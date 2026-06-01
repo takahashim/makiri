@@ -52,4 +52,35 @@ RSpec.describe Makiri::Document do
       expect(doc.errors).to eq([])
     end
   end
+
+  describe "#internal_subset (doctype)" do
+    it "exposes the doctype name and public/system identifiers" do
+      html = %(<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" ) +
+             %("http://www.w3.org/TR/html4/strict.dtd"><html><body>x</body></html>)
+      dt = Makiri::HTML(html).internal_subset
+      expect(dt).to be_a(Makiri::DocumentType)
+      expect(dt.name).to eq("html")
+      expect(dt.public_id).to eq("-//W3C//DTD HTML 4.01//EN")
+      expect(dt.external_id).to eq(dt.public_id) # Nokogiri-compatible alias
+      expect(dt.system_id).to eq("http://www.w3.org/TR/html4/strict.dtd")
+    end
+
+    it "reports nil ids for a bare doctype and exposes only one when present" do
+      bare = Makiri::HTML("<!DOCTYPE html><html><body>x</body></html>").internal_subset
+      expect([bare.public_id, bare.system_id]).to eq([nil, nil])
+
+      sys = Makiri::HTML('<!DOCTYPE potato SYSTEM "taco"><html></html>').internal_subset
+      expect([sys.public_id, sys.system_id]).to eq([nil, "taco"])
+    end
+
+    it "is nil when the document has no doctype" do
+      expect(Makiri::HTML("<html><body>x</body></html>").internal_subset).to be_nil
+    end
+
+    it "is reachable as a document child (XPath cannot select it)" do
+      doc = Makiri::HTML("<!DOCTYPE html><html><body>x</body></html>")
+      expect(doc.children.first).to eq(doc.internal_subset)
+      expect(doc.internal_subset.node_type).to eq(10) # DOCUMENT_TYPE
+    end
+  end
 end

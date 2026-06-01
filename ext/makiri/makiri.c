@@ -9,6 +9,7 @@ VALUE mkr_cText;
 VALUE mkr_cComment;
 VALUE mkr_cCData;
 VALUE mkr_cProcessingInstruction;
+VALUE mkr_cDocumentType;
 VALUE mkr_cDocumentFragment;
 VALUE mkr_cNodeSet;
 VALUE mkr_cXPathContext;
@@ -32,6 +33,8 @@ Init_makiri(void)
     mkr_cCData         = rb_define_class_under(mkr_mMakiri, "CData",        mkr_cNode);
     mkr_cProcessingInstruction =
         rb_define_class_under(mkr_mMakiri, "ProcessingInstruction", mkr_cNode);
+    mkr_cDocumentType =
+        rb_define_class_under(mkr_mMakiri, "DocumentType", mkr_cNode);
     mkr_cDocumentFragment =
         rb_define_class_under(mkr_mMakiri, "DocumentFragment", mkr_cNode);
     mkr_cNodeSet       = rb_define_class_under(mkr_mMakiri, "NodeSet",      rb_cObject);
@@ -58,6 +61,7 @@ Init_makiri(void)
     rb_undef_alloc_func(mkr_cComment);
     rb_undef_alloc_func(mkr_cCData);
     rb_undef_alloc_func(mkr_cProcessingInstruction);
+    rb_undef_alloc_func(mkr_cDocumentType);
     rb_undef_alloc_func(mkr_cDocumentFragment);
     rb_undef_alloc_func(mkr_cNodeSet);
     /* XPathContext is also created only from C (via XPathContext.new, which

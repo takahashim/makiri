@@ -56,6 +56,7 @@ mkr_wrap_node(lxb_dom_node_t *node, VALUE document)
     case LXB_DOM_NODE_TYPE_CDATA_SECTION: klass = mkr_cCData;     break;
     case LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION:
                                           klass = mkr_cProcessingInstruction; break;
+    case LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: klass = mkr_cDocumentType; break;
     case LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT:
                                           klass = mkr_cDocumentFragment;      break;
     default:                              klass = mkr_cNode;      break;
@@ -132,6 +133,41 @@ static VALUE
 mkr_node_get_type(VALUE self)
 {
     return INT2NUM((int)mkr_node_unwrap(self)->type);
+}
+
+/*
+ * DocumentType public / system identifiers (WHATWG DOM `publicId`/`systemId`).
+ * Returns the String, or nil when the doctype carries no such identifier.
+ * Lexbor represents a missing id inconsistently (NULL after `SYSTEM`, but an
+ * empty string for a bare `<!DOCTYPE html>`), so we treat empty as absent and
+ * return nil for both — matching Nokogiri (which also reports nil for an empty
+ * or missing id). Defined only on Makiri::DocumentType, so the receiver is
+ * always a doctype node; the guard is belt-and-suspenders.
+ */
+static VALUE
+mkr_doctype_id(VALUE self, int system)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_DOCUMENT_TYPE) {
+        return Qnil;
+    }
+    lxb_dom_document_type_t *dt = lxb_dom_interface_document_type(node);
+    size_t len = 0;
+    const lxb_char_t *id = system ? lxb_dom_document_type_system_id(dt, &len)
+                                  : lxb_dom_document_type_public_id(dt, &len);
+    return (id == NULL || len == 0) ? Qnil : rb_utf8_str_new((const char *)id, len);
+}
+
+static VALUE
+mkr_doctype_public_id(VALUE self)
+{
+    return mkr_doctype_id(self, 0);
+}
+
+static VALUE
+mkr_doctype_system_id(VALUE self)
+{
+    return mkr_doctype_id(self, 1);
 }
 
 /* Concatenated text content of this node and its descendants. The DOM spec
@@ -515,4 +551,10 @@ mkr_init_node(void)
     rb_define_method(mkr_cNode, "==",   mkr_node_equals, 1);
     rb_define_method(mkr_cNode, "eql?", mkr_node_equals, 1);
     rb_define_method(mkr_cNode, "hash", mkr_node_hash,   0);
+
+    /* DocumentType identifiers (WHATWG DOM names; external_id is the
+     * Nokogiri-compatible alias for public_id). */
+    rb_define_method(mkr_cDocumentType, "public_id",   mkr_doctype_public_id, 0);
+    rb_define_method(mkr_cDocumentType, "external_id", mkr_doctype_public_id, 0);
+    rb_define_method(mkr_cDocumentType, "system_id",   mkr_doctype_system_id, 0);
 }

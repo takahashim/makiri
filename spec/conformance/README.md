@@ -45,9 +45,9 @@ exercises DOM detail Makiri's Ruby surface cannot represent are reclassified as
 ### Result
 
 ```
-ran 1447  pass 1447  fail 0  error 0   (100.00% of ran)
+ran 1468  pass 1468  fail 0  error 0   (100.00% of ran)
 skipped: 192 fragment, 8 script
-unsupported: 131 (template content 110, doctype ids 21)
+unsupported: 110 (template content 110)
 ```
 
 **Makiri's HTML5 parsing matches html5lib-tests exactly** on every test its Ruby
@@ -55,22 +55,22 @@ API can represent.
 
 ### Findings (Makiri Ruby-API gaps, not parse bugs)
 
-These are tree details Lexbor parses correctly but Makiri does not expose, so
-the runner cannot match the expected dump. They are reclassified as
-*unsupported* and are candidates for future API work:
-
-1. **`<template>` content is unreachable (110 tests).** Per the HTML spec a
-   template's contents live in a separate "template contents" `DocumentFragment`,
-   not as children of the `<template>` element. Lexbor stores them there;
-   Makiri's `children` / `css` / `xpath` walk only the normal child chain, so
-   `template.children` is empty and the content is invisible from Ruby.
-2. **Doctype public/system identifiers are not exposed (21 tests).** Lexbor
-   parses `<!DOCTYPE html PUBLIC "..." "...">` correctly, but `Node` exposes only
-   the doctype name, so the ids cannot be read or dumped. NOTE: this is a DOM
-   API completeness matter (WHATWG DOM `DocumentType.publicId`/`systemId`), NOT
-   an XPath conformance issue — XPath 1.0's data model has no doctype node type
-   at all (root/element/text/attribute/namespace/PI/comment only), so doctype
-   declarations are unqueryable by design.
+1. **`<template>` content is unreachable (110 tests, unsupported).** Per the
+   HTML spec a template's contents live in a separate "template contents"
+   `DocumentFragment`, not as children of the `<template>` element. Lexbor
+   stores them there; Makiri's `children` / `css` / `xpath` walk only the normal
+   child chain, so `template.children` is empty and the content is invisible
+   from Ruby. A tree detail Lexbor parses correctly but Makiri does not expose,
+   so the runner reclassifies these as *unsupported* (a candidate for future API
+   work), never as parse failures.
+2. **Doctype public/system identifiers (21 tests) — now exposed (FIXED).**
+   Lexbor parses `<!DOCTYPE html PUBLIC "..." "...">` correctly; Makiri now
+   surfaces it via `Makiri::DocumentType#{public_id,external_id,system_id}` and
+   `Document#internal_subset`, so these tests pass. This was a DOM API
+   completeness matter (WHATWG DOM `DocumentType.publicId`/`systemId`), NOT an
+   XPath conformance issue — XPath 1.0's data model has no doctype node type at
+   all (root/element/text/attribute/namespace/PI/comment only), so doctype
+   declarations stay unqueryable by XPath by design (Nokogiri/libxml2 likewise).
 
 ---
 

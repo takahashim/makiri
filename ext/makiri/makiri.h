@@ -21,6 +21,7 @@ extern VALUE mkr_cText;
 extern VALUE mkr_cComment;
 extern VALUE mkr_cCData;
 extern VALUE mkr_cProcessingInstruction;
+extern VALUE mkr_cDocumentType;
 extern VALUE mkr_cDocumentFragment;
 extern VALUE mkr_cNodeSet;
 extern VALUE mkr_cXPathContext;

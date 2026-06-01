@@ -230,6 +230,21 @@ mkr_doc_title(VALUE self)
                          : rb_utf8_str_new((const char *)str, len);
 }
 
+/* The document's DocumentType node (`<!DOCTYPE ...>`), or nil if absent.
+ * Mirrors Nokogiri's Document#internal_subset. The doctype is a child of the
+ * document node (typically first), so a short scan of the children finds it. */
+static VALUE
+mkr_doc_internal_subset(VALUE self)
+{
+    lxb_dom_node_t *doc = (lxb_dom_node_t *)mkr_doc_unwrap(self);
+    for (lxb_dom_node_t *c = doc->first_child; c != NULL; c = c->next) {
+        if (c->type == LXB_DOM_NODE_TYPE_DOCUMENT_TYPE) {
+            return mkr_wrap_node(c, self);
+        }
+    }
+    return Qnil;
+}
+
 /* Parse warnings. Reserved; currently always empty. */
 static VALUE
 mkr_doc_errors(VALUE self)
@@ -246,6 +261,7 @@ mkr_init_document(void)
     rb_define_method(mkr_cDocument, "root",     mkr_doc_root,     0);
     rb_define_method(mkr_cDocument, "title",    mkr_doc_title,    0);
     rb_define_method(mkr_cDocument, "errors",   mkr_doc_errors,   0);
+    rb_define_method(mkr_cDocument, "internal_subset", mkr_doc_internal_subset, 0);
     rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, 1);
 
     rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, 1);

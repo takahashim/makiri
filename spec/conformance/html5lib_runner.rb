@@ -121,21 +121,13 @@ def parse_dat(path)
 end
 
 # Known Makiri Ruby-API gaps that make a test unrepresentable (not a parse
-# divergence). Returns :template / :doctype_id / nil. A gap is only credited
-# when it FULLY explains the diff, so a real divergence in the same test still
-# scores as a failure.
-def known_api_gap(expected, actual)
+# divergence). Returns :template / nil. A gap is only credited when it FULLY
+# explains the diff, so a real divergence in the same test still scores as a
+# failure.
+def known_api_gap(expected, _actual)
   # <template> contents live in a separate fragment Makiri does not expose;
   # the expected dump marks it with a "content" pseudo-node.
   return :template if expected.match?(/^\|\s+content$/)
-
-  # Doctype public/system identifiers: Lexbor parses them, but Makiri exposes
-  # only the name. Strip the ids from the expected dump and see if the rest
-  # matches exactly.
-  # The id values themselves can contain quotes, so strip from the first quote
-  # to the end of the doctype line rather than matching balanced quotes.
-  stripped = expected.gsub(/(\| <!DOCTYPE [^"\n]*) "[^\n]*">/, '\1>')
-  return :doctype_id if stripped != expected && stripped == actual
 
   nil
 end
@@ -232,8 +224,7 @@ puts "  total tests     : #{stats[:total]}"
 puts "  skipped fragment: #{stats[:skip_fragment]}"
 puts "  skipped script  : #{stats[:skip_script]}"
 puts "  unsupported     : #{stats[:unsupported]} " \
-     "(template content: #{stats[:unsupported_template]}, " \
-     "doctype ids: #{stats[:unsupported_doctype_id]})"
+     "(template content: #{stats[:unsupported_template]})"
 puts "  ran             : #{run}"
 puts "  pass            : #{stats[:pass]}"
 puts "  fail            : #{stats[:fail]}"

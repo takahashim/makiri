@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* `Makiri::DocumentType` node class exposing a doctype's `public_id` /
+  `system_id` (with `external_id` as a Nokogiri-compatible alias for the public
+  id), plus `Document#internal_subset` to fetch it. Reads the identifiers Lexbor
+  already parses; an empty or missing id reports `nil` (matching Nokogiri).
+  XPath still cannot select the doctype (XPath 1.0 has no doctype node type).
 * Project scaffolding (gemspec, Rakefile, README, LICENSE).
 * Vendored Lexbor as a git submodule under `vendor/lexbor/`,
   pinned and applied without patches.

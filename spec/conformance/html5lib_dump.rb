@@ -106,13 +106,17 @@ module Html5libDump
   end
 
   def doctype(node)
-    # Makiri does not expose a doctype's public/system identifiers, so a test
-    # whose expected dump carries them cannot be matched faithfully. The common
-    # "<!DOCTYPE html>" (name only, no ids) we render directly; anything we
-    # cannot distinguish we surface as Unsupported via the runner when it
-    # mismatches. Here we emit the name-only form.
-    name = node.name
-    name.nil? || name.empty? ? "<!DOCTYPE >" : "<!DOCTYPE #{name}>"
+    # html5lib renders "<!DOCTYPE name>" when the doctype has no public/system
+    # id, and "<!DOCTYPE name "public" "system">" (missing side shown as "")
+    # when either is present.
+    name = node.name.to_s
+    pub  = node.public_id
+    sys  = node.system_id
+    if pub.nil? && sys.nil?
+      "<!DOCTYPE #{name}>"
+    else
+      %(<!DOCTYPE #{name} "#{pub}" "#{sys}">)
+    end
   end
 
   # Namespace URI of an element, via XPath. Only ever called when the document
