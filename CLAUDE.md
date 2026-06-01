@@ -114,7 +114,13 @@ attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
 first_child/next, never attr.parent), so the XPath engine handles
 parent/ancestor axes and document-order over attributes with no special-casing.
 Reached via `mkr_parsed_attr_owner`; `mkr_parsed_attr_index_invalidate` drops it
-after any mutation so it rebuilds on the next query.
+after any mutation so it rebuilds on the next query. The same walk **co-builds
+an element index** (`tag id → elements`, document-order CSR) used by the XPath
+`//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
+is bucketed — custom-element tag ids are *pointer values* (`lxb_tag_append`),
+so those elements are left out and `//customtag` falls back to the tree walk.
+Reached via `mkr_parsed_element_index` / `mkr_element_index_tag` /
+`mkr_element_index_has_foreign`; invalidated with the attr index.
 
 **XPath engine** (`xpath/mkr_xpath_*.{c,h}`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
@@ -178,8 +184,25 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 
 **Makiri currently meets or beats Nokogiri/libxml2 on every `rake bench` row**
 (parse ~3×, css ~12×, at_css ~1000×, serialize ~4×, traverse ~1.2×, xpath
-attr-axis ~1.3×, `[@attr='v']` predicate ~1.5× faster, full-text extraction
-~parity). Key decisions that got there, worth not regressing:
+attr-axis ~1.3×, `[@attr='v']` predicate ~1.5×, `//tag` ~3.4× faster, full-text
+extraction ~parity). Plus parsing scales across threads (~2× on 8 cores) since
+it releases the GVL. Key decisions that got there, worth not regressing:
+
+- **Parsing and handler-free XPath release the GVL** (`ruby_doc.c`,
+  `ruby_xpath.c`): parse copies the source to a C buffer then runs
+  `mkr_parse_html` under `rb_thread_call_without_gvl`; `Node#xpath` /
+  `XPathContext#evaluate` parse the AST under the GVL then run
+  `mkr_xpath_eval_compiled` without it (the engine and all `lexbor_compat`/
+  `xpath` code are Ruby-free — Ruby is re-entered only via the custom-function
+  resolver, so the GVL is held whenever a handler is installed). Threads parse
+  and query concurrently (~2×/~3.3× on 8 cores); verify with `bench`'s threaded
+  rows and the `GC.stress` `spec/threading_spec.rb`.
+- **`//tag` is served from the element index** (`mkr_xpath_eval.c`
+  `try_descendant_tag_index`): a document-rooted, predicate-free, unprefixed
+  descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
+  (`has_foreign` guard) and each candidate is re-checked with
+  `node_principal_match`, so the result is identical to the walk; custom/unknown
+  tag names fall through. See the element index note above.
 
 - **String-value cache is hashed** (`mkr_xpath_value.c`): a pointer-keyed
   open-addressing index over an ordered store, so per-node predicate compares

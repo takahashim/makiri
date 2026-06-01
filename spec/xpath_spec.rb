@@ -340,4 +340,69 @@ RSpec.describe "Makiri XPath" do
       GC.start
     end
   end
+
+  # `//tag` (a document-rooted descendant name-test) is served from the
+  # document's element index instead of a tree walk. These assert it matches
+  # the walk exactly, including the cases that must NOT take the fast path.
+  describe "descendant tag fast path (element index)" do
+    let(:doc) do
+      Makiri::HTML(<<~HTML)
+        <html><body>
+          <ul><li id="a">a</li><li id="b">b</li></ul>
+          <div><li id="c">nested</li></div>
+          <p>p1</p>
+        </body></html>
+      HTML
+    end
+
+    it "returns every matching element in document order" do
+      expect(doc.xpath("//li").map { |n| n["id"] }).to eq(%w[a b c])
+    end
+
+    it "returns empty for a standard tag that is absent (no walk needed)" do
+      expect(doc.xpath("//table")).to be_empty
+    end
+
+    it "returns empty for an unknown tag name" do
+      expect(doc.xpath("//nosuchtag")).to be_empty
+    end
+
+    it "still uses the child axis correctly (not the fast path)" do
+      # //ul/li must exclude the <li> nested under <div>.
+      expect(doc.xpath("//ul/li").map { |n| n["id"] }).to eq(%w[a b])
+    end
+
+    it "applies predicates on a descendant tag step" do
+      # //li[1] = the first li *child within each parent* (a in <ul>, c in
+      # <div>), not the first li in the document — and predicates disable the
+      # fast path, so this also checks the generic step still works.
+      expect(doc.xpath("//li[1]").map { |n| n["id"] }).to eq(%w[a c])
+      expect(doc.xpath("//li[@id='c']").map(&:text)).to eq(%w[nested])
+    end
+
+    it "handles a relative descendant from a sub-context (not document-rooted)" do
+      ul = doc.at_xpath("//ul")
+      expect(ul.xpath(".//li").map { |n| n["id"] }).to eq(%w[a b])
+    end
+
+    it "finds custom-element tags via the tree-walk fallback" do
+      d = Makiri::HTML("<html><body><my-widget>w1</my-widget><my-widget>w2</my-widget></body></html>")
+      expect(d.xpath("//my-widget").map(&:text)).to eq(%w[w1 w2])
+    end
+
+    it "matches the case-sensitivity of the generic walk" do
+      # HTML qualified names are lowercase; an upper-case test matches nothing.
+      expect(doc.xpath("//LI")).to be_empty
+    end
+
+    it "reflects mutations (the index is invalidated)" do
+      expect(doc.xpath("//li").length).to eq(3)
+      doc.at_xpath("//ul").add_child(doc.create_element("li"))
+      expect(doc.xpath("//li").length).to eq(4)
+      doc.at_xpath("//li[@id='a']").remove
+      # Document order: <ul>'s remaining li (b) and the appended li (nil id)
+      # come before <div>'s li (c).
+      expect(doc.xpath("//li").map { |n| n["id"] }).to eq(["b", nil, "c"])
+    end
+  end
 end

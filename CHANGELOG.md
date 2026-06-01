@@ -66,6 +66,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   throwaway node-set per candidate. `//li[@attr='v']` went from ~parity to
   ~1.5× faster than Nokogiri. With this, Makiri meets or beats Nokogiri on
   every benchmarked operation. Verified clean under ASan + the fuzzer.
+* Parsing releases the GVL (`Makiri::HTML`/`Document.parse`): the source is
+  copied into a C buffer up front, then `mkr_parse_html` runs under
+  `rb_thread_call_without_gvl`, so threads parse concurrently. Single-thread
+  throughput is unchanged; aggregate parse throughput on an 8-core machine
+  roughly doubles (≈2× in `rake bench`'s threaded row). Verified clean under
+  ASan + the fuzzer, and a `GC.stress` multi-thread spec.
+* Handler-free XPath evaluation releases the GVL too (`Node#xpath`,
+  `XPathContext#evaluate`): the expression is parsed under the GVL, then the
+  compiled AST is evaluated under `rb_thread_call_without_gvl` (the engine only
+  re-enters Ruby through the custom-function resolver, which is absent without a
+  handler). Aggregate XPath throughput on 8 cores went from ~1.6× to ~3.3× the
+  single-thread rate; single-thread latency is unchanged. Verified clean under
+  ASan + the fuzzer and the `GC.stress` multi-thread spec.
+* `//tag` (a document-rooted descendant name-test) is answered from a new
+  document element index — `tag id → elements`, grouped in document order and
+  co-built with the attribute→owner index in the same walk — instead of a full
+  tree walk. `//li` went from ~parity to ~3.4× faster than Nokogiri. Only
+  Lexbor's static tag-id range is indexed; custom-element tags (whose ids are
+  pointer values) and foreign (non-HTML) content fall back to the walk, and
+  each candidate is re-checked so results are byte-identical to it. The index
+  is invalidated by the same mutation hooks as the attribute index. Verified
+  clean under ASan + the fuzzer.
 
 ### Fixed
 

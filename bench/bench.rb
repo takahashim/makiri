@@ -14,6 +14,7 @@
 # spec suite + fuzzer still pass).
 
 require "benchmark/ips"
+require "etc"
 require "makiri"
 
 begin
@@ -92,6 +93,21 @@ bench("xpath: //a/@href (attribute axis)") do |x|
   x.report("nokogiri") { n_doc.xpath("//a/@href").length } if NOKO
 end
 
+bench("xpath: //li (descendant tag)") do |x|
+  x.report("makiri")   { m_doc.xpath("//li").length }
+  x.report("nokogiri") { n_doc.xpath("//li").length } if NOKO
+end
+
+bench("xpath: //*[@id='main'] (id)") do |x|
+  x.report("makiri")   { m_doc.xpath("//*[@id='main']").length }
+  x.report("nokogiri") { n_doc.xpath("//*[@id='main']").length } if NOKO
+end
+
+bench("xpath: //li[@data-id='1000'] (attr eq)") do |x|
+  x.report("makiri")   { m_doc.xpath("//li[@data-id='1000']").length }
+  x.report("nokogiri") { n_doc.xpath("//li[@data-id='1000']").length } if NOKO
+end
+
 bench("traverse: count elements via children walk") do |x|
   walk = lambda do |node, &blk|
     node.children.each do |c|
@@ -122,3 +138,50 @@ bench("text extraction: full document text") do |x|
   x.report("makiri")   { m_doc.text }
   x.report("nokogiri") { n_doc.text } if NOKO
 end
+
+# --- threaded throughput --------------------------------------------------
+#
+# Measures aggregate ops/sec with T worker threads, each doing CPU-bound work
+# in a tight loop for a fixed wall-time. The gate metric is the N-thread vs
+# 1-thread speedup: with the GVL held it stays ~flat (no scaling), with the
+# GVL released around the pure-C region it should approach core count. Each
+# thread uses its own data (no shared Document) to mirror real concurrent use.
+
+NCORES = Etc.nprocessors
+
+# Run +block+ in a loop on +nthreads+ threads for +duration+ seconds; returns
+# total ops/sec. +setup+ (if given) runs once per thread and its result is
+# passed to the block, so per-thread state (e.g. a Document) isn't shared.
+def par_throughput(nthreads, duration: 2.0, setup: nil)
+  counts = Array.new(nthreads, 0)
+  threads = (0...nthreads).map do |i|
+    Thread.new do
+      ctx = setup&.call
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + duration
+      c = 0
+      while Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+        yield ctx
+        c += 1
+      end
+      counts[i] = c
+    end
+  end
+  threads.each(&:join)
+  counts.sum / duration
+end
+
+def threaded(title, unit, setup: nil)
+  puts "== #{title} (#{NCORES} cores) =="
+  base = nil
+  [1, NCORES].each do |t|
+    ips = par_throughput(t, setup: setup) { |ctx| yield ctx }
+    base ||= ips
+    scale = t == 1 ? "" : format("  (%.2fx vs 1 thread)", ips / base)
+    puts format("  makiri  %2d threads: %12.1f %s/s%s", t, ips, unit, scale)
+  end
+  puts
+end
+
+threaded("threaded parse throughput", "docs") { |_| Makiri::HTML(HTML) }
+threaded("threaded xpath throughput", "queries",
+         setup: -> { Makiri::HTML(HTML) }) { |doc| doc.xpath("//li").length }
