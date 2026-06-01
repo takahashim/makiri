@@ -1,6 +1,9 @@
 #include "glue.h"
 
 #include <lexbor/html/parser.h>
+#include <ruby/thread.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* ------------------------------------------------------------------ */
 /* Document wrapper type                                              */
@@ -140,6 +143,24 @@ mkr_frag_s_parse(VALUE klass, VALUE rb_html)
 /* Document.parse                                                     */
 /* ------------------------------------------------------------------ */
 
+/* Arguments for the GVL-released parse. */
+typedef struct {
+    const lxb_char_t *src;
+    size_t            len;
+    mkr_parsed_t     *result;
+} mkr_parse_nogvl_t;
+
+/* Runs with the GVL released: pure C (Lexbor + libc), touches no Ruby state.
+ * mkr_parse_html and all its callees are Ruby-free (verified), so multiple
+ * threads can parse concurrently. */
+static void *
+mkr_parse_nogvl(void *p)
+{
+    mkr_parse_nogvl_t *a = (mkr_parse_nogvl_t *)p;
+    a->result = mkr_parse_html(a->src, a->len);
+    return NULL;
+}
+
 /*
  * call-seq: _parse(source) -> Document
  *
@@ -159,8 +180,26 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
     d->parsed = NULL;
     d->errors = rb_ary_new();
 
-    d->parsed = mkr_parse_html((const lxb_char_t *)RSTRING_PTR(rb_source),
-                               (size_t)RSTRING_LEN(rb_source));
+    /* Copy the source into a C buffer so the parse can run with the GVL
+     * released without racing GC/compaction on the Ruby String's backing
+     * store. The source is not retained past the parse (Lexbor copies what it
+     * needs into the arena and the line table is built up front), so the
+     * buffer is freed immediately after. */
+    long len = RSTRING_LEN(rb_source);
+    char *buf = malloc(len > 0 ? (size_t)len : 1);
+    if (buf == NULL) {
+        rb_raise(mkr_eError, "out of memory copying source");
+    }
+    if (len > 0) {
+        memcpy(buf, RSTRING_PTR(rb_source), (size_t)len);
+    }
+    RB_GC_GUARD(rb_source);
+
+    mkr_parse_nogvl_t args = { (const lxb_char_t *)buf, (size_t)len, NULL };
+    rb_thread_call_without_gvl(mkr_parse_nogvl, &args, NULL, NULL);
+    free(buf);
+
+    d->parsed = args.result;
     if (d->parsed == NULL) {
         rb_raise(mkr_eError, "failed to parse HTML document");
     }

@@ -2,6 +2,7 @@
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
 
+#include <ruby/thread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -398,25 +399,40 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
 /* evaluate / register                                                */
 /* ------------------------------------------------------------------ */
 
-/* Evaluate with an optional Ruby handler installed for the call. Fills
- * value/error and returns the eval rc; never raises (so callers can free a
- * throwaway context first). */
-static int
-mkr_xpath_run_raw(mkr_xpath_context_t *ctx, const char *expr, VALUE handler,
-                  VALUE document, mkr_xpath_value_t *value, mkr_xpath_error_t *error)
+/* Bundle for evaluating a compiled AST with the GVL released. */
+typedef struct {
+    mkr_xpath_context_t *ctx;
+    mkr_node_t          *ast;
+    mkr_xpath_value_t   *value;
+    mkr_xpath_error_t   *error;
+    int                  rc;
+} mkr_eval_nogvl_t;
+
+static void *
+mkr_eval_compiled_nogvl(void *p)
 {
-    mkr_handler_bridge_t bridge = { handler, document };
-    int has_handler = !NIL_P(handler);
+    mkr_eval_nogvl_t *a = (mkr_eval_nogvl_t *)p;
+    a->rc = mkr_xpath_eval_compiled(a->ctx, a->ast, a->value, a->error);
+    return NULL;
+}
+
+/* Evaluate a compiled AST. Handler-free evaluation is pure C (the engine only
+ * re-enters Ruby through the custom-function resolver), so when no handler is
+ * installed we drop the GVL for the duration — letting other threads run and
+ * letting concurrent evaluations on distinct contexts/documents proceed in
+ * parallel. With a handler the resolver calls back into Ruby, so it must stay
+ * under the GVL. */
+static int
+mkr_eval_compiled_maybe_nogvl(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                              int has_handler, mkr_xpath_value_t *value,
+                              mkr_xpath_error_t *error)
+{
     if (has_handler) {
-        mkr_xpath_context_set_user_data(ctx, &bridge);
-        mkr_xpath_set_func_resolver(ctx, mkr_handler_resolver);
+        return mkr_xpath_eval_compiled(ctx, ast, value, error);
     }
-    int rc = mkr_xpath_eval(ctx, expr, value, error);
-    if (has_handler) {
-        mkr_xpath_set_func_resolver(ctx, NULL);
-        mkr_xpath_context_set_user_data(ctx, NULL);
-    }
-    return rc;
+    mkr_eval_nogvl_t a = { ctx, ast, value, error, 0 };
+    rb_thread_call_without_gvl(mkr_eval_compiled_nogvl, &a, NULL, NULL);
+    return a.rc;
 }
 
 /* Return the compiled AST for +expr+, parsing and caching it on first use.
@@ -491,7 +507,7 @@ mkr_xpath_ctx_evaluate(int argc, VALUE *argv, VALUE self)
         mkr_xpath_set_func_resolver(d->ctx, mkr_handler_resolver);
     }
     mkr_xpath_value_t value = {0};
-    int rc = mkr_xpath_eval_compiled(d->ctx, ast, &value, &error);
+    int rc = mkr_eval_compiled_maybe_nogvl(d->ctx, ast, has_handler, &value, &error);
     if (has_handler) {
         mkr_xpath_set_func_resolver(d->ctx, NULL);
         mkr_xpath_context_set_user_data(d->ctx, NULL);
@@ -532,7 +548,9 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 /* Node#xpath / Node#at_xpath                                         */
 /* ------------------------------------------------------------------ */
 
-/* Evaluate expr against self with a throwaway context and optional handler. */
+/* Evaluate expr against self with a throwaway context and optional handler.
+ * The expression is parsed under the GVL (it reads the Ruby String), then the
+ * compiled AST is evaluated with the GVL released when there is no handler. */
 static VALUE
 mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler)
 {
@@ -540,9 +558,29 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler)
     const char *expr = StringValueCStr(rb_expr);
 
     mkr_xpath_context_t *ctx = mkr_xpath_context_for(self, document);
-    mkr_xpath_value_t value = {0};
+
     mkr_xpath_error_t error = {0};
-    int rc = mkr_xpath_run_raw(ctx, expr, handler, document, &value, &error);
+    mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
+    limits->ast_nodes = 0;
+    mkr_node_t *ast = mkr_parse(expr, limits, &error);
+    if (ast == NULL) {
+        mkr_xpath_context_free(ctx);
+        mkr_xpath_raise(&error); /* parse error, never returns */
+    }
+
+    mkr_handler_bridge_t bridge = { handler, document };
+    int has_handler = !NIL_P(handler);
+    if (has_handler) {
+        mkr_xpath_context_set_user_data(ctx, &bridge);
+        mkr_xpath_set_func_resolver(ctx, mkr_handler_resolver);
+    }
+    mkr_xpath_value_t value = {0};
+    int rc = mkr_eval_compiled_maybe_nogvl(ctx, ast, has_handler, &value, &error);
+    if (has_handler) {
+        mkr_xpath_set_func_resolver(ctx, NULL);
+        mkr_xpath_context_set_user_data(ctx, NULL);
+    }
+    mkr_node_free(ast);
     if (rc != 0) {
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error); /* never returns */
