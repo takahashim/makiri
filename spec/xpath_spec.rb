@@ -187,6 +187,14 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('substring-after("a/b", "/")')).to eq("b")
     end
 
+    it "substring handles Infinity / NaN / huge positions (no UB)" do
+      expect(doc.xpath('substring("12345", 1 div 0)')).to eq("")          # start = +Inf
+      expect(doc.xpath('substring("12345", -1 div 0, 1 div 0)')).to eq("") # end = NaN
+      expect(doc.xpath('substring("12345", 1e309)')).to eq("")            # overflows to +Inf
+      expect(doc.xpath('substring("12345", 2, 1 div 0)')).to eq("2345")   # length = +Inf
+      expect(doc.xpath('substring("12345", -1 div 0)')).to eq("12345")    # start = -Inf
+    end
+
     it "string-length / normalize-space / translate" do
       expect(doc.xpath('string-length("héllo")')).to eq(5.0) # counts code points
       expect(doc.xpath('normalize-space("  a   b ")')).to eq("a b")
@@ -369,6 +377,14 @@ RSpec.describe "Makiri XPath" do
 
     it "rejects a malformed UTF-8 byte sequence in a name (fail closed)" do
       expect { Makiri::HTML("<p>x</p>").xpath("//a\xC3") }
+        .to raise_error(Makiri::XPath::SyntaxError)
+    end
+
+    it "rejects a string literal containing invalid UTF-8 (fail closed)" do
+      # Validated at lex time, so every character-wise function (translate,
+      # substring, string-length, ...) can assume well-formed input.
+      bad = ('string-length("' + "\xC3" + '")').b
+      expect { Makiri::HTML("<p>x</p>").xpath(bad) }
         .to raise_error(Makiri::XPath::SyntaxError)
     end
   end

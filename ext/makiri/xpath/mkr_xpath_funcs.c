@@ -521,12 +521,20 @@ fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   }
 
   /* XPath 1.0 §4.2: positions are 1-based character offsets, rounded.
-   * substring("12345", 2, 3) → "234"; out-of-range silently clipped. */
-  long start = (long)floor(start_d + 0.5);
-  long end   = (long)floor(end_d + 0.5);
-  if (start < 1) start = 1;
-  long imax = (long)s_chars + 1;
-  if (end > imax) end = imax;
+   * substring("12345", 2, 3) → "234"; out-of-range silently clipped.
+   * Round, then clamp to the valid range [1, s_chars+1] AS DOUBLES before the
+   * cast: start_d/end_d can be ±Infinity or exceed long's range (e.g.
+   * `substring(s, 1 div 0)`), where a direct (long)floor(...) is undefined
+   * behaviour. NaN is already handled above. */
+  double imax_d = (double)s_chars + 1.0;
+  double rstart = floor(start_d + 0.5);
+  double rend   = floor(end_d + 0.5);
+  if (rstart < 1.0)    rstart = 1.0;
+  if (rstart > imax_d) rstart = imax_d;
+  if (rend < 1.0)      rend = 1.0;
+  if (rend > imax_d)   rend = imax_d;
+  long start = (long)rstart;
+  long end   = (long)rend;
   if (end <= start) {
     out->u.string = strdup("");
   } else {
@@ -635,16 +643,19 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     return -1;
   }
 
+  /* The string-literal lexer validates UTF-8 and DOM string-values are valid
+   * UTF-8, so a decode error here should not happen — but if it does, fail
+   * closed (RUNTIME error) rather than silently truncating the result. */
   size_t from_n = 0;
   for (const lxb_char_t *p = (const lxb_char_t *)from, *e = p + from_len; p < e;) {
     lxb_codepoint_t cp = lxb_encoding_decode_valid_utf_8_single(&p, e);
-    if (cp == LXB_ENCODING_DECODE_ERROR) break;
+    if (cp == LXB_ENCODING_DECODE_ERROR) goto decode_fail;
     from_cp[from_n++] = cp;
   }
   size_t to_n = 0;
   for (const lxb_char_t *p = (const lxb_char_t *)to, *e = p + to_len; p < e;) {
     const lxb_char_t *c = p;
-    if (lxb_encoding_decode_valid_utf_8_single(&p, e) == LXB_ENCODING_DECODE_ERROR) break;
+    if (lxb_encoding_decode_valid_utf_8_single(&p, e) == LXB_ENCODING_DECODE_ERROR) goto decode_fail;
     to_off[to_n]  = (size_t)(c - (const lxb_char_t *)to);
     to_clen[to_n] = (size_t)(p - c);
     to_n++;
@@ -654,7 +665,7 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   for (const lxb_char_t *p = (const lxb_char_t *)s, *e = p + s_len; p < e;) {
     const lxb_char_t *c = p;
     lxb_codepoint_t cp = lxb_encoding_decode_valid_utf_8_single(&p, e);
-    if (cp == LXB_ENCODING_DECODE_ERROR) break;
+    if (cp == LXB_ENCODING_DECODE_ERROR) goto decode_fail;
     size_t clen = (size_t)(p - c);
 
     const char *emit = NULL;
@@ -693,6 +704,12 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->type = MKR_XPATH_TYPE_STRING;
   out->u.string = buf;
   return 0;
+
+decode_fail:
+  free(from_cp); free(to_off); free(to_clen); free(buf);
+  free(s); free(from); free(to);
+  mkr_err_set(err, MKR_XPATH_ERR_RUNTIME, "invalid UTF-8 in translate() argument");
+  return -1;
 }
 
 /* ---------- number functions ---------- */

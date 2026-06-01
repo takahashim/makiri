@@ -106,6 +106,21 @@ lex_number(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
   return 0;
 }
 
+/* Is [s, s+len) well-formed UTF-8? Strict (same rules as utf8_decode: rejects
+ * malformed/overlong/surrogate/out-of-range). */
+static int
+utf8_valid_range(const char *s, size_t len)
+{
+  const char *p = s, *e = s + len;
+  while (p < e) {
+    uint32_t cp;
+    int n = utf8_decode(p, &cp);
+    if (n <= 0 || (size_t)n > (size_t)(e - p)) return 0;
+    p += n;
+  }
+  return 1;
+}
+
 static int
 lex_string(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
@@ -117,9 +132,18 @@ lex_string(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
     mkr_err_set(err, MKR_XPATH_ERR_SYNTAX, "unterminated string literal");
     return -1;
   }
+  /* Validate UTF-8 here, once, so every character-wise string function
+   * (translate, substring, string-length, ...) can assume well-formed input
+   * and so an invalid literal fails closed (SyntaxError) rather than producing
+   * a silently wrong/truncated result. */
+  size_t len = (size_t)(p - start);
+  if (!utf8_valid_range(start, len)) {
+    mkr_err_set(err, MKR_XPATH_ERR_SYNTAX, "invalid UTF-8 in string literal");
+    return -1;
+  }
   t->kind  = MKR_TK_LITERAL;
   t->start = start;
-  t->len   = (size_t)(p - start);
+  t->len   = len;
   L->cur   = p + 1;
   return 0;
 }

@@ -126,6 +126,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* XPath string literals are validated as UTF-8 at lex time and a malformed
+  literal now raises `XPath::SyntaxError` (fail-closed), instead of silently
+  producing a wrong/truncated result from the character-wise string functions
+  (`translate`, `substring`, `string-length`, …). `translate()` likewise fails
+  closed (RUNTIME error) on a decode error rather than truncating.
+* XPath `substring()` no longer casts an Infinite / out-of-`long`-range position
+  straight to `long` (undefined behaviour, e.g. `substring(s, 1 div 0)` or
+  `substring(s, 1e309)`); the rounded start/end are clamped to the valid range
+  as doubles before the cast.
 * XPath node-set vs node-set relational comparisons (`//a < //b`, `<=`, `>`,
   `>=`) now consider every pair of nodes (XPath 1.0 §3.4 — true iff some pair
   satisfies), instead of collapsing one side to the first node's number.
