@@ -60,6 +60,11 @@ RSpec.describe "UTF-8 text-input contract" do
       "css selector (invalid UTF-8)"    => -> (d, e) { d.css(INVALID.dup.force_encoding("BINARY")) },
       "xpath expression (NUL)"          => -> (d, e) { d.xpath("//div#{NUL}") },
       "xpath expression (invalid UTF-8)" => -> (d, e) { d.xpath("//#{INVALID}".dup.force_encoding("UTF-8")) },
+      "attribute read [] (NUL)"         => -> (d, e) { e["a#{NUL}b"] },
+      "attribute read [] (invalid UTF-8)" => -> (d, e) { e[INVALID.dup.force_encoding("BINARY")] },
+      "key? (NUL)"                      => -> (d, e) { e.key?("a#{NUL}b") },
+      "fragment context (NUL)"          => -> (d, e) { Makiri::DocumentFragment.parse("<p>x</p>", context: "a#{NUL}b") },
+      "fragment context (invalid UTF-8)" => -> (d, e) { d.fragment("<p>x</p>", context: INVALID.dup.force_encoding("BINARY")) },
     }.each do |desc, body|
       it "rejects #{desc} with Makiri::Error" do
         expect { body.call(doc, el) }.to raise_error(Makiri::Error)

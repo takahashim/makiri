@@ -397,6 +397,7 @@ mkr_node_aref(VALUE self, VALUE rb_name)
     }
 
     VALUE name = rb_String(rb_name);
+    mkr_check_text(name, "attribute name");
     const lxb_char_t *nm = (const lxb_char_t *)RSTRING_PTR(name);
     size_t nlen = (size_t)RSTRING_LEN(name);
 
@@ -419,6 +420,7 @@ mkr_node_has_key(VALUE self, VALUE rb_name)
         return Qfalse;
     }
     VALUE name = rb_String(rb_name);
+    mkr_check_text(name, "attribute name");
     lxb_dom_element_t *el = lxb_dom_interface_element(node);
     return lxb_dom_element_has_attribute(el,
                                          (const lxb_char_t *)RSTRING_PTR(name),

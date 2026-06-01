@@ -105,11 +105,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the common case) is used unchanged — no copy. The programmatic APIs are
   strict instead: strings passed to `Node#{xpath,at_xpath}`, `XPathContext`
   (`evaluate` / `register_variable` / `register_namespace`), `Node#{css,at_css,
-  matches?}`, attribute names/values (`[]=`, `delete`), `content=`, `name=`, and
-  `Document#{create_element,create_text_node,create_comment}` must be valid UTF-8
-  and must not contain a NUL byte — a violation raises `Makiri::Error` rather
-  than being silently truncated, repaired, or interpreted. (Fragment HTML for
-  `inner_html=`/`outer_html=`/`DocumentFragment.parse`/`Document#fragment`/
+  matches?}`, attribute names/values (`[]`, `[]=`, `key?`/`has_attribute?`,
+  `delete`), `content=`, `name=`, `Document#{create_element,create_text_node,
+  create_comment}`, and the `context:` element name for fragment parsing must be
+  valid UTF-8 and must not contain a NUL byte — a violation raises `Makiri::Error`
+  rather than being silently truncated, repaired, or interpreted. (Fragment HTML
+  for `inner_html=`/`outer_html=`/`DocumentFragment.parse`/`Document#fragment`/
   `Node#parse` is decoded leniently like document parsing.)
 * XPath evaluation no longer releases the GVL, making concurrent use safe by
   construction. `Node#xpath`/`at_xpath` and `XPathContext#evaluate` previously

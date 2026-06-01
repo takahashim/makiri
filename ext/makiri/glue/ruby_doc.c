@@ -102,6 +102,9 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
     }
 
     VALUE s = rb_String(context);
+    /* The context: tag name is a programmatic control string, not parsed HTML,
+     * so it follows the strict text-input contract (valid UTF-8, no NUL). */
+    mkr_check_text(s, "fragment context element");
     const lxb_char_t *p = (const lxb_char_t *)RSTRING_PTR(s);
     size_t n = (size_t)RSTRING_LEN(s);
     if (n == 3 && memcmp(p, "svg", 3) == 0) {
