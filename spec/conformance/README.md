@@ -4,19 +4,21 @@ Harnesses that check Makiri against external standards, complementing the
 robustness fuzzer (`spec/fuzz/`, which only checks that Makiri never does worse
 than raise its own error). These check that Makiri is *correct*, not just safe.
 
-The two `rake conformance:*` harnesses below need network/Nokogiri and live
-outside the unit suite (their files are not `*_spec.rb`). A third,
-`wpt_domxpath_spec.rb`, is a normal spec (pure Ruby, no Nokogiri) and runs under
-`rake spec` — see "3. XPath over HTML" below.
+The `rake conformance:*` harnesses below need network/Nokogiri and live outside
+the unit suite (their files are not `*_spec.rb`). Two normal specs (pure Ruby,
+no Nokogiri) run under `rake spec`: `wpt_domxpath_spec.rb` ("3. XPath over HTML")
+and `css_selectors_spec.rb` ("4. CSS Selectors").
 
 ```bash
 rake conformance:html5     # WHATWG HTML5 parsing  vs html5lib-tests
 rake conformance:xpath     # XPath 1.0 evaluation  vs Nokogiri (libxml2)
-rake conformance           # both
+rake conformance:css       # CSS Selectors         vs Nokogiri::HTML5
+rake conformance           # all three
 
 # pass through options:
 H5_ARGS="--file tests1.dat --verbose"        rake conformance:html5
 XPATH_ARGS="--generate 8000 --seed 1"        rake conformance:xpath
+CSS_ARGS="--verbose"                         rake conformance:css
 ```
 
 The Nokogiri baseline is **`Nokogiri::HTML5`** (Gumbo, WHATWG-compliant), never
@@ -175,11 +177,45 @@ of HTML name tests (Makiri and Nokogiri::HTML5 are case-sensitive), and hiding
 
 ---
 
+## 4. CSS Selectors — `css_diff.rb` + `css_selectors_spec.rb`
+
+Makiri's `Node#css` is backed by **Lexbor's selector engine** (mature,
+upstream-tested), not original code, so unlike XPath the matching itself is not
+the main risk. These check (a) Makiri's glue — descendant-only scope, document
+order, comma de-duplication, error mapping — and (b) where Lexbor's and
+Nokogiri's *supported-selector vocabularies* differ.
+
+- `css_diff.rb` (`rake conformance:css`): differential vs `Nokogiri::HTML5#css`
+  over a standard-selector corpus (`css_corpus.rb`). On standard selectors the
+  two agree exactly; the differences are vocabulary only and are bucketed:
+  `lexbor-only` (Level-4 `:is`/`:where` Nokogiri rejects), `nokogiri-only`
+  (jQuery extensions `:contains`/`:gt`/`:eq`/`:first` — non-standard, Makiri
+  rejects by design), `agree-reject` (pseudo-elements / invalid).
+- `css_selectors_spec.rb`: a resident pure-Ruby spec pinning the supported
+  surface (type/universal/class/id, all combinators, every attribute operator,
+  structural pseudo-classes, `:not`/`:is`/`:where`/`:has`, grouping) and the
+  glue semantics, plus the deliberate non-support of jQuery extensions.
+
+### Findings
+
+1. **jQuery/Nokogiri CSS extensions are not supported (by design).**
+   `:contains`, `:gt`, `:lt`, `:eq`, `:first`, `:last`, … are not standard CSS;
+   Lexbor rejects them. Use XPath (`xpath("//p[contains(.,'x')]")`) or
+   Enumerable (`css('li')[1]`) instead.
+2. **Type selectors are case-insensitive; class/id are not quirks-aware.**
+   Lexbor matches type selectors ASCII-case-insensitively (CSS-correct for HTML;
+   `LI` matches `<li>` — Nokogiri::HTML5 is wrongly case-sensitive here), but it
+   matches class/id case-INsensitively regardless of the document's quirks mode,
+   whereas a no-quirks document should treat them case-sensitively (browsers /
+   Nokogiri::HTML5 do). That is Lexbor's behaviour (not patched); recorded as a
+   `pending` in `css_selectors_spec.rb`.
+
+---
+
 ## Extending
 
 - **Scripting-on tests (8):** these require a scripting flag that changes
   parsing (e.g. `<noscript>` handling); out of scope unless Makiri models it.
-- **CSS Selectors:** a sibling `css_diff.rb` against `Nokogiri::HTML5#css`, or
-  the WPT selector suite, would cover the third query surface.
-- When the differential finds and you fix a divergence, add a minimal
-  reproducing expression to `xpath_corpus.rb` so it stays fixed.
+- When a differential finds and you fix a divergence, add a minimal reproducing
+  case to the relevant corpus (`xpath_corpus.rb` / `css_corpus.rb`) so it stays
+  fixed.

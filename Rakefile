@@ -107,10 +107,17 @@ namespace :conformance do
       sh "#{FileUtils::RUBY} -Ilib spec/conformance/xpath_diff.rb #{ENV['XPATH_ARGS']}"
     end
   end
+
+  desc "CSS Selectors differential conformance vs Nokogiri::HTML5"
+  task css: :compile do
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/css_diff.rb #{ENV['CSS_ARGS']}"
+    end
+  end
 end
 
-desc "Run both conformance suites (html5lib-tests + XPath differential)"
-task conformance: %w[conformance:html5 conformance:xpath]
+desc "Run all conformance suites (html5lib-tests + XPath & CSS differentials)"
+task conformance: %w[conformance:html5 conformance:xpath conformance:css]
 
 namespace :fuzz do
   desc "Run the fuzzer under AddressSanitizer (rebuilds the ext; --isolated)"

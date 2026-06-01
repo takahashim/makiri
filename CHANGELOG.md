@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* CSS Selectors conformance coverage: `spec/conformance/css_selectors_spec.rb`
+  (a resident, browser-authoritative regression for `Node#css` — supported
+  selector surface and glue semantics, run by `rake spec`) and `css_diff.rb` /
+  `rake conformance:css` (differential vs `Nokogiri::HTML5#css`). Confirms that
+  standard selectors match identically; the differences are vocabulary only
+  (Lexbor's Level-4 `:is`/`:where` vs Nokogiri's jQuery extensions, which Makiri
+  does not support — use XPath or Enumerable instead).
 * XPath name-test namespace matching is now **strict by default**
   (HTML5/WHATWG-faithful, matching browsers' `document.evaluate` and
   `Nokogiri::HTML5`): an unprefixed element name test resolves in the HTML
