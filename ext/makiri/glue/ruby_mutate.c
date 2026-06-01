@@ -314,8 +314,8 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
 
     lxb_dom_node_t *frag = lxb_html_parse_fragment(
         parser, (lxb_html_element_t *)context_el, hsrc, hlen);
+    free(clean); /* consumed by the parse; free on every subsequent path */
     if (frag == NULL) {
-        free(clean);
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to parse HTML fragment");
     }
