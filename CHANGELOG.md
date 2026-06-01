@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* XPath document order now places an element before its own attribute nodes
+  (XPath 1.0 §5.1). The small-node-set fallback comparator sorted an attribute
+  ahead of its owner element, so a union like `//p | //p/@id` returned the
+  attribute first and disagreed with the indexed comparator used for larger
+  node-sets. Found by the new XPath differential against libxml2.
 * `Document#text`/`#content` now returns the root element's text (it was empty
   because a Document's DOM textContent is null).
 * Nokogiri-compatibility helpers: `Node#attributes`, `Node#search`/`#at`

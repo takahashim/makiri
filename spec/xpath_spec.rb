@@ -227,6 +227,19 @@ RSpec.describe "Makiri XPath" do
       expect(kinds).to eq(%i[attr text])
     end
 
+    # XPath 1.0 §5.1: "element, then its attribute nodes, then its children."
+    # When a union yields an element together with its OWN attributes, the
+    # element node must sort first. (Regression: the small-node-set fallback
+    # comparator placed the attribute before its owner element, disagreeing
+    # with both the spec and the indexed comparator used for larger sets.)
+    it "places an element before its own attribute nodes" do
+      d = Makiri::HTML('<html><body><p id="x" class="c">A</p></body></html>')
+      kinds = d.xpath("//p | //p/@id | //p/@class").map do |n|
+        n.is_a?(Makiri::Attribute) ? :"@#{n.name}" : n.name.to_sym
+      end
+      expect(kinds).to eq(%i[p @id @class])
+    end
+
     it "navigates from an attribute back to its element" do
       expect(doc.at_xpath("//a/@href/parent::a").name).to eq("a")
       expect(doc.xpath("//p/ancestor::div/@id").map(&:value)).to eq(%w[d])

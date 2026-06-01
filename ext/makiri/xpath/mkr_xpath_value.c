@@ -434,12 +434,18 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
   const lxb_dom_node_t *aa = anchor_for_cmp(a);
   const lxb_dom_node_t *bb = anchor_for_cmp(b);
 
-  /* If the anchors are the same element, decide by node type. */
+  /* If the anchors are the same element, decide by node type. A non-attribute
+   * node that anchors to the same element E can ONLY be E itself: any other
+   * node (a child/descendant) anchors to itself, not to E, so it would not
+   * reach this branch (the attribute-vs-descendant case is handled below by
+   * the depth-normalisation walk). Per XPath 1.0 §5.1 document order is
+   * "element, then its attribute nodes, then its children", so an attribute
+   * comes AFTER its own owner element. */
   if (aa == bb) {
     int a_attr = (a->type == LXB_DOM_NODE_TYPE_ATTRIBUTE);
     int b_attr = (b->type == LXB_DOM_NODE_TYPE_ATTRIBUTE);
-    if (a_attr && !b_attr) return -1; /* attribute precedes element descendants/self */
-    if (b_attr && !a_attr) return 1;
+    if (a_attr && !b_attr) return 1;  /* b is the owner element E; a (its attr) follows */
+    if (b_attr && !a_attr) return -1; /* a is the owner element E; b (its attr) follows */
     /* Both attributes of the same element: relative order is
      * implementation-defined. Use insertion order via attr linked list. */
     if (a_attr && b_attr) {
