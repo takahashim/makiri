@@ -82,6 +82,65 @@ RSpec.describe "Makiri Nokogiri-compat API (part 2)" do
         doc = Makiri::HTML("<html><body><div></div></body></html>")
         expect { doc.at_css("div").add_child(frag) }.to raise_error(Makiri::Error)
       end
+
+      it "preserves <template> contents (deep import handles the content fragment)" do
+        f = Makiri::DocumentFragment.parse("<div><template><p>x</p></template></div>")
+        expect(f.at_css("template").content_fragment.css("p").map(&:text)).to eq(["x"])
+      end
+    end
+
+    describe "fragment parsing context (Nokogiri-compatible)" do
+      it "defaults to a body context" do
+        # <td> is dropped in body context, leaving its text
+        expect(Makiri::DocumentFragment.parse("<td>x").children.map(&:name)).to eq(["text"])
+      end
+
+      it "honours a String context (HTML element)" do
+        frag = Makiri::DocumentFragment.parse("<td>x", context: "tr")
+        expect(frag.children.map(&:name)).to eq(["td"])
+      end
+
+      it "honours a String context on Document#fragment" do
+        doc = Makiri::HTML("<html><body></body></html>")
+        expect(doc.fragment("<tr><td>y", context: "table").children.map(&:name)).to eq(["tbody"])
+      end
+
+      it "treats 'svg'/'math' string contexts as the foreign roots" do
+        c = Makiri::DocumentFragment.parse("<circle/>", context: "svg").children.first
+        expect(c.xpath("namespace-uri(.)")).to eq("http://www.w3.org/2000/svg")
+      end
+
+      it "accepts a Node context, reaching foreign non-root contexts" do
+        # an SVG <desc>/<path> context: HTML elements are parsed verbatim
+        path = Makiri::HTML("<svg><path></path></svg>").at_css("path")
+        parsed = Makiri::DocumentFragment.parse("<nobr>X", context: path)
+        expect(parsed.children.map(&:name)).to eq(["nobr"])
+        expect(parsed.children.first.xpath("namespace-uri(.)"))
+          .to eq("http://www.w3.org/1999/xhtml")
+      end
+
+      it "raises on an unknown context element string" do
+        expect { Makiri::DocumentFragment.parse("x", context: "no-such-tag-xyz") }
+          .to raise_error(ArgumentError)
+      end
+    end
+
+    describe "Node#parse (fragment in the node's context)" do
+      it "parses in the receiver element's context and returns the nodes" do
+        tr = Makiri::HTML("<table><tr></tr></table>").at_css("tr")
+        nodes = tr.parse("<td>y</td>")
+        expect(nodes.map(&:name)).to eq(["td"])
+      end
+
+      it "uses the element's namespace (foreign context)" do
+        path = Makiri::HTML("<svg><path></path></svg>").at_css("path")
+        expect(path.parse("<nobr>X").map(&:name)).to eq(["nobr"])
+      end
+
+      it "rejects a non-element receiver" do
+        text = Makiri::HTML("<p>hi</p>").at_css("p").child
+        expect { text.parse("<b>x</b>") }.to raise_error(ArgumentError)
+      end
     end
 
     describe "Document#fragment + splicing" do

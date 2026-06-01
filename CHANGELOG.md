@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* Context-sensitive fragment parsing (Nokogiri-compatible): `context:` on
+  `DocumentFragment.parse` / `Document#fragment` (a tag-name String, `"svg"` /
+  `"math"` for the foreign roots, or a `Node` for any element incl. foreign
+  non-roots), and `Node#parse(html)` (parse in the receiver element's context).
+  Defaults to a `<body>` context. Backed by Lexbor's by-tag-id fragment parser,
+  so context-specific tokenizer states and foreign-content adjustment are
+  handled. Makiri now passes the html5lib-tests fragment suite.
 * `Element#content_fragment` — a `<template>`'s "template contents" as a
   `Makiri::DocumentFragment` (WHATWG DOM `HTMLTemplateElement.content`; nil for
   non-templates). The contents are not children of the `<template>` itself
@@ -102,6 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* Fragment parsing now preserves `<template>` contents. Deep node import
+  (`DocumentFragment.parse` / `Document#fragment`) copied the normal child chain
+  but not a template's separate content fragment, so an imported `<template>`
+  lost its contents; import now fixes up template content recursively.
 * XPath document order now places an element before its own attribute nodes
   (XPath 1.0 §5.1). The small-node-set fallback comparator sorted an attribute
   ahead of its owner element, so a union like `//p | //p/@id` returned the

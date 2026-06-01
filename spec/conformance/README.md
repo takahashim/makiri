@@ -37,23 +37,25 @@ Test data is **not vendored**: the runner fetches a pinned master commit of
 html5lib-tests via a sparse, blobless clone into `data/` (gitignored) on first
 run. Bump `DATA_COMMIT` in the runner to update.
 
-**Scope (v1):** full-document tests only. `#document-fragment` and `#script-on`
-tests are counted and skipped (not silently dropped). A test whose expected tree
-exercises a DOM detail Makiri's Ruby surface cannot represent at all would be
-reclassified as *unsupported* rather than scored as a parse failure; in practice
-that count is now 0 (see findings).
+**Scope:** full-document AND fragment (`#document-fragment`) tests. Fragment
+tests parse in their context element via the Nokogiri-compatible `context:`
+(String for HTML / `"svg"` / `"math"`, or a Node for foreign non-root contexts
+like an SVG `<desc>`). Only `#script-on` tests are skipped (scripting changes
+parsing and is out of scope). A test exercising a DOM detail Makiri cannot
+represent at all would be reclassified as *unsupported* rather than scored as a
+failure; in practice that count is 0.
 
 ### Result
 
 ```
-ran 1578  pass 1578  fail 0  error 0   (100.00% of ran)
-skipped: 192 fragment, 8 script
+ran 1770  pass 1770  fail 0  error 0   (100.00% of ran)
+skipped: 8 script
 unsupported: 0
 ```
 
-**Makiri's HTML5 parsing matches html5lib-tests exactly** on every test its Ruby
-API can represent. The only tests not run are fragment parsing (192) and
-scripting-on (8), both out of v1 scope (see Extending).
+**Makiri's HTML5 parsing matches html5lib-tests exactly** — every full-document
+and fragment test its Ruby API can represent passes. The only tests not run are
+the 8 scripting-on ones (out of scope).
 
 ### Findings (Makiri Ruby-API gaps surfaced by the suite, both since FIXED)
 
@@ -144,9 +146,8 @@ Buckets that are tallied, not scored as bugs:
 
 ## Extending
 
-- **Fragment parsing (html5lib):** Makiri has `DocumentFragment.parse` /
-  `Document#fragment`; a v2 could run the 192 `#document-fragment` tests by
-  parsing in the given context element.
+- **Scripting-on tests (8):** these require a scripting flag that changes
+  parsing (e.g. `<noscript>` handling); out of scope unless Makiri models it.
 - **CSS Selectors:** a sibling `css_diff.rb` against `Nokogiri::HTML5#css`, or
   the WPT selector suite, would cover the third query surface.
 - When the differential finds and you fix a divergence, add a minimal

@@ -132,36 +132,46 @@ files =
 stats = Hash.new(0)
 diffs = []
 
+# A fragment test's context is either a bare HTML tag ("td") or a namespaced
+# foreign element ("svg desc", "math mi"). The HTML case goes straight through
+# the string `context:`; the foreign case needs a Node context (Nokogiri's only
+# way to reach a foreign non-root element), which we obtain by parsing a tiny
+# host document and grabbing the element of the right tag + namespace.
+def fragment_context(ctx)
+  return ctx unless ctx.include?(" ")
+
+  ns, local = ctx.split(" ", 2)
+  if local == ns # "svg svg" / "math math" — the foreign root element itself
+    Makiri::HTML("<#{ns}></#{ns}>").at_css(ns)
+  else
+    host = Makiri::HTML("<#{ns}><#{local}></#{local}></#{ns}>")
+    host.at_xpath("//*[local-name()='#{local}']")
+  end
+end
+
 files.each do |path|
   parse_dat(path).each do |t|
     stats[:total] += 1
 
-    if t.fragment_ctx
-      stats[:skip_fragment] += 1
-      next
-    end
     if t.script_on
       stats[:skip_script] += 1
       next
     end
 
-    begin
-      doc = Makiri::HTML(t.data)
-    rescue => e
-      stats[:error] += 1
-      diffs << [t, "Makiri raised during parse: #{e.class}: #{e.message}", nil]
-      next
-    end
-
     actual =
       begin
-        Html5libDump.dump_document(doc)
-      rescue Html5libDump::Unsupported => e
+        if t.fragment_ctx
+          frag = Makiri::DocumentFragment.parse(t.data, context: fragment_context(t.fragment_ctx))
+          Html5libDump.dump_fragment(frag)
+        else
+          Html5libDump.dump_document(Makiri::HTML(t.data))
+        end
+      rescue Html5libDump::Unsupported
         stats[:unsupported] += 1
         next
       rescue => e
         stats[:error] += 1
-        diffs << [t, "dump raised: #{e.class}: #{e.message}", nil]
+        diffs << [t, "Makiri raised: #{e.class}: #{e.message}", nil]
         next
       end
 
@@ -182,7 +192,7 @@ diffs.each do |t, expected, actual|
 
   shown += 1
   puts "\n#{'=' * 72}"
-  puts "FAIL #{t.file} ##{t.index}"
+  puts "FAIL #{t.file} ##{t.index}#{t.fragment_ctx ? " (fragment context: #{t.fragment_ctx})" : ''}"
   puts "--- input ---"
   puts t.data
   if actual.nil?
@@ -203,7 +213,6 @@ run = stats[:pass] + stats[:fail] + stats[:error]
 puts "\n#{'=' * 72}"
 puts "html5lib-tests tree-construction (data @#{DATA_COMMIT[0, 12]})"
 puts "  total tests     : #{stats[:total]}"
-puts "  skipped fragment: #{stats[:skip_fragment]}"
 puts "  skipped script  : #{stats[:skip_script]}"
 puts "  unsupported     : #{stats[:unsupported]}"
 puts "  ran             : #{run}"

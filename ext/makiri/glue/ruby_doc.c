@@ -72,12 +72,106 @@ mkr_wrap_document(mkr_parsed_t *parsed)
 /* document fragments                                                 */
 /* ------------------------------------------------------------------ */
 
-/* Parse +rb_html+ as a fragment and build a DOCUMENT_FRAGMENT node owned by
- * +document+ (so its nodes can be spliced into that document). The fragment is
- * parsed in a <body> context; its nodes are deep-imported into the document's
- * arena and attached to the fragment node. Returns the wrapped fragment. */
+/* Resolve a fragment-parsing context (the element the HTML fragment is parsed
+ * "inside of", per the WHATWG fragment-parsing algorithm) into a tag id +
+ * namespace. +context+ matches Nokogiri's `context:`:
+ *   - nil          -> <body> in the HTML namespace (the default)
+ *   - a Makiri node -> that element's tag id + namespace (the only way to reach
+ *                      a foreign non-root context such as SVG <desc>)
+ *   - a String      -> an HTML-namespace tag by name, except "svg" / "math"
+ *                      which name the foreign roots (as in Nokogiri).
+ */
+static void
+mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
+                             lxb_tag_id_t *out_tag, lxb_ns_id_t *out_ns)
+{
+    if (NIL_P(context)) {
+        *out_tag = LXB_TAG_BODY;
+        *out_ns  = LXB_NS_HTML;
+        return;
+    }
+
+    if (rb_obj_is_kind_of(context, mkr_cNode)) {
+        lxb_dom_node_t *cn = mkr_node_unwrap(context);
+        if (cn->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+            rb_raise(rb_eArgError, "fragment context node must be an element");
+        }
+        *out_tag = (lxb_tag_id_t)cn->local_name;
+        *out_ns  = (lxb_ns_id_t)cn->ns;
+        return;
+    }
+
+    VALUE s = rb_String(context);
+    const lxb_char_t *p = (const lxb_char_t *)RSTRING_PTR(s);
+    size_t n = (size_t)RSTRING_LEN(s);
+    if (n == 3 && memcmp(p, "svg", 3) == 0) {
+        *out_tag = LXB_TAG_SVG;  *out_ns = LXB_NS_SVG;  return;
+    }
+    if (n == 4 && memcmp(p, "math", 4) == 0) {
+        *out_tag = LXB_TAG_MATH; *out_ns = LXB_NS_MATH; return;
+    }
+    lxb_tag_id_t tid = lxb_tag_id_by_name(doc->tags, p, n);
+    if (tid == LXB_TAG__UNDEF) {
+        rb_raise(rb_eArgError, "unknown fragment context element: %" PRIsVALUE, s);
+    }
+    *out_tag = tid;
+    *out_ns  = LXB_NS_HTML;
+}
+
+static bool
+mkr_is_html_template(const lxb_dom_node_t *n)
+{
+    return n->type == LXB_DOM_NODE_TYPE_ELEMENT
+        && n->local_name == LXB_TAG_TEMPLATE
+        && n->ns == LXB_NS_HTML;
+}
+
+/* lxb_dom_document_import_node deep-clones the normal child chain but NOT a
+ * <template>'s separate "template contents" fragment, so an imported template
+ * comes out with empty content. Walk the source subtree and its freshly-imported
+ * clone in lockstep (deep import preserves child order 1:1) and, for every
+ * matching <template>, import the source content children into the clone's
+ * content fragment. Recurses so templates nested inside template content are
+ * fixed too. */
+static void
+mkr_fixup_template_content(lxb_dom_document_t *doc,
+                           lxb_dom_node_t *src, lxb_dom_node_t *clone)
+{
+    if (mkr_is_html_template(src) && mkr_is_html_template(clone)) {
+        lxb_dom_document_fragment_t *sc = lxb_html_interface_template(src)->content;
+        lxb_dom_document_fragment_t *cc = lxb_html_interface_template(clone)->content;
+        if (sc != NULL && cc != NULL) {
+            lxb_dom_node_t *cc_node = lxb_dom_interface_node(cc);
+            for (lxb_dom_node_t *s = lxb_dom_interface_node(sc)->first_child;
+                 s != NULL; s = s->next) {
+                lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, s, true);
+                if (imp != NULL) {
+                    lxb_dom_node_insert_child(cc_node, imp);
+                    mkr_fixup_template_content(doc, s, imp);
+                }
+            }
+        }
+    }
+
+    lxb_dom_node_t *s = src->first_child;
+    lxb_dom_node_t *c = clone->first_child;
+    while (s != NULL && c != NULL) {
+        mkr_fixup_template_content(doc, s, c);
+        s = s->next;
+        c = c->next;
+    }
+}
+
+/* Parse +rb_html+ as a fragment in the given (tag id, namespace) context and
+ * build a DOCUMENT_FRAGMENT node owned by +document+ (so its nodes can be
+ * spliced into that document). Lexbor's by-tag-id fragment parser implements
+ * the full algorithm for the context (tokenizer state for rawtext/rcdata
+ * contexts, foreign-content adjustment, the form pointer, ...). The parsed
+ * nodes are deep-imported into the document's arena and attached to the
+ * fragment node. Returns the wrapped fragment. */
 static VALUE
-mkr_build_fragment(VALUE document, VALUE rb_html)
+mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
+                       lxb_tag_id_t ctx_tag, lxb_ns_id_t ctx_ns)
 {
     VALUE html = rb_String(rb_html);
     lxb_dom_document_t *doc = mkr_doc_unwrap(document);
@@ -88,55 +182,87 @@ mkr_build_fragment(VALUE document, VALUE rb_html)
     }
     lxb_dom_node_t *frag_node = lxb_dom_interface_node(frag);
 
-    /* Throwaway <body>-context element drives fragment parsing rules. */
-    lxb_dom_element_t *ctx =
-        lxb_dom_document_create_element(doc, (const lxb_char_t *)"body", 4, NULL);
     lxb_html_parser_t *parser = lxb_html_parser_create();
-    if (ctx == NULL || parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
+    if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
         if (parser != NULL) lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to create fragment parser");
     }
 
-    lxb_dom_node_t *root = lxb_html_parse_fragment(
-        parser, (lxb_html_element_t *)ctx,
+    lxb_dom_node_t *root = lxb_html_parse_fragment_by_tag_id(
+        parser, (lxb_html_document_t *)doc, ctx_tag, ctx_ns,
         (const lxb_char_t *)RSTRING_PTR(html), (size_t)RSTRING_LEN(html));
     if (root == NULL) {
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to parse fragment");
     }
 
-    for (lxb_dom_node_t *f = root->first_child; f != NULL; f = f->next) {
+    for (lxb_dom_node_t *f = root->first_child; f != NULL;) {
+        lxb_dom_node_t *next = f->next;
         lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, f, true);
         if (imp != NULL) {
             lxb_dom_node_insert_child(frag_node, imp);
+            mkr_fixup_template_content(doc, f, imp);
         }
+        f = next;
     }
 
     lxb_html_parser_destroy(parser);
-    lxb_dom_node_destroy(lxb_dom_interface_node(ctx));
     return mkr_wrap_node(frag_node, document);
 }
 
-/* document.fragment(html) -> DocumentFragment bound to this document. */
+/* document.fragment(html, context: ...) -> DocumentFragment bound to this
+ * document. +context+ defaults to <body>; see mkr_resolve_fragment_context. */
 static VALUE
-mkr_doc_fragment(VALUE self, VALUE rb_html)
+mkr_doc_fragment(int argc, VALUE *argv, VALUE self)
 {
-    return mkr_build_fragment(self, rb_html);
+    VALUE html, opts;
+    rb_scan_args(argc, argv, "1:", &html, &opts);
+    VALUE context = NIL_P(opts) ? Qnil
+                                : rb_hash_aref(opts, ID2SYM(rb_intern("context")));
+    lxb_tag_id_t tag;
+    lxb_ns_id_t  ns;
+    mkr_resolve_fragment_context(mkr_doc_unwrap(self), context, &tag, &ns);
+    return mkr_build_fragment_ctx(self, html, tag, ns);
 }
 
-/* DocumentFragment.parse(html) -> standalone fragment with its own backing
- * document (kept alive by the fragment's wrapper). */
+/* DocumentFragment.parse(html, context: ...) -> standalone fragment with its
+ * own backing document (kept alive by the fragment's wrapper). */
 static VALUE
-mkr_frag_s_parse(VALUE klass, VALUE rb_html)
+mkr_frag_s_parse(int argc, VALUE *argv, VALUE klass)
 {
     (void)klass;
+    VALUE html, opts;
+    rb_scan_args(argc, argv, "1:", &html, &opts);
+    VALUE context = NIL_P(opts) ? Qnil
+                                : rb_hash_aref(opts, ID2SYM(rb_intern("context")));
+
     static const lxb_char_t shell[] = "<html><body></body></html>";
     mkr_parsed_t *parsed = mkr_parse_html(shell, sizeof(shell) - 1);
     if (parsed == NULL) {
         rb_raise(mkr_eError, "failed to create fragment document");
     }
     VALUE document = mkr_wrap_document(parsed); /* GC now owns parsed */
-    return mkr_build_fragment(document, rb_html);
+    lxb_tag_id_t tag;
+    lxb_ns_id_t  ns;
+    mkr_resolve_fragment_context(mkr_doc_unwrap(document), context, &tag, &ns);
+    return mkr_build_fragment_ctx(document, html, tag, ns);
+}
+
+/* node.parse(html) -> NodeSet of nodes parsed as a fragment in this element's
+ * context (its own tag + namespace). Matches Nokogiri's Node#parse and is the
+ * way to reach a foreign (SVG/MathML) fragment context. */
+static VALUE
+mkr_node_parse(VALUE self, VALUE rb_html)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        rb_raise(rb_eArgError, "Node#parse requires an element context");
+    }
+    VALUE document = mkr_node_document(self);
+    VALUE frag = mkr_build_fragment_ctx(document, rb_html,
+                                        (lxb_tag_id_t)node->local_name,
+                                        (lxb_ns_id_t)node->ns);
+    return rb_funcall(frag, rb_intern("children"), 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -262,7 +388,11 @@ mkr_init_document(void)
     rb_define_method(mkr_cDocument, "title",    mkr_doc_title,    0);
     rb_define_method(mkr_cDocument, "errors",   mkr_doc_errors,   0);
     rb_define_method(mkr_cDocument, "internal_subset", mkr_doc_internal_subset, 0);
-    rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, 1);
+    rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, -1);
 
-    rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, 1);
+    rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, -1);
+
+    /* Node#parse(html): fragment-parse in this element's context (Nokogiri
+     * compatible). Defined here, next to the fragment machinery it reuses. */
+    rb_define_method(mkr_cNode, "parse", mkr_node_parse, 1);
 }
