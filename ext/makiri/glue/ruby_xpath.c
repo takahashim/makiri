@@ -162,7 +162,8 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
     lxb_dom_node_t     *node = mkr_node_unwrap(rb_node);
     lxb_dom_document_t *doc  = mkr_doc_unwrap(document);
 
-    if (mkr_parsed_attr_index_build(mkr_doc_parsed(document)) != 0) {
+    mkr_parsed_t *parsed = mkr_doc_parsed(document);
+    if (mkr_parsed_attr_index_build(parsed) != 0) {
         rb_raise(mkr_eError, "failed to build attribute index for XPath");
     }
 
@@ -170,6 +171,10 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
     if (ctx == NULL) {
         rb_raise(mkr_eError, "failed to allocate XPath context");
     }
+    /* Hand the engine the document's element index (tag id -> elements) so
+     * `//tag` can be answered without a tree walk. Borrowed; it lives on the
+     * parsed document, which outlives this context. */
+    mkr_xpath_context_set_element_index(ctx, mkr_parsed_element_index(parsed));
     return ctx;
 }
 

@@ -2,16 +2,28 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include <lexbor/ns/const.h>
+#include <lexbor/tag/const.h>
 
 /*
- * attribute -> owner element index.
+ * Per-document indices, all built in one walk of the tree (two tree passes:
+ * count/size, then fill — so each table is sized once and never rehashes
+ * mid-build, which keeps the OOM path trivial).
  *
- * An open-addressing hash table keyed on the lxb_dom_attr_t* pointer, mapping
- * each attribute to the element node that owns it. Built in a single pass over
- * the document (two-phase: count, then fill — so the table is sized once and
- * never rehashes mid-build, which keeps the OOM path trivial). Pointer keys,
- * no deletion, linear probing.
+ *  - attribute -> owner element: an open-addressing hash keyed on the
+ *    lxb_dom_attr_t* pointer (pointer keys, no deletion, linear probing).
+ *  - tag id -> elements (CSR layout): a flat `tag_nodes` array of every
+ *    element grouped by tag id and kept in document order, with `tag_off`
+ *    prefix-sum offsets so bucket t is tag_nodes[tag_off[t] .. tag_off[t+1]).
+ *    Lets the XPath engine answer `//tag` from the document without walking.
  */
+
+/* Tag-index buckets cover only Lexbor's static tag-id range [1, this). Custom
+ * element tag ids are pointer values (see mkr_attr_owner_idx_build) and can't
+ * key a dense array, so they are not indexed. */
+#define MKR_TAG_INDEX_CAP LXB_TAG__LAST_ENTRY
 
 typedef struct {
     lxb_dom_attr_t *attr;  /* key; NULL marks an empty slot */
@@ -23,6 +35,13 @@ typedef struct {
     size_t cap;   /* power of two, or 0 when there are no attributes */
     size_t count;
     bool   built;
+
+    /* tag id -> elements, document order (CSR). */
+    lxb_dom_node_t **tag_nodes; /* tag_total entries, or NULL */
+    size_t          *tag_off;   /* tag_max + 2 entries, or NULL */
+    uintptr_t        tag_max;   /* highest tag id present */
+    size_t           tag_total; /* element count (== len of tag_nodes) */
+    bool             has_foreign; /* any element with ns != HTML */
 } mkr_attr_owner_idx_t;
 
 /* ------------------------------------------------------------------ */
@@ -96,20 +115,42 @@ mkr_attr_idx_insert(mkr_attr_owner_idx_t *idx, lxb_dom_attr_t *attr,
     idx->count++;
 }
 
-/* Build the index by walking +doc+ and recording every (attr -> element). On
- * allocation failure returns LXB_STATUS_ERROR_MEMORY_ALLOCATION with the index
- * left unbuilt (slots == NULL), so the caller fails closed and can retry. */
+/* Build the indices by walking +doc+. Records every (attr -> element) and
+ * groups elements by tag id in document order. Two tree passes: phase 1 sizes
+ * everything (attr count, per-tag element counts, max tag id, foreign flag);
+ * phase 2 fills. On allocation failure returns
+ * LXB_STATUS_ERROR_MEMORY_ALLOCATION with the index left unbuilt, so the caller
+ * fails closed and can retry. */
 static lxb_status_t
 mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
 {
     lxb_dom_node_t *root = lxb_dom_interface_node(doc);
 
-    /* Phase 1: count attributes so the table is sized once. */
-    size_t n_attrs = 0;
+    /* Phase 1: one walk to size everything. Only *standard* HTML tags are
+     * indexed by tag id: Lexbor's static tag ids are the small dense range
+     * [1, LXB_TAG__LAST_ENTRY); a custom element's tag id is the *pointer* to
+     * its interned tag data (lxb_tag_append: `data->tag_id = (lxb_tag_id_t)
+     * data`), an enormous value that can't key a dense array. Elements with a
+     * tag id at/above the cap are left out of the index — the engine falls
+     * back to a tree walk for `//customtag`, which is rare in practice. */
+    size_t   counts[MKR_TAG_INDEX_CAP] = {0}; /* counts[t] = #elements, tag t */
+    size_t   n_attrs = 0;
+    size_t   n_indexed = 0;       /* elements with a standard (capped) tag id */
+    uintptr_t tag_max = 0;
+    bool     has_foreign = false;
     for (lxb_dom_node_t *node = root; node != NULL;
          node = mkr_dom_preorder_next(node, root)) {
         if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
             continue;
+        }
+        if (node->ns != LXB_NS_HTML) {
+            has_foreign = true;
+        }
+        uintptr_t tag = node->local_name; /* tag id for an element */
+        if (tag != LXB_TAG__UNDEF && tag < MKR_TAG_INDEX_CAP) {
+            counts[tag]++;
+            n_indexed++;
+            if (tag > tag_max) tag_max = tag;
         }
         for (lxb_dom_attr_t *a =
                  lxb_dom_element_first_attribute(lxb_dom_interface_element(node));
@@ -118,40 +159,62 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
         }
     }
 
-    if (n_attrs == 0) {
-        idx->slots = NULL;
-        idx->cap   = 0;
-        idx->count = 0;
-        idx->built = true;
-        return LXB_STATUS_OK;
+    /* Size the attr->owner table (load factor <= 0.5). */
+    mkr_attr_owner_slot_t *slots = NULL;
+    size_t cap = 0;
+    if (n_attrs > 0) {
+        cap = mkr_pow2_ceil(n_attrs * 2);
+        if (cap < 8) cap = 8;
+        slots = calloc(cap, sizeof(*slots));
+        if (slots == NULL) return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
     }
 
-    /* Target load factor <= 0.5: cap = next power of two >= 2 * n_attrs. */
-    size_t cap = mkr_pow2_ceil(n_attrs * 2);
-    if (cap < 8) {
-        cap = 8;
+    /* Size the tag CSR: prefix-sum the per-tag counts into offsets, plus a
+     * cursor (copy of the offsets) used to scatter in document order. */
+    lxb_dom_node_t **tag_nodes = NULL;
+    size_t          *tag_off   = NULL;
+    size_t          *cursor    = NULL;
+    if (n_indexed > 0) {
+        size_t noff = (size_t)tag_max + 2;
+        tag_off = malloc(noff * sizeof(*tag_off));
+        cursor  = malloc(noff * sizeof(*cursor));
+        tag_nodes = malloc(n_indexed * sizeof(*tag_nodes));
+        if (tag_off == NULL || cursor == NULL || tag_nodes == NULL) {
+            free(slots); free(tag_off); free(cursor); free(tag_nodes);
+            return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+        }
+        tag_off[0] = 0;
+        for (uintptr_t t = 0; t <= tag_max; t++) {
+            tag_off[t + 1] = tag_off[t] + counts[t];
+        }
+        memcpy(cursor, tag_off, noff * sizeof(*cursor));
     }
 
-    mkr_attr_owner_slot_t *slots = calloc(cap, sizeof(*slots));
-    if (slots == NULL) {
-        return LXB_STATUS_ERROR_MEMORY_ALLOCATION; /* fail closed */
-    }
+    idx->slots       = slots;
+    idx->cap         = cap;
+    idx->count       = 0;
+    idx->tag_nodes   = tag_nodes;
+    idx->tag_off     = tag_off;
+    idx->tag_max     = tag_max;
+    idx->tag_total   = n_indexed;
+    idx->has_foreign = has_foreign;
 
-    idx->slots = slots;
-    idx->cap   = cap;
-    idx->count = 0;
-
-    /* Phase 2: fill. We also backfill the attribute node's parent pointer to
-     * its owner element. Lexbor leaves attr->node.parent NULL; setting it to
-     * the semantically-correct owner is safe (Lexbor walks the tree via
-     * first_child/next and attributes never appear in that chain, so no cycle
-     * or stray child is introduced) and lets the native XPath engine — which
-     * reads node->parent for the parent/ancestor axes and document-order
-     * sorting — treat attributes uniformly with no special-casing. */
+    /* Phase 2: fill. Scatter each standard-tag element into its bucket
+     * (document order preserved by the cursor), insert its attributes, and
+     * backfill each attribute node's parent to its owner element. Lexbor
+     * leaves attr->node.parent NULL; setting it to the semantically-correct
+     * owner is safe (Lexbor walks the tree via first_child/next and attributes
+     * never appear in that chain) and lets the native XPath engine read
+     * node->parent for the parent/ancestor axes and document-order sorting
+     * uniformly. */
     for (lxb_dom_node_t *node = root; node != NULL;
          node = mkr_dom_preorder_next(node, root)) {
         if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
             continue;
+        }
+        uintptr_t tag = node->local_name;
+        if (tag != LXB_TAG__UNDEF && tag < MKR_TAG_INDEX_CAP) {
+            tag_nodes[cursor[tag]++] = node;
         }
         for (lxb_dom_attr_t *a =
                  lxb_dom_element_first_attribute(lxb_dom_interface_element(node));
@@ -161,6 +224,7 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
         }
     }
 
+    free(cursor);
     idx->built = true;
     return LXB_STATUS_OK;
 }
@@ -252,5 +316,40 @@ mkr_attr_owner_free(void *ptr)
     }
     mkr_attr_owner_idx_t *idx = ptr;
     free(idx->slots);
+    free(idx->tag_nodes);
+    free(idx->tag_off);
     free(idx);
+}
+
+/* ------------------------------------------------------------------ */
+/* element index (tag id -> elements)                                 */
+/* ------------------------------------------------------------------ */
+
+void *
+mkr_parsed_element_index(mkr_parsed_t *p)
+{
+    return mkr_attr_owner_ensure(p); /* same object as the attr->owner index */
+}
+
+lxb_dom_node_t *const *
+mkr_element_index_tag(const void *ptr, lxb_tag_id_t tag_id, size_t *count)
+{
+    const mkr_attr_owner_idx_t *idx = ptr;
+    if (idx == NULL || idx->tag_nodes == NULL
+        || tag_id == LXB_TAG__UNDEF || (uintptr_t)tag_id >= MKR_TAG_INDEX_CAP
+        || (uintptr_t)tag_id > idx->tag_max) {
+        if (count) *count = 0;
+        return NULL;
+    }
+    size_t start = idx->tag_off[tag_id];
+    size_t end   = idx->tag_off[tag_id + 1];
+    if (count) *count = end - start;
+    return (end > start) ? &idx->tag_nodes[start] : NULL;
+}
+
+int
+mkr_element_index_has_foreign(const void *ptr)
+{
+    const mkr_attr_owner_idx_t *idx = ptr;
+    return (idx != NULL) ? (idx->has_foreign ? 1 : 0) : 1; /* fail safe: assume foreign */
 }

@@ -1,7 +1,9 @@
 #include "mkr_xpath_internal.h"
+#include "../lexbor_compat/compat.h" /* element index lookups (ruby-free) */
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/ns/ns.h>
+#include <lexbor/tag/tag.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -539,6 +541,66 @@ is_reverse_axis(mkr_axis_t a)
   }
 }
 
+/*
+ * Fast path for `//tag` — a descendant, unprefixed, predicate-free name-test
+ * whose context is exactly the document node. `descendant::tag` from the
+ * document is precisely "every element whose name is tag", which the
+ * document's element index already groups by tag id in document order, so we
+ * answer it from the index instead of walking the whole tree.
+ *
+ * Returns 1 if it filled +result+ (caller skips the walk), 0 if the shape or
+ * context does not qualify (caller falls back to the walk), -1 on error.
+ *
+ * Correctness: only taken for pure-HTML documents (mkr_element_index_has_foreign
+ * is false) — in foreign content an element's qualified name need not equal its
+ * tag's canonical name, so a match could live in another tag bucket. Each
+ * candidate is still re-checked with node_principal_match, so the result is
+ * byte-identical to the walk (this also makes case/normalization quirks in the
+ * tag-name lookup harmless: a non-matching candidate is simply dropped).
+ */
+static int
+try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
+                         const mkr_nodeset_t *context_set, mkr_nodeset_t *result,
+                         mkr_xpath_error_t *err)
+{
+  if (step->axis != MKR_AXIS_DESCENDANT
+      || step->test.kind != MKR_NT_NAME
+      || step->test.prefix != NULL
+      || step->test.local == NULL
+      || context_set->count != 1
+      || context_set->items[0] != (lxb_dom_node_t *)mkr_ctx_document(ctx)) {
+    return 0;
+  }
+  void *eidx = mkr_ctx_element_index(ctx);
+  if (eidx == NULL || mkr_element_index_has_foreign(eidx)) {
+    return 0;
+  }
+  lxb_dom_document_t *doc = mkr_ctx_document(ctx);
+  if (doc == NULL) {
+    return 0;
+  }
+  lxb_tag_id_t tag = lxb_tag_id_by_name(doc->tags,
+                                        (const lxb_char_t *)step->test.local,
+                                        strlen(step->test.local));
+  /* The index covers only Lexbor's static tag-id range; a custom element's tag
+   * id is a (huge) pointer value and is not indexed. For such a name, fall back
+   * to the tree walk so those elements are still found. */
+  if (tag == LXB_TAG__UNDEF || (uintptr_t)tag >= LXB_TAG__LAST_ENTRY) {
+    return 0;
+  }
+  size_t cnt = 0;
+  lxb_dom_node_t *const *bucket = mkr_element_index_tag(eidx, tag, &cnt);
+  for (size_t i = 0; i < cnt; ++i) {
+    lxb_dom_node_t *n = bucket[i];
+    if (node_principal_match(&step->test, n, step->axis, ctx)) {
+      if (mkr_nodeset_push(result, n, mkr_ctx_limits(ctx), err) != 0) {
+        return -1;
+      }
+    }
+  }
+  return 1;
+}
+
 static int
 eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
           mkr_nodeset_t *context_set, mkr_nodeset_t *out,
@@ -584,6 +646,14 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   mkr_nodeset_init(&result);
 
   if (step->npredicates == 0) {
+    /* `//tag` from the document: serve from the element index, skipping the
+     * tree walk entirely. */
+    int fp = try_descendant_tag_index(ctx, step, context_set, &result, err);
+    if (fp < 0) {
+      mkr_nodeset_clear(&result);
+      return -1;
+    }
+    if (fp == 0) {
     /* No-predicate fast path: walk all contexts straight into the
      * result buffer, regardless of post_pass. Saves a per-context
      * fragment malloc/clear and the merge push that the predicate
@@ -597,6 +667,7 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
         mkr_nodeset_clear(&result);
         return -1;
       }
+    }
     }
   } else {
     /* Predicate path: position() / last() are per-context, so we have

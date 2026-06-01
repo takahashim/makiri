@@ -49,12 +49,29 @@ struct mkr_xpath_context_s {
 
   /* Per-evaluate document-order index (lazy). */
   mkr_doc_order_index_t order_index;
+
+  /* Borrowed document-level element index (tag id -> elements), owned by the
+   * parsed document and set by the glue layer before evaluation. NULL when
+   * unavailable; the engine then falls back to tree walks. */
+  void *element_index;
 };
 
 mkr_doc_order_index_t *
 mkr_ctx_order_index(mkr_xpath_context_t *ctx)
 {
   return ctx ? &ctx->order_index : NULL;
+}
+
+void
+mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index)
+{
+  if (ctx) ctx->element_index = index;
+}
+
+void *
+mkr_ctx_element_index(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->element_index : NULL;
 }
 
 mkr_str_cache_t *

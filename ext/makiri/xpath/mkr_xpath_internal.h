@@ -343,6 +343,9 @@ void mkr_doc_order_index_clear(mkr_doc_order_index_t *idx);
 
 mkr_doc_order_index_t *mkr_ctx_order_index(struct mkr_xpath_context_s *ctx);
 
+/* Borrowed document-level element index (tag id -> elements), or NULL. */
+void *mkr_ctx_element_index(struct mkr_xpath_context_s *ctx);
+
 void mkr_val_clear(mkr_val_t *v);
 
 /* Deep-copy src into dst. Used by the hoisting layer to return a fresh

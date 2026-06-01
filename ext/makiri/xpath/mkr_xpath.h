@@ -103,6 +103,11 @@ void  mkr_xpath_context_set_user_data(mkr_xpath_context_t *ctx, void *user_data)
 void *mkr_xpath_get_user_data       (mkr_xpath_context_t *ctx);
 void  mkr_xpath_set_func_resolver   (mkr_xpath_context_t *ctx, mkr_func_resolver_t resolver);
 
+/* Install the borrowed document-level element index (see lexbor_compat). The
+ * engine uses it to answer `//tag` from the document without a tree walk; pass
+ * NULL to disable. The index must outlive every evaluation made on ctx. */
+void  mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index);
+
 /*
  * Evaluate an XPath expression. On success returns 0 and fills *out_value.
  * On failure returns non-zero and fills *out_error (caller frees with

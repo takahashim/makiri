@@ -51,8 +51,34 @@ int mkr_parsed_attr_index_build(mkr_parsed_t *p);
 
 /* Drop the attr->owner index so the next lookup rebuilds it. Call after any
  * mutation that can change attribute ownership (attribute set/remove, or
- * inserting a subtree carrying its own attributes). */
+ * inserting a subtree carrying its own attributes). This also drops the
+ * co-built element index below. */
 void mkr_parsed_attr_index_invalidate(mkr_parsed_t *p);
+
+/* ---- element index: tag id -> elements (lexbor_compat/attr_owner.c) ----
+ *
+ * Co-built with the attr->owner index in the same document walk (same object,
+ * same lazy build, same invalidation). Groups every element by tag id in
+ * document order so the XPath engine can answer `//tag` (a descendant
+ * name-test rooted at the document) without walking the tree.
+ */
+
+/* The built element index for +p+ (lazily built; NULL on allocation failure).
+ * The returned pointer is the opaque index passed to the lookups below. */
+void *mkr_parsed_element_index(mkr_parsed_t *p);
+
+/* Borrowed, document-ordered array of every element whose tag id == +tag_id+,
+ * with the count via *count. NULL / *count == 0 when there are none. Valid
+ * until the index is invalidated. */
+lxb_dom_node_t *const *mkr_element_index_tag(const void *idx, lxb_tag_id_t tag_id,
+                                             size_t *count);
+
+/* Nonzero if the document contains any non-HTML-namespace element. The tag
+ * fast path is only sound for pure-HTML documents (it assumes an element's
+ * qualified name equals its tag's canonical name), so the engine must consult
+ * this and fall back to the tree walk when it is nonzero. Returns nonzero
+ * (fail safe) for a NULL index. */
+int mkr_element_index_has_foreign(const void *idx);
 
 /* ---- source location (lexbor_compat/source_loc.c) ----
  *
