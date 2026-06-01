@@ -1,4 +1,5 @@
 #include "compat.h"
+#include "compat_internal.h"
 
 #include <lexbor/html/parser.h>
 #include <lexbor/html/tokenizer.h>
@@ -201,21 +202,7 @@ mkr_pos_token_cb(lxb_html_tokenizer_t *tkz, lxb_html_token_t *token, void *ctx)
 /* assignment                                                         */
 /* ------------------------------------------------------------------ */
 
-/* Pre-order successor within the subtree rooted at root, iterative. */
-static lxb_dom_node_t *
-mkr_pos_preorder_next(lxb_dom_node_t *node, lxb_dom_node_t *root)
-{
-    if (node->first_child != NULL) {
-        return node->first_child;
-    }
-    while (node != root && node->next == NULL) {
-        node = node->parent;
-    }
-    if (node == root) {
-        return NULL;
-    }
-    return node->next;
-}
+/* Pre-order successor (mkr_dom_preorder_next) lives in compat_internal.h. */
 
 /* How far ahead of the cursor we'll look for a tag-id match. Bounds the damage
  * from a dropped/reordered token: an unmatched element stays unstamped instead
@@ -231,7 +218,7 @@ mkr_pos_assign_to_dom(mkr_pos_recorder_t *rec, lxb_dom_node_t *root)
 
     size_t cursor = 0;
     for (lxb_dom_node_t *node = root; node != NULL;
-         node = mkr_pos_preorder_next(node, root)) {
+         node = mkr_dom_preorder_next(node, root)) {
         if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
             continue;
         }

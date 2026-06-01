@@ -1,4 +1,5 @@
 #include "compat.h"
+#include "compat_internal.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,23 +49,8 @@ typedef struct {
 /* tree walk + hashing                                                */
 /* ------------------------------------------------------------------ */
 
-/* Pre-order successor of +node+ within the subtree rooted at +root+, or NULL
- * at the end. Iterative (no recursion) so a deeply nested document cannot blow
- * the C stack. */
-static lxb_dom_node_t *
-mkr_dom_preorder_next(lxb_dom_node_t *node, lxb_dom_node_t *root)
-{
-    if (node->first_child != NULL) {
-        return node->first_child;
-    }
-    while (node != root && node->next == NULL) {
-        node = node->parent;
-    }
-    if (node == root) {
-        return NULL;
-    }
-    return node->next;
-}
+/* Pre-order traversal helper mkr_dom_preorder_next lives in compat_internal.h
+ * (shared with source_loc.c). */
 
 /* Mix a pointer into a well-distributed bucket index. Pointers are aligned, so
  * the low bits carry little entropy; fmix64 (the finalizer from MurmurHash3)
