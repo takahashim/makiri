@@ -93,6 +93,25 @@ task bench: :compile do
   end
 end
 
+namespace :conformance do
+  desc "WHATWG HTML5 parsing conformance: run html5lib-tests through Makiri"
+  task html5: :compile do
+    sh "#{FileUtils::RUBY} -Ilib spec/conformance/html5lib_runner.rb #{ENV['H5_ARGS']}"
+  end
+
+  desc "XPath 1.0 differential conformance vs Nokogiri (libxml2 reference)"
+  task xpath: :compile do
+    # Like `bench`, run outside the bundle so the bench-only Nokogiri resolves
+    # from system RubyGems without entering the runtime dependency set.
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xpath_diff.rb #{ENV['XPATH_ARGS']}"
+    end
+  end
+end
+
+desc "Run both conformance suites (html5lib-tests + XPath differential)"
+task conformance: %w[conformance:html5 conformance:xpath]
+
 namespace :fuzz do
   desc "Run the fuzzer under AddressSanitizer (rebuilds the ext; --isolated)"
   task :sanitize do

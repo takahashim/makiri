@@ -1,0 +1,149 @@
+# Conformance & differential testing
+
+Two harnesses that check Makiri against external standards, complementing the
+robustness fuzzer (`spec/fuzz/`, which only checks that Makiri never does worse
+than raise its own error). These check that Makiri is *correct*, not just safe.
+
+Neither is run by `rake spec` (the files are not `*_spec.rb`). Both need
+network/Nokogiri and so live outside the unit suite.
+
+```bash
+rake conformance:html5     # WHATWG HTML5 parsing  vs html5lib-tests
+rake conformance:xpath     # XPath 1.0 evaluation  vs Nokogiri (libxml2)
+rake conformance           # both
+
+# pass through options:
+H5_ARGS="--file tests1.dat --verbose"        rake conformance:html5
+XPATH_ARGS="--generate 8000 --seed 1"        rake conformance:xpath
+```
+
+The Nokogiri baseline is **`Nokogiri::HTML5`** (Gumbo, WHATWG-compliant), never
+`Nokogiri::HTML` (libxml2's non-conformant HTML4 parser). Nokogiri is a
+bench-only dependency, so `conformance:xpath` runs outside the bundle, like
+`bench`.
+
+---
+
+## 1. HTML5 parsing — `html5lib_runner.rb`
+
+Runs the WHATWG [html5lib-tests](https://github.com/html5lib/html5lib-tests)
+`tree-construction` suite through `Makiri::HTML(...)` and string-compares
+Makiri's DOM (rendered by `html5lib_dump.rb`) against each test's expected tree.
+Lexbor passes this suite upstream; running it through Makiri verifies the
+post-parse layer (attr→owner index, source-location stamping, Ruby wrappers)
+does not perturb the tree.
+
+Test data is **not vendored**: the runner fetches a pinned master commit of
+html5lib-tests via a sparse, blobless clone into `data/` (gitignored) on first
+run. Bump `DATA_COMMIT` in the runner to update.
+
+**Scope (v1):** full-document tests only. `#document-fragment` and `#script-on`
+tests are counted and skipped (not silently dropped). Tests whose expected tree
+exercises DOM detail Makiri's Ruby surface cannot represent are reclassified as
+*unsupported* (see findings), never scored as parse failures.
+
+### Result
+
+```
+ran 1447  pass 1447  fail 0  error 0   (100.00% of ran)
+skipped: 192 fragment, 8 script
+unsupported: 131 (template content 110, doctype ids 21)
+```
+
+**Makiri's HTML5 parsing matches html5lib-tests exactly** on every test its Ruby
+API can represent.
+
+### Findings (Makiri Ruby-API gaps, not parse bugs)
+
+These are tree details Lexbor parses correctly but Makiri does not expose, so
+the runner cannot match the expected dump. They are reclassified as
+*unsupported* and are candidates for future API work:
+
+1. **`<template>` content is unreachable (110 tests).** Per the HTML spec a
+   template's contents live in a separate "template contents" `DocumentFragment`,
+   not as children of the `<template>` element. Lexbor stores them there;
+   Makiri's `children` / `css` / `xpath` walk only the normal child chain, so
+   `template.children` is empty and the content is invisible from Ruby.
+2. **Doctype public/system identifiers are not exposed (21 tests).** Lexbor
+   parses `<!DOCTYPE html PUBLIC "..." "...">` correctly, but `Node` exposes only
+   the doctype name, so the ids cannot be read or dumped. NOTE: this is a DOM
+   API completeness matter (WHATWG DOM `DocumentType.publicId`/`systemId`), NOT
+   an XPath conformance issue — XPath 1.0's data model has no doctype node type
+   at all (root/element/text/attribute/namespace/PI/comment only), so doctype
+   declarations are unqueryable by design.
+
+---
+
+## 2. XPath 1.0 — `xpath_diff.rb`
+
+Makiri's XPath engine is original code (no libxml2 anywhere), so it has no
+mature implementation backing it — making a differential against libxml2 (via
+Nokogiri) its highest-value correctness net. Both sides parse with their HTML5
+frontend, so the DOM trees are isomorphic and matched nodes are compared by
+absolute path.
+
+- **Corpus:** a curated, deterministic set (`xpath_corpus.rb`) covering every
+  axis, the node tests, position/predicate semantics, the function library, and
+  the operators — plus optional grammar-generated expressions
+  (`--generate N --seed S`, reusing the fuzzer's grammar).
+- **Comparison:** node-sets by set-of-paths (order tracked separately, since
+  XPath node-sets are formally unordered); scalars by value (numbers within
+  1e-9, NaN==NaN).
+- The Nokogiri DOM is run through `remove_namespaces!` so the diff compares pure
+  evaluation semantics under one namespace policy — see finding #1.
+
+### Result
+
+```
+curated:                 972 pairs, 0 divergences
+generated (8000, seed 1): 69723 pairs, 0 result/raise divergences
+```
+
+Buckets that are tallied, not scored as bugs:
+
+- **`noko-strict`** — Makiri evaluates a *top-level* `position()`/`last()` (the
+  document-root context position/size is 1) where libxml2 raises a syntax error.
+  Makiri's behaviour is defensible per XPath 1.0.
+
+### Findings
+
+1. **Namespace policy differs (by design, but worth knowing).** Makiri's
+   `namespace-uri()` correctly reports the HTML/SVG/MathML namespaces per the DOM
+   spec, but its XPath **unprefixed name tests match by local-name regardless of
+   namespace** — so `//svg`, `//rect`, `//circle` find foreign elements.
+   Nokogiri::HTML5 keeps HTML in the null namespace but SVG/MathML in their
+   foreign namespaces, so strict XPath 1.0 requires registering the namespace and
+   writing `//svg:rect`; bare `//rect` matches nothing. Makiri's choice is
+   HTML-ergonomic but is **not strict XPath 1.0 namespace semantics**. (The
+   harness neutralises this with `remove_namespaces!` so it can diff everything
+   else.)
+
+2. **Attribute document-order bug (FIXED).** XPath 1.0 §5.1 orders a node
+   before its attribute nodes (`element < its @attrs < its children`). For a
+   union that mixes elements and attributes, e.g.
+   `.//descendant-or-self::circle | //attribute::*`, Makiri returned an
+   attribute *before* its owning element:
+
+   ```
+   was:  .../circle/@r, .../circle          # @r before its element — wrong
+   now:  .../circle, .../circle/@r          # element before @r  — per spec
+   ```
+
+   Same node *set*, wrong document *order* — surfaced only when element and
+   attribute nodes shared a result set. Root cause was the small-node-set
+   fallback comparator in `mkr_xpath_value.c` (`doc_order_cmp`), which also
+   disagreed with the indexed comparator used for larger sets. Fixed; guarded
+   by `xpath_corpus.rb` (the element+attribute union cases) and a unit test in
+   `spec/xpath_spec.rb`.
+
+---
+
+## Extending
+
+- **Fragment parsing (html5lib):** Makiri has `DocumentFragment.parse` /
+  `Document#fragment`; a v2 could run the 192 `#document-fragment` tests by
+  parsing in the given context element.
+- **CSS Selectors:** a sibling `css_diff.rb` against `Nokogiri::HTML5#css`, or
+  the WPT selector suite, would cover the third query surface.
+- When the differential finds and you fix a divergence, add a minimal
+  reproducing expression to `xpath_corpus.rb` so it stays fixed.

@@ -36,3 +36,6 @@ Gemfile.lock
 # Fuzzer findings (keep the directory, not the per-run output)
 spec/fuzz/regressions/*
 !spec/fuzz/regressions/.gitkeep
+
+# Conformance test data (fetched on demand & pinned by the runner; not vendored)
+spec/conformance/data/
