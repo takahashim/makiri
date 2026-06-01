@@ -271,6 +271,107 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
 
 /* ---------- predicates ---------- */
 
+/*
+ * Fast path for the two most common predicate shapes, [@name] and
+ * [@name = 'literal']. The generic evaluator services these by building a
+ * throwaway node-set (malloc/free) per context node for the attribute path plus
+ * a string-cache insert; recognising the shape lets us filter with a direct
+ * attribute lookup instead. Both shapes are boolean (no position dependence),
+ * so this is a pure per-node filter — identical result to the generic path.
+ */
+typedef struct {
+  const char *name;
+  size_t      name_len;
+  const char *value;
+  size_t      value_len;
+  int         has_value; /* 0 => [@name]; 1 => [@name = 'value'] */
+} mkr_attr_pred_t;
+
+/* Shape A: a relative path that is a single unprefixed attribute name test with
+ * no predicates — i.e. `@name`. Fills name/name_len; returns 1 on match. */
+static int
+mkr_match_attr_step(const mkr_node_t *n, const char **name, size_t *name_len)
+{
+  if (n == NULL || n->kind != MKR_NK_PATH || n->u.path.absolute
+      || n->u.path.nsteps != 1) {
+    return 0;
+  }
+  const mkr_step_t *s = &n->u.path.steps[0];
+  if (s->axis != MKR_AXIS_ATTRIBUTE || s->npredicates != 0
+      || s->test.kind != MKR_NT_NAME || s->test.prefix != NULL
+      || s->test.local == NULL) {
+    return 0;
+  }
+  *name = s->test.local;
+  *name_len = strlen(s->test.local);
+  return 1;
+}
+
+/* Recognise [@name] or [@name='lit'] / ['lit'=@name]. Returns 1 + fills out. */
+static int
+mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
+{
+  if (mkr_match_attr_step(p, &out->name, &out->name_len)) {
+    out->has_value = 0;
+    return 1;
+  }
+  if (p == NULL || p->kind != MKR_NK_BINOP || p->u.binop.op != MKR_OP_EQ) {
+    return 0;
+  }
+  const mkr_node_t *lhs = p->u.binop.lhs;
+  const mkr_node_t *rhs = p->u.binop.rhs;
+  const mkr_node_t *attr_side, *lit_side;
+  if (lhs != NULL && lhs->kind == MKR_NK_LITERAL_STR) {
+    lit_side = lhs; attr_side = rhs;
+  } else if (rhs != NULL && rhs->kind == MKR_NK_LITERAL_STR) {
+    lit_side = rhs; attr_side = lhs;
+  } else {
+    return 0;
+  }
+  if (!mkr_match_attr_step(attr_side, &out->name, &out->name_len)) {
+    return 0;
+  }
+  out->value     = lit_side->u.literal_str ? lit_side->u.literal_str : "";
+  out->value_len = strlen(out->value);
+  out->has_value = 1;
+  return 1;
+}
+
+/* Filter `inout` by a recognised attribute predicate into `kept`. */
+static int
+mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
+                     const mkr_nodeset_t *inout, mkr_nodeset_t *kept,
+                     mkr_xpath_error_t *err)
+{
+  const lxb_char_t *name = (const lxb_char_t *)ap->name;
+  for (size_t i = 0; i < inout->count; ++i) {
+    lxb_dom_node_t *n = inout->items[i];
+    int keep = 0;
+    if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+      lxb_dom_element_t *el = lxb_dom_interface_element(n);
+      if (lxb_dom_element_has_attribute(el, name, ap->name_len)) {
+        if (!ap->has_value) {
+          keep = 1;
+        } else {
+          size_t got_len = 0;
+          const lxb_char_t *got =
+              lxb_dom_element_get_attribute(el, name, ap->name_len, &got_len);
+          if (got == NULL) {
+            got_len = 0;
+          }
+          keep = (got_len == ap->value_len
+                  && (ap->value_len == 0
+                      || memcmp(got, ap->value, ap->value_len) == 0));
+        }
+      }
+    }
+    if (keep && mkr_nodeset_push(kept, n, mkr_ctx_limits(ctx), err) != 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 static int
 apply_predicates(mkr_xpath_context_t *ctx,
                  mkr_node_t **preds, size_t npreds,
@@ -280,6 +381,20 @@ apply_predicates(mkr_xpath_context_t *ctx,
   for (size_t p = 0; p < npreds; ++p) {
     mkr_nodeset_t kept;
     mkr_nodeset_init(&kept);
+
+    /* Specialise [@name] / [@name='lit'] — a position-independent filter, so
+     * applying it per predicate (even amid others) matches the generic path. */
+    mkr_attr_pred_t ap;
+    if (mkr_match_attr_pred(preds[p], &ap)) {
+      if (mkr_filter_attr_pred(ctx, &ap, inout, &kept, err) != 0) {
+        mkr_nodeset_clear(&kept);
+        return -1;
+      }
+      mkr_nodeset_clear(inout);
+      *inout = kept;
+      continue;
+    }
+
     size_t size = inout->count;
     for (size_t i = 0; i < size; ++i) {
       mkr_val_t v = {0};

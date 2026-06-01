@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text straight into the result string, avoiding Lexbor's intermediate buffer
   and extra copy (~1.74× → ~1.59× of Nokogiri; the remaining gap is the
   inherent descendant-tree walk).
+* The common attribute predicates `[@name]` and `[@name='literal']` take a
+  direct-attribute fast path in the XPath evaluator instead of building a
+  throwaway node-set per candidate. `//li[@attr='v']` went from ~parity to
+  ~1.5× faster than Nokogiri. With this, Makiri meets or beats Nokogiri on
+  every benchmarked operation. Verified clean under ASan + the fuzzer.
 
 ### Fixed
 

@@ -102,6 +102,45 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('//p[@lang="en"]').map(&:text)).to eq(%w[second])
     end
 
+    # The [@name] / [@name='lit'] shapes take a specialized direct-attribute
+    # fast path; these lock in that it matches the generic evaluator exactly,
+    # including the cases that must fall through.
+    describe "attribute predicate fast path" do
+      let(:list) do
+        Makiri::HTML(%(<html><body><ul>) +
+          %(<li id="a" class="x" data-r="1">A</li>) +
+          %(<li class="y">B</li>) +
+          %(<li data-r="2" lang="en">C</li>) +
+          %(<li class="">D</li></ul></body></html>))
+      end
+
+      def ids(set) = set.map { |n| n["id"] || n.text }
+
+      it "existence [@name]" do
+        expect(ids(list.xpath("//li[@class]"))).to eq(%w[a B D])
+        expect(list.xpath("//li[@missing]")).to be_empty
+      end
+
+      it "equality [@name='value'] including empty value" do
+        expect(ids(list.xpath('//li[@class="x"]'))).to eq(%w[a])
+        expect(ids(list.xpath('//li[@class=""]'))).to eq(%w[D])
+        expect(ids(list.xpath('//li[@data-r="2"]'))).to eq(%w[C])
+        expect(list.xpath('//li[@class="wrong"]')).to be_empty
+      end
+
+      it "single- and double-quoted literals are equivalent" do
+        expect(list.xpath("//li[@class='x']").length).to eq(1)
+      end
+
+      it "falls through for shapes that are not a plain attribute test" do
+        expect(ids(list.xpath("//li[not(@class)]"))).to eq(%w[C])
+        expect(ids(list.xpath('//li[@class="x" and @data-r]'))).to eq(%w[a])
+        # positional predicates combined with an attribute test stay correct
+        expect(ids(list.xpath("//li[@data-r][1]"))).to eq(%w[a])
+        expect(ids(list.xpath("//li[1][@data-r]"))).to eq(%w[a])
+      end
+    end
+
     it "filters by position" do
       expect(doc.xpath("//article/p[2]").first.text).to eq("second")
       expect(doc.xpath("//article/p[last()]").first.text).to eq("third")
