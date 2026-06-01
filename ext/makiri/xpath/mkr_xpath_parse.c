@@ -186,14 +186,19 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
   }
 
   if (TOK(P).kind == MKR_TK_QNAME) {
-    /* QName: prefix:local — split. */
+    /* QName name test: `prefix:local` or `prefix:*` — split at the colon. */
     const char *s = TOK(P).start;
     size_t      n = TOK(P).len;
     size_t      colon = 0;
     while (colon < n && s[colon] != ':') colon++;
-    out->kind   = MKR_NT_NAME;
-    out->prefix = P_strndup(P,s, colon);
-    out->local  = P_strndup(P,s + colon + 1, n - colon - 1);
+    out->prefix = P_strndup(P, s, colon);
+    if (n - colon - 1 == 1 && s[colon + 1] == '*') {
+      /* prefix:* — any element in the prefix's namespace. */
+      out->kind = MKR_NT_WILDCARD;
+    } else {
+      out->kind  = MKR_NT_NAME;
+      out->local = P_strndup(P, s + colon + 1, n - colon - 1);
+    }
     return P_advance(P);
   }
 

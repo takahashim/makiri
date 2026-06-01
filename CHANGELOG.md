@@ -126,6 +126,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* XPath node-set vs node-set relational comparisons (`//a < //b`, `<=`, `>`,
+  `>=`) now consider every pair of nodes (XPath 1.0 §3.4 — true iff some pair
+  satisfies), instead of collapsing one side to the first node's number.
+* XPath `prefix:*` name tests are now accepted (any element in the prefix's
+  namespace), e.g. `//svg:*`; the lexer previously rejected the `:*` with a
+  syntax error. An unknown prefix still raises (never a silently-empty match).
+* XPath `translate()` now operates on Unicode code points, not bytes, so a
+  non-ASCII replacement (`translate("a","a","é")`) yields valid UTF-8 instead
+  of a broken byte. (Decodes via Lexbor's UTF-8 decoder.)
 * XPath expression whitespace is now exactly XML S (`#x20 #x9 #xD #xA`). The
   lexer used C `isspace()`, which also skipped `\v`/`\f`; those are not XPath
   whitespace and now surface as a syntax error.

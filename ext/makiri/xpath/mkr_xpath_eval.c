@@ -80,11 +80,23 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
       return name_eq_lxb(test->pi_target, tlen, nm, nlen);
     }
   case MKR_NT_WILDCARD: {
-    if (axis == MKR_AXIS_ATTRIBUTE)
-      return node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE;
     if (axis == MKR_AXIS_NAMESPACE)
       return 0; /* see internal.h §6 */
-    return node->type == LXB_DOM_NODE_TYPE_ELEMENT;
+    /* Principal node type. */
+    if (axis == MKR_AXIS_ATTRIBUTE) {
+      if (node->type != LXB_DOM_NODE_TYPE_ATTRIBUTE) return 0;
+    } else if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+      return 0;
+    }
+    /* `*` matches any namespace; `prefix:*` matches only the namespace bound
+     * to prefix (internal.h §5). Unknown prefix is reported up front by the
+     * step driver; here it is a non-match. */
+    if (test->prefix != NULL) {
+      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix);
+      if (want_uri == NULL) return 0;
+      if (strcmp(want_uri, node_ns_uri(node, mkr_ctx_document(ctx))) != 0) return 0;
+    }
+    return 1;
   }
   case MKR_NT_NAME: {
     /* Principal node type filter. */
@@ -652,14 +664,14 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     return -1;
   }
   /* Validate the namespace prefix once up front so we get a uniform
-   * RUNTIME error instead of a silently empty match. */
-  if (step->test.kind == MKR_NT_NAME && step->test.prefix != NULL) {
-    if (mkr_ctx_lookup_ns(ctx, step->test.prefix) == NULL) {
-      mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
-                  "unknown namespace prefix '%s' in name test",
-                  step->test.prefix);
-      return -1;
-    }
+   * RUNTIME error instead of a silently empty match. Covers both `prefix:local`
+   * (MKR_NT_NAME) and `prefix:*` (MKR_NT_WILDCARD). */
+  if (step->test.prefix != NULL
+      && mkr_ctx_lookup_ns(ctx, step->test.prefix) == NULL) {
+    mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
+                "unknown namespace prefix '%s' in name test",
+                step->test.prefix);
+    return -1;
   }
 
   /* Post-pass = sort to doc order, then optional adjacent-dedup. We
@@ -891,11 +903,53 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
   return 0;
 }
 
+/* Apply a relational operator to two already-computed numbers. */
+static int
+rel_hit(mkr_op_t op, double a, double b)
+{
+  switch (op) {
+  case MKR_OP_LT: return a < b;
+  case MKR_OP_LE: return a <= b;
+  case MKR_OP_GT: return a > b;
+  case MKR_OP_GE: return a >= b;
+  default:        return 0;
+  }
+}
+
 static int
 compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
             mkr_op_t op, int *out_result, mkr_xpath_error_t *err)
 {
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
+
+  /* node-set vs node-set (XPath 1.0 §3.4): true iff SOME pair of nodes — one
+   * from each set — satisfies the relation on their numeric string-values.
+   * Must compare every pair, not just the first node of each side. */
+  if (l->type == MKR_XPATH_TYPE_NODESET && r->type == MKR_XPATH_TYPE_NODESET) {
+    (void)L;
+    for (size_t i = 0; i < l->u.nodeset.count; ++i) {
+      const char *ls;
+      if (mkr_get_cached_node_string(ctx, l->u.nodeset.items[i], &ls, NULL, err) != 0) {
+        return -1;
+      }
+      mkr_val_t lt = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = (char *)ls } };
+      double a = mkr_val_to_number_unchecked(&lt);
+      for (size_t j = 0; j < r->u.nodeset.count; ++j) {
+        const char *rs;
+        if (mkr_get_cached_node_string(ctx, r->u.nodeset.items[j], &rs, NULL, err) != 0) {
+          return -1;
+        }
+        mkr_val_t rt = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = (char *)rs } };
+        if (rel_hit(op, a, mkr_val_to_number_unchecked(&rt))) {
+          *out_result = 1;
+          return 0;
+        }
+      }
+    }
+    *out_result = 0;
+    return 0;
+  }
+
   if (l->type == MKR_XPATH_TYPE_NODESET || r->type == MKR_XPATH_TYPE_NODESET) {
     const mkr_val_t *ns = (l->type == MKR_XPATH_TYPE_NODESET) ? l : r;
     const mkr_val_t *sc = (l->type == MKR_XPATH_TYPE_NODESET) ? r : l;
@@ -911,15 +965,7 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       double nv = mkr_val_to_number_unchecked(&tmp);
       double a = swap ? scn : nv;
       double b = swap ? nv  : scn;
-      int hit = 0;
-      switch (op) {
-      case MKR_OP_LT: hit = (a < b);  break;
-      case MKR_OP_LE: hit = (a <= b); break;
-      case MKR_OP_GT: hit = (a > b);  break;
-      case MKR_OP_GE: hit = (a >= b); break;
-      default: break;
-      }
-      if (hit) { *out_result = 1; return 0; }
+      if (rel_hit(op, a, b)) { *out_result = 1; return 0; }
     }
     *out_result = 0;
     return 0;

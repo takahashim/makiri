@@ -130,9 +130,16 @@ lex_name(mkr_lexer_t *L, mkr_token_t *t)
   const char *s = L->cur;
   int n;
   while ((n = ncname_char(L->cur, 0)) > 0) L->cur += n;
-  if (*L->cur == ':' && L->cur[1] != ':' && ncname_char(L->cur + 1, 1) > 0) {
+  /* QName NameTest is `prefix:local` OR `prefix:*` (XPath 1.0 §2.3); the ':'
+   * must not be the '::' axis separator. */
+  if (*L->cur == ':' && L->cur[1] != ':'
+      && (L->cur[1] == '*' || ncname_char(L->cur + 1, 1) > 0)) {
     L->cur++; /* eat ':' */
-    while ((n = ncname_char(L->cur, 0)) > 0) L->cur += n;
+    if (*L->cur == '*') {
+      L->cur++; /* prefix:* */
+    } else {
+      while ((n = ncname_char(L->cur, 0)) > 0) L->cur += n;
+    }
     t->kind = MKR_TK_QNAME;
   } else {
     t->kind = MKR_TK_NAME;

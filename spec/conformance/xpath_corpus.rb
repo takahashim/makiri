@@ -98,6 +98,13 @@ module XPathCorpus
     # --- comparisons / type coercion ---
     "//li[. = 2]", "//li[. >= '2']", "//span[. < 8]",
     "//*[@data-n > 2]", "'10' < '9'", "10 < 9",
+    # node-set vs node-set: true iff SOME pair satisfies (compare all pairs)
+    "//li < //li", "//li > //li", "//li = //li", "//li != //li",
+    "//span < //span", "//span > //span", "//span = //li",
+
+    # --- translate(): character-wise, incl. non-ASCII ---
+    "translate('héllo', 'é', 'e')", "translate('abc', 'b', 'ü')",
+    "translate('abcd', 'bd', 'x')", "translate('a', 'a', 'é')",
 
     # --- edge / empty results ---
     "//absent", "//div[@id='nope']", "//p[99]", "/nonsense/path",

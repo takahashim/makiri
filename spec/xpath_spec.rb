@@ -192,6 +192,13 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('normalize-space("  a   b ")')).to eq("a b")
       expect(doc.xpath('translate("bar", "abc", "ABC")')).to eq("BAr")
     end
+
+    it "translate operates on code points, not bytes (non-ASCII to/from)" do
+      expect(doc.xpath('translate("a", "a", "é")')).to eq("é")
+      expect(doc.xpath('translate("abc", "b", "ü")')).to eq("aüc")
+      expect(doc.xpath('translate("héllo", "é", "e")')).to eq("hello")
+      expect(doc.xpath('translate("abcd", "bd", "x")')).to eq("axc") # surplus 'from' dropped
+    end
   end
 
   describe "number functions and arithmetic" do
@@ -215,6 +222,25 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("true() and false()")).to be(false)
       expect(doc.xpath("true() or false()")).to be(true)
       expect(doc.xpath("not(//x)")).to be(true)
+    end
+  end
+
+  describe "node-set vs node-set comparison (XPath 1.0 §3.4)" do
+    # True iff SOME pair of nodes — one from each set — satisfies the relation,
+    # so every pair must be considered (not just the first node of each side).
+    let(:ns) { Makiri::HTML("<body><a>3</a><b>2</b><b>4</b><a>5</a></body>") }
+
+    it "relational compares all pairs" do
+      expect(ns.xpath("//a < //b")).to be(true)   # 3 < 4
+      expect(ns.xpath("//a <= //b")).to be(true)
+      expect(ns.xpath("//a > //b")).to be(true)   # 5 > 2
+      expect(ns.xpath("//a >= //b")).to be(true)
+    end
+
+    it "equality compares all pairs; empty set never satisfies" do
+      expect(ns.xpath("//a = //b")).to be(false)  # {3,5} vs {2,4}: no common value
+      expect(ns.xpath("//a != //b")).to be(true)
+      expect(ns.xpath("//none < //a")).to be(false)
     end
   end
 
@@ -302,6 +328,14 @@ RSpec.describe "Makiri XPath" do
       ctx.register_namespace("svg", "http://www.w3.org/2000/svg")
       expect(ctx.evaluate("//svg:path").length).to eq(1)
       expect(ctx.evaluate("//svg:title").map(&:text)).to eq(["s"]) # not the HTML sense
+    end
+
+    it "supports the prefix:* name test (any element in a namespace)" do
+      ctx = Makiri::XPathContext.new(mixed)
+      ctx.register_namespace("svg", "http://www.w3.org/2000/svg")
+      # svg, path, title are all in the SVG namespace
+      expect(ctx.evaluate("//svg:*").map(&:name)).to eq(%w[svg path title])
+      expect { mixed.xpath("//bogus:*") }.to raise_error(Makiri::Error, /unknown namespace prefix/i)
     end
 
     it "lax: unprefixed names match by local name regardless of namespace" do

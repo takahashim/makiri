@@ -1,6 +1,7 @@
 #include "mkr_xpath_internal.h"
 
 #include <lexbor/dom/dom.h>
+#include <lexbor/encoding/decode.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -612,21 +613,82 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (from == NULL) { free(s); return -1; }
   char *to   = mkr_val_to_string_or_fail(&args[2], L, err);
   if (to == NULL)   { free(s); free(from); return -1; }
-  size_t to_len = strlen(to);
-  size_t s_len  = strlen(s);
+
+  /* translate() works on CHARACTERS (Unicode code points), not bytes: each
+   * code point of `s` that appears in `from` is replaced by the code point at
+   * the same position in `to`, or removed if `from` is longer than `to`. We
+   * decode with Lexbor's UTF-8 decoder (input is valid UTF-8 from the DOM or a
+   * string literal) and, to avoid re-encoding, copy the original byte spans of
+   * the matched `to` / passed-through `s` characters. */
+  size_t s_len = strlen(s), from_len = strlen(from), to_len = strlen(to);
+
+  /* `from` code points, and `to` characters as (offset, byte length) spans. */
+  lxb_codepoint_t *from_cp = malloc((from_len + 1) * sizeof(*from_cp));
+  size_t *to_off = malloc((to_len + 1) * sizeof(*to_off));
+  size_t *to_clen = malloc((to_len + 1) * sizeof(*to_clen));
   char *buf = malloc(s_len + 1);
-  if (buf == NULL) { free(s); free(from); free(to); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate"); return -1; }
+  size_t buf_cap = s_len + 1;
+  if (from_cp == NULL || to_off == NULL || to_clen == NULL || buf == NULL) {
+    free(from_cp); free(to_off); free(to_clen); free(buf);
+    free(s); free(from); free(to);
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
+    return -1;
+  }
+
+  size_t from_n = 0;
+  for (const lxb_char_t *p = (const lxb_char_t *)from, *e = p + from_len; p < e;) {
+    lxb_codepoint_t cp = lxb_encoding_decode_valid_utf_8_single(&p, e);
+    if (cp == LXB_ENCODING_DECODE_ERROR) break;
+    from_cp[from_n++] = cp;
+  }
+  size_t to_n = 0;
+  for (const lxb_char_t *p = (const lxb_char_t *)to, *e = p + to_len; p < e;) {
+    const lxb_char_t *c = p;
+    if (lxb_encoding_decode_valid_utf_8_single(&p, e) == LXB_ENCODING_DECODE_ERROR) break;
+    to_off[to_n]  = (size_t)(c - (const lxb_char_t *)to);
+    to_clen[to_n] = (size_t)(p - c);
+    to_n++;
+  }
+
   size_t out_i = 0;
-  for (size_t i = 0; i < s_len; ++i) {
-    char *p = strchr(from, s[i]);
-    if (p == NULL) {
-      buf[out_i++] = s[i];
-    } else {
-      size_t idx = (size_t)(p - from);
-      if (idx < to_len) buf[out_i++] = to[idx];
+  for (const lxb_char_t *p = (const lxb_char_t *)s, *e = p + s_len; p < e;) {
+    const lxb_char_t *c = p;
+    lxb_codepoint_t cp = lxb_encoding_decode_valid_utf_8_single(&p, e);
+    if (cp == LXB_ENCODING_DECODE_ERROR) break;
+    size_t clen = (size_t)(p - c);
+
+    const char *emit = NULL;
+    size_t emit_len = 0;
+    size_t k = from_n;
+    for (size_t fi = 0; fi < from_n; ++fi) {
+      if (from_cp[fi] == cp) { k = fi; break; }
+    }
+    if (k == from_n) {            /* not in `from`: keep the character */
+      emit = (const char *)c; emit_len = clen;
+    } else if (k < to_n) {        /* replace with the to[k] character */
+      emit = to + to_off[k]; emit_len = to_clen[k];
+    }                             /* else: k >= to_n -> drop the character */
+
+    if (emit_len != 0) {
+      if (out_i + emit_len + 1 > buf_cap) {
+        size_t nc = buf_cap;
+        while (out_i + emit_len + 1 > nc) nc *= 2;
+        char *nb = realloc(buf, nc);
+        if (nb == NULL) {
+          free(from_cp); free(to_off); free(to_clen); free(buf);
+          free(s); free(from); free(to);
+          mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
+          return -1;
+        }
+        buf = nb; buf_cap = nc;
+      }
+      memcpy(buf + out_i, emit, emit_len);
+      out_i += emit_len;
     }
   }
   buf[out_i] = '\0';
+
+  free(from_cp); free(to_off); free(to_clen);
   free(s); free(from); free(to);
   out->type = MKR_XPATH_TYPE_STRING;
   out->u.string = buf;
