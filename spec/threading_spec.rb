@@ -81,4 +81,55 @@ RSpec.describe "concurrency", :threading do
     end
     expect(threads.map(&:value)).to all(eq(:ok))
   end
+
+  it "is safe to mix XPath and mutation on a SHARED document" do
+    # XPath evaluation holds the GVL, and so does every mutation, so a walk can
+    # never run in parallel with a mutation that detaches/moves nodes on the same
+    # document (which would otherwise be a use-after-move). Assert the mix runs to
+    # completion with no crash and no stray exception.
+    doc = Makiri::HTML(HTML)
+    ul  = doc.at_css("ul")
+    errors = Queue.new
+    threads = []
+    (NTHREADS - 2).times do
+      threads << Thread.new do
+        ITERS.times do
+          doc.xpath("//li[@class='item']").length
+          doc.at_xpath("//main")&.name
+        rescue => e
+          errors << e
+        end
+      end
+    end
+    2.times do |t|
+      threads << Thread.new do
+        ITERS.times do |i|
+          el = doc.create_element("li")
+          el["data-id"] = "x#{t}-#{i}"
+          ul.add_child(el)
+          ul.children.first&.remove
+        rescue => e
+          errors << e
+        end
+      end
+    end
+    threads.each(&:join)
+    expect(errors).to be_empty
+  end
+
+  it "is safe to share one XPathContext across threads (no corruption)" do
+    # A context's per-evaluate caches / AST memo are not concurrency-safe, but
+    # #evaluate holds the GVL, so concurrent evaluate on a shared context is
+    # serialised and cannot corrupt memory (previously segfaulted via ms_sort
+    # when evaluation released the GVL).
+    doc = Makiri::HTML(HTML)
+    ctx = Makiri::XPathContext.new(doc)
+    want = ctx.evaluate("//li[@class='item']").length
+    threads = Array.new(NTHREADS) do
+      Thread.new do
+        ITERS.times.all? { ctx.evaluate("//li[@class='item']").length == want }
+      end
+    end
+    expect(threads.map(&:value)).to all(be(true))
+  end
 end

@@ -202,15 +202,25 @@ attr-axis ~1.3×, `[@attr='v']` predicate ~1.5×, `//tag` ~3.4× faster, full-te
 extraction ~parity). Plus parsing scales across threads (~2× on 8 cores) since
 it releases the GVL. Key decisions that got there, worth not regressing:
 
-- **Parsing and handler-free XPath release the GVL** (`ruby_doc.c`,
+- **Parsing releases the GVL; XPath evaluation does NOT** (`ruby_doc.c`,
   `ruby_xpath.c`): parse copies the source to a C buffer then runs
-  `mkr_parse_html` under `rb_thread_call_without_gvl`; `Node#xpath` /
-  `XPathContext#evaluate` parse the AST under the GVL then run
-  `mkr_xpath_eval_compiled` without it (the engine and all `lexbor_compat`/
-  `xpath` code are Ruby-free — Ruby is re-entered only via the custom-function
-  resolver, so the GVL is held whenever a handler is installed). Threads parse
-  and query concurrently (~2×/~3.3× on 8 cores); verify with `bench`'s threaded
-  rows and the `GC.stress` `spec/threading_spec.rb`.
+  `mkr_parse_html` under `rb_thread_call_without_gvl` — safe because a freshly
+  parsed document is not yet shared, so it can't race anything. **XPath holds
+  the GVL for the whole evaluation by design** (`mkr_eval_compiled` is a plain
+  GVL-held call). The engine and DOM are not thread-safe against concurrent
+  mutation, and holding the GVL makes that safe *by construction*: the GVL
+  serialises all Ruby-thread C code, so an XPath walk never runs in parallel
+  with a tree mutation, with another `evaluate` on the same context, or with a
+  `register_variable`/`register_namespace`/`node=` on the same context — no
+  locking needed (and none is used). An earlier version released the GVL for
+  handler-free XPath (it scaled queries ~3.3× across threads), but the locking
+  required to make a GVL-released walk safe against shared-document mutation was
+  judged not worth the verification burden; single-thread XPath speed is
+  unaffected by holding the GVL. **Do not reintroduce a GVL-released XPath
+  path** without the full document/context locking story. Parse still scales
+  (~2× on 8 cores); verify with `bench`'s threaded rows and the `GC.stress`
+  `spec/threading_spec.rb` (which now also asserts shared-document XPath+mutation
+  and shared-context evaluate are crash-free under the GVL).
 - **`//tag` is served from the element index** (`mkr_xpath_eval.c`
   `try_descendant_tag_index`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only

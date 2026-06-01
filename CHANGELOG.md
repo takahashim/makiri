@@ -95,6 +95,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Makiri::Error` (never a foreign exception, crash, or hang).
 * Benchmark harness (`bench/`, `rake bench`) comparing against Nokogiri.
 
+### Security
+
+* XPath evaluation no longer releases the GVL, making concurrent use safe by
+  construction. `Node#xpath`/`at_xpath` and `XPathContext#evaluate` previously
+  dropped the GVL for the (handler-free) C walk; that let an evaluation race a
+  tree mutation on the same document (use-after-move), a second `evaluate` on the
+  same context, or a `register_variable`/`register_namespace`/`node=` on the same
+  context (previously a segfault inside the node-set sort). Holding the GVL across
+  every evaluation serialises all of these — the engine and DOM are never touched
+  by two threads at once — so no locking is needed. Single-thread performance is
+  unchanged; parsing still releases the GVL (a freshly parsed document is not yet
+  shared, so it carries no such hazard) and still scales across threads. The lost
+  piece is multi-threaded throughput for queries against one shared document.
+* XPath variable values (`register_variable`) and custom-function handler return
+  strings are now validated and fail closed: a value that exceeds the engine
+  string cap, contains an embedded NUL, or is not valid UTF-8 raises
+  `Makiri::Error` instead of being silently truncated at the NUL or passed
+  through as invalid bytes (which broke the character-wise string functions).
+* The XPath node string-value builder (`text`/`string()`) and the document-order
+  index builder no longer recurse on DOM depth: both are now iterative
+  parent-pointer walks (O(1) extra space, no heap stack). An adversarially deep
+  tree can no longer overflow the C stack, matching the fail-closed posture of
+  the rest of the engine. Output is byte-for-byte identical.
+
 ### Performance
 
 * The per-evaluation XPath string-value cache is now hashed (pointer-keyed

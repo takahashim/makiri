@@ -165,17 +165,34 @@ append_text_content(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
   lxb_dom_document_destroy_text(node->owner_document, t);
 }
 
+/* Append the string-value of every TEXT descendant of `node`, in document
+ * order. Iterative (parent-pointer) pre-order walk rather than C recursion, so
+ * an adversarially deep tree cannot overflow the stack (fail-closed / no DoS);
+ * O(1) extra space, no heap stack needed since the DOM ->parent links are
+ * valid for the tree nodes we traverse. Descends only into elements, matching
+ * the previous recursive form. */
 static void
 append_text_descendants(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
                         size_t max_bytes)
 {
-  for (lxb_dom_node_t *c = node->first_child; c != NULL; c = c->next) {
-    if (c->type == LXB_DOM_NODE_TYPE_TEXT) {
-      append_text_content(c, buf, len, cap, max_bytes);
-    } else if (c->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-      append_text_descendants(c, buf, len, cap, max_bytes);
+  lxb_dom_node_t *cur = node->first_child;
+  while (cur != NULL) {
+    if (cur->type == LXB_DOM_NODE_TYPE_TEXT) {
+      append_text_content(cur, buf, len, cap, max_bytes);
+      if (max_bytes && *len >= max_bytes) return; /* short-circuit at the cap */
     }
-    if (max_bytes && *len >= max_bytes) return; /* short-circuit */
+    /* Descend into element children (only elements were recursed before). */
+    if (cur->type == LXB_DOM_NODE_TYPE_ELEMENT && cur->first_child != NULL) {
+      cur = cur->first_child;
+      continue;
+    }
+    /* No descent: advance to the next sibling, climbing back toward `node`
+     * (never above it) when a branch is exhausted. */
+    while (cur != node && cur->next == NULL) {
+      cur = cur->parent;
+    }
+    if (cur == node) return;
+    cur = cur->next;
   }
 }
 
@@ -574,19 +591,34 @@ order_index_lookup(const mkr_doc_order_index_t *idx, const lxb_dom_node_t *node,
 
 /* DFS pre-order: assign ordinal to the element, then its attributes
  * (in linked-list order, before children), then descendants. This
- * matches doc_order_cmp's attribute placement. */
+ * matches doc_order_cmp's attribute placement.
+ *
+ * Iterative (parent-pointer) walk rather than C recursion, so an adversarially
+ * deep tree cannot overflow the stack (fail-closed / no DoS); O(1) extra space.
+ * The traversal stays within the subtree rooted at `root` (it never follows
+ * root->next). */
 static int
-order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *node, uint32_t *next_ord)
+order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *root, uint32_t *next_ord)
 {
-  if (order_index_insert(idx, node, (*next_ord)++) != 0) return -1;
-  if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-    lxb_dom_element_t *el = (lxb_dom_element_t *)node;
-    for (lxb_dom_attr_t *a = el->first_attr; a != NULL; a = a->next) {
-      if (order_index_insert(idx, (lxb_dom_node_t *)a, (*next_ord)++) != 0) return -1;
+  lxb_dom_node_t *cur = root;
+  while (cur != NULL) {
+    /* Visit (pre-order): the node, then its attributes before any child. */
+    if (order_index_insert(idx, cur, (*next_ord)++) != 0) return -1;
+    if (cur->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+      lxb_dom_element_t *el = (lxb_dom_element_t *)cur;
+      for (lxb_dom_attr_t *a = el->first_attr; a != NULL; a = a->next) {
+        if (order_index_insert(idx, (lxb_dom_node_t *)a, (*next_ord)++) != 0) return -1;
+      }
     }
-  }
-  for (lxb_dom_node_t *c = node->first_child; c != NULL; c = c->next) {
-    if (order_index_walk(idx, c, next_ord) != 0) return -1;
+    if (cur->first_child != NULL) {
+      cur = cur->first_child;
+      continue;
+    }
+    while (cur != root && cur->next == NULL) {
+      cur = cur->parent;
+    }
+    if (cur == root) break;
+    cur = cur->next;
   }
   return 0;
 }

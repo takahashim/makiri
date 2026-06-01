@@ -2,7 +2,6 @@
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
 
-#include <ruby/thread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -288,17 +287,42 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
     return Qnil;
 }
 
+/* Duplicate a Ruby String's bytes into a fresh NUL-terminated C string. */
 static char *
-mkr_dup_rstring(VALUE s)
+mkr_dup_string_value(VALUE sv)
 {
-    s = rb_obj_as_string(s);
-    long len = RSTRING_LEN(s);
+    long len = RSTRING_LEN(sv);
     char *p = malloc((size_t)len + 1);
     if (p != NULL) {
-        memcpy(p, RSTRING_PTR(s), (size_t)len);
+        memcpy(p, RSTRING_PTR(sv), (size_t)len);
         p[len] = '\0';
     }
     return p;
+}
+
+/* A Ruby string only becomes an engine string if it is safe to treat as a
+ * NUL-terminated UTF-8 C string within the per-evaluate cap. Returns NULL when
+ * OK, else a static reason. The engine relies on strlen + character-wise UTF-8,
+ * so an embedded NUL would silently truncate and invalid UTF-8 would break
+ * substring/translate/string-length — fail closed instead. +sv+ must be a
+ * String. */
+static const char *
+mkr_engine_string_reason(VALUE sv, size_t max_bytes)
+{
+    long len = RSTRING_LEN(sv);
+    if ((size_t)len > max_bytes) {
+        return "string exceeds the maximum length";
+    }
+    if (memchr(RSTRING_PTR(sv), '\0', (size_t)len) != NULL) {
+        return "string contains a NUL byte";
+    }
+    /* Validate the bytes as UTF-8 using Ruby's own validator (GVL is held in
+     * the variable-registration and handler paths). */
+    VALUE u = rb_utf8_str_new(RSTRING_PTR(sv), len);
+    if (!RTEST(rb_funcall(u, rb_intern("valid_encoding?"), 0))) {
+        return "string is not valid UTF-8";
+    }
+    return NULL;
 }
 
 static int
@@ -359,7 +383,18 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
     }
     /* nil and everything else: coerce to string (nil -> ""). */
     out->type = MKR_XPATH_TYPE_STRING;
-    out->u.string = NIL_P(r) ? strdup("") : mkr_dup_rstring(r);
+    if (NIL_P(r)) {
+        out->u.string = strdup("");
+    } else {
+        VALUE sv = rb_obj_as_string(r);
+        const char *bad =
+            mkr_engine_string_reason(sv, mkr_ctx_limits(ctx)->max_string_bytes);
+        if (bad != NULL) {
+            snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
+            return -1;
+        }
+        out->u.string = mkr_dup_string_value(sv);
+    }
     if (out->u.string == NULL) {
         snprintf(errbuf, errlen, "out of memory converting handler result");
         return -1;
@@ -449,40 +484,26 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
 /* evaluate / register                                                */
 /* ------------------------------------------------------------------ */
 
-/* Bundle for evaluating a compiled AST with the GVL released. */
-typedef struct {
-    mkr_xpath_context_t *ctx;
-    mkr_node_t          *ast;
-    mkr_xpath_value_t   *value;
-    mkr_xpath_error_t   *error;
-    int                  rc;
-} mkr_eval_nogvl_t;
-
-static void *
-mkr_eval_compiled_nogvl(void *p)
-{
-    mkr_eval_nogvl_t *a = (mkr_eval_nogvl_t *)p;
-    a->rc = mkr_xpath_eval_compiled(a->ctx, a->ast, a->value, a->error);
-    return NULL;
-}
-
-/* Evaluate a compiled AST. Handler-free evaluation is pure C (the engine only
- * re-enters Ruby through the custom-function resolver), so when no handler is
- * installed we drop the GVL for the duration — letting other threads run and
- * letting concurrent evaluations on distinct contexts/documents proceed in
- * parallel. With a handler the resolver calls back into Ruby, so it must stay
- * under the GVL. */
+/* Evaluate a compiled AST under the GVL.
+ *
+ * XPath evaluation deliberately does NOT release the GVL. The engine and DOM
+ * are not thread-safe against concurrent mutation, and holding the GVL across
+ * every evaluation makes that safe by construction: the GVL serialises all
+ * Ruby-thread C code, so an XPath walk can never run in parallel with a tree
+ * mutation, with another evaluation on the same context, or with a
+ * register_variable/register_namespace/node= on the same context. No extra
+ * locking is required (and none is used). Parsing still releases the GVL —
+ * a freshly parsed document is not yet shared, so it has no such hazard.
+ *
+ * (Releasing the GVL for the handler-free case was measured to scale XPath
+ * across threads, but the locking needed to make a GVL-released walk safe
+ * against shared-document mutation was not worth the verification burden;
+ * single-thread performance is unaffected by holding the GVL.) */
 static int
-mkr_eval_compiled_maybe_nogvl(mkr_xpath_context_t *ctx, mkr_node_t *ast,
-                              int has_handler, mkr_xpath_value_t *value,
-                              mkr_xpath_error_t *error)
+mkr_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                  mkr_xpath_value_t *value, mkr_xpath_error_t *error)
 {
-    if (has_handler) {
-        return mkr_xpath_eval_compiled(ctx, ast, value, error);
-    }
-    mkr_eval_nogvl_t a = { ctx, ast, value, error, 0 };
-    rb_thread_call_without_gvl(mkr_eval_compiled_nogvl, &a, NULL, NULL);
-    return a.rc;
+    return mkr_xpath_eval_compiled(ctx, ast, value, error);
 }
 
 /* Return the compiled AST for +expr+, parsing and caching it on first use.
@@ -557,7 +578,7 @@ mkr_xpath_ctx_evaluate(int argc, VALUE *argv, VALUE self)
         mkr_xpath_set_func_resolver(d->ctx, mkr_handler_resolver);
     }
     mkr_xpath_value_t value = {0};
-    int rc = mkr_eval_compiled_maybe_nogvl(d->ctx, ast, has_handler, &value, &error);
+    int rc = mkr_eval_compiled(d->ctx, ast, &value, &error);
     if (has_handler) {
         mkr_xpath_set_func_resolver(d->ctx, NULL);
         mkr_xpath_context_set_user_data(d->ctx, NULL);
@@ -587,6 +608,11 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
     VALUE value = rb_obj_as_string(rb_value);
+    const char *bad =
+        mkr_engine_string_reason(value, mkr_ctx_limits(d->ctx)->max_string_bytes);
+    if (bad != NULL) {
+        rb_raise(mkr_eError, "invalid variable value: %s", bad);
+    }
     if (mkr_xpath_register_variable_string(d->ctx, StringValueCStr(rb_name),
                                            StringValueCStr(value)) != 0) {
         rb_raise(mkr_eError, "failed to register variable");
@@ -626,7 +652,7 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
         mkr_xpath_set_func_resolver(ctx, mkr_handler_resolver);
     }
     mkr_xpath_value_t value = {0};
-    int rc = mkr_eval_compiled_maybe_nogvl(ctx, ast, has_handler, &value, &error);
+    int rc = mkr_eval_compiled(ctx, ast, &value, &error);
     if (has_handler) {
         mkr_xpath_set_func_resolver(ctx, NULL);
         mkr_xpath_context_set_user_data(ctx, NULL);

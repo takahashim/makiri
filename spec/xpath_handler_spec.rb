@@ -109,6 +109,29 @@ RSpec.describe "Makiri XPath custom function handler" do
     end
   end
 
+  describe "handler-returned string validation (fail closed)" do
+    let(:bad) do
+      Class.new do
+        def nul = "a\u0000b"                                # embedded NUL
+        def invalid = "\xC3".dup.force_encoding("BINARY")   # invalid UTF-8
+        def good = "héllo"                                  # valid multibyte
+      end.new
+    end
+
+    it "rejects an embedded NUL instead of silently truncating" do
+      expect { ctx.evaluate("ng:nul()", bad) }.to raise_error(Makiri::Error)
+    end
+
+    it "rejects invalid UTF-8" do
+      expect { ctx.evaluate("string-length(ng:invalid())", bad) }
+        .to raise_error(Makiri::Error)
+    end
+
+    it "accepts valid multibyte UTF-8" do
+      expect(ctx.evaluate("string-length(ng:good())", bad)).to eq(5.0)
+    end
+  end
+
   describe "memory safety" do
     it "survives handler dispatch under GC stress" do
       GC.stress = true

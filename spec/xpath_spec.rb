@@ -306,6 +306,24 @@ RSpec.describe "Makiri XPath" do
       ctx.register_variable("want", "en")
       expect(ctx.evaluate("//p[@lang=$want]").map(&:text)).to eq(%w[second])
     end
+
+    it "accepts a valid multibyte variable value" do
+      ctx = Makiri::XPathContext.new(doc)
+      ctx.register_variable("v", "héllo")
+      expect(ctx.evaluate("string-length($v)")).to eq(5.0)
+    end
+
+    it "rejects an invalid-UTF-8 variable value (fail closed)" do
+      ctx = Makiri::XPathContext.new(doc)
+      expect { ctx.register_variable("v", "\xC3".dup.force_encoding("BINARY")) }
+        .to raise_error(Makiri::Error)
+    end
+
+    it "rejects a variable value with an embedded NUL (fail closed)" do
+      ctx = Makiri::XPathContext.new(doc)
+      expect { ctx.register_variable("v", "a\u0000b") }
+        .to raise_error(Makiri::Error)
+    end
   end
 
   describe "namespace matching (strict default / lax opt-in)" do
