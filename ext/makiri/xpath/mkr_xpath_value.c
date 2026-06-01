@@ -143,7 +143,25 @@ append_text_content(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
   if (t == NULL) return;
   if (tlen) {
     if (max_bytes && *len + tlen > max_bytes) {
-      /* Stop appending — caller's limit guard will surface this. */
+      /* Over the cap: fill up to exactly max_bytes (a partial, possibly
+       * mid-codepoint copy — the result is discarded) so *len reaches the cap
+       * and the caller's `len >= max_string_bytes` guard fails closed. Stopping
+       * short here would leave *len below the cap and silently truncate. */
+      size_t take = max_bytes - *len;
+      if (*len + take + 1 > *cap) {
+        size_t newcap = *cap ? *cap : 32;
+        while (newcap < *len + take + 1) newcap *= 2;
+        char *p = realloc(*buf, newcap);
+        if (p == NULL) {
+          lxb_dom_document_destroy_text(node->owner_document, t);
+          return;
+        }
+        *buf = p;
+        *cap = newcap;
+      }
+      if (take) memcpy(*buf + *len, t, take);
+      *len += take;            /* now *len == max_bytes */
+      (*buf)[*len] = '\0';
       lxb_dom_document_destroy_text(node->owner_document, t);
       return;
     }

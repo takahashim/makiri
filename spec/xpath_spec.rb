@@ -461,6 +461,22 @@ RSpec.describe "Makiri XPath" do
       expect { small.xpath(expr) }
         .to raise_error(Makiri::XPath::LimitExceeded, /recursion depth/i)
     end
+
+    it "fails closed when a node string-value exceeds the byte cap" do
+      # string(.) of a >64MB text node must raise, not return a truncated/empty
+      # string (the builder must trip the limit, not stop short of it).
+      big = Makiri::HTML("<p>#{"x" * (65 * 1024 * 1024)}</p>")
+      expect { big.xpath("string(//p)") }
+        .to raise_error(Makiri::XPath::LimitExceeded, /string size limit/i)
+    end
+
+    it "caps translate() output (multibyte expansion past the limit)" do
+      # 17MB of "a" replaced by a 4-byte emoji blows past 64MB even though the
+      # input is within the limit.
+      doc = Makiri::HTML("<p>#{"a" * (17 * 1024 * 1024)}</p>")
+      expect { doc.xpath('translate(string(//p), "a", "😀")') }
+        .to raise_error(Makiri::XPath::LimitExceeded, /string size limit/i)
+    end
   end
 
   describe "XPathContext AST cache" do

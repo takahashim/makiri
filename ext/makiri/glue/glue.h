@@ -42,6 +42,14 @@ lxb_dom_document_t *mkr_doc_unwrap(VALUE rb_doc);
 mkr_parsed_t       *mkr_doc_parsed(VALUE rb_doc);
 VALUE               mkr_wrap_document(mkr_parsed_t *parsed); /* GC takes ownership */
 
+/* Re-import a <template>'s "template contents" when deep-importing a fragment.
+ * lxb_dom_document_import_node copies the normal child chain but not a
+ * template's separate content fragment; this walks src/clone in lockstep and
+ * fixes every matching template (recursively). Defined in glue/ruby_doc.c;
+ * shared with glue/ruby_mutate.c's fragment import. */
+void mkr_fixup_template_content(lxb_dom_document_t *doc,
+                                lxb_dom_node_t *src, lxb_dom_node_t *clone);
+
 /* NodeSet bridge (glue/ruby_node_set.c). */
 VALUE mkr_node_set_new(VALUE document);
 void  mkr_node_set_push(VALUE rb_set, lxb_dom_node_t *node);

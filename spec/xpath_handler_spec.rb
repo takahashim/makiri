@@ -132,6 +132,25 @@ RSpec.describe "Makiri XPath custom function handler" do
     end
   end
 
+  describe "handler exception message extraction (fail closed)" do
+    it "surfaces a NUL-containing message as Makiri::Error (no ArgumentError leak)" do
+      h = Object.new
+      def h.boom = raise("a\u0000b")
+      expect { ctx.evaluate("ng:boom()", h) }
+        .to raise_error(Makiri::Error, /handler raised/)
+    end
+
+    it "survives a handler whose #message itself raises" do
+      h = Object.new
+      def h.boom
+        e = StandardError.new
+        def e.message = raise("broken")
+        raise e
+      end
+      expect { ctx.evaluate("ng:boom()", h) }.to raise_error(Makiri::Error)
+    end
+  end
+
   describe "memory safety" do
     it "survives handler dispatch under GC stress" do
       GC.stress = true

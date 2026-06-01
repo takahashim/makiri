@@ -175,6 +175,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* XPath `string()`/`Node#text` and `translate()` now fail closed at the
+  per-evaluate string-byte cap instead of returning a truncated result. The
+  node string-value builder stopped appending one chunk *before* the cap, so the
+  caller's `len >= max_string_bytes` guard never tripped and a >64 MB text node
+  yielded a short/empty string; it now fills to the cap so the guard fires.
+  `translate()` gained an output-size cap (a multibyte replacement such as
+  `translate(s,"a","😀")` can blow the result past the limit even when the input
+  is within it) plus an overflow guard on its output-buffer growth.
+* A custom-function handler that raises an exception whose message contains a
+  NUL byte (or whose `#message` itself raises) no longer leaks an `ArgumentError`
+  out of the evaluator: the message is now read fail-closed (under `rb_protect`,
+  via `RSTRING_PTR`) and always surfaces as `Makiri::Error`.
+* `inner_html=` / `outer_html=` now preserve a `<template>`'s contents. Deep node
+  import copies the normal child chain but not a template's separate content
+  fragment, so an imported `<template>` came out empty; the mutation import now
+  applies the same template-content fixup the fragment parser already used.
 * XPath string literals are validated as UTF-8 at lex time and a malformed
   literal now raises `XPath::SyntaxError` (fail-closed), instead of silently
   producing a wrong/truncated result from the character-wise string functions

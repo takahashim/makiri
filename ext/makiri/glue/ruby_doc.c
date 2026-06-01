@@ -136,7 +136,7 @@ mkr_is_html_template(const lxb_dom_node_t *n)
  * matching <template>, import the source content children into the clone's
  * content fragment. Recurses so templates nested inside template content are
  * fixed too. */
-static void
+void
 mkr_fixup_template_content(lxb_dom_document_t *doc,
                            lxb_dom_node_t *src, lxb_dom_node_t *clone)
 {

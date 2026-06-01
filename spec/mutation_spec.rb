@@ -123,6 +123,14 @@ RSpec.describe "Makiri mutation" do
       doc.at_css("p").outer_html = "<em>E</em><i>I</i>"
       expect(div.inner_html).to eq("<em>E</em><i>I</i>")
     end
+
+    it "preserves <template> contents through fragment import" do
+      # import_node does not copy a template's separate content fragment; the
+      # mutation path must fix it up (as the document fragment parser does).
+      div.inner_html = "<template><span>ok</span></template>"
+      tpl = div.at_css("template")
+      expect(tpl.content_fragment.at_css("span")&.text).to eq("ok")
+    end
   end
 
   describe "query consistency after mutation" do

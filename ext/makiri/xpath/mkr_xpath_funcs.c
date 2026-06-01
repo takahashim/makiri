@@ -3,6 +3,7 @@
 #include <lexbor/dom/dom.h>
 #include <lexbor/encoding/decode.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -681,9 +682,28 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     }                             /* else: k >= to_n -> drop the character */
 
     if (emit_len != 0) {
+      /* Cap the OUTPUT size: a multibyte replacement can grow the result well
+       * past the input even when the input is within the limit (e.g. "a"->"😀").
+       * Fail closed rather than build an oversize string. */
+      if (L->max_string_bytes && out_i + emit_len > L->max_string_bytes) {
+        free(from_cp); free(to_off); free(to_clen); free(buf);
+        free(s); free(from); free(to);
+        mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
+                     "string size limit exceeded (%zu bytes) in translate()",
+                     L->max_string_bytes);
+        return -1;
+      }
       if (out_i + emit_len + 1 > buf_cap) {
         size_t nc = buf_cap;
-        while (out_i + emit_len + 1 > nc) nc *= 2;
+        while (out_i + emit_len + 1 > nc) {
+          if (nc > SIZE_MAX / 2) {  /* growth would overflow */
+            free(from_cp); free(to_off); free(to_clen); free(buf);
+            free(s); free(from); free(to);
+            mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
+            return -1;
+          }
+          nc *= 2;
+        }
         char *nb = realloc(buf, nc);
         if (nb == NULL) {
           free(from_cp); free(to_off); free(to_clen); free(buf);

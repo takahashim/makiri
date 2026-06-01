@@ -427,6 +427,14 @@ mkr_handler_call_body(VALUE p)
     return Qnil;
 }
 
+/* rb_protect thunk: fetch a raised exception's message as a String. Wrapped so
+ * a broken custom #message cannot long-jump out of the resolver. */
+static VALUE
+mkr_exc_message_thunk(VALUE exc)
+{
+    return rb_obj_as_string(rb_funcall(exc, rb_intern("message"), 0));
+}
+
 /* Resolver return convention: 0 = handled, -1 = errored, +1 = not found. */
 static int
 mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
@@ -468,9 +476,19 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
     if (state != 0) {
         VALUE exc = rb_errinfo();
         rb_set_errinfo(Qnil);
-        VALUE msg = rb_funcall(exc, rb_intern("message"), 0);
-        const char *m = RB_TYPE_P(msg, T_STRING) ? StringValueCStr(msg) : "error";
+        /* Extract the message fail-closed: a NUL in it would make StringValueCStr
+         * raise ArgumentError (long-jumping past this Makiri::Error conversion),
+         * and a broken #message could raise too. Use rb_protect + RSTRING_PTR
+         * (NUL-terminated; %s simply truncates at any embedded NUL). */
+        int mstate = 0;
+        VALUE msg = rb_protect(mkr_exc_message_thunk, exc, &mstate);
+        const char *m = (mstate == 0 && RB_TYPE_P(msg, T_STRING))
+                            ? RSTRING_PTR(msg) : "error";
+        if (mstate != 0) {
+            rb_set_errinfo(Qnil);
+        }
         mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "handler raised: %s", m);
+        RB_GC_GUARD(msg);
         return -1;
     }
     if (call.status != 0) {
@@ -633,8 +651,8 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 /* ------------------------------------------------------------------ */
 
 /* Evaluate expr against self with a throwaway context and optional handler.
- * The expression is parsed under the GVL (it reads the Ruby String), then the
- * compiled AST is evaluated with the GVL released when there is no handler. */
+ * Evaluation runs under the GVL (see mkr_eval_compiled — XPath never releases
+ * it). */
 static VALUE
 mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
 {

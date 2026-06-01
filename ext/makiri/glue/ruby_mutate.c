@@ -324,6 +324,9 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
         lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, f, true);
         if (imp != NULL) {
             emit(imp, u);
+            /* import_node does not copy a <template>'s content fragment; fix it
+             * up (recursively) while the source `f` is still alive. */
+            mkr_fixup_template_content(doc, f, imp);
         }
     }
 
