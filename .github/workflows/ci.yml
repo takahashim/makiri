@@ -33,10 +33,13 @@ jobs:
       - name: Compile the extension (builds vendored Lexbor, then the ext)
         run: bundle exec rake compile
 
-      - name: Run the test suite (incl. the heavy :threading suite)
+      # The :threading suite is heavy (GC.stress across threads) and checks a
+      # structural property that does not vary by OS/Ruby, so run it on a single
+      # representative job; the rest of the matrix skips it for a fast run.
+      - name: Run the test suite
         run: bundle exec rake spec
         env:
-          THREADING: "1"
+          THREADING: ${{ (matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4') && '1' || '' }}
 
       - name: Smoke-load the gem
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'

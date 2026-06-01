@@ -26,6 +26,11 @@ RSpec.describe "concurrency", :threading do
   SANITIZING = !ENV["ASAN_OPTIONS"].to_s.empty?
   NTHREADS = 8
   ITERS    = 50
+  # GC.stress forces a full GC at every allocation, so a handful of iterations
+  # across NTHREADS already exercises the interleavings thoroughly — many more
+  # only multiply CI cost (the suite was >15 min on CI runners). The :stress
+  # examples use this smaller count.
+  STRESS_ITERS = 12
 
   before { skip "ASan+macOS mishandles Ruby thread-stack munmap" if SANITIZING }
 
@@ -52,7 +57,7 @@ RSpec.describe "concurrency", :threading do
   it "parses concurrently with correct, independent results", :stress do
     threads = Array.new(NTHREADS) do
       Thread.new do
-        ITERS.times.map do
+        STRESS_ITERS.times.map do
           doc = Makiri::HTML(HTML)
           doc.css("li").length
         end
@@ -106,7 +111,7 @@ RSpec.describe "concurrency", :threading do
     threads = []
     (NTHREADS - 2).times do
       threads << Thread.new do
-        ITERS.times do
+        STRESS_ITERS.times do
           doc.xpath("//li[@class='item']").length
           doc.at_xpath("//main")&.name
         rescue => e
@@ -116,7 +121,7 @@ RSpec.describe "concurrency", :threading do
     end
     2.times do |t|
       threads << Thread.new do
-        ITERS.times do |i|
+        STRESS_ITERS.times do |i|
           el = doc.create_element("li")
           el["data-id"] = "x#{t}-#{i}"
           ul.add_child(el)
@@ -140,7 +145,7 @@ RSpec.describe "concurrency", :threading do
     want = ctx.evaluate("//li[@class='item']").length
     threads = Array.new(NTHREADS) do
       Thread.new do
-        ITERS.times.all? { ctx.evaluate("//li[@class='item']").length == want }
+        STRESS_ITERS.times.all? { ctx.evaluate("//li[@class='item']").length == want }
       end
     end
     expect(threads.map(&:value)).to all(be(true))

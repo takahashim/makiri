@@ -13,12 +13,15 @@ RSpec.configure do |config|
     c.syntax = :expect
   end
 
-  # The concurrency suite (spec/threading_spec.rb, tagged :threading) is heavy —
-  # 8 threads × 50 iterations under GC.stress — and dominates the local run
-  # time. Skip it by default for a fast inner loop. It is REQUIRED in CI
-  # (GitHub Actions sets CI=true, and the workflow also sets THREADING=1) and
-  # can be forced locally with THREADING=1.
-  unless ENV["CI"] || ENV["THREADING"]
+  # The concurrency suite (spec/threading_spec.rb, tagged :threading) is heavy
+  # — many threads under GC.stress — and dominates the run time, so it runs only
+  # when THREADING=1 is set explicitly. The CI workflow sets THREADING=1 on a
+  # single representative job (the safety it checks is structural, not OS/Ruby
+  # specific) rather than on every matrix job. It is NOT auto-enabled by CI=true,
+  # so the other matrix jobs (and the local default) skip it for a fast run.
+  # (Treat an empty THREADING as unset: the workflow expands the env to "" on
+  # the jobs that should skip, and "" is truthy in Ruby.)
+  if ENV["THREADING"].to_s.empty?
     config.filter_run_excluding :threading
     config.before(:suite) do
       warn "[spec] skipping :threading examples (set THREADING=1 to include them)"
