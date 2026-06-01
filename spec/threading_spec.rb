@@ -6,7 +6,9 @@
 # each thread owns its own Document (no shared mutable state), and we assert the
 # results are exactly what the single-threaded path produces.
 
-RSpec.describe "concurrency" do
+# Tagged :threading — skipped by default for a fast local run, REQUIRED in CI.
+# See spec/spec_helper.rb (THREADING=1 / CI forces it on).
+RSpec.describe "concurrency", :threading do
   HTML = (<<~HTML).freeze
     <!doctype html><html><body>
       <main id="main">

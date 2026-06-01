@@ -33,8 +33,10 @@ jobs:
       - name: Compile the extension (builds vendored Lexbor, then the ext)
         run: bundle exec rake compile
 
-      - name: Run the test suite
+      - name: Run the test suite (incl. the heavy :threading suite)
         run: bundle exec rake spec
+        env:
+          THREADING: "1"
 
       - name: Smoke-load the gem
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
