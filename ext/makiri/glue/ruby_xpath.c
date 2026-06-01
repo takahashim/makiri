@@ -171,10 +171,14 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
     if (ctx == NULL) {
         rb_raise(mkr_eError, "failed to allocate XPath context");
     }
-    /* Hand the engine the document's element index (tag id -> elements) so
-     * `//tag` can be answered without a tree walk. Borrowed; it lives on the
-     * parsed document, which outlives this context. */
-    mkr_xpath_context_set_element_index(ctx, mkr_parsed_element_index(parsed));
+    /* Hand the engine the document's element index (tag id -> elements) plus
+     * the compat-layer lookups, so `//tag` can be answered without a tree walk.
+     * The engine calls back through these hooks and never sees the index's
+     * concrete type. Borrowed; the index lives on the parsed document, which
+     * outlives this context. */
+    mkr_xpath_context_set_element_index(ctx, mkr_parsed_element_index(parsed),
+                                        mkr_element_index_tag,
+                                        mkr_element_index_has_foreign);
     return ctx;
 }
 

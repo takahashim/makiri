@@ -1,5 +1,4 @@
 #include "mkr_xpath_internal.h"
-#include "../lexbor_compat/compat.h" /* element index lookups (ruby-free) */
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/ns/ns.h>
@@ -572,7 +571,9 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     return 0;
   }
   void *eidx = mkr_ctx_element_index(ctx);
-  if (eidx == NULL || mkr_element_index_has_foreign(eidx)) {
+  mkr_tag_index_lookup_t  lookup      = mkr_ctx_tag_lookup(ctx);
+  mkr_tag_index_foreign_t has_foreign = mkr_ctx_tag_has_foreign(ctx);
+  if (eidx == NULL || lookup == NULL || has_foreign == NULL || has_foreign(eidx)) {
     return 0;
   }
   lxb_dom_document_t *doc = mkr_ctx_document(ctx);
@@ -589,7 +590,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     return 0;
   }
   size_t cnt = 0;
-  lxb_dom_node_t *const *bucket = mkr_element_index_tag(eidx, tag, &cnt);
+  lxb_dom_node_t *const *bucket = lookup(eidx, tag, &cnt);
   for (size_t i = 0; i < cnt; ++i) {
     lxb_dom_node_t *n = bucket[i];
     if (node_principal_match(&step->test, n, step->axis, ctx)) {

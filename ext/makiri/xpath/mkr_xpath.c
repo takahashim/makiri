@@ -50,10 +50,13 @@ struct mkr_xpath_context_s {
   /* Per-evaluate document-order index (lazy). */
   mkr_doc_order_index_t order_index;
 
-  /* Borrowed document-level element index (tag id -> elements), owned by the
-   * parsed document and set by the glue layer before evaluation. NULL when
-   * unavailable; the engine then falls back to tree walks. */
-  void *element_index;
+  /* Borrowed document-level element index (tag id -> elements) plus the lookup
+   * hooks for it, injected by the glue layer before evaluation (the engine
+   * never sees the index's concrete type). element_index == NULL or NULL hooks
+   * disable the //tag fast path; the engine then falls back to tree walks. */
+  void                    *element_index;
+  mkr_tag_index_lookup_t   tag_lookup;
+  mkr_tag_index_foreign_t  tag_has_foreign;
 };
 
 mkr_doc_order_index_t *
@@ -63,15 +66,32 @@ mkr_ctx_order_index(mkr_xpath_context_t *ctx)
 }
 
 void
-mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index)
+mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index,
+                                    mkr_tag_index_lookup_t lookup,
+                                    mkr_tag_index_foreign_t has_foreign)
 {
-  if (ctx) ctx->element_index = index;
+  if (ctx == NULL) return;
+  ctx->element_index   = index;
+  ctx->tag_lookup      = lookup;
+  ctx->tag_has_foreign = has_foreign;
 }
 
 void *
 mkr_ctx_element_index(mkr_xpath_context_t *ctx)
 {
   return ctx ? ctx->element_index : NULL;
+}
+
+mkr_tag_index_lookup_t
+mkr_ctx_tag_lookup(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->tag_lookup : NULL;
+}
+
+mkr_tag_index_foreign_t
+mkr_ctx_tag_has_foreign(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->tag_has_foreign : NULL;
 }
 
 mkr_str_cache_t *

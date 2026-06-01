@@ -2,6 +2,7 @@
 #define MKR_XPATH_H
 
 #include <lexbor/dom/dom.h>
+#include <lexbor/tag/const.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -103,10 +104,28 @@ void  mkr_xpath_context_set_user_data(mkr_xpath_context_t *ctx, void *user_data)
 void *mkr_xpath_get_user_data       (mkr_xpath_context_t *ctx);
 void  mkr_xpath_set_func_resolver   (mkr_xpath_context_t *ctx, mkr_func_resolver_t resolver);
 
-/* Install the borrowed document-level element index (see lexbor_compat). The
- * engine uses it to answer `//tag` from the document without a tree walk; pass
- * NULL to disable. The index must outlive every evaluation made on ctx. */
-void  mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index);
+/*
+ * Element-index hooks, injected by the glue layer alongside an opaque index
+ * pointer. The engine never sees the index's concrete type — it only calls
+ * back through these, exactly as it calls Ruby only through the func resolver
+ * above. This keeps the engine free of the lexbor_compat headers.
+ *
+ *   lookup(index, tag_id, &count) -> the document-ordered bucket of elements
+ *     whose tag id == tag_id (count via *count), or NULL / *count == 0.
+ *   has_foreign(index) -> nonzero if the document contains any non-HTML-
+ *     namespace element (the //tag fast path is sound only for pure HTML).
+ */
+typedef lxb_dom_node_t *const *(*mkr_tag_index_lookup_t)(const void *index,
+                                                         lxb_tag_id_t tag_id,
+                                                         size_t *count);
+typedef int (*mkr_tag_index_foreign_t)(const void *index);
+
+/* Install the borrowed document-level element index plus its lookup hooks, used
+ * to answer `//tag` from the document without a tree walk. Pass index == NULL
+ * (or NULL hooks) to disable. The index must outlive every evaluation on ctx. */
+void  mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index,
+                                          mkr_tag_index_lookup_t lookup,
+                                          mkr_tag_index_foreign_t has_foreign);
 
 /*
  * Evaluate an XPath expression. On success returns 0 and fills *out_value.
