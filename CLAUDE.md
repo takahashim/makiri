@@ -135,7 +135,10 @@ Custom functions: unknown calls route through the engine resolver to
 `handler.<local_name with - → _>`, run under `rb_protect` (a Ruby exception
 becomes `Makiri::Error`, never a long-jump through the evaluator); node-set
 returns from a foreign document are rejected. The **namespace axis is not
-implemented** (raises "not implemented", never silently empty).
+implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
+*does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
+nodes), so this is a documented behaviour difference — see README "Differences
+from Nokogiri". `namespace-uri()`/`local-name()` are implemented.
 **Namespace matching of name tests is strict by default** (HTML5/WHATWG-faithful,
 like browsers' `document.evaluate` and `Nokogiri::HTML5`): an *unprefixed*
 element name test resolves in the HTML namespace, so `//div` matches but

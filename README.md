@@ -71,6 +71,41 @@ ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 * Drop-in replacement for every Nokogiri method. The supported subset
   is documented in `docs/API.md` (forthcoming).
 
+## Differences from Nokogiri
+
+Makiri targets a Nokogiri-compatible API, but a few query behaviours differ
+(it parses HTML5 via Lexbor and runs an original XPath engine — no libxml2).
+Detailed, test-backed notes live in `spec/conformance/README.md`.
+
+XPath:
+
+* **The `namespace::` axis is not implemented** — it raises `Makiri::Error`
+  rather than returning a silently-empty result. Nokogiri (libxml2) supports it
+  (for `<svg>` in HTML it yields the `xml` and `svg` namespace nodes). For an
+  element's namespace use `namespace-uri()` / `local-name()`, which are
+  implemented.
+* **Unprefixed name tests are namespace-strict by default** (HTML5/WHATWG-
+  faithful, like browsers' `document.evaluate` and `Nokogiri::HTML5`): `//div`
+  matches, but foreign elements need a registered prefix (`//svg:path`). Pass
+  `namespace_matching: :lax` to `Node#xpath` / `XPathContext.new` for the
+  namespace-agnostic match where `//path` finds an SVG element (the
+  `Nokogiri::HTML`/libxml2-HTML4 behaviour).
+* **`namespace-uri()` of an HTML element returns the XHTML URI** (DOM-correct,
+  as browsers report); `Nokogiri::HTML5` returns `""`.
+
+CSS:
+
+* **jQuery/Nokogiri CSS extensions are not supported** (`:contains`, `:gt`,
+  `:lt`, `:eq`, `:first`, …): Makiri uses Lexbor's standards-only selector
+  engine. Use XPath (`xpath("//p[contains(., 'x')]")`) or Enumerable
+  (`css('li')[1]`). Standard Level-4 selectors (`:is` / `:where` / `:has`) are
+  supported — some of which Nokogiri rejects.
+* **Type selectors are ASCII case-insensitive** (CSS-correct for HTML; `LI`
+  matches `<li>`); `Nokogiri::HTML5` is case-sensitive there.
+* **Class/ID selectors are matched case-insensitively regardless of quirks
+  mode** (a Lexbor behaviour); in a no-quirks document browsers and
+  `Nokogiri::HTML5` match them case-sensitively.
+
 ## Requirements
 
 * CRuby 3.2 or newer.
