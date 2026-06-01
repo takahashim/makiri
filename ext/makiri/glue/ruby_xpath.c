@@ -239,6 +239,24 @@ mkr_xpath_ctx_unwrap(VALUE self)
     return d;
 }
 
+/* XPathContext#node= : rebind the context node (must be in the same document),
+ * so the context can be reused to evaluate relative expressions against
+ * several nodes. Namespace/variable registrations are preserved. */
+static VALUE
+mkr_xpath_ctx_set_node(VALUE self, VALUE rb_node)
+{
+    if (!rb_obj_is_kind_of(rb_node, mkr_cNode)) {
+        rb_raise(rb_eTypeError, "expected a Makiri::Node");
+    }
+    mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    if (mkr_node_document(rb_node) != d->document) {
+        rb_raise(mkr_eError, "context node must belong to the same document");
+    }
+    d->node = rb_node; /* keepalive; marked in mkr_xpath_ctx_mark */
+    mkr_ctx_set_node(d->ctx, mkr_node_unwrap(rb_node));
+    return rb_node;
+}
+
 /* ------------------------------------------------------------------ */
 /* custom function handler bridge                                     */
 /* ------------------------------------------------------------------ */
@@ -651,6 +669,7 @@ mkr_init_xpath(void)
     rb_define_method(mkr_cXPathContext, "evaluate", mkr_xpath_ctx_evaluate, -1);
     rb_define_method(mkr_cXPathContext, "register_namespace", mkr_xpath_ctx_register_ns, 2);
     rb_define_method(mkr_cXPathContext, "register_variable",  mkr_xpath_ctx_register_variable, 2);
+    rb_define_method(mkr_cXPathContext, "node=", mkr_xpath_ctx_set_node, 1);
 
     rb_define_method(mkr_cNode, "xpath",    mkr_node_xpath,    -1);
     rb_define_method(mkr_cNode, "at_xpath", mkr_node_at_xpath, -1);

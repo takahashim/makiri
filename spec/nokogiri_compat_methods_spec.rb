@@ -115,4 +115,49 @@ RSpec.describe "Nokogiri-compatible convenience methods" do
       expect(doc.at_css("head title")).not_to be_nil
     end
   end
+
+  describe "Node#matches?" do
+    it "tests the node itself against a CSS selector" do
+      expect(el.matches?("div.a")).to be(true)
+      expect(el.matches?("span")).to be(false)
+      expect(doc.at_css("p").matches?("div > p")).to be(true)
+    end
+
+    it "raises on a malformed selector" do
+      expect { el.matches?("div[") }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+  end
+
+  describe "Document#quirks_mode" do
+    it "reports the parse mode (0 no-quirks, 1 quirks, 2 limited-quirks)" do
+      expect(Makiri::HTML("<!DOCTYPE html><html></html>").quirks_mode).to eq(0)
+      expect(Makiri::HTML("<html></html>").quirks_mode).to eq(1)
+    end
+  end
+
+  describe "Document#create_comment" do
+    it "creates a detached comment node" do
+      c = doc.create_comment("note <here>")
+      expect(c).to be_a(Makiri::Comment)
+      expect(c.text).to eq("note <here>")
+      el.add_child(c)
+      expect(el.inner_html).to end_with("<!--note <here>-->")
+    end
+  end
+
+  describe "XPathContext#node=" do
+    it "rebinds the context node (same document)" do
+      ctx = Makiri::XPathContext.new(doc)
+      ctx.node = doc.at_css("p")
+      expect(ctx.evaluate("string(.)")).to eq("hi")
+      ctx.node = el
+      expect(ctx.evaluate("count(.//p)")).to eq(1.0)
+    end
+
+    it "rejects a node from another document" do
+      ctx = Makiri::XPathContext.new(doc)
+      expect { ctx.node = Makiri::HTML("<p/>").at_css("p") }
+        .to raise_error(Makiri::Error)
+    end
+  end
 end

@@ -113,6 +113,69 @@ mkr_css_query(VALUE self, VALUE rb_selector, int first_only)
     return set;
 }
 
+/* Callback for matches?: signals that the node matched the selector. */
+static lxb_status_t
+mkr_css_match_cb(lxb_dom_node_t *node, lxb_css_selector_specificity_t spec,
+                 void *ctx_)
+{
+    (void)node; (void)spec;
+    *(int *)ctx_ = 1;
+    return LXB_STATUS_STOP;
+}
+
+/* Node#matches?(selector): does THIS node match the CSS selector? (Like
+ * Nokogiri — tested against the node itself, not its descendants.) A malformed
+ * selector raises Makiri::CSS::SyntaxError. */
+static VALUE
+mkr_node_matches(VALUE self, VALUE rb_selector)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    VALUE sel = rb_String(rb_selector);
+    const lxb_char_t *s = (const lxb_char_t *)RSTRING_PTR(sel);
+    size_t slen = (size_t)RSTRING_LEN(sel);
+
+    lxb_css_memory_t    *mem       = lxb_css_memory_create();
+    lxb_css_parser_t    *parser    = lxb_css_parser_create();
+    lxb_css_selectors_t *css_sel   = lxb_css_selectors_create();
+    lxb_selectors_t     *selectors = lxb_selectors_create();
+    lxb_css_selector_list_t *list  = NULL;
+
+    int ok = (mem != NULL && parser != NULL && css_sel != NULL && selectors != NULL);
+    if (ok) {
+        ok = (lxb_css_memory_init(mem, 128) == LXB_STATUS_OK)
+          && (lxb_css_parser_init(parser, NULL) == LXB_STATUS_OK)
+          && (lxb_css_selectors_init(css_sel) == LXB_STATUS_OK)
+          && (lxb_selectors_init(selectors) == LXB_STATUS_OK);
+    }
+
+    int syntax_error = 0;
+    int matched = 0;
+    if (ok) {
+        lxb_css_parser_memory_set(parser, mem);
+        lxb_css_parser_selectors_set(parser, css_sel);
+        list = lxb_css_selectors_parse(parser, s, slen);
+        if (list == NULL || parser->status != LXB_STATUS_OK) {
+            syntax_error = 1;
+        } else {
+            (void)lxb_selectors_match_node(selectors, node, list,
+                                           mkr_css_match_cb, &matched);
+        }
+    }
+
+    if (selectors != NULL) lxb_selectors_destroy(selectors, true);
+    if (parser != NULL)    lxb_css_parser_destroy(parser, true);
+    if (mem != NULL)       lxb_css_memory_destroy(mem, true);
+    if (css_sel != NULL)   lxb_css_selectors_destroy(css_sel, true);
+
+    if (!ok) {
+        rb_raise(mkr_eError, "failed to initialise CSS selector engine");
+    }
+    if (syntax_error) {
+        rb_raise(mkr_eCSSSyntaxError, "invalid CSS selector: %" PRIsVALUE, sel);
+    }
+    return matched ? Qtrue : Qfalse;
+}
+
 static VALUE
 mkr_node_css(VALUE self, VALUE rb_selector)
 {
@@ -129,6 +192,7 @@ mkr_node_at_css(VALUE self, VALUE rb_selector)
 void
 mkr_init_css(void)
 {
-    rb_define_method(mkr_cNode, "css",    mkr_node_css,    1);
-    rb_define_method(mkr_cNode, "at_css", mkr_node_at_css, 1);
+    rb_define_method(mkr_cNode, "css",     mkr_node_css,     1);
+    rb_define_method(mkr_cNode, "at_css",  mkr_node_at_css,  1);
+    rb_define_method(mkr_cNode, "matches?", mkr_node_matches, 1);
 }

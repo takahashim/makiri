@@ -371,6 +371,15 @@ mkr_doc_internal_subset(VALUE self)
     return Qnil;
 }
 
+/* The document's quirks mode as an Integer matching Lexbor's
+ * lxb_dom_document_cmode_t (and Gumbo/Nokogiri): 0 = no-quirks, 1 = quirks,
+ * 2 = limited-quirks. Set by the parser from the doctype. */
+static VALUE
+mkr_doc_quirks_mode(VALUE self)
+{
+    return INT2NUM((int)mkr_doc_unwrap(self)->compat_mode);
+}
+
 /* Parse warnings. Reserved; currently always empty. */
 static VALUE
 mkr_doc_errors(VALUE self)
@@ -388,6 +397,7 @@ mkr_init_document(void)
     rb_define_method(mkr_cDocument, "title",    mkr_doc_title,    0);
     rb_define_method(mkr_cDocument, "errors",   mkr_doc_errors,   0);
     rb_define_method(mkr_cDocument, "internal_subset", mkr_doc_internal_subset, 0);
+    rb_define_method(mkr_cDocument, "quirks_mode", mkr_doc_quirks_mode, 0);
     rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, -1);
 
     rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, -1);

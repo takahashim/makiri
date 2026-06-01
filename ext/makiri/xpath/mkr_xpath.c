@@ -440,6 +440,12 @@ mkr_ctx_node(mkr_xpath_context_t *ctx)
   return ctx ? ctx->node : NULL;
 }
 
+void
+mkr_ctx_set_node(mkr_xpath_context_t *ctx, lxb_dom_node_t *node)
+{
+  if (ctx) ctx->node = node;
+}
+
 lxb_dom_document_t *
 mkr_ctx_document(mkr_xpath_context_t *ctx)
 {

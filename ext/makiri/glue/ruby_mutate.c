@@ -393,6 +393,19 @@ mkr_doc_create_text_node(VALUE self, VALUE rb_text)
     return mkr_wrap_node(lxb_dom_interface_node(t), self);
 }
 
+static VALUE
+mkr_doc_create_comment(VALUE self, VALUE rb_text)
+{
+    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    VALUE text = rb_String(rb_text);
+    lxb_dom_comment_t *c = lxb_dom_document_create_comment(
+        doc, (const lxb_char_t *)RSTRING_PTR(text), (size_t)RSTRING_LEN(text));
+    if (c == NULL) {
+        rb_raise(mkr_eError, "failed to create comment");
+    }
+    return mkr_wrap_node(lxb_dom_interface_node(c), self);
+}
+
 void
 mkr_init_mutate(void)
 {
@@ -417,4 +430,5 @@ mkr_init_mutate(void)
 
     rb_define_method(mkr_cDocument, "create_element",   mkr_doc_create_element,   1);
     rb_define_method(mkr_cDocument, "create_text_node", mkr_doc_create_text_node, 1);
+    rb_define_method(mkr_cDocument, "create_comment",   mkr_doc_create_comment,   1);
 }

@@ -543,6 +543,8 @@ const char *mkr_ctx_lookup_ns(struct mkr_xpath_context_s *ctx,
 
 /* The context node and document — exposed to the evaluator. */
 lxb_dom_node_t     *mkr_ctx_node(struct mkr_xpath_context_s *ctx);
+void                mkr_ctx_set_node(struct mkr_xpath_context_s *ctx,
+                                     lxb_dom_node_t *node);
 lxb_dom_document_t *mkr_ctx_document(struct mkr_xpath_context_s *ctx);
 mkr_xpath_limits_t  *mkr_ctx_limits (struct mkr_xpath_context_s *ctx);
 mkr_func_resolver_t  mkr_ctx_func_resolver(struct mkr_xpath_context_s *ctx);
