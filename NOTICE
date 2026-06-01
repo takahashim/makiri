@@ -1,0 +1,12 @@
+Makiri
+Copyright 2026 Makiri contributors
+
+This product includes software developed by:
+
+* Lexbor (vendored as a git submodule under vendor/lexbor)
+  Copyright (C) Alexander Borisov
+  Licensed under the Apache License, Version 2.0
+  https://lexbor.com / https://github.com/lexbor/lexbor
+
+The XPath 1.0 engine under ext/makiri/xpath/ is an original implementation
+written for this project. No code is derived from libxml2 or libxslt.

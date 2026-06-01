@@ -1,0 +1,116 @@
+# frozen_string_literal: true
+
+require "bundler/gem_tasks"
+require "rspec/core/rake_task"
+require "rake/extensiontask"
+
+GEMSPEC = Gem::Specification.load("makiri.gemspec")
+
+Rake::ExtensionTask.new("makiri", GEMSPEC) do |ext|
+  ext.lib_dir       = "lib/makiri"
+  ext.ext_dir       = "ext/makiri"
+  ext.source_pattern = "**/*.{c,h}"
+end
+
+RSpec::Core::RakeTask.new(:spec)
+
+task default: %i[compile spec]
+
+# `rake clean` (from rake-compiler) removes the ext build dir under tmp/,
+# including the generated Makefile. The next `rake compile` re-runs extconf,
+# so newly-added .c files are picked up — without this, a stale Makefile omits
+# new sources and macOS's -undefined dynamic_lookup turns the missing symbols
+# into runtime NULL calls. The vendored Lexbor build is deliberately NOT wiped
+# here (it is slow to rebuild and rarely changes); use `rake clean:lexbor` for
+# a from-scratch Lexbor build.
+#
+#   rake clean compile     # regenerate ext Makefile + recompile (fast)
+#   rake clean:lexbor      # force a full Lexbor rebuild next compile
+
+namespace :clean do
+  desc "Remove the vendored Lexbor build/install output (forces a full rebuild)"
+  task :lexbor do
+    require "fileutils"
+    FileUtils.rm_rf("vendor/lexbor/build")
+    FileUtils.rm_rf("vendor/lexbor/dist")
+  end
+end
+
+# Locate the AddressSanitizer runtime shared library for the active compiler, so
+# it can be preloaded ahead of Ruby (sanitized extensions dlopen'd late
+# otherwise abort with "ASan runtime does not come first").
+def asan_runtime_path
+  cc = RbConfig::CONFIG["CC"] || "cc"
+  names =
+    if RbConfig::CONFIG["target_os"] =~ /darwin/
+      %w[libclang_rt.asan_osx_dynamic.dylib]
+    else
+      arch = RUBY_PLATFORM[/x86_64|aarch64|arm64/] || "x86_64"
+      ["libasan.so", "libclang_rt.asan-#{arch}.so", "libclang_rt.asan.so"]
+    end
+  names.each do |name|
+    path = `#{cc} -print-file-name=#{name} 2>/dev/null`.strip
+    return path if path != name && !path.empty? && File.exist?(path)
+  end
+  nil
+end
+
+desc "Build the extension with sanitizers (MAKIRI_SANITIZE, default " \
+     "address,undefined) and run the spec suite under them"
+task :sanitize do
+  sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+  sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
+
+  env = {
+    # LeakSanitizer would flag Ruby's intentional caches; the interpreter is not
+    # instrumented, so silence the noise and keep real heap/UB findings fatal.
+    "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
+                       "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
+    "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+  }
+  if sanitize.include?("address")
+    runtime = asan_runtime_path or
+      abort "sanitize: could not locate the ASan runtime for #{RbConfig::CONFIG['CC']}"
+    preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
+    env[preload] = runtime
+    puts "sanitize: preloading #{runtime} via #{preload}"
+  end
+
+  sh(env, "#{FileUtils::RUBY} -S rspec")
+end
+
+desc "Run the robustness fuzzer (override options via FUZZ_ARGS)"
+task fuzz: :compile do
+  sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}"
+end
+
+desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
+task bench: :compile do
+  # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)
+  # resolve from system RubyGems without polluting the runtime dependency set.
+  Bundler.with_unbundled_env do
+    sh "#{FileUtils::RUBY} -Ilib bench/bench.rb"
+  end
+end
+
+namespace :fuzz do
+  desc "Run the fuzzer under AddressSanitizer (rebuilds the ext; --isolated)"
+  task :sanitize do
+    sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+    sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
+
+    env = {
+      "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
+                         "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
+      "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+    }
+    if sanitize.include?("address")
+      runtime = asan_runtime_path or
+        abort "fuzz:sanitize: could not locate the ASan runtime"
+      preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
+      env[preload] = runtime
+    end
+    args = ENV["FUZZ_ARGS"] || "--isolated --time 120"
+    sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{args}")
+  end
+end

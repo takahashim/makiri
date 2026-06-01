@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    name: Ruby ${{ matrix.ruby }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        ruby: ["3.2", "3.3", "3.4"]
+
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Compile the extension (builds vendored Lexbor, then the ext)
+        run: bundle exec rake compile
+
+      - name: Run the test suite
+        run: bundle exec rake spec
+
+      - name: Smoke-load the gem
+        run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
+
+  sanitize:
+    name: AddressSanitizer + UBSan (Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.3", "3.4"]
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      # Builds the ext with -fsanitize=address,undefined and runs the whole
+      # spec suite with the ASan runtime preloaded. Any heap/UB error aborts
+      # the run with a non-zero exit, failing the job.
+      - name: Build + test under sanitizers
+        run: bundle exec rake sanitize
