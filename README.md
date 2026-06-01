@@ -68,8 +68,15 @@ ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 * XML parsing (HTML only).
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.
 * Streaming / SAX parsing.
-* Drop-in replacement for every Nokogiri method. The supported subset
-  is documented in `docs/API.md` (forthcoming).
+* Drop-in replacement for every Nokogiri method. Makiri covers the common
+  HTML-scraping and -manipulation surface (`[]`/`attr`, `classes`/`add_class`,
+  `css`/`xpath`/`at_*`, `traverse`, the mutation API, `content`/`text`,
+  serialization via `to_html`). Deliberately **not** provided: XML/XHTML
+  serialization variants (`to_xml`, `to_xhtml`, `write_xml_to`); XML/DTD
+  construction (`create_internal_subset`, `external_subset`); namespace
+  introspection beyond `namespace-uri()` (`namespace_definitions`,
+  `add_namespace`, `collect_namespaces`); and Nokogiri internals (`decorate`,
+  `slop!`, `validate`). Use `Node#xpath` / Enumerable for anything else.
 
 ## Differences from Nokogiri
 

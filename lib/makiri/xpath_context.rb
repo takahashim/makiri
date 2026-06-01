@@ -16,5 +16,21 @@ module Makiri
   class XPathContext
     # Nokogiri-compatible name for {#register_namespace}.
     alias register_ns register_namespace
+
+    # Register several prefix => URI namespace bindings at once.
+    # @param bindings [Hash{String => String}]
+    # @return [self]
+    def register_namespaces(bindings)
+      bindings.each { |prefix, uri| register_namespace(prefix.to_s, uri.to_s) }
+      self
+    end
+
+    # Register several name => value variable bindings at once.
+    # @param bindings [Hash{String => Object}]
+    # @return [self]
+    def register_variables(bindings)
+      bindings.each { |name, value| register_variable(name.to_s, value) }
+      self
+    end
   end
 end

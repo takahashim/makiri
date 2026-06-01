@@ -28,6 +28,19 @@ module Makiri
       at_css("head")
     end
 
+    # Set the document title, creating <title> (in <head>) if absent.
+    # @param text [String]
+    # @return [String]
+    def title=(text)
+      t = at_css("title")
+      unless t
+        t = Element.new("title", self)
+        (head || root).add_child(t)
+      end
+      t.content = text
+      text
+    end
+
     # Makiri parses and stores everything as UTF-8 (callers decode bytes before
     # parsing), so the in-memory encoding is always UTF-8.
     # @return [String]

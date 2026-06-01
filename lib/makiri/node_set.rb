@@ -61,6 +61,19 @@ module Makiri
       map { |node| node.xpath(expr) }.reduce(:|)
     end
 
+    # First node matching the CSS selector across the set, or nil.
+    # @return [Makiri::Node, nil]
+    def at_css(selector)
+      css(selector).first
+    end
+
+    # First node matching the XPath expression across the set (or the scalar
+    # value for a non-node-set result).
+    def at_xpath(expr)
+      result = xpath(expr)
+      result.is_a?(NodeSet) ? result.first : result
+    end
+
     # CSS- or XPath-detecting query against every node (see {Node#search}).
     # @return [Makiri::NodeSet]
     def search(path)
@@ -68,6 +81,14 @@ module Makiri
 
       map { |node| node.search(path) }.reduce(:|)
     end
+
+    # Remove the named attribute from every node in the set.
+    # @return [self]
+    def remove_attr(name)
+      each { |node| node.delete(name) }
+      self
+    end
+    alias remove_attribute remove_attr
 
     # Detach every node in the set from its tree.
     # @return [self]

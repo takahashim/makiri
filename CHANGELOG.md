@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* More Nokogiri-compatible convenience methods (pure Ruby over the core API):
+  `Node#{attr,get_attribute,attribute,set_attribute,has_attribute?,
+  remove_attribute,node_name,node_name=,type,elem?,fragment?,blank?}`, the CSS
+  class helpers `Node#{classes,add_class,append_class,remove_class}`,
+  `Node#traverse`, `NodeSet#{at_css,at_xpath,remove_attr,remove_attribute}`,
+  `XPathContext#{register_namespaces,register_variables}`, and `Document#title=`.
 * CSS Selectors conformance coverage: `spec/conformance/css_selectors_spec.rb`
   (a resident, browser-authoritative regression for `Node#css` — supported
   selector surface and glue semantics, run by `rake spec`) and `css_diff.rb` /

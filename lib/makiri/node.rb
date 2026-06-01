@@ -42,6 +42,80 @@ module Makiri
       is_a?(DocumentFragment)
     end
 
+    # @return [Boolean] true for a blank/whitespace-only text or CDATA node.
+    def blank?
+      (text? || is_a?(CData)) && content.strip.empty?
+    end
+
+    # --- Nokogiri-compatible aliases over the core API ---
+
+    # Attribute value by name (alias for {#[]}). Use {#attribute} for the node.
+    alias_method :attr, :[]
+    alias_method :get_attribute, :[]
+    alias_method :has_attribute?, :key?
+    alias_method :remove_attribute, :delete
+    alias_method :node_name, :name
+    alias_method :node_name=, :name=
+    alias_method :type, :node_type
+    alias_method :elem?, :element?
+    alias_method :fragment?, :document_fragment?
+
+    # Set an attribute (alias for {#[]=}). @return [String]
+    def set_attribute(name, value)
+      self[name] = value
+    end
+
+    # The Attribute node named +name+, or nil (cf. {#[]}, which returns the value).
+    # @return [Makiri::Attribute, nil]
+    def attribute(name)
+      attributes[name.to_s]
+    end
+
+    # --- CSS class helpers (operate on the `class` attribute) ---
+
+    # @return [Array<String>] the element's class names.
+    def classes
+      self["class"].to_s.split(/\s+/).reject(&:empty?)
+    end
+
+    # Add each class in +names+ (space-separated) that is not already present.
+    # @return [self]
+    def add_class(names)
+      have = classes
+      have.concat(names.to_s.split(/\s+/).reject { |c| c.empty? || have.include?(c) })
+      self["class"] = have.join(" ")
+      self
+    end
+
+    # Append each class in +names+ unconditionally (duplicates allowed).
+    # @return [self]
+    def append_class(names)
+      self["class"] = (classes + names.to_s.split(/\s+/).reject(&:empty?)).join(" ")
+      self
+    end
+
+    # Remove each class in +names+ (or every class when +names+ is nil); drops
+    # the `class` attribute entirely when none remain.
+    # @return [self]
+    def remove_class(names = nil)
+      if names.nil?
+        delete("class")
+      else
+        remaining = classes - names.to_s.split(/\s+/)
+        remaining.empty? ? delete("class") : (self["class"] = remaining.join(" "))
+      end
+      self
+    end
+
+    # Yield this node and every descendant, depth-first, children before self
+    # (post-order, matching Nokogiri).
+    # @return [self]
+    def traverse(&block)
+      children.each { |child| child.traverse(&block) }
+      block.call(self)
+      self
+    end
+
     # The root element of the owning document (e.g. <html>).
     # @return [Makiri::Element, nil]
     def root
