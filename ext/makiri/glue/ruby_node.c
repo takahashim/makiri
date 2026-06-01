@@ -170,6 +170,35 @@ mkr_doctype_system_id(VALUE self)
     return mkr_doctype_id(self, 1);
 }
 
+/*
+ * A <template> element's "template contents" — the separate DocumentFragment
+ * the HTML parser fills instead of making the parsed nodes children of the
+ * <template> (WHATWG DOM `HTMLTemplateElement.content`; browsers behave the
+ * same: template.children is empty, template.content holds the nodes). Lexbor
+ * stores it on the template interface; we surface it as a Makiri::DocumentFragment
+ * so it can be traversed/queried (`tpl.content_fragment.css("p")`).
+ *
+ * Returns nil for any node that is not an HTML <template>. Note: CSS/XPath over
+ * the *template element itself* deliberately do NOT descend into the content
+ * (matching the DOM, and unavoidable for CSS since it runs Lexbor's selector
+ * engine over the real tree) — query the fragment instead.
+ */
+static VALUE
+mkr_node_content_fragment(VALUE self)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT
+        || node->local_name != LXB_TAG_TEMPLATE
+        || node->ns != LXB_NS_HTML) {
+        return Qnil;
+    }
+    lxb_dom_document_fragment_t *content = lxb_html_interface_template(node)->content;
+    if (content == NULL) {
+        return Qnil;
+    }
+    return mkr_wrap_node((lxb_dom_node_t *)content, mkr_node_document(self));
+}
+
 /* Concatenated text content of this node and its descendants. The DOM spec
  * makes a Document's textContent null; we instead return the text of the root
  * element (matching the intuitive, Nokogiri-like Document#text). */
@@ -557,4 +586,7 @@ mkr_init_node(void)
     rb_define_method(mkr_cDocumentType, "public_id",   mkr_doctype_public_id, 0);
     rb_define_method(mkr_cDocumentType, "external_id", mkr_doctype_public_id, 0);
     rb_define_method(mkr_cDocumentType, "system_id",   mkr_doctype_system_id, 0);
+
+    /* <template> contents (WHATWG DOM HTMLTemplateElement.content). */
+    rb_define_method(mkr_cElement, "content_fragment", mkr_node_content_fragment, 0);
 }

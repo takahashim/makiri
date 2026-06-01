@@ -38,31 +38,35 @@ html5lib-tests via a sparse, blobless clone into `data/` (gitignored) on first
 run. Bump `DATA_COMMIT` in the runner to update.
 
 **Scope (v1):** full-document tests only. `#document-fragment` and `#script-on`
-tests are counted and skipped (not silently dropped). Tests whose expected tree
-exercises DOM detail Makiri's Ruby surface cannot represent are reclassified as
-*unsupported* (see findings), never scored as parse failures.
+tests are counted and skipped (not silently dropped). A test whose expected tree
+exercises a DOM detail Makiri's Ruby surface cannot represent at all would be
+reclassified as *unsupported* rather than scored as a parse failure; in practice
+that count is now 0 (see findings).
 
 ### Result
 
 ```
-ran 1468  pass 1468  fail 0  error 0   (100.00% of ran)
+ran 1578  pass 1578  fail 0  error 0   (100.00% of ran)
 skipped: 192 fragment, 8 script
-unsupported: 110 (template content 110)
+unsupported: 0
 ```
 
 **Makiri's HTML5 parsing matches html5lib-tests exactly** on every test its Ruby
-API can represent.
+API can represent. The only tests not run are fragment parsing (192) and
+scripting-on (8), both out of v1 scope (see Extending).
 
-### Findings (Makiri Ruby-API gaps, not parse bugs)
+### Findings (Makiri Ruby-API gaps surfaced by the suite, both since FIXED)
 
-1. **`<template>` content is unreachable (110 tests, unsupported).** Per the
-   HTML spec a template's contents live in a separate "template contents"
-   `DocumentFragment`, not as children of the `<template>` element. Lexbor
-   stores them there; Makiri's `children` / `css` / `xpath` walk only the normal
-   child chain, so `template.children` is empty and the content is invisible
-   from Ruby. A tree detail Lexbor parses correctly but Makiri does not expose,
-   so the runner reclassifies these as *unsupported* (a candidate for future API
-   work), never as parse failures.
+1. **`<template>` content (110 tests) — now exposed (FIXED).** Per the HTML
+   spec a template's contents live in a separate "template contents"
+   `DocumentFragment`, not as children of the `<template>` element (browsers
+   behave the same: `template.children` is empty, `template.content` holds the
+   nodes). Lexbor stores them there; Makiri now surfaces the fragment via
+   `Element#content_fragment`, so `tpl.content_fragment.css("p")` works and the
+   dump renders the html5lib `content` pseudo-node. CSS/XPath over the template
+   element itself still do NOT descend into the content (matching the DOM, and
+   unavoidable for CSS since it runs Lexbor's unpatched selector engine over the
+   real tree) — query the fragment instead.
 2. **Doctype public/system identifiers (21 tests) — now exposed (FIXED).**
    Lexbor parses `<!DOCTYPE html PUBLIC "..." "...">` correctly; Makiri now
    surfaces it via `Makiri::DocumentType#{public_id,external_id,system_id}` and

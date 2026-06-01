@@ -46,10 +46,26 @@ module Html5libDump
   def dump_document(doc)
     # Fast path: namespace handling only matters when foreign content exists.
     # Detecting it once lets the common pure-HTML document skip per-node XPath.
-    foreign = !doc.css("svg, math").empty?
+    # We can't use doc.css("svg, math") — Lexbor's selector engine does not
+    # descend into <template> content, so foreign content nested in a template
+    # would be missed — so walk the tree (including template fragments).
+    foreign = subtree_has_foreign?(doc)
     lines = []
     doc.children.each { |child| dump_node(child, 0, lines, foreign) }
     lines.join("\n")
+  end
+
+  # Does this subtree contain any SVG/MathML element? Descends into <template>
+  # content fragments (which CSS/XPath over the host tree do not reach).
+  def subtree_has_foreign?(node)
+    node.children.each do |c|
+      next unless c.node_type == 1 # element
+
+      return true if c.name == "svg" || c.name == "math"
+      return true if subtree_has_foreign?(c)
+    end
+    cf = node.node_type == 1 ? node.content_fragment : nil
+    cf ? subtree_has_foreign?(cf) : false
   end
 
   def dump_node(node, depth, lines, foreign)
@@ -58,11 +74,16 @@ module Html5libDump
     when 1 # element
       lines << pad + element_open(node, foreign)
       dump_attributes(node, depth + 1, lines, foreign)
-      # NOTE: <template> contents are NOT emitted here — Lexbor keeps them in a
-      # separate "template contents" fragment that Makiri's Ruby surface does
-      # not expose, so node.children is empty for a template. The runner
-      # reclassifies such tests as an unsupported API gap.
-      node.children.each { |c| dump_node(c, depth + 1, lines, foreign) }
+      # A <template>'s parsed nodes live in its content fragment, not as
+      # children; html5lib renders them under a "content" pseudo-node. Makiri
+      # exposes the fragment via Element#content_fragment.
+      cf = node.content_fragment
+      if cf
+        lines << "| " + ("  " * (depth + 1)) + "content"
+        cf.children.each { |c| dump_node(c, depth + 2, lines, foreign) }
+      else
+        node.children.each { |c| dump_node(c, depth + 1, lines, foreign) }
+      end
     when 3 # text
       # Raw characters wrapped in double quotes (newlines kept literal) — NOT
       # Ruby String#inspect escaping.

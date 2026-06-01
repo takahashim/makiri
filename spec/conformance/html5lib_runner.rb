@@ -15,10 +15,10 @@
 #
 # Scope of v1: full-document tests only. Fragment tests (#document-fragment)
 # and scripting-on tests (#script-on) are counted and skipped, not run, so the
-# pass rate is never inflated by silently dropping hard cases. Tests whose
-# expected dump exercises DOM details Makiri does not expose on the Ruby
-# surface (doctype public/system ids, <template> content) are reported as
-# "unsupported" rather than failed.
+# pass rate is never inflated by silently dropping hard cases. A test whose
+# expected dump exercises a DOM detail Makiri cannot represent on the Ruby
+# surface at all (e.g. a processing-instruction node) is reported as
+# "unsupported" rather than failed; in practice this count is now 0.
 #
 # Usage:
 #   ruby -Ilib spec/conformance/html5lib_runner.rb
@@ -120,18 +120,6 @@ def parse_dat(path)
   tests
 end
 
-# Known Makiri Ruby-API gaps that make a test unrepresentable (not a parse
-# divergence). Returns :template / nil. A gap is only credited when it FULLY
-# explains the diff, so a real divergence in the same test still scores as a
-# failure.
-def known_api_gap(expected, _actual)
-  # <template> contents live in a separate fragment Makiri does not expose;
-  # the expected dump marks it with a "content" pseudo-node.
-  return :template if expected.match?(/^\|\s+content$/)
-
-  nil
-end
-
 # --- run -------------------------------------------------------------------
 
 files =
@@ -179,12 +167,6 @@ files.each do |path|
 
     if actual == t.document
       stats[:pass] += 1
-    elsif (gap = known_api_gap(t.document, actual))
-      # The parse is (very likely) correct, but Makiri's Ruby surface cannot
-      # represent the node, so we can neither match the dump nor score it as a
-      # parse divergence. These two gaps are documented in the README.
-      stats[:"unsupported_#{gap}"] += 1
-      stats[:unsupported] += 1
     else
       stats[:fail] += 1
       diffs << [t, t.document, actual]
@@ -223,8 +205,7 @@ puts "html5lib-tests tree-construction (data @#{DATA_COMMIT[0, 12]})"
 puts "  total tests     : #{stats[:total]}"
 puts "  skipped fragment: #{stats[:skip_fragment]}"
 puts "  skipped script  : #{stats[:skip_script]}"
-puts "  unsupported     : #{stats[:unsupported]} " \
-     "(template content: #{stats[:unsupported_template]})"
+puts "  unsupported     : #{stats[:unsupported]}"
 puts "  ran             : #{run}"
 puts "  pass            : #{stats[:pass]}"
 puts "  fail            : #{stats[:fail]}"

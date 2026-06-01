@@ -149,4 +149,33 @@ RSpec.describe Makiri::Node do
       expect(div == "div").to be(false)
     end
   end
+
+  describe "#content_fragment (template contents)" do
+    let(:tdoc) do
+      Makiri::HTML('<body><template id="t"><p>hi</p><span>x</span></template><div>plain</div></body>')
+    end
+    let(:tpl) { tdoc.at_css("#t") }
+
+    it "exposes a <template>'s contents as a DocumentFragment" do
+      cf = tpl.content_fragment
+      expect(cf).to be_a(Makiri::DocumentFragment)
+      expect(cf.children.map(&:name)).to eq(%w[p span])
+    end
+
+    it "is queryable (the contents are NOT children of the template itself)" do
+      expect(tpl.children).to be_empty            # matches the DOM: empty
+      expect(tpl.content_fragment.css("p").map(&:text)).to eq(["hi"])
+      expect(tpl.content_fragment.xpath(".//span").map(&:text)).to eq(["x"])
+    end
+
+    it "is an empty fragment for an empty template" do
+      cf = Makiri::HTML("<template></template>").at_css("template").content_fragment
+      expect(cf).to be_a(Makiri::DocumentFragment)
+      expect(cf.children).to be_empty
+    end
+
+    it "is nil for a non-template element" do
+      expect(tdoc.at_css("div").content_fragment).to be_nil
+    end
+  end
 end

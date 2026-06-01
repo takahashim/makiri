@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* `Element#content_fragment` — a `<template>`'s "template contents" as a
+  `Makiri::DocumentFragment` (WHATWG DOM `HTMLTemplateElement.content`; nil for
+  non-templates). The contents are not children of the `<template>` itself
+  (matching browsers), so query the returned fragment
+  (`tpl.content_fragment.css("p")`). CSS/XPath over the template element do not
+  descend into the content.
 * `Makiri::DocumentType` node class exposing a doctype's `public_id` /
   `system_id` (with `external_id` as a Nokogiri-compatible alias for the public
   id), plus `Document#internal_subset` to fetch it. Reads the identifiers Lexbor
