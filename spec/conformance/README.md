@@ -1,11 +1,13 @@
 # Conformance & differential testing
 
-Two harnesses that check Makiri against external standards, complementing the
+Harnesses that check Makiri against external standards, complementing the
 robustness fuzzer (`spec/fuzz/`, which only checks that Makiri never does worse
 than raise its own error). These check that Makiri is *correct*, not just safe.
 
-Neither is run by `rake spec` (the files are not `*_spec.rb`). Both need
-network/Nokogiri and so live outside the unit suite.
+The two `rake conformance:*` harnesses below need network/Nokogiri and live
+outside the unit suite (their files are not `*_spec.rb`). A third,
+`wpt_domxpath_spec.rb`, is a normal spec (pure Ruby, no Nokogiri) and runs under
+`rake spec` — see "3. XPath over HTML" below.
 
 ```bash
 rake conformance:html5     # WHATWG HTML5 parsing  vs html5lib-tests
@@ -144,6 +146,32 @@ Buckets that are tallied, not scored as bugs:
    disagreed with the indexed comparator used for larger sets. Fixed; guarded
    by `xpath_corpus.rb` (the element+attribute union cases) and a unit test in
    `spec/xpath_spec.rb`.
+
+---
+
+## 3. XPath over HTML — `wpt_domxpath_spec.rb`
+
+A hand-port of the evaluation-semantics subset of Web Platform Tests'
+[`domxpath/`](https://github.com/web-platform-tests/wpt/tree/master/domxpath)
+suite — the browser `document.evaluate` tests, the de-facto reference for XPath
+over the HTML DOM. Unlike the harnesses above this is a plain `*_spec.rb` (pure
+Ruby, no Nokogiri), so it runs under `rake spec`.
+
+Ported: element/attribute name tests (incl. namespaces, non-ASCII names),
+attribute parent axis, numeric/boolean operators, lexical structure (quotes &
+whitespace), node-set operators, predicates, document order, and the string
+functions. Out of scope: the DOM Level 3 XPath *API* (XPathEvaluator / resolver
+/ XPathResult), Shadow DOM, cross-realm, crash tests.
+
+**Bugs this port found and fixed:** non-ASCII NCName name tests (lexer was
+ASCII-only), the `[@attr]` predicate matching case-insensitively (diverged from
+the attribute axis, XPath 1.0, and Nokogiri::HTML5), and `\v`/`\f` wrongly
+accepted as expression whitespace.
+
+Browser behaviours Makiri intentionally does not match are `pending` with a
+reason (a pending example that starts passing fails the run): ASCII case-folding
+of HTML name tests (Makiri and Nokogiri::HTML5 are case-sensitive), and hiding
+`xmlns` from attribute tests.
 
 ---
 

@@ -81,7 +81,11 @@ ncname_char(const char *p, int start)
 static void
 skip_ws(mkr_lexer_t *L)
 {
-  while (*L->cur && isspace((unsigned char)*L->cur)) L->cur++;
+  /* XPath 1.0 §3.7 ExprWhitespace = XML S = (#x20 | #x9 | #xD | #xA)+ only.
+   * Not C isspace(), which would also skip #xB (\v) and #xC (\f) — those are
+   * not XPath whitespace and must surface as a syntax error. */
+  char c;
+  while ((c = *L->cur) == ' ' || c == '\t' || c == '\r' || c == '\n') L->cur++;
 }
 
 static int

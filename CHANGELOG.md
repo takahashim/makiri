@@ -119,6 +119,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* XPath expression whitespace is now exactly XML S (`#x20 #x9 #xD #xA`). The
+  lexer used C `isspace()`, which also skipped `\v`/`\f`; those are not XPath
+  whitespace and now surface as a syntax error.
 * XPath name tests now accept non-ASCII NCNames. The lexer was ASCII-only, so a
   valid name test like `//dØdd` raised a SyntaxError; it now classifies name
   characters by the XML 1.0 (5th ed.) NCName ranges via a UTF-8 decoder that

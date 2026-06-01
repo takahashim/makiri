@@ -163,4 +163,150 @@ RSpec.describe "WPT domxpath (XPath over HTML)" do
       expect(ctx.xpath("node()")).to be_empty
     end
   end
+
+  # ------------------------------------------------------------------
+  # numbers.html / booleans.html  (context: 3 <span> + 2 <br> children)
+  # ------------------------------------------------------------------
+  describe "numeric and boolean operators (numbers / booleans)" do
+    let(:ctx) do
+      Makiri::HTML("<body><div><span>1</span><span>2</span><span>3</span><br><br></div></body>")
+        .at_css("div")
+    end
+
+    it "arithmetic operators (+ - * div mod)" do
+      expect(ctx.xpath("count((./span)[1]) + count(./br)")).to eq(3)
+      expect(ctx.xpath("count((./span)[1]) - count(./br)")).to eq(-1)
+      expect(ctx.xpath("count((./span)[1]) * count(./br)")).to eq(2)
+      expect(ctx.xpath("count((./span)[1]) div count(./br)")).to eq(0.5)
+      expect(ctx.xpath("count((./span)[1]) mod count(./br)")).to eq(1)
+    end
+
+    it "boolean and relational operators" do
+      expect(ctx.xpath("(./span)[4] or ./br[2]")).to be(true)
+      expect(ctx.xpath("count((./span)[3]) = count(./br[2])")).to be(true)
+      expect(ctx.xpath("count((./span)[3]) != count(./br[2])")).to be(false)
+      expect(ctx.xpath("count((./span)[3]) < count(./br)")).to be(true)
+      expect(ctx.xpath("count((./span)[3]) > count(./br[2])")).to be(false)
+      expect(ctx.xpath("count((./span)[3]) >= count(./br)")).to be(false)
+      expect(ctx.xpath("count((./span)[3]) <= count(./br[2])")).to be(true)
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # lexical-structure.html
+  # ------------------------------------------------------------------
+  describe "lexical structure (lexical-structure)" do
+    let(:doc) { Makiri::HTML("<p>x</p>") }
+
+    it "accepts ASCII straight quotes as literal delimiters, with the other embedded" do
+      expect(doc.xpath(%q{'a"bc'})).to eq('a"bc')
+      expect(doc.xpath(%Q{"a'bc"})).to eq("a'bc")
+    end
+
+    it "rejects non-ASCII (smart) quotes as literal delimiters" do
+      expect { doc.xpath("’xyz’") }.to raise_error(Makiri::XPath::SyntaxError)
+    end
+
+    it "treats only #x20/#x9/#xD/#xA as expression whitespace" do
+      expect(doc.xpath("\t\r\n.\r\n\t")).not_to be_empty            # ASCII whitespace: ok
+      expect { doc.xpath("\x0B\x0C .") }.to raise_error(Makiri::XPath::SyntaxError) # \v \f
+      expect { doc.xpath("　 .") }.to raise_error(Makiri::XPath::SyntaxError)   # ideographic space
+      expect { doc.xpath("  .") }.to raise_error(Makiri::XPath::SyntaxError)   # paragraph sep
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # node-sets.html / predicates.html / node-set-tree-order.html
+  # ------------------------------------------------------------------
+  describe "node-set operators and predicates" do
+    it "union evaluates both sides against the same context node (node-sets)" do
+      doc = Makiri::HTML("<html><body><div></div></body></html>")
+      result = doc.root.xpath("(.//div)[1]|.")
+      expect(result.map(&:name)).to eq(%w[html div]) # context node + first descendant div
+    end
+
+    it "a predicate sub-expression does not change the outer context (predicates)" do
+      doc = Makiri::HTML("<body><table></table>" \
+                         "<table><tr><th></th><th></th><th></th><th></th></tr></table>" \
+                         "<table></table></body>")
+      tables = doc.xpath("//table").to_a
+      # predicate = [count((//table)[2]//th) - 1] = [4 - 1] = [3] -> the third table
+      result = doc.xpath("(//table)[count((//table)[2]/descendant::th)-1]")
+      expect(result.length).to eq(1)
+      expect(result.first).to eq(tables.last)
+    end
+
+    it "temporary node-sets from a union are in document order (node-set-tree-order)" do
+      ctx = Makiri::HTML('<div id="container"><span></span><p id="p"></p></div>').at_css("#container")
+      # (./p | ./span) is ordered [span, p] in tree order, so last() is the <p>
+      result = ctx.xpath("(./p | ./span)[last()]")
+      expect(result.map { |n| n["id"] }).to eq(["p"])
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # fn-*.html  (string functions, mostly with context-dependent arguments)
+  # ------------------------------------------------------------------
+  describe "string functions (fn-*)" do
+    it "substring / substring-before / substring-after / translate" do
+      c = Makiri::HTML("<body><div><span>^^^bar$$$</span><b>bar</b><b>foo</b>" \
+                       "<br><br><br><br></div></body>").at_css("div")
+      expect(c.xpath("substring((./span)[1], count(./br))")).to eq("bar$$$")
+      expect(c.xpath("substring-before((./span)[1], ./b)")).to eq("^^^")
+      expect(c.xpath("substring-after((./span)[1], ./b)")).to eq("$$$")
+      expect(c.xpath("translate((./span)[1], (./b)[1], ./b[2])")).to eq("^^^foo$$$")
+    end
+
+    it "concat" do
+      c = Makiri::HTML("<body><div><span>foo</span><span>bar</span><b>ber</b></div></body>").at_css("div")
+      expect(c.xpath("concat((./span)[2], ./b)")).to eq("barber")
+    end
+
+    it "contains" do
+      c = Makiri::HTML("<body><div><span>bar bar</span><span>bar<b>ber</b></span><b>bar</b></div></body>").at_css("div")
+      expect(c.xpath("contains((./span)[1], ./b)")).to be(true)
+    end
+
+    it "starts-with" do
+      c = Makiri::HTML("<body><div><span>foo</span><span>bar<b>ber</b></span><b>bar</b></div></body>").at_css("div")
+      expect(c.xpath("starts-with((./span)[2], ./b)")).to be(true)
+    end
+
+    it "normalize-space normalizes only #x20/#x9/#xD/#xA" do
+      doc = Makiri::HTML("<body><p> a <br> b</p></body>")
+      expect(doc.at_css("p").xpath("normalize-space()")).to eq("a b")
+      expect(doc.xpath("normalize-space(' a \t  b\r\nc ')")).to eq("a b c")
+      # \v \f and other control/space chars are NOT XPath whitespace: left intact
+      expect(doc.xpath("normalize-space('y\x0B\x0C\x0E\x0Fz')")).to eq("y\x0B\x0C\x0E\x0Fz")
+      expect(doc.xpath("normalize-space('  　')")).to eq("  　")
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # fn-id.html / fn-lang.html  (adapted to the HTML id / lang attributes)
+  # ------------------------------------------------------------------
+  describe "id() and lang()" do
+    let(:doc) do
+      Makiri::HTML('<body><div id="test1">a</div><div id="test2">b</div>' \
+                   '<div id="test-1">c</div></body>')
+    end
+
+    it "id() resolves IDs, splits on whitespace, and is case-sensitive" do
+      expect(doc.xpath('id("test1")').map { |n| n["id"] }).to eq(["test1"])
+      expect(doc.xpath('id("test1 test2")').map { |n| n["id"] }).to eq(%w[test1 test2])
+      expect(doc.xpath('id("test-1")').map { |n| n["id"] }).to eq(["test-1"])
+      expect(doc.xpath('id(" test1 ")').map { |n| n["id"] }).to eq(["test1"]) # trimmed/split
+      expect(doc.xpath('id("Test1")')).to be_empty   # case-sensitive
+      expect(doc.xpath('id("nonexistent")')).to be_empty
+    end
+
+    it "lang() matches the language attribute, inheriting and case-insensitive" do
+      el = Makiri::HTML('<body><div lang="en-US"><p>x</p></div></body>').at_css("p")
+      expect(el.xpath('lang("en")')).to be(true)   # prefix match + inherited
+      expect(el.xpath('lang("EN")')).to be(true)   # case-insensitive
+      expect(el.xpath('lang("fr")')).to be(false)
+      none = Makiri::HTML("<body><p>x</p></body>").at_css("p")
+      expect(none.xpath('lang("en")')).to be(false)
+    end
+  end
 end
