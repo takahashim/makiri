@@ -188,9 +188,22 @@ mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
         rb_raise(mkr_eError, "failed to create fragment parser");
     }
 
+    /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD (valid input is used
+     * as-is, no copy). Keeps the fragment DOM valid UTF-8 without rejecting. */
+    lxb_char_t *clean = NULL;
+    size_t      clean_len = 0;
+    if (mkr_utf8_sanitize((const lxb_char_t *)RSTRING_PTR(html),
+                          (size_t)RSTRING_LEN(html), &clean, &clean_len) != 0) {
+        lxb_html_parser_destroy(parser);
+        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
+    }
+    const lxb_char_t *hsrc = (clean != NULL) ? clean
+                                             : (const lxb_char_t *)RSTRING_PTR(html);
+    size_t            hlen = (clean != NULL) ? clean_len : (size_t)RSTRING_LEN(html);
+
     lxb_dom_node_t *root = lxb_html_parse_fragment_by_tag_id(
-        parser, (lxb_html_document_t *)doc, ctx_tag, ctx_ns,
-        (const lxb_char_t *)RSTRING_PTR(html), (size_t)RSTRING_LEN(html));
+        parser, (lxb_html_document_t *)doc, ctx_tag, ctx_ns, hsrc, hlen);
+    free(clean);
     if (root == NULL) {
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to parse fragment");

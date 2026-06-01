@@ -562,6 +562,8 @@ mkr_xpath_ctx_evaluate(int argc, VALUE *argv, VALUE self)
     rb_scan_args(argc, argv, "11", &rb_expr, &handler);
 
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    StringValue(rb_expr);
+    mkr_check_text(rb_expr, "XPath expression");
     const char *expr = StringValueCStr(rb_expr);
 
     mkr_xpath_error_t error = {0};
@@ -596,6 +598,10 @@ static VALUE
 mkr_xpath_ctx_register_ns(VALUE self, VALUE rb_prefix, VALUE rb_uri)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    StringValue(rb_prefix);
+    StringValue(rb_uri);
+    mkr_check_text(rb_prefix, "namespace prefix");
+    mkr_check_text(rb_uri, "namespace URI");
     if (mkr_xpath_register_ns(d->ctx, StringValueCStr(rb_prefix),
                               StringValueCStr(rb_uri)) != 0) {
         rb_raise(mkr_eError, "failed to register namespace");
@@ -607,6 +613,8 @@ static VALUE
 mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    StringValue(rb_name);
+    mkr_check_text(rb_name, "variable name");
     VALUE value = rb_obj_as_string(rb_value);
     const char *bad =
         mkr_engine_string_reason(value, mkr_ctx_limits(d->ctx)->max_string_bytes);
@@ -631,6 +639,8 @@ static VALUE
 mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
 {
     VALUE document = mkr_node_document(self);
+    StringValue(rb_expr);
+    mkr_check_text(rb_expr, "XPath expression");
     const char *expr = StringValueCStr(rb_expr);
 
     mkr_xpath_context_t *ctx = mkr_xpath_context_for(self, document);

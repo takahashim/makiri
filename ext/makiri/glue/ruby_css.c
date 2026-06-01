@@ -51,6 +51,7 @@ mkr_css_query(VALUE self, VALUE rb_selector, int first_only)
     VALUE document = mkr_node_document(self);
 
     VALUE sel = rb_String(rb_selector);
+    mkr_check_text(sel, "CSS selector");
     const lxb_char_t *s = (const lxb_char_t *)RSTRING_PTR(sel);
     size_t slen = (size_t)RSTRING_LEN(sel);
 
@@ -131,6 +132,7 @@ mkr_node_matches(VALUE self, VALUE rb_selector)
 {
     lxb_dom_node_t *node = mkr_node_unwrap(self);
     VALUE sel = rb_String(rb_selector);
+    mkr_check_text(sel, "CSS selector");
     const lxb_char_t *s = (const lxb_char_t *)RSTRING_PTR(sel);
     size_t slen = (size_t)RSTRING_LEN(sel);
 

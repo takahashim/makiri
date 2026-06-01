@@ -195,6 +195,8 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
     }
     VALUE name  = rb_String(rb_name);
     VALUE value = rb_String(rb_value);
+    mkr_check_text(name, "attribute name");
+    mkr_check_text(value, "attribute value");
     lxb_dom_attr_t *attr = lxb_dom_element_set_attribute(
         lxb_dom_interface_element(node),
         (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name),
@@ -217,6 +219,7 @@ mkr_node_set_name(VALUE self, VALUE rb_name)
         rb_raise(mkr_eError, "name= is only supported on elements");
     }
     VALUE name = rb_String(rb_name);
+    mkr_check_text(name, "element name");
     lxb_dom_element_t *fresh = lxb_dom_document_create_element(
         node->owner_document,
         (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name), NULL);
@@ -243,6 +246,7 @@ mkr_node_set_content(VALUE self, VALUE rb_text)
 {
     lxb_dom_node_t *node = mkr_node_unwrap(self);
     VALUE text = rb_String(rb_text);
+    mkr_check_text(text, "node content");
     if (lxb_dom_node_text_content_set(
             node, (const lxb_char_t *)RSTRING_PTR(text),
             (size_t)RSTRING_LEN(text)) != LXB_STATUS_OK) {
@@ -261,6 +265,7 @@ mkr_node_delete(VALUE self, VALUE rb_name)
         return self;
     }
     VALUE name = rb_String(rb_name);
+    mkr_check_text(name, "attribute name");
     lxb_dom_element_remove_attribute(
         lxb_dom_interface_element(node),
         (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name));
@@ -285,8 +290,22 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
 {
     VALUE html = rb_String(rb_html);
 
+    /* Browser-compatible decoding: fragment HTML is parsed like a document, so
+     * invalid UTF-8 is replaced with U+FFFD rather than rejected (the DOM stays
+     * valid UTF-8). Valid input is used as-is. */
+    lxb_char_t *clean = NULL;
+    size_t      clean_len = 0;
+    if (mkr_utf8_sanitize((const lxb_char_t *)RSTRING_PTR(html),
+                          (size_t)RSTRING_LEN(html), &clean, &clean_len) != 0) {
+        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
+    }
+    const lxb_char_t *hsrc = (clean != NULL) ? clean
+                                             : (const lxb_char_t *)RSTRING_PTR(html);
+    size_t            hlen = (clean != NULL) ? clean_len : (size_t)RSTRING_LEN(html);
+
     lxb_html_parser_t *parser = lxb_html_parser_create();
     if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
+        free(clean);
         if (parser != NULL) {
             lxb_html_parser_destroy(parser);
         }
@@ -294,9 +313,9 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
     }
 
     lxb_dom_node_t *frag = lxb_html_parse_fragment(
-        parser, (lxb_html_element_t *)context_el,
-        (const lxb_char_t *)RSTRING_PTR(html), (size_t)RSTRING_LEN(html));
+        parser, (lxb_html_element_t *)context_el, hsrc, hlen);
     if (frag == NULL) {
+        free(clean);
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to parse HTML fragment");
     }
@@ -372,6 +391,7 @@ mkr_doc_create_element(VALUE self, VALUE rb_name)
 {
     lxb_dom_document_t *doc = mkr_doc_unwrap(self);
     VALUE name = rb_String(rb_name);
+    mkr_check_text(name, "element name");
     lxb_dom_element_t *el = lxb_dom_document_create_element(
         doc, (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name), NULL);
     if (el == NULL) {
@@ -385,6 +405,7 @@ mkr_doc_create_text_node(VALUE self, VALUE rb_text)
 {
     lxb_dom_document_t *doc = mkr_doc_unwrap(self);
     VALUE text = rb_String(rb_text);
+    mkr_check_text(text, "text content");
     lxb_dom_text_t *t = lxb_dom_document_create_text_node(
         doc, (const lxb_char_t *)RSTRING_PTR(text), (size_t)RSTRING_LEN(text));
     if (t == NULL) {
@@ -398,6 +419,7 @@ mkr_doc_create_comment(VALUE self, VALUE rb_text)
 {
     lxb_dom_document_t *doc = mkr_doc_unwrap(self);
     VALUE text = rb_String(rb_text);
+    mkr_check_text(text, "comment content");
     lxb_dom_comment_t *c = lxb_dom_document_create_comment(
         doc, (const lxb_char_t *)RSTRING_PTR(text), (size_t)RSTRING_LEN(text));
     if (c == NULL) {

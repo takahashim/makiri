@@ -1,5 +1,7 @@
 #include "makiri.h"
 
+#include <string.h>
+
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
 VALUE mkr_cDocument;
@@ -19,6 +21,26 @@ VALUE mkr_eError;
 VALUE mkr_eXPathSyntaxError;
 VALUE mkr_eXPathLimitExceeded;
 VALUE mkr_eCSSSyntaxError;
+
+void
+mkr_check_text(VALUE str, const char *what)
+{
+    long        len = RSTRING_LEN(str);
+    const char *ptr = RSTRING_PTR(str);
+
+    if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
+        rb_raise(mkr_eError, "%s must not contain a NUL byte", what);
+    }
+
+    /* Validate the bytes as UTF-8 regardless of the String's declared encoding
+     * (Makiri accepts UTF-8 text only). rb_enc_str_coderange reports BROKEN for
+     * byte sequences that are not well-formed UTF-8. */
+    VALUE u = rb_enc_str_new(ptr, len, rb_utf8_encoding());
+    if (rb_enc_str_coderange(u) == ENC_CODERANGE_BROKEN) {
+        rb_raise(mkr_eError, "%s must be valid UTF-8", what);
+    }
+    RB_GC_GUARD(str);
+}
 
 RUBY_FUNC_EXPORTED void
 Init_makiri(void)

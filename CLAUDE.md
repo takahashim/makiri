@@ -90,6 +90,18 @@ docs/design_doc.ja.md      authoritative design (read this)
 
 ## Subsystems
 
+**Text-input contract.** Makiri accepts UTF-8. **HTML parsing decodes leniently
+like a browser**: `mkr_utf8_sanitize` (`post_parse.c`) replaces invalid UTF-8
+with U+FFFD (WHATWG byte-stream decoding via Lexbor's `lxb_encoding_*`; a NUL is
+left for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail**
+on bad bytes and the DOM is always valid UTF-8. Valid input (common case) is a
+no-op (one validating decode pass, no copy). The **programmatic APIs are strict**:
+`mkr_check_text` (`makiri.c`) raises `Makiri::Error` for invalid UTF-8 or an
+embedded NUL at the XPath/CSS/mutation boundaries (expr, selector, attribute
+name/value, `content=`, `name=`, `create_*`, variable/namespace) — never
+truncate/repair. Don't drop these checks; the engine assumes NUL-terminated,
+valid-UTF-8 C strings.
+
 **Parsing & source location** (`lexbor_compat/post_parse.c`, `source_loc.c`).
 `mkr_parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**

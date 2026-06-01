@@ -27,6 +27,16 @@ typedef struct mkr_parsed_s {
  * front. */
 mkr_parsed_t *mkr_parse_html(const lxb_char_t *src, size_t len);
 
+/* Browser-compatible UTF-8 input sanitisation. If `src` (len bytes) is already
+ * well-formed UTF-8 (the common case), sets *out=NULL and the caller uses src
+ * unchanged. Otherwise transcodes to a freshly malloc'd, NUL-terminated buffer
+ * with every invalid sequence replaced by U+FFFD (WHATWG decoding), setting
+ * *out / *out_len (caller frees *out). Returns 0 on success, -1 on OOM. NUL
+ * bytes are preserved (the HTML tokenizer handles them per the spec). Used by
+ * the parse and fragment-parse paths; never rejects. */
+int mkr_utf8_sanitize(const lxb_char_t *src, size_t len,
+                      lxb_char_t **out, size_t *out_len);
+
 void mkr_parsed_destroy(mkr_parsed_t *p);
 
 /* ---- attribute -> owner element index (lexbor_compat/attr_owner.c) ----

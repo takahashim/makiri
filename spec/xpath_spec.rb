@@ -394,16 +394,19 @@ RSpec.describe "Makiri XPath" do
     end
 
     it "rejects a malformed UTF-8 byte sequence in a name (fail closed)" do
+      # Makiri's text-input contract rejects invalid UTF-8 at the API boundary
+      # (before lexing) with a Makiri::Error, so the engine only ever sees
+      # well-formed input.
       expect { Makiri::HTML("<p>x</p>").xpath("//a\xC3") }
-        .to raise_error(Makiri::XPath::SyntaxError)
+        .to raise_error(Makiri::Error, /valid UTF-8/)
     end
 
     it "rejects a string literal containing invalid UTF-8 (fail closed)" do
-      # Validated at lex time, so every character-wise function (translate,
+      # Rejected at the boundary, so every character-wise function (translate,
       # substring, string-length, ...) can assume well-formed input.
       bad = ('string-length("' + "\xC3" + '")').b
       expect { Makiri::HTML("<p>x</p>").xpath(bad) }
-        .to raise_error(Makiri::XPath::SyntaxError)
+        .to raise_error(Makiri::Error, /valid UTF-8/)
     end
   end
 
