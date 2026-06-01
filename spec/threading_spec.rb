@@ -29,14 +29,27 @@ RSpec.describe "concurrency", :threading do
 
   before { skip "ASan+macOS mishandles Ruby thread-stack munmap" if SANITIZING }
 
+  # GC.stress flushes GC-interaction bugs (use-after-move, wrapper/arena
+  # lifetime) but slows each example ~10x, so apply it only where it earns its
+  # keep: the examples with genuine cross-thread memory interaction (a shared
+  # document/context) or concurrent GVL-released parse racing the GC. The
+  # per-thread-document query/serialize examples share no state and run the same
+  # C paths every other spec already exercises under ASan, so they run without
+  # stress. Tag an example with `:stress` to opt in.
   around do |example|
-    GC.stress = true
-    example.run
-  ensure
-    GC.stress = false
+    if example.metadata[:stress]
+      GC.stress = true
+      begin
+        example.run
+      ensure
+        GC.stress = false
+      end
+    else
+      example.run
+    end
   end
 
-  it "parses concurrently with correct, independent results" do
+  it "parses concurrently with correct, independent results", :stress do
     threads = Array.new(NTHREADS) do
       Thread.new do
         ITERS.times.map do
@@ -82,7 +95,7 @@ RSpec.describe "concurrency", :threading do
     expect(threads.map(&:value)).to all(eq(:ok))
   end
 
-  it "is safe to mix XPath and mutation on a SHARED document" do
+  it "is safe to mix XPath and mutation on a SHARED document", :stress do
     # XPath evaluation holds the GVL, and so does every mutation, so a walk can
     # never run in parallel with a mutation that detaches/moves nodes on the same
     # document (which would otherwise be a use-after-move). Assert the mix runs to
@@ -117,7 +130,7 @@ RSpec.describe "concurrency", :threading do
     expect(errors).to be_empty
   end
 
-  it "is safe to share one XPathContext across threads (no corruption)" do
+  it "is safe to share one XPathContext across threads (no corruption)", :stress do
     # A context's per-evaluate caches / AST memo are not concurrency-safe, but
     # #evaluate holds the GVL, so concurrent evaluate on a shared context is
     # serialised and cannot corrupt memory (previously segfaulted via ms_sort
