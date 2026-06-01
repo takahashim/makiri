@@ -95,14 +95,15 @@ absolute path.
 - **Comparison:** node-sets by set-of-paths (order tracked separately, since
   XPath node-sets are formally unordered); scalars by value (numbers within
   1e-9, NaN==NaN).
-- The Nokogiri DOM is run through `remove_namespaces!` so the diff compares pure
-  evaluation semantics under one namespace policy — see finding #1.
+- The Nokogiri DOM is used **unmodified**: Makiri's strict-by-default namespace
+  matching now lines up with Nokogiri::HTML5 (`//path` matches nothing on both),
+  so no `remove_namespaces!` neutralisation is needed.
 
 ### Result
 
 ```
-curated:                 972 pairs, 0 divergences
-generated (8000, seed 1): 69723 pairs, 0 result/raise divergences
+curated:                  ~1089 pairs, 0 divergences
+generated (8000, seed 1): ~69700 pairs, 0 result/raise divergences
 ```
 
 Buckets that are tallied, not scored as bugs:
@@ -110,19 +111,21 @@ Buckets that are tallied, not scored as bugs:
 - **`noko-strict`** — Makiri evaluates a *top-level* `position()`/`last()` (the
   document-root context position/size is 1) where libxml2 raises a syntax error.
   Makiri's behaviour is defensible per XPath 1.0.
+- **`ns-repr`** — `namespace-uri()` of an HTML element is the XHTML URI in
+  Makiri (DOM-correct, what browsers report) but `""` in Nokogiri::HTML5, which
+  drops the HTML namespace. A representation difference where Makiri is the more
+  correct side; not a bug.
 
 ### Findings
 
-1. **Namespace policy differs (by design, but worth knowing).** Makiri's
-   `namespace-uri()` correctly reports the HTML/SVG/MathML namespaces per the DOM
-   spec, but its XPath **unprefixed name tests match by local-name regardless of
-   namespace** — so `//svg`, `//rect`, `//circle` find foreign elements.
-   Nokogiri::HTML5 keeps HTML in the null namespace but SVG/MathML in their
-   foreign namespaces, so strict XPath 1.0 requires registering the namespace and
-   writing `//svg:rect`; bare `//rect` matches nothing. Makiri's choice is
-   HTML-ergonomic but is **not strict XPath 1.0 namespace semantics**. (The
-   harness neutralises this with `remove_namespaces!` so it can diff everything
-   else.)
+1. **Namespace matching — now strict by default (resolved).** Makiri's
+   unprefixed element name tests resolve in the HTML namespace: `//div` matches,
+   but `//svg` / `//path` do NOT — foreign content needs a registered prefix
+   (`//svg:path`), exactly like browsers' `document.evaluate` and
+   `Nokogiri::HTML5`. The old namespace-agnostic behaviour (where `//path` finds
+   the SVG element) is available per-call/per-context via
+   `namespace_matching: :lax`. This made the differential agree without
+   `remove_namespaces!`; the only residual is the `ns-repr` bucket above.
 
 2. **Attribute document-order bug (FIXED).** XPath 1.0 §5.1 orders a node
    before its attribute nodes (`element < its @attrs < its children`). For a

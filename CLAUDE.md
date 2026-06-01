@@ -136,6 +136,17 @@ Custom functions: unknown calls route through the engine resolver to
 becomes `Makiri::Error`, never a long-jump through the evaluator); node-set
 returns from a foreign document are rejected. The **namespace axis is not
 implemented** (raises "not implemented", never silently empty).
+**Namespace matching of name tests is strict by default** (HTML5/WHATWG-faithful,
+like browsers' `document.evaluate` and `Nokogiri::HTML5`): an *unprefixed*
+element name test resolves in the HTML namespace, so `//div` matches but
+`//svg`/`//path` do NOT — foreign (SVG/MathML) elements need a registered
+prefix (`//svg:path`). Pass `namespace_matching: :lax` (on `Node#{xpath,at_xpath}`
+or `XPathContext.new`) for the namespace-agnostic, `Nokogiri::HTML`-style match
+where `//path` finds the SVG element. The mode affects *only* unprefixed
+element name tests; prefixed tests, the `*` wildcard, and attribute tests are
+unchanged (see `mkr_xpath_internal.h` §2–§5). Makiri keeps HTML elements in the
+XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
+null).
 
 **CSS** (`glue/ruby_css.c`). `Node#{css,at_css}` via Lexbor's `lxb_selectors`
 (per call: build `css_memory`→`css_parser`+`css_selectors`→`selectors`, parse,

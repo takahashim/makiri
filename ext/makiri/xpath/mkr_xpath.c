@@ -57,6 +57,14 @@ struct mkr_xpath_context_s {
   void                    *element_index;
   mkr_tag_index_lookup_t   tag_lookup;
   mkr_tag_index_foreign_t  tag_has_foreign;
+
+  /* Namespace-matching policy for UNPREFIXED name tests. 0 (default) =
+   * strict/HTML5-faithful: an unprefixed name resolves in the HTML namespace
+   * (matches HTML-namespace or no-namespace nodes only; foreign SVG/MathML
+   * needs a prefix). 1 = lax: ignore namespace, match by local name. Prefixed
+   * tests and wildcards are unaffected. Set by the glue from the
+   * namespace_matching: option. */
+  int unprefixed_lax;
 };
 
 mkr_doc_order_index_t *
@@ -128,6 +136,18 @@ mkr_xpath_limits_t *
 mkr_ctx_limits(mkr_xpath_context_t *ctx)
 {
   return ctx ? &ctx->limits : NULL;
+}
+
+void
+mkr_ctx_set_unprefixed_lax(mkr_xpath_context_t *ctx, int lax)
+{
+  if (ctx) ctx->unprefixed_lax = lax ? 1 : 0;
+}
+
+int
+mkr_ctx_unprefixed_lax(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->unprefixed_lax : 0;
 }
 
 /* ---------- limits ---------- */

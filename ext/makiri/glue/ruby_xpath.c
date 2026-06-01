@@ -156,6 +156,21 @@ mkr_xpath_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
  * context node. Raises on allocation failure. The attr->owner index is built
  * up front so the engine's parent/ancestor axes and document-order sort see
  * attribute owners. */
+/* Resolve the namespace_matching: keyword (nil | :strict | :lax) to the
+ * unprefixed-lax flag (0 = strict default, 1 = lax). +opts+ is the keyword
+ * hash from rb_scan_args (nil when none given). Raises ArgumentError otherwise. */
+static int
+mkr_ns_matching_lax(VALUE opts)
+{
+    if (NIL_P(opts)) return 0;
+    VALUE v = rb_hash_aref(opts, ID2SYM(rb_intern("namespace_matching")));
+    if (NIL_P(v) || v == ID2SYM(rb_intern("strict"))) return 0;
+    if (v == ID2SYM(rb_intern("lax"))) return 1;
+    rb_raise(rb_eArgError,
+             "namespace_matching: must be :strict or :lax, got %" PRIsVALUE,
+             rb_inspect(v));
+}
+
 static mkr_xpath_context_t *
 mkr_xpath_context_for(VALUE rb_node, VALUE document)
 {
@@ -183,13 +198,20 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
 }
 
 /*
- * call-seq: XPathContext.new(node) -> XPathContext
+ * call-seq: XPathContext.new(node, namespace_matching: :strict) -> XPathContext
  *
  * Build a context whose context node is +node+ (a Node or Document).
+ * namespace_matching: :strict (default) resolves unprefixed name tests in the
+ * HTML namespace (HTML5/WHATWG-faithful; SVG/MathML need a prefix); :lax makes
+ * unprefixed tests namespace-agnostic.
  */
 static VALUE
-mkr_xpath_ctx_s_new(VALUE klass, VALUE rb_node)
+mkr_xpath_ctx_s_new(int argc, VALUE *argv, VALUE klass)
 {
+    VALUE rb_node, opts;
+    rb_scan_args(argc, argv, "1:", &rb_node, &opts);
+    int lax = mkr_ns_matching_lax(opts);
+
     if (!rb_obj_is_kind_of(rb_node, mkr_cNode)) {
         rb_raise(rb_eTypeError, "expected a Makiri::Node");
     }
@@ -205,6 +227,7 @@ mkr_xpath_ctx_s_new(VALUE klass, VALUE rb_node)
     d->cache_count = 0;
     d->cache_cap   = 0;
     d->ctx         = mkr_xpath_context_for(rb_node, document);
+    mkr_ctx_set_unprefixed_lax(d->ctx, lax);
     return obj;
 }
 
@@ -561,12 +584,13 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
  * The expression is parsed under the GVL (it reads the Ruby String), then the
  * compiled AST is evaluated with the GVL released when there is no handler. */
 static VALUE
-mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler)
+mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
 {
     VALUE document = mkr_node_document(self);
     const char *expr = StringValueCStr(rb_expr);
 
     mkr_xpath_context_t *ctx = mkr_xpath_context_for(self, document);
+    mkr_ctx_set_unprefixed_lax(ctx, lax);
 
     mkr_xpath_error_t error = {0};
     mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
@@ -602,18 +626,18 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler)
 static VALUE
 mkr_node_xpath(int argc, VALUE *argv, VALUE self)
 {
-    VALUE rb_expr, handler;
-    rb_scan_args(argc, argv, "11", &rb_expr, &handler);
-    return mkr_node_xpath_run(self, rb_expr, handler);
+    VALUE rb_expr, handler, opts;
+    rb_scan_args(argc, argv, "11:", &rb_expr, &handler, &opts);
+    return mkr_node_xpath_run(self, rb_expr, handler, mkr_ns_matching_lax(opts));
 }
 
 /* First matching node (for a node-set), or the scalar value otherwise. */
 static VALUE
 mkr_node_at_xpath(int argc, VALUE *argv, VALUE self)
 {
-    VALUE rb_expr, handler;
-    rb_scan_args(argc, argv, "11", &rb_expr, &handler);
-    VALUE result = mkr_node_xpath_run(self, rb_expr, handler);
+    VALUE rb_expr, handler, opts;
+    rb_scan_args(argc, argv, "11:", &rb_expr, &handler, &opts);
+    VALUE result = mkr_node_xpath_run(self, rb_expr, handler, mkr_ns_matching_lax(opts));
     if (rb_obj_is_kind_of(result, mkr_cNodeSet)) {
         return rb_funcall(result, rb_intern("first"), 0);
     }
@@ -623,7 +647,7 @@ mkr_node_at_xpath(int argc, VALUE *argv, VALUE self)
 void
 mkr_init_xpath(void)
 {
-    rb_define_singleton_method(mkr_cXPathContext, "new", mkr_xpath_ctx_s_new, 1);
+    rb_define_singleton_method(mkr_cXPathContext, "new", mkr_xpath_ctx_s_new, -1);
     rb_define_method(mkr_cXPathContext, "evaluate", mkr_xpath_ctx_evaluate, -1);
     rb_define_method(mkr_cXPathContext, "register_namespace", mkr_xpath_ctx_register_ns, 2);
     rb_define_method(mkr_cXPathContext, "register_variable",  mkr_xpath_ctx_register_variable, 2);

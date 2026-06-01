@@ -54,20 +54,16 @@ end.parse!(ARGV)
 
 # --- documents -------------------------------------------------------------
 
-# Makiri and Nokogiri::HTML5 disagree on the namespace MODEL, not on XPath
-# evaluation: Makiri's unprefixed name tests match by local-name regardless of
-# namespace (so //svg and //rect find foreign elements), whereas Nokogiri keeps
-# HTML in the null namespace but SVG/MathML in their foreign namespaces, so
-# //rect matches nothing unless you register and prefix the namespace. That is
-# a documented difference (see README), out of scope for evaluation-semantics
-# diffing. We align the baseline by stripping namespaces from the Nokogiri DOM
-# (remove_namespaces! also drops the "svg:" path prefix), so this harness
-# compares which nodes each ENGINE selects under the same namespace-agnostic
-# policy. The model difference itself is asserted separately in the README.
+# Makiri's default (:strict) namespace matching now agrees with Nokogiri::HTML5:
+# an unprefixed name test resolves in the HTML namespace, so //div matches but
+# //path (SVG) does not. We therefore compare against an UNMODIFIED Nokogiri DOM
+# (no remove_namespaces!) — node selection lines up. The one residual is the
+# namespace MODEL: Makiri keeps HTML elements in the XHTML namespace (the
+# DOM-correct value browsers report), while Nokogiri::HTML5 puts them in the
+# null namespace; this surfaces only in namespace-uri()/name() scalar results
+# and is bucketed as a known, Makiri-more-correct difference (see compare()).
 DOCS = (FuzzFixtures.all + XPathCorpus.extra_docs).map do |name, html|
-  noko = Nokogiri::HTML5(html)
-  noko.remove_namespaces!
-  { name: name, html: html, makiri: Makiri::HTML(html), nokogiri: noko }
+  { name: name, html: html, makiri: Makiri::HTML(html), nokogiri: Nokogiri::HTML5(html) }
 end
 
 # --- expressions -----------------------------------------------------------
@@ -129,7 +125,12 @@ def numbers_equal?(a, b)
   (a - b).abs <= 1e-9
 end
 
-# Compare two shaped results. Returns [:same] / [:order_only] / [:diff, why].
+XHTML_NS = "http://www.w3.org/1999/xhtml"
+
+# Compare two shaped results. Returns [:same] / [:order_only] / [:ns_repr] /
+# [:diff, why]. :ns_repr flags the one known, Makiri-more-correct difference:
+# namespace-uri() of an HTML element is the XHTML URI in Makiri (DOM-correct,
+# as browsers report) but "" in Nokogiri::HTML5, which drops the HTML namespace.
 def compare(ms, ns)
   return [:diff, "kind #{ms[0]} vs #{ns[0]}"] unless ms[0] == ns[0]
 
@@ -145,7 +146,10 @@ def compare(ms, ns)
   when :number
     numbers_equal?(ms[1], ns[1]) ? [:same] : [:diff, "#{ms[1]} vs #{ns[1]}"]
   else
-    ms[1] == ns[1] ? [:same] : [:diff, "#{ms[1].inspect} vs #{ns[1].inspect}"]
+    return [:same] if ms[1] == ns[1]
+    return [:ns_repr] if [ms[1], ns[1]].sort == ["", XHTML_NS]
+
+    [:diff, "#{ms[1].inspect} vs #{ns[1].inspect}"]
   end
 end
 
@@ -192,6 +196,8 @@ DOCS.each do |doc|
     case compare(ms, ns)
     in [:same]
       stats[:agree] += 1
+    in [:ns_repr]
+      stats[:ns_repr] += 1
     in [:order_only]
       stats[:order_only] += 1
       diffs << [doc[:name], expr, "ORDER ONLY (same node set, different encounter order)"]
@@ -224,6 +230,7 @@ puts "  agree (both reject): #{stats[:agree_reject]}"
 puts "  makiri budget-limit: #{stats[:makiri_limit]}"
 puts "  makiri unimplmntd  : #{stats[:makiri_unimpl]}"
 puts "  KNOWN noko-strict  : #{stats[:noko_strict]}  (top-level position()/last())"
+puts "  KNOWN ns-repr      : #{stats[:ns_repr]}  (HTML namespace-uri: Makiri xhtml vs Nokogiri '')"
 puts "  order-only diff    : #{stats[:order_only]}"
 puts "  DIVERGE result     : #{stats[:diverge_result]}"
 puts "  DIVERGE raise      : #{stats[:diverge_raise]}"

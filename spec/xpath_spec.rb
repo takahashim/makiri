@@ -265,6 +265,54 @@ RSpec.describe "Makiri XPath" do
     end
   end
 
+  describe "namespace matching (strict default / lax opt-in)" do
+    let(:mixed) do
+      Makiri::HTML("<body><div>a</div><div>b</div><svg><path/><title>s</title></svg>" \
+                   "<math><mi>x</mi></math></body>")
+    end
+
+    it "strict (default): unprefixed names resolve in the HTML namespace" do
+      # HTML elements match unprefixed...
+      expect(mixed.xpath("//div").length).to eq(2)
+      # ...but foreign (SVG/MathML) elements do NOT (browser / Nokogiri::HTML5 behaviour)
+      expect(mixed.xpath("//path")).to be_empty
+      expect(mixed.xpath("//svg")).to be_empty
+      expect(mixed.xpath("//mi")).to be_empty
+    end
+
+    it "strict: the '*' wildcard still matches any namespace" do
+      # html, head, body, 2×div, svg, path, svg-title, math, mi = 10 elements,
+      # foreign ones included — the wildcard is namespace-agnostic by design.
+      expect(mixed.xpath("//*").length).to eq(10)
+      # foreign children are reachable via the wildcard even in strict mode
+      expect(mixed.xpath("//*[local-name()='svg']/*").length).to eq(2) # path + title
+    end
+
+    it "strict: foreign content is reachable via a registered prefix" do
+      ctx = Makiri::XPathContext.new(mixed)
+      ctx.register_namespace("svg", "http://www.w3.org/2000/svg")
+      expect(ctx.evaluate("//svg:path").length).to eq(1)
+      expect(ctx.evaluate("//svg:title").map(&:text)).to eq(["s"]) # not the HTML sense
+    end
+
+    it "lax: unprefixed names match by local name regardless of namespace" do
+      expect(mixed.xpath("//path", namespace_matching: :lax).length).to eq(1)
+      expect(mixed.xpath("//svg",  namespace_matching: :lax).length).to eq(1)
+      expect(mixed.xpath("//mi",   namespace_matching: :lax).length).to eq(1)
+    end
+
+    it "lax can be set once on an XPathContext" do
+      ctx = Makiri::XPathContext.new(mixed, namespace_matching: :lax)
+      expect(ctx.evaluate("//path").length).to eq(1)
+      expect(Makiri::XPathContext.new(mixed).evaluate("//path")).to be_empty # default strict
+    end
+
+    it "rejects an invalid namespace_matching value" do
+      expect { mixed.xpath("//div", namespace_matching: :nope) }
+        .to raise_error(ArgumentError, /namespace_matching/)
+    end
+  end
+
   describe "errors (fail closed)" do
     it "raises SyntaxError on malformed expressions" do
       expect { doc.xpath("//p[") }.to raise_error(Makiri::XPath::SyntaxError)

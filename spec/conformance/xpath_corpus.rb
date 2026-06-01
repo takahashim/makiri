@@ -102,5 +102,16 @@ module XPathCorpus
     # --- edge / empty results ---
     "//absent", "//div[@id='nope']", "//p[99]", "/nonsense/path",
     "//*[@id='d1']/following-sibling::*[1]",
+
+    # --- namespaces (strict default: foreign needs a prefix) ---
+    # On the "svg" doc these agree with Nokogiri::HTML5: unprefixed foreign
+    # names match nothing, the wildcard does, attributes match by local name.
+    "//svg", "//circle", "//rect", "count(//circle)",   # 0 (foreign, unprefixed)
+    "//p",                                               # HTML element: matches
+    "//*", "//svg//*", "//*[local-name()='circle']",     # wildcard / local-name reach foreign
+    "//@width", "//@r", "//*[@width]",                   # attributes match by local name
+    # namespace-uri of an HTML element: exercises the ns-repr bucket (Makiri
+    # reports the XHTML URI, Nokogiri::HTML5 reports "").
+    "namespace-uri(//p)", "namespace-uri(//body)",
   ].freeze
 end

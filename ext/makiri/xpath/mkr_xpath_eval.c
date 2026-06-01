@@ -117,8 +117,15 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     if (want == NULL) return 0;
     if (!name_eq_lxb(want, strlen(want), got, got_len)) return 0;
 
-    /* Namespace check (see internal.h §2–§4). Unprefixed tests ignore
-     * namespace (HTML compat); prefixed tests require URI match. */
+    /* Namespace check (see internal.h §2–§4).
+     *   - Prefixed test: the node's namespace URI must equal the URI bound to
+     *     the prefix.
+     *   - Unprefixed test, strict (default, HTML5/WHATWG-faithful): the name
+     *     resolves in the HTML namespace, so it matches only HTML-namespace or
+     *     no-namespace nodes — foreign (SVG/MathML) content needs a prefix.
+     *     This mirrors browsers' document.evaluate and Nokogiri::HTML5.
+     *   - Unprefixed test, lax: namespace ignored (matched by local name
+     *     already), the HTML4 / Nokogiri::HTML-style convenience. */
     if (test->prefix != NULL) {
       const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix);
       if (want_uri == NULL) {
@@ -129,6 +136,18 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
       }
       const char *node_uri = node_ns_uri(node, mkr_ctx_document(ctx));
       if (strcmp(want_uri, node_uri) != 0) return 0;
+    } else if (!mkr_ctx_unprefixed_lax(ctx)
+               && axis != MKR_AXIS_ATTRIBUTE
+               && node->ns != LXB_NS_HTML && node->ns != LXB_NS__UNDEF) {
+      /* Strict mode restricts ELEMENT name tests to the HTML namespace; foreign
+       * (SVG/MathML) elements need a prefix. Attributes are exempt: an
+       * unprefixed attribute test matches by no-namespace local name (the DOM
+       * model — `id` on an <svg> is still a null-namespace attribute), and the
+       * qualified-name comparison above already excludes prefixed foreign
+       * attributes like xlink:href. Lexbor tags attributes with their element's
+       * ns, which does not reflect the DOM, so we must not gate attributes on
+       * node->ns here. */
+      return 0;
     }
     return 1;
   }

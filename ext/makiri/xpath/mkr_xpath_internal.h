@@ -70,34 +70,46 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  */
 
 /*
- * Namespace semantics — these are the rules the evaluator follows.
- * They lean toward HTML compatibility (matching libxml2/Nokogiri's
- * behavior on HTML documents) rather than strict XPath 1.0 over XML.
+ * Namespace semantics — the rules the evaluator follows. The DEFAULT is
+ * strict / HTML5-faithful: it matches browsers' document.evaluate and
+ * Nokogiri::HTML5. A per-context/per-call opt-in (namespace_matching: :lax,
+ * see mkr_ctx_unprefixed_lax) relaxes only the unprefixed element rule (§2)
+ * for HTML4 / Nokogiri::HTML-style convenience.
  *
  *   1. Prefix resolution. A prefix in a NameTest is resolved against
  *      the XPath context's registry (built via XPathContext#register_ns).
  *      Unknown prefixes produce MKR_XPATH_ERR_RUNTIME at evaluation.
  *
- *   2. Unprefixed element name test ("local"). Matches by local name
- *      only — namespace is ignored. This is the HTML-friendly choice:
- *      "//p" matches a <p> element regardless of whether Lexbor stamped
- *      it with LXB_NS_HTML, LXB_NS_SVG, etc. Strict XPath 1.0 would
- *      require the element to be in the null namespace, but that would
- *      break the common HTML case where Lexbor marks <p> as
- *      LXB_NS_HTML by default.
+ *   2. Unprefixed element name test ("local").
+ *      - strict (default): resolves in the HTML namespace. Matches an
+ *        element iff its local name matches AND its namespace is HTML
+ *        (LXB_NS_HTML) or none (LXB_NS__UNDEF). So "//p" matches an HTML
+ *        <p>, but "//path" does NOT match an SVG <path> — foreign content
+ *        needs a prefix (or :lax). This is the browser / Nokogiri::HTML5
+ *        behaviour. (Pure XPath 1.0 would require the null namespace only,
+ *        which would break "//p" since Lexbor marks HTML elements LXB_NS_HTML;
+ *        admitting LXB_NS_HTML is the HTML adaptation browsers also make.)
+ *      - lax: namespace ignored; match by local name regardless (so "//path"
+ *        finds the SVG path). The old HTML-friendly default, now opt-in.
  *
  *   3. Prefixed element name test ("prefix:local"). Matches an element
  *      iff its namespace URI (resolved via lxb_ns_by_id(doc->ns,
  *      node->ns)) equals the URI registered for prefix, AND the local
- *      name matches.
+ *      name matches. Unaffected by the strict/lax mode.
  *
- *   4. Attribute name test. For unprefixed "local", match by local
- *      name only (HTML compat). For "prefix:local", URI + local name
- *      must both match. Attributes do not inherit element namespaces.
+ *   4. Attribute name test. Unprefixed "local" matches by no-namespace
+ *      local name in BOTH modes (the strict element rule does NOT apply to
+ *      attributes): an attribute is in no namespace per the DOM even on a
+ *      foreign element (e.g. `id` on an <svg>), so "//@id" matches it. The
+ *      comparison uses the attribute's QUALIFIED name, so a prefixed foreign
+ *      attribute (xlink:href) does not match the unprefixed "@href". For
+ *      "prefix:local", URI + local name must both match. (Lexbor tags an
+ *      attribute with its element's ns, which does not reflect the DOM, so
+ *      attribute matching deliberately does not gate on node->ns.)
  *
  *   5. Wildcards. "*" with no prefix matches the principal node type
- *      of the axis regardless of namespace. "prefix:*" matches any
- *      node in the namespace bound to prefix.
+ *      of the axis regardless of namespace (foreign included), in both
+ *      modes. "prefix:*" matches any node in the namespace bound to prefix.
  *
  *   6. Namespace axis. Currently NOT implemented — Lexbor has no
  *      DOM-level namespace nodes and the namespace axis is rarely
@@ -534,6 +546,11 @@ lxb_dom_node_t     *mkr_ctx_node(struct mkr_xpath_context_s *ctx);
 lxb_dom_document_t *mkr_ctx_document(struct mkr_xpath_context_s *ctx);
 mkr_xpath_limits_t  *mkr_ctx_limits (struct mkr_xpath_context_s *ctx);
 mkr_func_resolver_t  mkr_ctx_func_resolver(struct mkr_xpath_context_s *ctx);
+
+/* Namespace-matching policy for unprefixed name tests (see the struct field).
+ * Default strict (0). lax (1) makes unprefixed tests namespace-agnostic. */
+void mkr_ctx_set_unprefixed_lax(struct mkr_xpath_context_s *ctx, int lax);
+int  mkr_ctx_unprefixed_lax(struct mkr_xpath_context_s *ctx);
 
 /* ---------- function library ---------- */
 

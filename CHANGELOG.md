@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+* XPath name-test namespace matching is now **strict by default**
+  (HTML5/WHATWG-faithful, matching browsers' `document.evaluate` and
+  `Nokogiri::HTML5`): an unprefixed element name test resolves in the HTML
+  namespace, so `//div` matches but `//svg`/`//path` do not — foreign
+  (SVG/MathML) elements need a registered prefix (`//svg:path`). Pass
+  `namespace_matching: :lax` to `Node#{xpath,at_xpath}` or `XPathContext.new`
+  for the previous namespace-agnostic match where `//path` finds the SVG
+  element. The mode affects only unprefixed element name tests; prefixed tests,
+  the `*` wildcard, and attribute tests are unchanged. (HTML elements stay in
+  the XHTML namespace, so `namespace-uri()` stays DOM-correct.)
 * Context-sensitive fragment parsing (Nokogiri-compatible): `context:` on
   `DocumentFragment.parse` / `Document#fragment` (a tag-name String, `"svg"` /
   `"math"` for the foreign roots, or a `Node` for any element incl. foreign
