@@ -119,6 +119,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* XPath name tests now accept non-ASCII NCNames. The lexer was ASCII-only, so a
+  valid name test like `//dØdd` raised a SyntaxError; it now classifies name
+  characters by the XML 1.0 (5th ed.) NCName ranges via a UTF-8 decoder that
+  fails closed on malformed input.
+* XPath `[@name]` / `[@name='v']` attribute predicates now match the attribute
+  name case-SENSITIVELY, consistent with the attribute-axis name test (and with
+  XPath 1.0 and Nokogiri::HTML5). The fast path had delegated to Lexbor's
+  case-insensitive HTML attribute lookup, so `//div[@Id]` wrongly matched `id`.
 * Fragment parsing now preserves `<template>` contents. Deep node import
   (`DocumentFragment.parse` / `Document#fragment`) copied the normal child chain
   but not a template's separate content fragment, so an imported `<template>`

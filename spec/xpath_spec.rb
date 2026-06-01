@@ -132,6 +132,15 @@ RSpec.describe "Makiri XPath" do
         expect(list.xpath("//li[@class='x']").length).to eq(1)
       end
 
+      it "matches attribute names case-sensitively (like the attribute axis)" do
+        # The fast path must not inherit Lexbor's case-insensitive HTML
+        # attribute lookup: //li[@Class] would then match `class`, diverging
+        # from XPath 1.0, Nokogiri::HTML5, and Makiri's own //@Class axis test.
+        expect(list.xpath("//li[@Class]")).to be_empty
+        expect(list.xpath('//li[@Class="x"]')).to be_empty
+        expect(list.xpath("//li[@class]").length).to eq(3) # exact case still matches
+      end
+
       it "falls through for shapes that are not a plain attribute test" do
         expect(ids(list.xpath("//li[not(@class)]"))).to eq(%w[C])
         expect(ids(list.xpath('//li[@class="x" and @data-r]'))).to eq(%w[a])
@@ -310,6 +319,23 @@ RSpec.describe "Makiri XPath" do
     it "rejects an invalid namespace_matching value" do
       expect { mixed.xpath("//div", namespace_matching: :nope) }
         .to raise_error(ArgumentError, /namespace_matching/)
+    end
+  end
+
+  describe "non-ASCII names (XML NCName, not ASCII-only)" do
+    # XPath 1.0 §3.7 builds NCName on the XML Name production, whose letters
+    # span a large non-ASCII range — so an HTML element named "dØdd" is a valid
+    # name test. (HTML can only create such elements when the tag starts with
+    # an ASCII letter: "<dØdd>" is a tag, "<Ødd>" is text.)
+    it "accepts and matches a non-ASCII element name test" do
+      d = Makiri::HTML("<body><dØdd>x</dØdd><dödd>y</dödd></body>")
+      expect(d.xpath("//dØdd").map(&:text)).to eq(["x"])
+      expect(d.xpath("//dödd").map(&:text)).to eq(["y"]) # distinct non-ASCII letter
+    end
+
+    it "rejects a malformed UTF-8 byte sequence in a name (fail closed)" do
+      expect { Makiri::HTML("<p>x</p>").xpath("//a\xC3") }
+        .to raise_error(Makiri::XPath::SyntaxError)
     end
   end
 

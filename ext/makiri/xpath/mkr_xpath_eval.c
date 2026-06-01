@@ -357,25 +357,44 @@ mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
   return 1;
 }
 
+/* Find an element's attribute whose qualified name equals +name+ exactly
+ * (case-SENSITIVE), or NULL. We scan rather than calling
+ * lxb_dom_element_get_attribute, because that does an HTML case-INsensitive
+ * lookup — which would make `[@Id]` match `id`, diverging from XPath 1.0, from
+ * Nokogiri::HTML5, AND from Makiri's own case-sensitive attribute-axis name
+ * test (node_principal_match compares the qualified name byte-for-byte). The
+ * fast path only handles unprefixed names, matching that comparison. */
+static lxb_dom_attr_t *
+mkr_attr_by_qualified_name(lxb_dom_element_t *el, const char *name, size_t name_len)
+{
+  for (lxb_dom_attr_t *a = el->first_attr; a != NULL; a = a->next) {
+    size_t qlen = 0;
+    const lxb_char_t *q = lxb_dom_attr_qualified_name(a, &qlen);
+    if (q != NULL && qlen == name_len && memcmp(q, name, name_len) == 0) {
+      return a;
+    }
+  }
+  return NULL;
+}
+
 /* Filter `inout` by a recognised attribute predicate into `kept`. */
 static int
 mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
                      const mkr_nodeset_t *inout, mkr_nodeset_t *kept,
                      mkr_xpath_error_t *err)
 {
-  const lxb_char_t *name = (const lxb_char_t *)ap->name;
   for (size_t i = 0; i < inout->count; ++i) {
     lxb_dom_node_t *n = inout->items[i];
     int keep = 0;
     if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-      lxb_dom_element_t *el = lxb_dom_interface_element(n);
-      if (lxb_dom_element_has_attribute(el, name, ap->name_len)) {
+      lxb_dom_attr_t *a =
+          mkr_attr_by_qualified_name(lxb_dom_interface_element(n), ap->name, ap->name_len);
+      if (a != NULL) {
         if (!ap->has_value) {
           keep = 1;
         } else {
           size_t got_len = 0;
-          const lxb_char_t *got =
-              lxb_dom_element_get_attribute(el, name, ap->name_len, &got_len);
+          const lxb_char_t *got = lxb_dom_attr_value(a, &got_len);
           if (got == NULL) {
             got_len = 0;
           }
