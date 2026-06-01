@@ -278,10 +278,12 @@ mkr_node_delete(VALUE self, VALUE rb_name)
 /* ------------------------------------------------------------------ */
 
 /*
- * Parse `html` as a fragment in the context of `context_el`. Fragment nodes
- * are born in a throwaway document, so each one is deep-imported into `doc`
- * (the target's arena) and handed to `emit`. The transient parser/document is
- * destroyed before returning. Raises on parser or parse failure.
+ * Parse `html` as a fragment in the context of `context_el` and splice the
+ * imported nodes via `emit`. UTF-8 decoding (browser-compatible: invalid bytes
+ * -> U+FFFD) and the import + <template>-content fixup are shared with the
+ * DocumentFragment paths (mkr_sanitize_html_input / mkr_import_fragment_children
+ * / mkr_emit_* in glue/ruby_doc.c). The transient parser is destroyed before
+ * returning. Raises on parser or parse failure.
  */
 static void
 mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
@@ -290,60 +292,35 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
 {
     VALUE html = rb_String(rb_html);
 
-    /* Browser-compatible decoding: fragment HTML is parsed like a document, so
-     * invalid UTF-8 is replaced with U+FFFD rather than rejected (the DOM stays
-     * valid UTF-8). Valid input is used as-is. */
-    lxb_char_t *clean = NULL;
-    size_t      clean_len = 0;
-    if (mkr_utf8_sanitize((const lxb_char_t *)RSTRING_PTR(html),
-                          (size_t)RSTRING_LEN(html), &clean, &clean_len) != 0) {
-        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
-    }
-    const lxb_char_t *hsrc = (clean != NULL) ? clean
-                                             : (const lxb_char_t *)RSTRING_PTR(html);
-    size_t            hlen = (clean != NULL) ? clean_len : (size_t)RSTRING_LEN(html);
-
     lxb_html_parser_t *parser = lxb_html_parser_create();
     if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
-        free(clean);
         if (parser != NULL) {
             lxb_html_parser_destroy(parser);
         }
         rb_raise(mkr_eError, "failed to create HTML parser");
     }
 
+    const lxb_char_t *hsrc;
+    size_t            hlen;
+    lxb_char_t       *owned;
+    if (mkr_sanitize_html_input(html, &hsrc, &hlen, &owned) != 0) {
+        lxb_html_parser_destroy(parser);
+        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
+    }
+
     lxb_dom_node_t *frag = lxb_html_parse_fragment(
         parser, (lxb_html_element_t *)context_el, hsrc, hlen);
-    free(clean); /* consumed by the parse; free on every subsequent path */
+    free(owned); /* consumed by the parse; free on every subsequent path */
     if (frag == NULL) {
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to parse HTML fragment");
     }
 
-    for (lxb_dom_node_t *f = frag->first_child; f != NULL; f = f->next) {
-        lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, f, true);
-        if (imp != NULL) {
-            emit(imp, u);
-            /* import_node does not copy a <template>'s content fragment; fix it
-             * up (recursively) while the source `f` is still alive. */
-            mkr_fixup_template_content(doc, f, imp);
-        }
-    }
+    mkr_import_fragment_children(doc, frag, emit, u);
 
     /* Frees the transient fragment document; our imported copies live on. */
     lxb_html_parser_destroy(parser);
-}
-
-static void
-mkr_emit_append(lxb_dom_node_t *imported, void *u)
-{
-    lxb_dom_node_insert_child((lxb_dom_node_t *)u, imported);
-}
-
-static void
-mkr_emit_before(lxb_dom_node_t *imported, void *u)
-{
-    lxb_dom_node_insert_before((lxb_dom_node_t *)u, imported);
+    RB_GC_GUARD(html);
 }
 
 /* element.inner_html = html -> html. Replaces the element's children. */

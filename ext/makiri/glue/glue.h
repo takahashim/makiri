@@ -42,13 +42,26 @@ lxb_dom_document_t *mkr_doc_unwrap(VALUE rb_doc);
 mkr_parsed_t       *mkr_doc_parsed(VALUE rb_doc);
 VALUE               mkr_wrap_document(mkr_parsed_t *parsed); /* GC takes ownership */
 
-/* Re-import a <template>'s "template contents" when deep-importing a fragment.
- * lxb_dom_document_import_node copies the normal child chain but not a
- * template's separate content fragment; this walks src/clone in lockstep and
- * fixes every matching template (recursively). Defined in glue/ruby_doc.c;
- * shared with glue/ruby_mutate.c's fragment import. */
-void mkr_fixup_template_content(lxb_dom_document_t *doc,
-                                lxb_dom_node_t *src, lxb_dom_node_t *clone);
+/* Shared fragment-parse machinery (glue/ruby_doc.c), reused by ruby_mutate.c's
+ * inner_html=/outer_html= so the UTF-8 sanitisation and import+template-fixup
+ * are not duplicated.
+ *
+ * mkr_sanitize_html_input: decode rb_html for the fragment parser — *out/*out_len
+ * are the bytes to parse, *owned a malloc'd buffer to free afterwards (NULL when
+ * the input is used in place). Returns 0, or -1 on OOM (nothing allocated), so
+ * the caller can release its parser before raising. See mkr_utf8_sanitize.
+ *
+ * mkr_import_fragment_children: deep-import each child of `root` into `doc`, hand
+ * it to `emit`, and fix up any <template> contents (which import_node omits).
+ *
+ * mkr_emit_append / mkr_emit_before: emit callbacks — append as last child of
+ * `u`, or insert before the reference node `u`. */
+int  mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
+                             lxb_char_t **owned);
+void mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
+                                  void (*emit)(lxb_dom_node_t *, void *), void *u);
+void mkr_emit_append(lxb_dom_node_t *imported, void *u);
+void mkr_emit_before(lxb_dom_node_t *imported, void *u);
 
 /* NodeSet bridge (glue/ruby_node_set.c). */
 VALUE mkr_node_set_new(VALUE document);

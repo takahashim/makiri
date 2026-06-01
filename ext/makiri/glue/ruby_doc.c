@@ -136,7 +136,7 @@ mkr_is_html_template(const lxb_dom_node_t *n)
  * matching <template>, import the source content children into the clone's
  * content fragment. Recurses so templates nested inside template content are
  * fixed too. */
-void
+static void
 mkr_fixup_template_content(lxb_dom_document_t *doc,
                            lxb_dom_node_t *src, lxb_dom_node_t *clone)
 {
@@ -162,6 +162,57 @@ mkr_fixup_template_content(lxb_dom_document_t *doc,
         mkr_fixup_template_content(doc, s, c);
         s = s->next;
         c = c->next;
+    }
+}
+
+/* Shared fragment-parse helpers (used by mkr_build_fragment_ctx here and by
+ * mkr_parse_fragment_into in glue/ruby_mutate.c). Keeping the UTF-8 input
+ * sanitisation and the import+template-fixup in one place stops the
+ * security/correctness logic from being duplicated and drifting apart. */
+
+int
+mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
+                        lxb_char_t **owned)
+{
+    /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD; valid input is used
+     * in place (no copy, *owned == NULL). Returns -1 on OOM (nothing allocated)
+     * so the caller can release its parser before raising. */
+    lxb_char_t *clean = NULL;
+    size_t      clean_len = 0;
+    if (mkr_utf8_sanitize((const lxb_char_t *)RSTRING_PTR(html),
+                          (size_t)RSTRING_LEN(html), &clean, &clean_len) != 0) {
+        return -1;
+    }
+    *owned   = clean;
+    *out     = (clean != NULL) ? clean : (const lxb_char_t *)RSTRING_PTR(html);
+    *out_len = (clean != NULL) ? clean_len : (size_t)RSTRING_LEN(html);
+    return 0;
+}
+
+void
+mkr_emit_append(lxb_dom_node_t *imported, void *u)
+{
+    lxb_dom_node_insert_child((lxb_dom_node_t *)u, imported);
+}
+
+void
+mkr_emit_before(lxb_dom_node_t *imported, void *u)
+{
+    lxb_dom_node_insert_before((lxb_dom_node_t *)u, imported);
+}
+
+void
+mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
+                             void (*emit)(lxb_dom_node_t *, void *), void *u)
+{
+    for (lxb_dom_node_t *f = root->first_child; f != NULL;) {
+        lxb_dom_node_t *next = f->next; /* import does not unlink f, but be safe */
+        lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, f, true);
+        if (imp != NULL) {
+            emit(imp, u);
+            mkr_fixup_template_content(doc, f, imp);
+        }
+        f = next;
     }
 }
 
@@ -191,38 +242,26 @@ mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
         rb_raise(mkr_eError, "failed to create fragment parser");
     }
 
-    /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD (valid input is used
-     * as-is, no copy). Keeps the fragment DOM valid UTF-8 without rejecting. */
-    lxb_char_t *clean = NULL;
-    size_t      clean_len = 0;
-    if (mkr_utf8_sanitize((const lxb_char_t *)RSTRING_PTR(html),
-                          (size_t)RSTRING_LEN(html), &clean, &clean_len) != 0) {
+    const lxb_char_t *hsrc;
+    size_t            hlen;
+    lxb_char_t       *owned;
+    if (mkr_sanitize_html_input(html, &hsrc, &hlen, &owned) != 0) {
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "out of memory decoding fragment HTML");
     }
-    const lxb_char_t *hsrc = (clean != NULL) ? clean
-                                             : (const lxb_char_t *)RSTRING_PTR(html);
-    size_t            hlen = (clean != NULL) ? clean_len : (size_t)RSTRING_LEN(html);
 
     lxb_dom_node_t *root = lxb_html_parse_fragment_by_tag_id(
         parser, (lxb_html_document_t *)doc, ctx_tag, ctx_ns, hsrc, hlen);
-    free(clean);
+    free(owned);
     if (root == NULL) {
         lxb_html_parser_destroy(parser);
         rb_raise(mkr_eError, "failed to parse fragment");
     }
 
-    for (lxb_dom_node_t *f = root->first_child; f != NULL;) {
-        lxb_dom_node_t *next = f->next;
-        lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, f, true);
-        if (imp != NULL) {
-            lxb_dom_node_insert_child(frag_node, imp);
-            mkr_fixup_template_content(doc, f, imp);
-        }
-        f = next;
-    }
+    mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node);
 
     lxb_html_parser_destroy(parser);
+    RB_GC_GUARD(html);
     return mkr_wrap_node(frag_node, document);
 }
 
