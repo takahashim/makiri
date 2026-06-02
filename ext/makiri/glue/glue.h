@@ -46,7 +46,7 @@ VALUE               mkr_wrap_document(mkr_parsed_t *parsed); /* GC takes ownersh
  * inner_html=/outer_html= so the UTF-8 sanitisation and import+template-fixup
  * are not duplicated.
  *
- * mkr_sanitize_html_input: decode rb_html for the fragment parser — *out/*out_len
+ * mkr_sanitize_html_input: decode rb_html for the fragment parser — *out / *out_len
  * are the bytes to parse, *owned a malloc'd buffer to free afterwards (NULL when
  * the input is used in place). Returns 0, or -1 on OOM (nothing allocated), so
  * the caller can release its parser before raising. See mkr_utf8_sanitize.
