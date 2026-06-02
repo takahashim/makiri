@@ -1,5 +1,7 @@
 #include "glue.h"
 
+#include <stdint.h>
+
 /* MKR_NODE_SET_MAX (the per-set node cap, shared with the CSS/XPath glue) is
  * defined in glue.h. Every node-collecting path — tree walks
  * (children / element_children / attribute_nodes), XPath, and CSS — fails
@@ -141,14 +143,72 @@ mkr_node_set_member(const mkr_node_set_data_t *s, const lxb_dom_node_t *n)
     return 0;
 }
 
-/* Append node to result unless it is already present (dedup by identity). r is
- * the result's data struct (stable across pushes; only its array reallocs). */
-static void
-mkr_push_unique(VALUE result, mkr_node_set_data_t *r, lxb_dom_node_t *n)
+/* Open-addressing pointer-hash set, used to keep the set operators below O(n²)
+ * (a CPU-DoS vector at large operand sizes). NULL is the empty sentinel; DOM
+ * node pointers are never NULL. Sized once for the expected element count (load
+ * factor < 0.5), so it never rehashes. cap == 0 means "not built" — the caller
+ * then falls back to a linear scan (small operands, or allocation failure). */
+typedef struct {
+    const lxb_dom_node_t **slots;
+    size_t                 cap;
+} mkr_ptrset_t;
+
+/* Below this operand size a linear scan is cheaper than building the hash. */
+#define MKR_NODE_SET_HASH_MIN 64
+
+static size_t
+mkr_ptr_hash(const lxb_dom_node_t *p)
 {
-    if (!mkr_node_set_member(r, n)) {
-        mkr_node_set_push(result, n);
+    uintptr_t x = (uintptr_t)p;
+    x ^= x >> 33;
+    x *= (uintptr_t)0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return (size_t)x;
+}
+
+/* Build (cap 0 on allocation failure → linear fallback). */
+static void
+mkr_ptrset_init(mkr_ptrset_t *set, size_t n)
+{
+    size_t cap = 16;
+    while (cap < n * 2) {
+        if (cap > SIZE_MAX / 2) { set->slots = NULL; set->cap = 0; return; }
+        cap *= 2;
     }
+    set->slots = calloc(cap, sizeof(*set->slots));
+    set->cap   = (set->slots != NULL) ? cap : 0;
+}
+
+static void
+mkr_ptrset_free(mkr_ptrset_t *set)
+{
+    free(set->slots);
+}
+
+/* Add p; returns 1 if newly added, 0 if already present. */
+static int
+mkr_ptrset_add(mkr_ptrset_t *set, const lxb_dom_node_t *p)
+{
+    size_t mask = set->cap - 1;
+    size_t j = mkr_ptr_hash(p) & mask;
+    while (set->slots[j] != NULL) {
+        if (set->slots[j] == p) return 0;
+        j = (j + 1) & mask;
+    }
+    set->slots[j] = p;
+    return 1;
+}
+
+static int
+mkr_ptrset_has(const mkr_ptrset_t *set, const lxb_dom_node_t *p)
+{
+    size_t mask = set->cap - 1;
+    size_t j = mkr_ptr_hash(p) & mask;
+    while (set->slots[j] != NULL) {
+        if (set->slots[j] == p) return 1;
+        j = (j + 1) & mask;
+    }
+    return 0;
 }
 
 /*
@@ -165,8 +225,21 @@ mkr_node_set_op_or(VALUE self, VALUE other)
     mkr_node_set_data_t *o = mkr_node_set_get(other);
     VALUE result = mkr_node_set_new(s->document);
     mkr_node_set_data_t *r = mkr_node_set_get(result);
-    for (size_t i = 0; i < s->count; i++) mkr_push_unique(result, r, s->nodes[i]);
-    for (size_t i = 0; i < o->count; i++) mkr_push_unique(result, r, o->nodes[i]);
+
+    mkr_ptrset_t seen = { NULL, 0 };
+    if (s->count + o->count > MKR_NODE_SET_HASH_MIN) {
+        mkr_ptrset_init(&seen, s->count + o->count);
+    }
+    mkr_node_set_data_t *srcs[2] = { s, o };
+    for (int k = 0; k < 2; k++) {
+        for (size_t i = 0; i < srcs[k]->count; i++) {
+            lxb_dom_node_t *n = srcs[k]->nodes[i];
+            int fresh = seen.cap ? mkr_ptrset_add(&seen, n)
+                                 : !mkr_node_set_member(r, n);
+            if (fresh) mkr_node_set_push(result, n);
+        }
+    }
+    mkr_ptrset_free(&seen);
     return result;
 }
 
@@ -182,36 +255,52 @@ mkr_node_set_op_plus(VALUE self, VALUE other)
     return result;
 }
 
-/* self & other -> intersection (self order, deduped). */
+/* Shared core of & and -: keep each (deduped) node of self whose membership in
+ * other equals +keep_if_in_other+ (1 for intersection, 0 for difference). */
 static VALUE
-mkr_node_set_op_and(VALUE self, VALUE other)
+mkr_node_set_op_filter(VALUE self, VALUE other, int keep_if_in_other)
 {
     mkr_node_set_data_t *s = mkr_node_set_get(self);
     mkr_node_set_data_t *o = mkr_node_set_get(other);
     VALUE result = mkr_node_set_new(s->document);
     mkr_node_set_data_t *r = mkr_node_set_get(result);
-    for (size_t i = 0; i < s->count; i++) {
-        if (mkr_node_set_member(o, s->nodes[i])) {
-            mkr_push_unique(result, r, s->nodes[i]);
+
+    mkr_ptrset_t oset = { NULL, 0 }; /* membership of `other` */
+    if (o->count > MKR_NODE_SET_HASH_MIN) {
+        mkr_ptrset_init(&oset, o->count);
+        if (oset.cap) {
+            for (size_t i = 0; i < o->count; i++) mkr_ptrset_add(&oset, o->nodes[i]);
         }
     }
+    mkr_ptrset_t seen = { NULL, 0 }; /* result dedup */
+    if (s->count > MKR_NODE_SET_HASH_MIN) {
+        mkr_ptrset_init(&seen, s->count);
+    }
+
+    for (size_t i = 0; i < s->count; i++) {
+        lxb_dom_node_t *n = s->nodes[i];
+        int in_o = oset.cap ? mkr_ptrset_has(&oset, n) : mkr_node_set_member(o, n);
+        if (in_o != keep_if_in_other) continue;
+        int fresh = seen.cap ? mkr_ptrset_add(&seen, n) : !mkr_node_set_member(r, n);
+        if (fresh) mkr_node_set_push(result, n);
+    }
+    mkr_ptrset_free(&oset);
+    mkr_ptrset_free(&seen);
     return result;
+}
+
+/* self & other -> intersection (self order, deduped). */
+static VALUE
+mkr_node_set_op_and(VALUE self, VALUE other)
+{
+    return mkr_node_set_op_filter(self, other, 1);
 }
 
 /* self - other -> difference (self order, deduped). */
 static VALUE
 mkr_node_set_op_minus(VALUE self, VALUE other)
 {
-    mkr_node_set_data_t *s = mkr_node_set_get(self);
-    mkr_node_set_data_t *o = mkr_node_set_get(other);
-    VALUE result = mkr_node_set_new(s->document);
-    mkr_node_set_data_t *r = mkr_node_set_get(result);
-    for (size_t i = 0; i < s->count; i++) {
-        if (!mkr_node_set_member(o, s->nodes[i])) {
-            mkr_push_unique(result, r, s->nodes[i]);
-        }
-    }
-    return result;
+    return mkr_node_set_op_filter(self, other, 0);
 }
 
 void

@@ -82,6 +82,20 @@ RSpec.describe "Makiri convenience API" do
     it "rejects a non-NodeSet operand" do
       expect { ps | [1, 2] }.to raise_error(TypeError)
     end
+
+    it "stays correct on large operands (pointer-hash path, not O(n^2))" do
+      # Above the hash threshold the operators switch from a linear scan to a
+      # pointer hash; exercise both the result and that path here.
+      big = Makiri::HTML("<ul>#{(1..2000).map { |i| "<li>#{i}</li>" }.join}</ul>")
+      lis = big.css("li")
+      expect(lis.length).to eq(2000)
+      expect((lis | lis).length).to eq(2000)          # union dedup
+      expect((lis & lis).length).to eq(2000)          # intersection
+      expect((lis - lis).length).to eq(0)             # difference
+      half = big.css("li:nth-child(-n+1000)")         # half-overlap
+      expect((lis & half).length).to eq(half.length)
+      expect((lis - half).length).to eq(2000 - half.length)
+    end
   end
 
   describe "NodeSet accessors" do
