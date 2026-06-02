@@ -30,8 +30,8 @@
 
 typedef struct {
     const lxb_dom_node_t *node;  /* key; NULL marks an empty slot */
-    uint32_t start;              /* [start, end) into slices[] */
-    uint32_t end;
+    size_t start;                /* [start, end) into slices[] */
+    size_t end;
 } mkr_text_range_t;
 
 typedef struct {
@@ -58,16 +58,21 @@ typedef struct {
 /* hashing                                                            */
 /* ------------------------------------------------------------------ */
 
-static size_t
-mkr_tix_pow2_ceil(size_t n)
+/* Smallest power of two >= n into *out. Returns false on overflow (no power of
+ * two >= n fits in size_t) so the caller abandons the index rather than build a
+ * table smaller than the element count it must hold (which would never find a
+ * free slot under linear probing). */
+static bool
+mkr_tix_pow2_ceil(size_t n, size_t *out)
 {
     size_t p = 1;
     while (p < n) {
         size_t np = p << 1;
-        if (np <= p) return p; /* saturate rather than wrap */
+        if (np <= p) return false; /* overflow */
         p = np;
     }
-    return p;
+    *out = p;
+    return true;
 }
 
 /* Bucket index for a node key (mkr_ptr_hash spreads aligned pointers). */
@@ -81,7 +86,7 @@ mkr_tix_slot_for(const mkr_text_idx_t *t, const lxb_dom_node_t *node)
  * The table is pre-sized for exactly the element count with load < 3/4, so it
  * never rehashes mid-build and a slot is always free (linear probing). */
 static size_t
-mkr_tix_range_insert(mkr_text_idx_t *t, lxb_dom_node_t *node, uint32_t start)
+mkr_tix_range_insert(mkr_text_idx_t *t, lxb_dom_node_t *node, size_t start)
 {
     size_t i = mkr_tix_slot_for(t, node);
     while (t->ranges[i].node != NULL) {
@@ -178,8 +183,8 @@ mkr_text_idx_build(lxb_dom_node_t *root)
     if (ncont > 0) {
         size_t want;
         if (!mkr_size_add(ncont, ncont >> 1, &want)
-            || !mkr_size_add(want, 1, &want)) { mkr_text_idx_destroy(t); return NULL; }
-        t->ranges_cap = mkr_tix_pow2_ceil(want);
+            || !mkr_size_add(want, 1, &want)
+            || !mkr_tix_pow2_ceil(want, &t->ranges_cap)) { mkr_text_idx_destroy(t); return NULL; }
         t->ranges = mkr_callocarray(t->ranges_cap, sizeof(*t->ranges));
         if (t->ranges == NULL) { mkr_text_idx_destroy(t); return NULL; }
     }
@@ -203,7 +208,7 @@ mkr_text_idx_build(lxb_dom_node_t *root)
         mkr_tix_frame_t *top = &st[sn - 1];
         lxb_dom_node_t *child = top->child;
         if (child == NULL) {
-            t->ranges[top->range].end = (uint32_t)t->nslices; /* close subtree */
+            t->ranges[top->range].end = t->nslices; /* close subtree */
             sn--;
             continue;
         }
@@ -227,7 +232,7 @@ mkr_text_idx_build(lxb_dom_node_t *root)
                 t->nslices = i + 1;
             }
         } else if (mkr_tix_is_container(child)) {
-            size_t r = mkr_tix_range_insert(t, child, (uint32_t)t->nslices);
+            size_t r = mkr_tix_range_insert(t, child, t->nslices);
             /* grow_reserve may move st; top is re-fetched at the loop head and
              * not used after this point in the iteration. */
             if (mkr_grow_reserve((void **)&st, &scap, sn + 1, sizeof(*st)) != MKR_OK) {

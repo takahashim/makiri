@@ -140,7 +140,7 @@ void mkr_attr_owner_free(void *idx);
  * node's storage, valid only until a mutation reallocates/detaches it).
  */
 
-/* If +node+ is in +p+'s indexed document tree, set *slices/*n to its
+/* If +node+ is in +p+'s indexed document tree, set *slices and *n to its
  * document-order descendant-text slice run (each a borrowed view of one
  * text/CDATA node's data) and *total_bytes to their summed length, and return
  * 1. Returns 0 (caller falls back to a tree walk) when node is outside the
