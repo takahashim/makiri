@@ -16,19 +16,14 @@
  */
 
 typedef struct {
-  char *prefix;
-  size_t prefix_len;
-  char *uri;
-  size_t uri_len;
+  mkr_owned_text_t prefix;
+  mkr_owned_text_t uri;
 } mkr_ns_entry_t;
 
 typedef struct {
-  char *prefix; /* may be NULL for default namespace */
-  size_t prefix_len;
-  char *name;
-  size_t name_len;
-  char *value;
-  size_t value_len;
+  mkr_owned_text_t prefix; /* .ptr NULL for default namespace */
+  mkr_owned_text_t name;
+  mkr_owned_text_t value;
 } mkr_var_entry_t;
 
 struct mkr_xpath_context_s {
@@ -318,14 +313,14 @@ mkr_xpath_context_free(mkr_xpath_context_t *ctx)
 {
   if (ctx == NULL) return;
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    free(ctx->ns[i].prefix);
-    free(ctx->ns[i].uri);
+    mkr_owned_text_clear(&ctx->ns[i].prefix);
+    mkr_owned_text_clear(&ctx->ns[i].uri);
   }
   free(ctx->ns);
   for (size_t i = 0; i < ctx->vars_count; ++i) {
-    free(ctx->vars[i].prefix);
-    free(ctx->vars[i].name);
-    free(ctx->vars[i].value);
+    mkr_owned_text_clear(&ctx->vars[i].prefix);
+    mkr_owned_text_clear(&ctx->vars[i].name);
+    mkr_owned_text_clear(&ctx->vars[i].value);
   }
   free(ctx->vars);
   mkr_str_cache_clear(&ctx->str_cache);
@@ -346,27 +341,19 @@ mkr_grow(void **base, size_t *cap, size_t elem)
   return mkr_grow_reserve(base, cap, *cap + 1, elem) == MKR_OK ? 0 : -1;
 }
 
-static int
-mkr_text_eq(const char *a, size_t a_len, const char *b, size_t b_len)
-{
-  if (a == NULL || b == NULL) return a == b;
-  return a_len == b_len && memcmp(a, b, a_len) == 0;
-}
-
 int
 mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_valid_text_t uri_t)
 {
-  const char *prefix = prefix_t.ptr;
-  const char *uri    = uri_t.ptr;
-  if (ctx == NULL || prefix == NULL || uri == NULL) return -1;
+  if (ctx == NULL || prefix_t.ptr == NULL || uri_t.ptr == NULL) return -1;
+  mkr_borrowed_text_t prefix = { prefix_t.ptr, prefix_t.len };
   /* Replace if prefix already registered. */
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    if (mkr_text_eq(ctx->ns[i].prefix, ctx->ns[i].prefix_len, prefix, prefix_t.len)) {
-      char *new_uri = mkr_strndup(uri, uri_t.len);
-      if (new_uri == NULL) return -1;
-      free(ctx->ns[i].uri);
+    if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), prefix)) {
+      mkr_owned_text_t new_uri;
+      if (mkr_owned_text_from_bytes_copy(&new_uri, uri_t.ptr, uri_t.len, NULL,
+                                         "out of memory registering namespace") != 0) return -1;
+      mkr_owned_text_clear(&ctx->ns[i].uri);
       ctx->ns[i].uri = new_uri;
-      ctx->ns[i].uri_len = uri_t.len;
       return 0;
     }
   }
@@ -374,13 +361,13 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
   if (ctx->ns_count == ctx->ns_cap) {
     if (mkr_grow((void **)&ctx->ns, &ctx->ns_cap, sizeof(*ctx->ns)) != 0) return -1;
   }
-  ctx->ns[ctx->ns_count].prefix_len = prefix_t.len;
-  ctx->ns[ctx->ns_count].uri_len    = uri_t.len;
-  ctx->ns[ctx->ns_count].prefix = mkr_strndup(prefix, prefix_t.len);
-  ctx->ns[ctx->ns_count].uri    = mkr_strndup(uri, uri_t.len);
-  if (ctx->ns[ctx->ns_count].prefix == NULL || ctx->ns[ctx->ns_count].uri == NULL) {
-    free(ctx->ns[ctx->ns_count].prefix);
-    free(ctx->ns[ctx->ns_count].uri);
+  mkr_ns_entry_t *e = &ctx->ns[ctx->ns_count];
+  mkr_owned_text_init(&e->prefix);
+  mkr_owned_text_init(&e->uri);
+  if (mkr_owned_text_from_bytes_copy(&e->prefix, prefix_t.ptr, prefix_t.len, NULL, NULL) != 0 ||
+      mkr_owned_text_from_bytes_copy(&e->uri,    uri_t.ptr,    uri_t.len,    NULL, NULL) != 0) {
+    mkr_owned_text_clear(&e->prefix);
+    mkr_owned_text_clear(&e->uri);
     return -1;
   }
   ctx->ns_count++;
@@ -390,20 +377,19 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
 int
 mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t name_t, mkr_valid_text_t value_t)
 {
-  const char *name  = name_t.ptr;
-  const char *value = value_t.ptr;
-  if (ctx == NULL || name == NULL) return -1;
+  if (ctx == NULL || name_t.ptr == NULL) return -1;
+  mkr_borrowed_text_t name = { name_t.ptr, name_t.len };
+  const char *value     = value_t.ptr ? value_t.ptr : "";
+  size_t      value_len = value_t.ptr ? value_t.len : 0;
   /* Phase 1: only unprefixed string variables. */
   for (size_t i = 0; i < ctx->vars_count; ++i) {
-    if (ctx->vars[i].prefix == NULL &&
-        mkr_text_eq(ctx->vars[i].name, ctx->vars[i].name_len, name, name_t.len)) {
-      const char *src = value ? value : "";
-      size_t src_len = value ? value_t.len : 0;
-      char *new_value = mkr_strndup(src, src_len);
-      if (new_value == NULL) return -1;
-      free(ctx->vars[i].value);
+    if (ctx->vars[i].prefix.ptr == NULL &&
+        mkr_text_eq(mkr_owned_borrow(ctx->vars[i].name), name)) {
+      mkr_owned_text_t new_value;
+      if (mkr_owned_text_from_bytes_copy(&new_value, value, value_len, NULL,
+                                         "out of memory registering variable") != 0) return -1;
+      mkr_owned_text_clear(&ctx->vars[i].value);
       ctx->vars[i].value = new_value;
-      ctx->vars[i].value_len = src_len;
       return 0;
     }
   }
@@ -411,15 +397,14 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
   if (ctx->vars_count == ctx->vars_cap) {
     if (mkr_grow((void **)&ctx->vars, &ctx->vars_cap, sizeof(*ctx->vars)) != 0) return -1;
   }
-  ctx->vars[ctx->vars_count].prefix = NULL;
-  ctx->vars[ctx->vars_count].prefix_len = 0;
-  ctx->vars[ctx->vars_count].name_len = name_t.len;
-  ctx->vars[ctx->vars_count].name   = mkr_strndup(name, name_t.len);
-  ctx->vars[ctx->vars_count].value_len = value ? value_t.len : 0;
-  ctx->vars[ctx->vars_count].value  = mkr_strndup(value ? value : "", ctx->vars[ctx->vars_count].value_len);
-  if (ctx->vars[ctx->vars_count].name == NULL || ctx->vars[ctx->vars_count].value == NULL) {
-    free(ctx->vars[ctx->vars_count].name);
-    free(ctx->vars[ctx->vars_count].value);
+  mkr_var_entry_t *e = &ctx->vars[ctx->vars_count];
+  mkr_owned_text_init(&e->prefix); /* unprefixed */
+  mkr_owned_text_init(&e->name);
+  mkr_owned_text_init(&e->value);
+  if (mkr_owned_text_from_bytes_copy(&e->name,  name_t.ptr, name_t.len, NULL, NULL) != 0 ||
+      mkr_owned_text_from_bytes_copy(&e->value, value,      value_len,  NULL, NULL) != 0) {
+    mkr_owned_text_clear(&e->name);
+    mkr_owned_text_clear(&e->value);
     return -1;
   }
   ctx->vars_count++;
@@ -432,12 +417,11 @@ mkr_ctx_lookup_ns(mkr_xpath_context_t *ctx, const char *prefix,
 {
   if (out_uri_len != NULL) *out_uri_len = 0;
   if (ctx == NULL || prefix == NULL) return NULL;
+  mkr_borrowed_text_t want = { prefix, prefix_len };
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    if (ctx->ns[i].prefix != NULL &&
-        ctx->ns[i].prefix_len == prefix_len &&
-        memcmp(ctx->ns[i].prefix, prefix, ctx->ns[i].prefix_len) == 0) {
-      if (out_uri_len != NULL) *out_uri_len = ctx->ns[i].uri_len;
-      return ctx->ns[i].uri;
+    if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), want)) {
+      if (out_uri_len != NULL) *out_uri_len = ctx->ns[i].uri.len;
+      return ctx->ns[i].uri.ptr;
     }
   }
   return NULL;
@@ -450,19 +434,14 @@ mkr_ctx_lookup_variable_text(mkr_xpath_context_t *ctx, const char *prefix,
 {
   if (out != NULL) *out = (mkr_borrowed_text_t){ NULL, 0 };
   if (ctx == NULL || name == NULL || out == NULL) return 0;
+  mkr_borrowed_text_t want_prefix = { prefix, prefix_len };
+  mkr_borrowed_text_t want_name   = { name, name_len };
   for (size_t i = 0; i < ctx->vars_count; ++i) {
-    int prefix_match;
-    if (prefix == NULL) {
-      prefix_match = (ctx->vars[i].prefix == NULL);
-    } else {
-      prefix_match = (ctx->vars[i].prefix != NULL
-                      && ctx->vars[i].prefix_len == prefix_len
-                      && memcmp(ctx->vars[i].prefix, prefix, ctx->vars[i].prefix_len) == 0);
-    }
-    if (prefix_match && ctx->vars[i].name != NULL
-        && ctx->vars[i].name_len == name_len
-        && memcmp(ctx->vars[i].name, name, ctx->vars[i].name_len) == 0) {
-      *out = (mkr_borrowed_text_t){ ctx->vars[i].value, ctx->vars[i].value_len };
+    int prefix_match = (prefix == NULL)
+        ? (ctx->vars[i].prefix.ptr == NULL)
+        : mkr_text_eq(mkr_owned_borrow(ctx->vars[i].prefix), want_prefix);
+    if (prefix_match && mkr_text_eq(mkr_owned_borrow(ctx->vars[i].name), want_name)) {
+      *out = mkr_owned_borrow(ctx->vars[i].value);
       return 1;
     }
   }

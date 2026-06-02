@@ -68,6 +68,13 @@ mkr_owned_text_clear(mkr_owned_text_t *t)
 }
 
 int
+mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
+{
+  if (a.ptr == NULL || b.ptr == NULL) return a.ptr == b.ptr;
+  return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
+}
+
+int
 mkr_owned_text_from_bytes_copy(mkr_owned_text_t *out, const char *s, size_t len,
                                mkr_xpath_error_t *err, const char *what)
 {

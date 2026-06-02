@@ -200,6 +200,17 @@ typedef struct {
   size_t      len; /* bytes, excluding the terminator */
 } mkr_borrowed_text_t;
 
+/* Borrow a slice of an owned text (no copy). */
+static inline mkr_borrowed_text_t
+mkr_owned_borrow(mkr_owned_text_t t)
+{
+  return (mkr_borrowed_text_t){ t.ptr, t.len };
+}
+
+/* Borrowed-text equality, NUL-safe (NULL only equals NULL). The single name/
+ * value/registry comparison used across the engine. */
+int mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
+
 typedef struct {
   mkr_nt_kind_t kind;
   mkr_owned_text_t prefix;    /* .ptr may be NULL */
