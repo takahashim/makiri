@@ -27,5 +27,5 @@ allowlist:
     reason: strlen on the validated, NUL-terminated XPath expression (mkr_valid_text_t).
   - path: ext/makiri/xpath/mkr_xpath_value.c
     rule: direct_strlen
-    max: 2
-    reason: strlen on engine-owned NUL-terminated strings; the node string-value builder is length-based and only these terminal calls assume termination.
+    max: 1
+    reason: strlen on a runtime string value (mkr_val_to_string_or_fail) for the byte-cap check; the value is an engine-owned NUL-free char* and this is not a per-node path.

@@ -211,8 +211,10 @@ mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node)
 char *
 mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
                              mkr_xpath_limits_t *limits,
-                             mkr_xpath_error_t *err)
+                             mkr_xpath_error_t *err,
+                             size_t *out_len)
 {
+  if (out_len) *out_len = 0;
   mkr_buf_t buf;
   mkr_buf_init(&buf, (limits != NULL) ? limits->max_string_bytes : 0);
   mkr_status_t st = build_string_value(node, &buf);
@@ -228,7 +230,7 @@ mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
     return NULL;
   }
-  char *s = mkr_buf_steal(&buf, NULL);
+  char *s = mkr_buf_steal(&buf, out_len);
   if (s == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
     return NULL;
@@ -277,7 +279,7 @@ mkr_val_to_string_or_fail(const mkr_val_t *v,
       return p;
     }
     /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
-    return mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err);
+    return mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err, NULL);
   }
   mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown value type");
   return NULL;
@@ -298,7 +300,7 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
       *out = (double)NAN;
       return 0;
     }
-    char *s = mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err);
+    char *s = mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err, NULL);
     if (s == NULL) return -1;
     mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = s } };
     *out = mkr_val_to_number_unchecked(&tmp);
@@ -832,9 +834,9 @@ mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
     }
   }
 
-  char *s = mkr_node_string_value_or_fail(node, mkr_ctx_limits(ctx), err);
+  size_t len = 0;
+  char *s = mkr_node_string_value_or_fail(node, mkr_ctx_limits(ctx), err, &len);
   if (s == NULL) return -1;
-  size_t len = strlen(s);
 
   if (mkr_grow_reserve((void **)&c->entries, &c->cap, c->count + 1,
                        sizeof(*c->entries)) != MKR_OK) {

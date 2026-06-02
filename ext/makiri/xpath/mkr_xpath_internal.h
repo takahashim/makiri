@@ -400,9 +400,12 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   mkr_val_to_boolean has no allocation path, so there is no
  *   _or_fail counterpart — the single entry is correct.
  */
+/* out_len (optional, may be NULL) receives the byte length of the returned
+ * string, saving callers a strlen — the builder already knows it. */
 char *mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
                                    mkr_xpath_limits_t *limits,
-                                   mkr_xpath_error_t *err);
+                                   mkr_xpath_error_t *err,
+                                   size_t *out_len);
 char *mkr_val_to_string_or_fail(const mkr_val_t *v,
                                mkr_xpath_limits_t *limits,
                                mkr_xpath_error_t *err);

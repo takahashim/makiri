@@ -208,7 +208,7 @@ fn_id(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
    * For non-node-set, the value is converted to string and split likewise. */
   if (args[0].type == MKR_XPATH_TYPE_NODESET) {
     for (size_t i = 0; i < args[0].u.nodeset.count; ++i) {
-      char *s = mkr_node_string_value_or_fail(args[0].u.nodeset.items[i], mkr_ctx_limits(ctx), err);
+      char *s = mkr_node_string_value_or_fail(args[0].u.nodeset.items[i], mkr_ctx_limits(ctx), err, NULL);
       if (s == NULL) { mkr_nodeset_clear(&out->u.nodeset); return -1; }
       int rc = id_collect_from_string(s, root, &out->u.nodeset, ctx, err);
       free(s);
@@ -338,7 +338,7 @@ fn_string(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (arity_check(nargs, 0, 1, err, "string") != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
   if (nargs == 0) {
-    out->u.string = mkr_node_string_value_or_fail(self_node, mkr_ctx_limits(ctx), err);
+    out->u.string = mkr_node_string_value_or_fail(self_node, mkr_ctx_limits(ctx), err, NULL);
   } else {
     out->u.string = mkr_val_to_string_or_fail(&args[0], mkr_ctx_limits(ctx), err);
   }
@@ -557,7 +557,7 @@ fn_string_length(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (arity_check(nargs, 0, 1, err, "string-length") != 0) return -1;
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   char *s = (nargs == 0)
-              ? mkr_node_string_value_or_fail(self_node, L, err)
+              ? mkr_node_string_value_or_fail(self_node, L, err, NULL)
               : mkr_val_to_string_or_fail(&args[0], L, err);
   if (s == NULL) return -1;
   out->type = MKR_XPATH_TYPE_NUMBER;
@@ -576,7 +576,7 @@ fn_normalize_space(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (arity_check(nargs, 0, 1, err, "normalize-space") != 0) return -1;
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   char *s = (nargs == 0)
-              ? mkr_node_string_value_or_fail(self_node, L, err)
+              ? mkr_node_string_value_or_fail(self_node, L, err, NULL)
               : mkr_val_to_string_or_fail(&args[0], L, err);
   if (s == NULL) return -1;
   size_t len = strlen(s);
