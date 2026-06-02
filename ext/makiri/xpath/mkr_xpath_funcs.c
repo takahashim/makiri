@@ -733,7 +733,7 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   size_t out_len = 0;
   char *out_s = mkr_buf_steal(&buf, &out_len);
   mkr_val_set_owned_string(out, out_s, out_len);
-  if (out->u.string == NULL) {
+  if (out->u.string.ptr == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
     return -1;
   }
@@ -896,7 +896,7 @@ fn_local_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "local-name") != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
-  out->u.string = NULL;
+  out->u.string = (mkr_owned_text_t){ NULL, 0 };
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "local-name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
@@ -925,7 +925,7 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "namespace-uri") != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
-  out->u.string = NULL;
+  out->u.string = (mkr_owned_text_t){ NULL, 0 };
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "namespace-uri");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
@@ -952,7 +952,7 @@ fn_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "name") != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
-  out->u.string = NULL;
+  out->u.string = (mkr_owned_text_t){ NULL, 0 };
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||

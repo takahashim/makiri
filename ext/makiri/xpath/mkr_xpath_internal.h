@@ -247,12 +247,11 @@ typedef struct {
 
 typedef struct {
   mkr_xpath_type_t type;
-  size_t string_len; /* valid when type == MKR_XPATH_TYPE_STRING */
   union {
-    mkr_nodeset_t nodeset;
-    char        *string;
-    double       number;
-    int          boolean;
+    mkr_nodeset_t    nodeset;
+    mkr_owned_text_t string; /* owned; valid when type == MKR_XPATH_TYPE_STRING */
+    double           number;
+    int              boolean;
   } u;
 } mkr_val_t;
 

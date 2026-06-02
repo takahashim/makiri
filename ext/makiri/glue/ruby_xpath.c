@@ -279,7 +279,7 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
         return set;
     }
     case MKR_XPATH_TYPE_STRING:
-        return rb_utf8_str_new(v->u.string ? v->u.string : "", (long)v->string_len);
+        return rb_utf8_str_new(v->u.string.ptr ? v->u.string.ptr : "", (long)v->u.string.len);
     case MKR_XPATH_TYPE_NUMBER:
         return rb_float_new(v->u.number);
     case MKR_XPATH_TYPE_BOOLEAN:
@@ -352,10 +352,8 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
         return 0;
     }
     /* nil and everything else: coerce to string (nil -> ""). */
-    out->type = MKR_XPATH_TYPE_STRING;
     if (NIL_P(r)) {
-        out->u.string = mkr_strdup("");
-        out->string_len = 0;
+        mkr_val_set_owned_string(out, mkr_strdup(""), 0);
     } else {
         VALUE sv = rb_obj_as_string(r);
         mkr_ruby_text_view_t vv;
@@ -365,11 +363,10 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
             snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
             return -1;
         }
-        out->u.string = mkr_dup_text_view(vv);
-        out->string_len = vv.len;
+        mkr_val_set_owned_string(out, mkr_dup_text_view(vv), vv.len);
         RB_GC_GUARD(vv.value);
     }
-    if (out->u.string == NULL) {
+    if (out->u.string.ptr == NULL) {
         snprintf(errbuf, errlen, "out of memory converting handler result");
         return -1;
     }

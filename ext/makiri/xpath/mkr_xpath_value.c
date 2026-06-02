@@ -115,8 +115,7 @@ mkr_val_set_owned_string(mkr_val_t *v, char *s, size_t len)
 {
   if (v == NULL) return;
   v->type = MKR_XPATH_TYPE_STRING;
-  v->string_len = len;
-  v->u.string = s;
+  v->u.string = (mkr_owned_text_t){ s, len };
 }
 
 /* ---------- value ---------- */
@@ -130,9 +129,7 @@ mkr_val_clear(mkr_val_t *v)
     mkr_nodeset_clear(&v->u.nodeset);
     break;
   case MKR_XPATH_TYPE_STRING:
-    free(v->u.string);
-    v->u.string = NULL;
-    v->string_len = 0;
+    mkr_owned_text_clear(&v->u.string);
     break;
   default:
     break;
@@ -151,8 +148,8 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
   dst->type = src->type;
   switch (src->type) {
   case MKR_XPATH_TYPE_STRING: {
-    const char *s = src->u.string ? src->u.string : "";
-    size_t len = src->u.string ? src->string_len : 0;
+    const char *s = src->u.string.ptr ? src->u.string.ptr : "";
+    size_t len = src->u.string.ptr ? src->u.string.len : 0;
     char *p = mkr_strndup(s, len);
     if (p == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning string value");
@@ -324,8 +321,8 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   switch (v->type) {
   case MKR_XPATH_TYPE_STRING: {
-    const char *s = v->u.string ? v->u.string : "";
-    size_t len = v->u.string ? v->string_len : 0;
+    const char *s = v->u.string.ptr ? v->u.string.ptr : "";
+    size_t len = v->u.string.ptr ? v->u.string.len : 0;
     if (limits != NULL && mkr_limit_check_string_bytes(limits, len, err) != 0) return -1;
     char *p = mkr_strndup(s, len);
     if (p == NULL) {
@@ -432,7 +429,7 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
   case MKR_XPATH_TYPE_BOOLEAN:
     return v->u.boolean ? 1.0 : 0.0;
   case MKR_XPATH_TYPE_STRING:
-    return mkr_borrowed_text_to_number((mkr_borrowed_text_t){ v->u.string, v->string_len });
+    return mkr_borrowed_text_to_number((mkr_borrowed_text_t){ v->u.string.ptr, v->u.string.len });
   case MKR_XPATH_TYPE_NODESET: {
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
@@ -454,7 +451,7 @@ mkr_val_to_boolean(const mkr_val_t *v)
   case MKR_XPATH_TYPE_NUMBER:
     return !(v->u.number == 0.0 || isnan(v->u.number));
   case MKR_XPATH_TYPE_STRING:
-    return v->u.string != NULL && v->u.string[0] != '\0';
+    return v->u.string.ptr != NULL && v->u.string.ptr[0] != '\0';
   case MKR_XPATH_TYPE_NODESET:
     return v->u.nodeset.count > 0;
   }
@@ -466,7 +463,7 @@ mkr_val_to_string_unchecked(const mkr_val_t *v)
 {
   switch (v->type) {
   case MKR_XPATH_TYPE_STRING:
-    return mkr_strdup(v->u.string ? v->u.string : "");
+    return mkr_strdup(v->u.string.ptr ? v->u.string.ptr : "");
   case MKR_XPATH_TYPE_BOOLEAN:
     return mkr_strdup(v->u.boolean ? "true" : "false");
   case MKR_XPATH_TYPE_NUMBER: {

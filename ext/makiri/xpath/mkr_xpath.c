@@ -556,8 +556,8 @@ mkr_val_to_public(const mkr_val_t *v, mkr_xpath_value_t *out)
     out->u.nodeset.count = v->u.nodeset.count;
     break;
   case MKR_XPATH_TYPE_STRING:
-    out->u.string = v->u.string;
-    out->string_len = v->string_len;
+    out->u.string = v->u.string.ptr;
+    out->string_len = v->u.string.len;
     break;
   case MKR_XPATH_TYPE_NUMBER:
     out->u.number = v->u.number;

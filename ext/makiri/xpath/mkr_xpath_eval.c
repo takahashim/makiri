@@ -1270,7 +1270,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     mkr_val_set_owned_string(out,
                              mkr_strndup(n->u.literal.str ? n->u.literal.str : "", n->u.literal.len),
                              n->u.literal.len);
-    if (out->u.string == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying literal"); rc = -1; }
+    if (out->u.string.ptr == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying literal"); rc = -1; }
     else rc = 0;
     break;
   case MKR_NK_LITERAL_NUM:
@@ -1290,7 +1290,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       break;
     }
     mkr_val_set_owned_string(out, mkr_strndup(v.ptr ? v.ptr : "", v.len), v.len);
-    if (out->u.string == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying variable value"); rc = -1; }
+    if (out->u.string.ptr == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying variable value"); rc = -1; }
     else rc = 0;
     break;
   }
