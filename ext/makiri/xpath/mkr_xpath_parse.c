@@ -34,14 +34,18 @@ P_strndup(mkr_parser_t *P, const char *s, size_t n)
 }
 
 /* strndup into an owned-text AST slot (node-test name, literal, varref/fncall
- * name). On OOM the slot is left {NULL, 0} and the parse aborts via P->err
- * (mkr_strndup set it). The stored length lets the evaluator compare names
- * without a per-node strlen. */
-static void
+ * name). Returns 0 on success, -1 on OOM (P->err set, slot left {NULL,0}).
+ * Callers MUST propagate the failure — a {NULL,0} slot left in the AST would
+ * silently mis-compare at evaluation, so the parse fails closed instead. The
+ * stored length lets the evaluator compare names without a per-node strlen.
+ * `s` is a slice of the already-validated expr buffer, so the copy is valid. */
+static int
 P_fill_owned_text(mkr_parser_t *P, const char *s, size_t n, mkr_owned_text_t *out)
 {
   out->ptr = P_strndup(P, s, n);
-  out->len = out->ptr ? n : 0;
+  if (out->ptr == NULL) { out->len = 0; return -1; }
+  out->len = n;
+  return 0;
 }
 
 static int
@@ -175,7 +179,7 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
         else /* processing-instruction */ {
           out->kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &out->pi_target);
+            if (P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &out->pi_target) != 0) return -1;
             if (P_advance(P) != 0) return -1;
           }
         }
@@ -184,12 +188,12 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       }
       /* Not followed by '(': it's an NCName name test. */
       out->kind  = MKR_NT_NAME;
-      P_fill_owned_text(P, saved.text.ptr, saved.text.len, &out->local);
+      if (P_fill_owned_text(P, saved.text.ptr, saved.text.len, &out->local) != 0) return -1;
       return 0;
     }
     /* Plain NCName: check for ':' '*' form. */
     out->kind  = MKR_NT_NAME;
-    P_fill_owned_text(P, s, n, &out->local);
+    if (P_fill_owned_text(P, s, n, &out->local) != 0) return -1;
     return P_advance(P);
   }
 
@@ -199,13 +203,13 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
     size_t      n = TOK(P).text.len;
     size_t      colon = 0;
     while (colon < n && s[colon] != ':') colon++;
-    P_fill_owned_text(P, s, colon, &out->prefix);
+    if (P_fill_owned_text(P, s, colon, &out->prefix) != 0) return -1;
     if (n - colon - 1 == 1 && s[colon + 1] == '*') {
       /* prefix:* — any element in the prefix's namespace. */
       out->kind = MKR_NT_WILDCARD;
     } else {
       out->kind  = MKR_NT_NAME;
-      P_fill_owned_text(P, s + colon + 1, n - colon - 1, &out->local);
+      if (P_fill_owned_text(P, s + colon + 1, n - colon - 1, &out->local) != 0) return -1;
     }
     return P_advance(P);
   }
@@ -294,14 +298,14 @@ parse_step(mkr_parser_t *P, mkr_step_t *out)
         else {
           out->test.kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &out->test.pi_target);
+            if (P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &out->test.pi_target) != 0) return -1;
             if (P_advance(P) != 0) return -1;
           }
         }
         if (P_eat(P, MKR_TK_RPAREN, "')' after node type test") != 0) return -1;
       } else {
         out->test.kind  = MKR_NT_NAME;
-        P_fill_owned_text(P, saved.text.ptr, saved.text.len, &out->test.local);
+        if (P_fill_owned_text(P, saved.text.ptr, saved.text.len, &out->test.local) != 0) return -1;
       }
       return parse_predicates(P, &out->predicates, &out->npredicates);
     }
@@ -421,10 +425,10 @@ parse_function_call(mkr_parser_t *P, mkr_token_t name_tok)
   if (name_tok.kind == MKR_TK_QNAME) {
     size_t colon = 0;
     while (colon < name_tok.text.len && name_tok.text.ptr[colon] != ':') colon++;
-    P_fill_owned_text(P, name_tok.text.ptr, colon, &n->u.fncall.prefix);
-    P_fill_owned_text(P, name_tok.text.ptr + colon + 1, name_tok.text.len - colon - 1, &n->u.fncall.name);
+    if (P_fill_owned_text(P, name_tok.text.ptr, colon, &n->u.fncall.prefix) != 0) goto fail;
+    if (P_fill_owned_text(P, name_tok.text.ptr + colon + 1, name_tok.text.len - colon - 1, &n->u.fncall.name) != 0) goto fail;
   } else {
-    P_fill_owned_text(P, name_tok.text.ptr, name_tok.text.len, &n->u.fncall.name);
+    if (P_fill_owned_text(P, name_tok.text.ptr, name_tok.text.len, &n->u.fncall.name) != 0) goto fail;
   }
 
   size_t cap = 0;
@@ -467,10 +471,10 @@ parse_primary(mkr_parser_t *P)
     if (TOK(P).kind == MKR_TK_QNAME) {
       size_t colon = 0;
       while (colon < TOK(P).text.len && TOK(P).text.ptr[colon] != ':') colon++;
-      P_fill_owned_text(P, TOK(P).text.ptr, colon, &n->u.varref.prefix);
-      P_fill_owned_text(P, TOK(P).text.ptr + colon + 1, TOK(P).text.len - colon - 1, &n->u.varref.name);
+      if (P_fill_owned_text(P, TOK(P).text.ptr, colon, &n->u.varref.prefix) != 0) { mkr_node_free(n); return NULL; }
+      if (P_fill_owned_text(P, TOK(P).text.ptr + colon + 1, TOK(P).text.len - colon - 1, &n->u.varref.name) != 0) { mkr_node_free(n); return NULL; }
     } else {
-      P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &n->u.varref.name);
+      if (P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &n->u.varref.name) != 0) { mkr_node_free(n); return NULL; }
     }
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
@@ -485,7 +489,7 @@ parse_primary(mkr_parser_t *P)
   case MKR_TK_LITERAL: {
     n = new_node(P, MKR_NK_LITERAL_STR);
     if (n == NULL) return NULL;
-    P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &n->u.literal);
+    if (P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &n->u.literal) != 0) { mkr_node_free(n); return NULL; }
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
   }

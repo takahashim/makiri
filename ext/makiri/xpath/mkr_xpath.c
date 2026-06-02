@@ -350,8 +350,8 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
   for (size_t i = 0; i < ctx->ns_count; ++i) {
     if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), prefix)) {
       mkr_owned_text_t new_uri;
-      if (mkr_owned_text_from_bytes_copy(&new_uri, uri_t.ptr, uri_t.len, NULL,
-                                         "out of memory registering namespace") != 0) return -1;
+      if (mkr_owned_text_from_borrowed_copy(&new_uri, mkr_valid_borrow(uri_t), NULL,
+                                            "out of memory registering namespace") != 0) return -1;
       mkr_owned_text_clear(&ctx->ns[i].uri);
       ctx->ns[i].uri = new_uri;
       return 0;
@@ -364,8 +364,8 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
   mkr_ns_entry_t *e = &ctx->ns[ctx->ns_count];
   mkr_owned_text_init(&e->prefix);
   mkr_owned_text_init(&e->uri);
-  if (mkr_owned_text_from_bytes_copy(&e->prefix, prefix_t.ptr, prefix_t.len, NULL, NULL) != 0 ||
-      mkr_owned_text_from_bytes_copy(&e->uri,    uri_t.ptr,    uri_t.len,    NULL, NULL) != 0) {
+  if (mkr_owned_text_from_borrowed_copy(&e->prefix, prefix,                  NULL, NULL) != 0 ||
+      mkr_owned_text_from_borrowed_copy(&e->uri,    mkr_valid_borrow(uri_t), NULL, NULL) != 0) {
     mkr_owned_text_clear(&e->prefix);
     mkr_owned_text_clear(&e->uri);
     return -1;
@@ -379,15 +379,14 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
 {
   if (ctx == NULL || name_t.ptr == NULL) return -1;
   mkr_borrowed_text_t name = mkr_valid_borrow(name_t);
-  const char *value     = value_t.ptr ? value_t.ptr : "";
-  size_t      value_len = value_t.ptr ? value_t.len : 0;
+  /* value_t.ptr == NULL (variable set to empty) -> from_borrowed_copy maps it to "". */
   /* Phase 1: only unprefixed string variables. */
   for (size_t i = 0; i < ctx->vars_count; ++i) {
     if (ctx->vars[i].prefix.ptr == NULL &&
         mkr_text_eq(mkr_owned_borrow(ctx->vars[i].name), name)) {
       mkr_owned_text_t new_value;
-      if (mkr_owned_text_from_bytes_copy(&new_value, value, value_len, NULL,
-                                         "out of memory registering variable") != 0) return -1;
+      if (mkr_owned_text_from_borrowed_copy(&new_value, mkr_valid_borrow(value_t), NULL,
+                                            "out of memory registering variable") != 0) return -1;
       mkr_owned_text_clear(&ctx->vars[i].value);
       ctx->vars[i].value = new_value;
       return 0;
@@ -401,8 +400,8 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
   mkr_owned_text_init(&e->prefix); /* unprefixed */
   mkr_owned_text_init(&e->name);
   mkr_owned_text_init(&e->value);
-  if (mkr_owned_text_from_bytes_copy(&e->name,  name_t.ptr, name_t.len, NULL, NULL) != 0 ||
-      mkr_owned_text_from_bytes_copy(&e->value, value,      value_len,  NULL, NULL) != 0) {
+  if (mkr_owned_text_from_borrowed_copy(&e->name,  name,                    NULL, NULL) != 0 ||
+      mkr_owned_text_from_borrowed_copy(&e->value, mkr_valid_borrow(value_t), NULL, NULL) != 0) {
     mkr_owned_text_clear(&e->name);
     mkr_owned_text_clear(&e->value);
     return -1;

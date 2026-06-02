@@ -208,9 +208,17 @@ mkr_text_idx_build(lxb_dom_node_t *root)
             const lexbor_str_t *d = &lxb_dom_interface_character_data(child)->data;
             if (d->data != NULL && d->length != 0) {
                 size_t i = t->nslices;
+                size_t total;
+                if (!mkr_size_add(t->prefix[i], d->length, &total)) {
+                    /* cumulative text length overflows size_t — give up the
+                     * index (fail closed); the caller falls back to a walk. */
+                    free(st);
+                    mkr_text_idx_destroy(t);
+                    return NULL;
+                }
                 t->slices[i].ptr = (const char *)d->data;
                 t->slices[i].len = d->length;
-                t->prefix[i + 1] = t->prefix[i] + d->length;
+                t->prefix[i + 1] = total;
                 t->nslices = i + 1;
             }
         } else if (mkr_tix_is_container(child)) {

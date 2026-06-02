@@ -327,8 +327,8 @@ void mkr_nodeset_clear(mkr_nodeset_t *ns);
 
 void mkr_owned_text_init (mkr_owned_text_t *t);
 void mkr_owned_text_clear(mkr_owned_text_t *t);
-int  mkr_owned_text_from_bytes_copy(mkr_owned_text_t *out, const char *s, size_t len,
-                                    mkr_xpath_error_t *err, const char *what);
+int  mkr_owned_text_from_borrowed_copy(mkr_owned_text_t *out, mkr_borrowed_text_t t,
+                                       mkr_xpath_error_t *err, const char *what);
 int  mkr_owned_text_from_buf_steal(mkr_owned_text_t *out, mkr_buf_t *buf,
                                    mkr_xpath_error_t *err, const char *what);
 void mkr_val_set_owned_string(mkr_val_t *v, char *s, size_t len);

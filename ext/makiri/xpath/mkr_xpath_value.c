@@ -74,19 +74,22 @@ mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
   return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
 }
 
+/* Copy an already-valid borrowed text into owned storage. Taking
+ * mkr_borrowed_text_t (not raw char*+len) keeps the type contract: an
+ * mkr_owned_text_t can only be minted from text the caller has asserted valid
+ * (via mkr_borrowed_text / mkr_valid_borrow / mkr_owned_borrow), so every
+ * raw-bytes -> text entry point is greppable. */
 int
-mkr_owned_text_from_bytes_copy(mkr_owned_text_t *out, const char *s, size_t len,
-                               mkr_xpath_error_t *err, const char *what)
+mkr_owned_text_from_borrowed_copy(mkr_owned_text_t *out, mkr_borrowed_text_t t,
+                                  mkr_xpath_error_t *err, const char *what)
 {
   if (out == NULL) {
-    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_owned_text_from_bytes_copy: bad args");
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_owned_text_from_borrowed_copy: bad args");
     return -1;
   }
   mkr_owned_text_init(out);
-  if (s == NULL) {
-    s = "";
-    len = 0;
-  }
+  const char *s = t.ptr ? t.ptr : "";
+  size_t len = t.ptr ? t.len : 0;
   char *p = mkr_strndup(s, len);
   if (p == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_OOM, what ? what : "out of memory copying text");
@@ -324,7 +327,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   mkr_owned_text_init(out);
   if (v == NULL) {
-    return mkr_owned_text_from_bytes_copy(out, "", 0, err, "out of memory converting value to string");
+    return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("", 0), err, "out of memory converting value to string");
   }
   switch (v->type) {
   case MKR_XPATH_TYPE_STRING: {
@@ -342,20 +345,20 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   case MKR_XPATH_TYPE_BOOLEAN:
     return v->u.boolean
-      ? mkr_owned_text_from_bytes_copy(out, "true", 4, err, "out of memory converting boolean to string")
-      : mkr_owned_text_from_bytes_copy(out, "false", 5, err, "out of memory converting boolean to string");
+      ? mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("true", 4), err, "out of memory converting boolean to string")
+      : mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("false", 5), err, "out of memory converting boolean to string");
   case MKR_XPATH_TYPE_NUMBER: {
     double d = v->u.number;
     if (isnan(d)) {
-      return mkr_owned_text_from_bytes_copy(out, "NaN", 3, err, "out of memory converting number to string");
+      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("NaN", 3), err, "out of memory converting number to string");
     }
     if (isinf(d)) {
       return d < 0
-        ? mkr_owned_text_from_bytes_copy(out, "-Infinity", 9, err, "out of memory converting number to string")
-        : mkr_owned_text_from_bytes_copy(out, "Infinity", 8, err, "out of memory converting number to string");
+        ? mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("-Infinity", 9), err, "out of memory converting number to string")
+        : mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("Infinity", 8), err, "out of memory converting number to string");
     }
     if (d == 0.0) {
-      return mkr_owned_text_from_bytes_copy(out, "0", 1, err, "out of memory converting number to string");
+      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("0", 1), err, "out of memory converting number to string");
     }
     char buf[64];
     int n;
@@ -376,7 +379,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   case MKR_XPATH_TYPE_NODESET:
     if (v->u.nodeset.count == 0) {
-      return mkr_owned_text_from_bytes_copy(out, "", 0, err, "out of memory");
+      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("", 0), err, "out of memory");
     }
     /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
     return mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, out);

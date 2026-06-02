@@ -1,20 +1,30 @@
 #include "bridge.h"
 #include "../makiri.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
 VALUE
 mkr_ruby_str_from_slices(const mkr_borrowed_text_t *slices, size_t n, size_t total)
 {
+    /* Defensive bounds: the caller (text index) guarantees the slice lengths sum
+     * to total, but a wrong total would overflow the output buffer. Fail closed
+     * rather than memcpy past the allocation. */
+    if (total > (size_t)LONG_MAX) {
+        rb_raise(mkr_eError, "text too large to assemble");
+    }
     VALUE  str = rb_utf8_str_new(NULL, (long)total);
     char  *dst = RSTRING_PTR(str);
     size_t off = 0;
     for (size_t i = 0; i < n; i++) {
-        if (slices[i].len != 0) {
-            memcpy(dst + off, slices[i].ptr, slices[i].len);
-            off += slices[i].len;
+        size_t len = slices[i].len;
+        if (len == 0) continue;
+        if (len > total - off) { /* off <= total holds, so total - off can't underflow */
+            rb_raise(mkr_eError, "text slice length inconsistency");
         }
+        memcpy(dst + off, slices[i].ptr, len);
+        off += len;
     }
     return str;
 }
