@@ -80,8 +80,9 @@ void *mkr_callocarray(size_t count, size_t elem);
  * fills the content. Returns NULL on overflow / OOM. */
 char *mkr_str_alloc(size_t n);
 
-/* Copy n bytes from s into a fresh NUL-terminated buffer (s must hold n bytes
- * when n > 0; s may be NULL when n == 0). Returns NULL on overflow / OOM. */
+/* Copy n bytes from s into a fresh NUL-terminated buffer. s must be non-NULL and
+ * hold n bytes when n > 0 (s == NULL with n > 0 fails closed -> NULL); s may be
+ * NULL when n == 0 (yields an owned ""). Returns NULL on overflow / OOM. */
 char *mkr_strndup(const char *s, size_t n);
 
 /* strdup replacement: s == NULL -> NULL; otherwise an owned NUL-terminated copy,
@@ -116,8 +117,9 @@ mkr_buf_init(mkr_buf_t *b, size_t max)
     b->max  = max;
 }
 
-/* Append n bytes. Fails closed: MKR_ERR_LIMIT if it would exceed max,
- * MKR_ERR_OOM on overflow or allocation failure (the buffer is left intact). */
+/* Append n bytes. Fails closed: MKR_ERR_INVALID if n > 0 but bytes == NULL,
+ * MKR_ERR_LIMIT if it would exceed max, MKR_ERR_OOM on overflow or allocation
+ * failure (the buffer is left intact in every failure case). n == 0 is a no-op. */
 mkr_status_t mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n);
 
 /* Take ownership of the (NUL-terminated) bytes; the buffer is reset to empty.

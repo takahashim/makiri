@@ -45,11 +45,14 @@ mkr_str_alloc(size_t n)
 char *
 mkr_strndup(const char *s, size_t n)
 {
+    if (n > 0 && s == NULL) {
+        return NULL; /* fail closed: would otherwise return uninitialised bytes */
+    }
     char *p = mkr_str_alloc(n);
     if (p == NULL) {
         return NULL;
     }
-    if (n > 0 && s != NULL) {
+    if (n > 0) {
         memcpy(p, s, n);
     }
     p[n] = '\0';
@@ -89,6 +92,9 @@ mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n)
 {
     if (n == 0) {
         return MKR_OK;
+    }
+    if (bytes == NULL) {
+        return MKR_ERR_INVALID; /* fail closed: nonzero length with no source */
     }
     size_t need;
     if (!mkr_size_add(b->len, n, &need)) {
@@ -193,6 +199,32 @@ mkr_safe_selftest(void)
         free(a);
         if (mkr_callocarray(SIZE_MAX, 2) != NULL) return 24; /* overflow */
         if (mkr_callocarray(0, 4) != NULL) return 25;         /* zero count */
+    }
+
+    /* str_alloc / strndup / strdup: copy, terminate, fail closed on NULL+len */
+    {
+        if (mkr_str_alloc(SIZE_MAX) != NULL) return 26;          /* n + 1 overflow */
+        char *p = mkr_strndup("hello", 3);
+        if (p == NULL || memcmp(p, "hel", 4) != 0) { free(p); return 27; } /* "hel\0" */
+        free(p);
+        if (mkr_strndup(NULL, 4) != NULL) return 28;             /* NULL + nonzero -> NULL */
+        char *e = mkr_strndup(NULL, 0);                          /* NULL + zero -> "" */
+        if (e == NULL || e[0] != '\0') { free(e); return 29; }
+        free(e);
+        if (mkr_strdup(NULL) != NULL) return 30;
+        char *d = mkr_strdup("xy");
+        if (d == NULL || memcmp(d, "xy", 3) != 0) { free(d); return 31; }
+        free(d);
+    }
+
+    /* buf: NULL source with nonzero length -> INVALID; n == 0 is a no-op */
+    {
+        mkr_buf_t b;
+        mkr_buf_init(&b, 0);
+        if (mkr_buf_append(&b, NULL, 3) != MKR_ERR_INVALID) { mkr_buf_free(&b); return 32; }
+        if (mkr_buf_append(&b, NULL, 0) != MKR_OK) { mkr_buf_free(&b); return 33; }
+        if (b.len != 0) { mkr_buf_free(&b); return 34; }
+        mkr_buf_free(&b);
     }
 
     /* buf: append, terminate, steal */
