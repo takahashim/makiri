@@ -565,17 +565,25 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
     aa = aa->parent;
     bb = bb->parent;
   }
-  /* Walk sibling chain from common parent. */
-  const lxb_dom_node_t *parent = aa->parent;
-  if (parent == NULL) {
+  /* Resolve sibling order. Scan outward from aa and bb in lockstep (via ->next)
+   * rather than forward from parent->first_child: the cost is then O(distance
+   * between aa and bb), not O(distance from the first child. The latter is
+   * quadratic when sorting nodes that sit deep in a wide, flat parent (e.g. a
+   * predicate result picking scattered <li> from a 2000-child <ul>), which the
+   * doc-order index would only avoid once a single sort reaches its build
+   * threshold. */
+  if (aa->parent == NULL) {
     /* Different documents/roots — undefined; keep stable. */
     return 0;
   }
-  for (const lxb_dom_node_t *s = parent->first_child; s != NULL; s = s->next) {
-    if (s == aa) return -1;
-    if (s == bb) return 1;
+  const lxb_dom_node_t *fa = aa, *fb = bb;
+  for (;;) {
+    fa = fa ? fa->next : NULL;
+    fb = fb ? fb->next : NULL;
+    if (fa == bb) return -1;            /* bb lies after aa -> aa first */
+    if (fb == aa) return 1;             /* aa lies after bb -> bb first */
+    if (fa == NULL && fb == NULL) return 0; /* unreachable for same-parent nodes */
   }
-  return 0;
 }
 
 /* ---------- per-evaluate document-order index ---------- */
