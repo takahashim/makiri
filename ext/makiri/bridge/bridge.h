@@ -62,6 +62,13 @@ void mkr_ruby_exception_message(VALUE exc, char *buf, size_t len);
  * v.value alive for the duration of the engine call. */
 mkr_valid_text_t mkr_text_from_view(mkr_ruby_borrowed_text_t v);
 
+/* Assemble a UTF-8 Ruby String of exactly +total+ bytes by concatenating +n+
+ * borrowed slices (their lengths must sum to +total+). The output-side analogue
+ * of the input helpers: the sole place an assembled result is written through
+ * RSTRING_PTR. Used by Node#text's text-index fast path. */
+VALUE mkr_ruby_str_from_slices(const mkr_borrowed_text_t *slices, size_t n,
+                               size_t total);
+
 #ifdef __cplusplus
 }
 #endif

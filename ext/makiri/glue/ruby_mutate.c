@@ -22,7 +22,9 @@
 static void
 mkr_invalidate_index(VALUE node)
 {
-    mkr_parsed_attr_index_invalidate(mkr_doc_parsed(mkr_node_document(node)));
+    mkr_parsed_t *p = mkr_doc_parsed(mkr_node_document(node));
+    mkr_parsed_attr_index_invalidate(p);
+    mkr_parsed_text_index_invalidate(p);
 }
 
 static lxb_dom_node_t *

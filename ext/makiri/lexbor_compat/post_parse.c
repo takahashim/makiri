@@ -135,6 +135,8 @@ mkr_parsed_destroy(mkr_parsed_t *p)
     p->attr_owner = NULL;
     mkr_lines_free(p->newline_idx);
     p->newline_idx = NULL;
+    mkr_text_index_free(p->text_index); /* lazy; NULL if no text query ran */
+    p->text_index = NULL;
 
     if (p->doc != NULL) {
         lxb_html_document_destroy(p->doc);

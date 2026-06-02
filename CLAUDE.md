@@ -138,6 +138,21 @@ so those elements are left out and `//customtag` falls back to the tree walk.
 Reached via `mkr_parsed_element_index` / `mkr_element_index_tag` /
 `mkr_element_index_has_foreign`; invalidated with the attr index.
 
+**text index** (`lexbor_compat/text_index.c`). Removes the per-call descendant
+walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
+lazy build (count, size once, fill; explicit **heap**-stack DFS via
+`mkr_grow_reserve`, no recursion → no stack DoS) records a flat document-order
+array of every TEXT/CDATA node's **borrowed** `mkr_borrowed_text_t` slice, a
+prefix-sum of their lengths, and a pointer-keyed open-addressing hash mapping
+each element/fragment to the `[start,end)` run of slices its subtree owns. A
+`Node#text` is then a hash lookup + `mkr_ruby_str_from_slices` (one pre-sized
+memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
+Cached on `mkr_parsed_t.text_index`; `mkr_parsed_text_index_invalidate` drops it
+from the **same single mutation hook** as the attr index, so a borrowed slice
+can never point at reallocated/detached text storage. Reached via
+`mkr_parsed_text_slices` (returns 0 → caller walks: fragments, build OOM).
+Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
+
 **XPath engine** (`xpath/mkr_xpath_*.{c,h}`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
 external hook is `mkr_dom_node_name_qualified` (in `mkr_xpath.c`). Per-evaluate
@@ -179,9 +194,11 @@ Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`, both streaming
 into a UTF-8 Ruby String. `pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
 serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
-over an element streams descendant text directly in `mkr_node_content` (no
-Lexbor temp buffer); for a Document it returns the **root element's** text (DOM
-makes a Document's textContent null, which is not what callers want).
+(`mkr_node_content`) serves descendant text from the **text index** (see
+below) — a hash lookup + one pre-sized `mkr_ruby_str_from_slices` memcpy run,
+no per-call tree walk — and falls back to a direct iterative walk for
+non-indexed nodes (fragments). For a Document it returns the **root element's**
+text (DOM makes a Document's textContent null, which is not what callers want).
 
 **Mutation** (`glue/ruby_mutate.c`). Tree edits (`add_child`/`<<`,
 `add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
@@ -215,7 +232,7 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 **Makiri currently meets or beats Nokogiri/libxml2 on every `rake bench` row**
 (parse ~3×, css ~12×, at_css ~1000×, serialize ~4×, traverse ~1.2×, xpath
 attr-axis ~1.3×, `[@attr='v']` predicate ~1.5×, `//tag` ~3.4× faster, full-text
-extraction ~parity). Plus parsing scales across threads (~2× on 8 cores) since
+extraction ~4×). Plus parsing scales across threads (~2× on 8 cores) since
 it releases the GVL. Key decisions that got there, worth not regressing:
 
 - **Parsing releases the GVL; XPath evaluation does NOT** (`ruby_doc.c`,
@@ -244,6 +261,14 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   `node_principal_match`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
+- **`Node#text` is served from the text index** (`lexbor_compat/text_index.c`,
+  see the subsystem note): a per-document, lazily-built, mutation-invalidated
+  map from node → its document-order text-slice run, turning text extraction
+  into a hash lookup + one pre-sized memcpy instead of a cache-bound walk over
+  96-byte nodes (~4× libxml2, vs the former ~parity). The walk fallback stays
+  for non-indexed nodes. Do not regress to walking on the indexed path; verify
+  with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
+  asserts byte-identity with a plain walk across subtrees + mutations).
 - **String-value cache is hashed** (`mkr_xpath_value.c`): a pointer-keyed
   open-addressing index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The ordered store keeps

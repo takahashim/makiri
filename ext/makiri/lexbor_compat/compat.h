@@ -7,6 +7,8 @@
 #include <lexbor/html/html.h>
 #include <lexbor/dom/dom.h>
 
+#include "../core/mkr_safe.h" /* mkr_borrowed_text_t */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,6 +20,7 @@ typedef struct mkr_parsed_s {
     lxb_html_document_t *doc;
     void                *attr_owner;   /* M4: lxb_dom_attr_t -> owner element */
     void                *newline_idx;  /* M6: byte offset -> source line */
+    void                *text_index;   /* node -> descendant-text slice run */
 } mkr_parsed_t;
 
 /* Parse HTML5 from src[0..len). Returns NULL on allocation or parse failure
@@ -126,6 +129,32 @@ size_t mkr_parsed_node_line(mkr_parsed_t *p, lxb_dom_node_t *node);
 /* Free an index allocated by mkr_parsed_attr_owner. Safe on NULL. Called by
  * mkr_parsed_destroy; exposed so post_parse.c need not see the index layout. */
 void mkr_attr_owner_free(void *idx);
+
+/* ---- text-extraction index (lexbor_compat/text_index.c) ----
+ *
+ * Maps a node to the contiguous run of document-order TEXT/CDATA byte slices
+ * its subtree owns, so Node#text / XPath string-value can serve a pre-sized
+ * single memcpy run instead of walking the subtree. Built lazily and cached on
+ * mkr_parsed_t.text_index; dropped by mkr_parsed_text_index_invalidate from the
+ * same mutation hook as the attr index (a cached slice borrows into a text
+ * node's storage, valid only until a mutation reallocates/detaches it).
+ */
+
+/* If +node+ is in +p+'s indexed document tree, set *slices/*n to its
+ * document-order descendant-text slice run (each a borrowed view of one
+ * text/CDATA node's data) and *total_bytes to their summed length, and return
+ * 1. Returns 0 (caller falls back to a tree walk) when node is outside the
+ * indexed tree (e.g. a fragment) or the index cannot be built (OOM). Builds the
+ * index on first use. */
+int mkr_parsed_text_slices(mkr_parsed_t *p, const lxb_dom_node_t *node,
+                           const mkr_borrowed_text_t **slices, size_t *n,
+                           size_t *total_bytes);
+
+/* Drop the text index so the next query rebuilds it. Call after any mutation. */
+void mkr_parsed_text_index_invalidate(mkr_parsed_t *p);
+
+/* Free a text index. Safe on NULL. Called by mkr_parsed_destroy. */
+void mkr_text_index_free(void *idx);
 
 #ifdef __cplusplus
 }

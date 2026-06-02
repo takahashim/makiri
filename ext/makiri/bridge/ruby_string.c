@@ -4,6 +4,21 @@
 #include <stdio.h>
 #include <string.h>
 
+VALUE
+mkr_ruby_str_from_slices(const mkr_borrowed_text_t *slices, size_t n, size_t total)
+{
+    VALUE  str = rb_utf8_str_new(NULL, (long)total);
+    char  *dst = RSTRING_PTR(str);
+    size_t off = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (slices[i].len != 0) {
+            memcpy(dst + off, slices[i].ptr, slices[i].len);
+            off += slices[i].len;
+        }
+    }
+    return str;
+}
+
 void
 mkr_check_text(VALUE str, const char *what)
 {

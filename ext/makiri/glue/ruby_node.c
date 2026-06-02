@@ -213,15 +213,29 @@ mkr_node_content(VALUE self)
         }
     }
 
-    /* Fast path for elements / fragments (the common case, incl. document text):
-     * stream each descendant text/CDATA node's data straight into the Ruby
-     * string, skipping lxb_dom_node_text_content's intermediate arena buffer and
-     * the extra copy (and its destroy). Iterative pre-order so deep trees can't
-     * blow the stack. Note: the dominant cost here is the descendant walk itself
-     * — a single pass with rb_str_cat measured best (a two-pass sum+memcpy was
-     * slower because it walked the tree twice). */
+    /* Fast path for elements / fragments (the common case, incl. document text).
+     *
+     * Preferred: the per-document text index (lexbor_compat/text_index.c) maps
+     * this node to the contiguous, document-order run of its descendants' text
+     * slices, so we serve a single pre-sized memcpy run with no per-extraction
+     * tree walk — the walk is otherwise the dominant, cache-bound cost. Built
+     * lazily on first use and dropped on any mutation, so a slice can never
+     * point at reallocated/detached storage.
+     *
+     * Fallback (index unavailable — node outside the indexed tree, e.g. a
+     * fragment, or a build OOM): stream each descendant text/CDATA node's data
+     * straight into the Ruby string via an iterative pre-order walk (stack-safe;
+     * skips Lexbor's intermediate arena buffer + copy). */
     if (node->type == LXB_DOM_NODE_TYPE_ELEMENT
         || node->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT) {
+        mkr_parsed_t *parsed = mkr_doc_parsed(mkr_node_document(self));
+        const mkr_borrowed_text_t *slices;
+        size_t nslices, total;
+        if (parsed != NULL
+            && mkr_parsed_text_slices(parsed, node, &slices, &nslices, &total)) {
+            return mkr_ruby_str_from_slices(slices, nslices, total);
+        }
+
         VALUE str = rb_utf8_str_new(NULL, 0);
         for (lxb_dom_node_t *n = node->first_child; n != NULL;) {
             if (n->type == LXB_DOM_NODE_TYPE_TEXT
