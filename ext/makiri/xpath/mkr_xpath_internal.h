@@ -480,8 +480,9 @@ typedef struct {
   /* Open-addressing index: node pointer -> (entry index + 1); 0 = empty slot.
    * Keeps lookup/insert O(1) so per-node predicate comparisons over a large
    * node-set don't degrade to O(n^2). entries[] is the ordered store (so
-   * truncate to a snapshot stays cheap); buckets is just an index into it. */
-  uint32_t *buckets;
+   * truncate to a snapshot stays cheap); buckets is just an index into it.
+   * size_t (not uint32_t) so the stored entry index can never truncate. */
+  size_t   *buckets;
   size_t    bucket_cap; /* power of two, or 0 */
 } mkr_str_cache_t;
 

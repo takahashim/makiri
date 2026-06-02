@@ -857,14 +857,14 @@ mkr_str_cache_index_put(mkr_str_cache_t *c, size_t idx)
   while (c->buckets[j] != 0) {
     j = (j + 1) & mask;
   }
-  c->buckets[j] = (uint32_t)(idx + 1);
+  c->buckets[j] = idx + 1;
 }
 
 /* Rebuild the index from entries[0, count). Returns -1 on OOM. */
 static int
 mkr_str_cache_reindex(mkr_str_cache_t *c, size_t bucket_cap)
 {
-  uint32_t *buckets = mkr_callocarray(bucket_cap, sizeof(*buckets));
+  size_t *buckets = mkr_callocarray(bucket_cap, sizeof(*buckets));
   if (buckets == NULL) return -1;
   free(c->buckets);
   c->buckets    = buckets;
