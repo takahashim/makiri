@@ -163,6 +163,11 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
     size_t          *cursor    = NULL;
     if (n_indexed > 0) {
         size_t noff = (size_t)tag_max + 2;
+        size_t off_bytes;
+        if (!mkr_size_mul(noff, sizeof(*cursor), &off_bytes)) {
+            free(slots);
+            return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+        }
         tag_off = mkr_reallocarray(NULL, noff, sizeof(*tag_off));
         cursor  = mkr_reallocarray(NULL, noff, sizeof(*cursor));
         tag_nodes = mkr_reallocarray(NULL, n_indexed, sizeof(*tag_nodes));
@@ -174,7 +179,7 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
         for (uintptr_t t = 0; t <= tag_max; t++) {
             tag_off[t + 1] = tag_off[t] + counts[t];
         }
-        memcpy(cursor, tag_off, noff * sizeof(*cursor));
+        memcpy(cursor, tag_off, off_bytes);
     }
 
     idx->slots       = slots;

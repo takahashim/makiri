@@ -79,6 +79,16 @@ $CFLAGS << " -fstack-protector-strong"
 $CFLAGS << " -Wformat -Wformat-security"
 $CFLAGS << " -fvisibility=hidden"
 $CFLAGS << " -fno-common"
+
+# Silence a benign false positive from Ruby 3.4's <ruby/internal/core/rstring.h>:
+# its static-inline rbimpl_rstring_getmem default-initialises a struct RString
+# whose const member it never sets (callers only read the fields it does set),
+# which newer clang flags as -Wdefault-const-init-field-unsafe. The warning is
+# emitted in every TU that includes ruby.h, not by our code, so suppress just
+# this one flag (guarded so compilers without it are unaffected).
+%w[-Wno-default-const-init-field-unsafe].each do |flag|
+  $CFLAGS << " #{flag}" if try_cflags(flag)
+end
 # Relocation hardening for shared object.
 $DLDFLAGS << " -Wl,-z,relro" if RbConfig::CONFIG["target_os"] =~ /linux/
 $DLDFLAGS << " -Wl,-z,now"   if RbConfig::CONFIG["target_os"] =~ /linux/

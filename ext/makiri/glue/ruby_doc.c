@@ -207,15 +207,17 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
     /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD; valid input is used
      * in place (no copy, *owned == NULL). Returns -1 on OOM (nothing allocated)
      * so the caller can release its parser before raising. */
+    mkr_ruby_bytes_view_t hv = mkr_ruby_bytes_view(html);
     lxb_char_t *clean = NULL;
     size_t      clean_len = 0;
-    if (mkr_utf8_sanitize((const lxb_char_t *)RSTRING_PTR(html),
-                          (size_t)RSTRING_LEN(html), &clean, &clean_len) != 0) {
+    if (mkr_utf8_sanitize((const lxb_char_t *)hv.ptr, hv.len, &clean, &clean_len) != 0) {
+        RB_GC_GUARD(hv.value);
         return -1;
     }
     *owned   = clean;
-    *out     = (clean != NULL) ? clean : (const lxb_char_t *)RSTRING_PTR(html);
-    *out_len = (clean != NULL) ? clean_len : (size_t)RSTRING_LEN(html);
+    *out     = (clean != NULL) ? clean : (const lxb_char_t *)hv.ptr;
+    *out_len = (clean != NULL) ? clean_len : hv.len;
+    RB_GC_GUARD(hv.value);
     return 0;
 }
 
@@ -396,19 +398,15 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
      * store. The source is not retained past the parse (Lexbor copies what it
      * needs into the arena and the line table is built up front), so the
      * buffer is freed immediately after. */
-    long len = RSTRING_LEN(rb_source);
-    char *buf = mkr_reallocarray(NULL, len > 0 ? (size_t)len : 1, 1);
-    if (buf == NULL) {
+    mkr_owned_bytes_t source = {0};
+    if (mkr_ruby_copy_bytes(rb_source, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying source");
-    }
-    if (len > 0) {
-        memcpy(buf, RSTRING_PTR(rb_source), (size_t)len);
     }
     RB_GC_GUARD(rb_source);
 
-    mkr_parse_nogvl_t args = { (const lxb_char_t *)buf, (size_t)len, NULL };
+    mkr_parse_nogvl_t args = { (const lxb_char_t *)source.ptr, source.len, NULL };
     rb_thread_call_without_gvl(mkr_parse_nogvl, &args, NULL, NULL);
-    free(buf);
+    mkr_owned_bytes_clear(&source);
 
     d->parsed = args.result;
     if (d->parsed == NULL) {

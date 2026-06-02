@@ -295,37 +295,6 @@ mkr_dup_text_view(mkr_ruby_text_view_t v)
     return mkr_strndup(v.ptr, v.len);
 }
 
-/* A Ruby string only becomes an engine string if it is safe to treat as a
- * NUL-terminated UTF-8 C string within the per-evaluate cap. Returns NULL when
- * OK, else a static reason. The engine relies on strlen + character-wise UTF-8,
- * so an embedded NUL would silently truncate and invalid UTF-8 would break
- * substring/translate/string-length — fail closed instead. +sv+ must be a
- * String. */
-static const char *
-mkr_engine_string_view(VALUE sv, size_t max_bytes, mkr_ruby_text_view_t *out)
-{
-    long len = RSTRING_LEN(sv);
-    if ((size_t)len > max_bytes) {
-        return "string exceeds the maximum length";
-    }
-    const char *ptr = RSTRING_PTR(sv);
-    if (memchr(ptr, '\0', (size_t)len) != NULL) {
-        return "string contains a NUL byte";
-    }
-    /* Validate the bytes as UTF-8 using Ruby's own validator (GVL is held in
-     * the variable-registration and handler paths). */
-    VALUE u = rb_utf8_str_new(ptr, len);
-    if (!RTEST(rb_funcall(u, rb_intern("valid_encoding?"), 0))) {
-        return "string is not valid UTF-8";
-    }
-    /* Validated: hand back a view so callers flow the checked ptr/len through
-     * mkr_text_from_view instead of re-fetching raw RSTRING_PTR. */
-    out->value = sv;
-    out->ptr   = ptr;
-    out->len   = (size_t)len;
-    return NULL;
-}
-
 static int
 mkr_push_result_node(mkr_xpath_context_t *ctx, VALUE rb_node, mkr_val_t *out,
                      char *errbuf, size_t errlen)
@@ -390,7 +359,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
         VALUE sv = rb_obj_as_string(r);
         mkr_ruby_text_view_t vv;
         const char *bad =
-            mkr_engine_string_view(sv, mkr_ctx_limits(ctx)->max_string_bytes, &vv);
+            mkr_ruby_engine_string_view(sv, mkr_ctx_limits(ctx)->max_string_bytes, &vv);
         if (bad != NULL) {
             snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
             return -1;
@@ -438,14 +407,6 @@ mkr_handler_call_body(VALUE p)
     return Qnil;
 }
 
-/* rb_protect thunk: fetch a raised exception's message as a String. Wrapped so
- * a broken custom #message cannot long-jump out of the resolver. */
-static VALUE
-mkr_exc_message_thunk(VALUE exc)
-{
-    return rb_obj_as_string(rb_funcall(exc, rb_intern("message"), 0));
-}
-
 /* Resolver return convention: 0 = handled, -1 = errored, +1 = not found. */
 static int
 mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
@@ -461,12 +422,13 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
 
     /* Method name: XPath uses '-', Ruby uses '_'. */
     char name[128];
-    size_t n = strlen(local_name);
-    if (n >= sizeof(name)) {
-        return 1;
+    size_t n = 0;
+    while (n + 1 < sizeof(name) && local_name[n] != '\0') {
+        name[n] = (local_name[n] == '-') ? '_' : local_name[n];
+        n++;
     }
-    for (size_t i = 0; i < n; i++) {
-        name[i] = (local_name[i] == '-') ? '_' : local_name[i];
+    if (local_name[n] != '\0') {
+        return 1; /* too long to map to a Ruby method name */
     }
     name[n] = '\0';
 
@@ -496,19 +458,9 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
     if (state != 0) {
         VALUE exc = rb_errinfo();
         rb_set_errinfo(Qnil);
-        /* Extract the message fail-closed: a NUL in it would make StringValueCStr
-         * raise ArgumentError (long-jumping past this Makiri::Error conversion),
-         * and a broken #message could raise too. Use rb_protect + RSTRING_PTR
-         * (NUL-terminated; %s simply truncates at any embedded NUL). */
-        int mstate = 0;
-        VALUE msg = rb_protect(mkr_exc_message_thunk, exc, &mstate);
-        const char *m = (mstate == 0 && RB_TYPE_P(msg, T_STRING))
-                            ? RSTRING_PTR(msg) : "error";
-        if (mstate != 0) {
-            rb_set_errinfo(Qnil);
-        }
-        mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "handler raised: %s", m);
-        RB_GC_GUARD(msg);
+        char msg[200];
+        mkr_ruby_exception_message(exc, msg, sizeof(msg));
+        mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "handler raised: %s", msg);
         return -1;
     }
     if (call.status != 0) {
@@ -652,7 +604,7 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
     VALUE value = rb_obj_as_string(rb_value);
     mkr_ruby_text_view_t vv;
     const char *bad =
-        mkr_engine_string_view(value, mkr_ctx_limits(d->ctx)->max_string_bytes, &vv);
+        mkr_ruby_engine_string_view(value, mkr_ctx_limits(d->ctx)->max_string_bytes, &vv);
     if (bad != NULL) {
         rb_raise(mkr_eError, "invalid variable value: %s", bad);
     }

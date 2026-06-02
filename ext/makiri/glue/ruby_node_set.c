@@ -39,7 +39,15 @@ static size_t
 mkr_node_set_memsize(const void *ptr)
 {
     const mkr_node_set_data_t *s = (const mkr_node_set_data_t *)ptr;
-    return sizeof(*s) + s->cap * sizeof(lxb_dom_node_t *);
+    size_t nodes_bytes;
+    size_t total;
+    if (!mkr_size_mul(s->cap, sizeof(lxb_dom_node_t *), &nodes_bytes)) {
+        return sizeof(*s);
+    }
+    if (!mkr_size_add(sizeof(*s), nodes_bytes, &total)) {
+        return sizeof(*s);
+    }
+    return total;
 }
 
 const rb_data_type_t mkr_node_set_type = {

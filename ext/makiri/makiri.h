@@ -62,12 +62,44 @@ typedef struct {
     size_t      len;
 } mkr_ruby_text_view_t;
 
+/* A borrowed raw byte view of a Ruby String. This deliberately does NOT enforce
+ * Makiri's strict text contract; HTML parsing consumes raw bytes and decodes
+ * invalid UTF-8 leniently. */
+typedef struct {
+    VALUE       value;
+    const char *ptr;
+    size_t      len;
+} mkr_ruby_bytes_view_t;
+
 /* Coerce +in+ to a String and enforce the text-input contract, raising
  * Makiri::Error (naming +what+) on a NUL byte or invalid UTF-8. */
 mkr_ruby_text_view_t mkr_ruby_checked_text(VALUE in, const char *what);
 
+/* Coerce +in+ to a String and return its raw bytes. No UTF-8 / NUL validation.
+ * The returned `ptr` BORROWS the bytes of `value` (the coerced String): it is
+ * valid only while `value` is reachable. The view holds `value` so keeping the
+ * view on the C stack suffices, but if a caller copies `ptr`/`value` out of the
+ * view and lets the view die (e.g. returns `ptr` while only the view referenced
+ * a freshly coerced String), the borrow dangles. For a buffer that must outlive
+ * the source String, use mkr_ruby_copy_bytes instead. */
+mkr_ruby_bytes_view_t mkr_ruby_bytes_view(VALUE in);
+
+/* Copy a Ruby String's raw bytes into owned C storage (at least one byte even
+ * for an empty input), suitable for use while the GVL is released. */
+int mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out);
+
+/* Validate a Ruby String for use as an XPath engine string: valid UTF-8,
+ * no interior NUL, and at most +max_bytes+. Returns NULL on success and fills
+ * +out+; otherwise returns a static reason string. +sv+ must be a String. */
+const char *mkr_ruby_engine_string_view(VALUE sv, size_t max_bytes,
+                                        mkr_ruby_text_view_t *out);
+
+/* Copy an exception's #message into +buf+ without letting a broken #message
+ * escape. Embedded NULs are intentionally truncated by %s formatting. */
+void mkr_ruby_exception_message(VALUE exc, char *buf, size_t len);
+
 /* The sole constructor of mkr_valid_text_t. Turns an already-validated view
- * (from mkr_ruby_checked_text or mkr_engine_string_view) into the token the
+ * (from mkr_ruby_checked_text or mkr_ruby_engine_string_view) into the token the
  * XPath engine accepts. Keeping this the only mint means unvalidated bytes
  * cannot reach the engine. The returned token borrows v.ptr; the caller must
  * keep v.value alive (RB_GC_GUARD) for the duration of the engine call. */
