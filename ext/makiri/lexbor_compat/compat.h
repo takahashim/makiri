@@ -42,7 +42,7 @@ int mkr_utf8_sanitize(const lxb_char_t *src, size_t len,
 
 void mkr_parsed_destroy(mkr_parsed_t *p);
 
-/* ---- attribute -> owner element index (lexbor_compat/attr_owner.c) ----
+/* ---- attribute -> owner element index (lexbor_compat/dom_index.c) ----
  *
  * Lexbor sets neither lxb_dom_attr_t::owner nor attr->node.parent, so an
  * attribute node has no usable back-pointer to its element. We build our own
@@ -68,7 +68,7 @@ int mkr_parsed_attr_index_build(mkr_parsed_t *p);
  * co-built element index below. */
 void mkr_parsed_attr_index_invalidate(mkr_parsed_t *p);
 
-/* ---- element index: tag id -> elements (lexbor_compat/attr_owner.c) ----
+/* ---- element index: tag id -> elements (lexbor_compat/dom_index.c) ----
  *
  * Co-built with the attr->owner index in the same document walk (same object,
  * same lazy build, same invalidation). Groups every element by tag id in

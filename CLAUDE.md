@@ -122,7 +122,7 @@ tkz/tree). Tracking is **always on**: it rides the parse (~7% over no-tracking,
 measured). An earlier `line: :text`/`:none` option was removed — `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
 
-**attr→owner index** (`lexbor_compat/attr_owner.c`). Lexbor never links an
+**attr→owner index** (`lexbor_compat/dom_index.c`). Lexbor never links an
 attribute back to its element, so we build an open-addressing hash (pointer
 keys, lazy two-phase build — count, size once, fill; iterative DFS, no recursion
 → no stack DoS; OOM fails closed and retries). The build also **backfills each
