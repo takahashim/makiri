@@ -100,12 +100,18 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
     size_t n = src->u.nodeset.count;
     mkr_nodeset_init(&dst->u.nodeset);
     if (n == 0) return 0;
-    lxb_dom_node_t **items = mkr_reallocarray(NULL, n, sizeof(*items));
+    lxb_dom_node_t **items;
+    size_t items_bytes;
+    if (!mkr_size_mul(n, sizeof(*items), &items_bytes)) {
+      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning node-set");
+      return -1;
+    }
+    items = mkr_reallocarray(NULL, n, sizeof(*items));
     if (items == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning node-set");
       return -1;
     }
-    memcpy(items, src->u.nodeset.items, n * sizeof(*items));
+    memcpy(items, src->u.nodeset.items, items_bytes);
     dst->u.nodeset.items    = items;
     dst->u.nodeset.count    = n;
     dst->u.nodeset.capacity = n;
@@ -765,7 +771,14 @@ mkr_str_cache_truncate(mkr_str_cache_t *c, size_t target_count)
    * a partial one (nested-eval snapshot restore) rebuilds from what remains. */
   if (c->buckets != NULL) {
     if (target_count == 0) {
-      memset(c->buckets, 0, c->bucket_cap * sizeof(*c->buckets));
+      size_t buckets_bytes;
+      if (!mkr_size_mul(c->bucket_cap, sizeof(*c->buckets), &buckets_bytes)) {
+        free(c->buckets);
+        c->buckets = NULL;
+        c->bucket_cap = 0;
+        return;
+      }
+      memset(c->buckets, 0, buckets_bytes);
     } else {
       mkr_str_cache_reindex(c, c->bucket_cap);
     }

@@ -29,8 +29,3 @@ allowlist:
     rule: direct_strlen
     max: 2
     reason: strlen on engine-owned NUL-terminated strings; the node string-value builder is length-based and only these terminal calls assume termination.
-  # --- copy/report sizes that mirror an already overflow-checked allocation ---
-  - path: ext/makiri/xpath/mkr_xpath_value.c
-    rule: sizeof_allocation
-    max: 2
-    reason: memcpy/memset sizes mirroring buffers allocated overflow-checked via mkr_reallocarray / mkr_callocarray.
