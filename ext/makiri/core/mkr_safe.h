@@ -114,6 +114,23 @@ typedef struct {
  * `cap *= 2; realloc(p, cap * sizeof(T))` pattern in one call. */
 mkr_status_t mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem);
 
+/* Mix a pointer into a well-distributed 64-bit hash (the MurmurHash3 fmix64
+ * finalizer). Aligned pointers carry little low-bit entropy, so spread them
+ * before masking with a power-of-two table size. The one definition shared by
+ * the pointer-keyed indexes (attr->owner, text-index, ...); mask the result
+ * with `& (cap - 1)` at the call site. */
+static inline uint64_t
+mkr_ptr_hash(const void *p)
+{
+    uint64_t h = (uint64_t)(uintptr_t)p;
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdULL;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53ULL;
+    h ^= h >> 33;
+    return h;
+}
+
 /* ---------------------------------------------------------------- */
 /* mkr_buf_t — owned, growable, optionally capped byte buffer        */
 /* ---------------------------------------------------------------- */

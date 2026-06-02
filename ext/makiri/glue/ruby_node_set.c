@@ -168,15 +168,7 @@ typedef struct {
 /* Below this operand size a linear scan is cheaper than building the hash. */
 #define MKR_NODE_SET_HASH_MIN 64
 
-static size_t
-mkr_ptr_hash(const lxb_dom_node_t *p)
-{
-    uintptr_t x = (uintptr_t)p;
-    x ^= x >> 33;
-    x *= (uintptr_t)0xff51afd7ed558ccdULL;
-    x ^= x >> 33;
-    return (size_t)x;
-}
+/* Pointer hashing is shared: mkr_ptr_hash (core/mkr_safe.h). */
 
 /* Build (cap 0 on overflow / allocation failure → linear fallback). Sized for
  * load factor < 0.5 (>= n * 2 slots, min 16), all through the overflow-checked

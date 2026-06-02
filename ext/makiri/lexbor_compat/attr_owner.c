@@ -53,19 +53,11 @@ typedef struct {
 /* Pre-order traversal helper mkr_dom_preorder_next lives in compat_internal.h
  * (shared with source_loc.c). */
 
-/* Mix a pointer into a well-distributed bucket index. Pointers are aligned, so
- * the low bits carry little entropy; fmix64 (the finalizer from MurmurHash3)
- * spreads them across the table. */
+/* Bucket index for an attribute key (mkr_ptr_hash spreads aligned pointers). */
 static size_t
 mkr_attr_slot_for(const mkr_attr_owner_idx_t *idx, const lxb_dom_attr_t *attr)
 {
-    uint64_t h = (uint64_t)(uintptr_t)attr;
-    h ^= h >> 33;
-    h *= 0xff51afd7ed558ccdULL;
-    h ^= h >> 33;
-    h *= 0xc4ceb9fe1a85ec53ULL;
-    h ^= h >> 33;
-    return (size_t)h & (idx->cap - 1);
+    return (size_t)mkr_ptr_hash(attr) & (idx->cap - 1);
 }
 
 static size_t

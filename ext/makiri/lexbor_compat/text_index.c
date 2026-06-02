@@ -70,18 +70,11 @@ mkr_tix_pow2_ceil(size_t n)
     return p;
 }
 
-/* fmix64 (MurmurHash3 finalizer): aligned pointers carry little low-bit
- * entropy, so spread them across the table. Mirrors the attr/owner index. */
+/* Bucket index for a node key (mkr_ptr_hash spreads aligned pointers). */
 static size_t
 mkr_tix_slot_for(const mkr_text_idx_t *t, const lxb_dom_node_t *node)
 {
-    uint64_t h = (uint64_t)(uintptr_t)node;
-    h ^= h >> 33;
-    h *= 0xff51afd7ed558ccdULL;
-    h ^= h >> 33;
-    h *= 0xc4ceb9fe1a85ec53ULL;
-    h ^= h >> 33;
-    return (size_t)h & (t->ranges_cap - 1);
+    return (size_t)mkr_ptr_hash(node) & (t->ranges_cap - 1);
 }
 
 /* Insert node with start (end filled on subtree close); return its slot index.
