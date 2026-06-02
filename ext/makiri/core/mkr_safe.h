@@ -183,13 +183,48 @@ mkr_vec_free(mkr_vec_t *v)
 }
 
 /* ---------------------------------------------------------------- */
-/* ownership-bearing views                                          */
+/* string-type lattice                                              */
 /* ---------------------------------------------------------------- */
+/*
+ * Makiri's string types form a small lattice over two axes plus a shape marker.
+ * They look alike ({ptr,len}) but C has no subtyping, so each contract is its
+ * own type — that distinctness IS the guarantee, and is why there is no single
+ * "string" type.
+ *
+ *   axis 1  ownership : borrowed (we never free) | owned (free via *_clear)
+ *   axis 2  contract  : bytes (raw, unchecked) | text (valid UTF-8, no interior
+ *                       NUL, NUL-terminated at ptr[len])
+ *   marker  ruby_     : also carries a Ruby VALUE as a GC liveness anchor for
+ *                       ptr (bridge layer only; the engine stays Ruby-free)
+ *
+ *   shape \ contract        raw (bytes)               valid (text)
+ *   ----------------------  ------------------------  -------------------------
+ *   ruby-anchored borrowed  mkr_ruby_borrowed_bytes_t mkr_ruby_borrowed_text_t  (bridge.h)
+ *   borrowed slice          (none yet — would be      mkr_borrowed_text_t /
+ *                            mkr_borrowed_bytes_t)     mkr_valid_text_t (*)
+ *   owned                   mkr_owned_bytes_t         mkr_owned_text_t
+ *
+ *   The borrowed-raw cell is intentionally empty: nothing needs an unanchored
+ *   raw slice today. When something does, name it mkr_borrowed_bytes_t per the
+ *   convention above; do not resurrect a placeholder before there is a user.
+ *
+ *   (*) mkr_valid_text_t (defined above) is the one deliberate naming exception:
+ *   it is a borrowed valid text AND a capability token. Its sole constructor is
+ *   mkr_text_from_view() at the Ruby boundary, so an unvalidated const char*
+ *   cannot reach the engine's public API. Internally the engine carries the
+ *   freely-constructible mkr_borrowed_text_t instead.
+ *
+ * Conversions — the only sanctioned edges (promotion is guarded, downgrade is
+ * free, and there is no edge that turns raw bytes into text without validating):
+ *   promote raw -> valid : ONLY mkr_ruby_checked_text() (bridge) and the
+ *                          owned-text builders validate; never a bare cast.
+ *   drop the GC anchor   : mkr_text_from_view (ruby_borrowed_text -> valid_text)
+ *   downgrade to borrow  : mkr_owned_borrow  (owned_text  -> borrowed_text)
+ *                          mkr_valid_borrow  (valid_text  -> borrowed_text)
+ *                          mkr_borrowed_text (const char*,len -> borrowed_text)
+ */
 
-/* Borrowed (non-owning) slice of bytes. */
-typedef struct { const char *ptr; size_t len; } mkr_str_view_t;
-
-/* Owned bytes. */
+/* Owned bytes (raw, unchecked). */
 typedef struct { char *ptr; size_t len; } mkr_owned_bytes_t;
 
 static inline void
@@ -200,15 +235,10 @@ mkr_owned_bytes_clear(mkr_owned_bytes_t *o)
     o->len = 0;
 }
 
-/* ---------------------------------------------------------------- */
-/* engine text (NUL-terminated, valid UTF-8)                        */
-/* ---------------------------------------------------------------- */
-
-/* Owned / borrowed text used across the XPath engine and exposed in its public
- * value type (mkr_xpath.h). Structurally identical to mkr_owned_bytes_t /
- * mkr_str_view_t above, but they carry a stronger contract: the bytes are
- * NUL-terminated at ptr[len] and well-formed UTF-8, so character-wise string
- * code can assume valid input. */
+/* Owned / borrowed engine text: same layout as the raw byte types, but the
+ * bytes are NUL-terminated at ptr[len] and well-formed UTF-8, so character-wise
+ * string code can assume valid input. Used across the XPath engine and exposed
+ * in its public value type (mkr_xpath.h). */
 typedef struct {
   char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
   size_t len; /* bytes, excluding the terminator */
@@ -224,6 +254,23 @@ static inline mkr_borrowed_text_t
 mkr_owned_borrow(mkr_owned_text_t t)
 {
   return (mkr_borrowed_text_t){ t.ptr, t.len };
+}
+
+/* Borrow a valid-text capability token as a plain borrowed text (no copy). */
+static inline mkr_borrowed_text_t
+mkr_valid_borrow(mkr_valid_text_t t)
+{
+  return (mkr_borrowed_text_t){ t.ptr, t.len };
+}
+
+/* Wrap an already-valid borrowed byte range (a Lexbor name, a cache entry, an
+ * XPath keyword) as a borrowed text. The caller asserts the text contract; no
+ * validation, no copy. The sole way to build a borrowed_text from loose
+ * pointers, replacing scattered (mkr_borrowed_text_t){p,n} casts. */
+static inline mkr_borrowed_text_t
+mkr_borrowed_text(const char *ptr, size_t len)
+{
+  return (mkr_borrowed_text_t){ ptr, len };
 }
 
 /* Self-test of the overflow / buffer / vector edge cases (incl. paths real
