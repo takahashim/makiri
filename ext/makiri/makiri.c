@@ -43,6 +43,21 @@ mkr_check_text(VALUE str, const char *what)
     RB_GC_GUARD(str);
 }
 
+mkr_ruby_text_view_t
+mkr_ruby_checked_text(VALUE in, const char *what)
+{
+    VALUE s = rb_String(in);
+    mkr_check_text(s, what);
+    /* s is now a String whose bytes are valid UTF-8 with no NUL, so ptr doubles
+     * as a C string. The returned view holds `value`; keeping the view on the C
+     * stack keeps the bytes alive (Ruby marks the machine stack). */
+    mkr_ruby_text_view_t v;
+    v.value = s;
+    v.ptr   = RSTRING_PTR(s);
+    v.len   = (size_t)RSTRING_LEN(s);
+    return v;
+}
+
 /* Makiri.__c_selftest -> true, or raises if the safe-core primitives
  * (mkr_safe.c) fail their internal edge-case checks. Test hook only. */
 static VALUE

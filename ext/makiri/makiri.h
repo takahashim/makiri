@@ -50,6 +50,20 @@ void mkr_init_mutate(void);
  * boundaries; HTML parsing instead decodes leniently (see mkr_utf8_sanitize). */
 void mkr_check_text(VALUE str, const char *what);
 
+/* A validated, borrowed view of a Ruby String argument at a programmatic API
+ * boundary: valid UTF-8, no NUL. `value` (the coerced String) keeps `ptr` alive
+ * while the view stays on the C stack; `ptr` is NUL-terminated, so it also works
+ * as a C string. Use this instead of StringValueCStr + a separate mkr_check_text. */
+typedef struct {
+    VALUE       value;
+    const char *ptr;
+    size_t      len;
+} mkr_ruby_text_view_t;
+
+/* Coerce +in+ to a String and enforce the text-input contract, raising
+ * Makiri::Error (naming +what+) on a NUL byte or invalid UTF-8. */
+mkr_ruby_text_view_t mkr_ruby_checked_text(VALUE in, const char *what);
+
 #ifdef __cplusplus
 }
 #endif

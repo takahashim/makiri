@@ -580,13 +580,13 @@ mkr_xpath_ctx_evaluate(int argc, VALUE *argv, VALUE self)
     rb_scan_args(argc, argv, "11", &rb_expr, &handler);
 
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
-    StringValue(rb_expr);
-    mkr_check_text(rb_expr, "XPath expression");
-    const char *expr = StringValueCStr(rb_expr);
+    mkr_ruby_text_view_t ev = mkr_ruby_checked_text(rb_expr, "XPath expression");
+    const char *expr = ev.ptr; /* validated: no NUL, valid UTF-8, NUL-terminated */
 
     mkr_xpath_error_t error = {0};
     int owned = 0;
     mkr_node_t *ast = mkr_ctx_cached_ast(d, expr, &error, &owned);
+    RB_GC_GUARD(ev.value);
     if (ast == NULL) {
         mkr_xpath_raise(&error); /* parse error, never returns */
     }
@@ -616,12 +616,12 @@ static VALUE
 mkr_xpath_ctx_register_ns(VALUE self, VALUE rb_prefix, VALUE rb_uri)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
-    StringValue(rb_prefix);
-    StringValue(rb_uri);
-    mkr_check_text(rb_prefix, "namespace prefix");
-    mkr_check_text(rb_uri, "namespace URI");
-    if (mkr_xpath_register_ns(d->ctx, StringValueCStr(rb_prefix),
-                              StringValueCStr(rb_uri)) != 0) {
+    mkr_ruby_text_view_t pv = mkr_ruby_checked_text(rb_prefix, "namespace prefix");
+    mkr_ruby_text_view_t uv = mkr_ruby_checked_text(rb_uri, "namespace URI");
+    int rc = mkr_xpath_register_ns(d->ctx, pv.ptr, uv.ptr); /* copies both */
+    RB_GC_GUARD(pv.value);
+    RB_GC_GUARD(uv.value);
+    if (rc != 0) {
         rb_raise(mkr_eError, "failed to register namespace");
     }
     return self;
@@ -631,16 +631,20 @@ static VALUE
 mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
-    StringValue(rb_name);
-    mkr_check_text(rb_name, "variable name");
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "variable name");
+    /* The value gets the stricter engine-string check (adds the byte cap on top
+     * of no-NUL / valid-UTF-8). */
     VALUE value = rb_obj_as_string(rb_value);
     const char *bad =
         mkr_engine_string_reason(value, mkr_ctx_limits(d->ctx)->max_string_bytes);
     if (bad != NULL) {
         rb_raise(mkr_eError, "invalid variable value: %s", bad);
     }
-    if (mkr_xpath_register_variable_string(d->ctx, StringValueCStr(rb_name),
-                                           StringValueCStr(value)) != 0) {
+    int rc = mkr_xpath_register_variable_string(d->ctx, nv.ptr,
+                                                RSTRING_PTR(value)); /* copies both */
+    RB_GC_GUARD(nv.value);
+    RB_GC_GUARD(value);
+    if (rc != 0) {
         rb_raise(mkr_eError, "failed to register variable");
     }
     return self;
@@ -657,9 +661,8 @@ static VALUE
 mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
 {
     VALUE document = mkr_node_document(self);
-    StringValue(rb_expr);
-    mkr_check_text(rb_expr, "XPath expression");
-    const char *expr = StringValueCStr(rb_expr);
+    mkr_ruby_text_view_t ev = mkr_ruby_checked_text(rb_expr, "XPath expression");
+    const char *expr = ev.ptr;
 
     mkr_xpath_context_t *ctx = mkr_xpath_context_for(self, document);
     mkr_ctx_set_unprefixed_lax(ctx, lax);
@@ -668,6 +671,7 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
     mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
     limits->ast_nodes = 0;
     mkr_node_t *ast = mkr_parse(expr, limits, &error);
+    RB_GC_GUARD(ev.value); /* keep `expr` alive across the parse */
     if (ast == NULL) {
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error); /* parse error, never returns */

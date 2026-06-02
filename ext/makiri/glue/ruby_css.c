@@ -64,10 +64,9 @@ mkr_with_compiled_selector(VALUE rb_selector, lxb_dom_node_t *node,
                                                lxb_css_selector_list_t *, void *),
                            void *u)
 {
-    VALUE sel = rb_String(rb_selector);
-    mkr_check_text(sel, "CSS selector");
-    const lxb_char_t *s = (const lxb_char_t *)RSTRING_PTR(sel);
-    size_t slen = (size_t)RSTRING_LEN(sel);
+    mkr_ruby_text_view_t sv = mkr_ruby_checked_text(rb_selector, "CSS selector");
+    const lxb_char_t *s = (const lxb_char_t *)sv.ptr;
+    size_t slen = sv.len;
 
     /* Lexbor CSS object graph: memory arena -> parser -> selector parser, plus
      * the traversal engine. All transient; torn down before we return. */
@@ -108,9 +107,9 @@ mkr_with_compiled_selector(VALUE rb_selector, lxb_dom_node_t *node,
         rb_raise(mkr_eError, "failed to initialise CSS selector engine");
     }
     if (syntax_error) {
-        rb_raise(mkr_eCSSSyntaxError, "invalid CSS selector: %" PRIsVALUE, sel);
+        rb_raise(mkr_eCSSSyntaxError, "invalid CSS selector: %" PRIsVALUE, sv.value);
     }
-    RB_GC_GUARD(sel);
+    RB_GC_GUARD(sv.value);
 }
 
 /* find: collect descendants matching the selector (MATCH_FIRST dedups a node

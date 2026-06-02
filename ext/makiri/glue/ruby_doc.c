@@ -103,12 +103,11 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
         return;
     }
 
-    VALUE s = rb_String(context);
     /* The context: tag name is a programmatic control string, not parsed HTML,
      * so it follows the strict text-input contract (valid UTF-8, no NUL). */
-    mkr_check_text(s, "fragment context element");
-    const lxb_char_t *p = (const lxb_char_t *)RSTRING_PTR(s);
-    size_t n = (size_t)RSTRING_LEN(s);
+    mkr_ruby_text_view_t cv = mkr_ruby_checked_text(context, "fragment context element");
+    const lxb_char_t *p = (const lxb_char_t *)cv.ptr;
+    size_t n = cv.len;
     if (n == 3 && memcmp(p, "svg", 3) == 0) {
         *out_tag = LXB_TAG_SVG;  *out_ns = LXB_NS_SVG;  return;
     }
@@ -117,7 +116,7 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
     }
     lxb_tag_id_t tid = lxb_tag_id_by_name(doc->tags, p, n);
     if (tid == LXB_TAG__UNDEF) {
-        rb_raise(rb_eArgError, "unknown fragment context element: %" PRIsVALUE, s);
+        rb_raise(rb_eArgError, "unknown fragment context element: %" PRIsVALUE, cv.value);
     }
     *out_tag = tid;
     *out_ns  = LXB_NS_HTML;

@@ -396,10 +396,9 @@ mkr_node_aref(VALUE self, VALUE rb_name)
         return Qnil;
     }
 
-    VALUE name = rb_String(rb_name);
-    mkr_check_text(name, "attribute name");
-    const lxb_char_t *nm = (const lxb_char_t *)RSTRING_PTR(name);
-    size_t nlen = (size_t)RSTRING_LEN(name);
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
+    const lxb_char_t *nm = (const lxb_char_t *)nv.ptr;
+    size_t nlen = nv.len;
 
     lxb_dom_element_t *el = lxb_dom_interface_element(node);
     if (!lxb_dom_element_has_attribute(el, nm, nlen)) {
@@ -408,6 +407,7 @@ mkr_node_aref(VALUE self, VALUE rb_name)
 
     size_t vlen = 0;
     const lxb_char_t *val = lxb_dom_element_get_attribute(el, nm, nlen, &vlen);
+    RB_GC_GUARD(nv.value);
     return val ? rb_utf8_str_new((const char *)val, vlen) : rb_utf8_str_new("", 0);
 }
 
@@ -419,13 +419,11 @@ mkr_node_has_key(VALUE self, VALUE rb_name)
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         return Qfalse;
     }
-    VALUE name = rb_String(rb_name);
-    mkr_check_text(name, "attribute name");
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
     lxb_dom_element_t *el = lxb_dom_interface_element(node);
-    return lxb_dom_element_has_attribute(el,
-                                         (const lxb_char_t *)RSTRING_PTR(name),
-                                         (size_t)RSTRING_LEN(name))
-               ? Qtrue : Qfalse;
+    bool has = lxb_dom_element_has_attribute(el, (const lxb_char_t *)nv.ptr, nv.len);
+    RB_GC_GUARD(nv.value);
+    return has ? Qtrue : Qfalse;
 }
 
 /* node.keys -> [String, ...] of attribute names (document order). */

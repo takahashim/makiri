@@ -193,14 +193,14 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
     }
-    VALUE name  = rb_String(rb_name);
-    VALUE value = rb_String(rb_value);
-    mkr_check_text(name, "attribute name");
-    mkr_check_text(value, "attribute value");
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
+    mkr_ruby_text_view_t vv = mkr_ruby_checked_text(rb_value, "attribute value");
     lxb_dom_attr_t *attr = lxb_dom_element_set_attribute(
         lxb_dom_interface_element(node),
-        (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name),
-        (const lxb_char_t *)RSTRING_PTR(value), (size_t)RSTRING_LEN(value));
+        (const lxb_char_t *)nv.ptr, nv.len,
+        (const lxb_char_t *)vv.ptr, vv.len);
+    RB_GC_GUARD(nv.value);
+    RB_GC_GUARD(vv.value);
     if (attr == NULL) {
         rb_raise(mkr_eError, "failed to set attribute");
     }
@@ -218,11 +218,10 @@ mkr_node_set_name(VALUE self, VALUE rb_name)
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "name= is only supported on elements");
     }
-    VALUE name = rb_String(rb_name);
-    mkr_check_text(name, "element name");
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "element name");
     lxb_dom_element_t *fresh = lxb_dom_document_create_element(
-        node->owner_document,
-        (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name), NULL);
+        node->owner_document, (const lxb_char_t *)nv.ptr, nv.len, NULL);
+    RB_GC_GUARD(nv.value);
     if (fresh == NULL) {
         rb_raise(mkr_eError, "failed to rename element");
     }
@@ -245,11 +244,11 @@ static VALUE
 mkr_node_set_content(VALUE self, VALUE rb_text)
 {
     lxb_dom_node_t *node = mkr_node_unwrap(self);
-    VALUE text = rb_String(rb_text);
-    mkr_check_text(text, "node content");
-    if (lxb_dom_node_text_content_set(
-            node, (const lxb_char_t *)RSTRING_PTR(text),
-            (size_t)RSTRING_LEN(text)) != LXB_STATUS_OK) {
+    mkr_ruby_text_view_t tv = mkr_ruby_checked_text(rb_text, "node content");
+    lxb_status_t st = lxb_dom_node_text_content_set(
+        node, (const lxb_char_t *)tv.ptr, tv.len);
+    RB_GC_GUARD(tv.value);
+    if (st != LXB_STATUS_OK) {
         rb_raise(mkr_eError, "failed to set node content");
     }
     mkr_invalidate_index(self);
@@ -264,11 +263,10 @@ mkr_node_delete(VALUE self, VALUE rb_name)
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         return self;
     }
-    VALUE name = rb_String(rb_name);
-    mkr_check_text(name, "attribute name");
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
     lxb_dom_element_remove_attribute(
-        lxb_dom_interface_element(node),
-        (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name));
+        lxb_dom_interface_element(node), (const lxb_char_t *)nv.ptr, nv.len);
+    RB_GC_GUARD(nv.value);
     mkr_invalidate_index(self);
     return self;
 }
@@ -370,10 +368,10 @@ static VALUE
 mkr_doc_create_element(VALUE self, VALUE rb_name)
 {
     lxb_dom_document_t *doc = mkr_doc_unwrap(self);
-    VALUE name = rb_String(rb_name);
-    mkr_check_text(name, "element name");
+    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "element name");
     lxb_dom_element_t *el = lxb_dom_document_create_element(
-        doc, (const lxb_char_t *)RSTRING_PTR(name), (size_t)RSTRING_LEN(name), NULL);
+        doc, (const lxb_char_t *)nv.ptr, nv.len, NULL);
+    RB_GC_GUARD(nv.value);
     if (el == NULL) {
         rb_raise(mkr_eError, "failed to create element");
     }
@@ -384,10 +382,10 @@ static VALUE
 mkr_doc_create_text_node(VALUE self, VALUE rb_text)
 {
     lxb_dom_document_t *doc = mkr_doc_unwrap(self);
-    VALUE text = rb_String(rb_text);
-    mkr_check_text(text, "text content");
+    mkr_ruby_text_view_t tv = mkr_ruby_checked_text(rb_text, "text content");
     lxb_dom_text_t *t = lxb_dom_document_create_text_node(
-        doc, (const lxb_char_t *)RSTRING_PTR(text), (size_t)RSTRING_LEN(text));
+        doc, (const lxb_char_t *)tv.ptr, tv.len);
+    RB_GC_GUARD(tv.value);
     if (t == NULL) {
         rb_raise(mkr_eError, "failed to create text node");
     }
@@ -398,10 +396,10 @@ static VALUE
 mkr_doc_create_comment(VALUE self, VALUE rb_text)
 {
     lxb_dom_document_t *doc = mkr_doc_unwrap(self);
-    VALUE text = rb_String(rb_text);
-    mkr_check_text(text, "comment content");
+    mkr_ruby_text_view_t tv = mkr_ruby_checked_text(rb_text, "comment content");
     lxb_dom_comment_t *c = lxb_dom_document_create_comment(
-        doc, (const lxb_char_t *)RSTRING_PTR(text), (size_t)RSTRING_LEN(text));
+        doc, (const lxb_char_t *)tv.ptr, tv.len);
+    RB_GC_GUARD(tv.value);
     if (c == NULL) {
         rb_raise(mkr_eError, "failed to create comment");
     }
