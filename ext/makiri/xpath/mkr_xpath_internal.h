@@ -331,7 +331,9 @@ int  mkr_owned_text_from_borrowed_copy(mkr_owned_text_t *out, mkr_borrowed_text_
                                        mkr_xpath_error_t *err, const char *what);
 int  mkr_owned_text_from_buf_steal(mkr_owned_text_t *out, mkr_buf_t *buf,
                                    mkr_xpath_error_t *err, const char *what);
-void mkr_val_set_owned_string(mkr_val_t *v, char *s, size_t len);
+/* Store an owned text value by transfer. After this call, +v+ owns +text.ptr+;
+ * the caller must not clear +text+. */
+void mkr_val_set_owned_text(mkr_val_t *v, mkr_owned_text_t text);
 
 /*
  * Sort entry points consult the context's per-evaluate document-order
@@ -433,9 +435,7 @@ int   mkr_val_to_number_or_fail(const mkr_val_t *v,
 int   mkr_val_to_boolean(const mkr_val_t *v);
 
 /* Internal _unchecked helpers (Layer 2). Documented above. */
-char   *mkr_val_to_string_unchecked        (const mkr_val_t *v);
 double  mkr_val_to_number_unchecked        (const mkr_val_t *v);
-char   *mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node);
 
 /* Parse a borrowed text as an XPath number. Parses t.ptr as a NUL-terminated
  * string (engine strings are NUL-terminated; t.len is advisory), returning NaN

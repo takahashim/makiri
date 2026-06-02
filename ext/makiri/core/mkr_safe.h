@@ -313,6 +313,11 @@ mkr_borrowed_text(const char *ptr, size_t len)
   return (mkr_borrowed_text_t){ ptr, len };
 }
 
+/* Borrow an already-valid string literal/static char array as text. Do not pass
+ * a char* variable: sizeof(pointer) would not be the byte length. */
+#define mkr_borrowed_text_lit(lit) \
+  mkr_borrowed_text((lit), sizeof(lit) - 1)
+
 /* Self-test of the overflow / buffer / vector edge cases (incl. paths real
  * inputs cannot reach). Returns 0 on success, nonzero on the first failure.
  * Wired to a private Ruby method for the spec suite. */

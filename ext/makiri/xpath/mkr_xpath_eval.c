@@ -31,12 +31,12 @@ static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 static mkr_borrowed_text_t
 node_ns_text(lxb_dom_node_t *node, lxb_dom_document_t *doc)
 {
-  if (node->ns == LXB_NS__UNDEF) return mkr_borrowed_text("", 0);
-  if (doc == NULL || doc->ns == NULL) return mkr_borrowed_text("", 0);
+  if (node->ns == LXB_NS__UNDEF) return mkr_borrowed_text_lit("");
+  if (doc == NULL || doc->ns == NULL) return mkr_borrowed_text_lit("");
   size_t len = 0;
   const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
   return uri ? mkr_borrowed_text((const char *)uri, len)
-             : mkr_borrowed_text("", 0);
+             : mkr_borrowed_text_lit("");
 }
 
 static int
@@ -1253,13 +1253,16 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
   int rc;
   switch (n->kind) {
-  case MKR_NK_LITERAL_STR:
-    mkr_val_set_owned_string(out,
-                             mkr_strndup(n->u.literal.ptr ? n->u.literal.ptr : "", n->u.literal.len),
-                             n->u.literal.len);
-    if (out->u.string.ptr == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying literal"); rc = -1; }
-    else rc = 0;
+  case MKR_NK_LITERAL_STR: {
+    mkr_owned_text_t text;
+    if (mkr_owned_text_from_borrowed_copy(&text, mkr_owned_borrow(n->u.literal),
+                                          err, "out of memory copying literal") != 0) rc = -1;
+    else {
+      mkr_val_set_owned_text(out, text);
+      rc = 0;
+    }
     break;
+  }
   case MKR_NK_LITERAL_NUM:
     out->type = MKR_XPATH_TYPE_NUMBER;
     out->u.number = n->u.literal_num;
@@ -1276,9 +1279,13 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       rc = -1;
       break;
     }
-    mkr_val_set_owned_string(out, mkr_strndup(v.ptr ? v.ptr : "", v.len), v.len);
-    if (out->u.string.ptr == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying variable value"); rc = -1; }
-    else rc = 0;
+    mkr_owned_text_t text;
+    if (mkr_owned_text_from_borrowed_copy(&text, v, err,
+                                          "out of memory copying variable value") != 0) rc = -1;
+    else {
+      mkr_val_set_owned_text(out, text);
+      rc = 0;
+    }
     break;
   }
   case MKR_NK_FNCALL:

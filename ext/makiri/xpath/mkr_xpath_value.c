@@ -121,11 +121,11 @@ mkr_owned_text_from_buf_steal(mkr_owned_text_t *out, mkr_buf_t *buf,
 }
 
 void
-mkr_val_set_owned_string(mkr_val_t *v, char *s, size_t len)
+mkr_val_set_owned_text(mkr_val_t *v, mkr_owned_text_t text)
 {
   if (v == NULL) return;
   v->type = MKR_XPATH_TYPE_STRING;
-  v->u.string = (mkr_owned_text_t){ s, len };
+  v->u.string = text;
 }
 
 /* ---------- value ---------- */
@@ -158,14 +158,10 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
   dst->type = src->type;
   switch (src->type) {
   case MKR_XPATH_TYPE_STRING: {
-    const char *s = src->u.string.ptr ? src->u.string.ptr : "";
-    size_t len = src->u.string.ptr ? src->u.string.len : 0;
-    char *p = mkr_strndup(s, len);
-    if (p == NULL) {
-      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning string value");
-      return -1;
-    }
-    mkr_val_set_owned_string(dst, p, len);
+    mkr_owned_text_t text;
+    if (mkr_owned_text_from_borrowed_copy(&text, mkr_owned_borrow(src->u.string),
+                                          err, "out of memory cloning string value") != 0) return -1;
+    mkr_val_set_owned_text(dst, text);
     return 0;
   }
   case MKR_XPATH_TYPE_NUMBER:
@@ -271,19 +267,22 @@ build_string_value(const lxb_dom_node_t *node, mkr_buf_t *buf)
   }
 }
 
-char *
-mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node)
+static void
+mkr_build_node_string_text_unchecked(const lxb_dom_node_t *node, mkr_owned_text_t *out)
 {
   /* Uncapped, best-effort: callers (number/string coercion) require a non-NULL
-   * C string, so on any failure fall back to an owned "" rather than NULL. */
+   * text, so on any failure fall back to an owned "" rather than NULL. */
+  mkr_owned_text_init(out);
   mkr_buf_t buf;
   mkr_buf_init(&buf, 0);
   if (build_string_value(node, &buf) != MKR_OK) {
     mkr_buf_free(&buf);
-    return mkr_strdup("");
+    (void)mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), NULL, NULL);
+    return;
   }
-  char *s = mkr_buf_steal(&buf, NULL);
-  return s != NULL ? s : mkr_strdup("");
+  if (mkr_owned_text_from_buf_steal(out, &buf, NULL, NULL) != 0) {
+    (void)mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), NULL, NULL);
+  }
 }
 
 int
@@ -327,38 +326,32 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   mkr_owned_text_init(out);
   if (v == NULL) {
-    return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("", 0), err, "out of memory converting value to string");
+    return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), err, "out of memory converting value to string");
   }
   switch (v->type) {
   case MKR_XPATH_TYPE_STRING: {
-    const char *s = v->u.string.ptr ? v->u.string.ptr : "";
-    size_t len = v->u.string.ptr ? v->u.string.len : 0;
-    if (limits != NULL && mkr_limit_check_string_bytes(limits, len, err) != 0) return -1;
-    char *p = mkr_strndup(s, len);
-    if (p == NULL) {
-      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying string value");
-      return -1;
-    }
-    out->ptr = p;
-    out->len = len;
-    return 0;
+    mkr_borrowed_text_t text = mkr_owned_borrow(v->u.string);
+    if (text.ptr == NULL) text.len = 0;
+    if (limits != NULL && mkr_limit_check_string_bytes(limits, text.len, err) != 0) return -1;
+    return mkr_owned_text_from_borrowed_copy(out, text,
+                                             err, "out of memory copying string value");
   }
   case MKR_XPATH_TYPE_BOOLEAN:
     return v->u.boolean
-      ? mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("true", 4), err, "out of memory converting boolean to string")
-      : mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("false", 5), err, "out of memory converting boolean to string");
+      ? mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit("true"), err, "out of memory converting boolean to string")
+      : mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit("false"), err, "out of memory converting boolean to string");
   case MKR_XPATH_TYPE_NUMBER: {
     double d = v->u.number;
     if (isnan(d)) {
-      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("NaN", 3), err, "out of memory converting number to string");
+      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit("NaN"), err, "out of memory converting number to string");
     }
     if (isinf(d)) {
       return d < 0
-        ? mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("-Infinity", 9), err, "out of memory converting number to string")
-        : mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("Infinity", 8), err, "out of memory converting number to string");
+        ? mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit("-Infinity"), err, "out of memory converting number to string")
+        : mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit("Infinity"), err, "out of memory converting number to string");
     }
     if (d == 0.0) {
-      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("0", 1), err, "out of memory converting number to string");
+      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit("0"), err, "out of memory converting number to string");
     }
     char buf[64];
     int n;
@@ -379,7 +372,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   case MKR_XPATH_TYPE_NODESET:
     if (v->u.nodeset.count == 0) {
-      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text("", 0), err, "out of memory");
+      return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), err, "out of memory");
     }
     /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
     return mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, out);
@@ -443,9 +436,10 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
   case MKR_XPATH_TYPE_NODESET: {
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
-    char *s = mkr_build_node_string_value_unchecked(v->u.nodeset.items[0]);
-    double d = mkr_borrowed_text_to_number(mkr_borrowed_text(s, 0)); /* len advisory; NUL-terminated */
-    free(s);
+    mkr_owned_text_t text;
+    mkr_build_node_string_text_unchecked(v->u.nodeset.items[0], &text);
+    double d = mkr_borrowed_text_to_number(mkr_owned_borrow(text));
+    mkr_owned_text_clear(&text);
     return d;
   }
   }
@@ -466,35 +460,6 @@ mkr_val_to_boolean(const mkr_val_t *v)
     return v->u.nodeset.count > 0;
   }
   return 0;
-}
-
-char *
-mkr_val_to_string_unchecked(const mkr_val_t *v)
-{
-  switch (v->type) {
-  case MKR_XPATH_TYPE_STRING:
-    return mkr_strdup(v->u.string.ptr ? v->u.string.ptr : "");
-  case MKR_XPATH_TYPE_BOOLEAN:
-    return mkr_strdup(v->u.boolean ? "true" : "false");
-  case MKR_XPATH_TYPE_NUMBER: {
-    double d = v->u.number;
-    if (isnan(d)) return mkr_strdup("NaN");
-    if (isinf(d)) return mkr_strdup(d < 0 ? "-Infinity" : "Infinity");
-    if (d == 0.0) return mkr_strdup("0");
-    /* XPath number → string: integer values render without trailing zeros. */
-    char buf[64];
-    if (d == floor(d) && fabs(d) < 1e15) {
-      snprintf(buf, sizeof(buf), "%lld", (long long)d);
-    } else {
-      snprintf(buf, sizeof(buf), "%.15g", d);
-    }
-    return mkr_strdup(buf);
-  }
-  case MKR_XPATH_TYPE_NODESET:
-    if (v->u.nodeset.count == 0) return mkr_strdup("");
-    return mkr_build_node_string_value_unchecked(v->u.nodeset.items[0]);
-  }
-  return mkr_strdup("");
 }
 
 /* ---------- document order ---------- */

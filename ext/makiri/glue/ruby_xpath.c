@@ -288,13 +288,6 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
     return Qnil;
 }
 
-/* Duplicate a validated text view into a fresh owned NUL-terminated C string. */
-static char *
-mkr_dup_text_view(mkr_ruby_borrowed_text_t v)
-{
-    return mkr_strndup(v.ptr, v.len);
-}
-
 static int
 mkr_push_result_node(mkr_xpath_context_t *ctx, VALUE rb_node, mkr_val_t *out,
                      char *errbuf, size_t errlen)
@@ -353,7 +346,13 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
     }
     /* nil and everything else: coerce to string (nil -> ""). */
     if (NIL_P(r)) {
-        mkr_val_set_owned_string(out, mkr_strdup(""), 0);
+        mkr_owned_text_t text;
+        if (mkr_owned_text_from_borrowed_copy(&text, mkr_borrowed_text_lit(""),
+                                              NULL, NULL) != 0) {
+            snprintf(errbuf, errlen, "out of memory converting handler result");
+            return -1;
+        }
+        mkr_val_set_owned_text(out, text);
     } else {
         VALUE sv = rb_obj_as_string(r);
         mkr_ruby_borrowed_text_t vv;
@@ -363,7 +362,14 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
             snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
             return -1;
         }
-        mkr_val_set_owned_string(out, mkr_dup_text_view(vv), vv.len);
+        mkr_owned_text_t text;
+        if (mkr_owned_text_from_borrowed_copy(&text, mkr_borrowed_text(vv.ptr, vv.len),
+                                              NULL, NULL) != 0) {
+            snprintf(errbuf, errlen, "out of memory converting handler result");
+            RB_GC_GUARD(vv.value);
+            return -1;
+        }
+        mkr_val_set_owned_text(out, text);
         RB_GC_GUARD(vv.value);
     }
     if (out->u.string.ptr == NULL) {
