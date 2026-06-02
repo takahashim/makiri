@@ -895,7 +895,8 @@ fn_local_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 {
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "local-name") != 0) return -1;
-  mkr_val_set_owned_text(out, mkr_owned_text(NULL, 0));
+  /* Every return path below sets out via set_empty_string / set_bytes_string;
+   * an error return leaves the caller's zero-initialised (clearable) out. */
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "local-name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
@@ -923,7 +924,6 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 {
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "namespace-uri") != 0) return -1;
-  mkr_val_set_owned_text(out, mkr_owned_text(NULL, 0));
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "namespace-uri");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
@@ -949,7 +949,6 @@ fn_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 {
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "name") != 0) return -1;
-  mkr_val_set_owned_text(out, mkr_owned_text(NULL, 0));
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
