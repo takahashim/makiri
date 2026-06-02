@@ -2,6 +2,10 @@ ignore_paths:
   - path: ext/makiri/core/**
     reason: Safe allocation and buffer helper internals intentionally contain primitive allocation patterns.
 
+ignore_paths:
+  - path: ext/makiri/core/**
+    reason: Safe allocation and buffer helper internals intentionally contain primitive allocation patterns.
+
 allowlist:
   - path: ext/makiri/glue/ruby_doc.c
     rule: ruby_string_ptr
@@ -14,14 +18,6 @@ allowlist:
   - path: ext/makiri/glue/ruby_xpath.c
     rule: alloca
     max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_xpath.c
-    rule: allocation_plus_one
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_xpath.c
-    rule: direct_alloc
-    max: 3
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/glue/ruby_xpath.c
     rule: direct_strlen

@@ -293,12 +293,7 @@ static char *
 mkr_dup_string_value(VALUE sv)
 {
     long len = RSTRING_LEN(sv);
-    char *p = malloc((size_t)len + 1);
-    if (p != NULL) {
-        memcpy(p, RSTRING_PTR(sv), (size_t)len);
-        p[len] = '\0';
-    }
-    return p;
+    return mkr_strndup(RSTRING_PTR(sv), (size_t)len);
 }
 
 /* A Ruby string only becomes an engine string if it is safe to treat as a
@@ -385,7 +380,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
     /* nil and everything else: coerce to string (nil -> ""). */
     out->type = MKR_XPATH_TYPE_STRING;
     if (NIL_P(r)) {
-        out->u.string = strdup("");
+        out->u.string = mkr_strdup("");
     } else {
         VALUE sv = rb_obj_as_string(r);
         const char *bad =
@@ -558,7 +553,7 @@ mkr_ctx_cached_ast(mkr_xpath_ctx_data_t *d, const char *expr,
         *owned = 1;
         return ast;
     }
-    char *key = strdup(expr);
+    char *key = mkr_strdup(expr);
     if (key == NULL) {
         *owned = 1;
         return ast;
