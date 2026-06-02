@@ -50,6 +50,75 @@ mkr_nodeset_clear(mkr_nodeset_t *ns)
   ns->capacity = 0;
 }
 
+void
+mkr_owned_text_init(mkr_owned_text_t *t)
+{
+  if (t == NULL) return;
+  t->ptr = NULL;
+  t->len = 0;
+}
+
+void
+mkr_owned_text_clear(mkr_owned_text_t *t)
+{
+  if (t == NULL) return;
+  free(t->ptr);
+  t->ptr = NULL;
+  t->len = 0;
+}
+
+int
+mkr_owned_text_from_bytes_copy(mkr_owned_text_t *out, const char *s, size_t len,
+                               mkr_xpath_error_t *err, const char *what)
+{
+  if (out == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_owned_text_from_bytes_copy: bad args");
+    return -1;
+  }
+  mkr_owned_text_init(out);
+  if (s == NULL) {
+    s = "";
+    len = 0;
+  }
+  char *p = mkr_strndup(s, len);
+  if (p == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, what ? what : "out of memory copying text");
+    return -1;
+  }
+  out->ptr = p;
+  out->len = len;
+  return 0;
+}
+
+int
+mkr_owned_text_from_buf_steal(mkr_owned_text_t *out, mkr_buf_t *buf,
+                              mkr_xpath_error_t *err, const char *what)
+{
+  if (out == NULL || buf == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_owned_text_from_buf_steal: bad args");
+    return -1;
+  }
+  mkr_owned_text_init(out);
+  size_t len = 0;
+  char *p = mkr_buf_steal(buf, &len);
+  if (p == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, what ? what : "out of memory stealing text buffer");
+    return -1;
+  }
+  out->ptr = p;
+  out->len = len;
+  return 0;
+}
+
+void
+mkr_val_set_owned_string(mkr_val_t *v, char *s, size_t len)
+{
+  if (v == NULL) return;
+  v->type = MKR_XPATH_TYPE_STRING;
+  v->string_len = len;
+  v->u.string = s;
+}
+
 /* ---------- value ---------- */
 
 void
@@ -63,6 +132,7 @@ mkr_val_clear(mkr_val_t *v)
   case MKR_XPATH_TYPE_STRING:
     free(v->u.string);
     v->u.string = NULL;
+    v->string_len = 0;
     break;
   default:
     break;
@@ -82,12 +152,13 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
   switch (src->type) {
   case MKR_XPATH_TYPE_STRING: {
     const char *s = src->u.string ? src->u.string : "";
-    char *p = mkr_strdup(s);
+    size_t len = src->u.string ? src->string_len : 0;
+    char *p = mkr_strndup(s, len);
     if (p == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning string value");
       return -1;
     }
-    dst->u.string = p;
+    mkr_val_set_owned_string(dst, p, len);
     return 0;
   }
   case MKR_XPATH_TYPE_NUMBER:
@@ -208,13 +279,17 @@ mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node)
   return s != NULL ? s : mkr_strdup("");
 }
 
-char *
-mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
+int
+mkr_node_string_text_or_fail(const lxb_dom_node_t *node,
                              mkr_xpath_limits_t *limits,
                              mkr_xpath_error_t *err,
-                             size_t *out_len)
+                             mkr_owned_text_t *out)
 {
-  if (out_len) *out_len = 0;
+  if (out == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_node_string_text_or_fail: bad args");
+    return -1;
+  }
+  mkr_owned_text_init(out);
   mkr_buf_t buf;
   mkr_buf_init(&buf, (limits != NULL) ? limits->max_string_bytes : 0);
   mkr_status_t st = build_string_value(node, &buf);
@@ -223,19 +298,100 @@ mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
     mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
                 "string size limit exceeded (%zu bytes) while building node string-value",
                 limits->max_string_bytes);
-    return NULL;
+    return -1;
   }
   if (st != MKR_OK) {
     mkr_buf_free(&buf);
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
-    return NULL;
+    return -1;
   }
-  char *s = mkr_buf_steal(&buf, out_len);
-  if (s == NULL) {
-    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
-    return NULL;
+  return mkr_owned_text_from_buf_steal(out, &buf, err, "out of memory building node string-value");
+}
+
+char *
+mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
+                             mkr_xpath_limits_t *limits,
+                             mkr_xpath_error_t *err,
+                             size_t *out_len)
+{
+  if (out_len) *out_len = 0;
+  mkr_owned_text_t text;
+  if (mkr_node_string_text_or_fail(node, limits, err, &text) != 0) return NULL;
+  if (out_len) *out_len = text.len;
+  return text.ptr;
+}
+
+int
+mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
+                              mkr_xpath_limits_t *limits,
+                              mkr_xpath_error_t *err,
+                              mkr_owned_text_t *out)
+{
+  if (out == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_val_to_owned_text_or_fail: bad args");
+    return -1;
   }
-  return s;
+  mkr_owned_text_init(out);
+  if (v == NULL) {
+    return mkr_owned_text_from_bytes_copy(out, "", 0, err, "out of memory converting value to string");
+  }
+  switch (v->type) {
+  case MKR_XPATH_TYPE_STRING: {
+    const char *s = v->u.string ? v->u.string : "";
+    size_t len = v->u.string ? v->string_len : 0;
+    if (limits != NULL && mkr_limit_check_string_bytes(limits, len, err) != 0) return -1;
+    char *p = mkr_strndup(s, len);
+    if (p == NULL) {
+      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying string value");
+      return -1;
+    }
+    out->ptr = p;
+    out->len = len;
+    return 0;
+  }
+  case MKR_XPATH_TYPE_BOOLEAN:
+    return v->u.boolean
+      ? mkr_owned_text_from_bytes_copy(out, "true", 4, err, "out of memory converting boolean to string")
+      : mkr_owned_text_from_bytes_copy(out, "false", 5, err, "out of memory converting boolean to string");
+  case MKR_XPATH_TYPE_NUMBER: {
+    double d = v->u.number;
+    if (isnan(d)) {
+      return mkr_owned_text_from_bytes_copy(out, "NaN", 3, err, "out of memory converting number to string");
+    }
+    if (isinf(d)) {
+      return d < 0
+        ? mkr_owned_text_from_bytes_copy(out, "-Infinity", 9, err, "out of memory converting number to string")
+        : mkr_owned_text_from_bytes_copy(out, "Infinity", 8, err, "out of memory converting number to string");
+    }
+    if (d == 0.0) {
+      return mkr_owned_text_from_bytes_copy(out, "0", 1, err, "out of memory converting number to string");
+    }
+    char buf[64];
+    int n;
+    if (d == floor(d) && fabs(d) < 1e15) {
+      n = snprintf(buf, sizeof(buf), "%lld", (long long)d);
+    } else {
+      n = snprintf(buf, sizeof(buf), "%.15g", d);
+    }
+    if (n < 0 || (size_t)n >= sizeof(buf)) {
+      mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "number string conversion overflow");
+      return -1;
+    }
+    char *p = mkr_strndup(buf, (size_t)n);
+    if (p == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting number to string"); return -1; }
+    out->ptr = p;
+    out->len = (size_t)n;
+    return 0;
+  }
+  case MKR_XPATH_TYPE_NODESET:
+    if (v->u.nodeset.count == 0) {
+      return mkr_owned_text_from_bytes_copy(out, "", 0, err, "out of memory");
+    }
+    /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
+    return mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, out);
+  }
+  mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown value type");
+  return -1;
 }
 
 char *
@@ -243,46 +399,9 @@ mkr_val_to_string_or_fail(const mkr_val_t *v,
                          mkr_xpath_limits_t *limits,
                          mkr_xpath_error_t *err)
 {
-  if (v == NULL) {
-    char *e = mkr_strdup("");
-    if (e == NULL) mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting value to string");
-    return e;
-  }
-  switch (v->type) {
-  case MKR_XPATH_TYPE_STRING: {
-    const char *s = v->u.string ? v->u.string : "";
-    if (limits != NULL && mkr_limit_check_string_bytes(limits, strlen(s), err) != 0) return NULL;
-    char *p = mkr_strdup(s);
-    if (p == NULL) {
-      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying string value");
-      return NULL;
-    }
-    return p;
-  }
-  case MKR_XPATH_TYPE_BOOLEAN: {
-    char *p = mkr_strdup(v->u.boolean ? "true" : "false");
-    if (p == NULL) mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting boolean to string");
-    return p;
-  }
-  case MKR_XPATH_TYPE_NUMBER: {
-    char *p = mkr_val_to_string_unchecked(v);
-    if (p == NULL) {
-      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting number to string");
-      return NULL;
-    }
-    return p;
-  }
-  case MKR_XPATH_TYPE_NODESET:
-    if (v->u.nodeset.count == 0) {
-      char *p = mkr_strdup("");
-      if (p == NULL) mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory");
-      return p;
-    }
-    /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
-    return mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err, NULL);
-  }
-  mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown value type");
-  return NULL;
+  mkr_owned_text_t text;
+  if (mkr_val_to_owned_text_or_fail(v, limits, err, &text) != 0) return NULL;
+  return text.ptr;
 }
 
 int
@@ -300,9 +419,10 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
       *out = (double)NAN;
       return 0;
     }
-    char *s = mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err, NULL);
+    size_t len = 0;
+    char *s = mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err, &len);
     if (s == NULL) return -1;
-    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = s } };
+    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = len, .u = { .string = s } };
     *out = mkr_val_to_number_unchecked(&tmp);
     free(s);
     return 0;
@@ -337,7 +457,7 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
     char *s = mkr_build_node_string_value_unchecked(v->u.nodeset.items[0]);
-    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = s } };
+    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = 0, .u = { .string = s } };
     double d = mkr_val_to_number_unchecked(&tmp);
     free(s);
     return d;
@@ -804,18 +924,22 @@ mkr_str_cache_clear(mkr_str_cache_t *c)
 }
 
 int
-mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
-                          lxb_dom_node_t *node,
-                          const char **out_str,
-                          size_t *out_len,
-                          mkr_xpath_error_t *err)
+mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
+                         lxb_dom_node_t *node,
+                         mkr_borrowed_text_t *out,
+                         mkr_xpath_error_t *err)
 {
+  if (out == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_get_cached_node_text: bad args");
+    return -1;
+  }
+  *out = (mkr_borrowed_text_t){ NULL, 0 };
   /* Contract: ctx is non-NULL when called from the evaluator (the only
    * intended caller). A NULL ctx is a programming error; surface it. */
   mkr_str_cache_t *c = mkr_ctx_str_cache(ctx);
   if (c == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_INTERNAL,
-               "mkr_get_cached_node_string called without a context");
+               "mkr_get_cached_node_text called without a context");
     return -1;
   }
 
@@ -826,38 +950,42 @@ mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
     while (c->buckets[j] != 0) {
       mkr_str_cache_entry_t *e = &c->entries[c->buckets[j] - 1];
       if (e->node == node) {
-        *out_str = e->str;
-        if (out_len) *out_len = e->len;
+        *out = (mkr_borrowed_text_t){ e->str, e->len };
         return 0;
       }
       j = (j + 1) & mask;
     }
   }
 
-  size_t len = 0;
-  char *s = mkr_node_string_value_or_fail(node, mkr_ctx_limits(ctx), err, &len);
-  if (s == NULL) return -1;
+  mkr_owned_text_t text;
+  if (mkr_node_string_text_or_fail(node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
 
   if (mkr_grow_reserve((void **)&c->entries, &c->cap, c->count + 1,
                        sizeof(*c->entries)) != MKR_OK) {
-    free(s);
+    mkr_owned_text_clear(&text);
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in node string cache");
     return -1;
   }
   c->entries[c->count].node = node;
-  c->entries[c->count].str  = s;
-  c->entries[c->count].len  = len;
+  c->entries[c->count].str  = text.ptr;
+  c->entries[c->count].len  = text.len;
 
   /* Grow / build the index, keeping load factor <= 1/2. */
   if (c->bucket_cap == 0 || (c->count + 1) * 2 > c->bucket_cap) {
     size_t new_bucket_cap = 64;
     if (c->bucket_cap != 0 && !mkr_size_mul(c->bucket_cap, 2, &new_bucket_cap)) {
-      free(s);
+      mkr_owned_text_clear(&text);
+      c->entries[c->count].node = NULL;
+      c->entries[c->count].str = NULL;
+      c->entries[c->count].len = 0;
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "node string cache index overflow");
       return -1;
     }
     if (mkr_str_cache_reindex(c, new_bucket_cap) != 0) {
-      free(s);
+      mkr_owned_text_clear(&text);
+      c->entries[c->count].node = NULL;
+      c->entries[c->count].str = NULL;
+      c->entries[c->count].len = 0;
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory indexing node string cache");
       return -1;
     }
@@ -865,8 +993,21 @@ mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
   mkr_str_cache_index_put(c, c->count);
   c->count++;
 
-  *out_str = s;
-  if (out_len) *out_len = len;
+  *out = (mkr_borrowed_text_t){ text.ptr, text.len };
+  return 0;
+}
+
+int
+mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
+                          lxb_dom_node_t *node,
+                          const char **out_str,
+                          size_t *out_len,
+                          mkr_xpath_error_t *err)
+{
+  mkr_borrowed_text_t text;
+  if (mkr_get_cached_node_text(ctx, node, &text, err) != 0) return -1;
+  if (out_str) *out_str = text.ptr;
+  if (out_len) *out_len = text.len;
   return 0;
 }
 
@@ -1133,7 +1274,7 @@ mkr_node_free(mkr_node_t *n)
   }
   switch (n->kind) {
   case MKR_NK_LITERAL_STR:
-    free(n->u.literal_str);
+    free(n->u.literal.str);
     break;
   case MKR_NK_LITERAL_NUM:
     break;

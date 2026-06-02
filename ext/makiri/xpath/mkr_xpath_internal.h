@@ -156,8 +156,10 @@ typedef struct {
 
 void mkr_lexer_init(mkr_lexer_t *L, const char *src, mkr_xpath_error_t *err);
 int  mkr_lexer_advance(mkr_lexer_t *L, mkr_xpath_error_t *err);
-/* Token spelling helpers (string equality with a NUL-terminated literal). */
-int  mkr_tok_is_word(const mkr_token_t *t, const char *word);
+/* Token spelling helpers (string equality with a compile-time literal). */
+int  mkr_tok_is_word_len(const mkr_token_t *t, const char *word, size_t word_len);
+#define mkr_tok_is_word_lit(t, word) \
+  mkr_tok_is_word_len((t), (word), sizeof(word) - 1)
 
 /* ---------- AST ---------- */
 
@@ -191,6 +193,7 @@ typedef struct {
   char *prefix;       /* may be NULL */
   char *local;        /* may be NULL for non-name tests */
   char *pi_target;    /* for processing-instruction("target"), may be NULL */
+  size_t prefix_len;   /* byte length of prefix (0 when prefix == NULL) */
   size_t local_len;     /* byte length of local (0 when local == NULL) */
   size_t pi_target_len; /* byte length of pi_target (0 when pi_target == NULL) */
 } mkr_nodetest_t;
@@ -233,7 +236,18 @@ typedef struct {
 } mkr_nodeset_t;
 
 typedef struct {
+  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
+  size_t len; /* bytes, excluding the terminator */
+} mkr_owned_text_t;
+
+typedef struct {
+  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor */
+  size_t      len; /* bytes, excluding the terminator */
+} mkr_borrowed_text_t;
+
+typedef struct {
   mkr_xpath_type_t type;
+  size_t string_len; /* valid when type == MKR_XPATH_TYPE_STRING */
   union {
     mkr_nodeset_t nodeset;
     char        *string;
@@ -270,15 +284,22 @@ struct mkr_node_s {
    * mkr_node_clear_memos and mkr_node_free. */
   mkr_val_t memo_value;
   union {
-    char  *literal_str;
+    struct {
+      char  *str;
+      size_t len;
+    } literal;
     double literal_num;
     struct {
       char *prefix;
+      size_t prefix_len;
       char *name;
+      size_t name_len;
     } varref;
     struct {
       char       *prefix;
+      size_t      prefix_len;
       char       *name;
+      size_t      name_len;
       mkr_node_t **args;
       size_t      nargs;
     } fncall;
@@ -314,6 +335,14 @@ void mkr_nodeset_init(mkr_nodeset_t *ns);
 int  mkr_nodeset_push(mkr_nodeset_t *ns, lxb_dom_node_t *node,
                      mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
 void mkr_nodeset_clear(mkr_nodeset_t *ns);
+
+void mkr_owned_text_init (mkr_owned_text_t *t);
+void mkr_owned_text_clear(mkr_owned_text_t *t);
+int  mkr_owned_text_from_bytes_copy(mkr_owned_text_t *out, const char *s, size_t len,
+                                    mkr_xpath_error_t *err, const char *what);
+int  mkr_owned_text_from_buf_steal(mkr_owned_text_t *out, mkr_buf_t *buf,
+                                   mkr_xpath_error_t *err, const char *what);
+void mkr_val_set_owned_string(mkr_val_t *v, char *s, size_t len);
 
 /*
  * Sort entry points consult the context's per-evaluate document-order
@@ -376,8 +405,8 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   Layer 1 — canonical entries (use these from the evaluator,
  *   functions, and the Ruby bridge):
  *
- *     mkr_node_string_value_or_fail  — node ─→ malloc'd string
- *     mkr_val_to_string_or_fail      — value ─→ malloc'd string
+ *     mkr_node_string_text_or_fail   — node ─→ owned text
+ *     mkr_val_to_owned_text_or_fail  — value ─→ owned text
  *     mkr_val_to_number_or_fail      — value ─→ double (via *out)
  *
  *   These thread the active limits and an err pointer so OOM and
@@ -400,8 +429,16 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   mkr_val_to_boolean has no allocation path, so there is no
  *   _or_fail counterpart — the single entry is correct.
  */
-/* out_len (optional, may be NULL) receives the byte length of the returned
- * string, saving callers a strlen — the builder already knows it. */
+int mkr_node_string_text_or_fail(const lxb_dom_node_t *node,
+                                mkr_xpath_limits_t *limits,
+                                mkr_xpath_error_t *err,
+                                mkr_owned_text_t *out);
+int mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
+                                  mkr_xpath_limits_t *limits,
+                                  mkr_xpath_error_t *err,
+                                  mkr_owned_text_t *out);
+/* Compatibility wrappers returning owned char*. Prefer the typed variants in
+ * new runtime code. out_len receives the byte length when requested. */
 char *mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
                                    mkr_xpath_limits_t *limits,
                                    mkr_xpath_error_t *err,
@@ -465,9 +502,14 @@ void mkr_str_cache_init    (mkr_str_cache_t *c);
 void mkr_str_cache_clear   (mkr_str_cache_t *c);
 void mkr_str_cache_truncate(mkr_str_cache_t *c, size_t target_count);
 
-/* Borrowed lookup. On hit *out_str / *out_len are filled from the
- * cache. On miss the string is computed via mkr_node_string_value_or_fail,
- * inserted, then returned. Returns 0 on success, -1 on OOM/LIMIT. */
+/* Borrowed lookup. On hit *out is filled from the cache. On miss the string is
+ * computed via mkr_node_string_text_or_fail, inserted, then returned. Returns 0
+ * on success, -1 on OOM/LIMIT. */
+int  mkr_get_cached_node_text  (struct mkr_xpath_context_s *ctx,
+                               lxb_dom_node_t            *node,
+                               mkr_borrowed_text_t       *out,
+                               mkr_xpath_error_t         *err);
+/* Compatibility wrapper. Prefer mkr_get_cached_node_text in new code. */
 int  mkr_get_cached_node_string(struct mkr_xpath_context_s *ctx,
                                lxb_dom_node_t            *node,
                                const char               **out_str,
@@ -537,14 +579,19 @@ int mkr_eval_ast(struct mkr_xpath_context_s *ctx,
 
 /* Access the registry's variable lookup. Phase 1 only supports string
  * variables; returns NULL if not found. Caller must not free. */
-const char *mkr_ctx_lookup_variable(struct mkr_xpath_context_s *ctx,
-                                   const char *prefix,
-                                   const char *name);
+int mkr_ctx_lookup_variable_text(struct mkr_xpath_context_s *ctx,
+                                 const char *prefix,
+                                 size_t prefix_len,
+                                 const char *name,
+                                 size_t name_len,
+                                 mkr_borrowed_text_t *out);
 
 /* Access the registry's namespace lookup. Returns the URI for the given
  * prefix, or NULL. Caller must not free. */
 const char *mkr_ctx_lookup_ns(struct mkr_xpath_context_s *ctx,
-                             const char *prefix);
+                             const char *prefix,
+                             size_t prefix_len,
+                             size_t *out_uri_len);
 
 /* The context node and document — exposed to the evaluator. */
 lxb_dom_node_t     *mkr_ctx_node(struct mkr_xpath_context_s *ctx);

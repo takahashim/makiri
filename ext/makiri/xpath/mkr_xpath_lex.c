@@ -256,9 +256,8 @@ mkr_lexer_advance(mkr_lexer_t *L, mkr_xpath_error_t *err)
 }
 
 int
-mkr_tok_is_word(const mkr_token_t *t, const char *word)
+mkr_tok_is_word_len(const mkr_token_t *t, const char *word, size_t word_len)
 {
   if (t->kind != MKR_TK_NAME) return 0;
-  size_t n = strlen(word);
-  return t->len == n && memcmp(t->start, word, n) == 0;
+  return t->len == word_len && memcmp(t->start, word, word_len) == 0;
 }

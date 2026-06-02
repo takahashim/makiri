@@ -199,7 +199,7 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
     size_t      n = TOK(P).len;
     size_t      colon = 0;
     while (colon < n && s[colon] != ':') colon++;
-    out->prefix = P_strndup(P, s, colon);
+    out->prefix = P_strndup_len(P, s, colon, &out->prefix_len);
     if (n - colon - 1 == 1 && s[colon + 1] == '*') {
       /* prefix:* — any element in the prefix's namespace. */
       out->kind = MKR_NT_WILDCARD;
@@ -421,10 +421,11 @@ parse_function_call(mkr_parser_t *P, mkr_token_t name_tok)
   if (name_tok.kind == MKR_TK_QNAME) {
     size_t colon = 0;
     while (colon < name_tok.len && name_tok.start[colon] != ':') colon++;
-    n->u.fncall.prefix = P_strndup(P,name_tok.start, colon);
-    n->u.fncall.name   = P_strndup(P,name_tok.start + colon + 1, name_tok.len - colon - 1);
+    n->u.fncall.prefix = P_strndup_len(P,name_tok.start, colon, &n->u.fncall.prefix_len);
+    n->u.fncall.name   = P_strndup_len(P,name_tok.start + colon + 1, name_tok.len - colon - 1,
+                                       &n->u.fncall.name_len);
   } else {
-    n->u.fncall.name = P_strndup(P,name_tok.start, name_tok.len);
+    n->u.fncall.name = P_strndup_len(P,name_tok.start, name_tok.len, &n->u.fncall.name_len);
   }
 
   size_t cap = 0;
@@ -467,10 +468,11 @@ parse_primary(mkr_parser_t *P)
     if (TOK(P).kind == MKR_TK_QNAME) {
       size_t colon = 0;
       while (colon < TOK(P).len && TOK(P).start[colon] != ':') colon++;
-      n->u.varref.prefix = P_strndup(P,TOK(P).start, colon);
-      n->u.varref.name   = P_strndup(P,TOK(P).start + colon + 1, TOK(P).len - colon - 1);
+      n->u.varref.prefix = P_strndup_len(P,TOK(P).start, colon, &n->u.varref.prefix_len);
+      n->u.varref.name   = P_strndup_len(P,TOK(P).start + colon + 1, TOK(P).len - colon - 1,
+                                         &n->u.varref.name_len);
     } else {
-      n->u.varref.name = P_strndup(P,TOK(P).start, TOK(P).len);
+      n->u.varref.name = P_strndup_len(P,TOK(P).start, TOK(P).len, &n->u.varref.name_len);
     }
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
@@ -485,7 +487,8 @@ parse_primary(mkr_parser_t *P)
   case MKR_TK_LITERAL: {
     n = new_node(P, MKR_NK_LITERAL_STR);
     if (n == NULL) return NULL;
-    n->u.literal_str = P_strndup(P,TOK(P).start, TOK(P).len);
+    n->u.literal.str = P_strndup(P,TOK(P).start, TOK(P).len);
+    n->u.literal.len = n->u.literal.str ? TOK(P).len : 0;
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
   }
@@ -654,9 +657,9 @@ parse_multiplicative(mkr_parser_t *P)
     mkr_op_t op;
     if (TOK(P).kind == MKR_TK_STAR) {
       op = MKR_OP_MUL;
-    } else if (mkr_tok_is_word(&TOK(P), "div")) {
+    } else if (mkr_tok_is_word_lit(&TOK(P), "div")) {
       op = MKR_OP_DIV;
-    } else if (mkr_tok_is_word(&TOK(P), "mod")) {
+    } else if (mkr_tok_is_word_lit(&TOK(P), "mod")) {
       op = MKR_OP_MOD;
     } else {
       break;
@@ -730,7 +733,7 @@ static mkr_node_t *
 parse_and(mkr_parser_t *P)
 {
   mkr_node_t *l = parse_equality(P);
-  while (l && mkr_tok_is_word(&TOK(P), "and")) {
+  while (l && mkr_tok_is_word_lit(&TOK(P), "and")) {
     if (P_advance(P) != 0) { mkr_node_free(l); return NULL; }
     mkr_node_t *r = parse_equality(P);
     if (r == NULL) { mkr_node_free(l); return NULL; }
@@ -745,7 +748,7 @@ static mkr_node_t *
 parse_or(mkr_parser_t *P)
 {
   mkr_node_t *l = parse_and(P);
-  while (l && mkr_tok_is_word(&TOK(P), "or")) {
+  while (l && mkr_tok_is_word_lit(&TOK(P), "or")) {
     if (P_advance(P) != 0) { mkr_node_free(l); return NULL; }
     mkr_node_t *r = parse_and(P);
     if (r == NULL) { mkr_node_free(l); return NULL; }

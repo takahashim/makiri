@@ -34,14 +34,15 @@ name_eq_lxb(const char *want, size_t want_len, const lxb_char_t *got, size_t got
 /* Resolve a node's namespace URI string. Returns "" for nodes with no
  * explicit namespace (LXB_NS__UNDEF). For other ids it looks up the URI
  * in the document's ns hash. */
-static const char *
-node_ns_uri(lxb_dom_node_t *node, lxb_dom_document_t *doc)
+static mkr_borrowed_text_t
+node_ns_text(lxb_dom_node_t *node, lxb_dom_document_t *doc)
 {
-  if (node->ns == LXB_NS__UNDEF) return "";
-  if (doc == NULL || doc->ns == NULL) return "";
+  if (node->ns == LXB_NS__UNDEF) return (mkr_borrowed_text_t){ "", 0 };
+  if (doc == NULL || doc->ns == NULL) return (mkr_borrowed_text_t){ "", 0 };
   size_t len = 0;
   const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
-  return uri ? (const char *)uri : "";
+  return uri ? (mkr_borrowed_text_t){ (const char *)uri, len }
+             : (mkr_borrowed_text_t){ "", 0 };
 }
 
 static int
@@ -92,9 +93,11 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
      * to prefix (internal.h §5). Unknown prefix is reported up front by the
      * step driver; here it is a non-match. */
     if (test->prefix != NULL) {
-      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix);
+      size_t want_uri_len = 0;
+      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix, test->prefix_len, &want_uri_len);
       if (want_uri == NULL) return 0;
-      if (strcmp(want_uri, node_ns_uri(node, mkr_ctx_document(ctx))) != 0) return 0;
+      mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
+      if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
     }
     return 1;
   }
@@ -139,15 +142,16 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
      *   - Unprefixed test, lax: namespace ignored (matched by local name
      *     already), the HTML4 / Nokogiri::HTML-style convenience. */
     if (test->prefix != NULL) {
-      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix);
+      size_t want_uri_len = 0;
+      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix, test->prefix_len, &want_uri_len);
       if (want_uri == NULL) {
         /* Unknown prefix: leave for the step driver to report so the
          * error is uniform across all hit nodes. We treat it as
          * non-match here; node_principal_match cannot raise on its own. */
         return 0;
       }
-      const char *node_uri = node_ns_uri(node, mkr_ctx_document(ctx));
-      if (strcmp(want_uri, node_uri) != 0) return 0;
+      mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
+      if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
     } else if (!mkr_ctx_unprefixed_lax(ctx)
                && axis != MKR_AXIS_ATTRIBUTE
                && node->ns != LXB_NS_HTML && node->ns != LXB_NS__UNDEF) {
@@ -363,8 +367,8 @@ mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
   if (!mkr_match_attr_step(attr_side, &out->name, &out->name_len)) {
     return 0;
   }
-  out->value     = lit_side->u.literal_str ? lit_side->u.literal_str : "";
-  out->value_len = strlen(out->value);
+  out->value     = lit_side->u.literal.str ? lit_side->u.literal.str : "";
+  out->value_len = lit_side->u.literal.len;
   out->has_value = 1;
   return 1;
 }
@@ -667,7 +671,7 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
    * RUNTIME error instead of a silently empty match. Covers both `prefix:local`
    * (MKR_NT_NAME) and `prefix:*` (MKR_NT_WILDCARD). */
   if (step->test.prefix != NULL
-      && mkr_ctx_lookup_ns(ctx, step->test.prefix) == NULL) {
+      && mkr_ctx_lookup_ns(ctx, step->test.prefix, step->test.prefix_len, NULL) == NULL) {
     mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
                 "unknown namespace prefix '%s' in name test",
                 step->test.prefix);
@@ -798,17 +802,17 @@ eval_steps(mkr_xpath_context_t *ctx, mkr_step_t *steps, size_t nsteps,
 /* ---------- equality / relational ---------- */
 
 static int
-strings_equal(const char *a, const char *b)
+texts_equal(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
 {
-  if (a == NULL || b == NULL) return a == b;
-  return strcmp(a, b) == 0;
+  if (a.ptr == NULL || b.ptr == NULL) return a.ptr == b.ptr;
+  return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
 }
 
 /*
  * Both comparators return 0 on success and -1 on OOM/LIMIT (with err
  * populated). The boolean result is stored in *out_result. String
- * values for node-set comparisons go through mkr_node_string_value_or_fail
- * so any budget overrun is surfaced rather than silently truncating.
+ * values for node-set comparisons go through mkr_get_cached_node_text so any
+ * budget overrun is surfaced rather than silently truncating.
  */
 static int
 compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
@@ -823,16 +827,16 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
      * at most O(M+N). */
     (void)L;
     for (size_t i = 0; i < l->u.nodeset.count; ++i) {
-      const char *ls;
-      if (mkr_get_cached_node_string(ctx, l->u.nodeset.items[i], &ls, NULL, err) != 0) {
+      mkr_borrowed_text_t ls;
+      if (mkr_get_cached_node_text(ctx, l->u.nodeset.items[i], &ls, err) != 0) {
         return -1;
       }
       for (size_t j = 0; j < r->u.nodeset.count; ++j) {
-        const char *rs;
-        if (mkr_get_cached_node_string(ctx, r->u.nodeset.items[j], &rs, NULL, err) != 0) {
+        mkr_borrowed_text_t rs;
+        if (mkr_get_cached_node_text(ctx, r->u.nodeset.items[j], &rs, err) != 0) {
           return -1;
         }
-        if (strings_equal(ls, rs) == want_eq) {
+        if (texts_equal(ls, rs) == want_eq) {
           *out_result = 1;
           return 0;
         }
@@ -847,11 +851,11 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     if (sc->type == MKR_XPATH_TYPE_NUMBER) {
       double target = sc->u.number;
       for (size_t i = 0; i < ns->u.nodeset.count; ++i) {
-        const char *s;
-        if (mkr_get_cached_node_string(ctx, ns->u.nodeset.items[i], &s, NULL, err) != 0) {
+        mkr_borrowed_text_t s;
+        if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
           return -1;
         }
-        mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = (char *)s } };
+        mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = s.len, .u = { .string = (char *)s.ptr } };
         double d = mkr_val_to_number_unchecked(&tmp);
         if ((d == target) == want_eq) { *out_result = 1; return 0; }
       }
@@ -865,16 +869,18 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       *out_result = want_eq ? eq : !eq;
       return 0;
     }
-    char *target = mkr_val_to_string_or_fail(sc, L, err);
-    if (target == NULL) return -1;
+    mkr_owned_text_t target;
+    if (mkr_val_to_owned_text_or_fail(sc, L, err, &target) != 0) return -1;
     for (size_t i = 0; i < ns->u.nodeset.count; ++i) {
-      const char *s;
-      if (mkr_get_cached_node_string(ctx, ns->u.nodeset.items[i], &s, NULL, err) != 0) {
-        free(target); return -1;
+      mkr_borrowed_text_t s;
+      if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
+        mkr_owned_text_clear(&target); return -1;
       }
-      if (strings_equal(s, target) == want_eq) { free(target); *out_result = 1; return 0; }
+      if (texts_equal(s, (mkr_borrowed_text_t){ target.ptr, target.len }) == want_eq) {
+        mkr_owned_text_clear(&target); *out_result = 1; return 0;
+      }
     }
-    free(target);
+    mkr_owned_text_clear(&target);
     *out_result = 0;
     return 0;
   }
@@ -893,12 +899,13 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     *out_result = want_eq ? eq : !eq;
     return 0;
   }
-  char *ls = mkr_val_to_string_or_fail(l, L, err);
-  if (ls == NULL) return -1;
-  char *rs = mkr_val_to_string_or_fail(r, L, err);
-  if (rs == NULL) { free(ls); return -1; }
-  int eq = strings_equal(ls, rs);
-  free(ls); free(rs);
+  mkr_owned_text_t ls, rs;
+  if (mkr_val_to_owned_text_or_fail(l, L, err, &ls) != 0) return -1;
+  if (mkr_val_to_owned_text_or_fail(r, L, err, &rs) != 0) { mkr_owned_text_clear(&ls); return -1; }
+  int eq = texts_equal((mkr_borrowed_text_t){ ls.ptr, ls.len },
+                       (mkr_borrowed_text_t){ rs.ptr, rs.len });
+  mkr_owned_text_clear(&ls);
+  mkr_owned_text_clear(&rs);
   *out_result = want_eq ? eq : !eq;
   return 0;
 }
@@ -928,18 +935,18 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
   if (l->type == MKR_XPATH_TYPE_NODESET && r->type == MKR_XPATH_TYPE_NODESET) {
     (void)L;
     for (size_t i = 0; i < l->u.nodeset.count; ++i) {
-      const char *ls;
-      if (mkr_get_cached_node_string(ctx, l->u.nodeset.items[i], &ls, NULL, err) != 0) {
+      mkr_borrowed_text_t ls;
+      if (mkr_get_cached_node_text(ctx, l->u.nodeset.items[i], &ls, err) != 0) {
         return -1;
       }
-      mkr_val_t lt = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = (char *)ls } };
+      mkr_val_t lt = { .type = MKR_XPATH_TYPE_STRING, .string_len = ls.len, .u = { .string = (char *)ls.ptr } };
       double a = mkr_val_to_number_unchecked(&lt);
       for (size_t j = 0; j < r->u.nodeset.count; ++j) {
-        const char *rs;
-        if (mkr_get_cached_node_string(ctx, r->u.nodeset.items[j], &rs, NULL, err) != 0) {
+        mkr_borrowed_text_t rs;
+        if (mkr_get_cached_node_text(ctx, r->u.nodeset.items[j], &rs, err) != 0) {
           return -1;
         }
-        mkr_val_t rt = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = (char *)rs } };
+        mkr_val_t rt = { .type = MKR_XPATH_TYPE_STRING, .string_len = rs.len, .u = { .string = (char *)rs.ptr } };
         if (rel_hit(op, a, mkr_val_to_number_unchecked(&rt))) {
           *out_result = 1;
           return 0;
@@ -957,11 +964,11 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     double scn;
     if (mkr_val_to_number_or_fail(sc, L, err, &scn) != 0) return -1;
     for (size_t i = 0; i < ns->u.nodeset.count; ++i) {
-      const char *s;
-      if (mkr_get_cached_node_string(ctx, ns->u.nodeset.items[i], &s, NULL, err) != 0) {
+      mkr_borrowed_text_t s;
+      if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
         return -1;
       }
-      mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .u = { .string = (char *)s } };
+      mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = s.len, .u = { .string = (char *)s.ptr } };
       double nv = mkr_val_to_number_unchecked(&tmp);
       double a = swap ? scn : nv;
       double b = swap ? nv  : scn;
@@ -1090,7 +1097,7 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 {
   const char *ns_uri = NULL;
   if (n->u.fncall.prefix) {
-    ns_uri = mkr_ctx_lookup_ns(ctx, n->u.fncall.prefix);
+    ns_uri = mkr_ctx_lookup_ns(ctx, n->u.fncall.prefix, n->u.fncall.prefix_len, NULL);
     if (ns_uri == NULL) {
       mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "unknown namespace prefix '%s'", n->u.fncall.prefix);
       return -1;
@@ -1264,8 +1271,9 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   int rc;
   switch (n->kind) {
   case MKR_NK_LITERAL_STR:
-    out->type = MKR_XPATH_TYPE_STRING;
-    out->u.string = mkr_strdup(n->u.literal_str ? n->u.literal_str : "");
+    mkr_val_set_owned_string(out,
+                             mkr_strndup(n->u.literal.str ? n->u.literal.str : "", n->u.literal.len),
+                             n->u.literal.len);
     if (out->u.string == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying literal"); rc = -1; }
     else rc = 0;
     break;
@@ -1275,8 +1283,9 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     rc = 0;
     break;
   case MKR_NK_VARREF: {
-    const char *v = mkr_ctx_lookup_variable(ctx, n->u.varref.prefix, n->u.varref.name);
-    if (v == NULL) {
+    mkr_borrowed_text_t v;
+    if (!mkr_ctx_lookup_variable_text(ctx, n->u.varref.prefix, n->u.varref.prefix_len,
+                                      n->u.varref.name, n->u.varref.name_len, &v)) {
       mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "undefined variable $%s%s%s",
                   n->u.varref.prefix ? n->u.varref.prefix : "",
                   n->u.varref.prefix ? ":" : "",
@@ -1284,8 +1293,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       rc = -1;
       break;
     }
-    out->type = MKR_XPATH_TYPE_STRING;
-    out->u.string = mkr_strdup(v);
+    mkr_val_set_owned_string(out, mkr_strndup(v.ptr ? v.ptr : "", v.len), v.len);
     if (out->u.string == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying variable value"); rc = -1; }
     else rc = 0;
     break;

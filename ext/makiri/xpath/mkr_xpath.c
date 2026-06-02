@@ -17,13 +17,18 @@
 
 typedef struct {
   char *prefix;
+  size_t prefix_len;
   char *uri;
+  size_t uri_len;
 } mkr_ns_entry_t;
 
 typedef struct {
   char *prefix; /* may be NULL for default namespace */
+  size_t prefix_len;
   char *name;
+  size_t name_len;
   char *value;
+  size_t value_len;
 } mkr_var_entry_t;
 
 struct mkr_xpath_context_s {
@@ -341,6 +346,13 @@ mkr_grow(void **base, size_t *cap, size_t elem)
   return mkr_grow_reserve(base, cap, *cap + 1, elem) == MKR_OK ? 0 : -1;
 }
 
+static int
+mkr_text_eq(const char *a, size_t a_len, const char *b, size_t b_len)
+{
+  if (a == NULL || b == NULL) return a == b;
+  return a_len == b_len && memcmp(a, b, a_len) == 0;
+}
+
 int
 mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_valid_text_t uri_t)
 {
@@ -349,11 +361,12 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
   if (ctx == NULL || prefix == NULL || uri == NULL) return -1;
   /* Replace if prefix already registered. */
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    if (strcmp(ctx->ns[i].prefix, prefix) == 0) {
-      char *new_uri = mkr_strdup(uri);
+    if (mkr_text_eq(ctx->ns[i].prefix, ctx->ns[i].prefix_len, prefix, prefix_t.len)) {
+      char *new_uri = mkr_strndup(uri, uri_t.len);
       if (new_uri == NULL) return -1;
       free(ctx->ns[i].uri);
       ctx->ns[i].uri = new_uri;
+      ctx->ns[i].uri_len = uri_t.len;
       return 0;
     }
   }
@@ -361,8 +374,10 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
   if (ctx->ns_count == ctx->ns_cap) {
     if (mkr_grow((void **)&ctx->ns, &ctx->ns_cap, sizeof(*ctx->ns)) != 0) return -1;
   }
-  ctx->ns[ctx->ns_count].prefix = mkr_strdup(prefix);
-  ctx->ns[ctx->ns_count].uri    = mkr_strdup(uri);
+  ctx->ns[ctx->ns_count].prefix_len = prefix_t.len;
+  ctx->ns[ctx->ns_count].uri_len    = uri_t.len;
+  ctx->ns[ctx->ns_count].prefix = mkr_strndup(prefix, prefix_t.len);
+  ctx->ns[ctx->ns_count].uri    = mkr_strndup(uri, uri_t.len);
   if (ctx->ns[ctx->ns_count].prefix == NULL || ctx->ns[ctx->ns_count].uri == NULL) {
     free(ctx->ns[ctx->ns_count].prefix);
     free(ctx->ns[ctx->ns_count].uri);
@@ -380,11 +395,15 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
   if (ctx == NULL || name == NULL) return -1;
   /* Phase 1: only unprefixed string variables. */
   for (size_t i = 0; i < ctx->vars_count; ++i) {
-    if (ctx->vars[i].prefix == NULL && strcmp(ctx->vars[i].name, name) == 0) {
-      char *new_value = mkr_strdup(value ? value : "");
+    if (ctx->vars[i].prefix == NULL &&
+        mkr_text_eq(ctx->vars[i].name, ctx->vars[i].name_len, name, name_t.len)) {
+      const char *src = value ? value : "";
+      size_t src_len = value ? value_t.len : 0;
+      char *new_value = mkr_strndup(src, src_len);
       if (new_value == NULL) return -1;
       free(ctx->vars[i].value);
       ctx->vars[i].value = new_value;
+      ctx->vars[i].value_len = src_len;
       return 0;
     }
   }
@@ -393,8 +412,11 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
     if (mkr_grow((void **)&ctx->vars, &ctx->vars_cap, sizeof(*ctx->vars)) != 0) return -1;
   }
   ctx->vars[ctx->vars_count].prefix = NULL;
-  ctx->vars[ctx->vars_count].name   = mkr_strdup(name);
-  ctx->vars[ctx->vars_count].value  = mkr_strdup(value ? value : "");
+  ctx->vars[ctx->vars_count].prefix_len = 0;
+  ctx->vars[ctx->vars_count].name_len = name_t.len;
+  ctx->vars[ctx->vars_count].name   = mkr_strndup(name, name_t.len);
+  ctx->vars[ctx->vars_count].value_len = value ? value_t.len : 0;
+  ctx->vars[ctx->vars_count].value  = mkr_strndup(value ? value : "", ctx->vars[ctx->vars_count].value_len);
   if (ctx->vars[ctx->vars_count].name == NULL || ctx->vars[ctx->vars_count].value == NULL) {
     free(ctx->vars[ctx->vars_count].name);
     free(ctx->vars[ctx->vars_count].value);
@@ -405,33 +427,46 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
 }
 
 const char *
-mkr_ctx_lookup_ns(mkr_xpath_context_t *ctx, const char *prefix)
+mkr_ctx_lookup_ns(mkr_xpath_context_t *ctx, const char *prefix,
+                  size_t prefix_len, size_t *out_uri_len)
 {
+  if (out_uri_len != NULL) *out_uri_len = 0;
   if (ctx == NULL || prefix == NULL) return NULL;
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    if (strcmp(ctx->ns[i].prefix, prefix) == 0) {
+    if (ctx->ns[i].prefix != NULL &&
+        ctx->ns[i].prefix_len == prefix_len &&
+        memcmp(ctx->ns[i].prefix, prefix, ctx->ns[i].prefix_len) == 0) {
+      if (out_uri_len != NULL) *out_uri_len = ctx->ns[i].uri_len;
       return ctx->ns[i].uri;
     }
   }
   return NULL;
 }
 
-const char *
-mkr_ctx_lookup_variable(mkr_xpath_context_t *ctx, const char *prefix, const char *name)
+int
+mkr_ctx_lookup_variable_text(mkr_xpath_context_t *ctx, const char *prefix,
+                             size_t prefix_len, const char *name,
+                             size_t name_len, mkr_borrowed_text_t *out)
 {
-  if (ctx == NULL || name == NULL) return NULL;
+  if (out != NULL) *out = (mkr_borrowed_text_t){ NULL, 0 };
+  if (ctx == NULL || name == NULL || out == NULL) return 0;
   for (size_t i = 0; i < ctx->vars_count; ++i) {
     int prefix_match;
     if (prefix == NULL) {
       prefix_match = (ctx->vars[i].prefix == NULL);
     } else {
-      prefix_match = (ctx->vars[i].prefix != NULL && strcmp(ctx->vars[i].prefix, prefix) == 0);
+      prefix_match = (ctx->vars[i].prefix != NULL
+                      && ctx->vars[i].prefix_len == prefix_len
+                      && memcmp(ctx->vars[i].prefix, prefix, ctx->vars[i].prefix_len) == 0);
     }
-    if (prefix_match && strcmp(ctx->vars[i].name, name) == 0) {
-      return ctx->vars[i].value;
+    if (prefix_match && ctx->vars[i].name != NULL
+        && ctx->vars[i].name_len == name_len
+        && memcmp(ctx->vars[i].name, name, ctx->vars[i].name_len) == 0) {
+      *out = (mkr_borrowed_text_t){ ctx->vars[i].value, ctx->vars[i].value_len };
+      return 1;
     }
   }
-  return NULL;
+  return 0;
 }
 
 lxb_dom_node_t *
@@ -499,6 +534,7 @@ mkr_xpath_value_clear(mkr_xpath_value_t *v)
   case MKR_XPATH_TYPE_STRING:
     free(v->u.string);
     v->u.string = NULL;
+    v->string_len = 0;
     break;
   default:
     break;
@@ -521,6 +557,7 @@ mkr_val_to_public(const mkr_val_t *v, mkr_xpath_value_t *out)
     break;
   case MKR_XPATH_TYPE_STRING:
     out->u.string = v->u.string;
+    out->string_len = v->string_len;
     break;
   case MKR_XPATH_TYPE_NUMBER:
     out->u.number = v->u.number;
@@ -575,4 +612,3 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   mkr_val_to_public(&v, out_value);
   return 0;
 }
-

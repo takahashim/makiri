@@ -132,7 +132,7 @@ mkr_xpath_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
         break;
     }
     case MKR_XPATH_TYPE_STRING:
-        result = rb_utf8_str_new_cstr(v->u.string ? v->u.string : "");
+        result = rb_utf8_str_new(v->u.string ? v->u.string : "", (long)v->string_len);
         break;
     case MKR_XPATH_TYPE_NUMBER:
         result = rb_float_new(v->u.number);
@@ -279,7 +279,7 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
         return set;
     }
     case MKR_XPATH_TYPE_STRING:
-        return rb_utf8_str_new_cstr(v->u.string ? v->u.string : "");
+        return rb_utf8_str_new(v->u.string ? v->u.string : "", (long)v->string_len);
     case MKR_XPATH_TYPE_NUMBER:
         return rb_float_new(v->u.number);
     case MKR_XPATH_TYPE_BOOLEAN:
@@ -355,6 +355,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
     out->type = MKR_XPATH_TYPE_STRING;
     if (NIL_P(r)) {
         out->u.string = mkr_strdup("");
+        out->string_len = 0;
     } else {
         VALUE sv = rb_obj_as_string(r);
         mkr_ruby_text_view_t vv;
@@ -365,6 +366,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
             return -1;
         }
         out->u.string = mkr_dup_text_view(vv);
+        out->string_len = vv.len;
         RB_GC_GUARD(vv.value);
     }
     if (out->u.string == NULL) {

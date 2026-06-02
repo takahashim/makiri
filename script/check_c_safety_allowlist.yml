@@ -10,22 +10,3 @@ ignore_paths:
   - path: ext/makiri/bridge/text_token.c
     rule: valid_text_forge
     reason: mkr_text_from_view, the sole sanctioned mint of mkr_valid_text_t; its input view is already validated by the bridge string helpers.
-
-allowlist:
-  # --- strlen on engine-owned, NUL-free C strings (never raw Ruby input) ---
-  - path: ext/makiri/xpath/mkr_xpath_eval.c
-    rule: direct_strlen
-    max: 1
-    reason: strlen on an AST string literal (the [@name='lit'] predicate recognizer); the source is the validated, NUL-free XPath expression and this runs once per predicate setup, not per node.
-  - path: ext/makiri/xpath/mkr_xpath_funcs.c
-    rule: direct_strlen
-    max: 11
-    reason: strlen on engine-owned NUL-terminated strings (XPath string functions over already-validated values).
-  - path: ext/makiri/xpath/mkr_xpath_lex.c
-    rule: direct_strlen
-    max: 1
-    reason: strlen on the validated, NUL-terminated XPath expression (mkr_valid_text_t).
-  - path: ext/makiri/xpath/mkr_xpath_value.c
-    rule: direct_strlen
-    max: 1
-    reason: strlen on a runtime string value (mkr_val_to_string_or_fail) for the byte-cap check; the value is an engine-owned NUL-free char* and this is not a per-node path.
