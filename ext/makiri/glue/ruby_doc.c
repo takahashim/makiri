@@ -106,7 +106,7 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
 
     /* The context: tag name is a programmatic control string, not parsed HTML,
      * so it follows the strict text-input contract (valid UTF-8, no NUL). */
-    mkr_ruby_text_view_t cv = mkr_ruby_checked_text(context, "fragment context element");
+    mkr_ruby_borrowed_text_t cv = mkr_ruby_checked_text(context, "fragment context element");
     const lxb_char_t *p = (const lxb_char_t *)cv.ptr;
     size_t n = cv.len;
     if (n == 3 && memcmp(p, "svg", 3) == 0) {
@@ -207,7 +207,7 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
     /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD; valid input is used
      * in place (no copy, *owned == NULL). Returns -1 on OOM (nothing allocated)
      * so the caller can release its parser before raising. */
-    mkr_ruby_bytes_view_t hv = mkr_ruby_bytes_view(html);
+    mkr_ruby_borrowed_bytes_t hv = mkr_ruby_bytes_view(html);
     lxb_char_t *clean = NULL;
     size_t      clean_len = 0;
     if (mkr_utf8_sanitize((const lxb_char_t *)hv.ptr, hv.len, &clean, &clean_len) != 0) {

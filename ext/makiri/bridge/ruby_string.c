@@ -22,23 +22,23 @@ mkr_check_text(VALUE str, const char *what)
     RB_GC_GUARD(str);
 }
 
-mkr_ruby_text_view_t
+mkr_ruby_borrowed_text_t
 mkr_ruby_checked_text(VALUE in, const char *what)
 {
     VALUE s = rb_String(in);
     mkr_check_text(s, what);
-    mkr_ruby_text_view_t v;
+    mkr_ruby_borrowed_text_t v;
     v.value = s;
     v.ptr   = RSTRING_PTR(s);
     v.len   = (size_t)RSTRING_LEN(s);
     return v;
 }
 
-mkr_ruby_bytes_view_t
+mkr_ruby_borrowed_bytes_t
 mkr_ruby_bytes_view(VALUE in)
 {
     VALUE s = rb_String(in);
-    mkr_ruby_bytes_view_t v;
+    mkr_ruby_borrowed_bytes_t v;
     v.value = s;
     v.ptr   = RSTRING_PTR(s);
     v.len   = (size_t)RSTRING_LEN(s);
@@ -48,7 +48,7 @@ mkr_ruby_bytes_view(VALUE in)
 int
 mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out)
 {
-    mkr_ruby_bytes_view_t v = mkr_ruby_bytes_view(in);
+    mkr_ruby_borrowed_bytes_t v = mkr_ruby_bytes_view(in);
     out->ptr = NULL;
     out->len = 0;
 
@@ -68,7 +68,7 @@ mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out)
 }
 
 const char *
-mkr_ruby_engine_string_view(VALUE sv, size_t max_bytes, mkr_ruby_text_view_t *out)
+mkr_ruby_engine_string_view(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
 {
     long len = RSTRING_LEN(sv);
     if ((size_t)len > max_bytes) {

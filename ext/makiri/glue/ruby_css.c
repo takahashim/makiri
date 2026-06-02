@@ -64,7 +64,7 @@ mkr_with_compiled_selector(VALUE rb_selector, lxb_dom_node_t *node,
                                                lxb_css_selector_list_t *, void *),
                            void *u)
 {
-    mkr_ruby_text_view_t sv = mkr_ruby_checked_text(rb_selector, "CSS selector");
+    mkr_ruby_borrowed_text_t sv = mkr_ruby_checked_text(rb_selector, "CSS selector");
     const lxb_char_t *s = (const lxb_char_t *)sv.ptr;
     size_t slen = sv.len;
 

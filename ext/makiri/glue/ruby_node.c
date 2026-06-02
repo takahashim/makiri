@@ -396,7 +396,7 @@ mkr_node_aref(VALUE self, VALUE rb_name)
         return Qnil;
     }
 
-    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
     const lxb_char_t *nm = (const lxb_char_t *)nv.ptr;
     size_t nlen = nv.len;
 
@@ -419,7 +419,7 @@ mkr_node_has_key(VALUE self, VALUE rb_name)
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         return Qfalse;
     }
-    mkr_ruby_text_view_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_checked_text(rb_name, "attribute name");
     lxb_dom_element_t *el = lxb_dom_interface_element(node);
     bool has = lxb_dom_element_has_attribute(el, (const lxb_char_t *)nv.ptr, nv.len);
     RB_GC_GUARD(nv.value);
