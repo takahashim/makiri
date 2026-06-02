@@ -1,10 +1,7 @@
 #include "compat.h"
+#include "../core/mkr_safe.h"
 
 #include <lexbor/encoding/encoding.h>
-
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 
 /* ------------------------------------------------------------------ */
 /* UTF-8 input sanitisation (browser-compatible HTML decoding)        */
@@ -62,8 +59,7 @@ mkr_utf8_replace_invalid(const lxb_char_t *src, size_t len, size_t *out_len)
     const lxb_char_t *data = src, *end = src + len;
     const lxb_codepoint_t *cp_begin, *cp_end;
     lxb_status_t de_status, en_status;
-    size_t cap, n = 0;
-    lxb_char_t *result;
+    mkr_buf_t buf;
 
     if (lxb_encoding_decode_init(&dec, u8, cp,
                                  sizeof(cp) / sizeof(cp[0])) != LXB_STATUS_OK) {
@@ -77,36 +73,18 @@ mkr_utf8_replace_invalid(const lxb_char_t *src, size_t len, size_t *out_len)
     (void) lxb_encoding_encode_replace_set(&enc, LXB_ENCODING_REPLACEMENT_BYTES,
                                            LXB_ENCODING_REPLACEMENT_SIZE);
 
-    if (len > SIZE_MAX - 17) {
-        return NULL; /* would overflow the size arithmetic below (unreachable
-                      * for a real Ruby String; guarded as a C input boundary) */
-    }
-    cap = len + 16;
-    result = malloc(cap + 1);
-    if (result == NULL) {
-        return NULL;
-    }
+    /* HTML parse input is not byte-capped; mkr_buf grows overflow-safe and fails
+     * closed (NULL) on OOM. */
+    mkr_buf_init(&buf, 0);
 
-    /* All size arithmetic below is overflow-checked and fails closed (NULL).
-     * `_nc > SIZE_MAX/2` is tested before doubling, so `_nc` never exceeds
-     * SIZE_MAX-1 and `_nc + 1` cannot wrap. */
-#define MKR_EMIT(buf, blen)                                                    \
+#define MKR_FLUSH()                                                            \
     do {                                                                       \
-        size_t _bl = (blen);                                                   \
-        if (_bl > SIZE_MAX - 1 - n) { free(result); return NULL; }            \
-        size_t _need = n + _bl;                                                \
-        if (_need > cap) {                                                     \
-            size_t _nc = cap;                                                  \
-            while (_nc < _need) {                                              \
-                if (_nc > SIZE_MAX / 2) { _nc = _need; break; }                \
-                _nc *= 2;                                                      \
-            }                                                                  \
-            lxb_char_t *_r = realloc(result, _nc + 1);                         \
-            if (_r == NULL) { free(result); return NULL; }                     \
-            result = _r; cap = _nc;                                            \
+        if (mkr_buf_append(&buf, outbuf,                                       \
+                           lxb_encoding_encode_buf_used(&enc)) != MKR_OK) {    \
+            mkr_buf_free(&buf);                                                \
+            return NULL;                                                       \
         }                                                                      \
-        memcpy(result + n, (buf), _bl);                                        \
-        n += _bl;                                                              \
+        lxb_encoding_encode_buf_used_set(&enc, 0);                             \
     } while (0)
 
     do {
@@ -115,8 +93,7 @@ mkr_utf8_replace_invalid(const lxb_char_t *src, size_t len, size_t *out_len)
         cp_end = cp_begin + lxb_encoding_decode_buf_used(&dec);
         do {
             en_status = u8->encode(&enc, &cp_begin, cp_end);
-            MKR_EMIT(outbuf, lxb_encoding_encode_buf_used(&enc));
-            lxb_encoding_encode_buf_used_set(&enc, 0);
+            MKR_FLUSH();
         } while (en_status == LXB_STATUS_SMALL_BUFFER);
         lxb_encoding_decode_buf_used_set(&dec, 0);
     } while (de_status == LXB_STATUS_SMALL_BUFFER);
@@ -127,17 +104,14 @@ mkr_utf8_replace_invalid(const lxb_char_t *src, size_t len, size_t *out_len)
         cp_begin = cp;
         cp_end = cp_begin + lxb_encoding_decode_buf_used(&dec);
         (void) u8->encode(&enc, &cp_begin, cp_end);
-        MKR_EMIT(outbuf, lxb_encoding_encode_buf_used(&enc));
-        lxb_encoding_encode_buf_used_set(&enc, 0);
+        MKR_FLUSH();
     }
     (void) lxb_encoding_encode_finish(&enc);
-    MKR_EMIT(outbuf, lxb_encoding_encode_buf_used(&enc));
+    MKR_FLUSH();
 
-#undef MKR_EMIT
+#undef MKR_FLUSH
 
-    result[n] = '\0';
-    *out_len = n;
-    return result;
+    return (lxb_char_t *) mkr_buf_steal(&buf, out_len);
 }
 
 int

@@ -1,4 +1,5 @@
 #include "mkr_xpath_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <lexbor/dom/dom.h>
 #include <ctype.h>
@@ -122,144 +123,88 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
 
 /* ---------- node string-value (XPath 1.0 §5) ---------- */
 
-/* Copy Lexbor-allocated text into our buffer and release the Lexbor
- * allocation. Without the destroy call we'd leak document arena memory
- * on every XPath that touches text content (predicates, comparisons,
- * id(), etc.). See nl_node.c:222 for the same pattern.
+/* ---------- node string-value (XPath 1.0 §5) ----------
  *
- * On allocation failure or LIMIT overrun the function aborts the
- * append and frees the Lexbor text. We deliberately do not propagate
- * an explicit error up to the caller here — the builder is
- * used from many contexts without an err pointer. Higher-level
- * callers detect oversize results via mkr_limit_check_string_bytes
- * after the fact.
- */
-static void
-append_text_content(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
-                    size_t max_bytes, int *overflow, int *oom)
+ * Built into an mkr_buf_t whose `max` is the per-evaluate byte cap: append fails
+ * closed with MKR_ERR_LIMIT past the cap and MKR_ERR_OOM on allocation failure,
+ * so there is never a partial/truncated result. Lexbor-allocated text is freed
+ * after each append (otherwise we'd leak document-arena memory on every XPath
+ * that touches text content). */
+
+/* Append `node`'s own text content. */
+static mkr_status_t
+append_text_content(lxb_dom_node_t *node, mkr_buf_t *buf)
 {
   size_t tlen = 0;
   lxb_char_t *t = lxb_dom_node_text_content(node, &tlen);
-  if (t == NULL) return;
-  if (tlen) {
-    if (max_bytes && *len + tlen > max_bytes) {
-      /* Over the cap: signal it explicitly and stop (no allocation). The caller
-       * fails closed on *overflow regardless of how far *len got, so this is
-       * robust even under OOM and never silently truncates. */
-      *overflow = 1;
-      lxb_dom_document_destroy_text(node->owner_document, t);
-      return;
-    }
-    /* Need *len + tlen + 1 bytes. Guard the size arithmetic (uncapped builds
-     * have no max_bytes ceiling) and signal OOM rather than truncating. */
-    if (tlen > SIZE_MAX - 1 - *len) {
-      *oom = 1;
-      lxb_dom_document_destroy_text(node->owner_document, t);
-      return;
-    }
-    size_t need = *len + tlen + 1;
-    if (need > *cap) {
-      size_t newcap = *cap ? *cap : 32;
-      while (newcap < need) {
-        if (newcap > SIZE_MAX / 2) { newcap = need; break; }
-        newcap *= 2;
-      }
-      char *p = realloc(*buf, newcap);
-      if (p == NULL) {
-        *oom = 1; /* fail closed: caller raises OOM instead of returning partial */
-        lxb_dom_document_destroy_text(node->owner_document, t);
-        return;
-      }
-      *buf = p;
-      *cap = newcap;
-    }
-    memcpy(*buf + *len, t, tlen);
-    *len += tlen;
-    (*buf)[*len] = '\0';
-  }
+  if (t == NULL) return MKR_OK;
+  mkr_status_t st = mkr_buf_append(buf, t, tlen);
   lxb_dom_document_destroy_text(node->owner_document, t);
+  return st;
 }
 
 /* Append the string-value of every TEXT descendant of `node`, in document
  * order. Iterative (parent-pointer) pre-order walk rather than C recursion, so
  * an adversarially deep tree cannot overflow the stack (fail-closed / no DoS);
- * O(1) extra space, no heap stack needed since the DOM ->parent links are
- * valid for the tree nodes we traverse. Descends only into elements, matching
- * the previous recursive form. */
-static void
-append_text_descendants(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
-                        size_t max_bytes, int *overflow, int *oom)
+ * O(1) extra space. Descends only into elements, matching the original. */
+static mkr_status_t
+append_text_descendants(lxb_dom_node_t *node, mkr_buf_t *buf)
 {
   lxb_dom_node_t *cur = node->first_child;
   while (cur != NULL) {
     if (cur->type == LXB_DOM_NODE_TYPE_TEXT) {
-      append_text_content(cur, buf, len, cap, max_bytes, overflow, oom);
-      if (*overflow || *oom) return; /* cap exceeded or OOM — caller fails closed */
+      mkr_status_t st = append_text_content(cur, buf);
+      if (st != MKR_OK) return st; /* LIMIT or OOM — caller fails closed */
     }
-    /* Descend into element children (only elements were recursed before). */
     if (cur->type == LXB_DOM_NODE_TYPE_ELEMENT && cur->first_child != NULL) {
       cur = cur->first_child;
       continue;
     }
-    /* No descent: advance to the next sibling, climbing back toward `node`
-     * (never above it) when a branch is exhausted. */
     while (cur != node && cur->next == NULL) {
       cur = cur->parent;
     }
-    if (cur == node) return;
+    if (cur == node) return MKR_OK;
     cur = cur->next;
   }
+  return MKR_OK;
 }
 
-static char *
-node_string_value_inner(const lxb_dom_node_t *node, size_t max_bytes,
-                        size_t *out_len, int *overflow, int *oom)
+/* Build node's string-value into `buf` (cap carried by buf->max). */
+static mkr_status_t
+build_string_value(const lxb_dom_node_t *node, mkr_buf_t *buf)
 {
-  if (out_len) *out_len = 0;
-  if (node == NULL) return strdup("");
+  if (node == NULL) return MKR_OK;
 
   switch (node->type) {
   case LXB_DOM_NODE_TYPE_ATTRIBUTE: {
     lxb_dom_attr_t *attr = (lxb_dom_attr_t *)node;
     size_t vlen = 0;
     const lxb_char_t *v = lxb_dom_attr_value(attr, &vlen);
-    char *out = malloc(vlen + 1);
-    if (out == NULL) return NULL;
-    if (v && vlen) memcpy(out, v, vlen);
-    out[vlen] = '\0';
-    if (out_len) *out_len = vlen;
-    return out;
+    return mkr_buf_append(buf, v ? (const char *)v : "", vlen);
   }
   case LXB_DOM_NODE_TYPE_TEXT:
   case LXB_DOM_NODE_TYPE_CDATA_SECTION:
   case LXB_DOM_NODE_TYPE_COMMENT:
-  case LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION: {
-    char  *buf = NULL;
-    size_t len = 0;
-    size_t cap = 0;
-    append_text_content((lxb_dom_node_t *)node, &buf, &len, &cap, max_bytes, overflow, oom);
-    if (out_len) *out_len = len;
-    return buf ? buf : strdup("");
-  }
+  case LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION:
+    return append_text_content((lxb_dom_node_t *)node, buf);
   default:
-    break;
+    return append_text_descendants((lxb_dom_node_t *)node, buf);
   }
-
-  char  *buf = NULL;
-  size_t len = 0;
-  size_t cap = 0;
-  append_text_descendants((lxb_dom_node_t *)node, &buf, &len, &cap, max_bytes, overflow, oom);
-  if (out_len) *out_len = len;
-  if (buf == NULL) return strdup("");
-  return buf;
 }
 
 char *
 mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node)
 {
-  int overflow = 0; /* max_bytes == 0 disables the cap, so never set */
-  int oom = 0;      /* best-effort path: a partial result on OOM is acceptable */
-  return node_string_value_inner(node, 0, NULL, &overflow, &oom);
+  /* Uncapped, best-effort: callers (number/string coercion) require a non-NULL
+   * C string, so on any failure fall back to an owned "" rather than NULL. */
+  mkr_buf_t buf;
+  mkr_buf_init(&buf, 0);
+  if (build_string_value(node, &buf) != MKR_OK) {
+    mkr_buf_free(&buf);
+    return strdup("");
+  }
+  char *s = mkr_buf_steal(&buf, NULL);
+  return s != NULL ? s : strdup("");
 }
 
 char *
@@ -267,26 +212,24 @@ mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
                              mkr_xpath_limits_t *limits,
                              mkr_xpath_error_t *err)
 {
-  size_t budget = (limits != NULL) ? limits->max_string_bytes : 0;
-  size_t len = 0;
-  int    overflow = 0;
-  int    oom = 0;
-  char  *s = node_string_value_inner(node, budget, &len, &overflow, &oom);
-  if (s == NULL || oom) {
-    /* oom catches a realloc failure partway through concat (s would otherwise
-     * be a truncated partial); fail closed rather than return a wrong result. */
-    free(s);
-    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
-    return NULL;
-  }
-  /* `overflow` catches descendant-text concat exceeding the cap (signalled
-   * without allocating); `len >= cap` additionally catches the attribute-value
-   * branch, which copies directly. Either fails closed as LIMIT. */
-  if (limits != NULL && (overflow || len >= limits->max_string_bytes)) {
-    free(s);
+  mkr_buf_t buf;
+  mkr_buf_init(&buf, (limits != NULL) ? limits->max_string_bytes : 0);
+  mkr_status_t st = build_string_value(node, &buf);
+  if (st == MKR_ERR_LIMIT) {
+    mkr_buf_free(&buf);
     mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
                 "string size limit exceeded (%zu bytes) while building node string-value",
                 limits->max_string_bytes);
+    return NULL;
+  }
+  if (st != MKR_OK) {
+    mkr_buf_free(&buf);
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
+    return NULL;
+  }
+  char *s = mkr_buf_steal(&buf, NULL);
+  if (s == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
     return NULL;
   }
   return s;

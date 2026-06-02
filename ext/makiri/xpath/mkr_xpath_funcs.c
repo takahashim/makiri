@@ -1,4 +1,5 @@
 #include "mkr_xpath_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/encoding/decode.h>
@@ -635,10 +636,13 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   lxb_codepoint_t *from_cp = malloc((from_len + 1) * sizeof(*from_cp));
   size_t *to_off = malloc((to_len + 1) * sizeof(*to_off));
   size_t *to_clen = malloc((to_len + 1) * sizeof(*to_clen));
-  char *buf = malloc(s_len + 1);
-  size_t buf_cap = s_len + 1;
-  if (from_cp == NULL || to_off == NULL || to_clen == NULL || buf == NULL) {
-    free(from_cp); free(to_off); free(to_clen); free(buf);
+  /* Output: capped (a multibyte replacement can expand the result past the
+   * limit even when the input is within it, e.g. "a" -> "😀"), grown
+   * overflow-safe; append fails closed with LIMIT/OOM. */
+  mkr_buf_t buf;
+  mkr_buf_init(&buf, L->max_string_bytes);
+  if (from_cp == NULL || to_off == NULL || to_clen == NULL) {
+    free(from_cp); free(to_off); free(to_clen);
     free(s); free(from); free(to);
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
     return -1;
@@ -662,7 +666,6 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     to_n++;
   }
 
-  size_t out_i = 0;
   for (const lxb_char_t *p = (const lxb_char_t *)s, *e = p + s_len; p < e;) {
     const lxb_char_t *c = p;
     lxb_codepoint_t cp = lxb_encoding_decode_valid_utf_8_single(&p, e);
@@ -682,51 +685,36 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     }                             /* else: k >= to_n -> drop the character */
 
     if (emit_len != 0) {
-      /* Cap the OUTPUT size: a multibyte replacement can grow the result well
-       * past the input even when the input is within the limit (e.g. "a"->"😀").
-       * Fail closed rather than build an oversize string. */
-      if (L->max_string_bytes && out_i + emit_len > L->max_string_bytes) {
-        free(from_cp); free(to_off); free(to_clen); free(buf);
+      mkr_status_t st = mkr_buf_append(&buf, emit, emit_len);
+      if (st != MKR_OK) {
+        mkr_buf_free(&buf);
+        free(from_cp); free(to_off); free(to_clen);
         free(s); free(from); free(to);
-        mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
-                     "string size limit exceeded (%zu bytes) in translate()",
-                     L->max_string_bytes);
+        if (st == MKR_ERR_LIMIT) {
+          mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
+                       "string size limit exceeded (%zu bytes) in translate()",
+                       L->max_string_bytes);
+        } else {
+          mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
+        }
         return -1;
       }
-      if (out_i + emit_len + 1 > buf_cap) {
-        size_t nc = buf_cap;
-        while (out_i + emit_len + 1 > nc) {
-          if (nc > SIZE_MAX / 2) {  /* growth would overflow */
-            free(from_cp); free(to_off); free(to_clen); free(buf);
-            free(s); free(from); free(to);
-            mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
-            return -1;
-          }
-          nc *= 2;
-        }
-        char *nb = realloc(buf, nc);
-        if (nb == NULL) {
-          free(from_cp); free(to_off); free(to_clen); free(buf);
-          free(s); free(from); free(to);
-          mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
-          return -1;
-        }
-        buf = nb; buf_cap = nc;
-      }
-      memcpy(buf + out_i, emit, emit_len);
-      out_i += emit_len;
     }
   }
-  buf[out_i] = '\0';
 
   free(from_cp); free(to_off); free(to_clen);
   free(s); free(from); free(to);
   out->type = MKR_XPATH_TYPE_STRING;
-  out->u.string = buf;
+  out->u.string = mkr_buf_steal(&buf, NULL);
+  if (out->u.string == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
+    return -1;
+  }
   return 0;
 
 decode_fail:
-  free(from_cp); free(to_off); free(to_clen); free(buf);
+  mkr_buf_free(&buf);
+  free(from_cp); free(to_off); free(to_clen);
   free(s); free(from); free(to);
   mkr_err_set(err, MKR_XPATH_ERR_RUNTIME, "invalid UTF-8 in translate() argument");
   return -1;
