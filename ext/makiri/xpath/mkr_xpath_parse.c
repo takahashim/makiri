@@ -160,8 +160,8 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
   }
 
   if (TOK(P).kind == MKR_TK_NAME) {
-    const char *s = TOK(P).start;
-    size_t      n = TOK(P).len;
+    const char *s = TOK(P).text.ptr;
+    size_t      n = TOK(P).text.len;
     /* NodeType test if followed by '(' and the name matches. */
     if (is_nodetype_name(s, n)) {
       /* peek: advance once and check for '(' */
@@ -169,13 +169,13 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       if (P_advance(P) != 0) return -1;
       if (TOK(P).kind == MKR_TK_LPAREN) {
         if (P_advance(P) != 0) return -1;
-        if      (saved.len == 4 && memcmp(saved.start, "node", 4)    == 0) out->kind = MKR_NT_NODE;
-        else if (saved.len == 4 && memcmp(saved.start, "text", 4)    == 0) out->kind = MKR_NT_TEXT;
-        else if (saved.len == 7 && memcmp(saved.start, "comment", 7) == 0) out->kind = MKR_NT_COMMENT;
+        if      (saved.text.len == 4 && memcmp(saved.text.ptr, "node", 4)    == 0) out->kind = MKR_NT_NODE;
+        else if (saved.text.len == 4 && memcmp(saved.text.ptr, "text", 4)    == 0) out->kind = MKR_NT_TEXT;
+        else if (saved.text.len == 7 && memcmp(saved.text.ptr, "comment", 7) == 0) out->kind = MKR_NT_COMMENT;
         else /* processing-instruction */ {
           out->kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            P_fill_owned_text(P, TOK(P).start, TOK(P).len, &out->pi_target);
+            P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &out->pi_target);
             if (P_advance(P) != 0) return -1;
           }
         }
@@ -184,7 +184,7 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       }
       /* Not followed by '(': it's an NCName name test. */
       out->kind  = MKR_NT_NAME;
-      P_fill_owned_text(P, saved.start, saved.len, &out->local);
+      P_fill_owned_text(P, saved.text.ptr, saved.text.len, &out->local);
       return 0;
     }
     /* Plain NCName: check for ':' '*' form. */
@@ -195,8 +195,8 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
 
   if (TOK(P).kind == MKR_TK_QNAME) {
     /* QName name test: `prefix:local` or `prefix:*` — split at the colon. */
-    const char *s = TOK(P).start;
-    size_t      n = TOK(P).len;
+    const char *s = TOK(P).text.ptr;
+    size_t      n = TOK(P).text.len;
     size_t      colon = 0;
     while (colon < n && s[colon] != ':') colon++;
     P_fill_owned_text(P, s, colon, &out->prefix);
@@ -275,8 +275,8 @@ parse_step(mkr_parser_t *P, mkr_step_t *out)
     if (P_advance(P) != 0) return -1;
     if (TOK(P).kind == MKR_TK_COLONCOLON) {
       mkr_axis_t ax;
-      if (!axis_by_name(saved.start, saved.len, &ax)) {
-        mkr_err_setf(P->err, MKR_XPATH_ERR_SYNTAX, "unknown axis '%.*s'", (int)saved.len, saved.start);
+      if (!axis_by_name(saved.text.ptr, saved.text.len, &ax)) {
+        mkr_err_setf(P->err, MKR_XPATH_ERR_SYNTAX, "unknown axis '%.*s'", (int)saved.text.len, saved.text.ptr);
         return -1;
       }
       out->axis = ax;
@@ -286,22 +286,22 @@ parse_step(mkr_parser_t *P, mkr_step_t *out)
       out->axis = MKR_AXIS_CHILD;
       /* Replay the saved NAME via the same logic as parse_node_test
        * but without re-consuming (we already advanced). */
-      if (is_nodetype_name(saved.start, saved.len) && TOK(P).kind == MKR_TK_LPAREN) {
+      if (is_nodetype_name(saved.text.ptr, saved.text.len) && TOK(P).kind == MKR_TK_LPAREN) {
         if (P_advance(P) != 0) return -1;
-        if      (saved.len == 4 && memcmp(saved.start, "node", 4)    == 0) out->test.kind = MKR_NT_NODE;
-        else if (saved.len == 4 && memcmp(saved.start, "text", 4)    == 0) out->test.kind = MKR_NT_TEXT;
-        else if (saved.len == 7 && memcmp(saved.start, "comment", 7) == 0) out->test.kind = MKR_NT_COMMENT;
+        if      (saved.text.len == 4 && memcmp(saved.text.ptr, "node", 4)    == 0) out->test.kind = MKR_NT_NODE;
+        else if (saved.text.len == 4 && memcmp(saved.text.ptr, "text", 4)    == 0) out->test.kind = MKR_NT_TEXT;
+        else if (saved.text.len == 7 && memcmp(saved.text.ptr, "comment", 7) == 0) out->test.kind = MKR_NT_COMMENT;
         else {
           out->test.kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            P_fill_owned_text(P, TOK(P).start, TOK(P).len, &out->test.pi_target);
+            P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &out->test.pi_target);
             if (P_advance(P) != 0) return -1;
           }
         }
         if (P_eat(P, MKR_TK_RPAREN, "')' after node type test") != 0) return -1;
       } else {
         out->test.kind  = MKR_NT_NAME;
-        P_fill_owned_text(P, saved.start, saved.len, &out->test.local);
+        P_fill_owned_text(P, saved.text.ptr, saved.text.len, &out->test.local);
       }
       return parse_predicates(P, &out->predicates, &out->npredicates);
     }
@@ -420,11 +420,11 @@ parse_function_call(mkr_parser_t *P, mkr_token_t name_tok)
 
   if (name_tok.kind == MKR_TK_QNAME) {
     size_t colon = 0;
-    while (colon < name_tok.len && name_tok.start[colon] != ':') colon++;
-    P_fill_owned_text(P, name_tok.start, colon, &n->u.fncall.prefix);
-    P_fill_owned_text(P, name_tok.start + colon + 1, name_tok.len - colon - 1, &n->u.fncall.name);
+    while (colon < name_tok.text.len && name_tok.text.ptr[colon] != ':') colon++;
+    P_fill_owned_text(P, name_tok.text.ptr, colon, &n->u.fncall.prefix);
+    P_fill_owned_text(P, name_tok.text.ptr + colon + 1, name_tok.text.len - colon - 1, &n->u.fncall.name);
   } else {
-    P_fill_owned_text(P, name_tok.start, name_tok.len, &n->u.fncall.name);
+    P_fill_owned_text(P, name_tok.text.ptr, name_tok.text.len, &n->u.fncall.name);
   }
 
   size_t cap = 0;
@@ -466,11 +466,11 @@ parse_primary(mkr_parser_t *P)
     if (n == NULL) return NULL;
     if (TOK(P).kind == MKR_TK_QNAME) {
       size_t colon = 0;
-      while (colon < TOK(P).len && TOK(P).start[colon] != ':') colon++;
-      P_fill_owned_text(P, TOK(P).start, colon, &n->u.varref.prefix);
-      P_fill_owned_text(P, TOK(P).start + colon + 1, TOK(P).len - colon - 1, &n->u.varref.name);
+      while (colon < TOK(P).text.len && TOK(P).text.ptr[colon] != ':') colon++;
+      P_fill_owned_text(P, TOK(P).text.ptr, colon, &n->u.varref.prefix);
+      P_fill_owned_text(P, TOK(P).text.ptr + colon + 1, TOK(P).text.len - colon - 1, &n->u.varref.name);
     } else {
-      P_fill_owned_text(P, TOK(P).start, TOK(P).len, &n->u.varref.name);
+      P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &n->u.varref.name);
     }
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
@@ -485,7 +485,7 @@ parse_primary(mkr_parser_t *P)
   case MKR_TK_LITERAL: {
     n = new_node(P, MKR_NK_LITERAL_STR);
     if (n == NULL) return NULL;
-    P_fill_owned_text(P, TOK(P).start, TOK(P).len, &n->u.literal);
+    P_fill_owned_text(P, TOK(P).text.ptr, TOK(P).text.len, &n->u.literal);
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
   }
@@ -572,8 +572,8 @@ looks_like_filter_expr(mkr_parser_t *P)
   case MKR_TK_NAME:
   case MKR_TK_QNAME: {
     /* It's a function call iff followed by '(' AND the name is not a NodeType. */
-    const char *s = TOK(P).start;
-    size_t      n = TOK(P).len;
+    const char *s = TOK(P).text.ptr;
+    size_t      n = TOK(P).text.len;
     if (TOK(P).kind == MKR_TK_NAME && is_nodetype_name(s, n)) {
       return 0;
     }
@@ -792,7 +792,7 @@ mkr_parse(mkr_valid_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *
   if (TOK(&P).kind != MKR_TK_EOF) {
     mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX,
                 "trailing input at '%.*s'",
-                (int)TOK(&P).len, TOK(&P).start);
+                (int)TOK(&P).text.len, TOK(&P).text.ptr);
     mkr_node_free(root);
     return NULL;
   }

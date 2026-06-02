@@ -118,6 +118,31 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  *      walking the element's ancestor chain.
  */
 
+/* ---------- engine text ---------- */
+
+/* Owned / borrowed engine text. Defined ahead of the tokens and the AST so the
+ * lexer token, node tests, literals, and names can hold these directly. */
+typedef struct {
+  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
+  size_t len; /* bytes, excluding the terminator */
+} mkr_owned_text_t;
+
+typedef struct {
+  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor/expr buffer */
+  size_t      len; /* bytes, excluding the terminator */
+} mkr_borrowed_text_t;
+
+/* Borrow a slice of an owned text (no copy). */
+static inline mkr_borrowed_text_t
+mkr_owned_borrow(mkr_owned_text_t t)
+{
+  return (mkr_borrowed_text_t){ t.ptr, t.len };
+}
+
+/* Borrowed-text equality, NUL-safe (NULL only equals NULL). The single name/
+ * value/registry/token comparison used across the engine. */
+int mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
+
 /* ---------- tokens ---------- */
 
 typedef enum {
@@ -142,9 +167,8 @@ typedef enum {
 
 typedef struct {
   mkr_tok_kind_t kind;
-  const char   *start;  /* pointer into the input buffer */
-  size_t        len;
-  double        num;    /* valid for MKR_TK_NUMBER */
+  mkr_borrowed_text_t text; /* borrowed slice of the input buffer */
+  double         num;       /* valid for MKR_TK_NUMBER */
 } mkr_token_t;
 
 typedef struct {
@@ -187,29 +211,6 @@ typedef enum {
   MKR_NT_COMMENT,     /* comment() */
   MKR_NT_PI,          /* processing-instruction([literal]) */
 } mkr_nt_kind_t;
-
-/* Owned / borrowed engine text. Defined here (ahead of the AST) so node tests,
- * literals, and names can hold an mkr_owned_text_t directly. */
-typedef struct {
-  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
-  size_t len; /* bytes, excluding the terminator */
-} mkr_owned_text_t;
-
-typedef struct {
-  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor */
-  size_t      len; /* bytes, excluding the terminator */
-} mkr_borrowed_text_t;
-
-/* Borrow a slice of an owned text (no copy). */
-static inline mkr_borrowed_text_t
-mkr_owned_borrow(mkr_owned_text_t t)
-{
-  return (mkr_borrowed_text_t){ t.ptr, t.len };
-}
-
-/* Borrowed-text equality, NUL-safe (NULL only equals NULL). The single name/
- * value/registry comparison used across the engine. */
-int mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
 
 typedef struct {
   mkr_nt_kind_t kind;

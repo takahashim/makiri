@@ -99,8 +99,8 @@ lex_number(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
     return -1;
   }
   t->kind  = MKR_TK_NUMBER;
-  t->start = s;
-  t->len   = (size_t)(end - s);
+  t->text.ptr = s;
+  t->text.len   = (size_t)(end - s);
   t->num   = v;
   L->cur   = end;
   return 0;
@@ -142,8 +142,8 @@ lex_string(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
     return -1;
   }
   t->kind  = MKR_TK_LITERAL;
-  t->start = start;
-  t->len   = len;
+  t->text.ptr = start;
+  t->text.len   = len;
   L->cur   = p + 1;
   return 0;
 }
@@ -168,8 +168,8 @@ lex_name(mkr_lexer_t *L, mkr_token_t *t)
   } else {
     t->kind = MKR_TK_NAME;
   }
-  t->start = s;
-  t->len   = (size_t)(L->cur - s);
+  t->text.ptr = s;
+  t->text.len   = (size_t)(L->cur - s);
   return 0;
 }
 
@@ -183,39 +183,39 @@ next_token(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 
   if (c == '\0') {
     t->kind = MKR_TK_EOF;
-    t->start = s;
-    t->len = 0;
+    t->text.ptr = s;
+    t->text.len = 0;
     return 0;
   }
 
-  if (c == '/' && s[1] == '/') { t->kind = MKR_TK_DSLASH;     t->start = s; t->len = 2; L->cur += 2; return 0; }
-  if (c == '.' && s[1] == '.') { t->kind = MKR_TK_DOTDOT;     t->start = s; t->len = 2; L->cur += 2; return 0; }
-  if (c == ':' && s[1] == ':') { t->kind = MKR_TK_COLONCOLON; t->start = s; t->len = 2; L->cur += 2; return 0; }
-  if (c == '!' && s[1] == '=') { t->kind = MKR_TK_NE;         t->start = s; t->len = 2; L->cur += 2; return 0; }
-  if (c == '<' && s[1] == '=') { t->kind = MKR_TK_LE;         t->start = s; t->len = 2; L->cur += 2; return 0; }
-  if (c == '>' && s[1] == '=') { t->kind = MKR_TK_GE;         t->start = s; t->len = 2; L->cur += 2; return 0; }
+  if (c == '/' && s[1] == '/') { t->kind = MKR_TK_DSLASH;     t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
+  if (c == '.' && s[1] == '.') { t->kind = MKR_TK_DOTDOT;     t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
+  if (c == ':' && s[1] == ':') { t->kind = MKR_TK_COLONCOLON; t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
+  if (c == '!' && s[1] == '=') { t->kind = MKR_TK_NE;         t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
+  if (c == '<' && s[1] == '=') { t->kind = MKR_TK_LE;         t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
+  if (c == '>' && s[1] == '=') { t->kind = MKR_TK_GE;         t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
 
   switch (c) {
-  case '(': t->kind = MKR_TK_LPAREN;   t->start = s; t->len = 1; L->cur++; return 0;
-  case ')': t->kind = MKR_TK_RPAREN;   t->start = s; t->len = 1; L->cur++; return 0;
-  case '[': t->kind = MKR_TK_LBRACKET; t->start = s; t->len = 1; L->cur++; return 0;
-  case ']': t->kind = MKR_TK_RBRACKET; t->start = s; t->len = 1; L->cur++; return 0;
+  case '(': t->kind = MKR_TK_LPAREN;   t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case ')': t->kind = MKR_TK_RPAREN;   t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '[': t->kind = MKR_TK_LBRACKET; t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case ']': t->kind = MKR_TK_RBRACKET; t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
   case '.':
     if (isdigit((unsigned char)s[1])) {
       return lex_number(L, t, err);
     }
-    t->kind = MKR_TK_DOT; t->start = s; t->len = 1; L->cur++; return 0;
-  case '@': t->kind = MKR_TK_AT;       t->start = s; t->len = 1; L->cur++; return 0;
-  case ',': t->kind = MKR_TK_COMMA;    t->start = s; t->len = 1; L->cur++; return 0;
-  case '|': t->kind = MKR_TK_PIPE;     t->start = s; t->len = 1; L->cur++; return 0;
-  case '/': t->kind = MKR_TK_SLASH;    t->start = s; t->len = 1; L->cur++; return 0;
-  case '+': t->kind = MKR_TK_PLUS;     t->start = s; t->len = 1; L->cur++; return 0;
-  case '-': t->kind = MKR_TK_MINUS;    t->start = s; t->len = 1; L->cur++; return 0;
-  case '*': t->kind = MKR_TK_STAR;     t->start = s; t->len = 1; L->cur++; return 0;
-  case '=': t->kind = MKR_TK_EQ;       t->start = s; t->len = 1; L->cur++; return 0;
-  case '<': t->kind = MKR_TK_LT;       t->start = s; t->len = 1; L->cur++; return 0;
-  case '>': t->kind = MKR_TK_GT;       t->start = s; t->len = 1; L->cur++; return 0;
-  case '$': t->kind = MKR_TK_DOLLAR;   t->start = s; t->len = 1; L->cur++; return 0;
+    t->kind = MKR_TK_DOT; t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '@': t->kind = MKR_TK_AT;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case ',': t->kind = MKR_TK_COMMA;    t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '|': t->kind = MKR_TK_PIPE;     t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '/': t->kind = MKR_TK_SLASH;    t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '+': t->kind = MKR_TK_PLUS;     t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '-': t->kind = MKR_TK_MINUS;    t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '*': t->kind = MKR_TK_STAR;     t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '=': t->kind = MKR_TK_EQ;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '<': t->kind = MKR_TK_LT;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '>': t->kind = MKR_TK_GT;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '$': t->kind = MKR_TK_DOLLAR;   t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
   case '\'':
   case '"':
     return lex_string(L, t, err);
@@ -259,5 +259,5 @@ int
 mkr_tok_is_word_len(const mkr_token_t *t, const char *word, size_t word_len)
 {
   if (t->kind != MKR_TK_NAME) return 0;
-  return t->len == word_len && memcmp(t->start, word, word_len) == 0;
+  return mkr_text_eq(t->text, (mkr_borrowed_text_t){ word, word_len });
 }
