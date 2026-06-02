@@ -1,4 +1,5 @@
 #include "makiri.h"
+#include "core/mkr_safe.h"
 
 #include <string.h>
 
@@ -40,6 +41,19 @@ mkr_check_text(VALUE str, const char *what)
         rb_raise(mkr_eError, "%s must be valid UTF-8", what);
     }
     RB_GC_GUARD(str);
+}
+
+/* Makiri.__c_selftest -> true, or raises if the safe-core primitives
+ * (mkr_safe.c) fail their internal edge-case checks. Test hook only. */
+static VALUE
+mkr_c_selftest(VALUE self)
+{
+    (void)self;
+    int rc = mkr_safe_selftest();
+    if (rc != 0) {
+        rb_raise(mkr_eError, "mkr_safe_selftest failed at check %d", rc);
+    }
+    return Qtrue;
 }
 
 RUBY_FUNC_EXPORTED void
@@ -97,4 +111,6 @@ Init_makiri(void)
     mkr_init_css();
     mkr_init_serialize();
     mkr_init_mutate();
+
+    rb_define_singleton_method(mkr_mMakiri, "__c_selftest", mkr_c_selftest, 0);
 }
