@@ -170,16 +170,20 @@ mkr_ptr_hash(const lxb_dom_node_t *p)
     return (size_t)x;
 }
 
-/* Build (cap 0 on allocation failure → linear fallback). */
+/* Build (cap 0 on overflow / allocation failure → linear fallback). Sized for
+ * load factor < 0.5 (>= n * 2 slots, min 16), all through the overflow-checked
+ * safe-core helpers. */
 static void
 mkr_ptrset_init(mkr_ptrset_t *set, size_t n)
 {
-    size_t cap = 16;
-    while (cap < n * 2) {
-        if (cap > SIZE_MAX / 2) { set->slots = NULL; set->cap = 0; return; }
-        cap *= 2;
-    }
-    set->slots = calloc(cap, sizeof(*set->slots));
+    set->slots = NULL;
+    set->cap   = 0;
+
+    size_t need, cap;
+    if (!mkr_size_mul(n, 2, &need)) return;                       /* n * 2 overflow */
+    if (!mkr_grow_capacity(16, need, sizeof(*set->slots), &cap)) return;
+
+    set->slots = mkr_callocarray(cap, sizeof(*set->slots));
     set->cap   = (set->slots != NULL) ? cap : 0;
 }
 

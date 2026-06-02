@@ -8,10 +8,6 @@ allowlist:
     max: 4
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/glue/ruby_node_set.c
-    rule: direct_alloc
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_node_set.c
     rule: sizeof_allocation
     max: 1
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.

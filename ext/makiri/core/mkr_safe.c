@@ -14,6 +14,19 @@ mkr_reallocarray(void *ptr, size_t count, size_t elem)
     return realloc(ptr, bytes);
 }
 
+void *
+mkr_callocarray(size_t count, size_t elem)
+{
+    if (count == 0 || elem == 0) {
+        return NULL;
+    }
+    size_t bytes;
+    if (!mkr_size_mul(count, elem, &bytes)) {
+        return NULL; /* overflow */
+    }
+    return calloc(count, elem); /* 2-arg calloc is itself overflow-safe */
+}
+
 mkr_status_t
 mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem)
 {
@@ -134,6 +147,15 @@ mkr_safe_selftest(void)
 
     /* reallocarray overflow returns NULL without touching ptr */
     if (mkr_reallocarray(NULL, SIZE_MAX, 2) != NULL) return 9;
+
+    /* callocarray: zeroed, and NULL on overflow / zero count */
+    {
+        size_t *a = mkr_callocarray(4, sizeof(*a));
+        if (a == NULL || a[0] != 0 || a[3] != 0) { free(a); return 23; }
+        free(a);
+        if (mkr_callocarray(SIZE_MAX, 2) != NULL) return 24; /* overflow */
+        if (mkr_callocarray(0, 4) != NULL) return 25;         /* zero count */
+    }
 
     /* buf: append, terminate, steal */
     {

@@ -70,6 +70,10 @@ mkr_grow_capacity(size_t cap, size_t need, size_t elem, size_t *new_cap)
  * it). count == 0 frees and returns NULL. */
 void *mkr_reallocarray(void *ptr, size_t count, size_t elem);
 
+/* calloc(count, elem) with the multiply overflow-checked, result zeroed.
+ * Returns NULL on overflow, allocation failure, or count == 0 / elem == 0. */
+void *mkr_callocarray(size_t count, size_t elem);
+
 /* Ensure the array at *ptr (currently *cap elements of `elem` bytes) can hold
  * at least `need` elements, growing geometrically and overflow-safely. On
  * success updates *ptr / *cap and returns MKR_OK; on overflow/allocation failure
