@@ -78,7 +78,11 @@ Requires CRuby >= 3.2 and `cmake`.
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
 ext/makiri/
   makiri.{c,h}             Init_makiri, module/class refs
-  glue/                    Ruby <-> C bridge, one file per surface (ruby_node/doc/node_set/
+  core/                    Ruby-free safety primitives (mkr_safe: overflow-checked
+                           alloc/grow, mkr_buf_t, mkr_valid_text_t)
+  bridge/                  the Ruby boundary — the ONLY layer allowed raw Ruby String
+                           access (RSTRING) and mkr_valid_text_t minting
+  glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
   lexbor_compat/           attr->owner index, source location, post-parse orchestration
