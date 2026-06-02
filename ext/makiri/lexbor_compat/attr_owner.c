@@ -160,7 +160,10 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
         }
         tag_off[0] = 0;
         for (uintptr_t t = 0; t <= tag_max; t++) {
-            tag_off[t + 1] = tag_off[t] + counts[t];
+            if (!mkr_size_add(tag_off[t], counts[t], &tag_off[t + 1])) {
+                free(slots); free(tag_off); free(cursor); free(tag_nodes);
+                return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+            }
         }
         memcpy(cursor, tag_off, off_bytes);
     }

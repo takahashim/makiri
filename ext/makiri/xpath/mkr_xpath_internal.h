@@ -363,7 +363,7 @@ void mkr_nodeset_unique_sorted(struct mkr_xpath_context_s *ctx, mkr_nodeset_t *n
 typedef struct {
   struct {
     const lxb_dom_node_t *node;  /* NULL = empty slot */
-    uint32_t              ord;
+    size_t                ord;   /* document-order ordinal (size_t: no 2^32 cap) */
   } *buckets;
   size_t cap;
   size_t count;

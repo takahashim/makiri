@@ -621,7 +621,7 @@ mkr_doc_order_index_clear(mkr_doc_order_index_t *idx)
 /* Insert (node, ord) into the open-addressing table. Grows when load
  * factor exceeds 3/4. Returns 0 on success, -1 on OOM. */
 static int
-order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, uint32_t ord)
+order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, size_t ord)
 {
   if (idx->cap == 0 || idx->count * 4 >= idx->cap * 3) {
     size_t new_cap = 256;
@@ -662,7 +662,7 @@ order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, uint3
 
 static int
 order_index_lookup(const mkr_doc_order_index_t *idx, const lxb_dom_node_t *node,
-                   uint32_t *out_ord)
+                   size_t *out_ord)
 {
   if (idx->cap == 0) return -1;
   size_t mask = idx->cap - 1;
@@ -686,7 +686,7 @@ order_index_lookup(const mkr_doc_order_index_t *idx, const lxb_dom_node_t *node,
  * The traversal stays within the subtree rooted at `root` (it never follows
  * root->next). */
 static int
-order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *root, uint32_t *next_ord)
+order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *root, size_t *next_ord)
 {
   lxb_dom_node_t *cur = root;
   while (cur != NULL) {
@@ -717,7 +717,7 @@ order_index_build(mkr_doc_order_index_t *idx, lxb_dom_node_t *root,
 {
   if (idx->built) return 0;
   if (root == NULL) return -1;
-  uint32_t next_ord = 0;
+  size_t next_ord = 0;
   if (order_index_walk(idx, root, &next_ord) != 0) {
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building document order index");
     mkr_doc_order_index_clear(idx);
@@ -736,10 +736,10 @@ doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const lxb_dom_node_t *a, const lxb_d
   if (ctx == NULL) return doc_order_cmp(a, b);
   mkr_doc_order_index_t *idx = mkr_ctx_order_index(ctx);
   if (idx == NULL || !idx->built) return doc_order_cmp(a, b);
-  uint32_t oa, ob;
+  size_t oa, ob;
   if (order_index_lookup(idx, a, &oa) != 0) return doc_order_cmp(a, b);
   if (order_index_lookup(idx, b, &ob) != 0) return doc_order_cmp(a, b);
-  /* Safe comparison — no subtraction (would overflow at 2^31). */
+  /* Safe comparison — compare, don't subtract (unsigned difference wraps). */
   if (oa < ob) return -1;
   if (oa > ob) return 1;
   return 0;
