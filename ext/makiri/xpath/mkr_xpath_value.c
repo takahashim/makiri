@@ -308,19 +308,6 @@ mkr_node_string_text_or_fail(const lxb_dom_node_t *node,
   return mkr_owned_text_from_buf_steal(out, &buf, err, "out of memory building node string-value");
 }
 
-char *
-mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
-                             mkr_xpath_limits_t *limits,
-                             mkr_xpath_error_t *err,
-                             size_t *out_len)
-{
-  if (out_len) *out_len = 0;
-  mkr_owned_text_t text;
-  if (mkr_node_string_text_or_fail(node, limits, err, &text) != 0) return NULL;
-  if (out_len) *out_len = text.len;
-  return text.ptr;
-}
-
 int
 mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
                               mkr_xpath_limits_t *limits,
@@ -392,16 +379,6 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown value type");
   return -1;
-}
-
-char *
-mkr_val_to_string_or_fail(const mkr_val_t *v,
-                         mkr_xpath_limits_t *limits,
-                         mkr_xpath_error_t *err)
-{
-  mkr_owned_text_t text;
-  if (mkr_val_to_owned_text_or_fail(v, limits, err, &text) != 0) return NULL;
-  return text.ptr;
 }
 
 int
@@ -996,20 +973,6 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
   c->count++;
 
   *out = (mkr_borrowed_text_t){ text.ptr, text.len };
-  return 0;
-}
-
-int
-mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
-                          lxb_dom_node_t *node,
-                          const char **out_str,
-                          size_t *out_len,
-                          mkr_xpath_error_t *err)
-{
-  mkr_borrowed_text_t text;
-  if (mkr_get_cached_node_text(ctx, node, &text, err) != 0) return -1;
-  if (out_str) *out_str = text.ptr;
-  if (out_len) *out_len = text.len;
   return 0;
 }
 

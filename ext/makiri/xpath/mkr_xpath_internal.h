@@ -437,15 +437,6 @@ int mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
                                   mkr_xpath_limits_t *limits,
                                   mkr_xpath_error_t *err,
                                   mkr_owned_text_t *out);
-/* Compatibility wrappers returning owned char*. Prefer the typed variants in
- * new runtime code. out_len receives the byte length when requested. */
-char *mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
-                                   mkr_xpath_limits_t *limits,
-                                   mkr_xpath_error_t *err,
-                                   size_t *out_len);
-char *mkr_val_to_string_or_fail(const mkr_val_t *v,
-                               mkr_xpath_limits_t *limits,
-                               mkr_xpath_error_t *err);
 int   mkr_val_to_number_or_fail(const mkr_val_t *v,
                                mkr_xpath_limits_t *limits,
                                mkr_xpath_error_t *err,
@@ -516,12 +507,6 @@ int  mkr_get_cached_node_text  (struct mkr_xpath_context_s *ctx,
                                lxb_dom_node_t            *node,
                                mkr_borrowed_text_t       *out,
                                mkr_xpath_error_t         *err);
-/* Compatibility wrapper. Prefer mkr_get_cached_node_text in new code. */
-int  mkr_get_cached_node_string(struct mkr_xpath_context_s *ctx,
-                               lxb_dom_node_t            *node,
-                               const char               **out_str,
-                               size_t                    *out_len,
-                               mkr_xpath_error_t          *err);
 
 /* Returns a pointer to the context's per-eval cache. Used by
  * eval_compiled to manage nested-eval snapshots. */

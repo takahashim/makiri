@@ -358,16 +358,14 @@ fn_string(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "string") != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
+  mkr_owned_text_t text;
   if (nargs == 0) {
-    size_t len = 0;
-    char *s = mkr_node_string_value_or_fail(self_node, mkr_ctx_limits(ctx), err, &len);
-    mkr_val_set_owned_string(out, s, len);
+    if (mkr_node_string_text_or_fail(self_node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
   } else {
-    mkr_owned_text_t text;
     if (mkr_val_to_owned_text_or_fail(&args[0], mkr_ctx_limits(ctx), err, &text) != 0) return -1;
-    mkr_val_set_owned_string(out, text.ptr, text.len);
   }
-  return out->u.string == NULL ? -1 : 0;
+  mkr_val_set_owned_string(out, text.ptr, text.len);
+  return 0;
 }
 
 static int
