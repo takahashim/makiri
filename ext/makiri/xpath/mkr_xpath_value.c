@@ -979,9 +979,9 @@ void
 mkr_step_clear(mkr_step_t *s)
 {
   if (s == NULL) return;
-  free(s->test.prefix);
-  free(s->test.local);
-  free(s->test.pi_target);
+  mkr_owned_text_clear(&s->test.prefix);
+  mkr_owned_text_clear(&s->test.local);
+  mkr_owned_text_clear(&s->test.pi_target);
   for (size_t i = 0; i < s->npredicates; ++i) {
     mkr_node_free(s->predicates[i]);
   }
@@ -1049,11 +1049,11 @@ mkr_mark_context_independent(mkr_node_t *n)
     for (size_t i = 0; i < n->u.fncall.nargs; ++i) {
       mkr_mark_context_independent(n->u.fncall.args[i]);
     }
-    if (n->u.fncall.prefix != NULL) {
+    if (n->u.fncall.prefix.ptr != NULL) {
       ci = 0; /* Handler-routed or namespaced builtins → non-CI. */
       break;
     }
-    if (!is_pure_builtin_name(n->u.fncall.name, n->u.fncall.nargs)) {
+    if (!is_pure_builtin_name(n->u.fncall.name.ptr, n->u.fncall.nargs)) {
       ci = 0;
       break;
     }
@@ -1132,7 +1132,7 @@ fuse_descendant_or_self_steps(mkr_step_t *steps, size_t *nsteps_ptr)
     if (r + 1 < nsteps
         && steps[r].axis == MKR_AXIS_DESCENDANT_OR_SELF
         && steps[r].test.kind == MKR_NT_NODE
-        && steps[r].test.prefix == NULL
+        && steps[r].test.prefix.ptr == NULL
         && steps[r].npredicates == 0
         && steps[r + 1].axis == MKR_AXIS_CHILD
         && steps[r + 1].npredicates == 0) {
@@ -1236,17 +1236,17 @@ mkr_node_free(mkr_node_t *n)
   }
   switch (n->kind) {
   case MKR_NK_LITERAL_STR:
-    free(n->u.literal.str);
+    mkr_owned_text_clear(&n->u.literal);
     break;
   case MKR_NK_LITERAL_NUM:
     break;
   case MKR_NK_VARREF:
-    free(n->u.varref.prefix);
-    free(n->u.varref.name);
+    mkr_owned_text_clear(&n->u.varref.prefix);
+    mkr_owned_text_clear(&n->u.varref.name);
     break;
   case MKR_NK_FNCALL:
-    free(n->u.fncall.prefix);
-    free(n->u.fncall.name);
+    mkr_owned_text_clear(&n->u.fncall.prefix);
+    mkr_owned_text_clear(&n->u.fncall.name);
     for (size_t i = 0; i < n->u.fncall.nargs; ++i) {
       mkr_node_free(n->u.fncall.args[i]);
     }

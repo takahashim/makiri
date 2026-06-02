@@ -33,15 +33,15 @@ P_strndup(mkr_parser_t *P, const char *s, size_t n)
   return p;
 }
 
-/* strndup into a node-test name slot, recording its byte length (0 on failure —
- * the parse then aborts via P->err). Lets node_principal_match compare names
+/* strndup into an owned-text AST slot (node-test name, literal, varref/fncall
+ * name). On OOM the slot is left {NULL, 0} and the parse aborts via P->err
+ * (mkr_strndup set it). The stored length lets the evaluator compare names
  * without a per-node strlen. */
-static char *
-P_strndup_len(mkr_parser_t *P, const char *s, size_t n, size_t *out_len)
+static void
+P_fill_owned_text(mkr_parser_t *P, const char *s, size_t n, mkr_owned_text_t *out)
 {
-  char *p = P_strndup(P, s, n);
-  *out_len = (p != NULL) ? n : 0;
-  return p;
+  out->ptr = P_strndup(P, s, n);
+  out->len = out->ptr ? n : 0;
 }
 
 static int
@@ -175,7 +175,7 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
         else /* processing-instruction */ {
           out->kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            out->pi_target = P_strndup_len(P, TOK(P).start, TOK(P).len, &out->pi_target_len);
+            P_fill_owned_text(P, TOK(P).start, TOK(P).len, &out->pi_target);
             if (P_advance(P) != 0) return -1;
           }
         }
@@ -184,12 +184,12 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       }
       /* Not followed by '(': it's an NCName name test. */
       out->kind  = MKR_NT_NAME;
-      out->local = P_strndup_len(P, saved.start, saved.len, &out->local_len);
+      P_fill_owned_text(P, saved.start, saved.len, &out->local);
       return 0;
     }
     /* Plain NCName: check for ':' '*' form. */
     out->kind  = MKR_NT_NAME;
-    out->local = P_strndup_len(P, s, n, &out->local_len);
+    P_fill_owned_text(P, s, n, &out->local);
     return P_advance(P);
   }
 
@@ -199,13 +199,13 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
     size_t      n = TOK(P).len;
     size_t      colon = 0;
     while (colon < n && s[colon] != ':') colon++;
-    out->prefix = P_strndup_len(P, s, colon, &out->prefix_len);
+    P_fill_owned_text(P, s, colon, &out->prefix);
     if (n - colon - 1 == 1 && s[colon + 1] == '*') {
       /* prefix:* — any element in the prefix's namespace. */
       out->kind = MKR_NT_WILDCARD;
     } else {
       out->kind  = MKR_NT_NAME;
-      out->local = P_strndup_len(P, s + colon + 1, n - colon - 1, &out->local_len);
+      P_fill_owned_text(P, s + colon + 1, n - colon - 1, &out->local);
     }
     return P_advance(P);
   }
@@ -294,14 +294,14 @@ parse_step(mkr_parser_t *P, mkr_step_t *out)
         else {
           out->test.kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            out->test.pi_target = P_strndup_len(P, TOK(P).start, TOK(P).len, &out->test.pi_target_len);
+            P_fill_owned_text(P, TOK(P).start, TOK(P).len, &out->test.pi_target);
             if (P_advance(P) != 0) return -1;
           }
         }
         if (P_eat(P, MKR_TK_RPAREN, "')' after node type test") != 0) return -1;
       } else {
         out->test.kind  = MKR_NT_NAME;
-        out->test.local = P_strndup_len(P, saved.start, saved.len, &out->test.local_len);
+        P_fill_owned_text(P, saved.start, saved.len, &out->test.local);
       }
       return parse_predicates(P, &out->predicates, &out->npredicates);
     }
@@ -421,11 +421,10 @@ parse_function_call(mkr_parser_t *P, mkr_token_t name_tok)
   if (name_tok.kind == MKR_TK_QNAME) {
     size_t colon = 0;
     while (colon < name_tok.len && name_tok.start[colon] != ':') colon++;
-    n->u.fncall.prefix = P_strndup_len(P,name_tok.start, colon, &n->u.fncall.prefix_len);
-    n->u.fncall.name   = P_strndup_len(P,name_tok.start + colon + 1, name_tok.len - colon - 1,
-                                       &n->u.fncall.name_len);
+    P_fill_owned_text(P, name_tok.start, colon, &n->u.fncall.prefix);
+    P_fill_owned_text(P, name_tok.start + colon + 1, name_tok.len - colon - 1, &n->u.fncall.name);
   } else {
-    n->u.fncall.name = P_strndup_len(P,name_tok.start, name_tok.len, &n->u.fncall.name_len);
+    P_fill_owned_text(P, name_tok.start, name_tok.len, &n->u.fncall.name);
   }
 
   size_t cap = 0;
@@ -468,11 +467,10 @@ parse_primary(mkr_parser_t *P)
     if (TOK(P).kind == MKR_TK_QNAME) {
       size_t colon = 0;
       while (colon < TOK(P).len && TOK(P).start[colon] != ':') colon++;
-      n->u.varref.prefix = P_strndup_len(P,TOK(P).start, colon, &n->u.varref.prefix_len);
-      n->u.varref.name   = P_strndup_len(P,TOK(P).start + colon + 1, TOK(P).len - colon - 1,
-                                         &n->u.varref.name_len);
+      P_fill_owned_text(P, TOK(P).start, colon, &n->u.varref.prefix);
+      P_fill_owned_text(P, TOK(P).start + colon + 1, TOK(P).len - colon - 1, &n->u.varref.name);
     } else {
-      n->u.varref.name = P_strndup_len(P,TOK(P).start, TOK(P).len, &n->u.varref.name_len);
+      P_fill_owned_text(P, TOK(P).start, TOK(P).len, &n->u.varref.name);
     }
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
@@ -487,8 +485,7 @@ parse_primary(mkr_parser_t *P)
   case MKR_TK_LITERAL: {
     n = new_node(P, MKR_NK_LITERAL_STR);
     if (n == NULL) return NULL;
-    n->u.literal.str = P_strndup(P,TOK(P).start, TOK(P).len);
-    n->u.literal.len = n->u.literal.str ? TOK(P).len : 0;
+    P_fill_owned_text(P, TOK(P).start, TOK(P).len, &n->u.literal);
     if (P_advance(P) != 0) { mkr_node_free(n); return NULL; }
     return n;
   }

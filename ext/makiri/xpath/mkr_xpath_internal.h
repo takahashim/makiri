@@ -188,14 +188,23 @@ typedef enum {
   MKR_NT_PI,          /* processing-instruction([literal]) */
 } mkr_nt_kind_t;
 
+/* Owned / borrowed engine text. Defined here (ahead of the AST) so node tests,
+ * literals, and names can hold an mkr_owned_text_t directly. */
+typedef struct {
+  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
+  size_t len; /* bytes, excluding the terminator */
+} mkr_owned_text_t;
+
+typedef struct {
+  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor */
+  size_t      len; /* bytes, excluding the terminator */
+} mkr_borrowed_text_t;
+
 typedef struct {
   mkr_nt_kind_t kind;
-  char *prefix;       /* may be NULL */
-  char *local;        /* may be NULL for non-name tests */
-  char *pi_target;    /* for processing-instruction("target"), may be NULL */
-  size_t prefix_len;   /* byte length of prefix (0 when prefix == NULL) */
-  size_t local_len;     /* byte length of local (0 when local == NULL) */
-  size_t pi_target_len; /* byte length of pi_target (0 when pi_target == NULL) */
+  mkr_owned_text_t prefix;    /* .ptr may be NULL */
+  mkr_owned_text_t local;     /* .ptr may be NULL for non-name tests */
+  mkr_owned_text_t pi_target; /* for processing-instruction("target"); .ptr may be NULL */
 } mkr_nodetest_t;
 
 typedef enum {
@@ -236,16 +245,6 @@ typedef struct {
 } mkr_nodeset_t;
 
 typedef struct {
-  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
-  size_t len; /* bytes, excluding the terminator */
-} mkr_owned_text_t;
-
-typedef struct {
-  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor */
-  size_t      len; /* bytes, excluding the terminator */
-} mkr_borrowed_text_t;
-
-typedef struct {
   mkr_xpath_type_t type;
   union {
     mkr_nodeset_t    nodeset;
@@ -283,24 +282,17 @@ struct mkr_node_s {
    * mkr_node_clear_memos and mkr_node_free. */
   mkr_val_t memo_value;
   union {
-    struct {
-      char  *str;
-      size_t len;
-    } literal;
+    mkr_owned_text_t literal;
     double literal_num;
     struct {
-      char *prefix;
-      size_t prefix_len;
-      char *name;
-      size_t name_len;
+      mkr_owned_text_t prefix;
+      mkr_owned_text_t name;
     } varref;
     struct {
-      char       *prefix;
-      size_t      prefix_len;
-      char       *name;
-      size_t      name_len;
-      mkr_node_t **args;
-      size_t      nargs;
+      mkr_owned_text_t prefix;
+      mkr_owned_text_t name;
+      mkr_node_t     **args;
+      size_t           nargs;
     } fncall;
     struct {
       mkr_node_t *expr;

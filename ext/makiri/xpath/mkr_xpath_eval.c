@@ -74,11 +74,11 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     return node->type == LXB_DOM_NODE_TYPE_COMMENT;
   case MKR_NT_PI:
     if (node->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION) return 0;
-    if (test->pi_target == NULL) return 1;
+    if (test->pi_target.ptr == NULL) return 1;
     {
       size_t nlen = 0;
       const lxb_char_t *nm = lxb_dom_node_name(node, &nlen);
-      return name_eq_lxb(test->pi_target, test->pi_target_len, nm, nlen);
+      return name_eq_lxb(test->pi_target.ptr, test->pi_target.len, nm, nlen);
     }
   case MKR_NT_WILDCARD: {
     if (axis == MKR_AXIS_NAMESPACE)
@@ -92,9 +92,9 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     /* `*` matches any namespace; `prefix:*` matches only the namespace bound
      * to prefix (internal.h §5). Unknown prefix is reported up front by the
      * step driver; here it is a non-match. */
-    if (test->prefix != NULL) {
+    if (test->prefix.ptr != NULL) {
       size_t want_uri_len = 0;
-      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix, test->prefix_len, &want_uri_len);
+      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
       if (want_uri == NULL) return 0;
       mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
       if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
@@ -114,7 +114,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
      * qualified name, which for HTML is equivalent to the local name. */
     size_t got_len = 0;
     const lxb_char_t *got;
-    if (test->prefix != NULL) {
+    if (test->prefix.ptr != NULL) {
       if (axis == MKR_AXIS_ATTRIBUTE) {
         got = lxb_dom_attr_local_name((lxb_dom_attr_t *)node, &got_len);
       } else {
@@ -128,9 +128,9 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
       }
     }
     if (got == NULL) return 0;
-    const char *want = test->local;
+    const char *want = test->local.ptr;
     if (want == NULL) return 0;
-    if (!name_eq_lxb(want, test->local_len, got, got_len)) return 0;
+    if (!name_eq_lxb(want, test->local.len, got, got_len)) return 0;
 
     /* Namespace check (see internal.h §2–§4).
      *   - Prefixed test: the node's namespace URI must equal the URI bound to
@@ -141,9 +141,9 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
      *     This mirrors browsers' document.evaluate and Nokogiri::HTML5.
      *   - Unprefixed test, lax: namespace ignored (matched by local name
      *     already), the HTML4 / Nokogiri::HTML-style convenience. */
-    if (test->prefix != NULL) {
+    if (test->prefix.ptr != NULL) {
       size_t want_uri_len = 0;
-      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix, test->prefix_len, &want_uri_len);
+      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
       if (want_uri == NULL) {
         /* Unknown prefix: leave for the step driver to report so the
          * error is uniform across all hit nodes. We treat it as
@@ -334,12 +334,12 @@ mkr_match_attr_step(const mkr_node_t *n, const char **name, size_t *name_len)
   }
   const mkr_step_t *s = &n->u.path.steps[0];
   if (s->axis != MKR_AXIS_ATTRIBUTE || s->npredicates != 0
-      || s->test.kind != MKR_NT_NAME || s->test.prefix != NULL
-      || s->test.local == NULL) {
+      || s->test.kind != MKR_NT_NAME || s->test.prefix.ptr != NULL
+      || s->test.local.ptr == NULL) {
     return 0;
   }
-  *name = s->test.local;
-  *name_len = s->test.local_len;
+  *name = s->test.local.ptr;
+  *name_len = s->test.local.len;
   return 1;
 }
 
@@ -367,7 +367,7 @@ mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
   if (!mkr_match_attr_step(attr_side, &out->name, &out->name_len)) {
     return 0;
   }
-  out->value     = lit_side->u.literal.str ? lit_side->u.literal.str : "";
+  out->value     = lit_side->u.literal.ptr ? lit_side->u.literal.ptr : "";
   out->value_len = lit_side->u.literal.len;
   out->has_value = 1;
   return 1;
@@ -618,8 +618,8 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
 {
   if (step->axis != MKR_AXIS_DESCENDANT
       || step->test.kind != MKR_NT_NAME
-      || step->test.prefix != NULL
-      || step->test.local == NULL
+      || step->test.prefix.ptr != NULL
+      || step->test.local.ptr == NULL
       || context_set->count != 1
       || context_set->items[0] != (lxb_dom_node_t *)mkr_ctx_document(ctx)) {
     return 0;
@@ -635,8 +635,8 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     return 0;
   }
   lxb_tag_id_t tag = lxb_tag_id_by_name(doc->tags,
-                                        (const lxb_char_t *)step->test.local,
-                                        step->test.local_len);
+                                        (const lxb_char_t *)step->test.local.ptr,
+                                        step->test.local.len);
   /* The index covers only Lexbor's static tag-id range; a custom element's tag
    * id is a (huge) pointer value and is not indexed. For such a name, fall back
    * to the tree walk so those elements are still found. */
@@ -670,11 +670,11 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   /* Validate the namespace prefix once up front so we get a uniform
    * RUNTIME error instead of a silently empty match. Covers both `prefix:local`
    * (MKR_NT_NAME) and `prefix:*` (MKR_NT_WILDCARD). */
-  if (step->test.prefix != NULL
-      && mkr_ctx_lookup_ns(ctx, step->test.prefix, step->test.prefix_len, NULL) == NULL) {
+  if (step->test.prefix.ptr != NULL
+      && mkr_ctx_lookup_ns(ctx, step->test.prefix.ptr, step->test.prefix.len, NULL) == NULL) {
     mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
                 "unknown namespace prefix '%s' in name test",
-                step->test.prefix);
+                step->test.prefix.ptr);
     return -1;
   }
 
@@ -1092,14 +1092,14 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
   const char *ns_uri = NULL;
-  if (n->u.fncall.prefix) {
-    ns_uri = mkr_ctx_lookup_ns(ctx, n->u.fncall.prefix, n->u.fncall.prefix_len, NULL);
+  if (n->u.fncall.prefix.ptr) {
+    ns_uri = mkr_ctx_lookup_ns(ctx, n->u.fncall.prefix.ptr, n->u.fncall.prefix.len, NULL);
     if (ns_uri == NULL) {
-      mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "unknown namespace prefix '%s'", n->u.fncall.prefix);
+      mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "unknown namespace prefix '%s'", n->u.fncall.prefix.ptr);
       return -1;
     }
   }
-  mkr_func_impl_t fn = mkr_lookup_function(ns_uri, n->u.fncall.name);
+  mkr_func_impl_t fn = mkr_lookup_function(ns_uri, n->u.fncall.name.ptr);
 
   /* Evaluate arguments once and reuse for either path. */
   mkr_val_t *args = NULL;
@@ -1130,14 +1130,14 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     if (resolver != NULL) {
       resolved = resolver(mkr_xpath_get_user_data(ctx),
                           ctx, (void *)self_node, self_pos, self_size,
-                          ns_uri, n->u.fncall.name,
+                          ns_uri, n->u.fncall.name.ptr,
                           (void *)args, nargs, (void *)out, err);
     }
     if (resolved > 0) {
       mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "unknown function %s%s%s",
-                  n->u.fncall.prefix ? n->u.fncall.prefix : "",
-                  n->u.fncall.prefix ? ":" : "",
-                  n->u.fncall.name);
+                  n->u.fncall.prefix.ptr ? n->u.fncall.prefix.ptr : "",
+                  n->u.fncall.prefix.ptr ? ":" : "",
+                  n->u.fncall.name.ptr);
       rc = -1;
     } else {
       rc = resolved; /* 0 = ok, -1 = function errored */
@@ -1268,7 +1268,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   switch (n->kind) {
   case MKR_NK_LITERAL_STR:
     mkr_val_set_owned_string(out,
-                             mkr_strndup(n->u.literal.str ? n->u.literal.str : "", n->u.literal.len),
+                             mkr_strndup(n->u.literal.ptr ? n->u.literal.ptr : "", n->u.literal.len),
                              n->u.literal.len);
     if (out->u.string.ptr == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying literal"); rc = -1; }
     else rc = 0;
@@ -1280,12 +1280,12 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     break;
   case MKR_NK_VARREF: {
     mkr_borrowed_text_t v;
-    if (!mkr_ctx_lookup_variable_text(ctx, n->u.varref.prefix, n->u.varref.prefix_len,
-                                      n->u.varref.name, n->u.varref.name_len, &v)) {
+    if (!mkr_ctx_lookup_variable_text(ctx, n->u.varref.prefix.ptr, n->u.varref.prefix.len,
+                                      n->u.varref.name.ptr, n->u.varref.name.len, &v)) {
       mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "undefined variable $%s%s%s",
-                  n->u.varref.prefix ? n->u.varref.prefix : "",
-                  n->u.varref.prefix ? ":" : "",
-                  n->u.varref.name);
+                  n->u.varref.prefix.ptr ? n->u.varref.prefix.ptr : "",
+                  n->u.varref.prefix.ptr ? ":" : "",
+                  n->u.varref.name.ptr);
       rc = -1;
       break;
     }
