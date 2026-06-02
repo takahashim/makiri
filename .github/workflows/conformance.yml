@@ -1,0 +1,94 @@
+name: Conformance
+
+# Differential / spec-conformance suites. These compare Makiri against external
+# references (Nokogiri's libxml2/Gumbo XPath+CSS, the html5lib-tests corpus) and
+# catch semantic divergences that the unit specs cannot. The XPath and CSS
+# differentials run OUTSIDE the bundle (the rake tasks use
+# Bundler.with_unbundled_env), so Nokogiri — a bench-only dependency — must be
+# present as a system gem; each job installs it explicitly.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "37 5 * * *" # nightly, offset from the other workflows
+  workflow_dispatch:
+
+jobs:
+  # PR + push: HTML5 parsing conformance, plus the XPath and CSS differentials
+  # over the curated corpus and a moderate batch of generated XPath expressions.
+  conformance:
+    name: HTML5 + XPath/CSS differential vs Nokogiri
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Compile the extension (builds vendored Lexbor, then the ext)
+        run: bundle exec rake compile
+
+      - name: Install Nokogiri (system gem; the differentials run outside the bundle)
+        run: gem install --no-document nokogiri
+
+      - name: HTML5 parsing conformance (html5lib-tests)
+        run: bundle exec rake conformance:html5
+
+      # XPATH_ARGS must be a real env var, not a rake CLI arg: the task reads
+      # ENV['XPATH_ARGS'] inside Bundler.with_unbundled_env, which reverts to the
+      # pre-rake environment, so a rake-set var would be dropped.
+      - name: XPath 1.0 differential vs Nokogiri (corpus + generated)
+        run: bundle exec rake conformance:xpath
+        env:
+          XPATH_ARGS: "--generate 5000 --seed 1"
+
+      - name: CSS Selectors differential vs Nokogiri::HTML5
+        run: bundle exec rake conformance:css
+
+  # Nightly: a wide XPath differential sweep across many seeds and a high
+  # generated volume, to surface divergences the curated corpus and a single
+  # seed miss. Fails fast (bash -e) on the first real divergence.
+  conformance-nightly:
+    name: Nightly XPath differential sweep
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Compile the extension
+        run: bundle exec rake compile
+
+      - name: Install Nokogiri (system gem)
+        run: gem install --no-document nokogiri
+
+      - name: XPath differential sweep (many seeds, high volume)
+        run: |
+          for seed in 1 2 3 4 5 6 7 8; do
+            echo "::group::seed ${seed}"
+            XPATH_ARGS="--generate 20000 --seed ${seed}" bundle exec rake conformance:xpath
+            echo "::endgroup::"
+          done
