@@ -73,15 +73,14 @@ mkr_node_set_push(VALUE rb_set, lxb_dom_node_t *node)
     }
 
     if (s->count == s->cap) {
-        /* Overflow-checked geometric growth. We keep Ruby's xrealloc (so the
-         * buffer pairs with xfree in gc_free and GC sees the memory pressure)
-         * but size it via the safe helpers instead of a raw cap * 2. */
-        size_t new_cap, bytes;
-        if (!mkr_grow_capacity(s->cap, s->count + 1, sizeof(lxb_dom_node_t *), &new_cap)
-            || !mkr_size_mul(new_cap, sizeof(lxb_dom_node_t *), &bytes)) {
+        /* Geometric growth via mkr_grow_capacity; xrealloc2 does the
+         * overflow-checked (count * size) allocation while keeping the buffer
+         * GC-accounted and paired with xfree in gc_free. */
+        size_t new_cap;
+        if (!mkr_grow_capacity(s->cap, s->count + 1, sizeof(lxb_dom_node_t *), &new_cap)) {
             rb_raise(mkr_eError, "node set capacity overflow");
         }
-        s->nodes = xrealloc(s->nodes, bytes);
+        s->nodes = xrealloc2(s->nodes, new_cap, sizeof(lxb_dom_node_t *));
         s->cap = new_cap;
     }
     s->nodes[s->count++] = node;

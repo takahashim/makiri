@@ -397,7 +397,7 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
      * needs into the arena and the line table is built up front), so the
      * buffer is freed immediately after. */
     long len = RSTRING_LEN(rb_source);
-    char *buf = malloc(len > 0 ? (size_t)len : 1);
+    char *buf = mkr_reallocarray(NULL, len > 0 ? (size_t)len : 1, 1);
     if (buf == NULL) {
         rb_raise(mkr_eError, "out of memory copying source");
     }

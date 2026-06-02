@@ -4,16 +4,12 @@ ignore_paths:
 
 allowlist:
   - path: ext/makiri/glue/ruby_doc.c
-    rule: direct_alloc
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_doc.c
     rule: ruby_string_ptr
     max: 4
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/glue/ruby_node_set.c
     rule: direct_alloc
-    max: 2
+    max: 1
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/glue/ruby_node_set.c
     rule: sizeof_allocation
