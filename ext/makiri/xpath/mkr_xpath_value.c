@@ -136,7 +136,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  */
 static void
 append_text_content(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
-                    size_t max_bytes, int *overflow)
+                    size_t max_bytes, int *overflow, int *oom)
 {
   size_t tlen = 0;
   lxb_char_t *t = lxb_dom_node_text_content(node, &tlen);
@@ -150,11 +150,23 @@ append_text_content(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
       lxb_dom_document_destroy_text(node->owner_document, t);
       return;
     }
-    if (*len + tlen + 1 > *cap) {
-      size_t newcap = *cap ? *cap * 2 : 32;
-      while (newcap < *len + tlen + 1) newcap *= 2;
+    /* Need *len + tlen + 1 bytes. Guard the size arithmetic (uncapped builds
+     * have no max_bytes ceiling) and signal OOM rather than truncating. */
+    if (tlen > SIZE_MAX - 1 - *len) {
+      *oom = 1;
+      lxb_dom_document_destroy_text(node->owner_document, t);
+      return;
+    }
+    size_t need = *len + tlen + 1;
+    if (need > *cap) {
+      size_t newcap = *cap ? *cap : 32;
+      while (newcap < need) {
+        if (newcap > SIZE_MAX / 2) { newcap = need; break; }
+        newcap *= 2;
+      }
       char *p = realloc(*buf, newcap);
       if (p == NULL) {
+        *oom = 1; /* fail closed: caller raises OOM instead of returning partial */
         lxb_dom_document_destroy_text(node->owner_document, t);
         return;
       }
@@ -176,13 +188,13 @@ append_text_content(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
  * the previous recursive form. */
 static void
 append_text_descendants(lxb_dom_node_t *node, char **buf, size_t *len, size_t *cap,
-                        size_t max_bytes, int *overflow)
+                        size_t max_bytes, int *overflow, int *oom)
 {
   lxb_dom_node_t *cur = node->first_child;
   while (cur != NULL) {
     if (cur->type == LXB_DOM_NODE_TYPE_TEXT) {
-      append_text_content(cur, buf, len, cap, max_bytes, overflow);
-      if (*overflow) return; /* cap exceeded — stop, caller fails closed */
+      append_text_content(cur, buf, len, cap, max_bytes, overflow, oom);
+      if (*overflow || *oom) return; /* cap exceeded or OOM — caller fails closed */
     }
     /* Descend into element children (only elements were recursed before). */
     if (cur->type == LXB_DOM_NODE_TYPE_ELEMENT && cur->first_child != NULL) {
@@ -201,7 +213,7 @@ append_text_descendants(lxb_dom_node_t *node, char **buf, size_t *len, size_t *c
 
 static char *
 node_string_value_inner(const lxb_dom_node_t *node, size_t max_bytes,
-                        size_t *out_len, int *overflow)
+                        size_t *out_len, int *overflow, int *oom)
 {
   if (out_len) *out_len = 0;
   if (node == NULL) return strdup("");
@@ -225,7 +237,7 @@ node_string_value_inner(const lxb_dom_node_t *node, size_t max_bytes,
     char  *buf = NULL;
     size_t len = 0;
     size_t cap = 0;
-    append_text_content((lxb_dom_node_t *)node, &buf, &len, &cap, max_bytes, overflow);
+    append_text_content((lxb_dom_node_t *)node, &buf, &len, &cap, max_bytes, overflow, oom);
     if (out_len) *out_len = len;
     return buf ? buf : strdup("");
   }
@@ -236,7 +248,7 @@ node_string_value_inner(const lxb_dom_node_t *node, size_t max_bytes,
   char  *buf = NULL;
   size_t len = 0;
   size_t cap = 0;
-  append_text_descendants((lxb_dom_node_t *)node, &buf, &len, &cap, max_bytes, overflow);
+  append_text_descendants((lxb_dom_node_t *)node, &buf, &len, &cap, max_bytes, overflow, oom);
   if (out_len) *out_len = len;
   if (buf == NULL) return strdup("");
   return buf;
@@ -246,7 +258,8 @@ char *
 mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node)
 {
   int overflow = 0; /* max_bytes == 0 disables the cap, so never set */
-  return node_string_value_inner(node, 0, NULL, &overflow);
+  int oom = 0;      /* best-effort path: a partial result on OOM is acceptable */
+  return node_string_value_inner(node, 0, NULL, &overflow, &oom);
 }
 
 char *
@@ -257,8 +270,12 @@ mkr_node_string_value_or_fail(const lxb_dom_node_t *node,
   size_t budget = (limits != NULL) ? limits->max_string_bytes : 0;
   size_t len = 0;
   int    overflow = 0;
-  char  *s = node_string_value_inner(node, budget, &len, &overflow);
-  if (s == NULL) {
+  int    oom = 0;
+  char  *s = node_string_value_inner(node, budget, &len, &overflow, &oom);
+  if (s == NULL || oom) {
+    /* oom catches a realloc failure partway through concat (s would otherwise
+     * be a truncated partial); fail closed rather than return a wrong result. */
+    free(s);
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
     return NULL;
   }
