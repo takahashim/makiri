@@ -25,13 +25,11 @@ typedef struct {
 static char *
 P_strndup(mkr_parser_t *P, const char *s, size_t n)
 {
-  char *p = malloc(n + 1);
+  char *p = mkr_strndup(s, n);
   if (p == NULL) {
     mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory in parser");
     return NULL;
   }
-  if (n) memcpy(p, s, n);
-  p[n] = '\0';
   return p;
 }
 
@@ -57,7 +55,7 @@ static mkr_node_t *
 new_node(mkr_parser_t *P, mkr_nk_t kind)
 {
   if (mkr_limit_ast_node(P->limits, P->err) != 0) return NULL;
-  mkr_node_t *n = calloc(1, sizeof(*n));
+  mkr_node_t *n = mkr_callocarray(1, sizeof(*n));
   if (n == NULL) {
     mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory allocating AST node");
     return NULL;

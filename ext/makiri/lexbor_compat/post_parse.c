@@ -1,4 +1,5 @@
 #include "compat.h"
+#include "../core/mkr_safe.h"
 
 #include <lexbor/html/parser.h>
 #include <lexbor/html/tokenizer.h>
@@ -75,7 +76,7 @@ mkr_parse_html(const lxb_char_t *src, size_t len)
         return NULL;
     }
 
-    mkr_parsed_t *p = calloc(1, sizeof(*p));
+    mkr_parsed_t *p = mkr_callocarray(1, sizeof(*p));
     if (p == NULL) {
         return NULL;
     }

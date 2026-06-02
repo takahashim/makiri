@@ -27,6 +27,44 @@ mkr_callocarray(size_t count, size_t elem)
     return calloc(count, elem); /* 2-arg calloc is itself overflow-safe */
 }
 
+char *
+mkr_str_alloc(size_t n)
+{
+    size_t total;
+    if (!mkr_size_add(n, 1, &total)) {
+        return NULL; /* n + 1 overflow */
+    }
+    char *p = malloc(total);
+    if (p == NULL) {
+        return NULL;
+    }
+    p[n] = '\0';
+    return p;
+}
+
+char *
+mkr_strndup(const char *s, size_t n)
+{
+    char *p = mkr_str_alloc(n);
+    if (p == NULL) {
+        return NULL;
+    }
+    if (n > 0 && s != NULL) {
+        memcpy(p, s, n);
+    }
+    p[n] = '\0';
+    return p;
+}
+
+char *
+mkr_strdup(const char *s)
+{
+    if (s == NULL) {
+        return NULL;
+    }
+    return mkr_strndup(s, strlen(s));
+}
+
 mkr_status_t
 mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem)
 {

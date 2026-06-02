@@ -74,6 +74,20 @@ void *mkr_reallocarray(void *ptr, size_t count, size_t elem);
  * Returns NULL on overflow, allocation failure, or count == 0 / elem == 0. */
 void *mkr_callocarray(size_t count, size_t elem);
 
+/* Allocate a NUL-terminable string buffer with room for n content bytes plus
+ * the terminator (n + 1 bytes), the size overflow-checked. The n content bytes
+ * are uninitialised (the terminator slot at [n] is pre-set to '\0'); the caller
+ * fills the content. Returns NULL on overflow / OOM. */
+char *mkr_str_alloc(size_t n);
+
+/* Copy n bytes from s into a fresh NUL-terminated buffer (s must hold n bytes
+ * when n > 0; s may be NULL when n == 0). Returns NULL on overflow / OOM. */
+char *mkr_strndup(const char *s, size_t n);
+
+/* strdup replacement: s == NULL -> NULL; otherwise an owned NUL-terminated copy,
+ * or NULL on overflow / OOM. */
+char *mkr_strdup(const char *s);
+
 /* Ensure the array at *ptr (currently *cap elements of `elem` bytes) can hold
  * at least `need` elements, growing geometrically and overflow-safely. On
  * success updates *ptr / *cap and returns MKR_OK; on overflow/allocation failure

@@ -32,48 +32,16 @@ allowlist:
     max: 7
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/lexbor_compat/attr_owner.c
-    rule: direct_alloc
-    max: 2
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/lexbor_compat/attr_owner.c
     rule: sizeof_allocation
     max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/lexbor_compat/post_parse.c
-    rule: direct_alloc
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/lexbor_compat/source_loc.c
-    rule: direct_alloc
-    max: 2
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/makiri.c
     rule: ruby_string_ptr
     max: 4
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath.c
-    rule: direct_alloc
-    max: 2
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath.c
-    rule: direct_strlen
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_eval.c
-    rule: direct_alloc
-    max: 3
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/xpath/mkr_xpath_eval.c
     rule: direct_strlen
     max: 4
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_funcs.c
-    rule: allocation_plus_one
-    max: 5
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_funcs.c
-    rule: direct_alloc
-    max: 12
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/xpath/mkr_xpath_funcs.c
     rule: direct_strlen
@@ -84,20 +52,8 @@ allowlist:
     max: 1
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/xpath/mkr_xpath_parse.c
-    rule: allocation_plus_one
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_parse.c
-    rule: direct_alloc
-    max: 2
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_parse.c
     rule: direct_strlen
     max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_value.c
-    rule: direct_alloc
-    max: 17
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/xpath/mkr_xpath_value.c
     rule: direct_strlen

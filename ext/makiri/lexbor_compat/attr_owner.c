@@ -152,7 +152,7 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
     if (n_attrs > 0) {
         cap = mkr_pow2_ceil(n_attrs * 2);
         if (cap < 8) cap = 8;
-        slots = calloc(cap, sizeof(*slots));
+        slots = mkr_callocarray(cap, sizeof(*slots));
         if (slots == NULL) return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
     }
 
@@ -250,7 +250,7 @@ mkr_attr_owner_ensure(mkr_parsed_t *p)
 
     mkr_attr_owner_idx_t *idx = p->attr_owner;
     if (idx == NULL) {
-        idx = calloc(1, sizeof(*idx));
+        idx = mkr_callocarray(1, sizeof(*idx));
         if (idx == NULL) {
             return NULL; /* fail closed */
         }

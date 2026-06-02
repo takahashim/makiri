@@ -356,7 +356,7 @@ fn_concat(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     return -1;
   }
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
-  char **parts = calloc(nargs, sizeof(*parts));
+  char **parts = mkr_callocarray(nargs, sizeof(*parts));
   if (parts == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in concat()");
     return -1;
@@ -376,7 +376,7 @@ fn_concat(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
       return -1;
     }
   }
-  char *buf = malloc(total + 1);
+  char *buf = mkr_str_alloc(total);
   if (buf == NULL) {
     for (size_t i = 0; i < nargs; ++i) free(parts[i]);
     free(parts);
@@ -453,14 +453,12 @@ fn_substring_before(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->type = MKR_XPATH_TYPE_STRING;
   char *found = (*t == '\0') ? NULL : strstr(s, t);
   if (found == NULL) {
-    out->u.string = strdup("");
+    out->u.string = mkr_strdup("");
     if (out->u.string == NULL) { free(s); free(t); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-before"); return -1; }
   } else {
     size_t n = (size_t)(found - s);
-    out->u.string = malloc(n + 1);
+    out->u.string = mkr_strndup(s, n);
     if (out->u.string == NULL) { free(s); free(t); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-before"); return -1; }
-    memcpy(out->u.string, s, n);
-    out->u.string[n] = '\0';
   }
   free(s); free(t);
   return 0;
@@ -477,10 +475,10 @@ fn_substring_after(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (two_strings(ctx, args, &s, &t, err) != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
   if (*t == '\0') {
-    out->u.string = strdup(s);
+    out->u.string = mkr_strdup(s);
   } else {
     char *found = strstr(s, t);
-    out->u.string = strdup(found ? (found + strlen(t)) : "");
+    out->u.string = mkr_strdup(found ? (found + strlen(t)) : "");
   }
   if (out->u.string == NULL) {
     free(s); free(t);
@@ -516,7 +514,7 @@ fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 
   out->type = MKR_XPATH_TYPE_STRING;
   if (start_d != start_d || end_d != end_d) {
-    out->u.string = strdup("");
+    out->u.string = mkr_strdup("");
     if (out->u.string == NULL) { free(s); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring"); return -1; }
     free(s);
     return 0;
@@ -538,16 +536,12 @@ fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   long start = (long)rstart;
   long end   = (long)rend;
   if (end <= start) {
-    out->u.string = strdup("");
+    out->u.string = mkr_strdup("");
   } else {
     const char *byte_start = utf8_advance(s, (size_t)(start - 1));
     const char *byte_end   = utf8_advance(byte_start, (size_t)(end - start));
     size_t byte_len = (size_t)(byte_end - byte_start);
-    out->u.string = malloc(byte_len + 1);
-    if (out->u.string) {
-      memcpy(out->u.string, byte_start, byte_len);
-      out->u.string[byte_len] = '\0';
-    }
+    out->u.string = mkr_strndup(byte_start, byte_len);
   }
   if (out->u.string == NULL) { free(s); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring"); return -1; }
   free(s);
@@ -586,7 +580,7 @@ fn_normalize_space(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
               : mkr_val_to_string_or_fail(&args[0], L, err);
   if (s == NULL) return -1;
   size_t len = strlen(s);
-  char  *buf = malloc(len + 1);
+  char  *buf = mkr_str_alloc(len);
   if (buf == NULL) { free(s); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in normalize-space"); return -1; }
   size_t out_i = 0;
   int in_space = 1;
@@ -832,11 +826,11 @@ name_func_target(mkr_val_t *args, size_t nargs, lxb_dom_node_t *self_node, mkr_x
   return args[0].u.nodeset.items[0];
 }
 
-/* Set *out_string to strdup("") and report OOM if strdup fails. */
+/* Set *out_string to mkr_strdup("") and report OOM if strdup fails. */
 static int
 set_empty_string(char **out_string, mkr_xpath_error_t *err, const char *fn_name)
 {
-  char *s = strdup("");
+  char *s = mkr_strdup("");
   if (s == NULL) {
     mkr_err_setf(err, MKR_XPATH_ERR_OOM, "out of memory in %s()", fn_name);
     return -1;
@@ -851,7 +845,7 @@ static int
 set_bytes_string(char **out_string, const lxb_char_t *src, size_t len,
                  mkr_xpath_error_t *err, const char *fn_name)
 {
-  char *s = malloc(len + 1);
+  char *s = mkr_str_alloc(len);
   if (s == NULL) {
     mkr_err_setf(err, MKR_XPATH_ERR_OOM, "out of memory in %s()", fn_name);
     return -1;

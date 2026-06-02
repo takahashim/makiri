@@ -82,7 +82,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
   switch (src->type) {
   case MKR_XPATH_TYPE_STRING: {
     const char *s = src->u.string ? src->u.string : "";
-    char *p = strdup(s);
+    char *p = mkr_strdup(s);
     if (p == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning string value");
       return -1;
@@ -196,10 +196,10 @@ mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node)
   mkr_buf_init(&buf, 0);
   if (build_string_value(node, &buf) != MKR_OK) {
     mkr_buf_free(&buf);
-    return strdup("");
+    return mkr_strdup("");
   }
   char *s = mkr_buf_steal(&buf, NULL);
-  return s != NULL ? s : strdup("");
+  return s != NULL ? s : mkr_strdup("");
 }
 
 char *
@@ -236,7 +236,7 @@ mkr_val_to_string_or_fail(const mkr_val_t *v,
                          mkr_xpath_error_t *err)
 {
   if (v == NULL) {
-    char *e = strdup("");
+    char *e = mkr_strdup("");
     if (e == NULL) mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting value to string");
     return e;
   }
@@ -244,7 +244,7 @@ mkr_val_to_string_or_fail(const mkr_val_t *v,
   case MKR_XPATH_TYPE_STRING: {
     const char *s = v->u.string ? v->u.string : "";
     if (limits != NULL && mkr_limit_check_string_bytes(limits, strlen(s), err) != 0) return NULL;
-    char *p = strdup(s);
+    char *p = mkr_strdup(s);
     if (p == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying string value");
       return NULL;
@@ -252,7 +252,7 @@ mkr_val_to_string_or_fail(const mkr_val_t *v,
     return p;
   }
   case MKR_XPATH_TYPE_BOOLEAN: {
-    char *p = strdup(v->u.boolean ? "true" : "false");
+    char *p = mkr_strdup(v->u.boolean ? "true" : "false");
     if (p == NULL) mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting boolean to string");
     return p;
   }
@@ -266,7 +266,7 @@ mkr_val_to_string_or_fail(const mkr_val_t *v,
   }
   case MKR_XPATH_TYPE_NODESET:
     if (v->u.nodeset.count == 0) {
-      char *p = strdup("");
+      char *p = mkr_strdup("");
       if (p == NULL) mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory");
       return p;
     }
@@ -359,14 +359,14 @@ mkr_val_to_string_unchecked(const mkr_val_t *v)
 {
   switch (v->type) {
   case MKR_XPATH_TYPE_STRING:
-    return strdup(v->u.string ? v->u.string : "");
+    return mkr_strdup(v->u.string ? v->u.string : "");
   case MKR_XPATH_TYPE_BOOLEAN:
-    return strdup(v->u.boolean ? "true" : "false");
+    return mkr_strdup(v->u.boolean ? "true" : "false");
   case MKR_XPATH_TYPE_NUMBER: {
     double d = v->u.number;
-    if (isnan(d)) return strdup("NaN");
-    if (isinf(d)) return strdup(d < 0 ? "-Infinity" : "Infinity");
-    if (d == 0.0) return strdup("0");
+    if (isnan(d)) return mkr_strdup("NaN");
+    if (isinf(d)) return mkr_strdup(d < 0 ? "-Infinity" : "Infinity");
+    if (d == 0.0) return mkr_strdup("0");
     /* XPath number → string: integer values render without trailing zeros. */
     char buf[64];
     if (d == floor(d) && fabs(d) < 1e15) {
@@ -374,13 +374,13 @@ mkr_val_to_string_unchecked(const mkr_val_t *v)
     } else {
       snprintf(buf, sizeof(buf), "%.15g", d);
     }
-    return strdup(buf);
+    return mkr_strdup(buf);
   }
   case MKR_XPATH_TYPE_NODESET:
-    if (v->u.nodeset.count == 0) return strdup("");
+    if (v->u.nodeset.count == 0) return mkr_strdup("");
     return mkr_build_node_string_value_unchecked(v->u.nodeset.items[0]);
   }
-  return strdup("");
+  return mkr_strdup("");
 }
 
 /* ---------- document order ---------- */
@@ -506,7 +506,7 @@ order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, uint3
     if (idx->cap != 0 && !mkr_size_mul(idx->cap, 2, &new_cap)) {
       return -1; /* overflow */
     }
-    void *new_buckets = calloc(new_cap, sizeof(*idx->buckets));
+    void *new_buckets = mkr_callocarray(new_cap, sizeof(*idx->buckets));
     if (new_buckets == NULL) return -1;
     /* Rehash. */
     typeof(idx->buckets) old_buckets = idx->buckets;
@@ -742,7 +742,7 @@ mkr_str_cache_index_put(mkr_str_cache_t *c, size_t idx)
 static int
 mkr_str_cache_reindex(mkr_str_cache_t *c, size_t bucket_cap)
 {
-  uint32_t *buckets = calloc(bucket_cap, sizeof(*buckets));
+  uint32_t *buckets = mkr_callocarray(bucket_cap, sizeof(*buckets));
   if (buckets == NULL) return -1;
   free(c->buckets);
   c->buckets    = buckets;

@@ -1,4 +1,5 @@
 #include "mkr_xpath_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/ns/ns.h>
@@ -1102,7 +1103,7 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   mkr_val_t *args = NULL;
   size_t    nargs = n->u.fncall.nargs;
   if (nargs > 0) {
-    args = calloc(nargs, sizeof(*args));
+    args = mkr_callocarray(nargs, sizeof(*args));
     if (args == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory allocating function arguments");
       return -1;
@@ -1265,7 +1266,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   switch (n->kind) {
   case MKR_NK_LITERAL_STR:
     out->type = MKR_XPATH_TYPE_STRING;
-    out->u.string = strdup(n->u.literal_str ? n->u.literal_str : "");
+    out->u.string = mkr_strdup(n->u.literal_str ? n->u.literal_str : "");
     if (out->u.string == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying literal"); rc = -1; }
     else rc = 0;
     break;
@@ -1285,7 +1286,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       break;
     }
     out->type = MKR_XPATH_TYPE_STRING;
-    out->u.string = strdup(v);
+    out->u.string = mkr_strdup(v);
     if (out->u.string == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory copying variable value"); rc = -1; }
     else rc = 0;
     break;

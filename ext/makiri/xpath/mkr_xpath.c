@@ -270,16 +270,6 @@ mkr_limit_check_expr_bytes(mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_error_
   return 0;
 }
 
-static char *
-mkr_strdup(const char *s)
-{
-  if (s == NULL) return NULL;
-  size_t n = strlen(s) + 1;
-  char *p = malloc(n);
-  if (p) memcpy(p, s, n);
-  return p;
-}
-
 /* ---------- node qualified name ---------- */
 
 /*
@@ -306,7 +296,7 @@ mkr_dom_node_name_qualified(lxb_dom_node_t *node, size_t *len)
 mkr_xpath_context_t *
 mkr_xpath_context_new(lxb_dom_document_t *doc, lxb_dom_node_t *node)
 {
-  mkr_xpath_context_t *ctx = calloc(1, sizeof(*ctx));
+  mkr_xpath_context_t *ctx = mkr_callocarray(1, sizeof(*ctx));
   if (ctx == NULL) {
     return NULL;
   }

@@ -50,7 +50,7 @@ mkr_lines_build(const lxb_char_t *src, size_t len)
         }
     }
 
-    mkr_lines_t *t = malloc(sizeof(*t));
+    mkr_lines_t *t = mkr_reallocarray(NULL, 1, sizeof(*t));
     if (t == NULL) {
         return NULL;
     }
@@ -127,7 +127,7 @@ struct mkr_pos_recorder_s {
 mkr_pos_recorder_t *
 mkr_pos_recorder_create(const lxb_char_t *src)
 {
-    mkr_pos_recorder_t *rec = calloc(1, sizeof(*rec));
+    mkr_pos_recorder_t *rec = mkr_callocarray(1, sizeof(*rec));
     if (rec == NULL) {
         return NULL;
     }
