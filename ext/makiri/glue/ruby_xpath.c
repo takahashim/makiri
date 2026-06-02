@@ -556,7 +556,7 @@ mkr_xpath_ctx_evaluate(int argc, VALUE *argv, VALUE self)
 
     mkr_xpath_error_t error = {0};
     int owned = 0;
-    mkr_node_t *ast = mkr_ctx_cached_ast(d, mkr_text_from_view(ev), &error, &owned);
+    mkr_node_t *ast = mkr_ctx_cached_ast(d, mkr_valid_text_from_view(ev), &error, &owned);
     RB_GC_GUARD(ev.value);
     if (ast == NULL) {
         mkr_xpath_raise(&error); /* parse error, never returns */
@@ -589,8 +589,8 @@ mkr_xpath_ctx_register_ns(VALUE self, VALUE rb_prefix, VALUE rb_uri)
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
     mkr_ruby_borrowed_text_t pv = mkr_ruby_checked_text(rb_prefix, "namespace prefix");
     mkr_ruby_borrowed_text_t uv = mkr_ruby_checked_text(rb_uri, "namespace URI");
-    int rc = mkr_xpath_register_ns(d->ctx, mkr_text_from_view(pv),
-                                   mkr_text_from_view(uv)); /* copies both */
+    int rc = mkr_xpath_register_ns(d->ctx, mkr_valid_text_from_view(pv),
+                                   mkr_valid_text_from_view(uv)); /* copies both */
     RB_GC_GUARD(pv.value);
     RB_GC_GUARD(uv.value);
     if (rc != 0) {
@@ -613,8 +613,8 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
     if (bad != NULL) {
         rb_raise(mkr_eError, "invalid variable value: %s", bad);
     }
-    int rc = mkr_xpath_register_variable_string(d->ctx, mkr_text_from_view(nv),
-                                                mkr_text_from_view(vv)); /* copies both */
+    int rc = mkr_xpath_register_variable_string(d->ctx, mkr_valid_text_from_view(nv),
+                                                mkr_valid_text_from_view(vv)); /* copies both */
     RB_GC_GUARD(nv.value);
     RB_GC_GUARD(value);
     if (rc != 0) {
@@ -642,7 +642,7 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
     mkr_xpath_error_t error = {0};
     mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
     limits->ast_nodes = 0;
-    mkr_node_t *ast = mkr_parse(mkr_text_from_view(ev), limits, &error);
+    mkr_node_t *ast = mkr_parse(mkr_valid_text_from_view(ev), limits, &error);
     RB_GC_GUARD(ev.value); /* keep the expr bytes alive across the parse */
     if (ast == NULL) {
         mkr_xpath_context_free(ctx);

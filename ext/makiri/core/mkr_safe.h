@@ -97,7 +97,7 @@ char *mkr_strdup(const char *s);
  * engine text contract: valid UTF-8, no interior NUL, and NUL-terminated at
  * ptr[len]. The XPath engine's public string entry points accept ONLY this
  * type, so a raw `const char *` cannot be passed without a compile error. The
- * sole constructor is mkr_text_from_view() at the Ruby boundary (makiri.c),
+ * sole constructor is mkr_valid_text_from_view() at the Ruby boundary (bridge),
  * which can only be fed a view that mkr_ruby_checked_text() already validated;
  * there is deliberately no Ruby-free constructor, so unvalidated bytes have no
  * path into the engine. (ptr is non-owning: the caller keeps it alive for the
@@ -245,7 +245,7 @@ mkr_vec_free(mkr_vec_t *v)
  *
  *   (*) mkr_valid_text_t (defined above) is the one deliberate naming exception:
  *   it is a borrowed valid text AND a capability token. Its sole constructor is
- *   mkr_text_from_view() at the Ruby boundary, so an unvalidated const char*
+ *   mkr_valid_text_from_view() at the Ruby boundary, so an unvalidated const char*
  *   cannot reach the engine's public API. Internally the engine carries the
  *   freely-constructible mkr_borrowed_text_t instead.
  *
@@ -256,7 +256,7 @@ mkr_vec_free(mkr_vec_t *v)
  *   validate raw -> valid : the bridge's checked entry points only —
  *                           mkr_ruby_checked_text / mkr_ruby_engine_string_view
  *                           (both validate UTF-8 + no NUL); never a cast.
- *   drop the GC anchor    : mkr_text_from_view (ruby_borrowed_text -> valid_text)
+ *   drop the GC anchor    : mkr_valid_text_from_view (ruby_borrowed_text -> valid_text)
  *   assert valid (no copy) : mkr_borrowed_text (const char*,len -> borrowed_text)
  *                            — caller asserts the bytes already meet the contract
  *   downgrade to borrow   : mkr_owned_borrow (owned_text -> borrowed_text)

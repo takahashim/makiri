@@ -60,7 +60,7 @@ void mkr_ruby_exception_message(VALUE exc, char *buf, size_t len);
  * (from mkr_ruby_checked_text or mkr_ruby_engine_string_view) into the token the
  * XPath engine accepts. The returned token borrows v.ptr; the caller must keep
  * v.value alive for the duration of the engine call. */
-mkr_valid_text_t mkr_text_from_view(mkr_ruby_borrowed_text_t v);
+mkr_valid_text_t mkr_valid_text_from_view(mkr_ruby_borrowed_text_t v);
 
 /* Assemble a UTF-8 Ruby String of exactly +total+ bytes by concatenating +n+
  * borrowed slices (their lengths must sum to +total+). The output-side analogue
