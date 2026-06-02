@@ -128,11 +128,11 @@ mkr_parsed_destroy(mkr_parsed_t *p)
         return;
     }
 
-    /* attr_owner is built lazily (M4) and is NULL if no attribute lookup ever
-     * ran; mkr_attr_owner_free is a no-op on NULL. newline_idx (M6) is set only
+    /* dom_index is built lazily (M4) and is NULL if no attribute lookup ever
+     * ran; mkr_dom_index_free is a no-op on NULL. newline_idx (M6) is set only
      * when source-location tracking ran; mkr_lines_free is a no-op on NULL. */
-    mkr_attr_owner_free(p->attr_owner);
-    p->attr_owner = NULL;
+    mkr_dom_index_free(p->dom_index);
+    p->dom_index = NULL;
     mkr_lines_free(p->newline_idx);
     p->newline_idx = NULL;
     mkr_text_index_free(p->text_index); /* lazy; NULL if no text query ran */

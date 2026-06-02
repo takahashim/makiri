@@ -178,7 +178,7 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
     lxb_dom_document_t *doc  = mkr_doc_unwrap(document);
 
     mkr_parsed_t *parsed = mkr_doc_parsed(document);
-    if (mkr_parsed_attr_index_build(parsed) != 0) {
+    if (mkr_parsed_dom_index_build(parsed) != 0) {
         rb_raise(mkr_eError, "failed to build attribute index for XPath");
     }
 

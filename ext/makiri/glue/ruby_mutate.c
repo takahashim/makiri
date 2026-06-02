@@ -15,15 +15,15 @@
  * frees it wholesale, and live Ruby wrappers may still point at a removed node.
  * `remove`/`unlink` therefore only detach.
  *
- * Any structural change drops the persistent attr->owner index so the next
- * XPath rebuilds it (and re-backfills attribute parents).
+ * Any structural change drops the persistent DOM index (attr->owner +
+ * element-by-tag) and the text index so the next query rebuilds them.
  */
 
 static void
 mkr_invalidate_index(VALUE node)
 {
     mkr_parsed_t *p = mkr_doc_parsed(mkr_node_document(node));
-    mkr_parsed_attr_index_invalidate(p);
+    mkr_parsed_dom_index_invalidate(p);
     mkr_parsed_text_index_invalidate(p);
 }
 

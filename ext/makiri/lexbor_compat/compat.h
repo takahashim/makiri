@@ -14,11 +14,11 @@ extern "C" {
 #endif
 
 /* Result of a parse. Owns the Lexbor document arena. The compat indices
- * (attr_owner, newline_idx) are created lazily and are NULL until then;
+ * (dom_index, newline_idx) are created lazily and are NULL until then;
  * mkr_parsed_destroy frees whatever is set. */
 typedef struct mkr_parsed_s {
     lxb_html_document_t *doc;
-    void                *attr_owner;   /* M4: lxb_dom_attr_t -> owner element */
+    void                *dom_index;   /* attr->owner + tag->elements indexes */
     void                *newline_idx;  /* M6: byte offset -> source line */
     void                *text_index;   /* node -> descendant-text slice run */
 } mkr_parsed_t;
@@ -51,22 +51,23 @@ void mkr_parsed_destroy(mkr_parsed_t *p);
  */
 
 /* Resolve the element that owns +attr+ within +p+'s document. The index is
- * built lazily on the first call and cached on p->attr_owner. Returns NULL if
+ * built lazily on the first call and cached on p->dom_index. Returns NULL if
  * attr is not in the document, or on allocation failure (fail-closed: a failed
  * build leaves the cache empty so a later call retries). */
 lxb_dom_node_t *mkr_parsed_attr_owner(mkr_parsed_t *p, lxb_dom_attr_t *attr);
 
-/* Force the attr->owner index to be built now (idempotent). As a side effect
- * every attribute node's parent pointer is backfilled to its owner element,
- * which the native XPath engine relies on. Returns 0 on success, -1 on
- * allocation failure. Call before evaluating XPath over the document. */
-int mkr_parsed_attr_index_build(mkr_parsed_t *p);
+/* Force the DOM index (attr->owner map + the element-by-tag index below) to be
+ * built now (idempotent). As a side effect every attribute node's parent
+ * pointer is backfilled to its owner element, which the native XPath engine
+ * relies on. Returns 0 on success, -1 on allocation failure. Call before
+ * evaluating XPath over the document. */
+int mkr_parsed_dom_index_build(mkr_parsed_t *p);
 
-/* Drop the attr->owner index so the next lookup rebuilds it. Call after any
- * mutation that can change attribute ownership (attribute set/remove, or
- * inserting a subtree carrying its own attributes). This also drops the
- * co-built element index below. */
-void mkr_parsed_attr_index_invalidate(mkr_parsed_t *p);
+/* Drop the DOM index (both the attr->owner map and the co-built element-by-tag
+ * index) so the next query rebuilds it. Call after any mutation that can change
+ * attribute ownership or the element set (attribute set/remove, or inserting /
+ * removing a subtree). */
+void mkr_parsed_dom_index_invalidate(mkr_parsed_t *p);
 
 /* ---- element index: tag id -> elements (lexbor_compat/dom_index.c) ----
  *
@@ -126,9 +127,9 @@ void mkr_pos_assign_to_dom(mkr_pos_recorder_t *rec, lxb_dom_node_t *root);
 /* 1-based source line of node, or 0 if unknown (no tracking / unmatched). */
 size_t mkr_parsed_node_line(mkr_parsed_t *p, lxb_dom_node_t *node);
 
-/* Free an index allocated by mkr_parsed_attr_owner. Safe on NULL. Called by
+/* Free the DOM index (the object behind p->dom_index). Safe on NULL. Called by
  * mkr_parsed_destroy; exposed so post_parse.c need not see the index layout. */
-void mkr_attr_owner_free(void *idx);
+void mkr_dom_index_free(void *idx);
 
 /* ---- text-extraction index (lexbor_compat/text_index.c) ----
  *

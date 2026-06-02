@@ -129,7 +129,7 @@ keys, lazy two-phase build — count, size once, fill; iterative DFS, no recursi
 attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
 first_child/next, never attr.parent), so the XPath engine handles
 parent/ancestor axes and document-order over attributes with no special-casing.
-Reached via `mkr_parsed_attr_owner`; `mkr_parsed_attr_index_invalidate` drops it
+Reached via `mkr_parsed_attr_owner`; `mkr_parsed_dom_index_invalidate` drops it
 after any mutation so it rebuilds on the next query. The same walk **co-builds
 an element index** (`tag id → elements`, document-order CSR) used by the XPath
 `//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
@@ -213,7 +213,7 @@ Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
 inserting a fragment splices its **children**. Guards Lexbor omits: same-document
 only, no self-cycles, attribute nodes can't be tree children. Every structural /
-attribute change calls `mkr_parsed_attr_index_invalidate`.
+attribute change calls `mkr_parsed_dom_index_invalidate`.
 
 **Ruby surface niceties.** Node classes: Document, Element, Attribute, Text,
 Comment, CData, ProcessingInstruction, DocumentFragment (mapped in
