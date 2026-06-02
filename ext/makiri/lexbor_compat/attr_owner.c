@@ -60,19 +60,7 @@ mkr_attr_slot_for(const mkr_attr_owner_idx_t *idx, const lxb_dom_attr_t *attr)
     return (size_t)mkr_ptr_hash(attr) & (idx->cap - 1);
 }
 
-static size_t
-mkr_pow2_ceil(size_t n)
-{
-    size_t p = 1;
-    while (p < n) {
-        size_t np = p << 1;
-        if (np <= p) {
-            return p; /* saturate rather than wrap on overflow */
-        }
-        p = np;
-    }
-    return p;
-}
+/* pow2-ceil sizing is shared: mkr_pow2_ceil (core/mkr_safe.h). */
 
 /* ------------------------------------------------------------------ */
 /* build / lookup                                                     */
@@ -142,7 +130,10 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
     mkr_attr_owner_slot_t *slots = NULL;
     size_t cap = 0;
     if (n_attrs > 0) {
-        cap = mkr_pow2_ceil(n_attrs * 2);
+        size_t need;
+        if (!mkr_size_mul(n_attrs, 2, &need) || !mkr_pow2_ceil(need, &cap)) {
+            return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+        }
         if (cap < 8) cap = 8;
         slots = mkr_callocarray(cap, sizeof(*slots));
         if (slots == NULL) return LXB_STATUS_ERROR_MEMORY_ALLOCATION;

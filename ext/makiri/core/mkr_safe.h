@@ -131,6 +131,24 @@ mkr_ptr_hash(const void *p)
     return h;
 }
 
+/* Smallest power of two >= n, into *out. Returns false on overflow (no power of
+ * two >= n fits in size_t) so the caller fails closed rather than sizing a
+ * power-of-two hash table below the element count it must hold — which would
+ * never find a free slot under linear probing. Shared by the pointer-keyed
+ * indexes (attr->owner, text-index). */
+static inline bool
+mkr_pow2_ceil(size_t n, size_t *out)
+{
+    size_t p = 1;
+    while (p < n) {
+        size_t np = p << 1;
+        if (np <= p) return false; /* overflow */
+        p = np;
+    }
+    *out = p;
+    return true;
+}
+
 /* ---------------------------------------------------------------- */
 /* mkr_buf_t — owned, growable, optionally capped byte buffer        */
 /* ---------------------------------------------------------------- */

@@ -58,22 +58,7 @@ typedef struct {
 /* hashing                                                            */
 /* ------------------------------------------------------------------ */
 
-/* Smallest power of two >= n into *out. Returns false on overflow (no power of
- * two >= n fits in size_t) so the caller abandons the index rather than build a
- * table smaller than the element count it must hold (which would never find a
- * free slot under linear probing). */
-static bool
-mkr_tix_pow2_ceil(size_t n, size_t *out)
-{
-    size_t p = 1;
-    while (p < n) {
-        size_t np = p << 1;
-        if (np <= p) return false; /* overflow */
-        p = np;
-    }
-    *out = p;
-    return true;
-}
+/* pow2-ceil sizing is shared: mkr_pow2_ceil (core/mkr_safe.h). */
 
 /* Bucket index for a node key (mkr_ptr_hash spreads aligned pointers). */
 static size_t
@@ -184,7 +169,7 @@ mkr_text_idx_build(lxb_dom_node_t *root)
         size_t want;
         if (!mkr_size_add(ncont, ncont >> 1, &want)
             || !mkr_size_add(want, 1, &want)
-            || !mkr_tix_pow2_ceil(want, &t->ranges_cap)) { mkr_text_idx_destroy(t); return NULL; }
+            || !mkr_pow2_ceil(want, &t->ranges_cap)) { mkr_text_idx_destroy(t); return NULL; }
         t->ranges = mkr_callocarray(t->ranges_cap, sizeof(*t->ranges));
         if (t->ranges == NULL) { mkr_text_idx_destroy(t); return NULL; }
     }
