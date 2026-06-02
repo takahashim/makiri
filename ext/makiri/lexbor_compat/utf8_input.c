@@ -2,6 +2,7 @@
 
 #include <lexbor/encoding/encoding.h>
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -76,17 +77,30 @@ mkr_utf8_replace_invalid(const lxb_char_t *src, size_t len, size_t *out_len)
     (void) lxb_encoding_encode_replace_set(&enc, LXB_ENCODING_REPLACEMENT_BYTES,
                                            LXB_ENCODING_REPLACEMENT_SIZE);
 
+    if (len > SIZE_MAX - 17) {
+        return NULL; /* would overflow the size arithmetic below (unreachable
+                      * for a real Ruby String; guarded as a C input boundary) */
+    }
     cap = len + 16;
     result = malloc(cap + 1);
     if (result == NULL) {
         return NULL;
     }
 
+    /* All size arithmetic below is overflow-checked and fails closed (NULL).
+     * `_nc > SIZE_MAX/2` is tested before doubling, so `_nc` never exceeds
+     * SIZE_MAX-1 and `_nc + 1` cannot wrap. */
 #define MKR_EMIT(buf, blen)                                                    \
     do {                                                                       \
         size_t _bl = (blen);                                                   \
-        if (n + _bl > cap) {                                                   \
-            size_t _nc = (cap * 2 > n + _bl) ? cap * 2 : n + _bl;              \
+        if (_bl > SIZE_MAX - 1 - n) { free(result); return NULL; }            \
+        size_t _need = n + _bl;                                                \
+        if (_need > cap) {                                                     \
+            size_t _nc = cap;                                                  \
+            while (_nc < _need) {                                              \
+                if (_nc > SIZE_MAX / 2) { _nc = _need; break; }                \
+                _nc *= 2;                                                      \
+            }                                                                  \
             lxb_char_t *_r = realloc(result, _nc + 1);                         \
             if (_r == NULL) { free(result); return NULL; }                     \
             result = _r; cap = _nc;                                            \
