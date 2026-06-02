@@ -16,10 +16,6 @@ allowlist:
     max: 1
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
   - path: ext/makiri/glue/ruby_xpath.c
-    rule: alloca
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_xpath.c
     rule: direct_strlen
     max: 1
     reason: Baseline existing occurrence; remove as the C safety refactor replaces it.

@@ -398,6 +398,13 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
     return 0;
 }
 
+/* Upper bound on handler arguments. Matches the engine's default
+ * max_function_args; the resolver rejects any call above it, so the fixed argv
+ * array below cannot overflow regardless of how the limit is tuned. Using a
+ * compile-time-fixed array (not ALLOCA_N) keeps stack use independent of the
+ * runtime argument count. */
+#define MKR_HANDLER_MAX_ARGS 64
+
 typedef struct {
     mkr_handler_bridge_t *b;
     mkr_xpath_context_t  *ctx;
@@ -407,18 +414,19 @@ typedef struct {
     mkr_val_t            *out;
     int                   status; /* set by the body: 0 ok, -1 conversion error */
     char                  errbuf[200];
+    VALUE                 argv[MKR_HANDLER_MAX_ARGS];
 } mkr_handler_call_t;
 
-/* Runs under rb_protect: build Ruby args, invoke the handler, convert result. */
+/* Runs under rb_protect: build Ruby args, invoke the handler, convert result.
+ * c->nargs is <= MKR_HANDLER_MAX_ARGS (enforced by the resolver). */
 static VALUE
 mkr_handler_call_body(VALUE p)
 {
     mkr_handler_call_t *c = (mkr_handler_call_t *)p;
-    VALUE *argv = ALLOCA_N(VALUE, c->nargs > 0 ? c->nargs : 1);
     for (size_t i = 0; i < c->nargs; i++) {
-        argv[i] = mkr_arg_to_ruby(c->b, &c->args[i]);
+        c->argv[i] = mkr_arg_to_ruby(c->b, &c->args[i]);
     }
-    VALUE r = rb_funcallv(c->b->handler, c->method, (int)c->nargs, argv);
+    VALUE r = rb_funcallv(c->b->handler, c->method, (int)c->nargs, c->argv);
     c->status = mkr_ruby_to_out(c->ctx, r, c->out, c->errbuf, sizeof(c->errbuf));
     return Qnil;
 }
@@ -458,6 +466,15 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
     ID method = rb_intern(name);
     if (!rb_respond_to(b->handler, method)) {
         return 1; /* let the engine raise "unknown function" */
+    }
+
+    /* The fixed argv buffer holds up to MKR_HANDLER_MAX_ARGS; refuse a call
+     * beyond it (the engine's default cap keeps this unreachable in practice). */
+    if (nargs > MKR_HANDLER_MAX_ARGS) {
+        mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
+                     "handler function '%s' called with too many arguments (%zu > %d)",
+                     name, nargs, MKR_HANDLER_MAX_ARGS);
+        return -1;
     }
 
     mkr_handler_call_t call = {
