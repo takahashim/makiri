@@ -29,6 +29,8 @@ vendor/lexbor/dist/
 .vscode/
 .idea/
 *.swp
+*~
+#*#
 
 # Bundler
 Gemfile.lock
