@@ -418,7 +418,7 @@ fn_concat(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   }
   buf[off] = '\0';
   free(parts);
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ buf, total });
+  mkr_val_set_owned_text(out, mkr_owned_text(buf, total));
   return 0;
 }
 
@@ -488,7 +488,7 @@ fn_substring_before(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-before");
     return -1;
   }
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ p, n });
+  mkr_val_set_owned_text(out, mkr_owned_text(p, n));
   return 0;
 }
 
@@ -517,7 +517,7 @@ fn_substring_after(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-after");
     return -1;
   }
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ p, out_len });
+  mkr_val_set_owned_text(out, mkr_owned_text(p, out_len));
   return 0;
 }
 
@@ -578,7 +578,7 @@ fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring");
     return -1;
   }
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ p, out_len });
+  mkr_val_set_owned_text(out, mkr_owned_text(p, out_len));
   return 0;
 }
 
@@ -633,7 +633,7 @@ fn_normalize_space(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (out_i > 0 && buf[out_i - 1] == ' ') out_i--;
   buf[out_i] = '\0';
   mkr_owned_text_clear(&s);
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ buf, out_i });
+  mkr_val_set_owned_text(out, mkr_owned_text(buf, out_i));
   return 0;
 }
 
@@ -732,7 +732,7 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   mkr_owned_text_clear(&s); mkr_owned_text_clear(&from); mkr_owned_text_clear(&to);
   size_t out_len = 0;
   char *out_s = mkr_buf_steal(&buf, &out_len);
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ out_s, out_len });
+  mkr_val_set_owned_text(out, mkr_owned_text(out_s, out_len));
   if (out->u.string.ptr == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in translate");
     return -1;
@@ -867,7 +867,7 @@ set_empty_string(mkr_val_t *out, mkr_xpath_error_t *err, const char *fn_name)
     mkr_err_setf(err, MKR_XPATH_ERR_OOM, "out of memory in %s()", fn_name);
     return -1;
   }
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ s, 0 });
+  mkr_val_set_owned_text(out, mkr_owned_text(s, 0));
   return 0;
 }
 
@@ -884,7 +884,7 @@ set_bytes_string(mkr_val_t *out, const lxb_char_t *src, size_t len,
   }
   if (src != NULL && len > 0) memcpy(s, src, len);
   s[len] = '\0';
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ s, len });
+  mkr_val_set_owned_text(out, mkr_owned_text(s, len));
   return 0;
 }
 
@@ -895,7 +895,7 @@ fn_local_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 {
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "local-name") != 0) return -1;
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ NULL, 0 });
+  mkr_val_set_owned_text(out, mkr_owned_text(NULL, 0));
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "local-name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
@@ -923,7 +923,7 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 {
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "namespace-uri") != 0) return -1;
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ NULL, 0 });
+  mkr_val_set_owned_text(out, mkr_owned_text(NULL, 0));
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "namespace-uri");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
@@ -949,7 +949,7 @@ fn_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 {
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "name") != 0) return -1;
-  mkr_val_set_owned_text(out, (mkr_owned_text_t){ NULL, 0 });
+  mkr_val_set_owned_text(out, mkr_owned_text(NULL, 0));
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||

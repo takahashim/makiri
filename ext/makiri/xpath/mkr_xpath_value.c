@@ -366,8 +366,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
     }
     char *p = mkr_strndup(buf, (size_t)n);
     if (p == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory converting number to string"); return -1; }
-    out->ptr = p;
-    out->len = (size_t)n;
+    *out = mkr_owned_text(p, (size_t)n);
     return 0;
   }
   case MKR_XPATH_TYPE_NODESET:

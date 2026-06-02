@@ -249,11 +249,13 @@ mkr_vec_free(mkr_vec_t *v)
  *   cannot reach the engine's public API. Internally the engine carries the
  *   freely-constructible mkr_borrowed_text_t instead.
  *
- * Conversions — the only sanctioned edges. The single point that actually
- * VALIDATES raw bytes is mkr_ruby_checked_text() (bridge); everything else only
- * moves already-valid text between shapes (no edge re-validates, and none turns
- * raw bytes into text without that one check):
- *   validate raw -> valid : ONLY mkr_ruby_checked_text() (bridge); never a cast.
+ * Conversions — the only sanctioned edges. The points that actually VALIDATE
+ * raw bytes are the bridge's checked entry points; everything else only moves
+ * already-valid text between shapes (no edge re-validates, and none turns raw
+ * bytes into text without one of those checks):
+ *   validate raw -> valid : the bridge's checked entry points only —
+ *                           mkr_ruby_checked_text / mkr_ruby_engine_string_view
+ *                           (both validate UTF-8 + no NUL); never a cast.
  *   drop the GC anchor    : mkr_text_from_view (ruby_borrowed_text -> valid_text)
  *   assert valid (no copy) : mkr_borrowed_text (const char*,len -> borrowed_text)
  *                            — caller asserts the bytes already meet the contract
@@ -262,6 +264,9 @@ mkr_vec_free(mkr_vec_t *v)
  *   copy into owned       : mkr_owned_text_from_borrowed_copy /
  *                           mkr_owned_text_from_buf_steal — accept only
  *                           already-asserted-valid text; they copy, not validate.
+ *   take ownership        : mkr_owned_text (char*,len -> owned_text) — caller
+ *                           transfers an already-valid heap buffer it produced
+ *                           (substring/concat/format output); asserts validity.
  */
 
 /* Owned bytes (raw, unchecked). */
@@ -317,6 +322,18 @@ mkr_borrowed_text(const char *ptr, size_t len)
  * a char* variable: sizeof(pointer) would not be the byte length. */
 #define mkr_borrowed_text_lit(lit) \
   mkr_borrowed_text((lit), sizeof(lit) - 1)
+
+/* Take ownership of an already-valid, NUL-terminated heap buffer as owned text:
+ * the owned analogue of mkr_borrowed_text. The caller transfers a buffer it just
+ * produced (e.g. mkr_strndup / mkr_str_alloc / mkr_buf_steal output for a
+ * substring/concat/format result) and asserts it meets the text contract. The
+ * single place a raw owned char* becomes an mkr_owned_text_t; freed via
+ * mkr_owned_text_clear (or by the mkr_val_t that receives it). */
+static inline mkr_owned_text_t
+mkr_owned_text(char *ptr, size_t len)
+{
+  return (mkr_owned_text_t){ ptr, len };
+}
 
 /* Self-test of the overflow / buffer / vector edge cases (incl. paths real
  * inputs cannot reach). Returns 0 on success, nonzero on the first failure.
