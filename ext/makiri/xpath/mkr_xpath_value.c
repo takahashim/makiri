@@ -419,12 +419,10 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
       *out = (double)NAN;
       return 0;
     }
-    size_t len = 0;
-    char *s = mkr_node_string_value_or_fail(v->u.nodeset.items[0], limits, err, &len);
-    if (s == NULL) return -1;
-    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = len, .u = { .string = s } };
-    *out = mkr_val_to_number_unchecked(&tmp);
-    free(s);
+    mkr_owned_text_t text;
+    if (mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, &text) != 0) return -1;
+    *out = mkr_borrowed_text_to_number((mkr_borrowed_text_t){ text.ptr, text.len });
+    mkr_owned_text_clear(&text);
     return 0;
   }
   *out = mkr_val_to_number_unchecked(v);
@@ -434,6 +432,21 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
 /* ---------- coercions ---------- */
 
 double
+mkr_borrowed_text_to_number(mkr_borrowed_text_t t)
+{
+  if (t.ptr == NULL) return (double)NAN;
+  const char *s = t.ptr;
+  while (*s && isspace((unsigned char)*s)) s++;
+  if (*s == '\0') return (double)NAN;
+  char *end = NULL;
+  double d = strtod(s, &end);
+  if (end == s) return (double)NAN;
+  while (*end && isspace((unsigned char)*end)) end++;
+  if (*end != '\0') return (double)NAN;
+  return d;
+}
+
+double
 mkr_val_to_number_unchecked(const mkr_val_t *v)
 {
   switch (v->type) {
@@ -441,24 +454,13 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
     return v->u.number;
   case MKR_XPATH_TYPE_BOOLEAN:
     return v->u.boolean ? 1.0 : 0.0;
-  case MKR_XPATH_TYPE_STRING: {
-    if (v->u.string == NULL) return (double)NAN;
-    const char *s = v->u.string;
-    while (*s && isspace((unsigned char)*s)) s++;
-    if (*s == '\0') return (double)NAN;
-    char *end = NULL;
-    double d = strtod(s, &end);
-    if (end == s) return (double)NAN;
-    while (*end && isspace((unsigned char)*end)) end++;
-    if (*end != '\0') return (double)NAN;
-    return d;
-  }
+  case MKR_XPATH_TYPE_STRING:
+    return mkr_borrowed_text_to_number((mkr_borrowed_text_t){ v->u.string, v->string_len });
   case MKR_XPATH_TYPE_NODESET: {
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
     char *s = mkr_build_node_string_value_unchecked(v->u.nodeset.items[0]);
-    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = 0, .u = { .string = s } };
-    double d = mkr_val_to_number_unchecked(&tmp);
+    double d = mkr_borrowed_text_to_number((mkr_borrowed_text_t){ s, 0 }); /* len advisory; NUL-terminated */
     free(s);
     return d;
   }

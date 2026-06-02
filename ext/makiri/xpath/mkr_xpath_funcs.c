@@ -793,8 +793,7 @@ fn_sum(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     if (mkr_get_cached_node_text(ctx, args[0].u.nodeset.items[i], &s, err) != 0) {
       return -1;
     }
-    mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = s.len, .u = { .string = (char *)s.ptr } };
-    total += mkr_val_to_number_unchecked(&tmp);
+    total += mkr_borrowed_text_to_number(s);
   }
   out->type = MKR_XPATH_TYPE_NUMBER;
   out->u.number = total;

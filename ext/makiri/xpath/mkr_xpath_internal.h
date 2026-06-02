@@ -457,6 +457,13 @@ char   *mkr_val_to_string_unchecked        (const mkr_val_t *v);
 double  mkr_val_to_number_unchecked        (const mkr_val_t *v);
 char   *mkr_build_node_string_value_unchecked(const lxb_dom_node_t *node);
 
+/* Parse a borrowed text as an XPath number. Parses t.ptr as a NUL-terminated
+ * string (engine strings are NUL-terminated; t.len is advisory), returning NaN
+ * for anything that is not a valid XPath number. Lets callers convert a
+ * borrowed string (cache entry, value's own string) without wrapping it in a
+ * temporary mkr_val_t. */
+double  mkr_borrowed_text_to_number        (mkr_borrowed_text_t t);
+
 /*
  * Per-evaluation string-value cache.
  *

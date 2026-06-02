@@ -855,8 +855,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
         if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
           return -1;
         }
-        mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = s.len, .u = { .string = (char *)s.ptr } };
-        double d = mkr_val_to_number_unchecked(&tmp);
+        double d = mkr_borrowed_text_to_number(s);
         if ((d == target) == want_eq) { *out_result = 1; return 0; }
       }
       *out_result = 0;
@@ -939,15 +938,13 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       if (mkr_get_cached_node_text(ctx, l->u.nodeset.items[i], &ls, err) != 0) {
         return -1;
       }
-      mkr_val_t lt = { .type = MKR_XPATH_TYPE_STRING, .string_len = ls.len, .u = { .string = (char *)ls.ptr } };
-      double a = mkr_val_to_number_unchecked(&lt);
+      double a = mkr_borrowed_text_to_number(ls);
       for (size_t j = 0; j < r->u.nodeset.count; ++j) {
         mkr_borrowed_text_t rs;
         if (mkr_get_cached_node_text(ctx, r->u.nodeset.items[j], &rs, err) != 0) {
           return -1;
         }
-        mkr_val_t rt = { .type = MKR_XPATH_TYPE_STRING, .string_len = rs.len, .u = { .string = (char *)rs.ptr } };
-        if (rel_hit(op, a, mkr_val_to_number_unchecked(&rt))) {
+        if (rel_hit(op, a, mkr_borrowed_text_to_number(rs))) {
           *out_result = 1;
           return 0;
         }
@@ -968,8 +965,7 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
         return -1;
       }
-      mkr_val_t tmp = { .type = MKR_XPATH_TYPE_STRING, .string_len = s.len, .u = { .string = (char *)s.ptr } };
-      double nv = mkr_val_to_number_unchecked(&tmp);
+      double nv = mkr_borrowed_text_to_number(s);
       double a = swap ? scn : nv;
       double b = swap ? nv  : scn;
       if (rel_hit(op, a, b)) { *out_result = 1; return 0; }
