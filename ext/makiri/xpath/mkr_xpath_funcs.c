@@ -481,20 +481,16 @@ fn_substring_before(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (arity_check(nargs, 2, 2, err, "substring-before") != 0) return -1;
   mkr_owned_text_t s, t;
   if (two_owned_texts(ctx, args, &s, &t, err) != 0) return -1;
-  out->type = MKR_XPATH_TYPE_STRING;
   const char *found = (t.len == 0) ? NULL : mkr_text_find(s.ptr, s.len, t.ptr, t.len);
-  if (found == NULL) {
-    out->u.string = mkr_strdup("");
-    out->string_len = 0;
-    if (out->u.string == NULL) { mkr_owned_text_clear(&s); mkr_owned_text_clear(&t); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-before"); return -1; }
-  } else {
-    size_t n = (size_t)(found - s.ptr);
-    out->u.string = mkr_strndup(s.ptr, n);
-    out->string_len = n;
-    if (out->u.string == NULL) { mkr_owned_text_clear(&s); mkr_owned_text_clear(&t); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-before"); return -1; }
-  }
+  size_t n = (found != NULL) ? (size_t)(found - s.ptr) : 0;
+  char *p = mkr_strndup(s.ptr, n); /* n == 0 yields an owned "" */
   mkr_owned_text_clear(&s);
   mkr_owned_text_clear(&t);
+  if (p == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-before");
+    return -1;
+  }
+  mkr_val_set_owned_string(out, p, n);
   return 0;
 }
 
@@ -507,24 +503,23 @@ fn_substring_after(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (arity_check(nargs, 2, 2, err, "substring-after") != 0) return -1;
   mkr_owned_text_t s, t;
   if (two_owned_texts(ctx, args, &s, &t, err) != 0) return -1;
-  out->type = MKR_XPATH_TYPE_STRING;
+  size_t out_len;
+  char *p;
   if (t.len == 0) {
-    out->u.string = mkr_strndup(s.ptr, s.len);
-    out->string_len = s.len;
+    out_len = s.len;
+    p = mkr_strndup(s.ptr, s.len);
   } else {
     const char *found = mkr_text_find(s.ptr, s.len, t.ptr, t.len);
-    size_t out_len = found ? s.len - (size_t)((found + t.len) - s.ptr) : 0;
-    out->u.string = found ? mkr_strndup(found + t.len, out_len) : mkr_strdup("");
-    out->string_len = out_len;
-  }
-  if (out->u.string == NULL) {
-    mkr_owned_text_clear(&s);
-    mkr_owned_text_clear(&t);
-    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-after");
-    return -1;
+    out_len = found ? s.len - (size_t)((found + t.len) - s.ptr) : 0;
+    p = found ? mkr_strndup(found + t.len, out_len) : mkr_strdup("");
   }
   mkr_owned_text_clear(&s);
   mkr_owned_text_clear(&t);
+  if (p == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring-after");
+    return -1;
+  }
+  mkr_val_set_owned_string(out, p, out_len);
   return 0;
 }
 
@@ -551,42 +546,41 @@ fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     end_d = (double)s_chars + 1;
   }
 
-  out->type = MKR_XPATH_TYPE_STRING;
+  size_t out_len = 0;
+  char *p;
   if (start_d != start_d || end_d != end_d) {
-    out->u.string = mkr_strdup("");
-    out->string_len = 0;
-    if (out->u.string == NULL) { mkr_owned_text_clear(&s); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring"); return -1; }
-    mkr_owned_text_clear(&s);
-    return 0;
-  }
-
-  /* XPath 1.0 §4.2: positions are 1-based character offsets, rounded.
-   * substring("12345", 2, 3) → "234"; out-of-range silently clipped.
-   * Round, then clamp to the valid range [1, s_chars+1] AS DOUBLES before the
-   * cast: start_d/end_d can be ±Infinity or exceed long's range (e.g.
-   * `substring(s, 1 div 0)`), where a direct (long)floor(...) is undefined
-   * behaviour. NaN is already handled above. */
-  double imax_d = (double)s_chars + 1.0;
-  double rstart = floor(start_d + 0.5);
-  double rend   = floor(end_d + 0.5);
-  if (rstart < 1.0)    rstart = 1.0;
-  if (rstart > imax_d) rstart = imax_d;
-  if (rend < 1.0)      rend = 1.0;
-  if (rend > imax_d)   rend = imax_d;
-  long start = (long)rstart;
-  long end   = (long)rend;
-  if (end <= start) {
-    out->u.string = mkr_strdup("");
-    out->string_len = 0;
+    p = mkr_strdup(""); /* NaN start/length -> "" */
   } else {
-    const char *byte_start = utf8_advance(s.ptr, (size_t)(start - 1));
-    const char *byte_end   = utf8_advance(byte_start, (size_t)(end - start));
-    size_t byte_len = (size_t)(byte_end - byte_start);
-    out->u.string = mkr_strndup(byte_start, byte_len);
-    out->string_len = byte_len;
+    /* XPath 1.0 §4.2: positions are 1-based character offsets, rounded.
+     * substring("12345", 2, 3) → "234"; out-of-range silently clipped.
+     * Round, then clamp to the valid range [1, s_chars+1] AS DOUBLES before the
+     * cast: start_d/end_d can be ±Infinity or exceed long's range (e.g.
+     * `substring(s, 1 div 0)`), where a direct (long)floor(...) is undefined
+     * behaviour. NaN is already handled above. */
+    double imax_d = (double)s_chars + 1.0;
+    double rstart = floor(start_d + 0.5);
+    double rend   = floor(end_d + 0.5);
+    if (rstart < 1.0)    rstart = 1.0;
+    if (rstart > imax_d) rstart = imax_d;
+    if (rend < 1.0)      rend = 1.0;
+    if (rend > imax_d)   rend = imax_d;
+    long start = (long)rstart;
+    long end   = (long)rend;
+    if (end <= start) {
+      p = mkr_strdup("");
+    } else {
+      const char *byte_start = utf8_advance(s.ptr, (size_t)(start - 1));
+      const char *byte_end   = utf8_advance(byte_start, (size_t)(end - start));
+      out_len = (size_t)(byte_end - byte_start);
+      p = mkr_strndup(byte_start, out_len);
+    }
   }
-  if (out->u.string == NULL) { mkr_owned_text_clear(&s); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring"); return -1; }
   mkr_owned_text_clear(&s);
+  if (p == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in substring");
+    return -1;
+  }
+  mkr_val_set_owned_string(out, p, out_len);
   return 0;
 }
 
