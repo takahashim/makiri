@@ -131,6 +131,22 @@ RSpec.describe "Makiri mutation" do
       tpl = div.at_css("template")
       expect(tpl.content_fragment.at_css("span")&.text).to eq("ok")
     end
+
+    it "preserves nested <template> contents" do
+      div.inner_html = "<template><b>x</b><template><i>y</i></template></template>"
+      outer = div.at_css("template")
+      inner = outer.content_fragment.at_css("template")
+      expect(outer.content_fragment.at_css("b").text).to eq("x")
+      expect(inner.content_fragment.at_css("i").text).to eq("y")
+    end
+
+    it "handles a deeply nested fragment without overflowing the stack" do
+      # The template-content fixup walks the import iteratively (not recursively
+      # on DOM depth), so a very deep fragment must not crash.
+      n = 40_000
+      div.inner_html = ("<div>" * n) + "<template><span>ok</span></template>" + ("</div>" * n)
+      expect(div.at_css("template").content_fragment.at_css("span").text).to eq("ok")
+    end
   end
 
   describe "query consistency after mutation" do

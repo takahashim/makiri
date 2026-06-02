@@ -1,7 +1,9 @@
 #include "glue.h"
+#include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
 
 #include <lexbor/html/parser.h>
 #include <ruby/thread.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -134,35 +136,68 @@ mkr_is_html_template(const lxb_dom_node_t *n)
  * comes out with empty content. Walk the source subtree and its freshly-imported
  * clone in lockstep (deep import preserves child order 1:1) and, for every
  * matching <template>, import the source content children into the clone's
- * content fragment. Recurses so templates nested inside template content are
- * fixed too. */
+ * content fragment. The template content fragment is a side structure (not in
+ * the normal child chain), so importing into it does not perturb the walk; each
+ * fixed-up content subtree is queued and scanned the same way, handling
+ * templates nested inside template content.
+ *
+ * Iterative (explicit worklist of subtree-root pairs + the shared parent-pointer
+ * pre-order walk) rather than recursing on DOM depth, so an adversarially deep
+ * fragment cannot overflow the C stack. The worklist holds one entry per
+ * template-with-content (bounded by the input), heap-allocated; on OOM it bails
+ * (best-effort, as the recursive version did under import failure). */
+typedef struct { lxb_dom_node_t *src; lxb_dom_node_t *clone; } mkr_fixup_pair_t;
+
 static void
 mkr_fixup_template_content(lxb_dom_document_t *doc,
-                           lxb_dom_node_t *src, lxb_dom_node_t *clone)
+                           lxb_dom_node_t *root_src, lxb_dom_node_t *root_clone)
 {
-    if (mkr_is_html_template(src) && mkr_is_html_template(clone)) {
-        lxb_dom_document_fragment_t *sc = lxb_html_interface_template(src)->content;
-        lxb_dom_document_fragment_t *cc = lxb_html_interface_template(clone)->content;
-        if (sc != NULL && cc != NULL) {
-            lxb_dom_node_t *cc_node = lxb_dom_interface_node(cc);
-            for (lxb_dom_node_t *s = lxb_dom_interface_node(sc)->first_child;
-                 s != NULL; s = s->next) {
-                lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, s, true);
-                if (imp != NULL) {
-                    lxb_dom_node_insert_child(cc_node, imp);
-                    mkr_fixup_template_content(doc, s, imp);
+    mkr_fixup_pair_t *stack = NULL;
+    size_t cap = 0, top = 0;
+
+#define MKR_FIXUP_PUSH(S, C)                                                   \
+    do {                                                                       \
+        if (top == cap) {                                                      \
+            size_t _nc = cap ? cap * 2 : 8;                                    \
+            if (cap > SIZE_MAX / sizeof(*stack) / 2) goto done;                \
+            mkr_fixup_pair_t *_p = realloc(stack, _nc * sizeof(*stack));       \
+            if (_p == NULL) goto done;                                         \
+            stack = _p; cap = _nc;                                             \
+        }                                                                      \
+        stack[top].src = (S); stack[top].clone = (C); top++;                   \
+    } while (0)
+
+    MKR_FIXUP_PUSH(root_src, root_clone);
+
+    while (top > 0) {
+        mkr_fixup_pair_t pair = stack[--top];
+        lxb_dom_node_t *sn = pair.src;
+        lxb_dom_node_t *cn = pair.clone;
+        /* lockstep pre-order over the (pair.src, pair.clone) subtree */
+        while (sn != NULL && cn != NULL) {
+            if (mkr_is_html_template(sn) && mkr_is_html_template(cn)) {
+                lxb_dom_document_fragment_t *sc = lxb_html_interface_template(sn)->content;
+                lxb_dom_document_fragment_t *cc = lxb_html_interface_template(cn)->content;
+                if (sc != NULL && cc != NULL) {
+                    lxb_dom_node_t *sc_node = lxb_dom_interface_node(sc);
+                    lxb_dom_node_t *cc_node = lxb_dom_interface_node(cc);
+                    for (lxb_dom_node_t *x = sc_node->first_child; x != NULL; x = x->next) {
+                        lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, x, true);
+                        if (imp != NULL) {
+                            lxb_dom_node_insert_child(cc_node, imp);
+                        }
+                    }
+                    MKR_FIXUP_PUSH(sc_node, cc_node); /* scan imported content */
                 }
             }
+            sn = mkr_dom_preorder_next(sn, pair.src);
+            cn = mkr_dom_preorder_next(cn, pair.clone);
         }
     }
 
-    lxb_dom_node_t *s = src->first_child;
-    lxb_dom_node_t *c = clone->first_child;
-    while (s != NULL && c != NULL) {
-        mkr_fixup_template_content(doc, s, c);
-        s = s->next;
-        c = c->next;
-    }
+done:
+#undef MKR_FIXUP_PUSH
+    free(stack);
 }
 
 /* Shared fragment-parse helpers (used by mkr_build_fragment_ctx here and by
