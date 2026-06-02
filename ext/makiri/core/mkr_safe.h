@@ -200,6 +200,32 @@ mkr_owned_bytes_clear(mkr_owned_bytes_t *o)
     o->len = 0;
 }
 
+/* ---------------------------------------------------------------- */
+/* engine text (NUL-terminated, valid UTF-8)                        */
+/* ---------------------------------------------------------------- */
+
+/* Owned / borrowed text used across the XPath engine and exposed in its public
+ * value type (mkr_xpath.h). Structurally identical to mkr_owned_bytes_t /
+ * mkr_str_view_t above, but they carry a stronger contract: the bytes are
+ * NUL-terminated at ptr[len] and well-formed UTF-8, so character-wise string
+ * code can assume valid input. */
+typedef struct {
+  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
+  size_t len; /* bytes, excluding the terminator */
+} mkr_owned_text_t;
+
+typedef struct {
+  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor/expr buffer */
+  size_t      len; /* bytes, excluding the terminator */
+} mkr_borrowed_text_t;
+
+/* Borrow a slice of an owned text (no copy). */
+static inline mkr_borrowed_text_t
+mkr_owned_borrow(mkr_owned_text_t t)
+{
+  return (mkr_borrowed_text_t){ t.ptr, t.len };
+}
+
 /* Self-test of the overflow / buffer / vector edge cases (incl. paths real
  * inputs cannot reach). Returns 0 on success, nonzero on the first failure.
  * Wired to a private Ruby method for the spec suite. */

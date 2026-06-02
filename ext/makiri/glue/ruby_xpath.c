@@ -132,7 +132,7 @@ mkr_xpath_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
         break;
     }
     case MKR_XPATH_TYPE_STRING:
-        result = rb_utf8_str_new(v->u.string ? v->u.string : "", (long)v->string_len);
+        result = rb_utf8_str_new(v->u.string.ptr ? v->u.string.ptr : "", (long)v->u.string.len);
         break;
     case MKR_XPATH_TYPE_NUMBER:
         result = rb_float_new(v->u.number);

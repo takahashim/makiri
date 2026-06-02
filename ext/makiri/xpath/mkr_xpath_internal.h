@@ -120,24 +120,10 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
 
 /* ---------- engine text ---------- */
 
-/* Owned / borrowed engine text. Defined ahead of the tokens and the AST so the
- * lexer token, node tests, literals, and names can hold these directly. */
-typedef struct {
-  char  *ptr; /* owned; kept NUL-terminated at ptr[len] */
-  size_t len; /* bytes, excluding the terminator */
-} mkr_owned_text_t;
-
-typedef struct {
-  const char *ptr; /* borrowed; owner is value/cache/AST/Lexbor/expr buffer */
-  size_t      len; /* bytes, excluding the terminator */
-} mkr_borrowed_text_t;
-
-/* Borrow a slice of an owned text (no copy). */
-static inline mkr_borrowed_text_t
-mkr_owned_borrow(mkr_owned_text_t t)
-{
-  return (mkr_borrowed_text_t){ t.ptr, t.len };
-}
+/* mkr_owned_text_t / mkr_borrowed_text_t and mkr_owned_borrow() live in
+ * core/mkr_safe.h (included via mkr_xpath.h) so the public value type can hold
+ * an owned text directly; the lexer token, node tests, literals, and names use
+ * them too. */
 
 /* Borrowed-text equality, NUL-safe (NULL only equals NULL). The single name/
  * value/registry/token comparison used across the engine. */

@@ -511,9 +511,7 @@ mkr_xpath_value_clear(mkr_xpath_value_t *v)
     v->u.nodeset.count = 0;
     break;
   case MKR_XPATH_TYPE_STRING:
-    free(v->u.string);
-    v->u.string = NULL;
-    v->string_len = 0;
+    mkr_owned_text_clear(&v->u.string);
     break;
   default:
     break;
@@ -523,8 +521,8 @@ mkr_xpath_value_clear(mkr_xpath_value_t *v)
 /* ---------- eval entry ---------- */
 
 /* Move an internal mkr_val_t into the public mkr_xpath_value_t (different
- * field name on the nodeset side). Ownership of the items array, the
- * string, etc. is transferred. */
+ * field name on the nodeset side; the string arm is the same mkr_owned_text_t).
+ * Ownership of the items array, the string, etc. is transferred. */
 static void
 mkr_val_to_public(const mkr_val_t *v, mkr_xpath_value_t *out)
 {
@@ -535,8 +533,7 @@ mkr_val_to_public(const mkr_val_t *v, mkr_xpath_value_t *out)
     out->u.nodeset.count = v->u.nodeset.count;
     break;
   case MKR_XPATH_TYPE_STRING:
-    out->u.string = v->u.string.ptr;
-    out->string_len = v->u.string.len;
+    out->u.string = v->u.string;
     break;
   case MKR_XPATH_TYPE_NUMBER:
     out->u.number = v->u.number;

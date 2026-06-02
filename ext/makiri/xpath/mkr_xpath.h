@@ -43,13 +43,12 @@ typedef struct mkr_xpath_context_s mkr_xpath_context_t;
 
 typedef struct {
   mkr_xpath_type_t type;
-  size_t string_len; /* valid when type == MKR_XPATH_TYPE_STRING */
   union {
     struct {
       lxb_dom_node_t **nodes;
       size_t count;
     } nodeset;
-    char *string;
+    mkr_owned_text_t string; /* owned; valid when type == MKR_XPATH_TYPE_STRING */
     double number;
     int boolean;
   } u;
