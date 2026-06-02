@@ -68,7 +68,7 @@ mkr_owned_text_clear(mkr_owned_text_t *t)
 }
 
 int
-mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
+mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
 {
   if (a.ptr == NULL || b.ptr == NULL) return a.ptr == b.ptr;
   return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
@@ -77,8 +77,9 @@ mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
 /* Copy an already-valid borrowed text into owned storage. Taking
  * mkr_borrowed_text_t (not raw char*+len) keeps the type contract: an
  * mkr_owned_text_t can only be minted from text the caller has asserted valid
- * (via mkr_borrowed_text / mkr_valid_borrow / mkr_owned_borrow), so every
- * raw-bytes -> text entry point is greppable. */
+ * (via mkr_borrowed_text / mkr_borrowed_text_from_valid /
+ * mkr_borrowed_text_from_owned), so every raw-bytes -> text entry point is
+ * greppable. */
 int
 mkr_owned_text_from_borrowed_copy(mkr_owned_text_t *out, mkr_borrowed_text_t t,
                                   mkr_xpath_error_t *err, const char *what)
@@ -159,7 +160,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
   switch (src->type) {
   case MKR_XPATH_TYPE_STRING: {
     mkr_owned_text_t text;
-    if (mkr_owned_text_from_borrowed_copy(&text, mkr_owned_borrow(src->u.string),
+    if (mkr_owned_text_from_borrowed_copy(&text, mkr_borrowed_text_from_owned(src->u.string),
                                           err, "out of memory cloning string value") != 0) return -1;
     mkr_val_set_owned_text(dst, text);
     return 0;
@@ -268,7 +269,7 @@ build_string_value(const lxb_dom_node_t *node, mkr_buf_t *buf)
 }
 
 static void
-mkr_build_node_string_text_unchecked(const lxb_dom_node_t *node, mkr_owned_text_t *out)
+mkr_build_node_text_unchecked(const lxb_dom_node_t *node, mkr_owned_text_t *out)
 {
   /* Uncapped, best-effort: callers (number/string coercion) require a non-NULL
    * text, so on any failure fall back to an owned "" rather than NULL. */
@@ -286,13 +287,13 @@ mkr_build_node_string_text_unchecked(const lxb_dom_node_t *node, mkr_owned_text_
 }
 
 int
-mkr_node_string_text_or_fail(const lxb_dom_node_t *node,
+mkr_node_to_owned_text_or_fail(const lxb_dom_node_t *node,
                              mkr_xpath_limits_t *limits,
                              mkr_xpath_error_t *err,
                              mkr_owned_text_t *out)
 {
   if (out == NULL) {
-    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_node_string_text_or_fail: bad args");
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_node_to_owned_text_or_fail: bad args");
     return -1;
   }
   mkr_owned_text_init(out);
@@ -330,7 +331,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
   }
   switch (v->type) {
   case MKR_XPATH_TYPE_STRING: {
-    mkr_borrowed_text_t text = mkr_owned_borrow(v->u.string);
+    mkr_borrowed_text_t text = mkr_borrowed_text_from_owned(v->u.string);
     if (text.ptr == NULL) text.len = 0;
     if (limits != NULL && mkr_limit_check_string_bytes(limits, text.len, err) != 0) return -1;
     return mkr_owned_text_from_borrowed_copy(out, text,
@@ -374,7 +375,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
       return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), err, "out of memory");
     }
     /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
-    return mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, out);
+    return mkr_node_to_owned_text_or_fail(v->u.nodeset.items[0], limits, err, out);
   }
   mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown value type");
   return -1;
@@ -396,8 +397,8 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
       return 0;
     }
     mkr_owned_text_t text;
-    if (mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, &text) != 0) return -1;
-    *out = mkr_borrowed_text_to_number(mkr_owned_borrow(text));
+    if (mkr_node_to_owned_text_or_fail(v->u.nodeset.items[0], limits, err, &text) != 0) return -1;
+    *out = mkr_borrowed_text_to_number(mkr_borrowed_text_from_owned(text));
     mkr_owned_text_clear(&text);
     return 0;
   }
@@ -431,13 +432,13 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
   case MKR_XPATH_TYPE_BOOLEAN:
     return v->u.boolean ? 1.0 : 0.0;
   case MKR_XPATH_TYPE_STRING:
-    return mkr_borrowed_text_to_number(mkr_owned_borrow(v->u.string));
+    return mkr_borrowed_text_to_number(mkr_borrowed_text_from_owned(v->u.string));
   case MKR_XPATH_TYPE_NODESET: {
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
     mkr_owned_text_t text;
-    mkr_build_node_string_text_unchecked(v->u.nodeset.items[0], &text);
-    double d = mkr_borrowed_text_to_number(mkr_owned_borrow(text));
+    mkr_build_node_text_unchecked(v->u.nodeset.items[0], &text);
+    double d = mkr_borrowed_text_to_number(mkr_borrowed_text_from_owned(text));
     mkr_owned_text_clear(&text);
     return d;
   }
@@ -916,7 +917,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
   }
 
   mkr_owned_text_t text;
-  if (mkr_node_string_text_or_fail(node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
+  if (mkr_node_to_owned_text_or_fail(node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
 
   if (mkr_grow_reserve((void **)&c->entries, &c->cap, c->count + 1,
                        sizeof(*c->entries)) != MKR_OK) {
@@ -951,7 +952,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
   mkr_str_cache_index_put(c, c->count);
   c->count++;
 
-  *out = mkr_owned_borrow(text);
+  *out = mkr_borrowed_text_from_owned(text);
   return 0;
 }
 

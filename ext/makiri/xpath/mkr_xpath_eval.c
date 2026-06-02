@@ -72,7 +72,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     {
       size_t nlen = 0;
       const lxb_char_t *nm = lxb_dom_node_name(node, &nlen);
-      return mkr_text_eq(mkr_owned_borrow(test->pi_target),
+      return mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->pi_target),
                          mkr_borrowed_text((const char *)nm, nlen));
     }
   case MKR_NT_WILDCARD: {
@@ -124,7 +124,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     }
     if (got == NULL) return 0;
     if (test->local.ptr == NULL) return 0;
-    if (!mkr_text_eq(mkr_owned_borrow(test->local),
+    if (!mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->local),
                      mkr_borrowed_text((const char *)got, got_len))) return 0;
 
     /* Namespace check (see internal.h §2–§4).
@@ -824,7 +824,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
         if (mkr_get_cached_node_text(ctx, r->u.nodeset.items[j], &rs, err) != 0) {
           return -1;
         }
-        if (mkr_text_eq(ls, rs) == want_eq) {
+        if (mkr_borrowed_text_eq(ls, rs) == want_eq) {
           *out_result = 1;
           return 0;
         }
@@ -863,7 +863,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
         mkr_owned_text_clear(&target); return -1;
       }
-      if (mkr_text_eq(s, mkr_owned_borrow(target)) == want_eq) {
+      if (mkr_borrowed_text_eq(s, mkr_borrowed_text_from_owned(target)) == want_eq) {
         mkr_owned_text_clear(&target); *out_result = 1; return 0;
       }
     }
@@ -889,7 +889,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
   mkr_owned_text_t ls, rs;
   if (mkr_val_to_owned_text_or_fail(l, L, err, &ls) != 0) return -1;
   if (mkr_val_to_owned_text_or_fail(r, L, err, &rs) != 0) { mkr_owned_text_clear(&ls); return -1; }
-  int eq = mkr_text_eq(mkr_owned_borrow(ls), mkr_owned_borrow(rs));
+  int eq = mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ls), mkr_borrowed_text_from_owned(rs));
   mkr_owned_text_clear(&ls);
   mkr_owned_text_clear(&rs);
   *out_result = want_eq ? eq : !eq;
@@ -1255,7 +1255,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   switch (n->kind) {
   case MKR_NK_LITERAL_STR: {
     mkr_owned_text_t text;
-    if (mkr_owned_text_from_borrowed_copy(&text, mkr_owned_borrow(n->u.literal),
+    if (mkr_owned_text_from_borrowed_copy(&text, mkr_borrowed_text_from_owned(n->u.literal),
                                           err, "out of memory copying literal") != 0) rc = -1;
     else {
       mkr_val_set_owned_text(out, text);

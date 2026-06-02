@@ -49,7 +49,7 @@ int mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out);
 /* Validate a Ruby String for use as an XPath engine string: valid UTF-8,
  * no interior NUL, and at most +max_bytes+. Returns NULL on success and fills
  * +out+; otherwise returns a static reason string. +sv+ must be a String. */
-const char *mkr_ruby_engine_string_view(VALUE sv, size_t max_bytes,
+const char *mkr_ruby_try_checked_text(VALUE sv, size_t max_bytes,
                                         mkr_ruby_borrowed_text_t *out);
 
 /* Copy an exception's #message into +buf+ without letting a broken #message
@@ -57,7 +57,7 @@ const char *mkr_ruby_engine_string_view(VALUE sv, size_t max_bytes,
 void mkr_ruby_exception_message(VALUE exc, char *buf, size_t len);
 
 /* The sole constructor of mkr_valid_text_t. Turns an already-validated view
- * (from mkr_ruby_checked_text or mkr_ruby_engine_string_view) into the token the
+ * (from mkr_ruby_checked_text or mkr_ruby_try_checked_text) into the token the
  * XPath engine accepts. The returned token borrows v.ptr; the caller must keep
  * v.value alive for the duration of the engine call. */
 mkr_valid_text_t mkr_valid_text_from_view(mkr_ruby_borrowed_text_t v);

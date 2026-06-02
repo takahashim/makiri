@@ -254,13 +254,13 @@ mkr_vec_free(mkr_vec_t *v)
  * already-valid text between shapes (no edge re-validates, and none turns raw
  * bytes into text without one of those checks):
  *   validate raw -> valid : the bridge's checked entry points only —
- *                           mkr_ruby_checked_text / mkr_ruby_engine_string_view
+ *                           mkr_ruby_checked_text / mkr_ruby_try_checked_text
  *                           (both validate UTF-8 + no NUL); never a cast.
  *   drop the GC anchor    : mkr_valid_text_from_view (ruby_borrowed_text -> valid_text)
  *   assert valid (no copy) : mkr_borrowed_text (const char*,len -> borrowed_text)
  *                            — caller asserts the bytes already meet the contract
- *   downgrade to borrow   : mkr_owned_borrow (owned_text -> borrowed_text)
- *                           mkr_valid_borrow (valid_text -> borrowed_text)
+ *   downgrade to borrow   : mkr_borrowed_text_from_owned (owned_text -> borrowed_text)
+ *                           mkr_borrowed_text_from_valid (valid_text -> borrowed_text)
  *   copy into owned       : mkr_owned_text_from_borrowed_copy /
  *                           mkr_owned_text_from_buf_steal — accept only
  *                           already-asserted-valid text; they copy, not validate.
@@ -296,14 +296,14 @@ typedef struct {
 
 /* Borrow a slice of an owned text (no copy). */
 static inline mkr_borrowed_text_t
-mkr_owned_borrow(mkr_owned_text_t t)
+mkr_borrowed_text_from_owned(mkr_owned_text_t t)
 {
   return (mkr_borrowed_text_t){ t.ptr, t.len };
 }
 
 /* Borrow a valid-text capability token as a plain borrowed text (no copy). */
 static inline mkr_borrowed_text_t
-mkr_valid_borrow(mkr_valid_text_t t)
+mkr_borrowed_text_from_valid(mkr_valid_text_t t)
 {
   return (mkr_borrowed_text_t){ t.ptr, t.len };
 }

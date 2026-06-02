@@ -225,7 +225,7 @@ fn_id(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (args[0].type == MKR_XPATH_TYPE_NODESET) {
     for (size_t i = 0; i < args[0].u.nodeset.count; ++i) {
       mkr_owned_text_t text;
-      if (mkr_node_string_text_or_fail(args[0].u.nodeset.items[i], mkr_ctx_limits(ctx), err, &text) != 0) {
+      if (mkr_node_to_owned_text_or_fail(args[0].u.nodeset.items[i], mkr_ctx_limits(ctx), err, &text) != 0) {
         mkr_nodeset_clear(&out->u.nodeset);
         return -1;
       }
@@ -360,7 +360,7 @@ fn_string(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->type = MKR_XPATH_TYPE_STRING;
   mkr_owned_text_t text;
   if (nargs == 0) {
-    if (mkr_node_string_text_or_fail(self_node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
+    if (mkr_node_to_owned_text_or_fail(self_node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
   } else {
     if (mkr_val_to_owned_text_or_fail(&args[0], mkr_ctx_limits(ctx), err, &text) != 0) return -1;
   }
@@ -592,7 +592,7 @@ fn_string_length(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   mkr_owned_text_t s;
   int rc = (nargs == 0)
-              ? mkr_node_string_text_or_fail(self_node, L, err, &s)
+              ? mkr_node_to_owned_text_or_fail(self_node, L, err, &s)
               : mkr_val_to_owned_text_or_fail(&args[0], L, err, &s);
   if (rc != 0) return -1;
   out->type = MKR_XPATH_TYPE_NUMBER;
@@ -612,7 +612,7 @@ fn_normalize_space(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   mkr_owned_text_t s;
   int rc = (nargs == 0)
-              ? mkr_node_string_text_or_fail(self_node, L, err, &s)
+              ? mkr_node_to_owned_text_or_fail(self_node, L, err, &s)
               : mkr_val_to_owned_text_or_fail(&args[0], L, err, &s);
   if (rc != 0) return -1;
   char  *buf = mkr_str_alloc(s.len);

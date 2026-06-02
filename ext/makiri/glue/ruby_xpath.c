@@ -357,7 +357,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
         VALUE sv = rb_obj_as_string(r);
         mkr_ruby_borrowed_text_t vv;
         const char *bad =
-            mkr_ruby_engine_string_view(sv, mkr_ctx_limits(ctx)->max_string_bytes, &vv);
+            mkr_ruby_try_checked_text(sv, mkr_ctx_limits(ctx)->max_string_bytes, &vv);
         if (bad != NULL) {
             snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
             return -1;
@@ -609,7 +609,7 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
     VALUE value = rb_obj_as_string(rb_value);
     mkr_ruby_borrowed_text_t vv;
     const char *bad =
-        mkr_ruby_engine_string_view(value, mkr_ctx_limits(d->ctx)->max_string_bytes, &vv);
+        mkr_ruby_try_checked_text(value, mkr_ctx_limits(d->ctx)->max_string_bytes, &vv);
     if (bad != NULL) {
         rb_raise(mkr_eError, "invalid variable value: %s", bad);
     }

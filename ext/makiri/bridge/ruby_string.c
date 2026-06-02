@@ -98,7 +98,7 @@ mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out)
 }
 
 const char *
-mkr_ruby_engine_string_view(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
+mkr_ruby_try_checked_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
 {
     long len = RSTRING_LEN(sv);
     if ((size_t)len > max_bytes) {

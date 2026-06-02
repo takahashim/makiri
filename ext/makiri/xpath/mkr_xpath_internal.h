@@ -120,14 +120,14 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
 
 /* ---------- engine text ---------- */
 
-/* mkr_owned_text_t / mkr_borrowed_text_t and mkr_owned_borrow() live in
+/* mkr_owned_text_t / mkr_borrowed_text_t and mkr_borrowed_text_from_owned() live in
  * core/mkr_safe.h (included via mkr_xpath.h) so the public value type can hold
  * an owned text directly; the lexer token, node tests, literals, and names use
  * them too. */
 
 /* Borrowed-text equality, NUL-safe (NULL only equals NULL). The single name/
  * value/registry/token comparison used across the engine. */
-int mkr_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
+int mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
 
 /* ---------- tokens ---------- */
 
@@ -396,7 +396,7 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   Layer 1 — canonical entries (use these from the evaluator,
  *   functions, and the Ruby bridge):
  *
- *     mkr_node_string_text_or_fail   — node ─→ owned text
+ *     mkr_node_to_owned_text_or_fail   — node ─→ owned text
  *     mkr_val_to_owned_text_or_fail  — value ─→ owned text
  *     mkr_val_to_number_or_fail      — value ─→ double (via *out)
  *
@@ -420,7 +420,7 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   mkr_val_to_boolean has no allocation path, so there is no
  *   _or_fail counterpart — the single entry is correct.
  */
-int mkr_node_string_text_or_fail(const lxb_dom_node_t *node,
+int mkr_node_to_owned_text_or_fail(const lxb_dom_node_t *node,
                                 mkr_xpath_limits_t *limits,
                                 mkr_xpath_error_t *err,
                                 mkr_owned_text_t *out);
@@ -491,7 +491,7 @@ void mkr_str_cache_clear   (mkr_str_cache_t *c);
 void mkr_str_cache_truncate(mkr_str_cache_t *c, size_t target_count);
 
 /* Borrowed lookup. On hit *out is filled from the cache. On miss the string is
- * computed via mkr_node_string_text_or_fail, inserted, then returned. Returns 0
+ * computed via mkr_node_to_owned_text_or_fail, inserted, then returned. Returns 0
  * on success, -1 on OOM/LIMIT. */
 int  mkr_get_cached_node_text  (struct mkr_xpath_context_s *ctx,
                                lxb_dom_node_t            *node,

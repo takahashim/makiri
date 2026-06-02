@@ -345,12 +345,12 @@ int
 mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_valid_text_t uri_t)
 {
   if (ctx == NULL || prefix_t.ptr == NULL || uri_t.ptr == NULL) return -1;
-  mkr_borrowed_text_t prefix = mkr_valid_borrow(prefix_t);
+  mkr_borrowed_text_t prefix = mkr_borrowed_text_from_valid(prefix_t);
   /* Replace if prefix already registered. */
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), prefix)) {
+    if (mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->ns[i].prefix), prefix)) {
       mkr_owned_text_t new_uri;
-      if (mkr_owned_text_from_borrowed_copy(&new_uri, mkr_valid_borrow(uri_t), NULL,
+      if (mkr_owned_text_from_borrowed_copy(&new_uri, mkr_borrowed_text_from_valid(uri_t), NULL,
                                             "out of memory registering namespace") != 0) return -1;
       mkr_owned_text_clear(&ctx->ns[i].uri);
       ctx->ns[i].uri = new_uri;
@@ -365,7 +365,7 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_v
   mkr_owned_text_init(&e->prefix);
   mkr_owned_text_init(&e->uri);
   if (mkr_owned_text_from_borrowed_copy(&e->prefix, prefix,                  NULL, NULL) != 0 ||
-      mkr_owned_text_from_borrowed_copy(&e->uri,    mkr_valid_borrow(uri_t), NULL, NULL) != 0) {
+      mkr_owned_text_from_borrowed_copy(&e->uri,    mkr_borrowed_text_from_valid(uri_t), NULL, NULL) != 0) {
     mkr_owned_text_clear(&e->prefix);
     mkr_owned_text_clear(&e->uri);
     return -1;
@@ -378,14 +378,14 @@ int
 mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t name_t, mkr_valid_text_t value_t)
 {
   if (ctx == NULL || name_t.ptr == NULL) return -1;
-  mkr_borrowed_text_t name = mkr_valid_borrow(name_t);
+  mkr_borrowed_text_t name = mkr_borrowed_text_from_valid(name_t);
   /* value_t.ptr == NULL (variable set to empty) -> from_borrowed_copy maps it to "". */
   /* Phase 1: only unprefixed string variables. */
   for (size_t i = 0; i < ctx->vars_count; ++i) {
     if (ctx->vars[i].prefix.ptr == NULL &&
-        mkr_text_eq(mkr_owned_borrow(ctx->vars[i].name), name)) {
+        mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->vars[i].name), name)) {
       mkr_owned_text_t new_value;
-      if (mkr_owned_text_from_borrowed_copy(&new_value, mkr_valid_borrow(value_t), NULL,
+      if (mkr_owned_text_from_borrowed_copy(&new_value, mkr_borrowed_text_from_valid(value_t), NULL,
                                             "out of memory registering variable") != 0) return -1;
       mkr_owned_text_clear(&ctx->vars[i].value);
       ctx->vars[i].value = new_value;
@@ -401,7 +401,7 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t na
   mkr_owned_text_init(&e->name);
   mkr_owned_text_init(&e->value);
   if (mkr_owned_text_from_borrowed_copy(&e->name,  name,                    NULL, NULL) != 0 ||
-      mkr_owned_text_from_borrowed_copy(&e->value, mkr_valid_borrow(value_t), NULL, NULL) != 0) {
+      mkr_owned_text_from_borrowed_copy(&e->value, mkr_borrowed_text_from_valid(value_t), NULL, NULL) != 0) {
     mkr_owned_text_clear(&e->name);
     mkr_owned_text_clear(&e->value);
     return -1;
@@ -418,7 +418,7 @@ mkr_ctx_lookup_ns(mkr_xpath_context_t *ctx, const char *prefix,
   if (ctx == NULL || prefix == NULL) return NULL;
   mkr_borrowed_text_t want = mkr_borrowed_text(prefix, prefix_len);
   for (size_t i = 0; i < ctx->ns_count; ++i) {
-    if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), want)) {
+    if (mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->ns[i].prefix), want)) {
       if (out_uri_len != NULL) *out_uri_len = ctx->ns[i].uri.len;
       return ctx->ns[i].uri.ptr;
     }
@@ -438,9 +438,9 @@ mkr_ctx_lookup_variable_text(mkr_xpath_context_t *ctx, const char *prefix,
   for (size_t i = 0; i < ctx->vars_count; ++i) {
     int prefix_match = (prefix == NULL)
         ? (ctx->vars[i].prefix.ptr == NULL)
-        : mkr_text_eq(mkr_owned_borrow(ctx->vars[i].prefix), want_prefix);
-    if (prefix_match && mkr_text_eq(mkr_owned_borrow(ctx->vars[i].name), want_name)) {
-      *out = mkr_owned_borrow(ctx->vars[i].value);
+        : mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->vars[i].prefix), want_prefix);
+    if (prefix_match && mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->vars[i].name), want_name)) {
+      *out = mkr_borrowed_text_from_owned(ctx->vars[i].value);
       return 1;
     }
   }
