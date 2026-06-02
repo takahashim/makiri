@@ -89,6 +89,24 @@ char *mkr_strndup(const char *s, size_t n);
  * or NULL on overflow / OOM. */
 char *mkr_strdup(const char *s);
 
+/* ---------------------------------------------------------------- */
+/* mkr_valid_text_t — a string proven to meet the engine text contract */
+/* ---------------------------------------------------------------- */
+
+/* A borrowed byte slice whose contents are guaranteed to satisfy Makiri's
+ * engine text contract: valid UTF-8, no interior NUL, and NUL-terminated at
+ * ptr[len]. The XPath engine's public string entry points accept ONLY this
+ * type, so a raw `const char *` cannot be passed without a compile error. The
+ * sole constructor is mkr_text_from_view() at the Ruby boundary (makiri.c),
+ * which can only be fed a view that mkr_ruby_checked_text() already validated;
+ * there is deliberately no Ruby-free constructor, so unvalidated bytes have no
+ * path into the engine. (ptr is non-owning: the caller keeps it alive for the
+ * duration of the engine call.) */
+typedef struct {
+    const char *ptr;
+    size_t      len;
+} mkr_valid_text_t;
+
 /* Ensure the array at *ptr (currently *cap elements of `elem` bytes) can hold
  * at least `need` elements, growing geometrically and overflow-safely. On
  * success updates *ptr / *cap and returns MKR_OK; on overflow/allocation failure

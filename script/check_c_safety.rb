@@ -57,6 +57,11 @@ RULES = [
     message: "looped cap *= 2 growth must use an overflow-checked grow helper",
     regex: /while\s*\([^)]*>\s*[^)]*cap[^)]*\).*?\*=\s*2/
   ),
+  Rule.new(
+    id: "valid_text_forge",
+    message: "mkr_valid_text_t must be minted only by mkr_text_from_view (the validated boundary)",
+    regex: /\(\s*mkr_valid_text_t\s*\)\s*\{/
+  ),
 ].freeze
 
 def load_config

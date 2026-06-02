@@ -1,57 +1,56 @@
 ignore_paths:
   - path: ext/makiri/core/**
-    reason: Safe allocation and buffer helper internals intentionally contain primitive allocation patterns.
-
-ignore_paths:
-  - path: ext/makiri/core/**
-    reason: Safe allocation and buffer helper internals intentionally contain primitive allocation patterns.
+    reason: The Ruby-free safe-core primitives layer; it deliberately holds the raw allocation/length patterns that every other layer routes through.
 
 allowlist:
-  - path: ext/makiri/glue/ruby_doc.c
-    rule: ruby_string_ptr
-    max: 4
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_node_set.c
-    rule: sizeof_allocation
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_xpath.c
-    rule: direct_strlen
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/glue/ruby_xpath.c
-    rule: ruby_string_ptr
-    max: 7
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/lexbor_compat/attr_owner.c
-    rule: sizeof_allocation
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+  # --- strict text-contract chokepoints: the only sanctioned raw RSTRING use ---
   - path: ext/makiri/makiri.c
     rule: ruby_string_ptr
     max: 4
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+    reason: The strict text-contract validator/view constructor (mkr_check_text / mkr_ruby_checked_text) — the single sanctioned RSTRING chokepoint for the strict path.
+  - path: ext/makiri/makiri.c
+    rule: valid_text_forge
+    max: 1
+    reason: mkr_text_from_view, the sole sanctioned mint of mkr_valid_text_t; its input view is already validated by mkr_check_text.
+  - path: ext/makiri/glue/ruby_xpath.c
+    rule: ruby_string_ptr
+    max: 3
+    reason: Engine-string validator (mkr_engine_string_view) plus the fail-closed exception-message read; chokepoints that hand validated views downstream, not scattered raw access.
+  - path: ext/makiri/glue/ruby_doc.c
+    rule: ruby_string_ptr
+    max: 4
+    reason: Lenient HTML byte input (mkr_sanitize_html_input and the parse-source copy); raw bytes by design, since HTML parsing decodes leniently and does not require the strict text contract.
+  # --- strlen on engine-owned, NUL-free C strings (never raw Ruby input) ---
+  - path: ext/makiri/glue/ruby_xpath.c
+    rule: direct_strlen
+    max: 1
+    reason: strlen on an engine-owned NUL-terminated C string; no-NUL is enforced at the strict boundary (mkr_valid_text_t) before any string reaches the engine.
   - path: ext/makiri/xpath/mkr_xpath_eval.c
     rule: direct_strlen
     max: 4
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+    reason: strlen on engine-owned NUL-terminated strings; sources are no-NUL by the strict boundary or HTML5 tokenization, and node string-values are built length-based.
   - path: ext/makiri/xpath/mkr_xpath_funcs.c
     rule: direct_strlen
     max: 11
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+    reason: strlen on engine-owned NUL-terminated strings (XPath string functions over already-validated values).
   - path: ext/makiri/xpath/mkr_xpath_lex.c
     rule: direct_strlen
     max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
-  - path: ext/makiri/xpath/mkr_xpath_parse.c
-    rule: direct_strlen
-    max: 1
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+    reason: strlen on the validated, NUL-terminated XPath expression (mkr_valid_text_t).
   - path: ext/makiri/xpath/mkr_xpath_value.c
     rule: direct_strlen
     max: 2
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+    reason: strlen on engine-owned NUL-terminated strings; the node string-value builder is length-based and only these terminal calls assume termination.
+  # --- copy/report sizes that mirror an already overflow-checked allocation ---
+  - path: ext/makiri/glue/ruby_node_set.c
+    rule: sizeof_allocation
+    max: 1
+    reason: memsize() byte-count report (cap * sizeof), bounded by MKR_NODE_SET_MAX; not an allocation.
+  - path: ext/makiri/lexbor_compat/attr_owner.c
+    rule: sizeof_allocation
+    max: 1
+    reason: memcpy size mirroring a buffer just allocated overflow-checked via mkr_reallocarray.
   - path: ext/makiri/xpath/mkr_xpath_value.c
     rule: sizeof_allocation
     max: 2
-    reason: Baseline existing occurrence; remove as the C safety refactor replaces it.
+    reason: memcpy/memset sizes mirroring buffers allocated overflow-checked via mkr_reallocarray / mkr_callocarray.

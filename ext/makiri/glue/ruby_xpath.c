@@ -288,12 +288,11 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
     return Qnil;
 }
 
-/* Duplicate a Ruby String's bytes into a fresh NUL-terminated C string. */
+/* Duplicate a validated text view into a fresh owned NUL-terminated C string. */
 static char *
-mkr_dup_string_value(VALUE sv)
+mkr_dup_text_view(mkr_ruby_text_view_t v)
 {
-    long len = RSTRING_LEN(sv);
-    return mkr_strndup(RSTRING_PTR(sv), (size_t)len);
+    return mkr_strndup(v.ptr, v.len);
 }
 
 /* A Ruby string only becomes an engine string if it is safe to treat as a
@@ -303,21 +302,27 @@ mkr_dup_string_value(VALUE sv)
  * substring/translate/string-length — fail closed instead. +sv+ must be a
  * String. */
 static const char *
-mkr_engine_string_reason(VALUE sv, size_t max_bytes)
+mkr_engine_string_view(VALUE sv, size_t max_bytes, mkr_ruby_text_view_t *out)
 {
     long len = RSTRING_LEN(sv);
     if ((size_t)len > max_bytes) {
         return "string exceeds the maximum length";
     }
-    if (memchr(RSTRING_PTR(sv), '\0', (size_t)len) != NULL) {
+    const char *ptr = RSTRING_PTR(sv);
+    if (memchr(ptr, '\0', (size_t)len) != NULL) {
         return "string contains a NUL byte";
     }
     /* Validate the bytes as UTF-8 using Ruby's own validator (GVL is held in
      * the variable-registration and handler paths). */
-    VALUE u = rb_utf8_str_new(RSTRING_PTR(sv), len);
+    VALUE u = rb_utf8_str_new(ptr, len);
     if (!RTEST(rb_funcall(u, rb_intern("valid_encoding?"), 0))) {
         return "string is not valid UTF-8";
     }
+    /* Validated: hand back a view so callers flow the checked ptr/len through
+     * mkr_text_from_view instead of re-fetching raw RSTRING_PTR. */
+    out->value = sv;
+    out->ptr   = ptr;
+    out->len   = (size_t)len;
     return NULL;
 }
 
@@ -383,13 +388,15 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
         out->u.string = mkr_strdup("");
     } else {
         VALUE sv = rb_obj_as_string(r);
+        mkr_ruby_text_view_t vv;
         const char *bad =
-            mkr_engine_string_reason(sv, mkr_ctx_limits(ctx)->max_string_bytes);
+            mkr_engine_string_view(sv, mkr_ctx_limits(ctx)->max_string_bytes, &vv);
         if (bad != NULL) {
             snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
             return -1;
         }
-        out->u.string = mkr_dup_string_value(sv);
+        out->u.string = mkr_dup_text_view(vv);
+        RB_GC_GUARD(vv.value);
     }
     if (out->u.string == NULL) {
         snprintf(errbuf, errlen, "out of memory converting handler result");
@@ -542,12 +549,12 @@ mkr_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
  * was full or could not grow) and the caller must free it. Returns NULL on a
  * parse error (error filled). */
 static mkr_node_t *
-mkr_ctx_cached_ast(mkr_xpath_ctx_data_t *d, const char *expr,
+mkr_ctx_cached_ast(mkr_xpath_ctx_data_t *d, mkr_valid_text_t expr,
                    mkr_xpath_error_t *error, int *owned)
 {
     *owned = 0;
     for (size_t i = 0; i < d->cache_count; i++) {
-        if (strcmp(d->cache[i].expr, expr) == 0) {
+        if (strcmp(d->cache[i].expr, expr.ptr) == 0) {
             return d->cache[i].ast;
         }
     }
@@ -570,7 +577,7 @@ mkr_ctx_cached_ast(mkr_xpath_ctx_data_t *d, const char *expr,
         *owned = 1;
         return ast;
     }
-    char *key = mkr_strdup(expr);
+    char *key = mkr_strdup(expr.ptr);
     if (key == NULL) {
         *owned = 1;
         return ast;
@@ -589,11 +596,10 @@ mkr_xpath_ctx_evaluate(int argc, VALUE *argv, VALUE self)
 
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
     mkr_ruby_text_view_t ev = mkr_ruby_checked_text(rb_expr, "XPath expression");
-    const char *expr = ev.ptr; /* validated: no NUL, valid UTF-8, NUL-terminated */
 
     mkr_xpath_error_t error = {0};
     int owned = 0;
-    mkr_node_t *ast = mkr_ctx_cached_ast(d, expr, &error, &owned);
+    mkr_node_t *ast = mkr_ctx_cached_ast(d, mkr_text_from_view(ev), &error, &owned);
     RB_GC_GUARD(ev.value);
     if (ast == NULL) {
         mkr_xpath_raise(&error); /* parse error, never returns */
@@ -626,7 +632,8 @@ mkr_xpath_ctx_register_ns(VALUE self, VALUE rb_prefix, VALUE rb_uri)
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
     mkr_ruby_text_view_t pv = mkr_ruby_checked_text(rb_prefix, "namespace prefix");
     mkr_ruby_text_view_t uv = mkr_ruby_checked_text(rb_uri, "namespace URI");
-    int rc = mkr_xpath_register_ns(d->ctx, pv.ptr, uv.ptr); /* copies both */
+    int rc = mkr_xpath_register_ns(d->ctx, mkr_text_from_view(pv),
+                                   mkr_text_from_view(uv)); /* copies both */
     RB_GC_GUARD(pv.value);
     RB_GC_GUARD(uv.value);
     if (rc != 0) {
@@ -643,13 +650,14 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
     /* The value gets the stricter engine-string check (adds the byte cap on top
      * of no-NUL / valid-UTF-8). */
     VALUE value = rb_obj_as_string(rb_value);
+    mkr_ruby_text_view_t vv;
     const char *bad =
-        mkr_engine_string_reason(value, mkr_ctx_limits(d->ctx)->max_string_bytes);
+        mkr_engine_string_view(value, mkr_ctx_limits(d->ctx)->max_string_bytes, &vv);
     if (bad != NULL) {
         rb_raise(mkr_eError, "invalid variable value: %s", bad);
     }
-    int rc = mkr_xpath_register_variable_string(d->ctx, nv.ptr,
-                                                RSTRING_PTR(value)); /* copies both */
+    int rc = mkr_xpath_register_variable_string(d->ctx, mkr_text_from_view(nv),
+                                                mkr_text_from_view(vv)); /* copies both */
     RB_GC_GUARD(nv.value);
     RB_GC_GUARD(value);
     if (rc != 0) {
@@ -670,7 +678,6 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
 {
     VALUE document = mkr_node_document(self);
     mkr_ruby_text_view_t ev = mkr_ruby_checked_text(rb_expr, "XPath expression");
-    const char *expr = ev.ptr;
 
     mkr_xpath_context_t *ctx = mkr_xpath_context_for(self, document);
     mkr_ctx_set_unprefixed_lax(ctx, lax);
@@ -678,8 +685,8 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
     mkr_xpath_error_t error = {0};
     mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
     limits->ast_nodes = 0;
-    mkr_node_t *ast = mkr_parse(expr, limits, &error);
-    RB_GC_GUARD(ev.value); /* keep `expr` alive across the parse */
+    mkr_node_t *ast = mkr_parse(mkr_text_from_view(ev), limits, &error);
+    RB_GC_GUARD(ev.value); /* keep the expr bytes alive across the parse */
     if (ast == NULL) {
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error); /* parse error, never returns */

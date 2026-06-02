@@ -759,20 +759,21 @@ parse_expr(mkr_parser_t *P)
 /* ---------- entry ---------- */
 
 mkr_node_t *
-mkr_parse(const char *expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err)
+mkr_parse(mkr_valid_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err)
 {
   if (limits == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_parse: limits required");
     return NULL;
   }
-  if (mkr_limit_check_expr_bytes(limits, expr ? strlen(expr) : 0, err) != 0) {
+  if (mkr_limit_check_expr_bytes(limits, expr.len, err) != 0) {
     return NULL;
   }
 
   mkr_parser_t P;
   P.err    = err;
   P.limits = limits;
-  mkr_lexer_init(&P.L, expr, err);
+  /* expr.ptr is a validated, NUL-terminated C string (mkr_valid_text_t). */
+  mkr_lexer_init(&P.L, expr.ptr, err);
   if (!P.L.good) return NULL;
 
   mkr_node_t *root = parse_expr(&P);

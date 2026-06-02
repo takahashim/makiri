@@ -5,6 +5,8 @@
 #include <lexbor/tag/const.h>
 #include <stddef.h>
 
+#include "../core/mkr_safe.h" /* mkr_valid_text_t */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -60,8 +62,8 @@ typedef struct {
 mkr_xpath_context_t *mkr_xpath_context_new(lxb_dom_document_t *doc, lxb_dom_node_t *node);
 void                mkr_xpath_context_free(mkr_xpath_context_t *ctx);
 
-int  mkr_xpath_register_ns(mkr_xpath_context_t *ctx, const char *prefix, const char *uri);
-int  mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, const char *name, const char *value);
+int  mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix, mkr_valid_text_t uri);
+int  mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t name, mkr_valid_text_t value);
 
 /*
  * Custom function fallback. When a function call's (namespace URI,
@@ -127,15 +129,6 @@ void  mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index,
                                           mkr_tag_index_lookup_t lookup,
                                           mkr_tag_index_foreign_t has_foreign);
 
-/*
- * Evaluate an XPath expression. On success returns 0 and fills *out_value.
- * On failure returns non-zero and fills *out_error (caller frees with
- * mkr_xpath_error_free). Either out_value or out_error must be non-NULL.
- */
-int  mkr_xpath_eval(mkr_xpath_context_t *ctx,
-                   const char *expr,
-                   mkr_xpath_value_t *out_value,
-                   mkr_xpath_error_t *out_error);
 
 void mkr_xpath_value_clear(mkr_xpath_value_t *v);
 void mkr_xpath_error_clear(mkr_xpath_error_t *e);

@@ -58,6 +58,14 @@ mkr_ruby_checked_text(VALUE in, const char *what)
     return v;
 }
 
+mkr_valid_text_t
+mkr_text_from_view(mkr_ruby_text_view_t v)
+{
+    /* The one sanctioned mint of mkr_valid_text_t: v has already passed the
+     * strict text contract (mkr_ruby_checked_text / mkr_engine_string_view). */
+    return (mkr_valid_text_t){ v.ptr, v.len };
+}
+
 /* Makiri.__c_selftest -> true, or raises if the safe-core primitives
  * (mkr_safe.c) fail their internal edge-case checks. Test hook only. */
 static VALUE

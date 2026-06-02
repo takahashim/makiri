@@ -342,8 +342,10 @@ mkr_grow(void **base, size_t *cap, size_t elem)
 }
 
 int
-mkr_xpath_register_ns(mkr_xpath_context_t *ctx, const char *prefix, const char *uri)
+mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_valid_text_t uri_t)
 {
+  const char *prefix = prefix_t.ptr;
+  const char *uri    = uri_t.ptr;
   if (ctx == NULL || prefix == NULL || uri == NULL) return -1;
   /* Replace if prefix already registered. */
   for (size_t i = 0; i < ctx->ns_count; ++i) {
@@ -371,8 +373,10 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, const char *prefix, const char *
 }
 
 int
-mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, const char *name, const char *value)
+mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t name_t, mkr_valid_text_t value_t)
 {
+  const char *name  = name_t.ptr;
+  const char *value = value_t.ptr;
   if (ctx == NULL || name == NULL) return -1;
   /* Phase 1: only unprefixed string variables. */
   for (size_t i = 0; i < ctx->vars_count; ++i) {
@@ -572,28 +576,3 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   return 0;
 }
 
-int
-mkr_xpath_eval(mkr_xpath_context_t *ctx,
-              const char *expr,
-              mkr_xpath_value_t *out_value,
-              mkr_xpath_error_t *out_error)
-{
-  if (ctx == NULL || expr == NULL || out_value == NULL) {
-    if (out_error) {
-      mkr_err_set(out_error, MKR_XPATH_ERR_INTERNAL, "mkr_xpath_eval: bad arguments");
-    }
-    return -1;
-  }
-  mkr_xpath_error_t err = {0};
-
-  ctx->limits.ast_nodes = 0;
-
-  mkr_node_t *ast = mkr_parse(expr, &ctx->limits, &err);
-  if (ast == NULL) {
-    if (out_error) *out_error = err; else mkr_xpath_error_clear(&err);
-    return -1;
-  }
-  int rc = mkr_xpath_eval_compiled(ctx, ast, out_value, out_error);
-  mkr_node_free(ast);
-  return rc;
-}

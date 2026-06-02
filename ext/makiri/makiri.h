@@ -7,6 +7,8 @@
 #include <lexbor/html/html.h>
 #include <lexbor/dom/dom.h>
 
+#include "core/mkr_safe.h" /* mkr_valid_text_t */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,6 +65,13 @@ typedef struct {
 /* Coerce +in+ to a String and enforce the text-input contract, raising
  * Makiri::Error (naming +what+) on a NUL byte or invalid UTF-8. */
 mkr_ruby_text_view_t mkr_ruby_checked_text(VALUE in, const char *what);
+
+/* The sole constructor of mkr_valid_text_t. Turns an already-validated view
+ * (from mkr_ruby_checked_text or mkr_engine_string_view) into the token the
+ * XPath engine accepts. Keeping this the only mint means unvalidated bytes
+ * cannot reach the engine. The returned token borrows v.ptr; the caller must
+ * keep v.value alive (RB_GC_GUARD) for the duration of the engine call. */
+mkr_valid_text_t mkr_text_from_view(mkr_ruby_text_view_t v);
 
 #ifdef __cplusplus
 }
