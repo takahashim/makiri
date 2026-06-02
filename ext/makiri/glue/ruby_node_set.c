@@ -1,4 +1,5 @@
 #include "glue.h"
+#include "../core/mkr_safe.h"
 
 #include <stdint.h>
 
@@ -72,12 +73,16 @@ mkr_node_set_push(VALUE rb_set, lxb_dom_node_t *node)
     }
 
     if (s->count == s->cap) {
-        size_t ncap = (s->cap == 0) ? 8 : s->cap * 2;
-        if (ncap <= s->cap) { /* overflow */
+        /* Overflow-checked geometric growth. We keep Ruby's xrealloc (so the
+         * buffer pairs with xfree in gc_free and GC sees the memory pressure)
+         * but size it via the safe helpers instead of a raw cap * 2. */
+        size_t new_cap, bytes;
+        if (!mkr_grow_capacity(s->cap, s->count + 1, sizeof(lxb_dom_node_t *), &new_cap)
+            || !mkr_size_mul(new_cap, sizeof(lxb_dom_node_t *), &bytes)) {
             rb_raise(mkr_eError, "node set capacity overflow");
         }
-        s->nodes = xrealloc(s->nodes, ncap * sizeof(lxb_dom_node_t *));
-        s->cap = ncap;
+        s->nodes = xrealloc(s->nodes, bytes);
+        s->cap = new_cap;
     }
     s->nodes[s->count++] = node;
 }

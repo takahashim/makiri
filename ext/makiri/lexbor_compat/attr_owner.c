@@ -1,5 +1,6 @@
 #include "compat.h"
 #include "compat_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -162,9 +163,9 @@ mkr_attr_owner_idx_build(mkr_attr_owner_idx_t *idx, lxb_dom_document_t *doc)
     size_t          *cursor    = NULL;
     if (n_indexed > 0) {
         size_t noff = (size_t)tag_max + 2;
-        tag_off = malloc(noff * sizeof(*tag_off));
-        cursor  = malloc(noff * sizeof(*cursor));
-        tag_nodes = malloc(n_indexed * sizeof(*tag_nodes));
+        tag_off = mkr_reallocarray(NULL, noff, sizeof(*tag_off));
+        cursor  = mkr_reallocarray(NULL, noff, sizeof(*cursor));
+        tag_nodes = mkr_reallocarray(NULL, n_indexed, sizeof(*tag_nodes));
         if (tag_off == NULL || cursor == NULL || tag_nodes == NULL) {
             free(slots); free(tag_off); free(cursor); free(tag_nodes);
             return LXB_STATUS_ERROR_MEMORY_ALLOCATION;

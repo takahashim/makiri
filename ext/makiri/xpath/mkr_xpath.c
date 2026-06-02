@@ -1,5 +1,6 @@
 #include "mkr_xpath.h"
 #include "mkr_xpath_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -345,14 +346,9 @@ mkr_xpath_context_free(mkr_xpath_context_t *ctx)
 static int
 mkr_grow(void **base, size_t *cap, size_t elem)
 {
-  if (*cap != 0 && *cap > SIZE_MAX / 2) return -1; /* doubling would overflow */
-  size_t new_cap = (*cap == 0) ? 4 : (*cap * 2);
-  if (elem != 0 && new_cap > SIZE_MAX / elem) return -1; /* size would overflow */
-  void *p = realloc(*base, new_cap * elem);
-  if (p == NULL) return -1;
-  *base = p;
-  *cap = new_cap;
-  return 0;
+  /* Grow by at least one element; mkr_grow_reserve handles the geometric,
+   * overflow-checked sizing. */
+  return mkr_grow_reserve(base, cap, *cap + 1, elem) == MKR_OK ? 0 : -1;
 }
 
 int

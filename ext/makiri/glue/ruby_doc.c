@@ -1,5 +1,6 @@
 #include "glue.h"
 #include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
+#include "../core/mkr_safe.h"
 
 #include <lexbor/html/parser.h>
 #include <ruby/thread.h>
@@ -156,13 +157,8 @@ mkr_fixup_template_content(lxb_dom_document_t *doc,
 
 #define MKR_FIXUP_PUSH(S, C)                                                   \
     do {                                                                       \
-        if (top == cap) {                                                      \
-            size_t _nc = cap ? cap * 2 : 8;                                    \
-            if (cap > SIZE_MAX / sizeof(*stack) / 2) goto done;                \
-            mkr_fixup_pair_t *_p = realloc(stack, _nc * sizeof(*stack));       \
-            if (_p == NULL) goto done;                                         \
-            stack = _p; cap = _nc;                                             \
-        }                                                                      \
+        if (mkr_grow_reserve((void **)&stack, &cap, top + 1,                   \
+                             sizeof(*stack)) != MKR_OK) goto done;             \
         stack[top].src = (S); stack[top].clone = (C); top++;                   \
     } while (0)
 

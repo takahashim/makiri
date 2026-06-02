@@ -3,6 +3,7 @@
 require "bundler/gem_tasks"
 require "rspec/core/rake_task"
 require "rake/extensiontask"
+require "shellwords"
 
 GEMSPEC = Gem::Specification.load("makiri.gemspec")
 
@@ -15,6 +16,13 @@ end
 RSpec::Core::RakeTask.new(:spec)
 
 task default: %i[compile spec]
+
+namespace :security do
+  desc "Run mechanical C safety lint over ext/makiri"
+  task :clint do
+    sh FileUtils::RUBY, "script/check_c_safety.rb", *Shellwords.split(ENV.fetch("C_LINT_ARGS", ""))
+  end
+end
 
 # `rake clean` (from rake-compiler) removes the ext build dir under tmp/,
 # including the generated Makefile. The next `rake compile` re-runs extconf,

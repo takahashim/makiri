@@ -1,0 +1,95 @@
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "17 19 * * *"
+  workflow_dispatch:
+
+jobs:
+  security-lint:
+    name: C safety lint
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run C safety lint
+        run: bundle exec rake security:clint
+
+  security-sanitize:
+    name: ASan + UBSan security suite
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Build + test under sanitizers
+        run: bundle exec rake sanitize
+
+  security-fuzz-short:
+    name: Short sanitized fuzz
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run short fuzz under sanitizers
+        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--isolated --time 30"
+
+  security-fuzz-nightly:
+    name: Nightly sanitized fuzz
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run nightly fuzz under sanitizers
+        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--isolated --time 300"

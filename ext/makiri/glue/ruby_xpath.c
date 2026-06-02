@@ -1,6 +1,7 @@
 #include "glue.h"
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
+#include "../core/mkr_safe.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -552,15 +553,10 @@ mkr_ctx_cached_ast(mkr_xpath_ctx_data_t *d, const char *expr,
         *owned = 1;
         return ast;
     }
-    if (d->cache_count == d->cache_cap) {
-        size_t ncap = d->cache_cap ? d->cache_cap * 2 : 8;
-        mkr_ast_cache_entry_t *p = realloc(d->cache, ncap * sizeof(*p));
-        if (p == NULL) {
-            *owned = 1;
-            return ast;
-        }
-        d->cache = p;
-        d->cache_cap = ncap;
+    if (mkr_grow_reserve((void **)&d->cache, &d->cache_cap, d->cache_count + 1,
+                         sizeof(*d->cache)) != MKR_OK) {
+        *owned = 1;
+        return ast;
     }
     char *key = strdup(expr);
     if (key == NULL) {

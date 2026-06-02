@@ -15,6 +15,25 @@ mkr_reallocarray(void *ptr, size_t count, size_t elem)
 }
 
 mkr_status_t
+mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem)
+{
+    if (need <= *cap) {
+        return MKR_OK;
+    }
+    size_t new_cap;
+    if (!mkr_grow_capacity(*cap, need, elem, &new_cap)) {
+        return MKR_ERR_OOM;
+    }
+    void *p = mkr_reallocarray(*ptr, new_cap, elem);
+    if (p == NULL) {
+        return MKR_ERR_OOM;
+    }
+    *ptr = p;
+    *cap = new_cap;
+    return MKR_OK;
+}
+
+mkr_status_t
 mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n)
 {
     if (n == 0) {

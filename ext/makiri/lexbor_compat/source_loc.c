@@ -1,5 +1,6 @@
 #include "compat.h"
 #include "compat_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <lexbor/html/parser.h>
 #include <lexbor/html/tokenizer.h>
@@ -54,7 +55,7 @@ mkr_lines_build(const lxb_char_t *src, size_t len)
         return NULL;
     }
     t->count  = nl + 1;
-    t->starts = malloc(t->count * sizeof(*t->starts));
+    t->starts = mkr_reallocarray(NULL, t->count, sizeof(*t->starts));
     if (t->starts == NULL) {
         free(t);
         return NULL;
@@ -168,18 +169,16 @@ mkr_pos_record(mkr_pos_recorder_t *rec, lxb_html_token_t *token)
     }
 
     if (rec->count == rec->cap) {
-        size_t ncap = (rec->cap == 0) ? 64 : rec->cap * 2;
-        if (ncap > MKR_POS_MAX_TOKENS) {
+        /* Fail closed before the geometric grow can exceed the defensive cap. */
+        if (rec->count >= MKR_POS_MAX_TOKENS) {
             rec->overflow = 1;
             return;
         }
-        mkr_pos_entry_t *p = realloc(rec->items, ncap * sizeof(*p));
-        if (p == NULL) {
+        if (mkr_grow_reserve((void **)&rec->items, &rec->cap,
+                             rec->count + 1, sizeof(*rec->items)) != MKR_OK) {
             rec->overflow = 1; /* fail closed: stop recording */
             return;
         }
-        rec->items = p;
-        rec->cap   = ncap;
     }
 
     rec->items[rec->count].tag_id = token->tag_id;

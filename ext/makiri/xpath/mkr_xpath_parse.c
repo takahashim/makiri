@@ -1,4 +1,5 @@
 #include "mkr_xpath_internal.h"
+#include "../core/mkr_safe.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -111,15 +112,13 @@ static int
 push_step(mkr_parser_t *P, mkr_step_t **steps, size_t *n, size_t *cap, mkr_step_t s)
 {
   if (mkr_limit_check_steps(P->limits, *n + 1, P->err) != 0) return -1;
-  if (*n == *cap) {
-    size_t nc = (*cap == 0) ? 4 : (*cap * 2);
-    mkr_step_t *p = realloc(*steps, nc * sizeof(*p));
-    if (p == NULL) {
+  {
+    mkr_step_t *steps_p = *steps;
+    if (mkr_grow_reserve((void **)&steps_p, cap, *n + 1, sizeof(*steps_p)) != MKR_OK) {
       mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory growing step array");
       return -1;
     }
-    *steps = p;
-    *cap = nc;
+    *steps = steps_p;
   }
   (*steps)[(*n)++] = s;
   return 0;
@@ -223,17 +222,13 @@ parse_predicates(mkr_parser_t *P, mkr_node_t ***preds, size_t *npreds)
       mkr_node_free(e);
       return -1;
     }
-    if (*npreds == cap) {
-      size_t nc = cap ? cap * 2 : 4;
-      mkr_node_t **np = realloc(*preds, nc * sizeof(*np));
-      if (np == NULL) {
-        mkr_node_free(e);
-        mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory growing predicate array");
-        return -1;
-      }
-      *preds = np;
-      cap = nc;
+    mkr_node_t **preds_p = *preds;
+    if (mkr_grow_reserve((void **)&preds_p, &cap, *npreds + 1, sizeof(*preds_p)) != MKR_OK) {
+      mkr_node_free(e);
+      mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory growing predicate array");
+      return -1;
     }
+    *preds = preds_p;
     (*preds)[(*npreds)++] = e;
   }
   return 0;
@@ -429,16 +424,11 @@ parse_function_call(mkr_parser_t *P, mkr_token_t name_tok)
       if (mkr_limit_check_func_args(P->limits, n->u.fncall.nargs + 1, P->err) != 0) goto fail;
       mkr_node_t *arg = parse_expr(P);
       if (arg == NULL) goto fail;
-      if (n->u.fncall.nargs == cap) {
-        size_t nc = cap ? cap * 2 : 4;
-        mkr_node_t **na = realloc(n->u.fncall.args, nc * sizeof(*na));
-        if (na == NULL) {
-          mkr_node_free(arg);
-          mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory growing function args array");
-          goto fail;
-        }
-        n->u.fncall.args = na;
-        cap = nc;
+      if (mkr_grow_reserve((void **)&n->u.fncall.args, &cap,
+                           n->u.fncall.nargs + 1, sizeof(*n->u.fncall.args)) != MKR_OK) {
+        mkr_node_free(arg);
+        mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory growing function args array");
+        goto fail;
       }
       n->u.fncall.args[n->u.fncall.nargs++] = arg;
       if (TOK(P).kind != MKR_TK_COMMA) break;

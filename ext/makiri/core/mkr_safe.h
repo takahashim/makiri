@@ -70,6 +70,13 @@ mkr_grow_capacity(size_t cap, size_t need, size_t elem, size_t *new_cap)
  * it). count == 0 frees and returns NULL. */
 void *mkr_reallocarray(void *ptr, size_t count, size_t elem);
 
+/* Ensure the array at *ptr (currently *cap elements of `elem` bytes) can hold
+ * at least `need` elements, growing geometrically and overflow-safely. On
+ * success updates *ptr / *cap and returns MKR_OK; on overflow/allocation failure
+ * returns MKR_ERR_OOM with *ptr / *cap unchanged. Replaces the hand-rolled
+ * `cap *= 2; realloc(p, cap * sizeof(T))` pattern in one call. */
+mkr_status_t mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem);
+
 /* ---------------------------------------------------------------- */
 /* mkr_buf_t — owned, growable, optionally capped byte buffer        */
 /* ---------------------------------------------------------------- */

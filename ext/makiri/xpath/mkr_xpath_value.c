@@ -31,15 +31,10 @@ mkr_nodeset_push(mkr_nodeset_t *ns, lxb_dom_node_t *node,
   if (limits != NULL && mkr_limit_check_nodeset_size(limits, ns->count + 1, err) != 0) {
     return -1;
   }
-  if (ns->count == ns->capacity) {
-    size_t newcap = ns->capacity ? ns->capacity * 2 : 8;
-    lxb_dom_node_t **p = mkr_reallocarray(ns->items, newcap, sizeof(*p));
-    if (p == NULL) {
-      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory growing node-set");
-      return -1;
-    }
-    ns->items    = p;
-    ns->capacity = newcap;
+  if (mkr_grow_reserve((void **)&ns->items, &ns->capacity, ns->count + 1,
+                       sizeof(*ns->items)) != MKR_OK) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory growing node-set");
+    return -1;
   }
   ns->items[ns->count++] = node;
   return 0;
@@ -507,7 +502,10 @@ static int
 order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, uint32_t ord)
 {
   if (idx->cap == 0 || idx->count * 4 >= idx->cap * 3) {
-    size_t new_cap = idx->cap ? idx->cap * 2 : 256;
+    size_t new_cap = 256;
+    if (idx->cap != 0 && !mkr_size_mul(idx->cap, 2, &new_cap)) {
+      return -1; /* overflow */
+    }
     void *new_buckets = calloc(new_cap, sizeof(*idx->buckets));
     if (new_buckets == NULL) return -1;
     /* Rehash. */
@@ -825,16 +823,11 @@ mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
   if (s == NULL) return -1;
   size_t len = strlen(s);
 
-  if (c->count == c->cap) {
-    size_t new_cap = c->cap ? c->cap * 2 : 16;
-    mkr_str_cache_entry_t *p = mkr_reallocarray(c->entries, new_cap, sizeof(*p));
-    if (p == NULL) {
-      free(s);
-      mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in node string cache");
-      return -1;
-    }
-    c->entries = p;
-    c->cap     = new_cap;
+  if (mkr_grow_reserve((void **)&c->entries, &c->cap, c->count + 1,
+                       sizeof(*c->entries)) != MKR_OK) {
+    free(s);
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in node string cache");
+    return -1;
   }
   c->entries[c->count].node = node;
   c->entries[c->count].str  = s;
@@ -842,7 +835,12 @@ mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
 
   /* Grow / build the index, keeping load factor <= 1/2. */
   if (c->bucket_cap == 0 || (c->count + 1) * 2 > c->bucket_cap) {
-    size_t new_bucket_cap = c->bucket_cap ? c->bucket_cap * 2 : 64;
+    size_t new_bucket_cap = 64;
+    if (c->bucket_cap != 0 && !mkr_size_mul(c->bucket_cap, 2, &new_bucket_cap)) {
+      free(s);
+      mkr_err_set(err, MKR_XPATH_ERR_OOM, "node string cache index overflow");
+      return -1;
+    }
     if (mkr_str_cache_reindex(c, new_bucket_cap) != 0) {
       free(s);
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory indexing node string cache");
