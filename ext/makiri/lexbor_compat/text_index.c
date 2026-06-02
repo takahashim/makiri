@@ -170,11 +170,16 @@ mkr_text_idx_build(lxb_dom_node_t *root)
     }
     /* prefix is always allocated (>= 1 entry, prefix[0] == 0) so an empty range
      * [0,0) over a text-free subtree reads prefix[0] rather than NULL. */
-    t->prefix = mkr_callocarray(nslices + 1, sizeof(*t->prefix));
+    size_t pcount;
+    if (!mkr_size_add(nslices, 1, &pcount)) { mkr_text_idx_destroy(t); return NULL; }
+    t->prefix = mkr_callocarray(pcount, sizeof(*t->prefix));
     if (t->prefix == NULL) { mkr_text_idx_destroy(t); return NULL; }
     /* Size the range table for ncont entries at load factor < 3/4. */
     if (ncont > 0) {
-        t->ranges_cap = mkr_tix_pow2_ceil(ncont + (ncont >> 1) + 1);
+        size_t want;
+        if (!mkr_size_add(ncont, ncont >> 1, &want)
+            || !mkr_size_add(want, 1, &want)) { mkr_text_idx_destroy(t); return NULL; }
+        t->ranges_cap = mkr_tix_pow2_ceil(want);
         t->ranges = mkr_callocarray(t->ranges_cap, sizeof(*t->ranges));
         if (t->ranges == NULL) { mkr_text_idx_destroy(t); return NULL; }
     }

@@ -26,6 +26,11 @@ mkr_ruby_str_from_slices(const mkr_borrowed_text_t *slices, size_t n, size_t tot
         memcpy(dst + off, slices[i].ptr, len);
         off += len;
     }
+    /* The slices must fill the buffer exactly; a short sum would leave the tail
+     * of the (uninitialised) Ruby String unwritten. Fail closed. */
+    if (off != total) {
+        rb_raise(mkr_eError, "text slice length inconsistency");
+    }
     return str;
 }
 

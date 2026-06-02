@@ -231,14 +231,19 @@ mkr_vec_free(mkr_vec_t *v)
  *   cannot reach the engine's public API. Internally the engine carries the
  *   freely-constructible mkr_borrowed_text_t instead.
  *
- * Conversions — the only sanctioned edges (promotion is guarded, downgrade is
- * free, and there is no edge that turns raw bytes into text without validating):
- *   promote raw -> valid : ONLY mkr_ruby_checked_text() (bridge) and the
- *                          owned-text builders validate; never a bare cast.
- *   drop the GC anchor   : mkr_text_from_view (ruby_borrowed_text -> valid_text)
- *   downgrade to borrow  : mkr_owned_borrow  (owned_text  -> borrowed_text)
- *                          mkr_valid_borrow  (valid_text  -> borrowed_text)
- *                          mkr_borrowed_text (const char*,len -> borrowed_text)
+ * Conversions — the only sanctioned edges. The single point that actually
+ * VALIDATES raw bytes is mkr_ruby_checked_text() (bridge); everything else only
+ * moves already-valid text between shapes (no edge re-validates, and none turns
+ * raw bytes into text without that one check):
+ *   validate raw -> valid : ONLY mkr_ruby_checked_text() (bridge); never a cast.
+ *   drop the GC anchor    : mkr_text_from_view (ruby_borrowed_text -> valid_text)
+ *   assert valid (no copy) : mkr_borrowed_text (const char*,len -> borrowed_text)
+ *                            — caller asserts the bytes already meet the contract
+ *   downgrade to borrow   : mkr_owned_borrow (owned_text -> borrowed_text)
+ *                           mkr_valid_borrow (valid_text -> borrowed_text)
+ *   copy into owned       : mkr_owned_text_from_borrowed_copy /
+ *                           mkr_owned_text_from_buf_steal — accept only
+ *                           already-asserted-valid text; they copy, not validate.
  */
 
 /* Owned bytes (raw, unchecked). */
