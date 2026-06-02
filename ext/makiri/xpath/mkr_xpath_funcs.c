@@ -633,9 +633,9 @@ fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   size_t s_len = strlen(s), from_len = strlen(from), to_len = strlen(to);
 
   /* `from` code points, and `to` characters as (offset, byte length) spans. */
-  lxb_codepoint_t *from_cp = malloc((from_len + 1) * sizeof(*from_cp));
-  size_t *to_off = malloc((to_len + 1) * sizeof(*to_off));
-  size_t *to_clen = malloc((to_len + 1) * sizeof(*to_clen));
+  lxb_codepoint_t *from_cp = mkr_reallocarray(NULL, from_len + 1, sizeof(*from_cp));
+  size_t *to_off = mkr_reallocarray(NULL, to_len + 1, sizeof(*to_off));
+  size_t *to_clen = mkr_reallocarray(NULL, to_len + 1, sizeof(*to_clen));
   /* Output: capped (a multibyte replacement can expand the result past the
    * limit even when the input is within it, e.g. "a" -> "😀"), grown
    * overflow-safe; append fails closed with LIMIT/OOM. */

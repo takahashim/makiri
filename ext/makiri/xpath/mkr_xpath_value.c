@@ -33,7 +33,7 @@ mkr_nodeset_push(mkr_nodeset_t *ns, lxb_dom_node_t *node,
   }
   if (ns->count == ns->capacity) {
     size_t newcap = ns->capacity ? ns->capacity * 2 : 8;
-    lxb_dom_node_t **p = realloc(ns->items, newcap * sizeof(*p));
+    lxb_dom_node_t **p = mkr_reallocarray(ns->items, newcap, sizeof(*p));
     if (p == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory growing node-set");
       return -1;
@@ -105,7 +105,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
     size_t n = src->u.nodeset.count;
     mkr_nodeset_init(&dst->u.nodeset);
     if (n == 0) return 0;
-    lxb_dom_node_t **items = malloc(n * sizeof(*items));
+    lxb_dom_node_t **items = mkr_reallocarray(NULL, n, sizeof(*items));
     if (items == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning node-set");
       return -1;
@@ -690,7 +690,7 @@ mkr_nodeset_sort_doc_order(mkr_xpath_context_t *ctx, mkr_nodeset_t *ns)
     mkr_xpath_error_clear(&ierr); /* index is best-effort; on OOM we fall through to parent-chain cmp */
   }
 
-  lxb_dom_node_t **tmp = malloc(ns->count * sizeof(*tmp));
+  lxb_dom_node_t **tmp = mkr_reallocarray(NULL, ns->count, sizeof(*tmp));
   if (tmp == NULL) {
     /* Fall back to in-place qsort with parent-chain compare (slow but
      * correct). Should be a very rare path. */
@@ -827,7 +827,7 @@ mkr_get_cached_node_string(mkr_xpath_context_t *ctx,
 
   if (c->count == c->cap) {
     size_t new_cap = c->cap ? c->cap * 2 : 16;
-    mkr_str_cache_entry_t *p = realloc(c->entries, new_cap * sizeof(*p));
+    mkr_str_cache_entry_t *p = mkr_reallocarray(c->entries, new_cap, sizeof(*p));
     if (p == NULL) {
       free(s);
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in node string cache");
