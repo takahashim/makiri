@@ -402,7 +402,7 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
     }
     mkr_owned_text_t text;
     if (mkr_node_string_text_or_fail(v->u.nodeset.items[0], limits, err, &text) != 0) return -1;
-    *out = mkr_borrowed_text_to_number((mkr_borrowed_text_t){ text.ptr, text.len });
+    *out = mkr_borrowed_text_to_number(mkr_owned_borrow(text));
     mkr_owned_text_clear(&text);
     return 0;
   }
@@ -436,12 +436,12 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
   case MKR_XPATH_TYPE_BOOLEAN:
     return v->u.boolean ? 1.0 : 0.0;
   case MKR_XPATH_TYPE_STRING:
-    return mkr_borrowed_text_to_number((mkr_borrowed_text_t){ v->u.string.ptr, v->u.string.len });
+    return mkr_borrowed_text_to_number(mkr_owned_borrow(v->u.string));
   case MKR_XPATH_TYPE_NODESET: {
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
     char *s = mkr_build_node_string_value_unchecked(v->u.nodeset.items[0]);
-    double d = mkr_borrowed_text_to_number((mkr_borrowed_text_t){ s, 0 }); /* len advisory; NUL-terminated */
+    double d = mkr_borrowed_text_to_number(mkr_borrowed_text(s, 0)); /* len advisory; NUL-terminated */
     free(s);
     return d;
   }
@@ -916,7 +916,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
     mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_get_cached_node_text: bad args");
     return -1;
   }
-  *out = (mkr_borrowed_text_t){ NULL, 0 };
+  *out = mkr_borrowed_text(NULL, 0);
   /* Contract: ctx is non-NULL when called from the evaluator (the only
    * intended caller). A NULL ctx is a programming error; surface it. */
   mkr_str_cache_t *c = mkr_ctx_str_cache(ctx);
@@ -933,7 +933,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
     while (c->buckets[j] != 0) {
       mkr_str_cache_entry_t *e = &c->entries[c->buckets[j] - 1];
       if (e->node == node) {
-        *out = (mkr_borrowed_text_t){ e->str, e->len };
+        *out = mkr_borrowed_text(e->str, e->len);
         return 0;
       }
       j = (j + 1) & mask;
@@ -976,7 +976,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
   mkr_str_cache_index_put(c, c->count);
   c->count++;
 
-  *out = (mkr_borrowed_text_t){ text.ptr, text.len };
+  *out = mkr_owned_borrow(text);
   return 0;
 }
 

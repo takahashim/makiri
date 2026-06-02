@@ -345,7 +345,7 @@ int
 mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix_t, mkr_valid_text_t uri_t)
 {
   if (ctx == NULL || prefix_t.ptr == NULL || uri_t.ptr == NULL) return -1;
-  mkr_borrowed_text_t prefix = { prefix_t.ptr, prefix_t.len };
+  mkr_borrowed_text_t prefix = mkr_valid_borrow(prefix_t);
   /* Replace if prefix already registered. */
   for (size_t i = 0; i < ctx->ns_count; ++i) {
     if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), prefix)) {
@@ -378,7 +378,7 @@ int
 mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t name_t, mkr_valid_text_t value_t)
 {
   if (ctx == NULL || name_t.ptr == NULL) return -1;
-  mkr_borrowed_text_t name = { name_t.ptr, name_t.len };
+  mkr_borrowed_text_t name = mkr_valid_borrow(name_t);
   const char *value     = value_t.ptr ? value_t.ptr : "";
   size_t      value_len = value_t.ptr ? value_t.len : 0;
   /* Phase 1: only unprefixed string variables. */
@@ -417,7 +417,7 @@ mkr_ctx_lookup_ns(mkr_xpath_context_t *ctx, const char *prefix,
 {
   if (out_uri_len != NULL) *out_uri_len = 0;
   if (ctx == NULL || prefix == NULL) return NULL;
-  mkr_borrowed_text_t want = { prefix, prefix_len };
+  mkr_borrowed_text_t want = mkr_borrowed_text(prefix, prefix_len);
   for (size_t i = 0; i < ctx->ns_count; ++i) {
     if (mkr_text_eq(mkr_owned_borrow(ctx->ns[i].prefix), want)) {
       if (out_uri_len != NULL) *out_uri_len = ctx->ns[i].uri.len;
@@ -432,10 +432,10 @@ mkr_ctx_lookup_variable_text(mkr_xpath_context_t *ctx, const char *prefix,
                              size_t prefix_len, const char *name,
                              size_t name_len, mkr_borrowed_text_t *out)
 {
-  if (out != NULL) *out = (mkr_borrowed_text_t){ NULL, 0 };
+  if (out != NULL) *out = mkr_borrowed_text(NULL, 0);
   if (ctx == NULL || name == NULL || out == NULL) return 0;
-  mkr_borrowed_text_t want_prefix = { prefix, prefix_len };
-  mkr_borrowed_text_t want_name   = { name, name_len };
+  mkr_borrowed_text_t want_prefix = mkr_borrowed_text(prefix, prefix_len);
+  mkr_borrowed_text_t want_name   = mkr_borrowed_text(name, name_len);
   for (size_t i = 0; i < ctx->vars_count; ++i) {
     int prefix_match = (prefix == NULL)
         ? (ctx->vars[i].prefix.ptr == NULL)

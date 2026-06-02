@@ -31,12 +31,12 @@ static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 static mkr_borrowed_text_t
 node_ns_text(lxb_dom_node_t *node, lxb_dom_document_t *doc)
 {
-  if (node->ns == LXB_NS__UNDEF) return (mkr_borrowed_text_t){ "", 0 };
-  if (doc == NULL || doc->ns == NULL) return (mkr_borrowed_text_t){ "", 0 };
+  if (node->ns == LXB_NS__UNDEF) return mkr_borrowed_text("", 0);
+  if (doc == NULL || doc->ns == NULL) return mkr_borrowed_text("", 0);
   size_t len = 0;
   const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
-  return uri ? (mkr_borrowed_text_t){ (const char *)uri, len }
-             : (mkr_borrowed_text_t){ "", 0 };
+  return uri ? mkr_borrowed_text((const char *)uri, len)
+             : mkr_borrowed_text("", 0);
 }
 
 static int
@@ -73,7 +73,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
       size_t nlen = 0;
       const lxb_char_t *nm = lxb_dom_node_name(node, &nlen);
       return mkr_text_eq(mkr_owned_borrow(test->pi_target),
-                         (mkr_borrowed_text_t){ (const char *)nm, nlen });
+                         mkr_borrowed_text((const char *)nm, nlen));
     }
   case MKR_NT_WILDCARD: {
     if (axis == MKR_AXIS_NAMESPACE)
@@ -125,7 +125,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     if (got == NULL) return 0;
     if (test->local.ptr == NULL) return 0;
     if (!mkr_text_eq(mkr_owned_borrow(test->local),
-                     (mkr_borrowed_text_t){ (const char *)got, got_len })) return 0;
+                     mkr_borrowed_text((const char *)got, got_len))) return 0;
 
     /* Namespace check (see internal.h §2–§4).
      *   - Prefixed test: the node's namespace URI must equal the URI bound to
@@ -863,7 +863,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
         mkr_owned_text_clear(&target); return -1;
       }
-      if (mkr_text_eq(s, (mkr_borrowed_text_t){ target.ptr, target.len }) == want_eq) {
+      if (mkr_text_eq(s, mkr_owned_borrow(target)) == want_eq) {
         mkr_owned_text_clear(&target); *out_result = 1; return 0;
       }
     }
@@ -889,8 +889,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
   mkr_owned_text_t ls, rs;
   if (mkr_val_to_owned_text_or_fail(l, L, err, &ls) != 0) return -1;
   if (mkr_val_to_owned_text_or_fail(r, L, err, &rs) != 0) { mkr_owned_text_clear(&ls); return -1; }
-  int eq = mkr_text_eq((mkr_borrowed_text_t){ ls.ptr, ls.len },
-                       (mkr_borrowed_text_t){ rs.ptr, rs.len });
+  int eq = mkr_text_eq(mkr_owned_borrow(ls), mkr_owned_borrow(rs));
   mkr_owned_text_clear(&ls);
   mkr_owned_text_clear(&rs);
   *out_result = want_eq ? eq : !eq;

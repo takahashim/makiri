@@ -259,5 +259,5 @@ int
 mkr_tok_is_word_len(const mkr_token_t *t, const char *word, size_t word_len)
 {
   if (t->kind != MKR_TK_NAME) return 0;
-  return mkr_text_eq(t->text, (mkr_borrowed_text_t){ word, word_len });
+  return mkr_text_eq(t->text, mkr_borrowed_text(word, word_len));
 }
