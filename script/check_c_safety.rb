@@ -68,6 +68,11 @@ def load_config
   YAML.safe_load(ALLOWLIST_PATH.read, permitted_classes: [], aliases: false) || {}
 end
 
+# ignore_paths entries each carry a `path` glob, a `reason`, and an OPTIONAL
+# `rule`. Without `rule` the whole file is exempt from every check (e.g. the
+# core/ primitives layer). With `rule` only that one check is exempt in the
+# matching files (e.g. ruby_string_ptr inside the bridge/ boundary), so the same
+# pattern anywhere else still trips the lint.
 def load_ignore_paths(raw)
   entries = raw.fetch("ignore_paths", [])
   unless entries.is_a?(Array)
@@ -81,21 +86,33 @@ def load_ignore_paths(raw)
         abort "invalid ignore_paths entry ##{idx + 1}: missing #{key}"
       end
     end
+    rule = entry["rule"]
+    if rule && RULES.none? { |r| r.id == rule }
+      abort "invalid ignore_paths entry ##{idx + 1}: unknown rule '#{rule}'"
+    end
   end
-  entries.map { |entry| entry["path"] }
+  entries
 end
 
-def ignored_path?(path, ignore_paths)
-  ignore_paths.any? do |pattern|
-    File.fnmatch?(pattern, path, File::FNM_PATHNAME) ||
-      File.fnmatch?(pattern, path, File::FNM_PATHNAME | File::FNM_EXTGLOB)
-  end
+def path_matches?(pattern, path)
+  File.fnmatch?(pattern, path, File::FNM_PATHNAME) ||
+    File.fnmatch?(pattern, path, File::FNM_PATHNAME | File::FNM_EXTGLOB)
 end
 
-def target_files(ignore_paths)
+# Whole-file ignore (no `rule`): the file is not scanned at all.
+def fully_ignored?(path, ignores)
+  ignores.any? { |e| e["rule"].nil? && path_matches?(e["path"], path) }
+end
+
+# (path, rule) ignore: drop just that rule's findings in matching files.
+def rule_ignored?(path, rule_id, ignores)
+  ignores.any? { |e| e["rule"] == rule_id && path_matches?(e["path"], path) }
+end
+
+def target_files(ignores)
   Dir.glob(ROOT.join("ext/makiri/**/*.{c,h}").to_s).sort.reject do |file|
     rel = Pathname.new(file).relative_path_from(ROOT).to_s
-    ignored_path?(rel, ignore_paths)
+    fully_ignored?(rel, ignores)
   end
 end
 
@@ -107,14 +124,15 @@ def code_line?(line)
   true
 end
 
-def scan_findings(ignore_paths)
-  target_files(ignore_paths).flat_map do |file|
+def scan_findings(ignores)
+  target_files(ignores).flat_map do |file|
     rel = Pathname.new(file).relative_path_from(ROOT).to_s
     File.readlines(file).flat_map.with_index(1) do |line, lineno|
       next [] unless code_line?(line)
 
       RULES.filter_map do |rule|
         next unless line.match?(rule.regex)
+        next if rule_ignored?(rel, rule.id, ignores)
 
         Finding.new(path: rel, line: lineno, rule: rule.id, text: line.strip)
       end
@@ -179,8 +197,8 @@ OptionParser.new do |opts|
 end.parse!
 
 config = load_config
-ignore_paths = load_ignore_paths(config)
-findings = scan_findings(ignore_paths)
+ignores = load_ignore_paths(config)
+findings = scan_findings(ignores)
 
 if options[:dump_baseline]
   dump_baseline(findings)
