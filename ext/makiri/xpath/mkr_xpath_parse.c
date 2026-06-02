@@ -33,6 +33,17 @@ P_strndup(mkr_parser_t *P, const char *s, size_t n)
   return p;
 }
 
+/* strndup into a node-test name slot, recording its byte length (0 on failure —
+ * the parse then aborts via P->err). Lets node_principal_match compare names
+ * without a per-node strlen. */
+static char *
+P_strndup_len(mkr_parser_t *P, const char *s, size_t n, size_t *out_len)
+{
+  char *p = P_strndup(P, s, n);
+  *out_len = (p != NULL) ? n : 0;
+  return p;
+}
+
 static int
 P_advance(mkr_parser_t *P)
 {
@@ -164,7 +175,7 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
         else /* processing-instruction */ {
           out->kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            out->pi_target = P_strndup(P,TOK(P).start, TOK(P).len);
+            out->pi_target = P_strndup_len(P, TOK(P).start, TOK(P).len, &out->pi_target_len);
             if (P_advance(P) != 0) return -1;
           }
         }
@@ -173,12 +184,12 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       }
       /* Not followed by '(': it's an NCName name test. */
       out->kind  = MKR_NT_NAME;
-      out->local = P_strndup(P,saved.start, saved.len);
+      out->local = P_strndup_len(P, saved.start, saved.len, &out->local_len);
       return 0;
     }
     /* Plain NCName: check for ':' '*' form. */
     out->kind  = MKR_NT_NAME;
-    out->local = P_strndup(P,s, n);
+    out->local = P_strndup_len(P, s, n, &out->local_len);
     return P_advance(P);
   }
 
@@ -194,7 +205,7 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       out->kind = MKR_NT_WILDCARD;
     } else {
       out->kind  = MKR_NT_NAME;
-      out->local = P_strndup(P, s + colon + 1, n - colon - 1);
+      out->local = P_strndup_len(P, s + colon + 1, n - colon - 1, &out->local_len);
     }
     return P_advance(P);
   }
@@ -283,14 +294,14 @@ parse_step(mkr_parser_t *P, mkr_step_t *out)
         else {
           out->test.kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
-            out->test.pi_target = P_strndup(P,TOK(P).start, TOK(P).len);
+            out->test.pi_target = P_strndup_len(P, TOK(P).start, TOK(P).len, &out->test.pi_target_len);
             if (P_advance(P) != 0) return -1;
           }
         }
         if (P_eat(P, MKR_TK_RPAREN, "')' after node type test") != 0) return -1;
       } else {
         out->test.kind  = MKR_NT_NAME;
-        out->test.local = P_strndup(P,saved.start, saved.len);
+        out->test.local = P_strndup_len(P, saved.start, saved.len, &out->test.local_len);
       }
       return parse_predicates(P, &out->predicates, &out->npredicates);
     }

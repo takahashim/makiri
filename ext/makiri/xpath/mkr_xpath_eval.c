@@ -77,8 +77,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     {
       size_t nlen = 0;
       const lxb_char_t *nm = lxb_dom_node_name(node, &nlen);
-      size_t tlen = strlen(test->pi_target);
-      return name_eq_lxb(test->pi_target, tlen, nm, nlen);
+      return name_eq_lxb(test->pi_target, test->pi_target_len, nm, nlen);
     }
   case MKR_NT_WILDCARD: {
     if (axis == MKR_AXIS_NAMESPACE)
@@ -128,7 +127,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     if (got == NULL) return 0;
     const char *want = test->local;
     if (want == NULL) return 0;
-    if (!name_eq_lxb(want, strlen(want), got, got_len)) return 0;
+    if (!name_eq_lxb(want, test->local_len, got, got_len)) return 0;
 
     /* Namespace check (see internal.h §2–§4).
      *   - Prefixed test: the node's namespace URI must equal the URI bound to
@@ -336,7 +335,7 @@ mkr_match_attr_step(const mkr_node_t *n, const char **name, size_t *name_len)
     return 0;
   }
   *name = s->test.local;
-  *name_len = strlen(s->test.local);
+  *name_len = s->test.local_len;
   return 1;
 }
 
@@ -633,7 +632,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   }
   lxb_tag_id_t tag = lxb_tag_id_by_name(doc->tags,
                                         (const lxb_char_t *)step->test.local,
-                                        strlen(step->test.local));
+                                        step->test.local_len);
   /* The index covers only Lexbor's static tag-id range; a custom element's tag
    * id is a (huge) pointer value and is not indexed. For such a name, fall back
    * to the tree walk so those elements are still found. */

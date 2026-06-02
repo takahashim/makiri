@@ -15,8 +15,8 @@ allowlist:
   # --- strlen on engine-owned, NUL-free C strings (never raw Ruby input) ---
   - path: ext/makiri/xpath/mkr_xpath_eval.c
     rule: direct_strlen
-    max: 4
-    reason: strlen on engine-owned NUL-terminated strings; sources are no-NUL by the strict boundary or HTML5 tokenization, and node string-values are built length-based.
+    max: 1
+    reason: strlen on an AST string literal (the [@name='lit'] predicate recognizer); the source is the validated, NUL-free XPath expression and this runs once per predicate setup, not per node.
   - path: ext/makiri/xpath/mkr_xpath_funcs.c
     rule: direct_strlen
     max: 11

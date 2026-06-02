@@ -191,6 +191,8 @@ typedef struct {
   char *prefix;       /* may be NULL */
   char *local;        /* may be NULL for non-name tests */
   char *pi_target;    /* for processing-instruction("target"), may be NULL */
+  size_t local_len;     /* byte length of local (0 when local == NULL) */
+  size_t pi_target_len; /* byte length of pi_target (0 when pi_target == NULL) */
 } mkr_nodetest_t;
 
 typedef enum {
