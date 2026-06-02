@@ -324,6 +324,13 @@ RSpec.describe "Makiri XPath" do
       expect { ctx.register_variable("v", "a\u0000b") }
         .to raise_error(Makiri::Error)
     end
+
+    it "caps the number of registered namespaces (fail closed)" do
+      ctx = Makiri::XPathContext.new(doc)
+      expect do
+        70_000.times { |i| ctx.register_namespace("p#{i}", "urn:#{i}") }
+      end.to raise_error(Makiri::Error)
+    end
   end
 
   describe "namespace matching (strict default / lax opt-in)" do

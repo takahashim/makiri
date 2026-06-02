@@ -2,6 +2,7 @@
 #include "mkr_xpath_internal.h"
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -336,10 +337,17 @@ mkr_xpath_context_free(mkr_xpath_context_t *ctx)
   free(ctx);
 }
 
+/* Per-context registration caps. These bound an abusive Ruby loop that calls
+ * register_namespace / register_variable without limit; far above any real use. */
+#define MKR_MAX_NAMESPACES ((size_t)65536)
+#define MKR_MAX_VARIABLES  ((size_t)65536)
+
 static int
 mkr_grow(void **base, size_t *cap, size_t elem)
 {
+  if (*cap != 0 && *cap > SIZE_MAX / 2) return -1; /* doubling would overflow */
   size_t new_cap = (*cap == 0) ? 4 : (*cap * 2);
+  if (elem != 0 && new_cap > SIZE_MAX / elem) return -1; /* size would overflow */
   void *p = realloc(*base, new_cap * elem);
   if (p == NULL) return -1;
   *base = p;
@@ -361,6 +369,7 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, const char *prefix, const char *
       return 0;
     }
   }
+  if (ctx->ns_count >= MKR_MAX_NAMESPACES) return -1; /* registration cap */
   if (ctx->ns_count == ctx->ns_cap) {
     if (mkr_grow((void **)&ctx->ns, &ctx->ns_cap, sizeof(*ctx->ns)) != 0) return -1;
   }
@@ -389,6 +398,7 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, const char *name, c
       return 0;
     }
   }
+  if (ctx->vars_count >= MKR_MAX_VARIABLES) return -1; /* registration cap */
   if (ctx->vars_count == ctx->vars_cap) {
     if (mkr_grow((void **)&ctx->vars, &ctx->vars_cap, sizeof(*ctx->vars)) != 0) return -1;
   }
