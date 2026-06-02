@@ -149,6 +149,11 @@ def finding_key(finding)
 end
 
 def dump_baseline(findings)
+  puts "ignore_paths:"
+  puts "  - path: ext/makiri/core/**"
+  puts "    reason: Safe allocation and buffer helper internals intentionally contain primitive allocation patterns."
+  puts ""
+
   puts "allowlist:"
   findings.group_by { |f| [f.path, f.rule] }.sort.each do |(path, rule), group|
     puts "  - path: #{path}"
