@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_to_rubygems:
-        description: "Push the built gems to RubyGems (requires the RUBYGEMS_API_KEY secret)"
+        description: "Push the built gems to RubyGems (via Trusted Publishing / OIDC)"
         type: boolean
         default: false
 
@@ -197,12 +197,19 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" dist/*.gem --repo "${GITHUB_REPOSITORY}" --clobber
 
   # --- optional: publish to RubyGems (manual, opt-in, never on a tag push) ----
+  # Auth is RubyGems Trusted Publishing (OIDC): no stored API key, short-lived
+  # token, MFA-compatible. Configure a matching Trusted Publisher on RubyGems.org
+  # for this gem: owner=takahashim, repo=makiri, workflow=release.yml, and set its
+  # Environment to "rubygems" (matching `environment:` below).
   publish:
     name: Publish to RubyGems
     needs: [source-gem, native-gem]
     if: github.event_name == 'workflow_dispatch' && inputs.publish_to_rubygems
     runs-on: ubuntu-latest
-    environment: rubygems   # add a protection rule here for a manual approval gate
+    environment: rubygems   # add a Required-reviewers protection rule for an approval gate
+    permissions:
+      contents: read
+      id-token: write       # OIDC identity token for Trusted Publishing
     steps:
       - uses: ruby/setup-ruby@v1
         with:
@@ -212,11 +219,10 @@ jobs:
           pattern: gem-*
           merge-multiple: true
           path: dist
+      - name: Configure RubyGems credentials (OIDC trusted publishing)
+        uses: rubygems/configure-rubygems-credentials@762a4b77c3300434bb57c7ce80b20e36231927aa # v2.0.0
       - name: gem push
-        env:
-          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
         run: |
-          test -n "$GEM_HOST_API_KEY" || { echo "RUBYGEMS_API_KEY secret is not set"; exit 1; }
           for g in dist/*.gem; do
             echo "Pushing $g"
             gem push "$g"
