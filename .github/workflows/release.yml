@@ -58,6 +58,11 @@ jobs:
       fail-fast: false
       matrix:
         ruby: ["3.2", "3.3", "3.4", "4.0"]
+        platform:
+        - x86_64-linux
+        - aarch64-linux
+        - x86_64-darwin
+        - arm64-darwin
         include:
           - { platform: x86_64-linux,  os: ubuntu-latest }
           - { platform: aarch64-linux, os: ubuntu-24.04-arm }
@@ -114,11 +119,19 @@ jobs:
   native-gem:
     name: Native gem ${{ matrix.platform }}
     needs: compile
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        platform: [x86_64-linux, aarch64-linux, x86_64-darwin, arm64-darwin]
+        include:
+        - platform: x86_64-linux
+          os: ubuntu-latest
+        - platform: aarch64-linux
+          os: ubuntu-24.04-arm
+        - platform: x86_64-darwin
+          os: macos-13
+        - platform: arm64-darwin
+          os: macos-14
     steps:
       - uses: actions/checkout@v6
         with:
@@ -136,7 +149,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p lib/makiri
+          echo "Downloaded artifacts:"
+          find staged -maxdepth 3 -type f -print || true
+          if ! find staged -mindepth 2 -maxdepth 2 -name 'makiri.*' | grep -q .; then
+            echo "::error::No makiri binaries were downloaded for ${{ matrix.platform }}"
+            exit 1
+          fi
           cp -r staged/* lib/makiri/
+          echo "Staged binaries:"
           find lib/makiri -maxdepth 2 -name 'makiri.*' -print
       - name: Build the native gem
         run: ruby script/build_native_gem.rb "${{ matrix.platform }}"
