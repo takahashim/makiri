@@ -1,0 +1,88 @@
+#include "mkr_alloc.h"
+
+void *
+mkr_reallocarray(void *ptr, size_t count, size_t elem)
+{
+    if (count == 0) {
+        free(ptr);
+        return NULL;
+    }
+    size_t bytes;
+    if (!mkr_size_mul(count, elem, &bytes)) {
+        return NULL; /* overflow: leave ptr unchanged */
+    }
+    return realloc(ptr, bytes);
+}
+
+void *
+mkr_callocarray(size_t count, size_t elem)
+{
+    if (count == 0 || elem == 0) {
+        return NULL;
+    }
+    size_t bytes;
+    if (!mkr_size_mul(count, elem, &bytes)) {
+        return NULL; /* overflow */
+    }
+    return calloc(count, elem); /* 2-arg calloc is itself overflow-safe */
+}
+
+char *
+mkr_str_alloc(size_t n)
+{
+    size_t total;
+    if (!mkr_size_add(n, 1, &total)) {
+        return NULL; /* n + 1 overflow */
+    }
+    char *p = malloc(total);
+    if (p == NULL) {
+        return NULL;
+    }
+    p[n] = '\0';
+    return p;
+}
+
+char *
+mkr_strndup(const char *s, size_t n)
+{
+    if (n > 0 && s == NULL) {
+        return NULL; /* fail closed: would otherwise return uninitialised bytes */
+    }
+    char *p = mkr_str_alloc(n);
+    if (p == NULL) {
+        return NULL;
+    }
+    if (n > 0) {
+        memcpy(p, s, n);
+    }
+    p[n] = '\0';
+    return p;
+}
+
+char *
+mkr_strdup(const char *s)
+{
+    if (s == NULL) {
+        return NULL;
+    }
+    return mkr_strndup(s, strlen(s));
+}
+
+mkr_status_t
+mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem)
+{
+    if (need <= *cap) {
+        return MKR_OK;
+    }
+    size_t new_cap;
+    if (!mkr_grow_capacity(*cap, need, elem, &new_cap)) {
+        return MKR_ERR_OOM;
+    }
+    void *p = mkr_reallocarray(*ptr, new_cap, elem);
+    if (p == NULL) {
+        return MKR_ERR_OOM;
+    }
+    *ptr = p;
+    *cap = new_cap;
+    return MKR_OK;
+}
