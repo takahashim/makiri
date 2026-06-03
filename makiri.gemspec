@@ -26,11 +26,15 @@ Gem::Specification.new do |spec|
   spec.metadata["changelog_uri"]     = "#{spec.homepage}/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
+  # `--recurse-submodules` pulls in the vendored Lexbor sources (a git submodule),
+  # which `git ls-files` alone reports as a single gitlink entry. They are
+  # required to compile the extension from a source gem, and to build the
+  # precompiled (native) gems on CI.
   gemspec = File.basename(__FILE__)
-  spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
+  spec.files = IO.popen(%w[git ls-files -z --recurse-submodules], chdir: __dir__, err: IO::NULL) do |ls|
     ls.readlines("\x0", chomp: true).reject do |f|
       (f == gemspec) ||
-        f.start_with?(*%w[bin/ Gemfile .gitignore .rspec spec/ test/ bench/])
+        f.start_with?(*%w[bin/ Gemfile .gitignore .rspec spec/ test/ bench/ docs/ AGENTS.md])
     end
   end
   spec.bindir            = "exe"
