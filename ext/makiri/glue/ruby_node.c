@@ -110,10 +110,10 @@ mkr_node_name(VALUE self)
     switch (node->type) {
     case LXB_DOM_NODE_TYPE_ELEMENT:
         name = lxb_dom_element_qualified_name(lxb_dom_interface_element(node), &len);
-        return name ? rb_utf8_str_new((const char *)name, len) : rb_str_new("", 0);
+        return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)name, len));
     case LXB_DOM_NODE_TYPE_ATTRIBUTE:
         name = lxb_dom_attr_qualified_name(lxb_dom_interface_attr(node), &len);
-        return name ? rb_utf8_str_new((const char *)name, len) : rb_str_new("", 0);
+        return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)name, len));
     case LXB_DOM_NODE_TYPE_TEXT:
         return rb_utf8_str_new_cstr("text");
     case LXB_DOM_NODE_TYPE_COMMENT:
@@ -124,7 +124,7 @@ mkr_node_name(VALUE self)
         return rb_utf8_str_new_cstr("document");
     default:
         name = lxb_dom_node_name(node, &len);
-        return name ? rb_utf8_str_new((const char *)name, len) : rb_str_new("", 0);
+        return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)name, len));
     }
 }
 
@@ -155,7 +155,9 @@ mkr_doctype_id(VALUE self, int system)
     size_t len = 0;
     const lxb_char_t *id = system ? lxb_dom_document_type_system_id(dt, &len)
                                   : lxb_dom_document_type_public_id(dt, &len);
-    return (id == NULL || len == 0) ? Qnil : rb_utf8_str_new((const char *)id, len);
+    return (id == NULL || len == 0)
+             ? Qnil
+             : mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)id, len));
 }
 
 static VALUE
@@ -422,7 +424,7 @@ mkr_node_aref(VALUE self, VALUE rb_name)
     size_t vlen = 0;
     const lxb_char_t *val = lxb_dom_element_get_attribute(el, nm, nlen, &vlen);
     RB_GC_GUARD(nv.value);
-    return val ? rb_utf8_str_new((const char *)val, vlen) : rb_utf8_str_new("", 0);
+    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)val, vlen));
 }
 
 /* node.key?(name) -> true/false */
@@ -454,8 +456,8 @@ mkr_node_keys(VALUE self)
     while (attr != NULL) {
         size_t len = 0;
         const lxb_char_t *name = lxb_dom_attr_qualified_name(attr, &len);
-        rb_ary_push(ary, name ? rb_utf8_str_new((const char *)name, len)
-                              : rb_str_new("", 0));
+        rb_ary_push(ary, mkr_ruby_str_from_borrowed(
+                             mkr_borrowed_text((const char *)name, len)));
         attr = lxb_dom_element_next_attribute(attr);
     }
     return ary;
@@ -475,8 +477,8 @@ mkr_node_values(VALUE self)
     while (attr != NULL) {
         size_t len = 0;
         const lxb_char_t *val = lxb_dom_attr_value(attr, &len);
-        rb_ary_push(ary, val ? rb_utf8_str_new((const char *)val, len)
-                             : rb_str_new("", 0));
+        rb_ary_push(ary, mkr_ruby_str_from_borrowed(
+                             mkr_borrowed_text((const char *)val, len)));
         attr = lxb_dom_element_next_attribute(attr);
     }
     return ary;
@@ -513,8 +515,7 @@ mkr_node_value(VALUE self)
         size_t len = 0;
         const lxb_char_t *val =
             lxb_dom_attr_value(lxb_dom_interface_attr(node), &len);
-        return val ? rb_utf8_str_new((const char *)val, len)
-                   : rb_utf8_str_new("", 0);
+        return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)val, len));
     }
     return mkr_node_content(self);
 }

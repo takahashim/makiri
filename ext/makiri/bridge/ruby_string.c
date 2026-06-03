@@ -34,6 +34,17 @@ mkr_ruby_str_from_slices(const mkr_borrowed_text_t *slices, size_t n, size_t tot
     return str;
 }
 
+VALUE
+mkr_ruby_str_from_borrowed(mkr_borrowed_text_t text)
+{
+    /* rb_utf8_str_new copies, so the borrow need not outlive this call. NULL is
+     * the "absent" sentinel -> "" regardless of len (never read off the "" lit). */
+    if (text.ptr == NULL) {
+        return rb_utf8_str_new("", 0);
+    }
+    return rb_utf8_str_new(text.ptr, (long)text.len);
+}
+
 void
 mkr_check_text(VALUE str, const char *what)
 {

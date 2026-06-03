@@ -69,6 +69,12 @@ mkr_valid_text_t mkr_valid_text_from_view(mkr_ruby_borrowed_text_t v);
 VALUE mkr_ruby_str_from_slices(const mkr_borrowed_text_t *slices, size_t n,
                                size_t total);
 
+/* Build a UTF-8 Ruby String by copying a single borrowed valid-text view (the
+ * single-slice sibling of mkr_ruby_str_from_slices). A NULL/empty view (the
+ * mkr_borrowed_text(NULL, 0) "absent" sentinel) yields "". Used by the DOM
+ * text/name/attribute readers that turn a Lexbor arena slice into a String. */
+VALUE mkr_ruby_str_from_borrowed(mkr_borrowed_text_t text);
+
 #ifdef __cplusplus
 }
 #endif
