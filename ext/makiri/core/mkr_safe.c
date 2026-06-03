@@ -145,29 +145,6 @@ mkr_buf_steal(mkr_buf_t *b, size_t *out_len)
     return p;
 }
 
-mkr_status_t
-mkr_vec_push(mkr_vec_t *v, void *item)
-{
-    if (v->count == v->cap) {
-        size_t need;
-        if (!mkr_size_add(v->count, 1, &need)) {
-            return MKR_ERR_OOM;
-        }
-        size_t new_cap;
-        if (!mkr_grow_capacity(v->cap, need, sizeof(void *), &new_cap)) {
-            return MKR_ERR_OOM;
-        }
-        void **p = mkr_reallocarray(v->items, new_cap, sizeof(void *));
-        if (p == NULL) {
-            return MKR_ERR_OOM;
-        }
-        v->items = p;
-        v->cap   = new_cap;
-    }
-    v->items[v->count++] = item;
-    return MKR_OK;
-}
-
 /* ------------------------------------------------------------------ */
 /* self-test                                                          */
 /* ------------------------------------------------------------------ */
@@ -260,23 +237,6 @@ mkr_safe_selftest(void)
         char *s = mkr_buf_steal(&b, &n);
         if (s == NULL || n != 0 || s[0] != '\0') { free(s); return 18; }
         free(s);
-    }
-
-    /* vec: push + grow */
-    {
-        mkr_vec_t v;
-        mkr_vec_init(&v);
-        for (size_t i = 0; i < 100; i++) {
-            if (mkr_vec_push(&v, (void *)(uintptr_t)(i + 1)) != MKR_OK) {
-                mkr_vec_free(&v);
-                return 19;
-            }
-        }
-        if (v.count != 100) { mkr_vec_free(&v); return 20; }
-        if (v.items[0] != (void *)(uintptr_t)1 ||
-            v.items[99] != (void *)(uintptr_t)100) { mkr_vec_free(&v); return 21; }
-        mkr_vec_free(&v);
-        if (v.items != NULL) return 22;
     }
 
     return 0;
