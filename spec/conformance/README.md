@@ -61,27 +61,6 @@ unsupported: 0
 and fragment test its Ruby API can represent passes. The only tests not run are
 the 8 scripting-on ones (out of scope).
 
-### Findings (Makiri Ruby-API gaps surfaced by the suite, both since FIXED)
-
-1. **`<template>` content (110 tests) — now exposed (FIXED).** Per the HTML
-   spec a template's contents live in a separate "template contents"
-   `DocumentFragment`, not as children of the `<template>` element (browsers
-   behave the same: `template.children` is empty, `template.content` holds the
-   nodes). Lexbor stores them there; Makiri now surfaces the fragment via
-   `Element#content_fragment`, so `tpl.content_fragment.css("p")` works and the
-   dump renders the html5lib `content` pseudo-node. CSS/XPath over the template
-   element itself still do NOT descend into the content (matching the DOM, and
-   unavoidable for CSS since it runs Lexbor's unpatched selector engine over the
-   real tree) — query the fragment instead.
-2. **Doctype public/system identifiers (21 tests) — now exposed (FIXED).**
-   Lexbor parses `<!DOCTYPE html PUBLIC "..." "...">` correctly; Makiri now
-   surfaces it via `Makiri::DocumentType#{public_id,external_id,system_id}` and
-   `Document#internal_subset`, so these tests pass. This was a DOM API
-   completeness matter (WHATWG DOM `DocumentType.publicId`/`systemId`), NOT an
-   XPath conformance issue — XPath 1.0's data model has no doctype node type at
-   all (root/element/text/attribute/namespace/PI/comment only), so doctype
-   declarations stay unqueryable by XPath by design (Nokogiri/libxml2 likewise).
-
 ---
 
 ## 2. XPath 1.0 — `xpath_diff.rb`
@@ -131,24 +110,6 @@ Buckets that are tallied, not scored as bugs:
    `namespace_matching: :lax`. This made the differential agree without
    `remove_namespaces!`; the only residual is the `ns-repr` bucket above.
 
-2. **Attribute document-order bug (FIXED).** XPath 1.0 §5.1 orders a node
-   before its attribute nodes (`element < its @attrs < its children`). For a
-   union that mixes elements and attributes, e.g.
-   `.//descendant-or-self::circle | //attribute::*`, Makiri returned an
-   attribute *before* its owning element:
-
-   ```
-   was:  .../circle/@r, .../circle          # @r before its element — wrong
-   now:  .../circle, .../circle/@r          # element before @r  — per spec
-   ```
-
-   Same node *set*, wrong document *order* — surfaced only when element and
-   attribute nodes shared a result set. Root cause was the small-node-set
-   fallback comparator in `mkr_xpath_value.c` (`doc_order_cmp`), which also
-   disagreed with the indexed comparator used for larger sets. Fixed; guarded
-   by `xpath_corpus.rb` (the element+attribute union cases) and a unit test in
-   `spec/xpath_spec.rb`.
-
 ---
 
 ## 3. XPath over HTML — `wpt_domxpath_spec.rb`
@@ -164,11 +125,6 @@ attribute parent axis, numeric/boolean operators, lexical structure (quotes &
 whitespace), node-set operators, predicates, document order, and the string
 functions. Out of scope: the DOM Level 3 XPath *API* (XPathEvaluator / resolver
 / XPathResult), Shadow DOM, cross-realm, crash tests.
-
-**Bugs this port found and fixed:** non-ASCII NCName name tests (lexer was
-ASCII-only), the `[@attr]` predicate matching case-insensitively (diverged from
-the attribute axis, XPath 1.0, and Nokogiri::HTML5), and `\v`/`\f` wrongly
-accepted as expression whitespace.
 
 Browser behaviours Makiri intentionally does not match are `pending` with a
 reason (a pending example that starts passing fails the run): ASCII case-folding
@@ -210,12 +166,3 @@ Nokogiri's *supported-selector vocabularies* differ.
    Nokogiri::HTML5 do). That is Lexbor's behaviour (not patched); recorded as a
    `pending` in `css_selectors_spec.rb`.
 
----
-
-## Extending
-
-- **Scripting-on tests (8):** these require a scripting flag that changes
-  parsing (e.g. `<noscript>` handling); out of scope unless Makiri models it.
-- When a differential finds and you fix a divergence, add a minimal reproducing
-  case to the relevant corpus (`xpath_corpus.rb` / `css_corpus.rb`) so it stays
-  fixed.
