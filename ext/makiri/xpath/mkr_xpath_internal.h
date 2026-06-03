@@ -335,6 +335,13 @@ int  mkr_owned_text_from_buf_steal(mkr_owned_text_t *out, mkr_buf_t *buf,
  * the caller must not clear +text+. */
 void mkr_val_set_owned_text(mkr_val_t *v, mkr_owned_text_t text);
 
+/* Store a STRING value by copying a borrowed view — the engine allocates and
+ * owns the copy. The boundary helper for callers (glue) that hold only a
+ * borrowed slice and must not construct mkr_owned_text_t themselves. Returns 0,
+ * or -1 on OOM (err populated; +v+ untouched). */
+int  mkr_val_set_borrowed_text_copy(mkr_val_t *v, mkr_borrowed_text_t text,
+                                    mkr_xpath_error_t *err, const char *what);
+
 /*
  * Sort entry points consult the context's per-evaluate document-order
  * index when available, which collapses comparisons to an O(1) hash

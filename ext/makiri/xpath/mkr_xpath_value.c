@@ -129,6 +129,28 @@ mkr_val_set_owned_text(mkr_val_t *v, mkr_owned_text_t text)
   v->u.string = text;
 }
 
+/* Set +v+ to a STRING by copying a borrowed view: the engine allocates and owns
+ * the copy. This is how callers outside the engine (the glue handler bridge)
+ * hand a string into a value — they pass what they have, a borrowed slice, and
+ * never construct an mkr_owned_text_t themselves. Keeping the copy-and-own step
+ * here keeps allocation and freeing of owned strings in one layer. Returns 0 on
+ * success, -1 on OOM (err populated; +v+ left untouched). */
+int
+mkr_val_set_borrowed_text_copy(mkr_val_t *v, mkr_borrowed_text_t text,
+                               mkr_xpath_error_t *err, const char *what)
+{
+  if (v == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_val_set_borrowed_text_copy: bad args");
+    return -1;
+  }
+  mkr_owned_text_t owned;
+  if (mkr_owned_text_from_borrowed_copy(&owned, text, err, what) != 0) {
+    return -1;
+  }
+  mkr_val_set_owned_text(v, owned);
+  return 0;
+}
+
 /* ---------- value ---------- */
 
 void

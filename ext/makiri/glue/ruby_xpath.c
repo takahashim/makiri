@@ -346,13 +346,11 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
     }
     /* nil and everything else: coerce to string (nil -> ""). */
     if (NIL_P(r)) {
-        mkr_owned_text_t text;
-        if (mkr_owned_text_from_borrowed_copy(&text, mkr_borrowed_text_lit(""),
-                                              NULL, NULL) != 0) {
+        if (mkr_val_set_borrowed_text_copy(out, mkr_borrowed_text_lit(""),
+                                           NULL, NULL) != 0) {
             snprintf(errbuf, errlen, "out of memory converting handler result");
             return -1;
         }
-        mkr_val_set_owned_text(out, text);
     } else {
         VALUE sv = rb_obj_as_string(r);
         mkr_ruby_borrowed_text_t vv;
@@ -362,14 +360,12 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
             snprintf(errbuf, errlen, "handler returned an invalid string: %s", bad);
             return -1;
         }
-        mkr_owned_text_t text;
-        if (mkr_owned_text_from_borrowed_copy(&text, mkr_borrowed_text(vv.ptr, vv.len),
-                                              NULL, NULL) != 0) {
+        if (mkr_val_set_borrowed_text_copy(out, mkr_borrowed_text(vv.ptr, vv.len),
+                                           NULL, NULL) != 0) {
             snprintf(errbuf, errlen, "out of memory converting handler result");
             RB_GC_GUARD(vv.value);
             return -1;
         }
-        mkr_val_set_owned_text(out, text);
         RB_GC_GUARD(vv.value);
     }
     if (out->u.string.ptr == NULL) {
