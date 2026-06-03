@@ -148,6 +148,83 @@ RSpec.describe Makiri::Node do
     it "does not equal a non-node" do
       expect(div == "div").to be(false)
     end
+
+    it "#pointer_id is the shared node pointer (Nokogiri-compatible)" do
+      a = body.first_element_child
+      b = body.first_element_child
+      expect(a.pointer_id).to be_a(Integer)
+      expect(a.pointer_id).to eq(b.pointer_id)
+      expect(a.pointer_id).not_to eq(ps[0].pointer_id)
+      # Same value the hash/eql? contract is built on.
+      expect(a.pointer_id).to eq(a.hash)
+    end
+  end
+
+  describe "#clone_node" do
+    it "shallow-clones by default (DOM cloneNode's deep defaults to false)" do
+      clone = div.clone_node
+      expect(clone.name).to eq("div")
+      expect(clone["id"]).to eq("x")
+      expect(clone["class"]).to eq("a b")
+      expect(clone.children).to be_empty
+    end
+
+    it "treats a missing, nil, or false argument as shallow" do
+      expect(div.clone_node.children).to be_empty
+      expect(div.clone_node(nil).children).to be_empty
+      expect(div.clone_node(false).children).to be_empty
+    end
+
+    it "deep-clones the subtree with a truthy deep argument" do
+      clone = div.clone_node(true)
+      expect(clone.element_children.map(&:name)).to eq(%w[p p])
+      expect(clone.text).to eq(div.text)
+    end
+
+    it "returns a detached node distinct from the original" do
+      clone = div.clone_node(true)
+      expect(clone).not_to eql(div)
+      expect(clone.parent).to be_nil
+    end
+
+    it "is owned by the same document and editable independently" do
+      clone = div.clone_node
+      clone["id"] = "y"
+      expect(div["id"]).to eq("x")
+      expect(clone.document).to equal(doc)
+    end
+
+    it "carries <template> contents on a deep clone (import_node alone omits them)" do
+      tdoc = Makiri::HTML('<template id="t"><p>hi</p><span>x</span></template>')
+      clone = tdoc.at_css("#t").clone_node(true)
+      expect(clone.content_fragment.children.map(&:name)).to eq(%w[p span])
+    end
+  end
+
+  describe "Document#import_node" do
+    let(:other) { Makiri::HTML("<html><body></body></html>") }
+
+    it "shallow-imports by default (DOM importNode's deep defaults to false)" do
+      imp = other.import_node(div)
+      expect(imp.name).to eq("div")
+      expect(imp["id"]).to eq("x")
+      expect(imp.children).to be_empty
+    end
+
+    it "deep-imports the subtree with a truthy deep argument" do
+      imp = other.import_node(div, true)
+      expect(imp.element_children.map(&:name)).to eq(%w[p p])
+    end
+
+    it "owns the copy in the receiver document and leaves the source untouched" do
+      imp = other.import_node(div, true)
+      expect(imp.document).to equal(other)
+      expect(imp.parent).to be_nil
+      expect(div.document).to equal(doc)
+      expect(div.element_children.map(&:name)).to eq(%w[p p])
+      other.at_css("body").add_child(imp)
+      expect(other.at_css("#x")).not_to be_nil
+    end
   end
 
   describe "#content_fragment (template contents)" do

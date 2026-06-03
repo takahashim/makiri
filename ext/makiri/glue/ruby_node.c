@@ -549,13 +549,24 @@ mkr_node_equals(VALUE self, VALUE other)
     return mkr_node_unwrap(self) == mkr_node_unwrap(other) ? Qtrue : Qfalse;
 }
 
-/* Stable hash derived from the node pointer, so a == b implies a.hash ==
- * b.hash even across separately-created wrappers. */
+/* Nokogiri-compatible identity: the underlying lxb_dom_node_t pointer as an
+ * Integer. Stable for the node's lifetime and unique among currently-live
+ * nodes; a freed-then-reallocated node may reuse an address (same caveat as
+ * Nokogiri::XML::Node#pointer_id). a.pointer_id == b.pointer_id iff a.eql?(b). */
 static VALUE
-mkr_node_hash(VALUE self)
+mkr_node_pointer_id(VALUE self)
 {
     lxb_dom_node_t *node = mkr_node_unwrap(self);
     return ULL2NUM((unsigned long long)(uintptr_t)node);
+}
+
+/* Stable hash derived from the node pointer, so a == b implies a.hash ==
+ * b.hash even across separately-created wrappers. Shares the pointer value
+ * with #pointer_id. */
+static VALUE
+mkr_node_hash(VALUE self)
+{
+    return mkr_node_pointer_id(self);
 }
 
 void
@@ -595,6 +606,8 @@ mkr_init_node(void)
     rb_define_method(mkr_cNode, "==",   mkr_node_equals, 1);
     rb_define_method(mkr_cNode, "eql?", mkr_node_equals, 1);
     rb_define_method(mkr_cNode, "hash", mkr_node_hash,   0);
+    rb_define_method(mkr_cNode, "pointer_id", mkr_node_pointer_id, 0);
+    rb_define_method(mkr_cNode, "clone_node", mkr_node_clone_node, -1);
 
     /* DocumentType identifiers (WHATWG DOM names; external_id is the
      * Nokogiri-compatible alias for public_id). */

@@ -63,6 +63,12 @@ void mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
 void mkr_emit_append(lxb_dom_node_t *imported, void *u);
 void mkr_emit_before(lxb_dom_node_t *imported, void *u);
 
+/* Node#clone_node(deep=false): shallow/deep DOM clone owned by this node's
+ * document (import_node + <template>-content fixup), detached from any parent.
+ * Implemented in ruby_doc.c (next to the import machinery), bound in
+ * mkr_init_node. */
+VALUE mkr_node_clone_node(int argc, VALUE *argv, VALUE self);
+
 /* NodeSet bridge (glue/ruby_node_set.c). */
 VALUE mkr_node_set_new(VALUE document);
 void  mkr_node_set_push(VALUE rb_set, lxb_dom_node_t *node);

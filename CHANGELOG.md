@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - 2026-06-04
 
+### Added
+
+* `Node#clone_node(deep = false)` — a copy of the node, owned by the same
+  document and detached from any parent (the DOM `cloneNode`, whose `deep`
+  defaults to `false` — a missing/`nil`/`false` argument is a shallow clone; a
+  truthy one copies the subtree). Built on the same `import_node` +
+  `<template>`-content fixup the fragment parser uses, so a deep-cloned
+  `<template>` keeps its contents. Fails closed: a failed import raises rather
+  than returning a partial node.
+* `Document#import_node(node, deep = false)` — a copy of `node` owned by the
+  receiver document (the DOM `importNode`, whose `deep` likewise defaults to
+  `false`). Unlike `Node#clone_node`, the copy is owned by the target rather
+  than the node's own document, so it is the way to bring a node across
+  documents (Makiri never moves a node between arenas); the source is left
+  untouched. Same import + `<template>`-content fixup as `clone_node`, and fails
+  closed on a failed import.
+* `Node#pointer_id` — the underlying `lxb_dom_node_t` pointer as an Integer,
+  matching `Nokogiri::XML::Node#pointer_id`. Shares the value `#hash`/`#eql?`
+  are built on, so it is a stable, Nokogiri-compatible identity key for
+  consumers (e.g. wrapper caches) that key nodes by pointer. Stable for a
+  node's lifetime; an address may be reused after a node is freed (same caveat
+  as Nokogiri).
+
 ### Changed
 
 * Source gem: drop the Lexbor trees the build never compiles

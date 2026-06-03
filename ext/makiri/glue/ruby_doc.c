@@ -248,6 +248,61 @@ mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
     }
 }
 
+/* Node#clone_node(deep = false): a shallow (or deep, with deep truthy) copy of
+ * this node, owned by the same document and detached from any parent — the DOM
+ * cloneNode, whose `deep` defaults to false (a missing/nil/false argument =>
+ * shallow). Built on the same import_node + <template>-content fixup the
+ * fragment parser uses, so a deep-cloned <template> carries its contents (which
+ * import_node alone omits). Fails closed: a NULL import (e.g. OOM) raises rather
+ * than returning a partial node. */
+VALUE
+mkr_node_clone_node(int argc, VALUE *argv, VALUE self)
+{
+    VALUE deep_v;
+    rb_scan_args(argc, argv, "01", &deep_v);
+    bool deep = RTEST(deep_v);
+
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_document_t *doc = node->owner_document;
+
+    lxb_dom_node_t *clone = lxb_dom_document_import_node(doc, node, deep);
+    if (clone == NULL) {
+        rb_raise(mkr_eError, "failed to clone node");
+    }
+    if (deep) {
+        mkr_fixup_template_content(doc, node, clone);
+    }
+    return mkr_wrap_node(clone, mkr_node_document(self));
+}
+
+/* Document#import_node(node, deep = false): a shallow (or deep, with deep
+ * truthy) copy of +node+ owned by THIS document — the DOM importNode, whose
+ * `deep` defaults to false (a missing/nil/false argument => shallow). Unlike
+ * Node#clone_node, the copy is owned by the receiver rather than the node's own
+ * document, so it is the way to bring a node across documents (Makiri never
+ * moves a node between arenas). The source is left untouched; the copy is
+ * detached. Same import + <template>-content fixup as clone_node; fails closed
+ * on a NULL import. */
+static VALUE
+mkr_doc_import_node(int argc, VALUE *argv, VALUE self)
+{
+    VALUE node_v, deep_v;
+    rb_scan_args(argc, argv, "11", &node_v, &deep_v);
+    bool deep = RTEST(deep_v);
+
+    lxb_dom_node_t   *src = mkr_node_unwrap(node_v);
+    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+
+    lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, src, deep);
+    if (imp == NULL) {
+        rb_raise(mkr_eError, "failed to import node");
+    }
+    if (deep) {
+        mkr_fixup_template_content(doc, src, imp);
+    }
+    return mkr_wrap_node(imp, self);
+}
+
 /* Parse +rb_html+ as a fragment in the given (tag id, namespace) context and
  * build a DOCUMENT_FRAGMENT node owned by +document+ (so its nodes can be
  * spliced into that document). Lexbor's by-tag-id fragment parser implements
@@ -482,6 +537,7 @@ mkr_init_document(void)
     rb_define_method(mkr_cDocument, "internal_subset", mkr_doc_internal_subset, 0);
     rb_define_method(mkr_cDocument, "quirks_mode", mkr_doc_quirks_mode, 0);
     rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, -1);
+    rb_define_method(mkr_cDocument, "import_node", mkr_doc_import_node, -1);
 
     rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, -1);
 
