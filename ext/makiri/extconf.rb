@@ -93,6 +93,22 @@ end
 $DLDFLAGS << " -Wl,-z,relro" if RbConfig::CONFIG["target_os"] =~ /linux/
 $DLDFLAGS << " -Wl,-z,now"   if RbConfig::CONFIG["target_os"] =~ /linux/
 
+# Portability of the compiled extension (matters for precompiled / "fat" gems).
+# A Ruby built --enable-shared (Homebrew, rbenv/ruby-build, mise, GitHub
+# setup-ruby) otherwise makes mkmf hard-link the BUILD Ruby's libruby:
+#   macOS  -> an absolute path to libruby.X.Y.dylib, so the .bundle refuses to
+#            load on any other Ruby install ("linked to incompatible ...").
+#   Linux  -> a libruby.so.X.Y SONAME dependency.
+# Resolve the Ruby C API from the host process at load time instead, so one
+# compiled binary works on any compatible Ruby of that ABI. Harmless for a
+# from-source install (it links against the user's own Ruby either way).
+if RbConfig::CONFIG["target_os"] =~ /darwin/
+  $LIBRUBYARG = ""                          # drop the libruby link
+  $DLDFLAGS << " -undefined dynamic_lookup" # symbols come from the loading ruby
+elsif RbConfig::CONFIG["target_os"] =~ /linux/
+  $LIBRUBYARG = ""                          # the ruby executable already provides them
+end
+
 # Recursively pick up C sources under ext/makiri/.
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c")).map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []

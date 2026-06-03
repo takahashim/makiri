@@ -26,7 +26,7 @@ permissions:
   contents: write   # create the GitHub Release and upload assets
 
 env:
-  RUBY_ABIS: "3.2 3.3 3.4"   # Ruby minor versions a native gem serves
+  RUBY_ABIS: "3.2 3.3 3.4 4.0"   # Ruby minor versions a native gem serves
 
 jobs:
   # --- source gem (always builds; compiles from source at install time) -------
@@ -42,7 +42,7 @@ jobs:
           ruby-version: "3.4"
       - name: Build source gem
         run: gem build makiri.gemspec -o pkg/makiri-source.gem
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: gem-source
           path: pkg/*.gem
@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ["3.2", "3.3", "3.4"]
+        ruby: ["3.2", "3.3", "3.4", "4.0"]
         include:
           - { platform: x86_64-linux,  os: ubuntu-latest }
           - { platform: aarch64-linux, os: ubuntu-24.04-arm }
@@ -83,7 +83,26 @@ jobs:
           mkdir -p "artifact/${minor}"
           cp "lib/makiri/makiri.${dlext}" "artifact/${minor}/makiri.${dlext}"
           ls -l "artifact/${minor}"
-      - uses: actions/upload-artifact@v4
+      - name: Assert the binary is Ruby-portable (no libruby hard-link)
+        shell: bash
+        # extconf.rb builds the extension with dynamic_lookup / no libruby link so
+        # one precompiled binary loads on any compatible Ruby of that ABI. If a
+        # change reintroduces a libruby dependency, the gem would only load on the
+        # exact build Ruby — fail loudly here instead of shipping a broken gem.
+        run: |
+          dlext="$(ruby -e 'print RbConfig::CONFIG["DLEXT"]')"
+          bin="lib/makiri/makiri.${dlext}"
+          if [ "$(uname)" = "Darwin" ]; then
+            if otool -L "$bin" | grep -i 'libruby'; then
+              echo "::error::$bin hard-links libruby; precompiled gem would not load on other Ruby installs"; exit 1
+            fi
+          else
+            if readelf -d "$bin" 2>/dev/null | grep -iE 'NEEDED.*libruby'; then
+              echo "::error::$bin has a libruby NEEDED entry; precompiled gem may not load on a static Ruby"; exit 1
+            fi
+          fi
+          echo "OK: $bin has no libruby dependency"
+      - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.platform }}-${{ matrix.ruby }}
           path: artifact/
@@ -106,7 +125,7 @@ jobs:
         with:
           ruby-version: "3.4"
       - name: Download this platform's per-ABI binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: bin-${{ matrix.platform }}-*
           merge-multiple: true
@@ -123,7 +142,7 @@ jobs:
         run: |
           gem install "makiri-"*"-${{ matrix.platform }}.gem" --local
           ruby -e 'require "makiri"; puts Makiri::VERSION'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: gem-${{ matrix.platform }}
           path: "*.gem"
@@ -136,7 +155,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: gem-*
           merge-multiple: true
@@ -165,7 +184,7 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: gem-*
           merge-multiple: true
