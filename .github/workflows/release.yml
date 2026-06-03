@@ -166,11 +166,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Mark pre-release tags (v1.2.3.rc1 / -beta / -alpha / -pre) as such.
+          pre=""
+          case "$GITHUB_REF_NAME" in
+            *rc*|*beta*|*alpha*|*pre*) pre="--prerelease" ;;
+          esac
           gh release create "${GITHUB_REF_NAME}" dist/*.gem \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --notes "Automated release for ${GITHUB_REF_NAME}. See CHANGELOG.md." \
-            --verify-tag || \
+            $pre --verify-tag || \
           gh release upload "${GITHUB_REF_NAME}" dist/*.gem --repo "${GITHUB_REPOSITORY}" --clobber
 
   # --- optional: publish to RubyGems (manual, opt-in, never on a tag push) ----
