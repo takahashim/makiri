@@ -103,10 +103,16 @@ $DLDFLAGS << " -Wl,-z,now"   if RbConfig::CONFIG["target_os"] =~ /linux/
 # compiled binary works on any compatible Ruby of that ABI. Harmless for a
 # from-source install (it links against the user's own Ruby either way).
 if RbConfig::CONFIG["target_os"] =~ /darwin/
-  $LIBRUBYARG = ""                          # drop the libruby link
+  # Do not link the extension to the build Ruby's libruby.
+  # Ruby C API symbols are resolved from the loading Ruby process.
+  $LIBRUBYARG = ""
+  $LIBRUBYARG_SHARED = ""
+  $LIBRUBYARG_STATIC = ""
   $DLDFLAGS << " -undefined dynamic_lookup" # symbols come from the loading ruby
 elsif RbConfig::CONFIG["target_os"] =~ /linux/
   $LIBRUBYARG = ""                          # the ruby executable already provides them
+  $LIBRUBYARG_SHARED = ""
+  $LIBRUBYARG_STATIC = ""
 end
 
 # Recursively pick up C sources under ext/makiri/.

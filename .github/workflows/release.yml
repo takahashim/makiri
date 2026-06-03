@@ -41,7 +41,9 @@ jobs:
         with:
           ruby-version: "3.4"
       - name: Build source gem
-        run: gem build makiri.gemspec -o pkg/makiri-source.gem
+        run: |
+          mkdir -p pkg
+          gem build makiri.gemspec -o pkg/makiri-source.gem
       - uses: actions/upload-artifact@v7
         with:
           name: gem-source
