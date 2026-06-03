@@ -11,9 +11,9 @@ Gem::Specification.new do |spec|
 
   spec.summary     = "HTML5 parser + native XPath 1.0 for Ruby, with no libxml2 dependency."
   spec.description = <<~DESC
-    Makiri parses HTML5 documents via the Lexbor library (vendored, unpatched)
+    Makiri parses HTML5 documents via the Lexbor library
     and queries them with a native XPath 1.0 engine written for this project.
-    It does not depend on libxml2 or libxslt at any layer. The API is
+    It does not depend on libxml2 at any layer. The API is
     Nokogiri-compatible for the subset of methods used in HTML scraping.
   DESC
 
