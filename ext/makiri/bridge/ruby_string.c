@@ -46,7 +46,7 @@ mkr_ruby_str_from_borrowed(mkr_borrowed_text_t text)
 }
 
 void
-mkr_check_text(VALUE str, const char *what)
+mkr_verify_text(VALUE str, const char *what)
 {
     long        len = RSTRING_LEN(str);
     const char *ptr = RSTRING_PTR(str);
@@ -64,10 +64,10 @@ mkr_check_text(VALUE str, const char *what)
 }
 
 mkr_ruby_borrowed_text_t
-mkr_ruby_checked_text(VALUE in, const char *what)
+mkr_ruby_verified_text(VALUE in, const char *what)
 {
     VALUE s = rb_String(in);
-    mkr_check_text(s, what);
+    mkr_verify_text(s, what);
     mkr_ruby_borrowed_text_t v;
     v.value = s;
     v.ptr   = RSTRING_PTR(s);
@@ -109,7 +109,7 @@ mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out)
 }
 
 const char *
-mkr_ruby_try_checked_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
+mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
 {
     long len = RSTRING_LEN(sv);
     if ((size_t)len > max_bytes) {

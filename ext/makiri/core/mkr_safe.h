@@ -90,22 +90,22 @@ char *mkr_strndup(const char *s, size_t n);
 char *mkr_strdup(const char *s);
 
 /* ---------------------------------------------------------------- */
-/* mkr_valid_text_t — a string proven to meet the engine text contract */
+/* mkr_verified_text_t — a string proven to meet the engine text contract */
 /* ---------------------------------------------------------------- */
 
 /* A borrowed byte slice whose contents are guaranteed to satisfy Makiri's
  * engine text contract: valid UTF-8, no interior NUL, and NUL-terminated at
  * ptr[len]. The XPath engine's public string entry points accept ONLY this
  * type, so a raw `const char *` cannot be passed without a compile error. The
- * sole constructor is mkr_valid_text_from_view() at the Ruby boundary (bridge),
- * which can only be fed a view that mkr_ruby_checked_text() already validated;
+ * sole constructor is mkr_verified_text_from_view() at the Ruby boundary (bridge),
+ * which can only be fed a view that mkr_ruby_verified_text() already validated;
  * there is deliberately no Ruby-free constructor, so unvalidated bytes have no
  * path into the engine. (ptr is non-owning: the caller keeps it alive for the
  * duration of the engine call.) */
 typedef struct {
     const char *ptr;
     size_t      len;
-} mkr_valid_text_t;
+} mkr_verified_text_t;
 
 /* Ensure the array at *ptr (currently *cap elements of `elem` bytes) can hold
  * at least `need` elements, growing geometrically and overflow-safely. On
@@ -236,16 +236,16 @@ mkr_vec_free(mkr_vec_t *v)
  *   ----------------------  ------------------------  -------------------------
  *   ruby-anchored borrowed  mkr_ruby_borrowed_bytes_t mkr_ruby_borrowed_text_t  (bridge.h)
  *   borrowed slice          (none yet — would be      mkr_borrowed_text_t /
- *                            mkr_borrowed_bytes_t)     mkr_valid_text_t (*)
+ *                            mkr_borrowed_bytes_t)     mkr_verified_text_t (*)
  *   owned                   mkr_owned_bytes_t         mkr_owned_text_t
  *
  *   The borrowed-raw cell is intentionally empty: nothing needs an unanchored
  *   raw slice today. When something does, name it mkr_borrowed_bytes_t per the
  *   convention above; do not resurrect a placeholder before there is a user.
  *
- *   (*) mkr_valid_text_t (defined above) is the one deliberate naming exception:
+ *   (*) mkr_verified_text_t (defined above) is the one deliberate naming exception:
  *   it is a borrowed valid text AND a capability token. Its sole constructor is
- *   mkr_valid_text_from_view() at the Ruby boundary, so an unvalidated const char*
+ *   mkr_verified_text_from_view() at the Ruby boundary, so an unvalidated const char*
  *   cannot reach the engine's public API. Internally the engine carries the
  *   freely-constructible mkr_borrowed_text_t instead.
  *
@@ -254,13 +254,13 @@ mkr_vec_free(mkr_vec_t *v)
  * already-valid text between shapes (no edge re-validates, and none turns raw
  * bytes into text without one of those checks):
  *   validate raw -> valid : the bridge's checked entry points only —
- *                           mkr_ruby_checked_text / mkr_ruby_try_checked_text
+ *                           mkr_ruby_verified_text / mkr_ruby_try_verified_text
  *                           (both validate UTF-8 + no NUL); never a cast.
- *   drop the GC anchor    : mkr_valid_text_from_view (ruby_borrowed_text -> valid_text)
+ *   drop the GC anchor    : mkr_verified_text_from_view (ruby_borrowed_text -> verified_text)
  *   assert valid (no copy) : mkr_borrowed_text (const char*,len -> borrowed_text)
  *                            — caller asserts the bytes already meet the contract
  *   downgrade to borrow   : mkr_borrowed_text_from_owned (owned_text -> borrowed_text)
- *                           mkr_borrowed_text_from_valid (valid_text -> borrowed_text)
+ *                           mkr_borrowed_text_from_verified (verified_text -> borrowed_text)
  *   copy into owned       : mkr_owned_text_from_borrowed_copy /
  *                           mkr_owned_text_from_buf_steal — accept only
  *                           already-asserted-valid text; they copy, not validate.
@@ -301,9 +301,9 @@ mkr_borrowed_text_from_owned(mkr_owned_text_t t)
   return (mkr_borrowed_text_t){ t.ptr, t.len };
 }
 
-/* Borrow a valid-text capability token as a plain borrowed text (no copy). */
+/* Borrow a verified-text capability token as a plain borrowed text (no copy). */
 static inline mkr_borrowed_text_t
-mkr_borrowed_text_from_valid(mkr_valid_text_t t)
+mkr_borrowed_text_from_verified(mkr_verified_text_t t)
 {
   return (mkr_borrowed_text_t){ t.ptr, t.len };
 }

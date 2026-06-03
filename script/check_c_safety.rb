@@ -58,9 +58,9 @@ RULES = [
     regex: /while\s*\([^)]*>\s*[^)]*cap[^)]*\).*?\*=\s*2/
   ),
   Rule.new(
-    id: "valid_text_forge",
-    message: "mkr_valid_text_t must be minted only by mkr_text_from_view (the validated boundary)",
-    regex: /\(\s*mkr_valid_text_t\s*\)\s*\{/
+    id: "verified_text_forge",
+    message: "mkr_verified_text_t must be minted only by mkr_verified_text_from_view (the validated boundary)",
+    regex: /\(\s*mkr_verified_text_t\s*\)\s*\{/
   ),
 ].freeze
 

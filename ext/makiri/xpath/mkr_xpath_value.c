@@ -77,7 +77,7 @@ mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b)
 /* Copy an already-valid borrowed text into owned storage. Taking
  * mkr_borrowed_text_t (not raw char*+len) keeps the type contract: an
  * mkr_owned_text_t can only be minted from text the caller has asserted valid
- * (via mkr_borrowed_text / mkr_borrowed_text_from_valid /
+ * (via mkr_borrowed_text / mkr_borrowed_text_from_verified /
  * mkr_borrowed_text_from_owned), so every raw-bytes -> text entry point is
  * greppable. */
 int

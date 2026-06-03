@@ -774,7 +774,7 @@ parse_expr(mkr_parser_t *P)
 /* ---------- entry ---------- */
 
 mkr_node_t *
-mkr_parse(mkr_valid_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err)
+mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err)
 {
   if (limits == NULL) {
     mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_parse: limits required");
@@ -787,7 +787,7 @@ mkr_parse(mkr_valid_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *
   mkr_parser_t P;
   P.err    = err;
   P.limits = limits;
-  /* expr.ptr is a validated, NUL-terminated C string (mkr_valid_text_t). */
+  /* expr.ptr is a validated, NUL-terminated C string (mkr_verified_text_t). */
   mkr_lexer_init(&P.L, expr.ptr, err);
   if (!P.L.good) return NULL;
 

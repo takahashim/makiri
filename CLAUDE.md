@@ -79,9 +79,9 @@ lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathCont
 ext/makiri/
   makiri.{c,h}             Init_makiri, module/class refs
   core/                    Ruby-free safety primitives (mkr_safe: overflow-checked
-                           alloc/grow, mkr_buf_t, mkr_valid_text_t)
+                           alloc/grow, mkr_buf_t, mkr_verified_text_t)
   bridge/                  the Ruby boundary — the ONLY layer allowed raw Ruby String
-                           access (RSTRING) and mkr_valid_text_t minting
+                           access (RSTRING) and mkr_verified_text_t minting
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
@@ -100,7 +100,7 @@ with U+FFFD (WHATWG byte-stream decoding via Lexbor's `lxb_encoding_*`; a NUL is
 left for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail**
 on bad bytes and the DOM is always valid UTF-8. Valid input (common case) is a
 no-op (one validating decode pass, no copy). The **programmatic APIs are strict**:
-`mkr_check_text` (`makiri.c`) raises `Makiri::Error` for invalid UTF-8 or an
+`mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for invalid UTF-8 or an
 embedded NUL at the XPath/CSS/mutation boundaries (expr, selector, attribute
 name/value, `content=`, `name=`, `create_*`, variable/namespace) — never
 truncate/repair. Don't drop these checks; the engine assumes NUL-terminated,

@@ -1,12 +1,12 @@
 ignore_paths:
   - path: ext/makiri/core/**
     reason: The Ruby-free safe-core primitives layer; it deliberately holds the raw allocation/length patterns that every other layer routes through.
-  # --- the Ruby boundary (bridge/): raw Ruby String access and mkr_valid_text_t
+  # --- the Ruby boundary (bridge/): raw Ruby String access and mkr_verified_text_t
   #     minting are this layer's defining purpose, exempt per (file, rule) so the
   #     same patterns anywhere else still trip the lint ---
   - path: ext/makiri/bridge/ruby_string.c
     rule: ruby_string_ptr
     reason: "Ruby string boundary helpers only: strict text validation, raw HTML byte views, engine-string validation, and fail-closed exception-message copying. Raw RSTRING access is this file's purpose; it never escapes to the engine."
   - path: ext/makiri/bridge/text_token.c
-    rule: valid_text_forge
-    reason: mkr_text_from_view, the sole sanctioned mint of mkr_valid_text_t; its input view is already validated by the bridge string helpers.
+    rule: verified_text_forge
+    reason: mkr_verified_text_from_view, the sole sanctioned mint of mkr_verified_text_t; its input view is already validated by the bridge string helpers.

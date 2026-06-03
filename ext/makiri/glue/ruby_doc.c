@@ -106,7 +106,7 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
 
     /* The context: tag name is a programmatic control string, not parsed HTML,
      * so it follows the strict text-input contract (valid UTF-8, no NUL). */
-    mkr_ruby_borrowed_text_t cv = mkr_ruby_checked_text(context, "fragment context element");
+    mkr_ruby_borrowed_text_t cv = mkr_ruby_verified_text(context, "fragment context element");
     const lxb_char_t *p = (const lxb_char_t *)cv.ptr;
     size_t n = cv.len;
     if (n == 3 && memcmp(p, "svg", 3) == 0) {

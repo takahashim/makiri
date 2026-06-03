@@ -541,7 +541,7 @@ void mkr_apply_peephole(mkr_node_t *n);
  * 'limits' is required (non-NULL): the parser increments ast_nodes for
  * every node it allocates and rejects expressions that exceed any of
  * the configured budgets with MKR_XPATH_ERR_LIMIT. */
-mkr_node_t *mkr_parse(mkr_valid_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
+mkr_node_t *mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
 
 /*
  * Evaluate a pre-parsed AST. Public counterpart to mkr_xpath_eval that

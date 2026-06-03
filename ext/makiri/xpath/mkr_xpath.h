@@ -5,7 +5,7 @@
 #include <lexbor/tag/const.h>
 #include <stddef.h>
 
-#include "../core/mkr_safe.h" /* mkr_valid_text_t */
+#include "../core/mkr_safe.h" /* mkr_verified_text_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,8 +62,8 @@ typedef struct {
 mkr_xpath_context_t *mkr_xpath_context_new(lxb_dom_document_t *doc, lxb_dom_node_t *node);
 void                mkr_xpath_context_free(mkr_xpath_context_t *ctx);
 
-int  mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_valid_text_t prefix, mkr_valid_text_t uri);
-int  mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_valid_text_t name, mkr_valid_text_t value);
+int  mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_verified_text_t prefix, mkr_verified_text_t uri);
+int  mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_verified_text_t name, mkr_verified_text_t value);
 
 /*
  * Custom function fallback. When a function call's (namespace URI,
