@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-04
+
+### Changed
+
+* Source gem: drop the Lexbor trees the build never compiles
+  (`test`/`utils`/`examples`/`benchmarks`/`wasm`/`packaging`; each is behind an
+  `IF(LEXBOR_BUILD_*)` guard and we build with them OFF), roughly halving the
+  packaged file count (~1115 → ~566). Precompiled gems are unaffected.
+
+### Internal
+
+* XPath: build the per-context compiled-AST cache key with `mkr_strndup`
+  (the expression is a `verified_text`, so its length is known) instead of
+  `mkr_strdup`, avoiding a `strlen` over already-length-bounded bytes.
+
 ## [0.1.0] - 2026-06-02
 
 First public release. An HTML5 parser, a native XPath 1.0 query engine, and CSS

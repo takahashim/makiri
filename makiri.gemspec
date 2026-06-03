@@ -30,11 +30,23 @@ Gem::Specification.new do |spec|
   # which `git ls-files` alone reports as a single gitlink entry. They are
   # required to compile the extension from a source gem, and to build the
   # precompiled (native) gems on CI.
+  #
+  # Drop the parts of Lexbor the build never touches: our CMake config sets
+  # LEXBOR_BUILD_{TESTS,EXAMPLES,UTILS,BENCHMARKS,WASM}=OFF and each of those
+  # add_subdirectory() calls is IF()-guarded, so these trees are never entered.
+  # Keeps the source gem to roughly half the file count (only `source/` + the
+  # CMake config + LICENSE/NOTICE are needed to build).
+  lexbor_unused = %w[
+    vendor/lexbor/test/ vendor/lexbor/utils/ vendor/lexbor/examples/
+    vendor/lexbor/benchmarks/ vendor/lexbor/wasm/ vendor/lexbor/packaging/
+    vendor/lexbor/images/ vendor/lexbor/.github/
+  ]
   gemspec = File.basename(__FILE__)
   spec.files = IO.popen(%w[git ls-files -z --recurse-submodules], chdir: __dir__, err: IO::NULL) do |ls|
     ls.readlines("\x0", chomp: true).reject do |f|
       (f == gemspec) ||
-        f.start_with?(*%w[bin/ Gemfile .gitignore .rspec spec/ test/ bench/ docs/ CLAUDE.md AGENTS.md])
+        f.start_with?(*%w[bin/ Gemfile .gitignore .rspec spec/ test/ bench/ docs/ CLAUDE.md AGENTS.md]) ||
+        f.start_with?(*lexbor_unused)
     end
   end
   spec.bindir            = "exe"

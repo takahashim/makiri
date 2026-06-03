@@ -540,7 +540,7 @@ mkr_ctx_cached_ast(mkr_xpath_ctx_data_t *d, mkr_verified_text_t expr,
         *owned = 1;
         return ast;
     }
-    char *key = mkr_strdup(expr.ptr);
+    char *key = mkr_strndup(expr.ptr, expr.len); /* expr is verified_text: len known, no strlen */
     if (key == NULL) {
         *owned = 1;
         return ast;
