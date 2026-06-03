@@ -5,7 +5,7 @@
 #include <lexbor/tag/const.h>
 #include <stddef.h>
 
-#include "../core/mkr_safe.h" /* mkr_verified_text_t */
+#include "../core/mkr_core.h" /* mkr_verified_text_t */
 
 #ifdef __cplusplus
 extern "C" {

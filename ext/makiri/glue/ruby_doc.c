@@ -1,6 +1,6 @@
 #include "glue.h"
 #include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <lexbor/html/parser.h>
 #include <ruby/thread.h>

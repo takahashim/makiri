@@ -1,6 +1,6 @@
 #include "compat.h"
 #include "compat_internal.h"
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -60,7 +60,7 @@ mkr_dom_index_attr_slot(const mkr_dom_index_t *idx, const lxb_dom_attr_t *attr)
     return (size_t)mkr_ptr_hash(attr) & (idx->cap - 1);
 }
 
-/* pow2-ceil sizing is shared: mkr_pow2_ceil (core/mkr_safe.h). */
+/* pow2-ceil sizing is shared: mkr_pow2_ceil (core/mkr_core.h). */
 
 /* ------------------------------------------------------------------ */
 /* build / lookup                                                     */

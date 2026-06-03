@@ -1,5 +1,5 @@
 #include "glue.h"
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <stdint.h>
 
@@ -168,7 +168,7 @@ typedef struct {
 /* Below this operand size a linear scan is cheaper than building the hash. */
 #define MKR_NODE_SET_HASH_MIN 64
 
-/* Pointer hashing is shared: mkr_ptr_hash (core/mkr_safe.h). */
+/* Pointer hashing is shared: mkr_ptr_hash (core/mkr_core.h). */
 
 /* Build (cap 0 on overflow / allocation failure → linear fallback). Sized for
  * load factor < 0.5 (>= n * 2 slots, min 16), all through the overflow-checked

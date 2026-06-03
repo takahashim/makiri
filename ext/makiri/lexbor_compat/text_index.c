@@ -1,6 +1,6 @@
 #include "compat.h"
 #include "compat_internal.h"
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -58,7 +58,7 @@ typedef struct {
 /* hashing                                                            */
 /* ------------------------------------------------------------------ */
 
-/* pow2-ceil sizing is shared: mkr_pow2_ceil (core/mkr_safe.h). */
+/* pow2-ceil sizing is shared: mkr_pow2_ceil (core/mkr_core.h). */
 
 /* Bucket index for a node key (mkr_ptr_hash spreads aligned pointers). */
 static size_t

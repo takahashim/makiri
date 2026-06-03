@@ -1,5 +1,5 @@
 #include "makiri.h"
-#include "core/mkr_safe.h"
+#include "core/mkr_core.h"
 
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
@@ -22,14 +22,14 @@ VALUE mkr_eXPathLimitExceeded;
 VALUE mkr_eCSSSyntaxError;
 
 /* Makiri.__c_selftest -> true, or raises if the safe-core primitives
- * (mkr_safe.c) fail their internal edge-case checks. Test hook only. */
+ * (mkr_core.c) fail their internal edge-case checks. Test hook only. */
 static VALUE
 mkr_c_selftest(VALUE self)
 {
     (void)self;
-    int rc = mkr_safe_selftest();
+    int rc = mkr_core_selftest();
     if (rc != 0) {
-        rb_raise(mkr_eError, "mkr_safe_selftest failed at check %d", rc);
+        rb_raise(mkr_eError, "mkr_core_selftest failed at check %d", rc);
     }
     return Qtrue;
 }

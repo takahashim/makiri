@@ -7,7 +7,7 @@
  * lexbor_compat) builds on, so the ad-hoc `cap *= 2` / `n + 1` /
  * `malloc(n * sizeof(T))` patterns are written once, here, and fail closed.
  * NOTHING in this header touches Ruby — exception mapping happens at the glue
- * boundary. (mkr_safe.h is a thin umbrella over this + mkr_text.h + mkr_buf.h.)
+ * boundary. (mkr_core.h is a thin umbrella over this + the other core headers.)
  */
 
 #include <stddef.h>
@@ -97,45 +97,10 @@ char *mkr_strdup(const char *s);
  * `cap *= 2; realloc(p, cap * sizeof(T))` pattern in one call. */
 mkr_status_t mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem);
 
-/* Mix a pointer into a well-distributed 64-bit hash (the MurmurHash3 fmix64
- * finalizer). Aligned pointers carry little low-bit entropy, so spread them
- * before masking with a power-of-two table size. The one definition shared by
- * the pointer-keyed indexes (attr->owner, text-index, ...); mask the result
- * with `& (cap - 1)` at the call site. */
-static inline uint64_t
-mkr_ptr_hash(const void *p)
-{
-    uint64_t h = (uint64_t)(uintptr_t)p;
-    h ^= h >> 33;
-    h *= 0xff51afd7ed558ccdULL;
-    h ^= h >> 33;
-    h *= 0xc4ceb9fe1a85ec53ULL;
-    h ^= h >> 33;
-    return h;
-}
-
-/* Smallest power of two >= n, into *out. Returns false on overflow (no power of
- * two >= n fits in size_t) so the caller fails closed rather than sizing a
- * power-of-two hash table below the element count it must hold — which would
- * never find a free slot under linear probing. Shared by the pointer-keyed
- * indexes (attr->owner, text-index). */
-static inline bool
-mkr_pow2_ceil(size_t n, size_t *out)
-{
-    size_t p = 1;
-    while (p < n) {
-        size_t np = p << 1;
-        if (np <= p) return false; /* overflow */
-        p = np;
-    }
-    *out = p;
-    return true;
-}
-
 /* Self-test of the overflow / allocation / buffer edge cases (incl. paths real
  * inputs cannot reach). Returns 0 on success, nonzero on the first failure.
  * Wired to a private Ruby method for the spec suite. */
-int mkr_safe_selftest(void);
+int mkr_core_selftest(void);
 
 #ifdef __cplusplus
 }

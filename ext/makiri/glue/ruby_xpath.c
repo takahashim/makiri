@@ -1,7 +1,7 @@
 #include "glue.h"
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <stdlib.h>
 #include <string.h>

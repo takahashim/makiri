@@ -78,8 +78,10 @@ Requires CRuby >= 3.2 and `cmake`.
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
 ext/makiri/
   makiri.{c,h}             Init_makiri, module/class refs
-  core/                    Ruby-free safety primitives (mkr_safe: overflow-checked
-                           alloc/grow, mkr_buf_t, mkr_verified_text_t)
+  core/                    Ruby-free safety primitives, split by concern under
+                           the mkr_core.h umbrella: mkr_alloc (overflow-checked
+                           alloc/grow), mkr_hash (ptr hash + pow2 sizer), mkr_text
+                           (string-type lattice / mkr_verified_text_t), mkr_buf
   bridge/                  the Ruby boundary — the ONLY layer allowed raw Ruby String
                            access (RSTRING) and mkr_verified_text_t minting
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/

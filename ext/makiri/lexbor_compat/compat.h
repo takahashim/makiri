@@ -7,7 +7,7 @@
 #include <lexbor/html/html.h>
 #include <lexbor/dom/dom.h>
 
-#include "../core/mkr_safe.h" /* mkr_borrowed_text_t */
+#include "../core/mkr_core.h" /* mkr_borrowed_text_t */
 
 #ifdef __cplusplus
 extern "C" {

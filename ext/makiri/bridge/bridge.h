@@ -4,7 +4,7 @@
 #include <ruby.h>
 #include <ruby/encoding.h>
 
-#include "../core/mkr_safe.h" /* mkr_verified_text_t, mkr_owned_bytes_t */
+#include "../core/mkr_core.h" /* mkr_verified_text_t, mkr_owned_bytes_t */
 
 #ifdef __cplusplus
 extern "C" {

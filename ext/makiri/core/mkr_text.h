@@ -4,7 +4,7 @@
 /*
  * The string-type lattice: ownership- and contract-typed {ptr,len} views.
  * Ruby-free (the VALUE-anchored variants live in bridge.h). See
- * docs/string_types.ja.md for the full guide. (mkr_safe.h is a thin umbrella
+ * docs/string_types.ja.md for the full guide. (mkr_core.h is a thin umbrella
  * over mkr_alloc.h + this + mkr_buf.h.)
  */
 

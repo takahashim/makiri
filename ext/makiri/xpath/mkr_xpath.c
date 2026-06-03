@@ -1,6 +1,6 @@
 #include "mkr_xpath.h"
 #include "mkr_xpath_internal.h"
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <stdarg.h>
 #include <stdint.h>

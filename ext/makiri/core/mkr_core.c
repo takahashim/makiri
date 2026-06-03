@@ -1,4 +1,4 @@
-#include "mkr_safe.h"
+#include "mkr_core.h"
 
 void *
 mkr_reallocarray(void *ptr, size_t count, size_t elem)
@@ -150,7 +150,7 @@ mkr_buf_steal(mkr_buf_t *b, size_t *out_len)
 /* ------------------------------------------------------------------ */
 
 int
-mkr_safe_selftest(void)
+mkr_core_selftest(void)
 {
     size_t out = 0;
 

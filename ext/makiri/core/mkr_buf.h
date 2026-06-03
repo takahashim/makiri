@@ -4,7 +4,7 @@
 /*
  * mkr_buf_t — an owned, growable, optionally capped byte buffer, kept
  * NUL-terminated. Built on the fail-closed allocators in mkr_alloc.h.
- * (mkr_safe.h is a thin umbrella over mkr_alloc.h + mkr_text.h + this.)
+ * (mkr_core.h is a thin umbrella over mkr_alloc.h + mkr_text.h + this.)
  */
 
 #include "mkr_alloc.h"

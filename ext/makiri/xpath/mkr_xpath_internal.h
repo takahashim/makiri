@@ -121,7 +121,7 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
 /* ---------- engine text ---------- */
 
 /* mkr_owned_text_t / mkr_borrowed_text_t and mkr_borrowed_text_from_owned() live in
- * core/mkr_safe.h (included via mkr_xpath.h) so the public value type can hold
+ * core/mkr_core.h (included via mkr_xpath.h) so the public value type can hold
  * an owned text directly; the lexer token, node tests, literals, and names use
  * them too. */
 

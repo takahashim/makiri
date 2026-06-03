@@ -1,5 +1,5 @@
 #include "mkr_xpath_internal.h"
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <stdlib.h>
 #include <string.h>

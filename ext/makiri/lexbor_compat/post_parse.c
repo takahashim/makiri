@@ -1,5 +1,5 @@
 #include "compat.h"
-#include "../core/mkr_safe.h"
+#include "../core/mkr_core.h"
 
 #include <lexbor/html/parser.h>
 #include <lexbor/html/tokenizer.h>
