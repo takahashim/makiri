@@ -43,6 +43,54 @@ RSpec.describe "Makiri mutation" do
       expect(txt).to be_a(Makiri::Text)
       expect(txt.text).to eq("hi")
     end
+
+    describe "#create_processing_instruction (DOM createProcessingInstruction)" do
+      it "creates a PI with a target and data, bound to the document" do
+        pi = doc.create_processing_instruction("xml-stylesheet", 'href="s.css"')
+        expect(pi).to be_a(Makiri::ProcessingInstruction)
+        expect(pi.target).to eq("xml-stylesheet")
+        expect(pi.content).to eq('href="s.css"')
+        expect(pi.document).to equal(doc)
+        expect(pi.parent).to be_nil
+      end
+
+      it "is insertable and serializes in the tree" do
+        pi = doc.create_processing_instruction("php", "echo 1;")
+        el = doc.at_css("div") || doc.at_css("body")
+        el.add_child(pi)
+        expect(el.to_html).to include("<?php echo 1;>")
+      end
+
+      it "fails closed when the data contains the PI terminator '?>'" do
+        expect { doc.create_processing_instruction("t", "a?>b") }
+          .to raise_error(Makiri::Error)
+      end
+
+      it "rejects an embedded NUL or invalid UTF-8 in target or data" do
+        expect { doc.create_processing_instruction("t\x00", "d") }
+          .to raise_error(Makiri::Error)
+        expect { doc.create_processing_instruction("t", "d\xFF".b) }
+          .to raise_error(Makiri::Error)
+      end
+    end
+
+    describe "#create_document_fragment (DOM createDocumentFragment)" do
+      it "creates an empty fragment bound to the document" do
+        fr = doc.create_document_fragment
+        expect(fr).to be_a(Makiri::DocumentFragment)
+        expect(fr.children).to be_empty
+        expect(fr.document).to equal(doc)
+      end
+
+      it "can be filled and spliced (its children) into the tree" do
+        fr = doc.create_document_fragment
+        fr << doc.create_element("span") << doc.create_element("b")
+        expect(fr.to_html).to eq("<span></span><b></b>")
+        el = doc.at_css("div") || doc.at_css("body")
+        el.add_child(fr)
+        expect(el.element_children.map(&:name)).to include("span", "b")
+      end
+    end
   end
 
   describe "tree insertion" do

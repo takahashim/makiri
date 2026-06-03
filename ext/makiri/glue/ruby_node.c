@@ -1,5 +1,7 @@
 #include "glue.h"
 
+#include <lexbor/ns/ns.h>   /* lxb_ns_by_id, LXB_NS__UNDEF (namespaceURI) */
+
 /* ------------------------------------------------------------------ */
 /* Node wrapper type                                                  */
 /* ------------------------------------------------------------------ */
@@ -126,6 +128,179 @@ mkr_node_name(VALUE self)
         name = lxb_dom_node_name(node, &len);
         return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)name, len));
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* namespace (WHATWG DOM Element/Attr: namespaceURI/prefix/localName)  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Local name (DOM `localName`): the name without any prefix — "div" for
+ * <div>, "path" for an SVG <path>, "href" for an xlink:href attribute.
+ * Defined on Element and Attribute only; nil for the other node kinds (the DOM
+ * gives a Text/Comment/Document no localName).
+ */
+static VALUE
+mkr_node_local_name(VALUE self)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    size_t len = 0;
+    const lxb_char_t *name;
+
+    switch (node->type) {
+    case LXB_DOM_NODE_TYPE_ELEMENT:
+        name = lxb_dom_element_local_name(lxb_dom_interface_element(node), &len);
+        break;
+    case LXB_DOM_NODE_TYPE_ATTRIBUTE:
+        name = lxb_dom_attr_local_name(lxb_dom_interface_attr(node), &len);
+        break;
+    default:
+        return Qnil;
+    }
+    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)name, len));
+}
+
+/*
+ * Namespace prefix (DOM `prefix`): nil unless the qualified name is
+ * `prefix:local` — typically nil for HTML5-parsed content. Derived from the
+ * qualified-vs-local length (qualified == prefix ":" local), so a colon inside
+ * a local name can't be mistaken for a separator. Element/Attribute only.
+ */
+static VALUE
+mkr_node_prefix(VALUE self)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    const lxb_char_t *q = NULL;
+    size_t qlen = 0, llen = 0;
+
+    switch (node->type) {
+    case LXB_DOM_NODE_TYPE_ELEMENT: {
+        lxb_dom_element_t *el = lxb_dom_interface_element(node);
+        q = lxb_dom_element_qualified_name(el, &qlen);
+        (void) lxb_dom_element_local_name(el, &llen);
+        break;
+    }
+    case LXB_DOM_NODE_TYPE_ATTRIBUTE: {
+        lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
+        q = lxb_dom_attr_qualified_name(at, &qlen);
+        (void) lxb_dom_attr_local_name(at, &llen);
+        break;
+    }
+    default:
+        return Qnil;
+    }
+    if (q == NULL || qlen <= llen + 1) {   /* no "prefix:" segment */
+        return Qnil;
+    }
+    return mkr_ruby_str_from_borrowed(
+        mkr_borrowed_text((const char *)q, qlen - llen - 1));
+}
+
+/*
+ * The fixed namespaces the HTML parser assigns to foreign-content attributes by
+ * prefix (the "adjust foreign attributes" step). Lexbor tags an attribute node
+ * with its *element's* ns rather than the attribute's own, so an attribute's
+ * namespaceURI is resolved from its prefix here, not from node->ns. Returns
+ * NULL (=> DOM null) for any other prefix.
+ */
+static const char *
+mkr_attr_ns_for_prefix(const char *p, size_t n)
+{
+    if (n == 5 && memcmp(p, "xlink", 5) == 0) return "http://www.w3.org/1999/xlink";
+    if (n == 3 && memcmp(p, "xml",   3) == 0) return "http://www.w3.org/XML/1998/namespace";
+    if (n == 5 && memcmp(p, "xmlns", 5) == 0) return "http://www.w3.org/2000/xmlns/";
+    return NULL;
+}
+
+/*
+ * Namespace URI (DOM `namespaceURI`).
+ *
+ * Element: resolved from node->ns, so — DOM-faithfully — an HTML element is in
+ * the XHTML namespace ("http://www.w3.org/1999/xhtml"), not nil (an HTML
+ * element is never namespaceless; this is what browsers' DOM and `namespace-uri()`
+ * return). SVG/MathML elements get their own URI; nil only when truly
+ * unnamespaced (LXB_NS__UNDEF).
+ *
+ * Attribute: nil for an unprefixed attribute (class, id, ...); for a prefixed
+ * one, the parser-assigned foreign-content namespace keyed on the prefix
+ * (xlink/xml/xmlns), else nil.
+ *
+ * Other node kinds: nil.
+ */
+static VALUE
+mkr_node_namespace_uri(VALUE self)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+
+    if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+        if (node->ns == LXB_NS__UNDEF) {
+            return Qnil;
+        }
+        lxb_dom_document_t *doc = node->owner_document;
+        if (doc == NULL || doc->ns == NULL) {
+            return Qnil;
+        }
+        size_t len = 0;
+        const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
+        if (uri == NULL || len == 0) {
+            return Qnil;
+        }
+        return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)uri, len));
+    }
+
+    if (node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
+        lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
+        size_t qlen = 0, llen = 0;
+        const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
+        (void) lxb_dom_attr_local_name(at, &llen);
+        if (q == NULL || qlen <= llen + 1) {
+            return Qnil;   /* unprefixed attribute => no namespace */
+        }
+        const char *uri = mkr_attr_ns_for_prefix((const char *)q, qlen - llen - 1);
+        return uri ? rb_utf8_str_new_cstr(uri) : Qnil;
+    }
+
+    return Qnil;
+}
+
+/*
+ * Element#tag_name (DOM `tagName`): the qualified name, uppercased for an HTML
+ * element in an HTML document ("DIV"), as the DOM specifies — unlike #name,
+ * which is the lowercase qualified name. SVG/MathML elements keep their case.
+ * nil for non-element nodes.
+ */
+static VALUE
+mkr_node_tag_name(VALUE self)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        return Qnil;
+    }
+    size_t len = 0;
+    const lxb_char_t *name =
+        lxb_dom_element_tag_name(lxb_dom_interface_element(node), &len);
+    if (name == NULL) {
+        return Qnil;
+    }
+    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)name, len));
+}
+
+/*
+ * ProcessingInstruction#target (DOM `target`): the PI's target name
+ * (the "xml" in <?xml ...?>). nil for non-PI nodes. The PI's data is read via
+ * #content / #text like any character-data node.
+ */
+static VALUE
+mkr_node_pi_target(VALUE self)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION) {
+        return Qnil;
+    }
+    size_t len = 0;
+    const lxb_char_t *t = lxb_dom_processing_instruction_target(
+        lxb_dom_interface_processing_instruction(node), &len);
+    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)t, len));
 }
 
 /* Numeric DOM node type (LXB_DOM_NODE_TYPE_*). */
@@ -572,7 +747,12 @@ mkr_node_hash(VALUE self)
 void
 mkr_init_node(void)
 {
-    rb_define_method(mkr_cNode, "name",       mkr_node_name,       0);
+    rb_define_method(mkr_cNode, "name",          mkr_node_name,          0);
+    rb_define_method(mkr_cNode, "namespace_uri", mkr_node_namespace_uri, 0);
+    rb_define_method(mkr_cNode, "prefix",        mkr_node_prefix,        0);
+    rb_define_method(mkr_cNode, "local_name",    mkr_node_local_name,    0);
+    rb_define_method(mkr_cNode, "tag_name",      mkr_node_tag_name,      0);
+    rb_define_method(mkr_cNode, "target",        mkr_node_pi_target,     0);
     rb_define_method(mkr_cNode, "node_type",  mkr_node_get_type,   0);
     rb_define_method(mkr_cNode, "content",    mkr_node_content,    0);
     rb_define_method(mkr_cNode, "text",       mkr_node_content,    0);

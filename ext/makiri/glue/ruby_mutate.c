@@ -408,6 +408,39 @@ mkr_doc_create_comment(VALUE self, VALUE rb_text)
     return mkr_wrap_node(lxb_dom_interface_node(c), self);
 }
 
+/* Document#create_processing_instruction(target, data) — DOM
+ * createProcessingInstruction: a detached ProcessingInstruction owned by this
+ * document. Lexbor validates the target, so an invalid one fails closed. */
+static VALUE
+mkr_doc_create_processing_instruction(VALUE self, VALUE rb_target, VALUE rb_data)
+{
+    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_target, "processing instruction target");
+    mkr_ruby_borrowed_text_t dv = mkr_ruby_verified_text(rb_data, "processing instruction data");
+    lxb_dom_processing_instruction_t *pi = lxb_dom_document_create_processing_instruction(
+        doc, (const lxb_char_t *)tv.ptr, tv.len, (const lxb_char_t *)dv.ptr, dv.len);
+    RB_GC_GUARD(tv.value);
+    RB_GC_GUARD(dv.value);
+    if (pi == NULL) {
+        rb_raise(mkr_eError, "failed to create processing instruction");
+    }
+    return mkr_wrap_node(lxb_dom_interface_node(pi), self);
+}
+
+/* Document#create_document_fragment — DOM createDocumentFragment: an empty
+ * DocumentFragment owned by this document (unlike #fragment / DocumentFragment.parse,
+ * which parse HTML; this makes an empty one to build up programmatically). */
+static VALUE
+mkr_doc_create_document_fragment(VALUE self)
+{
+    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_document_fragment_t *f = lxb_dom_document_create_document_fragment(doc);
+    if (f == NULL) {
+        rb_raise(mkr_eError, "failed to create document fragment");
+    }
+    return mkr_wrap_node(lxb_dom_interface_node(f), self);
+}
+
 void
 mkr_init_mutate(void)
 {
@@ -433,4 +466,8 @@ mkr_init_mutate(void)
     rb_define_method(mkr_cDocument, "create_element",   mkr_doc_create_element,   1);
     rb_define_method(mkr_cDocument, "create_text_node", mkr_doc_create_text_node, 1);
     rb_define_method(mkr_cDocument, "create_comment",   mkr_doc_create_comment,   1);
+    rb_define_method(mkr_cDocument, "create_processing_instruction",
+                     mkr_doc_create_processing_instruction, 2);
+    rb_define_method(mkr_cDocument, "create_document_fragment",
+                     mkr_doc_create_document_fragment, 0);
 }

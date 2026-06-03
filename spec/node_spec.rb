@@ -28,6 +28,120 @@ RSpec.describe Makiri::Node do
     end
   end
 
+  describe "namespace (WHATWG DOM Element/Attr accessors)" do
+    let(:svg_doc) do
+      Makiri::HTML(<<~HTML)
+        <html><body><svg xmlns="http://www.w3.org/2000/svg">
+          <a xlink:href="u" xml:lang="en" class="c"><path d="z"/></a>
+        </svg></body></html>
+      HTML
+    end
+    let(:path) { svg_doc.at_xpath('//*[local-name()="path"]') }
+    let(:a)    { svg_doc.at_xpath('//*[local-name()="a"]') }
+    def attr(node, name) = node.attribute_nodes.find { |x| x.name == name }
+
+    describe "#local_name" do
+      it "is the un-prefixed name for elements" do
+        expect(div.local_name).to eq("div")
+        expect(path.local_name).to eq("path")
+      end
+
+      it "drops the prefix for prefixed attributes" do
+        expect(attr(a, "xlink:href").local_name).to eq("href")
+        expect(attr(a, "class").local_name).to eq("class")
+      end
+
+      it "is nil for non-element/attribute nodes (DOM)" do
+        expect(ps[0].child.local_name).to be_nil
+        expect(doc.local_name).to be_nil
+      end
+    end
+
+    describe "#namespace_uri" do
+      it "is the XHTML namespace for HTML elements (DOM-faithful, not nil)" do
+        # An HTML element is in the HTML namespace per the DOM, like browsers
+        # and namespace-uri(); only Nokogiri::HTML's libxml2 returns nil.
+        expect(div.namespace_uri).to eq("http://www.w3.org/1999/xhtml")
+        expect(body.namespace_uri).to eq("http://www.w3.org/1999/xhtml")
+      end
+
+      it "is the SVG namespace for SVG elements" do
+        expect(path.namespace_uri).to eq("http://www.w3.org/2000/svg")
+      end
+
+      it "agrees with the namespace-uri() XPath function" do
+        expect(div.namespace_uri).to eq(div.at_xpath("namespace-uri(.)"))
+        expect(path.namespace_uri).to eq(path.at_xpath("namespace-uri(.)"))
+      end
+
+      it "is nil for an unprefixed attribute" do
+        expect(attr(a, "class").namespace_uri).to be_nil
+      end
+
+      it "is the parser-assigned namespace for a prefixed attribute" do
+        expect(attr(a, "xlink:href").namespace_uri).to eq("http://www.w3.org/1999/xlink")
+        expect(attr(a, "xml:lang").namespace_uri).to eq("http://www.w3.org/XML/1998/namespace")
+      end
+
+      it "is nil for non-element/attribute nodes (DOM)" do
+        expect(ps[0].child.namespace_uri).to be_nil
+        expect(doc.namespace_uri).to be_nil
+      end
+    end
+
+    describe "#prefix" do
+      it "is nil for unprefixed HTML5-parsed nodes" do
+        expect(div.prefix).to be_nil
+        expect(path.prefix).to be_nil
+        expect(attr(a, "class").prefix).to be_nil
+      end
+
+      it "is the prefix segment for prefixed attributes" do
+        expect(attr(a, "xlink:href").prefix).to eq("xlink")
+        expect(attr(a, "xml:lang").prefix).to eq("xml")
+      end
+
+      it "is nil for non-element/attribute nodes (DOM)" do
+        expect(ps[0].child.prefix).to be_nil
+        expect(doc.prefix).to be_nil
+      end
+    end
+  end
+
+  describe "#tag_name (DOM tagName)" do
+    it "is the uppercase qualified name for HTML elements" do
+      expect(div.tag_name).to eq("DIV")
+      expect(body.tag_name).to eq("BODY")
+    end
+
+    it "differs from #name, which stays lowercase" do
+      expect(div.name).to eq("div")
+    end
+
+    it "keeps the original case for SVG/MathML elements" do
+      path = Makiri::HTML(%(<svg xmlns="http://www.w3.org/2000/svg"><path/></svg>))
+             .at_xpath('//*[local-name()="path"]')
+      expect(path.tag_name).to eq("path")
+    end
+
+    it "is nil for non-element nodes" do
+      expect(ps[0].child.tag_name).to be_nil
+      expect(doc.tag_name).to be_nil
+    end
+  end
+
+  describe "#target (DOM ProcessingInstruction.target)" do
+    it "is the target of a created processing instruction" do
+      pi = doc.create_processing_instruction("xml-stylesheet", "x")
+      expect(pi.target).to eq("xml-stylesheet")
+    end
+
+    it "is nil for non-PI nodes" do
+      expect(div.target).to be_nil
+      expect(ps[0].child.target).to be_nil
+    end
+  end
+
   describe "type predicates" do
     it "classifies nodes" do
       expect(div).to be_element

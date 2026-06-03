@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* `Element#tag_name` (DOM `tagName`) — the qualified name uppercased for an
+  HTML element in an HTML document (`"DIV"`), keeping the original case for
+  SVG/MathML; `nil` for non-elements. Complements `#name`, which stays the
+  lowercase qualified name.
+* `ProcessingInstruction#target` (DOM `target`) — a PI's target name; `nil` for
+  other node kinds. Its data is read via `#content`/`#text`.
+* `Document#create_processing_instruction(target, data)` (DOM
+  `createProcessingInstruction`) and `Document#create_document_fragment` (DOM
+  `createDocumentFragment`, an empty fragment to build up programmatically —
+  unlike `#fragment` / `DocumentFragment.parse`, which parse HTML). Both produce
+  a detached node owned by the document; PI creation fails closed when the data
+  contains the `?>` terminator (matching the DOM constraint). (DOM
+  `createCDATASection` is intentionally not provided: per WHATWG DOM it throws on
+  an HTML document, which is the only kind Makiri produces.)
+* `Node#{namespace_uri, prefix, local_name}` — the WHATWG DOM per-node
+  namespace accessors on `Element` and `Attribute` (`nil` on other node kinds).
+  `namespace_uri` resolves an element's namespace from its node (so an HTML
+  element is the XHTML namespace `http://www.w3.org/1999/xhtml`, not `nil` — the
+  DOM-faithful value browsers and `namespace-uri()` return; SVG/MathML get their
+  own URI), and agrees byte-for-byte with the `namespace-uri()` XPath function.
+  For attributes it is `nil` unless prefixed, where it returns the parser-assigned
+  foreign-content namespace (`xlink`/`xml`/`xmlns`). `prefix` is the prefix
+  segment of the qualified name (`nil` for the usual unprefixed HTML5 case), and
+  `local_name` is the name without that prefix. Previously a node's namespace was
+  reachable only through XPath (`namespace-uri()`/`local-name()`).
 * `Node#clone_node(deep = false)` — a copy of the node, owned by the same
   document and detached from any parent (the DOM `cloneNode`, whose `deep`
   defaults to `false` — a missing/`nil`/`false` argument is a shallow clone; a
