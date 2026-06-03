@@ -587,3 +587,33 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   mkr_val_to_public(&v, out_value);
   return 0;
 }
+
+int
+mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                             mkr_xpath_value_t *out_value,
+                             mkr_xpath_error_t *out_error)
+{
+  if (ctx == NULL || ast == NULL || out_value == NULL) {
+    if (out_error) {
+      mkr_err_set(out_error, MKR_XPATH_ERR_INTERNAL,
+                  "mkr_xpath_eval_compiled_first: bad arguments");
+    }
+    return -1;
+  }
+  lxb_dom_node_t *node = NULL;
+  if (mkr_try_first_match(ctx, ast, &node)) {
+    /* Recognised first-match shape: return a 0-or-1-node node-set without
+     * building (or sorting) the full descendant set. */
+    mkr_val_t v = {0};
+    v.type = MKR_XPATH_TYPE_NODESET;
+    mkr_nodeset_init(&v.u.nodeset);
+    if (node != NULL
+        && mkr_nodeset_push(&v.u.nodeset, node, NULL, out_error) != 0) {
+      mkr_nodeset_clear(&v.u.nodeset);
+      return -1;
+    }
+    mkr_val_to_public(&v, out_value);
+    return 0;
+  }
+  return mkr_xpath_eval_compiled(ctx, ast, out_value, out_error);
+}

@@ -497,6 +497,16 @@ mkr_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
     return mkr_xpath_eval_compiled(ctx, ast, value, error);
 }
 
+/* Node#at_xpath only needs the first node: route through the engine's
+ * first-match short-circuit (recognised shapes return a 0-or-1-node set without
+ * building the rest; everything else falls back to the full evaluator). */
+static int
+mkr_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                        mkr_xpath_value_t *value, mkr_xpath_error_t *error)
+{
+    return mkr_xpath_eval_compiled_first(ctx, ast, value, error);
+}
+
 /* Return the compiled AST for +expr+, parsing and caching it on first use.
  * Sets *owned to 1 when the returned AST is NOT owned by the cache (the cache
  * was full or could not grow) and the caller must free it. Returns NULL on a
@@ -627,7 +637,7 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
  * Evaluation runs under the GVL (see mkr_eval_compiled — XPath never releases
  * it). */
 static VALUE
-mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
+mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax, int first_only)
 {
     VALUE document = mkr_node_document(self);
     mkr_ruby_borrowed_text_t ev = mkr_ruby_verified_text(rb_expr, "XPath expression");
@@ -652,7 +662,8 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax)
         mkr_xpath_set_func_resolver(ctx, mkr_handler_resolver);
     }
     mkr_xpath_value_t value = {0};
-    int rc = mkr_eval_compiled(ctx, ast, &value, &error);
+    int rc = first_only ? mkr_eval_compiled_first(ctx, ast, &value, &error)
+                        : mkr_eval_compiled(ctx, ast, &value, &error);
     if (has_handler) {
         mkr_xpath_set_func_resolver(ctx, NULL);
         mkr_xpath_context_set_user_data(ctx, NULL);
@@ -672,7 +683,7 @@ mkr_node_xpath(int argc, VALUE *argv, VALUE self)
 {
     VALUE rb_expr, handler, opts;
     rb_scan_args(argc, argv, "11:", &rb_expr, &handler, &opts);
-    return mkr_node_xpath_run(self, rb_expr, handler, mkr_ns_matching_lax(opts));
+    return mkr_node_xpath_run(self, rb_expr, handler, mkr_ns_matching_lax(opts), 0);
 }
 
 /* First matching node (for a node-set), or the scalar value otherwise. */
@@ -681,7 +692,7 @@ mkr_node_at_xpath(int argc, VALUE *argv, VALUE self)
 {
     VALUE rb_expr, handler, opts;
     rb_scan_args(argc, argv, "11:", &rb_expr, &handler, &opts);
-    VALUE result = mkr_node_xpath_run(self, rb_expr, handler, mkr_ns_matching_lax(opts));
+    VALUE result = mkr_node_xpath_run(self, rb_expr, handler, mkr_ns_matching_lax(opts), 1);
     if (rb_obj_is_kind_of(result, mkr_cNodeSet)) {
         return rb_funcall(result, rb_intern("first"), 0);
     }

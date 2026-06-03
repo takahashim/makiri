@@ -278,6 +278,20 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   position-independent filter via `lxb_dom_element_has_attribute`/`get_attribute`
   instead of building a throwaway node-set per candidate; anything else falls
   through to the generic evaluator.
+- **`Node#at_xpath` first-match short-circuit** (`mkr_xpath_eval.c`
+  `mkr_try_first_match`, entered via `mkr_xpath_eval_compiled_first`): `at_xpath`
+  wants only node-set[0], so for the common "first descendant by name (+ a
+  position-independent `[@a]`/`[@a='v']` predicate)" shapes — `//x`, `//x[@a]`,
+  `//*[@a='v']`, `.//x`, `descendant::x[...]` (after the `//` peephole; one or two
+  steps) — it walks the subtree in **document order and stops at the first match**
+  instead of materialising+sorting the whole set, the XPath analogue of at_css's
+  `MATCH_FIRST`. Cost becomes O(position of first match): a front hit is ~µs
+  (vs ~280µs full-eval), trailing/absent fall back to a full scan. Reuses
+  `node_principal_match` + the `[@attr]` matcher so it's **byte-identical to
+  `xpath(e).first`** (asserted by `spec/at_xpath_first_spec.rb`). Anything else
+  (positional predicates, functions/variables, reverse axes, unions, prefixes,
+  longer paths) returns 0 from the recogniser → full evaluator. Only `at_xpath`
+  uses it; `xpath` always builds the full set.
 - **Per-context compiled-AST cache** (`mkr_xpath.c`): an `XPathContext` parses
   each expression once and re-runs the cached AST (bounded by `MKR_AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.

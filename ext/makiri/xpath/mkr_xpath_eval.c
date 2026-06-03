@@ -651,6 +651,116 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   return 1;
 }
 
+/* ---------------------------------------------------------------------------
+ * at_xpath() first-match short-circuit (Node#at_xpath / Node#at).
+ *
+ * Node#at_xpath wants only the first node in document order; today it builds the
+ * whole node-set and takes [0]. For the common "find a descendant by name (plus
+ * a simple attribute predicate)" shapes we can instead walk the subtree in
+ * document order and stop at the first match — the XPath-side analogue of
+ * at_css's lxb_selectors MATCH_FIRST.
+ *
+ * Recognised shapes (after the parser's // peephole, see mkr_apply_peephole):
+ *     //X        .//X          -> PATH [ {descendant, X} ]
+ *     //X[@a..]  .//X[@a..]    -> PATH [ {desc-or-self,node()}, {child, X, preds} ]
+ *     descendant::X[@a..]      -> PATH [ {descendant, X, preds} ]
+ * where X is an UNPREFIXED name / '*' / node-type test and every predicate is a
+ * position-independent [@name] / [@name='lit'] (exactly mkr_match_attr_pred's
+ * shape). Each denotes "the strict descendants of <start> matching the
+ * test+predicates, in document order", so the first node the pre-order walk
+ * reaches IS node-set[0] of the full evaluation — byte-identical, just without
+ * building the rest. Anything else (positional predicates, functions/variables,
+ * reverse axes, unions, prefixes, longer paths) returns 0 and the caller falls
+ * back to the full evaluator.
+ */
+static int
+mkr_first_recognise(const mkr_node_t *ast, const mkr_step_t **out_step)
+{
+  if (ast == NULL || ast->kind != MKR_NK_PATH) return 0;
+  const mkr_step_t *steps = ast->u.path.steps;
+  size_t nsteps = ast->u.path.nsteps;
+  const mkr_step_t *nt;
+  if (nsteps == 1 && steps[0].axis == MKR_AXIS_DESCENDANT) {
+    nt = &steps[0];
+  } else if (nsteps == 2
+             && steps[0].axis == MKR_AXIS_DESCENDANT_OR_SELF
+             && steps[0].test.kind == MKR_NT_NODE
+             && steps[0].npredicates == 0
+             && steps[1].axis == MKR_AXIS_CHILD) {
+    nt = &steps[1];
+  } else {
+    return 0;
+  }
+  /* A prefixed name test needs the step driver's "unknown prefix -> RUNTIME
+   * error" semantics, which this path does not reproduce; fall back. */
+  if (nt->test.prefix.ptr != NULL) return 0;
+  /* Every predicate must be a position-independent attribute predicate (no
+   * position()/last()/numeric, no function/variable -> no handler involvement). */
+  for (size_t p = 0; p < nt->npredicates; p++) {
+    mkr_attr_pred_t ap;
+    if (!mkr_match_attr_pred(nt->predicates[p], &ap)) return 0;
+  }
+  *out_step = nt;
+  return 1;
+}
+
+/* Does +n+ satisfy every (already-recognised) attribute predicate of +step+?
+ * Mirrors mkr_filter_attr_pred's per-node test so the result is identical. */
+static int
+mkr_first_node_ok(const mkr_step_t *step, lxb_dom_node_t *n)
+{
+  for (size_t p = 0; p < step->npredicates; p++) {
+    mkr_attr_pred_t ap;
+    (void)mkr_match_attr_pred(step->predicates[p], &ap); /* recogniser ensured it matches */
+    if (n->type != LXB_DOM_NODE_TYPE_ELEMENT) return 0;
+    lxb_dom_attr_t *a =
+        mkr_attr_by_qualified_name(lxb_dom_interface_element(n), ap.name, ap.name_len);
+    if (a == NULL) return 0;
+    if (ap.has_value) {
+      size_t got_len = 0;
+      const lxb_char_t *got = lxb_dom_attr_value(a, &got_len);
+      if (got == NULL) got_len = 0;
+      if (got_len != ap.value_len
+          || (ap.value_len != 0 && memcmp(got, ap.value, ap.value_len) != 0)) {
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+/* If +ast+ is a recognised at_xpath() first-match shape, walk <start>'s strict
+ * descendants in document order and set *out_node to the first match (NULL if
+ * none). Returns 1 when handled (caller skips the full evaluator), 0 when the
+ * shape is not recognised. Never raises (the recognised shape cannot error). */
+int
+mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                    lxb_dom_node_t **out_node)
+{
+  const mkr_step_t *step;
+  if (out_node == NULL || !mkr_first_recognise(ast, &step)) return 0;
+  *out_node = NULL;
+
+  lxb_dom_node_t *start = ast->u.path.absolute
+      ? (lxb_dom_node_t *)mkr_ctx_document(ctx)
+      : mkr_ctx_node(ctx);
+  if (start == NULL) return 1; /* recognised; no context -> no match */
+
+  /* Iterative pre-order (document order) over STRICT descendants of start. */
+  for (lxb_dom_node_t *n = start->first_child; n != NULL; ) {
+    if (node_principal_match(&step->test, n, step->axis, ctx)
+        && mkr_first_node_ok(step, n)) {
+      *out_node = n;
+      return 1;
+    }
+    if (n->first_child != NULL) { n = n->first_child; continue; }
+    while (n != start && n->next == NULL) n = n->parent;
+    if (n == start) break;
+    n = n->next;
+  }
+  return 1; /* recognised; *out_node is the first match or NULL */
+}
+
 static int
 eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
           mkr_nodeset_t *context_set, mkr_nodeset_t *out,
