@@ -6,6 +6,7 @@
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
 VALUE mkr_cDocument;
+VALUE mkr_cXmlDocument;
 VALUE mkr_cElement;
 VALUE mkr_cAttribute;
 VALUE mkr_cText;

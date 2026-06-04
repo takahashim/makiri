@@ -1,6 +1,7 @@
 #include "glue.h"
 #include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
 #include "../core/mkr_core.h"
+#include "../xml/mkr_xml.h"   /* mkr_xml_doc_memsize for an XML-backed document */
 
 #include <lexbor/html/parser.h>
 #include <ruby/thread.h>
@@ -32,9 +33,14 @@ mkr_doc_free(void *ptr)
 static size_t
 mkr_doc_memsize(const void *ptr)
 {
-    /* The DOM arena size is not cheaply queryable; report the wrapper only. */
-    (void)ptr;
-    return sizeof(mkr_doc_data_t);
+    const mkr_doc_data_t *d = (const mkr_doc_data_t *)ptr;
+    size_t total = sizeof(mkr_doc_data_t);
+    /* The Lexbor (HTML) arena size is not cheaply queryable; report the wrapper
+     * only. The XML arena tracks its own byte total, so include it. */
+    if (d->parsed != NULL && mkr_parsed_kind(d->parsed) == MKR_DOC_XML) {
+        total += mkr_xml_doc_memsize(mkr_parsed_xml_doc(d->parsed));
+    }
+    return total;
 }
 
 const rb_data_type_t mkr_doc_type = {
@@ -48,7 +54,8 @@ mkr_doc_unwrap(VALUE rb_doc)
 {
     mkr_doc_data_t *d;
     TypedData_Get_Struct(rb_doc, mkr_doc_data_t, &mkr_doc_type, d);
-    return (lxb_dom_document_t *)d->parsed->doc;
+    /* HTML-only: the XML engine/Node-API path never routes through here. */
+    return (lxb_dom_document_t *)mkr_parsed_html_doc(d->parsed);
 }
 
 mkr_parsed_t *
@@ -59,13 +66,18 @@ mkr_doc_parsed(VALUE rb_doc)
     return d->parsed;
 }
 
-/* Wrap an owned mkr_parsed_t as a Makiri::Document. GC takes ownership of
- * +parsed+ (freed in dfree). Used to back a standalone DocumentFragment. */
+/* Wrap an owned mkr_parsed_t as a Document. GC takes ownership of +parsed+
+ * (freed in dfree). The Ruby leaf class is chosen by kind: a Lexbor-backed
+ * handle becomes Makiri::Document (HTML), an arena-backed one
+ * Makiri::XML::Document (§2.3). Used to back a parsed document or a standalone
+ * DocumentFragment. */
 VALUE
 mkr_wrap_document(mkr_parsed_t *parsed)
 {
+    VALUE klass = (mkr_parsed_kind(parsed) == MKR_DOC_XML)
+                    ? mkr_cXmlDocument : mkr_cDocument;
     mkr_doc_data_t *d;
-    VALUE obj = TypedData_Make_Struct(mkr_cDocument, mkr_doc_data_t, &mkr_doc_type, d);
+    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_doc_type, d);
     d->parsed = parsed;
     d->errors = rb_ary_new();
     return obj;

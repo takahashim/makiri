@@ -1,10 +1,12 @@
 #include "compat.h"
 #include "../core/mkr_core.h"
+#include "../xml/mkr_xml.h"   /* mkr_xml_doc_destroy for the XML destroy branch */
 
 #include <lexbor/html/parser.h>
 #include <lexbor/html/tokenizer.h>
 
 #include <stdlib.h>
+#include <assert.h>
 
 /* UTF-8 input sanitisation (mkr_utf8_sanitize) is a separate pre-parse
  * subsystem in utf8_input.c; this file drives the parse pipeline and owns the
@@ -80,6 +82,7 @@ mkr_parse_html(const lxb_char_t *src, size_t len, bool assume_valid)
     if (p == NULL) {
         return NULL;
     }
+    p->kind = MKR_DOC_HTML;
 
     /* Empty input (NULL source): nothing to sanitise or track — just create an
      * empty document. */
@@ -129,9 +132,8 @@ mkr_parsed_destroy(mkr_parsed_t *p)
         return;
     }
 
-    /* dom_index is built lazily (M4) and is NULL if no attribute lookup ever
-     * ran; mkr_dom_index_free is a no-op on NULL. newline_idx (M6) is set only
-     * when source-location tracking ran; mkr_lines_free is a no-op on NULL. */
+    /* The compat indices are HTML-only and built lazily; each *_free is a no-op
+     * on NULL, so this is safe for an XML handle (which never sets them). */
     mkr_dom_index_free(p->dom_index);
     p->dom_index = NULL;
     mkr_lines_free(p->newline_idx);
@@ -140,9 +142,54 @@ mkr_parsed_destroy(mkr_parsed_t *p)
     p->text_index = NULL;
 
     if (p->doc != NULL) {
-        lxb_html_document_destroy(p->doc);
+        if (p->kind == MKR_DOC_XML) {
+            mkr_xml_doc_destroy((mkr_xml_doc_t *)p->doc); /* whole-arena free */
+        } else {
+            lxb_html_document_destroy((lxb_html_document_t *)p->doc);
+        }
         p->doc = NULL;
     }
 
     free(p);
+}
+
+/* ---- document-kind accessors (§2.3) ---- */
+
+mkr_doc_kind_t
+mkr_parsed_kind(const mkr_parsed_t *p)
+{
+    return p->kind;
+}
+
+lxb_html_document_t *
+mkr_parsed_html_doc(const mkr_parsed_t *p)
+{
+    assert(p->kind == MKR_DOC_HTML);
+    return (lxb_html_document_t *)p->doc;
+}
+
+mkr_parsed_t *
+mkr_parsed_new_xml(struct mkr_xml_doc *xdoc)
+{
+    mkr_parsed_t *p = mkr_callocarray(1, sizeof(*p));
+    if (p == NULL) {
+        return NULL;
+    }
+    p->kind = MKR_DOC_XML;
+    p->doc  = xdoc;            /* may be NULL; set later via mkr_parsed_set_xml_doc */
+    return p;
+}
+
+struct mkr_xml_doc *
+mkr_parsed_xml_doc(const mkr_parsed_t *p)
+{
+    assert(p->kind == MKR_DOC_XML);
+    return (struct mkr_xml_doc *)p->doc;
+}
+
+void
+mkr_parsed_set_xml_doc(mkr_parsed_t *p, struct mkr_xml_doc *xdoc)
+{
+    assert(p->kind == MKR_DOC_XML);
+    p->doc = xdoc;
 }

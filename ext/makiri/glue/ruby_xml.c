@@ -2,46 +2,16 @@
  *
  * Makiri::XML(source) / Makiri.parse_xml(source): strict-decode the input
  * (§2.1), then run the Ruby-free parser with the GVL released, and return a
- * Makiri::XML::Document wrapping the owned document arena (GC frees it).
- *
- * SKELETON: mkr_xml_parse currently builds an empty document; the tokenizer and
- * tree builder land next. This validates the decode -> GVL -> arena -> doc ->
- * wrap pipeline end to end.
+ * Makiri::XML::Document. The document is held in a kind=MKR_DOC_XML mkr_parsed_t
+ * (the common document handle, §2.3) and wrapped by mkr_wrap_document, which GC
+ * frees via mkr_parsed_destroy (the XML branch whole-arena-frees).
  */
 #include "../makiri.h"
 #include "../core/mkr_core.h"
 #include "../xml/mkr_xml.h"
+#include "glue.h"   /* mkr_wrap_document, mkr_parsed_* (via compat.h) */
 
 #include <ruby/thread.h>
-
-/* Class ref kept alive by the Makiri::XML::Document constant. */
-static VALUE mkr_cXmlDocument;
-
-/* ---- Makiri::XML::Document wrapper (owns the arena) ---- */
-typedef struct {
-    mkr_xml_doc_t *doc;
-} mkr_xml_doc_data_t;
-
-static void
-mkr_xml_doc_dfree(void *ptr)
-{
-    mkr_xml_doc_data_t *d = (mkr_xml_doc_data_t *)ptr;
-    mkr_xml_doc_destroy(d->doc); /* whole-arena free; safe on NULL */
-    xfree(d);
-}
-
-static size_t
-mkr_xml_doc_dsize(const void *ptr)
-{
-    const mkr_xml_doc_data_t *d = (const mkr_xml_doc_data_t *)ptr;
-    return sizeof(*d) + mkr_xml_doc_memsize(d->doc);
-}
-
-static const rb_data_type_t mkr_xml_doc_type = {
-    "Makiri::XML::Document",
-    { NULL, mkr_xml_doc_dfree, mkr_xml_doc_dsize, },
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY,
-};
 
 /* ---- GVL-released parse ---- */
 typedef struct {
@@ -69,12 +39,14 @@ mkr_xml_s_parse(VALUE self, VALUE rb_source)
      * raise Makiri::XML::SyntaxError here (no U+FFFD repair). */
     VALUE decoded = mkr_xml_decode_input(rb_String(rb_source));
 
-    /* Allocate the wrapper first (doc == NULL) so a failure mid-parse frees
-     * cleanly via GC. */
-    mkr_xml_doc_data_t *d;
-    VALUE obj = TypedData_Make_Struct(mkr_cXmlDocument, mkr_xml_doc_data_t,
-                                      &mkr_xml_doc_type, d);
-    d->doc = NULL;
+    /* Build an empty XML handle and wrap it first (doc == NULL) so a failure
+     * mid-parse frees cleanly via GC (mkr_parsed_destroy -> the XML branch ->
+     * mkr_xml_doc_destroy(NULL), a no-op). */
+    mkr_parsed_t *parsed = mkr_parsed_new_xml(NULL);
+    if (parsed == NULL) {
+        rb_raise(mkr_eError, "out of memory allocating XML document");
+    }
+    VALUE obj = mkr_wrap_document(parsed); /* GC owns +parsed+ from here */
 
     /* Copy the decoded bytes so the parse can run with the GVL released without
      * racing GC/compaction on the String's backing store. */
@@ -88,20 +60,23 @@ mkr_xml_s_parse(VALUE self, VALUE rb_source)
     rb_thread_call_without_gvl(mkr_xml_parse_nogvl, &args, NULL, NULL);
     mkr_owned_bytes_clear(&source);
 
-    d->doc = args.result;
-    if (d->doc == NULL) {
+    if (args.result == NULL) {
         switch (args.status) {
         case MKR_XML_ERR_SYNTAX: rb_raise(mkr_eXmlSyntaxError,   "malformed XML"); break;
         case MKR_XML_ERR_LIMIT:  rb_raise(mkr_eXmlLimitExceeded, "XML document budget exceeded"); break;
         default:                 rb_raise(mkr_eError,            "failed to parse XML document"); break;
         }
     }
+    mkr_parsed_set_xml_doc(parsed, args.result);
+    RB_GC_GUARD(obj);
     return obj;
 }
 
 void
 mkr_init_xml(void)
 {
+    /* Standalone class for now; the per-kind hierarchy (Makiri::Document abstract
+     * base + HTML/XML leaves, §12) lands in step 1b. */
     mkr_cXmlDocument = rb_define_class_under(mkr_mXML, "Document", rb_cObject);
     rb_undef_alloc_func(mkr_cXmlDocument); /* created only from C, never .new */
 

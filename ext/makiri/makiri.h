@@ -17,6 +17,7 @@ extern "C" {
 extern VALUE mkr_mMakiri;
 extern VALUE mkr_cNode;
 extern VALUE mkr_cDocument;
+extern VALUE mkr_cXmlDocument;   /* Makiri::XML::Document */
 extern VALUE mkr_cElement;
 extern VALUE mkr_cAttribute;
 extern VALUE mkr_cText;
