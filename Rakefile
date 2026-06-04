@@ -110,6 +110,11 @@ task fuzz: :compile do
   sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}"
 end
 
+desc "Fuzz the XML parser (hostile/mutated documents; override via FUZZ_ARGS)"
+task "fuzz:xml": :compile do
+  sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target xml #{ENV['FUZZ_ARGS']}"
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)
@@ -162,7 +167,13 @@ namespace :fuzz do
       preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
       env[preload] = runtime
     end
-    args = ENV["FUZZ_ARGS"] || "--isolated --time 120"
-    sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{args}")
+    if ENV["FUZZ_ARGS"]
+      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
+    else
+      # By default cover both surfaces under the sanitizer: the query engine
+      # (XPath/CSS over parsed fixtures) and the XML parser (hostile documents).
+      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --isolated --time 90")
+      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target xml --isolated --time 90")
+    end
   end
 end
