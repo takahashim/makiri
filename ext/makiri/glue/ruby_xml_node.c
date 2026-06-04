@@ -211,6 +211,36 @@ mkr_xml_node_get_document(VALUE self)
     return mkr_xml_node_document(self);
 }
 
+/* ---- fail-closed guards for the unsupported query / serialization surface ----
+ *
+ * Makiri::XML is a strict, read-only reader (§7.5 / §12). Two HTML-node
+ * conveniences would silently misbehave on XML and are turned into explicit
+ * NotImplementedError instead of a wrong result:
+ *   - CSS selectors: Lexbor's lxb_selectors lower-cases names, which destroys
+ *     XML's case- and namespace-sensitive matching — use #xpath.
+ *   - serialization (to_xml/to_html/to_s/inner_html/outer_html): writing the
+ *     read-only tree back out is a later phase; emitting HTML-serialized markup
+ *     for an XML document would be wrong (escaping / CDATA / xhtml differ). */
+static VALUE
+mkr_xml_node_no_css(int argc, VALUE *argv, VALUE self)
+{
+    (void)argc; (void)argv; (void)self;
+    rb_raise(rb_eNotImpError,
+             "Makiri::XML does not support CSS selectors; use #xpath. "
+             "(CSS cannot preserve XML element-name case or namespaces.) "
+             "Default-namespace documents (RSS/Atom) need a registered prefix, "
+             "e.g. doc.xpath(\"//a:entry\", \"a\" => \"http://www.w3.org/2005/Atom\").");
+}
+
+static VALUE
+mkr_xml_node_no_serialize(int argc, VALUE *argv, VALUE self)
+{
+    (void)argc; (void)argv; (void)self;
+    rb_raise(rb_eNotImpError,
+             "Makiri::XML is read-only in this version; node serialization "
+             "(to_xml / to_html / to_s / inner_html / outer_html) is not supported.");
+}
+
 void
 mkr_init_xml_node(void)
 {
@@ -234,4 +264,15 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "children",      mkr_xml_node_children, 0);
     rb_define_method(mkr_mXmlNodeMethods, "[]",            mkr_xml_node_aref, 1);
     rb_define_method(mkr_mXmlNodeMethods, "attribute_nodes", mkr_xml_node_attribute_nodes, 0);
+
+    /* Fail-closed: CSS + serialization are unsupported on XML; raise rather than
+     * return a wrong result (these shadow nothing — XML nodes have no css/to_s
+     * otherwise). Also defined on XML::Document, which includes this module. */
+    rb_define_method(mkr_mXmlNodeMethods, "css",        mkr_xml_node_no_css, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "at_css",     mkr_xml_node_no_css, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "to_xml",     mkr_xml_node_no_serialize, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "to_html",    mkr_xml_node_no_serialize, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "to_s",       mkr_xml_node_no_serialize, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "inner_html", mkr_xml_node_no_serialize, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "outer_html", mkr_xml_node_no_serialize, -1);
 }

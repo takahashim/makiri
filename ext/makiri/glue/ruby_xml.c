@@ -130,12 +130,53 @@ mkr_xml_query_context(VALUE self, VALUE *out_document)
     return (mkr_xml_node_t *)nd->node;
 }
 
-/* Makiri::XML::{Document,*}#xpath(expr) / #at_xpath(expr): evaluate +expr+ over
- * the XML engine instance, rooted at +self+'s context node, and return a NodeSet
- * (node-set) or scalar. Phase 1: no custom-function handler and no
- * namespace_matching / per-call namespace registration option yet (Phase 2). */
+/* Register a {prefix => uri} Ruby Hash onto +ctx+ for a single query. On any bad
+ * entry (non-string-coercible, invalid UTF-8 / embedded NUL, or OOM) the context
+ * is freed and an exception is raised — never a partial registration. RSS/Atom
+ * live in a default namespace, so a prefix is the strict-mode way to select them
+ * (e.g. xpath("//a:entry", "a" => "http://www.w3.org/2005/Atom")). */
+static void
+mkr_xml_register_query_namespaces(mkr_xpath_context_t *ctx, VALUE rb_ns)
+{
+    if (NIL_P(rb_ns)) return;
+    if (!RB_TYPE_P(rb_ns, T_HASH)) {
+        mkr_xpath_context_free(ctx);
+        rb_raise(rb_eTypeError, "namespaces must be a Hash of prefix => uri");
+    }
+    size_t cap = mkr_ctx_limits(ctx)->max_string_bytes;
+    VALUE keys = rb_funcall(rb_ns, rb_intern("keys"), 0);
+    for (long i = 0; i < RARRAY_LEN(keys); i++) {
+        VALUE k  = rb_ary_entry(keys, i);
+        VALUE ks = rb_obj_as_string(k);
+        VALUE vs = rb_obj_as_string(rb_hash_aref(rb_ns, k));
+        mkr_ruby_borrowed_text_t pv, uv;
+        const char *bad = mkr_ruby_try_verified_text(ks, cap, &pv);
+        if (bad == NULL) bad = mkr_ruby_try_verified_text(vs, cap, &uv);
+        if (bad != NULL) {
+            mkr_xpath_context_free(ctx);
+            rb_raise(mkr_eError, "invalid namespace mapping: %s", bad);
+        }
+        int rc = mkr_xpath_register_ns(ctx, mkr_verified_text_from_view(pv),
+                                       mkr_verified_text_from_view(uv));
+        RB_GC_GUARD(ks);
+        RB_GC_GUARD(vs);
+        if (rc != 0) {
+            mkr_xpath_context_free(ctx);
+            rb_raise(mkr_eError, "failed to register namespace");
+        }
+    }
+    RB_GC_GUARD(keys);
+}
+
+/* Makiri::XML::{Document,*}#xpath(expr, namespaces = nil) / #at_xpath(...):
+ * evaluate +expr+ over the XML engine instance, rooted at +self+'s context node,
+ * and return a NodeSet (node-set) or scalar. +namespaces+ is an optional
+ * {prefix => uri} Hash registered for this query (RSS/Atom default-namespace
+ * docs need a prefix under strict matching). Phase 1: no custom-function
+ * handler. Makiri::XPathContext is the alternative when many queries share one
+ * namespace set (it caches the registrations and the compiled ASTs). */
 static VALUE
-mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, int first_only)
+mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
 {
     VALUE document = Qnil;
     mkr_xml_node_t *context = mkr_xml_query_context(self, &document);
@@ -143,7 +184,6 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, int first_only)
         return first_only ? Qnil : mkr_node_set_new(document);
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
-    mkr_ruby_borrowed_text_t ev = mkr_ruby_verified_text(rb_expr, "XPath expression");
 
     /* The document node is the "document" (the engine's XML namespace services
      * ignore it) and the "/" root for absolute paths; +context+ is the relative
@@ -154,7 +194,12 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, int first_only)
         rb_raise(mkr_eError, "failed to allocate XPath context");
     }
     mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
 
+    /* Mint the borrowed expression view AFTER namespace registration: that step
+     * allocates Ruby objects (and may run GC), and the borrowed bytes must not
+     * be held live across it. mkr_parse below runs pure C. */
+    mkr_ruby_borrowed_text_t ev = mkr_ruby_verified_text(rb_expr, "XPath expression");
     mkr_xpath_error_t error = {0};
     mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
     limits->ast_nodes = 0;
@@ -183,8 +228,21 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, int first_only)
     return result;
 }
 
-static VALUE mkr_xml_doc_xpath(VALUE self, VALUE expr)    { return mkr_xml_doc_xpath_run(self, expr, 0); }
-static VALUE mkr_xml_doc_at_xpath(VALUE self, VALUE expr) { return mkr_xml_doc_xpath_run(self, expr, 1); }
+static VALUE
+mkr_xml_doc_xpath(int argc, VALUE *argv, VALUE self)
+{
+    VALUE expr, ns;
+    rb_scan_args(argc, argv, "11", &expr, &ns);
+    return mkr_xml_doc_xpath_run(self, expr, ns, 0);
+}
+
+static VALUE
+mkr_xml_doc_at_xpath(int argc, VALUE *argv, VALUE self)
+{
+    VALUE expr, ns;
+    rb_scan_args(argc, argv, "11", &expr, &ns);
+    return mkr_xml_doc_xpath_run(self, expr, ns, 1);
+}
 
 /* The document's root element. */
 static VALUE
@@ -208,10 +266,10 @@ mkr_init_xml(void)
 
     /* xpath / at_xpath work on the document and on any XML node (rooted at that
      * node), so they live on the shared XML node behavior module + the document. */
-    rb_define_method(mkr_cXmlDocument,   "xpath",    mkr_xml_doc_xpath,    1);
-    rb_define_method(mkr_cXmlDocument,   "at_xpath", mkr_xml_doc_at_xpath, 1);
-    rb_define_method(mkr_mXmlNodeMethods, "xpath",    mkr_xml_doc_xpath,    1);
-    rb_define_method(mkr_mXmlNodeMethods, "at_xpath", mkr_xml_doc_at_xpath, 1);
+    rb_define_method(mkr_cXmlDocument,   "xpath",    mkr_xml_doc_xpath,    -1);
+    rb_define_method(mkr_cXmlDocument,   "at_xpath", mkr_xml_doc_at_xpath, -1);
+    rb_define_method(mkr_mXmlNodeMethods, "xpath",    mkr_xml_doc_xpath,    -1);
+    rb_define_method(mkr_mXmlNodeMethods, "at_xpath", mkr_xml_doc_at_xpath, -1);
 
     rb_define_module_function(mkr_mMakiri, "parse_xml", mkr_xml_s_parse, 1);
     /* Makiri::XML(source) — a method named XML on the Makiri module, coexisting
