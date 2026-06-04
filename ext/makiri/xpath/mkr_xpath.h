@@ -139,6 +139,92 @@ void  mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index,
 void mkr_xpath_value_clear(mkr_xpath_value_t *v);
 void mkr_xpath_error_clear(mkr_xpath_error_t *e);
 
+/* ------------------------------------------------------------------ *
+ * Engine-client API: parser, compiled-AST evaluator, context accessors
+ * and the internal value model. The Ruby glue (the engine's client) drives the
+ * engine through these and bridges custom-function handlers, so they live on
+ * this public boundary -- representation-neutral (node pointers are void*; the
+ * glue casts to the document's kind) and free of the MKR_DOM_* monomorphization
+ * machinery in mkr_xpath_internal.h, which the glue never includes. The engine
+ * itself reaches them through internal.h, which includes this header.
+ * ------------------------------------------------------------------ */
+
+/* Per-evaluate budgets + live counters. Filled by
+ * mkr_xpath_limits_init_defaults; every overrun fails closed with
+ * MKR_XPATH_ERR_LIMIT. */
+typedef struct {
+  /* Static budgets. */
+  size_t max_expr_bytes;
+  size_t max_ast_nodes;
+  size_t max_steps;
+  size_t max_predicates;
+  size_t max_function_args;
+  size_t max_nodeset_size;
+  size_t max_eval_ops;
+  size_t max_string_bytes;
+  size_t max_recursion_depth;
+  /* Live counters. */
+  size_t ast_nodes;
+  size_t eval_ops;
+  size_t recursion_depth;
+} mkr_xpath_limits_t;
+
+/* The compiled AST, opaque to clients (built by mkr_parse, freed by
+ * mkr_node_free, run by the evaluator). */
+typedef struct mkr_node_s mkr_node_t;
+
+/* The engine's internal value -- the type a custom-function resolver receives
+ * as its void* args / out (distinct from mkr_xpath_value_t, the result-boundary
+ * type, which names the node array `nodes`). Node pointers are void*; the glue
+ * handler bridge reads/writes them and casts to the document's representation. */
+typedef struct {
+  void  **items;
+  size_t  count;
+  size_t  capacity;
+} mkr_nodeset_t;
+
+typedef struct {
+  mkr_xpath_type_t type;
+  union {
+    mkr_nodeset_t    nodeset;
+    mkr_owned_text_t string;
+    double           number;
+    int              boolean;
+  } u;
+} mkr_val_t;
+
+/* Parse an expression into a compiled AST (caller frees with mkr_node_free);
+ * NULL on error (*err filled). 'limits' bounds the AST node count. */
+mkr_node_t *mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
+void        mkr_node_free(mkr_node_t *n);
+
+/* Evaluate a compiled AST; fills *out_value / *out_error. _first is the
+ * Node#at_xpath variant (a 0-or-1-node result without building the full set). */
+int mkr_xpath_eval_compiled      (mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                                  mkr_xpath_value_t *out_value, mkr_xpath_error_t *out_error);
+int mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                                  mkr_xpath_value_t *out_value, mkr_xpath_error_t *out_error);
+
+/* Select the monomorphized engine instance: 0 = HTML (lxb_dom), 1 = XML. */
+void mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind);
+
+/* Context accessors used by the glue (node pointers are void*). */
+mkr_xpath_limits_t *mkr_ctx_limits           (mkr_xpath_context_t *ctx);
+void               *mkr_ctx_document         (mkr_xpath_context_t *ctx);
+void                mkr_ctx_set_node         (mkr_xpath_context_t *ctx, void *node);
+void                mkr_ctx_set_unprefixed_lax(mkr_xpath_context_t *ctx, int lax);
+
+/* Error helpers (fill *err; never raise). */
+void mkr_err_set (mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *msg);
+void mkr_err_setf(mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *fmt, ...);
+
+/* Node-set builder + value setter, for the custom-function handler bridge. */
+void mkr_nodeset_init (mkr_nodeset_t *ns);
+int  mkr_nodeset_push (mkr_nodeset_t *ns, void *node, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
+void mkr_nodeset_clear(mkr_nodeset_t *ns);
+int  mkr_val_set_borrowed_text_copy(mkr_val_t *v, mkr_borrowed_text_t text,
+                                    mkr_xpath_error_t *err, const char *what);
+
 #ifdef __cplusplus
 }
 #endif

@@ -13,7 +13,6 @@
 #include "glue.h"   /* mkr_wrap_document, mkr_parsed_* (via compat.h) */
 #include "ruby_xpath.h"   /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
-#include "../xpath/mkr_xpath_internal.h"
 
 #include <ruby/thread.h>
 

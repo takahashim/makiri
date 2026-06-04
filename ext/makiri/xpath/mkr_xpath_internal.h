@@ -32,33 +32,11 @@
 #define MKR_NS_NOKOGIRI_BUILTIN_URI "https://www.nokogiri.org/default_ns/ruby/builtins"
 
 /*
- * Evaluation limits and live counters. The struct lives on the context
- * so every helper can reach it. Defaults are picked to be safely above
- * any realistic real-world query but well below DoS territory. Callers
- * that need bigger budgets can raise the values later (after exposure
- * is reviewed).
- *
- * Every overrun returns MKR_XPATH_ERR_LIMIT — NEVER silent truncation
- * and NEVER an empty result.
+ * Evaluation limits and live counters. mkr_xpath_limits_t lives in mkr_xpath.h
+ * (the glue reads/writes its fields); the init + the per-op check helpers below
+ * are engine-internal. Every overrun returns MKR_XPATH_ERR_LIMIT — NEVER silent
+ * truncation and NEVER an empty result.
  */
-typedef struct {
-  /* Static budgets — initialised in mkr_xpath_limits_init_defaults(). */
-  size_t max_expr_bytes;
-  size_t max_ast_nodes;
-  size_t max_steps;
-  size_t max_predicates;
-  size_t max_function_args;
-  size_t max_nodeset_size;
-  size_t max_eval_ops;
-  size_t max_string_bytes;
-  size_t max_recursion_depth;
-
-  /* Live counters. */
-  size_t ast_nodes;
-  size_t eval_ops;
-  size_t recursion_depth;
-} mkr_xpath_limits_t;
-
 void mkr_xpath_limits_init_defaults(mkr_xpath_limits_t *L);
 
 /* Internal helpers for the limits. Each returns 0 on success and -1
@@ -239,7 +217,9 @@ typedef enum {
   MKR_NK_FILTER,      /* PrimaryExpr Predicate*  optionally followed by /Path */
 } mkr_nk_t;
 
-typedef struct mkr_node_s mkr_node_t;
+/* mkr_node_t (opaque), mkr_nodeset_t and mkr_val_t live in mkr_xpath.h — they
+ * are embedded in mkr_node_s below (the memoization slot) and handed to the glue
+ * via the custom-function resolver, so they sit on the public boundary. */
 
 typedef struct {
   mkr_axis_t      axis;
@@ -247,24 +227,6 @@ typedef struct {
   mkr_node_t    **predicates;
   size_t         npredicates;
 } mkr_step_t;
-
-/* mkr_val_t / mkr_nodeset_t defined here so they can be embedded inside
- * mkr_node_s (for the memoization slot used by Perf 5 hoisting). */
-typedef struct {
-  MKR_DOM_NODE **items;
-  size_t           count;
-  size_t           capacity;
-} mkr_nodeset_t;
-
-typedef struct {
-  mkr_xpath_type_t type;
-  union {
-    mkr_nodeset_t    nodeset;
-    mkr_owned_text_t string; /* owned; valid when type == MKR_XPATH_TYPE_STRING */
-    double           number;
-    int              boolean;
-  } u;
-} mkr_val_t;
 
 struct mkr_node_s {
   mkr_nk_t kind;
@@ -331,13 +293,8 @@ struct mkr_node_s {
 
 /* ---------- runtime values ---------- */
 
-/* Result-builder for the evaluator. */
-void mkr_nodeset_init(mkr_nodeset_t *ns);
-/* Push a node. Enforces max_nodeset_size when limits is non-NULL.
- * Returns 0 on success, -1 on OOM/LIMIT (err populated). */
-int  mkr_nodeset_push(mkr_nodeset_t *ns, MKR_DOM_NODE *node,
-                     mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
-void mkr_nodeset_clear(mkr_nodeset_t *ns);
+/* mkr_nodeset_init / mkr_nodeset_push / mkr_nodeset_clear live in mkr_xpath.h
+ * (the handler bridge builds node-sets); they are shared (mkr_xpath_shared.c). */
 
 void mkr_owned_text_init (mkr_owned_text_t *t);
 void mkr_owned_text_clear(mkr_owned_text_t *t);
@@ -351,12 +308,8 @@ int  mkr_owned_text_from_borrowed_copy(mkr_owned_text_t *out, mkr_borrowed_text_
  * the caller must not clear +text+. Shared (pure). */
 void mkr_val_set_owned_text(mkr_val_t *v, mkr_owned_text_t text);
 
-/* Store a STRING value by copying a borrowed view — the engine allocates and
- * owns the copy. The boundary helper for callers (the glue handler bridge) that
- * hold only a borrowed slice and must not construct mkr_owned_text_t
- * themselves. Returns 0, or -1 on OOM (err populated; +v+ untouched). Shared. */
-int  mkr_val_set_borrowed_text_copy(mkr_val_t *v, mkr_borrowed_text_t text,
-                                    mkr_xpath_error_t *err, const char *what);
+/* mkr_val_set_borrowed_text_copy (the glue handler bridge's string setter) lives
+ * in mkr_xpath.h. */
 
 /*
  * Document-order sort/dedup of a node-set and the per-evaluate document-order
@@ -472,14 +425,11 @@ int  mkr_str_cache_reindex  (mkr_str_cache_t *c, size_t bucket_cap);
  * eval_compiled to manage nested-eval snapshots. */
 mkr_str_cache_t *mkr_ctx_str_cache(struct mkr_xpath_context_s *ctx);
 
-/* ---------- error helpers ---------- */
-
-void mkr_err_set(mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *msg);
-void mkr_err_setf(mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *fmt, ...);
+/* mkr_err_set / mkr_err_setf (error helpers) live in mkr_xpath.h. */
 
 /* ---------- AST helpers ---------- */
 
-void mkr_node_free(mkr_node_t *n);
+/* mkr_node_free lives in mkr_xpath.h (the glue frees a parsed AST). */
 void mkr_step_clear(mkr_step_t *s);
 
 /* Hoisting / memoization. After parse, the parser entry calls
@@ -496,37 +446,16 @@ void mkr_node_clear_memos        (mkr_node_t *n);
  * so //X//Y avoids materialising the cross-product. */
 void mkr_apply_peephole(mkr_node_t *n);
 
-/* ---------- parser entry ---------- */
-
-/* On success returns a fresh AST root (caller frees with mkr_node_free).
- * On failure returns NULL and fills *err.
- *
- * 'limits' is required (non-NULL): the parser increments ast_nodes for
- * every node it allocates and rejects expressions that exceed any of
- * the configured budgets with MKR_XPATH_ERR_LIMIT. */
-mkr_node_t *mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
-
-/* Select the monomorphized engine instance that walks this context's nodes:
- * 0 = HTML (lxb_dom, the default), 1 = XML (custom node). Set by the glue at
- * context creation (right after mkr_xpath_context_new). */
-void mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind);
+/* mkr_parse (parser entry) and mkr_xpath_set_engine_kind both live in
+ * mkr_xpath.h — the glue parses, selects the instance, then evaluates. */
 
 /* Structural self-test of the XML engine instance (Makiri.__c_selftest): parses
  * a small XML document and runs a few XPath queries through the _xml engine,
  * asserting node-set counts / namespace matching. Returns 0 or a 1-based index. */
 int mkr_xml_xpath_selftest(void);
 
-/*
- * Evaluate a pre-parsed AST. Public counterpart to mkr_xpath_eval that
- * lets callers cache the AST across multiple evaluate() calls.
- * Per-evaluation live counters (eval_ops, recursion_depth) are reset
- * here; the cached ast_nodes count is NOT reset because the AST is
- * already built.
- */
-int mkr_xpath_eval_compiled(struct mkr_xpath_context_s *ctx,
-                           mkr_node_t                 *ast,
-                           mkr_xpath_value_t          *out_value,
-                           mkr_xpath_error_t          *out_error);
+/* mkr_xpath_eval_compiled / mkr_xpath_eval_compiled_first (the AST evaluator
+ * entries the glue calls) live in mkr_xpath.h. */
 
 /* at_xpath() fast path: recognise a first-descendant-match shape and walk the
  * subtree in document order, stopping at the first match (out_node = match or
@@ -536,15 +465,6 @@ int mkr_xpath_eval_compiled(struct mkr_xpath_context_s *ctx,
  * evaluator. */
 int mkr_try_first_match(struct mkr_xpath_context_s *ctx, const mkr_node_t *ast,
                         MKR_DOM_NODE **out_node, mkr_xpath_error_t *err);
-
-/* Like mkr_xpath_eval_compiled, but for Node#at_xpath: if the expression is a
- * recognised first-match shape (mkr_try_first_match), returns a 0-or-1-node
- * node-set without building the full set; otherwise falls back to the full
- * evaluator. The result is byte-identical to mkr_xpath_eval_compiled(...).first. */
-int mkr_xpath_eval_compiled_first(struct mkr_xpath_context_s *ctx,
-                                  mkr_node_t                 *ast,
-                                  mkr_xpath_value_t          *out_value,
-                                  mkr_xpath_error_t          *out_error);
 
 /* ---------- evaluator entry ---------- */
 
@@ -573,17 +493,13 @@ const char *mkr_ctx_lookup_ns(struct mkr_xpath_context_s *ctx,
                              size_t prefix_len,
                              size_t *out_uri_len);
 
-/* The context node and document — exposed to the evaluator. */
+/* The context node, exposed to the evaluator (the typed accessor). The glue-
+ * facing accessors mkr_ctx_document / mkr_ctx_set_node / mkr_ctx_limits /
+ * mkr_ctx_set_unprefixed_lax live in mkr_xpath.h (void* node pointers). */
 MKR_DOM_NODE     *mkr_ctx_node(struct mkr_xpath_context_s *ctx);
-void                mkr_ctx_set_node(struct mkr_xpath_context_s *ctx,
-                                     MKR_DOM_NODE *node);
-MKR_DOM_DOCUMENT *mkr_ctx_document(struct mkr_xpath_context_s *ctx);
-mkr_xpath_limits_t  *mkr_ctx_limits (struct mkr_xpath_context_s *ctx);
 mkr_func_resolver_t  mkr_ctx_func_resolver(struct mkr_xpath_context_s *ctx);
 
-/* Namespace-matching policy for unprefixed name tests (see the struct field).
- * Default strict (0). lax (1) makes unprefixed tests namespace-agnostic. */
-void mkr_ctx_set_unprefixed_lax(struct mkr_xpath_context_s *ctx, int lax);
+/* Namespace-matching policy read-back (the setter is in mkr_xpath.h). */
 int  mkr_ctx_unprefixed_lax(struct mkr_xpath_context_s *ctx);
 
 /* ---------- function library ---------- */

@@ -1,7 +1,6 @@
 #include "glue.h"
 #include "ruby_xpath.h"                  /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
-#include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
 #include "../xml/mkr_xml_node.h"         /* mkr_xml_doc_t / mkr_xml_node_t for the XML instance */
 #include "../core/mkr_core.h"
 

@@ -80,7 +80,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
     size_t n = src->u.nodeset.count;
     mkr_nodeset_init(&dst->u.nodeset);
     if (n == 0) return 0;
-    MKR_DOM_NODE **items;
+    void **items;
     size_t items_bytes;
     if (!mkr_size_mul(n, sizeof(*items), &items_bytes)) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning node-set");
@@ -585,7 +585,7 @@ doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const MKR_DOM_NODE *a, const MKR_DOM
  * bonus: ties (same ord — only possible for synthesised nodes that
  * weren't in the index) preserve insertion order. */
 static void
-ms_merge(MKR_DOM_NODE **arr, MKR_DOM_NODE **tmp,
+ms_merge(void **arr, void **tmp,
          size_t lo, size_t mid, size_t hi, mkr_xpath_context_t *ctx)
 {
   size_t i = lo, j = mid, k = lo;
@@ -599,7 +599,7 @@ ms_merge(MKR_DOM_NODE **arr, MKR_DOM_NODE **tmp,
 }
 
 static void
-ms_sort(MKR_DOM_NODE **arr, MKR_DOM_NODE **tmp,
+ms_sort(void **arr, void **tmp,
         size_t lo, size_t hi, mkr_xpath_context_t *ctx)
 {
   if (hi - lo < 2) return;
@@ -665,7 +665,7 @@ mkr_nodeset_sort_doc_order(mkr_xpath_context_t *ctx, mkr_nodeset_t *ns)
     mkr_xpath_error_clear(&ierr); /* index is best-effort; on OOM we fall through to parent-chain cmp */
   }
 
-  MKR_DOM_NODE **tmp = mkr_reallocarray(NULL, ns->count, sizeof(*tmp));
+  void **tmp = mkr_reallocarray(NULL, ns->count, sizeof(*tmp));
   if (tmp == NULL) {
     /* Fall back to in-place qsort with parent-chain compare (slow but
      * correct). Should be a very rare path. */
