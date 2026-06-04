@@ -72,9 +72,50 @@ ctx.register_variable("cls", "lead")
 ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 ```
 
+### XML (read-only, secure)
+
+`Makiri::XML(source)` parses XML with a native, strict, well-formedness-checking
+parser (no libxml2) and queries it through the same native XPath 1.0 engine.
+Element-name case and namespaces are preserved. It is **read-only** and
+**fail-closed**: malformed input, a DOCTYPE/DTD, or a duplicate attribute raises
+`Makiri::XML::SyntaxError`, and operations XML does not support raise
+`NotImplementedError` rather than returning a wrong result.
+
+```ruby
+doc = Makiri::XML(<<~XML)
+  <feed xmlns="http://www.w3.org/2005/Atom">
+    <entry><title>Hello</title></entry>
+    <entry><title>World</title></entry>
+  </feed>
+XML
+
+# Namespace matching is strict, so a default namespace needs a registered prefix.
+ns = { "a" => "http://www.w3.org/2005/Atom" }
+doc.xpath("//entry").length                    # => 0  (default namespace)
+doc.xpath("//a:entry", ns).length              # => 2
+doc.at_xpath("//a:entry/a:title", ns).text     # => "Hello"
+
+# Or reuse a context (caches registrations + compiled expressions):
+ctx = Makiri::XPathContext.new(doc.root)
+ctx.register_namespace("a", "http://www.w3.org/2005/Atom")
+ctx.evaluate("//a:entry").length               # => 2
+
+el = doc.at_xpath("//a:entry", ns)
+el.local_name                                  # => "entry"
+el.namespace_uri                               # => "http://www.w3.org/2005/Atom"
+
+doc.css("entry")     # raises NotImplementedError (use #xpath)
+doc.root.to_xml      # raises NotImplementedError (read-only)
+```
+
+CSS is intentionally unavailable for XML (Lexbor's selector engine lower-cases
+names, which breaks XML case/namespace matching) - use XPath. XML mutation and
+serialization are a later phase.
+
 ## Non-goals (v1.0)
 
-* XML parsing (HTML only).
+* XML writing (the XML reader above is read-only): no XML mutation, no XML/XHTML
+  serialization (`to_xml`), no `Makiri::XML::Document` construction.
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.
 * Streaming / SAX parsing.
 * Drop-in replacement for every Nokogiri method. Makiri covers the common

@@ -216,6 +216,14 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   out->type = MKR_XPATH_TYPE_NODESET;
   mkr_nodeset_init(&out->u.nodeset);
 
+#ifdef MKR_HOST_XML
+  /* Host policy (§8.6): in XML an ID is an attribute DECLARED ID-typed by the
+   * DTD/schema — not any attribute named "id". DTDs are rejected at parse
+   * (§9.4), so a document read here carries no ID-typed attributes and id() is
+   * the empty node-set. (xml:id is a separate, optional spec, not implemented.) */
+  (void)ctx; (void)args;
+  return 0;
+#else
   MKR_DOM_NODE *root = (MKR_DOM_NODE *)mkr_ctx_document(ctx);
   if (root == NULL) return 0;
 
@@ -246,6 +254,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   /* Result is in document order with duplicates removed (XPath 1.0 §4.1). */
   mkr_nodeset_unique_sorted(ctx, &out->u.nodeset);
   return 0;
+#endif /* !MKR_HOST_XML */
 }
 
 /* Forward decl for two_owned_texts() defined later. */
@@ -981,15 +990,21 @@ fn_lang(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   if (mkr_val_to_owned_text_or_fail(&args[0], mkr_ctx_limits(ctx), err, &want) != 0) return -1;
   out->type = MKR_XPATH_TYPE_BOOLEAN;
   out->u.boolean = 0;
-  /* Walk up the ancestor chain looking for an @xml:lang or @lang. */
+  /* Walk up the ancestor chain looking for the host's language attribute.
+     Host policy (§8.6): XPath 1.0 lang() is xml:lang based; HTML uses the `lang`
+     attribute (with xml:lang accepted as a fallback). */
   for (MKR_DOM_NODE *p = self_node; p != NULL; p = MKR_NODE_PARENT(p)) {
     if (MKR_NODE_TYPE(p) != MKR_NTYPE_ELEMENT) continue;
     MKR_DOM_ELEMENT *el = MKR_NODE_AS_ELEMENT(p);
     size_t vlen = 0;
+#ifdef MKR_HOST_XML
+    const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "xml:lang", 8, &vlen);
+#else
     const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "lang", 4, &vlen);
     if (v == NULL) {
       v = MKR_ELEM_GET_ATTRIBUTE(el, "xml:lang", 8, &vlen);
     }
+#endif
     if (v == NULL) continue;
     /* Compare prefix (case-insensitive) up to '-'. */
     if (vlen >= want.len) {
