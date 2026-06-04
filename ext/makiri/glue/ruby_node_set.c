@@ -102,20 +102,51 @@ mkr_node_set_length(VALUE self)
     return ULONG2NUM(s->count);
 }
 
-/* set[i] -> Node or nil. Negative indices count from the end. */
+/* A new NodeSet from the [beg, beg+len) run of `s` (caller has clamped them to
+ * [0, count]). */
 static VALUE
-mkr_node_set_aref(VALUE self, VALUE rb_index)
+mkr_node_set_slice(mkr_node_set_data_t *s, long beg, long len)
+{
+    VALUE result = mkr_node_set_new(s->document);
+    for (long i = 0; i < len; i++) {
+        mkr_node_set_push(result, s->nodes[beg + i]);
+    }
+    return result;
+}
+
+/* set[i]               -> Node or nil (negative indices count from the end).
+ * set[start, length]   -> a new NodeSet (nil if start is out of range).
+ * set[range]           -> a new NodeSet (nil if the range start is out of range).
+ * Mirrors Array#[]. */
+static VALUE
+mkr_node_set_aref(int argc, VALUE *argv, VALUE self)
 {
     mkr_node_set_data_t *s;
     TypedData_Get_Struct(self, mkr_node_set_data_t, &mkr_node_set_type, s);
+    long count = (long)s->count;
 
-    long i = NUM2LONG(rb_index);
-    if (i < 0) {
-        i += (long)s->count;
+    if (argc == 2) {                       /* set[start, length] */
+        long beg = NUM2LONG(argv[0]);
+        long len = NUM2LONG(argv[1]);
+        if (beg < 0) beg += count;
+        if (beg < 0 || beg > count || len < 0) return Qnil;
+        if (len > count - beg) len = count - beg;
+        return mkr_node_set_slice(s, beg, len);
     }
-    if (i < 0 || (size_t)i >= s->count) {
-        return Qnil;
+
+    rb_check_arity(argc, 1, 2);
+
+    if (rb_obj_is_kind_of(argv[0], rb_cRange)) {
+        long beg, len;
+        if (rb_range_beg_len(argv[0], &beg, &len, count, 0) != Qtrue) {
+            return Qnil;                   /* start out of range */
+        }
+        return mkr_node_set_slice(s, beg, len);
     }
+
+    long i = NUM2LONG(argv[0]);
+    if (i < 0) i += count;
+    if (i < 0 || i >= count) return Qnil;
     return mkr_wrap_node(s->nodes[i], s->document);
 }
 
@@ -339,7 +370,7 @@ mkr_init_node_set(void)
     rb_define_method(mkr_cNodeSet, "-", mkr_node_set_op_minus, 1);
 
     rb_define_method(mkr_cNodeSet, "length", mkr_node_set_length, 0);
-    rb_define_method(mkr_cNodeSet, "[]",     mkr_node_set_aref,   1);
+    rb_define_method(mkr_cNodeSet, "[]",     mkr_node_set_aref,  -1);
     rb_define_method(mkr_cNodeSet, "each",   mkr_node_set_each,   0);
     rb_define_method(mkr_cNodeSet, "dup",    mkr_node_set_dup,   -1);
     /* #clone is defined in Ruby (node_set.rb) so it can honour `freeze:`. */

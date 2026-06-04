@@ -5,7 +5,28 @@ module Makiri
   # The bulk of the API lives in the C extension; this file defines the
   # Ruby-only conveniences.
   class Node
+    # Order by document (pre-order) position via the native #<=>, so nodes can
+    # be sorted; #<=> is nil (incomparable) across documents or for attributes.
+    include Comparable
+
+    # A Node is Enumerable over its child nodes (#each yields each child), so
+    # node.map / node.select / node.find / node.to_a, etc. work — like Nokogiri.
+    # (#to_h is unaffected: Node defines its own, returning the attribute hash.)
+    include Enumerable
+
     # Identity is by wrapped node pointer; defined in C.
+
+    # Yield each child node in document order. Iterates a snapshot of the
+    # children (taken when called), so the block may safely move or remove the
+    # current node. Returns an Enumerator when no block is given.
+    # @yieldparam child [Makiri::Node]
+    # @return [self, Enumerator]
+    def each(&block)
+      return enum_for(:each) { children.length } unless block_given?
+
+      children.each(&block)
+      self
+    end
 
     # @return [Boolean]
     def element?

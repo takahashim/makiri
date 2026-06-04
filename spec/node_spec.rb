@@ -308,6 +308,65 @@ RSpec.describe Makiri::Node do
     end
   end
 
+  describe "Enumerable over child nodes" do
+    let(:parent) do
+      Makiri::HTML("<div id='p'><a>1</a><!-- c --><b>2</b>tail</div>").at_css("#p")
+    end
+
+    it "#each yields every child node (Enumerator without a block)" do
+      expect(parent.each).to be_a(Enumerator)
+      expect(parent.map(&:name)).to eq(%w[a comment b text])
+    end
+
+    it "provides the Enumerable mixin" do
+      expect(parent.select(&:element?).map(&:name)).to eq(%w[a b])
+      expect(parent.find(&:text?)).to be_a(Makiri::Text)
+      expect(parent.count).to eq(4)
+      expect(parent.to_a.length).to eq(4)
+      expect(parent.include?(parent.at_css("a"))).to be(true)
+    end
+
+    it "does not shadow Node#to_h (still the attribute hash)" do
+      expect(parent.to_h).to eq("id" => "p")
+    end
+
+    it "iterates a snapshot, so the block may remove the current node" do
+      seen = []
+      parent.each { |c| seen << c.name; c.remove if c.element? }
+      expect(seen).to eq(%w[a comment b text])
+      expect(parent.element_children).to be_empty
+    end
+  end
+
+  describe "#<=> (document order, Comparable)" do
+    let(:items) { div.element_children } # the two <p> in document order
+
+    it "orders nodes by document position" do
+      a, b = items[0], items[1]
+      expect(a <=> b).to eq(-1)
+      expect(b <=> a).to eq(1)
+      expect(a <=> a).to eq(0)
+    end
+
+    it "places an ancestor before its descendant" do
+      expect(div <=> items[0]).to eq(-1)
+    end
+
+    it "sorts nodes into document order (via Comparable)" do
+      a, b = items[0], items[1]
+      expect([b, a].sort).to eq([a, b])
+      expect(a).to be < b
+      expect([b, a].min).to eql(a)
+    end
+
+    it "is nil (incomparable) across documents and for attributes" do
+      other = Makiri::HTML("<p>x</p>").at_css("p")
+      expect(div <=> other).to be_nil
+      attr = div.attribute_nodes.first
+      expect(attr <=> items[0]).to be_nil
+    end
+  end
+
   describe "a frozen node is immutable" do
     it "raises FrozenError from every mutator" do
       node = div.dup       # detached copy we can freeze freely

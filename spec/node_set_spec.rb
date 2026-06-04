@@ -30,6 +30,19 @@ RSpec.describe Makiri::NodeSet do
     expect(lis.each.to_a.map(&:text)).to eq(%w[a b c])
   end
 
+  it "#[] supports ranges and (start, length) like Array" do
+    expect(lis[1].text).to eq("b")            # Integer -> Node
+    expect(lis[-1].text).to eq("c")
+    expect(lis[5]).to be_nil
+    expect(lis[0..1]).to be_a(Makiri::NodeSet) # Range -> NodeSet
+    expect(lis[0..1].map(&:text)).to eq(%w[a b])
+    expect(lis[1..].map(&:text)).to eq(%w[b c])
+    expect(lis[0, 2].map(&:text)).to eq(%w[a b]) # (start, length) -> NodeSet
+    expect(lis[1, 10].map(&:text)).to eq(%w[b c]) # clamped
+    expect(lis[5..6]).to be_nil                # start out of range
+    expect(lis[3..].length).to eq(0)           # empty NodeSet
+  end
+
   it "#dup / #clone make an independent set over the same nodes" do
     copy = lis.dup
     expect(copy).to be_a(Makiri::NodeSet)

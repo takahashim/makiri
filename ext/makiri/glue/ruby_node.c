@@ -724,6 +724,74 @@ mkr_node_equals(VALUE self, VALUE other)
     return mkr_node_unwrap(self) == mkr_node_unwrap(other) ? Qtrue : Qfalse;
 }
 
+/* Distance from `n` to the root (a node with no parent). */
+static size_t
+mkr_node_depth(const lxb_dom_node_t *n)
+{
+    size_t d = 0;
+    for (const lxb_dom_node_t *p = n->parent; p != NULL; p = p->parent) {
+        d++;
+    }
+    return d;
+}
+
+/*
+ * Node#<=> : document (pre-order) position, so an array of nodes can be sorted.
+ * Returns -1 / 0 / 1, or nil when the nodes are not comparable: a non-node,
+ * different documents or detached subtrees (no common root), or an attribute
+ * node (attributes are not in the first_child/next chain, so their order is not
+ * defined here). Included via Comparable, which gives <, >, between?, etc.
+ */
+static VALUE
+mkr_node_spaceship(VALUE self, VALUE other)
+{
+    if (!rb_obj_is_kind_of(other, mkr_cNode)) {
+        return Qnil;
+    }
+    lxb_dom_node_t *a = mkr_node_unwrap(self);
+    lxb_dom_node_t *b = mkr_node_unwrap(other);
+    if (a == b) {
+        return INT2FIX(0);
+    }
+    if (a->type == LXB_DOM_NODE_TYPE_ATTRIBUTE
+        || b->type == LXB_DOM_NODE_TYPE_ATTRIBUTE
+        || a->owner_document != b->owner_document) {
+        return Qnil;
+    }
+
+    size_t da = mkr_node_depth(a), db = mkr_node_depth(b);
+    lxb_dom_node_t *pa = a, *pb = b;
+
+    /* Raise the deeper node to the other's depth; if it lands on the other,
+     * that other is an ancestor and so comes first in pre-order. */
+    if (da > db) {
+        for (size_t k = 0; k < da - db; k++) pa = pa->parent;
+        if (pa == b) return INT2FIX(1);   /* b is an ancestor of a */
+    } else if (db > da) {
+        for (size_t k = 0; k < db - da; k++) pb = pb->parent;
+        if (pb == a) return INT2FIX(-1);  /* a is an ancestor of b */
+    }
+
+    /* Climb both until they share a parent (the lowest common ancestor). */
+    while (pa->parent != pb->parent) {
+        if (pa->parent == NULL || pb->parent == NULL) {
+            return Qnil;                  /* different trees */
+        }
+        pa = pa->parent;
+        pb = pb->parent;
+    }
+    if (pa->parent == NULL) {
+        return Qnil;                      /* two distinct roots */
+    }
+
+    /* pa and pb are distinct siblings: earlier in the child list comes first. */
+    for (lxb_dom_node_t *c = pa->parent->first_child; c != NULL; c = c->next) {
+        if (c == pa) return INT2FIX(-1);
+        if (c == pb) return INT2FIX(1);
+    }
+    return Qnil; /* unreachable for a well-formed tree */
+}
+
 /* Nokogiri-compatible identity: the underlying lxb_dom_node_t pointer as an
  * Integer. Stable for the node's lifetime and unique among currently-live
  * nodes; a freed-then-reallocated node may reuse an address (same caveat as
@@ -785,6 +853,7 @@ mkr_init_node(void)
 
     rb_define_method(mkr_cNode, "==",   mkr_node_equals, 1);
     rb_define_method(mkr_cNode, "eql?", mkr_node_equals, 1);
+    rb_define_method(mkr_cNode, "<=>",  mkr_node_spaceship, 1);
     rb_define_method(mkr_cNode, "hash", mkr_node_hash,   0);
     rb_define_method(mkr_cNode, "pointer_id", mkr_node_pointer_id, 0);
     rb_define_method(mkr_cNode, "clone_node", mkr_node_clone_node, -1);

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* `Node` includes `Enumerable` over its child nodes — `node.each` yields each
+  child (returning an `Enumerator` without a block), so `node.map` / `select` /
+  `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
+  move or remove the current child. `Node#to_h` still returns the attribute hash.
+* `Node#<=>` orders nodes by document (pre-order) position, and `Node` includes
+  `Comparable`, so nodes can be sorted (`nodes.sort`, `min`/`max`, `<`/`>`).
+  Returns `nil` (incomparable) across documents or detached subtrees and for
+  attribute nodes — matching how `Comparable` treats an unorderable pair.
+* `NodeSet#[]` now accepts a `Range` or `start, length` like `Array#[]`
+  (returning a new `NodeSet`), in addition to a single Integer index (a `Node`).
 * `Node#dup` / `Node#clone`, `NodeSet#dup` / `#clone`, and `Document#dup` /
   `#clone` — the native allocator is undef'd (so wrapper objects stay
   memory-safe), which made Ruby's default `dup`/`clone` raise a confusing
