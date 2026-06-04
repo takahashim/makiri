@@ -124,6 +124,13 @@ task bench: :compile do
   end
 end
 
+desc "Run the XML reader benchmark (Makiri::XML vs Nokogiri::XML reference)"
+task "bench:xml" => :compile do
+  Bundler.with_unbundled_env do
+    sh "#{FileUtils::RUBY} -Ilib bench/bench_xml.rb"
+  end
+end
+
 namespace :conformance do
   desc "WHATWG HTML5 parsing conformance: run html5lib-tests through Makiri"
   task html5: :compile do
