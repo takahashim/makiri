@@ -310,7 +310,7 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         const char *pfx, *loc; uint32_t pl, ll;
         if (split_qname(r->name, r->name_len, &pfx, &pl, &loc, &ll) != 0) { set_syntax(P); return -1; }
 
-        mkr_xml_node_t *attr = mkr_xml_arena_node(P->doc, MKR_XN_ATTRIBUTE);
+        mkr_xml_node_t *attr = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
         if (attr == NULL) { propagate_oom(P); return -1; }
         (void)pfx;
         if (set_node_qname(P, attr, r->name, r->name_len, loc, ll, pl) != 0) return -1;
@@ -384,7 +384,7 @@ parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
     uint32_t clen = (uint32_t)craw;
     if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
     if (parent != NULL) {
-        mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XN_COMMENT);
+        mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_COMMENT);
         if (c == NULL) { propagate_oom(P); return -1; }
         c->value = own(P, cstart, clen); c->value_len = clen;
         if (clen > 0 && c->value == NULL) return -1;
@@ -412,7 +412,7 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
     if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
     uint32_t clen = (uint32_t)craw;
     if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
-    mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XN_CDATA);
+    mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_CDATA_SECTION);
     if (c == NULL) { propagate_oom(P); return -1; }
     c->value = own(P, cstart, clen); c->value_len = clen;
     if (clen > 0 && c->value == NULL) return -1;
@@ -456,7 +456,7 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
          * carry pseudo-attributes (a bare "<?xml?>" has no version), not retained. */
         if (!at_doc_start || parent != NULL || empty_data) { set_syntax(P); return -1; }
     } else if (parent != NULL) {
-        mkr_xml_node_t *pi = mkr_xml_arena_node(P->doc, MKR_XN_PI);
+        mkr_xml_node_t *pi = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_PI);
         if (pi == NULL) { propagate_oom(P); return -1; }
         pi->local = own(P, tgt, tl);     pi->local_len = tl;
         pi->value = own(P, dstart, dlen); pi->value_len = dlen;
@@ -554,7 +554,7 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
                 if (scan_name(&P, &nm, &nl) != 0) break;
                 const char *epfx, *eloc; uint32_t epl, ell;
                 if (split_qname(nm, nl, &epfx, &epl, &eloc, &ell) != 0) { set_syntax(&P); break; }
-                mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XN_ELEMENT);
+                mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
                 if (el == NULL) { propagate_oom(&P); break; }
                 (void)epfx;
                 if (set_node_qname(&P, el, nm, nl, eloc, ell, epl) != 0) break;
@@ -597,7 +597,7 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
                 /* text outside any element: only whitespace (misc) is allowed */
                 if (nonspace) { set_syntax(&P); break; }
             } else {
-                mkr_xml_node_t *t = mkr_xml_arena_node(doc, MKR_XN_TEXT);
+                mkr_xml_node_t *t = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_TEXT);
                 if (t == NULL) { propagate_oom(&P); break; }
                 /* expand char/entity references + validate XML Char (§9.1/§9.2) */
                 t->value = mkr_xml_expand(doc, tstart, tlen,
@@ -619,7 +619,7 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
      * no document node otherwise, so the engine's absolute-path seed would have
      * nothing valid to root at.) */
     if (P.status == MKR_XML_OK && doc->root != NULL) {
-        mkr_xml_node_t *dn = mkr_xml_arena_node(doc, MKR_XN_DOCUMENT);
+        mkr_xml_node_t *dn = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT);
         if (dn == NULL) {
             P.status = doc->oom;
         } else {
@@ -683,13 +683,13 @@ mkr_xml_parse_selftest(void)
 
     i++; /* 2: root element, case-preserved name, source position recorded */
     mkr_xml_node_t *root = d->root;
-    if (!NAME_IS(root, "Feed") || root->type != MKR_XN_ELEMENT
+    if (!NAME_IS(root, "Feed") || root->type != MKR_XML_NODE_TYPE_ELEMENT
         || root->line != 1 || root->col != 1) { mkr_xml_doc_destroy(d); return i; }
 
     i++; /* 3: attributes x=1, y=two in order */
     mkr_xml_node_t *a0 = root->attrs;
     mkr_xml_node_t *a1 = a0 ? a0->next : NULL;
-    if (!a0 || a0->type != MKR_XN_ATTRIBUTE || !NAME_IS(a0, "x") || !VAL_IS(a0, "1")
+    if (!a0 || a0->type != MKR_XML_NODE_TYPE_ATTRIBUTE || !NAME_IS(a0, "x") || !VAL_IS(a0, "1")
         || !a1 || !NAME_IS(a1, "y") || !VAL_IS(a1, "two") || a1->next != NULL) {
         mkr_xml_doc_destroy(d); return i;
     }
@@ -698,9 +698,9 @@ mkr_xml_parse_selftest(void)
     mkr_xml_node_t *c0 = root->first_child;
     mkr_xml_node_t *c1 = c0 ? c0->next : NULL;
     mkr_xml_node_t *c2 = c1 ? c1->next : NULL;
-    if (!c0 || c0->type != MKR_XN_TEXT || !VAL_IS(c0, "hi")
-        || !c1 || c1->type != MKR_XN_ELEMENT || !NAME_IS(c1, "b") || c1->first_child != NULL
-        || !c2 || c2->type != MKR_XN_TEXT || !VAL_IS(c2, "z") || c2->next != NULL) {
+    if (!c0 || c0->type != MKR_XML_NODE_TYPE_TEXT || !VAL_IS(c0, "hi")
+        || !c1 || c1->type != MKR_XML_NODE_TYPE_ELEMENT || !NAME_IS(c1, "b") || c1->first_child != NULL
+        || !c2 || c2->type != MKR_XML_NODE_TYPE_TEXT || !VAL_IS(c2, "z") || c2->next != NULL) {
         mkr_xml_doc_destroy(d); return i;
     }
     i++; /* 5: parent/sibling links */
@@ -740,7 +740,7 @@ mkr_xml_parse_selftest(void)
         mkr_xml_node_t *ax = r->attrs, *ay = ax ? ax->next : NULL;
         mkr_xml_node_t *tx = r->first_child;
         if (!VAL_IS(ax, "p&q") || !VAL_IS(ay, "AB")
-            || !tx || tx->type != MKR_XN_TEXT || !VAL_IS(tx, "1<2>3&4'5\"6")) {
+            || !tx || tx->type != MKR_XML_NODE_TYPE_TEXT || !VAL_IS(tx, "1<2>3&4'5\"6")) {
             mkr_xml_doc_destroy(d); return i;
         }
     }
@@ -804,7 +804,7 @@ mkr_xml_parse_selftest(void)
         mkr_xml_node_t *tx = r->first_child;
         if (!VAL_IS(ax, "p q r")            /* literal whitespace -> spaces */
             || !VAL_IS(ay, "p\tq\nr")       /* reference-derived whitespace preserved */
-            || !tx || tx->type != MKR_XN_TEXT || !VAL_IS(tx, "u\tv\nw")) { /* text unfolded */
+            || !tx || tx->type != MKR_XML_NODE_TYPE_TEXT || !VAL_IS(tx, "u\tv\nw")) { /* text unfolded */
             mkr_xml_doc_destroy(d); return i;
         }
     }
@@ -822,9 +822,9 @@ mkr_xml_parse_selftest(void)
         mkr_xml_node_t *cm = r->first_child;
         mkr_xml_node_t *cd = cm ? cm->next : NULL;
         mkr_xml_node_t *pi = cd ? cd->next : NULL;
-        if (!cm || cm->type != MKR_XN_COMMENT || !VAL_IS(cm, "c")
-            || !cd || cd->type != MKR_XN_CDATA || !VAL_IS(cd, "a<b") /* raw '<' kept */
-            || !pi || pi->type != MKR_XN_PI || !NAME_IS(pi, "pi") || !VAL_IS(pi, "dat")
+        if (!cm || cm->type != MKR_XML_NODE_TYPE_COMMENT || !VAL_IS(cm, "c")
+            || !cd || cd->type != MKR_XML_NODE_TYPE_CDATA_SECTION || !VAL_IS(cd, "a<b") /* raw '<' kept */
+            || !pi || pi->type != MKR_XML_NODE_TYPE_PI || !NAME_IS(pi, "pi") || !VAL_IS(pi, "dat")
             || pi->next != NULL) {
             mkr_xml_doc_destroy(d); return i;
         }
@@ -854,7 +854,7 @@ mkr_xml_parse_selftest(void)
         mkr_xml_node_t *ax = r->attrs;
         mkr_xml_node_t *tx = r->first_child;
         if (!VAL_IS(ax, "p q ")                 /* CRLF and lone CR each -> one space */
-            || !tx || tx->type != MKR_XN_TEXT || !VAL_IS(tx, "m\nn\no")) { /* folded to LF */
+            || !tx || tx->type != MKR_XML_NODE_TYPE_TEXT || !VAL_IS(tx, "m\nn\no")) { /* folded to LF */
             mkr_xml_doc_destroy(d); return i;
         }
     }

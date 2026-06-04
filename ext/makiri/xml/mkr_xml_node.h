@@ -13,22 +13,31 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Node types reuse the lxb_dom numeric values so the monomorphized XPath engine
- * (MKR_NTYPE_*) sees the same integers for HTML and XML. */
+/* The XML representation's DOM node-type constants — the counterpart of Lexbor's
+ * LXB_DOM_NODE_TYPE_* for HTML. The numeric values mirror the DOM/Lexbor
+ * encoding exactly (asserted in mkr_xpath_node_access_xml.h) so the monomorphized
+ * XPath engine's neutral MKR_NTYPE_* bind to whichever representation it compiles
+ * for. The reader produces only ELEMENT/ATTRIBUTE/TEXT/CDATA_SECTION/PI/COMMENT/
+ * DOCUMENT (valid_xn_type); the remaining members exist only so the shared
+ * engine's node-type contract is complete for both instances. */
 typedef enum {
-    MKR_XN_ELEMENT   = 1,
-    MKR_XN_ATTRIBUTE = 2,
-    MKR_XN_TEXT      = 3,
-    MKR_XN_CDATA     = 4,
-    MKR_XN_PI        = 7,
-    MKR_XN_COMMENT   = 8,
-    MKR_XN_DOCUMENT  = 9
-} mkr_xn_type_t;
+    MKR_XML_NODE_TYPE_ELEMENT          = 1,
+    MKR_XML_NODE_TYPE_ATTRIBUTE        = 2,
+    MKR_XML_NODE_TYPE_TEXT             = 3,
+    MKR_XML_NODE_TYPE_CDATA_SECTION    = 4,
+    MKR_XML_NODE_TYPE_ENTITY_REFERENCE = 5,  /* never produced (no DTD) */
+    MKR_XML_NODE_TYPE_ENTITY           = 6,  /* never produced (no DTD) */
+    MKR_XML_NODE_TYPE_PI               = 7,
+    MKR_XML_NODE_TYPE_COMMENT          = 8,
+    MKR_XML_NODE_TYPE_DOCUMENT         = 9,
+    MKR_XML_NODE_TYPE_DOCUMENT_TYPE    = 10, /* never produced (DOCTYPE rejected) */
+    MKR_XML_NODE_TYPE_NOTATION         = 12  /* never produced (no DTD) */
+} mkr_xml_node_type_t;
 
 /* The hot navigation/type fields are at the front (the engine reads them in its
  * tight walk). Names/values are arena-owned byte slices (case-preserved). */
 typedef struct mkr_xml_node {
-    uint8_t  type;                 /* mkr_xn_type_t */
+    uint8_t  type;                 /* mkr_xml_node_type_t */
     struct mkr_xml_node *parent, *first_child, *last_child, *prev, *next;
     struct mkr_xml_node *attrs;    /* element: head of attribute list (type=ATTRIBUTE) */
     const char *qname;   uint32_t qname_len;    /* element/attr raw "prefix:local" (contiguous; local/prefix slice into it) */

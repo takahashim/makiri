@@ -109,9 +109,9 @@ static int
 valid_xn_type(uint8_t type)
 {
     switch (type) {
-    case MKR_XN_ELEMENT: case MKR_XN_ATTRIBUTE: case MKR_XN_TEXT:
-    case MKR_XN_CDATA:   case MKR_XN_PI:        case MKR_XN_COMMENT:
-    case MKR_XN_DOCUMENT:
+    case MKR_XML_NODE_TYPE_ELEMENT: case MKR_XML_NODE_TYPE_ATTRIBUTE: case MKR_XML_NODE_TYPE_TEXT:
+    case MKR_XML_NODE_TYPE_CDATA_SECTION:   case MKR_XML_NODE_TYPE_PI:        case MKR_XML_NODE_TYPE_COMMENT:
+    case MKR_XML_NODE_TYPE_DOCUMENT:
         return 1;
     default:
         return 0;
@@ -171,10 +171,10 @@ mkr_xml_node_selftest(void)
 
     /* node zero-init + name copy */
     idx++;                                     /* 2 */
-    mkr_xml_node_t *root = mkr_xml_arena_node(doc, MKR_XN_ELEMENT);
+    mkr_xml_node_t *root = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
     char nm[] = "Feed";
     const char *local = mkr_xml_arena_bytes(doc, nm, 4);
-    if (root == NULL || root->first_child != NULL || root->type != MKR_XN_ELEMENT
+    if (root == NULL || root->first_child != NULL || root->type != MKR_XML_NODE_TYPE_ELEMENT
         || local == NULL || local == nm || memcmp(local, "Feed", 4) != 0) {
         mkr_xml_doc_destroy(doc); return idx;
     }
@@ -185,7 +185,7 @@ mkr_xml_node_selftest(void)
     /* build 1000 children */
     idx++;                                     /* 4 */
     for (int i = 0; i < 1000; i++) {
-        mkr_xml_node_t *c = mkr_xml_arena_node(doc, MKR_XN_ELEMENT);
+        mkr_xml_node_t *c = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
         if (c == NULL) { mkr_xml_doc_destroy(doc); return idx; }
         c->parent = root;
         if (root->last_child) { root->last_child->next = c; c->prev = root->last_child; }
@@ -213,7 +213,7 @@ mkr_xml_node_selftest(void)
     doc->max_bytes = 4096;
     int hit = 0;
     for (int i = 0; i < 100000; i++) {
-        if (mkr_xml_arena_node(doc, MKR_XN_ELEMENT) == NULL) {
+        if (mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT) == NULL) {
             hit = (doc->oom == MKR_XML_ERR_LIMIT);
             break;
         }
@@ -228,7 +228,7 @@ mkr_xml_node_selftest(void)
     doc->max_nodes = 10;
     int nlimit = 0;
     for (int i = 0; i < 100; i++) {
-        if (mkr_xml_arena_node(doc, MKR_XN_ELEMENT) == NULL) {
+        if (mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT) == NULL) {
             nlimit = (doc->oom == MKR_XML_ERR_LIMIT);
             break;
         }
@@ -238,7 +238,7 @@ mkr_xml_node_selftest(void)
 
     /* fail-closed on a NULL document (contract guard, no deref/crash) */
     idx++;                                     /* 8 */
-    if (mkr_xml_arena_node(NULL, MKR_XN_ELEMENT) != NULL
+    if (mkr_xml_arena_node(NULL, MKR_XML_NODE_TYPE_ELEMENT) != NULL
         || mkr_xml_arena_bytes(NULL, "x", 1) != NULL
         || mkr_xml_arena_scratch_bytes(NULL, 1) != NULL) {
         return idx;

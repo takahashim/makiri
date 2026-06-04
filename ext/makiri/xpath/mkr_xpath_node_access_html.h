@@ -29,10 +29,13 @@
  * engine already uses mkr_node_t for its XPath AST node.) */
 
 /* --- neutral node-type constants ---
- * The shared engine body compares MKR_NODE_TYPE(n) against these instead of the
- * Lexbor LXB_DOM_NODE_TYPE_* names, so the body is representation-neutral. For
- * the HTML instance they ARE the Lexbor values (byte-identical codegen); the XML
- * node reuses the same numeric values.
+ * The shared engine body compares MKR_NODE_TYPE(n) against these instead of a
+ * representation-specific name, so the body is representation-neutral. This is
+ * the per-instance binding: the HTML instance maps the neutral names to Lexbor's
+ * LXB_DOM_NODE_TYPE_*; the XML instance (mkr_xpath_node_access_xml.h) maps the
+ * same names to MKR_XML_NODE_TYPE_*. The two encodings are asserted equal there,
+ * so the integer in a node's `type` field means the same thing to either
+ * instance (byte-identical codegen for HTML).
  *
  * NB: named MKR_NTYPE_* (node *type*), distinct from the engine's existing
  * mkr_nt_kind_t enum MKR_NT_* (node *test* kinds: text()/comment()/pi()/...).

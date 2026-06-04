@@ -10,23 +10,40 @@
 #ifndef MKR_XPATH_NODE_ACCESS_XML_H
 #define MKR_XPATH_NODE_ACCESS_XML_H
 
-#include <lexbor/dom/dom.h>          /* shared LXB_DOM_NODE_TYPE_* numeric values + lxb_char_t */
+#include <lexbor/dom/dom.h>          /* for the MKR_XML_NODE_TYPE_* == LXB asserts + lxb_char_t */
 #include "../xml/mkr_xml_node.h"
 #include <string.h>
 
 #define MKR_HOST_XML 1
 
-/* Neutral node-type constants — the custom node reuses the Lexbor values. */
-#define MKR_NTYPE_ELEMENT            LXB_DOM_NODE_TYPE_ELEMENT
-#define MKR_NTYPE_ATTRIBUTE          LXB_DOM_NODE_TYPE_ATTRIBUTE
-#define MKR_NTYPE_TEXT               LXB_DOM_NODE_TYPE_TEXT
-#define MKR_NTYPE_CDATA_SECTION      LXB_DOM_NODE_TYPE_CDATA_SECTION
-#define MKR_NTYPE_COMMENT            LXB_DOM_NODE_TYPE_COMMENT
-#define MKR_NTYPE_PI                 LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION
-#define MKR_NTYPE_DOCUMENT_TYPE      LXB_DOM_NODE_TYPE_DOCUMENT_TYPE
-#define MKR_NTYPE_ENTITY             LXB_DOM_NODE_TYPE_ENTITY
-#define MKR_NTYPE_ENTITY_REFERENCE   LXB_DOM_NODE_TYPE_ENTITY_REFERENCE
-#define MKR_NTYPE_NOTATION           LXB_DOM_NODE_TYPE_NOTATION
+/* Bind the engine's neutral node-type names to the XML representation's own
+ * constants (the html binding maps the same names to LXB_DOM_NODE_TYPE_*). */
+#define MKR_NTYPE_ELEMENT            MKR_XML_NODE_TYPE_ELEMENT
+#define MKR_NTYPE_ATTRIBUTE          MKR_XML_NODE_TYPE_ATTRIBUTE
+#define MKR_NTYPE_TEXT               MKR_XML_NODE_TYPE_TEXT
+#define MKR_NTYPE_CDATA_SECTION      MKR_XML_NODE_TYPE_CDATA_SECTION
+#define MKR_NTYPE_COMMENT            MKR_XML_NODE_TYPE_COMMENT
+#define MKR_NTYPE_PI                 MKR_XML_NODE_TYPE_PI
+#define MKR_NTYPE_DOCUMENT_TYPE      MKR_XML_NODE_TYPE_DOCUMENT_TYPE
+#define MKR_NTYPE_ENTITY             MKR_XML_NODE_TYPE_ENTITY
+#define MKR_NTYPE_ENTITY_REFERENCE   MKR_XML_NODE_TYPE_ENTITY_REFERENCE
+#define MKR_NTYPE_NOTATION           MKR_XML_NODE_TYPE_NOTATION
+
+/* The whole monomorphization rests on the two representations agreeing on the
+ * node-type encoding (so a node's `type` integer means the same thing whichever
+ * instance walks it). Enforce that agreement at compile time rather than by
+ * comment — the XML constants must equal the Lexbor ones. */
+_Static_assert((int)MKR_XML_NODE_TYPE_ELEMENT == (int)LXB_DOM_NODE_TYPE_ELEMENT,                "node-type encoding drift: ELEMENT");
+_Static_assert((int)MKR_XML_NODE_TYPE_ATTRIBUTE == (int)LXB_DOM_NODE_TYPE_ATTRIBUTE,              "node-type encoding drift: ATTRIBUTE");
+_Static_assert((int)MKR_XML_NODE_TYPE_TEXT == (int)LXB_DOM_NODE_TYPE_TEXT,                   "node-type encoding drift: TEXT");
+_Static_assert((int)MKR_XML_NODE_TYPE_CDATA_SECTION == (int)LXB_DOM_NODE_TYPE_CDATA_SECTION,          "node-type encoding drift: CDATA_SECTION");
+_Static_assert((int)MKR_XML_NODE_TYPE_ENTITY_REFERENCE == (int)LXB_DOM_NODE_TYPE_ENTITY_REFERENCE,       "node-type encoding drift: ENTITY_REFERENCE");
+_Static_assert((int)MKR_XML_NODE_TYPE_ENTITY == (int)LXB_DOM_NODE_TYPE_ENTITY,                 "node-type encoding drift: ENTITY");
+_Static_assert((int)MKR_XML_NODE_TYPE_PI == (int)LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION, "node-type encoding drift: PI");
+_Static_assert((int)MKR_XML_NODE_TYPE_COMMENT == (int)LXB_DOM_NODE_TYPE_COMMENT,                "node-type encoding drift: COMMENT");
+_Static_assert((int)MKR_XML_NODE_TYPE_DOCUMENT == (int)LXB_DOM_NODE_TYPE_DOCUMENT,               "node-type encoding drift: DOCUMENT");
+_Static_assert((int)MKR_XML_NODE_TYPE_DOCUMENT_TYPE == (int)LXB_DOM_NODE_TYPE_DOCUMENT_TYPE,          "node-type encoding drift: DOCUMENT_TYPE");
+_Static_assert((int)MKR_XML_NODE_TYPE_NOTATION == (int)LXB_DOM_NODE_TYPE_NOTATION,               "node-type encoding drift: NOTATION");
 
 /* type / synthetic namespace-id (1 = has a namespace, 0 = none). */
 #define MKR_NODE_TYPE(n)          ((n)->type)

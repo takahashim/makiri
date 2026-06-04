@@ -22,17 +22,17 @@ mkr_wrap_xml_node(mkr_xml_node_t *node, VALUE document)
     if (node == NULL) {
         return Qnil;
     }
-    if (node->type == MKR_XN_DOCUMENT) {
+    if (node->type == MKR_XML_NODE_TYPE_DOCUMENT) {
         return document;   /* the document node maps back onto the Ruby Document */
     }
     VALUE klass;
     switch (node->type) {
-    case MKR_XN_ELEMENT:   klass = mkr_cXmlElement;   break;
-    case MKR_XN_ATTRIBUTE: klass = mkr_cXmlAttribute; break;
-    case MKR_XN_TEXT:      klass = mkr_cXmlText;      break;
-    case MKR_XN_CDATA:     klass = mkr_cXmlCData;     break;
-    case MKR_XN_COMMENT:   klass = mkr_cXmlComment;   break;
-    case MKR_XN_PI:        klass = mkr_cXmlProcessingInstruction; break;
+    case MKR_XML_NODE_TYPE_ELEMENT:   klass = mkr_cXmlElement;   break;
+    case MKR_XML_NODE_TYPE_ATTRIBUTE: klass = mkr_cXmlAttribute; break;
+    case MKR_XML_NODE_TYPE_TEXT:      klass = mkr_cXmlText;      break;
+    case MKR_XML_NODE_TYPE_CDATA_SECTION:     klass = mkr_cXmlCData;     break;
+    case MKR_XML_NODE_TYPE_COMMENT:   klass = mkr_cXmlComment;   break;
+    case MKR_XML_NODE_TYPE_PI:        klass = mkr_cXmlProcessingInstruction; break;
     default:               klass = mkr_cXmlNode;      break;
     }
     mkr_node_data_t *nd;
@@ -71,12 +71,12 @@ mkr_xml_node_name(VALUE self)
 {
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
     switch (n->type) {
-    case MKR_XN_ELEMENT:
-    case MKR_XN_ATTRIBUTE: return rb_utf8_str_new(n->qname, (long)n->qname_len);
-    case MKR_XN_PI:        return rb_utf8_str_new(n->local, (long)n->local_len); /* target */
-    case MKR_XN_TEXT:      return rb_utf8_str_new_cstr("text");
-    case MKR_XN_CDATA:     return rb_utf8_str_new_cstr("#cdata-section");
-    case MKR_XN_COMMENT:   return rb_utf8_str_new_cstr("comment");
+    case MKR_XML_NODE_TYPE_ELEMENT:
+    case MKR_XML_NODE_TYPE_ATTRIBUTE: return rb_utf8_str_new(n->qname, (long)n->qname_len);
+    case MKR_XML_NODE_TYPE_PI:        return rb_utf8_str_new(n->local, (long)n->local_len); /* target */
+    case MKR_XML_NODE_TYPE_TEXT:      return rb_utf8_str_new_cstr("text");
+    case MKR_XML_NODE_TYPE_CDATA_SECTION:     return rb_utf8_str_new_cstr("#cdata-section");
+    case MKR_XML_NODE_TYPE_COMMENT:   return rb_utf8_str_new_cstr("comment");
     default:               return rb_utf8_str_new_cstr("document");
     }
 }
@@ -85,7 +85,7 @@ static VALUE
 mkr_xml_node_local_name(VALUE self)
 {
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
-    if (n->type == MKR_XN_ELEMENT || n->type == MKR_XN_ATTRIBUTE) {
+    if (n->type == MKR_XML_NODE_TYPE_ELEMENT || n->type == MKR_XML_NODE_TYPE_ATTRIBUTE) {
         return rb_utf8_str_new(n->local, (long)n->local_len);
     }
     return Qnil;
@@ -118,9 +118,9 @@ mkr_xml_node_content(VALUE self)
 {
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
     /* leaf data nodes return their own value verbatim. */
-    if (n->type == MKR_XN_TEXT || n->type == MKR_XN_CDATA
-        || n->type == MKR_XN_COMMENT || n->type == MKR_XN_ATTRIBUTE
-        || n->type == MKR_XN_PI) {
+    if (n->type == MKR_XML_NODE_TYPE_TEXT || n->type == MKR_XML_NODE_TYPE_CDATA_SECTION
+        || n->type == MKR_XML_NODE_TYPE_COMMENT || n->type == MKR_XML_NODE_TYPE_ATTRIBUTE
+        || n->type == MKR_XML_NODE_TYPE_PI) {
         return rb_utf8_str_new(n->value ? n->value : "", (long)n->value_len);
     }
     /* element / document: concatenate every TEXT/CDATA descendant in document
@@ -129,7 +129,7 @@ mkr_xml_node_content(VALUE self)
     VALUE str = rb_utf8_str_new("", 0);
     mkr_xml_node_t *cur = n->first_child;
     while (cur != NULL) {
-        if ((cur->type == MKR_XN_TEXT || cur->type == MKR_XN_CDATA) && cur->value_len) {
+        if ((cur->type == MKR_XML_NODE_TYPE_TEXT || cur->type == MKR_XML_NODE_TYPE_CDATA_SECTION) && cur->value_len) {
             rb_str_cat(str, cur->value, (long)cur->value_len);
         }
         if (cur->first_child != NULL) { cur = cur->first_child; continue; }
@@ -178,7 +178,7 @@ static VALUE
 mkr_xml_node_aref(VALUE self, VALUE rb_name)
 {
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
-    if (n->type != MKR_XN_ELEMENT) return Qnil;
+    if (n->type != MKR_XML_NODE_TYPE_ELEMENT) return Qnil;
     mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
     VALUE out = Qnil;
     for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
@@ -197,7 +197,7 @@ mkr_xml_node_attribute_nodes(VALUE self)
     VALUE doc = mkr_xml_node_document(self);
     VALUE set = mkr_node_set_new(doc);
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
-    if (n->type == MKR_XN_ELEMENT) {
+    if (n->type == MKR_XML_NODE_TYPE_ELEMENT) {
         for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
             mkr_node_set_push(set, (lxb_dom_node_t *)a);
         }
