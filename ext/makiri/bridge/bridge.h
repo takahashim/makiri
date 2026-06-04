@@ -46,6 +46,19 @@ mkr_ruby_borrowed_bytes_t mkr_ruby_bytes_view(VALUE in);
  * for an empty input), suitable for use while the GVL is released. */
 int mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out);
 
+/* Return a UTF-8 Ruby String for `str`, honouring its declared encoding: UTF-8 /
+ * US-ASCII / ASCII-8BIT are returned unchanged (the parser handles their bytes
+ * directly); any other encoding is transcoded to UTF-8 (invalid/undef -> U+FFFD)
+ * so its content is preserved rather than read as raw UTF-8. The UTF-8 common
+ * case is a single encoding comparison. */
+VALUE mkr_ruby_to_utf8(VALUE str);
+
+/* True if `str` is *already known* to be valid UTF-8 — pure ASCII, or valid in
+ * the UTF-8 encoding — from its cached coderange, WITHOUT forcing a scan. Lets
+ * the parse skip mkr_utf8_sanitize's validation pass for input Ruby has already
+ * classified (an unknown/broken coderange returns false: sanitize handles it). */
+bool mkr_ruby_str_known_valid_utf8(VALUE str);
+
 /* Validate a Ruby String for use as an XPath engine string: valid UTF-8,
  * no interior NUL, and at most +max_bytes+. Returns NULL on success and fills
  * +out+; otherwise returns a static reason string. +sv+ must be a String. */

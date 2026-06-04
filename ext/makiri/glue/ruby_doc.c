@@ -207,7 +207,39 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
     /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD; valid input is used
      * in place (no copy, *owned == NULL). Returns -1 on OOM (nothing allocated)
      * so the caller can release its parser before raising. */
-    mkr_ruby_borrowed_bytes_t hv = mkr_ruby_bytes_view(html);
+    VALUE u8 = mkr_ruby_to_utf8(html); /* honour the input encoding (-> UTF-8) */
+    mkr_ruby_borrowed_bytes_t hv = mkr_ruby_bytes_view(u8);
+
+    if (u8 != html) {
+        /* Transcoded to UTF-8: a fresh String that nothing keeps alive past this
+         * return, so we must NOT borrow its bytes. It is already valid UTF-8, so
+         * copy it into an owned buffer (the caller frees *owned) — no sanitise. */
+        size_t n = (hv.len > 0) ? hv.len : 1;
+        char  *buf = mkr_reallocarray(NULL, n, 1);
+        if (buf == NULL) {
+            RB_GC_GUARD(hv.value);
+            return -1;
+        }
+        if (hv.len > 0) {
+            memcpy(buf, hv.ptr, hv.len);
+        }
+        *owned   = (lxb_char_t *)buf;
+        *out     = (const lxb_char_t *)buf;
+        *out_len = hv.len;
+        RB_GC_GUARD(hv.value);
+        return 0;
+    }
+
+    /* Not transcoded (UTF-8 / US-ASCII / binary): input Ruby already knows is
+     * valid UTF-8 is borrowed in place (the caller keeps `html` alive);
+     * otherwise sanitise as before. */
+    if (mkr_ruby_str_known_valid_utf8(html)) {
+        *owned   = NULL;
+        *out     = (const lxb_char_t *)hv.ptr;
+        *out_len = hv.len;
+        RB_GC_GUARD(hv.value);
+        return 0;
+    }
     lxb_char_t *clean = NULL;
     size_t      clean_len = 0;
     if (mkr_utf8_sanitize((const lxb_char_t *)hv.ptr, hv.len, &clean, &clean_len) != 0) {
@@ -379,7 +411,7 @@ mkr_frag_s_parse(int argc, VALUE *argv, VALUE klass)
                                 : rb_hash_aref(opts, ID2SYM(rb_intern("context")));
 
     static const lxb_char_t shell[] = "<html><body></body></html>";
-    mkr_parsed_t *parsed = mkr_parse_html(shell, sizeof(shell) - 1);
+    mkr_parsed_t *parsed = mkr_parse_html(shell, sizeof(shell) - 1, true);
     if (parsed == NULL) {
         rb_raise(mkr_eError, "failed to create fragment document");
     }
@@ -415,6 +447,7 @@ mkr_node_parse(VALUE self, VALUE rb_html)
 typedef struct {
     const lxb_char_t *src;
     size_t            len;
+    bool              assume_valid;
     mkr_parsed_t     *result;
 } mkr_parse_nogvl_t;
 
@@ -425,7 +458,7 @@ static void *
 mkr_parse_nogvl(void *p)
 {
     mkr_parse_nogvl_t *a = (mkr_parse_nogvl_t *)p;
-    a->result = mkr_parse_html(a->src, a->len);
+    a->result = mkr_parse_html(a->src, a->len, a->assume_valid);
     return NULL;
 }
 
@@ -440,6 +473,10 @@ static VALUE
 mkr_doc_s_parse(VALUE klass, VALUE rb_source)
 {
     StringValue(rb_source);
+    /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through (no
+     * degradation), anything else is transcoded to UTF-8 so its content is
+     * preserved rather than read as raw UTF-8 bytes. */
+    rb_source = mkr_ruby_to_utf8(rb_source);
 
     /* Allocate the wrapper first (with parsed == NULL) so that if parsing
      * fails the GC-managed object frees cleanly. */
@@ -457,9 +494,14 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
     if (mkr_ruby_copy_bytes(rb_source, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying source");
     }
+    /* Read the coderange (no scan) before releasing the GVL; the copy is
+     * byte-identical, so a source Ruby already knows is valid UTF-8 lets the
+     * parse skip its sanitisation scan. */
+    bool assume_valid = mkr_ruby_str_known_valid_utf8(rb_source);
     RB_GC_GUARD(rb_source);
 
-    mkr_parse_nogvl_t args = { (const lxb_char_t *)source.ptr, source.len, NULL };
+    mkr_parse_nogvl_t args = { (const lxb_char_t *)source.ptr, source.len,
+                               assume_valid, NULL };
     rb_thread_call_without_gvl(mkr_parse_nogvl, &args, NULL, NULL);
     mkr_owned_bytes_clear(&source);
 

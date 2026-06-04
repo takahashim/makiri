@@ -70,7 +70,7 @@ mkr_parse_tracked(const lxb_char_t *src, size_t len, void **out_lines)
 }
 
 mkr_parsed_t *
-mkr_parse_html(const lxb_char_t *src, size_t len)
+mkr_parse_html(const lxb_char_t *src, size_t len, bool assume_valid)
 {
     if (src == NULL && len != 0) {
         return NULL;
@@ -103,10 +103,11 @@ mkr_parse_html(const lxb_char_t *src, size_t len)
      * with no copy. Source offsets / line numbers are then relative to the
      * sanitised bytes — exact for valid input, best-effort when replacement
      * shifted byte positions. Source locations always ride the parse pipeline
-     * (cheap). */
+     * (cheap). `assume_valid` (the caller already verified UTF-8, e.g. via the
+     * Ruby String's coderange) skips the validation scan entirely. */
     lxb_char_t *clean = NULL;
     size_t      clean_len = 0;
-    if (mkr_utf8_sanitize(src, len, &clean, &clean_len) != 0) {
+    if (!assume_valid && mkr_utf8_sanitize(src, len, &clean, &clean_len) != 0) {
         free(p);
         return NULL; /* OOM */
     }

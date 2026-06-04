@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* Parsing now **honours the input String's encoding**. UTF-8, US-ASCII and
+  ASCII-8BIT (binary) are used directly (the UTF-8 common case is unchanged — a
+  single encoding check, no extra work); any other encoding (Shift_JIS, EUC-JP,
+  ISO-8859-1, Windows-1252, …) is transcoded to UTF-8 (invalid/undefined →
+  U+FFFD) so its content is preserved. Previously every input was read as raw
+  UTF-8 bytes, so a Shift_JIS or EUC-JP document was mangled into U+FFFD; it now
+  decodes correctly (matching `Nokogiri`). Applies to `Makiri::HTML` /
+  `Makiri.parse`, `DocumentFragment.parse`, and `Document#fragment` / `Node#parse`.
+* Parsing skips its UTF-8 validation scan when the input String's cached
+  coderange already proves it valid (pure ASCII, or valid in the UTF-8
+  encoding) — read without forcing a scan. Invalid/unknown input is sanitised
+  as before. Most effective on multibyte-heavy already-validated input; the DOM
+  is unchanged.
+* The HTML serializer's line table is built with `memchr`, and the UTF-8
+  validity check is a dedicated validate-only scan (Unicode well-formed table +
+  word-at-a-time ASCII), instead of decoding every code point — together ~7%
+  faster parsing on a 235 KB document, output byte-identical.
 * `Node#{to_html,to_s,outer_html,inner_html}` collect Lexbor's serializer output
   into one growing C buffer (`mkr_buf`) and copy it into a Ruby String once,
   instead of `rb_str_cat` per emitted chunk. The per-chunk Ruby-string growth

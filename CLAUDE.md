@@ -103,12 +103,20 @@ docs/design_doc.ja.md      authoritative design (read this)
 
 ## Subsystems
 
-**Text-input contract.** Makiri accepts UTF-8. **HTML parsing decodes leniently
-like a browser**: `mkr_utf8_sanitize` (`post_parse.c`) replaces invalid UTF-8
-with U+FFFD (WHATWG byte-stream decoding via Lexbor's `lxb_encoding_*`; a NUL is
-left for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail**
-on bad bytes and the DOM is always valid UTF-8. Valid input (common case) is a
-no-op (one validating decode pass, no copy). The **programmatic APIs are strict**:
+**Text-input contract.** Parsing **honours the input String's encoding**
+(`mkr_ruby_to_utf8`, `bridge/ruby_string.c`): UTF-8 / US-ASCII / ASCII-8BIT pass
+through untouched (the UTF-8 common case is a single encoding compare — no
+transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, …) is
+`rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
+instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
+parsing then decodes leniently like a browser**: `mkr_utf8_sanitize`
+(`utf8_input.c`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
+for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
+bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
+validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
+skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
+no forced scan) already proves it valid — `mkr_parse_html`'s `assume_valid` and
+`mkr_ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
 `mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for invalid UTF-8 or an
 embedded NUL at the XPath/CSS/mutation boundaries (expr, selector, attribute
 name/value, `content=`, `name=`, `create_*`, variable/namespace) — never

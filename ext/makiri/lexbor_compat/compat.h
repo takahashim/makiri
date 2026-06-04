@@ -28,7 +28,10 @@ typedef struct mkr_parsed_s {
  * tokenizer (cheap — it rides the parse). The src buffer is not retained:
  * Lexbor copies what it needs into the arena, and we build the line table up
  * front. */
-mkr_parsed_t *mkr_parse_html(const lxb_char_t *src, size_t len);
+/* `assume_valid` skips the UTF-8 sanitisation pass: pass it only when the caller
+ * already knows `src` is valid UTF-8 (e.g. from the Ruby String's coderange).
+ * When false, input is sanitised as before. */
+mkr_parsed_t *mkr_parse_html(const lxb_char_t *src, size_t len, bool assume_valid);
 
 /* Browser-compatible UTF-8 input sanitisation. If `src` (len bytes) is already
  * well-formed UTF-8 (the common case), sets *out=NULL and the caller uses src

@@ -108,6 +108,49 @@ mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out)
     return 0;
 }
 
+VALUE
+mkr_ruby_to_utf8(VALUE str)
+{
+    /* Honour the Ruby String's declared encoding so its content survives:
+     *
+     *  - UTF-8 / US-ASCII / ASCII-8BIT (binary): returned unchanged. These are
+     *    already UTF-8 bytes (or deliberately raw bytes), and the native parser
+     *    does the WHATWG invalid-byte replacement for them. The UTF-8 common
+     *    case costs only this encoding comparison — no transcode, no copy.
+     *
+     *  - any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, Windows-1252, ...):
+     *    transcoded to UTF-8 with invalid/undef -> U+FFFD, so e.g. Shift_JIS
+     *    text becomes the right UTF-8 characters instead of being read as raw
+     *    UTF-8 bytes and mangled. Only non-UTF-8 input pays this. */
+    rb_encoding *enc = rb_enc_get(str);
+    if (enc == rb_utf8_encoding()
+        || enc == rb_usascii_encoding()
+        || enc == rb_ascii8bit_encoding()) {
+        return str;
+    }
+    return rb_str_encode(str, rb_enc_from_encoding(rb_utf8_encoding()),
+                         ECONV_INVALID_REPLACE | ECONV_UNDEF_REPLACE, Qnil);
+}
+
+bool
+mkr_ruby_str_known_valid_utf8(VALUE str)
+{
+    if (!RB_TYPE_P(str, T_STRING)) {
+        return false;
+    }
+    /* ENC_CODERANGE reads the *cached* classification from the object's flags;
+     * it does NOT scan (rb_enc_str_coderange would, costing as much as our own
+     * validator). So this only wins when Ruby already knows the answer. */
+    int cr = ENC_CODERANGE(str);
+    if (cr == ENC_CODERANGE_7BIT) {
+        return true; /* all bytes < 0x80 in an ASCII-compatible encoding */
+    }
+    if (cr == ENC_CODERANGE_VALID) {
+        return rb_enc_get(str) == rb_utf8_encoding(); /* valid AND UTF-8 */
+    }
+    return false; /* UNKNOWN or BROKEN: let mkr_utf8_sanitize handle it */
+}
+
 const char *
 mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
 {
