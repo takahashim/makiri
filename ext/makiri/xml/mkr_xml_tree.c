@@ -38,12 +38,16 @@ typedef struct {
 } raw_attr_t;
 
 typedef struct {
-    const char     *p, *end;
+    const char     *p, *end, *start;  /* cursor, end, buffer origin (the only place
+                                       * the XML declaration is valid) */
     uint32_t        line, col;       /* 1-based; col in bytes (§5) */
     mkr_xml_doc_t  *doc;
     mkr_xml_status_t status;
     ns_binding_t   *binds; size_t nbind, bind_cap;   /* namespace scope stack */
     raw_attr_t     *ratt;  size_t nratt, ratt_cap;   /* reusable per-tag attr buffer */
+    mkr_xml_node_t **stack; size_t depth, scap;      /* open-element stack */
+    size_t          *frame; size_t fcap;             /* parallel: ns-binding count when
+                                                      * each open element was entered */
 } mkr_xml_parser_t;
 
 #define XML_NS_URI    "http://www.w3.org/XML/1998/namespace"
@@ -123,15 +127,6 @@ append_child(mkr_xml_node_t *parent, mkr_xml_node_t *child)
     parent->last_child = child;
 }
 
-static void
-append_attr(mkr_xml_node_t *el, mkr_xml_node_t *attr)
-{
-    attr->parent = el;
-    if (el->attrs == NULL) { el->attrs = attr; return; }
-    mkr_xml_node_t *a = el->attrs;
-    while (a->next) a = a->next;
-    a->next = attr;
-}
 
 /* Copy a slice into the arena; on failure record the arena status. NULL return
  * with len>0 means budget/OOM (P->status set); len==0 yields "". */
@@ -304,7 +299,10 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         /* else: no default namespace -> the element is in no namespace */
     }
 
-    /* Phase 4: create the attribute nodes (xmlns declarations kept, §7.2). */
+    /* Phase 4: create the attribute nodes (xmlns declarations kept, §7.2). The
+     * list is built with an explicit tail so each append is O(1) — walking to the
+     * tail per attribute would be O(n^2) over a MKR_XML_MAX_ATTRS-bounded set. */
+    mkr_xml_node_t *attr_tail = NULL;
     for (size_t i = 0; i < P->nratt; i++) {
         raw_attr_t *r = &P->ratt[i];
         const char *pfx, *loc; uint32_t pl, ll;
@@ -330,7 +328,9 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         attr->value = mkr_xml_expand(P->doc, r->val, r->val_len,
                                      MKR_XML_EXPAND_ATTR, &attr->value_len, &P->status);
         if (attr->value == NULL) return -1;
-        append_attr(el, attr);
+        attr->parent = el;                             /* O(1) tail append */
+        if (attr_tail) attr_tail->next = attr; else el->attrs = attr;
+        attr_tail = attr;
     }
 
     /* §9.3: no two attributes may share the same (namespace URI, local name) —
@@ -467,6 +467,140 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
     return 0;
 }
 
+/* ---- per-construct handlers (the tokenizer dispatch calls one per token) ----
+ * Each takes only the parser (which now carries the open-element stack), returns
+ * 0 on success / -1 on a well-formedness or budget failure (P->status set), and
+ * leaves P->p just past the construct. */
+
+/* The innermost open element, or NULL at the document level (prolog/epilog). */
+static inline mkr_xml_node_t *
+cur_parent(const mkr_xml_parser_t *P)
+{
+    return P->depth ? P->stack[P->depth - 1] : NULL;
+}
+
+/* End tag '</name S? >' (P->p at '/'): must match the innermost open element's
+ * raw QName; on match pops it and restores that element's namespace scope. */
+static int
+parse_end_tag(mkr_xml_parser_t *P)
+{
+    advance(P);                                       /* '/' */
+    const char *nm; uint32_t nl;
+    if (scan_name(P, &nm, &nl) != 0) return -1;
+    skip_ws(P);
+    if (P->p >= P->end || *P->p != '>') { set_syntax(P); return -1; }
+    advance(P);
+    if (P->depth == 0) { set_syntax(P); return -1; }  /* end tag with no open element */
+    mkr_xml_node_t *top = P->stack[P->depth - 1];
+    uint32_t tql = top->prefix_len ? top->prefix_len + 1 + top->local_len : top->local_len;
+    int match;
+    if (top->prefix_len) {
+        match = (nl == tql && memcmp(nm, top->prefix, top->prefix_len) == 0
+                 && nm[top->prefix_len] == ':'
+                 && memcmp(nm + top->prefix_len + 1, top->local, top->local_len) == 0);
+    } else {
+        match = (top->local_len == nl && memcmp(top->local, nm, nl) == 0);
+    }
+    if (!match) { set_syntax(P); return -1; }          /* mismatched end tag */
+    P->depth--;
+    P->nbind = P->frame[P->depth];                     /* pop this element's namespace scope */
+    return 0;
+}
+
+/* '<!' markup (P->p at '!'): a comment or a CDATA section; '<!DOCTYPE' and any
+ * other markup declaration are rejected (§9.4 — DTDs are unsupported). */
+static int
+parse_markup(mkr_xml_parser_t *P)
+{
+    mkr_xml_node_t *parent = cur_parent(P);
+    if (lit_ahead(P, "!--", 3))      return parse_comment(P, parent);
+    if (lit_ahead(P, "![CDATA[", 8)) return parse_cdata(P, parent);
+    set_syntax(P); return -1;
+}
+
+/* Start tag (P->p at the QName's first byte; +tl+/+tc+ = the '<' position).
+ * Builds the element, resolves its namespaces, links it into the tree, then on
+ * '>' pushes it onto the open-element stack or on '/>' leaves it a leaf. */
+static int
+parse_start_tag(mkr_xml_parser_t *P, uint32_t tl, uint32_t tc)
+{
+    const char *nm; uint32_t nl;
+    if (scan_name(P, &nm, &nl) != 0) return -1;
+    const char *epfx, *eloc; uint32_t epl, ell;
+    if (split_qname(nm, nl, &epfx, &epl, &eloc, &ell) != 0) { set_syntax(P); return -1; }
+    (void)epfx;
+    mkr_xml_node_t *el = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_ELEMENT);
+    if (el == NULL) { propagate_oom(P); return -1; }
+    if (set_node_qname(P, el, nm, nl, eloc, ell, epl) != 0) return -1;
+    el->line = tl; el->col = tc;
+
+    if (P->depth == 0) {
+        if (P->doc->root != NULL) { set_syntax(P); return -1; }   /* multiple roots */
+        P->doc->root = el;
+    } else {
+        append_child(P->stack[P->depth - 1], el);
+    }
+
+    size_t bind_base = P->nbind;       /* xmlns on this element go above here */
+    int pushed = 0;
+    if (parse_element_body(P, el, &pushed) != 0) return -1;
+    if (pushed) {
+        if (P->depth + 1 > MKR_XML_MAX_DEPTH) { P->status = MKR_XML_ERR_LIMIT; return -1; }
+        if (mkr_grow_reserve((void **)&P->stack, &P->scap, P->depth + 1, sizeof(*P->stack)) != MKR_OK
+            || mkr_grow_reserve((void **)&P->frame, &P->fcap, P->depth + 1, sizeof(*P->frame)) != MKR_OK) {
+            P->status = MKR_XML_ERR_OOM; return -1;
+        }
+        P->stack[P->depth] = el; P->frame[P->depth] = bind_base; P->depth++;
+    } else {
+        P->nbind = bind_base;          /* self-closing: pop its namespace scope now */
+    }
+    return 0;
+}
+
+/* Character data up to the next '<'. Inside an element it becomes a TEXT node
+ * (references expanded, XML Char validated); at the document level only white
+ * space (misc) is permitted. */
+static int
+parse_text(mkr_xml_parser_t *P)
+{
+    const char *tstart = P->p;
+    int nonspace = 0;
+    while (P->p < P->end && *P->p != '<') {
+        char c = *P->p;
+        if (!(c == ' ' || c == '\t' || c == '\n' || c == '\r')) nonspace = 1;
+        advance(P);
+    }
+    size_t traw = (size_t)(P->p - tstart);
+    if (traw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }   /* fail closed */
+    uint32_t tlen = (uint32_t)traw;
+    if (P->depth == 0) {
+        if (nonspace) { set_syntax(P); return -1; }   /* non-ws text outside any element */
+        return 0;
+    }
+    mkr_xml_node_t *t = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_TEXT);
+    if (t == NULL) { propagate_oom(P); return -1; }
+    /* expand char/entity references + validate XML Char (§9.1/§9.2) */
+    t->value = mkr_xml_expand(P->doc, tstart, tlen, MKR_XML_EXPAND_TEXT, &t->value_len, &P->status);
+    if (t->value == NULL) return -1;
+    append_child(P->stack[P->depth - 1], t);
+    return 0;
+}
+
+/* Wrap the root element in a DOCUMENT node — the XPath "/" root and what a Ruby
+ * Document wraps. (Lexbor's HTML document IS a node; our custom tree has no
+ * document node otherwise, so the engine's absolute-path seed would have nothing
+ * valid to root at.) Returns MKR_XML_OK or the arena status on OOM. */
+static mkr_xml_status_t
+wrap_document_node(mkr_xml_doc_t *doc)
+{
+    mkr_xml_node_t *dn = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT);
+    if (dn == NULL) return doc->oom;
+    dn->first_child = dn->last_child = doc->root;
+    doc->root->parent = dn;
+    doc->doc_node = dn;
+    return MKR_XML_OK;
+}
+
 mkr_xml_doc_t *
 mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
 {
@@ -500,137 +634,42 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
         blen = o;
     }
 
-    mkr_xml_parser_t P = { body, body + blen, 1, 1, doc, MKR_XML_OK };
-    const char *origin = body;        /* the XML declaration is valid only here */
+    mkr_xml_parser_t P = { .p = body, .end = body + blen, .start = body,
+                           .line = 1, .col = 1, .doc = doc, .status = MKR_XML_OK };
 
-    mkr_xml_node_t **stack = NULL;     /* open elements */
-    size_t          *frame = NULL;     /* parallel: namespace-binding count when each was opened */
-    size_t depth = 0, scap = 0, fcap = 0;
-
+    /* Tokenizer dispatch: classify the construct at P.p and hand it to its
+     * handler. The handlers carry all parse state through P (cursor, namespace
+     * scope, AND the open-element stack), so this loop stays a thin classifier. */
     while (P.p < P.end) {
-        if (*P.p == '<') {
-            uint32_t tl = P.line, tc = P.col;   /* tag start position */
-            int tok_at_start = (P.p == origin); /* '<?xml ...?>' is valid only here */
-            advance(&P); /* '<' */
+        if (*P.p != '<') {
+            if (parse_text(&P) != 0) break;
+        } else {
+            uint32_t tl = P.line, tc = P.col;     /* the '<' position (start-tag line/col) */
+            int at_start = (P.p == P.start);       /* '<?xml ...?>' is valid only here */
+            advance(&P);                           /* '<' */
             if (P.p >= P.end) { set_syntax(&P); break; }
-            char c = *P.p;
-
-            if (c == '/') {                      /* end tag */
-                advance(&P);
-                const char *nm; uint32_t nl;
-                if (scan_name(&P, &nm, &nl) != 0) break;
-                skip_ws(&P);
-                if (P.p >= P.end || *P.p != '>') { set_syntax(&P); break; }
-                advance(&P);
-                if (depth == 0) { set_syntax(&P); break; }   /* end tag with no open element */
-                /* the end tag must match the open element's full QName (raw) */
-                mkr_xml_node_t *top = stack[depth - 1];
-                uint32_t tql = top->prefix_len ? top->prefix_len + 1 + top->local_len : top->local_len;
-                int match;
-                if (top->prefix_len) {
-                    match = (nl == tql && memcmp(nm, top->prefix, top->prefix_len) == 0
-                             && nm[top->prefix_len] == ':'
-                             && memcmp(nm + top->prefix_len + 1, top->local, top->local_len) == 0);
-                } else {
-                    match = (top->local_len == nl && memcmp(top->local, nm, nl) == 0);
-                }
-                if (!match) { set_syntax(&P); break; }        /* mismatched end tag */
-                depth--;
-                P.nbind = frame[depth];                       /* pop this element's namespace scope */
-            } else if (c == '!') {               /* <!-- -->, <![CDATA[ ]]>, <!DOCTYPE: §9 */
-                mkr_xml_node_t *parent = depth ? stack[depth - 1] : NULL;
-                if (lit_ahead(&P, "!--", 3)) {
-                    if (parse_comment(&P, parent) != 0) break;
-                } else if (lit_ahead(&P, "![CDATA[", 8)) {
-                    if (parse_cdata(&P, parent) != 0) break;
-                } else {                          /* <!DOCTYPE and any other markup decl */
-                    set_syntax(&P); break;        /* §9.4: DTD is unsupported, fail-closed */
-                }
-            } else if (c == '?') {               /* <?pi?> or the <?xml ...?> declaration */
-                mkr_xml_node_t *parent = depth ? stack[depth - 1] : NULL;
-                if (parse_pi(&P, parent, tok_at_start) != 0) break;
-            } else {                              /* start tag */
-                const char *nm; uint32_t nl;
-                if (scan_name(&P, &nm, &nl) != 0) break;
-                const char *epfx, *eloc; uint32_t epl, ell;
-                if (split_qname(nm, nl, &epfx, &epl, &eloc, &ell) != 0) { set_syntax(&P); break; }
-                mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
-                if (el == NULL) { propagate_oom(&P); break; }
-                (void)epfx;
-                if (set_node_qname(&P, el, nm, nl, eloc, ell, epl) != 0) break;
-                el->line = tl; el->col = tc;
-                if (P.status != MKR_XML_OK) break;
-
-                if (depth == 0) {
-                    if (doc->root != NULL) { set_syntax(&P); break; } /* multiple roots */
-                    doc->root = el;
-                } else {
-                    append_child(stack[depth - 1], el);
-                }
-
-                size_t bind_base = P.nbind;     /* xmlns on this element go above here */
-                int pushed = 0;
-                if (parse_element_body(&P, el, &pushed) != 0) break;
-                if (pushed) {
-                    if (depth + 1 > MKR_XML_MAX_DEPTH) { P.status = MKR_XML_ERR_LIMIT; break; }
-                    if (mkr_grow_reserve((void **)&stack, &scap, depth + 1, sizeof(*stack)) != MKR_OK
-                        || mkr_grow_reserve((void **)&frame, &fcap, depth + 1, sizeof(*frame)) != MKR_OK) {
-                        P.status = MKR_XML_ERR_OOM; break;
-                    }
-                    stack[depth] = el; frame[depth] = bind_base; depth++;
-                } else {
-                    P.nbind = bind_base;        /* self-closing: pop its namespace scope now */
-                }
+            int rc;
+            switch (*P.p) {
+            case '/': rc = parse_end_tag(&P);                          break;
+            case '!': rc = parse_markup(&P);                           break;  /* comment / CDATA / DTD */
+            case '?': rc = parse_pi(&P, cur_parent(&P), at_start);     break;
+            default:  rc = parse_start_tag(&P, tl, tc);                break;
             }
-        } else {                                  /* character data */
-            const char *tstart = P.p;
-            int nonspace = 0;
-            while (P.p < P.end && *P.p != '<') {
-                char c = *P.p;
-                if (!(c == ' ' || c == '\t' || c == '\n' || c == '\r')) nonspace = 1;
-                advance(&P);
-            }
-            size_t traw = (size_t)(P.p - tstart);
-            if (traw > UINT32_MAX) { P.status = MKR_XML_ERR_LIMIT; break; } /* fail closed */
-            uint32_t tlen = (uint32_t)traw;
-            if (depth == 0) {
-                /* text outside any element: only whitespace (misc) is allowed */
-                if (nonspace) { set_syntax(&P); break; }
-            } else {
-                mkr_xml_node_t *t = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_TEXT);
-                if (t == NULL) { propagate_oom(&P); break; }
-                /* expand char/entity references + validate XML Char (§9.1/§9.2) */
-                t->value = mkr_xml_expand(doc, tstart, tlen,
-                                          MKR_XML_EXPAND_TEXT, &t->value_len, &P.status);
-                if (t->value == NULL) break;
-                append_child(stack[depth - 1], t);
-            }
+            if (rc != 0) break;
         }
         if (P.status != MKR_XML_OK) break;
     }
 
     if (P.status == MKR_XML_OK) {
-        if (depth != 0)        set_syntax(&P);   /* unclosed element(s) */
-        else if (doc->root == NULL) set_syntax(&P); /* no root element */
+        if (P.depth != 0)           set_syntax(&P);   /* unclosed element(s) */
+        else if (doc->root == NULL) set_syntax(&P);   /* no root element */
     }
-
-    /* Wrap the root element in a DOCUMENT node — the XPath "/" root, and what a
-     * Ruby Document wraps. (Lexbor's HTML document IS a node; our custom tree has
-     * no document node otherwise, so the engine's absolute-path seed would have
-     * nothing valid to root at.) */
     if (P.status == MKR_XML_OK && doc->root != NULL) {
-        mkr_xml_node_t *dn = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT);
-        if (dn == NULL) {
-            P.status = doc->oom;
-        } else {
-            dn->first_child = dn->last_child = doc->root;
-            doc->root->parent = dn;
-            doc->doc_node = dn;
-        }
+        P.status = wrap_document_node(doc);
     }
 
-    free(stack);
-    free(frame);
+    free(P.stack);
+    free(P.frame);
     free(P.binds);
     free(P.ratt);
     free(norm);                       /* scratch line-ending-normalized buffer (if any) */
