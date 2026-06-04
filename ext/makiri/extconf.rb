@@ -115,6 +115,24 @@ elsif RbConfig::CONFIG["target_os"] =~ /linux/
   $LIBRUBYARG_STATIC = ""
 end
 
+# Export ONLY Init_makiri from the compiled extension. `-fvisibility=hidden`
+# above hides our own sources' symbols, but the vendored Lexbor static library
+# is built (by Lexbor's own CMake) with default visibility, so without this the
+# linker re-exports ~1700 `lxb_*` / `lexbor_*` symbols into the bundle's dynamic
+# table. Another Lexbor-based extension loaded in the same process (e.g.
+# nokolexbor) would then resolve its own `lxb_*` calls to OUR copy — a different
+# Lexbor version with an incompatible ABI — and segfault. Restricting the export
+# list to Init_makiri keeps Makiri's Lexbor entirely private (Ruby only needs
+# Init_makiri, found via dlsym at require time).
+if RbConfig::CONFIG["target_os"] =~ /darwin/
+  $DLDFLAGS << " -Wl,-exported_symbol,_Init_makiri"
+elsif RbConfig::CONFIG["target_os"] =~ /linux/
+  # Hide every symbol pulled in from static archives (the Lexbor .a); our own
+  # are already hidden by -fvisibility=hidden, leaving just RUBY_FUNC_EXPORTED
+  # Init_makiri in the dynamic symbol table.
+  $DLDFLAGS << " -Wl,--exclude-libs,ALL"
+end
+
 # Recursively pick up C sources under ext/makiri/.
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c")).map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []

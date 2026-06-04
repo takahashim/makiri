@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+* The compiled extension exported the entire vendored Lexbor symbol table
+  (~1700 `lxb_*` / `lexbor_*` symbols) instead of only `Init_makiri`:
+  `-fvisibility=hidden` hides our own sources but not the prebuilt Lexbor static
+  library, whose symbols were re-exported into the bundle's dynamic table.
+  Loading Makiri together with another Lexbor-based extension (e.g. `nokolexbor`)
+  in the same process could then bind that gem's `lxb_*` calls to Makiri's
+  different Lexbor version and **segfault**. The linker now exports only
+  `Init_makiri` (`-Wl,-exported_symbol,_Init_makiri` on macOS,
+  `-Wl,--exclude-libs,ALL` on Linux), keeping Makiri's Lexbor fully private.
+  Affects precompiled gems; rebuild required.
+
 ## [0.2.0] - 2026-06-04
 
 ### Added

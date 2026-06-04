@@ -23,8 +23,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   node-set caps, validate inputs, never return a truncated/wrong result (raise
   instead). Keep the build hardening flags (`-D_FORTIFY_SOURCE=2`,
   `-fstack-protector-strong`, `-fvisibility=hidden` + `RUBY_FUNC_EXPORTED` on
-  `Init_makiri`). Every C change must stay clean under ASan+UBSan and keep the
-  fuzzer green.
+  `Init_makiri`). **Export only `Init_makiri`** from the compiled extension
+  (`extconf.rb`: `-Wl,-exported_symbol,_Init_makiri` on macOS,
+  `-Wl,--exclude-libs,ALL` on Linux): `-fvisibility=hidden` hides our own
+  sources but *not* the prebuilt vendored Lexbor static lib, so without this the
+  bundle re-exports ~1700 `lxb_*`/`lexbor_*` symbols and another Lexbor-based
+  gem in the same process (e.g. `nokolexbor`) binds its `lxb_*` calls to our
+  different Lexbor version → segfault. Keep Makiri's Lexbor private; verify with
+  `nm -gU lib/makiri/makiri.bundle | grep -c ' T _lxb_'` → `0`. Every C change
+  must stay clean under ASan+UBSan and keep the fuzzer green.
 
 ## Lexbor version
 
