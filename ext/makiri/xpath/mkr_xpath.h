@@ -45,7 +45,10 @@ typedef struct {
   mkr_xpath_type_t type;
   union {
     struct {
-      lxb_dom_node_t **nodes;
+      /* Representation-agnostic node pointers: lxb_dom_node_t* for an HTML
+       * document, mkr_xml_node_t* for an XML one. The glue knows the kind and
+       * casts; the engine boundary stays neutral. */
+      void **nodes;
       size_t count;
     } nodeset;
     mkr_owned_text_t string; /* owned; valid when type == MKR_XPATH_TYPE_STRING */
@@ -59,7 +62,10 @@ typedef struct {
   char *message; /* heap-allocated, freed with mkr_xpath_error_free */
 } mkr_xpath_error_t;
 
-mkr_xpath_context_t *mkr_xpath_context_new(lxb_dom_document_t *doc, lxb_dom_node_t *node);
+/* Create a context for +node+ in +doc+ (representation-agnostic void* — the glue
+ * passes lxb_dom_* for HTML, mkr_xml_* for XML; the engine kind is selected via
+ * mkr_xpath_set_engine_kind). */
+mkr_xpath_context_t *mkr_xpath_context_new(void *doc, void *node);
 void                mkr_xpath_context_free(mkr_xpath_context_t *ctx);
 
 int  mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_verified_text_t prefix, mkr_verified_text_t uri);

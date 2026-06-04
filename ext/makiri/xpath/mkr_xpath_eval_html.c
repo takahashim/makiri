@@ -6,5 +6,5 @@
  * instance (mkr_xpath_eval_xml.c) will include the same body with the macros
  * bound to the custom mkr_xml_node_t. Keep node access going through the macros
  * so both instances stay byte-identical to a direct field read (§2.5). */
-#include "mkr_xpath_node_access_html.h"
+#include "mkr_xpath_html_prelude.h"
 #include "mkr_xpath_eval_body.h"

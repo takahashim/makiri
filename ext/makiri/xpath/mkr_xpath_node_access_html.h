@@ -79,8 +79,21 @@
     lxb_dom_element_local_name((lxb_dom_element_t *)(n), (lenp))
 #define MKR_ATTR_LOCAL_NAME(n, lenp) \
     lxb_dom_attr_local_name((lxb_dom_attr_t *)(n), (lenp))
+/* Borrowed qualified name of any node: HTML elements report their lowercase
+ * local name (the lowercase-tag HTML data model the engine assumes, matching
+ * Makiri::Node#name); every other kind defers to lxb_dom_node_name. The XML
+ * binding returns the node's contiguous qname instead. */
+static inline const lxb_char_t *
+mkr_html_node_name_qualified(lxb_dom_node_t *node, size_t *len)
+{
+    if (node == NULL) { if (len) *len = 0; return NULL; }
+    if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+        return lxb_dom_element_qualified_name(lxb_dom_interface_element(node), len);
+    }
+    return lxb_dom_node_name(node, len);
+}
 #define MKR_ELEM_QUALIFIED_NAME(n, lenp) \
-    mkr_dom_node_name_qualified((n), (lenp))
+    mkr_html_node_name_qualified((n), (lenp))
 #define MKR_ATTR_QUALIFIED_NAME(n, lenp) \
     lxb_dom_attr_qualified_name((lxb_dom_attr_t *)(n), (lenp))
 #define MKR_NODE_PI_NAME(n, lenp) \

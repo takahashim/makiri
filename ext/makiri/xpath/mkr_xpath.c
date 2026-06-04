@@ -293,25 +293,6 @@ mkr_limit_check_expr_bytes(mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_error_
 
 /* ---------- node qualified name ---------- */
 
-/*
- * Borrowed qualified name for any node. HTML elements report their
- * lowercase local name (lxb_dom_element_qualified_name), matching
- * Makiri::Node#name and the lowercase-tag HTML data model the engine
- * assumes; every other node kind defers to lxb_dom_node_name.
- */
-const lxb_char_t *
-mkr_dom_node_name_qualified(MKR_DOM_NODE *node, size_t *len)
-{
-  if (node == NULL) {
-    if (len) *len = 0;
-    return NULL;
-  }
-  if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-    return lxb_dom_element_qualified_name(lxb_dom_interface_element(node), len);
-  }
-  return lxb_dom_node_name(node, len);
-}
-
 /* ---------- context ---------- */
 
 mkr_xpath_context_t *

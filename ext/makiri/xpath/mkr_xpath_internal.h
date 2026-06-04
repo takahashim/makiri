@@ -7,23 +7,20 @@
 #include <stdint.h>
 
 /* The concrete DOM node/element/attr/document types the engine instance is
- * compiled against (§2.5 monomorphization). The default is Lexbor's lxb_dom for
- * the HTML instance; the XML instance defines MKR_DOM_NODE = mkr_xml_node_t (and
- * the siblings) before including this header so the same engine body compiles
- * against the custom node. The MKR_NODE_* field-access contract (mkr_xpath_node_access_*.h)
- * is the matching per-instance binding. */
+ * compiled against (§2.5 monomorphization). Each instance binds these to its
+ * representation BEFORE including this header (mkr_xpath_{html,xml}_prelude.h):
+ * the HTML instance to Lexbor's lxb_dom, the XML instance to mkr_xml_node_t. The
+ * default here is the neutral `void` — used by the representation-independent
+ * translation units (driver / lexer / parser / shared engine helpers), which
+ * only move node pointers around and never dereference them, so void* is exact
+ * and neither representation is privileged as "the default". The MKR_NODE_*
+ * field-access contract (mkr_xpath_node_access_*.h) is the matching binding. */
 #ifndef MKR_DOM_NODE
-#  define MKR_DOM_NODE     lxb_dom_node_t
-#  define MKR_DOM_ELEMENT  lxb_dom_element_t
-#  define MKR_DOM_ATTR     lxb_dom_attr_t
-#  define MKR_DOM_DOCUMENT lxb_dom_document_t
+#  define MKR_DOM_NODE     void
+#  define MKR_DOM_ELEMENT  void
+#  define MKR_DOM_ATTR     void
+#  define MKR_DOM_DOCUMENT void
 #endif
-
-/* Qualified name of any node as a borrowed Lexbor byte run. For HTML
- * elements this is the lowercase local name (matching Makiri::Node#name);
- * for other node kinds it falls back to lxb_dom_node_name. Defined in
- * mkr_xpath.c. Keeping the engine free of <ruby.h> / our glue headers. */
-const lxb_char_t *mkr_dom_node_name_qualified(MKR_DOM_NODE *node, size_t *len);
 
 /*
  * Nokogiri-compatible namespace URIs. These must match the strings
