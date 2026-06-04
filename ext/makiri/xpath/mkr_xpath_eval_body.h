@@ -107,7 +107,7 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
     return 0;
   }
   return 1;
-#endif
+#endif /* MKR_HOST_XML */
 }
 
 static int

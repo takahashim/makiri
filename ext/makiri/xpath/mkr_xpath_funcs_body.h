@@ -260,7 +260,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   /* Result is in document order with duplicates removed (XPath 1.0 §4.1). */
   mkr_nodeset_unique_sorted(ctx, &out->u.nodeset);
   return 0;
-#endif /* !MKR_HOST_XML */
+#endif /* MKR_HOST_XML */
 }
 
 /* Forward decl for two_owned_texts() defined later. */
@@ -1010,7 +1010,7 @@ fn_lang(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
     if (v == NULL) {
       v = MKR_ELEM_GET_ATTRIBUTE(el, "xml:lang", 8, &vlen);
     }
-#endif
+#endif /* MKR_HOST_XML */
     if (v == NULL) continue;
     /* Compare prefix (case-insensitive) up to '-'. */
     if (vlen >= want.len) {
