@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* The text index's per-element range table stores its slice-run bounds as
+  `uint32` indices instead of `size_t`, shrinking each entry from 24 to 16 bytes
+  (the node pointer plus two 32-bit indices) — about a third off the table, the
+  index's largest allocation. On a 2k-element document the retained text index
+  drops ~27% (~480 → ~352 KB) with byte-identical text and no change in
+  extraction speed (still ~4× Nokogiri). A document with more than `UINT32_MAX`
+  text slices (impossible in practice) fails the index build closed and the
+  caller falls back to a walk.
+
 * Parsing now **honours the input String's encoding**. UTF-8, US-ASCII and
   ASCII-8BIT (binary) are used directly (the UTF-8 common case is unchanged — a
   single encoding check, no extra work); any other encoding (Shift_JIS, EUC-JP,
