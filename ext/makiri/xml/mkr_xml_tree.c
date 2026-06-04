@@ -1,12 +1,14 @@
-/* mkr_xml_tree.c — minimal XML tokenizer + tree builder (§14 steps 5-6).
+/* mkr_xml_tree.c — XML tokenizer + tree builder (§14 steps 5-9).
  *
  * Ruby-free. Parses a decoded, validated-UTF-8 byte buffer (§2.1) into the
- * custom node arena. MINIMAL subset: elements, attributes, character data, and
- * the well-formedness errors that fall out of that grammar (unclosed / mismatched
- * tags, multiple roots, raw '<' in attribute values, content outside the root).
- * Namespaces (§7), entities (§9.1), comments/CDATA/PI/XML-decl/DOCTYPE (§9) and
- * strict Name-char validation (§9.2b) land in later steps; for now '&' and the
- * names are taken literally and '<!'/'<?' are rejected as unsupported.
+ * custom node arena: elements, attributes, character data, namespaces (§7),
+ * entity/char-reference expansion (§9.1), comments / CDATA sections / processing
+ * instructions / the XML declaration (§9), with '<!DOCTYPE' fail-closed to
+ * SyntaxError (§9.4 — DTDs are unsupported, so XXE/billion-laughs are structurally
+ * impossible). Comments and PIs in the prolog/epilog (outside the root) are
+ * validated for well-formedness but not retained as nodes (Phase 1 keeps only the
+ * root element, no document node). Strict NameStartChar/NameChar (§9.2b) and
+ * duplicate-attribute rejection (§9.3) land in later steps.
  *
  * Budgets (§4): element depth (MKR_XML_MAX_DEPTH) and node/attr counts (enforced
  * in the arena) are fail-closed — a violation aborts with no partial document.
@@ -306,6 +308,133 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
     return 0;
 }
 
+/* Advance n bytes, keeping line/col correct (the consumed span may contain
+ * newlines: comment/CDATA/PI content). */
+static void
+advance_n(mkr_xml_parser_t *P, size_t n)
+{
+    while (n-- > 0 && P->p < P->end) advance(P);
+}
+
+/* True if the remaining input begins with the literal [lit, lit+n). */
+static int
+lit_ahead(const mkr_xml_parser_t *P, const char *lit, size_t n)
+{
+    return (size_t)(P->end - P->p) >= n && memcmp(P->p, lit, n) == 0;
+}
+
+static int
+is_space_byte(char c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+/* '<!--' comment (P->p at '!'). XML 1.0: the content is XML Char and may not
+ * contain '--' except as part of the closing '-->'. Creates a COMMENT node under
+ * +parent+; a prolog/epilog comment (parent == NULL) is validated for
+ * well-formedness but not retained (Phase 1 has no document node). */
+static int
+parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
+{
+    advance_n(P, 3);                                  /* consume "!--" */
+    const char *cstart = P->p, *q = P->p, *close = NULL;
+    for (;;) {
+        const char *dash = memchr(q, '-', (size_t)(P->end - q));
+        if (dash == NULL || dash + 1 >= P->end) { set_syntax(P); return -1; } /* unterminated */
+        if (dash[1] == '-') {
+            if (dash + 2 < P->end && dash[2] == '>') { close = dash; break; }
+            set_syntax(P); return -1;                 /* '--' not part of '-->' */
+        }
+        q = dash + 1;
+    }
+    size_t craw = (size_t)(close - cstart);
+    if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
+    uint32_t clen = (uint32_t)craw;
+    if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
+    if (parent != NULL) {
+        mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XN_COMMENT);
+        if (c == NULL) { propagate_oom(P); return -1; }
+        c->value = own(P, cstart, clen); c->value_len = clen;
+        if (clen > 0 && c->value == NULL) return -1;
+        append_child(parent, c);
+    }
+    advance_n(P, (size_t)(close + 3 - P->p));         /* content + "-->" */
+    return 0;
+}
+
+/* '<![CDATA[' section (P->p at '!'). Raw character data (no reference recognition)
+ * up to ']]>'. Character data is only well-formed inside an element. */
+static int
+parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
+{
+    if (parent == NULL) { set_syntax(P); return -1; } /* CDATA outside the root */
+    advance_n(P, 8);                                  /* consume "![CDATA[" */
+    const char *cstart = P->p, *q = P->p, *close = NULL;
+    for (;;) {
+        const char *b = memchr(q, ']', (size_t)(P->end - q));
+        if (b == NULL || b + 2 >= P->end) { set_syntax(P); return -1; } /* unterminated */
+        if (b[1] == ']' && b[2] == '>') { close = b; break; }
+        q = b + 1;
+    }
+    size_t craw = (size_t)(close - cstart);
+    if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
+    uint32_t clen = (uint32_t)craw;
+    if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
+    mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XN_CDATA);
+    if (c == NULL) { propagate_oom(P); return -1; }
+    c->value = own(P, cstart, clen); c->value_len = clen;
+    if (clen > 0 && c->value == NULL) return -1;
+    append_child(parent, c);
+    advance_n(P, (size_t)(close + 3 - P->p));         /* content + "]]>" */
+    return 0;
+}
+
+/* '<?' processing instruction (P->p at '?'), or the '<?xml ...?>' declaration when
+ * the target is "xml" (any case). The declaration is valid only as the very first
+ * item in the document (at_doc_start) and is not retained as a DOM node. */
+static int
+parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
+{
+    advance_n(P, 1);                                  /* consume '?' */
+    const char *tgt; uint32_t tl;
+    if (scan_name(P, &tgt, &tl) != 0) return -1;      /* PITarget (a Name) */
+    int is_xml = (tl == 3 && (tgt[0] | 0x20) == 'x'
+                          && (tgt[1] | 0x20) == 'm'
+                          && (tgt[2] | 0x20) == 'l');
+
+    int empty_data = lit_ahead(P, "?>", 2);
+    if (!empty_data) {
+        if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; } /* need S */
+        skip_ws(P);
+    }
+    const char *dstart = P->p, *q = P->p, *close = NULL;
+    for (;;) {
+        const char *qm = memchr(q, '?', (size_t)(P->end - q));
+        if (qm == NULL || qm + 1 >= P->end) { set_syntax(P); return -1; } /* unterminated */
+        if (qm[1] == '>') { close = qm; break; }
+        q = qm + 1;
+    }
+    size_t draw = (size_t)(close - dstart);
+    if (draw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
+    uint32_t dlen = (uint32_t)draw;
+    if (mkr_xml_validate_chars(dstart, dlen) != 0) { set_syntax(P); return -1; }
+
+    if (is_xml) {
+        /* the XML declaration is not a PI: only at the very document start, must
+         * carry pseudo-attributes (a bare "<?xml?>" has no version), not retained. */
+        if (!at_doc_start || parent != NULL || empty_data) { set_syntax(P); return -1; }
+    } else if (parent != NULL) {
+        mkr_xml_node_t *pi = mkr_xml_arena_node(P->doc, MKR_XN_PI);
+        if (pi == NULL) { propagate_oom(P); return -1; }
+        pi->local = own(P, tgt, tl);     pi->local_len = tl;
+        pi->value = own(P, dstart, dlen); pi->value_len = dlen;
+        if (pi->local == NULL || (dlen > 0 && pi->value == NULL)) return -1;
+        append_child(parent, pi);
+    }
+    advance_n(P, (size_t)(close + 2 - P->p));         /* data + "?>" */
+    return 0;
+}
+
 mkr_xml_doc_t *
 mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
 {
@@ -321,6 +450,7 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
     while (P.p < P.end) {
         if (*P.p == '<') {
             uint32_t tl = P.line, tc = P.col;   /* tag start position */
+            int tok_at_start = (P.p == src);    /* '<?xml ...?>' is valid only here */
             advance(&P); /* '<' */
             if (P.p >= P.end) { set_syntax(&P); break; }
             char c = *P.p;
@@ -347,8 +477,18 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
                 if (!match) { set_syntax(&P); break; }        /* mismatched end tag */
                 depth--;
                 P.nbind = frame[depth];                       /* pop this element's namespace scope */
-            } else if (c == '!' || c == '?') {   /* comment/CDATA/PI/DOCTYPE/XML-decl: §9 */
-                set_syntax(&P); break;           /* unsupported in the minimal subset */
+            } else if (c == '!') {               /* <!-- -->, <![CDATA[ ]]>, <!DOCTYPE: §9 */
+                mkr_xml_node_t *parent = depth ? stack[depth - 1] : NULL;
+                if (lit_ahead(&P, "!--", 3)) {
+                    if (parse_comment(&P, parent) != 0) break;
+                } else if (lit_ahead(&P, "![CDATA[", 8)) {
+                    if (parse_cdata(&P, parent) != 0) break;
+                } else {                          /* <!DOCTYPE and any other markup decl */
+                    set_syntax(&P); break;        /* §9.4: DTD is unsupported, fail-closed */
+                }
+            } else if (c == '?') {               /* <?pi?> or the <?xml ...?> declaration */
+                mkr_xml_node_t *parent = depth ? stack[depth - 1] : NULL;
+                if (parse_pi(&P, parent, tok_at_start) != 0) break;
             } else {                              /* start tag */
                 const char *nm; uint32_t nl;
                 if (scan_name(&P, &nm, &nl) != 0) break;
@@ -593,6 +733,39 @@ mkr_xml_parse_selftest(void)
         }
     }
     mkr_xml_doc_destroy(d);
+
+    /* §9: comment / CDATA / PI nodes inside an element; prolog XML declaration and
+     * a prolog PI are accepted but not retained; '<!DOCTYPE' is fail-closed. */
+    i++; /* 13 */
+    d = PARSE_LIT("<?xml version=\"1.0\"?><?xml-stylesheet href=\"x\"?>"
+                  "<r><!--c--><![CDATA[a<b]]><?pi dat?></r>", &st);
+    if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
+    {
+        mkr_xml_node_t *r = d->root;
+        if (!NAME_IS(r, "r")) { mkr_xml_doc_destroy(d); return i; }
+        mkr_xml_node_t *cm = r->first_child;
+        mkr_xml_node_t *cd = cm ? cm->next : NULL;
+        mkr_xml_node_t *pi = cd ? cd->next : NULL;
+        if (!cm || cm->type != MKR_XN_COMMENT || !VAL_IS(cm, "c")
+            || !cd || cd->type != MKR_XN_CDATA || !VAL_IS(cd, "a<b") /* raw '<' kept */
+            || !pi || pi->type != MKR_XN_PI || !NAME_IS(pi, "pi") || !VAL_IS(pi, "dat")
+            || pi->next != NULL) {
+            mkr_xml_doc_destroy(d); return i;
+        }
+    }
+    mkr_xml_doc_destroy(d);
+
+    i++; /* 14: §9 fail-closed cases */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<!DOCTYPE r><r/>",   &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* DTD unsupported */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<r><!-- a--b --></r>", &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* '--' in comment */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<r><!-- c </r>",     &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* unterminated comment */
+    st = MKR_XML_OK;
+    e = PARSE_LIT(" <?xml version=\"1.0\"?><r/>", &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* decl not at start */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<![CDATA[x]]><r/>",  &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* CDATA outside root */
 
     return 0;
 }

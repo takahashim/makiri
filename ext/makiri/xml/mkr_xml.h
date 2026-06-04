@@ -47,6 +47,10 @@ int mkr_xml_parse_selftest(void);
 /* --- character data: XML Char + entity/char-reference expansion (§9.1/§9.2) --- */
 int mkr_xml_is_char(uint32_t c);
 
+/* Validate that [src, src+len) is entirely XML 1.0 Char with NO reference
+ * recognition (comment/CDATA/PI content, where '&'/'<' are literal). 0 / -1. */
+int mkr_xml_validate_chars(const char *src, uint32_t len);
+
 /* Expansion context. ATTR adds XML 1.0 §3.3.3 attribute-value normalization:
  * a *literal* white-space byte (TAB/LF/CR) becomes a space, while a white-space
  * character produced by a numeric reference (&#9;/&#10;/&#13;) is preserved. TEXT

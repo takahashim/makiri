@@ -34,6 +34,25 @@ is_cont(const char *p, const char *end)
     return p < end && ((unsigned char)*p & 0xC0u) == 0x80u;
 }
 
+/* forward decl: utf8_decode is defined below but mkr_xml_validate_chars uses it. */
+static int utf8_decode(const char *p, const char *end, uint32_t *cp);
+
+/* Validate that [src, src+len) is entirely XML 1.0 Char, with NO entity/reference
+ * recognition (for comment/CDATA/PI content, where '&' and '<' are literal). 0 if
+ * all valid, -1 on the first malformed UTF-8 or non-Char (caller raises SYNTAX). */
+int
+mkr_xml_validate_chars(const char *src, uint32_t len)
+{
+    const char *p = src, *end = src + len;
+    while (p < end) {
+        uint32_t cp;
+        int bl = utf8_decode(p, end, &cp);
+        if (bl == 0 || !mkr_xml_is_char(cp)) return -1;
+        p += bl;
+    }
+    return 0;
+}
+
 static int
 utf8_decode(const char *p, const char *end, uint32_t *cp)
 {

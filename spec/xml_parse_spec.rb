@@ -52,13 +52,6 @@ RSpec.describe "Makiri::XML minimal parse" do
       it(label) { expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError) }
     end
 
-    # Unsupported in the minimal subset (handled in later steps), rejected for now.
-    {
-      "comment (step 9)"          => "<!-- c --><a/>",
-      "XML declaration (step 9)"  => "<?xml version='1.0'?><a/>",
-    }.each do |label, src|
-      it(label) { expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError) }
-    end
   end
 
   it "the depth budget is fail-closed (deeply nested input does not crash)" do
@@ -142,6 +135,42 @@ RSpec.describe "Makiri::XML minimal parse" do
     it "the namespace count budget is fail-closed" do
       decls = (1..5000).map { |n| "xmlns:p#{n}='urn:#{n}'" }.join(" ")
       expect { Makiri::XML("<a #{decls}/>") }.to raise_error(Makiri::XML::LimitExceeded)
+    end
+  end
+
+  describe "comments, CDATA, PIs and the XML declaration (§9)" do
+    it "accepts comments, CDATA sections and processing instructions" do
+      expect(ok?("<r><!-- a comment --></r>")).to be true
+      expect(ok?("<r><![CDATA[ raw < & > text ]]></r>")).to be true
+      expect(ok?("<r><?target some data?></r>")).to be true
+      expect(ok?("<r><?target?></r>")).to be true                  # empty PI data
+      expect(ok?("<!-- prolog --><r/><!-- epilog -->")).to be true # misc around the root
+    end
+
+    it "accepts the XML declaration and prolog processing instructions" do
+      expect(ok?("<?xml version='1.0'?><r/>")).to be true
+      expect(ok?("<?xml version='1.0' encoding='UTF-8'?><r/>")).to be true
+      expect(ok?("<?xml version='1.0'?><?xml-stylesheet href='s.xsl'?><r/>")).to be true
+    end
+
+    it "rejects DOCTYPE (DTDs unsupported -> fail-closed, XXE structurally impossible)" do
+      expect { Makiri::XML("<!DOCTYPE r><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<!DOCTYPE r SYSTEM 'x.dtd'><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+    end
+
+    it "rejects malformed comments (-- in content, unterminated, --->)" do
+      expect { Makiri::XML("<r><!-- a--b --></r>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<r><!-- unterminated </r>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<r><!-- bad --->") }.to raise_error(Makiri::XML::SyntaxError)
+    end
+
+    it "rejects misplaced/unterminated XML declarations, PIs and CDATA" do
+      expect { Makiri::XML(" <?xml version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError) # not at start
+      expect { Makiri::XML("<r/><?xml version='1.0'?>") }.to raise_error(Makiri::XML::SyntaxError)  # in epilog
+      expect { Makiri::XML("<?xml?><r/>") }.to raise_error(Makiri::XML::SyntaxError)                # no version
+      expect { Makiri::XML("<r><?pi unterminated</r>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<![CDATA[outside]]><r/>") }.to raise_error(Makiri::XML::SyntaxError)     # CDATA outside root
+      expect { Makiri::XML("<r><![CDATA[unterminated</r>") }.to raise_error(Makiri::XML::SyntaxError)
     end
   end
 
