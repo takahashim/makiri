@@ -199,8 +199,11 @@ document order; capped at `MKR_NODE_SET_MAX`; malformed → `Makiri::CSS::Syntax
 `at_css` stops at the first match.
 
 **Serialization** (`glue/ruby_serialize.c`). `Node#{to_html,to_s,outer_html}` =
-Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`, both streaming
-into a UTF-8 Ruby String. `pretty: true` uses `serialize_pretty_*` (Lexbor
+Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
+collects Lexbor's many small chunks into one growing C buffer (`mkr_buf`) and the
+whole thing is copied into a UTF-8 Ruby String once — markedly faster than
+`rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
+serializer's dominant cost), and at parity with `nokolexbor`. `pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
 serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
 (`mkr_node_content`) serves descendant text from the **text index** (see

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+* `Node#{to_html,to_s,outer_html,inner_html}` collect Lexbor's serializer output
+  into one growing C buffer (`mkr_buf`) and copy it into a Ruby String once,
+  instead of `rb_str_cat` per emitted chunk. The per-chunk Ruby-string growth
+  (capacity + coderange bookkeeping over thousands of appends) was the dominant
+  cost; the single-copy path is ~1.2–1.3× faster on a 2k-element document
+  (now at parity with `nokolexbor`), with byte-identical output.
+
 ### Fixed
 
 * The compiled extension exported the entire vendored Lexbor symbol table
