@@ -3,6 +3,8 @@
 
 #include <lexbor/encoding/encoding.h>
 
+#include <string.h>   /* memcpy for the word-at-a-time ASCII scan */
+
 /* ------------------------------------------------------------------ */
 /* UTF-8 input sanitisation (browser-compatible HTML decoding)        */
 /* ------------------------------------------------------------------ */
@@ -14,35 +16,84 @@
  * via mkr_utf8_sanitize (declared in compat.h).
  */
 
-/* Is `src` (len bytes) well-formed UTF-8? Uses Lexbor's spec UTF-8 decoder
- * (which rejects bad continuation bytes, overlong forms, surrogates and
- * out-of-range code points) with NO replacement, so the first error makes it
- * return false. An incomplete trailing sequence (caught by decode_finish) is
- * also invalid. NUL bytes are valid UTF-8 here and are left for the HTML
- * tokenizer to handle per the spec (drop in text, U+FFFD in foreign content). */
+/* Is `src` (len bytes) well-formed UTF-8? A dedicated validator (the Unicode
+ * "well-formed UTF-8 byte sequences" table, RFC 3629 / WHATWG): it rejects bad
+ * continuation bytes, overlong forms, surrogates (U+D800..U+DFFF) and code
+ * points above U+10FFFF, and an incomplete trailing sequence. This is the same
+ * accept set as Lexbor's decoder but validate-only — it never materialises code
+ * points, and rips through ASCII (the common case) a machine word at a time, so
+ * it is much cheaper than decode-and-discard. NUL bytes are valid here and are
+ * left for the HTML tokenizer to handle per the spec.
+ *
+ * The contract that matters: this returns true *only* for input that
+ * mkr_utf8_replace_invalid would leave byte-identical, so "valid" can safely
+ * skip the transcode. */
 static bool
 mkr_utf8_valid(const lxb_char_t *src, size_t len)
 {
-    const lxb_encoding_data_t *u8 = lxb_encoding_data(LXB_ENCODING_UTF_8);
-    lxb_encoding_decode_t dec;
-    lxb_codepoint_t cp[1024];
-    const lxb_char_t *data = src, *end = src + len;
-    lxb_status_t st;
+    const unsigned char *p   = (const unsigned char *)src;
+    const unsigned char *const end = p + len;
 
-    if (lxb_encoding_decode_init(&dec, u8, cp,
-                                 sizeof(cp) / sizeof(cp[0])) != LXB_STATUS_OK) {
-        return false; /* treat as invalid -> caller transcodes (fail safe) */
-    }
-    /* No replace_set: an invalid sequence aborts with LXB_STATUS_ERROR. */
-    do {
-        st = u8->decode(&dec, &data, end);
-        lxb_encoding_decode_buf_used_set(&dec, 0); /* discard code points */
-    } while (st == LXB_STATUS_SMALL_BUFFER);
+    while (p < end) {
+        unsigned char b = *p;
 
-    if (st != LXB_STATUS_OK) {
-        return false;
+        if (b < 0x80) {
+            /* ASCII fast path: skip a run of ASCII bytes a word at a time
+             * (any high bit set ends the run), then byte-wise for the tail. */
+            while ((size_t)(end - p) >= sizeof(size_t)) {
+                size_t w;
+                memcpy(&w, p, sizeof(w));
+                if (w & (size_t)0x8080808080808080ULL) {
+                    break;
+                }
+                p += sizeof(size_t);
+            }
+            while (p < end && *p < 0x80) {
+                p++;
+            }
+            continue;
+        }
+
+        /* Multi-byte: decide length and validate the (length-dependent) ranges
+         * that exclude overlong forms, surrogates and > U+10FFFF. */
+        size_t n;
+        if (b >= 0xC2 && b <= 0xDF) {                 /* U+0080..U+07FF   */
+            n = 2;
+            if (end - p < 2 || (p[1] & 0xC0) != 0x80) return false;
+        } else if (b == 0xE0) {                       /* U+0800..U+0FFF   */
+            n = 3;
+            if (end - p < 3 || p[1] < 0xA0 || p[1] > 0xBF
+                || (p[2] & 0xC0) != 0x80) return false;
+        } else if (b >= 0xE1 && b <= 0xEC) {          /* U+1000..U+CFFF   */
+            n = 3;
+            if (end - p < 3 || (p[1] & 0xC0) != 0x80
+                || (p[2] & 0xC0) != 0x80) return false;
+        } else if (b == 0xED) {                       /* U+D000..U+D7FF   */
+            n = 3;                                    /* (excludes surrogates) */
+            if (end - p < 3 || p[1] < 0x80 || p[1] > 0x9F
+                || (p[2] & 0xC0) != 0x80) return false;
+        } else if (b == 0xEE || b == 0xEF) {          /* U+E000..U+FFFF   */
+            n = 3;
+            if (end - p < 3 || (p[1] & 0xC0) != 0x80
+                || (p[2] & 0xC0) != 0x80) return false;
+        } else if (b == 0xF0) {                       /* U+10000..U+3FFFF */
+            n = 4;
+            if (end - p < 4 || p[1] < 0x90 || p[1] > 0xBF
+                || (p[2] & 0xC0) != 0x80 || (p[3] & 0xC0) != 0x80) return false;
+        } else if (b >= 0xF1 && b <= 0xF3) {          /* U+40000..U+FFFFF */
+            n = 4;
+            if (end - p < 4 || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80
+                || (p[3] & 0xC0) != 0x80) return false;
+        } else if (b == 0xF4) {                       /* U+100000..U+10FFFF */
+            n = 4;
+            if (end - p < 4 || p[1] < 0x80 || p[1] > 0x8F
+                || (p[2] & 0xC0) != 0x80 || (p[3] & 0xC0) != 0x80) return false;
+        } else {                                      /* C0,C1,F5..FF,stray 80..BF */
+            return false;
+        }
+        p += n;
     }
-    return lxb_encoding_decode_finish(&dec) == LXB_STATUS_OK;
+    return true;
 }
 
 /* Transcode UTF-8 -> UTF-8 replacing every invalid sequence with U+FFFD

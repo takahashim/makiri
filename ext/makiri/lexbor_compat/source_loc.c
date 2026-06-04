@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>   /* memchr */
 
 /*
  * Source location tracking. Lexbor does not record where in the input a node
@@ -42,12 +43,15 @@ mkr_lines_build(const lxb_char_t *src, size_t len)
         len = 0;
     }
 
-    /* One pass to count newlines, so the array is sized once. */
+    const lxb_char_t *const end = src + len;
+
+    /* One pass to count newlines (vectorised memchr), so the array is sized
+     * once. */
     size_t nl = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (src[i] == '\n') {
-            nl++;
-        }
+    for (const lxb_char_t *p = src;
+         (p = memchr(p, '\n', (size_t)(end - p))) != NULL;
+         p++) {
+        nl++;
     }
 
     mkr_lines_t *t = mkr_reallocarray(NULL, 1, sizeof(*t));
@@ -63,10 +67,10 @@ mkr_lines_build(const lxb_char_t *src, size_t len)
 
     size_t line = 0;
     t->starts[line++] = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (src[i] == '\n') {
-            t->starts[line++] = i + 1;
-        }
+    for (const lxb_char_t *p = src;
+         (p = memchr(p, '\n', (size_t)(end - p))) != NULL;
+         p++) {
+        t->starts[line++] = (size_t)(p - src) + 1;
     }
     return t;
 }
