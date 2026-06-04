@@ -47,24 +47,27 @@ typedef struct mkr_xml_doc {
     mkr_xml_arena_chunk_t *chunks; /* arena chunk list */
     size_t   arena_bytes;          /* payload bytes cut (budget) */
     size_t   max_bytes;            /* MKR_XML_MAX_BYTES */
-    size_t   nodes,  max_nodes;
-    size_t   attrs,  max_attrs;
+    size_t   nodes,  max_nodes;    /* total node count (attributes included) */
     int      oom;                  /* mkr_xml_status_t once non-zero (sticky) */
     mkr_xml_node_t *root;
 } mkr_xml_doc_t;
+/* The PER-ELEMENT attribute cap (MKR_XML_MAX_ATTRS) is enforced by the tree
+ * builder; the arena counts every node — attributes included — toward max_nodes. */
 
 mkr_xml_doc_t *mkr_xml_doc_new(void);            /* budgets from MKR_XML_MAX_*; NULL on OOM */
 void           mkr_xml_doc_destroy(mkr_xml_doc_t *doc);   /* whole-arena free */
 size_t         mkr_xml_doc_memsize(const mkr_xml_doc_t *doc);
 
-/* --- secure arena: the SINGLE alloc choke point + typed wrappers (§8.2) ---
- * Every byte cut from the arena goes through mkr_xml_arena_alloc (overflow- and
- * budget-checked). Callers never get a void* to cast: nodes via *_node (zeroed),
- * name/value bytes via *_bytes (copied -> the arena owns them). On any failure
- * doc->oom is set (sticky) and the wrapper returns NULL. */
-void           *mkr_xml_arena_alloc(mkr_xml_doc_t *doc, size_t size);
+/* --- secure arena: typed wrappers only (§8.2) ---
+ * The single overflow- and budget-checked alloc choke point is PRIVATE to
+ * mkr_xml_node.c. Callers never get a void* to cast: nodes via *_node (zeroed,
+ * type-validated), copied name/value bytes via *_bytes (the arena owns them).
+ * mkr_xml_arena_scratch_bytes returns a raw, uninitialised char buffer of exactly
+ * +len+ bytes for the one caller that must fill it itself (entity expansion). On
+ * any failure doc->oom is set (sticky) and the wrapper returns NULL. */
 mkr_xml_node_t *mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type);
 const char     *mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len);
+char           *mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len);
 
 /* Self-test of the arena's secure-by-design properties (overflow, budgets,
  * alignment, zero-init, copy-on-store, whole-free). Returns 0 on success or the

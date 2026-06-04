@@ -4,13 +4,15 @@
 #include "mkr_xml.h"
 #include "../core/mkr_core.h"
 
+#include <stddef.h>   /* max_align_t */
 #include <stdlib.h>
 #include <string.h>
 
-/* Alignment for arena cuts: >= alignof(max_align_t) on LP64. The chunk payload
- * starts at an aligned offset past the header, and every cut size is rounded up
- * to ARENA_ALIGN, so each returned pointer is ARENA_ALIGN-aligned. */
-#define ARENA_ALIGN   (sizeof(void *) * 2)
+/* Alignment for arena cuts: the strictest fundamental alignment, so any object
+ * fits. The chunk payload starts at an aligned offset past the header, and every
+ * cut size is rounded up to ARENA_ALIGN, so each returned pointer is aligned. */
+#define ARENA_ALIGN   _Alignof(max_align_t)
+_Static_assert((ARENA_ALIGN & (ARENA_ALIGN - 1)) == 0, "ARENA_ALIGN must be a power of two");
 #define CHUNK_MIN     (64u * 1024u)
 
 struct mkr_xml_arena_chunk {
@@ -28,7 +30,6 @@ mkr_xml_doc_new(void)
     if (doc == NULL) return NULL;
     doc->max_bytes = MKR_XML_MAX_BYTES;
     doc->max_nodes = MKR_XML_MAX_NODES;
-    doc->max_attrs = MKR_XML_MAX_ATTRS;
     return doc;
 }
 
@@ -52,17 +53,25 @@ mkr_xml_doc_memsize(const mkr_xml_doc_t *doc)
     size_t total = sizeof *doc;
     const size_t hdr = align_up(sizeof(mkr_xml_arena_chunk_t), ARENA_ALIGN);
     for (const mkr_xml_arena_chunk_t *c = doc->chunks; c != NULL; c = c->next) {
-        total += hdr + c->cap;
+        size_t chunk;
+        /* saturate rather than wrap: a bogus huge memsize is harmless, a wrapped
+         * small one would lie to Ruby's GC accounting. */
+        if (!mkr_size_add(hdr, c->cap, &chunk) || !mkr_size_add(total, chunk, &total)) {
+            return SIZE_MAX;
+        }
     }
     return total;
 }
 
-/* THE single checked alloc choke point. Overflow- and budget-checked; on any
- * failure sets doc->oom (sticky) and returns NULL. Nothing else cuts arena. */
-void *
-mkr_xml_arena_alloc(mkr_xml_doc_t *doc, size_t size)
+/* THE single checked alloc choke point. PRIVATE — callers use the typed
+ * wrappers below. Overflow- and budget-checked; on any failure sets doc->oom
+ * (sticky) and returns NULL. Nothing else cuts arena. */
+static void *
+arena_alloc(mkr_xml_doc_t *doc, size_t size)
 {
-    if (doc->oom) return NULL;
+    /* fail-closed contract: the internal callers never pass NULL, but a primitive
+     * must not deref it — return NULL rather than crash (there is no doc to mark). */
+    if (doc == NULL || doc->oom) return NULL;
 
     size_t need = align_up(size, ARENA_ALIGN);
     if (need < size) { doc->oom = MKR_XML_ERR_LIMIT; return NULL; } /* align overflow */
@@ -76,7 +85,9 @@ mkr_xml_arena_alloc(mkr_xml_doc_t *doc, size_t size)
 
     const size_t hdr = align_up(sizeof(mkr_xml_arena_chunk_t), ARENA_ALIGN);
     mkr_xml_arena_chunk_t *c = doc->chunks;
-    if (c == NULL || c->used + need > c->cap) {
+    /* subtractive form (used <= cap invariant) avoids an addition that could
+     * overflow with a pathological chunk. */
+    if (c == NULL || need > c->cap - c->used) {
         size_t cap = need > CHUNK_MIN ? need : CHUNK_MIN;
         size_t total;
         if (!mkr_size_add(hdr, cap, &total)) { doc->oom = MKR_XML_ERR_LIMIT; return NULL; }
@@ -94,18 +105,35 @@ mkr_xml_arena_alloc(mkr_xml_doc_t *doc, size_t size)
     return p;
 }
 
+static int
+valid_xn_type(uint8_t type)
+{
+    switch (type) {
+    case MKR_XN_ELEMENT: case MKR_XN_ATTRIBUTE: case MKR_XN_TEXT:
+    case MKR_XN_CDATA:   case MKR_XN_PI:        case MKR_XN_COMMENT:
+    case MKR_XN_DOCUMENT:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 mkr_xml_node_t *
 mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type)
 {
-    size_t *counter = (type == MKR_XN_ATTRIBUTE) ? &doc->attrs : &doc->nodes;
-    size_t  limit   = (type == MKR_XN_ATTRIBUTE) ? doc->max_attrs : doc->max_nodes;
-    if (*counter + 1 > limit) { doc->oom = MKR_XML_ERR_LIMIT; return NULL; }
+    if (doc == NULL) return NULL;   /* fail-closed: never deref a NULL document */
+    /* guard against a caller passing a bogus type (programming error) so it can
+     * never be silently miscounted/mis-walked — caught by the self-test/ASan. */
+    if (!valid_xn_type(type)) { doc->oom = MKR_XML_ERR_INTERNAL; return NULL; }
+    /* every node (attributes included) counts toward the single node budget; the
+     * per-element attribute cap is enforced by the tree builder. */
+    if (doc->nodes + 1 > doc->max_nodes) { doc->oom = MKR_XML_ERR_LIMIT; return NULL; }
 
-    mkr_xml_node_t *n = mkr_xml_arena_alloc(doc, sizeof *n);
+    mkr_xml_node_t *n = arena_alloc(doc, sizeof *n);
     if (n == NULL) return NULL;
     memset(n, 0, sizeof *n);   /* zero-init: no uninitialised reads; 0 = "no source loc" */
     n->type = type;
-    (*counter)++;
+    doc->nodes++;
     return n;
 }
 
@@ -113,10 +141,24 @@ const char *
 mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len)
 {
     if (len == 0) return "";          /* never read off the "" literal */
-    char *p = mkr_xml_arena_alloc(doc, len);
+    if (src == NULL) return NULL;     /* contract: len>0 needs a real source (fail closed) */
+    char *p = arena_alloc(doc, len);
     if (p == NULL) return NULL;
     memcpy(p, src, len);              /* copy-on-store: the arena owns the bytes */
     return p;
+}
+
+/* A raw, uninitialised arena buffer of exactly +len+ bytes, for the one caller
+ * that must fill it itself (entity expansion writes the expanded, never-longer
+ * output here). Budget-/overflow-checked via the same choke point. */
+char *
+mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
+{
+    /* a 0-length buffer needs no storage — never cut a whole chunk for it. The
+     * sentinel is a valid non-NULL pointer the caller must not write to (there is
+     * nothing to write), mirroring mkr_xml_arena_bytes's "" return. */
+    if (len == 0) return (char *)"";
+    return arena_alloc(doc, len);
 }
 
 /* ---- self-test (Makiri.__c_selftest) — mirrors tmp/xml_spike/arena_spike.c --- */
@@ -159,7 +201,7 @@ mkr_xml_node_selftest(void)
     idx++;                                     /* 5 */
     doc = mkr_xml_doc_new();
     if (doc == NULL) return idx;
-    if (mkr_xml_arena_alloc(doc, ((size_t)-1) - 8) != NULL || doc->oom == MKR_XML_OK) {
+    if (arena_alloc(doc, ((size_t)-1) - 8) != NULL || doc->oom == MKR_XML_OK) {
         mkr_xml_doc_destroy(doc); return idx;
     }
     mkr_xml_doc_destroy(doc);
@@ -193,6 +235,14 @@ mkr_xml_node_selftest(void)
     }
     if (!nlimit) { mkr_xml_doc_destroy(doc); return idx; }
     mkr_xml_doc_destroy(doc);
+
+    /* fail-closed on a NULL document (contract guard, no deref/crash) */
+    idx++;                                     /* 8 */
+    if (mkr_xml_arena_node(NULL, MKR_XN_ELEMENT) != NULL
+        || mkr_xml_arena_bytes(NULL, "x", 1) != NULL
+        || mkr_xml_arena_scratch_bytes(NULL, 1) != NULL) {
+        return idx;
+    }
 
     return 0; /* all checks passed */
 }
