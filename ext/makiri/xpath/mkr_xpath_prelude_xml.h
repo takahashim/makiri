@@ -1,4 +1,4 @@
-/* mkr_xpath_xml_prelude.h — XML engine-instance prelude.
+/* mkr_xpath_prelude_xml.h — XML engine-instance prelude.
  *
  * Included at the top of mkr_xpath_engine_xml.c BEFORE the engine bodies. It
  * binds the DOM types + MKR_NODE_* node-access contract to the custom
@@ -10,8 +10,8 @@
  * node-dereferencing ENTRY points the driver dispatches on are external; the
  * prelude suffixes them _xml (the HTML prelude suffixes the same pair _html).
  */
-#ifndef MKR_XPATH_XML_PRELUDE_H
-#define MKR_XPATH_XML_PRELUDE_H
+#ifndef MKR_XPATH_PRELUDE_XML_H
+#define MKR_XPATH_PRELUDE_XML_H
 
 /* DOM types -> the custom node (the type counterpart of MKR_NODE_*). */
 #define MKR_DOM_NODE     mkr_xml_node_t
@@ -25,4 +25,4 @@
 
 #include "mkr_xpath_node_access_xml.h"   /* MKR_NODE_* + MKR_HOST_XML for the custom node */
 
-#endif /* MKR_XPATH_XML_PRELUDE_H */
+#endif /* MKR_XPATH_PRELUDE_XML_H */

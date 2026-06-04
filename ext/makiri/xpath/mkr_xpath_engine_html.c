@@ -10,7 +10,7 @@
  * on (mkr_eval_ast, mkr_try_first_match) are external, suffixed _html by the
  * prelude. The representation-independent primitives both instances call live
  * once in mkr_xpath_shared.c. */
-#include "mkr_xpath_html_prelude.h"
+#include "mkr_xpath_prelude_html.h"
 
 #include "mkr_xpath_value_body.h"
 #include "mkr_xpath_funcs_body.h"

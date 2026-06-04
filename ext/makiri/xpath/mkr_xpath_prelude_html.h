@@ -1,7 +1,7 @@
-/* mkr_xpath_html_prelude.h — HTML engine-instance prelude.
+/* mkr_xpath_prelude_html.h — HTML engine-instance prelude.
  *
  * Included at the top of mkr_xpath_engine_html.c BEFORE the engine bodies,
- * symmetric with mkr_xpath_xml_prelude.h. It binds the DOM types + the
+ * symmetric with mkr_xpath_prelude_xml.h. It binds the DOM types + the
  * MKR_NODE_* node-access contract to Lexbor's lxb_dom, so the bodies compile
  * against lxb_dom.
  *
@@ -10,8 +10,8 @@
  * node-dereferencing ENTRY points the driver dispatches on are external; the
  * prelude suffixes them _html so they coexist with the XML instance's _xml
  * pair. (mkr_xpath.c declares both and selects by engine_kind.) */
-#ifndef MKR_XPATH_HTML_PRELUDE_H
-#define MKR_XPATH_HTML_PRELUDE_H
+#ifndef MKR_XPATH_PRELUDE_HTML_H
+#define MKR_XPATH_PRELUDE_HTML_H
 
 #include <lexbor/dom/dom.h>
 
@@ -27,4 +27,4 @@
 
 #include "mkr_xpath_node_access_html.h"   /* MKR_NODE_* for lxb_dom */
 
-#endif /* MKR_XPATH_HTML_PRELUDE_H */
+#endif /* MKR_XPATH_PRELUDE_HTML_H */

@@ -5,7 +5,7 @@
  * selects the engine's XML host-policy branches (MKR_HOST_XML). See
  * mkr_xpath_engine_html.c for the one-TU / file-static rationale; here the two
  * external entries are suffixed _xml. */
-#include "mkr_xpath_xml_prelude.h"
+#include "mkr_xpath_prelude_xml.h"
 
 #include "mkr_xpath_value_body.h"
 #include "mkr_xpath_funcs_body.h"
