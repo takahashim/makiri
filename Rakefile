@@ -7,6 +7,24 @@ require "shellwords"
 
 GEMSPEC = Gem::Specification.load("makiri.gemspec")
 
+# Replace bundler/gem_tasks' `release` (which builds a source-only gem and
+# `gem push`es it from the dev machine) with a tag push: it hands the build,
+# GitHub Release, and the approval-gated RubyGems publish off to CI
+# (.github/workflows/release.yml). Nothing is pushed to RubyGems locally.
+Rake::Task["release"].clear
+desc "Tag v#{GEMSPEC.version} and push it; CI builds, releases, and publishes"
+task release: %w[release:guard_clean release:source_control_push] do
+  puts <<~MSG
+
+    Pushed tag v#{GEMSPEC.version}. GitHub Actions (release.yml) will now:
+      1. build the source gem + precompiled native gems,
+      2. create the GitHub Release and attach them, then
+      3. publish to RubyGems via OIDC — after the `rubygems` environment approval.
+    Approve the pending deployment in the Actions run to publish; nothing is
+    pushed to RubyGems from this machine.
+  MSG
+end
+
 Rake::ExtensionTask.new("makiri", GEMSPEC) do |ext|
   ext.lib_dir       = "lib/makiri"
   ext.ext_dir       = "ext/makiri"
