@@ -232,6 +232,46 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
     return rb_value;
 }
 
+/* An attribute's OWN namespace id: the one recorded by set_attribute_ns (which
+ * differs from the owner element's), else the null namespace — a normally-set or
+ * parsed attribute inherits the element's ns, which for matching purposes is the
+ * null namespace (an unprefixed attribute is namespaceless). */
+static lxb_ns_id_t
+mkr_attr_own_ns(const lxb_dom_attr_t *at)
+{
+    if (at->owner != NULL && at->node.ns != at->owner->node.ns) {
+        return at->node.ns;
+    }
+    return LXB_NS__UNDEF;
+}
+
+/* Find the attribute on `el` matching (ns_id, local_name) case-sensitively — the
+ * DOM keys attributes on (namespace, local name), so two with the same qualified
+ * name but different namespaces coexist (unlike Lexbor's by-qualified-name,
+ * case-insensitive-for-HTML lookup). */
+static lxb_dom_attr_t *
+mkr_attr_find_ns(lxb_dom_element_t *el, lxb_ns_id_t ns_id,
+                 const lxb_char_t *local, size_t local_len)
+{
+    for (lxb_dom_attr_t *at = el->first_attr; at != NULL; at = at->next) {
+        if (mkr_attr_own_ns(at) != ns_id) {
+            continue;
+        }
+        /* Compare the case-preserved local name (the suffix of the qualified
+         * name): Lexbor lower-cases the stored local_name even when the
+         * qualified name keeps its case, but setAttributeNS is case-sensitive. */
+        size_t qlen = 0, llen = 0;
+        const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
+        (void) lxb_dom_attr_local_name(at, &llen);
+        if (q != NULL && qlen >= llen
+            && llen == local_len
+            && memcmp(q + (qlen - llen), local, local_len) == 0) {
+            return at;
+        }
+    }
+    return NULL;
+}
+
 /* element.set_attribute_ns(namespace_or_nil, qualified_name, value) -> value.
  *
  * Stores the attribute under its qualified name (case-preserved — setAttributeNS
@@ -258,23 +298,32 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
         have_ns = nv.len > 0;
     }
 
-    /* An existing attribute keeps its qualified name; only its value and own
-     * namespace change. A new one is named with the namespace-aware setter, which
-     * splits prefix/local and interns the namespace (so localName/prefix and
-     * namespaceURI all resolve); a null namespace just sets the bare name. */
-    lxb_dom_attr_t *attr = lxb_dom_element_attr_by_name(el,
-                               (const lxb_char_t *)qv.ptr, qv.len);
+    /* Intern the wanted namespace (null/"" => LXB_NS__UNDEF) so the existing
+     * attribute is matched on (namespace, local name) — the DOM key — rather than
+     * the qualified name. */
+    lxb_ns_id_t want_ns = LXB_NS__UNDEF;
+    if (have_ns && node->owner_document != NULL && node->owner_document->ns != NULL) {
+        const lxb_ns_data_t *d = lxb_ns_append(node->owner_document->ns,
+                                               (const lxb_char_t *)nv.ptr, nv.len);
+        if (d != NULL) {
+            want_ns = d->ns_id;
+        }
+    }
+
+    const lxb_char_t *qn = (const lxb_char_t *)qv.ptr;
+    const lxb_char_t *colon = memchr(qn, ':', qv.len);
+    const lxb_char_t *local = colon ? colon + 1 : qn;
+    size_t local_len = colon ? (size_t)(qv.len - (colon - qn) - 1) : qv.len;
+
+    /* A match keeps its qualified name (so re-setting with a different prefix
+     * leaves the prefix unchanged); only the value updates. A miss appends a new
+     * attribute, even when its qualified name collides with an existing one in a
+     * different namespace — the namespace-aware setter splits prefix/local and
+     * records the namespace; a null namespace just sets the bare name. */
+    lxb_dom_attr_t *attr = mkr_attr_find_ns(el, want_ns, local, local_len);
     if (attr != NULL) {
         if (lxb_dom_attr_set_value(attr, (const lxb_char_t *)vv.ptr, vv.len) != LXB_STATUS_OK) {
             rb_raise(mkr_eError, "failed to set attribute value");
-        }
-        attr->node.ns = LXB_NS__UNDEF;
-        if (have_ns && node->owner_document != NULL && node->owner_document->ns != NULL) {
-            const lxb_ns_data_t *d = lxb_ns_append(node->owner_document->ns,
-                                                   (const lxb_char_t *)nv.ptr, nv.len);
-            if (d != NULL) {
-                attr->node.ns = d->ns_id;
-            }
         }
     }
     else {
@@ -306,6 +355,47 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
     RB_GC_GUARD(nv.value);
     mkr_invalidate_index(self);
     return rb_value;
+}
+
+/* element.remove_attribute_ns(namespace_or_nil, local_name) -> nil. Removes the
+ * attribute matching (namespace, local name) — the DOM key — so a namespaced
+ * attribute is removed without disturbing a same-qualified-name one in another
+ * namespace (which removal by qualified name, case-insensitive for HTML, would). */
+static VALUE
+mkr_node_remove_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_local)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        return Qnil;
+    }
+    lxb_dom_element_t *el = lxb_dom_interface_element(node);
+
+    mkr_ruby_borrowed_text_t lv = mkr_ruby_verified_text(rb_local, "attribute local name");
+
+    lxb_ns_id_t want_ns = LXB_NS__UNDEF;
+    VALUE ns_guard = Qnil;
+    if (!NIL_P(rb_ns)) {
+        mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_ns, "namespace");
+        ns_guard = nv.value;
+        if (nv.len > 0 && node->owner_document != NULL && node->owner_document->ns != NULL) {
+            const lxb_ns_data_t *d = lxb_ns_append(node->owner_document->ns,
+                                                   (const lxb_char_t *)nv.ptr, nv.len);
+            if (d != NULL) {
+                want_ns = d->ns_id;
+            }
+        }
+    }
+
+    lxb_dom_attr_t *attr = mkr_attr_find_ns(el, want_ns,
+                               (const lxb_char_t *)lv.ptr, lv.len);
+    if (attr != NULL) {
+        lxb_dom_element_attr_remove(el, attr);
+        mkr_invalidate_index(self);
+    }
+
+    RB_GC_GUARD(lv.value);
+    RB_GC_GUARD(ns_guard);
+    return Qnil;
 }
 
 /* element.name = new_name -> new_name. Renames the element in place (identity
@@ -557,6 +647,7 @@ mkr_init_mutate(void)
 
     rb_define_method(mkr_cNode, "[]=",              mkr_node_aset,             2);
     rb_define_method(mkr_cNode, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
+    rb_define_method(mkr_cNode, "remove_attribute_ns", mkr_node_remove_attribute_ns, 2);
     rb_define_method(mkr_cNode, "delete",           mkr_node_delete, 1);
     rb_define_method(mkr_cNode, "remove_attribute", mkr_node_delete, 1);
     rb_define_method(mkr_cNode, "content=",         mkr_node_set_content, 1);

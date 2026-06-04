@@ -151,9 +151,23 @@ mkr_node_local_name(VALUE self)
     case LXB_DOM_NODE_TYPE_ELEMENT:
         name = lxb_dom_element_local_name(lxb_dom_interface_element(node), &len);
         break;
-    case LXB_DOM_NODE_TYPE_ATTRIBUTE:
-        name = lxb_dom_attr_local_name(lxb_dom_interface_attr(node), &len);
+    case LXB_DOM_NODE_TYPE_ATTRIBUTE: {
+        /* The case-preserved local name is the suffix of the qualified name;
+         * Lexbor's stored local_name is lower-cased even when the qualified name
+         * keeps its case (set_attribute_ns is case-sensitive). */
+        lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
+        size_t qlen = 0, llen = 0;
+        const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
+        (void) lxb_dom_attr_local_name(at, &llen);
+        if (q != NULL && qlen >= llen) {
+            name = q + (qlen - llen);
+            len = llen;
+        }
+        else {
+            name = lxb_dom_attr_local_name(at, &len);
+        }
         break;
+    }
     default:
         return Qnil;
     }
