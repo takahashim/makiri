@@ -132,6 +132,57 @@ mkr_ruby_to_utf8(VALUE str)
                          ECONV_INVALID_REPLACE | ECONV_UNDEF_REPLACE, Qnil);
 }
 
+/* rb_str_encode with no replacement flags: an undefined conversion or invalid
+ * byte sequence RAISES (Encoding::UndefinedConversionError /
+ * Encoding::InvalidByteSequenceError) instead of substituting U+FFFD. Run under
+ * rb_protect so we can remap the Ruby Encoding error to Makiri::XML::SyntaxError. */
+static VALUE
+mkr_xml_strict_transcode_thunk(VALUE str)
+{
+    return rb_str_encode(str, rb_enc_from_encoding(rb_utf8_encoding()), 0, Qnil);
+}
+
+VALUE
+mkr_xml_decode_input(VALUE str)
+{
+    /* Share only the encoding-judgment rule with mkr_ruby_to_utf8 (NOT its
+     * lenient replace path): UTF-8 / US-ASCII / ASCII-8BIT are already UTF-8
+     * bytes (or raw) and pass straight to strict validation; anything else is
+     * strict-transcoded (raising, never replacing). */
+    rb_encoding *enc = rb_enc_get(str);
+    VALUE s;
+    if (enc == rb_utf8_encoding()
+        || enc == rb_usascii_encoding()
+        || enc == rb_ascii8bit_encoding()) {
+        s = str;
+    } else {
+        int state = 0;
+        s = rb_protect(mkr_xml_strict_transcode_thunk, str, &state);
+        if (state != 0) {
+            VALUE exc = rb_errinfo();
+            rb_set_errinfo(Qnil);
+            char msg[256];
+            mkr_ruby_exception_message(exc, msg, sizeof msg);
+            rb_raise(mkr_eXmlSyntaxError,
+                     "XML input could not be decoded to UTF-8: %s", msg);
+        }
+    }
+
+    /* Strict UTF-8 validation: an embedded NUL or any invalid UTF-8 is fatal
+     * (no U+FFFD repair — unlike the HTML mkr_utf8_sanitize path). */
+    long        len = RSTRING_LEN(s);
+    const char *ptr = RSTRING_PTR(s);
+    if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
+        rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
+    }
+    VALUE u = rb_enc_str_new(ptr, len, rb_utf8_encoding());
+    if (rb_enc_str_coderange(u) == ENC_CODERANGE_BROKEN) {
+        rb_raise(mkr_eXmlSyntaxError, "XML input must be valid UTF-8");
+    }
+    RB_GC_GUARD(s);
+    return u; /* validated, UTF-8-tagged */
+}
+
 bool
 mkr_ruby_str_known_valid_utf8(VALUE str)
 {

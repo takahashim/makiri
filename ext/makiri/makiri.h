@@ -29,10 +29,13 @@ extern VALUE mkr_cNodeSet;
 extern VALUE mkr_cXPathContext;
 extern VALUE mkr_mXPath;
 extern VALUE mkr_mCSS;
+extern VALUE mkr_mXML;
 extern VALUE mkr_eError;
 extern VALUE mkr_eXPathSyntaxError;
 extern VALUE mkr_eXPathLimitExceeded;
 extern VALUE mkr_eCSSSyntaxError;
+extern VALUE mkr_eXmlSyntaxError;
+extern VALUE mkr_eXmlLimitExceeded;
 
 /* Forward-declared sub-init entry points. Each sub-component owns its
  * own Init_* and registers methods on the class refs above. */

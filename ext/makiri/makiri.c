@@ -1,5 +1,6 @@
 #include "makiri.h"
 #include "core/mkr_core.h"
+#include "bridge/bridge.h"
 
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
@@ -16,10 +17,13 @@ VALUE mkr_cNodeSet;
 VALUE mkr_cXPathContext;
 VALUE mkr_mXPath;
 VALUE mkr_mCSS;
+VALUE mkr_mXML;
 VALUE mkr_eError;
 VALUE mkr_eXPathSyntaxError;
 VALUE mkr_eXPathLimitExceeded;
 VALUE mkr_eCSSSyntaxError;
+VALUE mkr_eXmlSyntaxError;
+VALUE mkr_eXmlLimitExceeded;
 
 /* Makiri.__c_selftest -> true, or raises if the safe-core primitives
  * (mkr_core.c) fail their internal edge-case checks. Test hook only. */
@@ -32,6 +36,17 @@ mkr_c_selftest(VALUE self)
         rb_raise(mkr_eError, "mkr_core_selftest failed at check %d", rc);
     }
     return Qtrue;
+}
+
+/* Makiri::XML.__decode(str) -> validated, UTF-8-tagged String, or raises
+ * Makiri::XML::SyntaxError. Internal test hook exercising the strict input
+ * decode (§2.1) on its own, until the full Makiri::XML(...) parse pipeline
+ * (tokenizer + tree builder) lands and subsumes it. */
+static VALUE
+mkr_xml_s_decode(VALUE self, VALUE str)
+{
+    (void)self;
+    return mkr_xml_decode_input(rb_String(str));
 }
 
 RUBY_FUNC_EXPORTED void
@@ -56,11 +71,14 @@ Init_makiri(void)
 
     mkr_mXPath         = rb_define_module_under(mkr_mMakiri, "XPath");
     mkr_mCSS           = rb_define_module_under(mkr_mMakiri, "CSS");
+    mkr_mXML           = rb_define_module_under(mkr_mMakiri, "XML");
 
     mkr_eError              = rb_define_class_under(mkr_mMakiri, "Error", rb_eStandardError);
     mkr_eXPathSyntaxError   = rb_define_class_under(mkr_mXPath, "SyntaxError",   mkr_eError);
     mkr_eXPathLimitExceeded = rb_define_class_under(mkr_mXPath, "LimitExceeded", mkr_eXPathSyntaxError);
     mkr_eCSSSyntaxError     = rb_define_class_under(mkr_mCSS,   "SyntaxError",   mkr_eError);
+    mkr_eXmlSyntaxError     = rb_define_class_under(mkr_mXML,   "SyntaxError",   mkr_eError);
+    mkr_eXmlLimitExceeded   = rb_define_class_under(mkr_mXML,   "LimitExceeded", mkr_eError);
 
     /* Instances of these classes are created only from C via
      * TypedData_Make_Struct (document parse / tree traversal / query
@@ -91,4 +109,5 @@ Init_makiri(void)
     mkr_init_mutate();
 
     rb_define_singleton_method(mkr_mMakiri, "__c_selftest", mkr_c_selftest, 0);
+    rb_define_singleton_method(mkr_mXML, "__decode", mkr_xml_s_decode, 1);
 }

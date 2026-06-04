@@ -53,6 +53,15 @@ int mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out);
  * case is a single encoding comparison. */
 VALUE mkr_ruby_to_utf8(VALUE str);
 
+/* STRICT decode for XML (§2.1): like mkr_ruby_to_utf8 it honours the String's
+ * declared encoding (UTF-8 / US-ASCII / ASCII-8BIT pass through; any other
+ * encoding is transcoded to UTF-8) — but FAIL-CLOSED, never lenient: a non-UTF-8
+ * byte that can't be converted, invalid UTF-8, or an embedded NUL all raise
+ * Makiri::XML::SyntaxError (no U+FFFD replacement). Returns a validated,
+ * UTF-8-tagged Ruby String. (The HTML replace path mkr_ruby_to_utf8 itself is
+ * NOT reused for the conversion — only its encoding-judgment rule is shared.) */
+VALUE mkr_xml_decode_input(VALUE str);
+
 /* True if `str` is *already known* to be valid UTF-8 — pure ASCII, or valid in
  * the UTF-8 encoding — from its cached coderange, WITHOUT forcing a scan. Lets
  * the parse skip mkr_utf8_sanitize's validation pass for input Ruby has already
