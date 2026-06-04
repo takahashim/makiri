@@ -1,6 +1,18 @@
 #include "glue.h"
 
 #include <lexbor/html/parser.h>
+#include <lexbor/ns/ns.h>
+
+/* Exported by lexbor but omitted from its public headers. lxb_ns_append interns
+ * a namespace URI in the document's ns table; lxb_dom_attr_set_name_ns names an
+ * attribute from (namespace, qualified name), splitting prefix/local and
+ * interning the namespace. */
+extern const lxb_ns_data_t *
+lxb_ns_append(lexbor_hash_t *hash, const lxb_char_t *link, size_t length);
+extern lxb_status_t
+lxb_dom_attr_set_name_ns(lxb_dom_attr_t *attr, const lxb_char_t *link,
+                         size_t link_length, const lxb_char_t *name,
+                         size_t name_length, bool to_lowercase);
 
 /*
  * DOM mutation (v0.2). Thin wrappers over Lexbor's insert/remove/create
@@ -216,6 +228,82 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
     if (attr == NULL) {
         rb_raise(mkr_eError, "failed to set attribute");
     }
+    mkr_invalidate_index(self);
+    return rb_value;
+}
+
+/* element.set_attribute_ns(namespace_or_nil, qualified_name, value) -> value.
+ *
+ * Stores the attribute under its qualified name (case-preserved — setAttributeNS
+ * is case-sensitive, unlike the HTML setAttribute family) and records its OWN
+ * namespace on the attr node, so namespaceURI / getAttributeNS resolve it. The
+ * namespace URI is interned in the document's ns table; nil/"" stores the null
+ * namespace (LXB_NS__UNDEF). */
+static VALUE
+mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_value)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
+    }
+    lxb_dom_element_t *el = lxb_dom_interface_element(node);
+
+    mkr_ruby_borrowed_text_t qv = mkr_ruby_verified_text(rb_qname, "attribute qualified name");
+    mkr_ruby_borrowed_text_t vv = mkr_ruby_verified_text(rb_value, "attribute value");
+
+    mkr_ruby_borrowed_text_t nv = {0};
+    bool have_ns = false;
+    if (!NIL_P(rb_ns)) {
+        nv = mkr_ruby_verified_text(rb_ns, "namespace");
+        have_ns = nv.len > 0;
+    }
+
+    /* An existing attribute keeps its qualified name; only its value and own
+     * namespace change. A new one is named with the namespace-aware setter, which
+     * splits prefix/local and interns the namespace (so localName/prefix and
+     * namespaceURI all resolve); a null namespace just sets the bare name. */
+    lxb_dom_attr_t *attr = lxb_dom_element_attr_by_name(el,
+                               (const lxb_char_t *)qv.ptr, qv.len);
+    if (attr != NULL) {
+        if (lxb_dom_attr_set_value(attr, (const lxb_char_t *)vv.ptr, vv.len) != LXB_STATUS_OK) {
+            rb_raise(mkr_eError, "failed to set attribute value");
+        }
+        attr->node.ns = LXB_NS__UNDEF;
+        if (have_ns && node->owner_document != NULL && node->owner_document->ns != NULL) {
+            const lxb_ns_data_t *d = lxb_ns_append(node->owner_document->ns,
+                                                   (const lxb_char_t *)nv.ptr, nv.len);
+            if (d != NULL) {
+                attr->node.ns = d->ns_id;
+            }
+        }
+    }
+    else {
+        attr = lxb_dom_attr_interface_create(node->owner_document);
+        if (attr == NULL) {
+            rb_raise(mkr_eError, "failed to create attribute");
+        }
+        /* A fresh attr is calloc'd, so node.ns is already LXB_NS__UNDEF for the
+         * null-namespace case; only the namespaced setter changes it. */
+        lxb_status_t st;
+        if (have_ns) {
+            st = lxb_dom_attr_set_name_ns(attr, (const lxb_char_t *)nv.ptr, nv.len,
+                                          (const lxb_char_t *)qv.ptr, qv.len, false);
+        }
+        else {
+            st = lxb_dom_attr_set_name(attr, (const lxb_char_t *)qv.ptr, qv.len, false);
+        }
+        if (st != LXB_STATUS_OK
+            || lxb_dom_attr_set_value(attr, (const lxb_char_t *)vv.ptr, vv.len) != LXB_STATUS_OK) {
+            /* Leave the un-appended attr for the document arena to free wholesale
+             * (the module's "never destroy a detached node" convention). */
+            rb_raise(mkr_eError, "failed to set namespaced attribute");
+        }
+        lxb_dom_element_attr_append(el, attr);
+    }
+
+    RB_GC_GUARD(qv.value);
+    RB_GC_GUARD(vv.value);
+    RB_GC_GUARD(nv.value);
     mkr_invalidate_index(self);
     return rb_value;
 }
@@ -467,7 +555,8 @@ mkr_init_mutate(void)
     rb_define_method(mkr_cNode, "inner_html=", mkr_node_set_inner_html, 1);
     rb_define_method(mkr_cNode, "outer_html=", mkr_node_set_outer_html, 1);
 
-    rb_define_method(mkr_cNode, "[]=",              mkr_node_aset,   2);
+    rb_define_method(mkr_cNode, "[]=",              mkr_node_aset,             2);
+    rb_define_method(mkr_cNode, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
     rb_define_method(mkr_cNode, "delete",           mkr_node_delete, 1);
     rb_define_method(mkr_cNode, "remove_attribute", mkr_node_delete, 1);
     rb_define_method(mkr_cNode, "content=",         mkr_node_set_content, 1);

@@ -250,6 +250,27 @@ mkr_node_namespace_uri(VALUE self)
 
     if (node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
         lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
+
+        /* An attribute set via set_attribute_ns records its OWN namespace on the
+         * attr node — distinguishable because it differs from the owner element's
+         * ns (a normally-set/parsed attr inherits the element's). Resolve it from
+         * the interned id; LXB_NS__UNDEF (set by set_attribute_ns(nil, ...)) is
+         * the null namespace. */
+        if (at->owner != NULL && node->ns != at->owner->node.ns) {
+            if (node->ns == LXB_NS__UNDEF) {
+                return Qnil;
+            }
+            lxb_dom_document_t *doc = node->owner_document;
+            if (doc != NULL && doc->ns != NULL) {
+                size_t len = 0;
+                const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
+                if (uri != NULL && len != 0) {
+                    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)uri, len));
+                }
+            }
+            return Qnil;
+        }
+
         size_t qlen = 0, llen = 0;
         const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
         (void) lxb_dom_attr_local_name(at, &llen);
