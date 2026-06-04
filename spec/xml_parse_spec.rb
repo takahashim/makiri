@@ -174,6 +174,47 @@ RSpec.describe "Makiri::XML minimal parse" do
     end
   end
 
+  describe "strict names (§9.2b)" do
+    it "accepts XML 1.0 names including Unicode NameChar" do
+      expect(ok?("<café/>")).to be true
+      expect(ok?("<a-1.b/>")).to be true              # '-' '.' digits are NameChar
+      expect(ok?("<_x/>")).to be true
+      expect(ok?("<日本語 値='1'/>")).to be true
+    end
+
+    it "rejects names that violate NameStartChar / NCName" do
+      expect { Makiri::XML("<1bad/>") }.to raise_error(Makiri::XML::SyntaxError)        # digit start
+      expect { Makiri::XML("<-bad/>") }.to raise_error(Makiri::XML::SyntaxError)        # '-' start
+      expect { Makiri::XML("<.bad/>") }.to raise_error(Makiri::XML::SyntaxError)        # '.' start
+      expect { Makiri::XML("<a:1b xmlns:a='u'/>") }.to raise_error(Makiri::XML::SyntaxError) # local starts with digit
+      expect { Makiri::XML("<a b@d='1'/>") }.to raise_error(Makiri::XML::SyntaxError)   # '@' not a NameChar
+    end
+  end
+
+  describe "duplicate attributes (§9.3)" do
+    it "rejects two attributes with the same resolved (namespace, local name)" do
+      expect { Makiri::XML("<a x='1' x='2'/>") }.to raise_error(Makiri::XML::SyntaxError)
+      same_uri = "<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>"
+      expect { Makiri::XML(same_uri) }.to raise_error(Makiri::XML::SyntaxError) # a:x and b:x collapse to {u}x
+      expect { Makiri::XML("<a xmlns='d' xmlns='d'/>") }.to raise_error(Makiri::XML::SyntaxError) # default ns twice
+    end
+
+    it "allows attributes that differ in namespace or local name" do
+      expect(ok?("<e xmlns:a='u1' xmlns:b='u2' a:x='1' b:x='2'/>")).to be true  # different URIs
+      expect(ok?("<e xmlns:a='u' x='1' a:x='2'/>")).to be true                  # no-ns vs {u}
+      expect(ok?("<e xmlns:a='u1' xmlns:b='u2'/>")).to be true                  # two xmlns decls
+    end
+  end
+
+  describe "line-ending normalization (§9.3b-A)" do
+    it "accepts CRLF and lone CR (folded to LF before tokenizing)" do
+      expect(ok?("<a>x\r\ny</a>")).to be true
+      expect(ok?("<a>x\ry</a>")).to be true
+      expect(ok?("<a x=\"p\r\nq\"/>")).to be true
+      expect(ok?("<r>\r\n  <c/>\r\n</r>")).to be true
+    end
+  end
+
   describe "budgets" do
     it "caps attributes PER ELEMENT (not document-wide)" do
       # > 4096 attributes on a single element is fail-closed...

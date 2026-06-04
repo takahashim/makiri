@@ -73,6 +73,14 @@ advance(mkr_xml_parser_t *P)
     else           { P->col++; }
 }
 
+/* Advance n bytes, keeping line/col correct (the consumed span may contain LF:
+ * comment/CDATA/PI content). Input is line-ending-normalized, so only LF appears. */
+static void
+advance_n(mkr_xml_parser_t *P, size_t n)
+{
+    while (n-- > 0 && P->p < P->end) advance(P);
+}
+
 static void
 skip_ws(mkr_xml_parser_t *P)
 {
@@ -83,24 +91,22 @@ skip_ws(mkr_xml_parser_t *P)
     }
 }
 
-/* Minimal Name char set (permissive ASCII; strict NameStartChar/NameChar with
- * Unicode ranges arrives in §9.2b). Good enough to tokenize element/attr names. */
-static int is_name_start(unsigned char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == ':'
-        || c >= 0x80; /* allow UTF-8 lead/continuation bytes; refined in §9.2b */
-}
-static int is_name_char(unsigned char c) {
-    return is_name_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
-}
-
-/* Scan a Name into [*out, *out+*len) (a slice of the input). 0 on success. */
+/* Scan a Name into [*out, *out+*len) (a slice of the input), codepoint by
+ * codepoint against the full XML 1.0 §2.3 NameStartChar / NameChar sets (§9.2b):
+ * the first codepoint must be a NameStartChar, the rest NameChar. 0 on success. */
 static int
 scan_name(mkr_xml_parser_t *P, const char **out, uint32_t *len)
 {
     const char *start = P->p;
-    if (P->p >= P->end || !is_name_start((unsigned char)*P->p)) { set_syntax(P); return -1; }
-    advance(P);
-    while (P->p < P->end && is_name_char((unsigned char)*P->p)) advance(P);
+    uint32_t cp;
+    int bl = mkr_xml_utf8_decode(P->p, P->end, &cp);
+    if (bl == 0 || !mkr_xml_is_name_start(cp)) { set_syntax(P); return -1; }
+    advance_n(P, (size_t)bl);
+    for (;;) {
+        bl = mkr_xml_utf8_decode(P->p, P->end, &cp);
+        if (bl == 0 || !mkr_xml_is_name_char(cp)) break;
+        advance_n(P, (size_t)bl);
+    }
     size_t n = (size_t)(P->p - start);
     if (n > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; } /* fail closed, never truncate */
     *out = start;
@@ -156,6 +162,12 @@ split_qname(const char *name, uint32_t len, const char **pfx, uint32_t *pfx_len,
     uint32_t ll = len - pl - 1;
     if (pl == 0 || ll == 0) return -1;                  /* ":x" or "x:" */
     if (memchr(ls, ':', ll) != NULL) return -1;         /* second colon */
+    /* §9.2b: prefix and local must each be an NCName. scan_name already proved the
+     * whole QName is NameStartChar + NameChar* and split removed the only colon, so
+     * the one remaining check is that the local part starts with a NameStartChar
+     * (the prefix starts the QName, so it already does). Rejects e.g. "a:1b". */
+    uint32_t cp;
+    if (mkr_xml_utf8_decode(ls, ls + ll, &cp) == 0 || !mkr_xml_is_name_start(cp)) return -1;
     *pfx = name; *pfx_len = pl; *loc = ls; *loc_len = ll;
     return 0;
 }
@@ -305,15 +317,20 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         if (attr->value == NULL) return -1;
         append_attr(el, attr);
     }
-    return 0;
-}
 
-/* Advance n bytes, keeping line/col correct (the consumed span may contain
- * newlines: comment/CDATA/PI content). */
-static void
-advance_n(mkr_xml_parser_t *P, size_t n)
-{
-    while (n-- > 0 && P->p < P->end) advance(P);
+    /* §9.3: no two attributes may share the same (namespace URI, local name) —
+     * compared AFTER resolution, so "a:x" and "b:x" bound to the same URI collide
+     * while "xmlns:a"/"xmlns:b" (same xmlns URI, different local) do not. O(n^2)
+     * over a per-element set bounded by MKR_XML_MAX_ATTRS. */
+    for (mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
+        for (mkr_xml_node_t *b = a->next; b != NULL; b = b->next) {
+            if (slice_eq(a->local, a->local_len, b->local, b->local_len)
+                && slice_eq(a->ns_uri, a->ns_uri_len, b->ns_uri, b->ns_uri_len)) {
+                set_syntax(P); return -1;                  /* duplicate attribute */
+            }
+        }
+    }
+    return 0;
 }
 
 /* True if the remaining input begins with the literal [lit, lit+n). */
@@ -441,7 +458,35 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
     mkr_xml_doc_t *doc = mkr_xml_doc_new();
     if (doc == NULL) { if (status) *status = MKR_XML_ERR_OOM; return NULL; }
 
-    mkr_xml_parser_t P = { src, src + len, 1, 1, doc, MKR_XML_OK };
+    /* §9.3b-A: line-ending normalization — fold CRLF and a lone CR to LF over the
+     * whole input BEFORE tokenizing, so every later stage (attribute-value
+     * normalization, line counting) sees only LF. It can only shrink, so we
+     * normalize into a scratch buffer only when a CR is actually present (the
+     * common no-CR input tokenizes in place with zero copy). The buffer outlives
+     * the parse; every retained byte is copied into the arena, so freeing it at
+     * the end is safe. */
+    const char *body = src;
+    size_t      blen = len;
+    char       *norm = NULL;
+    if (memchr(src, '\r', len) != NULL) {
+        norm = mkr_reallocarray(NULL, len == 0 ? 1 : len, 1);
+        if (norm == NULL) { if (status) *status = MKR_XML_ERR_OOM; mkr_xml_doc_destroy(doc); return NULL; }
+        size_t o = 0;
+        for (size_t k = 0; k < len; k++) {
+            char ch = src[k];
+            if (ch == '\r') {
+                norm[o++] = '\n';
+                if (k + 1 < len && src[k + 1] == '\n') k++;   /* CRLF -> single LF */
+            } else {
+                norm[o++] = ch;
+            }
+        }
+        body = norm;
+        blen = o;
+    }
+
+    mkr_xml_parser_t P = { body, body + blen, 1, 1, doc, MKR_XML_OK };
+    const char *origin = body;        /* the XML declaration is valid only here */
 
     mkr_xml_node_t **stack = NULL;     /* open elements */
     size_t          *frame = NULL;     /* parallel: namespace-binding count when each was opened */
@@ -450,7 +495,7 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
     while (P.p < P.end) {
         if (*P.p == '<') {
             uint32_t tl = P.line, tc = P.col;   /* tag start position */
-            int tok_at_start = (P.p == src);    /* '<?xml ...?>' is valid only here */
+            int tok_at_start = (P.p == origin); /* '<?xml ...?>' is valid only here */
             advance(&P); /* '<' */
             if (P.p >= P.end) { set_syntax(&P); break; }
             char c = *P.p;
@@ -558,6 +603,7 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
     free(frame);
     free(P.binds);
     free(P.ratt);
+    free(norm);                       /* scratch line-ending-normalized buffer (if any) */
     if (P.status != MKR_XML_OK) {
         if (status) *status = P.status;
         mkr_xml_doc_destroy(doc);
@@ -766,6 +812,34 @@ mkr_xml_parse_selftest(void)
     e = PARSE_LIT(" <?xml version=\"1.0\"?><r/>", &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* decl not at start */
     st = MKR_XML_OK;
     e = PARSE_LIT("<![CDATA[x]]><r/>",  &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* CDATA outside root */
+
+    /* §9.3b-A: line-ending normalization happens before attribute-value
+     * normalization, so a literal CRLF inside an attribute collapses to ONE space
+     * (CRLF -> LF -> space); in text content CRLF/CR just fold to LF, unfolded. */
+    i++; /* 15 */
+    d = PARSE_LIT("<a x=\"p\r\nq\r\">m\r\nn\ro</a>", &st);
+    if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
+    {
+        mkr_xml_node_t *r = d->root;
+        mkr_xml_node_t *ax = r->attrs;
+        mkr_xml_node_t *tx = r->first_child;
+        if (!VAL_IS(ax, "p q ")                 /* CRLF and lone CR each -> one space */
+            || !tx || tx->type != MKR_XN_TEXT || !VAL_IS(tx, "m\nn\no")) { /* folded to LF */
+            mkr_xml_doc_destroy(d); return i;
+        }
+    }
+    mkr_xml_doc_destroy(d);
+
+    i++; /* 16: §9.2b strict names + §9.3 duplicate attributes fail closed */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<1bad/>",            &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* NameStartChar */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<a:1b xmlns:a='u'/>", &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* NCName local */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<a x='1' x='2'/>",   &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* duplicate attr */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>", &st);
+    if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* same-URI duplicate */
 
     return 0;
 }

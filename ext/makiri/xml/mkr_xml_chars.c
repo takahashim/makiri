@@ -82,6 +82,37 @@ utf8_decode(const char *p, const char *end, uint32_t *cp)
     return 0;
 }
 
+/* Public, bounds-checked one-codepoint decode for the tokenizer's name scanning
+ * (returns 0 at end-of-input as well as on any malformed byte). */
+int
+mkr_xml_utf8_decode(const char *p, const char *end, uint32_t *cp)
+{
+    if (p >= end) return 0;
+    return utf8_decode(p, end, cp);
+}
+
+/* XML 1.0 §2.3 NameStartChar / NameChar (the full Unicode sets, not just ASCII).
+ * Element/attribute QNames and PI targets are validated against these so an
+ * ill-formed name never reaches the DOM (§9.2b). */
+int
+mkr_xml_is_name_start(uint32_t c)
+{
+    return c == ':' || (c >= 'A' && c <= 'Z') || c == '_' || (c >= 'a' && c <= 'z')
+        || (c >= 0xC0u    && c <= 0xD6u)    || (c >= 0xD8u   && c <= 0xF6u)
+        || (c >= 0xF8u    && c <= 0x2FFu)   || (c >= 0x370u  && c <= 0x37Du)
+        || (c >= 0x37Fu   && c <= 0x1FFFu)  || (c >= 0x200Cu && c <= 0x200Du)
+        || (c >= 0x2070u  && c <= 0x218Fu)  || (c >= 0x2C00u && c <= 0x2FEFu)
+        || (c >= 0x3001u  && c <= 0xD7FFu)  || (c >= 0xF900u && c <= 0xFDCFu)
+        || (c >= 0xFDF0u  && c <= 0xFFFDu)  || (c >= 0x10000u && c <= 0xEFFFFu);
+}
+
+int
+mkr_xml_is_name_char(uint32_t c)
+{
+    return mkr_xml_is_name_start(c) || c == '-' || c == '.' || (c >= '0' && c <= '9')
+        || c == 0xB7u || (c >= 0x300u && c <= 0x36Fu) || (c >= 0x203Fu && c <= 0x2040u);
+}
+
 static int
 utf8_encode(uint32_t cp, char *out)
 {

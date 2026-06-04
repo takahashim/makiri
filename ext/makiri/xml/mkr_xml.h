@@ -51,6 +51,12 @@ int mkr_xml_is_char(uint32_t c);
  * recognition (comment/CDATA/PI content, where '&'/'<' are literal). 0 / -1. */
 int mkr_xml_validate_chars(const char *src, uint32_t len);
 
+/* Bounds-checked one-codepoint UTF-8 decode (byte length 1-4, or 0 at end /
+ * on malformed input) + XML 1.0 §2.3 NameStartChar / NameChar (§9.2b). */
+int mkr_xml_utf8_decode(const char *p, const char *end, uint32_t *cp);
+int mkr_xml_is_name_start(uint32_t c);
+int mkr_xml_is_name_char(uint32_t c);
+
 /* Expansion context. ATTR adds XML 1.0 §3.3.3 attribute-value normalization:
  * a *literal* white-space byte (TAB/LF/CR) becomes a space, while a white-space
  * character produced by a numeric reference (&#9;/&#10;/&#13;) is preserved. TEXT
