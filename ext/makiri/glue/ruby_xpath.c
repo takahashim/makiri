@@ -1,4 +1,5 @@
 #include "glue.h"
+#include "ruby_xpath.h"                  /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
 #include "../xml/mkr_xml_node.h"         /* mkr_xml_doc_t / mkr_xml_node_t for the XML instance */
@@ -93,10 +94,9 @@ static const rb_data_type_t mkr_xpath_ctx_type = {
 /* result + error mapping                                             */
 /* ------------------------------------------------------------------ */
 
-/* Translate an engine error into a Ruby exception and raise. Never returns. */
-static NORETURN(void mkr_xpath_raise(mkr_xpath_error_t *err));
-
-static void
+/* Translate an engine error into a Ruby exception and raise. Never returns.
+ * Shared with the XML query glue via ruby_xpath.h. */
+void
 mkr_xpath_raise(mkr_xpath_error_t *err)
 {
     VALUE klass;
@@ -119,8 +119,9 @@ mkr_xpath_raise(mkr_xpath_error_t *err)
 }
 
 /* Convert a (just-produced) engine value into a Ruby object, then release any
- * heap the engine handed us. document is the keepalive for node-set results. */
-static VALUE
+ * heap the engine handed us. document is the keepalive for node-set results.
+ * Shared with the XML query glue via ruby_xpath.h. */
+VALUE
 mkr_xpath_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
 {
     VALUE result;

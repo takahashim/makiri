@@ -11,6 +11,7 @@
 #include "../xml/mkr_xml.h"
 #include "../xml/mkr_xml_node.h"
 #include "glue.h"   /* mkr_wrap_document, mkr_parsed_* (via compat.h) */
+#include "ruby_xpath.h"   /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_xpath_internal.h"
 
@@ -75,43 +76,11 @@ mkr_xml_s_parse(VALUE self, VALUE rb_source)
     return obj;
 }
 
-/* Move an evaluated XML XPath value into a Ruby value. A node-set becomes a
- * Makiri::NodeSet over the +document+ (its kind-aware wrap yields Makiri::XML::*
- * nodes); otherwise a String / Float / boolean. The value's owned storage (the
- * node array, the string) is released by the caller via mkr_xpath_value_clear. */
-static VALUE
-mkr_xml_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
-{
-    switch (v->type) {
-    case MKR_XPATH_TYPE_NODESET: {
-        VALUE set = mkr_node_set_new(document);
-        for (size_t i = 0; i < v->u.nodeset.count; i++) {
-            mkr_node_set_push(set, v->u.nodeset.nodes[i]);
-        }
-        return set;
-    }
-    case MKR_XPATH_TYPE_STRING:
-        return rb_utf8_str_new(v->u.string.ptr ? v->u.string.ptr : "", (long)v->u.string.len);
-    case MKR_XPATH_TYPE_NUMBER:
-        return DBL2NUM(v->u.number);
-    case MKR_XPATH_TYPE_BOOLEAN:
-        return v->u.boolean ? Qtrue : Qfalse;
-    }
-    return Qnil;
-}
-
-NORETURN(static void mkr_xml_raise_xpath(mkr_xpath_error_t *err));
-static void
-mkr_xml_raise_xpath(mkr_xpath_error_t *err)
-{
-    VALUE klass = (err->status == MKR_XPATH_ERR_SYNTAX)  ? mkr_eXPathSyntaxError
-                : (err->status == MKR_XPATH_ERR_LIMIT)   ? mkr_eXPathLimitExceeded
-                : mkr_eError;
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s", err->message ? err->message : "XPath error");
-    mkr_xpath_error_clear(err);
-    rb_raise(klass, "%s", buf);
-}
+/* XPath value -> Ruby and error -> exception are shared with the HTML query glue
+ * (mkr_xpath_value_to_ruby / mkr_xpath_raise, ruby_xpath.h): both query entry
+ * points run the same engine and return the same public value/error types, so
+ * the conversion lives in one place. mkr_node_set_new/push are kind-aware, so the
+ * shared value converter wraps these results as Makiri::XML::* nodes. */
 
 /* Resolve the (document VALUE, context node) an XPath query runs against: for a
  * Makiri::XML::Document the context is the document node, for a node it is that
@@ -207,7 +176,7 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
     RB_GC_GUARD(ev.value);
     if (ast == NULL) {
         mkr_xpath_context_free(ctx);
-        mkr_xml_raise_xpath(&error);
+        mkr_xpath_raise(&error);
     }
 
     mkr_xpath_value_t value = {0};
@@ -216,10 +185,9 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
     mkr_node_free(ast);
     if (rc != 0) {
         mkr_xpath_context_free(ctx);
-        mkr_xml_raise_xpath(&error);
+        mkr_xpath_raise(&error);
     }
-    VALUE result = mkr_xml_value_to_ruby(&value, document);
-    mkr_xpath_value_clear(&value);
+    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
     mkr_xpath_context_free(ctx);
 
     if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
