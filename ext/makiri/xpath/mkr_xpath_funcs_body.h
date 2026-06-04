@@ -147,6 +147,11 @@ fn_false(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   return 0;
 }
 
+#ifndef MKR_HOST_XML
+/* id() helpers are HTML-only: the XML instance's id() is the empty node-set
+ * (no DTD-declared IDs, §8.6), so it never walks the tree by id attribute.
+ * Guarded so the XML engine TU does not carry (and warn about) dead code. */
+
 /* id(string|nodeset) — looks up by HTML id attribute. */
 static MKR_DOM_NODE *
 find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
@@ -205,6 +210,7 @@ id_collect_from_string(char *s, MKR_DOM_NODE *root, mkr_nodeset_t *out,
   }
   return 0;
 }
+#endif /* !MKR_HOST_XML */
 
 static int
 fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
