@@ -179,7 +179,7 @@ mkr_node_at_css(VALUE self, VALUE rb_selector)
 void
 mkr_init_css(void)
 {
-    rb_define_method(mkr_cNode, "css",     mkr_node_css,     1);
-    rb_define_method(mkr_cNode, "at_css",  mkr_node_at_css,  1);
-    rb_define_method(mkr_cNode, "matches?", mkr_node_matches, 1);
+    rb_define_method(mkr_mHtmlNode, "css",     mkr_node_css,     1);
+    rb_define_method(mkr_mHtmlNode, "at_css",  mkr_node_at_css,  1);
+    rb_define_method(mkr_mHtmlNode, "matches?", mkr_node_matches, 1);
 }

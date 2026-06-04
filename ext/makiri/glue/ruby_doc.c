@@ -75,7 +75,7 @@ VALUE
 mkr_wrap_document(mkr_parsed_t *parsed)
 {
     VALUE klass = (mkr_parsed_kind(parsed) == MKR_DOC_XML)
-                    ? mkr_cXmlDocument : mkr_cDocument;
+                    ? mkr_cXmlDocument : mkr_cHtmlDocument;
     mkr_doc_data_t *d;
     VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_doc_type, d);
     d->parsed = parsed;
@@ -584,18 +584,18 @@ mkr_doc_errors(VALUE self)
 void
 mkr_init_document(void)
 {
-    rb_define_singleton_method(mkr_cDocument, "_parse", mkr_doc_s_parse, 1);
-    rb_define_method(mkr_cDocument, "root",     mkr_doc_root,     0);
-    rb_define_method(mkr_cDocument, "title",    mkr_doc_title,    0);
-    rb_define_method(mkr_cDocument, "errors",   mkr_doc_errors,   0);
-    rb_define_method(mkr_cDocument, "internal_subset", mkr_doc_internal_subset, 0);
-    rb_define_method(mkr_cDocument, "quirks_mode", mkr_doc_quirks_mode, 0);
-    rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, -1);
-    rb_define_method(mkr_cDocument, "import_node", mkr_doc_import_node, -1);
+    rb_define_singleton_method(mkr_cHtmlDocument, "_parse", mkr_doc_s_parse, 1);
+    rb_define_method(mkr_cHtmlDocument, "root",     mkr_doc_root,     0);
+    rb_define_method(mkr_cHtmlDocument, "title",    mkr_doc_title,    0);
+    rb_define_method(mkr_cHtmlDocument, "errors",   mkr_doc_errors,   0);
+    rb_define_method(mkr_cHtmlDocument, "internal_subset", mkr_doc_internal_subset, 0);
+    rb_define_method(mkr_cHtmlDocument, "quirks_mode", mkr_doc_quirks_mode, 0);
+    rb_define_method(mkr_cHtmlDocument, "fragment", mkr_doc_fragment, -1);
+    rb_define_method(mkr_cHtmlDocument, "import_node", mkr_doc_import_node, -1);
 
     rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, -1);
 
     /* Node#parse(html): fragment-parse in this element's context (Nokogiri
      * compatible). Defined here, next to the fragment machinery it reuses. */
-    rb_define_method(mkr_cNode, "parse", mkr_node_parse, 1);
+    rb_define_method(mkr_mHtmlNode, "parse", mkr_node_parse, 1);
 }

@@ -30,8 +30,8 @@ RSpec.describe "XPath node tests" do
   end
 
   it "//node() selects element, text and comment children alike" do
-    kinds = doc.at_xpath("//body").xpath("node()").map(&:class).uniq
-    expect(kinds).to include(Makiri::Element, Makiri::Text, Makiri::Comment)
+    nodes = doc.at_xpath("//body").xpath("node()")
+    expect(nodes).to include(be_a(Makiri::Element), be_a(Makiri::Text), be_a(Makiri::Comment))
   end
 
   it "//processing-instruction() selects PI nodes" do

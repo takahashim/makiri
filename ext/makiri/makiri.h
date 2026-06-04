@@ -15,9 +15,10 @@ extern "C" {
 
 /* Ruby module + class refs, populated by Init_makiri. */
 extern VALUE mkr_mMakiri;
+/* Abstract bases (§12): Node and the per-type bases. Concrete nodes are the
+ * per-kind leaves below; `is_a?(Makiri::Element)` etc. stays true for both. */
 extern VALUE mkr_cNode;
 extern VALUE mkr_cDocument;
-extern VALUE mkr_cXmlDocument;   /* Makiri::XML::Document */
 extern VALUE mkr_cElement;
 extern VALUE mkr_cAttribute;
 extern VALUE mkr_cText;
@@ -26,6 +27,23 @@ extern VALUE mkr_cCData;
 extern VALUE mkr_cProcessingInstruction;
 extern VALUE mkr_cDocumentType;
 extern VALUE mkr_cDocumentFragment;
+
+/* Makiri::HTML module + leaves. mkr_mHtmlNode is a behavior module holding the
+ * lxb_dom-backed reader/query methods, included into every HTML leaf (so an XML
+ * node never inherits an HTML reader). */
+extern VALUE mkr_mHTML;
+extern VALUE mkr_mHtmlNode;
+extern VALUE mkr_cHtmlDocument;
+extern VALUE mkr_cHtmlElement;
+extern VALUE mkr_cHtmlAttribute;
+extern VALUE mkr_cHtmlText;
+extern VALUE mkr_cHtmlComment;
+extern VALUE mkr_cHtmlCData;
+extern VALUE mkr_cHtmlProcessingInstruction;
+extern VALUE mkr_cHtmlDocumentType;
+extern VALUE mkr_cHtmlDocumentFragment;
+
+extern VALUE mkr_cXmlDocument;   /* Makiri::XML::Document (standalone until step 2) */
 extern VALUE mkr_cNodeSet;
 extern VALUE mkr_cXPathContext;
 extern VALUE mkr_mXPath;

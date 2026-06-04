@@ -92,7 +92,7 @@ RSpec.describe "Makiri XPath" do
 
     it "attribute axis yields Attribute nodes" do
       attrs = doc.xpath("//div/@*")
-      expect(attrs.map(&:class)).to all(eq(Makiri::Attribute))
+      expect(attrs).to all(be_a(Makiri::Attribute)) # HTML::Attribute leaf, is_a? Attribute
       expect(attrs.map(&:name)).to eq(%w[id class])
     end
   end

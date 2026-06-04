@@ -632,32 +632,32 @@ mkr_doc_create_document_fragment(VALUE self)
 void
 mkr_init_mutate(void)
 {
-    rb_define_method(mkr_cNode, "add_child",            mkr_node_add_child,            1);
-    rb_define_method(mkr_cNode, "<<",                   mkr_node_append,               1);
-    rb_define_method(mkr_cNode, "add_previous_sibling", mkr_node_add_previous_sibling, 1);
-    rb_define_method(mkr_cNode, "before",               mkr_node_add_previous_sibling, 1);
-    rb_define_method(mkr_cNode, "add_next_sibling",     mkr_node_add_next_sibling,     1);
-    rb_define_method(mkr_cNode, "after",                mkr_node_add_next_sibling,     1);
-    rb_define_method(mkr_cNode, "remove",               mkr_node_remove,               0);
-    rb_define_method(mkr_cNode, "unlink",               mkr_node_remove,               0);
-    rb_define_method(mkr_cNode, "replace",              mkr_node_replace,              1);
+    rb_define_method(mkr_mHtmlNode, "add_child",            mkr_node_add_child,            1);
+    rb_define_method(mkr_mHtmlNode, "<<",                   mkr_node_append,               1);
+    rb_define_method(mkr_mHtmlNode, "add_previous_sibling", mkr_node_add_previous_sibling, 1);
+    rb_define_method(mkr_mHtmlNode, "before",               mkr_node_add_previous_sibling, 1);
+    rb_define_method(mkr_mHtmlNode, "add_next_sibling",     mkr_node_add_next_sibling,     1);
+    rb_define_method(mkr_mHtmlNode, "after",                mkr_node_add_next_sibling,     1);
+    rb_define_method(mkr_mHtmlNode, "remove",               mkr_node_remove,               0);
+    rb_define_method(mkr_mHtmlNode, "unlink",               mkr_node_remove,               0);
+    rb_define_method(mkr_mHtmlNode, "replace",              mkr_node_replace,              1);
 
-    rb_define_method(mkr_cNode, "inner_html=", mkr_node_set_inner_html, 1);
-    rb_define_method(mkr_cNode, "outer_html=", mkr_node_set_outer_html, 1);
+    rb_define_method(mkr_mHtmlNode, "inner_html=", mkr_node_set_inner_html, 1);
+    rb_define_method(mkr_mHtmlNode, "outer_html=", mkr_node_set_outer_html, 1);
 
-    rb_define_method(mkr_cNode, "[]=",              mkr_node_aset,             2);
-    rb_define_method(mkr_cNode, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
-    rb_define_method(mkr_cNode, "remove_attribute_ns", mkr_node_remove_attribute_ns, 2);
-    rb_define_method(mkr_cNode, "delete",           mkr_node_delete, 1);
-    rb_define_method(mkr_cNode, "remove_attribute", mkr_node_delete, 1);
-    rb_define_method(mkr_cNode, "content=",         mkr_node_set_content, 1);
-    rb_define_method(mkr_cNode, "name=",            mkr_node_set_name,    1);
+    rb_define_method(mkr_mHtmlNode, "[]=",              mkr_node_aset,             2);
+    rb_define_method(mkr_mHtmlNode, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
+    rb_define_method(mkr_mHtmlNode, "remove_attribute_ns", mkr_node_remove_attribute_ns, 2);
+    rb_define_method(mkr_mHtmlNode, "delete",           mkr_node_delete, 1);
+    rb_define_method(mkr_mHtmlNode, "remove_attribute", mkr_node_delete, 1);
+    rb_define_method(mkr_mHtmlNode, "content=",         mkr_node_set_content, 1);
+    rb_define_method(mkr_mHtmlNode, "name=",            mkr_node_set_name,    1);
 
-    rb_define_method(mkr_cDocument, "create_element",   mkr_doc_create_element,   1);
-    rb_define_method(mkr_cDocument, "create_text_node", mkr_doc_create_text_node, 1);
-    rb_define_method(mkr_cDocument, "create_comment",   mkr_doc_create_comment,   1);
-    rb_define_method(mkr_cDocument, "create_processing_instruction",
+    rb_define_method(mkr_cHtmlDocument, "create_element",   mkr_doc_create_element,   1);
+    rb_define_method(mkr_cHtmlDocument, "create_text_node", mkr_doc_create_text_node, 1);
+    rb_define_method(mkr_cHtmlDocument, "create_comment",   mkr_doc_create_comment,   1);
+    rb_define_method(mkr_cHtmlDocument, "create_processing_instruction",
                      mkr_doc_create_processing_instruction, 2);
-    rb_define_method(mkr_cDocument, "create_document_fragment",
+    rb_define_method(mkr_cHtmlDocument, "create_document_fragment",
                      mkr_doc_create_document_fragment, 0);
 }

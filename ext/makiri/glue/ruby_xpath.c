@@ -708,6 +708,6 @@ mkr_init_xpath(void)
     rb_define_method(mkr_cXPathContext, "register_variable",  mkr_xpath_ctx_register_variable, 2);
     rb_define_method(mkr_cXPathContext, "node=", mkr_xpath_ctx_set_node, 1);
 
-    rb_define_method(mkr_cNode, "xpath",    mkr_node_xpath,    -1);
-    rb_define_method(mkr_cNode, "at_xpath", mkr_node_at_xpath, -1);
+    rb_define_method(mkr_mHtmlNode, "xpath",    mkr_node_xpath,    -1);
+    rb_define_method(mkr_mHtmlNode, "at_xpath", mkr_node_at_xpath, -1);
 }

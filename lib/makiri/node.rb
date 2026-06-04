@@ -69,15 +69,12 @@ module Makiri
     end
 
     # --- Nokogiri-compatible aliases over the core API ---
-
-    # Attribute value by name (alias for {#[]}). Use {#attribute} for the node.
-    alias_method :attr, :[]
-    alias_method :get_attribute, :[]
-    alias_method :has_attribute?, :key?
-    alias_method :remove_attribute, :delete
-    alias_method :node_name, :name
-    alias_method :node_name=, :name=
-    alias_method :type, :node_type
+    #
+    # Aliases of the representation-specific reader methods (#[], #name, ...) live
+    # with those methods on the per-kind node behaviour (Makiri::HTML::Node), not
+    # here, since alias_method resolves its target at definition time and the
+    # readers are defined on the leaves' included module. These two alias
+    # representation-independent predicates defined just above, so they stay.
     alias_method :elem?, :element?
     alias_method :fragment?, :document_fragment?
 

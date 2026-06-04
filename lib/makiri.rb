@@ -15,6 +15,7 @@ end
 
 require_relative "makiri/node"
 require_relative "makiri/document"
+require_relative "makiri/html"
 require_relative "makiri/element"
 require_relative "makiri/attribute"
 require_relative "makiri/text"
@@ -35,13 +36,13 @@ module Makiri
   # Convenience constructor mirroring Nokogiri.
   #
   # @param source [String] HTML source (UTF-8).
-  # @return [Makiri::Document]
+  # @return [Makiri::HTML::Document]
   def self.HTML(source) # rubocop:disable Naming/MethodName
-    Document.parse(source)
+    HTML::Document.parse(source)
   end
 
   # Alias for {.HTML}.
   def self.parse(source)
-    Document.parse(source)
+    HTML::Document.parse(source)
   end
 end

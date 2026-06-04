@@ -6,7 +6,6 @@
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
 VALUE mkr_cDocument;
-VALUE mkr_cXmlDocument;
 VALUE mkr_cElement;
 VALUE mkr_cAttribute;
 VALUE mkr_cText;
@@ -15,6 +14,18 @@ VALUE mkr_cCData;
 VALUE mkr_cProcessingInstruction;
 VALUE mkr_cDocumentType;
 VALUE mkr_cDocumentFragment;
+VALUE mkr_mHTML;
+VALUE mkr_mHtmlNode;
+VALUE mkr_cHtmlDocument;
+VALUE mkr_cHtmlElement;
+VALUE mkr_cHtmlAttribute;
+VALUE mkr_cHtmlText;
+VALUE mkr_cHtmlComment;
+VALUE mkr_cHtmlCData;
+VALUE mkr_cHtmlProcessingInstruction;
+VALUE mkr_cHtmlDocumentType;
+VALUE mkr_cHtmlDocumentFragment;
+VALUE mkr_cXmlDocument;
 VALUE mkr_cNodeSet;
 VALUE mkr_cXPathContext;
 VALUE mkr_mXPath;
@@ -82,6 +93,36 @@ Init_makiri(void)
     mkr_mXPath         = rb_define_module_under(mkr_mMakiri, "XPath");
     mkr_mCSS           = rb_define_module_under(mkr_mMakiri, "CSS");
     mkr_mXML           = rb_define_module_under(mkr_mMakiri, "XML");
+
+    /* Per-kind hierarchy (§12): the classes above are abstract bases; concrete
+     * HTML nodes are Makiri::HTML::* leaves. The reader/query methods (which read
+     * lxb_dom) live on the mkr_mHtmlNode behavior module and are included into
+     * every leaf, so XML nodes (added in step 2) never inherit an HTML reader. */
+    mkr_mHTML          = rb_define_module_under(mkr_mMakiri, "HTML");
+    mkr_mHtmlNode      = rb_define_module_under(mkr_mHTML, "Node");
+    mkr_cHtmlDocument  = rb_define_class_under(mkr_mHTML, "Document",     mkr_cDocument);
+    mkr_cHtmlElement   = rb_define_class_under(mkr_mHTML, "Element",      mkr_cElement);
+    mkr_cHtmlAttribute = rb_define_class_under(mkr_mHTML, "Attribute",    mkr_cAttribute);
+    mkr_cHtmlText      = rb_define_class_under(mkr_mHTML, "Text",         mkr_cText);
+    mkr_cHtmlComment   = rb_define_class_under(mkr_mHTML, "Comment",      mkr_cComment);
+    mkr_cHtmlCData     = rb_define_class_under(mkr_mHTML, "CData",        mkr_cCData);
+    mkr_cHtmlProcessingInstruction =
+        rb_define_class_under(mkr_mHTML, "ProcessingInstruction", mkr_cProcessingInstruction);
+    mkr_cHtmlDocumentType =
+        rb_define_class_under(mkr_mHTML, "DocumentType", mkr_cDocumentType);
+    mkr_cHtmlDocumentFragment =
+        rb_define_class_under(mkr_mHTML, "DocumentFragment", mkr_cDocumentFragment);
+
+    /* Every HTML leaf gets the shared lxb_dom reader/query methods. */
+    VALUE html_leaves[] = {
+        mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttribute, mkr_cHtmlText,
+        mkr_cHtmlComment, mkr_cHtmlCData, mkr_cHtmlProcessingInstruction,
+        mkr_cHtmlDocumentType, mkr_cHtmlDocumentFragment,
+    };
+    for (size_t i = 0; i < sizeof(html_leaves) / sizeof(html_leaves[0]); i++) {
+        rb_include_module(html_leaves[i], mkr_mHtmlNode);
+        rb_undef_alloc_func(html_leaves[i]); /* created only from C, never .new */
+    }
 
     mkr_eError              = rb_define_class_under(mkr_mMakiri, "Error", rb_eStandardError);
     mkr_eXPathSyntaxError   = rb_define_class_under(mkr_mXPath, "SyntaxError",   mkr_eError);
