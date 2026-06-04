@@ -1045,7 +1045,9 @@ static const fn_entry_t fn_table[] = {
   { NULL,               NULL                },
 };
 
-mkr_func_impl_t
+/* File-static: the function table is engine-internal. eval_fncall (later in the
+ * merged engine TU) resolves through it; nothing outside the engine does. */
+static mkr_func_impl_t
 mkr_lookup_function(const char *ns_uri, const char *local_name)
 {
   if (local_name == NULL) return NULL;

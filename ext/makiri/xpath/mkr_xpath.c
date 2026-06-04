@@ -76,13 +76,20 @@ struct mkr_xpath_context_s {
   int engine_kind;
 };
 
-/* The XML instance's two node-dereferencing entries (the _xml monomorphization
- * of the shared body; defined in mkr_xpath_{eval,value}_xml.c). Their signatures
- * are node-pointer-only, so they are ABI-compatible with the HTML declarations. */
-int mkr_eval_ast_xml(mkr_xpath_context_t *ctx, mkr_node_t *ast,
-                     mkr_val_t *out, mkr_xpath_error_t *err);
-int mkr_try_first_match_xml(mkr_xpath_context_t *ctx, mkr_node_t *ast,
-                            MKR_DOM_NODE **out_node);
+/* The two node-dereferencing engine ENTRY points, one pair per monomorphized
+ * instance (mkr_xpath_engine_{html,xml}.c — the bodies suffix them _html / _xml
+ * via the prelude). The driver holds them as void node pointers and dispatches
+ * on ctx->engine_kind; every other per-evaluate helper is representation-neutral
+ * and shared (mkr_xpath_shared.c), called by its bare name. The signatures are
+ * node-pointer-only, hence ABI-identical across the two instances. */
+int mkr_eval_ast_html(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                      mkr_val_t *out, mkr_xpath_error_t *err);
+int mkr_eval_ast_xml (mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                      mkr_val_t *out, mkr_xpath_error_t *err);
+int mkr_try_first_match_html(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                             MKR_DOM_NODE **out_node);
+int mkr_try_first_match_xml (mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                             MKR_DOM_NODE **out_node);
 
 void
 mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind)
@@ -575,7 +582,7 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
 
   mkr_val_t v = {0};
   int eval_rc = ctx->engine_kind ? mkr_eval_ast_xml(ctx, ast, &v, &err)
-                                 : mkr_eval_ast(ctx, ast, &v, &err);
+                                 : mkr_eval_ast_html(ctx, ast, &v, &err);
   mkr_str_cache_truncate(&ctx->str_cache, str_cache_snapshot);
   if (!order_was_built && ctx->order_index.built) {
     mkr_doc_order_index_clear(&ctx->order_index);
@@ -605,7 +612,7 @@ mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   }
   MKR_DOM_NODE *node = NULL;
   int matched = ctx->engine_kind ? mkr_try_first_match_xml(ctx, ast, &node)
-                                 : mkr_try_first_match(ctx, ast, &node);
+                                 : mkr_try_first_match_html(ctx, ast, &node);
   if (matched) {
     /* Recognised first-match shape: return a 0-or-1-node node-set without
      * building (or sorting) the full descendant set. */

@@ -1199,7 +1199,8 @@ eval_filter(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 /* ---------- function library bridge ---------- */
 
-extern mkr_func_impl_t mkr_lookup_function(const char *ns_uri, const char *local_name);
+/* mkr_lookup_function is the file-static function table, defined earlier in this
+ * merged engine TU (mkr_xpath_funcs_body.h, included before this body). */
 
 static int
 eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
