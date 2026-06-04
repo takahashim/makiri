@@ -530,9 +530,12 @@ int mkr_xpath_eval_compiled(struct mkr_xpath_context_s *ctx,
 
 /* at_xpath() fast path: recognise a first-descendant-match shape and walk the
  * subtree in document order, stopping at the first match (out_node = match or
- * NULL). Returns 1 when handled, 0 when the shape is not recognised. */
+ * NULL). Returns 1 when handled, 0 when the shape is not recognised, -1 when the
+ * per-evaluate op budget is exceeded during the walk (*err set). Each visited
+ * node is charged to max_eval_ops so the fast path is bounded like the full
+ * evaluator. */
 int mkr_try_first_match(struct mkr_xpath_context_s *ctx, const mkr_node_t *ast,
-                        MKR_DOM_NODE **out_node);
+                        MKR_DOM_NODE **out_node, mkr_xpath_error_t *err);
 
 /* Like mkr_xpath_eval_compiled, but for Node#at_xpath: if the expression is a
  * recognised first-match shape (mkr_try_first_match), returns a 0-or-1-node

@@ -750,10 +750,13 @@ mkr_first_node_ok(const mkr_step_t *step, MKR_DOM_NODE *n)
 /* If +ast+ is a recognised at_xpath() first-match shape, walk <start>'s strict
  * descendants in document order and set *out_node to the first match (NULL if
  * none). Returns 1 when handled (caller skips the full evaluator), 0 when the
- * shape is not recognised. Never raises (the recognised shape cannot error). */
+ * shape is not recognised, and -1 when the per-evaluate op budget is exceeded
+ * during the walk (*err filled with MKR_XPATH_ERR_LIMIT). Every visited node is
+ * charged to max_eval_ops, so a huge late-/no-match document fails closed here
+ * exactly as it would in the full evaluator instead of bypassing the budget. */
 int
 mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
-                    MKR_DOM_NODE **out_node)
+                    MKR_DOM_NODE **out_node, mkr_xpath_error_t *err)
 {
   const mkr_step_t *step;
   if (out_node == NULL || !mkr_first_recognise(ast, &step)) return 0;
@@ -764,8 +767,13 @@ mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
       : mkr_ctx_node(ctx);
   if (start == NULL) return 1; /* recognised; no context -> no match */
 
+  mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
+
   /* Iterative pre-order (document order) over STRICT descendants of start. */
   for (MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(start); n != NULL; ) {
+    /* Charge each visited node to the per-evaluate op budget so this fast path
+     * is bounded by max_eval_ops just like the full evaluator (fail-closed). */
+    if (mkr_limit_eval_op(limits, err) != 0) return -1;
     if (node_principal_match(&step->test, n, step->axis, ctx)
         && mkr_first_node_ok(step, n)) {
       *out_node = n;

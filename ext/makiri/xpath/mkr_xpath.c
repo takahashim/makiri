@@ -87,9 +87,9 @@ int mkr_eval_ast_html(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
 int mkr_eval_ast_xml (mkr_xpath_context_t *ctx, const mkr_node_t *ast,
                       mkr_val_t *out, mkr_xpath_error_t *err);
 int mkr_try_first_match_html(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
-                             MKR_DOM_NODE **out_node);
+                             MKR_DOM_NODE **out_node, mkr_xpath_error_t *err);
 int mkr_try_first_match_xml (mkr_xpath_context_t *ctx, const mkr_node_t *ast,
-                             MKR_DOM_NODE **out_node);
+                             MKR_DOM_NODE **out_node, mkr_xpath_error_t *err);
 
 void
 mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind)
@@ -610,9 +610,24 @@ mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
     }
     return -1;
   }
+  /* Reset the per-evaluate counters before the first-match fast path: its
+   * descendant walk charges every visited node to max_eval_ops, so it is
+   * bounded fail-closed exactly like the full evaluator (which resets these in
+   * mkr_xpath_eval_compiled). The not-recognised fallback below resets them
+   * again; the walk only runs for recognised shapes, so nothing double-counts. */
+  ctx->limits.eval_ops        = 0;
+  ctx->limits.recursion_depth = 0;
+
   MKR_DOM_NODE *node = NULL;
-  int matched = ctx->engine_kind ? mkr_try_first_match_xml(ctx, ast, &node)
-                                 : mkr_try_first_match_html(ctx, ast, &node);
+  mkr_xpath_error_t err = {0};
+  int matched = ctx->engine_kind ? mkr_try_first_match_xml(ctx, ast, &node, &err)
+                                 : mkr_try_first_match_html(ctx, ast, &node, &err);
+  if (matched < 0) {
+    /* Op budget exceeded while walking — fail closed (do NOT fall back to the
+     * full evaluator, which would hit the same wall). */
+    if (out_error) *out_error = err; else mkr_xpath_error_clear(&err);
+    return -1;
+  }
   if (matched) {
     /* Recognised first-match shape: return a 0-or-1-node node-set without
      * building (or sorting) the full descendant set. */
