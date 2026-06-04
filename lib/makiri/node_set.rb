@@ -98,6 +98,14 @@ module Makiri
     end
     alias unlink remove
 
+    # Like {#dup} (a new set over the same nodes), honouring Ruby's +freeze:+
+    # keyword. (#dup is the native copy.)
+    def clone(freeze: nil)
+      copy = dup
+      copy.freeze if freeze || (freeze.nil? && frozen?)
+      copy
+    end
+
     def inspect
       "#<#{self.class.name} length=#{length}>"
     end

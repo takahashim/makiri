@@ -274,6 +274,61 @@ RSpec.describe Makiri::Node do
     end
   end
 
+  describe "#dup / #clone (Ruby copy protocol)" do
+    it "#dup is a deep, detached, independent copy by default" do
+      copy = div.dup
+      expect(copy.name).to eq("div")
+      expect(copy.parent).to be_nil
+      expect(copy).not_to eql(div)
+      expect(copy.element_children.map(&:name)).to eq(%w[p p])
+      copy["id"] = "y"
+      expect(div["id"]).to eq("x") # independent
+    end
+
+    it "#dup(0) is a shallow copy (Nokogiri level argument)" do
+      expect(div.dup(0).children).to be_empty
+    end
+
+    it "#clone is a deep copy and honours the freeze: keyword" do
+      expect(div.clone.element_children.map(&:name)).to eq(%w[p p])
+      expect(div.clone).not_to be_frozen
+      expect(div.clone(freeze: false)).not_to be_frozen
+      frozen = div.clone(freeze: true)
+      expect(frozen).to be_frozen
+      expect { frozen["id"] = "z" }.to raise_error(FrozenError)
+    end
+
+    it "Document#dup is an independent whole-document copy" do
+      d2 = doc.dup
+      expect(d2).to be_a(Makiri::Document)
+      expect(d2.at_css("#x")).not_to be_nil
+      expect(d2.at_css("#x")).not_to eql(div)
+      d2.at_css("#x")["id"] = "z"
+      expect(doc.at_css("#x")).not_to be_nil # original untouched
+    end
+  end
+
+  describe "a frozen node is immutable" do
+    it "raises FrozenError from every mutator" do
+      node = div.dup       # detached copy we can freeze freely
+      child = doc.create_element("span")
+      node.freeze
+      expect(node).to be_frozen
+      expect { node["k"] = "v" }.to raise_error(FrozenError)
+      expect { node.delete("id") }.to raise_error(FrozenError)
+      expect { node.content = "x" }.to raise_error(FrozenError)
+      expect { node.name = "section" }.to raise_error(FrozenError)
+      expect { node.add_child(child) }.to raise_error(FrozenError)
+      expect { node << child }.to raise_error(FrozenError)
+      expect { node.inner_html = "<b>x</b>" }.to raise_error(FrozenError)
+    end
+
+    it "still allows mutation of non-frozen nodes" do
+      div["new"] = "1"
+      expect(div["new"]).to eq("1")
+    end
+  end
+
   describe "#clone_node" do
     it "shallow-clones by default (DOM cloneNode's deep defaults to false)" do
       clone = div.clone_node

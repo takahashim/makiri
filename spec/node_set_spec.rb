@@ -29,4 +29,14 @@ RSpec.describe Makiri::NodeSet do
     expect(lis.each).to be_a(Enumerator)
     expect(lis.each.to_a.map(&:text)).to eq(%w[a b c])
   end
+
+  it "#dup / #clone make an independent set over the same nodes" do
+    copy = lis.dup
+    expect(copy).to be_a(Makiri::NodeSet)
+    expect(copy.length).to eq(3)
+    expect(copy.map(&:text)).to eq(%w[a b c])
+    expect(copy[0]).to eql(lis[0]) # same underlying nodes
+    expect(copy).not_to equal(lis) # but a distinct set
+    expect(lis.clone.map(&:text)).to eq(%w[a b c])
+  end
 end

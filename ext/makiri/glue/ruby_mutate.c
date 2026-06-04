@@ -70,12 +70,22 @@ mkr_is_fragment(const lxb_dom_node_t *n)
 /* tree mutation                                                      */
 /* ------------------------------------------------------------------ */
 
+/* Every tree / attribute mutation unwraps `self` through here first: a node the
+ * caller has frozen (Ruby's Object#freeze) is immutable, so raise FrozenError
+ * rather than silently editing it. Read accessors keep using mkr_node_unwrap. */
+static lxb_dom_node_t *
+mkr_node_unwrap_mutable(VALUE self)
+{
+    rb_check_frozen(self);
+    return mkr_node_unwrap(self);
+}
+
 /* node.add_child(child) -> child. Appends child as the last child. A document
  * fragment contributes its children rather than itself. */
 static VALUE
 mkr_node_add_child(VALUE self, VALUE rb_child)
 {
-    lxb_dom_node_t *parent = mkr_node_unwrap(self);
+    lxb_dom_node_t *parent = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *child  = mkr_arg_node(rb_child);
     mkr_prepare_insert(parent, child);
     if (mkr_is_fragment(child)) {
@@ -102,7 +112,7 @@ mkr_node_append(VALUE self, VALUE rb_child)
 static VALUE
 mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
 {
-    lxb_dom_node_t *ref  = mkr_node_unwrap(self);
+    lxb_dom_node_t *ref  = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *node = mkr_arg_node(rb_node);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
@@ -124,7 +134,7 @@ mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
 static VALUE
 mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
 {
-    lxb_dom_node_t *ref  = mkr_node_unwrap(self);
+    lxb_dom_node_t *ref  = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *node = mkr_arg_node(rb_node);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
@@ -148,7 +158,7 @@ mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
 static VALUE
 mkr_node_remove(VALUE self)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
         rb_raise(mkr_eError, "use delete(name) to remove an attribute");
     }
@@ -163,7 +173,7 @@ mkr_node_remove(VALUE self)
 static VALUE
 mkr_node_replace(VALUE self, VALUE rb_other)
 {
-    lxb_dom_node_t *ref   = mkr_node_unwrap(self);
+    lxb_dom_node_t *ref   = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *other = mkr_arg_node(rb_other);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot replace a node with no parent");
@@ -191,7 +201,7 @@ mkr_node_replace(VALUE self, VALUE rb_other)
 static VALUE
 mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
     }
@@ -216,7 +226,7 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
 static VALUE
 mkr_node_set_name(VALUE self, VALUE rb_name)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "name= is only supported on elements");
     }
@@ -245,7 +255,7 @@ mkr_node_set_name(VALUE self, VALUE rb_name)
 static VALUE
 mkr_node_set_content(VALUE self, VALUE rb_text)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "node content");
     lxb_status_t st = lxb_dom_node_text_content_set(
         node, (const lxb_char_t *)tv.ptr, tv.len);
@@ -261,7 +271,7 @@ mkr_node_set_content(VALUE self, VALUE rb_text)
 static VALUE
 mkr_node_delete(VALUE self, VALUE rb_name)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         return self;
     }
@@ -327,7 +337,7 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
 static VALUE
 mkr_node_set_inner_html(VALUE self, VALUE rb_html)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "inner_html= requires an element");
     }
@@ -348,7 +358,7 @@ mkr_node_set_inner_html(VALUE self, VALUE rb_html)
 static VALUE
 mkr_node_set_outer_html(VALUE self, VALUE rb_html)
 {
-    lxb_dom_node_t *node   = mkr_node_unwrap(self);
+    lxb_dom_node_t *node   = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *parent = node->parent;
     if (parent == NULL || parent->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "outer_html= requires a node with a parent element");

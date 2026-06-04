@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* `Node#dup` / `Node#clone`, `NodeSet#dup` / `#clone`, and `Document#dup` /
+  `#clone` — the native allocator is undef'd (so wrapper objects stay
+  memory-safe), which made Ruby's default `dup`/`clone` raise a confusing
+  "allocator undefined" `TypeError`. They now return a real, independent copy
+  like Nokogiri: a node is deep-cloned and detached (`#dup(0)` for a shallow
+  copy, matching Nokogiri's level argument); a `NodeSet` becomes a new set over
+  the same nodes; a `Document` is copied by serialise-and-re-parse. `#clone`
+  honours Ruby's `freeze:` keyword.
+* A **frozen node is now genuinely immutable**: every tree/attribute mutator
+  (`add_child`/`<<`, `before`/`after`, `remove`, `replace`, `[]=`, `delete`,
+  `content=`, `name=`, `inner_html=`/`outer_html=`) raises `FrozenError` on a
+  frozen node instead of silently editing it. Previously `freeze` set the flag
+  but the C mutators ignored it, so a "frozen" node could still be changed (and
+  `clone(freeze: true)` returned an unfrozen copy).
+
 ### Changed
 
 * The text index's per-element range table stores its slice-run bounds as

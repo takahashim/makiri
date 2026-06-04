@@ -311,6 +311,25 @@ mkr_node_set_op_minus(VALUE self, VALUE other)
     return mkr_node_set_op_filter(self, other, 0);
 }
 
+/* #dup / #clone: a new NodeSet over the same nodes (the nodes are shared — they
+ * are owned by the document arena — but the set itself is independent), like
+ * Nokogiri. Defined here because the allocator is undef'd, so Ruby's default
+ * allocate-then-copy raises; any level/freeze argument is ignored. */
+static VALUE
+mkr_node_set_dup(int argc, VALUE *argv, VALUE self)
+{
+    (void)argc;
+    (void)argv;
+    mkr_node_set_data_t *s = mkr_node_set_get(self);
+    VALUE copy = mkr_node_set_new(s->document);
+    /* Reuse the overflow-checked growth + cap enforcement of mkr_node_set_push;
+     * the source already has no duplicates, so this is a faithful copy. */
+    for (size_t i = 0; i < s->count; i++) {
+        mkr_node_set_push(copy, s->nodes[i]);
+    }
+    return copy;
+}
+
 void
 mkr_init_node_set(void)
 {
@@ -322,4 +341,6 @@ mkr_init_node_set(void)
     rb_define_method(mkr_cNodeSet, "length", mkr_node_set_length, 0);
     rb_define_method(mkr_cNodeSet, "[]",     mkr_node_set_aref,   1);
     rb_define_method(mkr_cNodeSet, "each",   mkr_node_set_each,   0);
+    rb_define_method(mkr_cNodeSet, "dup",    mkr_node_set_dup,   -1);
+    /* #clone is defined in Ruby (node_set.rb) so it can honour `freeze:`. */
 }

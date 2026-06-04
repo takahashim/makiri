@@ -172,6 +172,26 @@ module Makiri
       "#<#{self.class.name}>"
     end
 
+    # An independent copy of this node, detached from any parent and owned by the
+    # same document (like Nokogiri's Node#dup). Deep by default; +level+ 0 makes
+    # a shallow copy (matching Nokogiri's level argument). The native allocator
+    # is undef'd to keep wrappers memory-safe, so #dup/#clone delegate to
+    # {#clone_node} rather than Ruby's default allocate-and-copy (which would
+    # otherwise raise "allocator undefined").
+    def dup(level = 1)
+      clone_node(level != 0)
+    end
+
+    # Like {#dup}, always a deep copy, and honouring Ruby's +freeze:+ keyword:
+    # +true+ returns a frozen copy, +false+ an unfrozen one, the default (+nil+)
+    # copies the receiver's frozen state. A frozen node is genuinely immutable —
+    # its mutators raise +FrozenError+ (see Makiri's mutation methods).
+    def clone(freeze: nil)
+      copy = clone_node(true)
+      copy.freeze if freeze || (freeze.nil? && frozen?)
+      copy
+    end
+
     private
 
     # Heuristic used by {#search}: does +path+ look like an XPath location path
