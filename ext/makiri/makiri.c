@@ -1,7 +1,7 @@
 #include "makiri.h"
 #include "core/mkr_core.h"
 #include "bridge/bridge.h"
-#include "xml/mkr_xml_node.h"
+#include "xml/mkr_xml.h"
 
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
@@ -39,6 +39,10 @@ mkr_c_selftest(VALUE self)
     int xc = mkr_xml_node_selftest();
     if (xc != 0) {
         rb_raise(mkr_eError, "mkr_xml_node_selftest failed at check %d", xc);
+    }
+    int pc = mkr_xml_parse_selftest();
+    if (pc != 0) {
+        rb_raise(mkr_eError, "mkr_xml_parse_selftest failed at check %d", pc);
     }
     return Qtrue;
 }

@@ -197,16 +197,5 @@ mkr_xml_node_selftest(void)
     return 0; /* all checks passed */
 }
 
-/* ---- parser entry (SKELETON) ---------------------------------------------
- * Builds an empty document. The tokenizer (mkr_xml_lexer.c) and tree builder
- * (mkr_xml_tree.c) land next; for now this validates the decode -> GVL -> arena
- * -> doc -> wrap pipeline. */
-mkr_xml_doc_t *
-mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
-{
-    (void)src; (void)len;
-    mkr_xml_doc_t *doc = mkr_xml_doc_new();
-    if (doc == NULL) { if (status) *status = MKR_XML_ERR_OOM; return NULL; }
-    if (status) *status = MKR_XML_OK;
-    return doc;
-}
+/* mkr_xml_parse now lives in mkr_xml_tree.c (the minimal tokenizer + tree
+ * builder). This file owns only the node/arena primitives. */

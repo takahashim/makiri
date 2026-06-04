@@ -39,4 +39,8 @@ typedef enum {
  * pipeline is exercised end to end. */
 mkr_xml_doc_t *mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status);
 
+/* Structural self-test of the tokenizer + tree builder (run from
+ * Makiri.__c_selftest). Returns 0 on success or the 1-based failing check. */
+int mkr_xml_parse_selftest(void);
+
 #endif /* MKR_XML_H */
