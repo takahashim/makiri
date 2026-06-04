@@ -46,6 +46,7 @@ void mkr_init_xpath(void);
 void mkr_init_css(void);
 void mkr_init_serialize(void);
 void mkr_init_mutate(void);
+void mkr_init_xml(void);
 
 #ifdef __cplusplus
 }

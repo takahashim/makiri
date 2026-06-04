@@ -1,6 +1,7 @@
 #include "makiri.h"
 #include "core/mkr_core.h"
 #include "bridge/bridge.h"
+#include "xml/mkr_xml_node.h"
 
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
@@ -34,6 +35,10 @@ mkr_c_selftest(VALUE self)
     int rc = mkr_core_selftest();
     if (rc != 0) {
         rb_raise(mkr_eError, "mkr_core_selftest failed at check %d", rc);
+    }
+    int xc = mkr_xml_node_selftest();
+    if (xc != 0) {
+        rb_raise(mkr_eError, "mkr_xml_node_selftest failed at check %d", xc);
     }
     return Qtrue;
 }
@@ -107,6 +112,7 @@ Init_makiri(void)
     mkr_init_css();
     mkr_init_serialize();
     mkr_init_mutate();
+    mkr_init_xml();
 
     rb_define_singleton_method(mkr_mMakiri, "__c_selftest", mkr_c_selftest, 0);
     rb_define_singleton_method(mkr_mXML, "__decode", mkr_xml_s_decode, 1);
