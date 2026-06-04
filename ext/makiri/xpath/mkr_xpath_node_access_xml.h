@@ -1,14 +1,14 @@
-/* mkr_node_access_xml.h — node-access contract bound to the custom XML node.
+/* mkr_xpath_node_access_xml.h — node-access contract bound to the custom XML node.
  *
- * The XML counterpart of mkr_node_access.h: it binds the MKR_NODE_* / MKR_ELEM_*
+ * The XML counterpart of mkr_xpath_node_access_html.h: it binds the MKR_NODE_* / MKR_ELEM_*
  * field-access macros + per-instance services to mkr_xml_node_t, so the shared
  * XPath engine body (mkr_xpath_*_body.h) compiles for XML with zero runtime
  * dispatch (§2.5). MKR_HOST_XML selects the engine's XML host-policy branches
  * (name-test matching, §8.6). The custom node carries its namespace URI and a
  * contiguous "prefix:local" qname directly, so there is no ns hash / tag table.
  */
-#ifndef MKR_NODE_ACCESS_XML_H
-#define MKR_NODE_ACCESS_XML_H
+#ifndef MKR_XPATH_NODE_ACCESS_XML_H
+#define MKR_XPATH_NODE_ACCESS_XML_H
 
 #include <lexbor/dom/dom.h>          /* shared LXB_DOM_NODE_TYPE_* numeric values + lxb_char_t */
 #include "../xml/mkr_xml_node.h"
@@ -90,4 +90,4 @@ mkr_xml_node_get_attribute(mkr_xml_node_t *el, const char *name, size_t nlen, si
  * never enabled for XML (the element index is NULL), so this is unreachable. */
 #define MKR_DOC_TAG_ID_BY_NAME(doc, ptr, len) LXB_TAG__UNDEF
 
-#endif /* MKR_NODE_ACCESS_XML_H */
+#endif /* MKR_XPATH_NODE_ACCESS_XML_H */

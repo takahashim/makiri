@@ -1,8 +1,8 @@
-/* mkr_xpath_value.c — HTML instance of the XPath value model / node-set / string
+/* mkr_xpath_value_html.c — HTML instance of the XPath value model / node-set / string
  * value construction.
  *
  * Shared body: mkr_xpath_value_body.h. This wrapper binds the node-access
  * contract to lxb_dom and compiles the value model for HTML. See
- * mkr_xpath_eval.c for the monomorphization rationale (§2.5). */
-#include "mkr_node_access.h"
+ * mkr_xpath_eval_html.c for the monomorphization rationale (§2.5). */
+#include "mkr_xpath_node_access_html.h"
 #include "mkr_xpath_value_body.h"

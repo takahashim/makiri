@@ -10,7 +10,7 @@
  * compiled against (§2.5 monomorphization). The default is Lexbor's lxb_dom for
  * the HTML instance; the XML instance defines MKR_DOM_NODE = mkr_xml_node_t (and
  * the siblings) before including this header so the same engine body compiles
- * against the custom node. The MKR_NODE_* field-access contract (mkr_node_access*.h)
+ * against the custom node. The MKR_NODE_* field-access contract (mkr_xpath_node_access_*.h)
  * is the matching per-instance binding. */
 #ifndef MKR_DOM_NODE
 #  define MKR_DOM_NODE     lxb_dom_node_t
@@ -379,7 +379,7 @@ void mkr_nodeset_unique_sorted(struct mkr_xpath_context_s *ctx, mkr_nodeset_t *n
  * is a 32-bit ordinal that places attribute nodes immediately after
  * their owner element and before any descendants, matching the
  * comparator's existing semantics so behavior is preserved. Build /
- * lookup are file-static helpers in mkr_xpath_value.c; only the
+ * lookup are file-static helpers in mkr_xpath_value_body.h; only the
  * lifecycle hooks below are public so the context can own the index.
  */
 typedef struct {
@@ -433,7 +433,7 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   correctness-wise OK but performs unchecked allocation; new code
  *   should prefer the _or_fail variants.
  *
- *   Layer 3 — internal builders (file-static in mkr_xpath_value.c):
+ *   Layer 3 — internal builders (file-static in mkr_xpath_value_body.h):
  *   node_string_value_inner, append_text_content, etc. Never called
  *   from outside the value layer.
  *

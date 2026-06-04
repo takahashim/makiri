@@ -53,6 +53,6 @@
 #define mkr_val_to_number_unchecked        mkr_val_to_number_unchecked_xml
 #define mkr_val_to_owned_text_or_fail      mkr_val_to_owned_text_or_fail_xml
 
-#include "mkr_node_access_xml.h"   /* MKR_NODE_* + MKR_HOST_XML for the custom node */
+#include "mkr_xpath_node_access_xml.h"   /* MKR_NODE_* + MKR_HOST_XML for the custom node */
 
 #endif /* MKR_XPATH_XML_PRELUDE_H */

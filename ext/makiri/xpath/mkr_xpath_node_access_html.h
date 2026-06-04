@@ -1,4 +1,4 @@
-/* mkr_node_access.h — node-access contract for the XPath engine.
+/* mkr_xpath_node_access_html.h — node-access contract for the XPath engine.
  *
  * The engine's per-node work (navigation, name tests, namespace tests) is
  * expressed through these MKR_NODE_* / MKR_ELEM_* macros instead of touching a
@@ -18,8 +18,8 @@
  * representations (the custom XML node reuses LXB_DOM_NODE_TYPE_* values), so
  * the type switches in the engine stay representation-neutral.
  */
-#ifndef MKR_NODE_ACCESS_H
-#define MKR_NODE_ACCESS_H
+#ifndef MKR_XPATH_NODE_ACCESS_HTML_H
+#define MKR_XPATH_NODE_ACCESS_HTML_H
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/ns/ns.h>
@@ -119,4 +119,4 @@ mkr_html_node_ns_uri(lxb_dom_node_t *node, lxb_dom_document_t *doc, size_t *lenp
 #define MKR_DOC_TAG_ID_BY_NAME(doc, ptr, len) \
     lxb_tag_id_by_name((doc)->tags, (const lxb_char_t *)(ptr), (len))
 
-#endif /* MKR_NODE_ACCESS_H */
+#endif /* MKR_XPATH_NODE_ACCESS_HTML_H */

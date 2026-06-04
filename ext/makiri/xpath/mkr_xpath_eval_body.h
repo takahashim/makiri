@@ -13,7 +13,7 @@
  * native context. Phase 1 implements: child / attribute / self /
  * descendant-or-self / parent axes; predicates with position; the
  * full set of XPath 1.0 binary operators (semantically); arithmetic;
- * and a small built-in function table (see mkr_xpath_funcs.c).
+ * and a small built-in function table (see mkr_xpath_funcs_body.h).
  */
 
 /* ---------- forward decls ---------- */
@@ -56,12 +56,12 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
    * URI bound to the prefix. There is no qualified-name buffer on the custom
    * node, so the comparison is always against the local name. */
   size_t got_len = 0;
-  const char *got = (axis == MKR_AXIS_ATTRIBUTE)
-                      ? MKR_ATTR_LOCAL_NAME(node, &got_len)
-                      : MKR_ELEM_LOCAL_NAME(node, &got_len);
+  const lxb_char_t *got = (axis == MKR_AXIS_ATTRIBUTE)
+                            ? MKR_ATTR_LOCAL_NAME(node, &got_len)
+                            : MKR_ELEM_LOCAL_NAME(node, &got_len);
   if (got == NULL || test->local.ptr == NULL) return 0;
   if (!mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->local),
-                            mkr_borrowed_text(got, got_len))) return 0;
+                            mkr_borrowed_text((const char *)got, got_len))) return 0;
 
   size_t node_uri_len = 0;
   const char *node_uri = MKR_NODE_NS_URI(node, mkr_ctx_document(ctx), &node_uri_len);
