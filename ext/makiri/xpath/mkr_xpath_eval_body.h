@@ -654,7 +654,10 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     return 0;
   }
   size_t cnt = 0;
-  MKR_DOM_NODE *const *bucket = lookup(eidx, tag, &cnt);
+  /* The element index is HTML-only (the lookup hook is typed for lxb_dom); this
+   * whole fast path is unreachable for XML (its element index is NULL), but the
+   * cast keeps the shared body warning-clean under the XML instantiation. */
+  MKR_DOM_NODE *const *bucket = (MKR_DOM_NODE *const *)lookup(eidx, tag, &cnt);
   for (size_t i = 0; i < cnt; ++i) {
     MKR_DOM_NODE *n = bucket[i];
     if (node_principal_match(&step->test, n, step->axis, ctx)) {

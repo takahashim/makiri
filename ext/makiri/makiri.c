@@ -26,7 +26,15 @@ VALUE mkr_cHtmlCData;
 VALUE mkr_cHtmlProcessingInstruction;
 VALUE mkr_cHtmlDocumentType;
 VALUE mkr_cHtmlDocumentFragment;
+VALUE mkr_mXmlNodeMethods;
+VALUE mkr_cXmlNode;
 VALUE mkr_cXmlDocument;
+VALUE mkr_cXmlElement;
+VALUE mkr_cXmlAttribute;
+VALUE mkr_cXmlText;
+VALUE mkr_cXmlComment;
+VALUE mkr_cXmlCData;
+VALUE mkr_cXmlProcessingInstruction;
 VALUE mkr_cNodeSet;
 VALUE mkr_cXPathContext;
 VALUE mkr_mXPath;
@@ -134,6 +142,26 @@ Init_makiri(void)
         rb_undef_alloc_func(html_leaves[i]); /* created only from C, never .new */
     }
 
+    /* Makiri::XML leaves (the custom-node counterparts). XML::Document itself is
+     * defined in mkr_init_xml (it backs a mkr_parsed_t, not a node). */
+    mkr_mXmlNodeMethods = rb_define_module_under(mkr_mXML, "NodeMethods");
+    mkr_cXmlNode      = rb_define_class_under(mkr_mXML, "Node",      mkr_cNode);
+    mkr_cXmlElement   = rb_define_class_under(mkr_mXML, "Element",   mkr_cElement);
+    mkr_cXmlAttribute = rb_define_class_under(mkr_mXML, "Attribute", mkr_cAttribute);
+    mkr_cXmlText      = rb_define_class_under(mkr_mXML, "Text",      mkr_cText);
+    mkr_cXmlComment   = rb_define_class_under(mkr_mXML, "Comment",   mkr_cComment);
+    mkr_cXmlCData     = rb_define_class_under(mkr_mXML, "CData",     mkr_cCData);
+    mkr_cXmlProcessingInstruction =
+        rb_define_class_under(mkr_mXML, "ProcessingInstruction", mkr_cProcessingInstruction);
+    VALUE xml_leaves[] = {
+        mkr_cXmlNode, mkr_cXmlElement, mkr_cXmlAttribute, mkr_cXmlText,
+        mkr_cXmlComment, mkr_cXmlCData, mkr_cXmlProcessingInstruction,
+    };
+    for (size_t i = 0; i < sizeof(xml_leaves) / sizeof(xml_leaves[0]); i++) {
+        rb_include_module(xml_leaves[i], mkr_mXmlNodeMethods);
+        rb_undef_alloc_func(xml_leaves[i]);
+    }
+
     mkr_eError              = rb_define_class_under(mkr_mMakiri, "Error", rb_eStandardError);
     mkr_eXPathSyntaxError   = rb_define_class_under(mkr_mXPath, "SyntaxError",   mkr_eError);
     mkr_eXPathLimitExceeded = rb_define_class_under(mkr_mXPath, "LimitExceeded", mkr_eXPathSyntaxError);
@@ -169,6 +197,7 @@ Init_makiri(void)
     mkr_init_serialize();
     mkr_init_mutate();
     mkr_init_xml();
+    mkr_init_xml_node();
 
     rb_define_singleton_method(mkr_mMakiri, "__c_selftest", mkr_c_selftest, 0);
     rb_define_singleton_method(mkr_mXML, "__decode", mkr_xml_s_decode, 1);

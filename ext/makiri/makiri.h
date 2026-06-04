@@ -47,7 +47,19 @@ extern VALUE mkr_cHtmlProcessingInstruction;
 extern VALUE mkr_cHtmlDocumentType;
 extern VALUE mkr_cHtmlDocumentFragment;
 
-extern VALUE mkr_cXmlDocument;   /* Makiri::XML::Document (standalone until step 2) */
+/* Makiri::XML leaves + the XML reader behavior module (the custom-node
+ * counterpart of mkr_mHtmlNodeMethods). */
+extern VALUE mkr_mXmlNodeMethods;
+extern VALUE mkr_cXmlNode;
+extern VALUE mkr_cXmlDocument;
+extern VALUE mkr_cXmlElement;
+extern VALUE mkr_cXmlAttribute;
+extern VALUE mkr_cXmlText;
+extern VALUE mkr_cXmlComment;
+extern VALUE mkr_cXmlCData;
+extern VALUE mkr_cXmlProcessingInstruction;
+
+void mkr_init_xml_node(void);
 extern VALUE mkr_cNodeSet;
 extern VALUE mkr_cXPathContext;
 extern VALUE mkr_mXPath;

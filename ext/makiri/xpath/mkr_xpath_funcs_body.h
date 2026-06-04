@@ -933,9 +933,8 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   if (MKR_NODE_NS_ID(n) == 0) {
     return set_empty_string(out, err, "namespace-uri");
   }
-  MKR_DOM_DOCUMENT *doc = mkr_ctx_document(ctx);
   size_t len = 0;
-  const char *uri = MKR_NODE_NS_URI(n, doc, &len);
+  const char *uri = MKR_NODE_NS_URI(n, mkr_ctx_document(ctx), &len);
   if (uri == NULL) {
     return set_empty_string(out, err, "namespace-uri");
   }

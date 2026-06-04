@@ -37,6 +37,11 @@ VALUE           mkr_wrap_node(lxb_dom_node_t *node, VALUE document);
 lxb_dom_node_t *mkr_node_unwrap(VALUE rb_node);
 VALUE           mkr_node_document(VALUE rb_node);
 
+/* XML node bridge (glue/ruby_xml_node.c): wrap a custom XML node into the right
+ * Makiri::XML::* leaf (Qnil for NULL, the Document VALUE for the document node). */
+struct mkr_xml_node;
+VALUE mkr_wrap_xml_node(struct mkr_xml_node *node, VALUE document);
+
 /* Document bridge (glue/ruby_doc.c). */
 lxb_dom_document_t *mkr_doc_unwrap(VALUE rb_doc);
 mkr_parsed_t       *mkr_doc_parsed(VALUE rb_doc);

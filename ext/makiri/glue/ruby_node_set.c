@@ -16,7 +16,22 @@ typedef struct {
     size_t           count;
     size_t           cap;
     VALUE            document;
+    int              doc_is_xml;  /* cached once: the stored pointers are
+                                   * mkr_xml_node_t* (wrap as Makiri::XML::*) */
 } mkr_node_set_data_t;
+
+/* Wrap a stored node into a Ruby Node, choosing the representation by the set's
+ * (fixed) document kind — an XML document's nodes are custom mkr_xml_node_t. The
+ * kind is cached at construction so this stays a single branch per node (a
+ * per-node is_kind_of/parsed-kind probe would regress the hot traversal path). */
+static VALUE
+mkr_node_set_wrap(const mkr_node_set_data_t *s, lxb_dom_node_t *node)
+{
+    if (s->doc_is_xml) {
+        return mkr_wrap_xml_node((struct mkr_xml_node *)node, s->document);
+    }
+    return mkr_wrap_node(node, s->document);
+}
 
 static void
 mkr_node_set_gc_mark(void *ptr)
@@ -62,10 +77,11 @@ mkr_node_set_new(VALUE document)
     mkr_node_set_data_t *s;
     VALUE obj = TypedData_Make_Struct(mkr_cNodeSet, mkr_node_set_data_t,
                                       &mkr_node_set_type, s);
-    s->nodes    = NULL;
-    s->count    = 0;
-    s->cap      = 0;
-    s->document = document;
+    s->nodes      = NULL;
+    s->count      = 0;
+    s->cap        = 0;
+    s->document   = document;
+    s->doc_is_xml = rb_obj_is_kind_of(document, mkr_cXmlDocument) ? 1 : 0;
     return obj;
 }
 
@@ -147,7 +163,7 @@ mkr_node_set_aref(int argc, VALUE *argv, VALUE self)
     long i = NUM2LONG(argv[0]);
     if (i < 0) i += count;
     if (i < 0 || i >= count) return Qnil;
-    return mkr_wrap_node(s->nodes[i], s->document);
+    return mkr_node_set_wrap(s, s->nodes[i]);
 }
 
 static VALUE
@@ -159,7 +175,7 @@ mkr_node_set_each(VALUE self)
     RETURN_ENUMERATOR(self, 0, 0);
 
     for (size_t i = 0; i < s->count; i++) {
-        rb_yield(mkr_wrap_node(s->nodes[i], s->document));
+        rb_yield(mkr_node_set_wrap(s, s->nodes[i]));
     }
     return self;
 }
