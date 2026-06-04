@@ -633,6 +633,26 @@ mkr_nodeset_sort_doc_order(mkr_xpath_context_t *ctx, mkr_nodeset_t *ns)
 {
   if (ns == NULL || ns->count < 2) return;
 
+  /* Already-sorted fast path. A relative step over a multi-node context
+   * (e.g. the child step of //li/a or //a:entry/a:title) collects its
+   * forward-axis results context-by-context in document order, so when the
+   * contexts are non-nested the concatenation is ALREADY in document order and
+   * the O(n log n) sort is pure waste. An O(n) scan confirms it: if every
+   * adjacent pair is already in order we return without sorting (and without
+   * building the doc-order index). Reverse axes and interleaved (nested-context)
+   * results fail the scan early and fall through to the full sort below. The
+   * scan uses the same comparator the sort would, so it can only skip work,
+   * never change the result. This is the libxml2-parity win for multi-step
+   * paths, where the sort otherwise dominates (profiled). */
+  int already_ordered = 1;
+  for (size_t i = 1; i < ns->count; ++i) {
+    if (doc_order_cmp_ctx(ctx, ns->items[i - 1], ns->items[i]) > 0) {
+      already_ordered = 0;
+      break;
+    }
+  }
+  if (already_ordered) return;
+
   /* Lazy build of the doc-order index. Only worth doing when the sort
    * itself is large enough to amortise the full-doc walk; smaller
    * sorts fall through to parent-chain compares via doc_order_cmp_ctx
