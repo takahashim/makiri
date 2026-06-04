@@ -6,11 +6,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The concrete DOM node/element/attr/document types the engine instance is
+ * compiled against (§2.5 monomorphization). The default is Lexbor's lxb_dom for
+ * the HTML instance; the XML instance defines MKR_DOM_NODE = mkr_xml_node_t (and
+ * the siblings) before including this header so the same engine body compiles
+ * against the custom node. The MKR_NODE_* field-access contract (mkr_node_access*.h)
+ * is the matching per-instance binding. */
+#ifndef MKR_DOM_NODE
+#  define MKR_DOM_NODE     lxb_dom_node_t
+#  define MKR_DOM_ELEMENT  lxb_dom_element_t
+#  define MKR_DOM_ATTR     lxb_dom_attr_t
+#  define MKR_DOM_DOCUMENT lxb_dom_document_t
+#endif
+
 /* Qualified name of any node as a borrowed Lexbor byte run. For HTML
  * elements this is the lowercase local name (matching Makiri::Node#name);
  * for other node kinds it falls back to lxb_dom_node_name. Defined in
  * mkr_xpath.c. Keeping the engine free of <ruby.h> / our glue headers. */
-const lxb_char_t *mkr_dom_node_name_qualified(lxb_dom_node_t *node, size_t *len);
+const lxb_char_t *mkr_dom_node_name_qualified(MKR_DOM_NODE *node, size_t *len);
 
 /*
  * Nokogiri-compatible namespace URIs. These must match the strings
@@ -237,7 +250,7 @@ typedef struct {
 /* mkr_val_t / mkr_nodeset_t defined here so they can be embedded inside
  * mkr_node_s (for the memoization slot used by Perf 5 hoisting). */
 typedef struct {
-  lxb_dom_node_t **items;
+  MKR_DOM_NODE **items;
   size_t           count;
   size_t           capacity;
 } mkr_nodeset_t;
@@ -321,7 +334,7 @@ struct mkr_node_s {
 void mkr_nodeset_init(mkr_nodeset_t *ns);
 /* Push a node. Enforces max_nodeset_size when limits is non-NULL.
  * Returns 0 on success, -1 on OOM/LIMIT (err populated). */
-int  mkr_nodeset_push(mkr_nodeset_t *ns, lxb_dom_node_t *node,
+int  mkr_nodeset_push(mkr_nodeset_t *ns, MKR_DOM_NODE *node,
                      mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
 void mkr_nodeset_clear(mkr_nodeset_t *ns);
 
@@ -362,7 +375,7 @@ void mkr_nodeset_unique_sorted(struct mkr_xpath_context_s *ctx, mkr_nodeset_t *n
  * is cleared at the OUTERMOST evaluate exit (nested evals inherit the
  * parent's build to avoid rebuilding mid-call).
  *
- * Open-addressing hash table keyed by lxb_dom_node_t pointer. Value
+ * Open-addressing hash table keyed by MKR_DOM_NODE pointer. Value
  * is a 32-bit ordinal that places attribute nodes immediately after
  * their owner element and before any descendants, matching the
  * comparator's existing semantics so behavior is preserved. Build /
@@ -371,7 +384,7 @@ void mkr_nodeset_unique_sorted(struct mkr_xpath_context_s *ctx, mkr_nodeset_t *n
  */
 typedef struct {
   struct {
-    const lxb_dom_node_t *node;  /* NULL = empty slot */
+    const MKR_DOM_NODE *node;  /* NULL = empty slot */
     size_t                ord;   /* document-order ordinal (size_t: no 2^32 cap) */
   } *buckets;
   size_t cap;
@@ -427,7 +440,7 @@ int  mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
  *   mkr_val_to_boolean has no allocation path, so there is no
  *   _or_fail counterpart — the single entry is correct.
  */
-int mkr_node_to_owned_text_or_fail(const lxb_dom_node_t *node,
+int mkr_node_to_owned_text_or_fail(const MKR_DOM_NODE *node,
                                 mkr_xpath_limits_t *limits,
                                 mkr_xpath_error_t *err,
                                 mkr_owned_text_t *out);
@@ -475,7 +488,7 @@ double  mkr_borrowed_text_to_number        (mkr_borrowed_text_t t);
  *     matches the existing "do not mutate during XPath" assumption.
  */
 typedef struct {
-  lxb_dom_node_t *node;
+  MKR_DOM_NODE *node;
   char           *str;
   size_t          len;
 } mkr_str_cache_entry_t;
@@ -501,7 +514,7 @@ void mkr_str_cache_truncate(mkr_str_cache_t *c, size_t target_count);
  * computed via mkr_node_to_owned_text_or_fail, inserted, then returned. Returns 0
  * on success, -1 on OOM/LIMIT. */
 int  mkr_get_cached_node_text  (struct mkr_xpath_context_s *ctx,
-                               lxb_dom_node_t            *node,
+                               MKR_DOM_NODE            *node,
                                mkr_borrowed_text_t       *out,
                                mkr_xpath_error_t         *err);
 
@@ -559,7 +572,7 @@ int mkr_xpath_eval_compiled(struct mkr_xpath_context_s *ctx,
  * subtree in document order, stopping at the first match (out_node = match or
  * NULL). Returns 1 when handled, 0 when the shape is not recognised. */
 int mkr_try_first_match(struct mkr_xpath_context_s *ctx, const mkr_node_t *ast,
-                        lxb_dom_node_t **out_node);
+                        MKR_DOM_NODE **out_node);
 
 /* Like mkr_xpath_eval_compiled, but for Node#at_xpath: if the expression is a
  * recognised first-match shape (mkr_try_first_match), returns a 0-or-1-node
@@ -598,10 +611,10 @@ const char *mkr_ctx_lookup_ns(struct mkr_xpath_context_s *ctx,
                              size_t *out_uri_len);
 
 /* The context node and document — exposed to the evaluator. */
-lxb_dom_node_t     *mkr_ctx_node(struct mkr_xpath_context_s *ctx);
+MKR_DOM_NODE     *mkr_ctx_node(struct mkr_xpath_context_s *ctx);
 void                mkr_ctx_set_node(struct mkr_xpath_context_s *ctx,
-                                     lxb_dom_node_t *node);
-lxb_dom_document_t *mkr_ctx_document(struct mkr_xpath_context_s *ctx);
+                                     MKR_DOM_NODE *node);
+MKR_DOM_DOCUMENT *mkr_ctx_document(struct mkr_xpath_context_s *ctx);
 mkr_xpath_limits_t  *mkr_ctx_limits (struct mkr_xpath_context_s *ctx);
 mkr_func_resolver_t  mkr_ctx_func_resolver(struct mkr_xpath_context_s *ctx);
 
@@ -613,7 +626,7 @@ int  mkr_ctx_unprefixed_lax(struct mkr_xpath_context_s *ctx);
 /* ---------- function library ---------- */
 
 typedef int (*mkr_func_impl_t)(struct mkr_xpath_context_s *ctx,
-                              lxb_dom_node_t *self_node,
+                              MKR_DOM_NODE *self_node,
                               size_t self_pos,
                               size_t self_size,
                               mkr_val_t *args, size_t nargs,

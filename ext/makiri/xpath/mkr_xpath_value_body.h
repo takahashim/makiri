@@ -24,7 +24,7 @@ mkr_nodeset_init(mkr_nodeset_t *ns)
 }
 
 int
-mkr_nodeset_push(mkr_nodeset_t *ns, lxb_dom_node_t *node,
+mkr_nodeset_push(mkr_nodeset_t *ns, MKR_DOM_NODE *node,
                 mkr_xpath_limits_t *limits, mkr_xpath_error_t *err)
 {
   if (node == NULL) return 0;
@@ -197,7 +197,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
     size_t n = src->u.nodeset.count;
     mkr_nodeset_init(&dst->u.nodeset);
     if (n == 0) return 0;
-    lxb_dom_node_t **items;
+    MKR_DOM_NODE **items;
     size_t items_bytes;
     if (!mkr_size_mul(n, sizeof(*items), &items_bytes)) {
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory cloning node-set");
@@ -231,7 +231,7 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
 
 /* Append `node`'s own text content. */
 static mkr_status_t
-append_text_content(lxb_dom_node_t *node, mkr_buf_t *buf)
+append_text_content(MKR_DOM_NODE *node, mkr_buf_t *buf)
 {
   size_t tlen = 0;
   lxb_char_t *t = lxb_dom_node_text_content(node, &tlen);
@@ -246,9 +246,9 @@ append_text_content(lxb_dom_node_t *node, mkr_buf_t *buf)
  * an adversarially deep tree cannot overflow the stack (fail-closed / no DoS);
  * O(1) extra space. Descends only into elements, matching the original. */
 static mkr_status_t
-append_text_descendants(lxb_dom_node_t *node, mkr_buf_t *buf)
+append_text_descendants(MKR_DOM_NODE *node, mkr_buf_t *buf)
 {
-  lxb_dom_node_t *cur = MKR_NODE_FIRST_CHILD(node);
+  MKR_DOM_NODE *cur = MKR_NODE_FIRST_CHILD(node);
   while (cur != NULL) {
     if (MKR_NODE_TYPE(cur) == MKR_NTYPE_TEXT) {
       mkr_status_t st = append_text_content(cur, buf);
@@ -269,13 +269,13 @@ append_text_descendants(lxb_dom_node_t *node, mkr_buf_t *buf)
 
 /* Build node's string-value into `buf` (cap carried by buf->max). */
 static mkr_status_t
-build_string_value(const lxb_dom_node_t *node, mkr_buf_t *buf)
+build_string_value(const MKR_DOM_NODE *node, mkr_buf_t *buf)
 {
   if (node == NULL) return MKR_OK;
 
   switch (MKR_NODE_TYPE(node)) {
   case MKR_NTYPE_ATTRIBUTE: {
-    lxb_dom_attr_t *attr = (lxb_dom_attr_t *)node;
+    MKR_DOM_ATTR *attr = (MKR_DOM_ATTR *)node;
     size_t vlen = 0;
     const lxb_char_t *v = MKR_ATTR_VALUE(attr, &vlen);
     return mkr_buf_append(buf, v ? (const char *)v : "", vlen);
@@ -284,14 +284,14 @@ build_string_value(const lxb_dom_node_t *node, mkr_buf_t *buf)
   case MKR_NTYPE_CDATA_SECTION:
   case MKR_NTYPE_COMMENT:
   case MKR_NTYPE_PI:
-    return append_text_content((lxb_dom_node_t *)node, buf);
+    return append_text_content((MKR_DOM_NODE *)node, buf);
   default:
-    return append_text_descendants((lxb_dom_node_t *)node, buf);
+    return append_text_descendants((MKR_DOM_NODE *)node, buf);
   }
 }
 
 static void
-mkr_build_node_text_unchecked(const lxb_dom_node_t *node, mkr_owned_text_t *out)
+mkr_build_node_text_unchecked(const MKR_DOM_NODE *node, mkr_owned_text_t *out)
 {
   /* Uncapped, best-effort: callers (number/string coercion) require a non-NULL
    * text, so on any failure fall back to an owned "" rather than NULL. */
@@ -309,7 +309,7 @@ mkr_build_node_text_unchecked(const lxb_dom_node_t *node, mkr_owned_text_t *out)
 }
 
 int
-mkr_node_to_owned_text_or_fail(const lxb_dom_node_t *node,
+mkr_node_to_owned_text_or_fail(const MKR_DOM_NODE *node,
                              mkr_xpath_limits_t *limits,
                              mkr_xpath_error_t *err,
                              mkr_owned_text_t *out)
@@ -491,8 +491,8 @@ mkr_val_to_boolean(const mkr_val_t *v)
  * cross-subtree comparisons; only when both belong to the same element
  * does the attribute-vs-attribute or attribute-vs-descendant rule kick in.
  */
-static const lxb_dom_node_t *
-anchor_for_cmp(const lxb_dom_node_t *n)
+static const MKR_DOM_NODE *
+anchor_for_cmp(const MKR_DOM_NODE *n)
 {
   if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
     return MKR_NODE_PARENT(n) ? MKR_NODE_PARENT(n) : n;
@@ -501,7 +501,7 @@ anchor_for_cmp(const lxb_dom_node_t *n)
 }
 
 static int
-depth_of(const lxb_dom_node_t *n)
+depth_of(const MKR_DOM_NODE *n)
 {
   int d = 0;
   while (MKR_NODE_PARENT(n)) { d++; n = MKR_NODE_PARENT(n); }
@@ -509,11 +509,11 @@ depth_of(const lxb_dom_node_t *n)
 }
 
 static int
-doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
+doc_order_cmp(const MKR_DOM_NODE *a, const MKR_DOM_NODE *b)
 {
   if (a == b) return 0;
-  const lxb_dom_node_t *aa = anchor_for_cmp(a);
-  const lxb_dom_node_t *bb = anchor_for_cmp(b);
+  const MKR_DOM_NODE *aa = anchor_for_cmp(a);
+  const MKR_DOM_NODE *bb = anchor_for_cmp(b);
 
   /* If the anchors are the same element, decide by node type. A non-attribute
    * node that anchors to the same element E can ONLY be E itself: any other
@@ -530,10 +530,10 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
     /* Both attributes of the same element: relative order is
      * implementation-defined. Use insertion order via attr linked list. */
     if (a_attr && b_attr) {
-      for (const lxb_dom_attr_t *at = MKR_ELEM_FIRST_ATTR((const lxb_dom_element_t *)aa);
+      for (const MKR_DOM_ATTR *at = MKR_ELEM_FIRST_ATTR((const MKR_DOM_ELEMENT *)aa);
            at != NULL; at = MKR_ATTR_NEXT(at)) {
-        if ((const lxb_dom_node_t *)at == a) return -1;
-        if ((const lxb_dom_node_t *)at == b) return 1;
+        if ((const MKR_DOM_NODE *)at == a) return -1;
+        if ((const MKR_DOM_NODE *)at == b) return 1;
       }
       return 0;
     }
@@ -563,7 +563,7 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
     /* Different documents/roots — undefined; keep stable. */
     return 0;
   }
-  const lxb_dom_node_t *fa = aa, *fb = bb;
+  const MKR_DOM_NODE *fa = aa, *fb = bb;
   for (;;) {
     fa = fa ? MKR_NODE_NEXT(fa) : NULL;
     fb = fb ? MKR_NODE_NEXT(fb) : NULL;
@@ -608,7 +608,7 @@ mkr_doc_order_index_clear(mkr_doc_order_index_t *idx)
 /* Insert (node, ord) into the open-addressing table. Grows when load
  * factor exceeds 3/4. Returns 0 on success, -1 on OOM. */
 static int
-order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, size_t ord)
+order_index_insert(mkr_doc_order_index_t *idx, const MKR_DOM_NODE *node, size_t ord)
 {
   if (idx->cap == 0 || idx->count * 4 >= idx->cap * 3) {
     size_t new_cap = 256;
@@ -648,7 +648,7 @@ order_index_insert(mkr_doc_order_index_t *idx, const lxb_dom_node_t *node, size_
 }
 
 static int
-order_index_lookup(const mkr_doc_order_index_t *idx, const lxb_dom_node_t *node,
+order_index_lookup(const mkr_doc_order_index_t *idx, const MKR_DOM_NODE *node,
                    size_t *out_ord)
 {
   if (idx->cap == 0) return -1;
@@ -673,16 +673,16 @@ order_index_lookup(const mkr_doc_order_index_t *idx, const lxb_dom_node_t *node,
  * The traversal stays within the subtree rooted at `root` (it never follows
  * root->next). */
 static int
-order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *root, size_t *next_ord)
+order_index_walk(mkr_doc_order_index_t *idx, MKR_DOM_NODE *root, size_t *next_ord)
 {
-  lxb_dom_node_t *cur = root;
+  MKR_DOM_NODE *cur = root;
   while (cur != NULL) {
     /* Visit (pre-order): the node, then its attributes before any child. */
     if (order_index_insert(idx, cur, (*next_ord)++) != 0) return -1;
     if (MKR_NODE_TYPE(cur) == MKR_NTYPE_ELEMENT) {
-      lxb_dom_element_t *el = (lxb_dom_element_t *)cur;
-      for (lxb_dom_attr_t *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
-        if (order_index_insert(idx, (lxb_dom_node_t *)a, (*next_ord)++) != 0) return -1;
+      MKR_DOM_ELEMENT *el = (MKR_DOM_ELEMENT *)cur;
+      for (MKR_DOM_ATTR *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
+        if (order_index_insert(idx, (MKR_DOM_NODE *)a, (*next_ord)++) != 0) return -1;
       }
     }
     if (MKR_NODE_FIRST_CHILD(cur) != NULL) {
@@ -699,7 +699,7 @@ order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *root, size_t *next_
 }
 
 static int
-order_index_build(mkr_doc_order_index_t *idx, lxb_dom_node_t *root,
+order_index_build(mkr_doc_order_index_t *idx, MKR_DOM_NODE *root,
                   mkr_xpath_error_t *err)
 {
   if (idx->built) return 0;
@@ -717,7 +717,7 @@ order_index_build(mkr_doc_order_index_t *idx, lxb_dom_node_t *root,
 /* Indexed comparator. Falls back to doc_order_cmp on any miss
  * (e.g., synthesised nodes or cross-document compares). */
 static int
-doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const lxb_dom_node_t *a, const lxb_dom_node_t *b)
+doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const MKR_DOM_NODE *a, const MKR_DOM_NODE *b)
 {
   if (a == b) return 0;
   if (ctx == NULL) return doc_order_cmp(a, b);
@@ -737,7 +737,7 @@ doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const lxb_dom_node_t *a, const lxb_d
  * bonus: ties (same ord — only possible for synthesised nodes that
  * weren't in the index) preserve insertion order. */
 static void
-ms_merge(lxb_dom_node_t **arr, lxb_dom_node_t **tmp,
+ms_merge(MKR_DOM_NODE **arr, MKR_DOM_NODE **tmp,
          size_t lo, size_t mid, size_t hi, mkr_xpath_context_t *ctx)
 {
   size_t i = lo, j = mid, k = lo;
@@ -751,7 +751,7 @@ ms_merge(lxb_dom_node_t **arr, lxb_dom_node_t **tmp,
 }
 
 static void
-ms_sort(lxb_dom_node_t **arr, lxb_dom_node_t **tmp,
+ms_sort(MKR_DOM_NODE **arr, MKR_DOM_NODE **tmp,
         size_t lo, size_t hi, mkr_xpath_context_t *ctx)
 {
   if (hi - lo < 2) return;
@@ -765,8 +765,8 @@ ms_sort(lxb_dom_node_t **arr, lxb_dom_node_t **tmp,
 static int
 doc_order_qsort_cb_fallback(const void *pa, const void *pb)
 {
-  const lxb_dom_node_t *a = *(const lxb_dom_node_t * const *)pa;
-  const lxb_dom_node_t *b = *(const lxb_dom_node_t * const *)pb;
+  const MKR_DOM_NODE *a = *(const MKR_DOM_NODE * const *)pa;
+  const MKR_DOM_NODE *b = *(const MKR_DOM_NODE * const *)pb;
   return doc_order_cmp(a, b);
 }
 
@@ -791,13 +791,13 @@ mkr_nodeset_sort_doc_order(mkr_xpath_context_t *ctx, mkr_nodeset_t *ns)
    * (which sees an unbuilt index and dispatches accordingly). */
   mkr_doc_order_index_t *idx = mkr_ctx_order_index(ctx);
   if (idx != NULL && !idx->built && ns->count >= MKR_INDEX_BUILD_MIN) {
-    lxb_dom_node_t *root = (lxb_dom_node_t *)mkr_ctx_document(ctx);
+    MKR_DOM_NODE *root = (MKR_DOM_NODE *)mkr_ctx_document(ctx);
     mkr_xpath_error_t ierr = {0};
     (void)order_index_build(idx, root, &ierr);
     mkr_xpath_error_clear(&ierr); /* index is best-effort; on OOM we fall through to parent-chain cmp */
   }
 
-  lxb_dom_node_t **tmp = mkr_reallocarray(NULL, ns->count, sizeof(*tmp));
+  MKR_DOM_NODE **tmp = mkr_reallocarray(NULL, ns->count, sizeof(*tmp));
   if (tmp == NULL) {
     /* Fall back to in-place qsort with parent-chain compare (slow but
      * correct). Should be a very rare path. */
@@ -906,7 +906,7 @@ mkr_str_cache_clear(mkr_str_cache_t *c)
 
 int
 mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
-                         lxb_dom_node_t *node,
+                         MKR_DOM_NODE *node,
                          mkr_borrowed_text_t *out,
                          mkr_xpath_error_t *err)
 {

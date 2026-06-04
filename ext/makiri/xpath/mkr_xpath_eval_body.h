@@ -19,7 +19,7 @@
 /* ---------- forward decls ---------- */
 
 static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-                     lxb_dom_node_t *self_node, size_t self_pos, size_t self_size,
+                     MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
                      mkr_val_t *out, mkr_xpath_error_t *err);
 
 /* ---------- node test ---------- */
@@ -29,7 +29,7 @@ static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
  * explicit namespace (LXB_NS__UNDEF). For other ids it looks up the URI
  * in the document's ns hash. */
 static mkr_borrowed_text_t
-node_ns_text(lxb_dom_node_t *node, lxb_dom_document_t *doc)
+node_ns_text(MKR_DOM_NODE *node, MKR_DOM_DOCUMENT *doc)
 {
   if (MKR_NODE_NS_ID(node) == LXB_NS__UNDEF) return mkr_borrowed_text_lit("");
   if (doc == NULL || doc->ns == NULL) return mkr_borrowed_text_lit("");
@@ -40,7 +40,7 @@ node_ns_text(lxb_dom_node_t *node, lxb_dom_document_t *doc)
 }
 
 static int
-node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
+node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
                      mkr_axis_t axis, mkr_xpath_context_t *ctx)
 {
   switch (test->kind) {
@@ -169,35 +169,35 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
 /* ---------- axis walkers ---------- */
 
 static int
-walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
-          int (*visit)(lxb_dom_node_t *n, void *u), void *u)
+walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
+          int (*visit)(MKR_DOM_NODE *n, void *u), void *u)
 {
   switch (axis) {
   case MKR_AXIS_SELF:
     if (visit(context, u)) return 1;
     return 0;
   case MKR_AXIS_PARENT: {
-    lxb_dom_node_t *p = MKR_NODE_PARENT(context);
+    MKR_DOM_NODE *p = MKR_NODE_PARENT(context);
     if (p && visit(p, u)) return 1;
     return 0;
   }
   case MKR_AXIS_CHILD:
-    for (lxb_dom_node_t *c = MKR_NODE_FIRST_CHILD(context); c != NULL; c = MKR_NODE_NEXT(c)) {
+    for (MKR_DOM_NODE *c = MKR_NODE_FIRST_CHILD(context); c != NULL; c = MKR_NODE_NEXT(c)) {
       if (visit(c, u)) return 1;
     }
     return 0;
   case MKR_AXIS_ATTRIBUTE: {
     if (MKR_NODE_TYPE(context) != MKR_NTYPE_ELEMENT) return 0;
-    lxb_dom_element_t *el = (lxb_dom_element_t *)context;
-    for (lxb_dom_attr_t *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
-      if (visit((lxb_dom_node_t *)a, u)) return 1;
+    MKR_DOM_ELEMENT *el = (MKR_DOM_ELEMENT *)context;
+    for (MKR_DOM_ATTR *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
+      if (visit((MKR_DOM_NODE *)a, u)) return 1;
     }
     return 0;
   }
   case MKR_AXIS_DESCENDANT_OR_SELF: {
     /* DFS pre-order. */
     if (visit(context, u)) return 1;
-    lxb_dom_node_t *n = MKR_NODE_FIRST_CHILD(context);
+    MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(context);
     while (n != NULL && n != context) {
       if (visit(n, u)) return 1;
       if (MKR_NODE_FIRST_CHILD(n)) {
@@ -211,7 +211,7 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
     return 0;
   }
   case MKR_AXIS_DESCENDANT: {
-    lxb_dom_node_t *n = MKR_NODE_FIRST_CHILD(context);
+    MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(context);
     while (n != NULL && n != context) {
       if (visit(n, u)) return 1;
       if (MKR_NODE_FIRST_CHILD(n)) {
@@ -225,28 +225,28 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
     return 0;
   }
   case MKR_AXIS_ANCESTOR:
-    for (lxb_dom_node_t *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
+    for (MKR_DOM_NODE *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
       if (visit(p, u)) return 1;
     }
     return 0;
   case MKR_AXIS_ANCESTOR_OR_SELF:
-    for (lxb_dom_node_t *p = context; p != NULL; p = MKR_NODE_PARENT(p)) {
+    for (MKR_DOM_NODE *p = context; p != NULL; p = MKR_NODE_PARENT(p)) {
       if (visit(p, u)) return 1;
     }
     return 0;
   case MKR_AXIS_FOLLOWING_SIBLING:
-    for (lxb_dom_node_t *s = MKR_NODE_NEXT(context); s != NULL; s = MKR_NODE_NEXT(s)) {
+    for (MKR_DOM_NODE *s = MKR_NODE_NEXT(context); s != NULL; s = MKR_NODE_NEXT(s)) {
       if (visit(s, u)) return 1;
     }
     return 0;
   case MKR_AXIS_PRECEDING_SIBLING:
-    for (lxb_dom_node_t *s = MKR_NODE_PREV(context); s != NULL; s = MKR_NODE_PREV(s)) {
+    for (MKR_DOM_NODE *s = MKR_NODE_PREV(context); s != NULL; s = MKR_NODE_PREV(s)) {
       if (visit(s, u)) return 1;
     }
     return 0;
   case MKR_AXIS_FOLLOWING: {
     /* Start at the next node in doc order after context's subtree. */
-    lxb_dom_node_t *cur = context;
+    MKR_DOM_NODE *cur = context;
     while (cur != NULL && MKR_NODE_NEXT(cur) == NULL) cur = MKR_NODE_PARENT(cur);
     if (cur == NULL) return 0;
     cur = MKR_NODE_NEXT(cur);
@@ -269,7 +269,7 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
      * ancestor of context: it's an ancestor only when we're climbing
      * the chain from context itself, not when we're climbing back out
      * of a preceding sibling's subtree. */
-    lxb_dom_node_t *cur = context;
+    MKR_DOM_NODE *cur = context;
     while (cur != NULL) {
       if (MKR_NODE_PREV(cur)) {
         cur = MKR_NODE_PREV(cur);
@@ -280,7 +280,7 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
         if (cur == NULL) return 0;
         /* Is cur an ancestor of the original context? */
         int is_ancestor = 0;
-        for (lxb_dom_node_t *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
+        for (MKR_DOM_NODE *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
           if (p == cur) { is_ancestor = 1; break; }
         }
         if (!is_ancestor) {
@@ -375,10 +375,10 @@ mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
  * Nokogiri::HTML5, AND from Makiri's own case-sensitive attribute-axis name
  * test (node_principal_match compares the qualified name byte-for-byte). The
  * fast path only handles unprefixed names, matching that comparison. */
-static lxb_dom_attr_t *
-mkr_attr_by_qualified_name(lxb_dom_element_t *el, const char *name, size_t name_len)
+static MKR_DOM_ATTR *
+mkr_attr_by_qualified_name(MKR_DOM_ELEMENT *el, const char *name, size_t name_len)
 {
-  for (lxb_dom_attr_t *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
+  for (MKR_DOM_ATTR *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
     size_t qlen = 0;
     const lxb_char_t *q = MKR_ATTR_QUALIFIED_NAME(a, &qlen);
     if (q != NULL && qlen == name_len && memcmp(q, name, name_len) == 0) {
@@ -395,10 +395,10 @@ mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
                      mkr_xpath_error_t *err)
 {
   for (size_t i = 0; i < inout->count; ++i) {
-    lxb_dom_node_t *n = inout->items[i];
+    MKR_DOM_NODE *n = inout->items[i];
     int keep = 0;
     if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
-      lxb_dom_attr_t *a =
+      MKR_DOM_ATTR *a =
           mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap->name, ap->name_len);
       if (a != NULL) {
         if (!ap->has_value) {
@@ -486,7 +486,7 @@ typedef struct {
 } step_visit_t;
 
 static int
-step_visit_cb(lxb_dom_node_t *n, void *u)
+step_visit_cb(MKR_DOM_NODE *n, void *u)
 {
   step_visit_t *st = (step_visit_t *)u;
   if (node_principal_match(&st->step->test, n, st->step->axis, st->ctx)) {
@@ -616,7 +616,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
       || step->test.prefix.ptr != NULL
       || step->test.local.ptr == NULL
       || context_set->count != 1
-      || context_set->items[0] != (lxb_dom_node_t *)mkr_ctx_document(ctx)) {
+      || context_set->items[0] != (MKR_DOM_NODE *)mkr_ctx_document(ctx)) {
     return 0;
   }
   void *eidx = mkr_ctx_element_index(ctx);
@@ -625,7 +625,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   if (eidx == NULL || lookup == NULL || has_foreign == NULL || has_foreign(eidx)) {
     return 0;
   }
-  lxb_dom_document_t *doc = mkr_ctx_document(ctx);
+  MKR_DOM_DOCUMENT *doc = mkr_ctx_document(ctx);
   if (doc == NULL) {
     return 0;
   }
@@ -639,9 +639,9 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     return 0;
   }
   size_t cnt = 0;
-  lxb_dom_node_t *const *bucket = lookup(eidx, tag, &cnt);
+  MKR_DOM_NODE *const *bucket = lookup(eidx, tag, &cnt);
   for (size_t i = 0; i < cnt; ++i) {
-    lxb_dom_node_t *n = bucket[i];
+    MKR_DOM_NODE *n = bucket[i];
     if (node_principal_match(&step->test, n, step->axis, ctx)) {
       if (mkr_nodeset_push(result, n, mkr_ctx_limits(ctx), err) != 0) {
         return -1;
@@ -707,13 +707,13 @@ mkr_first_recognise(const mkr_node_t *ast, const mkr_step_t **out_step)
 /* Does +n+ satisfy every (already-recognised) attribute predicate of +step+?
  * Mirrors mkr_filter_attr_pred's per-node test so the result is identical. */
 static int
-mkr_first_node_ok(const mkr_step_t *step, lxb_dom_node_t *n)
+mkr_first_node_ok(const mkr_step_t *step, MKR_DOM_NODE *n)
 {
   for (size_t p = 0; p < step->npredicates; p++) {
     mkr_attr_pred_t ap;
     (void)mkr_match_attr_pred(step->predicates[p], &ap); /* recogniser ensured it matches */
     if (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT) return 0;
-    lxb_dom_attr_t *a =
+    MKR_DOM_ATTR *a =
         mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap.name, ap.name_len);
     if (a == NULL) return 0;
     if (ap.has_value) {
@@ -735,19 +735,19 @@ mkr_first_node_ok(const mkr_step_t *step, lxb_dom_node_t *n)
  * shape is not recognised. Never raises (the recognised shape cannot error). */
 int
 mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
-                    lxb_dom_node_t **out_node)
+                    MKR_DOM_NODE **out_node)
 {
   const mkr_step_t *step;
   if (out_node == NULL || !mkr_first_recognise(ast, &step)) return 0;
   *out_node = NULL;
 
-  lxb_dom_node_t *start = ast->u.path.absolute
-      ? (lxb_dom_node_t *)mkr_ctx_document(ctx)
+  MKR_DOM_NODE *start = ast->u.path.absolute
+      ? (MKR_DOM_NODE *)mkr_ctx_document(ctx)
       : mkr_ctx_node(ctx);
   if (start == NULL) return 1; /* recognised; no context -> no match */
 
   /* Iterative pre-order (document order) over STRICT descendants of start. */
-  for (lxb_dom_node_t *n = MKR_NODE_FIRST_CHILD(start); n != NULL; ) {
+  for (MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(start); n != NULL; ) {
     if (node_principal_match(&step->test, n, step->axis, ctx)
         && mkr_first_node_ok(step, n)) {
       *out_node = n;
@@ -1122,13 +1122,13 @@ union_nodeset(mkr_xpath_context_t *ctx, mkr_val_t *l, mkr_val_t *r, mkr_val_t *o
 
 static int
 eval_path(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-          lxb_dom_node_t *self_node,
+          MKR_DOM_NODE *self_node,
           mkr_val_t *out, mkr_xpath_error_t *err)
 {
   mkr_nodeset_t seed;
   mkr_nodeset_init(&seed);
   if (n->u.path.absolute) {
-    lxb_dom_node_t *root = (lxb_dom_node_t *)mkr_ctx_document(ctx);
+    MKR_DOM_NODE *root = (MKR_DOM_NODE *)mkr_ctx_document(ctx);
     if (root == NULL) {
       mkr_err_set(err, MKR_XPATH_ERR_RUNTIME, "absolute path with no document");
       return -1;
@@ -1148,7 +1148,7 @@ eval_path(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_filter(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-            lxb_dom_node_t *self_node, size_t self_pos, size_t self_size,
+            MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
   mkr_val_t primary = {0};
@@ -1185,7 +1185,7 @@ extern mkr_func_impl_t mkr_lookup_function(const char *ns_uri, const char *local
 
 static int
 eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-            lxb_dom_node_t *self_node, size_t self_pos, size_t self_size,
+            MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
   const char *ns_uri = NULL;
@@ -1248,7 +1248,7 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_binop(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-           lxb_dom_node_t *self_node, size_t self_pos, size_t self_size,
+           MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
            mkr_val_t *out, mkr_xpath_error_t *err)
 {
   /* AND/OR short-circuit. */
@@ -1342,7 +1342,7 @@ eval_binop(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-          lxb_dom_node_t *self_node, size_t self_pos, size_t self_size,
+          MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
           mkr_val_t *out, mkr_xpath_error_t *err)
 {
   /* Budget + recursion bookkeeping. Every AST node visit counts as one
@@ -1460,6 +1460,6 @@ int
 mkr_eval_ast(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
-  lxb_dom_node_t *self_node = mkr_ctx_node(ctx);
+  MKR_DOM_NODE *self_node = mkr_ctx_node(ctx);
   return eval_node(ctx, ast, self_node, 1, 1, out, err);
 }

@@ -27,8 +27,8 @@ typedef struct {
 } mkr_var_entry_t;
 
 struct mkr_xpath_context_s {
-  lxb_dom_document_t *doc;
-  lxb_dom_node_t     *node;
+  MKR_DOM_DOCUMENT *doc;
+  MKR_DOM_NODE     *node;
 
   mkr_ns_entry_t *ns;
   size_t         ns_count;
@@ -279,7 +279,7 @@ mkr_limit_check_expr_bytes(mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_error_
  * assumes; every other node kind defers to lxb_dom_node_name.
  */
 const lxb_char_t *
-mkr_dom_node_name_qualified(lxb_dom_node_t *node, size_t *len)
+mkr_dom_node_name_qualified(MKR_DOM_NODE *node, size_t *len)
 {
   if (node == NULL) {
     if (len) *len = 0;
@@ -294,7 +294,7 @@ mkr_dom_node_name_qualified(lxb_dom_node_t *node, size_t *len)
 /* ---------- context ---------- */
 
 mkr_xpath_context_t *
-mkr_xpath_context_new(lxb_dom_document_t *doc, lxb_dom_node_t *node)
+mkr_xpath_context_new(MKR_DOM_DOCUMENT *doc, MKR_DOM_NODE *node)
 {
   mkr_xpath_context_t *ctx = mkr_callocarray(1, sizeof(*ctx));
   if (ctx == NULL) {
@@ -447,19 +447,19 @@ mkr_ctx_lookup_variable_text(mkr_xpath_context_t *ctx, const char *prefix,
   return 0;
 }
 
-lxb_dom_node_t *
+MKR_DOM_NODE *
 mkr_ctx_node(mkr_xpath_context_t *ctx)
 {
   return ctx ? ctx->node : NULL;
 }
 
 void
-mkr_ctx_set_node(mkr_xpath_context_t *ctx, lxb_dom_node_t *node)
+mkr_ctx_set_node(mkr_xpath_context_t *ctx, MKR_DOM_NODE *node)
 {
   if (ctx) ctx->node = node;
 }
 
-lxb_dom_document_t *
+MKR_DOM_DOCUMENT *
 mkr_ctx_document(mkr_xpath_context_t *ctx)
 {
   return ctx ? ctx->doc : NULL;
@@ -600,7 +600,7 @@ mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
     }
     return -1;
   }
-  lxb_dom_node_t *node = NULL;
+  MKR_DOM_NODE *node = NULL;
   if (mkr_try_first_match(ctx, ast, &node)) {
     /* Recognised first-match shape: return a 0-or-1-node node-set without
      * building (or sorting) the full descendant set. */
