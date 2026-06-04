@@ -934,12 +934,12 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
     return set_empty_string(out, err, "namespace-uri");
   }
   MKR_DOM_DOCUMENT *doc = mkr_ctx_document(ctx);
-  if (doc == NULL || doc->ns == NULL) {
+  size_t len = 0;
+  const char *uri = MKR_NODE_NS_URI(n, doc, &len);
+  if (uri == NULL) {
     return set_empty_string(out, err, "namespace-uri");
   }
-  size_t len = 0;
-  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, MKR_NODE_NS_ID(n), &len);
-  return set_bytes_string(out, uri, len, err, "namespace-uri");
+  return set_bytes_string(out, (const lxb_char_t *)uri, len, err, "namespace-uri");
 }
 
 static int

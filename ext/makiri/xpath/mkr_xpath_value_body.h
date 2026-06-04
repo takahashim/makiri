@@ -233,11 +233,8 @@ mkr_val_clone(const mkr_val_t *src, mkr_val_t *dst, mkr_xpath_error_t *err)
 static mkr_status_t
 append_text_content(MKR_DOM_NODE *node, mkr_buf_t *buf)
 {
-  size_t tlen = 0;
-  lxb_char_t *t = lxb_dom_node_text_content(node, &tlen);
-  if (t == NULL) return MKR_OK;
-  mkr_status_t st = mkr_buf_append(buf, t, tlen);
-  lxb_dom_document_destroy_text(node->owner_document, t);
+  mkr_status_t st;
+  MKR_NODE_APPEND_OWN_TEXT(node, buf, st);
   return st;
 }
 

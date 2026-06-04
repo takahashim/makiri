@@ -87,4 +87,36 @@
 #define MKR_ELEM_GET_ATTRIBUTE(el, name, nlen, vlenp) \
     lxb_dom_element_get_attribute((el), (const lxb_char_t *)(name), (nlen), (vlenp))
 
+/* --- per-instance services (resolved against the concrete representation) ---
+ * The engine body uses these instead of calling Lexbor directly, so the XML
+ * instance can bind them to the custom node (which carries ns_uri / value
+ * directly and has no Lexbor ns hash / tag table). */
+
+/* Borrowed namespace-URI bytes for a node (or NULL, *lenp=0, if it has none).
+ * HTML resolves the node's ns-id against the document's ns hash. */
+static inline const char *
+mkr_html_node_ns_uri(lxb_dom_node_t *node, lxb_dom_document_t *doc, size_t *lenp)
+{
+    *lenp = 0;
+    if (node->ns == LXB_NS__UNDEF || doc == NULL || doc->ns == NULL) return NULL;
+    return (const char *)lxb_ns_by_id(doc->ns, node->ns, lenp);
+}
+#define MKR_NODE_NS_URI(node, doc, lenp) mkr_html_node_ns_uri((node), (doc), (lenp))
+
+/* Append a node's own text content to a mkr_buf_t, setting `st` (mkr_status_t).
+ * HTML uses lxb_dom_node_text_content (allocates; freed after the append). */
+#define MKR_NODE_APPEND_OWN_TEXT(node, buf, st)                              \
+    do {                                                                     \
+        size_t mkr__tlen = 0;                                                \
+        lxb_char_t *mkr__t = lxb_dom_node_text_content((node), &mkr__tlen);  \
+        (st) = (mkr__t == NULL) ? MKR_OK : mkr_buf_append((buf), mkr__t, mkr__tlen); \
+        if (mkr__t) lxb_dom_document_destroy_text((node)->owner_document, mkr__t); \
+    } while (0)
+
+/* Resolve a tag-name to a Lexbor tag id for the //tag element-index fast path.
+ * Only ever reached when the element index is present (HTML); for XML the index
+ * is NULL so the fast path bails before this, but it must still compile. */
+#define MKR_DOC_TAG_ID_BY_NAME(doc, ptr, len) \
+    lxb_tag_id_by_name((doc)->tags, (const lxb_char_t *)(ptr), (len))
+
 #endif /* MKR_NODE_ACCESS_H */

@@ -31,12 +31,9 @@ static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 static mkr_borrowed_text_t
 node_ns_text(MKR_DOM_NODE *node, MKR_DOM_DOCUMENT *doc)
 {
-  if (MKR_NODE_NS_ID(node) == LXB_NS__UNDEF) return mkr_borrowed_text_lit("");
-  if (doc == NULL || doc->ns == NULL) return mkr_borrowed_text_lit("");
   size_t len = 0;
-  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, MKR_NODE_NS_ID(node), &len);
-  return uri ? mkr_borrowed_text((const char *)uri, len)
-             : mkr_borrowed_text_lit("");
+  const char *uri = MKR_NODE_NS_URI(node, doc, &len);
+  return uri ? mkr_borrowed_text(uri, len) : mkr_borrowed_text_lit("");
 }
 
 static int
@@ -629,9 +626,8 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   if (doc == NULL) {
     return 0;
   }
-  lxb_tag_id_t tag = lxb_tag_id_by_name(doc->tags,
-                                        (const lxb_char_t *)step->test.local.ptr,
-                                        step->test.local.len);
+  lxb_tag_id_t tag = MKR_DOC_TAG_ID_BY_NAME(doc, step->test.local.ptr,
+                                            step->test.local.len);
   /* The index covers only Lexbor's static tag-id range; a custom element's tag
    * id is a (huge) pointer value and is not indexed. For such a name, fall back
    * to the tree walk so those elements are still found. */
