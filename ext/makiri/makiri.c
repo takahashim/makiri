@@ -15,7 +15,8 @@ VALUE mkr_cProcessingInstruction;
 VALUE mkr_cDocumentType;
 VALUE mkr_cDocumentFragment;
 VALUE mkr_mHTML;
-VALUE mkr_mHtmlNode;
+VALUE mkr_mHtmlNodeMethods;
+VALUE mkr_cHtmlNode;
 VALUE mkr_cHtmlDocument;
 VALUE mkr_cHtmlElement;
 VALUE mkr_cHtmlAttribute;
@@ -96,10 +97,13 @@ Init_makiri(void)
 
     /* Per-kind hierarchy (§12): the classes above are abstract bases; concrete
      * HTML nodes are Makiri::HTML::* leaves. The reader/query methods (which read
-     * lxb_dom) live on the mkr_mHtmlNode behavior module and are included into
+     * lxb_dom) live on the mkr_mHtmlNodeMethods behavior module and are included into
      * every leaf, so XML nodes (added in step 2) never inherit an HTML reader. */
     mkr_mHTML          = rb_define_module_under(mkr_mMakiri, "HTML");
-    mkr_mHtmlNode      = rb_define_module_under(mkr_mHTML, "Node");
+    mkr_mHtmlNodeMethods = rb_define_module_under(mkr_mHTML, "NodeMethods");
+    /* The concrete generic HTML node — the wrap fallback for an uncommon DOM node
+     * type with no more specific leaf. Carries the readers but is not an Element. */
+    mkr_cHtmlNode      = rb_define_class_under(mkr_mHTML, "Node",         mkr_cNode);
     mkr_cHtmlDocument  = rb_define_class_under(mkr_mHTML, "Document",     mkr_cDocument);
     mkr_cHtmlElement   = rb_define_class_under(mkr_mHTML, "Element",      mkr_cElement);
     mkr_cHtmlAttribute = rb_define_class_under(mkr_mHTML, "Attribute",    mkr_cAttribute);
@@ -113,14 +117,16 @@ Init_makiri(void)
     mkr_cHtmlDocumentFragment =
         rb_define_class_under(mkr_mHTML, "DocumentFragment", mkr_cDocumentFragment);
 
-    /* Every HTML leaf gets the shared lxb_dom reader/query methods. */
+    /* Every HTML leaf — the generic node and the typed leaves — gets the shared
+     * lxb_dom reader/query methods. */
     VALUE html_leaves[] = {
-        mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttribute, mkr_cHtmlText,
-        mkr_cHtmlComment, mkr_cHtmlCData, mkr_cHtmlProcessingInstruction,
-        mkr_cHtmlDocumentType, mkr_cHtmlDocumentFragment,
+        mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttribute,
+        mkr_cHtmlText, mkr_cHtmlComment, mkr_cHtmlCData,
+        mkr_cHtmlProcessingInstruction, mkr_cHtmlDocumentType,
+        mkr_cHtmlDocumentFragment,
     };
     for (size_t i = 0; i < sizeof(html_leaves) / sizeof(html_leaves[0]); i++) {
-        rb_include_module(html_leaves[i], mkr_mHtmlNode);
+        rb_include_module(html_leaves[i], mkr_mHtmlNodeMethods);
         rb_undef_alloc_func(html_leaves[i]); /* created only from C, never .new */
     }
 

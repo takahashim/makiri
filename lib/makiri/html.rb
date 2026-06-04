@@ -7,10 +7,10 @@ module Makiri
   # Makiri::HTML::Node module. XML nodes never inherit these.
   module HTML
     # The lxb_dom reader/query methods are defined in C on this module and
-    # included into every HTML leaf. The Nokogiri-compatible aliases over those
-    # readers live here (not on Makiri::Node) so they resolve against the HTML
-    # readers at definition time.
-    module Node
+    # included into every HTML leaf (including the generic Makiri::HTML::Node).
+    # The Nokogiri-compatible aliases over those readers live here (not on
+    # Makiri::Node) so they resolve against the HTML readers at definition time.
+    module NodeMethods
       alias_method :attr, :[]
       alias_method :get_attribute, :[]
       alias_method :has_attribute?, :key?

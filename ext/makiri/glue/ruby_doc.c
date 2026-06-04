@@ -597,5 +597,5 @@ mkr_init_document(void)
 
     /* Node#parse(html): fragment-parse in this element's context (Nokogiri
      * compatible). Defined here, next to the fragment machinery it reuses. */
-    rb_define_method(mkr_mHtmlNode, "parse", mkr_node_parse, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "parse", mkr_node_parse, 1);
 }

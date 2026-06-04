@@ -632,26 +632,26 @@ mkr_doc_create_document_fragment(VALUE self)
 void
 mkr_init_mutate(void)
 {
-    rb_define_method(mkr_mHtmlNode, "add_child",            mkr_node_add_child,            1);
-    rb_define_method(mkr_mHtmlNode, "<<",                   mkr_node_append,               1);
-    rb_define_method(mkr_mHtmlNode, "add_previous_sibling", mkr_node_add_previous_sibling, 1);
-    rb_define_method(mkr_mHtmlNode, "before",               mkr_node_add_previous_sibling, 1);
-    rb_define_method(mkr_mHtmlNode, "add_next_sibling",     mkr_node_add_next_sibling,     1);
-    rb_define_method(mkr_mHtmlNode, "after",                mkr_node_add_next_sibling,     1);
-    rb_define_method(mkr_mHtmlNode, "remove",               mkr_node_remove,               0);
-    rb_define_method(mkr_mHtmlNode, "unlink",               mkr_node_remove,               0);
-    rb_define_method(mkr_mHtmlNode, "replace",              mkr_node_replace,              1);
+    rb_define_method(mkr_mHtmlNodeMethods, "add_child",            mkr_node_add_child,            1);
+    rb_define_method(mkr_mHtmlNodeMethods, "<<",                   mkr_node_append,               1);
+    rb_define_method(mkr_mHtmlNodeMethods, "add_previous_sibling", mkr_node_add_previous_sibling, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "before",               mkr_node_add_previous_sibling, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "add_next_sibling",     mkr_node_add_next_sibling,     1);
+    rb_define_method(mkr_mHtmlNodeMethods, "after",                mkr_node_add_next_sibling,     1);
+    rb_define_method(mkr_mHtmlNodeMethods, "remove",               mkr_node_remove,               0);
+    rb_define_method(mkr_mHtmlNodeMethods, "unlink",               mkr_node_remove,               0);
+    rb_define_method(mkr_mHtmlNodeMethods, "replace",              mkr_node_replace,              1);
 
-    rb_define_method(mkr_mHtmlNode, "inner_html=", mkr_node_set_inner_html, 1);
-    rb_define_method(mkr_mHtmlNode, "outer_html=", mkr_node_set_outer_html, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "inner_html=", mkr_node_set_inner_html, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "outer_html=", mkr_node_set_outer_html, 1);
 
-    rb_define_method(mkr_mHtmlNode, "[]=",              mkr_node_aset,             2);
-    rb_define_method(mkr_mHtmlNode, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
-    rb_define_method(mkr_mHtmlNode, "remove_attribute_ns", mkr_node_remove_attribute_ns, 2);
-    rb_define_method(mkr_mHtmlNode, "delete",           mkr_node_delete, 1);
-    rb_define_method(mkr_mHtmlNode, "remove_attribute", mkr_node_delete, 1);
-    rb_define_method(mkr_mHtmlNode, "content=",         mkr_node_set_content, 1);
-    rb_define_method(mkr_mHtmlNode, "name=",            mkr_node_set_name,    1);
+    rb_define_method(mkr_mHtmlNodeMethods, "[]=",              mkr_node_aset,             2);
+    rb_define_method(mkr_mHtmlNodeMethods, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
+    rb_define_method(mkr_mHtmlNodeMethods, "remove_attribute_ns", mkr_node_remove_attribute_ns, 2);
+    rb_define_method(mkr_mHtmlNodeMethods, "delete",           mkr_node_delete, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "remove_attribute", mkr_node_delete, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "content=",         mkr_node_set_content, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "name=",            mkr_node_set_name,    1);
 
     rb_define_method(mkr_cHtmlDocument, "create_element",   mkr_doc_create_element,   1);
     rb_define_method(mkr_cHtmlDocument, "create_text_node", mkr_doc_create_text_node, 1);

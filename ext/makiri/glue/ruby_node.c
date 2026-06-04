@@ -49,9 +49,12 @@ mkr_wrap_node(lxb_dom_node_t *node, VALUE document)
         return document;
     }
 
-    /* An HTML (lxb_dom) node wraps to a Makiri::HTML::* leaf; the leaf carries
-     * the lxb_dom reader methods via the included mkr_mHtmlNode module. XML nodes
-     * get their own wrap path (Makiri::XML::* leaves) in step 2. */
+    /* An HTML (lxb_dom) node wraps to a Makiri::HTML::* leaf; the leaf carries the
+     * lxb_dom reader methods via the included mkr_mHtmlNodeMethods module. XML
+     * nodes get their own wrap path (Makiri::XML::* leaves) in step 2. An uncommon
+     * DOM node type with no specific leaf (entity/notation — Lexbor's HTML parser
+     * does not produce these) falls back to the generic Makiri::HTML::Node rather
+     * than being misclassified as an Element. */
     VALUE klass;
     switch (node->type) {
     case LXB_DOM_NODE_TYPE_ELEMENT:       klass = mkr_cHtmlElement;   break;
@@ -64,7 +67,7 @@ mkr_wrap_node(lxb_dom_node_t *node, VALUE document)
     case LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: klass = mkr_cHtmlDocumentType; break;
     case LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT:
                                           klass = mkr_cHtmlDocumentFragment;      break;
-    default:                              klass = mkr_cHtmlElement;   break;
+    default:                              klass = mkr_cHtmlNode;      break;
     }
 
     mkr_node_data_t *nd;
@@ -853,48 +856,48 @@ mkr_node_hash(VALUE self)
 void
 mkr_init_node(void)
 {
-    rb_define_method(mkr_mHtmlNode, "name",          mkr_node_name,          0);
-    rb_define_method(mkr_mHtmlNode, "namespace_uri", mkr_node_namespace_uri, 0);
-    rb_define_method(mkr_mHtmlNode, "prefix",        mkr_node_prefix,        0);
-    rb_define_method(mkr_mHtmlNode, "local_name",    mkr_node_local_name,    0);
-    rb_define_method(mkr_mHtmlNode, "tag_name",      mkr_node_tag_name,      0);
-    rb_define_method(mkr_mHtmlNode, "target",        mkr_node_pi_target,     0);
-    rb_define_method(mkr_mHtmlNode, "node_type",  mkr_node_get_type,   0);
-    rb_define_method(mkr_mHtmlNode, "content",    mkr_node_content,    0);
-    rb_define_method(mkr_mHtmlNode, "text",       mkr_node_content,    0);
-    rb_define_method(mkr_mHtmlNode, "inner_text", mkr_node_content,    0);
+    rb_define_method(mkr_mHtmlNodeMethods, "name",          mkr_node_name,          0);
+    rb_define_method(mkr_mHtmlNodeMethods, "namespace_uri", mkr_node_namespace_uri, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "prefix",        mkr_node_prefix,        0);
+    rb_define_method(mkr_mHtmlNodeMethods, "local_name",    mkr_node_local_name,    0);
+    rb_define_method(mkr_mHtmlNodeMethods, "tag_name",      mkr_node_tag_name,      0);
+    rb_define_method(mkr_mHtmlNodeMethods, "target",        mkr_node_pi_target,     0);
+    rb_define_method(mkr_mHtmlNodeMethods, "node_type",  mkr_node_get_type,   0);
+    rb_define_method(mkr_mHtmlNodeMethods, "content",    mkr_node_content,    0);
+    rb_define_method(mkr_mHtmlNodeMethods, "text",       mkr_node_content,    0);
+    rb_define_method(mkr_mHtmlNodeMethods, "inner_text", mkr_node_content,    0);
 
-    rb_define_method(mkr_mHtmlNode, "document",   mkr_node_get_document, 0);
-    rb_define_method(mkr_mHtmlNode, "parent",     mkr_node_parent,       0);
-    rb_define_method(mkr_mHtmlNode, "next",             mkr_node_next,     0);
-    rb_define_method(mkr_mHtmlNode, "next_sibling",     mkr_node_next,     0);
-    rb_define_method(mkr_mHtmlNode, "previous",         mkr_node_previous, 0);
-    rb_define_method(mkr_mHtmlNode, "previous_sibling", mkr_node_previous, 0);
-    rb_define_method(mkr_mHtmlNode, "next_element",     mkr_node_next_element,     0);
-    rb_define_method(mkr_mHtmlNode, "previous_element", mkr_node_previous_element, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "document",   mkr_node_get_document, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "parent",     mkr_node_parent,       0);
+    rb_define_method(mkr_mHtmlNodeMethods, "next",             mkr_node_next,     0);
+    rb_define_method(mkr_mHtmlNodeMethods, "next_sibling",     mkr_node_next,     0);
+    rb_define_method(mkr_mHtmlNodeMethods, "previous",         mkr_node_previous, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "previous_sibling", mkr_node_previous, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "next_element",     mkr_node_next_element,     0);
+    rb_define_method(mkr_mHtmlNodeMethods, "previous_element", mkr_node_previous_element, 0);
 
-    rb_define_method(mkr_mHtmlNode, "child",                mkr_node_child,                0);
-    rb_define_method(mkr_mHtmlNode, "children",             mkr_node_children,             0);
-    rb_define_method(mkr_mHtmlNode, "element_children",     mkr_node_element_children,     0);
-    rb_define_method(mkr_mHtmlNode, "elements",             mkr_node_element_children,     0);
-    rb_define_method(mkr_mHtmlNode, "first_element_child",  mkr_node_first_element_child,  0);
-    rb_define_method(mkr_mHtmlNode, "last_element_child",   mkr_node_last_element_child,   0);
-    rb_define_method(mkr_mHtmlNode, "ancestors",            mkr_node_ancestors,            0);
+    rb_define_method(mkr_mHtmlNodeMethods, "child",                mkr_node_child,                0);
+    rb_define_method(mkr_mHtmlNodeMethods, "children",             mkr_node_children,             0);
+    rb_define_method(mkr_mHtmlNodeMethods, "element_children",     mkr_node_element_children,     0);
+    rb_define_method(mkr_mHtmlNodeMethods, "elements",             mkr_node_element_children,     0);
+    rb_define_method(mkr_mHtmlNodeMethods, "first_element_child",  mkr_node_first_element_child,  0);
+    rb_define_method(mkr_mHtmlNodeMethods, "last_element_child",   mkr_node_last_element_child,   0);
+    rb_define_method(mkr_mHtmlNodeMethods, "ancestors",            mkr_node_ancestors,            0);
 
-    rb_define_method(mkr_mHtmlNode, "[]",     mkr_node_aref,    1);
-    rb_define_method(mkr_mHtmlNode, "key?",   mkr_node_has_key, 1);
-    rb_define_method(mkr_mHtmlNode, "keys",   mkr_node_keys,    0);
-    rb_define_method(mkr_mHtmlNode, "values", mkr_node_values,  0);
-    rb_define_method(mkr_mHtmlNode, "attribute_nodes", mkr_node_attribute_nodes, 0);
-    rb_define_method(mkr_mHtmlNode, "value",  mkr_node_value,   0);
-    rb_define_method(mkr_mHtmlNode, "line",   mkr_node_line,    0);
+    rb_define_method(mkr_mHtmlNodeMethods, "[]",     mkr_node_aref,    1);
+    rb_define_method(mkr_mHtmlNodeMethods, "key?",   mkr_node_has_key, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "keys",   mkr_node_keys,    0);
+    rb_define_method(mkr_mHtmlNodeMethods, "values", mkr_node_values,  0);
+    rb_define_method(mkr_mHtmlNodeMethods, "attribute_nodes", mkr_node_attribute_nodes, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "value",  mkr_node_value,   0);
+    rb_define_method(mkr_mHtmlNodeMethods, "line",   mkr_node_line,    0);
 
-    rb_define_method(mkr_mHtmlNode, "==",   mkr_node_equals, 1);
-    rb_define_method(mkr_mHtmlNode, "eql?", mkr_node_equals, 1);
-    rb_define_method(mkr_mHtmlNode, "<=>",  mkr_node_spaceship, 1);
-    rb_define_method(mkr_mHtmlNode, "hash", mkr_node_hash,   0);
-    rb_define_method(mkr_mHtmlNode, "pointer_id", mkr_node_pointer_id, 0);
-    rb_define_method(mkr_mHtmlNode, "clone_node", mkr_node_clone_node, -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "==",   mkr_node_equals, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "eql?", mkr_node_equals, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "<=>",  mkr_node_spaceship, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "hash", mkr_node_hash,   0);
+    rb_define_method(mkr_mHtmlNodeMethods, "pointer_id", mkr_node_pointer_id, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "clone_node", mkr_node_clone_node, -1);
 
     /* DocumentType identifiers (WHATWG DOM names; external_id is the
      * Nokogiri-compatible alias for public_id). */

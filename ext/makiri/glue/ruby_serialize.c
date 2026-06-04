@@ -100,8 +100,8 @@ mkr_node_inner_html(int argc, VALUE *argv, VALUE self)
 void
 mkr_init_serialize(void)
 {
-    rb_define_method(mkr_mHtmlNode, "to_html",    mkr_node_to_html,    -1);
-    rb_define_method(mkr_mHtmlNode, "to_s",       mkr_node_to_html,    -1);
-    rb_define_method(mkr_mHtmlNode, "outer_html", mkr_node_to_html,    -1);
-    rb_define_method(mkr_mHtmlNode, "inner_html", mkr_node_inner_html, -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "to_html",    mkr_node_to_html,    -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "to_s",       mkr_node_to_html,    -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "outer_html", mkr_node_to_html,    -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "inner_html", mkr_node_inner_html, -1);
 }
