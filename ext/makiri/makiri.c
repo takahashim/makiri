@@ -57,6 +57,10 @@ mkr_c_selftest(VALUE self)
     if (pc != 0) {
         rb_raise(mkr_eError, "mkr_xml_parse_selftest failed at check %d", pc);
     }
+    int qc = mkr_xml_xpath_selftest();
+    if (qc != 0) {
+        rb_raise(mkr_eError, "mkr_xml_xpath_selftest failed at check %d", qc);
+    }
     return Qtrue;
 }
 

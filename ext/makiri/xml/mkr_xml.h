@@ -44,6 +44,11 @@ mkr_xml_doc_t *mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *stat
  * Makiri.__c_selftest). Returns 0 on success or the 1-based failing check. */
 int mkr_xml_parse_selftest(void);
 
+/* Self-test of the monomorphized XML XPath engine instance (xpath/
+ * mkr_xpath_xml_selftest.c): runs queries through the _xml engine over a small
+ * document. Returns 0 or the 1-based failing check. */
+int mkr_xml_xpath_selftest(void);
+
 /* --- character data: XML Char + entity/char-reference expansion (§9.1/§9.2) --- */
 int mkr_xml_is_char(uint32_t c);
 

@@ -143,6 +143,22 @@ own(mkr_xml_parser_t *P, const char *src, uint32_t len)
     return p;
 }
 
+/* Store an element/attribute's raw "prefix:local" QName as ONE arena copy, with
+ * local and prefix slicing into it. Keeping the qualified name contiguous lets
+ * Node#name / the XPath name() borrow it without rebuilding it. +loc+/+pfx_len+
+ * come from split_qname (loc points into +name+). 0 on success, -1 on OOM. */
+static int
+set_node_qname(mkr_xml_parser_t *P, mkr_xml_node_t *node, const char *name,
+               uint32_t nl, const char *loc, uint32_t ll, uint32_t pl)
+{
+    const char *q = own(P, name, nl);
+    if (nl > 0 && q == NULL) return -1;
+    node->qname  = q;                          node->qname_len  = nl;
+    node->local  = q + (size_t)(loc - name);   node->local_len  = ll;
+    node->prefix = q;                          node->prefix_len = pl; /* pl 0 = unprefixed */
+    return 0;
+}
+
 static int
 slice_eq(const char *a, uint32_t al, const char *b, uint32_t bl)
 {
@@ -296,9 +312,8 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
 
         mkr_xml_node_t *attr = mkr_xml_arena_node(P->doc, MKR_XN_ATTRIBUTE);
         if (attr == NULL) { propagate_oom(P); return -1; }
-        attr->prefix = own(P, pfx, pl); attr->prefix_len = pl;
-        attr->local  = own(P, loc, ll); attr->local_len = ll;
-        if ((pl > 0 && attr->prefix == NULL) || (ll > 0 && attr->local == NULL)) return -1;
+        (void)pfx;
+        if (set_node_qname(P, attr, r->name, r->name_len, loc, ll, pl) != 0) return -1;
 
         int is_default  = slice_eq(r->name, r->name_len, "xmlns", 5);
         int is_pfx_decl = (r->name_len > 6 && memcmp(r->name, "xmlns:", 6) == 0);
@@ -541,8 +556,8 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
                 if (split_qname(nm, nl, &epfx, &epl, &eloc, &ell) != 0) { set_syntax(&P); break; }
                 mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XN_ELEMENT);
                 if (el == NULL) { propagate_oom(&P); break; }
-                el->prefix = own(&P, epfx, epl); el->prefix_len = epl;
-                el->local  = own(&P, eloc, ell); el->local_len = ell;
+                (void)epfx;
+                if (set_node_qname(&P, el, nm, nl, eloc, ell, epl) != 0) break;
                 el->line = tl; el->col = tc;
                 if (P.status != MKR_XML_OK) break;
 
@@ -597,6 +612,21 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
     if (P.status == MKR_XML_OK) {
         if (depth != 0)        set_syntax(&P);   /* unclosed element(s) */
         else if (doc->root == NULL) set_syntax(&P); /* no root element */
+    }
+
+    /* Wrap the root element in a DOCUMENT node — the XPath "/" root, and what a
+     * Ruby Document wraps. (Lexbor's HTML document IS a node; our custom tree has
+     * no document node otherwise, so the engine's absolute-path seed would have
+     * nothing valid to root at.) */
+    if (P.status == MKR_XML_OK && doc->root != NULL) {
+        mkr_xml_node_t *dn = mkr_xml_arena_node(doc, MKR_XN_DOCUMENT);
+        if (dn == NULL) {
+            P.status = doc->oom;
+        } else {
+            dn->first_child = dn->last_child = doc->root;
+            doc->root->parent = dn;
+            doc->doc_node = dn;
+        }
     }
 
     free(stack);

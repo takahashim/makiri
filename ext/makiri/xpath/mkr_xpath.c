@@ -67,7 +67,28 @@ struct mkr_xpath_context_s {
    * tests and wildcards are unaffected. Set by the glue from the
    * namespace_matching: option. */
   int unprefixed_lax;
+
+  /* Which monomorphized engine instance walks this context's nodes: 0 = HTML
+   * (lxb_dom), 1 = XML (custom node). Set by the glue at context creation. Only
+   * the two node-dereferencing entries (eval, first-match) dispatch on it; all
+   * other per-evaluate machinery is representation-neutral (pointer/string only),
+   * so it runs the HTML copy for both. */
+  int engine_kind;
 };
+
+/* The XML instance's two node-dereferencing entries (the _xml monomorphization
+ * of the shared body; defined in mkr_xpath_{eval,value}_xml.c). Their signatures
+ * are node-pointer-only, so they are ABI-compatible with the HTML declarations. */
+int mkr_eval_ast_xml(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                     mkr_val_t *out, mkr_xpath_error_t *err);
+int mkr_try_first_match_xml(mkr_xpath_context_t *ctx, mkr_node_t *ast,
+                            MKR_DOM_NODE **out_node);
+
+void
+mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind)
+{
+  if (ctx) ctx->engine_kind = kind ? 1 : 0;
+}
 
 mkr_doc_order_index_t *
 mkr_ctx_order_index(mkr_xpath_context_t *ctx)
@@ -572,7 +593,8 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   int order_was_built = ctx->order_index.built;
 
   mkr_val_t v = {0};
-  int eval_rc = mkr_eval_ast(ctx, ast, &v, &err);
+  int eval_rc = ctx->engine_kind ? mkr_eval_ast_xml(ctx, ast, &v, &err)
+                                 : mkr_eval_ast(ctx, ast, &v, &err);
   mkr_str_cache_truncate(&ctx->str_cache, str_cache_snapshot);
   if (!order_was_built && ctx->order_index.built) {
     mkr_doc_order_index_clear(&ctx->order_index);
@@ -601,7 +623,9 @@ mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
     return -1;
   }
   MKR_DOM_NODE *node = NULL;
-  if (mkr_try_first_match(ctx, ast, &node)) {
+  int matched = ctx->engine_kind ? mkr_try_first_match_xml(ctx, ast, &node)
+                                 : mkr_try_first_match(ctx, ast, &node);
+  if (matched) {
     /* Recognised first-match shape: return a 0-or-1-node node-set without
      * building (or sorting) the full descendant set. */
     mkr_val_t v = {0};

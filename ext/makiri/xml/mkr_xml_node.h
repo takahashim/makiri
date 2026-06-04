@@ -31,6 +31,7 @@ typedef struct mkr_xml_node {
     uint8_t  type;                 /* mkr_xn_type_t */
     struct mkr_xml_node *parent, *first_child, *last_child, *prev, *next;
     struct mkr_xml_node *attrs;    /* element: head of attribute list (type=ATTRIBUTE) */
+    const char *qname;   uint32_t qname_len;    /* element/attr raw "prefix:local" (contiguous; local/prefix slice into it) */
     const char *local;   uint32_t local_len;
     const char *prefix;  uint32_t prefix_len;
     const char *ns_uri;  uint32_t ns_uri_len;   /* resolved namespace URI (original case) */
@@ -49,7 +50,9 @@ typedef struct mkr_xml_doc {
     size_t   max_bytes;            /* MKR_XML_MAX_BYTES */
     size_t   nodes,  max_nodes;    /* total node count (attributes included) */
     int      oom;                  /* mkr_xml_status_t once non-zero (sticky) */
-    mkr_xml_node_t *root;
+    mkr_xml_node_t *root;          /* the root element */
+    mkr_xml_node_t *doc_node;      /* the DOCUMENT node (parent of root); the XPath
+                                    * "/" root and what a Ruby Document wraps */
 } mkr_xml_doc_t;
 /* The PER-ELEMENT attribute cap (MKR_XML_MAX_ATTRS) is enforced by the tree
  * builder; the arena counts every node — attributes included — toward max_nodes. */

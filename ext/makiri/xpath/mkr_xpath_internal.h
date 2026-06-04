@@ -556,6 +556,16 @@ void mkr_apply_peephole(mkr_node_t *n);
  * the configured budgets with MKR_XPATH_ERR_LIMIT. */
 mkr_node_t *mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_t *err);
 
+/* Select the monomorphized engine instance that walks this context's nodes:
+ * 0 = HTML (lxb_dom, the default), 1 = XML (custom node). Set by the glue at
+ * context creation (right after mkr_xpath_context_new). */
+void mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind);
+
+/* Structural self-test of the XML engine instance (Makiri.__c_selftest): parses
+ * a small XML document and runs a few XPath queries through the _xml engine,
+ * asserting node-set counts / namespace matching. Returns 0 or a 1-based index. */
+int mkr_xml_xpath_selftest(void);
+
 /*
  * Evaluate a pre-parsed AST. Public counterpart to mkr_xpath_eval that
  * lets callers cache the AST across multiple evaluate() calls.
