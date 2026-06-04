@@ -1,5 +1,6 @@
 #include "mkr_xpath_internal.h"
 #include "../core/mkr_core.h"
+#include "mkr_node_access.h"
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/ns/ns.h>
@@ -31,10 +32,10 @@ static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 static mkr_borrowed_text_t
 node_ns_text(lxb_dom_node_t *node, lxb_dom_document_t *doc)
 {
-  if (node->ns == LXB_NS__UNDEF) return mkr_borrowed_text_lit("");
+  if (MKR_NODE_NS_ID(node) == LXB_NS__UNDEF) return mkr_borrowed_text_lit("");
   if (doc == NULL || doc->ns == NULL) return mkr_borrowed_text_lit("");
   size_t len = 0;
-  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
+  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, MKR_NODE_NS_ID(node), &len);
   return uri ? mkr_borrowed_text((const char *)uri, len)
              : mkr_borrowed_text_lit("");
 }
@@ -52,26 +53,26 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
      * model, so node() must not match them. DocumentFragment IS
      * matched: it acts as the root for fragment-rooted contexts,
      * so '.' / 'self::node()' over a fragment has to see it. */
-    switch (node->type) {
-    case LXB_DOM_NODE_TYPE_DOCUMENT_TYPE:
-    case LXB_DOM_NODE_TYPE_ENTITY:
-    case LXB_DOM_NODE_TYPE_ENTITY_REFERENCE:
-    case LXB_DOM_NODE_TYPE_NOTATION:
+    switch (MKR_NODE_TYPE(node)) {
+    case MKR_NTYPE_DOCUMENT_TYPE:
+    case MKR_NTYPE_ENTITY:
+    case MKR_NTYPE_ENTITY_REFERENCE:
+    case MKR_NTYPE_NOTATION:
       return 0;
     default:
       return 1;
     }
   case MKR_NT_TEXT:
-    return node->type == LXB_DOM_NODE_TYPE_TEXT
-        || node->type == LXB_DOM_NODE_TYPE_CDATA_SECTION;
+    return MKR_NODE_TYPE(node) == MKR_NTYPE_TEXT
+        || MKR_NODE_TYPE(node) == MKR_NTYPE_CDATA_SECTION;
   case MKR_NT_COMMENT:
-    return node->type == LXB_DOM_NODE_TYPE_COMMENT;
+    return MKR_NODE_TYPE(node) == MKR_NTYPE_COMMENT;
   case MKR_NT_PI:
-    if (node->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION) return 0;
+    if (MKR_NODE_TYPE(node) != MKR_NTYPE_PI) return 0;
     if (test->pi_target.ptr == NULL) return 1;
     {
       size_t nlen = 0;
-      const lxb_char_t *nm = lxb_dom_node_name(node, &nlen);
+      const lxb_char_t *nm = MKR_NODE_PI_NAME(node, &nlen);
       return mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->pi_target),
                          mkr_borrowed_text((const char *)nm, nlen));
     }
@@ -80,8 +81,8 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
       return 0; /* see internal.h §6 */
     /* Principal node type. */
     if (axis == MKR_AXIS_ATTRIBUTE) {
-      if (node->type != LXB_DOM_NODE_TYPE_ATTRIBUTE) return 0;
-    } else if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+      if (MKR_NODE_TYPE(node) != MKR_NTYPE_ATTRIBUTE) return 0;
+    } else if (MKR_NODE_TYPE(node) != MKR_NTYPE_ELEMENT) {
       return 0;
     }
     /* `*` matches any namespace; `prefix:*` matches only the namespace bound
@@ -99,8 +100,8 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
   case MKR_NT_NAME: {
     /* Principal node type filter. */
     if (axis == MKR_AXIS_ATTRIBUTE) {
-      if (node->type != LXB_DOM_NODE_TYPE_ATTRIBUTE) return 0;
-    } else if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+      if (MKR_NODE_TYPE(node) != MKR_NTYPE_ATTRIBUTE) return 0;
+    } else if (MKR_NODE_TYPE(node) != MKR_NTYPE_ELEMENT) {
       return 0;
     }
 
@@ -111,15 +112,15 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
     const lxb_char_t *got;
     if (test->prefix.ptr != NULL) {
       if (axis == MKR_AXIS_ATTRIBUTE) {
-        got = lxb_dom_attr_local_name((lxb_dom_attr_t *)node, &got_len);
+        got = MKR_ATTR_LOCAL_NAME(node, &got_len);
       } else {
-        got = lxb_dom_element_local_name((lxb_dom_element_t *)node, &got_len);
+        got = MKR_ELEM_LOCAL_NAME(node, &got_len);
       }
     } else {
       if (axis == MKR_AXIS_ATTRIBUTE) {
-        got = lxb_dom_attr_qualified_name((lxb_dom_attr_t *)node, &got_len);
+        got = MKR_ATTR_QUALIFIED_NAME(node, &got_len);
       } else {
-        got = mkr_dom_node_name_qualified(node, &got_len);
+        got = MKR_ELEM_QUALIFIED_NAME(node, &got_len);
       }
     }
     if (got == NULL) return 0;
@@ -149,7 +150,7 @@ node_principal_match(const mkr_nodetest_t *test, lxb_dom_node_t *node,
       if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
     } else if (!mkr_ctx_unprefixed_lax(ctx)
                && axis != MKR_AXIS_ATTRIBUTE
-               && node->ns != LXB_NS_HTML && node->ns != LXB_NS__UNDEF) {
+               && MKR_NODE_IS_FOREIGN_NS(node)) {
       /* Strict mode restricts ELEMENT name tests to the HTML namespace; foreign
        * (SVG/MathML) elements need a prefix. Attributes are exempt: an
        * unprefixed attribute test matches by no-namespace local name (the DOM
@@ -177,19 +178,19 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
     if (visit(context, u)) return 1;
     return 0;
   case MKR_AXIS_PARENT: {
-    lxb_dom_node_t *p = context->parent;
+    lxb_dom_node_t *p = MKR_NODE_PARENT(context);
     if (p && visit(p, u)) return 1;
     return 0;
   }
   case MKR_AXIS_CHILD:
-    for (lxb_dom_node_t *c = context->first_child; c != NULL; c = c->next) {
+    for (lxb_dom_node_t *c = MKR_NODE_FIRST_CHILD(context); c != NULL; c = MKR_NODE_NEXT(c)) {
       if (visit(c, u)) return 1;
     }
     return 0;
   case MKR_AXIS_ATTRIBUTE: {
-    if (context->type != LXB_DOM_NODE_TYPE_ELEMENT) return 0;
+    if (MKR_NODE_TYPE(context) != MKR_NTYPE_ELEMENT) return 0;
     lxb_dom_element_t *el = (lxb_dom_element_t *)context;
-    for (lxb_dom_attr_t *a = el->first_attr; a != NULL; a = a->next) {
+    for (lxb_dom_attr_t *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
       if (visit((lxb_dom_node_t *)a, u)) return 1;
     }
     return 0;
@@ -197,66 +198,66 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
   case MKR_AXIS_DESCENDANT_OR_SELF: {
     /* DFS pre-order. */
     if (visit(context, u)) return 1;
-    lxb_dom_node_t *n = context->first_child;
+    lxb_dom_node_t *n = MKR_NODE_FIRST_CHILD(context);
     while (n != NULL && n != context) {
       if (visit(n, u)) return 1;
-      if (n->first_child) {
-        n = n->first_child;
+      if (MKR_NODE_FIRST_CHILD(n)) {
+        n = MKR_NODE_FIRST_CHILD(n);
       } else {
-        while (n != context && n->next == NULL) n = n->parent;
+        while (n != context && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
         if (n == context) break;
-        n = n->next;
+        n = MKR_NODE_NEXT(n);
       }
     }
     return 0;
   }
   case MKR_AXIS_DESCENDANT: {
-    lxb_dom_node_t *n = context->first_child;
+    lxb_dom_node_t *n = MKR_NODE_FIRST_CHILD(context);
     while (n != NULL && n != context) {
       if (visit(n, u)) return 1;
-      if (n->first_child) {
-        n = n->first_child;
+      if (MKR_NODE_FIRST_CHILD(n)) {
+        n = MKR_NODE_FIRST_CHILD(n);
       } else {
-        while (n != context && n->next == NULL) n = n->parent;
+        while (n != context && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
         if (n == context) break;
-        n = n->next;
+        n = MKR_NODE_NEXT(n);
       }
     }
     return 0;
   }
   case MKR_AXIS_ANCESTOR:
-    for (lxb_dom_node_t *p = context->parent; p != NULL; p = p->parent) {
+    for (lxb_dom_node_t *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
       if (visit(p, u)) return 1;
     }
     return 0;
   case MKR_AXIS_ANCESTOR_OR_SELF:
-    for (lxb_dom_node_t *p = context; p != NULL; p = p->parent) {
+    for (lxb_dom_node_t *p = context; p != NULL; p = MKR_NODE_PARENT(p)) {
       if (visit(p, u)) return 1;
     }
     return 0;
   case MKR_AXIS_FOLLOWING_SIBLING:
-    for (lxb_dom_node_t *s = context->next; s != NULL; s = s->next) {
+    for (lxb_dom_node_t *s = MKR_NODE_NEXT(context); s != NULL; s = MKR_NODE_NEXT(s)) {
       if (visit(s, u)) return 1;
     }
     return 0;
   case MKR_AXIS_PRECEDING_SIBLING:
-    for (lxb_dom_node_t *s = context->prev; s != NULL; s = s->prev) {
+    for (lxb_dom_node_t *s = MKR_NODE_PREV(context); s != NULL; s = MKR_NODE_PREV(s)) {
       if (visit(s, u)) return 1;
     }
     return 0;
   case MKR_AXIS_FOLLOWING: {
     /* Start at the next node in doc order after context's subtree. */
     lxb_dom_node_t *cur = context;
-    while (cur != NULL && cur->next == NULL) cur = cur->parent;
+    while (cur != NULL && MKR_NODE_NEXT(cur) == NULL) cur = MKR_NODE_PARENT(cur);
     if (cur == NULL) return 0;
-    cur = cur->next;
+    cur = MKR_NODE_NEXT(cur);
     while (cur != NULL) {
       if (visit(cur, u)) return 1;
-      if (cur->first_child) {
-        cur = cur->first_child;
+      if (MKR_NODE_FIRST_CHILD(cur)) {
+        cur = MKR_NODE_FIRST_CHILD(cur);
       } else {
-        while (cur != NULL && cur->next == NULL) cur = cur->parent;
-        if (cur != NULL) cur = cur->next;
+        while (cur != NULL && MKR_NODE_NEXT(cur) == NULL) cur = MKR_NODE_PARENT(cur);
+        if (cur != NULL) cur = MKR_NODE_NEXT(cur);
       }
     }
     return 0;
@@ -271,16 +272,16 @@ walk_axis(mkr_axis_t axis, lxb_dom_node_t *context,
      * of a preceding sibling's subtree. */
     lxb_dom_node_t *cur = context;
     while (cur != NULL) {
-      if (cur->prev) {
-        cur = cur->prev;
-        while (cur->last_child) cur = cur->last_child;
+      if (MKR_NODE_PREV(cur)) {
+        cur = MKR_NODE_PREV(cur);
+        while (MKR_NODE_LAST_CHILD(cur)) cur = MKR_NODE_LAST_CHILD(cur);
         if (visit(cur, u)) return 1;
       } else {
-        cur = cur->parent;
+        cur = MKR_NODE_PARENT(cur);
         if (cur == NULL) return 0;
         /* Is cur an ancestor of the original context? */
         int is_ancestor = 0;
-        for (lxb_dom_node_t *p = context->parent; p != NULL; p = p->parent) {
+        for (lxb_dom_node_t *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
           if (p == cur) { is_ancestor = 1; break; }
         }
         if (!is_ancestor) {
@@ -378,9 +379,9 @@ mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
 static lxb_dom_attr_t *
 mkr_attr_by_qualified_name(lxb_dom_element_t *el, const char *name, size_t name_len)
 {
-  for (lxb_dom_attr_t *a = el->first_attr; a != NULL; a = a->next) {
+  for (lxb_dom_attr_t *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
     size_t qlen = 0;
-    const lxb_char_t *q = lxb_dom_attr_qualified_name(a, &qlen);
+    const lxb_char_t *q = MKR_ATTR_QUALIFIED_NAME(a, &qlen);
     if (q != NULL && qlen == name_len && memcmp(q, name, name_len) == 0) {
       return a;
     }
@@ -397,15 +398,15 @@ mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
   for (size_t i = 0; i < inout->count; ++i) {
     lxb_dom_node_t *n = inout->items[i];
     int keep = 0;
-    if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+    if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
       lxb_dom_attr_t *a =
-          mkr_attr_by_qualified_name(lxb_dom_interface_element(n), ap->name, ap->name_len);
+          mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap->name, ap->name_len);
       if (a != NULL) {
         if (!ap->has_value) {
           keep = 1;
         } else {
           size_t got_len = 0;
-          const lxb_char_t *got = lxb_dom_attr_value(a, &got_len);
+          const lxb_char_t *got = MKR_ATTR_VALUE(a, &got_len);
           if (got == NULL) {
             got_len = 0;
           }
@@ -712,13 +713,13 @@ mkr_first_node_ok(const mkr_step_t *step, lxb_dom_node_t *n)
   for (size_t p = 0; p < step->npredicates; p++) {
     mkr_attr_pred_t ap;
     (void)mkr_match_attr_pred(step->predicates[p], &ap); /* recogniser ensured it matches */
-    if (n->type != LXB_DOM_NODE_TYPE_ELEMENT) return 0;
+    if (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT) return 0;
     lxb_dom_attr_t *a =
-        mkr_attr_by_qualified_name(lxb_dom_interface_element(n), ap.name, ap.name_len);
+        mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap.name, ap.name_len);
     if (a == NULL) return 0;
     if (ap.has_value) {
       size_t got_len = 0;
-      const lxb_char_t *got = lxb_dom_attr_value(a, &got_len);
+      const lxb_char_t *got = MKR_ATTR_VALUE(a, &got_len);
       if (got == NULL) got_len = 0;
       if (got_len != ap.value_len
           || (ap.value_len != 0 && memcmp(got, ap.value, ap.value_len) != 0)) {
@@ -747,16 +748,16 @@ mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
   if (start == NULL) return 1; /* recognised; no context -> no match */
 
   /* Iterative pre-order (document order) over STRICT descendants of start. */
-  for (lxb_dom_node_t *n = start->first_child; n != NULL; ) {
+  for (lxb_dom_node_t *n = MKR_NODE_FIRST_CHILD(start); n != NULL; ) {
     if (node_principal_match(&step->test, n, step->axis, ctx)
         && mkr_first_node_ok(step, n)) {
       *out_node = n;
       return 1;
     }
-    if (n->first_child != NULL) { n = n->first_child; continue; }
-    while (n != start && n->next == NULL) n = n->parent;
+    if (MKR_NODE_FIRST_CHILD(n) != NULL) { n = MKR_NODE_FIRST_CHILD(n); continue; }
+    while (n != start && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
     if (n == start) break;
-    n = n->next;
+    n = MKR_NODE_NEXT(n);
   }
   return 1; /* recognised; *out_node is the first match or NULL */
 }

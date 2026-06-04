@@ -1,5 +1,6 @@
 #include "mkr_xpath_internal.h"
 #include "../core/mkr_core.h"
+#include "mkr_node_access.h"
 
 #include <lexbor/dom/dom.h>
 #include <ctype.h>
@@ -248,21 +249,21 @@ append_text_content(lxb_dom_node_t *node, mkr_buf_t *buf)
 static mkr_status_t
 append_text_descendants(lxb_dom_node_t *node, mkr_buf_t *buf)
 {
-  lxb_dom_node_t *cur = node->first_child;
+  lxb_dom_node_t *cur = MKR_NODE_FIRST_CHILD(node);
   while (cur != NULL) {
-    if (cur->type == LXB_DOM_NODE_TYPE_TEXT) {
+    if (MKR_NODE_TYPE(cur) == MKR_NTYPE_TEXT) {
       mkr_status_t st = append_text_content(cur, buf);
       if (st != MKR_OK) return st; /* LIMIT or OOM — caller fails closed */
     }
-    if (cur->type == LXB_DOM_NODE_TYPE_ELEMENT && cur->first_child != NULL) {
-      cur = cur->first_child;
+    if (MKR_NODE_TYPE(cur) == MKR_NTYPE_ELEMENT && MKR_NODE_FIRST_CHILD(cur) != NULL) {
+      cur = MKR_NODE_FIRST_CHILD(cur);
       continue;
     }
-    while (cur != node && cur->next == NULL) {
-      cur = cur->parent;
+    while (cur != node && MKR_NODE_NEXT(cur) == NULL) {
+      cur = MKR_NODE_PARENT(cur);
     }
     if (cur == node) return MKR_OK;
-    cur = cur->next;
+    cur = MKR_NODE_NEXT(cur);
   }
   return MKR_OK;
 }
@@ -273,17 +274,17 @@ build_string_value(const lxb_dom_node_t *node, mkr_buf_t *buf)
 {
   if (node == NULL) return MKR_OK;
 
-  switch (node->type) {
-  case LXB_DOM_NODE_TYPE_ATTRIBUTE: {
+  switch (MKR_NODE_TYPE(node)) {
+  case MKR_NTYPE_ATTRIBUTE: {
     lxb_dom_attr_t *attr = (lxb_dom_attr_t *)node;
     size_t vlen = 0;
-    const lxb_char_t *v = lxb_dom_attr_value(attr, &vlen);
+    const lxb_char_t *v = MKR_ATTR_VALUE(attr, &vlen);
     return mkr_buf_append(buf, v ? (const char *)v : "", vlen);
   }
-  case LXB_DOM_NODE_TYPE_TEXT:
-  case LXB_DOM_NODE_TYPE_CDATA_SECTION:
-  case LXB_DOM_NODE_TYPE_COMMENT:
-  case LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION:
+  case MKR_NTYPE_TEXT:
+  case MKR_NTYPE_CDATA_SECTION:
+  case MKR_NTYPE_COMMENT:
+  case MKR_NTYPE_PI:
     return append_text_content((lxb_dom_node_t *)node, buf);
   default:
     return append_text_descendants((lxb_dom_node_t *)node, buf);
@@ -494,8 +495,8 @@ mkr_val_to_boolean(const mkr_val_t *v)
 static const lxb_dom_node_t *
 anchor_for_cmp(const lxb_dom_node_t *n)
 {
-  if (n->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
-    return n->parent ? n->parent : n;
+  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
+    return MKR_NODE_PARENT(n) ? MKR_NODE_PARENT(n) : n;
   }
   return n;
 }
@@ -504,7 +505,7 @@ static int
 depth_of(const lxb_dom_node_t *n)
 {
   int d = 0;
-  while (n->parent) { d++; n = n->parent; }
+  while (MKR_NODE_PARENT(n)) { d++; n = MKR_NODE_PARENT(n); }
   return d;
 }
 
@@ -523,15 +524,15 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
    * "element, then its attribute nodes, then its children", so an attribute
    * comes AFTER its own owner element. */
   if (aa == bb) {
-    int a_attr = (a->type == LXB_DOM_NODE_TYPE_ATTRIBUTE);
-    int b_attr = (b->type == LXB_DOM_NODE_TYPE_ATTRIBUTE);
+    int a_attr = (MKR_NODE_TYPE(a) == MKR_NTYPE_ATTRIBUTE);
+    int b_attr = (MKR_NODE_TYPE(b) == MKR_NTYPE_ATTRIBUTE);
     if (a_attr && !b_attr) return 1;  /* b is the owner element E; a (its attr) follows */
     if (b_attr && !a_attr) return -1; /* a is the owner element E; b (its attr) follows */
     /* Both attributes of the same element: relative order is
      * implementation-defined. Use insertion order via attr linked list. */
     if (a_attr && b_attr) {
-      for (const lxb_dom_attr_t *at = ((const lxb_dom_element_t *)aa)->first_attr;
-           at != NULL; at = at->next) {
+      for (const lxb_dom_attr_t *at = MKR_ELEM_FIRST_ATTR((const lxb_dom_element_t *)aa);
+           at != NULL; at = MKR_ATTR_NEXT(at)) {
         if ((const lxb_dom_node_t *)at == a) return -1;
         if ((const lxb_dom_node_t *)at == b) return 1;
       }
@@ -542,15 +543,15 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
   }
 
   int da = depth_of(aa), db = depth_of(bb);
-  while (da > db) { aa = aa->parent; da--; }
-  while (db > da) { bb = bb->parent; db--; }
+  while (da > db) { aa = MKR_NODE_PARENT(aa); da--; }
+  while (db > da) { bb = MKR_NODE_PARENT(bb); db--; }
   if (aa == bb) {
     /* One is ancestor of the other; ancestor comes first. */
     return (aa == anchor_for_cmp(a)) ? -1 : 1;
   }
-  while (aa->parent != bb->parent) {
-    aa = aa->parent;
-    bb = bb->parent;
+  while (MKR_NODE_PARENT(aa) != MKR_NODE_PARENT(bb)) {
+    aa = MKR_NODE_PARENT(aa);
+    bb = MKR_NODE_PARENT(bb);
   }
   /* Resolve sibling order. Scan outward from aa and bb in lockstep (via ->next)
    * rather than forward from parent->first_child: the cost is then O(distance
@@ -559,14 +560,14 @@ doc_order_cmp(const lxb_dom_node_t *a, const lxb_dom_node_t *b)
    * predicate result picking scattered <li> from a 2000-child <ul>), which the
    * doc-order index would only avoid once a single sort reaches its build
    * threshold. */
-  if (aa->parent == NULL) {
+  if (MKR_NODE_PARENT(aa) == NULL) {
     /* Different documents/roots — undefined; keep stable. */
     return 0;
   }
   const lxb_dom_node_t *fa = aa, *fb = bb;
   for (;;) {
-    fa = fa ? fa->next : NULL;
-    fb = fb ? fb->next : NULL;
+    fa = fa ? MKR_NODE_NEXT(fa) : NULL;
+    fb = fb ? MKR_NODE_NEXT(fb) : NULL;
     if (fa == bb) return -1;            /* bb lies after aa -> aa first */
     if (fb == aa) return 1;             /* aa lies after bb -> bb first */
     if (fa == NULL && fb == NULL) return 0; /* unreachable for same-parent nodes */
@@ -679,21 +680,21 @@ order_index_walk(mkr_doc_order_index_t *idx, lxb_dom_node_t *root, size_t *next_
   while (cur != NULL) {
     /* Visit (pre-order): the node, then its attributes before any child. */
     if (order_index_insert(idx, cur, (*next_ord)++) != 0) return -1;
-    if (cur->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+    if (MKR_NODE_TYPE(cur) == MKR_NTYPE_ELEMENT) {
       lxb_dom_element_t *el = (lxb_dom_element_t *)cur;
-      for (lxb_dom_attr_t *a = el->first_attr; a != NULL; a = a->next) {
+      for (lxb_dom_attr_t *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
         if (order_index_insert(idx, (lxb_dom_node_t *)a, (*next_ord)++) != 0) return -1;
       }
     }
-    if (cur->first_child != NULL) {
-      cur = cur->first_child;
+    if (MKR_NODE_FIRST_CHILD(cur) != NULL) {
+      cur = MKR_NODE_FIRST_CHILD(cur);
       continue;
     }
-    while (cur != root && cur->next == NULL) {
-      cur = cur->parent;
+    while (cur != root && MKR_NODE_NEXT(cur) == NULL) {
+      cur = MKR_NODE_PARENT(cur);
     }
     if (cur == root) break;
-    cur = cur->next;
+    cur = MKR_NODE_NEXT(cur);
   }
   return 0;
 }

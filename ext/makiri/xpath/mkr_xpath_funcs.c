@@ -1,5 +1,6 @@
 #include "mkr_xpath_internal.h"
 #include "../core/mkr_core.h"
+#include "mkr_node_access.h"
 
 #include <lexbor/dom/dom.h>
 #include <lexbor/encoding/decode.h>
@@ -154,20 +155,20 @@ find_by_id(lxb_dom_node_t *root, const char *id, size_t id_len)
   if (root == NULL || id == NULL || id_len == 0) return NULL;
   lxb_dom_node_t *n = root;
   while (n) {
-    if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-      lxb_dom_element_t *el = (lxb_dom_element_t *)n;
+    if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
+      lxb_dom_element_t *el = MKR_NODE_AS_ELEMENT(n);
       size_t vlen = 0;
-      const lxb_char_t *v = lxb_dom_element_get_attribute(el, (const lxb_char_t *)"id", 2, &vlen);
+      const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "id", 2, &vlen);
       if (v && vlen == id_len && memcmp(v, id, id_len) == 0) {
         return n;
       }
     }
-    if (n->first_child) {
-      n = n->first_child;
+    if (MKR_NODE_FIRST_CHILD(n)) {
+      n = MKR_NODE_FIRST_CHILD(n);
     } else {
-      while (n && n != root && n->next == NULL) n = n->parent;
+      while (n && n != root && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
       if (n == root || n == NULL) break;
-      n = n->next;
+      n = MKR_NODE_NEXT(n);
     }
   }
   return NULL;
@@ -316,7 +317,7 @@ fn_nokogiri_local_name_is(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->u.boolean = 0;
   if (self_node != NULL) {
     size_t got_len = 0;
-    const lxb_char_t *got = mkr_dom_node_name_qualified(self_node, &got_len);
+    const lxb_char_t *got = MKR_ELEM_QUALIFIED_NAME(self_node, &got_len);
     if (got != NULL) {
       out->u.boolean = (got_len == want.len && memcmp(got, want.ptr, want.len) == 0);
     }
@@ -900,19 +901,19 @@ fn_local_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "local-name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
-      (n->type != LXB_DOM_NODE_TYPE_ELEMENT &&
-       n->type != LXB_DOM_NODE_TYPE_ATTRIBUTE &&
-       n->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION)) {
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
     return set_empty_string(out, err, "local-name");
   }
   size_t len = 0;
   const lxb_char_t *name;
-  if (n->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
-    name = lxb_dom_attr_local_name((lxb_dom_attr_t *)n, &len);
-  } else if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-    name = lxb_dom_element_local_name((lxb_dom_element_t *)n, &len);
+  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
+    name = MKR_ATTR_LOCAL_NAME(n, &len);
+  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
+    name = MKR_ELEM_LOCAL_NAME(n, &len);
   } else {
-    name = lxb_dom_node_name(n, &len);
+    name = MKR_NODE_PI_NAME(n, &len);
   }
   return set_bytes_string(out, name, len, err, "local-name");
 }
@@ -927,10 +928,10 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "namespace-uri");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
-      (n->type != LXB_DOM_NODE_TYPE_ELEMENT && n->type != LXB_DOM_NODE_TYPE_ATTRIBUTE)) {
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT && MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE)) {
     return set_empty_string(out, err, "namespace-uri");
   }
-  if (n->ns == 0) {
+  if (MKR_NODE_NS_ID(n) == 0) {
     return set_empty_string(out, err, "namespace-uri");
   }
   lxb_dom_document_t *doc = mkr_ctx_document(ctx);
@@ -938,7 +939,7 @@ fn_namespace_uri(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
     return set_empty_string(out, err, "namespace-uri");
   }
   size_t len = 0;
-  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, n->ns, &len);
+  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, MKR_NODE_NS_ID(n), &len);
   return set_bytes_string(out, uri, len, err, "namespace-uri");
 }
 
@@ -952,19 +953,19 @@ fn_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
-      (n->type != LXB_DOM_NODE_TYPE_ELEMENT &&
-       n->type != LXB_DOM_NODE_TYPE_ATTRIBUTE &&
-       n->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION)) {
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
     return set_empty_string(out, err, "name");
   }
   /* In HTML the qualified name matches the local name; this also avoids
    * surfacing the LXB_NS_HTML prefix that would otherwise confuse users. */
   size_t len = 0;
   const lxb_char_t *name;
-  if (n->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
-    name = lxb_dom_attr_qualified_name((lxb_dom_attr_t *)n, &len);
+  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
+    name = MKR_ATTR_QUALIFIED_NAME(n, &len);
   } else {
-    name = mkr_dom_node_name_qualified(n, &len);
+    name = MKR_ELEM_QUALIFIED_NAME(n, &len);
   }
   return set_bytes_string(out, name, len, err, "name");
 }
@@ -983,13 +984,13 @@ fn_lang(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->type = MKR_XPATH_TYPE_BOOLEAN;
   out->u.boolean = 0;
   /* Walk up the ancestor chain looking for an @xml:lang or @lang. */
-  for (lxb_dom_node_t *p = self_node; p != NULL; p = p->parent) {
-    if (p->type != LXB_DOM_NODE_TYPE_ELEMENT) continue;
-    lxb_dom_element_t *el = (lxb_dom_element_t *)p;
+  for (lxb_dom_node_t *p = self_node; p != NULL; p = MKR_NODE_PARENT(p)) {
+    if (MKR_NODE_TYPE(p) != MKR_NTYPE_ELEMENT) continue;
+    lxb_dom_element_t *el = MKR_NODE_AS_ELEMENT(p);
     size_t vlen = 0;
-    const lxb_char_t *v = lxb_dom_element_get_attribute(el, (const lxb_char_t *)"lang", 4, &vlen);
+    const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "lang", 4, &vlen);
     if (v == NULL) {
-      v = lxb_dom_element_get_attribute(el, (const lxb_char_t *)"xml:lang", 8, &vlen);
+      v = MKR_ELEM_GET_ATTRIBUTE(el, "xml:lang", 8, &vlen);
     }
     if (v == NULL) continue;
     /* Compare prefix (case-insensitive) up to '-'. */
