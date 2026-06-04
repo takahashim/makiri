@@ -36,6 +36,80 @@ node_ns_text(MKR_DOM_NODE *node, MKR_DOM_DOCUMENT *doc)
   return uri ? mkr_borrowed_text(uri, len) : mkr_borrowed_text_lit("");
 }
 
+/* Host-specific element/attribute name-test match (§8.6). The principal-node-type
+ * filter has already passed (node is an element, or an attribute on the attribute
+ * axis); this decides whether its name and namespace match +test+.
+ *
+ * HTML uses the qualified-name model: an unprefixed test compares the node's
+ * qualified name (== local name for HTML, which has no element prefixes) and, in
+ * strict mode, restricts elements to the HTML/no namespace; a prefixed test
+ * compares the local name plus the namespace URI bound to the prefix. The XML
+ * instance defines MKR_HOST_XML and provides its own local-name + ns_uri match. */
+static int
+name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
+                mkr_axis_t axis, mkr_xpath_context_t *ctx)
+{
+#ifdef MKR_HOST_XML
+  /* XML name match (local name + namespace URI). An unprefixed test matches a
+   * no-namespace node only (a prefixed or default-namespaced element needs a
+   * registered prefix, §8.6); a prefixed test matches the local name plus the
+   * URI bound to the prefix. There is no qualified-name buffer on the custom
+   * node, so the comparison is always against the local name. */
+  size_t got_len = 0;
+  const char *got = (axis == MKR_AXIS_ATTRIBUTE)
+                      ? MKR_ATTR_LOCAL_NAME(node, &got_len)
+                      : MKR_ELEM_LOCAL_NAME(node, &got_len);
+  if (got == NULL || test->local.ptr == NULL) return 0;
+  if (!mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->local),
+                            mkr_borrowed_text(got, got_len))) return 0;
+
+  size_t node_uri_len = 0;
+  const char *node_uri = MKR_NODE_NS_URI(node, mkr_ctx_document(ctx), &node_uri_len);
+  if (test->prefix.ptr != NULL) {
+    size_t want_uri_len = 0;
+    const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
+    if (want_uri == NULL) return 0;
+    if (want_uri_len != node_uri_len
+        || (want_uri_len && memcmp(want_uri, node_uri, want_uri_len) != 0)) return 0;
+  } else if (node_uri_len != 0 && !mkr_ctx_unprefixed_lax(ctx)) {
+    /* unprefixed test, strict: the node must be in no namespace */
+    return 0;
+  }
+  return 1;
+#else
+  /* HTML name match (qualified-name model). */
+  size_t got_len = 0;
+  const lxb_char_t *got;
+  if (test->prefix.ptr != NULL) {
+    got = (axis == MKR_AXIS_ATTRIBUTE) ? MKR_ATTR_LOCAL_NAME(node, &got_len)
+                                       : MKR_ELEM_LOCAL_NAME(node, &got_len);
+  } else {
+    got = (axis == MKR_AXIS_ATTRIBUTE) ? MKR_ATTR_QUALIFIED_NAME(node, &got_len)
+                                       : MKR_ELEM_QUALIFIED_NAME(node, &got_len);
+  }
+  if (got == NULL || test->local.ptr == NULL) return 0;
+  if (!mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->local),
+                            mkr_borrowed_text((const char *)got, got_len))) return 0;
+
+  if (test->prefix.ptr != NULL) {
+    size_t want_uri_len = 0;
+    const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
+    if (want_uri == NULL) return 0; /* unknown prefix -> non-match (step driver reports) */
+    mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
+    if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
+  } else if (!mkr_ctx_unprefixed_lax(ctx)
+             && axis != MKR_AXIS_ATTRIBUTE
+             && MKR_NODE_IS_FOREIGN_NS(node)) {
+    /* strict mode: unprefixed ELEMENT tests resolve in the HTML namespace, so a
+     * foreign (SVG/MathML) element needs a prefix. Attributes are exempt (an
+     * unprefixed attribute test matches by no-namespace local name; the
+     * qualified-name compare above already excludes prefixed foreign attrs). */
+    return 0;
+  }
+  return 1;
+#endif
+}
+
 static int
 node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
                      mkr_axis_t axis, mkr_xpath_context_t *ctx)
@@ -93,72 +167,17 @@ node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
     }
     return 1;
   }
-  case MKR_NT_NAME: {
+  case MKR_NT_NAME:
     /* Principal node type filter. */
     if (axis == MKR_AXIS_ATTRIBUTE) {
       if (MKR_NODE_TYPE(node) != MKR_NTYPE_ATTRIBUTE) return 0;
     } else if (MKR_NODE_TYPE(node) != MKR_NTYPE_ELEMENT) {
       return 0;
     }
-
-    /* Local-name comparison. For prefixed tests we compare local names
-     * (no prefix); for unprefixed tests we compare against the
-     * qualified name, which for HTML is equivalent to the local name. */
-    size_t got_len = 0;
-    const lxb_char_t *got;
-    if (test->prefix.ptr != NULL) {
-      if (axis == MKR_AXIS_ATTRIBUTE) {
-        got = MKR_ATTR_LOCAL_NAME(node, &got_len);
-      } else {
-        got = MKR_ELEM_LOCAL_NAME(node, &got_len);
-      }
-    } else {
-      if (axis == MKR_AXIS_ATTRIBUTE) {
-        got = MKR_ATTR_QUALIFIED_NAME(node, &got_len);
-      } else {
-        got = MKR_ELEM_QUALIFIED_NAME(node, &got_len);
-      }
-    }
-    if (got == NULL) return 0;
-    if (test->local.ptr == NULL) return 0;
-    if (!mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(test->local),
-                     mkr_borrowed_text((const char *)got, got_len))) return 0;
-
-    /* Namespace check (see internal.h §2–§4).
-     *   - Prefixed test: the node's namespace URI must equal the URI bound to
-     *     the prefix.
-     *   - Unprefixed test, strict (default, HTML5/WHATWG-faithful): the name
-     *     resolves in the HTML namespace, so it matches only HTML-namespace or
-     *     no-namespace nodes — foreign (SVG/MathML) content needs a prefix.
-     *     This mirrors browsers' document.evaluate and Nokogiri::HTML5.
-     *   - Unprefixed test, lax: namespace ignored (matched by local name
-     *     already), the HTML4 / Nokogiri::HTML-style convenience. */
-    if (test->prefix.ptr != NULL) {
-      size_t want_uri_len = 0;
-      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
-      if (want_uri == NULL) {
-        /* Unknown prefix: leave for the step driver to report so the
-         * error is uniform across all hit nodes. We treat it as
-         * non-match here; node_principal_match cannot raise on its own. */
-        return 0;
-      }
-      mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
-      if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
-    } else if (!mkr_ctx_unprefixed_lax(ctx)
-               && axis != MKR_AXIS_ATTRIBUTE
-               && MKR_NODE_IS_FOREIGN_NS(node)) {
-      /* Strict mode restricts ELEMENT name tests to the HTML namespace; foreign
-       * (SVG/MathML) elements need a prefix. Attributes are exempt: an
-       * unprefixed attribute test matches by no-namespace local name (the DOM
-       * model — `id` on an <svg> is still a null-namespace attribute), and the
-       * qualified-name comparison above already excludes prefixed foreign
-       * attributes like xlink:href. Lexbor tags attributes with their element's
-       * ns, which does not reflect the DOM, so we must not gate attributes on
-       * node->ns here. */
-      return 0;
-    }
-    return 1;
-  }
+    /* The local-name + namespace match for an element/attribute name test is
+     * host-specific (HTML's qualified-name model vs XML's local+namespace-URI
+     * model, §8.6), so it lives in name_test_match — defined per instance. */
+    return name_test_match(test, node, axis, ctx);
   }
   return 0;
 }
