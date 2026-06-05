@@ -35,17 +35,28 @@ typedef enum {
     MKR_XML_NODE_TYPE_NOTATION         = 12  /* never produced (no DTD) */
 } mkr_xml_node_type_t;
 
-/* The hot navigation/type fields are at the front (the engine reads them in its
- * tight walk). Names/values are arena-owned byte slices (case-preserved). */
+/* Field order is chosen for size + locality, not readability:
+ *   1. the hot navigation/type fields first (the engine reads type + the tree
+ *      pointers in its tight walk), kept within the first cache line;
+ *   2. the name/value pointers grouped;
+ *   3. their lengths grouped at the end.
+ * Grouping the uint32 lengths lets adjacent ones pack into shared 8-byte slots
+ * instead of each wasting 4 bytes of padding before the next 8-aligned pointer
+ * — 144 -> 128 bytes/node (measured), ~160 MB saved at the 10M-node cap. The
+ * split is invisible to callers: a length is only ever read via its paired
+ * pointer (n->qname / n->qname_len), the field NAMES are unchanged, and the
+ * lengths stay uint32 (the deliberate per-slice 4 GiB cap; see the enum note).
+ * Names/values are arena-owned byte slices (case-preserved). */
 typedef struct mkr_xml_node {
     uint8_t  type;                 /* mkr_xml_node_type_t */
     struct mkr_xml_node *parent, *first_child, *last_child, *prev, *next;
     struct mkr_xml_node *attrs;    /* element: head of attribute list (type=ATTRIBUTE) */
-    const char *qname;   uint32_t qname_len;    /* element/attr raw "prefix:local" (contiguous; local/prefix slice into it) */
-    const char *local;   uint32_t local_len;
-    const char *prefix;  uint32_t prefix_len;
-    const char *ns_uri;  uint32_t ns_uri_len;   /* resolved namespace URI (original case) */
-    const char *value;   uint32_t value_len;    /* text/cdata/comment/pi-data/attr value */
+    const char *qname;   /* element/attr raw "prefix:local" (contiguous; local/prefix slice into it) */
+    const char *local;
+    const char *prefix;
+    const char *ns_uri;  /* resolved namespace URI (original case) */
+    const char *value;   /* text/cdata/comment/pi-data/attr value */
+    uint32_t qname_len, local_len, prefix_len, ns_uri_len, value_len;
     uint32_t line, col;            /* source position (element only; 0 = none) */
 } mkr_xml_node_t;
 
