@@ -30,8 +30,9 @@
 
 typedef struct {
     const lxb_dom_node_t *node;  /* key; NULL marks an empty slot */
-    size_t start;                /* [start, end) into slices[] */
-    size_t end;
+    uint32_t start;              /* [start, end) into slices[] (indices, not */
+    uint32_t end;                /* byte offsets; bounded by the slice count, */
+                                 /* which the build caps at UINT32_MAX) */
 } mkr_text_range_t;
 
 typedef struct {
@@ -78,8 +79,8 @@ mkr_tix_range_insert(mkr_text_idx_t *t, lxb_dom_node_t *node, size_t start)
         i = (i + 1) & (t->ranges_cap - 1);
     }
     t->ranges[i].node  = node;
-    t->ranges[i].start = start;
-    t->ranges[i].end   = start; /* provisional until close */
+    t->ranges[i].start = (uint32_t)start;
+    t->ranges[i].end   = (uint32_t)start; /* provisional until close */
     t->ranges_count++;
     return i;
 }
@@ -150,6 +151,11 @@ mkr_text_idx_build(lxb_dom_node_t *root)
     size_t nslices = 0, ncont = 0;
     mkr_tix_count(root, &nslices, &ncont);
 
+    /* Slice run bounds (start/end) are stored as uint32 in the range table. A
+     * document with > UINT32_MAX text slices is impossible in practice (each is
+     * >= 1 byte), but guard it anyway: fail closed so the caller walks. */
+    if (nslices > UINT32_MAX) return NULL;
+
     mkr_text_idx_t *t = mkr_callocarray(1, sizeof(*t));
     if (t == NULL) return NULL;
     t->root = root;
@@ -193,7 +199,7 @@ mkr_text_idx_build(lxb_dom_node_t *root)
         mkr_tix_frame_t *top = &st[sn - 1];
         lxb_dom_node_t *child = top->child;
         if (child == NULL) {
-            t->ranges[top->range].end = t->nslices; /* close subtree */
+            t->ranges[top->range].end = (uint32_t)t->nslices; /* close subtree */
             sn--;
             continue;
         }

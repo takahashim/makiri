@@ -33,7 +33,7 @@ RSpec.describe Makiri::Attribute do
     it "returns Attribute nodes in document order" do
       attrs = div.attribute_nodes
       expect(attrs).to be_a(Makiri::NodeSet)
-      expect(attrs.map(&:class)).to all(eq(Makiri::Attribute))
+      expect(attrs).to all(be_a(Makiri::Attribute)) # HTML::Attribute leaf, is_a? Attribute
       expect(attrs.map(&:name)).to eq(%w[id class data-n])
       expect(attrs.map(&:value)).to eq(["outer", "a b", "1"])
     end

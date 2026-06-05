@@ -1,6 +1,7 @@
 #include "glue.h"
+#include "ruby_xpath.h"                  /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
-#include "../xpath/mkr_xpath_internal.h" /* mkr_val_t / nodeset for the handler bridge */
+#include "../xml/mkr_xml_node.h"         /* mkr_xml_doc_t / mkr_xml_node_t for the XML instance */
 #include "../core/mkr_core.h"
 
 #include <stdlib.h>
@@ -92,10 +93,9 @@ static const rb_data_type_t mkr_xpath_ctx_type = {
 /* result + error mapping                                             */
 /* ------------------------------------------------------------------ */
 
-/* Translate an engine error into a Ruby exception and raise. Never returns. */
-static NORETURN(void mkr_xpath_raise(mkr_xpath_error_t *err));
-
-static void
+/* Translate an engine error into a Ruby exception and raise. Never returns.
+ * Shared with the XML query glue via ruby_xpath.h. */
+void
 mkr_xpath_raise(mkr_xpath_error_t *err)
 {
     VALUE klass;
@@ -118,8 +118,9 @@ mkr_xpath_raise(mkr_xpath_error_t *err)
 }
 
 /* Convert a (just-produced) engine value into a Ruby object, then release any
- * heap the engine handed us. document is the keepalive for node-set results. */
-static VALUE
+ * heap the engine handed us. document is the keepalive for node-set results.
+ * Shared with the XML query glue via ruby_xpath.h. */
+VALUE
 mkr_xpath_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
 {
     VALUE result;
@@ -174,10 +175,31 @@ mkr_ns_matching_lax(VALUE opts)
 static mkr_xpath_context_t *
 mkr_xpath_context_for(VALUE rb_node, VALUE document)
 {
+    mkr_parsed_t *parsed = mkr_doc_parsed(document);
+
+    /* XML document: the custom-node arena + the _xml engine instance. There is
+     * no HTML attr->owner index (the custom node links attributes to their owner
+     * directly) and no tag-id element index (//tag falls back to a tree walk),
+     * so neither is built. The "document" is the XML document node (root of "/"
+     * and absolute paths); the context node is that node for a Document, else
+     * the node itself. */
+    if (mkr_parsed_kind(parsed) == MKR_DOC_XML) {
+        mkr_xml_doc_t  *xdoc  = mkr_parsed_xml_doc(parsed);
+        mkr_xml_node_t *docn  = xdoc ? xdoc->doc_node : NULL;
+        mkr_xml_node_t *cnode = rb_obj_is_kind_of(rb_node, mkr_cXmlDocument)
+                                    ? docn
+                                    : (mkr_xml_node_t *)mkr_node_unwrap(rb_node);
+        mkr_xpath_context_t *xctx = mkr_xpath_context_new((void *)docn, (void *)cnode);
+        if (xctx == NULL) {
+            rb_raise(mkr_eError, "failed to allocate XPath context");
+        }
+        mkr_xpath_set_engine_kind(xctx, 1);
+        return xctx;
+    }
+
     lxb_dom_node_t     *node = mkr_node_unwrap(rb_node);
     lxb_dom_document_t *doc  = mkr_doc_unwrap(document);
 
-    mkr_parsed_t *parsed = mkr_doc_parsed(document);
     if (mkr_parsed_dom_index_build(parsed) != 0) {
         rb_raise(mkr_eError, "failed to build attribute index for XPath");
     }
@@ -708,6 +730,6 @@ mkr_init_xpath(void)
     rb_define_method(mkr_cXPathContext, "register_variable",  mkr_xpath_ctx_register_variable, 2);
     rb_define_method(mkr_cXPathContext, "node=", mkr_xpath_ctx_set_node, 1);
 
-    rb_define_method(mkr_cNode, "xpath",    mkr_node_xpath,    -1);
-    rb_define_method(mkr_cNode, "at_xpath", mkr_node_at_xpath, -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "xpath",    mkr_node_xpath,    -1);
+    rb_define_method(mkr_mHtmlNodeMethods, "at_xpath", mkr_node_at_xpath, -1);
 }

@@ -27,8 +27,8 @@ typedef struct {
 } mkr_var_entry_t;
 
 struct mkr_xpath_context_s {
-  lxb_dom_document_t *doc;
-  lxb_dom_node_t     *node;
+  MKR_DOM_DOCUMENT *doc;
+  MKR_DOM_NODE     *node;
 
   mkr_ns_entry_t *ns;
   size_t         ns_count;
@@ -67,7 +67,35 @@ struct mkr_xpath_context_s {
    * tests and wildcards are unaffected. Set by the glue from the
    * namespace_matching: option. */
   int unprefixed_lax;
+
+  /* Which monomorphized engine instance walks this context's nodes: 0 = HTML
+   * (lxb_dom), 1 = XML (custom node). Set by the glue at context creation. Only
+   * the two node-dereferencing entries (eval, first-match) dispatch on it; all
+   * other per-evaluate machinery is representation-neutral (pointer/string only),
+   * so it runs the HTML copy for both. */
+  int engine_kind;
 };
+
+/* The two node-dereferencing engine ENTRY points, one pair per monomorphized
+ * instance (mkr_xpath_engine_{html,xml}.c — the bodies suffix them _html / _xml
+ * via the prelude). The driver holds them as void node pointers and dispatches
+ * on ctx->engine_kind; every other per-evaluate helper is representation-neutral
+ * and shared (mkr_xpath_shared.c), called by its bare name. The signatures are
+ * node-pointer-only, hence ABI-identical across the two instances. */
+int mkr_eval_ast_html(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                      mkr_val_t *out, mkr_xpath_error_t *err);
+int mkr_eval_ast_xml (mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                      mkr_val_t *out, mkr_xpath_error_t *err);
+int mkr_try_first_match_html(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                             MKR_DOM_NODE **out_node, mkr_xpath_error_t *err);
+int mkr_try_first_match_xml (mkr_xpath_context_t *ctx, const mkr_node_t *ast,
+                             MKR_DOM_NODE **out_node, mkr_xpath_error_t *err);
+
+void
+mkr_xpath_set_engine_kind(mkr_xpath_context_t *ctx, int kind)
+{
+  if (ctx) ctx->engine_kind = kind ? 1 : 0;
+}
 
 mkr_doc_order_index_t *
 mkr_ctx_order_index(mkr_xpath_context_t *ctx)
@@ -272,29 +300,10 @@ mkr_limit_check_expr_bytes(mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_error_
 
 /* ---------- node qualified name ---------- */
 
-/*
- * Borrowed qualified name for any node. HTML elements report their
- * lowercase local name (lxb_dom_element_qualified_name), matching
- * Makiri::Node#name and the lowercase-tag HTML data model the engine
- * assumes; every other node kind defers to lxb_dom_node_name.
- */
-const lxb_char_t *
-mkr_dom_node_name_qualified(lxb_dom_node_t *node, size_t *len)
-{
-  if (node == NULL) {
-    if (len) *len = 0;
-    return NULL;
-  }
-  if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-    return lxb_dom_element_qualified_name(lxb_dom_interface_element(node), len);
-  }
-  return lxb_dom_node_name(node, len);
-}
-
 /* ---------- context ---------- */
 
 mkr_xpath_context_t *
-mkr_xpath_context_new(lxb_dom_document_t *doc, lxb_dom_node_t *node)
+mkr_xpath_context_new(MKR_DOM_DOCUMENT *doc, MKR_DOM_NODE *node)
 {
   mkr_xpath_context_t *ctx = mkr_callocarray(1, sizeof(*ctx));
   if (ctx == NULL) {
@@ -447,19 +456,19 @@ mkr_ctx_lookup_variable_text(mkr_xpath_context_t *ctx, const char *prefix,
   return 0;
 }
 
-lxb_dom_node_t *
+MKR_DOM_NODE *
 mkr_ctx_node(mkr_xpath_context_t *ctx)
 {
   return ctx ? ctx->node : NULL;
 }
 
 void
-mkr_ctx_set_node(mkr_xpath_context_t *ctx, lxb_dom_node_t *node)
+mkr_ctx_set_node(mkr_xpath_context_t *ctx, MKR_DOM_NODE *node)
 {
   if (ctx) ctx->node = node;
 }
 
-lxb_dom_document_t *
+MKR_DOM_DOCUMENT *
 mkr_ctx_document(mkr_xpath_context_t *ctx)
 {
   return ctx ? ctx->doc : NULL;
@@ -572,7 +581,8 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   int order_was_built = ctx->order_index.built;
 
   mkr_val_t v = {0};
-  int eval_rc = mkr_eval_ast(ctx, ast, &v, &err);
+  int eval_rc = ctx->engine_kind ? mkr_eval_ast_xml(ctx, ast, &v, &err)
+                                 : mkr_eval_ast_html(ctx, ast, &v, &err);
   mkr_str_cache_truncate(&ctx->str_cache, str_cache_snapshot);
   if (!order_was_built && ctx->order_index.built) {
     mkr_doc_order_index_clear(&ctx->order_index);
@@ -600,8 +610,25 @@ mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
     }
     return -1;
   }
-  lxb_dom_node_t *node = NULL;
-  if (mkr_try_first_match(ctx, ast, &node)) {
+  /* Reset the per-evaluate counters before the first-match fast path: its
+   * descendant walk charges every visited node to max_eval_ops, so it is
+   * bounded fail-closed exactly like the full evaluator (which resets these in
+   * mkr_xpath_eval_compiled). The not-recognised fallback below resets them
+   * again; the walk only runs for recognised shapes, so nothing double-counts. */
+  ctx->limits.eval_ops        = 0;
+  ctx->limits.recursion_depth = 0;
+
+  MKR_DOM_NODE *node = NULL;
+  mkr_xpath_error_t err = {0};
+  int matched = ctx->engine_kind ? mkr_try_first_match_xml(ctx, ast, &node, &err)
+                                 : mkr_try_first_match_html(ctx, ast, &node, &err);
+  if (matched < 0) {
+    /* Op budget exceeded while walking — fail closed (do NOT fall back to the
+     * full evaluator, which would hit the same wall). */
+    if (out_error) *out_error = err; else mkr_xpath_error_clear(&err);
+    return -1;
+  }
+  if (matched) {
     /* Recognised first-match shape: return a 0-or-1-node node-set without
      * building (or sorting) the full descendant set. */
     mkr_val_t v = {0};

@@ -1,6 +1,18 @@
 #include "glue.h"
 
 #include <lexbor/html/parser.h>
+#include <lexbor/ns/ns.h>
+
+/* Exported by lexbor but omitted from its public headers. lxb_ns_append interns
+ * a namespace URI in the document's ns table; lxb_dom_attr_set_name_ns names an
+ * attribute from (namespace, qualified name), splitting prefix/local and
+ * interning the namespace. */
+extern const lxb_ns_data_t *
+lxb_ns_append(lexbor_hash_t *hash, const lxb_char_t *link, size_t length);
+extern lxb_status_t
+lxb_dom_attr_set_name_ns(lxb_dom_attr_t *attr, const lxb_char_t *link,
+                         size_t link_length, const lxb_char_t *name,
+                         size_t name_length, bool to_lowercase);
 
 /*
  * DOM mutation (v0.2). Thin wrappers over Lexbor's insert/remove/create
@@ -70,12 +82,22 @@ mkr_is_fragment(const lxb_dom_node_t *n)
 /* tree mutation                                                      */
 /* ------------------------------------------------------------------ */
 
+/* Every tree / attribute mutation unwraps `self` through here first: a node the
+ * caller has frozen (Ruby's Object#freeze) is immutable, so raise FrozenError
+ * rather than silently editing it. Read accessors keep using mkr_node_unwrap. */
+static lxb_dom_node_t *
+mkr_node_unwrap_mutable(VALUE self)
+{
+    rb_check_frozen(self);
+    return mkr_node_unwrap(self);
+}
+
 /* node.add_child(child) -> child. Appends child as the last child. A document
  * fragment contributes its children rather than itself. */
 static VALUE
 mkr_node_add_child(VALUE self, VALUE rb_child)
 {
-    lxb_dom_node_t *parent = mkr_node_unwrap(self);
+    lxb_dom_node_t *parent = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *child  = mkr_arg_node(rb_child);
     mkr_prepare_insert(parent, child);
     if (mkr_is_fragment(child)) {
@@ -102,7 +124,7 @@ mkr_node_append(VALUE self, VALUE rb_child)
 static VALUE
 mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
 {
-    lxb_dom_node_t *ref  = mkr_node_unwrap(self);
+    lxb_dom_node_t *ref  = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *node = mkr_arg_node(rb_node);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
@@ -124,7 +146,7 @@ mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
 static VALUE
 mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
 {
-    lxb_dom_node_t *ref  = mkr_node_unwrap(self);
+    lxb_dom_node_t *ref  = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *node = mkr_arg_node(rb_node);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
@@ -148,7 +170,7 @@ mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
 static VALUE
 mkr_node_remove(VALUE self)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
         rb_raise(mkr_eError, "use delete(name) to remove an attribute");
     }
@@ -163,7 +185,7 @@ mkr_node_remove(VALUE self)
 static VALUE
 mkr_node_replace(VALUE self, VALUE rb_other)
 {
-    lxb_dom_node_t *ref   = mkr_node_unwrap(self);
+    lxb_dom_node_t *ref   = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *other = mkr_arg_node(rb_other);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot replace a node with no parent");
@@ -191,7 +213,7 @@ mkr_node_replace(VALUE self, VALUE rb_other)
 static VALUE
 mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
     }
@@ -210,13 +232,179 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
     return rb_value;
 }
 
+/* An attribute's OWN namespace id: the one recorded by set_attribute_ns (which
+ * differs from the owner element's), else the null namespace — a normally-set or
+ * parsed attribute inherits the element's ns, which for matching purposes is the
+ * null namespace (an unprefixed attribute is namespaceless). */
+static lxb_ns_id_t
+mkr_attr_own_ns(const lxb_dom_attr_t *at)
+{
+    if (at->owner != NULL && at->node.ns != at->owner->node.ns) {
+        return at->node.ns;
+    }
+    return LXB_NS__UNDEF;
+}
+
+/* Find the attribute on `el` matching (ns_id, local_name) case-sensitively — the
+ * DOM keys attributes on (namespace, local name), so two with the same qualified
+ * name but different namespaces coexist (unlike Lexbor's by-qualified-name,
+ * case-insensitive-for-HTML lookup). */
+static lxb_dom_attr_t *
+mkr_attr_find_ns(lxb_dom_element_t *el, lxb_ns_id_t ns_id,
+                 const lxb_char_t *local, size_t local_len)
+{
+    for (lxb_dom_attr_t *at = el->first_attr; at != NULL; at = at->next) {
+        if (mkr_attr_own_ns(at) != ns_id) {
+            continue;
+        }
+        /* Compare the case-preserved local name (the suffix of the qualified
+         * name): Lexbor lower-cases the stored local_name even when the
+         * qualified name keeps its case, but setAttributeNS is case-sensitive. */
+        size_t qlen = 0, llen = 0;
+        const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
+        (void) lxb_dom_attr_local_name(at, &llen);
+        if (q != NULL && qlen >= llen
+            && llen == local_len
+            && memcmp(q + (qlen - llen), local, local_len) == 0) {
+            return at;
+        }
+    }
+    return NULL;
+}
+
+/* element.set_attribute_ns(namespace_or_nil, qualified_name, value) -> value.
+ *
+ * Stores the attribute under its qualified name (case-preserved — setAttributeNS
+ * is case-sensitive, unlike the HTML setAttribute family) and records its OWN
+ * namespace on the attr node, so namespaceURI / getAttributeNS resolve it. The
+ * namespace URI is interned in the document's ns table; nil/"" stores the null
+ * namespace (LXB_NS__UNDEF). */
+static VALUE
+mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_value)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
+    }
+    lxb_dom_element_t *el = lxb_dom_interface_element(node);
+
+    mkr_ruby_borrowed_text_t qv = mkr_ruby_verified_text(rb_qname, "attribute qualified name");
+    mkr_ruby_borrowed_text_t vv = mkr_ruby_verified_text(rb_value, "attribute value");
+
+    mkr_ruby_borrowed_text_t nv = {0};
+    bool have_ns = false;
+    if (!NIL_P(rb_ns)) {
+        nv = mkr_ruby_verified_text(rb_ns, "namespace");
+        have_ns = nv.len > 0;
+    }
+
+    /* Intern the wanted namespace (null/"" => LXB_NS__UNDEF) so the existing
+     * attribute is matched on (namespace, local name) — the DOM key — rather than
+     * the qualified name. */
+    lxb_ns_id_t want_ns = LXB_NS__UNDEF;
+    if (have_ns && node->owner_document != NULL && node->owner_document->ns != NULL) {
+        const lxb_ns_data_t *d = lxb_ns_append(node->owner_document->ns,
+                                               (const lxb_char_t *)nv.ptr, nv.len);
+        if (d != NULL) {
+            want_ns = d->ns_id;
+        }
+    }
+
+    const lxb_char_t *qn = (const lxb_char_t *)qv.ptr;
+    const lxb_char_t *colon = memchr(qn, ':', qv.len);
+    const lxb_char_t *local = colon ? colon + 1 : qn;
+    size_t local_len = colon ? (size_t)(qv.len - (colon - qn) - 1) : qv.len;
+
+    /* A match keeps its qualified name (so re-setting with a different prefix
+     * leaves the prefix unchanged); only the value updates. A miss appends a new
+     * attribute, even when its qualified name collides with an existing one in a
+     * different namespace — the namespace-aware setter splits prefix/local and
+     * records the namespace; a null namespace just sets the bare name. */
+    lxb_dom_attr_t *attr = mkr_attr_find_ns(el, want_ns, local, local_len);
+    if (attr != NULL) {
+        if (lxb_dom_attr_set_value(attr, (const lxb_char_t *)vv.ptr, vv.len) != LXB_STATUS_OK) {
+            rb_raise(mkr_eError, "failed to set attribute value");
+        }
+    }
+    else {
+        attr = lxb_dom_attr_interface_create(node->owner_document);
+        if (attr == NULL) {
+            rb_raise(mkr_eError, "failed to create attribute");
+        }
+        /* A fresh attr is calloc'd, so node.ns is already LXB_NS__UNDEF for the
+         * null-namespace case; only the namespaced setter changes it. */
+        lxb_status_t st;
+        if (have_ns) {
+            st = lxb_dom_attr_set_name_ns(attr, (const lxb_char_t *)nv.ptr, nv.len,
+                                          (const lxb_char_t *)qv.ptr, qv.len, false);
+        }
+        else {
+            st = lxb_dom_attr_set_name(attr, (const lxb_char_t *)qv.ptr, qv.len, false);
+        }
+        if (st != LXB_STATUS_OK
+            || lxb_dom_attr_set_value(attr, (const lxb_char_t *)vv.ptr, vv.len) != LXB_STATUS_OK) {
+            /* Leave the un-appended attr for the document arena to free wholesale
+             * (the module's "never destroy a detached node" convention). */
+            rb_raise(mkr_eError, "failed to set namespaced attribute");
+        }
+        lxb_dom_element_attr_append(el, attr);
+    }
+
+    RB_GC_GUARD(qv.value);
+    RB_GC_GUARD(vv.value);
+    RB_GC_GUARD(nv.value);
+    mkr_invalidate_index(self);
+    return rb_value;
+}
+
+/* element.remove_attribute_ns(namespace_or_nil, local_name) -> nil. Removes the
+ * attribute matching (namespace, local name) — the DOM key — so a namespaced
+ * attribute is removed without disturbing a same-qualified-name one in another
+ * namespace (which removal by qualified name, case-insensitive for HTML, would). */
+static VALUE
+mkr_node_remove_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_local)
+{
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        return Qnil;
+    }
+    lxb_dom_element_t *el = lxb_dom_interface_element(node);
+
+    mkr_ruby_borrowed_text_t lv = mkr_ruby_verified_text(rb_local, "attribute local name");
+
+    lxb_ns_id_t want_ns = LXB_NS__UNDEF;
+    VALUE ns_guard = Qnil;
+    if (!NIL_P(rb_ns)) {
+        mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_ns, "namespace");
+        ns_guard = nv.value;
+        if (nv.len > 0 && node->owner_document != NULL && node->owner_document->ns != NULL) {
+            const lxb_ns_data_t *d = lxb_ns_append(node->owner_document->ns,
+                                                   (const lxb_char_t *)nv.ptr, nv.len);
+            if (d != NULL) {
+                want_ns = d->ns_id;
+            }
+        }
+    }
+
+    lxb_dom_attr_t *attr = mkr_attr_find_ns(el, want_ns,
+                               (const lxb_char_t *)lv.ptr, lv.len);
+    if (attr != NULL) {
+        lxb_dom_element_attr_remove(el, attr);
+        mkr_invalidate_index(self);
+    }
+
+    RB_GC_GUARD(lv.value);
+    RB_GC_GUARD(ns_guard);
+    return Qnil;
+}
+
 /* element.name = new_name -> new_name. Renames the element in place (identity
  * preserved): create a throwaway element with the new name so the document
  * interns it, copy its name fields onto this node, then discard it. */
 static VALUE
 mkr_node_set_name(VALUE self, VALUE rb_name)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "name= is only supported on elements");
     }
@@ -245,7 +433,7 @@ mkr_node_set_name(VALUE self, VALUE rb_name)
 static VALUE
 mkr_node_set_content(VALUE self, VALUE rb_text)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "node content");
     lxb_status_t st = lxb_dom_node_text_content_set(
         node, (const lxb_char_t *)tv.ptr, tv.len);
@@ -261,7 +449,7 @@ mkr_node_set_content(VALUE self, VALUE rb_text)
 static VALUE
 mkr_node_delete(VALUE self, VALUE rb_name)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         return self;
     }
@@ -327,7 +515,7 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
 static VALUE
 mkr_node_set_inner_html(VALUE self, VALUE rb_html)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "inner_html= requires an element");
     }
@@ -348,7 +536,7 @@ mkr_node_set_inner_html(VALUE self, VALUE rb_html)
 static VALUE
 mkr_node_set_outer_html(VALUE self, VALUE rb_html)
 {
-    lxb_dom_node_t *node   = mkr_node_unwrap(self);
+    lxb_dom_node_t *node   = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *parent = node->parent;
     if (parent == NULL || parent->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(mkr_eError, "outer_html= requires a node with a parent element");
@@ -444,30 +632,32 @@ mkr_doc_create_document_fragment(VALUE self)
 void
 mkr_init_mutate(void)
 {
-    rb_define_method(mkr_cNode, "add_child",            mkr_node_add_child,            1);
-    rb_define_method(mkr_cNode, "<<",                   mkr_node_append,               1);
-    rb_define_method(mkr_cNode, "add_previous_sibling", mkr_node_add_previous_sibling, 1);
-    rb_define_method(mkr_cNode, "before",               mkr_node_add_previous_sibling, 1);
-    rb_define_method(mkr_cNode, "add_next_sibling",     mkr_node_add_next_sibling,     1);
-    rb_define_method(mkr_cNode, "after",                mkr_node_add_next_sibling,     1);
-    rb_define_method(mkr_cNode, "remove",               mkr_node_remove,               0);
-    rb_define_method(mkr_cNode, "unlink",               mkr_node_remove,               0);
-    rb_define_method(mkr_cNode, "replace",              mkr_node_replace,              1);
+    rb_define_method(mkr_mHtmlNodeMethods, "add_child",            mkr_node_add_child,            1);
+    rb_define_method(mkr_mHtmlNodeMethods, "<<",                   mkr_node_append,               1);
+    rb_define_method(mkr_mHtmlNodeMethods, "add_previous_sibling", mkr_node_add_previous_sibling, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "before",               mkr_node_add_previous_sibling, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "add_next_sibling",     mkr_node_add_next_sibling,     1);
+    rb_define_method(mkr_mHtmlNodeMethods, "after",                mkr_node_add_next_sibling,     1);
+    rb_define_method(mkr_mHtmlNodeMethods, "remove",               mkr_node_remove,               0);
+    rb_define_method(mkr_mHtmlNodeMethods, "unlink",               mkr_node_remove,               0);
+    rb_define_method(mkr_mHtmlNodeMethods, "replace",              mkr_node_replace,              1);
 
-    rb_define_method(mkr_cNode, "inner_html=", mkr_node_set_inner_html, 1);
-    rb_define_method(mkr_cNode, "outer_html=", mkr_node_set_outer_html, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "inner_html=", mkr_node_set_inner_html, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "outer_html=", mkr_node_set_outer_html, 1);
 
-    rb_define_method(mkr_cNode, "[]=",              mkr_node_aset,   2);
-    rb_define_method(mkr_cNode, "delete",           mkr_node_delete, 1);
-    rb_define_method(mkr_cNode, "remove_attribute", mkr_node_delete, 1);
-    rb_define_method(mkr_cNode, "content=",         mkr_node_set_content, 1);
-    rb_define_method(mkr_cNode, "name=",            mkr_node_set_name,    1);
+    rb_define_method(mkr_mHtmlNodeMethods, "[]=",              mkr_node_aset,             2);
+    rb_define_method(mkr_mHtmlNodeMethods, "set_attribute_ns", mkr_node_set_attribute_ns, 3);
+    rb_define_method(mkr_mHtmlNodeMethods, "remove_attribute_ns", mkr_node_remove_attribute_ns, 2);
+    rb_define_method(mkr_mHtmlNodeMethods, "delete",           mkr_node_delete, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "remove_attribute", mkr_node_delete, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "content=",         mkr_node_set_content, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "name=",            mkr_node_set_name,    1);
 
-    rb_define_method(mkr_cDocument, "create_element",   mkr_doc_create_element,   1);
-    rb_define_method(mkr_cDocument, "create_text_node", mkr_doc_create_text_node, 1);
-    rb_define_method(mkr_cDocument, "create_comment",   mkr_doc_create_comment,   1);
-    rb_define_method(mkr_cDocument, "create_processing_instruction",
+    rb_define_method(mkr_cHtmlDocument, "create_element",   mkr_doc_create_element,   1);
+    rb_define_method(mkr_cHtmlDocument, "create_text_node", mkr_doc_create_text_node, 1);
+    rb_define_method(mkr_cHtmlDocument, "create_comment",   mkr_doc_create_comment,   1);
+    rb_define_method(mkr_cHtmlDocument, "create_processing_instruction",
                      mkr_doc_create_processing_instruction, 2);
-    rb_define_method(mkr_cDocument, "create_document_fragment",
+    rb_define_method(mkr_cHtmlDocument, "create_document_fragment",
                      mkr_doc_create_document_fragment, 0);
 }

@@ -16,7 +16,22 @@ typedef struct {
     size_t           count;
     size_t           cap;
     VALUE            document;
+    int              doc_is_xml;  /* cached once: the stored pointers are
+                                   * mkr_xml_node_t* (wrap as Makiri::XML::*) */
 } mkr_node_set_data_t;
+
+/* Wrap a stored node into a Ruby Node, choosing the representation by the set's
+ * (fixed) document kind — an XML document's nodes are custom mkr_xml_node_t. The
+ * kind is cached at construction so this stays a single branch per node (a
+ * per-node is_kind_of/parsed-kind probe would regress the hot traversal path). */
+static VALUE
+mkr_node_set_wrap(const mkr_node_set_data_t *s, lxb_dom_node_t *node)
+{
+    if (s->doc_is_xml) {
+        return mkr_wrap_xml_node((struct mkr_xml_node *)node, s->document);
+    }
+    return mkr_wrap_node(node, s->document);
+}
 
 static void
 mkr_node_set_gc_mark(void *ptr)
@@ -62,10 +77,11 @@ mkr_node_set_new(VALUE document)
     mkr_node_set_data_t *s;
     VALUE obj = TypedData_Make_Struct(mkr_cNodeSet, mkr_node_set_data_t,
                                       &mkr_node_set_type, s);
-    s->nodes    = NULL;
-    s->count    = 0;
-    s->cap      = 0;
-    s->document = document;
+    s->nodes      = NULL;
+    s->count      = 0;
+    s->cap        = 0;
+    s->document   = document;
+    s->doc_is_xml = rb_obj_is_kind_of(document, mkr_cXmlDocument) ? 1 : 0;
     return obj;
 }
 
@@ -102,21 +118,52 @@ mkr_node_set_length(VALUE self)
     return ULONG2NUM(s->count);
 }
 
-/* set[i] -> Node or nil. Negative indices count from the end. */
+/* A new NodeSet from the [beg, beg+len) run of `s` (caller has clamped them to
+ * [0, count]). */
 static VALUE
-mkr_node_set_aref(VALUE self, VALUE rb_index)
+mkr_node_set_slice(mkr_node_set_data_t *s, long beg, long len)
+{
+    VALUE result = mkr_node_set_new(s->document);
+    for (long i = 0; i < len; i++) {
+        mkr_node_set_push(result, s->nodes[beg + i]);
+    }
+    return result;
+}
+
+/* set[i]               -> Node or nil (negative indices count from the end).
+ * set[start, length]   -> a new NodeSet (nil if start is out of range).
+ * set[range]           -> a new NodeSet (nil if the range start is out of range).
+ * Mirrors Array#[]. */
+static VALUE
+mkr_node_set_aref(int argc, VALUE *argv, VALUE self)
 {
     mkr_node_set_data_t *s;
     TypedData_Get_Struct(self, mkr_node_set_data_t, &mkr_node_set_type, s);
+    long count = (long)s->count;
 
-    long i = NUM2LONG(rb_index);
-    if (i < 0) {
-        i += (long)s->count;
+    if (argc == 2) {                       /* set[start, length] */
+        long beg = NUM2LONG(argv[0]);
+        long len = NUM2LONG(argv[1]);
+        if (beg < 0) beg += count;
+        if (beg < 0 || beg > count || len < 0) return Qnil;
+        if (len > count - beg) len = count - beg;
+        return mkr_node_set_slice(s, beg, len);
     }
-    if (i < 0 || (size_t)i >= s->count) {
-        return Qnil;
+
+    rb_check_arity(argc, 1, 2);
+
+    if (rb_obj_is_kind_of(argv[0], rb_cRange)) {
+        long beg, len;
+        if (rb_range_beg_len(argv[0], &beg, &len, count, 0) != Qtrue) {
+            return Qnil;                   /* start out of range */
+        }
+        return mkr_node_set_slice(s, beg, len);
     }
-    return mkr_wrap_node(s->nodes[i], s->document);
+
+    long i = NUM2LONG(argv[0]);
+    if (i < 0) i += count;
+    if (i < 0 || i >= count) return Qnil;
+    return mkr_node_set_wrap(s, s->nodes[i]);
 }
 
 static VALUE
@@ -128,7 +175,7 @@ mkr_node_set_each(VALUE self)
     RETURN_ENUMERATOR(self, 0, 0);
 
     for (size_t i = 0; i < s->count; i++) {
-        rb_yield(mkr_wrap_node(s->nodes[i], s->document));
+        rb_yield(mkr_node_set_wrap(s, s->nodes[i]));
     }
     return self;
 }
@@ -311,6 +358,25 @@ mkr_node_set_op_minus(VALUE self, VALUE other)
     return mkr_node_set_op_filter(self, other, 0);
 }
 
+/* #dup / #clone: a new NodeSet over the same nodes (the nodes are shared — they
+ * are owned by the document arena — but the set itself is independent), like
+ * Nokogiri. Defined here because the allocator is undef'd, so Ruby's default
+ * allocate-then-copy raises; any level/freeze argument is ignored. */
+static VALUE
+mkr_node_set_dup(int argc, VALUE *argv, VALUE self)
+{
+    (void)argc;
+    (void)argv;
+    mkr_node_set_data_t *s = mkr_node_set_get(self);
+    VALUE copy = mkr_node_set_new(s->document);
+    /* Reuse the overflow-checked growth + cap enforcement of mkr_node_set_push;
+     * the source already has no duplicates, so this is a faithful copy. */
+    for (size_t i = 0; i < s->count; i++) {
+        mkr_node_set_push(copy, s->nodes[i]);
+    }
+    return copy;
+}
+
 void
 mkr_init_node_set(void)
 {
@@ -320,6 +386,8 @@ mkr_init_node_set(void)
     rb_define_method(mkr_cNodeSet, "-", mkr_node_set_op_minus, 1);
 
     rb_define_method(mkr_cNodeSet, "length", mkr_node_set_length, 0);
-    rb_define_method(mkr_cNodeSet, "[]",     mkr_node_set_aref,   1);
+    rb_define_method(mkr_cNodeSet, "[]",     mkr_node_set_aref,  -1);
     rb_define_method(mkr_cNodeSet, "each",   mkr_node_set_each,   0);
+    rb_define_method(mkr_cNodeSet, "dup",    mkr_node_set_dup,   -1);
+    /* #clone is defined in Ruby (node_set.rb) so it can honour `freeze:`. */
 }

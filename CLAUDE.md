@@ -23,8 +23,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   node-set caps, validate inputs, never return a truncated/wrong result (raise
   instead). Keep the build hardening flags (`-D_FORTIFY_SOURCE=2`,
   `-fstack-protector-strong`, `-fvisibility=hidden` + `RUBY_FUNC_EXPORTED` on
-  `Init_makiri`). Every C change must stay clean under ASan+UBSan and keep the
-  fuzzer green.
+  `Init_makiri`). **Export only `Init_makiri`** from the compiled extension
+  (`extconf.rb`: `-Wl,-exported_symbol,_Init_makiri` on macOS,
+  `-Wl,--exclude-libs,ALL` on Linux): `-fvisibility=hidden` hides our own
+  sources but *not* the prebuilt vendored Lexbor static lib, so without this the
+  bundle re-exports ~1700 `lxb_*`/`lexbor_*` symbols and another Lexbor-based
+  gem in the same process (e.g. `nokolexbor`) binds its `lxb_*` calls to our
+  different Lexbor version → segfault. Keep Makiri's Lexbor private; verify with
+  `nm -gU lib/makiri/makiri.bundle | grep -c ' T _lxb_'` → `0`. Every C change
+  must stay clean under ASan+UBSan and keep the fuzzer green.
 
 ## Lexbor version
 
@@ -96,12 +103,20 @@ docs/design_doc.ja.md      authoritative design (read this)
 
 ## Subsystems
 
-**Text-input contract.** Makiri accepts UTF-8. **HTML parsing decodes leniently
-like a browser**: `mkr_utf8_sanitize` (`post_parse.c`) replaces invalid UTF-8
-with U+FFFD (WHATWG byte-stream decoding via Lexbor's `lxb_encoding_*`; a NUL is
-left for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail**
-on bad bytes and the DOM is always valid UTF-8. Valid input (common case) is a
-no-op (one validating decode pass, no copy). The **programmatic APIs are strict**:
+**Text-input contract.** Parsing **honours the input String's encoding**
+(`mkr_ruby_to_utf8`, `bridge/ruby_string.c`): UTF-8 / US-ASCII / ASCII-8BIT pass
+through untouched (the UTF-8 common case is a single encoding compare — no
+transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, …) is
+`rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
+instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
+parsing then decodes leniently like a browser**: `mkr_utf8_sanitize`
+(`utf8_input.c`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
+for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
+bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
+validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
+skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
+no forced scan) already proves it valid — `mkr_parse_html`'s `assume_valid` and
+`mkr_ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
 `mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for invalid UTF-8 or an
 embedded NUL at the XPath/CSS/mutation boundaries (expr, selector, attribute
 name/value, `content=`, `name=`, `create_*`, variable/namespace) — never
@@ -192,8 +207,11 @@ document order; capped at `MKR_NODE_SET_MAX`; malformed → `Makiri::CSS::Syntax
 `at_css` stops at the first match.
 
 **Serialization** (`glue/ruby_serialize.c`). `Node#{to_html,to_s,outer_html}` =
-Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`, both streaming
-into a UTF-8 Ruby String. `pretty: true` uses `serialize_pretty_*` (Lexbor
+Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
+collects Lexbor's many small chunks into one growing C buffer (`mkr_buf`) and the
+whole thing is copied into a UTF-8 Ruby String once — markedly faster than
+`rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
+serializer's dominant cost), and at parity with `nokolexbor`. `pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
 serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
 (`mkr_node_content`) serves descendant text from the **text index** (see

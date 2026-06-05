@@ -41,6 +41,45 @@ RSpec.describe "UTF-8 text-input contract" do
     end
   end
 
+  describe "input encoding is honoured (transcoded to UTF-8)" do
+    jp = "日本語テスト"
+
+    it "transcodes a Shift_JIS document so its content survives" do
+      html = "<html><body><p>#{jp}</p></body></html>".encode("Shift_JIS")
+      txt = Makiri::HTML(html).at_css("p").text
+      expect(txt).to be_valid_encoding
+      expect(txt).to eq(jp)
+    end
+
+    it "transcodes an EUC-JP document" do
+      html = "<html><body><p>#{jp}</p></body></html>".encode("EUC-JP")
+      expect(Makiri::HTML(html).at_css("p").text).to eq(jp)
+    end
+
+    it "transcodes a single-byte legacy encoding (ISO-8859-1)" do
+      html = "<html><body><p>caf\xE9</p></body></html>".dup.force_encoding("ISO-8859-1")
+      expect(Makiri::HTML(html).at_css("p").text).to eq("café")
+    end
+
+    it "leaves UTF-8 / US-ASCII / binary input as-is" do
+      expect(Makiri::HTML("<p>#{jp}</p>").at_css("p").text).to eq(jp)
+      expect(Makiri::HTML("<p>plain</p>".encode("US-ASCII")).at_css("p").text).to eq("plain")
+      expect(Makiri::HTML("<p>#{jp}</p>".dup.b).at_css("p").text).to eq(jp)
+    end
+
+    it "honours the encoding in fragment parses too" do
+      frag = Makiri::DocumentFragment.parse("<p>#{jp}</p>".encode("Shift_JIS"))
+      expect(frag.at_css("p").text).to eq(jp)
+      doc = Makiri::HTML("<html><body></body></html>")
+      expect(doc.fragment("<p>#{jp}</p>".encode("EUC-JP")).at_css("p").text).to eq(jp)
+    end
+
+    it "replaces bytes that don't round-trip with U+FFFD, never raising" do
+      html = "<p>\x80</p>".dup.force_encoding("ISO-8859-1")
+      expect(Makiri::HTML(html).at_css("p").text).to be_valid_encoding
+    end
+  end
+
   describe "programmatic APIs (strict: valid UTF-8, no NUL)" do
     let(:doc) { Makiri::HTML("<div id='d'>x</div>") }
     let(:el)  { doc.at_css("div") }

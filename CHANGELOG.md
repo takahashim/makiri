@@ -7,6 +7,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* **`Makiri::XML(source)` / `Makiri.parse_xml(source)` - a native, read-only,
+  security-first XML reader** (no libxml2, like the rest of Makiri). It parses
+  with its own strict, well-formedness-checking parser into a custom node arena
+  (not Lexbor's HTML DOM) and queries through the same native XPath 1.0 engine,
+  compiled a second time against the XML node (one runtime branch at the query
+  entry, zero per-node overhead).
+  * Strict by design: input is decoded fail-closed (invalid UTF-8 / undecodable
+    bytes / embedded NUL raise `Makiri::XML::SyntaxError`, never U+FFFD repair),
+    duplicate attributes are rejected, and every parse runs under document
+    budgets. Element-name case and namespaces are preserved (unlike the HTML
+    path).
+  * Character encoding is autodetected (XML 1.0 Appendix F): a leading byte-order
+    mark (UTF-8 / UTF-16 / UTF-32) or the `<?xml encoding="…"?>` declaration
+    selects the encoding, so raw bytes (`File.binread`) in UTF-16, Shift_JIS,
+    etc. parse correctly; a leading BOM is stripped (not treated as content). A
+    concrete String encoding stays authoritative — a BOM or declaration that
+    contradicts it (or each other) is a fatal `SyntaxError` rather than a silent
+    mis-decode. The strict XML declaration grammar (§2.8) and well-formedness
+    rules (`]]>` in content, S-separated attributes, reserved/colon PI targets,
+    lowercase `&#x` hex refs) are enforced; verified against the **W3C XML
+    Conformance Test Suite** (`rake conformance:xmlconf`, 100% of the in-scope,
+    non-validating, XML-1.0 tests). Makiri implements **XML 1.0 only**: a
+    well-formed document that declares `version="1.1"` (or any non-`1.0`
+    version) is rejected with a clear `SyntaxError` rather than silently parsed
+    under 1.0 rules.
+  * DoS-bounded by a single arena memory ceiling (default **256 MiB**), which
+    counts node structs *and* copied name/value bytes — so it subsumes the
+    node-count limit and caps tiny-element amplification, and an over-length
+    input is rejected before any allocation. 256 MiB fits every standard
+    document (a 50 MB sitemap is ~82 MB of arena) and only rejects documents
+    past ~2M elements; raise it per parse with
+    `Makiri::XML(src, max_bytes: 512 * 1024 * 1024)` /
+    `Makiri.parse_xml(src, max_bytes:)` (a positive Integer; other per-document
+    budget overrides will join this keyword later).
+  * A `<!DOCTYPE …>` is **recognized but its DTD is not processed**: the doctype
+    name and external identifiers are retained and exposed via
+    `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DTD` with `#name`,
+    `#external_id` / `#public_id`, and `#system_id`, like Nokogiri), but no
+    entity or element declarations are loaded and no external subset is ever
+    fetched (zero I/O). Consequently a DTD-defined entity reference stays an
+    undefined-entity error, so **XXE and billion-laughs amplification are
+    structurally impossible** rather than merely disabled. The doctype node is
+    kept off the tree (XPath 1.0 has no doctype node type, as in libxml2).
+  * Read API on `Makiri::XML::Document` / `Makiri::XML::*` nodes: `#xpath` /
+    `#at_xpath` (with an optional `{prefix => uri}` Hash for that query),
+    `#root`, `#name` / `#local_name` / `#prefix` / `#namespace_uri`,
+    `#text` / `#content`, `#[]`, `#parent` / `#children` / `#next` / `#previous`,
+    `#attribute_nodes`. `Makiri::XPathContext` also works over an XML node
+    (`register_namespace` + `evaluate`), which is the way to query a
+    default-namespace document (RSS/Atom): under strict matching `//entry` does
+    not match a default namespace, so register a prefix and use `//a:entry`.
+  * Comments and processing instructions in the prolog/epilog (around the root
+    element) are retained as children of the document node — reachable by XPath
+    (`//comment()`, `//processing-instruction()`, `/node()`) and `#children`, in
+    document order — matching the XPath data model and Nokogiri. (Inter-construct
+    whitespace there is not a text node; the DOCTYPE stays off-tree, via
+    `#internal_subset`.) Adjacent same-type character data is coalesced into one
+    node (`<![CDATA[a]]><![CDATA[b]]>` → one CDATA node), as libxml2 does and per
+    the XPath data model's maximal-grouping rule; text and CDATA stay distinct.
+    The tree is verified to be byte-identical to Nokogiri's by a property-based
+    differential over generated documents (`rake conformance:xml_pbt`).
+  * Fail-closed on the unsupported surface: CSS selectors (`#css` / `#at_css`)
+    and serialization (`#to_xml` / `#to_html` / `#to_s` / `#inner_html` /
+    `#outer_html`) raise `NotImplementedError` rather than returning a wrong
+    result. `id()` is the empty node-set (no DTD-declared IDs) and `lang()` reads
+    `xml:lang`, per the XML host policy. XML mutation and serialization are a
+    later phase.
+* `Node` includes `Enumerable` over its child nodes — `node.each` yields each
+  child (returning an `Enumerator` without a block), so `node.map` / `select` /
+  `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
+  move or remove the current child. `Node#to_h` still returns the attribute hash.
+* `Node#<=>` orders nodes by document (pre-order) position, and `Node` includes
+  `Comparable`, so nodes can be sorted (`nodes.sort`, `min`/`max`, `<`/`>`).
+  Returns `nil` (incomparable) across documents or detached subtrees and for
+  attribute nodes — matching how `Comparable` treats an unorderable pair.
+* `NodeSet#[]` now accepts a `Range` or `start, length` like `Array#[]`
+  (returning a new `NodeSet`), in addition to a single Integer index (a `Node`).
+* `Node#dup` / `Node#clone`, `NodeSet#dup` / `#clone`, and `Document#dup` /
+  `#clone` — the native allocator is undef'd (so wrapper objects stay
+  memory-safe), which made Ruby's default `dup`/`clone` raise a confusing
+  "allocator undefined" `TypeError`. They now return a real, independent copy
+  like Nokogiri: a node is deep-cloned and detached (`#dup(0)` for a shallow
+  copy, matching Nokogiri's level argument); a `NodeSet` becomes a new set over
+  the same nodes; a `Document` is copied by serialise-and-re-parse. `#clone`
+  honours Ruby's `freeze:` keyword.
+* A **frozen node is now genuinely immutable**: every tree/attribute mutator
+  (`add_child`/`<<`, `before`/`after`, `remove`, `replace`, `[]=`, `delete`,
+  `content=`, `name=`, `inner_html=`/`outer_html=`) raises `FrozenError` on a
+  frozen node instead of silently editing it. Previously `freeze` set the flag
+  but the C mutators ignored it, so a "frozen" node could still be changed (and
+  `clone(freeze: true)` returned an unfrozen copy).
+
+### Changed
+
+* The text index's per-element range table stores its slice-run bounds as
+  `uint32` indices instead of `size_t`, shrinking each entry from 24 to 16 bytes
+  (the node pointer plus two 32-bit indices) — about a third off the table, the
+  index's largest allocation. On a 2k-element document the retained text index
+  drops ~27% (~480 → ~352 KB) with byte-identical text and no change in
+  extraction speed (still ~4× Nokogiri). A document with more than `UINT32_MAX`
+  text slices (impossible in practice) fails the index build closed and the
+  caller falls back to a walk.
+
+* Parsing now **honours the input String's encoding**. UTF-8, US-ASCII and
+  ASCII-8BIT (binary) are used directly (the UTF-8 common case is unchanged — a
+  single encoding check, no extra work); any other encoding (Shift_JIS, EUC-JP,
+  ISO-8859-1, Windows-1252, …) is transcoded to UTF-8 (invalid/undefined →
+  U+FFFD) so its content is preserved. Previously every input was read as raw
+  UTF-8 bytes, so a Shift_JIS or EUC-JP document was mangled into U+FFFD; it now
+  decodes correctly (matching `Nokogiri`). Applies to `Makiri::HTML` /
+  `Makiri.parse`, `DocumentFragment.parse`, and `Document#fragment` / `Node#parse`.
+* Parsing skips its UTF-8 validation scan when the input String's cached
+  coderange already proves it valid (pure ASCII, or valid in the UTF-8
+  encoding) — read without forcing a scan. Invalid/unknown input is sanitised
+  as before. Most effective on multibyte-heavy already-validated input; the DOM
+  is unchanged.
+* The HTML serializer's line table is built with `memchr`, and the UTF-8
+  validity check is a dedicated validate-only scan (Unicode well-formed table +
+  word-at-a-time ASCII), instead of decoding every code point — together ~7%
+  faster parsing on a 235 KB document, output byte-identical.
+* `Node#{to_html,to_s,outer_html,inner_html}` collect Lexbor's serializer output
+  into one growing C buffer (`mkr_buf`) and copy it into a Ruby String once,
+  instead of `rb_str_cat` per emitted chunk. The per-chunk Ruby-string growth
+  (capacity + coderange bookkeeping over thousands of appends) was the dominant
+  cost; the single-copy path is ~1.2–1.3× faster on a 2k-element document
+  (now at parity with `nokolexbor`), with byte-identical output.
+
+### Fixed
+
+* The compiled extension exported the entire vendored Lexbor symbol table
+  (~1700 `lxb_*` / `lexbor_*` symbols) instead of only `Init_makiri`:
+  `-fvisibility=hidden` hides our own sources but not the prebuilt Lexbor static
+  library, whose symbols were re-exported into the bundle's dynamic table.
+  Loading Makiri together with another Lexbor-based extension (e.g. `nokolexbor`)
+  in the same process could then bind that gem's `lxb_*` calls to Makiri's
+  different Lexbor version and **segfault**. The linker now exports only
+  `Init_makiri` (`-Wl,-exported_symbol,_Init_makiri` on macOS,
+  `-Wl,--exclude-libs,ALL` on Linux), keeping Makiri's Lexbor fully private.
+  Affects precompiled gems; rebuild required.
+
 ## [0.2.0] - 2026-06-04
 
 ### Added

@@ -46,6 +46,34 @@ mkr_ruby_borrowed_bytes_t mkr_ruby_bytes_view(VALUE in);
  * for an empty input), suitable for use while the GVL is released. */
 int mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out);
 
+/* Return a UTF-8 Ruby String for `str`, honouring its declared encoding: UTF-8 /
+ * US-ASCII / ASCII-8BIT are returned unchanged (the parser handles their bytes
+ * directly); any other encoding is transcoded to UTF-8 (invalid/undef -> U+FFFD)
+ * so its content is preserved rather than read as raw UTF-8. The UTF-8 common
+ * case is a single encoding comparison. */
+VALUE mkr_ruby_to_utf8(VALUE str);
+
+/* STRICT decode for XML (§2.1): like mkr_ruby_to_utf8 it honours the String's
+ * declared encoding (UTF-8 / US-ASCII / ASCII-8BIT pass through; any other
+ * encoding is transcoded to UTF-8) — but FAIL-CLOSED, never lenient: a non-UTF-8
+ * byte that can't be converted, invalid UTF-8, or an embedded NUL all raise
+ * Makiri::XML::SyntaxError (no U+FFFD replacement). Returns a validated,
+ * UTF-8-tagged Ruby String. (The HTML replace path mkr_ruby_to_utf8 itself is
+ * NOT reused for the conversion — only its encoding-judgment rule is shared.)
+ *
+ * +max_bytes+ bounds the decoded UTF-8 length: an input that already exceeds the
+ * parser's arena byte budget is rejected here with Makiri::XML::LimitExceeded,
+ * before the validation copy and the caller's GVL-release copy (so a hostile
+ * oversized document is not copied twice for a doomed parse). 0 disables the
+ * check (decode-only callers that build no arena). */
+VALUE mkr_xml_decode_input(VALUE str, size_t max_bytes);
+
+/* True if `str` is *already known* to be valid UTF-8 — pure ASCII, or valid in
+ * the UTF-8 encoding — from its cached coderange, WITHOUT forcing a scan. Lets
+ * the parse skip mkr_utf8_sanitize's validation pass for input Ruby has already
+ * classified (an unknown/broken coderange returns false: sanitize handles it). */
+bool mkr_ruby_str_known_valid_utf8(VALUE str);
+
 /* Validate a Ruby String for use as an XPath engine string: valid UTF-8,
  * no interior NUL, and at most +max_bytes+. Returns NULL on success and fills
  * +out+; otherwise returns a static reason string. +sv+ must be a String. */

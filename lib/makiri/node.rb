@@ -5,7 +5,28 @@ module Makiri
   # The bulk of the API lives in the C extension; this file defines the
   # Ruby-only conveniences.
   class Node
+    # Order by document (pre-order) position via the native #<=>, so nodes can
+    # be sorted; #<=> is nil (incomparable) across documents or for attributes.
+    include Comparable
+
+    # A Node is Enumerable over its child nodes (#each yields each child), so
+    # node.map / node.select / node.find / node.to_a, etc. work — like Nokogiri.
+    # (#to_h is unaffected: Node defines its own, returning the attribute hash.)
+    include Enumerable
+
     # Identity is by wrapped node pointer; defined in C.
+
+    # Yield each child node in document order. Iterates a snapshot of the
+    # children (taken when called), so the block may safely move or remove the
+    # current node. Returns an Enumerator when no block is given.
+    # @yieldparam child [Makiri::Node]
+    # @return [self, Enumerator]
+    def each(&block)
+      return enum_for(:each) { children.length } unless block_given?
+
+      children.each(&block)
+      self
+    end
 
     # @return [Boolean]
     def element?
@@ -48,15 +69,12 @@ module Makiri
     end
 
     # --- Nokogiri-compatible aliases over the core API ---
-
-    # Attribute value by name (alias for {#[]}). Use {#attribute} for the node.
-    alias_method :attr, :[]
-    alias_method :get_attribute, :[]
-    alias_method :has_attribute?, :key?
-    alias_method :remove_attribute, :delete
-    alias_method :node_name, :name
-    alias_method :node_name=, :name=
-    alias_method :type, :node_type
+    #
+    # Aliases of the representation-specific reader methods (#[], #name, ...) live
+    # with those methods on the per-kind node behaviour (Makiri::HTML::Node), not
+    # here, since alias_method resolves its target at definition time and the
+    # readers are defined on the leaves' included module. These two alias
+    # representation-independent predicates defined just above, so they stay.
     alias_method :elem?, :element?
     alias_method :fragment?, :document_fragment?
 
@@ -170,6 +188,26 @@ module Makiri
       "#<#{self.class.name} name=#{name.inspect}>"
     rescue NoMethodError
       "#<#{self.class.name}>"
+    end
+
+    # An independent copy of this node, detached from any parent and owned by the
+    # same document (like Nokogiri's Node#dup). Deep by default; +level+ 0 makes
+    # a shallow copy (matching Nokogiri's level argument). The native allocator
+    # is undef'd to keep wrappers memory-safe, so #dup/#clone delegate to
+    # {#clone_node} rather than Ruby's default allocate-and-copy (which would
+    # otherwise raise "allocator undefined").
+    def dup(level = 1)
+      clone_node(level != 0)
+    end
+
+    # Like {#dup}, always a deep copy, and honouring Ruby's +freeze:+ keyword:
+    # +true+ returns a frozen copy, +false+ an unfrozen one, the default (+nil+)
+    # copies the receiver's frozen state. A frozen node is genuinely immutable —
+    # its mutators raise +FrozenError+ (see Makiri's mutation methods).
+    def clone(freeze: nil)
+      copy = clone_node(true)
+      copy.freeze if freeze || (freeze.nil? && frozen?)
+      copy
     end
 
     private

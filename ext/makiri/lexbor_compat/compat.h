@@ -13,22 +13,47 @@
 extern "C" {
 #endif
 
-/* Result of a parse. Owns the Lexbor document arena. The compat indices
- * (dom_index, newline_idx) are created lazily and are NULL until then;
- * mkr_parsed_destroy frees whatever is set. */
+/* The document kind a mkr_parsed_t holds (§2.3). HTML points `doc` at a
+ * Lexbor lxb_html_document_t; XML points it at our own mkr_xml_doc_t arena. The
+ * kind selects the destroy path and (later) the engine / Node-API instance. */
+typedef enum { MKR_DOC_HTML = 0, MKR_DOC_XML = 1 } mkr_doc_kind_t;
+
+struct mkr_xml_doc; /* forward decl — the XML arena (xml/mkr_xml.h); no include here */
+
+/* Result of a parse. Owns the document arena (Lexbor for HTML, our own for XML).
+ * The compat indices (dom_index, newline_idx, text_index) are HTML-only, created
+ * lazily and NULL until then; mkr_parsed_destroy frees whatever is set. */
 typedef struct mkr_parsed_s {
-    lxb_html_document_t *doc;
-    void                *dom_index;   /* attr->owner + tag->elements indexes */
-    void                *newline_idx;  /* M6: byte offset -> source line */
-    void                *text_index;   /* node -> descendant-text slice run */
+    void                *doc;     /* HTML: lxb_html_document_t* / XML: mkr_xml_doc_t* */
+    mkr_doc_kind_t       kind;
+    void                *dom_index;   /* HTML: attr->owner + tag->elements indexes */
+    void                *newline_idx;  /* HTML: byte offset -> source line */
+    void                *text_index;   /* HTML: node -> descendant-text slice run */
 } mkr_parsed_t;
+
+/* Which kind of document this handle holds. */
+mkr_doc_kind_t mkr_parsed_kind(const mkr_parsed_t *p);
+
+/* The HTML document (asserts kind == MKR_DOC_HTML). */
+lxb_html_document_t *mkr_parsed_html_doc(const mkr_parsed_t *p);
+
+/* Wrap an owned XML arena in a kind=MKR_DOC_XML handle (GC takes ownership via
+ * mkr_parsed_destroy). `xdoc` may be NULL initially and set later with
+ * mkr_parsed_set_xml_doc (so a mid-parse failure still frees cleanly). Returns
+ * NULL on allocation failure. */
+mkr_parsed_t        *mkr_parsed_new_xml(struct mkr_xml_doc *xdoc);
+struct mkr_xml_doc  *mkr_parsed_xml_doc(const mkr_parsed_t *p);
+void                 mkr_parsed_set_xml_doc(mkr_parsed_t *p, struct mkr_xml_doc *xdoc);
 
 /* Parse HTML5 from src[0..len). Returns NULL on allocation or parse failure
  * (fail-closed). Source locations for Node#line are always tracked via the
  * tokenizer (cheap — it rides the parse). The src buffer is not retained:
  * Lexbor copies what it needs into the arena, and we build the line table up
  * front. */
-mkr_parsed_t *mkr_parse_html(const lxb_char_t *src, size_t len);
+/* `assume_valid` skips the UTF-8 sanitisation pass: pass it only when the caller
+ * already knows `src` is valid UTF-8 (e.g. from the Ruby String's coderange).
+ * When false, input is sanitised as before. */
+mkr_parsed_t *mkr_parse_html(const lxb_char_t *src, size_t len, bool assume_valid);
 
 /* Browser-compatible UTF-8 input sanitisation. If `src` (len bytes) is already
  * well-formed UTF-8 (the common case), sets *out=NULL and the caller uses src

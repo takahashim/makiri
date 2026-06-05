@@ -72,7 +72,7 @@ arity_check(size_t got, size_t want_min, size_t want_max, mkr_xpath_error_t *err
 }
 
 static int
-fn_last(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_last(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         size_t self_pos, size_t self_size,
         mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -84,7 +84,7 @@ fn_last(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_position(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_position(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
             size_t self_pos, size_t self_size,
             mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -96,7 +96,7 @@ fn_position(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_count(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_count(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
          size_t self_pos, size_t self_size,
          mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -112,7 +112,7 @@ fn_count(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_not(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_not(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
        size_t self_pos, size_t self_size,
        mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -124,7 +124,7 @@ fn_not(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_true(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_true(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         size_t self_pos, size_t self_size,
         mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -136,7 +136,7 @@ fn_true(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_false(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_false(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
          size_t self_pos, size_t self_size,
          mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -147,27 +147,32 @@ fn_false(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   return 0;
 }
 
+#ifndef MKR_HOST_XML
+/* id() helpers are HTML-only: the XML instance's id() is the empty node-set
+ * (no DTD-declared IDs, §8.6), so it never walks the tree by id attribute.
+ * Guarded so the XML engine TU does not carry (and warn about) dead code. */
+
 /* id(string|nodeset) — looks up by HTML id attribute. */
-static lxb_dom_node_t *
-find_by_id(lxb_dom_node_t *root, const char *id, size_t id_len)
+static MKR_DOM_NODE *
+find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
 {
   if (root == NULL || id == NULL || id_len == 0) return NULL;
-  lxb_dom_node_t *n = root;
+  MKR_DOM_NODE *n = root;
   while (n) {
-    if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-      lxb_dom_element_t *el = (lxb_dom_element_t *)n;
+    if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
+      MKR_DOM_ELEMENT *el = MKR_NODE_AS_ELEMENT(n);
       size_t vlen = 0;
-      const lxb_char_t *v = lxb_dom_element_get_attribute(el, (const lxb_char_t *)"id", 2, &vlen);
+      const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "id", 2, &vlen);
       if (v && vlen == id_len && memcmp(v, id, id_len) == 0) {
         return n;
       }
     }
-    if (n->first_child) {
-      n = n->first_child;
+    if (MKR_NODE_FIRST_CHILD(n)) {
+      n = MKR_NODE_FIRST_CHILD(n);
     } else {
-      while (n && n != root && n->next == NULL) n = n->parent;
+      while (n && n != root && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
       if (n == root || n == NULL) break;
-      n = n->next;
+      n = MKR_NODE_NEXT(n);
     }
   }
   return NULL;
@@ -181,7 +186,7 @@ find_by_id(lxb_dom_node_t *root, const char *id, size_t id_len)
  * versus O(n^2) per-insert contains() checks.
  */
 static int
-id_collect_from_string(char *s, lxb_dom_node_t *root, mkr_nodeset_t *out,
+id_collect_from_string(char *s, MKR_DOM_NODE *root, mkr_nodeset_t *out,
                        mkr_xpath_context_t *ctx, mkr_xpath_error_t *err)
 {
   if (s == NULL) return 0;
@@ -194,7 +199,7 @@ id_collect_from_string(char *s, lxb_dom_node_t *root, mkr_nodeset_t *out,
     size_t tok_len = (size_t)(p - tok);
     char saved = *p;
     *p = '\0';
-    lxb_dom_node_t *hit = find_by_id(root, tok, tok_len);
+    MKR_DOM_NODE *hit = find_by_id(root, tok, tok_len);
     if (hit) {
       if (mkr_nodeset_push(out, hit, mkr_ctx_limits(ctx), err) != 0) {
         return -1;
@@ -205,9 +210,10 @@ id_collect_from_string(char *s, lxb_dom_node_t *root, mkr_nodeset_t *out,
   }
   return 0;
 }
+#endif /* !MKR_HOST_XML */
 
 static int
-fn_id(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
       size_t self_pos, size_t self_size,
       mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -216,7 +222,15 @@ fn_id(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->type = MKR_XPATH_TYPE_NODESET;
   mkr_nodeset_init(&out->u.nodeset);
 
-  lxb_dom_node_t *root = (lxb_dom_node_t *)mkr_ctx_document(ctx);
+#ifdef MKR_HOST_XML
+  /* Host policy (§8.6): in XML an ID is an attribute DECLARED ID-typed by the
+   * DTD/schema — not any attribute named "id". DTDs are rejected at parse
+   * (§9.4), so a document read here carries no ID-typed attributes and id() is
+   * the empty node-set. (xml:id is a separate, optional spec, not implemented.) */
+  (void)ctx; (void)args;
+  return 0;
+#else
+  MKR_DOM_NODE *root = (MKR_DOM_NODE *)mkr_ctx_document(ctx);
   if (root == NULL) return 0;
 
   /* XPath 1.0 §4.1: id() argument may be a node-set; in that case each
@@ -246,6 +260,7 @@ fn_id(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   /* Result is in document order with duplicates removed (XPath 1.0 §4.1). */
   mkr_nodeset_unique_sorted(ctx, &out->u.nodeset);
   return 0;
+#endif /* MKR_HOST_XML */
 }
 
 /* Forward decl for two_owned_texts() defined later. */
@@ -283,7 +298,7 @@ ws_token_match(const char *str, const char *val, size_t val_len)
 }
 
 static int
-fn_nokogiri_css_class(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_nokogiri_css_class(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                      size_t self_pos, size_t self_size,
                      mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -303,7 +318,7 @@ fn_nokogiri_css_class(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
  * name (for HTML this is the lowercase local name) equals the argument.
  */
 static int
-fn_nokogiri_local_name_is(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_nokogiri_local_name_is(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                           size_t self_pos, size_t self_size,
                           mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -316,7 +331,7 @@ fn_nokogiri_local_name_is(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   out->u.boolean = 0;
   if (self_node != NULL) {
     size_t got_len = 0;
-    const lxb_char_t *got = mkr_dom_node_name_qualified(self_node, &got_len);
+    const lxb_char_t *got = MKR_ELEM_QUALIFIED_NAME(self_node, &got_len);
     if (got != NULL) {
       out->u.boolean = (got_len == want.len && memcmp(got, want.ptr, want.len) == 0);
     }
@@ -337,7 +352,7 @@ static const fn_entry_t fn_table_nokogiri_builtin[] = {
 };
 
 static int
-fn_boolean(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_boolean(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
            size_t self_pos, size_t self_size,
            mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -351,7 +366,7 @@ fn_boolean(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 /* ---------- string functions ---------- */
 
 static int
-fn_string(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_string(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
           size_t self_pos, size_t self_size,
           mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -369,7 +384,7 @@ fn_string(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_concat(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_concat(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
           size_t self_pos, size_t self_size,
           mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -439,7 +454,7 @@ two_owned_texts(mkr_xpath_context_t *ctx, mkr_val_t *args,
 }
 
 static int
-fn_starts_with(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_starts_with(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                size_t self_pos, size_t self_size,
                mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -455,7 +470,7 @@ fn_starts_with(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_contains(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_contains(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
             size_t self_pos, size_t self_size,
             mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -471,7 +486,7 @@ fn_contains(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_substring_before(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_substring_before(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                     size_t self_pos, size_t self_size,
                     mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -493,7 +508,7 @@ fn_substring_before(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_substring_after(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_substring_after(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                    size_t self_pos, size_t self_size,
                    mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -524,7 +539,7 @@ fn_substring_after(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 /* substring(s, start[, length]) — XPath positions are 1-based and round
  * to nearest; out-of-range positions clip to the string. */
 static int
-fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_substring(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
              size_t self_pos, size_t self_size,
              mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -583,7 +598,7 @@ fn_substring(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_string_length(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_string_length(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                  size_t self_pos, size_t self_size,
                  mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -603,7 +618,7 @@ fn_string_length(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 
 /* normalize-space: collapse runs of whitespace, trim leading/trailing */
 static int
-fn_normalize_space(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_normalize_space(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                    size_t self_pos, size_t self_size,
                    mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -638,7 +653,7 @@ fn_normalize_space(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_translate(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_translate(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
              size_t self_pos, size_t self_size,
              mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -750,7 +765,7 @@ decode_fail:
 /* ---------- number functions ---------- */
 
 static int
-fn_number(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_number(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
           size_t self_pos, size_t self_size,
           mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -773,7 +788,7 @@ fn_number(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_sum(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_sum(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
        size_t self_pos, size_t self_size,
        mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -799,7 +814,7 @@ fn_sum(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_floor(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_floor(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
          size_t self_pos, size_t self_size,
          mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -813,7 +828,7 @@ fn_floor(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 }
 
 static int
-fn_ceiling(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_ceiling(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
            size_t self_pos, size_t self_size,
            mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -828,7 +843,7 @@ fn_ceiling(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 
 /* XPath 1.0 round(): round to nearest integer, .5 rounds toward +inf. */
 static int
-fn_round(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_round(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
          size_t self_pos, size_t self_size,
          mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -846,8 +861,8 @@ fn_round(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 
 /* Helper: pull the first node of a nodeset arg, or the self node when
  * the arg list is empty. */
-static lxb_dom_node_t *
-name_func_target(mkr_val_t *args, size_t nargs, lxb_dom_node_t *self_node, mkr_xpath_error_t *err, const char *fname)
+static MKR_DOM_NODE *
+name_func_target(mkr_val_t *args, size_t nargs, MKR_DOM_NODE *self_node, mkr_xpath_error_t *err, const char *fname)
 {
   if (nargs == 0) return self_node;
   if (args[0].type != MKR_XPATH_TYPE_NODESET) {
@@ -889,7 +904,7 @@ set_bytes_string(mkr_val_t *out, const lxb_char_t *src, size_t len,
 }
 
 static int
-fn_local_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_local_name(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
               size_t self_pos, size_t self_size,
               mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -897,74 +912,75 @@ fn_local_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (arity_check(nargs, 0, 1, err, "local-name") != 0) return -1;
   /* Every return path below sets out via set_empty_string / set_bytes_string;
    * an error return leaves the caller's zero-initialised (clearable) out. */
-  lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "local-name");
+  MKR_DOM_NODE *n = name_func_target(args, nargs, self_node, err, "local-name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
-      (n->type != LXB_DOM_NODE_TYPE_ELEMENT &&
-       n->type != LXB_DOM_NODE_TYPE_ATTRIBUTE &&
-       n->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION)) {
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
     return set_empty_string(out, err, "local-name");
   }
   size_t len = 0;
   const lxb_char_t *name;
-  if (n->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
-    name = lxb_dom_attr_local_name((lxb_dom_attr_t *)n, &len);
-  } else if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-    name = lxb_dom_element_local_name((lxb_dom_element_t *)n, &len);
+  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
+    name = MKR_ATTR_LOCAL_NAME(n, &len);
+  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
+    name = MKR_ELEM_LOCAL_NAME(n, &len);
   } else {
-    name = lxb_dom_node_name(n, &len);
+    name = MKR_NODE_PI_NAME(n, &len);
   }
   return set_bytes_string(out, name, len, err, "local-name");
 }
 
 static int
-fn_namespace_uri(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_namespace_uri(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
                  size_t self_pos, size_t self_size,
                  mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "namespace-uri") != 0) return -1;
-  lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "namespace-uri");
+  MKR_DOM_NODE *n = name_func_target(args, nargs, self_node, err, "namespace-uri");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
-      (n->type != LXB_DOM_NODE_TYPE_ELEMENT && n->type != LXB_DOM_NODE_TYPE_ATTRIBUTE)) {
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT && MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE)) {
     return set_empty_string(out, err, "namespace-uri");
   }
-  if (n->ns == 0) {
-    return set_empty_string(out, err, "namespace-uri");
-  }
-  lxb_dom_document_t *doc = mkr_ctx_document(ctx);
-  if (doc == NULL || doc->ns == NULL) {
+  if (MKR_NODE_NS_ID(n) == 0) {
     return set_empty_string(out, err, "namespace-uri");
   }
   size_t len = 0;
-  const lxb_char_t *uri = lxb_ns_by_id(doc->ns, n->ns, &len);
-  return set_bytes_string(out, uri, len, err, "namespace-uri");
+  const char *uri = MKR_NODE_NS_URI(n, mkr_ctx_document(ctx), &len);
+  if (uri == NULL) {
+    return set_empty_string(out, err, "namespace-uri");
+  }
+  return set_bytes_string(out, (const lxb_char_t *)uri, len, err, "namespace-uri");
 }
 
 static int
-fn_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_name(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         size_t self_pos, size_t self_size,
         mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
   (void)ctx; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "name") != 0) return -1;
-  lxb_dom_node_t *n = name_func_target(args, nargs, self_node, err, "name");
+  MKR_DOM_NODE *n = name_func_target(args, nargs, self_node, err, "name");
   if (err->status != MKR_XPATH_OK) return -1;
   if (n == NULL ||
-      (n->type != LXB_DOM_NODE_TYPE_ELEMENT &&
-       n->type != LXB_DOM_NODE_TYPE_ATTRIBUTE &&
-       n->type != LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION)) {
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
     return set_empty_string(out, err, "name");
   }
   /* In HTML the qualified name matches the local name; this also avoids
    * surfacing the LXB_NS_HTML prefix that would otherwise confuse users. */
   size_t len = 0;
   const lxb_char_t *name;
-  if (n->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
-    name = lxb_dom_attr_qualified_name((lxb_dom_attr_t *)n, &len);
+  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
+    name = MKR_ATTR_QUALIFIED_NAME(n, &len);
+  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
+    name = MKR_ELEM_QUALIFIED_NAME(n, &len);
   } else {
-    name = mkr_dom_node_name_qualified(n, &len);
+    name = MKR_NODE_PI_NAME(n, &len);   /* a PI's expanded-name is (null, target) */
   }
   return set_bytes_string(out, name, len, err, "name");
 }
@@ -972,7 +988,7 @@ fn_name(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
 /* ---------- boolean / language ---------- */
 
 static int
-fn_lang(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
+fn_lang(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         size_t self_pos, size_t self_size,
         mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
@@ -982,15 +998,21 @@ fn_lang(mkr_xpath_context_t *ctx, lxb_dom_node_t *self_node,
   if (mkr_val_to_owned_text_or_fail(&args[0], mkr_ctx_limits(ctx), err, &want) != 0) return -1;
   out->type = MKR_XPATH_TYPE_BOOLEAN;
   out->u.boolean = 0;
-  /* Walk up the ancestor chain looking for an @xml:lang or @lang. */
-  for (lxb_dom_node_t *p = self_node; p != NULL; p = p->parent) {
-    if (p->type != LXB_DOM_NODE_TYPE_ELEMENT) continue;
-    lxb_dom_element_t *el = (lxb_dom_element_t *)p;
+  /* Walk up the ancestor chain looking for the host's language attribute.
+     Host policy (§8.6): XPath 1.0 lang() is xml:lang based; HTML uses the `lang`
+     attribute (with xml:lang accepted as a fallback). */
+  for (MKR_DOM_NODE *p = self_node; p != NULL; p = MKR_NODE_PARENT(p)) {
+    if (MKR_NODE_TYPE(p) != MKR_NTYPE_ELEMENT) continue;
+    MKR_DOM_ELEMENT *el = MKR_NODE_AS_ELEMENT(p);
     size_t vlen = 0;
-    const lxb_char_t *v = lxb_dom_element_get_attribute(el, (const lxb_char_t *)"lang", 4, &vlen);
+#ifdef MKR_HOST_XML
+    const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "xml:lang", 8, &vlen);
+#else
+    const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "lang", 4, &vlen);
     if (v == NULL) {
-      v = lxb_dom_element_get_attribute(el, (const lxb_char_t *)"xml:lang", 8, &vlen);
+      v = MKR_ELEM_GET_ATTRIBUTE(el, "xml:lang", 8, &vlen);
     }
+#endif /* MKR_HOST_XML */
     if (v == NULL) continue;
     /* Compare prefix (case-insensitive) up to '-'. */
     if (vlen >= want.len) {
@@ -1046,7 +1068,9 @@ static const fn_entry_t fn_table[] = {
   { NULL,               NULL                },
 };
 
-mkr_func_impl_t
+/* File-static: the function table is engine-internal. eval_fncall (later in the
+ * merged engine TU) resolves through it; nothing outside the engine does. */
+static mkr_func_impl_t
 mkr_lookup_function(const char *ns_uri, const char *local_name)
 {
   if (local_name == NULL) return NULL;

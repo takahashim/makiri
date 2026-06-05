@@ -1,6 +1,7 @@
 #include "glue.h"
 #include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
 #include "../core/mkr_core.h"
+#include "../xml/mkr_xml.h"   /* mkr_xml_doc_memsize for an XML-backed document */
 
 #include <lexbor/html/parser.h>
 #include <ruby/thread.h>
@@ -32,9 +33,14 @@ mkr_doc_free(void *ptr)
 static size_t
 mkr_doc_memsize(const void *ptr)
 {
-    /* The DOM arena size is not cheaply queryable; report the wrapper only. */
-    (void)ptr;
-    return sizeof(mkr_doc_data_t);
+    const mkr_doc_data_t *d = (const mkr_doc_data_t *)ptr;
+    size_t total = sizeof(mkr_doc_data_t);
+    /* The Lexbor (HTML) arena size is not cheaply queryable; report the wrapper
+     * only. The XML arena tracks its own byte total, so include it. */
+    if (d->parsed != NULL && mkr_parsed_kind(d->parsed) == MKR_DOC_XML) {
+        total += mkr_xml_doc_memsize(mkr_parsed_xml_doc(d->parsed));
+    }
+    return total;
 }
 
 const rb_data_type_t mkr_doc_type = {
@@ -48,7 +54,8 @@ mkr_doc_unwrap(VALUE rb_doc)
 {
     mkr_doc_data_t *d;
     TypedData_Get_Struct(rb_doc, mkr_doc_data_t, &mkr_doc_type, d);
-    return (lxb_dom_document_t *)d->parsed->doc;
+    /* HTML-only: the XML engine/Node-API path never routes through here. */
+    return (lxb_dom_document_t *)mkr_parsed_html_doc(d->parsed);
 }
 
 mkr_parsed_t *
@@ -59,13 +66,18 @@ mkr_doc_parsed(VALUE rb_doc)
     return d->parsed;
 }
 
-/* Wrap an owned mkr_parsed_t as a Makiri::Document. GC takes ownership of
- * +parsed+ (freed in dfree). Used to back a standalone DocumentFragment. */
+/* Wrap an owned mkr_parsed_t as a Document. GC takes ownership of +parsed+
+ * (freed in dfree). The Ruby leaf class is chosen by kind: a Lexbor-backed
+ * handle becomes Makiri::Document (HTML), an arena-backed one
+ * Makiri::XML::Document (§2.3). Used to back a parsed document or a standalone
+ * DocumentFragment. */
 VALUE
 mkr_wrap_document(mkr_parsed_t *parsed)
 {
+    VALUE klass = (mkr_parsed_kind(parsed) == MKR_DOC_XML)
+                    ? mkr_cXmlDocument : mkr_cHtmlDocument;
     mkr_doc_data_t *d;
-    VALUE obj = TypedData_Make_Struct(mkr_cDocument, mkr_doc_data_t, &mkr_doc_type, d);
+    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_doc_type, d);
     d->parsed = parsed;
     d->errors = rb_ary_new();
     return obj;
@@ -207,7 +219,39 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
     /* Browser-compatible decoding: invalid UTF-8 -> U+FFFD; valid input is used
      * in place (no copy, *owned == NULL). Returns -1 on OOM (nothing allocated)
      * so the caller can release its parser before raising. */
-    mkr_ruby_borrowed_bytes_t hv = mkr_ruby_bytes_view(html);
+    VALUE u8 = mkr_ruby_to_utf8(html); /* honour the input encoding (-> UTF-8) */
+    mkr_ruby_borrowed_bytes_t hv = mkr_ruby_bytes_view(u8);
+
+    if (u8 != html) {
+        /* Transcoded to UTF-8: a fresh String that nothing keeps alive past this
+         * return, so we must NOT borrow its bytes. It is already valid UTF-8, so
+         * copy it into an owned buffer (the caller frees *owned) — no sanitise. */
+        size_t n = (hv.len > 0) ? hv.len : 1;
+        char  *buf = mkr_reallocarray(NULL, n, 1);
+        if (buf == NULL) {
+            RB_GC_GUARD(hv.value);
+            return -1;
+        }
+        if (hv.len > 0) {
+            memcpy(buf, hv.ptr, hv.len);
+        }
+        *owned   = (lxb_char_t *)buf;
+        *out     = (const lxb_char_t *)buf;
+        *out_len = hv.len;
+        RB_GC_GUARD(hv.value);
+        return 0;
+    }
+
+    /* Not transcoded (UTF-8 / US-ASCII / binary): input Ruby already knows is
+     * valid UTF-8 is borrowed in place (the caller keeps `html` alive);
+     * otherwise sanitise as before. */
+    if (mkr_ruby_str_known_valid_utf8(html)) {
+        *owned   = NULL;
+        *out     = (const lxb_char_t *)hv.ptr;
+        *out_len = hv.len;
+        RB_GC_GUARD(hv.value);
+        return 0;
+    }
     lxb_char_t *clean = NULL;
     size_t      clean_len = 0;
     if (mkr_utf8_sanitize((const lxb_char_t *)hv.ptr, hv.len, &clean, &clean_len) != 0) {
@@ -379,7 +423,7 @@ mkr_frag_s_parse(int argc, VALUE *argv, VALUE klass)
                                 : rb_hash_aref(opts, ID2SYM(rb_intern("context")));
 
     static const lxb_char_t shell[] = "<html><body></body></html>";
-    mkr_parsed_t *parsed = mkr_parse_html(shell, sizeof(shell) - 1);
+    mkr_parsed_t *parsed = mkr_parse_html(shell, sizeof(shell) - 1, true);
     if (parsed == NULL) {
         rb_raise(mkr_eError, "failed to create fragment document");
     }
@@ -415,6 +459,7 @@ mkr_node_parse(VALUE self, VALUE rb_html)
 typedef struct {
     const lxb_char_t *src;
     size_t            len;
+    bool              assume_valid;
     mkr_parsed_t     *result;
 } mkr_parse_nogvl_t;
 
@@ -425,7 +470,7 @@ static void *
 mkr_parse_nogvl(void *p)
 {
     mkr_parse_nogvl_t *a = (mkr_parse_nogvl_t *)p;
-    a->result = mkr_parse_html(a->src, a->len);
+    a->result = mkr_parse_html(a->src, a->len, a->assume_valid);
     return NULL;
 }
 
@@ -440,6 +485,10 @@ static VALUE
 mkr_doc_s_parse(VALUE klass, VALUE rb_source)
 {
     StringValue(rb_source);
+    /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through (no
+     * degradation), anything else is transcoded to UTF-8 so its content is
+     * preserved rather than read as raw UTF-8 bytes. */
+    rb_source = mkr_ruby_to_utf8(rb_source);
 
     /* Allocate the wrapper first (with parsed == NULL) so that if parsing
      * fails the GC-managed object frees cleanly. */
@@ -457,9 +506,14 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
     if (mkr_ruby_copy_bytes(rb_source, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying source");
     }
+    /* Read the coderange (no scan) before releasing the GVL; the copy is
+     * byte-identical, so a source Ruby already knows is valid UTF-8 lets the
+     * parse skip its sanitisation scan. */
+    bool assume_valid = mkr_ruby_str_known_valid_utf8(rb_source);
     RB_GC_GUARD(rb_source);
 
-    mkr_parse_nogvl_t args = { (const lxb_char_t *)source.ptr, source.len, NULL };
+    mkr_parse_nogvl_t args = { (const lxb_char_t *)source.ptr, source.len,
+                               assume_valid, NULL };
     rb_thread_call_without_gvl(mkr_parse_nogvl, &args, NULL, NULL);
     mkr_owned_bytes_clear(&source);
 
@@ -530,18 +584,18 @@ mkr_doc_errors(VALUE self)
 void
 mkr_init_document(void)
 {
-    rb_define_singleton_method(mkr_cDocument, "_parse", mkr_doc_s_parse, 1);
-    rb_define_method(mkr_cDocument, "root",     mkr_doc_root,     0);
-    rb_define_method(mkr_cDocument, "title",    mkr_doc_title,    0);
-    rb_define_method(mkr_cDocument, "errors",   mkr_doc_errors,   0);
-    rb_define_method(mkr_cDocument, "internal_subset", mkr_doc_internal_subset, 0);
-    rb_define_method(mkr_cDocument, "quirks_mode", mkr_doc_quirks_mode, 0);
-    rb_define_method(mkr_cDocument, "fragment", mkr_doc_fragment, -1);
-    rb_define_method(mkr_cDocument, "import_node", mkr_doc_import_node, -1);
+    rb_define_singleton_method(mkr_cHtmlDocument, "_parse", mkr_doc_s_parse, 1);
+    rb_define_method(mkr_cHtmlDocument, "root",     mkr_doc_root,     0);
+    rb_define_method(mkr_cHtmlDocument, "title",    mkr_doc_title,    0);
+    rb_define_method(mkr_cHtmlDocument, "errors",   mkr_doc_errors,   0);
+    rb_define_method(mkr_cHtmlDocument, "internal_subset", mkr_doc_internal_subset, 0);
+    rb_define_method(mkr_cHtmlDocument, "quirks_mode", mkr_doc_quirks_mode, 0);
+    rb_define_method(mkr_cHtmlDocument, "fragment", mkr_doc_fragment, -1);
+    rb_define_method(mkr_cHtmlDocument, "import_node", mkr_doc_import_node, -1);
 
     rb_define_singleton_method(mkr_cDocumentFragment, "parse", mkr_frag_s_parse, -1);
 
     /* Node#parse(html): fragment-parse in this element's context (Nokogiri
      * compatible). Defined here, next to the fragment machinery it reuses. */
-    rb_define_method(mkr_cNode, "parse", mkr_node_parse, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "parse", mkr_node_parse, 1);
 }

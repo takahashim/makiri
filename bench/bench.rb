@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 #
-# Makiri performance benchmark. Measures the main operations and, when Nokogiri
-# is installed, compares against it as a reference (Nokogiri is a bench-only
-# dependency — Makiri itself never links libxml2).
+# Makiri performance benchmark. Measures the main operations and, when they are
+# installed, compares against Nokogiri (libxml2) and Nokolexbor (a
+# Nokogiri-compatible API also built on Lexbor) as references. Both are
+# bench-only dependencies — Makiri itself never links libxml2.
 #
 # Run:
 #   rake bench
@@ -22,7 +23,15 @@ begin
   NOKO = true
 rescue LoadError
   NOKO = false
-  warn "nokogiri not available — running Makiri-only (no comparison)"
+  warn "nokogiri not available — skipping its column"
+end
+
+begin
+  require "nokolexbor"
+  NOKOLEX = true
+rescue LoadError
+  NOKOLEX = false
+  warn "nokolexbor not available — skipping its column"
 end
 
 # --- representative document ----------------------------------------------
@@ -50,12 +59,15 @@ end
 ITEMS = Integer(ENV.fetch("BENCH_ITEMS", "2000"))
 HTML  = build_html(ITEMS)
 
-m_doc = Makiri::HTML(HTML)
-n_doc = (Nokogiri::HTML(HTML) if NOKO)
+m_doc  = Makiri::HTML(HTML)
+n_doc  = (Nokogiri::HTML(HTML) if NOKO)
+nl_doc = (Nokolexbor::HTML(HTML) if NOKOLEX)
 
 el_count = m_doc.css("*").length
 puts "document: #{HTML.bytesize} bytes, #{ITEMS} items, #{el_count} elements"
-puts "ruby #{RUBY_VERSION}  makiri #{Makiri::VERSION}#{"  nokogiri #{Nokogiri::VERSION}" if NOKO}"
+puts "ruby #{RUBY_VERSION}  makiri #{Makiri::VERSION}" \
+     "#{"  nokogiri #{Nokogiri::VERSION}" if NOKO}" \
+     "#{"  nokolexbor #{Nokolexbor::VERSION}" if NOKOLEX}"
 puts
 
 def bench(title)
@@ -63,49 +75,57 @@ def bench(title)
   Benchmark.ips do |x|
     x.config(time: 2, warmup: 1)
     yield x
-    x.compare! if NOKO
+    x.compare! if NOKO || NOKOLEX
   end
   puts
 end
 
 bench("parse") do |x|
-  x.report("makiri")   { Makiri::HTML(HTML) }
-  x.report("nokogiri") { Nokogiri::HTML(HTML) } if NOKO
+  x.report("makiri")     { Makiri::HTML(HTML) }
+  x.report("nokogiri")   { Nokogiri::HTML(HTML) } if NOKO
+  x.report("nokolexbor") { Nokolexbor::HTML(HTML) } if NOKOLEX
 end
 
 bench("css: ul li.item") do |x|
-  x.report("makiri")   { m_doc.css("ul li.item").length }
-  x.report("nokogiri") { n_doc.css("ul li.item").length } if NOKO
+  x.report("makiri")     { m_doc.css("ul li.item").length }
+  x.report("nokogiri")   { n_doc.css("ul li.item").length } if NOKO
+  x.report("nokolexbor") { nl_doc.css("ul li.item").length } if NOKOLEX
 end
 
 bench("at_css: #main") do |x|
-  x.report("makiri")   { m_doc.at_css("#main") }
-  x.report("nokogiri") { n_doc.at_css("#main") } if NOKO
+  x.report("makiri")     { m_doc.at_css("#main") }
+  x.report("nokogiri")   { n_doc.at_css("#main") } if NOKO
+  x.report("nokolexbor") { nl_doc.at_css("#main") } if NOKOLEX
 end
 
 bench("xpath: //li[@data-rank='1']") do |x|
-  x.report("makiri")   { m_doc.xpath("//li[@data-rank='1']").length }
-  x.report("nokogiri") { n_doc.xpath("//li[@data-rank='1']").length } if NOKO
+  x.report("makiri")     { m_doc.xpath("//li[@data-rank='1']").length }
+  x.report("nokogiri")   { n_doc.xpath("//li[@data-rank='1']").length } if NOKO
+  x.report("nokolexbor") { nl_doc.xpath("//li[@data-rank='1']").length } if NOKOLEX
 end
 
 bench("xpath: //a/@href (attribute axis)") do |x|
-  x.report("makiri")   { m_doc.xpath("//a/@href").length }
-  x.report("nokogiri") { n_doc.xpath("//a/@href").length } if NOKO
+  x.report("makiri")     { m_doc.xpath("//a/@href").length }
+  x.report("nokogiri")   { n_doc.xpath("//a/@href").length } if NOKO
+  x.report("nokolexbor") { nl_doc.xpath("//a/@href").length } if NOKOLEX
 end
 
 bench("xpath: //li (descendant tag)") do |x|
-  x.report("makiri")   { m_doc.xpath("//li").length }
-  x.report("nokogiri") { n_doc.xpath("//li").length } if NOKO
+  x.report("makiri")     { m_doc.xpath("//li").length }
+  x.report("nokogiri")   { n_doc.xpath("//li").length } if NOKO
+  x.report("nokolexbor") { nl_doc.xpath("//li").length } if NOKOLEX
 end
 
 bench("xpath: //*[@id='main'] (id)") do |x|
-  x.report("makiri")   { m_doc.xpath("//*[@id='main']").length }
-  x.report("nokogiri") { n_doc.xpath("//*[@id='main']").length } if NOKO
+  x.report("makiri")     { m_doc.xpath("//*[@id='main']").length }
+  x.report("nokogiri")   { n_doc.xpath("//*[@id='main']").length } if NOKO
+  x.report("nokolexbor") { nl_doc.xpath("//*[@id='main']").length } if NOKOLEX
 end
 
 bench("xpath: //li[@data-id='1000'] (attr eq)") do |x|
-  x.report("makiri")   { m_doc.xpath("//li[@data-id='1000']").length }
-  x.report("nokogiri") { n_doc.xpath("//li[@data-id='1000']").length } if NOKO
+  x.report("makiri")     { m_doc.xpath("//li[@data-id='1000']").length }
+  x.report("nokogiri")   { n_doc.xpath("//li[@data-id='1000']").length } if NOKO
+  x.report("nokolexbor") { nl_doc.xpath("//li[@data-id='1000']").length } if NOKOLEX
 end
 
 bench("traverse: count elements via children walk") do |x|
@@ -115,28 +135,28 @@ bench("traverse: count elements via children walk") do |x|
       walk.call(c, &blk) if c.element?
     end
   end
-  x.report("makiri") do
+  count = lambda do |root|
     n = 0
-    walk.call(m_doc.root) { |c| n += 1 if c.element? }
+    walk.call(root) { |c| n += 1 if c.element? }
     n
   end
-  if NOKO
-    x.report("nokogiri") do
-      n = 0
-      walk.call(n_doc.root) { |c| n += 1 if c.element? }
-      n
-    end
-  end
+  x.report("makiri")     { count.call(m_doc.root) }
+  x.report("nokogiri")   { count.call(n_doc.root) } if NOKO
+  x.report("nokolexbor") { count.call(nl_doc.root) } if NOKOLEX
 end
 
 bench("serialize: to_html") do |x|
-  x.report("makiri")   { m_doc.to_html }
-  x.report("nokogiri") { n_doc.to_html } if NOKO
+  x.report("makiri")     { m_doc.to_html }
+  x.report("nokogiri")   { n_doc.to_html } if NOKO
+  x.report("nokolexbor") { nl_doc.to_html } if NOKOLEX
 end
 
 bench("text extraction: full document text") do |x|
-  x.report("makiri")   { m_doc.text }
-  x.report("nokogiri") { n_doc.text } if NOKO
+  # Makiri/Nokogiri's Document#text returns the whole document's text; Nokolexbor
+  # gives a Document an empty textContent (per the DOM), so extract from its root.
+  x.report("makiri")     { m_doc.text }
+  x.report("nokogiri")   { n_doc.text } if NOKO
+  x.report("nokolexbor") { nl_doc.root.text } if NOKOLEX
 end
 
 # --- threaded throughput --------------------------------------------------

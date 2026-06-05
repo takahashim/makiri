@@ -36,6 +36,7 @@ require "makiri"
 require_relative "grammar"
 require_relative "fixtures"
 require_relative "seed_corpus"
+require_relative "xml_corpus"
 
 REGRESSIONS_DIR = File.expand_path("regressions", __dir__)
 STATE_FILE      = File.join(REGRESSIONS_DIR, "last_input.txt")
@@ -47,7 +48,7 @@ OptionParser.new do |o|
   o.banner = "Usage: ruby spec/fuzz/run.rb [options]"
   o.on("--time SEC", Integer, "seconds to run (default 60)")          { |v| opts[:time] = v }
   o.on("--seed N", Integer, "RNG seed (default random)")              { |v| opts[:seed] = v }
-  o.on("--target T", %i[xpath css both], "xpath (default), css, both") { |v| opts[:target] = v }
+  o.on("--target T", %i[xpath css both xml], "xpath (default), css, both, xml") { |v| opts[:target] = v }
   o.on("--isolated", "fork per query (crash/hang safe)")              { opts[:isolated] = true }
   o.on("--query-timeout SEC", Integer, "per-query timeout in --isolated (default 5)") { |v| opts[:query_timeout] = v }
   o.on("-q", "--quiet", "suppress per-finding output")               { opts[:quiet] = true }
@@ -130,6 +131,57 @@ rescue StandardError
   [:crash, "corrupt worker response"]
 end
 
+# --- XML parser fuzzing (target :xml) -------------------------------------
+# Here the "query" IS the document: we parse hostile/mutated XML and assert the
+# parser fails closed (Makiri::Error) rather than crashing or leaking a foreign
+# exception. A returned Document is fine (the input happened to be well-formed).
+
+def run_xml_inproc(input)
+  Makiri::XML(input)
+  [:ok, nil]
+rescue Makiri::Error => e
+  [:expected, e.class.name] # malformed/hostile input rejected cleanly — fine
+rescue StandardError => e
+  [:unexpected, "#{e.class}: #{e.message}"] # contract violation — a finding
+end
+
+def run_xml_isolated(input, timeout_sec)
+  rd, wr = IO.pipe
+  pid = fork do
+    rd.close
+    result =
+      begin
+        Makiri::XML(input)
+        [:ok, nil]
+      rescue Makiri::Error => e
+        [:expected, e.class.name]
+      rescue StandardError => e
+        [:unexpected, "#{e.class}: #{e.message}"&.slice(0, 2000)]
+      end
+    wr.write(Marshal.dump(result))
+    wr.close
+    exit!(0)
+  end
+  wr.close
+
+  unless IO.select([rd], nil, nil, timeout_sec)
+    Process.kill("KILL", pid) rescue nil
+    Process.wait(pid)
+    rd.close
+    return [:timeout, "no response in #{timeout_sec}s"]
+  end
+
+  data = rd.read
+  Process.wait(pid)
+  rd.close
+  if $?.signaled? || !$?.exitstatus.zero?
+    return [:crash, $?.signaled? ? "signal #{$?.termsig}" : "exit #{$?.exitstatus}"]
+  end
+  Marshal.load(data)
+rescue StandardError
+  [:crash, "corrupt worker response"]
+end
+
 def save_regression(name, html, target, query, category, detail)
   hash = Digest::SHA1.hexdigest("#{name}|#{target}|#{query}")[0, 10]
   dir  = File.join(REGRESSIONS_DIR, "#{category}_#{hash}")
@@ -158,13 +210,26 @@ while Time.now - t0 < opts[:time]
     next_heartbeat = now + 10
   end
 
-  target, query = next_query(opts[:target], rng)
-  name, html, doc = fixtures.sample(random: rng)
-  File.write(STATE_FILE, "fixture: #{name}\ntarget: #{target}\nquery: #{query}\n") rescue nil
+  if opts[:target] == :xml
+    target = :xml
+    query  = XmlFuzz.next_input(rng)
+    name   = "xml-input"
+    html   = query
+  else
+    target, query = next_query(opts[:target], rng)
+    name, html, doc = fixtures.sample(random: rng)
+  end
+  File.write(STATE_FILE, "fixture: #{name}\ntarget: #{target}\nquery: #{query.inspect}\n") rescue nil
 
   category, detail =
-    opts[:isolated] ? run_isolated(doc, target, query, opts[:query_timeout])
-                    : run_inproc(doc, target, query)
+    if target == :xml
+      opts[:isolated] ? run_xml_isolated(query, opts[:query_timeout])
+                      : run_xml_inproc(query)
+    elsif opts[:isolated]
+      run_isolated(doc, target, query, opts[:query_timeout])
+    else
+      run_inproc(doc, target, query)
+    end
   stats[category] += 1
   stats[:runs] += 1
 

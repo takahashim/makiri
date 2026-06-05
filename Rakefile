@@ -7,6 +7,24 @@ require "shellwords"
 
 GEMSPEC = Gem::Specification.load("makiri.gemspec")
 
+# Replace bundler/gem_tasks' `release` (which builds a source-only gem and
+# `gem push`es it from the dev machine) with a tag push: it hands the build,
+# GitHub Release, and the approval-gated RubyGems publish off to CI
+# (.github/workflows/release.yml). Nothing is pushed to RubyGems locally.
+Rake::Task["release"].clear
+desc "Tag v#{GEMSPEC.version} and push it; CI builds, releases, and publishes"
+task release: %w[release:guard_clean release:source_control_push] do
+  puts <<~MSG
+
+    Pushed tag v#{GEMSPEC.version}. GitHub Actions (release.yml) will now:
+      1. build the source gem + precompiled native gems,
+      2. create the GitHub Release and attach them, then
+      3. publish to RubyGems via OIDC — after the `rubygems` environment approval.
+    Approve the pending deployment in the Actions run to publish; nothing is
+    pushed to RubyGems from this machine.
+  MSG
+end
+
 Rake::ExtensionTask.new("makiri", GEMSPEC) do |ext|
   ext.lib_dir       = "lib/makiri"
   ext.ext_dir       = "ext/makiri"
@@ -92,12 +110,24 @@ task fuzz: :compile do
   sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}"
 end
 
+desc "Fuzz the XML parser (hostile/mutated documents; override via FUZZ_ARGS)"
+task "fuzz:xml": :compile do
+  sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target xml #{ENV['FUZZ_ARGS']}"
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)
   # resolve from system RubyGems without polluting the runtime dependency set.
   Bundler.with_unbundled_env do
     sh "#{FileUtils::RUBY} -Ilib bench/bench.rb"
+  end
+end
+
+desc "Run the XML reader benchmark (Makiri::XML vs Nokogiri::XML reference)"
+task "bench:xml" => :compile do
+  Bundler.with_unbundled_env do
+    sh "#{FileUtils::RUBY} -Ilib bench/bench_xml.rb"
   end
 end
 
@@ -116,6 +146,28 @@ namespace :conformance do
     end
   end
 
+  desc "XML XPath 1.0 differential conformance: Makiri::XML vs Nokogiri::XML"
+  task xpath_xml: :compile do
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xml_xpath_diff.rb #{ENV['XPATH_ARGS']}"
+    end
+  end
+
+  desc "W3C XML Conformance Test Suite: well-formedness through Makiri::XML"
+  task xmlconf: :compile do
+    # Nokogiri (bench-only) parses the manifests, so run outside the bundle.
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xmlconf_runner.rb #{ENV['XMLCONF_ARGS']}"
+    end
+  end
+
+  desc "Property-based XML differential: generated documents, Makiri vs Nokogiri tree"
+  task xml_pbt: :compile do
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xml_pbt_diff.rb #{ENV['PBT_ARGS']}"
+    end
+  end
+
   desc "CSS Selectors differential conformance vs Nokogiri::HTML5"
   task css: :compile do
     Bundler.with_unbundled_env do
@@ -124,8 +176,8 @@ namespace :conformance do
   end
 end
 
-desc "Run all conformance suites (html5lib-tests + XPath & CSS differentials)"
-task conformance: %w[conformance:html5 conformance:xpath conformance:css]
+desc "Run all conformance suites"
+task conformance: %w[conformance:html5 conformance:xpath conformance:css conformance:xmlconf conformance:xpath_xml]
 
 namespace :fuzz do
   desc "Run the fuzzer under AddressSanitizer (rebuilds the ext; --isolated)"
@@ -144,7 +196,13 @@ namespace :fuzz do
       preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
       env[preload] = runtime
     end
-    args = ENV["FUZZ_ARGS"] || "--isolated --time 120"
-    sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{args}")
+    if ENV["FUZZ_ARGS"]
+      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
+    else
+      # By default cover both surfaces under the sanitizer: the query engine
+      # (XPath/CSS over parsed fixtures) and the XML parser (hostile documents).
+      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --isolated --time 90")
+      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target xml --isolated --time 90")
+    end
   end
 end

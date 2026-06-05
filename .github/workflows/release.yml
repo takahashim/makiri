@@ -196,17 +196,22 @@ jobs:
             $pre --verify-tag || \
           gh release upload "${GITHUB_REF_NAME}" dist/*.gem --repo "${GITHUB_REPOSITORY}" --clobber
 
-  # --- optional: publish to RubyGems (manual, opt-in, never on a tag push) ----
-  # Auth is RubyGems Trusted Publishing (OIDC): no stored API key, short-lived
-  # token, MFA-compatible. Configure a matching Trusted Publisher on RubyGems.org
-  # for this gem: owner=takahashim, repo=makiri, workflow=release.yml, and set its
-  # Environment to "rubygems" (matching `environment:` below).
+  # --- publish to RubyGems, behind the `rubygems` environment approval gate ---
+  # Held until the `rubygems` environment's Required-reviewers rule is approved,
+  # so a tag push releases on GitHub immediately but the RubyGems push waits.
+  #
+  # Auth is RubyGems Trusted Publishing (OIDC): no stored API key. Configure a
+  # matching Trusted Publisher on RubyGems.org (owner=takahashim, repo=makiri,
+  # workflow=release.yml, Environment=rubygems) so the token is only accepted
+  # through this gated environment.
   publish:
     name: Publish to RubyGems
     needs: [source-gem, native-gem]
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_to_rubygems
+    if: >-
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_to_rubygems)
     runs-on: ubuntu-latest
-    environment: rubygems   # add a Required-reviewers protection rule for an approval gate
+    environment: rubygems
     permissions:
       contents: read
       id-token: write       # OIDC identity token for Trusted Publishing
