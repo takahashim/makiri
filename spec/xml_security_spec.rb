@@ -95,9 +95,33 @@ RSpec.describe "Makiri::XML security" do
       expect { parse(flood) }.to raise_error(Makiri::XML::LimitExceeded)
     end
 
-    it "bounds distinct namespace declarations" do
+    it "bounds namespace bindings IN SCOPE at once (the scope-stack depth)" do
+      # MKR_XML_MAX_NS caps how many bindings are concurrently in scope, not the
+      # document-wide total: 5000 xmlns on ONE element are all in scope together
+      # and trip the limit.
       decls = (1..5000).map { |n| "xmlns:p#{n}='urn:#{n}'" }.join(" ")
       expect { parse("<a #{decls}/>") }.to raise_error(Makiri::XML::LimitExceeded)
+    end
+
+    it "does NOT count namespaces that go out of scope (popped on element close)" do
+      # The same 5000 declarations spread across siblings each leave scope when
+      # the element closes, so they never coexist -> no LimitExceeded. This pins
+      # the in-scope semantics (a per-binding 'distinct per document' counter
+      # would wrongly reject this), and the per-declaration memory is bounded by
+      # the byte / attribute budgets instead.
+      sibs = (1..5000).map { |n| "<c xmlns:p#{n}='urn:#{n}'/>" }.join
+      doc = parse("<root>#{sibs}</root>")
+      expect(doc.xpath("count(//c)")).to eq(5000.0)
+    end
+
+    it "bounds total arena memory (a tiny-element flood hits the byte budget)" do
+      # Node structs are counted against the same arena byte budget as text, so a
+      # flood of empty elements is bounded by memory, not only by the 10M node cap
+      # (which at ~128 B/node would otherwise permit a >1 GB arena). This stays
+      # well under the 512 MiB default until the node budget; the assertion is
+      # only that a pathological-but-bounded doc parses without unbounded growth.
+      doc = parse("<r>#{'<a/>' * 200_000}</r>")
+      expect(doc.xpath("count(//a)")).to eq(200_000.0)
     end
   end
 

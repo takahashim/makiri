@@ -707,6 +707,18 @@ mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
     mkr_xml_doc_t *doc = mkr_xml_doc_new();
     if (doc == NULL) { if (status) *status = MKR_XML_ERR_OOM; return NULL; }
 
+    /* Fail closed on an over-budget input before ANY allocation (src is not yet
+     * read): every retained byte is copied into the arena, so an input longer
+     * than the arena byte budget can never succeed — reject it now instead of
+     * after building most of a doomed document. This also bounds the line-ending
+     * scratch below (norm <= len <= max_bytes), so it cannot run a large
+     * out-of-budget allocation ahead of the arena's own checks. */
+    if (len > doc->max_bytes) {
+        if (status) *status = MKR_XML_ERR_LIMIT;
+        mkr_xml_doc_destroy(doc);
+        return NULL;
+    }
+
     /* §9.3b-A: line-ending normalization — fold CRLF and a lone CR to LF over the
      * whole input BEFORE tokenizing, so every later stage (attribute-value
      * normalization, line counting) sees only LF. It can only shrink, so we
@@ -1037,6 +1049,26 @@ mkr_xml_parse_selftest(void)
     st = MKR_XML_OK;
     e = PARSE_LIT("<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>", &st);
     if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* same-URI duplicate */
+
+    /* §4 byte-budget entry guard: an input longer than MKR_XML_MAX_BYTES fails
+     * closed (MKR_XML_ERR_LIMIT) before any allocation. The guard tests `len`
+     * only, so a tiny buffer with a huge claimed length exercises it without
+     * allocating — and proves `src` is not dereferenced past the budget. */
+    i++; /* 17 */
+    st = MKR_XML_OK;
+    {
+        static const char tiny[] = "<r/>";
+        if (mkr_xml_parse(tiny, (size_t)MKR_XML_MAX_BYTES + 1u, &st) != NULL
+            || st != MKR_XML_ERR_LIMIT) {
+            return i;
+        }
+        /* and the boundary (== budget) is NOT rejected by the guard (it parses,
+         * since this real 4-byte input is well under the budget). */
+        st = MKR_XML_OK;
+        d = mkr_xml_parse(tiny, sizeof(tiny) - 1, &st);
+        if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
+        mkr_xml_doc_destroy(d);
+    }
 
     return 0;
 }

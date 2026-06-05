@@ -22,11 +22,27 @@ typedef enum {
 /* Per-document budgets (§4). Enforced in the arena / tree builder; exceeding any
  * of them is fail-closed (no partial/truncated document — raise instead). */
 #define MKR_XML_MAX_DEPTH   1024u                 /* element nesting (no stack DoS) */
-#define MKR_XML_MAX_NODES   (10u * 1000u * 1000u) /* total DOM nodes */
+#define MKR_XML_MAX_NODES   (10u * 1000u * 1000u) /* total DOM nodes — a SECONDARY guard; the
+                                                   * byte budget below is the primary memory
+                                                   * ceiling (at ~128 B/node it caps node count
+                                                   * well under 10M, so it trips first). */
 #define MKR_XML_MAX_ATTRS   4096u                 /* attributes per element */
-#define MKR_XML_MAX_NS      4096u                 /* distinct namespaces per doc */
+#define MKR_XML_MAX_NS      4096u                 /* namespace bindings IN SCOPE at once — the
+                                                   * scope-stack depth, popped on element close.
+                                                   * Bounds concurrent bindings + the binds array,
+                                                   * NOT document-wide distinct declarations (those
+                                                   * are each an attribute, bounded by the byte /
+                                                   * attr budgets). */
 #ifndef MKR_XML_MAX_BYTES
-#define MKR_XML_MAX_BYTES   ((size_t)-1)          /* arena payload cap (effectively off) */
+/* Arena payload cap: the single arena choke (arena_alloc) counts BOTH node
+ * structs and copied name/value bytes against this, so it is the master memory
+ * ceiling — it subsumes the node-count limit and bounds tiny-element
+ * amplification (a `<a/>` flood is ~32x input→arena) to ~16 MB of hostile input.
+ * Enforced before each allocation, and the parse entry rejects any input longer
+ * than this up front (so the line-ending scratch is bounded too). Compile-time
+ * overridable via -DMKR_XML_MAX_BYTES; a future parse option may expose it
+ * per-document. */
+#define MKR_XML_MAX_BYTES   ((size_t)512u * 1024u * 1024u)  /* 512 MiB */
 #endif
 
 /* Parse +len+ bytes of already-decoded, validated UTF-8 (§2.1 guarantees the
