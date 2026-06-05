@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`register_namespace` + `evaluate`), which is the way to query a
     default-namespace document (RSS/Atom): under strict matching `//entry` does
     not match a default namespace, so register a prefix and use `//a:entry`.
+  * Comments and processing instructions in the prolog/epilog (around the root
+    element) are retained as children of the document node — reachable by XPath
+    (`//comment()`, `//processing-instruction()`, `/node()`) and `#children`, in
+    document order — matching the XPath data model and Nokogiri. (Inter-construct
+    whitespace there is not a text node; the DOCTYPE stays off-tree, via
+    `#internal_subset`.)
   * Fail-closed on the unsupported surface: CSS selectors (`#css` / `#at_css`)
     and serialization (`#to_xml` / `#to_html` / `#to_s` / `#inner_html` /
     `#outer_html`) raise `NotImplementedError` rather than returning a wrong

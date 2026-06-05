@@ -213,6 +213,34 @@ module XmlXPathCorpus
         "number(//nums/n[1]) - number(//nums/n[2])",
       ],
     },
+    {
+      name: "misc",
+      ns: {},
+      # Comments and PIs in the prolog/epilog (around the root) are children of
+      # the document node, like Nokogiri / the XPath data model — with realistic
+      # whitespace between them to pin that prolog whitespace is not a text node.
+      xml: <<~XML,
+        <?xml version="1.0"?>
+        <?xml-stylesheet type="text/xsl" href="a.xsl"?>
+        <!-- top comment -->
+        <doc xmlns="">
+          <?run inside?>
+          <item>x</item>
+          <!-- inner -->
+        </doc>
+        <!-- tail comment -->
+        <?after epilog?>
+      XML
+      exprs: [
+        "//comment()", "count(//comment())", "//processing-instruction()",
+        "count(//processing-instruction())", "//processing-instruction('run')",
+        "/comment()", "/processing-instruction()", "count(/node())", "/node()[1]",
+        "/node()[2]", "name(/processing-instruction()[1])",
+        "//comment()[1]/parent::node()", "//doc/preceding-sibling::node()",
+        "//doc/following-sibling::node()", "//doc/preceding-sibling::comment()",
+        "string(/processing-instruction()[1])", "//node()[last()]",
+      ],
+    },
   ].freeze
 
   # Structural, prefix-free expressions run against every document (the doc's ns

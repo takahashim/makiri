@@ -273,6 +273,38 @@ RSpec.describe "Makiri::XML minimal parse" do
     end
   end
 
+  describe "prolog/epilog comments and PIs are document-node children (like Nokogiri)" do
+    let(:doc) do
+      Makiri::XML(<<~XML)
+        <?xml version="1.0"?>
+        <?stylesheet href="a.xsl"?>
+        <!-- top -->
+        <root><c/></root>
+        <!-- tail -->
+        <?after x?>
+      XML
+    end
+
+    it "exposes them to XPath in document order" do
+      expect(doc.xpath("//comment()").map(&:text)).to eq([" top ", " tail "])
+      expect(doc.xpath("//processing-instruction()").map(&:name)).to eq(%w[stylesheet after])
+      expect(doc.xpath("count(/node())")).to eq(5.0) # PI, comment, root, comment, PI
+    end
+
+    it "makes them children of the document node, around the root, no whitespace text" do
+      kinds = doc.children.map { |n| n.class.name.split("::").last }
+      expect(kinds).to eq(%w[ProcessingInstruction Comment Element Comment ProcessingInstruction])
+      expect(doc.at_xpath("//comment()").parent).to be_a(Makiri::XML::Document)
+      expect(doc.root.name).to eq("root") # the root element is still #root
+    end
+
+    it "still rejects the XML declaration anywhere but the very start" do
+      expect { Makiri::XML("<!-- c --><?xml version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<r/><?xml version='1.0'?>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<![CDATA[x]]><r/>") }.to raise_error(Makiri::XML::SyntaxError) # char data in prolog
+    end
+  end
+
   describe "character encoding: BOM + declaration autodetection (XML 1.0 App. F)" do
     it "strips a leading UTF-8 BOM (it is the encoding signature, not content)" do
       expect(Makiri::XML("﻿<r>x</r>").root.text).to eq("x")        # UTF-8 string

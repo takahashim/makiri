@@ -10,9 +10,9 @@
  * defined (a DTD-defined &name; stays an undefined-entity error) and no external
  * subset is fetched (zero I/O), so XXE / billion-laughs remain structurally
  * impossible. Comments and PIs in the prolog/epilog (outside the root) are
- * validated for well-formedness but not retained as nodes (Phase 1 keeps only the
- * root element, no document node). Strict NameStartChar/NameChar (§9.2b) and
- * duplicate-attribute rejection (§9.3) land in later steps.
+ * retained as children of the DOCUMENT node (the XPath data model; like
+ * Nokogiri); inter-construct whitespace there is not a text node. Strict
+ * NameStartChar/NameChar (§9.2b) and duplicate-attribute rejection (§9.3) apply.
  *
  * Budgets (§4): element depth (MKR_XML_MAX_DEPTH) and node/attr counts (enforced
  * in the arena) are fail-closed — a violation aborts with no partial document.
@@ -378,8 +378,8 @@ is_space_byte(char c)
 
 /* '<!--' comment (P->p at '!'). XML 1.0: the content is XML Char and may not
  * contain '--' except as part of the closing '-->'. Creates a COMMENT node under
- * +parent+; a prolog/epilog comment (parent == NULL) is validated for
- * well-formedness but not retained (Phase 1 has no document node). */
+ * +parent+ — its open element, or the DOCUMENT node in the prolog/epilog (XPath
+ * data model; like Nokogiri). */
 static int
 parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
@@ -414,7 +414,7 @@ parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 static int
 parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
-    if (parent == NULL) { set_syntax(P); return -1; } /* CDATA outside the root */
+    if (P->depth == 0) { set_syntax(P); return -1; }  /* CDATA (char data) outside the root */
     advance_n(P, 8);                                  /* consume "![CDATA[" */
     const char *cstart = P->p, *q = P->p, *close = NULL;
     for (;;) {
@@ -527,8 +527,9 @@ parse_xml_decl_body(mkr_xml_parser_t *P)
 /* '<?' processing instruction (P->p at '?'). The '<?xml ...?>' declaration (exact
  * lowercase target, document start only) is validated strictly by
  * parse_xml_decl_body and not retained; a target matching "xml" in any OTHER case
- * is a reserved PITarget (§2.6) and rejected. Other PIs inside an element are
- * retained as nodes; in the prolog/epilog they are validated but not retained. */
+ * is a reserved PITarget (§2.6) and rejected. Every other PI is retained as a
+ * node — under its open element, or under the DOCUMENT node in the
+ * prolog/epilog (XPath data model; like Nokogiri). */
 static int
 parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
 {
@@ -543,7 +544,7 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
                            && (tgt[2] | 0x20) == 'l');
     int is_decl = (tl == 3 && tgt[0] == 'x' && tgt[1] == 'm' && tgt[2] == 'l');
     if (is_decl) {
-        if (!at_doc_start || parent != NULL) { set_syntax(P); return -1; }  /* decl: doc start only */
+        if (!at_doc_start || P->depth != 0) { set_syntax(P); return -1; }  /* decl: doc start only */
         return parse_xml_decl_body(P);
     }
     if (ci_xml) { set_syntax(P); return -1; }         /* reserved target ("XML"/"xmL"/...) */
@@ -582,11 +583,14 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
  * 0 on success / -1 on a well-formedness or budget failure (P->status set), and
  * leaves P->p just past the construct. */
 
-/* The innermost open element, or NULL at the document level (prolog/epilog). */
+/* The parent a node created at the cursor attaches to: the innermost open
+ * element, or — at the document level (prolog/epilog) — the DOCUMENT node, so a
+ * top-level comment / PI becomes its child (XPath data model; like Nokogiri).
+ * The document node exists from the start of the parse. */
 static inline mkr_xml_node_t *
 cur_parent(const mkr_xml_parser_t *P)
 {
-    return P->depth ? P->stack[P->depth - 1] : NULL;
+    return P->depth ? P->stack[P->depth - 1] : P->doc->doc_node;
 }
 
 /* End tag '</name S? >' (P->p at '/'): must match the innermost open element's
@@ -742,9 +746,8 @@ parse_start_tag(mkr_xml_parser_t *P, uint32_t tl, uint32_t tc)
     if (P->depth == 0) {
         if (P->doc->root != NULL) { set_syntax(P); return -1; }   /* multiple roots */
         P->doc->root = el;
-    } else {
-        append_child(P->stack[P->depth - 1], el);
     }
+    append_child(cur_parent(P), el);   /* the DOCUMENT node at depth 0, the open element otherwise */
 
     size_t bind_base = P->nbind;       /* xmlns on this element go above here */
     int pushed = 0;
@@ -795,21 +798,6 @@ parse_text(mkr_xml_parser_t *P)
     return 0;
 }
 
-/* Wrap the root element in a DOCUMENT node — the XPath "/" root and what a Ruby
- * Document wraps. (Lexbor's HTML document IS a node; our custom tree has no
- * document node otherwise, so the engine's absolute-path seed would have nothing
- * valid to root at.) Returns MKR_XML_OK or the arena status on OOM. */
-static mkr_xml_status_t
-wrap_document_node(mkr_xml_doc_t *doc)
-{
-    mkr_xml_node_t *dn = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT);
-    if (dn == NULL) return doc->oom;
-    dn->first_child = dn->last_child = doc->root;
-    doc->root->parent = dn;
-    doc->doc_node = dn;
-    return MKR_XML_OK;
-}
-
 mkr_xml_doc_t *
 mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
 {
@@ -836,6 +824,16 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
      * out-of-budget allocation ahead of the arena's own checks. */
     if (len > doc->max_bytes) {
         if (status) *status = MKR_XML_ERR_LIMIT;
+        mkr_xml_doc_destroy(doc);
+        return NULL;
+    }
+
+    /* Create the DOCUMENT node up front: it is the XPath "/" root, what a Ruby
+     * Document wraps, and the parent that top-level comments / PIs and the root
+     * element attach to during the parse (cur_parent at depth 0). */
+    doc->doc_node = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT);
+    if (doc->doc_node == NULL) {
+        if (status) *status = doc->oom;
         mkr_xml_doc_destroy(doc);
         return NULL;
     }
@@ -896,9 +894,6 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
     if (P.status == MKR_XML_OK) {
         if (P.depth != 0)           set_syntax(&P);   /* unclosed element(s) */
         else if (doc->root == NULL) set_syntax(&P);   /* no root element */
-    }
-    if (P.status == MKR_XML_OK && doc->root != NULL) {
-        P.status = wrap_document_node(doc);
     }
 
     free(P.stack);
@@ -1082,11 +1077,12 @@ mkr_xml_parse_selftest(void)
     }
     mkr_xml_doc_destroy(d);
 
-    /* §9: comment / CDATA / PI nodes inside an element; prolog XML declaration and
-     * a prolog PI are accepted but not retained; '<!DOCTYPE' is fail-closed. */
+    /* §9: comment / CDATA / PI nodes inside an element; the prolog XML declaration
+     * is not retained, but a prolog PI / comment IS, as a child of the DOCUMENT
+     * node (before the root); '<!DOCTYPE' is fail-closed elsewhere. */
     i++; /* 13 */
-    d = PARSE_LIT("<?xml version=\"1.0\"?><?xml-stylesheet href=\"x\"?>"
-                  "<r><!--c--><![CDATA[a<b]]><?pi dat?></r>", &st);
+    d = PARSE_LIT("<?xml version=\"1.0\"?><?xml-stylesheet href=\"x\"?><!--top-->"
+                  "<r><!--c--><![CDATA[a<b]]><?pi dat?></r><?tail t?>", &st);
     if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
     {
         mkr_xml_node_t *r = d->root;
@@ -1098,6 +1094,21 @@ mkr_xml_parse_selftest(void)
             || !cd || cd->type != MKR_XML_NODE_TYPE_CDATA_SECTION || !VAL_IS(cd, "a<b") /* raw '<' kept */
             || !pi || pi->type != MKR_XML_NODE_TYPE_PI || !NAME_IS(pi, "pi") || !VAL_IS(pi, "dat")
             || pi->next != NULL) {
+            mkr_xml_doc_destroy(d); return i;
+        }
+        /* the DOCUMENT node's children: prolog PI (xml-stylesheet) + comment,
+         * then the root, then the epilog PI (the <?xml?> declaration is NOT a
+         * node); inter-construct whitespace is not retained. */
+        mkr_xml_node_t *dn = d->doc_node;
+        mkr_xml_node_t *p1 = dn ? dn->first_child : NULL;        /* <?xml-stylesheet?> */
+        mkr_xml_node_t *p2 = p1 ? p1->next : NULL;               /* <!--top--> */
+        mkr_xml_node_t *p3 = p2 ? p2->next : NULL;               /* <r> (root) */
+        mkr_xml_node_t *p4 = p3 ? p3->next : NULL;               /* <?tail?> */
+        if (!p1 || p1->type != MKR_XML_NODE_TYPE_PI || !NAME_IS(p1, "xml-stylesheet")
+            || !p2 || p2->type != MKR_XML_NODE_TYPE_COMMENT || !VAL_IS(p2, "top")
+            || p3 != r || r->parent != dn
+            || !p4 || p4->type != MKR_XML_NODE_TYPE_PI || !NAME_IS(p4, "tail")
+            || p4->next != NULL) {
             mkr_xml_doc_destroy(d); return i;
         }
     }
