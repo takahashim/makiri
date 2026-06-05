@@ -106,9 +106,11 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
 
     if (args.result == NULL) {
         switch (args.status) {
-        case MKR_XML_ERR_SYNTAX: rb_raise(mkr_eXmlSyntaxError,   "malformed XML"); break;
-        case MKR_XML_ERR_LIMIT:  rb_raise(mkr_eXmlLimitExceeded, "XML document budget exceeded"); break;
-        default:                 rb_raise(mkr_eError,            "failed to parse XML document"); break;
+        case MKR_XML_ERR_SYNTAX:  rb_raise(mkr_eXmlSyntaxError,   "malformed XML"); break;
+        case MKR_XML_ERR_LIMIT:   rb_raise(mkr_eXmlLimitExceeded, "XML document budget exceeded"); break;
+        case MKR_XML_ERR_VERSION: rb_raise(mkr_eXmlSyntaxError,
+                                           "unsupported XML version (only XML 1.0 is supported)"); break;
+        default:                  rb_raise(mkr_eError,            "failed to parse XML document"); break;
         }
     }
     mkr_parsed_set_xml_doc(parsed, args.result);

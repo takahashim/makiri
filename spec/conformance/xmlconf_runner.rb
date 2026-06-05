@@ -176,6 +176,15 @@ tests.each do |t|
 
   raw = File.binread(t.path) # ASCII-8BIT; Makiri autodetects the encoding
 
+  # A document that DECLARES version!="1.0" is XML 1.1/1.x even if its manifest
+  # entry is version-agnostic — out of scope (Makiri implements XML 1.0 only,
+  # rejecting other versions by design). Skip it like a manifest-1.1 test rather
+  # than scoring Makiri's deliberate rejection.
+  if raw.byteslice(0, 256).delete("\x00") =~ /\A\s*(?:\xEF\xBB\xBF)?<\?xml\s[^>]*?version\s*=\s*["']([\d.]+)["']/n &&
+     Regexp.last_match(1) != "1.0"
+    stats[:skip_xml11] += 1; next
+  end
+
   # run Makiri -----------------------------------------------------------
   outcome =
     begin

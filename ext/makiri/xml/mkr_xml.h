@@ -16,7 +16,8 @@ typedef enum {
     MKR_XML_ERR_SYNTAX,   /* well-formedness violation -> Makiri::XML::SyntaxError */
     MKR_XML_ERR_LIMIT,    /* budget exceeded            -> Makiri::XML::LimitExceeded */
     MKR_XML_ERR_OOM,      /* allocation failure         -> Makiri::Error */
-    MKR_XML_ERR_INTERNAL  /* impossible-state guard tripped (programming error) -> Makiri::Error */
+    MKR_XML_ERR_INTERNAL, /* impossible-state guard tripped (programming error) -> Makiri::Error */
+    MKR_XML_ERR_VERSION   /* well-formed but a version != 1.0 (XML 1.1) -> Makiri::XML::SyntaxError */
 } mkr_xml_status_t;
 
 /* Per-document budgets (§4). Enforced in the arena / tree builder; exceeding any

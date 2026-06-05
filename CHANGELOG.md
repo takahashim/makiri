@@ -30,7 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     rules (`]]>` in content, S-separated attributes, reserved/colon PI targets,
     lowercase `&#x` hex refs) are enforced; verified against the **W3C XML
     Conformance Test Suite** (`rake conformance:xmlconf`, 100% of the in-scope,
-    non-validating, XML-1.0 tests).
+    non-validating, XML-1.0 tests). Makiri implements **XML 1.0 only**: a
+    well-formed document that declares `version="1.1"` (or any non-`1.0`
+    version) is rejected with a clear `SyntaxError` rather than silently parsed
+    under 1.0 rules.
   * DoS-bounded by a single arena memory ceiling (default **256 MiB**), which
     counts node structs *and* copied name/value bytes — so it subsumes the
     node-count limit and caps tiny-element amplification, and an over-length

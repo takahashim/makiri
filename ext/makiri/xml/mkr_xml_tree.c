@@ -458,17 +458,27 @@ decl_eq(mkr_xml_parser_t *P)
     return 0;
 }
 
-/* A quoted pseudo-attribute value, validated whole by +ok+. 0 on success. */
+/* Read a quoted pseudo-attribute value into [*out, *out+*out_len). 0 on success,
+ * -1 on a missing/mismatched quote. */
 static int
-decl_value(mkr_xml_parser_t *P, int (*ok)(const char *, uint32_t))
+decl_value_get(mkr_xml_parser_t *P, const char **out, uint32_t *out_len)
 {
     if (P->p >= P->end || (*P->p != '"' && *P->p != '\'')) { set_syntax(P); return -1; }
     char qch = *P->p; advance(P);
     const char *vs = P->p;
     while (P->p < P->end && *P->p != qch) advance(P);
     if (P->p >= P->end) { set_syntax(P); return -1; }   /* unterminated / mismatched quote */
-    uint32_t vl = (uint32_t)(P->p - vs);
+    *out = vs; *out_len = (uint32_t)(P->p - vs);
     advance(P);                                         /* closing quote */
+    return 0;
+}
+
+/* A quoted pseudo-attribute value, validated whole by +ok+. 0 on success. */
+static int
+decl_value(mkr_xml_parser_t *P, int (*ok)(const char *, uint32_t))
+{
+    const char *vs; uint32_t vl;
+    if (decl_value_get(P, &vs, &vl) != 0) return -1;
     if (!ok(vs, vl)) { set_syntax(P); return -1; }
     return 0;
 }
@@ -504,7 +514,14 @@ parse_xml_decl_body(mkr_xml_parser_t *P)
     skip_ws(P);
     if (!eat_keyword(P, "version", 7)) { set_syntax(P); return -1; }
     if (decl_eq(P) != 0) return -1;
-    if (decl_value(P, is_version_num) != 0) return -1;
+    const char *ver; uint32_t ver_len;
+    if (decl_value_get(P, &ver, &ver_len) != 0) return -1;
+    if (!is_version_num(ver, ver_len)) { set_syntax(P); return -1; }   /* bad VersionNum syntax */
+    if (!(ver_len == 3 && memcmp(ver, "1.0", 3) == 0)) {
+        /* well-formed, but a version Makiri does not implement (XML 1.1 / 1.x):
+         * fail closed rather than silently parse it under XML 1.0 rules. */
+        P->status = MKR_XML_ERR_VERSION; return -1;
+    }
 
     int saw_enc = 0, saw_sd = 0;
     for (;;) {
@@ -1217,6 +1234,18 @@ mkr_xml_parse_selftest(void)
             e = PARSE_LIT(bad[k], &st);
             if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; }
         }
+        /* a well-formed but unsupported version (XML 1.1 / 1.x) is fail-closed
+         * with its own status, distinct from a malformedness SYNTAX error. */
+        st = MKR_XML_OK;
+        e = PARSE_LIT("<?xml version=\"1.1\"?><r/>", &st);
+        if (e || st != MKR_XML_ERR_VERSION) { if (e) mkr_xml_doc_destroy(e); return i; }
+        st = MKR_XML_OK;
+        e = PARSE_LIT("<?xml version=\"1.5\"?><r/>", &st);
+        if (e || st != MKR_XML_ERR_VERSION) { if (e) mkr_xml_doc_destroy(e); return i; }
+        /* version="2.0" is not even a valid VersionNum ('1.' [0-9]+) -> SYNTAX */
+        st = MKR_XML_OK;
+        e = PARSE_LIT("<?xml version=\"2.0\"?><r/>", &st);
+        if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; }
     }
 
     /* §4 byte-budget entry guard: an input longer than MKR_XML_MAX_BYTES fails

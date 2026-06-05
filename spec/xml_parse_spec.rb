@@ -185,6 +185,18 @@ RSpec.describe "Makiri::XML minimal parse" do
       ].each { |src| expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError), src.inspect }
     end
 
+    it "accepts only XML 1.0, rejecting other versions with a clear message" do
+      expect(ok?("<?xml version='1.0'?><r/>")).to be true
+      expect(ok?("<r/>")).to be true # no declaration -> XML 1.0 by default
+      # well-formed but a version Makiri does not implement -> fail closed, not silently 1.0
+      expect { Makiri::XML("<?xml version='1.1'?><r/>") }
+        .to raise_error(Makiri::XML::SyntaxError, /unsupported XML version/)
+      expect { Makiri::XML("<?xml version='1.5'?><r/>") }
+        .to raise_error(Makiri::XML::SyntaxError, /unsupported XML version/)
+      # "2.0" is not even a valid VersionNum ('1.' digits) -> a plain syntax error
+      expect { Makiri::XML("<?xml version='2.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+    end
+
     it "reserves the PI target 'xml' (any case) and forbids a colon in a target" do
       expect { Makiri::XML("<?XML version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
       expect { Makiri::XML("<?xmL version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
