@@ -1,7 +1,8 @@
 # Makiri
 
-Standards-oriented HTML5 parsing, CSS selector querying, and XPath 1.0
-querying for Ruby, powered by Lexbor and a native XPath engine.
+Standards-oriented HTML5 parsing, CSS selector querying, XPath 1.0 querying, and
+a native XML 1.0 reader for Ruby, powered by Lexbor and a native XPath engine —
+with no libxml2 dependency.
 
 > [!WARNING]
 > Status: early release. APIs and behavior may change before v1.0.
@@ -20,6 +21,11 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
 * Native XPath 1.0 engine
   * XPath is parsed and evaluated by Makiri's own engine, written from scratch.
   * Makiri does not depend on libxml2 for parsing, DOM representation, or XPath evaluation.
+* Native, read-only XML 1.0 reader (`Makiri::XML`)
+  * A strict, non-validating, security-first parser with its own node arena (not
+    Lexbor's HTML DOM), queried through the same native XPath engine.
+  * Conformance is held by the W3C XML Conformance Test Suite, an XPath
+    differential, and property-based testing vs Nokogiri (see below).
 * Bounded, fail-closed execution
   * XPath evaluation is bounded by per-evaluation limits on work, memory, and recursion.
   * Ownership and borrowing are kept explicit across layers, with owned/borrowed
@@ -74,16 +80,17 @@ ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 
 ### XML (read-only, secure)
 
-`Makiri::XML(source)` parses XML with a native, strict, well-formedness-checking
-parser (no libxml2) and queries it through the same native XPath 1.0 engine.
-Element-name case and namespaces are preserved. It is **read-only** and
-**fail-closed**: malformed input or a duplicate attribute raises
-`Makiri::XML::SyntaxError`, and operations XML does not support raise
-`NotImplementedError` rather than returning a wrong result. A `<!DOCTYPE …>` is
-recognized but its **DTD is not processed** (no entity/element declarations are
-loaded, no external subset is fetched) — so a DTD-defined entity reference stays
-an undefined-entity error and **XXE / billion-laughs are structurally
-impossible**. The doctype's name and identifiers are still readable:
+`Makiri::XML(source)` parses **XML 1.0** with a native, strict,
+well-formedness-checking parser (no libxml2) and queries it through the same
+native XPath 1.0 engine. Element-name case and namespaces are preserved. It is
+**read-only** and **fail-closed**: malformed input, a duplicate attribute, or a
+non-`1.0` version declaration raises `Makiri::XML::SyntaxError`, and operations
+XML does not support raise `NotImplementedError` rather than returning a wrong
+result. A `<!DOCTYPE …>` is recognized but its **DTD is not processed** (no
+entity/element declarations are loaded, no external subset is fetched) — so a
+DTD-defined entity reference stays an undefined-entity error and **XXE /
+billion-laughs are structurally impossible**. The doctype's name and identifiers
+are still readable:
 
 ```ruby
 doc = Makiri::XML(<<~XML)
@@ -119,9 +126,18 @@ dtd.external_id  # => "-//W3C//DTD XHTML 1.0//EN"  (alias: #public_id)
 dtd.system_id    # => "x.dtd"
 ```
 
-CSS is intentionally unavailable for XML (Lexbor's selector engine lower-cases
-names, which breaks XML case/namespace matching) - use XPath. XML mutation and
-serialization are a later phase.
+Comments and processing instructions in the prolog/epilog are document-node
+children (reachable via `//comment()` / `//processing-instruction()` and
+`#children`), and adjacent CDATA is coalesced — matching libxml2 and the XPath
+data model. CSS is intentionally unavailable for XML (Lexbor's selector engine
+lower-cases names, which breaks XML case/namespace matching) - use XPath. XML
+mutation and serialization are a later phase.
+
+The character encoding is autodetected (XML 1.0 Appendix F): a byte-order mark or
+the `<?xml encoding="…"?>` declaration selects it, so raw bytes (`File.binread`)
+in UTF-16, Shift_JIS, etc. parse correctly and a leading BOM is stripped. A
+concrete String encoding stays authoritative — a BOM or declaration that
+contradicts it is a fatal error, not a silent mis-decode.
 
 Parsing is DoS-bounded by a single arena memory ceiling (default 256 MiB,
 counting node structs and text), which fits every standard document. Raise it
@@ -130,6 +146,12 @@ per parse for an unusually large one:
 ```ruby
 Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri.parse_xml(..., max_bytes:)
 ```
+
+Conformance is held by a regression net: the **W3C XML Conformance Test Suite**
+(`rake conformance:xmlconf`, 100% of the in-scope non-validating XML-1.0 tests),
+an XPath 1.0 differential vs Nokogiri/libxml2 (`rake conformance:xpath_xml`), and
+property-based testing that requires Makiri's tree to be byte-identical to
+Nokogiri's over generated documents (`rake conformance:xml_pbt`).
 
 ## Non-goals (v1.0)
 
@@ -162,6 +184,18 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     `Nokogiri::HTML`/libxml2-HTML4 behaviour).
 * `namespace-uri()` of an HTML element returns the XHTML URI (DOM-correct, as browsers report)
   * `Nokogiri::HTML5` returns `""`.
+
+### XML
+
+* `Makiri::XML` is **XML 1.0 only and non-validating**, and read-only.
+  * A `version="1.1"` declaration is rejected; Nokogiri parses XML 1.1.
+  * The DTD is recognized but not processed: DTD-defined entities are not
+    expanded and DTD default attributes are not applied (Nokogiri/libxml2 can do
+    both). External entities/subsets are never fetched (no I/O).
+  * No serialization (`to_xml`) or mutation yet — those raise `NotImplementedError`.
+* Otherwise the parsed tree is byte-identical to `Nokogiri::XML`'s (verified by
+  the property-based differential), including namespaces, prolog/epilog comments
+  and PIs, and adjacent-CDATA coalescing.
 
 ### CSS
 
