@@ -146,6 +146,13 @@ namespace :conformance do
     end
   end
 
+  desc "XML XPath 1.0 differential conformance: Makiri::XML vs Nokogiri::XML"
+  task xpath_xml: :compile do
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xml_xpath_diff.rb #{ENV['XPATH_ARGS']}"
+    end
+  end
+
   desc "CSS Selectors differential conformance vs Nokogiri::HTML5"
   task css: :compile do
     Bundler.with_unbundled_env do

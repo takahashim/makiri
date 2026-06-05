@@ -241,6 +241,27 @@ mkr_xml_node_no_serialize(int argc, VALUE *argv, VALUE self)
              "(to_xml / to_html / to_s / inner_html / outer_html) is not supported.");
 }
 
+/* ---- node identity (== / eql? / hash / pointer_id) ----
+ *
+ * XML nodes share the mkr_node_data_t typed-data with HTML nodes, so the
+ * underlying node pointer (mkr_node_unwrap, representation-agnostic) IS the
+ * identity. Without these, two wrappers for the same XML node compared unequal
+ * (Object identity), which broke #path, NodeSet/Set dedup, and Hash keys.
+ * Same contract as the HTML nodes (ruby_node.c): a.pointer_id == b.pointer_id
+ * iff a.eql?(b). */
+static VALUE
+mkr_xml_node_pointer_id(VALUE self)
+{
+    return ULL2NUM((unsigned long long)(uintptr_t)mkr_node_unwrap(self));
+}
+
+static VALUE
+mkr_xml_node_equals(VALUE self, VALUE other)
+{
+    if (!rb_obj_is_kind_of(other, mkr_cNode)) return Qfalse;
+    return mkr_node_unwrap(self) == mkr_node_unwrap(other) ? Qtrue : Qfalse;
+}
+
 void
 mkr_init_xml_node(void)
 {
@@ -264,6 +285,13 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "children",      mkr_xml_node_children, 0);
     rb_define_method(mkr_mXmlNodeMethods, "[]",            mkr_xml_node_aref, 1);
     rb_define_method(mkr_mXmlNodeMethods, "attribute_nodes", mkr_xml_node_attribute_nodes, 0);
+
+    /* Node identity by underlying pointer, so #path / NodeSet dedup / Set / Hash
+     * work (the same contract HTML nodes have). */
+    rb_define_method(mkr_mXmlNodeMethods, "==",         mkr_xml_node_equals, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "eql?",       mkr_xml_node_equals, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "hash",       mkr_xml_node_pointer_id, 0);
+    rb_define_method(mkr_mXmlNodeMethods, "pointer_id", mkr_xml_node_pointer_id, 0);
 
     /* Fail-closed: CSS + serialization are unsupported on XML; raise rather than
      * return a wrong result (these shadow nothing — XML nodes have no css/to_s

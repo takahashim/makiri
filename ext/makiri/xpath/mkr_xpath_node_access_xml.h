@@ -57,10 +57,41 @@ _Static_assert((int)MKR_XML_NODE_TYPE_NOTATION == (int)LXB_DOM_NODE_TYPE_NOTATIO
 #define MKR_NODE_PARENT(n)        ((n)->parent)
 
 /* element / attribute handles & iteration — the node IS its own element handle;
- * attributes are a sibling-linked list off the element's `attrs`. */
+ * attributes are a sibling-linked list off the element's `attrs`.
+ *
+ * Host policy (§8.6): a namespace declaration (xmlns / xmlns:*) is a NAMESPACE
+ * node in XPath 1.0, NOT an attribute, so it must not appear on the attribute
+ * axis (an unprefixed-wildcard attribute test, count of attributes, etc. ignore
+ * it). The reader still keeps it as a DOM attribute node (Node#attribute_nodes /
+ * Node#[] read el->attrs directly, in glue), matching DOM Level 2; only the
+ * XPath attribute iteration skips it. So the engine's MKR_ELEM_FIRST_ATTR /
+ * MKR_ATTR_NEXT advance past ns declarations, and every attribute-axis consumer
+ * (walk, predicates, doc-order) inherits that. The iterators take const and
+ * yield mutable (like strchr), so const callers (the doc-order comparator) and
+ * mutable ones share one implementation. */
 #define MKR_NODE_AS_ELEMENT(n)    (n)
-#define MKR_ELEM_FIRST_ATTR(el)   ((el)->attrs)
-#define MKR_ATTR_NEXT(a)          ((a)->next)
+
+static inline int
+mkr_xml_attr_is_ns_decl(const mkr_xml_node_t *a)
+{
+    return (a->qname_len == 5 && memcmp(a->qname, "xmlns", 5) == 0)
+        || (a->qname_len >= 6 && memcmp(a->qname, "xmlns:", 6) == 0);
+}
+static inline mkr_xml_node_t *
+mkr_xml_first_xpath_attr(const mkr_xml_node_t *el)
+{
+    const mkr_xml_node_t *a = el->attrs;
+    while (a != NULL && mkr_xml_attr_is_ns_decl(a)) a = a->next;
+    return (mkr_xml_node_t *)a;
+}
+static inline mkr_xml_node_t *
+mkr_xml_next_xpath_attr(const mkr_xml_node_t *a)
+{
+    for (a = a->next; a != NULL && mkr_xml_attr_is_ns_decl(a); a = a->next) { }
+    return (mkr_xml_node_t *)a;
+}
+#define MKR_ELEM_FIRST_ATTR(el)   mkr_xml_first_xpath_attr(el)
+#define MKR_ATTR_NEXT(a)          mkr_xml_next_xpath_attr(a)
 #define MKR_ATTR_VALUE(a, lenp)   (*(lenp) = (a)->value_len, (const lxb_char_t *)(a)->value)
 
 /* Strict unprefixed element name tests must match a no-namespace node only, so a
@@ -79,6 +110,7 @@ static inline const lxb_char_t *
 mkr_xml_node_get_attribute(mkr_xml_node_t *el, const char *name, size_t nlen, size_t *vlenp)
 {
     for (mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
+        if (mkr_xml_attr_is_ns_decl(a)) continue;   /* xmlns is a namespace node, not @attr */
         if (a->qname_len == nlen && memcmp(a->qname, name, nlen) == 0) {
             *vlenp = a->value_len;
             return (const lxb_char_t *)a->value;

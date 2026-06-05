@@ -119,16 +119,20 @@ append_text_content(MKR_DOM_NODE *node, mkr_buf_t *buf)
   return st;
 }
 
-/* Append the string-value of every TEXT descendant of `node`, in document
- * order. Iterative (parent-pointer) pre-order walk rather than C recursion, so
- * an adversarially deep tree cannot overflow the stack (fail-closed / no DoS);
- * O(1) extra space. Descends only into elements, matching the original. */
+/* Append the string-value of every character-data descendant of `node`, in
+ * document order. Both TEXT and CDATA-section nodes are character data (XPath
+ * 1.0 §3 / §5: a CDATA section is text, not a distinct node type), so both
+ * contribute — matching the text index that backs Node#text. Iterative
+ * (parent-pointer) pre-order walk rather than C recursion, so an adversarially
+ * deep tree cannot overflow the stack (fail-closed / no DoS); O(1) extra space.
+ * Descends only into elements. */
 static mkr_status_t
 append_text_descendants(MKR_DOM_NODE *node, mkr_buf_t *buf)
 {
   MKR_DOM_NODE *cur = MKR_NODE_FIRST_CHILD(node);
   while (cur != NULL) {
-    if (MKR_NODE_TYPE(cur) == MKR_NTYPE_TEXT) {
+    if (MKR_NODE_TYPE(cur) == MKR_NTYPE_TEXT
+        || MKR_NODE_TYPE(cur) == MKR_NTYPE_CDATA_SECTION) {
       mkr_status_t st = append_text_content(cur, buf);
       if (st != MKR_OK) return st; /* LIMIT or OOM — caller fails closed */
     }
