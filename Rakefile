@@ -169,8 +169,8 @@ namespace :conformance do
   end
 end
 
-desc "Run all conformance suites (html5lib-tests + XPath & CSS differentials)"
-task conformance: %w[conformance:html5 conformance:xpath conformance:css]
+desc "Run all conformance suites"
+task conformance: %w[conformance:html5 conformance:xpath conformance:css conformance:xmlconf conformance:xpath_xml]
 
 namespace :fuzz do
   desc "Run the fuzzer under AddressSanitizer (rebuilds the ext; --isolated)"
