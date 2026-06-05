@@ -48,10 +48,15 @@ RSpec.describe "Makiri::XML minimal parse" do
       "unterminated attr value"   => %(<a x="1>),
       "unterminated start tag"    => "<a ",
       "empty element name"        => "<>",
+      "literal ]]> in content"    => "<a>foo]]>bar</a>", # §2.4
+      "literal ]]> alone"         => "<a>]]></a>",
     }.each do |label, src|
       it(label) { expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError) }
     end
 
+    it "still accepts a lone ] or ]] in content (only ]]> is forbidden)" do
+      expect(Makiri::XML("<a>1]2]]3</a>").root.text).to eq("1]2]]3")
+    end
   end
 
   it "the depth budget is fail-closed (deeply nested input does not crash)" do

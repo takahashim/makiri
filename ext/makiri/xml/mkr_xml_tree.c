@@ -667,6 +667,10 @@ parse_text(mkr_xml_parser_t *P)
     int nonspace = 0;
     while (P->p < P->end && *P->p != '<') {
         char c = *P->p;
+        /* §2.4: the literal "]]>" MUST NOT appear in character data — only a
+         * CDATA section (handled by parse_cdata) may end with it. A lone ']' or
+         * "]]" not followed by '>' is fine. */
+        if (c == ']' && lit_ahead(P, "]]>", 3)) { set_syntax(P); return -1; }
         if (!(c == ' ' || c == '\t' || c == '\n' || c == '\r')) nonspace = 1;
         advance(P);
     }
@@ -1061,6 +1065,15 @@ mkr_xml_parse_selftest(void)
     st = MKR_XML_OK;
     e = PARSE_LIT("<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>", &st);
     if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* same-URI duplicate */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<a>foo]]>bar</a>", &st);  /* §2.4: literal ]]> forbidden in content */
+    if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; }
+    st = MKR_XML_OK;
+    d = PARSE_LIT("<a>1]2]]3</a>", &st);      /* but a lone ] / ]] is fine */
+    if (d == NULL || st != MKR_XML_OK || !VAL_IS(d->root->first_child, "1]2]]3")) {
+        if (d) mkr_xml_doc_destroy(d); return i;
+    }
+    mkr_xml_doc_destroy(d);
 
     /* §4 byte-budget entry guard: an input longer than MKR_XML_MAX_BYTES fails
      * closed (MKR_XML_ERR_LIMIT) before any allocation. The guard tests `len`
