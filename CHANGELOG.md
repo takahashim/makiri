@@ -17,9 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry, zero per-node overhead).
   * Strict by design: input is decoded fail-closed (invalid UTF-8 / undecodable
     bytes / embedded NUL raise `Makiri::XML::SyntaxError`, never U+FFFD repair),
-    DOCTYPE/DTD is rejected, duplicate attributes are rejected, and every parse
-    runs under document budgets. Element-name case and namespaces are preserved
-    (unlike the HTML path).
+    duplicate attributes are rejected, and every parse runs under document
+    budgets. Element-name case and namespaces are preserved (unlike the HTML
+    path).
+  * A `<!DOCTYPE …>` is **recognized but its DTD is not processed**: the doctype
+    name and external identifiers are retained and exposed via
+    `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DTD` with `#name`,
+    `#external_id` / `#public_id`, and `#system_id`, like Nokogiri), but no
+    entity or element declarations are loaded and no external subset is ever
+    fetched (zero I/O). Consequently a DTD-defined entity reference stays an
+    undefined-entity error, so **XXE and billion-laughs amplification are
+    structurally impossible** rather than merely disabled. The doctype node is
+    kept off the tree (XPath 1.0 has no doctype node type, as in libxml2).
   * Read API on `Makiri::XML::Document` / `Makiri::XML::*` nodes: `#xpath` /
     `#at_xpath` (with an optional `{prefix => uri}` Hash for that query),
     `#root`, `#name` / `#local_name` / `#prefix` / `#namespace_uri`,

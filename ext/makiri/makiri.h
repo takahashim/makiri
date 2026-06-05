@@ -58,6 +58,7 @@ extern VALUE mkr_cXmlText;
 extern VALUE mkr_cXmlComment;
 extern VALUE mkr_cXmlCData;
 extern VALUE mkr_cXmlProcessingInstruction;
+extern VALUE mkr_cXmlDTD;
 
 void mkr_init_xml_node(void);
 extern VALUE mkr_cNodeSet;

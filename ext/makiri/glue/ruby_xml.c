@@ -219,6 +219,21 @@ mkr_xml_doc_root(VALUE self)
     return (xdoc == NULL) ? Qnil : mkr_wrap_xml_node(xdoc->root, self);
 }
 
+/* The document's DOCTYPE as a Makiri::XML::DTD, or nil if the document had no
+ * `<!DOCTYPE ...>`. Mirrors Nokogiri's Document#internal_subset. The DTD's name
+ * and external/system identifiers are read; the DTD body is NOT parsed (no
+ * entity/element declarations are loaded — &name; stays an undefined-entity
+ * error and no external subset is fetched). The doctype node is kept off the
+ * tree, so XPath never sees it (XPath 1.0 has no doctype node type). */
+static VALUE
+mkr_xml_doc_internal_subset(VALUE self)
+{
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(self));
+    return (xdoc == NULL || xdoc->doctype == NULL)
+               ? Qnil
+               : mkr_wrap_xml_node(xdoc->doctype, self);
+}
+
 void
 mkr_init_xml(void)
 {
@@ -230,6 +245,7 @@ mkr_init_xml(void)
     rb_include_module(mkr_cXmlDocument, mkr_mXmlNodeMethods);
 
     rb_define_method(mkr_cXmlDocument, "root",     mkr_xml_doc_root,     0);
+    rb_define_method(mkr_cXmlDocument, "internal_subset", mkr_xml_doc_internal_subset, 0);
 
     /* xpath / at_xpath work on the document and on any XML node (rooted at that
      * node), so they live on the shared XML node behavior module + the document. */

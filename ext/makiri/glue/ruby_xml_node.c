@@ -33,6 +33,7 @@ mkr_wrap_xml_node(mkr_xml_node_t *node, VALUE document)
     case MKR_XML_NODE_TYPE_CDATA_SECTION:     klass = mkr_cXmlCData;     break;
     case MKR_XML_NODE_TYPE_COMMENT:   klass = mkr_cXmlComment;   break;
     case MKR_XML_NODE_TYPE_PI:        klass = mkr_cXmlProcessingInstruction; break;
+    case MKR_XML_NODE_TYPE_DOCUMENT_TYPE: klass = mkr_cXmlDTD;       break;
     default:               klass = mkr_cXmlNode;      break;
     }
     mkr_node_data_t *nd;
@@ -77,8 +78,31 @@ mkr_xml_node_name(VALUE self)
     case MKR_XML_NODE_TYPE_TEXT:      return rb_utf8_str_new_cstr("text");
     case MKR_XML_NODE_TYPE_CDATA_SECTION:     return rb_utf8_str_new_cstr("#cdata-section");
     case MKR_XML_NODE_TYPE_COMMENT:   return rb_utf8_str_new_cstr("comment");
+    case MKR_XML_NODE_TYPE_DOCUMENT_TYPE: return rb_utf8_str_new(n->local, (long)n->local_len); /* the DOCTYPE name */
     default:               return rb_utf8_str_new_cstr("document");
     }
+}
+
+/* ---- DTD (DOCUMENT_TYPE) identifiers ----
+ *
+ * The off-tree doctype node repurposes fields: local/qname = the DOCTYPE name
+ * (Node#name), prefix = the PUBLIC/external id, value = the SYSTEM id. A field
+ * left NULL means that id was absent (-> nil); an empty literal (e.g. PUBLIC "")
+ * is a non-NULL 0-length slice (-> ""). Mirrors Nokogiri::XML::DTD#external_id /
+ * #system_id; #public_id is a WHATWG-DOM-style alias of #external_id. The DTD
+ * itself is NOT parsed (no entities/elements), so there is nothing else to read. */
+static VALUE
+mkr_xml_dtd_external_id(VALUE self)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
+    return n->prefix == NULL ? Qnil : rb_utf8_str_new(n->prefix, (long)n->prefix_len);
+}
+
+static VALUE
+mkr_xml_dtd_system_id(VALUE self)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
+    return n->value == NULL ? Qnil : rb_utf8_str_new(n->value, (long)n->value_len);
 }
 
 static VALUE
@@ -303,4 +327,10 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "to_s",       mkr_xml_node_no_serialize, -1);
     rb_define_method(mkr_mXmlNodeMethods, "inner_html", mkr_xml_node_no_serialize, -1);
     rb_define_method(mkr_mXmlNodeMethods, "outer_html", mkr_xml_node_no_serialize, -1);
+
+    /* Makiri::XML::DTD identifiers (Nokogiri-compatible; #public_id is the
+     * WHATWG-DOM alias of #external_id). #name comes from the shared reader. */
+    rb_define_method(mkr_cXmlDTD, "external_id", mkr_xml_dtd_external_id, 0);
+    rb_define_method(mkr_cXmlDTD, "public_id",   mkr_xml_dtd_external_id, 0);
+    rb_define_method(mkr_cXmlDTD, "system_id",   mkr_xml_dtd_system_id, 0);
 }

@@ -17,8 +17,9 @@
  * LXB_DOM_NODE_TYPE_* for HTML. The numeric values mirror the DOM/Lexbor
  * encoding exactly (asserted in mkr_xpath_node_access_xml.h) so the monomorphized
  * XPath engine's neutral MKR_NTYPE_* bind to whichever representation it compiles
- * for. The reader produces only ELEMENT/ATTRIBUTE/TEXT/CDATA_SECTION/PI/COMMENT/
- * DOCUMENT (valid_xn_type); the remaining members exist only so the shared
+ * for. The reader produces ELEMENT/ATTRIBUTE/TEXT/CDATA_SECTION/PI/COMMENT/
+ * DOCUMENT in the tree, plus a single off-tree DOCUMENT_TYPE (the DOCTYPE
+ * metadata, see doc->doctype); the remaining members exist only so the shared
  * engine's node-type contract is complete for both instances. */
 typedef enum {
     MKR_XML_NODE_TYPE_ELEMENT          = 1,
@@ -30,7 +31,7 @@ typedef enum {
     MKR_XML_NODE_TYPE_PI               = 7,
     MKR_XML_NODE_TYPE_COMMENT          = 8,
     MKR_XML_NODE_TYPE_DOCUMENT         = 9,
-    MKR_XML_NODE_TYPE_DOCUMENT_TYPE    = 10, /* never produced (DOCTYPE rejected) */
+    MKR_XML_NODE_TYPE_DOCUMENT_TYPE    = 10, /* the off-tree DOCTYPE metadata node */
     MKR_XML_NODE_TYPE_NOTATION         = 12  /* never produced (no DTD) */
 } mkr_xml_node_type_t;
 
@@ -62,6 +63,15 @@ typedef struct mkr_xml_doc {
     mkr_xml_node_t *root;          /* the root element */
     mkr_xml_node_t *doc_node;      /* the DOCUMENT node (parent of root); the XPath
                                     * "/" root and what a Ruby Document wraps */
+    mkr_xml_node_t *doctype;       /* a DOCUMENT_TYPE node holding the DOCTYPE's
+                                    * metadata, or NULL. Kept OFF the tree (it is
+                                    * not a child of doc_node, so XPath is
+                                    * unaffected) and exposed only via
+                                    * Document#internal_subset. The DTD itself is
+                                    * NOT parsed (no entities/elements). On this
+                                    * node: local/qname = name, prefix = public
+                                    * (external) id, value = system id; a 0-length
+                                    * prefix/value means that id is absent. */
 } mkr_xml_doc_t;
 /* The PER-ELEMENT attribute cap (MKR_XML_MAX_ATTRS) is enforced by the tree
  * builder; the arena counts every node — attributes included — toward max_nodes. */

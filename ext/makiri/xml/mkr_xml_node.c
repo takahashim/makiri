@@ -111,7 +111,7 @@ valid_xn_type(uint8_t type)
     switch (type) {
     case MKR_XML_NODE_TYPE_ELEMENT: case MKR_XML_NODE_TYPE_ATTRIBUTE: case MKR_XML_NODE_TYPE_TEXT:
     case MKR_XML_NODE_TYPE_CDATA_SECTION:   case MKR_XML_NODE_TYPE_PI:        case MKR_XML_NODE_TYPE_COMMENT:
-    case MKR_XML_NODE_TYPE_DOCUMENT:
+    case MKR_XML_NODE_TYPE_DOCUMENT:        case MKR_XML_NODE_TYPE_DOCUMENT_TYPE:
         return 1;
     default:
         return 0;

@@ -4,24 +4,30 @@ require "spec_helper"
 require "tempfile"
 
 # Security invariants of the native XML reader (plan §10). The parser is
-# fail-closed by construction: it does no I/O, defines no entities (there is no
-# DTD support), and bounds every resource with a per-document budget. These
-# specs pin those guarantees from Ruby. Structural details that need to read the
-# built tree are asserted in C (Makiri.__c_selftest, also run under ASan+UBSan);
-# here we exercise the externally observable contract: hostile input raises a
-# Makiri::Error and never crashes, hangs, leaks a foreign exception, or returns
-# a partial document.
+# fail-closed by construction: it does no I/O and defines no entities (a DOCTYPE
+# is recognized but its DTD is NOT processed — no entity/element declarations are
+# loaded and no external subset is fetched), and it bounds every resource with a
+# per-document budget. These specs pin those guarantees from Ruby. Structural
+# details that need to read the built tree are asserted in C (Makiri.__c_selftest,
+# also run under ASan+UBSan); here we exercise the externally observable
+# contract: hostile input raises a Makiri::Error and never crashes, hangs, leaks
+# a foreign exception, or returns a partial document.
 RSpec.describe "Makiri::XML security" do
   def parse(src)
     Makiri::XML(src)
   end
 
-  describe "XXE / external entities are structurally impossible (no DTD)" do
-    it "fails closed on DOCTYPE (the DTD that XXE needs is unsupported)" do
-      expect { parse('<?xml version="1.0"?><!DOCTYPE r SYSTEM "x.dtd"><r/>') }
-        .to raise_error(Makiri::XML::SyntaxError)
-      expect { parse('<!DOCTYPE r PUBLIC "-//X//Y" "http://example.invalid/x.dtd"><r/>') }
-        .to raise_error(Makiri::XML::SyntaxError)
+  describe "XXE / external entities are structurally impossible (DTD not processed)" do
+    it "recognizes a well-formed DOCTYPE but defines none of its entities" do
+      # The DOCTYPE itself parses (its name + external id are retained for
+      # Document#internal_subset), but nothing in the DTD is processed: a SYSTEM
+      # or PUBLIC external subset is never fetched, and an entity an XXE attack
+      # would declare in the internal subset stays undefined -> a reference to it
+      # is a fatal undefined-entity error.
+      expect(parse('<?xml version="1.0"?><!DOCTYPE r SYSTEM "x.dtd"><r/>'))
+        .to be_a(Makiri::XML::Document)
+      expect(parse('<!DOCTYPE r PUBLIC "-//X//Y" "http://example.invalid/x.dtd"><r/>'))
+        .to be_a(Makiri::XML::Document)
       expect { parse('<!DOCTYPE r [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]><r>&xxe;</r>') }
         .to raise_error(Makiri::XML::SyntaxError)
     end
@@ -29,15 +35,20 @@ RSpec.describe "Makiri::XML security" do
     it "performs zero I/O: behaviour does not depend on the referenced file" do
       # A real, readable sentinel file. If the parser ever resolved a SYSTEM
       # identifier or an external entity, its result would differ from the
-      # missing-file case. It does not: both raise the same SyntaxError, because
-      # DOCTYPE is rejected outright before any resolution could occur.
+      # missing-file case. It does not: both parse identically (no fetch happens),
+      # so the DOCTYPE's system id never reaches the filesystem.
       Tempfile.create(["xxe", ".txt"]) do |f|
         f.write("TOP-SECRET-SENTINEL")
         f.flush
-        present = %(<!DOCTYPE r SYSTEM "file://#{f.path}"><r/>)
-        missing = %(<!DOCTYPE r SYSTEM "file:///no/such/path/xyzzy.dtd"><r/>)
-        expect { parse(present) }.to raise_error(Makiri::XML::SyntaxError)
-        expect { parse(missing) }.to raise_error(Makiri::XML::SyntaxError)
+        present = %(<!DOCTYPE r SYSTEM "file://#{f.path}"><r>ok</r>)
+        missing = %(<!DOCTYPE r SYSTEM "file:///no/such/path/xyzzy.dtd"><r>ok</r>)
+        a = parse(present)
+        b = parse(missing)
+        expect(a.root.text).to eq("ok")
+        expect(b.root.text).to eq(a.root.text)
+        # the sentinel is never read into the document
+        expect(a.root.text).not_to include("SENTINEL")
+        expect(a.internal_subset.system_id).to eq("file://#{f.path}")
       end
     end
 

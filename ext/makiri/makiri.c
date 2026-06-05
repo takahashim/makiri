@@ -35,6 +35,7 @@ VALUE mkr_cXmlText;
 VALUE mkr_cXmlComment;
 VALUE mkr_cXmlCData;
 VALUE mkr_cXmlProcessingInstruction;
+VALUE mkr_cXmlDTD;
 VALUE mkr_cNodeSet;
 VALUE mkr_cXPathContext;
 VALUE mkr_mXPath;
@@ -153,9 +154,14 @@ Init_makiri(void)
     mkr_cXmlCData     = rb_define_class_under(mkr_mXML, "CData",     mkr_cCData);
     mkr_cXmlProcessingInstruction =
         rb_define_class_under(mkr_mXML, "ProcessingInstruction", mkr_cProcessingInstruction);
+    /* Makiri::XML::DTD — the off-tree DOCTYPE metadata node (doc->doctype),
+     * reachable only via Document#internal_subset (XPath has no doctype node, as
+     * in Nokogiri/libxml2). It is an XML node leaf (identity, fail-closed
+     * css/serialize) with its own name/external_id/system_id readers. */
+    mkr_cXmlDTD       = rb_define_class_under(mkr_mXML, "DTD",       mkr_cXmlNode);
     VALUE xml_leaves[] = {
         mkr_cXmlNode, mkr_cXmlElement, mkr_cXmlAttribute, mkr_cXmlText,
-        mkr_cXmlComment, mkr_cXmlCData, mkr_cXmlProcessingInstruction,
+        mkr_cXmlComment, mkr_cXmlCData, mkr_cXmlProcessingInstruction, mkr_cXmlDTD,
     };
     for (size_t i = 0; i < sizeof(xml_leaves) / sizeof(xml_leaves[0]); i++) {
         rb_include_module(xml_leaves[i], mkr_mXmlNodeMethods);

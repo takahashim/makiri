@@ -153,9 +153,15 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(ok?("<?xml version='1.0'?><?xml-stylesheet href='s.xsl'?><r/>")).to be true
     end
 
-    it "rejects DOCTYPE (DTDs unsupported -> fail-closed, XXE structurally impossible)" do
-      expect { Makiri::XML("<!DOCTYPE r><r/>") }.to raise_error(Makiri::XML::SyntaxError)
-      expect { Makiri::XML("<!DOCTYPE r SYSTEM 'x.dtd'><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+    it "recognizes DOCTYPE but does not process the DTD (XXE structurally impossible)" do
+      # A well-formed DOCTYPE parses; the DTD is not processed (no entities, no
+      # external-subset I/O). See xml_doctype_spec / xml_security_spec for detail.
+      expect(ok?("<!DOCTYPE r><r/>")).to be true
+      expect(ok?("<!DOCTYPE r SYSTEM 'x.dtd'><r/>")).to be true
+      expect(Makiri::XML("<!DOCTYPE r SYSTEM 'x.dtd'><r/>").internal_subset.name).to eq("r")
+      # an entity the DTD would define stays undefined -> referencing it is fatal
+      expect { Makiri::XML("<!DOCTYPE r [ <!ENTITY x 'y'> ]><r>&x;</r>") }
+        .to raise_error(Makiri::XML::SyntaxError)
     end
 
     it "rejects malformed comments (-- in content, unterminated, --->)" do

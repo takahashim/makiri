@@ -3,9 +3,13 @@
  * Ruby-free. Parses a decoded, validated-UTF-8 byte buffer (§2.1) into the
  * custom node arena: elements, attributes, character data, namespaces (§7),
  * entity/char-reference expansion (§9.1), comments / CDATA sections / processing
- * instructions / the XML declaration (§9), with '<!DOCTYPE' fail-closed to
- * SyntaxError (§9.4 — DTDs are unsupported, so XXE/billion-laughs are structurally
- * impossible). Comments and PIs in the prolog/epilog (outside the root) are
+ * instructions / the XML declaration (§9). A '<!DOCTYPE' is RECOGNIZED but its
+ * DTD is not processed (§9.4 alternative): the name + external id are kept (in an
+ * off-tree DOCUMENT_TYPE node, for Document#internal_subset) and the rest is
+ * skipped to its true '>'. NOTHING in the DTD is registered — no entity is
+ * defined (a DTD-defined &name; stays an undefined-entity error) and no external
+ * subset is fetched (zero I/O), so XXE / billion-laughs remain structurally
+ * impossible. Comments and PIs in the prolog/epilog (outside the root) are
  * validated for well-formedness but not retained as nodes (Phase 1 keeps only the
  * root element, no document node). Strict NameStartChar/NameChar (§9.2b) and
  * duplicate-attribute rejection (§9.3) land in later steps.
@@ -48,6 +52,7 @@ typedef struct {
     mkr_xml_node_t **stack; size_t depth, scap;      /* open-element stack */
     size_t          *frame; size_t fcap;             /* parallel: ns-binding count when
                                                       * each open element was entered */
+    int             saw_doctype;                     /* at most one DOCTYPE, prolog only */
 } mkr_xml_parser_t;
 
 #define XML_NS_URI    "http://www.w3.org/XML/1998/namespace"
@@ -507,14 +512,109 @@ parse_end_tag(mkr_xml_parser_t *P)
     return 0;
 }
 
-/* '<!' markup (P->p at '!'): a comment or a CDATA section; '<!DOCTYPE' and any
- * other markup declaration are rejected (§9.4 — DTDs are unsupported). */
+/* A quoted literal ("..." or '...'); its content is a slice of the input (no
+ * reference recognition). 0 on success, -1 on a missing/unterminated quote. */
+static int
+parse_quoted(mkr_xml_parser_t *P, const char **out, uint32_t *out_len)
+{
+    if (P->p >= P->end || (*P->p != '"' && *P->p != '\'')) { set_syntax(P); return -1; }
+    char q = *P->p; advance(P);
+    const char *s = P->p;
+    while (P->p < P->end && *P->p != q) advance(P);
+    if (P->p >= P->end) { set_syntax(P); return -1; }   /* unterminated literal */
+    size_t n = (size_t)(P->p - s);
+    if (n > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
+    *out = s; *out_len = (uint32_t)n;
+    advance(P);                                          /* closing quote */
+    return 0;
+}
+
+/* '<!DOCTYPE' (P->p at '!'): the DTD is RECOGNIZED but NOT PROCESSED (§9.4
+ * alternative). Valid only in the prolog (before the root element) and at most
+ * once. The Name and the ExternalID (SYSTEM/PUBLIC literals) are read for
+ * Document#internal_subset, then any internal subset '[ ... ]' is skipped to the
+ * true '>' (quote state + bracket depth balance a '>' inside a quoted literal or
+ * a markup declaration). NOTHING in the DTD is processed: no entity is defined
+ * (so a DTD-defined &name; stays an undefined-entity error per §9.1, keeping XXE
+ * and billion-laughs impossible) and no external subset is fetched (zero I/O).
+ * The metadata is kept in an off-tree DOCUMENT_TYPE node (doc->doctype). */
+static int
+parse_doctype(mkr_xml_parser_t *P)
+{
+    if (P->depth != 0 || P->doc->root != NULL || P->saw_doctype) {
+        set_syntax(P); return -1;   /* inside an element, after the root, or a second DOCTYPE */
+    }
+    P->saw_doctype = 1;
+    advance_n(P, LIT_LEN("!DOCTYPE"));
+    if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; } /* S required */
+    skip_ws(P);
+    const char *name; uint32_t name_len;
+    if (scan_name(P, &name, &name_len) != 0) return -1; /* the document type name (a Name) */
+
+    const char *pub = NULL, *sys = NULL;
+    uint32_t pub_len = 0, sys_len = 0;
+
+    if (P->p < P->end && is_space_byte(*P->p)) {
+        skip_ws(P);
+        if (lit_ahead(P, "SYSTEM", 6)) {
+            advance_n(P, 6);
+            if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; }
+            skip_ws(P);
+            if (parse_quoted(P, &sys, &sys_len) != 0) return -1;
+        } else if (lit_ahead(P, "PUBLIC", 6)) {
+            advance_n(P, 6);
+            if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; }
+            skip_ws(P);
+            if (parse_quoted(P, &pub, &pub_len) != 0) return -1;
+            if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; }
+            skip_ws(P);
+            if (parse_quoted(P, &sys, &sys_len) != 0) return -1;
+        }
+    }
+
+    /* Skip the optional internal subset + trailing whitespace to the true '>'. */
+    char quote = 0;
+    int  depth = 0, closed = 0;
+    while (P->p < P->end) {
+        char c = *P->p;
+        if (quote)                          { if (c == quote) quote = 0; }
+        else if (c == '"' || c == '\'')     { quote = c; }
+        else if (c == '[')                  { depth++; }
+        else if (c == ']')                  { if (depth > 0) depth--; }
+        else if (c == '>' && depth == 0)    { advance(P); closed = 1; break; }
+        advance(P);
+    }
+    if (!closed) { set_syntax(P); return -1; }   /* unterminated DOCTYPE */
+
+    /* Retain the metadata off-tree (not a child of any node, so XPath is
+     * unaffected) for Document#internal_subset. Fields are repurposed:
+     * local/qname = name, prefix = public/external id, value = system id. */
+    mkr_xml_node_t *dt = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_DOCUMENT_TYPE);
+    if (dt == NULL) { propagate_oom(P); return -1; }
+    dt->local = dt->qname = own(P, name, name_len);
+    dt->local_len = dt->qname_len = name_len;
+    if (name_len > 0 && dt->local == NULL) return -1;
+    if (pub != NULL) {
+        dt->prefix = own(P, pub, pub_len); dt->prefix_len = pub_len;
+        if (pub_len > 0 && dt->prefix == NULL) return -1;
+    }
+    if (sys != NULL) {
+        dt->value = own(P, sys, sys_len); dt->value_len = sys_len;
+        if (sys_len > 0 && dt->value == NULL) return -1;
+    }
+    P->doc->doctype = dt;
+    return 0;
+}
+
+/* '<!' markup (P->p at '!'): a comment, a CDATA section, or a DOCTYPE (recognized
+ * but not processed, §9.4). Any other markup declaration is rejected. */
 static int
 parse_markup(mkr_xml_parser_t *P)
 {
     mkr_xml_node_t *parent = cur_parent(P);
     if (lit_ahead(P, "!--", 3))      return parse_comment(P, parent);
     if (lit_ahead(P, "![CDATA[", 8)) return parse_cdata(P, parent);
+    if (lit_ahead(P, "!DOCTYPE", 8)) return parse_doctype(P);
     set_syntax(P); return -1;
 }
 
@@ -872,7 +972,10 @@ mkr_xml_parse_selftest(void)
 
     i++; /* 14: §9 fail-closed cases */
     st = MKR_XML_OK;
-    e = PARSE_LIT("<!DOCTYPE r><r/>",   &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* DTD unsupported */
+    e = PARSE_LIT("<r/><!DOCTYPE r>",   &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* DOCTYPE after root */
+    st = MKR_XML_OK;
+    e = PARSE_LIT("<!DOCTYPE r [ <!ENTITY x \"y\"> ]><r>&x;</r>", &st);
+    if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* DTD entity not registered -> &x; undefined */
     st = MKR_XML_OK;
     e = PARSE_LIT("<r><!-- a--b --></r>", &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* '--' in comment */
     st = MKR_XML_OK;
@@ -881,6 +984,31 @@ mkr_xml_parse_selftest(void)
     e = PARSE_LIT(" <?xml version=\"1.0\"?><r/>", &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* decl not at start */
     st = MKR_XML_OK;
     e = PARSE_LIT("<![CDATA[x]]><r/>",  &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* CDATA outside root */
+
+    /* §9.4 alternative: DOCTYPE is recognized but not processed — the external ID
+     * and the internal subset (with a '>' inside a markup decl, and '>' inside a
+     * quoted literal) are skipped to the true '>', nothing in the DTD is
+     * registered, and parsing continues into the root. The name + external ID are
+     * retained in an off-tree DOCUMENT_TYPE node (doc->doctype, NOT a child of any
+     * node, so the tree/XPath is unaffected); here SYSTEM "a>b" (with a quoted
+     * '>') gives system id "a>b" and no public id. */
+    i++; /* 14b */
+    d = PARSE_LIT("<!DOCTYPE r SYSTEM \"a>b\" [ <!ELEMENT r (#PCDATA)> ]><r>ok</r>", &st);
+    if (d == NULL || st != MKR_XML_OK || !NAME_IS(d->root, "r")
+        || !VAL_IS(d->root->first_child, "ok")) {
+        if (d) mkr_xml_doc_destroy(d); return i;
+    }
+    {
+        mkr_xml_node_t *dt = d->doctype;
+        if (dt == NULL || dt->type != MKR_XML_NODE_TYPE_DOCUMENT_TYPE
+            || dt->parent != NULL || dt->next != NULL || dt->prev != NULL  /* off-tree */
+            || !slice_eq(dt->local, dt->local_len, "r", 1)
+            || dt->prefix != NULL                                          /* no PUBLIC id */
+            || !slice_eq(dt->value, dt->value_len, "a>b", 3)) {            /* SYSTEM id */
+            mkr_xml_doc_destroy(d); return i;
+        }
+    }
+    mkr_xml_doc_destroy(d);
 
     /* §9.3b-A: line-ending normalization happens before attribute-value
      * normalization, so a literal CRLF inside an attribute collapses to ONE space

@@ -77,9 +77,13 @@ ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 `Makiri::XML(source)` parses XML with a native, strict, well-formedness-checking
 parser (no libxml2) and queries it through the same native XPath 1.0 engine.
 Element-name case and namespaces are preserved. It is **read-only** and
-**fail-closed**: malformed input, a DOCTYPE/DTD, or a duplicate attribute raises
+**fail-closed**: malformed input or a duplicate attribute raises
 `Makiri::XML::SyntaxError`, and operations XML does not support raise
-`NotImplementedError` rather than returning a wrong result.
+`NotImplementedError` rather than returning a wrong result. A `<!DOCTYPE …>` is
+recognized but its **DTD is not processed** (no entity/element declarations are
+loaded, no external subset is fetched) — so a DTD-defined entity reference stays
+an undefined-entity error and **XXE / billion-laughs are structurally
+impossible**. The doctype's name and identifiers are still readable:
 
 ```ruby
 doc = Makiri::XML(<<~XML)
@@ -106,6 +110,13 @@ el.namespace_uri                               # => "http://www.w3.org/2005/Atom
 
 doc.css("entry")     # raises NotImplementedError (use #xpath)
 doc.root.to_xml      # raises NotImplementedError (read-only)
+
+# DOCTYPE is recognized but the DTD is not processed (no entities, no I/O):
+dtd = Makiri::XML(%(<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0//EN" "x.dtd"><html/>))
+        .internal_subset
+dtd.name         # => "html"
+dtd.external_id  # => "-//W3C//DTD XHTML 1.0//EN"  (alias: #public_id)
+dtd.system_id    # => "x.dtd"
 ```
 
 CSS is intentionally unavailable for XML (Lexbor's selector engine lower-cases
