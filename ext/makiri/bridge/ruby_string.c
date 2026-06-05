@@ -143,7 +143,7 @@ mkr_xml_strict_transcode_thunk(VALUE str)
 }
 
 VALUE
-mkr_xml_decode_input(VALUE str)
+mkr_xml_decode_input(VALUE str, size_t max_bytes)
 {
     /* Share only the encoding-judgment rule with mkr_ruby_to_utf8 (NOT its
      * lenient replace path): UTF-8 / US-ASCII / ASCII-8BIT are already UTF-8
@@ -168,9 +168,24 @@ mkr_xml_decode_input(VALUE str)
         }
     }
 
+    /* Fail closed on an over-budget input BEFORE the validation copy below (and
+     * the caller's GVL-release copy after): every retained byte is copied into
+     * the parser's arena, so an input whose UTF-8 length already exceeds the
+     * arena byte budget can never parse — reject it here instead of copying it
+     * twice for a doomed parse. The check is on the decoded length: for the
+     * passthrough encodings that equals the raw input (so an over-budget UTF-8
+     * document is rejected with zero extra allocation), and a shrinking
+     * transcode (e.g. UTF-16) is already reduced into +s+, so it is exact either
+     * way. max_bytes == 0 disables the check (the __decode path, which only
+     * decodes and builds no arena). */
+    long len = RSTRING_LEN(s);
+    if (max_bytes != 0 && (size_t)len > max_bytes) {
+        RB_GC_GUARD(s);
+        rb_raise(mkr_eXmlLimitExceeded, "XML input exceeds the byte budget");
+    }
+
     /* Strict UTF-8 validation: an embedded NUL or any invalid UTF-8 is fatal
      * (no U+FFFD repair — unlike the HTML mkr_utf8_sanitize path). */
-    long        len = RSTRING_LEN(s);
     const char *ptr = RSTRING_PTR(s);
     if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
         rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");

@@ -59,8 +59,14 @@ VALUE mkr_ruby_to_utf8(VALUE str);
  * byte that can't be converted, invalid UTF-8, or an embedded NUL all raise
  * Makiri::XML::SyntaxError (no U+FFFD replacement). Returns a validated,
  * UTF-8-tagged Ruby String. (The HTML replace path mkr_ruby_to_utf8 itself is
- * NOT reused for the conversion — only its encoding-judgment rule is shared.) */
-VALUE mkr_xml_decode_input(VALUE str);
+ * NOT reused for the conversion — only its encoding-judgment rule is shared.)
+ *
+ * +max_bytes+ bounds the decoded UTF-8 length: an input that already exceeds the
+ * parser's arena byte budget is rejected here with Makiri::XML::LimitExceeded,
+ * before the validation copy and the caller's GVL-release copy (so a hostile
+ * oversized document is not copied twice for a doomed parse). 0 disables the
+ * check (decode-only callers that build no arena). */
+VALUE mkr_xml_decode_input(VALUE str, size_t max_bytes);
 
 /* True if `str` is *already known* to be valid UTF-8 — pure ASCII, or valid in
  * the UTF-8 encoding — from its cached coderange, WITHOUT forcing a scan. Lets

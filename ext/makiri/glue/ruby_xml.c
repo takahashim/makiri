@@ -74,10 +74,14 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
     VALUE rb_source, rb_opts;
     rb_scan_args(argc, argv, "1:", &rb_source, &rb_opts);
     mkr_xml_limits_t limits = mkr_xml_parse_limits(rb_opts);  /* validates; may raise */
+    size_t budget = limits.max_bytes ? limits.max_bytes : (size_t)MKR_XML_MAX_BYTES;
 
     /* Strict decode under the GVL: invalid UTF-8 / undecodable byte / NUL all
-     * raise Makiri::XML::SyntaxError here (no U+FFFD repair). */
-    VALUE decoded = mkr_xml_decode_input(rb_String(rb_source));
+     * raise Makiri::XML::SyntaxError here (no U+FFFD repair). Passing the budget
+     * lets decode reject an over-budget input (LimitExceeded) before its
+     * validation copy and the GVL-release copy below — so a hostile oversized
+     * document is not materialised twice for a doomed parse. */
+    VALUE decoded = mkr_xml_decode_input(rb_String(rb_source), budget);
 
     /* Build an empty XML handle and wrap it first (doc == NULL) so a failure
      * mid-parse frees cleanly via GC (mkr_parsed_destroy -> the XML branch ->

@@ -81,7 +81,7 @@ static VALUE
 mkr_xml_s_decode(VALUE self, VALUE str)
 {
     (void)self;
-    return mkr_xml_decode_input(rb_String(str));
+    return mkr_xml_decode_input(rb_String(str), 0);  /* decode-only: no arena, no budget */
 }
 
 RUBY_FUNC_EXPORTED void
