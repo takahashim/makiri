@@ -20,6 +20,7 @@
 typedef struct {
     const char      *src;
     size_t           len;
+    mkr_xml_limits_t limits;     /* per-parse budget overrides (0 fields = default) */
     mkr_xml_doc_t   *result;
     mkr_xml_status_t status;
 } mkr_xml_parse_nogvl_t;
@@ -28,16 +29,52 @@ static void *
 mkr_xml_parse_nogvl(void *p)
 {
     mkr_xml_parse_nogvl_t *a = (mkr_xml_parse_nogvl_t *)p;
-    a->result = mkr_xml_parse(a->src, a->len, &a->status);
+    a->result = mkr_xml_parse_ex(a->src, a->len, &a->limits, &a->status);
     return NULL;
 }
 
-/* call-seq: Makiri.parse_xml(source) -> Makiri::XML::Document
- *           Makiri::XML(source)      -> Makiri::XML::Document */
+/* Read the optional per-parse budget overrides from the keyword hash. Today only
+ * max_bytes (the arena memory ceiling) is configurable; rb_get_kwargs rejects any
+ * other keyword, and new budgets join the table here as they become runtime-
+ * configurable. max_bytes must be a positive Integer (0 / negative / non-Integer
+ * raise), and 0 in the struct means "use the compile-time default". */
+static mkr_xml_limits_t
+mkr_xml_parse_limits(VALUE rb_opts)
+{
+    mkr_xml_limits_t limits = { 0 };
+    if (NIL_P(rb_opts)) return limits;
+
+    static ID kw_ids[1];
+    if (kw_ids[0] == 0) kw_ids[0] = rb_intern_const("max_bytes");
+    VALUE kw_vals[1];
+    rb_get_kwargs(rb_opts, kw_ids, 0, 1, kw_vals);  /* unknown keyword -> ArgumentError */
+
+    if (kw_vals[0] != Qundef) {
+        if (!RB_INTEGER_TYPE_P(kw_vals[0])) {
+            rb_raise(rb_eTypeError, "max_bytes must be an Integer");
+        }
+        /* Reject <= 0 BEFORE the unsigned conversion: NUM2SIZET wraps a negative
+         * Integer into a huge size_t (an accidental budget bypass), so guard the
+         * sign first. A too-large positive still raises RangeError in NUM2SIZET. */
+        if (RTEST(rb_funcall(kw_vals[0], rb_intern("<="), 1, INT2FIX(0)))) {
+            rb_raise(rb_eArgError, "max_bytes must be positive");
+        }
+        limits.max_bytes = NUM2SIZET(kw_vals[0]);
+    }
+    return limits;
+}
+
+/* call-seq: Makiri.parse_xml(source, max_bytes: nil) -> Makiri::XML::Document
+ *           Makiri::XML(source, max_bytes: nil)      -> Makiri::XML::Document
+ * +max_bytes+ overrides the default arena memory ceiling for this parse. */
 static VALUE
-mkr_xml_s_parse(VALUE self, VALUE rb_source)
+mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
 {
     (void)self;
+    VALUE rb_source, rb_opts;
+    rb_scan_args(argc, argv, "1:", &rb_source, &rb_opts);
+    mkr_xml_limits_t limits = mkr_xml_parse_limits(rb_opts);  /* validates; may raise */
+
     /* Strict decode under the GVL: invalid UTF-8 / undecodable byte / NUL all
      * raise Makiri::XML::SyntaxError here (no U+FFFD repair). */
     VALUE decoded = mkr_xml_decode_input(rb_String(rb_source));
@@ -59,7 +96,7 @@ mkr_xml_s_parse(VALUE self, VALUE rb_source)
     }
     RB_GC_GUARD(decoded);
 
-    mkr_xml_parse_nogvl_t args = { source.ptr, source.len, NULL, MKR_XML_OK };
+    mkr_xml_parse_nogvl_t args = { source.ptr, source.len, limits, NULL, MKR_XML_OK };
     rb_thread_call_without_gvl(mkr_xml_parse_nogvl, &args, NULL, NULL);
     mkr_owned_bytes_clear(&source);
 
@@ -254,8 +291,8 @@ mkr_init_xml(void)
     rb_define_method(mkr_mXmlNodeMethods, "xpath",    mkr_xml_doc_xpath,    -1);
     rb_define_method(mkr_mXmlNodeMethods, "at_xpath", mkr_xml_doc_at_xpath, -1);
 
-    rb_define_module_function(mkr_mMakiri, "parse_xml", mkr_xml_s_parse, 1);
+    rb_define_module_function(mkr_mMakiri, "parse_xml", mkr_xml_s_parse, -1);
     /* Makiri::XML(source) — a method named XML on the Makiri module, coexisting
      * with the Makiri::XML constant (the module), as Nokogiri::XML does. */
-    rb_define_module_function(mkr_mMakiri, "XML", mkr_xml_s_parse, 1);
+    rb_define_module_function(mkr_mMakiri, "XML", mkr_xml_s_parse, -1);
 }

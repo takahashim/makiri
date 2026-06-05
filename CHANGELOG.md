@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     duplicate attributes are rejected, and every parse runs under document
     budgets. Element-name case and namespaces are preserved (unlike the HTML
     path).
+  * DoS-bounded by a single arena memory ceiling (default **256 MiB**), which
+    counts node structs *and* copied name/value bytes — so it subsumes the
+    node-count limit and caps tiny-element amplification, and an over-length
+    input is rejected before any allocation. 256 MiB fits every standard
+    document (a 50 MB sitemap is ~82 MB of arena) and only rejects documents
+    past ~2M elements; raise it per parse with
+    `Makiri::XML(src, max_bytes: 512 * 1024 * 1024)` /
+    `Makiri.parse_xml(src, max_bytes:)` (a positive Integer; other per-document
+    budget overrides will join this keyword later).
   * A `<!DOCTYPE …>` is **recognized but its DTD is not processed**: the doctype
     name and external identifiers are retained and exposed via
     `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DTD` with `#name`,

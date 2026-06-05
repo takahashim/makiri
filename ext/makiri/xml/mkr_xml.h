@@ -37,13 +37,25 @@ typedef enum {
 /* Arena payload cap: the single arena choke (arena_alloc) counts BOTH node
  * structs and copied name/value bytes against this, so it is the master memory
  * ceiling — it subsumes the node-count limit and bounds tiny-element
- * amplification (a `<a/>` flood is ~32x input→arena) to ~16 MB of hostile input.
- * Enforced before each allocation, and the parse entry rejects any input longer
- * than this up front (so the line-ending scratch is bounded too). Compile-time
- * overridable via -DMKR_XML_MAX_BYTES; a future parse option may expose it
- * per-document. */
-#define MKR_XML_MAX_BYTES   ((size_t)512u * 1024u * 1024u)  /* 512 MiB */
+ * amplification (a `<a/>` flood is ~23x input→arena, measured) to ~11 MB of
+ * hostile input. Enforced before each allocation, and the parse entry rejects
+ * any input longer than this up front (so the line-ending scratch is bounded
+ * too). 256 MiB comfortably fits every standard document (a 50 MB sitemap is
+ * ~82 MB of arena; RSS/Atom/SOAP far less) and only rejects documents past
+ * ~2M elements. A caller that needs more passes max_bytes to mkr_xml_parse_ex
+ * (per-document override); -DMKR_XML_MAX_BYTES changes the default. */
+#define MKR_XML_MAX_BYTES   ((size_t)256u * 1024u * 1024u)  /* 256 MiB */
 #endif
+
+/* Per-parse budget overrides (the runtime counterpart of the MKR_XML_MAX_*
+ * compile-time defaults). A 0 field means "use the compile-time default", so a
+ * zeroed struct (or a NULL pointer to mkr_xml_parse_ex) reproduces mkr_xml_parse
+ * exactly. Only max_bytes is honoured today; the other budgets (max_nodes,
+ * max_depth, max_attrs, max_ns) are intended to join this struct as they become
+ * runtime-configurable, without changing the entry-point signature. */
+typedef struct {
+    size_t max_bytes;   /* arena payload cap; 0 = MKR_XML_MAX_BYTES */
+} mkr_xml_limits_t;
 
 /* Parse +len+ bytes of already-decoded, validated UTF-8 (§2.1 guarantees the
  * input is valid UTF-8, XML-Char-only, NUL-free) into a document. Ruby-free, so
@@ -51,10 +63,12 @@ typedef enum {
  * failure; otherwise an owned mkr_xml_doc_t the caller must hand to GC
  * (mkr_xml_doc_destroy on free).
  *
- * SKELETON (this commit): builds an empty document — the tokenizer and tree
- * builder land in the next steps. The decode -> GVL -> arena -> doc -> wrap
- * pipeline is exercised end to end. */
+ * mkr_xml_parse uses the compile-time default budgets; mkr_xml_parse_ex applies
+ * the non-zero fields of +limits+ over them first (a NULL +limits+ is identical
+ * to mkr_xml_parse). */
 mkr_xml_doc_t *mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status);
+mkr_xml_doc_t *mkr_xml_parse_ex(const char *src, size_t len,
+                                const mkr_xml_limits_t *limits, mkr_xml_status_t *status);
 
 /* Structural self-test of the tokenizer + tree builder (run from
  * Makiri.__c_selftest). Returns 0 on success or the 1-based failing check. */

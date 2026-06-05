@@ -123,6 +123,14 @@ CSS is intentionally unavailable for XML (Lexbor's selector engine lower-cases
 names, which breaks XML case/namespace matching) - use XPath. XML mutation and
 serialization are a later phase.
 
+Parsing is DoS-bounded by a single arena memory ceiling (default 256 MiB,
+counting node structs and text), which fits every standard document. Raise it
+per parse for an unusually large one:
+
+```ruby
+Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri.parse_xml(..., max_bytes:)
+```
+
 ## Non-goals (v1.0)
 
 * XML writing (the XML reader above is read-only): no XML mutation, no XML/XHTML

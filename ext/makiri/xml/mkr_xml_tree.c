@@ -704,8 +704,20 @@ wrap_document_node(mkr_xml_doc_t *doc)
 mkr_xml_doc_t *
 mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
 {
+    return mkr_xml_parse_ex(src, len, NULL, status);
+}
+
+mkr_xml_doc_t *
+mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
+                 mkr_xml_status_t *status)
+{
     mkr_xml_doc_t *doc = mkr_xml_doc_new();
     if (doc == NULL) { if (status) *status = MKR_XML_ERR_OOM; return NULL; }
+
+    /* Apply per-parse budget overrides over the compile-time defaults (a 0 field
+     * leaves the default; a NULL +limits+ leaves all defaults). Only max_bytes is
+     * runtime-configurable today. */
+    if (limits != NULL && limits->max_bytes != 0) doc->max_bytes = limits->max_bytes;
 
     /* Fail closed on an over-budget input before ANY allocation (src is not yet
      * read): every retained byte is copied into the arena, so an input longer
@@ -1066,6 +1078,41 @@ mkr_xml_parse_selftest(void)
          * since this real 4-byte input is well under the budget). */
         st = MKR_XML_OK;
         d = mkr_xml_parse(tiny, sizeof(tiny) - 1, &st);
+        if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
+        mkr_xml_doc_destroy(d);
+    }
+
+    /* §4 per-parse override (mkr_xml_parse_ex): a tiny max_bytes lowers the
+     * effective budget so a document that parses under the default now fails
+     * closed, and a NULL/zeroed limits reproduces the default. */
+    i++; /* 18 */
+    {
+        static const char doc_src[] = "<root><a/><b/><c/></root>";
+        size_t dlen = sizeof(doc_src) - 1;
+        /* a 2-byte budget trips the entry guard (len > max_bytes) */
+        st = MKR_XML_OK;
+        mkr_xml_limits_t tiny_budget = { .max_bytes = 2 };
+        if (mkr_xml_parse_ex(doc_src, dlen, &tiny_budget, &st) != NULL || st != MKR_XML_ERR_LIMIT) {
+            return i;
+        }
+        /* a budget that passes the entry guard but cannot hold the nodes trips the
+         * arena allocator instead (one 128-byte node already exceeds 64). */
+        st = MKR_XML_OK;
+        mkr_xml_limits_t small_budget = { .max_bytes = 64 };
+        if (mkr_xml_parse_ex(doc_src, dlen, &small_budget, &st) != NULL || st != MKR_XML_ERR_LIMIT) {
+            return i;
+        }
+        /* a generous override parses the same document; zeroed limits == default */
+        st = MKR_XML_OK;
+        mkr_xml_limits_t big_budget = { .max_bytes = (size_t)1024u * 1024u };
+        d = mkr_xml_parse_ex(doc_src, dlen, &big_budget, &st);
+        if (d == NULL || st != MKR_XML_OK || !NAME_IS(d->root, "root")) {
+            if (d) mkr_xml_doc_destroy(d); return i;
+        }
+        mkr_xml_doc_destroy(d);
+        st = MKR_XML_OK;
+        mkr_xml_limits_t zero = { 0 };
+        d = mkr_xml_parse_ex(doc_src, dlen, &zero, &st);
         if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
         mkr_xml_doc_destroy(d);
     }

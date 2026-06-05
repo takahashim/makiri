@@ -118,10 +118,38 @@ RSpec.describe "Makiri::XML security" do
       # Node structs are counted against the same arena byte budget as text, so a
       # flood of empty elements is bounded by memory, not only by the 10M node cap
       # (which at ~128 B/node would otherwise permit a >1 GB arena). This stays
-      # well under the 512 MiB default until the node budget; the assertion is
-      # only that a pathological-but-bounded doc parses without unbounded growth.
+      # well under the 256 MiB default; the assertion is only that a
+      # pathological-but-bounded doc parses without unbounded growth.
       doc = parse("<r>#{'<a/>' * 200_000}</r>")
       expect(doc.xpath("count(//a)")).to eq(200_000.0)
+    end
+  end
+
+  describe "per-parse budget override (max_bytes:)" do
+    # ~1 MB+ of arena (markup-heavy), comfortably under the 256 MiB default.
+    let(:big) { "<root>#{'<item><a>1</a><b>2</b></item>' * 20_000}</root>" }
+
+    it "parses under the default and via Makiri.parse_xml" do
+      expect(Makiri::XML(big).xpath("count(//item)")).to eq(20_000.0)
+      expect(Makiri.parse_xml("<r/>", max_bytes: 4096).root.name).to eq("r")
+    end
+
+    it "rejects a document that exceeds a lowered max_bytes" do
+      expect { Makiri::XML(big, max_bytes: 100_000) }
+        .to raise_error(Makiri::XML::LimitExceeded)
+    end
+
+    it "parses the same document under a raised max_bytes" do
+      expect(Makiri::XML(big, max_bytes: 64 * 1024 * 1024).xpath("count(//item)"))
+        .to eq(20_000.0)
+    end
+
+    it "validates the option (positive Integer; unknown keywords rejected)" do
+      expect { Makiri::XML("<r/>", max_bytes: 0) }.to raise_error(ArgumentError)
+      expect { Makiri::XML("<r/>", max_bytes: -5) }.to raise_error(ArgumentError) # no unsigned wrap
+      expect { Makiri::XML("<r/>", max_bytes: 1.5) }.to raise_error(TypeError)
+      expect { Makiri::XML("<r/>", max_bytes: "big") }.to raise_error(TypeError)
+      expect { Makiri::XML("<r/>", bogus: 1) }.to raise_error(ArgumentError)
     end
   end
 
