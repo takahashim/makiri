@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     duplicate attributes are rejected, and every parse runs under document
     budgets. Element-name case and namespaces are preserved (unlike the HTML
     path).
+  * Character encoding is autodetected (XML 1.0 Appendix F): a leading byte-order
+    mark (UTF-8 / UTF-16 / UTF-32) or the `<?xml encoding="…"?>` declaration
+    selects the encoding, so raw bytes (`File.binread`) in UTF-16, Shift_JIS,
+    etc. parse correctly; a leading BOM is stripped (not treated as content). A
+    concrete String encoding stays authoritative — a BOM or declaration that
+    contradicts it (or each other) is a fatal `SyntaxError` rather than a silent
+    mis-decode. The strict XML declaration grammar (§2.8) and well-formedness
+    rules (`]]>` in content, S-separated attributes, reserved/colon PI targets,
+    lowercase `&#x` hex refs) are enforced; verified against the **W3C XML
+    Conformance Test Suite** (`rake conformance:xmlconf`, 100% of the in-scope,
+    non-validating, XML-1.0 tests).
   * DoS-bounded by a single arena memory ceiling (default **256 MiB**), which
     counts node structs *and* copied name/value bytes — so it subsumes the
     node-count limit and caps tiny-element amplification, and an over-length

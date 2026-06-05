@@ -142,22 +142,120 @@ mkr_xml_strict_transcode_thunk(VALUE str)
     return rb_str_encode(str, rb_enc_from_encoding(rb_utf8_encoding()), 0, Qnil);
 }
 
+/* --- XML 1.0 Appendix F: byte-encoding autodetection (BOM, then declaration) ---
+ *
+ * The leading byte-order mark, or NULL; *bom_len gets its length. UTF-32 BOMs are
+ * checked before the UTF-16 LE BOM they share a prefix with. */
+static rb_encoding *
+mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len)
+{
+    *bom_len = 0;
+    if (len >= 4 && p[0] == 0x00 && p[1] == 0x00 && p[2] == 0xFE && p[3] == 0xFF) {
+        *bom_len = 4; return rb_enc_find("UTF-32BE");
+    }
+    if (len >= 4 && p[0] == 0xFF && p[1] == 0xFE && p[2] == 0x00 && p[3] == 0x00) {
+        *bom_len = 4; return rb_enc_find("UTF-32LE");
+    }
+    if (len >= 2 && p[0] == 0xFE && p[1] == 0xFF) { *bom_len = 2; return rb_enc_find("UTF-16BE"); }
+    if (len >= 2 && p[0] == 0xFF && p[1] == 0xFE) { *bom_len = 2; return rb_enc_find("UTF-16LE"); }
+    if (len >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) { *bom_len = 3; return rb_utf8_encoding(); }
+    return NULL;
+}
+
+/* The encoding named in the '<?xml ... encoding="NAME" ?>' declaration, or NULL.
+ * The declaration is ASCII; for a UTF-16/32-detected document its bytes are
+ * stride-interleaved, so the ASCII column is extracted (per the BOM) before the
+ * scan, letting a BOM-vs-declaration conflict be caught even in UTF-16. */
+static rb_encoding *
+mkr_xml_decl_encoding(const unsigned char *p, long len, rb_encoding *bom)
+{
+    long stride = 1, off = 0;
+    if (bom == rb_enc_find("UTF-16LE"))      { stride = 2; off = 0; }
+    else if (bom == rb_enc_find("UTF-16BE")) { stride = 2; off = 1; }
+    else if (bom == rb_enc_find("UTF-32LE")) { stride = 4; off = 0; }
+    else if (bom == rb_enc_find("UTF-32BE")) { stride = 4; off = 3; }
+
+    char head[256];
+    long hn = 0;
+    for (long i = off; i < len && hn < (long)sizeof(head); i += stride) head[hn++] = (char)p[i];
+
+    long i = 0;
+    while (i < hn && (head[i] == ' ' || head[i] == '\t' || head[i] == '\r' || head[i] == '\n')) i++;
+    if (i + 5 > hn || memcmp(head + i, "<?xml", 5) != 0) return NULL;
+    i += 5;
+    /* find a whitespace-introduced "encoding" before the '?>' */
+    for (; i + 8 <= hn; i++) {
+        if (head[i] == '?' && i + 1 < hn && head[i + 1] == '>') return NULL; /* end of decl */
+        int ws_before = (head[i - 1] == ' ' || head[i - 1] == '\t' || head[i - 1] == '\r' || head[i - 1] == '\n');
+        if (!ws_before || memcmp(head + i, "encoding", 8) != 0) continue;
+        long j = i + 8;
+        while (j < hn && (head[j] == ' ' || head[j] == '\t' || head[j] == '\r' || head[j] == '\n')) j++;
+        if (j >= hn || head[j] != '=') return NULL;
+        j++;
+        while (j < hn && (head[j] == ' ' || head[j] == '\t' || head[j] == '\r' || head[j] == '\n')) j++;
+        if (j >= hn || (head[j] != '"' && head[j] != '\'')) return NULL;
+        char q = head[j++];
+        long ns = j;
+        while (j < hn && head[j] != q) j++;
+        if (j >= hn) return NULL;
+        char name[64];
+        long nl = j - ns;
+        if (nl <= 0 || nl >= (long)sizeof(name)) return NULL;
+        memcpy(name, head + ns, (size_t)nl);
+        name[nl] = '\0';
+        return rb_enc_find(name);   /* NULL for an unknown encoding name */
+    }
+    return NULL;
+}
+
+/* Two encodings agree for conflict purposes when identical, or when either is
+ * US-ASCII (a subset of UTF-8 and the single-byte encodings). */
+static int
+mkr_xml_enc_compatible(rb_encoding *a, rb_encoding *b)
+{
+    return a == b || a == rb_usascii_encoding() || b == rb_usascii_encoding();
+}
+
 VALUE
 mkr_xml_decode_input(VALUE str, size_t max_bytes)
 {
-    /* Share only the encoding-judgment rule with mkr_ruby_to_utf8 (NOT its
-     * lenient replace path): UTF-8 / US-ASCII / ASCII-8BIT are already UTF-8
-     * bytes (or raw) and pass straight to strict validation; anything else is
-     * strict-transcoded (raising, never replacing). */
-    rb_encoding *enc = rb_enc_get(str);
+    rb_encoding   *tag    = rb_enc_get(str);
+    const unsigned char *raw = (const unsigned char *)RSTRING_PTR(str);
+    long           rawlen = RSTRING_LEN(str);
+
+    /* Detect the byte encoding (XML 1.0 Appendix F): a BOM wins, else the
+     * declaration. The Ruby String's encoding is authoritative when it is a
+     * concrete text encoding; a BOM/declaration that disagrees is a fatal
+     * conflict. ASCII-8BIT means "raw bytes, no claimed encoding", so there the
+     * detected encoding decodes the input (a UTF-16/Shift_JIS/BOM'd file read
+     * with File.binread now parses). */
+    long bom_len = 0;
+    rb_encoding *bom  = mkr_xml_bom_encoding(raw, rawlen, &bom_len);
+    rb_encoding *decl = mkr_xml_decl_encoding(raw + bom_len, rawlen - bom_len, bom);
+    int is_binary = (tag == rb_ascii8bit_encoding());
+
+    if (bom && decl && !mkr_xml_enc_compatible(bom, decl)) {
+        rb_raise(mkr_eXmlSyntaxError,
+                 "XML encoding conflict: the byte-order mark and the encoding declaration disagree");
+    }
+    if (!is_binary && bom && !mkr_xml_enc_compatible(bom, tag)) {
+        rb_raise(mkr_eXmlSyntaxError,
+                 "XML encoding conflict: the byte-order mark disagrees with the string's encoding");
+    }
+
+    rb_encoding *eff = is_binary ? (bom ? bom : (decl ? decl : rb_utf8_encoding())) : tag;
+
+    /* Decode to UTF-8 (strict). UTF-8 / US-ASCII / ASCII-8BIT are already UTF-8
+     * bytes (validated below); anything else is strict-transcoded, raising rather
+     * than substituting U+FFFD. */
     VALUE s;
-    if (enc == rb_utf8_encoding()
-        || enc == rb_usascii_encoding()
-        || enc == rb_ascii8bit_encoding()) {
+    if (eff == rb_utf8_encoding() || eff == rb_usascii_encoding() || eff == rb_ascii8bit_encoding()) {
         s = str;
     } else {
+        VALUE in = str;
+        if (rb_enc_get(str) != eff) { in = rb_str_dup(str); rb_enc_associate(in, eff); }
         int state = 0;
-        s = rb_protect(mkr_xml_strict_transcode_thunk, str, &state);
+        s = rb_protect(mkr_xml_strict_transcode_thunk, in, &state);
         if (state != 0) {
             VALUE exc = rb_errinfo();
             rb_set_errinfo(Qnil);
@@ -166,19 +264,21 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
             rb_raise(mkr_eXmlSyntaxError,
                      "XML input could not be decoded to UTF-8: %s", msg);
         }
+        RB_GC_GUARD(in);
     }
 
-    /* Fail closed on an over-budget input BEFORE the validation copy below (and
-     * the caller's GVL-release copy after): every retained byte is copied into
-     * the parser's arena, so an input whose UTF-8 length already exceeds the
-     * arena byte budget can never parse — reject it here instead of copying it
-     * twice for a doomed parse. The check is on the decoded length: for the
-     * passthrough encodings that equals the raw input (so an over-budget UTF-8
-     * document is rejected with zero extra allocation), and a shrinking
-     * transcode (e.g. UTF-16) is already reduced into +s+, so it is exact either
-     * way. max_bytes == 0 disables the check (the __decode path, which only
-     * decodes and builds no arena). */
-    long len = RSTRING_LEN(s);
+    const char *ptr = RSTRING_PTR(s);
+    long        len = RSTRING_LEN(s);
+    /* §4.3.3: a leading BOM is the encoding signature, not document content —
+     * strip a U+FEFF (the transcode above turns any UTF-16/32 BOM into one). */
+    if (len >= 3 && (unsigned char)ptr[0] == 0xEF && (unsigned char)ptr[1] == 0xBB
+        && (unsigned char)ptr[2] == 0xBF) {
+        ptr += 3; len -= 3;
+    }
+
+    /* Fail closed on an over-budget input BEFORE the validation copy and the
+     * caller's GVL-release copy (an input whose UTF-8 length exceeds the arena
+     * budget can never parse). max_bytes == 0 disables the check (__decode). */
     if (max_bytes != 0 && (size_t)len > max_bytes) {
         RB_GC_GUARD(s);
         rb_raise(mkr_eXmlLimitExceeded, "XML input exceeds the byte budget");
@@ -186,7 +286,6 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
 
     /* Strict UTF-8 validation: an embedded NUL or any invalid UTF-8 is fatal
      * (no U+FFFD repair — unlike the HTML mkr_utf8_sanitize path). */
-    const char *ptr = RSTRING_PTR(s);
     if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
         rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
     }
@@ -195,7 +294,7 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
         rb_raise(mkr_eXmlSyntaxError, "XML input must be valid UTF-8");
     }
     RB_GC_GUARD(s);
-    return u; /* validated, UTF-8-tagged */
+    return u; /* validated, UTF-8-tagged, BOM-stripped */
 }
 
 bool

@@ -272,4 +272,42 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(ok?(many)).to be true
     end
   end
+
+  describe "character encoding: BOM + declaration autodetection (XML 1.0 App. F)" do
+    it "strips a leading UTF-8 BOM (it is the encoding signature, not content)" do
+      expect(Makiri::XML("﻿<r>x</r>").root.text).to eq("x")        # UTF-8 string
+      expect(Makiri::XML("\xEF\xBB\xBF<r>x</r>".b).root.text).to eq("x") # raw bytes
+      # a U+FEFF that is NOT leading stays as ordinary content
+      expect(Makiri::XML("<r>a﻿b</r>").root.text).to eq("a﻿b")
+    end
+
+    it "decodes a tagged non-UTF-8 String to the right characters" do
+      expect(Makiri::XML("<r>日</r>".encode("Shift_JIS")).root.text).to eq("日")
+      expect(Makiri::XML("<r>x</r>".encode("UTF-16LE")).root.text).to eq("x")
+      expect(Makiri::XML("<r>x</r>".encode("UTF-16BE")).root.text).to eq("x")
+    end
+
+    it "autodetects raw bytes (ASCII-8BIT) from the BOM" do
+      bytes = "\xFE\xFF".b + "<r>x</r>".encode("UTF-16BE").b # UTF-16BE BOM + content
+      expect(Makiri::XML(bytes).root.text).to eq("x")
+    end
+
+    it "autodetects raw bytes from the encoding declaration (no BOM)" do
+      sjis = ("<?xml version='1.0' encoding='Shift_JIS'?><r>".encode("Shift_JIS") +
+              "日".encode("Shift_JIS") + "</r>".encode("Shift_JIS")).b
+      expect(Makiri::XML(sjis).root.text).to eq("日")
+    end
+
+    it "rejects a BOM that contradicts the declaration or the String encoding" do
+      # UTF-8 BOM but the declaration claims a different encoding (cf. xmlconf ht-bh)
+      expect { Makiri::XML("\xEF\xBB\xBF<?xml version='1.0' encoding='iso-8859-1'?><x/>".b) }
+        .to raise_error(Makiri::XML::SyntaxError)
+      # UTF-16 BOM but the declaration claims utf-8
+      u16 = "\xFE\xFF".b + "<?xml version='1.0' encoding='utf-8'?><x/>".encode("UTF-16BE").b
+      expect { Makiri::XML(u16) }.to raise_error(Makiri::XML::SyntaxError)
+      # a concrete (UTF-8) String tag with a UTF-16 BOM in the bytes
+      expect { Makiri::XML("\xFF\xFE<r/>".dup.force_encoding("UTF-8")) }
+        .to raise_error(Makiri::XML::SyntaxError)
+    end
+  end
 end
