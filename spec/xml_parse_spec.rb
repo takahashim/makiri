@@ -309,5 +309,17 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect { Makiri::XML("\xFF\xFE<r/>".dup.force_encoding("UTF-8")) }
         .to raise_error(Makiri::XML::SyntaxError)
     end
+
+    it "rejects a declaration that disagrees with a concrete String encoding" do
+      # Shift_JIS String but the declaration claims UTF-8 -> self-inconsistent.
+      expect { Makiri::XML("<?xml version='1.0' encoding='UTF-8'?><r>x</r>".encode("Shift_JIS")) }
+        .to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<?xml version='1.0' encoding='iso-8859-1'?><r>x</r>") } # UTF-8 String
+        .to raise_error(Makiri::XML::SyntaxError)
+      # but a declaration that agrees (or is an ASCII subset) is fine
+      expect(ok?("<?xml version='1.0' encoding='Shift_JIS'?><r>x</r>".encode("Shift_JIS"))).to be true
+      expect(ok?("<?xml version='1.0' encoding='utf-8'?><r>x</r>")).to be true
+      expect(ok?("<?xml version='1.0' encoding='Shift_JIS'?><r>x</r>".encode("US-ASCII"))).to be true
+    end
   end
 end

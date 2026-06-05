@@ -242,6 +242,15 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
         rb_raise(mkr_eXmlSyntaxError,
                  "XML encoding conflict: the byte-order mark disagrees with the string's encoding");
     }
+    if (!is_binary && decl && !mkr_xml_enc_compatible(decl, tag)) {
+        /* A concrete String encoding is authoritative for decoding, so the
+         * declaration is not used to transcode — but a declaration that names a
+         * different encoding than the String is tagged with (e.g. a Shift_JIS
+         * String declaring encoding="UTF-8") is a self-inconsistent document and
+         * a fatal error, not a silently-ignored mismatch. */
+        rb_raise(mkr_eXmlSyntaxError,
+                 "XML encoding conflict: the encoding declaration disagrees with the string's encoding");
+    }
 
     rb_encoding *eff = is_binary ? (bom ? bom : (decl ? decl : rb_utf8_encoding())) : tag;
 
