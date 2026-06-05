@@ -977,8 +977,10 @@ fn_name(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   const lxb_char_t *name;
   if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
     name = MKR_ATTR_QUALIFIED_NAME(n, &len);
-  } else {
+  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
     name = MKR_ELEM_QUALIFIED_NAME(n, &len);
+  } else {
+    name = MKR_NODE_PI_NAME(n, &len);   /* a PI's expanded-name is (null, target) */
   }
   return set_bytes_string(out, name, len, err, "name");
 }

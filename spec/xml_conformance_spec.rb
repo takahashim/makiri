@@ -49,6 +49,20 @@ RSpec.describe "Makiri::XML XPath conformance" do
     end
   end
 
+  describe "name()/local-name() of a processing instruction (target)" do
+    let(:doc) { Makiri::XML("<doc><meta><?render fast?></meta></doc>") }
+
+    it "returns the PI target for both name() and local-name()" do
+      # A PI's expanded-name is (null, target), so name() == local-name() == the
+      # target. name() used to mis-route PIs through the element accessor and
+      # return "" (found by the XML XPath differential).
+      expect(doc.xpath("name(//meta/processing-instruction())")).to eq("render")
+      expect(doc.xpath("local-name(//meta/processing-instruction())")).to eq("render")
+      expect(doc.xpath("namespace-uri(//meta/processing-instruction())")).to eq("")
+      expect(doc.xpath("string(//meta/processing-instruction())")).to eq("fast")
+    end
+  end
+
   describe "namespace declarations are namespace nodes, not attributes" do
     let(:doc) do
       Makiri::XML(%(<e xmlns:p="urn:p" xmlns="urn:d" id="1"><c p:k="v"/></e>))

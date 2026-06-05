@@ -49,6 +49,20 @@ module XmlXPathCorpus
         "//book[contains(title,'e')]", "//book[starts-with(@id,'b')]",
         "concat(//book[1]/@id,'-',//book[2]/@id)", "//book[not(@available)]",
         "//@currency", "//@id", "//book[count(tags/tag)=3]",
+        # string functions over node string-values
+        "substring(//book[1]/title,1,5)", "substring(//book[3]/title,2)",
+        "substring-before(//book[1]/title,' ')", "substring-after(//book[1]/title,'& ')",
+        "translate(//book[2]/@id,'b','B')", "string-length(//book[1]/title)",
+        # operators / comparisons / arithmetic
+        "//book[price != 0]", "//book[price >= 9.99]", "//book[price <= 10]",
+        "//book[@id != 'b1']", "//book[position() != last()]", "//book[last()-1]/@id",
+        "//book[price mod 1 = 0]", "sum(//price) div count(//book)",
+        "count(//book) - count(//book[@available])",
+        "//book[1]/title = //book[3]/title", "//title | //author",
+        "//book[1]/@* | //book[2]/@*", "//tag[position() mod 2 = 1]",
+        # explicit axes
+        "//book/child::title", "//book/attribute::id", "/descendant::book",
+        "//catalog/child::book[2]/descendant::tag",
       ],
     },
     {
@@ -79,6 +93,14 @@ module XmlXPathCorpus
         "//a:entry[2]/preceding-sibling::a:entry", "//a:title/ancestor::a:entry/a:id",
         "local-name(//a:entry[1])", "namespace-uri(//a:entry[1])", "name(//a:entry[1])",
         "//a:entry/a:link[@rel='alternate']", "//entry", "//a:link/@xlink:href",
+        # lang() with xml:lang inheritance from <feed xml:lang="en">
+        "//a:entry[lang('en')]", "//a:title[lang('en')]", "//a:entry[lang('fr')]",
+        "count(//a:entry[lang('EN')])", # lang() is case-insensitive
+        # union / positional arithmetic / string fns
+        "//a:entry/a:title | //a:feed/a:title", "//a:link/@href | //a:entry/a:id",
+        "//a:entry[position()=last()-1]", "substring(//a:entry[1]/a:title,1,3)",
+        "//a:feed/child::a:entry", "//a:entry/descendant::a:id",
+        "count(//a:entry/a:link) - count(//a:entry)",
       ],
     },
     {
@@ -109,6 +131,10 @@ module XmlXPathCorpus
         "//item/pubDate", "//item[dc:creator='Ada']", "//dc:creator", "count(//item)",
         "//guid/@isPermaLink", "string(//channel/title)", "//item[1]/following-sibling::item",
         "//item[position()=1]/title", "//item[last()]/title",
+        "//item | //channel/title", "//item[position() != 1]",
+        "translate(//dc:creator[1],'Aa','aA')", "count(//item) mod 2",
+        "substring-after(//channel/link,'https://')", "//item[dc:creator != 'Ada']",
+        "//channel/descendant::dc:creator",
       ],
     },
     {
@@ -126,6 +152,10 @@ module XmlXPathCorpus
         "//s:rect/@width", "//s:circle[@r='20']", "//s:a/@xlink:href",
         "string(//s:a/@xlink:href)", "//s:g[@id='grp']/s:circle[1]",
         "//s:circle/ancestor::s:g/@id", "namespace-uri(//s:rect)", "//rect",
+        "//s:circle | //s:rect", "//s:circle[@r > 15]", "//s:circle[@r != '10']",
+        "//s:circle[position()=last()]", "substring(//s:a/@xlink:href,1,5)",
+        "//s:g/child::s:circle", "number(//s:rect/@width) + number(//s:rect/@height)",
+        "//s:rect/@width div //s:svg/@width", "//s:*[@r]",
       ],
     },
     {
@@ -147,6 +177,10 @@ module XmlXPathCorpus
         "number(//m:Price)", "string(//m:Currency)", "//m:Trans",
         "//soap:Header/m:Trans", "count(//m:*)", "//soap:Envelope/soap:Body",
         "//m:Price/ancestor::soap:Body", "local-name(//m:Price)",
+        "//m:Price | //m:Currency", "number(//m:Price) + 1", "number(//m:Price) * 2",
+        "round(number(//m:Price))", "floor(number(//m:Price))", "ceiling(number(//m:Price))",
+        "number(//m:Trans) mod 100", "//m:* | //soap:*",
+        "substring-before(string(//m:Price),'.')",
       ],
     },
     {
@@ -159,6 +193,7 @@ module XmlXPathCorpus
           <empty/>
           <whitespace>   </whitespace>
           <nums><n>3</n><n>1</n><n>2</n></nums>
+          <meta><?render fast?><!-- a note --><?render slow?></meta>
         </doc>
       XML
       exprs: [
@@ -166,6 +201,16 @@ module XmlXPathCorpus
         "//b", "//p/b/following-sibling::i", "//data", "string(//data)",
         "//empty", "//nums/n", "sum(//nums/n)", "//nums/n[. > 1]",
         "//p/node()", "count(//p/node())", "//whitespace",
+        # element-level processing instructions + comments
+        "//processing-instruction()", "count(//processing-instruction())",
+        "//processing-instruction('render')", "name(//meta/processing-instruction()[1])",
+        "string(//meta/processing-instruction()[2])", "//meta/comment()",
+        "count(//meta/node())", "//meta/node()[2]",
+        # number/string fns over content
+        "sum(//nums/n) div count(//nums/n)", "//nums/n[. != 2]",
+        "//nums/n[position() mod 2 = 1]", "translate(string(//p),'lo','LO')",
+        "substring-after(string(//data),'< ')", "//nums/n | //p/b",
+        "number(//nums/n[1]) - number(//nums/n[2])",
       ],
     },
   ].freeze
@@ -180,5 +225,36 @@ module XmlXPathCorpus
     "//*/self::*", "count(//*[1]/following::*)", "//*[last()]/preceding::*",
     "boolean(//*)", "not(//nonexistent)", "true()", "false()", "1 + 2 * 3",
     "count(//*) > 0", "//*[count(@*) > 0]", "//*[string-length(name()) > 3]",
+
+    # --- union ----------------------------------------------------------
+    "//* | //@*", "count(//* | //node())", "//*[1] | //*[last()]",
+    "count(//* | //*)", # union of identical sets dedups
+    # --- comparison operators ------------------------------------------
+    "count(//*) != 0", "count(//*) >= 1", "count(//*) <= 100000", "1 != 2",
+    "2 <= 2", "3 >= 4", "//*[position() != 1]", "//*[position() <= 2]",
+    # --- arithmetic -----------------------------------------------------
+    "5 - 3", "7 div 2", "7 mod 3", "-3 + 1", "10 - 2 * 3", "(10 - 2) * 3",
+    "6 div 4", "count(//*) - 1", "count(//*) mod 2",
+    # --- boolean --------------------------------------------------------
+    "true() and false()", "true() or false()", "not(false())", "boolean(0)",
+    "boolean('')", "boolean('x')", "count(//*) > 0 and true()",
+    # --- number functions ----------------------------------------------
+    "floor(1.9)", "ceiling(1.1)", "round(2.5)", "round(-2.5)", "round(0.5)",
+    "floor(-1.1)", "ceiling(-1.9)", "round(2.4)",
+    # --- number conversion / formatting (NaN, Infinity, -0) -------------
+    "number('  42 ')", "string(number('xyz'))", "string(1 div 0)",
+    "string(-1 div 0)", "string(0 div 0)", "string(1 div 3)", "string(0.5)",
+    "string(-0.5 + 0.5)", "number('3.14')", "string(123456789)", "string(0.1)",
+    # --- string functions ----------------------------------------------
+    "substring('hello',2,3)", "substring('hello',2)", "substring('hello',0,3)",
+    "substring('hello',-1,3)", "substring-before('a-b-c','-')",
+    "substring-after('a-b-c','-')", "substring-before('abc','x')",
+    "translate('Bar','abcr','ABCR')", "translate('abcabc','ac','x')",
+    "string-length('hello')", "normalize-space('  a   b  c ')",
+    "concat('a','b','c','d','e')", "contains('','')", "starts-with('abc','')",
+    # --- nested predicates ---------------------------------------------
+    "//*[*][@*]", "//*[position()=1][1]", "//*[last()][1]",
+    # --- explicit axes --------------------------------------------------
+    "/child::*", "//*/self::node()", "//*/descendant-or-self::node()[1]",
   ].freeze
 end
