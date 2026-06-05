@@ -138,10 +138,18 @@ const char *
 mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
                mkr_xml_expand_mode_t mode, uint32_t *out_len, mkr_xml_status_t *status)
 {
+    /* Fail-closed contract guards: this is a public primitive (mkr_xml.h), so it
+     * must not dereference a NULL output or document even though the in-tree
+     * callers always pass real ones. out_len/status are required outputs (a NULL
+     * leaves no channel to report through -> return NULL); a len>0 expansion
+     * needs a real doc + source. All are programming errors, never recoverable
+     * input. */
+    if (out_len == NULL || status == NULL) return NULL;
     if (len == 0) { *out_len = 0; return ""; }
+    if (doc == NULL || src == NULL) { *status = MKR_XML_ERR_INTERNAL; return NULL; }
 
     char *buf = mkr_xml_arena_scratch_bytes(doc, len);
-    if (buf == NULL) { *status = doc->oom; return NULL; }
+    if (buf == NULL) { *status = doc->oom; return NULL; } /* doc non-NULL here (guarded above) */
 
     size_t      o   = 0;
     const char *p   = src;
