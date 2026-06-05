@@ -49,6 +49,24 @@ RSpec.describe "Makiri::XML XPath conformance" do
     end
   end
 
+  describe "adjacent character data is coalesced (libxml2 / XPath data model)" do
+    it "merges adjacent CDATA sections into one node" do
+      doc = Makiri::XML("<r><![CDATA[a]]><![CDATA[b]]><![CDATA[c]]></r>")
+      expect(doc.root.children.length).to eq(1)
+      expect(doc.root.children.first).to be_a(Makiri::XML::CData)
+      expect(doc.xpath("//text()").map(&:text)).to eq(["abc"])
+      expect(doc.xpath("string(//r)")).to eq("abc")
+    end
+
+    it "keeps text and CDATA as distinct nodes (only same-type merges)" do
+      doc = Makiri::XML("<r>x<![CDATA[y]]>z</r>")
+      kinds = doc.root.children.map { |c| c.class.name.split("::").last }
+      expect(kinds).to eq(%w[Text CData Text])
+      expect(doc.xpath("count(//text())")).to eq(3.0)
+      expect(doc.root.text).to eq("xyz")
+    end
+  end
+
   describe "name()/local-name() of a processing instruction (target)" do
     let(:doc) { Makiri::XML("<doc><meta><?render fast?></meta></doc>") }
 

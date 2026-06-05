@@ -161,6 +161,13 @@ namespace :conformance do
     end
   end
 
+  desc "Property-based XML differential: generated documents, Makiri vs Nokogiri tree"
+  task xml_pbt: :compile do
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xml_pbt_diff.rb #{ENV['PBT_ARGS']}"
+    end
+  end
+
   desc "CSS Selectors differential conformance vs Nokogiri::HTML5"
   task css: :compile do
     Bundler.with_unbundled_env do

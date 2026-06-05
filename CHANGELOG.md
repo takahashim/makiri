@@ -65,7 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`//comment()`, `//processing-instruction()`, `/node()`) and `#children`, in
     document order — matching the XPath data model and Nokogiri. (Inter-construct
     whitespace there is not a text node; the DOCTYPE stays off-tree, via
-    `#internal_subset`.)
+    `#internal_subset`.) Adjacent same-type character data is coalesced into one
+    node (`<![CDATA[a]]><![CDATA[b]]>` → one CDATA node), as libxml2 does and per
+    the XPath data model's maximal-grouping rule; text and CDATA stay distinct.
+    The tree is verified to be byte-identical to Nokogiri's by a property-based
+    differential over generated documents (`rake conformance:xml_pbt`).
   * Fail-closed on the unsupported surface: CSS selectors (`#css` / `#at_css`)
     and serialization (`#to_xml` / `#to_html` / `#to_s` / `#inner_html` /
     `#outer_html`) raise `NotImplementedError` rather than returning a wrong

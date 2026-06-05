@@ -136,6 +136,34 @@ append_child(mkr_xml_node_t *parent, mkr_xml_node_t *child)
     parent->last_child = child;
 }
 
+/* Append a character-data node (TEXT or CDATA) whose value is the arena slice
+ * [val, val+len). Adjacent character data of the SAME type is coalesced into the
+ * preceding sibling (as libxml2's xmlAddChild does, and per the XPath data
+ * model's "as much character data as possible is grouped" rule) — so
+ * <![CDATA[a]]><![CDATA[b]]> is one CDATA node, not two. Different types stay
+ * separate (text vs CDATA remain distinct DOM nodes). 0 / -1 (P->status set). */
+static int
+append_chardata(mkr_xml_parser_t *P, mkr_xml_node_t *parent, uint8_t type,
+                const char *val, uint32_t len)
+{
+    mkr_xml_node_t *last = parent->last_child;
+    if (last != NULL && last->type == type) {
+        size_t total = (size_t)last->value_len + len;
+        if (total > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
+        char *buf = mkr_xml_arena_scratch_bytes(P->doc, total);
+        if (buf == NULL) { propagate_oom(P); return -1; }   /* total>0 here (len could be 0, but last+len) */
+        if (last->value_len) memcpy(buf, last->value, last->value_len);
+        if (len)             memcpy(buf + last->value_len, val, len);
+        last->value = buf; last->value_len = (uint32_t)total;
+        return 0;
+    }
+    mkr_xml_node_t *n = mkr_xml_arena_node(P->doc, type);
+    if (n == NULL) { propagate_oom(P); return -1; }
+    n->value = val; n->value_len = len;
+    append_child(parent, n);
+    return 0;
+}
+
 
 /* Copy a slice into the arena; on failure record the arena status. NULL return
  * with len>0 means budget/OOM (P->status set); len==0 yields "". */
@@ -427,11 +455,9 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
     if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
     uint32_t clen = (uint32_t)craw;
     if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
-    mkr_xml_node_t *c = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_CDATA_SECTION);
-    if (c == NULL) { propagate_oom(P); return -1; }
-    c->value = own(P, cstart, clen); c->value_len = clen;
-    if (clen > 0 && c->value == NULL) return -1;
-    append_child(parent, c);
+    const char *cval = own(P, cstart, clen);
+    if (clen > 0 && cval == NULL) return -1;
+    if (append_chardata(P, parent, MKR_XML_NODE_TYPE_CDATA_SECTION, cval, clen) != 0) return -1;
     advance_n(P, (size_t)(close + 3 - P->p));         /* content + "]]>" */
     return 0;
 }
@@ -806,13 +832,11 @@ parse_text(mkr_xml_parser_t *P)
         if (nonspace) { set_syntax(P); return -1; }   /* non-ws text outside any element */
         return 0;
     }
-    mkr_xml_node_t *t = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_TEXT);
-    if (t == NULL) { propagate_oom(P); return -1; }
     /* expand char/entity references + validate XML Char (§9.1/§9.2) */
-    t->value = mkr_xml_expand(P->doc, tstart, tlen, MKR_XML_EXPAND_TEXT, &t->value_len, &P->status);
-    if (t->value == NULL) return -1;
-    append_child(P->stack[P->depth - 1], t);
-    return 0;
+    uint32_t tvlen = 0;
+    const char *tval = mkr_xml_expand(P->doc, tstart, tlen, MKR_XML_EXPAND_TEXT, &tvlen, &P->status);
+    if (tval == NULL) return -1;
+    return append_chardata(P, P->stack[P->depth - 1], MKR_XML_NODE_TYPE_TEXT, tval, tvlen);
 }
 
 mkr_xml_doc_t *

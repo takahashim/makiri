@@ -16,13 +16,18 @@ rake conformance:css       # CSS Selectors         vs Nokogiri::HTML5
 rake conformance           # all three
 rake conformance:xpath_xml # XML XPath 1.0         vs Nokogiri::XML
 rake conformance:xmlconf   # XML well-formedness    vs the W3C XML Test Suite
+rake conformance:xml_pbt   # XML tree (PBT)         vs Nokogiri::XML (generated docs)
 
 # pass through options:
 H5_ARGS="--file tests1.dat --verbose"        rake conformance:html5
 XPATH_ARGS="--generate 8000 --seed 1"        rake conformance:xpath
 CSS_ARGS="--verbose"                         rake conformance:css
 XMLCONF_ARGS="--verbose --show-policy"       rake conformance:xmlconf
+PBT_ARGS="--count 50000 --verbose"           rake conformance:xml_pbt
 ```
+
+Makiri-only property-based tests (round-trip + metamorphic, with shrinking) run
+in the normal suite: `spec/xml_pbt_spec.rb` (raise `PBT_COUNT` to do more).
 
 The Nokogiri baseline is **`Nokogiri::HTML5`** (Gumbo, WHATWG-compliant), never
 `Nokogiri::HTML` (libxml2's non-conformant HTML4 parser). Nokogiri is a
