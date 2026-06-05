@@ -179,7 +179,10 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
         if (p < end && *p == '#') {                 /* numeric character reference */
             p++;
             int hex = 0;
-            if (p < end && (*p == 'x' || *p == 'X')) { hex = 1; p++; }
+            /* §4.1: the hex marker is a lowercase 'x' only — "&#X58;" is not-wf
+             * (an uppercase 'X' is not a decimal digit either, so it is rejected
+             * as "no digits" below). */
+            if (p < end && *p == 'x') { hex = 1; p++; }
             const char *digits = p;
             uint32_t base = hex ? 16u : 10u;
             uint32_t cp = 0;

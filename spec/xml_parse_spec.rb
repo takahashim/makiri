@@ -50,6 +50,8 @@ RSpec.describe "Makiri::XML minimal parse" do
       "empty element name"        => "<>",
       "literal ]]> in content"    => "<a>foo]]>bar</a>", # §2.4
       "literal ]]> alone"         => "<a>]]></a>",
+      "missing S between attrs"    => %(<a x="1"y="2"/>), # §3.1
+      "missing S, end tag form"    => %(<a x="1"y="2"></a>),
     }.each do |label, src|
       it(label) { expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError) }
     end
@@ -95,6 +97,11 @@ RSpec.describe "Makiri::XML minimal parse" do
 
     it "accepts the maximum valid codepoint U+10FFFF" do
       expect(ok?("<a>&#x10FFFF;</a>")).to be true
+    end
+
+    it "requires a lowercase 'x' for a hex character reference (§4.1)" do
+      expect(ok?("<a>&#x58;</a>")).to be true                              # lowercase x ok
+      expect { Makiri::XML("<a>&#X58;</a>") }.to raise_error(Makiri::XML::SyntaxError) # uppercase X
     end
 
     it "rejects a numeric reference that would overflow (no integer wrap -> false accept)" do
@@ -155,7 +162,34 @@ RSpec.describe "Makiri::XML minimal parse" do
     it "accepts the XML declaration and prolog processing instructions" do
       expect(ok?("<?xml version='1.0'?><r/>")).to be true
       expect(ok?("<?xml version='1.0' encoding='UTF-8'?><r/>")).to be true
+      expect(ok?("<?xml version='1.0' encoding='UTF-8' standalone='yes'?><r/>")).to be true
       expect(ok?("<?xml version='1.0'?><?xml-stylesheet href='s.xsl'?><r/>")).to be true
+    end
+
+    it "validates the XML declaration pseudo-attribute grammar (§2.8)" do
+      # version is required and first; encoding then standalone, lowercase,
+      # in order, each at most once, S-separated, quoted, with valid values.
+      [
+        "<?xml VERSION='1.0'?><r/>",                       # keyword case
+        "<?xml version='1.0' STANDALONE='yes'?><r/>",      # keyword case
+        "<?xml version='1.0' standalone='YES'?><r/>",      # value case
+        "<?xml encoding='UTF-8'?><r/>",                    # version required
+        "<?xml encoding='UTF-8' version='1.0'?><r/>",      # version must be first
+        "<?xml version='1.0'encoding='UTF-8'?><r/>",       # missing S separator
+        "<?xml version='1.0' version='1.0'?><r/>",         # duplicate
+        "<?xml version='1.0' standalone='yes' encoding='UTF-8'?><r/>", # order
+        "<?xml version='1.0' valid='no'?><r/>",            # unknown pseudo-attr
+        %(<?xml version="1.0' ?><r/>),                     # mismatched quotes
+        "<?xml version='1.0^'?><r/>",                      # bad VersionNum char
+        "<?xml version='1.0' standalone=yes?><r/>",        # unquoted value
+      ].each { |src| expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError), src.inspect }
+    end
+
+    it "reserves the PI target 'xml' (any case) and forbids a colon in a target" do
+      expect { Makiri::XML("<?XML version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<?xmL version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<r><?a:b data?></r>") }.to raise_error(Makiri::XML::SyntaxError) # NS: NCName
+      expect(ok?("<r><?xml-stylesheet href='s'?></r>")).to be true # not the reserved 3-letter name
     end
 
     it "recognizes DOCTYPE but does not process the DTD (XXE structurally impossible)" do

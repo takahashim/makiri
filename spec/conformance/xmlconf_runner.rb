@@ -137,19 +137,47 @@ end
 # file's bytes to a UTF-8 String here, from the BOM or the declared encoding, and
 # hand Makiri valid UTF-8. Files we cannot transcode are skipped, not failed.
 
+# The encoding the BOM implies, or nil. Used both to decode and to detect a
+# BOM-vs-declaration conflict (which Makiri does not police — see EncodingScope).
+def bom_encoding(bytes)
+  return "UTF-8"    if bytes.start_with?("\xEF\xBB\xBF".b)
+  return "UTF-16LE" if bytes.start_with?("\xFF\xFE".b)
+  return "UTF-16BE" if bytes.start_with?("\xFE\xFF".b)
+  nil
+end
+
+# The encoding named in the XML declaration, or nil.
+def declared_encoding(bytes)
+  head = bytes.byteslice(0, 256).force_encoding("ASCII-8BIT")
+  head = head.sub(/\A(\xEF\xBB\xBF|\xFF\xFE|\xFE\xFF)/n, "") # drop a leading BOM
+  head = head.delete("\x00") # UTF-16 declarations interleave NULs; strip for the scan
+  head =~ /\A\s*<\?xml[^>]*?encoding\s*=\s*["']([\w.\-]+)["']/i ? Regexp.last_match(1) : nil
+end
+
+# Out of scope: a BOM whose encoding family contradicts the declared encoding is
+# a byte-level encoding-detection test (§4.3.3). Makiri delegates encoding to the
+# Ruby String, so it cannot diagnose this — skip rather than falsely fail.
+def encoding_conflict?(bytes)
+  bom = bom_encoding(bytes) or return false
+  dec = declared_encoding(bytes) or return false
+  bom_family = bom.start_with?("UTF-16") ? "UTF-16" : "UTF-8"
+  dec_family =
+    if /utf-?16/i.match?(dec) then "UTF-16"
+    elsif /utf-?8/i.match?(dec) then "UTF-8"
+    else "OTHER"
+    end
+  bom_family != dec_family
+end
+
 def decode_to_utf8(bytes)
   return bytes.byteslice(3..).force_encoding("UTF-8") if bytes.start_with?("\xEF\xBB\xBF".b)
-  if bytes.start_with?("\xFF\xFE".b) || bytes.start_with?("\xFE\xFF".b)
-    enc = bytes.start_with?("\xFF\xFE".b) ? "UTF-16LE" : "UTF-16BE"
-    return bytes.byteslice(2..).force_encoding(enc).encode("UTF-8")
+  if (bom = bom_encoding(bytes)) && bom.start_with?("UTF-16")
+    return bytes.byteslice(2..).force_encoding(bom).encode("UTF-8")
   end
   # No BOM: look at the XML declaration's encoding pseudo-attribute (ASCII-safe).
-  head = bytes.byteslice(0, 200).force_encoding("ASCII-8BIT")
-  if head =~ /\A<\?xml[^>]*?encoding\s*=\s*["']([\w.\-]+)["']/i
-    enc = Regexp.last_match(1)
-    unless /\A(utf-?8|us-ascii|ascii)\z/i.match?(enc)
-      return bytes.dup.force_encoding(enc).encode("UTF-8")
-    end
+  enc = declared_encoding(bytes)
+  if enc && !/\A(utf-?8|us-ascii|ascii)\z/i.match?(enc)
+    return bytes.dup.force_encoding(enc).encode("UTF-8")
   end
   bytes.dup.force_encoding("UTF-8")
 end
@@ -190,6 +218,9 @@ tests.each do |t|
   end
 
   raw = File.binread(t.path)
+  if encoding_conflict?(raw)
+    stats[:skip_encoding] += 1; next # BOM vs declaration (§4.3.3) — not Makiri's layer
+  end
   utf8 =
     begin
       s = decode_to_utf8(raw)

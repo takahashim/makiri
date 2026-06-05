@@ -59,6 +59,10 @@ typedef struct {
 #define XMLNS_NS_URI  "http://www.w3.org/2000/xmlns/"
 #define LIT_LEN(s)    ((uint32_t)(sizeof(s) - 1))
 
+/* small leaf predicates defined later but used by earlier handlers */
+static int is_space_byte(char c);
+static int lit_ahead(const mkr_xml_parser_t *P, const char *lit, size_t n);
+
 static void
 set_syntax(mkr_xml_parser_t *P)
 {
@@ -255,7 +259,13 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         size_t vraw = (size_t)(P->p - vs);
         if (vraw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; } /* fail closed */
         uint32_t vlen = (uint32_t)vraw;
-        advance(P);
+        advance(P);                                              /* closing quote */
+        /* §3.1: attributes are S-separated — after a value the next byte must be
+         * whitespace or the tag close ('>' / '/'), never another name. Rejects
+         * `<a x="1"y="2"/>`. */
+        if (P->p < P->end && *P->p != '>' && *P->p != '/' && !is_space_byte(*P->p)) {
+            set_syntax(P); return -1;
+        }
         if (P->nratt + 1 > MKR_XML_MAX_ATTRS) { P->status = MKR_XML_ERR_LIMIT; return -1; }
         if (mkr_grow_reserve((void **)&P->ratt, &P->ratt_cap, P->nratt + 1, sizeof(*P->ratt)) != MKR_OK) {
             P->status = MKR_XML_ERR_OOM; return -1;
@@ -426,18 +436,117 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
     return 0;
 }
 
-/* '<?' processing instruction (P->p at '?'), or the '<?xml ...?>' declaration when
- * the target is "xml" (any case). The declaration is valid only as the very first
- * item in the document (at_doc_start) and is not retained as a DOM node. */
+/* ---- XML declaration (§2.8 / §4.3.1) strict pseudo-attribute grammar ---- */
+
+/* match the literal keyword [kw, kw+n) at the cursor and consume it; 0/1. */
+static int
+eat_keyword(mkr_xml_parser_t *P, const char *kw, size_t n)
+{
+    if ((size_t)(P->end - P->p) < n || memcmp(P->p, kw, n) != 0) return 0;
+    advance_n(P, n);
+    return 1;
+}
+
+/* Eq ::= S? '=' S?  — 0 on success, -1 if '=' is missing. */
+static int
+decl_eq(mkr_xml_parser_t *P)
+{
+    skip_ws(P);
+    if (P->p >= P->end || *P->p != '=') { set_syntax(P); return -1; }
+    advance(P);
+    skip_ws(P);
+    return 0;
+}
+
+/* A quoted pseudo-attribute value, validated whole by +ok+. 0 on success. */
+static int
+decl_value(mkr_xml_parser_t *P, int (*ok)(const char *, uint32_t))
+{
+    if (P->p >= P->end || (*P->p != '"' && *P->p != '\'')) { set_syntax(P); return -1; }
+    char qch = *P->p; advance(P);
+    const char *vs = P->p;
+    while (P->p < P->end && *P->p != qch) advance(P);
+    if (P->p >= P->end) { set_syntax(P); return -1; }   /* unterminated / mismatched quote */
+    uint32_t vl = (uint32_t)(P->p - vs);
+    advance(P);                                         /* closing quote */
+    if (!ok(vs, vl)) { set_syntax(P); return -1; }
+    return 0;
+}
+
+static int is_version_num(const char *s, uint32_t n) {   /* '1.' [0-9]+ */
+    if (n < 3 || s[0] != '1' || s[1] != '.') return 0;
+    for (uint32_t i = 2; i < n; i++) if (s[i] < '0' || s[i] > '9') return 0;
+    return 1;
+}
+static int is_enc_name(const char *s, uint32_t n) {      /* [A-Za-z] ([A-Za-z0-9._] | '-')* */
+    if (n == 0) return 0;
+    char c0 = s[0];
+    if (!((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z'))) return 0;
+    for (uint32_t i = 1; i < n; i++) {
+        char c = s[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+              || c == '.' || c == '_' || c == '-')) return 0;
+    }
+    return 1;
+}
+static int is_yes_no(const char *s, uint32_t n) {
+    return (n == 3 && memcmp(s, "yes", 3) == 0) || (n == 2 && memcmp(s, "no", 2) == 0);
+}
+
+/* '<?xml' already consumed (cursor just past "xml"). Validate
+ *   S 'version' Eq VersionNum (S 'encoding' Eq EncName)? (S 'standalone' Eq ('yes'|'no'))? S? '?>'
+ * — pseudo-attributes are lowercase, in this order, each at most once, S-separated.
+ * The declaration is not retained as a node. 0 on success / -1 (P->status set). */
+static int
+parse_xml_decl_body(mkr_xml_parser_t *P)
+{
+    if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; } /* S */
+    skip_ws(P);
+    if (!eat_keyword(P, "version", 7)) { set_syntax(P); return -1; }
+    if (decl_eq(P) != 0) return -1;
+    if (decl_value(P, is_version_num) != 0) return -1;
+
+    int saw_enc = 0, saw_sd = 0;
+    for (;;) {
+        int had_s = 0;
+        while (P->p < P->end && is_space_byte(*P->p)) { advance(P); had_s = 1; }
+        if (lit_ahead(P, "?>", 2)) { advance_n(P, 2); return 0; }  /* end of declaration */
+        if (!had_s) { set_syntax(P); return -1; }                 /* attrs need an S separator */
+        if (!saw_enc && !saw_sd && eat_keyword(P, "encoding", 8)) {
+            saw_enc = 1;                                          /* encoding precedes standalone */
+            if (decl_eq(P) != 0 || decl_value(P, is_enc_name) != 0) return -1;
+        } else if (!saw_sd && eat_keyword(P, "standalone", 10)) {
+            saw_sd = 1;
+            if (decl_eq(P) != 0 || decl_value(P, is_yes_no) != 0) return -1;
+        } else {
+            set_syntax(P); return -1;   /* unknown / duplicate / out-of-order pseudo-attribute */
+        }
+    }
+}
+
+/* '<?' processing instruction (P->p at '?'). The '<?xml ...?>' declaration (exact
+ * lowercase target, document start only) is validated strictly by
+ * parse_xml_decl_body and not retained; a target matching "xml" in any OTHER case
+ * is a reserved PITarget (§2.6) and rejected. Other PIs inside an element are
+ * retained as nodes; in the prolog/epilog they are validated but not retained. */
 static int
 parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
 {
     advance_n(P, 1);                                  /* consume '?' */
     const char *tgt; uint32_t tl;
     if (scan_name(P, &tgt, &tl) != 0) return -1;      /* PITarget (a Name) */
-    int is_xml = (tl == 3 && (tgt[0] | 0x20) == 'x'
-                          && (tgt[1] | 0x20) == 'm'
-                          && (tgt[2] | 0x20) == 'l');
+    /* Namespaces in XML §3: a PITarget is an NCName, so a colon is not-wf under
+     * namespace processing (which Makiri always does, like Nokogiri::XML). */
+    if (memchr(tgt, ':', tl) != NULL) { set_syntax(P); return -1; }
+    int ci_xml  = (tl == 3 && (tgt[0] | 0x20) == 'x'
+                           && (tgt[1] | 0x20) == 'm'
+                           && (tgt[2] | 0x20) == 'l');
+    int is_decl = (tl == 3 && tgt[0] == 'x' && tgt[1] == 'm' && tgt[2] == 'l');
+    if (is_decl) {
+        if (!at_doc_start || parent != NULL) { set_syntax(P); return -1; }  /* decl: doc start only */
+        return parse_xml_decl_body(P);
+    }
+    if (ci_xml) { set_syntax(P); return -1; }         /* reserved target ("XML"/"xmL"/...) */
 
     int empty_data = lit_ahead(P, "?>", 2);
     if (!empty_data) {
@@ -456,11 +565,7 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
     uint32_t dlen = (uint32_t)draw;
     if (mkr_xml_validate_chars(dstart, dlen) != 0) { set_syntax(P); return -1; }
 
-    if (is_xml) {
-        /* the XML declaration is not a PI: only at the very document start, must
-         * carry pseudo-attributes (a bare "<?xml?>" has no version), not retained. */
-        if (!at_doc_start || parent != NULL || empty_data) { set_syntax(P); return -1; }
-    } else if (parent != NULL) {
+    if (parent != NULL) {
         mkr_xml_node_t *pi = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_PI);
         if (pi == NULL) { propagate_oom(P); return -1; }
         pi->local = own(P, tgt, tl);     pi->local_len = tl;
@@ -1075,11 +1180,39 @@ mkr_xml_parse_selftest(void)
     }
     mkr_xml_doc_destroy(d);
 
+    i++; /* 17: §2.8 XML declaration grammar + §2.6 reserved/colon PI targets */
+    {
+        /* a fully-specified valid declaration parses */
+        st = MKR_XML_OK;
+        d = PARSE_LIT("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>", &st);
+        if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
+        mkr_xml_doc_destroy(d);
+        static const char *bad[] = {
+            "<?xml VERSION=\"1.0\"?><r/>",                 /* keyword case */
+            "<?xml version=\"1.0\" standalone=\"YES\"?><r/>", /* value case */
+            "<?xml encoding=\"UTF-8\"?><r/>",              /* version required */
+            "<?xml version=\"1.0\"encoding=\"UTF-8\"?><r/>",  /* missing S separator */
+            "<?xml version=\"1.0\" version=\"1.0\"?><r/>", /* duplicate */
+            "<?xml version=\"1.0\" valid=\"no\"?><r/>",    /* unknown pseudo-attr */
+            "<?xml version=\"1.0' ?><r/>",                 /* mismatched quotes */
+            "<?xml version=\"1.0^\"?><r/>",                /* bad VersionNum char */
+            "<?XML version=\"1.0\"?><r/>",                 /* reserved target (wrong case) */
+            "<r><?a:b data?></r>",                         /* colon in PITarget (NS) */
+            "<a x=\"1\"y=\"2\"/>",                          /* §3.1: missing S between attrs */
+            "<a>&#X58;</a>",                               /* §4.1: hex marker must be lowercase x */
+        };
+        for (size_t k = 0; k < sizeof(bad) / sizeof(bad[0]); k++) {
+            st = MKR_XML_OK;
+            e = PARSE_LIT(bad[k], &st);
+            if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; }
+        }
+    }
+
     /* §4 byte-budget entry guard: an input longer than MKR_XML_MAX_BYTES fails
      * closed (MKR_XML_ERR_LIMIT) before any allocation. The guard tests `len`
      * only, so a tiny buffer with a huge claimed length exercises it without
      * allocating — and proves `src` is not dereferenced past the budget. */
-    i++; /* 17 */
+    i++; /* 18 */
     st = MKR_XML_OK;
     {
         static const char tiny[] = "<r/>";
@@ -1098,7 +1231,7 @@ mkr_xml_parse_selftest(void)
     /* §4 per-parse override (mkr_xml_parse_ex): a tiny max_bytes lowers the
      * effective budget so a document that parses under the default now fails
      * closed, and a NULL/zeroed limits reproduces the default. */
-    i++; /* 18 */
+    i++; /* 19 */
     {
         static const char doc_src[] = "<root><a/><b/><c/></root>";
         size_t dlen = sizeof(doc_src) - 1;
