@@ -153,6 +153,14 @@ namespace :conformance do
     end
   end
 
+  desc "W3C XML Conformance Test Suite: well-formedness through Makiri::XML"
+  task xmlconf: :compile do
+    # Nokogiri (bench-only) parses the manifests, so run outside the bundle.
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xmlconf_runner.rb #{ENV['XMLCONF_ARGS']}"
+    end
+  end
+
   desc "CSS Selectors differential conformance vs Nokogiri::HTML5"
   task css: :compile do
     Bundler.with_unbundled_env do
