@@ -300,6 +300,12 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     alias.) Like Lexbor's matcher, it tests the element's **immediate child text
     nodes** (not the deep string-value), so HTML and XML agree; on XML it lowers
     to XPath `child::text()[contains(., "text")]`.
+* Untyped `:*-of-type` (`:first-of-type`, `:nth-of-type(an+b)`, ... with no type
+  selector) is supported and correct on both HTML and XML - the "type" is the
+  element's own expanded name.
+  * Nokogiri (XML and HTML5) mistranslates these to first-/only-child
+    (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri matches
+    Lexbor's HTML matcher.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
 * Class/ID selectors are matched case-insensitively regardless of quirks mode (a Lexbor behaviour)

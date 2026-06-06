@@ -526,18 +526,43 @@ cb_pos(css_build_t *B, mkr_axis_t axis, const mkr_nodetest_t *named)
   return cb_binop(B, MKR_OP_ADD, cb_fncall(B, "count", a, 1), cb_num(B, 1.0));
 }
 
-/* The :nth-*(an+b) match condition over the position expression on +axis+
- * (preceding/following-sibling), optionally restricted to +named+ (of-type). */
+/* The internal of-type position fn (1-based, among same-type siblings). +forward+
+ * counts from the start (preceding-sibling direction), else from the end. Used
+ * for an *untyped* of-type, whose "type" is the element's own expanded name - a
+ * self comparison pure XPath 1.0 cannot make. See MKR_FN_OF_TYPE_POS. */
 static mkr_node_t *
-cb_nth(css_build_t *B, mkr_axis_t axis, const mkr_nodetest_t *named, long a, long b)
+cb_of_type_pos(css_build_t *B, int forward)
+{
+  mkr_node_t **a = cb_args(0);
+  if (a == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
+  return forward ? cb_fncall(B, MKR_FN_OF_TYPE_POS, a, 0)
+                 : cb_fncall(B, MKR_FN_OF_TYPE_POS_LAST, a, 0);
+}
+
+/* 1-based position expression for :nth-*: an untyped of-type uses the internal
+ * of-type-pos fn; otherwise count(axis::test)+1 (nth-child when named==NULL, a
+ * typed of-type when named). */
+static mkr_node_t *
+cb_pos_expr(css_build_t *B, mkr_axis_t axis, const mkr_nodetest_t *named, int oftype_untyped)
+{
+  if (oftype_untyped) return cb_of_type_pos(B, axis == MKR_AXIS_PRECEDING_SIBLING);
+  return cb_pos(B, axis, named);
+}
+
+/* The :nth-*(an+b) match condition over the position expression on +axis+
+ * (preceding/following-sibling), optionally restricted to +named+ (typed
+ * of-type) or +oftype_untyped+ (of-type with no explicit type selector). */
+static mkr_node_t *
+cb_nth(css_build_t *B, mkr_axis_t axis, const mkr_nodetest_t *named,
+       int oftype_untyped, long a, long b)
 {
   if (a == 0) {                                   /* position = b */
-    return cb_binop(B, MKR_OP_EQ, cb_pos(B, axis, named), cb_num(B, (double)b));
+    return cb_binop(B, MKR_OP_EQ, cb_pos_expr(B, axis, named, oftype_untyped), cb_num(B, (double)b));
   }
   /* (pos-b) mod a == 0  AND  (pos-b) div a >= 0   (forward, valid index) */
-  mkr_node_t *d1 = cb_binop(B, MKR_OP_SUB, cb_pos(B, axis, named), cb_num(B, (double)b));
+  mkr_node_t *d1 = cb_binop(B, MKR_OP_SUB, cb_pos_expr(B, axis, named, oftype_untyped), cb_num(B, (double)b));
   mkr_node_t *modz = cb_binop(B, MKR_OP_EQ, cb_binop(B, MKR_OP_MOD, d1, cb_num(B, (double)a)), cb_num(B, 0.0));
-  mkr_node_t *d2 = cb_binop(B, MKR_OP_SUB, cb_pos(B, axis, named), cb_num(B, (double)b));
+  mkr_node_t *d2 = cb_binop(B, MKR_OP_SUB, cb_pos_expr(B, axis, named, oftype_untyped), cb_num(B, (double)b));
   mkr_node_t *qge = cb_binop(B, MKR_OP_GE, cb_binop(B, MKR_OP_DIV, d2, cb_num(B, (double)a)), cb_num(B, 0.0));
   return cb_binop(B, MKR_OP_AND, modz, qge);
 }
@@ -563,19 +588,28 @@ lower_pseudo_simple(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_
 
     case LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE:
     case LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE:
-    case LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE:
+    case LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE: {
+      /* Typed (a:first-of-type) -> not(preceding-sibling::a); untyped
+       * (:first-of-type) -> of-type-pos()=1 (the type is the element's own
+       * expanded name, compared at eval time - see cb_of_type_pos). */
+      unsigned pt = s->u.pseudo.type;
       if (step->test.kind != MKR_NT_NAME) {
-        mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX,
-                    "CSS of-type pseudo-classes require an explicit type selector");
-        return NULL;
+        if (pt == LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE)
+          return cb_binop(B, MKR_OP_EQ, cb_of_type_pos(B, 1), cb_num(B, 1.0));
+        if (pt == LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE)
+          return cb_binop(B, MKR_OP_EQ, cb_of_type_pos(B, 0), cb_num(B, 1.0));
+        return cb_binop(B, MKR_OP_AND,
+                        cb_binop(B, MKR_OP_EQ, cb_of_type_pos(B, 1), cb_num(B, 1.0)),
+                        cb_binop(B, MKR_OP_EQ, cb_of_type_pos(B, 0), cb_num(B, 1.0)));
       }
-      if (s->u.pseudo.type == LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE)
+      if (pt == LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE)
         return cb_not_named_axis(B, MKR_AXIS_PRECEDING_SIBLING, &step->test);
-      if (s->u.pseudo.type == LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE)
+      if (pt == LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE)
         return cb_not_named_axis(B, MKR_AXIS_FOLLOWING_SIBLING, &step->test);
       return cb_binop(B, MKR_OP_AND,
                       cb_not_named_axis(B, MKR_AXIS_PRECEDING_SIBLING, &step->test),
                       cb_not_named_axis(B, MKR_AXIS_FOLLOWING_SIBLING, &step->test));
+    }
 
     default:
       mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX, "unsupported CSS pseudo-class");
@@ -654,15 +688,15 @@ lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t 
                   || type == LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_LAST_OF_TYPE);
       mkr_axis_t axis = last ? MKR_AXIS_FOLLOWING_SIBLING : MKR_AXIS_PRECEDING_SIBLING;
       const mkr_nodetest_t *named = NULL;
+      int oftype_untyped = 0;
       if (of_type) {
-        if (step->test.kind != MKR_NT_NAME) {
-          mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX,
-                      "CSS :nth-of-type requires an explicit type selector");
-          return NULL;
-        }
-        named = &step->test;
+        /* Typed (a:nth-of-type) counts same-name siblings via a literal name;
+         * untyped (:nth-of-type) compares the element's own expanded name at
+         * eval time through the internal of-type-pos fn. */
+        if (step->test.kind == MKR_NT_NAME) named = &step->test;
+        else oftype_untyped = 1;
       }
-      return cb_nth(B, axis, named, anb->anb.a, anb->anb.b);
+      return cb_nth(B, axis, named, oftype_untyped, anb->anb.a, anb->anb.b);
     }
 
     case LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NOT: {

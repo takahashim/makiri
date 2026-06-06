@@ -23,8 +23,10 @@
 # engines (seeded by `--seed`). This is an exploration tool, NOT part of the gate
 # (`rake conformance:css_xml` runs only the curated corpus, which is 0-diverge):
 # the random pass surfaces real Nokogiri::XML bugs where Makiri is correct, e.g.
-# `:not(type.class)` (Nokogiri drops everything but the type) and `[a|=v].class`
-# (Nokogiri's unparenthesised operator precedence over-matches). Makiri's correct
+# `:not(type.class)` (Nokogiri drops everything but the type), `[a|=v].class`
+# (Nokogiri's unparenthesised operator precedence over-matches), and untyped
+# of-type like `:first-of-type` / `*:first-of-type` (Nokogiri mistranslates it to
+# first-/only-child: //*[position()=1] / //*[last()=1]). Makiri's correct
 # behaviour for those is pinned in spec/xml_css_spec.rb.
 #
 # Nokogiri is a bench-only dependency, so run OUTSIDE the bundle (the rake task

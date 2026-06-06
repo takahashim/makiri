@@ -351,6 +351,63 @@ static const fn_entry_t fn_table_nokogiri_builtin[] = {
   { NULL,            NULL                      },
 };
 
+#ifdef MKR_HOST_XML
+/* ---------- internal: untyped :*-of-type position (XML, CSS-only) ---------- *
+ * Two elements are the same "type" iff they share an expanded name (local name
+ * + namespace URI). These back the CSS-lowered untyped of-type pseudo-classes;
+ * see MKR_FN_OF_TYPE_POS in mkr_xpath_internal.h for why they cannot be a pure
+ * XPath expression. self_node is the context element being filtered. */
+static int
+mkr_xml_same_type(MKR_DOM_NODE *a, MKR_DOM_NODE *b)
+{
+  size_t al = 0, bl = 0;
+  const lxb_char_t *an = MKR_ELEM_LOCAL_NAME(a, &al);
+  const lxb_char_t *bn = MKR_ELEM_LOCAL_NAME(b, &bl);
+  if (al != bl || (al != 0 && memcmp(an, bn, al) != 0)) return 0;
+  size_t au = 0, bu = 0;
+  const char *ap = MKR_NODE_NS_URI(a, NULL, &au);
+  const char *bp = MKR_NODE_NS_URI(b, NULL, &bu);
+  if (au != bu) return 0;
+  return au == 0 || memcmp(ap, bp, au) == 0;
+}
+
+/* 1-based position of +self+ among its same-type element siblings; forward walks
+ * preceding siblings (position from the start), else following (from the end). */
+static double
+mkr_xml_of_type_pos(MKR_DOM_NODE *self, int forward)
+{
+  if (self == NULL || MKR_NODE_TYPE(self) != MKR_NTYPE_ELEMENT) return 0.0;
+  long pos = 1;
+  for (MKR_DOM_NODE *s = forward ? MKR_NODE_PREV(self) : MKR_NODE_NEXT(self);
+       s != NULL; s = forward ? MKR_NODE_PREV(s) : MKR_NODE_NEXT(s)) {
+    if (MKR_NODE_TYPE(s) == MKR_NTYPE_ELEMENT && mkr_xml_same_type(self, s)) pos++;
+  }
+  return (double)pos;
+}
+
+static int
+fn_xml_of_type_pos(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
+                   size_t self_pos, size_t self_size,
+                   mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
+{
+  (void)ctx; (void)self_pos; (void)self_size; (void)args; (void)nargs; (void)err;
+  out->type = MKR_XPATH_TYPE_NUMBER;
+  out->u.number = mkr_xml_of_type_pos(self_node, 1);
+  return 0;
+}
+
+static int
+fn_xml_of_type_pos_last(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
+                        size_t self_pos, size_t self_size,
+                        mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
+{
+  (void)ctx; (void)self_pos; (void)self_size; (void)args; (void)nargs; (void)err;
+  out->type = MKR_XPATH_TYPE_NUMBER;
+  out->u.number = mkr_xml_of_type_pos(self_node, 0);
+  return 0;
+}
+#endif /* MKR_HOST_XML */
+
 static int
 fn_boolean(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
            size_t self_pos, size_t self_size,
@@ -1065,6 +1122,12 @@ static const fn_entry_t fn_table[] = {
   { "floor",            fn_floor            },
   { "ceiling",          fn_ceiling          },
   { "round",            fn_round            },
+#ifdef MKR_HOST_XML
+  /* CSS-only internal hooks for untyped :*-of-type; the \x01-prefixed names are
+   * unreachable from a user XPath expression (the lexer cannot produce them). */
+  { MKR_FN_OF_TYPE_POS,      fn_xml_of_type_pos      },
+  { MKR_FN_OF_TYPE_POS_LAST, fn_xml_of_type_pos_last },
+#endif
   { NULL,               NULL                },
 };
 

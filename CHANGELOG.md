@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     XML agree; on XML it lowers to `child::text()[contains(., "text")]`. (It is
     Lexbor's spelling of jQuery's `:contains()`; the bare `:contains` name is
     still unsupported.)
+  * The `:*-of-type` family now also works **without an explicit type selector**
+    (`:first-of-type`, `:nth-of-type(an+b)`, `*:only-of-type`, ...), where the
+    "type" is each element's own expanded name. That self-comparison cannot be
+    expressed in XPath 1.0 (no `current()`), so the engine resolves it natively
+    (an internal, XPath-unreachable position function); the result matches
+    Lexbor's HTML matcher. (Nokogiri - both XML and HTML5 - mistranslates untyped
+    of-type to first-/only-child, `//*[position()=1]` / `//*[last()=1]`; Makiri is
+    correct here, pinned in `spec/xml_css_spec.rb`.)
 
 ### Changed
 

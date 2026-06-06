@@ -32,6 +32,20 @@
 #define MKR_NS_NOKOGIRI_BUILTIN_URI "https://www.nokogiri.org/default_ns/ruby/builtins"
 
 /*
+ * Engine-internal function names emitted ONLY by the CSS lowering (mkr_css.c)
+ * for an *untyped* :*-of-type pseudo-class, where the "type" is the element's
+ * own expanded name - a self-referential comparison that pure XPath 1.0 cannot
+ * express (no current()). Each returns the element's 1-based position among its
+ * same-type siblings (forward / from the end); the lowering builds the
+ * first/last/only/nth conditions from them with ordinary binops. The leading
+ * \x01 cannot be produced by the XPath lexer, so these are unreachable from a
+ * user expression - they exist purely as an internal evaluator hook. XML host
+ * only (HTML CSS uses Lexbor's native matcher, never this lowering).
+ */
+#define MKR_FN_OF_TYPE_POS       "\x01" "of-type-pos"
+#define MKR_FN_OF_TYPE_POS_LAST  "\x01" "of-type-pos-last"
+
+/*
  * Evaluation limits and live counters. mkr_xpath_limits_t lives in mkr_xpath.h
  * (the glue reads/writes its fields); the init + the per-op check helpers below
  * are engine-internal. Every overrun returns MKR_XPATH_ERR_LIMIT - NEVER silent

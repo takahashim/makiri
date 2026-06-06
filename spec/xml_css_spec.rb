@@ -202,7 +202,60 @@ RSpec.describe "Makiri::XML CSS selectors" do
 
     it "raises CSS::SyntaxError on an unsupported construct" do
       expect { doc.css("a::before") }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { doc.css("*:first-of-type") }.to raise_error(Makiri::CSS::SyntaxError) # untyped of-type
+    end
+  end
+
+  describe "untyped of-type pseudo-classes (no explicit type selector)" do
+    # The "type" is each element's own expanded name (local name + namespace
+    # URI). Pure XPath 1.0 cannot express that self-comparison (no current()), so
+    # the engine resolves it natively; the result matches Lexbor's HTML matcher.
+    # Nokogiri (XML and HTML5) mistranslates these to first-/only-child
+    # (//*[position()=1] / //*[last()=1]) - Makiri is correct where Nokogiri is
+    # not, so this is pinned here rather than in the Nokogiri differential.
+    let(:doc) do
+      Makiri::XML("<r><a>1</a><b>2</b><a>3</a><b>4</b><c>5</c></r>")
+    end
+
+    it ":first-of-type matches the first sibling of each element type" do
+      expect(doc.css(":first-of-type").map(&:name)).to eq(%w[r a b c])
+      expect(doc.css("r > :first-of-type").map(&:text)).to eq(%w[1 2 5]) # a(1), b(2), c(5)
+    end
+
+    it ":last-of-type matches the last sibling of each element type" do
+      expect(doc.css("r > :last-of-type").map(&:text)).to eq(%w[3 4 5]) # a(3), b(4), c(5)
+    end
+
+    it ":only-of-type matches an element that is the sole one of its type" do
+      expect(doc.css("r > :only-of-type").map(&:text)).to eq(%w[5]) # only <c>
+    end
+
+    it ":nth-of-type / :nth-last-of-type count within the element type" do
+      expect(doc.css("r > :nth-of-type(2)").map(&:text)).to eq(%w[3 4])      # 2nd a, 2nd b
+      expect(doc.css("r > :nth-last-of-type(1)").map(&:text)).to eq(%w[3 4 5])
+      expect(doc.css("r > :nth-of-type(odd)").map(&:text)).to eq(%w[1 2 5])  # a(1),b(2),c(5)
+    end
+
+    it "*:first-of-type (explicit universal type) behaves like the untyped form" do
+      expect(doc.css("*:first-of-type").map(&:name)).to eq(%w[r a b c])
+    end
+
+    it "treats the same local name in different namespaces as different types" do
+      nsdoc = Makiri::XML(%(<r xmlns:x="urn:x"><a/><x:a/><a/></r>))
+      # no-namespace <a> and <x:a> are distinct types: the first no-ns a and the
+      # lone x:a are each first-of-type (plus the root).
+      expect(nsdoc.css(":first-of-type").map(&:name)).to eq(%w[r a x:a])
+      expect(nsdoc.css(":last-of-type").map(&:name)).to eq(%w[r x:a a])
+    end
+
+    it "agrees with Lexbor's HTML matcher on the same content" do
+      # Explicit close tags so HTML parses the siblings flat (an empty <a/> is not
+      # self-closing in HTML); the XML side here matches the same selector.
+      markup = "<r><a>1</a><b>2</b><a>3</a><c>4</c></r>"
+      r = Makiri::HTML("<html><body>#{markup}</body></html>").at_css("r")
+      x = Makiri::XML(markup).at_css("r")
+      %w[:first-of-type :last-of-type :only-of-type :nth-of-type(2)].each do |sel|
+        expect(r.css(sel).map(&:name)).to eq(x.css(sel).map(&:name)), "selector #{sel}"
+      end
     end
   end
 
