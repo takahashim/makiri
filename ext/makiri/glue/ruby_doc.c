@@ -43,18 +43,36 @@ mkr_doc_memsize(const void *ptr)
     return total;
 }
 
+/* Like nodes, HTML and XML Documents share the mkr_doc_data_t layout and GC
+ * functions but are wrapped under DISTINCT TypedData types (both deriving from
+ * the shared base mkr_doc_type), so mkr_html_doc_unwrap — which reinterprets the
+ * parsed document as a Lexbor lxb_html_document_t — RAISES TypeError on an XML
+ * Document via Ruby's type machinery, instead of relying on the (NDEBUG-erased)
+ * assert in mkr_parsed_html_doc. mkr_doc_type (base) is kept for the kind-agnostic
+ * accessors (mkr_doc_parsed, #errors) that legitimately accept either. */
 const rb_data_type_t mkr_doc_type = {
     "Makiri::Document",
     { mkr_doc_mark, mkr_doc_free, mkr_doc_memsize, },
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY,
 };
+static const rb_data_type_t mkr_html_doc_type = {
+    "Makiri::HTML::Document",
+    { mkr_doc_mark, mkr_doc_free, mkr_doc_memsize, },
+    &mkr_doc_type, 0, RUBY_TYPED_FREE_IMMEDIATELY,
+};
+static const rb_data_type_t mkr_xml_doc_type = {
+    "Makiri::XML::Document",
+    { mkr_doc_mark, mkr_doc_free, mkr_doc_memsize, },
+    &mkr_doc_type, 0, RUBY_TYPED_FREE_IMMEDIATELY,
+};
 
 lxb_dom_document_t *
-mkr_doc_unwrap(VALUE rb_doc)
+mkr_html_doc_unwrap(VALUE rb_doc)
 {
     mkr_doc_data_t *d;
-    TypedData_Get_Struct(rb_doc, mkr_doc_data_t, &mkr_doc_type, d);
-    /* HTML-only: the XML engine/Node-API path never routes through here. */
+    /* mkr_html_doc_type rejects an XML Document at the type boundary (its type
+     * chain does not include mkr_html_doc_type). */
+    TypedData_Get_Struct(rb_doc, mkr_doc_data_t, &mkr_html_doc_type, d);
     return (lxb_dom_document_t *)mkr_parsed_html_doc(d->parsed);
 }
 
@@ -74,10 +92,11 @@ mkr_doc_parsed(VALUE rb_doc)
 VALUE
 mkr_wrap_document(mkr_parsed_t *parsed)
 {
-    VALUE klass = (mkr_parsed_kind(parsed) == MKR_DOC_XML)
-                    ? mkr_cXmlDocument : mkr_cHtmlDocument;
+    int is_xml = (mkr_parsed_kind(parsed) == MKR_DOC_XML);
+    VALUE klass = is_xml ? mkr_cXmlDocument : mkr_cHtmlDocument;
     mkr_doc_data_t *d;
-    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_doc_type, d);
+    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t,
+                                      is_xml ? &mkr_xml_doc_type : &mkr_html_doc_type, d);
     d->parsed = parsed;
     d->errors = rb_ary_new();
     return obj;
@@ -107,7 +126,7 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
     }
 
     if (rb_obj_is_kind_of(context, mkr_cNode)) {
-        lxb_dom_node_t *cn = mkr_node_unwrap(context);
+        lxb_dom_node_t *cn = mkr_html_node_unwrap(context);   /* reject an XML node before lxb use */
         if (cn->type != LXB_DOM_NODE_TYPE_ELEMENT) {
             rb_raise(rb_eArgError, "fragment context node must be an element");
         }
@@ -306,7 +325,7 @@ mkr_node_clone_node(int argc, VALUE *argv, VALUE self)
     rb_scan_args(argc, argv, "01", &deep_v);
     bool deep = RTEST(deep_v);
 
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     lxb_dom_document_t *doc = node->owner_document;
 
     lxb_dom_node_t *clone = lxb_dom_document_import_node(doc, node, deep);
@@ -316,7 +335,7 @@ mkr_node_clone_node(int argc, VALUE *argv, VALUE self)
     if (deep) {
         mkr_fixup_template_content(doc, node, clone);
     }
-    return mkr_wrap_node(clone, mkr_node_document(self));
+    return mkr_wrap_html_node(clone, mkr_node_document(self));
 }
 
 /* Document#import_node(node, deep = false): a shallow (or deep, with deep
@@ -334,8 +353,8 @@ mkr_doc_import_node(int argc, VALUE *argv, VALUE self)
     rb_scan_args(argc, argv, "11", &node_v, &deep_v);
     bool deep = RTEST(deep_v);
 
-    lxb_dom_node_t   *src = mkr_node_unwrap(node_v);
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_node_t   *src = mkr_html_node_unwrap(node_v);   /* reject an XML node before lxb use */
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
 
     lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, src, deep);
     if (imp == NULL) {
@@ -344,7 +363,7 @@ mkr_doc_import_node(int argc, VALUE *argv, VALUE self)
     if (deep) {
         mkr_fixup_template_content(doc, src, imp);
     }
-    return mkr_wrap_node(imp, self);
+    return mkr_wrap_html_node(imp, self);
 }
 
 /* Parse +rb_html+ as a fragment in the given (tag id, namespace) context and
@@ -359,7 +378,7 @@ mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
                        lxb_tag_id_t ctx_tag, lxb_ns_id_t ctx_ns)
 {
     VALUE html = rb_String(rb_html);
-    lxb_dom_document_t *doc = mkr_doc_unwrap(document);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(document);
 
     lxb_dom_document_fragment_t *frag = lxb_dom_document_fragment_interface_create(doc);
     if (frag == NULL) {
@@ -393,7 +412,7 @@ mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
 
     lxb_html_parser_destroy(parser);
     RB_GC_GUARD(html);
-    return mkr_wrap_node(frag_node, document);
+    return mkr_wrap_html_node(frag_node, document);
 }
 
 /* document.fragment(html, context: ...) -> DocumentFragment bound to this
@@ -407,7 +426,7 @@ mkr_doc_fragment(int argc, VALUE *argv, VALUE self)
                                 : rb_hash_aref(opts, ID2SYM(rb_intern("context")));
     lxb_tag_id_t tag;
     lxb_ns_id_t  ns;
-    mkr_resolve_fragment_context(mkr_doc_unwrap(self), context, &tag, &ns);
+    mkr_resolve_fragment_context(mkr_html_doc_unwrap(self), context, &tag, &ns);
     return mkr_build_fragment_ctx(self, html, tag, ns);
 }
 
@@ -430,7 +449,7 @@ mkr_frag_s_parse(int argc, VALUE *argv, VALUE klass)
     VALUE document = mkr_wrap_document(parsed); /* GC now owns parsed */
     lxb_tag_id_t tag;
     lxb_ns_id_t  ns;
-    mkr_resolve_fragment_context(mkr_doc_unwrap(document), context, &tag, &ns);
+    mkr_resolve_fragment_context(mkr_html_doc_unwrap(document), context, &tag, &ns);
     return mkr_build_fragment_ctx(document, html, tag, ns);
 }
 
@@ -440,7 +459,7 @@ mkr_frag_s_parse(int argc, VALUE *argv, VALUE klass)
 static VALUE
 mkr_node_parse(VALUE self, VALUE rb_html)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         rb_raise(rb_eArgError, "Node#parse requires an element context");
     }
@@ -491,9 +510,10 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
     rb_source = mkr_ruby_to_utf8(rb_source);
 
     /* Allocate the wrapper first (with parsed == NULL) so that if parsing
-     * fails the GC-managed object frees cleanly. */
+     * fails the GC-managed object frees cleanly. This is the HTML parse entry
+     * (defined on Makiri::HTML::Document), so the result is always HTML. */
     mkr_doc_data_t *d;
-    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_doc_type, d);
+    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_html_doc_type, d);
     d->parsed = NULL;
     d->errors = rb_ary_new();
 
@@ -533,8 +553,8 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
 static VALUE
 mkr_doc_root(VALUE self)
 {
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
-    return mkr_wrap_node(lxb_dom_document_root(doc), self);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
+    return mkr_wrap_html_node(lxb_dom_document_root(doc), self);
 }
 
 /* Get the document <title>, or "" if absent. */
@@ -543,7 +563,7 @@ mkr_doc_title(VALUE self)
 {
     size_t len = 0;
     const lxb_char_t *str =
-        lxb_html_document_title((lxb_html_document_t *)mkr_doc_unwrap(self), &len);
+        lxb_html_document_title((lxb_html_document_t *)mkr_html_doc_unwrap(self), &len);
     return (str == NULL) ? rb_utf8_str_new("", 0)
                          : rb_utf8_str_new((const char *)str, len);
 }
@@ -554,10 +574,10 @@ mkr_doc_title(VALUE self)
 static VALUE
 mkr_doc_internal_subset(VALUE self)
 {
-    lxb_dom_node_t *doc = (lxb_dom_node_t *)mkr_doc_unwrap(self);
+    lxb_dom_node_t *doc = (lxb_dom_node_t *)mkr_html_doc_unwrap(self);
     for (lxb_dom_node_t *c = doc->first_child; c != NULL; c = c->next) {
         if (c->type == LXB_DOM_NODE_TYPE_DOCUMENT_TYPE) {
-            return mkr_wrap_node(c, self);
+            return mkr_wrap_html_node(c, self);
         }
     }
     return Qnil;
@@ -569,7 +589,7 @@ mkr_doc_internal_subset(VALUE self)
 static VALUE
 mkr_doc_quirks_mode(VALUE self)
 {
-    return INT2NUM((int)mkr_doc_unwrap(self)->compat_mode);
+    return INT2NUM((int)mkr_html_doc_unwrap(self)->compat_mode);
 }
 
 /* Parse warnings. Reserved; currently always empty. */

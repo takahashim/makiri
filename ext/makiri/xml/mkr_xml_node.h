@@ -2,8 +2,9 @@
  *
  * XML does NOT use lxb_dom (§2.5): a custom node held in a per-document arena,
  * case-preserved, with zero dependency on Lexbor or its internal APIs. The arena
- * is append-only and freed whole with the document (read-only Phase 1: nodes are
- * never individually freed, so Ruby wrappers that alias a node stay valid).
+ * is append-only and freed whole with the document; nodes are never individually
+ * freed, so Ruby wrappers that alias a node stay valid — including across a
+ * mutation, which only detaches (mkr_xml_mutate.c is detach-never-destroy).
  * Ruby-free. Memory-safety structure documented in docs/xml_parser_plan.ja.md
  * §8.1/§8.2 and proven by mkr_xml_node_selftest().
  */
@@ -101,6 +102,13 @@ size_t         mkr_xml_doc_memsize(const mkr_xml_doc_t *doc);
 mkr_xml_node_t *mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type);
 const char     *mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len);
 char           *mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len);
+
+/* If attribute +a+ is an xmlns declaration, set the declared namespace prefix
+ * (NULL/plen 0 for the default xmlns) and its URI as arena slices, and return 1;
+ * else 0. The one shared detector for the namespace introspection, the C14N
+ * walk, and the mutation namespace resolver (all read these node fields). */
+int mkr_xml_node_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *plen,
+                            const char **uri, uint32_t *ulen);
 
 /* Self-test of the arena's secure-by-design properties (overflow, budgets,
  * alignment, zero-init, copy-on-store, whole-free). Returns 0 on success or the

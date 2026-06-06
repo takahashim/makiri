@@ -21,9 +21,10 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
 * Native XPath 1.0 engine
   * XPath is parsed and evaluated by Makiri's own engine, written from scratch.
   * Makiri does not depend on libxml2 for parsing, DOM representation, or XPath evaluation.
-* Native, read-only XML 1.0 reader (`Makiri::XML`)
+* Native XML 1.0 reader + in-place editor (`Makiri::XML`)
   * A strict, non-validating, security-first parser with its own node arena (not
-    Lexbor's HTML DOM), queried through the same native XPath engine.
+    Lexbor's HTML DOM), queried through the same native XPath engine, with
+    in-place tree edits (attributes, content, rename, remove).
   * Conformance is held by the W3C XML Conformance Test Suite, an XPath
     differential, and property-based testing vs Nokogiri (see below).
 * Bounded, fail-closed execution
@@ -85,10 +86,11 @@ well-formedness-checking parser (no libxml2) and queries it through the same
 native XPath 1.0 engine. `source` is a String or any object responding to
 `#read` (an `IO` / `File` / `StringIO`); read a non-UTF-8 file in binary mode
 (`File.binread`) so its encoding is autodetected. Element-name case and namespaces are preserved. It is
-**read-only** and **fail-closed**: malformed input, a duplicate attribute, or a
+**fail-closed**: malformed input, a duplicate attribute, or a
 non-`1.0` version declaration raises `Makiri::XML::SyntaxError`, and operations
 XML does not support raise `NotImplementedError` rather than returning a wrong
-result. A `<!DOCTYPE …>` is recognized but its **DTD is not processed** (no
+result. The tree supports in-place edits and building new subtrees (see below).
+A `<!DOCTYPE …>` is recognized but its **DTD is not processed** (no
 entity/element declarations are loaded, no external subset is fetched) — so a
 DTD-defined entity reference stays an undefined-entity error and **XXE /
 billion-laughs are structurally impossible**. The doctype's name and identifiers
@@ -119,7 +121,7 @@ el.namespace_uri                               # => "http://www.w3.org/2005/Atom
 
 doc.css("entry")     # raises NotImplementedError (use #xpath)
 
-# Serialize back to XML (read-only output; tree mutation is a later phase)
+# Serialize back to XML
 doc.to_xml                                 # => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed ...>...</feed>\n"
 doc.at_xpath("//a:entry", ns).to_xml       # => "<entry><title>Hello</title></entry>" (no declaration)
 doc.to_xml(pretty: true)                   # indented, element-only content
@@ -142,7 +144,51 @@ a `Document#to_xml` adds the declaration and the DOCTYPE. `#canonicalize` emits
 Inclusive Canonical XML 1.0 (for XML signatures; `comments: true` to keep
 comments), byte-identical to libxml2. CSS is intentionally unavailable for XML
 (Lexbor's selector engine lower-cases names, which breaks XML case/namespace
-matching) - use XPath. Tree mutation is a later phase.
+matching) - use XPath.
+
+The tree supports in-place mutation — every edit validates its input (names as
+XML 1.0 QNames, values as XML Char) so the tree stays serializable to
+well-formed XML, and a removed node is detached, never freed, so a live wrapper
+that aliases it stays usable:
+
+```ruby
+doc = Makiri::XML(%(<feed xmlns:dc="urn:dc"><entry id="1">Hi</entry><draft/></feed>))
+e   = doc.at_xpath("//entry")
+
+e["id"]   = "9"            # add or replace an attribute (value escaped on output)
+e["dc:k"] = "v"           # a prefixed name resolves against the in-scope xmlns
+e.content = "Bye"         # replace an element's children with text
+e.name    = "post"        # rename in place (identity + namespace re-resolved)
+e.delete("id")            # remove an attribute
+doc.at_xpath("//draft").remove
+
+doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><post dc:k=\"v\">Bye</post></feed>"
+```
+
+New subtrees can be built too — `Document#create_element` (and
+`#create_text_node` / `#create_comment` / `#create_cdata` /
+`#create_processing_instruction`) make detached nodes, and `#add_child` / `<<`,
+`#add_previous_sibling` / `#before`, `#add_next_sibling` / `#after`, `#replace`
+link them. A node's namespace is resolved against its position **at insertion**
+(a prefixed name binds to the in-scope `xmlns`, an unprefixed element to the
+default namespace), so the same tree results whether you set names before or
+after attaching; an unbound prefix in the live tree fails closed. A node from
+another document is **deep-copied** into the target (the source is untouched):
+
+```ruby
+doc   = Makiri::XML(%(<feed xmlns="urn:a" xmlns:dc="urn:dc"/>))
+entry = doc.create_element("entry")
+entry["dc:id"] = "42"                       # prefixed attr resolves on insertion
+entry.add_child(doc.create_element("title", "Hello"))
+doc.root.add_child(entry)
+
+doc.to_xml   # => "...<entry dc:id=\"42\"><title>Hello</title></entry>..."
+```
+
+Supported edits: `#[]=`, `#delete` / `#remove_attribute`, `#content=`, `#name=`,
+`#remove` / `#unlink`, the factories above, and `#add_child` / `<<` /
+`#before` / `#after` / `#replace`. Insertion takes a single `Makiri::XML` node;
+parsing a string/fragment and `DocumentFragment` are a later phase.
 
 The character encoding is autodetected (XML 1.0 Appendix F): a byte-order mark or
 the `<?xml encoding="…"?>` declaration selects it, so raw bytes (`File.binread`)
@@ -166,8 +212,11 @@ Nokogiri's over generated documents (`rake conformance:xml_pbt`).
 
 ## Non-goals (v1.0)
 
-* XML writing (the XML reader above does not mutate): no XML tree mutation and no
-  `Makiri::XML::Document` construction. (`#to_xml` serialization IS supported.)
+* Constructing a `Makiri::XML::Document` from scratch, and parsing an XML
+  string/fragment into nodes (`#add_child("<x/>")`, `DocumentFragment`). (In-place
+  edits, the node factories — `Document#create_element` etc. — node insertion
+  (`#add_child` / `#before` / `#after` / `#replace`), and `#to_xml` serialization
+  ARE supported.)
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.
 * Streaming / SAX parsing.
 * Drop-in replacement for every Nokogiri method. Makiri covers the common
@@ -200,13 +249,15 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
 
 ### XML
 
-* `Makiri::XML` is **XML 1.0 only and non-validating**, and read-only.
+* `Makiri::XML` is **XML 1.0 only and non-validating**.
   * A `version="1.1"` declaration is rejected; Nokogiri parses XML 1.1.
   * The DTD is recognized but not processed: DTD-defined entities are not
     expanded and DTD default attributes are not applied (Nokogiri/libxml2 can do
     both). External entities/subsets are never fetched (no I/O).
-  * No tree mutation yet. (`#to_xml` serialization is supported; HTML
-    serialization — `to_html` / `inner_html` / `outer_html` — is not.)
+  * Mutation supports in-place edits, the node factories, and node insertion, but
+    not yet parsing a string/fragment into nodes or constructing a document from
+    scratch. (`#to_xml` serialization is supported; HTML serialization — `to_html`
+    / `inner_html` / `outer_html` — is not.)
 * Otherwise the parsed tree is byte-identical to `Nokogiri::XML`'s (verified by
   the property-based differential), including namespaces, prolog/epilog comments
   and PIs, and adjacent-CDATA coalescing.

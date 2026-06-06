@@ -139,15 +139,11 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
 static mkr_xml_node_t *
 mkr_xml_query_context(VALUE self, VALUE *out_document)
 {
-    if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
-        *out_document = self;
-        mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(self));
-        return xdoc ? xdoc->doc_node : NULL;
-    }
-    mkr_node_data_t *nd;
-    TypedData_Get_Struct(self, mkr_node_data_t, &mkr_node_type, nd);
-    *out_document = nd->document;
-    return (mkr_xml_node_t *)nd->node;
+    /* mkr_xml_node_unwrap is kind-checked (raises on a non-XML node) and resolves
+     * an XML Document to its arena document node; mkr_node_document gives the
+     * keepalive Document for either. */
+    *out_document = mkr_node_document(self);
+    return mkr_xml_node_unwrap(self);
 }
 
 /* Register a {prefix => uri} Ruby Hash onto +ctx+ for a single query. On any bad

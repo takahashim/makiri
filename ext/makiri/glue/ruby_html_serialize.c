@@ -59,7 +59,7 @@ static VALUE
 mkr_node_to_html(int argc, VALUE *argv, VALUE self)
 {
     int pretty = mkr_serialize_pretty_opt(argc, argv);
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     mkr_buf_t buf;
     mkr_buf_init(&buf, 0);
 
@@ -87,7 +87,7 @@ static VALUE
 mkr_node_inner_html(int argc, VALUE *argv, VALUE self)
 {
     int pretty = mkr_serialize_pretty_opt(argc, argv);
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     mkr_buf_t buf;
     mkr_buf_init(&buf, 0);
     lxb_status_t st = pretty

@@ -39,13 +39,14 @@ mkr_invalidate_index(VALUE node)
     mkr_parsed_text_index_invalidate(p);
 }
 
+/* An HTML node argument for a tree mutation. Routes through mkr_html_node_unwrap so
+ * an XML node is rejected before its mkr_xml_node_t* reaches Lexbor (the
+ * same-document/cycle checks below read lxb fields, and the insert hands the
+ * pointer to Lexbor). */
 static lxb_dom_node_t *
 mkr_arg_node(VALUE v)
 {
-    if (!rb_obj_is_kind_of(v, mkr_cNode)) {
-        rb_raise(rb_eTypeError, "expected a Makiri::Node");
-    }
-    return mkr_node_unwrap(v);
+    return mkr_html_node_unwrap(v);
 }
 
 /* Validate that `incoming` may be placed relative to `ref` and detach it from
@@ -84,12 +85,12 @@ mkr_is_fragment(const lxb_dom_node_t *n)
 
 /* Every tree / attribute mutation unwraps `self` through here first: a node the
  * caller has frozen (Ruby's Object#freeze) is immutable, so raise FrozenError
- * rather than silently editing it. Read accessors keep using mkr_node_unwrap. */
+ * rather than silently editing it. Read accessors use mkr_html_node_unwrap (XML rejected at the type boundary). */
 static lxb_dom_node_t *
 mkr_node_unwrap_mutable(VALUE self)
 {
     rb_check_frozen(self);
-    return mkr_node_unwrap(self);
+    return mkr_html_node_unwrap(self);
 }
 
 /* node.add_child(child) -> child. Appends child as the last child. A document
@@ -557,7 +558,7 @@ mkr_node_set_outer_html(VALUE self, VALUE rb_html)
 static VALUE
 mkr_doc_create_element(VALUE self, VALUE rb_name)
 {
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
     mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "element name");
     lxb_dom_element_t *el = lxb_dom_document_create_element(
         doc, (const lxb_char_t *)nv.ptr, nv.len, NULL);
@@ -565,13 +566,13 @@ mkr_doc_create_element(VALUE self, VALUE rb_name)
     if (el == NULL) {
         rb_raise(mkr_eError, "failed to create element");
     }
-    return mkr_wrap_node(lxb_dom_interface_node(el), self);
+    return mkr_wrap_html_node(lxb_dom_interface_node(el), self);
 }
 
 static VALUE
 mkr_doc_create_text_node(VALUE self, VALUE rb_text)
 {
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
     mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "text content");
     lxb_dom_text_t *t = lxb_dom_document_create_text_node(
         doc, (const lxb_char_t *)tv.ptr, tv.len);
@@ -579,13 +580,13 @@ mkr_doc_create_text_node(VALUE self, VALUE rb_text)
     if (t == NULL) {
         rb_raise(mkr_eError, "failed to create text node");
     }
-    return mkr_wrap_node(lxb_dom_interface_node(t), self);
+    return mkr_wrap_html_node(lxb_dom_interface_node(t), self);
 }
 
 static VALUE
 mkr_doc_create_comment(VALUE self, VALUE rb_text)
 {
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
     mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "comment content");
     lxb_dom_comment_t *c = lxb_dom_document_create_comment(
         doc, (const lxb_char_t *)tv.ptr, tv.len);
@@ -593,7 +594,7 @@ mkr_doc_create_comment(VALUE self, VALUE rb_text)
     if (c == NULL) {
         rb_raise(mkr_eError, "failed to create comment");
     }
-    return mkr_wrap_node(lxb_dom_interface_node(c), self);
+    return mkr_wrap_html_node(lxb_dom_interface_node(c), self);
 }
 
 /* Document#create_processing_instruction(target, data) — DOM
@@ -602,7 +603,7 @@ mkr_doc_create_comment(VALUE self, VALUE rb_text)
 static VALUE
 mkr_doc_create_processing_instruction(VALUE self, VALUE rb_target, VALUE rb_data)
 {
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
     mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_target, "processing instruction target");
     mkr_ruby_borrowed_text_t dv = mkr_ruby_verified_text(rb_data, "processing instruction data");
     lxb_dom_processing_instruction_t *pi = lxb_dom_document_create_processing_instruction(
@@ -612,7 +613,7 @@ mkr_doc_create_processing_instruction(VALUE self, VALUE rb_target, VALUE rb_data
     if (pi == NULL) {
         rb_raise(mkr_eError, "failed to create processing instruction");
     }
-    return mkr_wrap_node(lxb_dom_interface_node(pi), self);
+    return mkr_wrap_html_node(lxb_dom_interface_node(pi), self);
 }
 
 /* Document#create_document_fragment — DOM createDocumentFragment: an empty
@@ -621,12 +622,12 @@ mkr_doc_create_processing_instruction(VALUE self, VALUE rb_target, VALUE rb_data
 static VALUE
 mkr_doc_create_document_fragment(VALUE self)
 {
-    lxb_dom_document_t *doc = mkr_doc_unwrap(self);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
     lxb_dom_document_fragment_t *f = lxb_dom_document_create_document_fragment(doc);
     if (f == NULL) {
         rb_raise(mkr_eError, "failed to create document fragment");
     }
-    return mkr_wrap_node(lxb_dom_interface_node(f), self);
+    return mkr_wrap_html_node(lxb_dom_interface_node(f), self);
 }
 
 void

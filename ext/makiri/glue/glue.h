@@ -8,11 +8,24 @@
 extern "C" {
 #endif
 
+/* A DOM node pointer of UNKNOWN representation — an HTML lxb_dom_node_t or an XML
+ * mkr_xml_node_t — as stored in a node wrapper or a NodeSet. It is an INCOMPLETE
+ * type on purpose: it cannot be dereferenced, and (unlike void*) it does not
+ * implicitly convert to a typed pointer, so reading a stored node AS a specific
+ * representation requires an explicit cast that the kind-checked accessors
+ * (mkr_html_node_unwrap / mkr_xml_node_unwrap) justify by the wrapper's TypedData type
+ * (or, for a NodeSet, by doc_is_xml). The stored pointer is only ever
+ * pointer-compared or cast through one of those accessors. */
+typedef struct mkr_raw_node mkr_raw_node_t;
+
 /* Wrapper for any DOM node except Document. The node memory is owned by the
- * document's Lexbor arena; we keep only the pointer plus a keepalive VALUE
- * reference to the Ruby Document so the arena outlives the wrapper. */
+ * document's arena (an HTML Lexbor arena or the XML node arena); we keep only the
+ * pointer plus a keepalive VALUE reference to the Ruby Document so the arena
+ * outlives the wrapper. The pointer is representation-opaque (mkr_raw_node_t):
+ * read it only through mkr_html_node_unwrap / mkr_xml_node_unwrap, which check the
+ * wrapper's representation (distinct TypedData types) before casting. */
 typedef struct {
-    lxb_dom_node_t *node;
+    mkr_raw_node_t *node;
     VALUE           document;
 } mkr_node_data_t;
 
@@ -31,19 +44,35 @@ extern const rb_data_type_t mkr_node_type;
 extern const rb_data_type_t mkr_doc_type;
 extern const rb_data_type_t mkr_node_set_type;
 
-/* Node bridge (glue/ruby_node.c). mkr_wrap_node returns the Document VALUE
+/* Node bridge (glue/ruby_node.c). mkr_wrap_html_node returns the Document VALUE
  * for the document node, Qnil for NULL, otherwise a freshly-wrapped Node. */
-VALUE           mkr_wrap_node(lxb_dom_node_t *node, VALUE document);
-lxb_dom_node_t *mkr_node_unwrap(VALUE rb_node);
+VALUE           mkr_wrap_html_node(lxb_dom_node_t *node, VALUE document);
 VALUE           mkr_node_document(VALUE rb_node);
+
+/* HTML and XML nodes are wrapped under DISTINCT TypedData types (both deriving
+ * from the shared base mkr_node_type), so a representation-specific accessor
+ * rejects the wrong kind via Ruby's type machinery. See ruby_node.c.
+ *   mkr_html_node_unwrap      -> lxb_dom_node_t* ; raises on an XML node/Document.
+ *   mkr_xml_node_unwrap-> mkr_xml_node_t* ; raises on an HTML node/Document (ruby_xml_node.c).
+ *   mkr_node_raw       -> void* ; kind-agnostic raw pointer for identity, or for a
+ *                         site where the kind is already guaranteed. Deref needs an
+ *                         explicit cast — never treat it as a typed pointer blindly.
+ *   mkr_node_id        -> uintptr_t ; node identity for ==/eql?/hash/pointer_id. */
+extern const rb_data_type_t mkr_html_node_type;
+extern const rb_data_type_t mkr_xml_node_type;
+lxb_dom_node_t *mkr_html_node_unwrap(VALUE rb_node);
+void           *mkr_node_raw(VALUE rb_node);
+uintptr_t       mkr_node_id(VALUE rb_node);
 
 /* XML node bridge (glue/ruby_xml_node.c): wrap a custom XML node into the right
  * Makiri::XML::* leaf (Qnil for NULL, the Document VALUE for the document node). */
 struct mkr_xml_node;
 VALUE mkr_wrap_xml_node(struct mkr_xml_node *node, VALUE document);
+/* XML node-pointer accessor; raises TypeError on an HTML node/Document. */
+struct mkr_xml_node *mkr_xml_node_unwrap(VALUE rb_node);
 
 /* Document bridge (glue/ruby_doc.c). */
-lxb_dom_document_t *mkr_doc_unwrap(VALUE rb_doc);
+lxb_dom_document_t *mkr_html_doc_unwrap(VALUE rb_doc);
 mkr_parsed_t       *mkr_doc_parsed(VALUE rb_doc);
 VALUE               mkr_wrap_document(mkr_parsed_t *parsed); /* GC takes ownership */
 
@@ -74,9 +103,11 @@ void mkr_emit_before(lxb_dom_node_t *imported, void *u);
  * mkr_init_node. */
 VALUE mkr_node_clone_node(int argc, VALUE *argv, VALUE self);
 
-/* NodeSet bridge (glue/ruby_node_set.c). */
+/* NodeSet bridge (glue/ruby_node_set.c). mkr_raw_node_t (above): callers cast
+ * their typed node to it when pushing (forgetting the type is the safe, store
+ * direction); the single typed read-back lives in mkr_node_set_wrap. */
 VALUE mkr_node_set_new(VALUE document);
-void  mkr_node_set_push(VALUE rb_set, lxb_dom_node_t *node);
+void  mkr_node_set_push(VALUE rb_set, mkr_raw_node_t *node);
 
 #ifdef __cplusplus
 }

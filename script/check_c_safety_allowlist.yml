@@ -10,3 +10,80 @@ ignore_paths:
   - path: ext/makiri/bridge/text_token.c
     rule: verified_text_forge
     reason: mkr_verified_text_from_view, the sole sanctioned mint of mkr_verified_text_t; its input view is already validated by the bridge string helpers.
+  # --- HTML/XML representation boundary: each per-rep symbol is exempt only in
+  #     the files that own it (declaration, definition, or a kind-checked use), so
+  #     a new use anywhere else — especially shared glue — trips the lint ---
+  # mkr_html_doc_unwrap (HTML-only document unwrap)
+  - path: ext/makiri/glue/glue.h
+    rule: html_doc_unwrap_boundary
+    reason: declaration of the HTML-only document unwrap.
+  - path: ext/makiri/glue/ruby_doc.c
+    rule: html_doc_unwrap_boundary
+    reason: definition + HTML Document methods (parse/serialize/title/compat_mode) — all HTML-only.
+  - path: ext/makiri/glue/ruby_node.c
+    rule: html_doc_unwrap_boundary
+    reason: the kind-aware mkr_node_raw calls it only on its HTML branch (after a MKR_DOC_XML check).
+  - path: ext/makiri/glue/ruby_html_node.c
+    rule: html_doc_unwrap_boundary
+    reason: mkr_html_node_unwrap resolves an HTML Document (after rejecting an XML one at the type boundary).
+  - path: ext/makiri/glue/ruby_html_mutate.c
+    rule: html_doc_unwrap_boundary
+    reason: HTML tree/fragment mutation; XML mutation has its own arena path.
+  - path: ext/makiri/glue/ruby_xpath.c
+    rule: html_doc_unwrap_boundary
+    reason: the HTML branch of mkr_xpath_context_for, entered only after the XML kind returns early.
+  # mkr_parsed_html_doc (asserts kind == HTML)
+  - path: ext/makiri/lexbor_compat/compat.h
+    rule: parsed_html_doc_boundary
+    reason: declaration of the HTML parsed-document accessor.
+  - path: ext/makiri/lexbor_compat/post_parse.c
+    rule: parsed_html_doc_boundary
+    reason: definition (the kind assert lives here) + HTML post-parse pipeline.
+  - path: ext/makiri/glue/ruby_doc.c
+    rule: parsed_html_doc_boundary
+    reason: mkr_html_doc_unwrap is defined here over the HTML parsed document.
+  # mkr_parsed_xml_doc (XML arena accessor) — kept out of the pure-HTML glue files
+  - path: ext/makiri/lexbor_compat/compat.h
+    rule: parsed_xml_doc_boundary
+    reason: declaration of the XML parsed-document accessor.
+  - path: ext/makiri/lexbor_compat/post_parse.c
+    rule: parsed_xml_doc_boundary
+    reason: definition + XML document wrapping/teardown.
+  - path: ext/makiri/glue/ruby_xml.c
+    rule: parsed_xml_doc_boundary
+    reason: XML parse entry / Document construction.
+  - path: ext/makiri/glue/ruby_xml_node.c
+    rule: parsed_xml_doc_boundary
+    reason: XML node read + mutation surface over the arena.
+  - path: ext/makiri/glue/ruby_doc.c
+    rule: parsed_xml_doc_boundary
+    reason: shared Document glue, used only on kind-checked XML branches.
+  - path: ext/makiri/glue/ruby_xpath.c
+    rule: parsed_xml_doc_boundary
+    reason: the XML branch of mkr_xpath_context_for (kind-checked).
+  - path: ext/makiri/glue/ruby_node.c
+    rule: parsed_xml_doc_boundary
+    reason: the kind-aware mkr_node_raw resolves an XML Document only after a MKR_DOC_XML check.
+  # owner_document (HTML-only lxb_dom_node_t field)
+  - path: ext/makiri/glue/ruby_html_node.c
+    rule: owner_document_boundary
+    reason: HTML node readers operate on lxb_dom_node_t.
+  - path: ext/makiri/glue/ruby_doc.c
+    rule: owner_document_boundary
+    reason: HTML Document operations.
+  - path: ext/makiri/glue/ruby_html_mutate.c
+    rule: owner_document_boundary
+    reason: HTML tree mutation over Lexbor nodes.
+  - path: ext/makiri/xpath/mkr_xpath_node_access_html.h
+    rule: owner_document_boundary
+    reason: the HTML monomorphization of the engine's node-access layer.
+  # mkr_node_raw (kind-agnostic void* raw pointer; never dereferenced as a typed node)
+  - path: ext/makiri/glue/glue.h
+    rule: node_raw_boundary
+    reason: declaration of the kind-agnostic accessor.
+  - path: ext/makiri/glue/ruby_node.c
+    rule: node_raw_boundary
+    reason: defines mkr_node_raw / mkr_node_id (node identity — the pointer is only compared, never dereferenced).
+  - path: ext/makiri/glue/ruby_xpath.c
+    rule: node_raw_boundary
+    reason: the XPath context node / handler-result node, where same-document (hence the representation) is verified before the engine takes the raw pointer.

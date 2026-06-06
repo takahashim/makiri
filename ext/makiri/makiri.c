@@ -2,6 +2,7 @@
 #include "core/mkr_core.h"
 #include "bridge/bridge.h"
 #include "xml/mkr_xml.h"
+#include "xml/mkr_xml_mutate.h"
 
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
@@ -69,6 +70,10 @@ mkr_c_selftest(VALUE self)
     int qc = mkr_xml_xpath_selftest();
     if (qc != 0) {
         rb_raise(mkr_eError, "mkr_xml_xpath_selftest failed at check %d", qc);
+    }
+    int mc = mkr_xml_mutate_selftest();
+    if (mc != 0) {
+        rb_raise(mkr_eError, "mkr_xml_mutate_selftest failed at check %d", mc);
     }
     return Qtrue;
 }

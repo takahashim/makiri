@@ -128,7 +128,7 @@ mkr_xpath_value_to_ruby(mkr_xpath_value_t *v, VALUE document)
     case MKR_XPATH_TYPE_NODESET: {
         result = mkr_node_set_new(document);
         for (size_t i = 0; i < v->u.nodeset.count; ++i) {
-            mkr_node_set_push(result, v->u.nodeset.nodes[i]);
+            mkr_node_set_push(result, (mkr_raw_node_t *)v->u.nodeset.nodes[i]);
         }
         break;
     }
@@ -188,7 +188,7 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
         mkr_xml_node_t *docn  = xdoc ? xdoc->doc_node : NULL;
         mkr_xml_node_t *cnode = rb_obj_is_kind_of(rb_node, mkr_cXmlDocument)
                                     ? docn
-                                    : (mkr_xml_node_t *)mkr_node_unwrap(rb_node);
+                                    : mkr_xml_node_unwrap(rb_node);
         mkr_xpath_context_t *xctx = mkr_xpath_context_new((void *)docn, (void *)cnode);
         if (xctx == NULL) {
             rb_raise(mkr_eError, "failed to allocate XPath context");
@@ -197,8 +197,8 @@ mkr_xpath_context_for(VALUE rb_node, VALUE document)
         return xctx;
     }
 
-    lxb_dom_node_t     *node = mkr_node_unwrap(rb_node);
-    lxb_dom_document_t *doc  = mkr_doc_unwrap(document);
+    lxb_dom_node_t     *node = mkr_html_node_unwrap(rb_node);
+    lxb_dom_document_t *doc  = mkr_html_doc_unwrap(document);
 
     if (mkr_parsed_dom_index_build(parsed) != 0) {
         rb_raise(mkr_eError, "failed to build attribute index for XPath");
@@ -275,7 +275,9 @@ mkr_xpath_ctx_set_node(VALUE self, VALUE rb_node)
         rb_raise(mkr_eError, "context node must belong to the same document");
     }
     d->node = rb_node; /* keepalive; marked in mkr_xpath_ctx_mark */
-    mkr_ctx_set_node(d->ctx, mkr_node_unwrap(rb_node));
+    /* Same-document is verified above, so rb_node is the context's representation;
+     * the engine (monomorphized per kind) takes the raw pointer. */
+    mkr_ctx_set_node(d->ctx, mkr_node_raw(rb_node));
     return rb_node;
 }
 
@@ -296,7 +298,7 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
     case MKR_XPATH_TYPE_NODESET: {
         VALUE set = mkr_node_set_new(b->document);
         for (size_t i = 0; i < v->u.nodeset.count; i++) {
-            mkr_node_set_push(set, v->u.nodeset.items[i]);
+            mkr_node_set_push(set, (mkr_raw_node_t *)v->u.nodeset.items[i]);
         }
         return set;
     }
@@ -310,15 +312,22 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
     return Qnil;
 }
 
+/* Validate a handler-returned node and push it into the result node-set. The
+ * same-document check compares the node's keepalive document VALUE against the
+ * context's document VALUE, NOT the HTML-only lxb owner_document field — so it is
+ * correct for an XML node too (whose pointer is an mkr_xml_node_t*, not an
+ * lxb_dom_node_t). A node from a different document fails closed. */
 static int
-mkr_push_result_node(mkr_xpath_context_t *ctx, VALUE rb_node, mkr_val_t *out,
-                     char *errbuf, size_t errlen)
+mkr_push_result_node(mkr_xpath_context_t *ctx, VALUE document, VALUE rb_node,
+                     mkr_val_t *out, char *errbuf, size_t errlen)
 {
-    lxb_dom_node_t *n = mkr_node_unwrap(rb_node);
-    if (n->owner_document != mkr_ctx_document(ctx)) {
+    if (mkr_node_document(rb_node) != document) {
         snprintf(errbuf, errlen, "handler returned a node from a different document");
         return -1;
     }
+    /* Same-document verified above, so rb_node is the context's representation; the
+     * engine node-set (monomorphized per kind) takes the raw pointer. */
+    void *n = mkr_node_raw(rb_node);
     mkr_xpath_error_t ierr = {0};
     if (mkr_nodeset_push(&out->u.nodeset, n, mkr_ctx_limits(ctx), &ierr) != 0) {
         mkr_xpath_error_clear(&ierr);
@@ -328,9 +337,11 @@ mkr_push_result_node(mkr_xpath_context_t *ctx, VALUE rb_node, mkr_val_t *out,
     return 0;
 }
 
-/* Ruby return value -> engine value. Returns 0 on success, -1 with errbuf set. */
+/* Ruby return value -> engine value. Returns 0 on success, -1 with errbuf set.
+ * +document+ is the context's document VALUE (handler bridge), used to reject a
+ * node returned from a different document. */
 static int
-mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
+mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE document, VALUE r, mkr_val_t *out,
                 char *errbuf, size_t errlen)
 {
     if (r == Qtrue || r == Qfalse) {
@@ -347,7 +358,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
         out->type = MKR_XPATH_TYPE_NODESET;
         mkr_nodeset_init(&out->u.nodeset);
         if (rb_obj_is_kind_of(r, mkr_cNode)) {
-            if (mkr_push_result_node(ctx, r, out, errbuf, errlen) != 0) {
+            if (mkr_push_result_node(ctx, document, r, out, errbuf, errlen) != 0) {
                 mkr_nodeset_clear(&out->u.nodeset);
                 return -1;
             }
@@ -358,7 +369,7 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE r, mkr_val_t *out,
                 if (!rb_obj_is_kind_of(node, mkr_cNode)) {
                     continue;
                 }
-                if (mkr_push_result_node(ctx, node, out, errbuf, errlen) != 0) {
+                if (mkr_push_result_node(ctx, document, node, out, errbuf, errlen) != 0) {
                     mkr_nodeset_clear(&out->u.nodeset);
                     return -1;
                 }
@@ -426,7 +437,7 @@ mkr_handler_call_body(VALUE p)
         c->argv[i] = mkr_arg_to_ruby(c->b, &c->args[i]);
     }
     VALUE r = rb_funcallv(c->b->handler, c->method, (int)c->nargs, c->argv);
-    c->status = mkr_ruby_to_out(c->ctx, r, c->out, c->errbuf, sizeof(c->errbuf));
+    c->status = mkr_ruby_to_out(c->ctx, c->b->document, r, c->out, c->errbuf, sizeof(c->errbuf));
     return Qnil;
 }
 

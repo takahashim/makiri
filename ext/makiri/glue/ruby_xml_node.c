@@ -1,16 +1,18 @@
-/* ruby_xml_node.c — Ruby read API for custom XML nodes (Phase 1, read-only).
+/* ruby_xml_node.c — Ruby read + mutation API for custom XML nodes.
  *
  * The XML counterpart of ruby_node.c: it wraps a mkr_xml_node_t into the right
- * Makiri::XML::* leaf and defines the reader/query methods on the
+ * Makiri::XML::* leaf and defines the reader/query/mutation methods on the
  * Makiri::XML::NodeMethods behavior module (included into every XML leaf), each
  * reading the custom node's fields directly. XML nodes never inherit the lxb_dom
- * HTML readers (those live on Makiri::HTML::NodeMethods), so the read-only
- * guarantee is structural. The shared node TypedData (mkr_node_type) stores the
+ * HTML readers (those live on Makiri::HTML::NodeMethods), so the surface is
+ * structural; the in-place edits (remove/[]=/delete/content=/name=) route to the
+ * Ruby-free primitives in xml/mkr_xml_mutate.c. The shared node TypedData (mkr_node_type) stores the
  * node pointer + a keepalive Document VALUE; for XML the pointer is a
  * mkr_xml_node_t* (the document arena outlives the wrapper via the Document).
  */
 #include "glue.h"
 #include "../xml/mkr_xml_node.h"
+#include "../xml/mkr_xml_mutate.h"
 #include "../core/mkr_core.h"   /* mkr_buf */
 
 #include <ruby/encoding.h>     /* rb_to_encoding / rb_str_encode (output encoding) */
@@ -40,20 +42,25 @@ mkr_wrap_xml_node(mkr_xml_node_t *node, VALUE document)
     default:               klass = mkr_cXmlNode;      break;
     }
     mkr_node_data_t *nd;
-    VALUE obj = TypedData_Make_Struct(klass, mkr_node_data_t, &mkr_node_type, nd);
-    nd->node     = (lxb_dom_node_t *)node;   /* a mkr_xml_node_t*; XML readers cast back */
+    VALUE obj = TypedData_Make_Struct(klass, mkr_node_data_t, &mkr_xml_node_type, nd);
+    nd->node     = (mkr_raw_node_t *)node;   /* an mkr_xml_node_t*; XML readers cast back */
     nd->document = document;
     return obj;
 }
 
-static mkr_xml_node_t *
+/* The XML node-pointer accessor (the counterpart of mkr_html_node_unwrap): returns the
+ * mkr_xml_node_t for an XML node or XML Document, and RAISES TypeError for an HTML
+ * node/Document (TypedData_Get_Struct checks mkr_xml_node_type, which an HTML node
+ * — wrapped under mkr_html_node_type — does not satisfy). Non-static so the shared
+ * XPath glue can resolve an XML context/result node safely. */
+mkr_xml_node_t *
 mkr_xml_node_unwrap(VALUE self)
 {
     if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
         return mkr_parsed_xml_doc(mkr_doc_parsed(self))->doc_node;
     }
     mkr_node_data_t *nd;
-    TypedData_Get_Struct(self, mkr_node_data_t, &mkr_node_type, nd);
+    TypedData_Get_Struct(self, mkr_node_data_t, &mkr_xml_node_type, nd);
     return (mkr_xml_node_t *)nd->node;
 }
 
@@ -63,8 +70,8 @@ mkr_xml_node_document(VALUE self)
     if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
         return self;
     }
-    mkr_node_data_t *nd;
-    TypedData_Get_Struct(self, mkr_node_data_t, &mkr_node_type, nd);
+    mkr_node_data_t *nd;   /* XML-strict: rejects a non-XML node at the type boundary */
+    TypedData_Get_Struct(self, mkr_node_data_t, &mkr_xml_node_type, nd);
     return nd->document;
 }
 
@@ -176,24 +183,9 @@ mkr_ns_inspect(VALUE self)
                       rb_inspect(mkr_ns_prefix(self)), rb_inspect(mkr_ns_href(self)));
 }
 
-/* If +a+ is an xmlns declaration, set the declared namespace prefix (NULL,
- * plen 0, for the default xmlns) and its URI as arena slices, and return 1; else
- * 0. Pure C: callers mint Ruby objects only where the API actually needs them
- * (shared by the namespace introspection and the C14N walk). */
-static int
-mkr_xml_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *plen,
-                   const char **uri, uint32_t *ulen)
-{
-    if (a->qname_len == 5 && memcmp(a->qname, "xmlns", 5) == 0) {
-        *prefix = ""; *plen = 0;
-    } else if (a->qname_len > 6 && memcmp(a->qname, "xmlns:", 6) == 0) {
-        *prefix = a->local; *plen = a->local_len;
-    } else {
-        return 0;
-    }
-    *uri = a->value ? a->value : ""; *ulen = a->value_len;
-    return 1;
-}
+/* The xmlns-declaration detector lives in the node layer (mkr_xml_node_xmlns_decl)
+ * so the namespace introspection, the C14N walk, and the mutation namespace
+ * resolver all share one definition. */
 
 static VALUE
 mkr_xml_node_namespace(VALUE self)
@@ -215,7 +207,7 @@ mkr_xml_node_namespace_definitions(VALUE self)
     if (n->type == MKR_XML_NODE_TYPE_ELEMENT) {
         for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
             const char *p, *u; uint32_t pl, ul;
-            if (mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) {
+            if (mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) {
                 VALUE prefix = pl ? rb_utf8_str_new(p, (long)pl) : Qnil;
                 rb_ary_push(arr, mkr_ns_new(prefix, rb_utf8_str_new(u, (long)ul)));
             }
@@ -233,7 +225,7 @@ mkr_xml_node_namespaces(VALUE self)
         if (e->type != MKR_XML_NODE_TYPE_ELEMENT) continue;
         for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
             const char *p, *u; uint32_t pl, ul;
-            if (!mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
+            if (!mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
             VALUE key = rb_utf8_str_new(a->qname, (long)a->qname_len); /* "xmlns" / "xmlns:p" */
             if (rb_hash_lookup2(h, key, Qundef) == Qundef) {
                 rb_hash_aset(h, key, rb_utf8_str_new(u, (long)ul));
@@ -255,7 +247,7 @@ mkr_xml_node_collect_namespaces(VALUE self)
         if (cur->type == MKR_XML_NODE_TYPE_ELEMENT) {
             for (mkr_xml_node_t *a = cur->attrs; a != NULL; a = a->next) {
                 const char *p, *u; uint32_t pl, ul;
-                if (!mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
+                if (!mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
                 rb_hash_aset(h, rb_utf8_str_new(a->qname, (long)a->qname_len),
                              rb_utf8_str_new(u, (long)ul));
             }
@@ -330,7 +322,7 @@ mkr_xml_node_children(VALUE self)
     VALUE doc = mkr_xml_node_document(self);
     VALUE set = mkr_node_set_new(doc);
     for (mkr_xml_node_t *c = mkr_xml_node_unwrap(self)->first_child; c != NULL; c = c->next) {
-        mkr_node_set_push(set, (lxb_dom_node_t *)c);
+        mkr_node_set_push(set, (mkr_raw_node_t *)c);
     }
     return set;
 }
@@ -362,7 +354,7 @@ mkr_xml_node_attribute_nodes(VALUE self)
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
     if (n->type == MKR_XML_NODE_TYPE_ELEMENT) {
         for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
-            mkr_node_set_push(set, (lxb_dom_node_t *)a);
+            mkr_node_set_push(set, (mkr_raw_node_t *)a);
         }
     }
     return set;
@@ -656,7 +648,7 @@ mkr_c14n_nearest(const mkr_xml_node_t *node, const char *prefix, uint32_t plen,
         if (e->type != MKR_XML_NODE_TYPE_ELEMENT) continue;
         for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
             const char *p, *u; uint32_t pl, ul;
-            if (mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul) && pl == plen
+            if (mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul) && pl == plen
                 && (pl == 0 || memcmp(p, prefix, pl) == 0)) {
                 *uri = u; *ulen = ul; return 1;
             }
@@ -687,7 +679,7 @@ mkr_c14n_namespaces(const mkr_xml_node_t *n, int is_apex, mkr_c14n_ns_t **out)
         if (e->type == MKR_XML_NODE_TYPE_ELEMENT) {
             for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
                 const char *p, *u; uint32_t pl, ul;
-                if (mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) cap++;
+                if (mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) cap++;
             }
         }
         if (!is_apex) break;   /* a descendant considers only its own declarations */
@@ -701,7 +693,7 @@ mkr_c14n_namespaces(const mkr_xml_node_t *n, int is_apex, mkr_c14n_ns_t **out)
         if (e->type == MKR_XML_NODE_TYPE_ELEMENT) {
             for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
                 const char *p, *u; uint32_t pl, ul;
-                if (!mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
+                if (!mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
                 if (pl == 3 && memcmp(p, "xml", 3) == 0) continue;             /* implicit xml: */
                 if (is_apex) {
                     if (pl == 0) {                /* default: nearest decl wins */
@@ -761,7 +753,7 @@ mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments)
         size_t na = 0;
         for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
             const char *p, *u; uint32_t pl, ul;
-            if (!mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) na++;
+            if (!mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) na++;
         }
         if (na > 0) {
             const mkr_xml_node_t **av = mkr_reallocarray(NULL, na, sizeof(*av));
@@ -769,7 +761,7 @@ mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments)
             size_t k = 0;
             for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
                 const char *p, *u; uint32_t pl, ul;
-                if (!mkr_xml_xmlns_decl(a, &p, &pl, &u, &ul)) av[k++] = a;
+                if (!mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) av[k++] = a;
             }
             qsort(av, na, sizeof(*av), mkr_c14n_attr_cmp);
             for (size_t i = 0; i < na; i++) {
@@ -890,7 +882,7 @@ mkr_xml_node_no_serialize(int argc, VALUE *argv, VALUE self)
 /* ---- node identity (== / eql? / hash / pointer_id) ----
  *
  * XML nodes share the mkr_node_data_t typed-data with HTML nodes, so the
- * underlying node pointer (mkr_node_unwrap, representation-agnostic) IS the
+ * underlying node pointer (mkr_node_id, representation-agnostic) IS the
  * identity. Without these, two wrappers for the same XML node compared unequal
  * (Object identity), which broke #path, NodeSet/Set dedup, and Hash keys.
  * Same contract as the HTML nodes (ruby_node.c): a.pointer_id == b.pointer_id
@@ -898,14 +890,299 @@ mkr_xml_node_no_serialize(int argc, VALUE *argv, VALUE self)
 static VALUE
 mkr_xml_node_pointer_id(VALUE self)
 {
-    return ULL2NUM((unsigned long long)(uintptr_t)mkr_node_unwrap(self));
+    return ULL2NUM((unsigned long long)mkr_node_id(self));
 }
 
 static VALUE
 mkr_xml_node_equals(VALUE self, VALUE other)
 {
     if (!rb_obj_is_kind_of(other, mkr_cNode)) return Qfalse;
-    return mkr_node_unwrap(self) == mkr_node_unwrap(other) ? Qtrue : Qfalse;
+    return mkr_node_id(self) == mkr_node_id(other) ? Qtrue : Qfalse;
+}
+
+/* ---- mutation (Phase 1: in-place edits) ----------------------------------
+ *
+ * The write surface over the custom XML arena. The Ruby-free primitives live in
+ * xml/mkr_xml_mutate.c (validation, namespace resolution, link/unlink); this
+ * layer only coerces+verifies arguments through the bridge and maps the
+ * mutation status to a Ruby exception. Detach-never-destroy: a removed node is
+ * unlinked, never freed, so live wrappers stay valid (the same invariant the
+ * read-only reader had). The XML reader keeps no attr/text index, so — unlike
+ * the HTML side — there is nothing to invalidate after an edit. */
+
+static mkr_xml_doc_t *
+mkr_xml_node_xdoc(VALUE self)
+{
+    return mkr_parsed_xml_doc(mkr_doc_parsed(mkr_xml_node_document(self)));
+}
+
+/* A value/name byte length as a uint32 (the arena's per-slice cap), or raise. */
+static uint32_t
+mkr_xml_u32_len(size_t len)
+{
+    if (len > UINT32_MAX) {
+        rb_raise(mkr_eError, "string too long for an XML node (max 4 GiB)");
+    }
+    return (uint32_t)len;
+}
+
+/* Map a mutation status to a Ruby exception (MKR_XML_MUT_OK returns). */
+static void
+mkr_xml_mut_check(mkr_xml_mut_status_t st)
+{
+    switch (st) {
+    case MKR_XML_MUT_OK:        return;
+    case MKR_XML_MUT_OOM:       rb_raise(mkr_eError, "out of memory mutating XML");
+    case MKR_XML_MUT_BAD_NAME:  rb_raise(rb_eArgError, "not a well-formed XML name");
+    case MKR_XML_MUT_BAD_CHARS: rb_raise(mkr_eError,
+                                    "value contains a character not permitted in XML");
+    case MKR_XML_MUT_UNBOUND_NS: rb_raise(mkr_eError,
+                                    "namespace prefix is not bound in this scope");
+    case MKR_XML_MUT_TYPE:      rb_raise(mkr_eError, "operation unsupported for this node type");
+    case MKR_XML_MUT_CYCLE:     rb_raise(mkr_eError, "cannot insert a node into its own subtree");
+    case MKR_XML_MUT_HIERARCHY: rb_raise(mkr_eError,
+                                    "invalid placement (an attribute/document node cannot be a "
+                                    "tree child, a document allows a single root element, and a "
+                                    "sibling target must have a parent)");
+    }
+    rb_raise(mkr_eError, "unknown XML mutation error");   /* unreachable; keeps the compiler happy */
+}
+
+/* Unwrap an XML node for mutation: a frozen node (Object#freeze) is immutable, so
+ * raise FrozenError rather than edit it (the same contract HTML nodes have). */
+static mkr_xml_node_t *
+mkr_xml_node_unwrap_mutable(VALUE self)
+{
+    rb_check_frozen(self);
+    return mkr_xml_node_unwrap(self);
+}
+
+/* node.remove / node.unlink -> node. Detach from the tree (or, for an attribute,
+ * from its owner element); the node stays usable. */
+static VALUE
+mkr_xml_node_remove(VALUE self)
+{
+    if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
+        rb_raise(mkr_eError, "cannot remove the document node");
+    }
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+    if (xdoc != NULL && n == xdoc->root) xdoc->root = NULL;   /* detaching the root element */
+    mkr_xml_detach(n);
+    return self;
+}
+
+/* element[name] = value -> value. Adds or replaces the attribute. */
+static VALUE
+mkr_xml_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    if (n->type != MKR_XML_NODE_TYPE_ELEMENT) {
+        rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
+    }
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
+    mkr_ruby_borrowed_text_t vv = mkr_ruby_verified_text(rb_value, "attribute value");
+    mkr_xml_mut_status_t st = mkr_xml_set_attribute(
+        mkr_xml_node_xdoc(self), n,
+        nv.ptr, mkr_xml_u32_len(nv.len), vv.ptr, mkr_xml_u32_len(vv.len), NULL);
+    RB_GC_GUARD(nv.value);
+    RB_GC_GUARD(vv.value);
+    mkr_xml_mut_check(st);
+    return rb_value;
+}
+
+/* element.delete(name) -> self. Removes the attribute if present (no-op otherwise). */
+static VALUE
+mkr_xml_node_delete(VALUE self, VALUE rb_name)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    if (n->type != MKR_XML_NODE_TYPE_ELEMENT) return self;
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
+    mkr_xml_remove_attribute(n, nv.ptr, mkr_xml_u32_len(nv.len));
+    RB_GC_GUARD(nv.value);
+    return self;
+}
+
+/* node.content = text -> text. For an element: replace its children with one text
+ * node (the string is stored verbatim and escaped on serialization). For a
+ * text/cdata/comment/PI leaf: set its data. */
+static VALUE
+mkr_xml_node_set_content(VALUE self, VALUE rb_text)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "node content");
+    mkr_xml_mut_status_t st = mkr_xml_set_content(
+        mkr_xml_node_xdoc(self), n, tv.ptr, mkr_xml_u32_len(tv.len));
+    RB_GC_GUARD(tv.value);
+    mkr_xml_mut_check(st);
+    return rb_text;
+}
+
+/* node.name = new_name -> new_name. Renames an element or attribute in place
+ * (identity + tree position preserved); the namespace is re-resolved against the
+ * node's in-scope declarations. */
+static VALUE
+mkr_xml_node_set_name(VALUE self, VALUE rb_name)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "node name");
+    mkr_xml_mut_status_t st = mkr_xml_rename(
+        mkr_xml_node_xdoc(self), n, nv.ptr, mkr_xml_u32_len(nv.len));
+    RB_GC_GUARD(nv.value);
+    mkr_xml_mut_check(st);
+    return rb_name;
+}
+
+/* ---- Phase 2: building new subtrees --------------------------------------
+ *
+ * Document factories create a detached node in the document's arena; insertion
+ * (add_child / before / after / replace) links a node, resolving the inserted
+ * subtree's namespaces against its new context, and deep-copies (imports) a node
+ * that comes from another document. The Ruby-free primitives live in
+ * xml/mkr_xml_mutate.c. NodeSet / String arguments are a later phase. */
+
+/* Coerce +arg+ to an XML node that lives in (or is imported into) +xdoc+ (the
+ * target document's arena, whose Ruby VALUE is +target_doc+). A node from another
+ * document is deep-copied; a same-document node is returned as-is (move). */
+static mkr_xml_node_t *
+mkr_xml_incoming_node(mkr_xml_doc_t *xdoc, VALUE target_doc, VALUE arg)
+{
+    if (!rb_obj_is_kind_of(arg, mkr_cNode)
+        || !rb_obj_is_kind_of(mkr_xml_node_document(arg), mkr_cXmlDocument)) {
+        rb_raise(rb_eTypeError,
+                 "expected a Makiri::XML node (NodeSet / String arguments are a later phase)");
+    }
+    mkr_xml_node_t *src = mkr_xml_node_unwrap(arg);
+    if (mkr_xml_node_document(arg) == target_doc) {
+        return src;                                 /* same arena -> move */
+    }
+    mkr_xml_node_t *copy = NULL;                    /* foreign arena -> import a deep copy */
+    mkr_xml_mut_check(mkr_xml_import_subtree(xdoc, src, &copy));
+    return copy;
+}
+
+/* The four insertion verbs share this shape: frozen-check self, coerce/import the
+ * argument, run the primitive, and return the inserted node (wrapped from the
+ * target document). +op+ selects the primitive. */
+typedef enum { MKR_INS_CHILD, MKR_INS_BEFORE, MKR_INS_AFTER, MKR_INS_REPLACE } mkr_ins_op_t;
+
+static VALUE
+mkr_xml_node_insert(VALUE self, VALUE arg, mkr_ins_op_t op)
+{
+    mkr_xml_node_t *target = mkr_xml_node_unwrap_mutable(self);
+    VALUE doc_v = mkr_xml_node_document(self);
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+    mkr_xml_node_t *node = mkr_xml_incoming_node(xdoc, doc_v, arg);
+
+    mkr_xml_mut_status_t st;
+    switch (op) {
+    case MKR_INS_CHILD:   st = mkr_xml_insert_child(xdoc, target, node);  break;
+    case MKR_INS_BEFORE:  st = mkr_xml_insert_before(xdoc, target, node); break;
+    case MKR_INS_AFTER:   st = mkr_xml_insert_after(xdoc, target, node);  break;
+    default:              st = mkr_xml_replace_node(xdoc, target, node);  break;
+    }
+    mkr_xml_mut_check(st);
+    return mkr_wrap_xml_node(node, doc_v);
+}
+
+/* element.add_child(node) -> the inserted node. */
+static VALUE mkr_xml_node_add_child(VALUE self, VALUE arg) { return mkr_xml_node_insert(self, arg, MKR_INS_CHILD); }
+/* node.add_previous_sibling(other) / node.before(other) -> the inserted node. */
+static VALUE mkr_xml_node_before(VALUE self, VALUE arg)    { return mkr_xml_node_insert(self, arg, MKR_INS_BEFORE); }
+/* node.add_next_sibling(other) / node.after(other) -> the inserted node. */
+static VALUE mkr_xml_node_after(VALUE self, VALUE arg)     { return mkr_xml_node_insert(self, arg, MKR_INS_AFTER); }
+/* node.replace(other) -> the inserted node (the replaced node is detached). */
+static VALUE mkr_xml_node_replace(VALUE self, VALUE arg)   { return mkr_xml_node_insert(self, arg, MKR_INS_REPLACE); }
+
+/* element << node -> self (Nokogiri's <<: append and return the receiver). */
+static VALUE
+mkr_xml_node_lshift(VALUE self, VALUE arg)
+{
+    mkr_xml_node_insert(self, arg, MKR_INS_CHILD);
+    return self;
+}
+
+/* ---- Document factories ---- */
+
+static VALUE
+mkr_xml_doc_create_element(int argc, VALUE *argv, VALUE self)
+{
+    VALUE rb_name, rb_content;
+    rb_scan_args(argc, argv, "11", &rb_name, &rb_content);
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "element name");
+    mkr_xml_node_t *el = NULL;
+    mkr_xml_mut_status_t st = mkr_xml_new_element(xdoc, nv.ptr, mkr_xml_u32_len(nv.len), &el);
+    RB_GC_GUARD(nv.value);
+    mkr_xml_mut_check(st);
+    if (!NIL_P(rb_content)) {
+        mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_content, "element content");
+        st = mkr_xml_set_content(xdoc, el, tv.ptr, mkr_xml_u32_len(tv.len));
+        RB_GC_GUARD(tv.value);
+        mkr_xml_mut_check(st);
+    }
+    return mkr_wrap_xml_node(el, self);
+}
+
+/* Shared body for the leaf-data factories (text / comment / cdata). */
+static VALUE
+mkr_xml_doc_create_chardata(VALUE self, VALUE rb_text, uint8_t type, const char *what)
+{
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+    mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, what);
+    mkr_xml_node_t *n = NULL;
+    mkr_xml_mut_status_t st = mkr_xml_new_chardata(xdoc, type, tv.ptr, mkr_xml_u32_len(tv.len), &n);
+    RB_GC_GUARD(tv.value);
+    mkr_xml_mut_check(st);
+    return mkr_wrap_xml_node(n, self);
+}
+
+static VALUE mkr_xml_doc_create_text_node(VALUE self, VALUE t) { return mkr_xml_doc_create_chardata(self, t, MKR_XML_NODE_TYPE_TEXT, "text content"); }
+static VALUE mkr_xml_doc_create_comment(VALUE self, VALUE t)   { return mkr_xml_doc_create_chardata(self, t, MKR_XML_NODE_TYPE_COMMENT, "comment content"); }
+static VALUE mkr_xml_doc_create_cdata(VALUE self, VALUE t)     { return mkr_xml_doc_create_chardata(self, t, MKR_XML_NODE_TYPE_CDATA_SECTION, "CDATA content"); }
+
+static VALUE
+mkr_xml_doc_create_pi(VALUE self, VALUE rb_target, VALUE rb_data)
+{
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+    mkr_ruby_borrowed_text_t tg = mkr_ruby_verified_text(rb_target, "PI target");
+    mkr_ruby_borrowed_text_t dt = mkr_ruby_verified_text(rb_data, "PI data");
+    mkr_xml_node_t *pi = NULL;
+    mkr_xml_mut_status_t st = mkr_xml_new_pi(
+        xdoc, tg.ptr, mkr_xml_u32_len(tg.len), dt.ptr, mkr_xml_u32_len(dt.len), &pi);
+    RB_GC_GUARD(tg.value);
+    RB_GC_GUARD(dt.value);
+    mkr_xml_mut_check(st);
+    return mkr_wrap_xml_node(pi, self);
+}
+
+/* Makiri::XML::Element.new(name, document) / Text.new(content, document) — the
+ * allocator is undef'd (nodes come only from C), so these delegate to the
+ * document's factory, like Nokogiri. +document+ must be a Makiri::XML::Document. */
+static VALUE
+mkr_xml_require_document(VALUE rb_doc)
+{
+    if (!rb_obj_is_kind_of(rb_doc, mkr_cXmlDocument)) {
+        rb_raise(rb_eTypeError, "expected a Makiri::XML::Document");
+    }
+    return rb_doc;
+}
+
+static VALUE
+mkr_xml_element_s_new(int argc, VALUE *argv, VALUE klass)
+{
+    (void)klass;
+    VALUE rb_name, rb_doc;
+    rb_scan_args(argc, argv, "2", &rb_name, &rb_doc);
+    VALUE args[1] = { rb_name };
+    return mkr_xml_doc_create_element(1, args, mkr_xml_require_document(rb_doc));
+}
+
+static VALUE
+mkr_xml_text_s_new(VALUE klass, VALUE rb_content, VALUE rb_doc)
+{
+    (void)klass;
+    return mkr_xml_doc_create_text_node(mkr_xml_require_document(rb_doc), rb_content);
 }
 
 void
@@ -945,6 +1222,37 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "children",      mkr_xml_node_children, 0);
     rb_define_method(mkr_mXmlNodeMethods, "[]",            mkr_xml_node_aref, 1);
     rb_define_method(mkr_mXmlNodeMethods, "attribute_nodes", mkr_xml_node_attribute_nodes, 0);
+
+    /* Mutation (Phase 1: in-place edits). Detach-never-destroy; the primitives
+     * live in xml/mkr_xml_mutate.c. */
+    rb_define_method(mkr_mXmlNodeMethods, "remove",   mkr_xml_node_remove,      0);
+    rb_define_method(mkr_mXmlNodeMethods, "unlink",   mkr_xml_node_remove,      0);
+    rb_define_method(mkr_mXmlNodeMethods, "[]=",      mkr_xml_node_aset,        2);
+    rb_define_method(mkr_mXmlNodeMethods, "delete",   mkr_xml_node_delete,      1);
+    rb_define_method(mkr_mXmlNodeMethods, "remove_attribute", mkr_xml_node_delete, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "content=", mkr_xml_node_set_content, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "name=",    mkr_xml_node_set_name,    1);
+
+    /* Mutation (Phase 2: building). Insertion accepts a single Makiri::XML node;
+     * a node from another document is deep-copied (imported) into this one. */
+    rb_define_method(mkr_mXmlNodeMethods, "add_child",             mkr_xml_node_add_child, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "<<",                    mkr_xml_node_lshift,    1);
+    rb_define_method(mkr_mXmlNodeMethods, "add_previous_sibling",  mkr_xml_node_before,    1);
+    rb_define_method(mkr_mXmlNodeMethods, "before",               mkr_xml_node_before,    1);
+    rb_define_method(mkr_mXmlNodeMethods, "add_next_sibling",      mkr_xml_node_after,     1);
+    rb_define_method(mkr_mXmlNodeMethods, "after",                mkr_xml_node_after,     1);
+    rb_define_method(mkr_mXmlNodeMethods, "replace",              mkr_xml_node_replace,   1);
+
+    /* Document factories + the Element/Text .new delegators (XML::Document is set
+     * up in mkr_init_xml, which runs first). */
+    rb_define_method(mkr_cXmlDocument, "create_element",                mkr_xml_doc_create_element, -1);
+    rb_define_method(mkr_cXmlDocument, "create_text_node",             mkr_xml_doc_create_text_node, 1);
+    rb_define_method(mkr_cXmlDocument, "create_comment",               mkr_xml_doc_create_comment, 1);
+    rb_define_method(mkr_cXmlDocument, "create_cdata",                 mkr_xml_doc_create_cdata, 1);
+    rb_define_method(mkr_cXmlDocument, "create_cdata_node",            mkr_xml_doc_create_cdata, 1);
+    rb_define_method(mkr_cXmlDocument, "create_processing_instruction", mkr_xml_doc_create_pi, 2);
+    rb_define_singleton_method(mkr_cXmlElement, "new", mkr_xml_element_s_new, -1);
+    rb_define_singleton_method(mkr_cXmlText,    "new", mkr_xml_text_s_new,    2);
 
     /* Node identity by underlying pointer, so #path / NodeSet dedup / Set / Hash
      * work (the same contract HTML nodes have). */

@@ -36,7 +36,7 @@ mkr_css_find_cb(lxb_dom_node_t *node, lxb_css_selector_specificity_t spec,
         return LXB_STATUS_STOP; /* fail closed without raising mid-traversal */
     }
 
-    mkr_node_set_push(c->set, node);
+    mkr_node_set_push(c->set, (mkr_raw_node_t *)node);
     c->count++;
     return c->first_only ? LXB_STATUS_STOP : LXB_STATUS_OK;
 }
@@ -136,7 +136,7 @@ mkr_run_match(lxb_selectors_t *selectors, lxb_dom_node_t *node,
 static VALUE
 mkr_css_query(VALUE self, VALUE rb_selector, int first_only)
 {
-    lxb_dom_node_t *root = mkr_node_unwrap(self);
+    lxb_dom_node_t *root = mkr_html_node_unwrap(self);
     VALUE document = mkr_node_document(self);
     VALUE set = mkr_node_set_new(document);
 
@@ -157,7 +157,7 @@ mkr_css_query(VALUE self, VALUE rb_selector, int first_only)
 static VALUE
 mkr_node_matches(VALUE self, VALUE rb_selector)
 {
-    lxb_dom_node_t *node = mkr_node_unwrap(self);
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     int matched = 0;
     mkr_with_compiled_selector(rb_selector, node, mkr_run_match, &matched);
     return matched ? Qtrue : Qfalse;

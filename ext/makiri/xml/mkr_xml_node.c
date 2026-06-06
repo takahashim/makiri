@@ -161,6 +161,21 @@ mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
     return arena_alloc(doc, len);
 }
 
+int
+mkr_xml_node_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *plen,
+                        const char **uri, uint32_t *ulen)
+{
+    if (a->qname_len == 5 && memcmp(a->qname, "xmlns", 5) == 0) {
+        *prefix = ""; *plen = 0;
+    } else if (a->qname_len > 6 && memcmp(a->qname, "xmlns:", 6) == 0) {
+        *prefix = a->local; *plen = a->local_len;
+    } else {
+        return 0;
+    }
+    *uri = a->value ? a->value : ""; *ulen = a->value_len;
+    return 1;
+}
+
 /* ---- self-test (Makiri.__c_selftest) — mirrors tmp/xml_spike/arena_spike.c --- */
 int
 mkr_xml_node_selftest(void)

@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* **`Makiri::XML(source)` / `Makiri.parse_xml(source)` - a native, read-only,
-  security-first XML reader** (no libxml2, like the rest of Makiri). It parses
+* **`Makiri::XML(source)` / `Makiri.parse_xml(source)` - a native,
+  security-first XML reader + in-place editor** (no libxml2, like the rest of
+  Makiri). It parses
   with its own strict, well-formedness-checking parser into a custom node arena
   (not Lexbor's HTML DOM) and queries through the same native XPath 1.0 engine,
   compiled a second time against the XML node (one runtime branch at the query
@@ -93,7 +94,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and HTML serialization (`#to_html` / `#inner_html` / `#outer_html`, which is
     an HTML concept) raise `NotImplementedError` rather than returning a wrong
     result. `id()` is the empty node-set (no DTD-declared IDs) and `lang()` reads
-    `xml:lang`, per the XML host policy. XML tree mutation is a later phase.
+    `xml:lang`, per the XML host policy.
+  * Tree mutation: in-place edits and building new subtrees. In-place: `#[]=`
+    and `#delete` / `#remove_attribute` (attributes), `#content=` (replace an
+    element's children with text, or set a leaf's data), `#name=` (rename an
+    element or attribute, re-resolving its namespace), and `#remove` / `#unlink`
+    (detach a node). Building: the node factories `Document#create_element`
+    (optionally with text content), `#create_text_node`, `#create_comment`,
+    `#create_cdata`, `#create_processing_instruction` (plus `XML::Element.new` /
+    `XML::Text.new`), and node insertion `#add_child` / `<<`,
+    `#add_previous_sibling` / `#before`, `#add_next_sibling` / `#after`,
+    `#replace`. A node's namespace is resolved against its position **at
+    insertion** (parser-faithful: a prefixed name binds to the in-scope `xmlns`,
+    an unprefixed element to the default namespace), so the same tree results
+    whether names are set before or after attaching — an unbound prefix is
+    deferred while a fragment is detached and only errors once it joins the live
+    tree, keeping the live document serializable to well-formed XML. A node from
+    another document is **deep-copied** into the target arena (the source is
+    untouched); a same-document node moves. The Ruby-free primitives live in
+    `ext/makiri/xml/mkr_xml_mutate.c`; every edit validates first (names as XML
+    1.0 QNames, values as XML Char) and resolves before any structural change, so
+    a failure — bad name/char, unbound prefix, cycle, a second document root, an
+    attribute/document used as a tree child — leaves the tree untouched (fully
+    fail-closed, even on a move). Detach-never-destroy: a removed/replaced node is
+    unlinked, never freed, so a live wrapper aliasing it stays usable (the arena
+    owns the memory). Parsing a string/fragment into nodes and `DocumentFragment`
+    are a later phase.
 * `Node` includes `Enumerable` over its child nodes — `node.each` yields each
   child (returning an `Enumerator` without a block), so `node.map` / `select` /
   `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
@@ -155,6 +181,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (now at parity with `nokolexbor`), with byte-identical output.
 
 ### Fixed
+
+* **Hardened the HTML/XML representation boundary in the shared glue.** The
+  XPath engine, `NodeSet`, and node identity are shared by the HTML (Lexbor) and
+  XML (custom arena) representations, and three shared paths assumed HTML:
+  * `Node#==` against an XML `Document`, and `XPathContext#node=` with an XML
+    `Document`, fell through the kind-blind unwrap to the HTML-only document
+    accessor and **aborted the process** (an `assert` in a non-`NDEBUG` build).
+    The shared unwrap is now kind-aware (an XML `Document` resolves to its arena
+    document node), so both return correctly instead of crashing.
+  * A custom XPath function handler that returned a node was validated by reading
+    the HTML-only `owner_document` field, which is meaningless for an XML node;
+    the same-document check is now done at the Ruby level (the node's keepalive
+    `Document`), correct for both representations.
+  * `NodeSet#|`, `#+`, `#&`, `#-` borrowed one operand's document for the result
+    and silently wrapped the other operand's nodes under the wrong
+    representation (an XML node as HTML or vice versa) without keeping its
+    document alive. They now **raise `Makiri::Error`** when the operands belong
+    to different documents.
+  * An HTML-only API that hands a node *argument* to Lexbor accepted any
+    `Makiri::Node` and unwrapped it, so passing a `Makiri::XML` node read its
+    `mkr_xml_node_t*` as an `lxb_dom_node_t` and **segfaulted** —
+    `HTML::Document#import_node`, the `add_child` / `before` / `after` /
+    `replace` family, and `fragment(..., context:)` /
+    `DocumentFragment.parse(..., context:)`. All such sites now raise `TypeError`.
+
+  The root cause was structural — HTML and XML nodes shared one TypedData type and
+  one `lxb_dom_node_t*`-typed pointer field, so neither C nor Ruby could tell them
+  apart and a single ambiguous unwrap could return an XML pointer as an HTML one.
+  The boundary is now enforced by **Ruby's own type machinery**: HTML and XML
+  nodes are wrapped under **distinct TypedData types** (`mkr_html_node_type` /
+  `mkr_xml_node_type`, both deriving from a shared base `mkr_node_type`), and the
+  representation-specific accessors `mkr_html_node` / `mkr_xml_node_unwrap` use
+  `TypedData_Get_Struct`, which **raises `TypeError` on the wrong representation**
+  automatically — it is structurally impossible to read one representation's
+  pointer as the other's, for `self` or for any argument. Identity
+  (`==`/`eql?`/`hash`/`pointer_id`) uses an integer id that is never dereferenced;
+  the ambiguous `lxb_dom_node_t`-returning unwrap was removed. The HTML-only
+  document unwrap was also renamed `mkr_html_doc_unwrap` (intention-revealing), and
+  the C-safety lint (`rake security:clint`) fences the representation-specific
+  symbols (`mkr_html_doc_unwrap`, `mkr_parsed_html_doc`, `mkr_parsed_xml_doc`,
+  `mkr_node_raw`, the lxb `owner_document` field) to their representation-correct /
+  kind-checked files, so a future misuse in shared glue fails CI. The node
+  wrapper's stored pointer (`mkr_node_data_t.node`) and `NodeSet`'s node array
+  likewise hold a representation-opaque `mkr_raw_node_t *` (an incomplete type —
+  it cannot be dereferenced and, unlike `void *`, does not implicitly convert to
+  a typed pointer) instead of a misleading `lxb_dom_node_t *`, so an XML node or
+  set can never have its `mkr_xml_node_t *` pointer read as a Lexbor node; the
+  only casts back to a typed pointer are the kind-checked accessors
+  (`mkr_html_node` / `mkr_xml_node_unwrap`) and the NodeSet's wrap function.
+  HTML and XML `Document` wrappers are likewise split into distinct TypedData
+  types (`mkr_html_doc_type` / `mkr_xml_doc_type`), so `mkr_html_doc_unwrap` —
+  which reinterprets the parsed document as a Lexbor `lxb_html_document_t` —
+  rejects an XML `Document` at the type boundary rather than relying on an assert
+  that vanishes under `NDEBUG`.
 
 * The compiled extension exported the entire vendored Lexbor symbol table
   (~1700 `lxb_*` / `lexbor_*` symbols) instead of only `Init_makiri`:

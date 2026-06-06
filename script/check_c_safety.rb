@@ -62,6 +62,38 @@ RULES = [
     message: "mkr_verified_text_t must be minted only by mkr_verified_text_from_view (the validated boundary)",
     regex: /\(\s*mkr_verified_text_t\s*\)\s*\{/
   ),
+  # --- HTML/XML representation boundary (see docs/html_xml_boundary_hardening) ---
+  # These symbols assume one DOM representation; using them outside their
+  # representation-correct / kind-checked home is how shared glue (XPath, NodeSet,
+  # node identity) silently treats an XML node as HTML (or vice versa) — an
+  # assert-abort or memory type-confusion. Each is allowlisted only in the files
+  # that legitimately own it; anywhere else trips the lint.
+  Rule.new(
+    id: "html_doc_unwrap_boundary",
+    message: "mkr_html_doc_unwrap is HTML-only; shared/XML code must use the kind-aware mkr_node_unwrap",
+    regex: /\bmkr_html_doc_unwrap\s*\(/
+  ),
+  Rule.new(
+    id: "parsed_html_doc_boundary",
+    message: "mkr_parsed_html_doc (asserts kind==HTML) may only be used in a kind-checked / HTML-only site",
+    regex: /\bmkr_parsed_html_doc\s*\(/
+  ),
+  Rule.new(
+    id: "parsed_xml_doc_boundary",
+    message: "mkr_parsed_xml_doc may only be used in a kind-checked / XML-representation site",
+    regex: /\bmkr_parsed_xml_doc\s*\(/
+  ),
+  Rule.new(
+    id: "owner_document_boundary",
+    message: "owner_document is an HTML-only lxb field; shared code must compare documents via mkr_node_document",
+    regex: /\bowner_document\b/
+  ),
+  Rule.new(
+    id: "node_raw_boundary",
+    message: "mkr_node_raw is the kind-agnostic raw pointer (identity / kind-guaranteed only); " \
+             "to dereference a node use mkr_html_node or mkr_xml_node_unwrap (kind-checked)",
+    regex: /\bmkr_node_raw\s*\(/
+  ),
 ].freeze
 
 def load_config
