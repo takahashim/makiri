@@ -74,14 +74,19 @@ RSpec.describe "Makiri::XML namespaces & unsupported surface" do
     end
   end
 
+  describe "CSS selectors (lowered to the native XPath engine)" do
+    let(:doc) { Makiri::XML("<r><c/><c/></r>") }
+
+    it "queries with #css / #at_css and tests #matches?" do
+      expect(doc.css("c").length).to eq(2)
+      expect(doc.at_css("c")).to eq(doc.root.children.first)
+      expect(doc.root.css("c").length).to eq(2)
+      expect(doc.at_css("c").matches?("r > c")).to be(true)
+    end
+  end
+
   describe "fail-closed: unsupported surface raises NotImplementedError" do
     let(:doc) { Makiri::XML("<r><c/></r>") }
-
-    it "rejects CSS selectors and points at #xpath" do
-      expect { doc.css("c") }.to raise_error(NotImplementedError, /xpath/)
-      expect { doc.at_css("c") }.to raise_error(NotImplementedError)
-      expect { doc.root.css("c") }.to raise_error(NotImplementedError)
-    end
 
     it "serializes via #to_xml / #to_s but rejects HTML serialization" do
       expect(doc.root.to_xml).to be_a(String)

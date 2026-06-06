@@ -238,7 +238,7 @@ namespace :fuzz do
       # Cover every surface under the sanitizer: the query engine (XPath/CSS over
       # parsed fixtures), the XML parser (hostile documents), and the XML mutation
       # surface (random edit sequences + invariants).
-      ["", "--target xml", "--target mutate"].each do |surface|
+      ["", "--target xml", "--target mutate", "--target xmlcss"].each do |surface|
         sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{surface} #{iso} --time #{secs}".squeeze(" ").strip)
       end
     end

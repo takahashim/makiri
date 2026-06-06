@@ -14,6 +14,7 @@
 #include "glue.h"   /* mkr_wrap_document, mkr_parsed_* (via compat.h) */
 #include "ruby_xpath.h"   /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
+#include "../xpath/mkr_css.h"   /* mkr_css_compile - CSS selectors over XML via the XPath engine */
 
 #include <ruby/thread.h>
 
@@ -260,6 +261,151 @@ mkr_xml_doc_at_xpath(int argc, VALUE *argv, VALUE self)
     return mkr_xml_doc_xpath_run(self, expr, ns, 1);
 }
 
+/* ---- CSS selectors over XML (lowered to the native XPath engine) ----
+ *
+ * Makiri::XML CSS support compiles a selector to the engine's AST (mkr_css.c)
+ * and runs it through the SAME evaluator as #xpath, so case-sensitivity,
+ * namespaces, budgets and document order are identical. The Ruby wrappers
+ * (lib/makiri/xml/node_methods.rb) collect the document's namespaces and pass a
+ * normalised {prefix => uri} hash; the default namespace, if any, arrives under
+ * the synthetic prefix "xmlns" (Nokogiri's convention), and a bare type selector
+ * binds to it. These are the private `_css` / `_at_css` / `_css_matches?`
+ * primitives those wrappers call. */
+
+/* The synthetic default-namespace prefix, present iff the (already
+ * prefix-normalised) namespace hash carries an "xmlns" key. */
+static const char *
+mkr_css_default_prefix(VALUE rb_ns)
+{
+    if (RB_TYPE_P(rb_ns, T_HASH)
+        && !NIL_P(rb_hash_aref(rb_ns, rb_str_new_cstr(MKR_CSS_DEFAULT_NS_PREFIX)))) {
+        return MKR_CSS_DEFAULT_NS_PREFIX;
+    }
+    return NULL;
+}
+
+/* Compile +rb_selector+ to an AST under +ctx+ (its namespaces already
+ * registered). On a CSS syntax error raises Makiri::CSS::SyntaxError; on any
+ * other engine error frees ctx and raises via the shared raiser. Returns the AST
+ * (caller frees with mkr_node_free). */
+static mkr_node_t *
+mkr_css_compile_or_raise(mkr_xpath_context_t *ctx, VALUE rb_selector, VALUE rb_ns)
+{
+    mkr_css_ns_t cns = { mkr_css_default_prefix(rb_ns) };
+    mkr_ruby_borrowed_text_t sv = mkr_ruby_verified_text(rb_selector, "CSS selector");
+    mkr_xpath_error_t error = {0};
+    mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
+    limits->ast_nodes = 0;
+    mkr_node_t *ast = mkr_css_compile(mkr_verified_text_from_view(sv), &cns, limits, &error);
+    RB_GC_GUARD(sv.value);
+    if (ast == NULL) {
+        int syntax = (error.status == MKR_XPATH_ERR_SYNTAX);
+        mkr_xpath_context_free(ctx);
+        if (syntax) {
+            VALUE msg = error.message ? rb_utf8_str_new_cstr(error.message)
+                                      : rb_str_new_cstr("invalid CSS selector");
+            mkr_xpath_error_clear(&error);
+            rb_raise(mkr_eCSSSyntaxError, "%" PRIsVALUE, msg);
+        }
+        mkr_xpath_raise(&error); /* frees error.message, never returns */
+    }
+    return ast;
+}
+
+static VALUE
+mkr_xml_doc_css_run(VALUE self, VALUE rb_selector, VALUE rb_ns, int first_only)
+{
+    VALUE document = Qnil;
+    mkr_xml_node_t *context = mkr_xml_query_context(self, &document);
+    if (context == NULL) {
+        return first_only ? Qnil : mkr_node_set_new(document);
+    }
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
+
+    mkr_xpath_context_t *ctx =
+        mkr_xpath_context_new((void *)xdoc->doc_node, (void *)context);
+    if (ctx == NULL) {
+        rb_raise(mkr_eError, "failed to allocate XPath context");
+    }
+    mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
+
+    mkr_node_t *ast = mkr_css_compile_or_raise(ctx, rb_selector, rb_ns); /* frees ctx + raises on error */
+
+    mkr_xpath_value_t value = {0};
+    mkr_xpath_error_t error = {0};
+    int rc = first_only ? mkr_xpath_eval_compiled_first(ctx, ast, &value, &error)
+                        : mkr_xpath_eval_compiled(ctx, ast, &value, &error);
+    mkr_node_free(ast);
+    if (rc != 0) {
+        mkr_xpath_context_free(ctx);
+        mkr_xpath_raise(&error);
+    }
+    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
+    mkr_xpath_context_free(ctx);
+
+    if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
+        return rb_funcall(result, rb_intern("first"), 0);
+    }
+    return result;
+}
+
+static VALUE
+mkr_xml_node_css(VALUE self, VALUE selector, VALUE ns)
+{
+    return mkr_xml_doc_css_run(self, selector, ns, 0);
+}
+
+static VALUE
+mkr_xml_node_at_css(VALUE self, VALUE selector, VALUE ns)
+{
+    return mkr_xml_doc_css_run(self, selector, ns, 1);
+}
+
+/* #matches?(selector): does THIS node match the selector? Evaluated by selecting
+ * every matching node in the whole document (context = the document node, so the
+ * descendant-rooted selector scans the entire tree) and testing membership by
+ * node identity - the full-combinator-correct semantics. */
+static VALUE
+mkr_xml_node_css_matches(VALUE self, VALUE selector, VALUE ns)
+{
+    VALUE document = Qnil;
+    mkr_xml_node_t *node = mkr_xml_query_context(self, &document);
+    if (node == NULL) {
+        return Qfalse;
+    }
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
+
+    mkr_xpath_context_t *ctx =
+        mkr_xpath_context_new((void *)xdoc->doc_node, (void *)xdoc->doc_node);
+    if (ctx == NULL) {
+        rb_raise(mkr_eError, "failed to allocate XPath context");
+    }
+    mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_register_query_namespaces(ctx, ns); /* frees ctx + raises on error */
+
+    mkr_node_t *ast = mkr_css_compile_or_raise(ctx, selector, ns); /* frees ctx + raises on error */
+
+    mkr_xpath_value_t value = {0};
+    mkr_xpath_error_t error = {0};
+    int rc = mkr_xpath_eval_compiled(ctx, ast, &value, &error);
+    mkr_node_free(ast);
+    if (rc != 0) {
+        mkr_xpath_context_free(ctx);
+        mkr_xpath_raise(&error);
+    }
+
+    int found = 0;
+    if (value.type == MKR_XPATH_TYPE_NODESET) {
+        for (size_t i = 0; i < value.u.nodeset.count; i++) {
+            if (value.u.nodeset.nodes[i] == (void *)node) { found = 1; break; }
+        }
+    }
+    mkr_xpath_value_clear(&value);
+    mkr_xpath_context_free(ctx);
+    return found ? Qtrue : Qfalse;
+}
+
 /* The document's root element. */
 static VALUE
 mkr_xml_doc_root(VALUE self)
@@ -412,6 +558,13 @@ mkr_init_xml(void)
     rb_define_method(mkr_cXmlDocument,   "at_xpath", mkr_xml_doc_at_xpath, -1);
     rb_define_method(mkr_mXmlNodeMethods, "xpath",    mkr_xml_doc_xpath,    -1);
     rb_define_method(mkr_mXmlNodeMethods, "at_xpath", mkr_xml_doc_at_xpath, -1);
+
+    /* CSS selectors over XML: private primitives called by the Ruby #css /
+     * #at_css / #matches? wrappers (which collect the document namespaces). The
+     * selector is lowered to the native XPath engine (mkr_css.c). */
+    rb_define_private_method(mkr_mXmlNodeMethods, "_css",        mkr_xml_node_css,         2);
+    rb_define_private_method(mkr_mXmlNodeMethods, "_at_css",     mkr_xml_node_at_css,      2);
+    rb_define_private_method(mkr_mXmlNodeMethods, "_css_matches", mkr_xml_node_css_matches, 2);
 
     /* The native XML parser, exposed as XML::Document.parse, mirroring HTML
      * (HTML::Document.parse). The Makiri::XML(source) convenience delegates to it

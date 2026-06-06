@@ -119,7 +119,10 @@ el = doc.at_xpath("//a:entry", ns)
 el.local_name                                  # => "entry"
 el.namespace_uri                               # => "http://www.w3.org/2005/Atom"
 
-doc.css("entry")     # raises NotImplementedError (use #xpath)
+# CSS selectors work too (lowered to the native XPath engine): a bare type
+# selector binds to the document's default namespace, so this just works.
+doc.css("entry").length                        # => 2
+doc.css("feed > entry").map { |e| e.at_css("title").text }  # => ["Hello", "World"]
 
 # Serialize back to XML
 doc.to_xml                                 # => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed ...>...</feed>\n"
@@ -142,9 +145,17 @@ or `indent: n`, for indented element-only content; `encoding: "Shift_JIS"` to
 transcode, with a hex character reference for anything the encoding can't hold);
 a `Document#to_xml` adds the declaration and the DOCTYPE. `#canonicalize` emits
 Inclusive Canonical XML 1.0 (for XML signatures; `comments: true` to keep
-comments), byte-identical to libxml2. CSS is intentionally unavailable for XML
-(Lexbor's selector engine lower-cases names, which breaks XML case/namespace
-matching) - use XPath.
+comments), byte-identical to libxml2.
+
+`#css` / `#at_css` / `#matches?` also work on XML. They are **lowered to the
+native XPath engine** (not Lexbor's HTML matcher), so matching is case-sensitive
+and namespace-aware: a bare type selector binds to the document's default
+namespace and a prefixed `ns|el` resolves against the in-scope (or a supplied)
+namespaces - Nokogiri-compatible. The common selector surface is supported
+(descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]` operators,
+and `:first/last/only-child`, `:empty`, `:root`, the `:*-of-type` family,
+`:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`); jQuery extensions and the
+`[attr=v i]` case flag are not (use XPath).
 
 The tree supports in-place mutation - every edit validates its input (names as
 XML 1.0 QNames, values as XML Char) so the tree stays serializable to

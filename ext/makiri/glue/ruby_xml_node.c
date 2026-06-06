@@ -884,27 +884,13 @@ mkr_xml_node_canonicalize(int argc, VALUE *argv, VALUE self)
     return str;
 }
 
-/* ---- fail-closed guards for the unsupported query / serialization surface ----
+/* ---- fail-closed guard for the unsupported serialization surface ----
  *
- * Makiri::XML is a strict, read-only reader (§7.5 / §12). Two HTML-node
- * conveniences would silently misbehave on XML and are turned into explicit
- * NotImplementedError instead of a wrong result:
- *   - CSS selectors: Lexbor's lxb_selectors lower-cases names, which destroys
- *     XML's case- and namespace-sensitive matching - use #xpath.
- *   - HTML serialization (to_html/inner_html/outer_html): emitting
- *     HTML-serialized markup for an XML document would be wrong (escaping /
- *     CDATA / void elements differ). Use #to_xml. */
-static VALUE
-mkr_xml_node_no_css(int argc, VALUE *argv, VALUE self)
-{
-    (void)argc; (void)argv; (void)self;
-    rb_raise(rb_eNotImpError,
-             "Makiri::XML does not support CSS selectors; use #xpath. "
-             "(CSS cannot preserve XML element-name case or namespaces.) "
-             "Default-namespace documents (RSS/Atom) need a registered prefix, "
-             "e.g. doc.xpath(\"//a:entry\", \"a\" => \"http://www.w3.org/2005/Atom\").");
-}
-
+ * HTML serialization (to_html/inner_html/outer_html) would silently misbehave on
+ * XML (escaping / CDATA / void elements differ), so it is an explicit
+ * NotImplementedError rather than a wrong result. Use #to_xml. (CSS selectors,
+ * once unsupported here, are now lowered to the native XPath engine - see
+ * ruby_xml.c.) */
 static VALUE
 mkr_xml_node_no_serialize(int argc, VALUE *argv, VALUE self)
 {
@@ -1370,10 +1356,9 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "to_s",       mkr_xml_node_to_xml, -1);
     rb_define_method(mkr_mXmlNodeMethods, "canonicalize", mkr_xml_node_canonicalize, -1);
 
-    /* Fail-closed: CSS + HTML serialization are unsupported on XML; raise rather
-     * than return a wrong result (these shadow nothing on XML nodes otherwise). */
-    rb_define_method(mkr_mXmlNodeMethods, "css",        mkr_xml_node_no_css, -1);
-    rb_define_method(mkr_mXmlNodeMethods, "at_css",     mkr_xml_node_no_css, -1);
+    /* CSS selectors (#css / #at_css / #matches?) are supported on XML via the
+     * native XPath engine - registered in ruby_xml.c. Fail-closed: HTML
+     * serialization is unsupported on XML; raise rather than emit wrong markup. */
     rb_define_method(mkr_mXmlNodeMethods, "to_html",    mkr_xml_node_no_serialize, -1);
     rb_define_method(mkr_mXmlNodeMethods, "inner_html", mkr_xml_node_no_serialize, -1);
     rb_define_method(mkr_mXmlNodeMethods, "outer_html", mkr_xml_node_no_serialize, -1);

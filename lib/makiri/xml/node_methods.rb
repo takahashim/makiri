@@ -32,6 +32,47 @@ module Makiri
       end
 
       alias_method :has_attribute?, :key? unless method_defined?(:has_attribute?)
+
+      # CSS selector queries over XML, lowered to the native XPath engine (so
+      # matching is case-sensitive and namespace-aware, unlike a Lexbor HTML
+      # matcher). Nokogiri-compatible namespaces: the document's in-scope
+      # declarations are collected automatically (a bare type selector binds to
+      # the default namespace), and an optional +ns+ hash of {prefix => uri}
+      # supplements/overrides them.
+      #
+      #   doc.css("entry")               # default-namespace bound (Atom/RSS just work)
+      #   doc.css("a|entry", "a" => uri) # explicit prefix
+      #
+      # @return [Makiri::NodeSet]
+      def css(selector, ns = nil)
+        _css(selector.to_s, _css_namespaces(ns))
+      end
+
+      # First descendant matching +selector+, or nil. @return [Makiri::Node, nil]
+      def at_css(selector, ns = nil)
+        _at_css(selector.to_s, _css_namespaces(ns))
+      end
+
+      # Whether this node matches +selector+ (full selector, combinators included).
+      # @return [Boolean]
+      def matches?(selector, ns = nil)
+        _css_matches(selector.to_s, _css_namespaces(ns))
+      end
+
+      private
+
+      # Build the {prefix => uri} hash the C primitives register: the document's
+      # xmlns declarations (default under the synthetic prefix "xmlns", mirroring
+      # Nokogiri's `document.namespaces`), then any caller-supplied +user+ ns.
+      def _css_namespaces(user)
+        reg = {}
+        collect_namespaces.each do |key, uri|
+          prefix = key == "xmlns" ? "xmlns" : key.sub(/\Axmlns:/, "")
+          reg[prefix] = uri
+        end
+        user&.each { |k, v| reg[k.to_s] = v.to_s }
+        reg
+      end
     end
   end
 end

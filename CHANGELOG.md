@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* **CSS selectors on `Makiri::XML`** - `#css` / `#at_css` / `#matches?` now work
+  on XML nodes, lowered to the native XPath engine (so matching is
+  case-sensitive and namespace-aware, sharing its budgets / document order).
+  * Bare type selectors bind to the document's default namespace and `ns|el`
+    resolves against in-scope / supplied namespaces (Nokogiri-compatible).
+  * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
+    operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
+    `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`. jQuery extensions and the
+    `[attr=v i]` case flag remain unsupported (use XPath).
+
 ## [0.3.0] - 2026-06-06
 
 ### Added
