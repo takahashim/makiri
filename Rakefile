@@ -190,10 +190,18 @@ namespace :conformance do
       sh "#{FileUtils::RUBY} -Ilib spec/conformance/css_diff.rb #{ENV['CSS_ARGS']}"
     end
   end
+
+  desc "XML CSS-selector differential conformance: Makiri::XML vs Nokogiri::XML"
+  task css_xml: :compile do
+    Bundler.with_unbundled_env do
+      sh "#{FileUtils::RUBY} -Ilib spec/conformance/xml_css_diff.rb #{ENV['CSS_XML_ARGS']}"
+    end
+  end
 end
 
 desc "Run all conformance suites"
-task conformance: %w[conformance:html5 conformance:xpath conformance:css conformance:xmlconf conformance:xpath_xml]
+task conformance: %w[conformance:html5 conformance:xpath conformance:css
+                     conformance:xmlconf conformance:xpath_xml conformance:css_xml]
 
 namespace :fuzz do
   # Run the fuzzer under the sanitizer. Toggles (all via env):

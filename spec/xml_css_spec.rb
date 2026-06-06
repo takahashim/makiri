@@ -43,9 +43,19 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(atom.css("dc|entry", "dc" => "urn:dc").map(&:text)).to eq(["meta"])
     end
 
-    it "selects a prefixed attribute" do
-      expect(atom.css("entry[dc|role]", "dc" => "urn:dc").length).to eq(1)
+    it "selects by a prefixed attribute (namespace-only selector)" do
+      # An attribute-only selector has no bare type, so the explicit ns hash does
+      # not change its element matching.
       expect(atom.css("[dc|role=\"lead\"]", "dc" => "urn:dc").length).to eq(1)
+    end
+
+    it "disables the default-namespace binding once an explicit ns hash is given" do
+      # Nokogiri-compatible: with an explicit namespaces hash, a bare type
+      # selector resolves to NO namespace (it no longer auto-binds the default),
+      # so the default-ns entries are not matched...
+      expect(atom.css("entry[dc|role]", "dc" => "urn:dc").length).to eq(0)
+      # ...and the default namespace must be registered under a prefix to match.
+      expect(atom.css("a|entry[dc|role]", "a" => "urn:atom", "dc" => "urn:dc").length).to eq(1)
     end
 
     it "matches no-namespace elements when there is no default namespace" do

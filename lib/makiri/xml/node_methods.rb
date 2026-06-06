@@ -61,18 +61,22 @@ module Makiri
 
       private
 
-      # Build the {prefix => uri} hash the C primitives register: the root
-      # element's xmlns declarations (default under the synthetic prefix "xmlns",
-      # mirroring Nokogiri's `document.namespaces`), then any caller-supplied
-      # +user+ ns. Reading only the root's declarations is O(root attributes) -
-      # the whole-document #collect_namespaces walk would make every query O(doc).
+      # Build the {prefix => uri} hash the C primitives register. Matching
+      # Nokogiri: with NO explicit namespaces the document's own declarations are
+      # collected (the default namespace under the synthetic prefix "xmlns", so a
+      # bare type selector binds to it - the RSS/Atom common case); but once the
+      # caller passes a namespaces hash, ONLY those prefixes are used and a bare
+      # selector resolves to no namespace (Nokogiri disables the default binding
+      # the moment an explicit map is given). Reading only the root's
+      # declarations is O(root attributes), not the whole-document walk.
       def _css_namespaces(user)
+        return user.transform_keys(&:to_s).transform_values(&:to_s) if user && !user.empty?
+
         reg = {}
         root = document&.root
         root&.namespace_definitions&.each do |ns|
           reg[ns.prefix.nil? ? "xmlns" : ns.prefix] = ns.href
         end
-        user&.each { |k, v| reg[k.to_s] = v.to_s }
         reg
       end
     end

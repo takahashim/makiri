@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on XML nodes, lowered to the native XPath engine (so matching is
   case-sensitive and namespace-aware, sharing its budgets / document order).
   * Bare type selectors bind to the document's default namespace and `ns|el`
-    resolves against in-scope / supplied namespaces (Nokogiri-compatible).
+    resolves against in-scope / supplied namespaces (Nokogiri-compatible -
+    including that passing an explicit namespaces hash disables the default
+    binding, so a bare selector then matches the no-namespace element).
+  * Verified by a CSS-selector differential against Nokogiri::XML/libxml2
+    (`rake conformance:css_xml`).
   * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
     operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
     `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
