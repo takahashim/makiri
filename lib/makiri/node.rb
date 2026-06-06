@@ -44,8 +44,13 @@ module Makiri
     end
 
     # @return [Boolean]
+    def cdata?
+      is_a?(CDATASection)
+    end
+
+    # @return [Boolean]
     def attribute?
-      is_a?(Attribute)
+      is_a?(Attr)
     end
 
     # @return [Boolean]
@@ -65,7 +70,7 @@ module Makiri
 
     # @return [Boolean] true for a blank/whitespace-only text or CDATA node.
     def blank?
-      (text? || is_a?(CData)) && content.strip.empty?
+      (text? || cdata?) && content.strip.empty?
     end
 
     # --- Nokogiri-compatible aliases over the core API ---
@@ -83,8 +88,8 @@ module Makiri
       self[name] = value
     end
 
-    # The Attribute node named +name+, or nil (cf. {#[]}, which returns the value).
-    # @return [Makiri::Attribute, nil]
+    # The Attr node named +name+, or nil (cf. {#[]}, which returns the value).
+    # @return [Makiri::Attr, nil]
     def attribute(name)
       attributes[name.to_s]
     end
@@ -140,8 +145,8 @@ module Makiri
       document.root
     end
 
-    # Attributes as a name => Attribute Hash (empty for non-elements).
-    # @return [Hash{String => Makiri::Attribute}]
+    # Attributes as a name => Attr Hash (empty for non-elements).
+    # @return [Hash{String => Makiri::Attr}]
     def attributes
       attribute_nodes.each_with_object({}) { |attr, h| h[attr.name] = attr }
     end

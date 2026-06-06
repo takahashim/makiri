@@ -201,7 +201,7 @@ counting node structs and text), which fits every standard document. Raise it
 per parse for an unusually large one:
 
 ```ruby
-Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri.parse_xml(..., max_bytes:)
+Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri::XML::Document.parse(..., max_bytes:)
 ```
 
 Conformance is held by a regression net: the **W3C XML Conformance Test Suite**

@@ -4,7 +4,8 @@ require "spec_helper"
 
 # DOCTYPE handling: the native XML reader RECOGNIZES a `<!DOCTYPE ...>` and
 # retains its name + external identifiers (Document#internal_subset, a
-# Makiri::XML::DTD, mirroring Nokogiri), but it does NOT process the DTD - no
+# Makiri::XML::DocumentType; the Nokogiri name DTD is an alias), but it does NOT
+# process the DTD - no
 # entity/element declarations are loaded and no external subset is fetched. The
 # security consequences (undefined entities, zero I/O) live in xml_security_spec.
 RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
@@ -18,7 +19,7 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
 
   it "exposes a name-only DOCTYPE with nil external/system ids" do
     d = dtd("<!DOCTYPE html><html/>")
-    expect(d).to be_a(Makiri::XML::DTD)
+    expect(d).to be_a(Makiri::XML::DocumentType)
     expect(d.name).to eq("html")
     expect(d.external_id).to be_nil
     expect(d.public_id).to be_nil

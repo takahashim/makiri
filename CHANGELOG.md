@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* **`Makiri::XML(source)` / `Makiri.parse_xml(source)` - a native,
+* **`Makiri::XML::Document.parse(source)` / `Makiri::XML(source)` - a native,
   security-first XML reader + in-place editor** (no libxml2, like the rest of
   Makiri). It parses
   with its own strict, well-formedness-checking parser into a custom node arena
@@ -42,12 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     document (a 50 MB sitemap is ~82 MB of arena) and only rejects documents
     past ~2M elements; raise it per parse with
     `Makiri::XML(src, max_bytes: 512 * 1024 * 1024)` /
-    `Makiri.parse_xml(src, max_bytes:)` (a positive Integer; other per-document
-    budget overrides will join this keyword later).
+    `Makiri::XML::Document.parse(src, max_bytes:)` (a positive Integer; other
+    per-document budget overrides will join this keyword later).
   * A `<!DOCTYPE ...>` is **recognized but its DTD is not processed**: the doctype
     name and external identifiers are retained and exposed via
-    `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DTD` with `#name`,
-    `#external_id` / `#public_id`, and `#system_id`, like Nokogiri), but no
+    `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DocumentType` -
+    aliased `Makiri::XML::DTD` for Nokogiri - with `#name`,
+    `#external_id` / `#public_id`, and `#system_id`), but no
     entity or element declarations are loaded and no external subset is ever
     fetched (zero I/O). Consequently a DTD-defined entity reference stays an
     undefined-entity error, so **XXE and billion-laughs amplification are
@@ -84,7 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to the same tree - checked by a property-based round-trip over generated
     documents. `encoding: "..."` (a String or Encoding) transcodes the output,
     naming the encoding in a Document's declaration and replacing any
-    unrepresentable character with a hexadecimal character reference.
+    unrepresentable character with a hexadecimal character reference. The
+    serialization buffer is bounded by a content-scaled cap (a multiple of the
+    document's size), so a pathological tree fails closed with `Makiri::Error`
+    rather than exhausting memory; the HTML serializer is bounded likewise.
   * `#canonicalize` produces Inclusive Canonical XML 1.0 (the form used for XML
     signatures): sorted attributes/namespaces, superfluous namespace
     declarations removed, explicit end tags, CDATA as text, comments omitted
@@ -95,31 +99,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     an HTML concept) raise `NotImplementedError` rather than returning a wrong
     result. `id()` is the empty node-set (no DTD-declared IDs) and `lang()` reads
     `xml:lang`, per the XML host policy.
-  * Tree mutation: in-place edits and building new subtrees. In-place: `#[]=`
-    and `#delete` / `#remove_attribute` (attributes), `#content=` (replace an
-    element's children with text, or set a leaf's data), `#name=` (rename an
-    element or attribute, re-resolving its namespace), and `#remove` / `#unlink`
-    (detach a node). Building: the node factories `Document#create_element`
-    (optionally with text content), `#create_text_node`, `#create_comment`,
-    `#create_cdata`, `#create_processing_instruction` (plus `XML::Element.new` /
-    `XML::Text.new`), and node insertion `#add_child` / `<<`,
-    `#add_previous_sibling` / `#before`, `#add_next_sibling` / `#after`,
-    `#replace`. A node's namespace is resolved against its position **at
-    insertion** (parser-faithful: a prefixed name binds to the in-scope `xmlns`,
-    an unprefixed element to the default namespace), so the same tree results
-    whether names are set before or after attaching - an unbound prefix is
-    deferred while a fragment is detached and only errors once it joins the live
-    tree, keeping the live document serializable to well-formed XML. A node from
-    another document is **deep-copied** into the target arena (the source is
-    untouched); a same-document node moves. The Ruby-free primitives live in
-    `ext/makiri/xml/mkr_xml_mutate.c`; every edit validates first (names as XML
-    1.0 QNames, values as XML Char) and resolves before any structural change, so
-    a failure - bad name/char, unbound prefix, cycle, a second document root, an
-    attribute/document used as a tree child - leaves the tree untouched (fully
-    fail-closed, even on a move). Detach-never-destroy: a removed/replaced node is
-    unlinked, never freed, so a live wrapper aliasing it stays usable (the arena
-    owns the memory). Parsing a string/fragment into nodes and `DocumentFragment`
-    are a later phase.
+  * Tree mutation - in-place edits, construction, and insertion. Every edit is
+    **fully fail-closed**: it validates (names as XML 1.0 QNames; values as XML
+    Char, and free of the sequences that would not round-trip - `--` or a trailing
+    `-` in a comment, `]]>` in a CDATA section, `?>` in PI data, a prefix bound to
+    the empty namespace via `xmlns:p=""`) and resolves before any structural
+    change, so a failure (bad name/char/sequence, unbound prefix, cycle, a second
+    document root, an attribute/document used as a tree child) leaves the tree
+    untouched, even on a move. Detach-never-destroy: a removed/replaced node is
+    unlinked, never freed, so a live wrapper aliasing it stays usable.
+    * **In-place:** `#[]=` and `#delete` / `#remove_attribute` (attributes),
+      `#content=` (replace an element's children with text, or set a leaf's data),
+      `#name=` (rename, re-resolving the namespace), `#remove` / `#unlink` (detach).
+    * **Factories** on `Document`: `#create_element` (optional text content and/or
+      an attributes Hash, Nokogiri-style), `#create_text_node`, `#create_comment`,
+      `#create_cdata`, `#create_processing_instruction`. Plus the Nokogiri-style
+      node-class constructors `Element.new(name, doc)` / `Text.new(content, doc)`
+      and (document first) `Comment.new(doc, content)` / `CDATASection.new(doc, content)` /
+      `ProcessingInstruction.new(doc, target, data)` - shared base constructors that
+      delegate to the factories, so they work for HTML and XML and raise a
+      consistent `TypeError` on a non-document.
+    * **Insertion:** `#add_child` / `<<`, `#add_previous_sibling` / `#before`,
+      `#add_next_sibling` / `#after`, `#replace`. A node's namespace is resolved at
+      its insertion position (parser-faithful: a prefixed name binds to the in-scope
+      `xmlns`, an unprefixed element to the default), so the same tree results
+      whether names are set before or after attaching; an unbound prefix is deferred
+      while a fragment is detached and only errors once it joins the live tree. A
+      node from another document is deep-copied into the target arena (the source is
+      untouched); a same-document node moves.
+    * **Fragments:** `XML::DocumentFragment.parse(source)` (self-contained, its own
+      backing document) and `XML::Document#fragment(source)` (bound, resolving names
+      against the document's in-scope namespaces). The parser has a dedicated
+      fragment mode (no synthetic wrapper element) that fails closed on an XML
+      declaration, DOCTYPE, stray end tag, or unbound prefix; inserting a fragment
+      splices its children (not the fragment node) for every verb, re-resolving each
+      child's namespaces at the insertion point.
+    * **From scratch:** `XML::Document.new` is an empty document (no root) to
+      assemble with the factories and `#add_child`; `XML::Document#root=` sets or
+      replaces the root element (subject to the single-root rule).
 * `Node` includes `Enumerable` over its child nodes - `node.each` yields each
   child (returning an `Enumerator` without a block), so `node.map` / `select` /
   `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
@@ -128,6 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Comparable`, so nodes can be sorted (`nodes.sort`, `min`/`max`, `<`/`>`).
   Returns `nil` (incomparable) across documents or detached subtrees and for
   attribute nodes - matching how `Comparable` treats an unorderable pair.
+* `NodeSet.new(document_or_node, list = [])` builds a set from a document (or any
+  node, whose document is used) and an optional Array of its nodes, like Nokogiri.
+  Every listed node must belong to that document - a foreign-document or
+  cross-representation node is rejected (fail-closed, since the set re-wraps its
+  stored pointers by document kind).
 * `NodeSet#[]` now accepts a `Range` or `start, length` like `Array#[]`
   (returning a new `NodeSet`), in addition to a single Integer index (a `Node`).
 * `Node#dup` / `Node#clone`, `NodeSet#dup` / `#clone`, and `Document#dup` /
@@ -146,6 +168,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `clone(freeze: true)` returned an unfrozen copy).
 
 ### Changed
+
+* **Node-class names are now the WHATWG DOM interface names, with the
+  libxml2/Nokogiri spellings kept as aliases.** The canonical leaf names are
+  `Element`, `Attr`, `Text`, `Comment`, `CDATASection`, `ProcessingInstruction`,
+  `DocumentType`, `Document`, `DocumentFragment` (at all three levels - the
+  abstract base and the `HTML::` / `XML::` leaves). Two of these differ from the
+  previous spelling: `CData`/`CDATA` → **`CDATASection`** and the XML doctype
+  `DTD` → **`DocumentType`** (so an XML doctype now shares the
+  `Makiri::DocumentType` base with the HTML one, and `is_a?(Makiri::DocumentType)`
+  holds for both). `Attribute` → **`Attr`** (which is itself the DOM name).
+  Nokogiri's names resolve as aliases - `CDATA` (→ `CDATASection`) and `DTD`
+  (→ `DocumentType`) at every level - so a ported `is_a?` / `case` check works
+  unchanged; only `#class.name` reports the canonical DOM name. The `attribute?`
+  predicate keeps its name, and a `Node#cdata?` predicate was added alongside
+  `element?` / `text?` / `comment?`.
 
 * The text index's per-element range table stores its slice-run bounds as
   `uint32` indices instead of `size_t`, shrinking each entry from 24 to 16 bytes

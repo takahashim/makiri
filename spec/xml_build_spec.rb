@@ -17,10 +17,18 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect(doc.create_element("p", "hi").text).to eq("hi")
     end
 
+    it "creates an element with an attributes hash and/or text content (Nokogiri-style)" do
+      expect(doc.create_element("box", "id" => "1", "class" => "c").to_xml)
+        .to eq(%(<box id="1" class="c"/>))
+      expect(doc.create_element("a", "hi", href: "/x").to_xml) # content + symbol-key attrs
+        .to eq(%(<a href="/x">hi</a>))
+      expect { doc.create_element("x", "xmlns:q" => "") }.to raise_error(Makiri::Error) # validated
+    end
+
     it "creates text, comment, CDATA and PI nodes" do
       expect(doc.create_text_node("t")).to be_a(Makiri::XML::Text)
       expect(doc.create_comment(" c ")).to be_a(Makiri::XML::Comment)
-      expect(doc.create_cdata("a < b")).to be_a(Makiri::XML::CData)
+      expect(doc.create_cdata("a < b")).to be_a(Makiri::XML::CDATASection)
       pi = doc.create_processing_instruction("xml-stylesheet", %(href="a.xsl"))
       expect(pi).to be_a(Makiri::XML::ProcessingInstruction)
       expect(pi.name).to eq("xml-stylesheet")
@@ -52,10 +60,30 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect(doc.root["xmlns:q"]).to eq("urn:q")
     end
 
-    it "exposes Element.new / Text.new delegating to the document" do
+    it "exposes node-class .new delegating to the document (Nokogiri argument order)" do
+      # Element/Text take the document LAST; Comment/CDATA/PI take it FIRST.
       expect(Makiri::XML::Element.new("e", doc).name).to eq("e")
       expect(Makiri::XML::Text.new("hello", doc).text).to eq("hello")
+      expect(Makiri::XML::Comment.new(doc, " c ").to_xml).to eq("<!-- c -->")
+      expect(Makiri::XML::CDATASection.new(doc, "a < b").to_xml).to eq("<![CDATA[a < b]]>")
+      pi = Makiri::XML::ProcessingInstruction.new(doc, "xml-stylesheet", %(href="s.xsl"))
+      expect(pi).to be_a(Makiri::XML::ProcessingInstruction)
+      expect(pi.to_xml).to eq(%(<?xml-stylesheet href="s.xsl"?>))
+    end
+
+    it "Node#cdata? is true only for a CDATA node (cf. text?/comment?)" do
+      cdata = Makiri::XML::CDATASection.new(doc, "x")
+      expect(cdata.cdata?).to be(true)
+      expect(cdata.text?).to be(false)
+      expect(cdata.comment?).to be(false)
+      expect(Makiri::XML::Text.new("x", doc).cdata?).to be(false)
+    end
+
+    it "keeps the factory validation and Document type-check on the .new delegators" do
       expect { Makiri::XML::Element.new("e", "not a doc") }.to raise_error(TypeError)
+      expect { Makiri::XML::Comment.new("not a doc", "x") }.to raise_error(TypeError)
+      expect { Makiri::XML::Comment.new(doc, "a--b") }.to raise_error(Makiri::Error) # "--"
+      expect { Makiri::XML::CDATASection.new(doc, "a]]>b") }.to raise_error(Makiri::Error)  # "]]>"
     end
   end
 
@@ -171,6 +199,32 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       r = doc.root
       r.freeze
       expect { r.add_child(doc.create_element("x")) }.to raise_error(FrozenError)
+    end
+  end
+
+  describe "Document.new (build from scratch)" do
+    it "creates an empty document and builds it up with root= / add_child" do
+      d = Makiri::XML::Document.new
+      expect(d).to be_a(Makiri::XML::Document)
+      expect(d.root).to be_nil
+      d.root = d.create_element("feed", "xmlns" => "urn:a")
+      d.root.add_child(d.create_element("entry", "hi"))
+      expect(d.to_xml).to include(%(<feed xmlns="urn:a"><entry>hi</entry></feed>))
+      expect(d.root.name).to eq("feed")
+    end
+
+    it "root= replaces an existing root; the single-root rule still holds" do
+      d = Makiri::XML::Document.new
+      d.add_child(d.create_element("a"))
+      expect { d.add_child(d.create_element("b")) }.to raise_error(Makiri::Error, /single root/)
+      d.root = d.create_element("c") # replace, not a second root
+      expect(d.root.name).to eq("c")
+      expect(d.xpath("/c").length).to eq(1)
+    end
+
+    it "scopes root= to XML (an HTML5 document has a fixed structure)" do
+      expect(Makiri::HTML("<p/>")).not_to respond_to(:root=)
+      expect(Makiri::Document.instance_methods).not_to include(:root=)
     end
   end
 

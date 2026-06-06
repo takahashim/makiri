@@ -53,7 +53,7 @@ RSpec.describe "Makiri::XML XPath conformance" do
     it "merges adjacent CDATA sections into one node" do
       doc = Makiri::XML("<r><![CDATA[a]]><![CDATA[b]]><![CDATA[c]]></r>")
       expect(doc.root.children.length).to eq(1)
-      expect(doc.root.children.first).to be_a(Makiri::XML::CData)
+      expect(doc.root.children.first).to be_a(Makiri::XML::CDATASection)
       expect(doc.xpath("//text()").map(&:text)).to eq(["abc"])
       expect(doc.xpath("string(//r)")).to eq("abc")
     end
@@ -61,7 +61,7 @@ RSpec.describe "Makiri::XML XPath conformance" do
     it "keeps text and CDATA as distinct nodes (only same-type merges)" do
       doc = Makiri::XML("<r>x<![CDATA[y]]>z</r>")
       kinds = doc.root.children.map { |c| c.class.name.split("::").last }
-      expect(kinds).to eq(%w[Text CData Text])
+      expect(kinds).to eq(%w[Text CDATASection Text])
       expect(doc.xpath("count(//text())")).to eq(3.0)
       expect(doc.root.text).to eq("xyz")
     end

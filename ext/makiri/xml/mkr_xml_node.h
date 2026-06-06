@@ -33,6 +33,7 @@ typedef enum {
     MKR_XML_NODE_TYPE_COMMENT          = 8,
     MKR_XML_NODE_TYPE_DOCUMENT         = 9,
     MKR_XML_NODE_TYPE_DOCUMENT_TYPE    = 10, /* the off-tree DOCTYPE metadata node */
+    MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT = 11, /* a detached group of sibling nodes */
     MKR_XML_NODE_TYPE_NOTATION         = 12  /* never produced (no DTD) */
 } mkr_xml_node_type_t;
 

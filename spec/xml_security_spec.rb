@@ -129,9 +129,9 @@ RSpec.describe "Makiri::XML security" do
     # ~1 MB+ of arena (markup-heavy), comfortably under the 256 MiB default.
     let(:big) { "<root>#{'<item><a>1</a><b>2</b></item>' * 20_000}</root>" }
 
-    it "parses under the default and via Makiri.parse_xml" do
+    it "parses under the default and via Makiri::XML::Document.parse" do
       expect(Makiri::XML(big).xpath("count(//item)")).to eq(20_000.0)
-      expect(Makiri.parse_xml("<r/>", max_bytes: 4096).root.name).to eq("r")
+      expect(Makiri::XML::Document.parse("<r/>", max_bytes: 4096).root.name).to eq("r")
     end
 
     it "rejects a document that exceeds a lowered max_bytes" do

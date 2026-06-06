@@ -1,6 +1,6 @@
 /* mkr_xml.h - public boundary of the native XML reader (Phase 1, read-only).
  *
- * Ruby-free. The Ruby surface (Makiri::XML(...) / Makiri.parse_xml) lives in
+ * Ruby-free. The Ruby surface (Makiri::XML::Document.parse / Makiri::XML(...)) lives in
  * glue/ruby_xml.c, which decodes input (bridge/mkr_xml_decode_input), releases
  * the GVL, and calls mkr_xml_parse here. See docs/xml_parser_plan.ja.md.
  */
@@ -70,6 +70,18 @@ typedef struct {
 mkr_xml_doc_t *mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status);
 mkr_xml_doc_t *mkr_xml_parse_ex(const char *src, size_t len,
                                 const mkr_xml_limits_t *limits, mkr_xml_status_t *status);
+
+/* Parse +src+ as a FRAGMENT (0+ top-level nodes: char data, multiple elements,
+ * comments, PIs, CDATA - no XML declaration, DOCTYPE, or single-root rule) into a
+ * fresh DOCUMENT_FRAGMENT node in +doc+'s arena, returned on success. When
+ * +inherit_doc_ns+ is set, +doc+'s root in-scope namespace declarations seed the
+ * scope so a prefixed/default-namespaced name resolves against the document
+ * (Document#fragment); otherwise the fragment is self-contained
+ * (DocumentFragment.parse, typically into a fresh doc). Bytes count against
+ * +doc+'s budget. NULL + *status on error; the partial fragment is left detached
+ * in the arena (never freed). The input must already be validated UTF-8. */
+mkr_xml_node_t *mkr_xml_parse_fragment(mkr_xml_doc_t *doc, const char *src, size_t len,
+                                       int inherit_doc_ns, mkr_xml_status_t *status);
 
 /* Structural self-test of the tokenizer + tree builder (run from
  * Makiri.__c_selftest). Returns 0 on success or the 1-based failing check. */

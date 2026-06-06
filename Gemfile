@@ -15,6 +15,6 @@ gem "rspec", "~> 3.13"
 # also built on Lexbor) are performance references in bench/.
 group :bench, optional: true do
   gem "benchmark-ips", "~> 2.0"
-  gem "nokogiri", "~> 1.0"
+  gem "nokogiri", "~> 1.19"
   gem "nokolexbor", "~> 0.7"
 end

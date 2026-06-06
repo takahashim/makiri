@@ -46,6 +46,11 @@ typedef struct {
                                        * the XML declaration is valid) */
     uint32_t        line, col;       /* 1-based; col in bytes (§5) */
     mkr_xml_doc_t  *doc;
+    mkr_xml_node_t *fragment;        /* NULL = parse a whole document; else parse a
+                                      * fragment INTO this DOCUMENT_FRAGMENT node:
+                                      * 0+ top-level nodes (char data, multiple
+                                      * elements; no XML decl / DOCTYPE / single-root
+                                      * rule) attach to it instead of the doc node */
     mkr_xml_status_t status;
     ns_binding_t   *binds; size_t nbind, bind_cap;   /* namespace scope stack */
     raw_attr_t     *ratt;  size_t nratt, ratt_cap;   /* reusable per-tag attr buffer */
@@ -442,7 +447,7 @@ parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 static int
 parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
-    if (P->depth == 0) { set_syntax(P); return -1; }  /* CDATA (char data) outside the root */
+    if (P->depth == 0 && P->fragment == NULL) { set_syntax(P); return -1; } /* CDATA outside the root */
     advance_n(P, 8);                                  /* consume "![CDATA[" */
     const char *cstart = P->p, *q = P->p, *close = NULL;
     for (;;) {
@@ -633,7 +638,8 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
 static inline mkr_xml_node_t *
 cur_parent(const mkr_xml_parser_t *P)
 {
-    return P->depth ? P->stack[P->depth - 1] : P->doc->doc_node;
+    if (P->depth) return P->stack[P->depth - 1];
+    return P->fragment ? P->fragment : P->doc->doc_node;
 }
 
 /* End tag '</name S? >' (P->p at '/'): must match the innermost open element's
@@ -766,7 +772,10 @@ parse_markup(mkr_xml_parser_t *P)
     mkr_xml_node_t *parent = cur_parent(P);
     if (lit_ahead(P, "!--", 3))      return parse_comment(P, parent);
     if (lit_ahead(P, "![CDATA[", 8)) return parse_cdata(P, parent);
-    if (lit_ahead(P, "!DOCTYPE", 8)) return parse_doctype(P);
+    if (lit_ahead(P, "!DOCTYPE", 8)) {
+        if (P->fragment != NULL) { set_syntax(P); return -1; }   /* a fragment has no DOCTYPE */
+        return parse_doctype(P);
+    }
     set_syntax(P); return -1;
 }
 
@@ -786,11 +795,11 @@ parse_start_tag(mkr_xml_parser_t *P, uint32_t tl, uint32_t tc)
     if (set_node_qname(P, el, nm, nl, eloc, ell, epl) != 0) return -1;
     el->line = tl; el->col = tc;
 
-    if (P->depth == 0) {
+    if (P->depth == 0 && P->fragment == NULL) {
         if (P->doc->root != NULL) { set_syntax(P); return -1; }   /* multiple roots */
         P->doc->root = el;
-    }
-    append_child(cur_parent(P), el);   /* the DOCUMENT node at depth 0, the open element otherwise */
+    }   /* a fragment allows multiple top-level elements and sets no doc->root */
+    append_child(cur_parent(P), el);   /* depth 0: the DOCUMENT (or fragment) node; else the open element */
 
     size_t bind_base = P->nbind;       /* xmlns on this element go above here */
     int pushed = 0;
@@ -828,15 +837,93 @@ parse_text(mkr_xml_parser_t *P)
     size_t traw = (size_t)(P->p - tstart);
     if (traw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }   /* fail closed */
     uint32_t tlen = (uint32_t)traw;
-    if (P->depth == 0) {
+    if (P->depth == 0 && P->fragment == NULL) {
         if (nonspace) { set_syntax(P); return -1; }   /* non-ws text outside any element */
-        return 0;
+        return 0;                                     /* document-level whitespace (misc): discarded */
     }
-    /* expand char/entity references + validate XML Char (§9.1/§9.2) */
+    /* expand char/entity references + validate XML Char (§9.1/§9.2). At the fragment
+     * top level (depth 0) char data is a child of the fragment node itself. */
     uint32_t tvlen = 0;
     const char *tval = mkr_xml_expand(P->doc, tstart, tlen, MKR_XML_EXPAND_TEXT, &tvlen, &P->status);
     if (tval == NULL) return -1;
-    return append_chardata(P, P->stack[P->depth - 1], MKR_XML_NODE_TYPE_TEXT, tval, tvlen);
+    return append_chardata(P, cur_parent(P), MKR_XML_NODE_TYPE_TEXT, tval, tvlen);
+}
+
+/* Fold CRLF and a lone CR to LF over the whole input before tokenizing (§9.3b-A),
+ * so every later stage (attribute-value normalization, line counting) sees only
+ * LF. Only when a CR is actually present is the input copied into a freshly
+ * malloc'd scratch buffer (the common no-CR input tokenizes in place, zero copy);
+ * it can only shrink. On return, body+blen are the bytes to parse and norm is the
+ * scratch buffer the caller must free (NULL if none). Returns 0, or -1 on OOM. */
+static int
+normalize_newlines(const char *src, size_t len, const char **body, size_t *blen, char **norm)
+{
+    *body = src; *blen = len; *norm = NULL;
+    if (memchr(src, '\r', len) == NULL) return 0;
+    char *buf = mkr_reallocarray(NULL, len == 0 ? 1 : len, 1);
+    if (buf == NULL) return -1;
+    size_t o = 0;
+    for (size_t k = 0; k < len; k++) {
+        char ch = src[k];
+        if (ch == '\r') {
+            buf[o++] = '\n';
+            if (k + 1 < len && src[k + 1] == '\n') k++;   /* CRLF -> single LF */
+        } else {
+            buf[o++] = ch;
+        }
+    }
+    *body = buf; *blen = o; *norm = buf;
+    return 0;
+}
+
+/* Tokenizer dispatch: classify the construct at P->p and hand it to its handler.
+ * The handlers carry all parse state through P (cursor, namespace scope, AND the
+ * open-element stack), so this loop stays a thin classifier. Shared by the
+ * document and fragment entries - P->fragment selects the depth-0 rules; the
+ * caller does the mode-specific post-checks. */
+static void
+run_tokenizer(mkr_xml_parser_t *P)
+{
+    while (P->p < P->end) {
+        if (*P->p != '<') {
+            if (parse_text(P) != 0) break;
+        } else {
+            uint32_t tl = P->line, tc = P->col;     /* the '<' position (start-tag line/col) */
+            int at_start = (P->p == P->start) && P->fragment == NULL; /* '<?xml ...?>' only in a document prolog */
+            advance(P);                              /* '<' */
+            if (P->p >= P->end) { set_syntax(P); break; }
+            int rc;
+            switch (*P->p) {
+            case '/': rc = parse_end_tag(P);                          break;
+            case '!': rc = parse_markup(P);                           break;  /* comment / CDATA / DTD */
+            case '?': rc = parse_pi(P, cur_parent(P), at_start);      break;
+            default:  rc = parse_start_tag(P, tl, tc);                break;
+            }
+            if (rc != 0) break;
+        }
+        if (P->status != MKR_XML_OK) break;
+    }
+}
+
+/* Seed a fragment parser's binding scope with the document root's in-scope
+ * namespace declarations (its xmlns / xmlns:* DOM attributes ARE the in-scope set:
+ * the root is the top, and the xml: prefix is implicit in ns_lookup), so a
+ * prefixed (or default-namespaced) name in a Document#fragment resolves against
+ * the document, Nokogiri-faithfully. 0, or -1 on a binding-stack failure. */
+static int
+seed_doc_namespaces(mkr_xml_parser_t *P)
+{
+    mkr_xml_node_t *root = P->doc->root;
+    if (root == NULL) return 0;
+    for (mkr_xml_node_t *a = root->attrs; a != NULL; a = a->next) {
+        int is_default  = slice_eq(a->qname, a->qname_len, "xmlns", 5);
+        int is_prefixed = (a->qname_len > 6 && memcmp(a->qname, "xmlns:", 6) == 0);
+        if (!is_default && !is_prefixed) continue;
+        const char *bpfx = ""; uint32_t bpl = 0;
+        if (is_prefixed) { bpfx = a->qname + 6; bpl = a->qname_len - 6; }
+        if (push_binding(P, bpfx, bpl, a->value, a->value_len) != 0) return -1;
+    }
+    return 0;
 }
 
 mkr_xml_doc_t *
@@ -879,58 +966,16 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
         return NULL;
     }
 
-    /* §9.3b-A: line-ending normalization - fold CRLF and a lone CR to LF over the
-     * whole input BEFORE tokenizing, so every later stage (attribute-value
-     * normalization, line counting) sees only LF. It can only shrink, so we
-     * normalize into a scratch buffer only when a CR is actually present (the
-     * common no-CR input tokenizes in place with zero copy). The buffer outlives
-     * the parse; every retained byte is copied into the arena, so freeing it at
-     * the end is safe. */
-    const char *body = src;
-    size_t      blen = len;
-    char       *norm = NULL;
-    if (memchr(src, '\r', len) != NULL) {
-        norm = mkr_reallocarray(NULL, len == 0 ? 1 : len, 1);
-        if (norm == NULL) { if (status) *status = MKR_XML_ERR_OOM; mkr_xml_doc_destroy(doc); return NULL; }
-        size_t o = 0;
-        for (size_t k = 0; k < len; k++) {
-            char ch = src[k];
-            if (ch == '\r') {
-                norm[o++] = '\n';
-                if (k + 1 < len && src[k + 1] == '\n') k++;   /* CRLF -> single LF */
-            } else {
-                norm[o++] = ch;
-            }
-        }
-        body = norm;
-        blen = o;
+    const char *body; size_t blen; char *norm;
+    if (normalize_newlines(src, len, &body, &blen, &norm) != 0) {
+        if (status) *status = MKR_XML_ERR_OOM;
+        mkr_xml_doc_destroy(doc);
+        return NULL;
     }
 
     mkr_xml_parser_t P = { .p = body, .end = body + blen, .start = body,
                            .line = 1, .col = 1, .doc = doc, .status = MKR_XML_OK };
-
-    /* Tokenizer dispatch: classify the construct at P.p and hand it to its
-     * handler. The handlers carry all parse state through P (cursor, namespace
-     * scope, AND the open-element stack), so this loop stays a thin classifier. */
-    while (P.p < P.end) {
-        if (*P.p != '<') {
-            if (parse_text(&P) != 0) break;
-        } else {
-            uint32_t tl = P.line, tc = P.col;     /* the '<' position (start-tag line/col) */
-            int at_start = (P.p == P.start);       /* '<?xml ...?>' is valid only here */
-            advance(&P);                           /* '<' */
-            if (P.p >= P.end) { set_syntax(&P); break; }
-            int rc;
-            switch (*P.p) {
-            case '/': rc = parse_end_tag(&P);                          break;
-            case '!': rc = parse_markup(&P);                           break;  /* comment / CDATA / DTD */
-            case '?': rc = parse_pi(&P, cur_parent(&P), at_start);     break;
-            default:  rc = parse_start_tag(&P, tl, tc);                break;
-            }
-            if (rc != 0) break;
-        }
-        if (P.status != MKR_XML_OK) break;
-    }
+    run_tokenizer(&P);
 
     if (P.status == MKR_XML_OK) {
         if (P.depth != 0)           set_syntax(&P);   /* unclosed element(s) */
@@ -949,6 +994,49 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
     }
     if (status) *status = MKR_XML_OK;
     return doc;
+}
+
+mkr_xml_node_t *
+mkr_xml_parse_fragment(mkr_xml_doc_t *doc, const char *src, size_t len,
+                       int inherit_doc_ns, mkr_xml_status_t *status)
+{
+    /* Coarse fast-fail before any allocation; the arena's per-cut checks enforce
+     * the remaining budget during the parse (an existing document has already
+     * spent some of it). */
+    if (len > doc->max_bytes) { if (status) *status = MKR_XML_ERR_LIMIT; return NULL; }
+
+    mkr_xml_node_t *frag = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT);
+    if (frag == NULL) { if (status) *status = doc->oom; return NULL; }
+
+    const char *body; size_t blen; char *norm;
+    if (normalize_newlines(src, len, &body, &blen, &norm) != 0) {
+        if (status) *status = MKR_XML_ERR_OOM;
+        return NULL;   /* frag stays in the arena, detached (never freed) */
+    }
+
+    mkr_xml_parser_t P = { .p = body, .end = body + blen, .start = body, .line = 1,
+                           .col = 1, .doc = doc, .fragment = frag, .status = MKR_XML_OK };
+
+    if (inherit_doc_ns && seed_doc_namespaces(&P) != 0) {
+        free(P.binds); free(norm);
+        if (status) *status = P.status;
+        return NULL;
+    }
+
+    run_tokenizer(&P);
+    if (P.status == MKR_XML_OK && P.depth != 0) set_syntax(&P);   /* unclosed element(s) */
+
+    free(P.stack);
+    free(P.frame);
+    free(P.binds);
+    free(P.ratt);
+    free(norm);
+    if (P.status != MKR_XML_OK) {
+        if (status) *status = P.status;
+        return NULL;   /* the partial fragment stays detached in the arena */
+    }
+    if (status) *status = MKR_XML_OK;
+    return frag;
 }
 
 /* ---- parse self-test (structural; run from Makiri.__c_selftest under ASan) --
@@ -1325,6 +1413,66 @@ mkr_xml_parse_selftest(void)
         d = mkr_xml_parse_ex(doc_src, dlen, &zero, &st);
         if (d == NULL || st != MKR_XML_OK) { if (d) mkr_xml_doc_destroy(d); return i; }
         mkr_xml_doc_destroy(d);
+    }
+
+    /* 20: fragment - multiple top-level nodes (no single-root rule), char data at
+     *     the top level, a self-declared namespace. */
+    i++;
+    {
+        static const char fsrc[] = "<a/>txt<p:b xmlns:p='urn:p'>x</p:b>";
+        mkr_xml_doc_t *fd = mkr_xml_doc_new();
+        if (fd == NULL) return i;
+        st = MKR_XML_OK;
+        mkr_xml_node_t *frag = mkr_xml_parse_fragment(fd, fsrc, sizeof(fsrc) - 1, 0, &st);
+        if (frag == NULL || st != MKR_XML_OK
+            || frag->type != MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT) { mkr_xml_doc_destroy(fd); return i; }
+        mkr_xml_node_t *c0 = frag->first_child;
+        mkr_xml_node_t *c1 = c0 ? c0->next : NULL;
+        mkr_xml_node_t *c2 = c1 ? c1->next : NULL;
+        if (!NAME_IS(c0, "a") || c0->type != MKR_XML_NODE_TYPE_ELEMENT
+            || c1 == NULL || c1->type != MKR_XML_NODE_TYPE_TEXT || !VAL_IS(c1, "txt")
+            || !NAME_IS(c2, "b") || !NS_IS(c2, "urn:p") || c2->next != NULL) {
+            mkr_xml_doc_destroy(fd); return i;
+        }
+        mkr_xml_doc_destroy(fd);
+    }
+
+    /* 21: a fragment fails closed on an XML declaration, a DOCTYPE, a stray end
+     *     tag, an unclosed element, and (standalone) an unbound prefix. */
+    i++;
+    {
+        mkr_xml_doc_t *fd = mkr_xml_doc_new();
+        if (fd == NULL) return i;
+#define FRAG_REJECTS(lit) do {                                                  \
+            st = MKR_XML_OK;                                                    \
+            if (mkr_xml_parse_fragment(fd, (lit), sizeof(lit) - 1, 0, &st) != NULL \
+                || st == MKR_XML_OK) { mkr_xml_doc_destroy(fd); return i; }     \
+        } while (0)
+        FRAG_REJECTS("<?xml version='1.0'?>");
+        FRAG_REJECTS("<!DOCTYPE r>");
+        FRAG_REJECTS("</x>");
+        FRAG_REJECTS("<a>");
+        FRAG_REJECTS("<p:a/>");
+#undef FRAG_REJECTS
+        mkr_xml_doc_destroy(fd);
+    }
+
+    /* 22: inherit_doc_ns resolves a prefixed (and default-namespaced) fragment name
+     *     against the document's root namespaces (Document#fragment). */
+    i++;
+    {
+        static const char fsrc[] = "<p:a/><plain/>";
+        st = MKR_XML_OK;
+        mkr_xml_doc_t *fd = PARSE_LIT("<r xmlns:p='urn:p' xmlns='urn:d'/>", &st);
+        if (fd == NULL || st != MKR_XML_OK) { if (fd) mkr_xml_doc_destroy(fd); return i; }
+        st = MKR_XML_OK;
+        mkr_xml_node_t *frag = mkr_xml_parse_fragment(fd, fsrc, sizeof(fsrc) - 1, 1, &st);
+        mkr_xml_node_t *a = frag ? frag->first_child : NULL;
+        mkr_xml_node_t *plain = a ? a->next : NULL;
+        if (frag == NULL || st != MKR_XML_OK || !NS_IS(a, "urn:p") || !NS_IS(plain, "urn:d")) {
+            mkr_xml_doc_destroy(fd); return i;
+        }
+        mkr_xml_doc_destroy(fd);
     }
 
     return 0;

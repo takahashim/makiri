@@ -399,9 +399,54 @@ mkr_node_set_dup(int argc, VALUE *argv, VALUE self)
     return copy;
 }
 
+/* NodeSet.new(document_or_node, list = []) -> NodeSet.
+ * Mirrors Nokogiri: the first argument is the owning Document (or any node, whose
+ * document is taken) that the set pins as a GC keepalive; the optional list seeds
+ * it. Every listed node MUST belong to that document - one from another document
+ * or representation would be re-wrapped under the wrong document/kind, so it is
+ * rejected (fail-closed, preventing the HTML/XML type confusion the set's
+ * representation-opaque storage otherwise relies on document kind to avoid). */
+static VALUE
+mkr_node_set_s_new(int argc, VALUE *argv, VALUE klass)
+{
+    (void)klass;
+    VALUE rb_ctx, rb_list;
+    rb_scan_args(argc, argv, "11", &rb_ctx, &rb_list);
+
+    VALUE rb_doc;
+    if (rb_obj_is_kind_of(rb_ctx, mkr_cDocument)) {
+        rb_doc = rb_ctx;
+    } else if (rb_obj_is_kind_of(rb_ctx, mkr_cNode)) {
+        rb_doc = mkr_node_document(rb_ctx);
+    } else {
+        rb_raise(rb_eTypeError, "expected a Makiri::Document or Node as the first argument");
+    }
+
+    VALUE set = mkr_node_set_new(rb_doc);
+    if (NIL_P(rb_list)) {
+        return set;
+    }
+    VALUE arr = rb_check_array_type(rb_list);
+    if (NIL_P(arr)) {
+        rb_raise(rb_eTypeError, "expected an Array of nodes as the second argument");
+    }
+    for (long i = 0; i < RARRAY_LEN(arr); i++) {
+        VALUE node = RARRAY_AREF(arr, i);
+        if (!rb_obj_is_kind_of(node, mkr_cNode) || mkr_node_document(node) != rb_doc) {
+            rb_raise(rb_eArgError,
+                     "every node must be a Makiri node belonging to the given document");
+        }
+        mkr_node_set_push(set, (mkr_raw_node_t *)mkr_node_raw(node));
+    }
+    return set;
+}
+
 void
 mkr_init_node_set(void)
 {
+    rb_undef_alloc_func(mkr_cNodeSet); /* nodes come only from C; .new seeds via the factory */
+    rb_define_singleton_method(mkr_cNodeSet, "new", mkr_node_set_s_new, -1);
+
     rb_define_method(mkr_cNodeSet, "|", mkr_node_set_op_or,    1);
     rb_define_method(mkr_cNodeSet, "+", mkr_node_set_op_plus,  1);
     rb_define_method(mkr_cNodeSet, "&", mkr_node_set_op_and,   1);

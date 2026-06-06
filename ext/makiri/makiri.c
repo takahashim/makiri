@@ -8,10 +8,10 @@ VALUE mkr_mMakiri;
 VALUE mkr_cNode;
 VALUE mkr_cDocument;
 VALUE mkr_cElement;
-VALUE mkr_cAttribute;
+VALUE mkr_cAttr;
 VALUE mkr_cText;
 VALUE mkr_cComment;
-VALUE mkr_cCData;
+VALUE mkr_cCDATASection;
 VALUE mkr_cProcessingInstruction;
 VALUE mkr_cDocumentType;
 VALUE mkr_cDocumentFragment;
@@ -20,10 +20,10 @@ VALUE mkr_mHtmlNodeMethods;
 VALUE mkr_cHtmlNode;
 VALUE mkr_cHtmlDocument;
 VALUE mkr_cHtmlElement;
-VALUE mkr_cHtmlAttribute;
+VALUE mkr_cHtmlAttr;
 VALUE mkr_cHtmlText;
 VALUE mkr_cHtmlComment;
-VALUE mkr_cHtmlCData;
+VALUE mkr_cHtmlCDATASection;
 VALUE mkr_cHtmlProcessingInstruction;
 VALUE mkr_cHtmlDocumentType;
 VALUE mkr_cHtmlDocumentFragment;
@@ -31,12 +31,13 @@ VALUE mkr_mXmlNodeMethods;
 VALUE mkr_cXmlNode;
 VALUE mkr_cXmlDocument;
 VALUE mkr_cXmlElement;
-VALUE mkr_cXmlAttribute;
+VALUE mkr_cXmlAttr;
 VALUE mkr_cXmlText;
 VALUE mkr_cXmlComment;
-VALUE mkr_cXmlCData;
+VALUE mkr_cXmlCDATASection;
 VALUE mkr_cXmlProcessingInstruction;
-VALUE mkr_cXmlDTD;
+VALUE mkr_cXmlDocumentType;
+VALUE mkr_cXmlDocumentFragment;
 VALUE mkr_cNodeSet;
 VALUE mkr_cXPathContext;
 VALUE mkr_mXPath;
@@ -96,10 +97,10 @@ Init_makiri(void)
     mkr_cNode          = rb_define_class_under(mkr_mMakiri, "Node",         rb_cObject);
     mkr_cDocument      = rb_define_class_under(mkr_mMakiri, "Document",     mkr_cNode);
     mkr_cElement       = rb_define_class_under(mkr_mMakiri, "Element",      mkr_cNode);
-    mkr_cAttribute     = rb_define_class_under(mkr_mMakiri, "Attribute",    mkr_cNode);
+    mkr_cAttr     = rb_define_class_under(mkr_mMakiri, "Attr",    mkr_cNode);
     mkr_cText          = rb_define_class_under(mkr_mMakiri, "Text",         mkr_cNode);
     mkr_cComment       = rb_define_class_under(mkr_mMakiri, "Comment",      mkr_cNode);
-    mkr_cCData         = rb_define_class_under(mkr_mMakiri, "CData",        mkr_cNode);
+    mkr_cCDATASection         = rb_define_class_under(mkr_mMakiri, "CDATASection",        mkr_cNode);
     mkr_cProcessingInstruction =
         rb_define_class_under(mkr_mMakiri, "ProcessingInstruction", mkr_cNode);
     mkr_cDocumentType =
@@ -124,10 +125,10 @@ Init_makiri(void)
     mkr_cHtmlNode      = rb_define_class_under(mkr_mHTML, "Node",         mkr_cNode);
     mkr_cHtmlDocument  = rb_define_class_under(mkr_mHTML, "Document",     mkr_cDocument);
     mkr_cHtmlElement   = rb_define_class_under(mkr_mHTML, "Element",      mkr_cElement);
-    mkr_cHtmlAttribute = rb_define_class_under(mkr_mHTML, "Attribute",    mkr_cAttribute);
+    mkr_cHtmlAttr = rb_define_class_under(mkr_mHTML, "Attr",    mkr_cAttr);
     mkr_cHtmlText      = rb_define_class_under(mkr_mHTML, "Text",         mkr_cText);
     mkr_cHtmlComment   = rb_define_class_under(mkr_mHTML, "Comment",      mkr_cComment);
-    mkr_cHtmlCData     = rb_define_class_under(mkr_mHTML, "CData",        mkr_cCData);
+    mkr_cHtmlCDATASection     = rb_define_class_under(mkr_mHTML, "CDATASection",        mkr_cCDATASection);
     mkr_cHtmlProcessingInstruction =
         rb_define_class_under(mkr_mHTML, "ProcessingInstruction", mkr_cProcessingInstruction);
     mkr_cHtmlDocumentType =
@@ -138,8 +139,8 @@ Init_makiri(void)
     /* Every HTML leaf - the generic node and the typed leaves - gets the shared
      * lxb_dom reader/query methods. */
     VALUE html_leaves[] = {
-        mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttribute,
-        mkr_cHtmlText, mkr_cHtmlComment, mkr_cHtmlCData,
+        mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttr,
+        mkr_cHtmlText, mkr_cHtmlComment, mkr_cHtmlCDATASection,
         mkr_cHtmlProcessingInstruction, mkr_cHtmlDocumentType,
         mkr_cHtmlDocumentFragment,
     };
@@ -153,20 +154,31 @@ Init_makiri(void)
     mkr_mXmlNodeMethods = rb_define_module_under(mkr_mXML, "NodeMethods");
     mkr_cXmlNode      = rb_define_class_under(mkr_mXML, "Node",      mkr_cNode);
     mkr_cXmlElement   = rb_define_class_under(mkr_mXML, "Element",   mkr_cElement);
-    mkr_cXmlAttribute = rb_define_class_under(mkr_mXML, "Attribute", mkr_cAttribute);
+    mkr_cXmlAttr = rb_define_class_under(mkr_mXML, "Attr", mkr_cAttr);
     mkr_cXmlText      = rb_define_class_under(mkr_mXML, "Text",      mkr_cText);
     mkr_cXmlComment   = rb_define_class_under(mkr_mXML, "Comment",   mkr_cComment);
-    mkr_cXmlCData     = rb_define_class_under(mkr_mXML, "CData",     mkr_cCData);
+    mkr_cXmlCDATASection     = rb_define_class_under(mkr_mXML, "CDATASection",     mkr_cCDATASection);
     mkr_cXmlProcessingInstruction =
         rb_define_class_under(mkr_mXML, "ProcessingInstruction", mkr_cProcessingInstruction);
-    /* Makiri::XML::DTD - the off-tree DOCTYPE metadata node (doc->doctype),
-     * reachable only via Document#internal_subset (XPath has no doctype node, as
-     * in Nokogiri/libxml2). It is an XML node leaf (identity, fail-closed
-     * css/serialize) with its own name/external_id/system_id readers. */
-    mkr_cXmlDTD       = rb_define_class_under(mkr_mXML, "DTD",       mkr_cXmlNode);
+    /* Makiri::XML::DocumentType - the off-tree DOCTYPE metadata node
+     * (doc->doctype), reachable only via Document#internal_subset (XPath has no
+     * doctype node, as in Nokogiri/libxml2). The canonical name is the WHATWG DOM
+     * interface name DocumentType (with a Makiri::XML::DTD alias for Nokogiri
+     * compatibility, defined in Ruby); it descends from the shared
+     * Makiri::DocumentType base (like HTML::DocumentType) - not Makiri::XML::Node -
+     * so is_a?(Makiri::DocumentType) holds for both HTML and XML doctypes. It is
+     * still an XML node leaf (the reader/identity methods come from the included
+     * mkr_mXmlNodeMethods below), with its own name/external_id/system_id readers. */
+    mkr_cXmlDocumentType       = rb_define_class_under(mkr_mXML, "DocumentType", mkr_cDocumentType);
+    /* Makiri::XML::DocumentFragment - a detached group of sibling nodes built by
+     * XML::DocumentFragment.parse / XML::Document#fragment (an XML node leaf, like
+     * its HTML counterpart). */
+    mkr_cXmlDocumentFragment =
+        rb_define_class_under(mkr_mXML, "DocumentFragment", mkr_cDocumentFragment);
     VALUE xml_leaves[] = {
-        mkr_cXmlNode, mkr_cXmlElement, mkr_cXmlAttribute, mkr_cXmlText,
-        mkr_cXmlComment, mkr_cXmlCData, mkr_cXmlProcessingInstruction, mkr_cXmlDTD,
+        mkr_cXmlNode, mkr_cXmlElement, mkr_cXmlAttr, mkr_cXmlText,
+        mkr_cXmlComment, mkr_cXmlCDATASection, mkr_cXmlProcessingInstruction, mkr_cXmlDocumentType,
+        mkr_cXmlDocumentFragment,
     };
     for (size_t i = 0; i < sizeof(xml_leaves) / sizeof(xml_leaves[0]); i++) {
         rb_include_module(xml_leaves[i], mkr_mXmlNodeMethods);
@@ -188,10 +200,10 @@ Init_makiri(void)
     rb_undef_alloc_func(mkr_cNode);
     rb_undef_alloc_func(mkr_cDocument);
     rb_undef_alloc_func(mkr_cElement);
-    rb_undef_alloc_func(mkr_cAttribute);
+    rb_undef_alloc_func(mkr_cAttr);
     rb_undef_alloc_func(mkr_cText);
     rb_undef_alloc_func(mkr_cComment);
-    rb_undef_alloc_func(mkr_cCData);
+    rb_undef_alloc_func(mkr_cCDATASection);
     rb_undef_alloc_func(mkr_cProcessingInstruction);
     rb_undef_alloc_func(mkr_cDocumentType);
     rb_undef_alloc_func(mkr_cDocumentFragment);

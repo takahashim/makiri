@@ -69,7 +69,7 @@ end
 # DOMs are isomorphic, so corresponding nodes get the same key. Attributes key by
 # their owner's path + local name.
 def attribute_node?(n)
-  %w[Nokogiri::XML::Attr Makiri::XML::Attribute Makiri::HTML::Attribute].include?(n.class.name)
+  %w[Nokogiri::XML::Attr Makiri::XML::Attr Makiri::HTML::Attr].include?(n.class.name)
 end
 
 def local_of(n)

@@ -127,13 +127,32 @@ module MutateFuzz
   end
 
   def make(doc, rng)
-    case rng.rand(7)
+    case rng.rand(8)
     when 0, 1 then doc.create_element(ELEM_NAMES.sample(random: rng))
     when 2    then doc.create_element(ELEM_NAMES.sample(random: rng), TEXTS.sample(random: rng))
     when 3    then doc.create_text_node(TEXTS.sample(random: rng))
     when 4    then doc.create_comment(TEXTS.sample(random: rng))
     when 5    then doc.create_cdata(TEXTS.sample(random: rng))
     when 6    then doc.create_processing_instruction(PI_TARGETS.sample(random: rng), TEXTS.sample(random: rng))
+    when 7    then make_fragment(doc, rng)  # inserting a fragment splices its children
+    end
+  end
+
+  # A fragment of 1-3 top-level items, parsed either bound to the document (names
+  # resolve against its namespaces) or standalone (then imported on insert). Much
+  # of the generated source is invalid (bad names, unbound prefixes, "]]>" / "--")
+  # and is rejected cleanly; the valid remainder exercises the splice/import paths.
+  def make_fragment(doc, rng)
+    src = Array.new(1 + rng.rand(3)) { fragment_item(rng) }.join
+    rng.rand(2).zero? ? doc.fragment(src) : Makiri::XML::DocumentFragment.parse(src)
+  end
+
+  def fragment_item(rng)
+    name = ELEM_NAMES.sample(random: rng)
+    case rng.rand(3)
+    when 0 then "<#{name}/>"
+    when 1 then "<#{name}>#{TEXTS.sample(random: rng)}</#{name}>"
+    else        TEXTS.sample(random: rng)  # bare top-level character data
     end
   end
 
@@ -210,7 +229,7 @@ module MutateFuzz
     elements = 0
     c = child_of(doc)
     while c
-      return false if c.is_a?(Makiri::XML::Text) || c.is_a?(Makiri::XML::CData)
+      return false if c.is_a?(Makiri::XML::Text) || c.is_a?(Makiri::XML::CDATASection)
 
       elements += 1 if c.is_a?(Makiri::XML::Element)
       c = c.next

@@ -90,3 +90,6 @@ ignore_paths:
   - path: ext/makiri/glue/ruby_xpath.c
     rule: node_raw_boundary
     reason: the XPath context node / handler-result node, where same-document (hence the representation) is verified before the engine takes the raw pointer.
+  - path: ext/makiri/glue/ruby_node_set.c
+    rule: node_raw_boundary
+    reason: NodeSet.new stores representation-opaque pointers; mkr_node_raw takes a seed node's pointer only after same-document validation guarantees its kind matches the set.

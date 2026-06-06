@@ -2,7 +2,8 @@
 
 require "spec_helper"
 
-# Phase-1 skeleton (§14 step 4): Makiri::XML(source) / Makiri.parse_xml decode
+# Phase-1 skeleton (§14 step 4): Makiri::XML::Document.parse(source) (and the
+# Makiri::XML(source) convenience that delegates to it) decode
 # the input strictly, run the Ruby-free parser with the GVL released, and return
 # a Makiri::XML::Document backed by the secure append-only arena. The tokenizer
 # and tree builder land next; for now the document is empty, and this exercises
@@ -10,7 +11,7 @@ require "spec_helper"
 RSpec.describe "Makiri::XML skeleton" do
   it "returns a Makiri::XML::Document" do
     expect(Makiri::XML("<feed/>")).to be_a(Makiri::XML::Document)
-    expect(Makiri.parse_xml("<a><b/></a>")).to be_a(Makiri::XML::Document)
+    expect(Makiri::XML::Document.parse("<a><b/></a>")).to be_a(Makiri::XML::Document)
   end
 
   it "strict-decodes input (fail-closed) before parsing" do
@@ -29,7 +30,9 @@ RSpec.describe "Makiri::XML skeleton" do
     expect(Makiri::XML("<y/>")).to be_a(Makiri::XML::Document)
   end
 
-  it "cannot be constructed via .new (created only from C)" do
-    expect { Makiri::XML::Document.new }.to raise_error(StandardError)
+  it "can be constructed empty via .new (built up programmatically)" do
+    d = Makiri::XML::Document.new
+    expect(d).to be_a(Makiri::XML::Document)
+    expect(d.root).to be_nil
   end
 end

@@ -4,7 +4,7 @@
 # that an Attribute wraps only the bare Lexbor attr pointer (Lexbor never links
 # it back to its element), so #parent must resolve through the lazily-built
 # compat index rather than a stored owner.
-RSpec.describe Makiri::Attribute do
+RSpec.describe Makiri::Attr do
   let(:doc) do
     Makiri::HTML(<<~HTML)
       <html><body>
@@ -33,7 +33,7 @@ RSpec.describe Makiri::Attribute do
     it "returns Attribute nodes in document order" do
       attrs = div.attribute_nodes
       expect(attrs).to be_a(Makiri::NodeSet)
-      expect(attrs).to all(be_a(Makiri::Attribute)) # HTML::Attribute leaf, is_a? Attribute
+      expect(attrs).to all(be_a(Makiri::Attr)) # HTML::Attr leaf, is_a? Attr
       expect(attrs.map(&:name)).to eq(%w[id class data-n])
       expect(attrs.map(&:value)).to eq(["outer", "a b", "1"])
     end

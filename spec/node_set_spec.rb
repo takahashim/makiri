@@ -52,4 +52,23 @@ RSpec.describe Makiri::NodeSet do
     expect(copy).not_to equal(lis) # but a distinct set
     expect(lis.clone.map(&:text)).to eq(%w[a b c])
   end
+
+  describe ".new" do
+    it "builds a set from a document (or node) and a list of its nodes" do
+      ns = Makiri::NodeSet.new(doc, lis.to_a)
+      expect(ns).to be_a(Makiri::NodeSet)
+      expect(ns.map(&:text)).to eq(%w[a b c])
+      expect(Makiri::NodeSet.new(doc).length).to eq(0)              # empty
+      expect(Makiri::NodeSet.new(lis[0], lis.to_a).length).to eq(3) # a node as the context
+    end
+
+    it "fails closed on a foreign-document / cross-representation node or a bad context" do
+      foreign = Makiri::HTML("<p>x</p>").at_css("p")
+      expect { Makiri::NodeSet.new(doc, [foreign]) }.to raise_error(ArgumentError)
+      xnode = Makiri::XML("<x/>").root
+      expect { Makiri::NodeSet.new(doc, [xnode]) }.to raise_error(ArgumentError)
+      expect { Makiri::NodeSet.new("not a doc") }.to raise_error(TypeError)
+      expect { Makiri::NodeSet.new(doc, "not an array") }.to raise_error(TypeError)
+    end
+  end
 end

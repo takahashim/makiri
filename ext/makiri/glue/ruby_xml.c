@@ -1,7 +1,8 @@
 /* ruby_xml.c - Ruby boundary for the native XML reader (Phase 1).
  *
- * Makiri::XML(source) / Makiri.parse_xml(source): strict-decode the input
- * (§2.1), then run the Ruby-free parser with the GVL released, and return a
+ * Makiri::XML::Document.parse(source) (and the Makiri::XML(source) convenience
+ * that delegates to it): strict-decode the input (§2.1), then run the Ruby-free
+ * parser with the GVL released, and return a
  * Makiri::XML::Document. The document is held in a kind=MKR_DOC_XML mkr_parsed_t
  * (the common document handle, §2.3) and wrapped by mkr_wrap_document, which GC
  * frees via mkr_parsed_destroy (the XML branch whole-arena-frees).
@@ -64,8 +65,8 @@ mkr_xml_parse_limits(VALUE rb_opts)
     return limits;
 }
 
-/* call-seq: Makiri.parse_xml(source, max_bytes: nil) -> Makiri::XML::Document
- *           Makiri::XML(source, max_bytes: nil)      -> Makiri::XML::Document
+/* call-seq: Makiri::XML::Document.parse(source, max_bytes: nil) -> Makiri::XML::Document
+ *           Makiri::XML(source, max_bytes: nil)              -> Makiri::XML::Document
  * +source+ is a String or any object responding to +#read+ (an IO / File /
  * StringIO); +max_bytes+ overrides the default arena memory ceiling for this
  * parse. Read a non-UTF-8 file in binary mode (File.binread / "rb") so the
@@ -267,7 +268,8 @@ mkr_xml_doc_root(VALUE self)
     return (xdoc == NULL) ? Qnil : mkr_wrap_xml_node(xdoc->root, self);
 }
 
-/* The document's DOCTYPE as a Makiri::XML::DTD, or nil if the document had no
+/* The document's DOCTYPE as a Makiri::XML::DocumentType (aliased
+ * Makiri::XML::DTD), or nil if the document had no
  * `<!DOCTYPE ...>`. Mirrors Nokogiri's Document#internal_subset. The DTD's name
  * and external/system identifiers are read; the DTD body is NOT parsed (no
  * entity/element declarations are loaded - &name; stays an undefined-entity
@@ -282,6 +284,112 @@ mkr_xml_doc_internal_subset(VALUE self)
                : mkr_wrap_xml_node(xdoc->doctype, self);
 }
 
+/* Map a fragment-parse status to its Ruby exception (never returns on error). */
+NORETURN(static void mkr_xml_raise_fragment_status(mkr_xml_status_t st));
+static void
+mkr_xml_raise_fragment_status(mkr_xml_status_t st)
+{
+    switch (st) {
+    case MKR_XML_ERR_SYNTAX:  rb_raise(mkr_eXmlSyntaxError,   "malformed XML fragment");
+    case MKR_XML_ERR_LIMIT:   rb_raise(mkr_eXmlLimitExceeded, "XML fragment budget exceeded");
+    case MKR_XML_ERR_VERSION: rb_raise(mkr_eXmlSyntaxError,
+                                       "unsupported XML version (only XML 1.0 is supported)");
+    default:                  rb_raise(mkr_eError,            "failed to parse XML fragment");
+    }
+}
+
+/* Strict-decode +rb_source+ and parse it as a fragment into +xdoc+ (when
+ * +inherit_doc_ns+, names resolve against the document's root namespaces). The
+ * parse runs under the GVL: a fragment is small, and an existing document's arena
+ * must never be mutated with the GVL released. Returns the DOCUMENT_FRAGMENT node;
+ * raises on a decode/parse failure. */
+static mkr_xml_node_t *
+mkr_xml_fragment_into(mkr_xml_doc_t *xdoc, VALUE rb_source, int inherit_doc_ns)
+{
+    VALUE decoded = mkr_xml_decode_input(rb_String(rb_source), xdoc->max_bytes);
+    mkr_owned_bytes_t src = { 0 };
+    if (mkr_ruby_copy_bytes(decoded, &src) != 0) {
+        rb_raise(mkr_eError, "out of memory copying XML fragment source");
+    }
+    RB_GC_GUARD(decoded);
+
+    mkr_xml_status_t st = MKR_XML_OK;
+    mkr_xml_node_t *frag = mkr_xml_parse_fragment(xdoc, src.ptr, src.len, inherit_doc_ns, &st);
+    mkr_owned_bytes_clear(&src);
+    if (frag == NULL) {
+        mkr_xml_raise_fragment_status(st);
+    }
+    return frag;
+}
+
+/* A fresh, empty XML Document VALUE: a backing arena holding a DOCUMENT node and
+ * no root element. Used by Document.new and as DocumentFragment.parse's backing
+ * document. Raises on OOM (with +parsed+ already GC-owned, so it frees cleanly). */
+static VALUE
+mkr_xml_new_empty_document(void)
+{
+    mkr_parsed_t *parsed = mkr_parsed_new_xml(NULL);
+    if (parsed == NULL) {
+        rb_raise(mkr_eError, "out of memory allocating XML document");
+    }
+    VALUE doc_obj = mkr_wrap_document(parsed);     /* GC owns +parsed+ from here */
+    mkr_xml_doc_t *xdoc = mkr_xml_doc_new();
+    if (xdoc == NULL) {
+        rb_raise(mkr_eError, "out of memory allocating XML document");
+    }
+    mkr_parsed_set_xml_doc(parsed, xdoc);          /* GC now frees +xdoc+ via +parsed+ */
+    xdoc->doc_node = mkr_xml_arena_node(xdoc, MKR_XML_NODE_TYPE_DOCUMENT);
+    if (xdoc->doc_node == NULL) {
+        rb_raise(mkr_eError, "out of memory allocating XML document");
+    }
+    return doc_obj;
+}
+
+/* call-seq: Makiri::XML::Document.new -> Document
+ * A new, empty XML document (no root element) to build up programmatically with
+ * #create_element etc. and #add_child / #root=, like Nokogiri. Any arguments
+ * (Nokogiri accepts a version / encoding) are accepted and ignored. */
+static VALUE
+mkr_xml_document_s_new(int argc, VALUE *argv, VALUE klass)
+{
+    (void)argc; (void)argv; (void)klass;
+    return mkr_xml_new_empty_document();
+}
+
+/* call-seq: Makiri::XML::DocumentFragment.parse(source) -> DocumentFragment
+ * Parse +source+ into a standalone fragment with its own (empty) backing
+ * document. The fragment is self-contained: a prefixed name must declare its
+ * namespace within the fragment itself (use Document#fragment to parse against an
+ * existing document's in-scope namespaces). */
+static VALUE
+mkr_xml_fragment_s_parse(VALUE klass, VALUE rb_source)
+{
+    (void)klass;
+    VALUE doc_obj = mkr_xml_new_empty_document();
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(doc_obj));
+    mkr_xml_node_t *frag = mkr_xml_fragment_into(xdoc, rb_source, 0);
+    VALUE result = mkr_wrap_xml_node(frag, doc_obj);
+    RB_GC_GUARD(doc_obj);
+    return result;
+}
+
+/* call-seq: doc.fragment(source) -> DocumentFragment
+ * Parse +source+ into a fragment bound to this document, resolving names against
+ * the document's in-scope (root) namespaces, so the fragment's nodes can be
+ * spliced in with Node#add_child and friends. */
+static VALUE
+mkr_xml_doc_fragment(VALUE self, VALUE rb_source)
+{
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(self));
+    if (xdoc == NULL) {
+        rb_raise(mkr_eError, "the document has no arena");
+    }
+    mkr_xml_node_t *frag = mkr_xml_fragment_into(xdoc, rb_source, 1);
+    VALUE result = mkr_wrap_xml_node(frag, self);
+    RB_GC_GUARD(self);
+    return result;
+}
+
 void
 mkr_init_xml(void)
 {
@@ -294,6 +402,9 @@ mkr_init_xml(void)
 
     rb_define_method(mkr_cXmlDocument, "root",     mkr_xml_doc_root,     0);
     rb_define_method(mkr_cXmlDocument, "internal_subset", mkr_xml_doc_internal_subset, 0);
+    rb_define_method(mkr_cXmlDocument, "fragment", mkr_xml_doc_fragment, 1);
+    rb_define_singleton_method(mkr_cXmlDocument, "new", mkr_xml_document_s_new, -1);
+    rb_define_singleton_method(mkr_cXmlDocumentFragment, "parse", mkr_xml_fragment_s_parse, 1);
 
     /* xpath / at_xpath work on the document and on any XML node (rooted at that
      * node), so they live on the shared XML node behavior module + the document. */
@@ -302,8 +413,8 @@ mkr_init_xml(void)
     rb_define_method(mkr_mXmlNodeMethods, "xpath",    mkr_xml_doc_xpath,    -1);
     rb_define_method(mkr_mXmlNodeMethods, "at_xpath", mkr_xml_doc_at_xpath, -1);
 
-    rb_define_module_function(mkr_mMakiri, "parse_xml", mkr_xml_s_parse, -1);
-    /* Makiri::XML(source) - a method named XML on the Makiri module, coexisting
-     * with the Makiri::XML constant (the module), as Nokogiri::XML does. */
-    rb_define_module_function(mkr_mMakiri, "XML", mkr_xml_s_parse, -1);
+    /* The native XML parser, exposed as XML::Document.parse, mirroring HTML
+     * (HTML::Document.parse). The Makiri::XML(source) convenience delegates to it
+     * in Ruby (lib/makiri.rb), as Makiri.HTML does for HTML::Document.parse. */
+    rb_define_singleton_method(mkr_cXmlDocument, "parse", mkr_xml_s_parse, -1);
 }

@@ -33,10 +33,10 @@ mkr_wrap_html_node(lxb_dom_node_t *node, VALUE document)
     VALUE klass;
     switch (node->type) {
     case LXB_DOM_NODE_TYPE_ELEMENT:       klass = mkr_cHtmlElement;   break;
-    case LXB_DOM_NODE_TYPE_ATTRIBUTE:     klass = mkr_cHtmlAttribute; break;
+    case LXB_DOM_NODE_TYPE_ATTRIBUTE:     klass = mkr_cHtmlAttr; break;
     case LXB_DOM_NODE_TYPE_TEXT:          klass = mkr_cHtmlText;      break;
     case LXB_DOM_NODE_TYPE_COMMENT:       klass = mkr_cHtmlComment;   break;
-    case LXB_DOM_NODE_TYPE_CDATA_SECTION: klass = mkr_cHtmlCData;     break;
+    case LXB_DOM_NODE_TYPE_CDATA_SECTION: klass = mkr_cHtmlCDATASection;     break;
     case LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION:
                                           klass = mkr_cHtmlProcessingInstruction; break;
     case LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: klass = mkr_cHtmlDocumentType; break;

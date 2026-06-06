@@ -21,7 +21,7 @@ RSpec.describe "Makiri Nokogiri-compat API" do
     it "returns a name => Attribute hash" do
       attrs = div.attributes
       expect(attrs.keys).to eq(%w[id class data-n])
-      expect(attrs.values).to all(be_a(Makiri::Attribute))
+      expect(attrs.values).to all(be_a(Makiri::Attr))
       expect(attrs.transform_values(&:value)).to eq("id" => "m", "class" => "c x", "data-n" => "1")
     end
 
@@ -96,7 +96,7 @@ RSpec.describe "Makiri Nokogiri-compat API" do
     end
   end
 
-  describe "Element.new / Text.new" do
+  describe "node-class constructors (shared base, delegating to the document)" do
     it "constructs detached nodes bound to the document" do
       el = Makiri::Element.new("section", doc)
       el << Makiri::Text.new("hi", doc)
@@ -104,6 +104,17 @@ RSpec.describe "Makiri Nokogiri-compat API" do
       expect(el.name).to eq("section")
       doc.body.add_child(el)
       expect(doc.at_css("section").text).to eq("hi")
+    end
+
+    it "Comment.new / ProcessingInstruction.new work for HTML too (document first)" do
+      expect(Makiri::Comment.new(doc, " c ")).to be_a(Makiri::Comment)
+      expect(Makiri::ProcessingInstruction.new(doc, "php", "echo")).to be_a(Makiri::ProcessingInstruction)
+    end
+
+    it "raise a consistent TypeError on a non-document, for HTML and XML alike" do
+      expect { Makiri::HTML::Element.new("e", "not a doc") }.to raise_error(TypeError)
+      expect { Makiri::XML::Element.new("e", "not a doc") }.to raise_error(TypeError)
+      expect { Makiri::HTML::Comment.new("not a doc", "c") }.to raise_error(TypeError)
     end
   end
 end

@@ -17,7 +17,7 @@ RSpec.describe "Nokogiri-compatible convenience methods" do
     it "attr / get_attribute return the value; attribute returns the node" do
       expect(el.attr("id")).to eq("m")
       expect(el.get_attribute("data-x")).to eq("1")
-      expect(el.attribute("class")).to be_a(Makiri::Attribute)
+      expect(el.attribute("class")).to be_a(Makiri::Attr)
       expect(el.attribute("class").value).to eq("a b")
       expect(el.attribute("nope")).to be_nil
     end

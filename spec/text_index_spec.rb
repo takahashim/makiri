@@ -13,7 +13,7 @@ RSpec.describe "Node#text via the text index" do
     stack = node.children.to_a.reverse
     until stack.empty?
       n = stack.pop
-      if n.text? || n.is_a?(Makiri::CData)
+      if n.text? || n.is_a?(Makiri::CDATASection)
         out << n.content
       else
         stack.concat(n.children.to_a.reverse)

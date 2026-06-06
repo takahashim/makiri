@@ -92,7 +92,7 @@ RSpec.describe "Makiri XPath" do
 
     it "attribute axis yields Attribute nodes" do
       attrs = doc.xpath("//div/@*")
-      expect(attrs).to all(be_a(Makiri::Attribute)) # HTML::Attribute leaf, is_a? Attribute
+      expect(attrs).to all(be_a(Makiri::Attr)) # HTML::Attr leaf, is_a? Attr
       expect(attrs.map(&:name)).to eq(%w[id class])
     end
   end
@@ -265,7 +265,7 @@ RSpec.describe "Makiri XPath" do
       d = Makiri::HTML('<html><body><p id="x" class="c">A</p></body></html>')
       p = d.at_xpath('//p[@id="x"]')
       kinds = p.xpath("@class | text()").map do |n|
-        n.is_a?(Makiri::Attribute) ? :attr : :text
+        n.is_a?(Makiri::Attr) ? :attr : :text
       end
       expect(kinds).to eq(%i[attr text])
     end
@@ -278,7 +278,7 @@ RSpec.describe "Makiri XPath" do
     it "places an element before its own attribute nodes" do
       d = Makiri::HTML('<html><body><p id="x" class="c">A</p></body></html>')
       kinds = d.xpath("//p | //p/@id | //p/@class").map do |n|
-        n.is_a?(Makiri::Attribute) ? :"@#{n.name}" : n.name.to_sym
+        n.is_a?(Makiri::Attr) ? :"@#{n.name}" : n.name.to_sym
       end
       expect(kinds).to eq(%i[p @id @class])
     end

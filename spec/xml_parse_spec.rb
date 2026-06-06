@@ -20,12 +20,12 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(Makiri::XML(StringIO.new("<r>io</r>")).root.text).to eq("io")
     end
 
-    it "reads a File (and Makiri.parse_xml accepts one too)" do
+    it "reads a File (and Makiri::XML::Document.parse accepts one too)" do
       Tempfile.create(["t", ".xml"]) do |f|
         f.write("<r>file</r>")
         f.flush
         expect(Makiri::XML(File.open(f.path)).root.text).to eq("file")
-        expect(Makiri.parse_xml(File.open(f.path)).root.text).to eq("file")
+        expect(Makiri::XML::Document.parse(File.open(f.path)).root.text).to eq("file")
       end
     end
 

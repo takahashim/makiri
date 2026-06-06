@@ -33,12 +33,13 @@ mkr_wrap_xml_node(mkr_xml_node_t *node, VALUE document)
     VALUE klass;
     switch (node->type) {
     case MKR_XML_NODE_TYPE_ELEMENT:   klass = mkr_cXmlElement;   break;
-    case MKR_XML_NODE_TYPE_ATTRIBUTE: klass = mkr_cXmlAttribute; break;
+    case MKR_XML_NODE_TYPE_ATTRIBUTE: klass = mkr_cXmlAttr; break;
     case MKR_XML_NODE_TYPE_TEXT:      klass = mkr_cXmlText;      break;
-    case MKR_XML_NODE_TYPE_CDATA_SECTION:     klass = mkr_cXmlCData;     break;
+    case MKR_XML_NODE_TYPE_CDATA_SECTION:     klass = mkr_cXmlCDATASection;     break;
     case MKR_XML_NODE_TYPE_COMMENT:   klass = mkr_cXmlComment;   break;
     case MKR_XML_NODE_TYPE_PI:        klass = mkr_cXmlProcessingInstruction; break;
-    case MKR_XML_NODE_TYPE_DOCUMENT_TYPE: klass = mkr_cXmlDTD;       break;
+    case MKR_XML_NODE_TYPE_DOCUMENT_TYPE: klass = mkr_cXmlDocumentType;       break;
+    case MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT: klass = mkr_cXmlDocumentFragment; break;
     default:               klass = mkr_cXmlNode;      break;
     }
     mkr_node_data_t *nd;
@@ -89,6 +90,7 @@ mkr_xml_node_name(VALUE self)
     case MKR_XML_NODE_TYPE_CDATA_SECTION:     return rb_utf8_str_new_cstr("#cdata-section");
     case MKR_XML_NODE_TYPE_COMMENT:   return rb_utf8_str_new_cstr("comment");
     case MKR_XML_NODE_TYPE_DOCUMENT_TYPE: return rb_utf8_str_new(n->local, (long)n->local_len); /* the DOCTYPE name */
+    case MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT: return rb_utf8_str_new_cstr("#document-fragment");
     default:               return rb_utf8_str_new_cstr("document");
     }
 }
@@ -481,6 +483,13 @@ mkr_xser_node(mkr_buf_t *b, const mkr_xml_node_t *n, int level, int width)
         if (n->value_len) { MKR_XSER_LIT(b, " "); MKR_XSER_APPEND(b, n->value, n->value_len); }
         MKR_XSER_LIT(b, "?>");
         return 0;
+    case MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT:
+        /* A fragment has no markup of its own: it serializes as its children, in
+         * order, spliced together (the same nodes #add_child would insert). */
+        for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
+            if (mkr_xser_node(b, c, level, width) != 0) return -1;
+        }
+        return 0;
     default:
         return 0;
     }
@@ -821,6 +830,11 @@ mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments)
         if (n->value_len) { MKR_XSER_LIT(b, " "); MKR_XSER_APPEND(b, n->value, n->value_len); }
         MKR_XSER_LIT(b, "?>");
         return 0;
+    case MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT:
+        for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
+            if (mkr_c14n_node(b, c, 0, comments) != 0) return -1;   /* children are not the apex */
+        }
+        return 0;
     default:
         return 0;
     }
@@ -1089,6 +1103,34 @@ mkr_xml_incoming_node(mkr_xml_doc_t *xdoc, VALUE target_doc, VALUE arg)
  * target document). +op+ selects the primitive. */
 typedef enum { MKR_INS_CHILD, MKR_INS_BEFORE, MKR_INS_AFTER, MKR_INS_REPLACE } mkr_ins_op_t;
 
+/* A DOCUMENT_FRAGMENT contributes its CHILDREN, not itself (like Nokogiri / the
+ * DOM): splice them in place of the fragment, in order, leaving it empty. Each
+ * child is inserted relative to +target+ per +op+ (resolving its namespaces
+ * against the new context, as a single node would); for AFTER the insertion point
+ * advances so the children keep their order, and REPLACE inserts the children
+ * before +target+ then detaches it. Returns the (now empty) fragment, as
+ * Nokogiri's add_child/before/after/replace return the fragment. */
+static VALUE
+mkr_xml_splice_fragment(mkr_xml_doc_t *xdoc, mkr_xml_node_t *target,
+                        mkr_xml_node_t *frag, VALUE doc_v, mkr_ins_op_t op)
+{
+    mkr_xml_node_t *ref = target;   /* moving insertion point for AFTER */
+    mkr_xml_node_t *c;
+    while ((c = frag->first_child) != NULL) {   /* each insert detaches c from frag */
+        mkr_xml_mut_status_t st;
+        switch (op) {
+        case MKR_INS_CHILD:   st = mkr_xml_insert_child(xdoc, target, c);  break;
+        case MKR_INS_AFTER:   st = mkr_xml_insert_after(xdoc, ref, c); ref = c; break;
+        default:              st = mkr_xml_insert_before(xdoc, target, c); break; /* BEFORE + REPLACE */
+        }
+        mkr_xml_mut_check(st);
+    }
+    if (op == MKR_INS_REPLACE) {
+        mkr_xml_detach(target);     /* drop the replaced node after its children are spliced in */
+    }
+    return mkr_wrap_xml_node(frag, doc_v);
+}
+
 static VALUE
 mkr_xml_node_insert(VALUE self, VALUE arg, mkr_ins_op_t op)
 {
@@ -1096,6 +1138,10 @@ mkr_xml_node_insert(VALUE self, VALUE arg, mkr_ins_op_t op)
     VALUE doc_v = mkr_xml_node_document(self);
     mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
     mkr_xml_node_t *node = mkr_xml_incoming_node(xdoc, doc_v, arg);
+
+    if (node->type == MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT) {
+        return mkr_xml_splice_fragment(xdoc, target, node, doc_v, op);
+    }
 
     mkr_xml_mut_status_t st;
     switch (op) {
@@ -1127,11 +1173,34 @@ mkr_xml_node_lshift(VALUE self, VALUE arg)
 
 /* ---- Document factories ---- */
 
+/* rb_hash_foreach body: set one attribute on the element (arg). Keys/values are
+ * stringified (Nokogiri accepts symbol keys / non-string values), then run
+ * through the normal validated attribute setter. */
+static int
+mkr_xml_create_attr_i(VALUE key, VALUE val, VALUE rb_el)
+{
+    mkr_xml_node_aset(rb_el, rb_obj_as_string(key), rb_obj_as_string(val));
+    return ST_CONTINUE;
+}
+
+/* create_element(name, content = nil, attributes = {}) -> Element.
+ * Nokogiri-style trailing arguments: a Hash sets attributes, any other (non-nil)
+ * argument is the element's text content. */
 static VALUE
 mkr_xml_doc_create_element(int argc, VALUE *argv, VALUE self)
 {
-    VALUE rb_name, rb_content;
-    rb_scan_args(argc, argv, "11", &rb_name, &rb_content);
+    VALUE rb_name, rb_rest;
+    rb_scan_args(argc, argv, "1*", &rb_name, &rb_rest);
+    VALUE rb_content = Qnil, rb_attrs = Qnil;
+    for (long i = 0; i < RARRAY_LEN(rb_rest); i++) {
+        VALUE a = RARRAY_AREF(rb_rest, i);
+        if (RB_TYPE_P(a, T_HASH)) {
+            rb_attrs = a;
+        } else if (!NIL_P(a)) {
+            rb_content = a;
+        }
+    }
+
     mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
     mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "element name");
     mkr_xml_node_t *el = NULL;
@@ -1144,7 +1213,11 @@ mkr_xml_doc_create_element(int argc, VALUE *argv, VALUE self)
         RB_GC_GUARD(tv.value);
         mkr_xml_mut_check(st);
     }
-    return mkr_wrap_xml_node(el, self);
+    VALUE rb_el = mkr_wrap_xml_node(el, self);
+    if (!NIL_P(rb_attrs)) {
+        rb_hash_foreach(rb_attrs, mkr_xml_create_attr_i, rb_el);
+    }
+    return rb_el;
 }
 
 /* Shared body for the leaf-data factories (text / comment / cdata). */
@@ -1179,34 +1252,10 @@ mkr_xml_doc_create_pi(VALUE self, VALUE rb_target, VALUE rb_data)
     return mkr_wrap_xml_node(pi, self);
 }
 
-/* Makiri::XML::Element.new(name, document) / Text.new(content, document) - the
- * allocator is undef'd (nodes come only from C), so these delegate to the
- * document's factory, like Nokogiri. +document+ must be a Makiri::XML::Document. */
-static VALUE
-mkr_xml_require_document(VALUE rb_doc)
-{
-    if (!rb_obj_is_kind_of(rb_doc, mkr_cXmlDocument)) {
-        rb_raise(rb_eTypeError, "expected a Makiri::XML::Document");
-    }
-    return rb_doc;
-}
-
-static VALUE
-mkr_xml_element_s_new(int argc, VALUE *argv, VALUE klass)
-{
-    (void)klass;
-    VALUE rb_name, rb_doc;
-    rb_scan_args(argc, argv, "2", &rb_name, &rb_doc);
-    VALUE args[1] = { rb_name };
-    return mkr_xml_doc_create_element(1, args, mkr_xml_require_document(rb_doc));
-}
-
-static VALUE
-mkr_xml_text_s_new(VALUE klass, VALUE rb_content, VALUE rb_doc)
-{
-    (void)klass;
-    return mkr_xml_doc_create_text_node(mkr_xml_require_document(rb_doc), rb_content);
-}
+/* The node-class .new constructors (Element/Text/Comment/CDATASection/ProcessingInstruction.new)
+ * and Document#root= are pure delegations to the document factories / insertion
+ * verbs and live in the Ruby convenience layer (lib/makiri/), so a single
+ * definition serves both HTML and XML and the document-type check is consistent. */
 
 void
 mkr_init_xml_node(void)
@@ -1266,16 +1315,15 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "after",                mkr_xml_node_after,     1);
     rb_define_method(mkr_mXmlNodeMethods, "replace",              mkr_xml_node_replace,   1);
 
-    /* Document factories + the Element/Text .new delegators (XML::Document is set
-     * up in mkr_init_xml, which runs first). */
+    /* Document factories. The node-class .new constructors and Document#root= are
+     * pure delegations to these, defined once in the Ruby layer (lib/makiri/)
+     * so HTML and XML share them. */
     rb_define_method(mkr_cXmlDocument, "create_element",                mkr_xml_doc_create_element, -1);
     rb_define_method(mkr_cXmlDocument, "create_text_node",             mkr_xml_doc_create_text_node, 1);
     rb_define_method(mkr_cXmlDocument, "create_comment",               mkr_xml_doc_create_comment, 1);
     rb_define_method(mkr_cXmlDocument, "create_cdata",                 mkr_xml_doc_create_cdata, 1);
     rb_define_method(mkr_cXmlDocument, "create_cdata_node",            mkr_xml_doc_create_cdata, 1);
     rb_define_method(mkr_cXmlDocument, "create_processing_instruction", mkr_xml_doc_create_pi, 2);
-    rb_define_singleton_method(mkr_cXmlElement, "new", mkr_xml_element_s_new, -1);
-    rb_define_singleton_method(mkr_cXmlText,    "new", mkr_xml_text_s_new,    2);
 
     /* Node identity by underlying pointer, so #path / NodeSet dedup / Set / Hash
      * work (the same contract HTML nodes have). */
@@ -1298,9 +1346,9 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "inner_html", mkr_xml_node_no_serialize, -1);
     rb_define_method(mkr_mXmlNodeMethods, "outer_html", mkr_xml_node_no_serialize, -1);
 
-    /* Makiri::XML::DTD identifiers (Nokogiri-compatible; #public_id is the
-     * WHATWG-DOM alias of #external_id). #name comes from the shared reader. */
-    rb_define_method(mkr_cXmlDTD, "external_id", mkr_xml_dtd_external_id, 0);
-    rb_define_method(mkr_cXmlDTD, "public_id",   mkr_xml_dtd_external_id, 0);
-    rb_define_method(mkr_cXmlDTD, "system_id",   mkr_xml_dtd_system_id, 0);
+    /* Makiri::XML::DocumentType identifiers (#public_id is the Nokogiri-style
+     * alias of #external_id). #name comes from the shared reader. */
+    rb_define_method(mkr_cXmlDocumentType, "external_id", mkr_xml_dtd_external_id, 0);
+    rb_define_method(mkr_cXmlDocumentType, "public_id",   mkr_xml_dtd_external_id, 0);
+    rb_define_method(mkr_cXmlDocumentType, "system_id",   mkr_xml_dtd_system_id, 0);
 }
