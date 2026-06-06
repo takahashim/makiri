@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
     (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. jQuery
     extensions and the `[attr=v i]` case flag remain unsupported (use XPath);
-    `|el` (no namespace) is treated as `*|el` (any), a Lexbor parser limitation.
+    `|el` (no namespace) fails closed with a `CSS::SyntaxError` because Lexbor's
+    parser cannot distinguish it from `*|el` (use a bare `el` or XPath).
 
 ### Changed
 

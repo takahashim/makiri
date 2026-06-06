@@ -156,10 +156,11 @@ namespaces - Nokogiri-compatible. The common selector surface is supported
 and `:first/last/only-child`, `:empty`, `:root`, the `:*-of-type` family,
 `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`); jQuery extensions and the
 `[attr=v i]` case flag are not (use XPath). One namespace caveat: `|el`
-(explicit no-namespace) is treated as `*|el` (any namespace) because Lexbor's
-selector parser does not preserve the distinction - use a bare `el` or XPath
-`//el` for a strict no-namespace match. Cross-checked against Nokogiri::XML by a
-differential (`rake conformance:css_xml`) and property-based metamorphic tests.
+(explicit no-namespace) **raises** rather than matching - Lexbor's selector
+parser cannot distinguish it from `*|el` (any namespace), so Makiri fails closed
+instead of returning a wrong result; use a bare `el` or XPath `//el` for a
+strict no-namespace match. Cross-checked against Nokogiri::XML by a differential
+(`rake conformance:css_xml`) and property-based metamorphic tests.
 
 The tree supports in-place mutation - every edit validates its input (names as
 XML 1.0 QNames, values as XML Char) so the tree stays serializable to

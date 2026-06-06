@@ -68,6 +68,41 @@ typedef struct {
   const mkr_css_ns_t *ns;
 } css_build_t;
 
+/* A CSS identifier byte (the chars a namespace prefix / type name is made of). */
+static int
+css_is_name_byte(unsigned char c)
+{
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+      || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '\\' || c >= 0x80;
+}
+
+/* Detect a leading-pipe type selector (`|el`, the no-namespace form): a top-level
+ * `|` not immediately preceded by `*` or an identifier byte (so it follows the
+ * start, whitespace, a combinator, `,` or `(`). Lexbor's parser cannot represent
+ * `|el` distinctly from `*|el` (both arrive as ns="*"), so rather than silently
+ * match any namespace we fail closed here. `*|el`, `ns|el` and the `[a|=v]`
+ * attribute operator are NOT leading pipes and are unaffected. */
+static int
+css_has_leading_pipe(const char *s, size_t len)
+{
+  int bracket = 0;
+  unsigned char prev = 0;   /* last significant byte; 0 = start, ' ' = whitespace */
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c == '[') { bracket++; prev = c; continue; }
+    if (c == ']') { if (bracket > 0) bracket--; prev = c; continue; }
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {
+      if (bracket == 0) prev = ' ';
+      continue;
+    }
+    if (c == '|' && bracket == 0 && prev != '*' && !css_is_name_byte(prev)) {
+      return 1;
+    }
+    prev = c;
+  }
+  return 0;
+}
+
 static mkr_node_t *
 cb_node(css_build_t *B, mkr_nk_t kind)
 {
@@ -856,6 +891,14 @@ mkr_css_compile(mkr_verified_text_t selector, const mkr_css_ns_t *ns,
                 mkr_xpath_limits_t *limits, mkr_xpath_error_t *err)
 {
   css_build_t B = { limits, err, ns };
+
+  if (css_has_leading_pipe(selector.ptr, selector.len)) {
+    mkr_err_set(err, MKR_XPATH_ERR_SYNTAX,
+                "CSS |el (no-namespace) type selector is not supported "
+                "(Lexbor cannot distinguish it from *|el); use a bare type "
+                "selector or XPath for a strict no-namespace match");
+    return NULL;
+  }
 
   if (!css_parser_ready()) {
     mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "failed to initialise CSS parser");

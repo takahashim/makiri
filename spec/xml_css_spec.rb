@@ -206,17 +206,25 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
   end
 
-  describe "known limitation: |el (no-namespace) is treated as *|el (any namespace)" do
-    # Lexbor's selector parser does not preserve the distinction: a leading-pipe
-    # `|el` and `*|el` arrive with the same namespace component, so Makiri cannot
-    # tell them apart and both match any namespace. (Bare `el` and XPath `//el`
-    # are unaffected and match the no-namespace element correctly.)
+  describe "the |el (no-namespace) selector fails closed" do
+    # Lexbor's parser cannot represent `|el` distinctly from `*|el` (both arrive
+    # as ns="*"), so rather than silently matching any namespace, Makiri rejects
+    # a leading-pipe type selector. A bare `el` or XPath `//el` matches the
+    # no-namespace element correctly.
     let(:doc) { Makiri::XML(%(<r><wrap/><x xmlns:p="urn:b"><p:wrap/></x></r>)) }
 
-    it "matches |wrap the same as *|wrap (any namespace), not strictly no-namespace" do
-      expect(doc.css("|wrap").length).to eq(doc.css("*|wrap").length) # both 2 (any ns)
-      expect(doc.xpath("//wrap").length).to eq(1)                     # XPath: no-namespace, correct
-      expect(doc.css("wrap").length).to eq(1)                         # bare: no default ns -> no-namespace
+    it "raises CSS::SyntaxError on |el (any position), not a wrong any-namespace match" do
+      expect { doc.css("|wrap") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { doc.css("r > |wrap") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { doc.css(":is(|wrap)") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { doc.at_css("|wrap") }.to raise_error(Makiri::CSS::SyntaxError)
+    end
+
+    it "still supports *|el (any namespace), bare el, and the [a|=v] operator" do
+      expect(doc.css("*|wrap").length).to eq(2)                   # any namespace
+      expect(doc.css("wrap").length).to eq(1)                     # bare: no-namespace here
+      expect(doc.xpath("//wrap").length).to eq(1)
+      expect(doc.css(%([id|="x"])).length).to eq(0)               # |= operator unaffected
     end
   end
 end
