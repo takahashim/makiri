@@ -61,14 +61,16 @@ module Makiri
 
       private
 
-      # Build the {prefix => uri} hash the C primitives register: the document's
-      # xmlns declarations (default under the synthetic prefix "xmlns", mirroring
-      # Nokogiri's `document.namespaces`), then any caller-supplied +user+ ns.
+      # Build the {prefix => uri} hash the C primitives register: the root
+      # element's xmlns declarations (default under the synthetic prefix "xmlns",
+      # mirroring Nokogiri's `document.namespaces`), then any caller-supplied
+      # +user+ ns. Reading only the root's declarations is O(root attributes) -
+      # the whole-document #collect_namespaces walk would make every query O(doc).
       def _css_namespaces(user)
         reg = {}
-        collect_namespaces.each do |key, uri|
-          prefix = key == "xmlns" ? "xmlns" : key.sub(/\Axmlns:/, "")
-          reg[prefix] = uri
+        root = document&.root
+        root&.namespace_definitions&.each do |ns|
+          reg[ns.prefix.nil? ? "xmlns" : ns.prefix] = ns.href
         end
         user&.each { |k, v| reg[k.to_s] = v.to_s }
         reg
