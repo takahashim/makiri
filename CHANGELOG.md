@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-06
+
 ### Added
 
 * **Native XML 1.0 reader + in-place editor** - `Makiri::XML::Document.parse(source)`
@@ -237,6 +239,7 @@ libxml2 / libxslt dependency at any layer**.
   domxpath, CSS differential vs `Nokogiri::HTML5`). GitHub Actions CI across
   Ruby 3.2–4.0 × Ubuntu/macOS plus a sanitizer job.
 
-[Unreleased]: https://github.com/takahashim/makiri/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/takahashim/makiri/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/takahashim/makiri/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/takahashim/makiri/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/takahashim/makiri/releases/tag/v0.1.0
