@@ -598,6 +598,39 @@ lower_selector_list_selftest(css_build_t *B, const lxb_css_selector_list_t *list
   return acc;
 }
 
+/* child::text()[pred] - a relative path selecting the element's direct child
+ * text nodes that satisfy +pred+ (consumed). In predicate position a non-empty
+ * node-set is truthy, so this is "some direct child text node matches", which is
+ * exactly how Lexbor's :lexbor-contains matcher scans (immediate child TEXT
+ * nodes only, not the deep string-value). +pred+ is owned on success or freed on
+ * any failure. */
+static mkr_node_t *
+cb_child_text_pred(css_build_t *B, mkr_node_t *pred)
+{
+  if (pred == NULL) return NULL;
+  mkr_node_t *n = cb_node(B, MKR_NK_PATH);
+  if (n == NULL) { mkr_node_free(pred); return NULL; }
+  mkr_step_t *steps = (mkr_step_t *)mkr_callocarray(1, sizeof(mkr_step_t));
+  if (steps == NULL) {
+    mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "out of memory (css)");
+    mkr_node_free(pred); mkr_node_free(n); return NULL;
+  }
+  mkr_node_t **pv = (mkr_node_t **)mkr_callocarray(1, sizeof(mkr_node_t *));
+  if (pv == NULL) {
+    mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "out of memory (css)");
+    free(steps); mkr_node_free(pred); mkr_node_free(n); return NULL;
+  }
+  pv[0] = pred;
+  steps[0].axis = MKR_AXIS_CHILD;
+  steps[0].test.kind = MKR_NT_TEXT;
+  steps[0].predicates = pv;
+  steps[0].npredicates = 1;
+  n->u.path.absolute = 0;
+  n->u.path.steps = steps;
+  n->u.path.nsteps = 1;
+  return n;
+}
+
 /* Functional pseudo-classes: :nth-*(an+b), :not(), :is()/:where(), :has(). */
 static mkr_node_t *
 lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t *step)
@@ -661,10 +694,12 @@ lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t 
     }
 
     case LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_LEXBOR_CONTAINS: {
-      /* :lexbor-contains("t")  -> contains(., "t")  (the element's text contains
-       * t). The `i` flag is ASCII case-insensitive (matching Lexbor's matcher,
-       * so the XML path agrees with the HTML one): lower both sides with
-       * translate(). Mirrors Lexbor's own selector; not a CSS standard. */
+      /* :lexbor-contains("t") -> child::text()[contains(., "t")]: true when a
+       * direct child text node contains t. This mirrors Lexbor's matcher, which
+       * scans only the element's immediate child TEXT nodes (NOT the deep
+       * string-value), so the XML path agrees with the HTML one. The `i` flag is
+       * ASCII case-insensitive: fold each side with translate(). Lexbor's own
+       * selector; not a CSS standard. The inner "." is the child text node. */
       const lxb_css_selector_contains_t *c =
           (const lxb_css_selector_contains_t *)s->u.pseudo.data;
       if (c == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX, "malformed :lexbor-contains()"); return NULL; }
@@ -676,7 +711,7 @@ lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t 
         if (a == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
         a[0] = cb_step_path(B, MKR_AXIS_SELF, MKR_NT_NODE, NULL, 0);  /* "." */
         a[1] = cb_literal(B, needle, nlen);
-        return cb_fncall(B, "contains", a, 2);
+        return cb_child_text_pred(B, cb_fncall(B, "contains", a, 2));
       }
 
       /* ASCII case-insensitive: contains(translate(., A-Z, a-z), lower(needle)) */
@@ -699,7 +734,7 @@ lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t 
       a[0] = folded;
       a[1] = cb_literal(B, low, nlen);
       free(low);
-      return cb_fncall(B, "contains", a, 2);
+      return cb_child_text_pred(B, cb_fncall(B, "contains", a, 2));
     }
 
     default:

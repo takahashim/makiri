@@ -269,13 +269,21 @@ RSpec.describe "Makiri::XML CSS selectors" do
         .to eq(["apple PIE", "cherry pie"])
     end
 
-    it "is byte-identical to the equivalent XPath contains()" do
+    it "matches a direct child text node like XPath child::text()[contains()]" do
       expect(doc.css(%(i:lexbor-contains("pie"))).map(&:text))
-        .to eq(doc.xpath(%(//i[contains(., "pie")])).map(&:text))
+        .to eq(doc.xpath(%(//i[text()[contains(., "pie")]])).map(&:text))
     end
 
-    it "uses the element string-value, so an ancestor containing it matches too" do
-      expect(doc.css(%(:lexbor-contains("cherry"))).map(&:name)).to eq(%w[r i])
+    it "scans only immediate child text nodes, not the deep string-value" do
+      # Faithful to Lexbor's matcher: <r> contains "cherry" only via a descendant
+      # text node, not a direct child one, so <r> does NOT match - only <i> does.
+      # (This is what makes HTML and XML agree; the deep string-value would also
+      # match every ancestor.)
+      nested = Makiri::XML("<r><i>cherry pie</i></r>")
+      expect(nested.css(%(:lexbor-contains("cherry"))).map(&:name)).to eq(%w[i])
+      html = Makiri::HTML("<html><body><r><i>cherry pie</i></r></body></html>")
+      expect(html.css(%(:lexbor-contains("cherry"))).map(&:name))
+        .to eq(nested.css(%(:lexbor-contains("cherry"))).map(&:name))
     end
   end
 end

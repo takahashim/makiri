@@ -28,10 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     XPath); `|el` (no namespace) fails closed with a `CSS::SyntaxError` because
     Lexbor's parser cannot distinguish it from `*|el` (use a bare `el` or XPath).
   * `:lexbor-contains("text")` is supported on XML too, matching the HTML side:
-    Lexbor's substring text filter, lowered to XPath `contains()` on the element
-    string-value, with the ` i` flag (`:lexbor-contains("text" i)`) for an ASCII
-    case-insensitive match. (It is Lexbor's spelling of jQuery's `:contains()`;
-    the bare `:contains` name is still unsupported.)
+    Lexbor's substring text filter, with the ` i` flag (`:lexbor-contains("text"
+    i)`) for an ASCII case-insensitive match. Like Lexbor's matcher it tests the
+    element's immediate child text nodes (not the deep string-value), so HTML and
+    XML agree; on XML it lowers to `child::text()[contains(., "text")]`. (It is
+    Lexbor's spelling of jQuery's `:contains()`; the bare `:contains` name is
+    still unsupported.)
 
 ### Changed
 

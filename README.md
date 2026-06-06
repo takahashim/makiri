@@ -297,7 +297,9 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     spelling of the jQuery `:contains()` substring filter, matching an element
     whose text contains the string; append ` i` (`:lexbor-contains("text" i)`)
     for an ASCII case-insensitive match. (Nokogiri's name `:contains` is not an
-    alias.) On XML it lowers to XPath `contains()` on the element string-value.
+    alias.) Like Lexbor's matcher, it tests the element's **immediate child text
+    nodes** (not the deep string-value), so HTML and XML agree; on XML it lowers
+    to XPath `child::text()[contains(., "text")]`.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
 * Class/ID selectors are matched case-insensitively regardless of quirks mode (a Lexbor behaviour)
