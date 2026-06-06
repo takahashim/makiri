@@ -414,9 +414,15 @@ lower_attribute(css_build_t *B, const lxb_css_selector_t *s)
  * query passes 0, making the first compound a plain descendant of the context. */
 static mkr_node_t *lower_complex(css_build_t *B, const lxb_css_selector_t *first,
                                  int relative_first);
-static mkr_node_t *lower_compound_selftest(css_build_t *B,
-                                           const lxb_css_selector_t *cfirst,
-                                           const lxb_css_selector_t *clast);
+/* Boolean self-test for a (possibly multi-compound) complex selector, used by
+ * :is()/:where()/:not(). Combinators are expressed with the reverse axes:
+ *   a b  -> self::b/ancestor::a   a > b -> self::b/parent::a
+ *   a + b -> self::b/preceding-sibling::*[1]/self::a   a ~ b -> .../preceding-sibling::a
+ * so the path is non-empty (truthy) exactly when self matches the selector. */
+static mkr_node_t *lower_complex_selftest(css_build_t *B, const lxb_css_selector_t *first);
+
+/* Cap on compounds in one :is()/:not() argument (selector-complexity bound). */
+#define MKR_CSS_MAX_COMPOUNDS 64
 
 /* not(axis::*) - "no sibling/child on that axis". */
 static mkr_node_t *
@@ -549,17 +555,7 @@ lower_selector_list_selftest(css_build_t *B, const lxb_css_selector_list_t *list
 {
   mkr_node_t *acc = NULL;
   for (const lxb_css_selector_list_t *g = list; g != NULL; g = g->next) {
-    /* reject combinators inside the arg: every selector after the first must be CLOSE */
-    for (const lxb_css_selector_t *s = g->first->next; s != NULL; s = s->next) {
-      if (s->combinator != LXB_CSS_SELECTOR_COMBINATOR_CLOSE) {
-        mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX,
-                    "combinators inside :is()/:where()/:not() are not supported");
-        mkr_node_free(acc); return NULL;
-      }
-    }
-    const lxb_css_selector_t *last = g->first;
-    while (last->next != NULL) last = last->next;
-    mkr_node_t *one = lower_compound_selftest(B, g->first, last);
+    mkr_node_t *one = lower_complex_selftest(B, g->first);
     if (one == NULL) { mkr_node_free(acc); return NULL; }
     acc = (acc == NULL) ? one : cb_binop(B, MKR_OP_OR, acc, one);
     if (acc == NULL) return NULL;
@@ -774,61 +770,84 @@ fail:
  * fold_simple to lower the compound's simples (type -> nodetest, others ->
  * self-relative predicates), then combines as self::<type> AND pred1 AND ...
  * Used by :is()/:where()/:not(). */
-static mkr_node_t *
-lower_compound_selftest(css_build_t *B, const lxb_css_selector_t *cfirst,
-                        const lxb_css_selector_t *clast)
+/* The reverse of a forward combinator, for walking from the subject (self) back
+ * to the preceding compound. Adjacent (+) is handled separately (two steps). */
+static mkr_axis_t
+reverse_axis(lxb_css_selector_combinator_t c)
 {
-  mkr_step_t step; memset(&step, 0, sizeof(step));
-  step.test.kind = MKR_NT_WILDCARD;
-  preds_arr_t preds = {0};
-
-  for (const lxb_css_selector_t *s = cfirst; ; s = s->next) {
-    if (fold_simple(B, s, &step, &preds) != 0) goto fail;
-    if (s == clast) break;
+  switch (c) {
+    case LXB_CSS_SELECTOR_COMBINATOR_CHILD:     return MKR_AXIS_PARENT;
+    case LXB_CSS_SELECTOR_COMBINATOR_FOLLOWING: return MKR_AXIS_PRECEDING_SIBLING; /* ~ */
+    case LXB_CSS_SELECTOR_COMBINATOR_DESCENDANT:
+    default:                                    return MKR_AXIS_ANCESTOR;
   }
+}
 
-  /* self::<type> (a name test on the self axis) or self::* for an untyped compound */
-  mkr_node_t *acc;
-  if (step.test.kind == MKR_NT_NAME) {
-    acc = cb_node(B, MKR_NK_PATH);
-    if (acc == NULL) goto fail;
-    mkr_step_t *st = (mkr_step_t *)mkr_callocarray(1, sizeof(mkr_step_t));
-    if (st == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); mkr_node_free(acc); goto fail; }
-    st[0].axis = MKR_AXIS_SELF; st[0].test.kind = MKR_NT_NAME;
-    if (cb_set_text(B, &st[0].test.local, (const char *)step.test.local.ptr, step.test.local.len) != 0) {
-      free(st); mkr_node_free(acc); goto fail;
-    }
-    if (step.test.prefix.ptr != NULL && step.test.prefix.len > 0
-        && cb_set_text(B, &st[0].test.prefix, (const char *)step.test.prefix.ptr, step.test.prefix.len) != 0) {
-      mkr_owned_text_clear(&st[0].test.local); free(st); mkr_node_free(acc); goto fail;
-    }
-    acc->u.path.absolute = 0; acc->u.path.steps = st; acc->u.path.nsteps = 1;
-  } else {
-    acc = cb_step_path(B, MKR_AXIS_SELF, MKR_NT_WILDCARD, NULL, 0);
-    if (acc == NULL) goto fail;
-  }
+typedef struct {
+  const lxb_css_selector_t      *first, *last;
+  lxb_css_selector_combinator_t  comb;   /* how this compound connects to its left neighbour */
+} mkr_css_compound_t;
 
-  for (size_t i = 0; i < preds.n; i++) {
-    acc = cb_binop(B, MKR_OP_AND, acc, preds.v[i]);
-    preds.v[i] = NULL;          /* ownership moved into acc (or freed on failure) */
-    if (acc == NULL) { /* cb_binop freed both operands */
-      for (size_t j = i + 1; j < preds.n; j++) mkr_node_free(preds.v[j]);
-      free(preds.v);
-      mkr_owned_text_clear(&step.test.local);
-      mkr_owned_text_clear(&step.test.prefix);
+static mkr_node_t *
+lower_complex_selftest(css_build_t *B, const lxb_css_selector_t *first)
+{
+  /* Split the chain into compounds (CLOSE-linked runs), left to right. */
+  mkr_css_compound_t comps[MKR_CSS_MAX_COMPOUNDS];
+  size_t nc = 0;
+  const lxb_css_selector_t *cstart = first;
+  for (const lxb_css_selector_t *s = first; s != NULL; s = s->next) {
+    const lxb_css_selector_t *nxt = s->next;
+    if (nxt != NULL && nxt->combinator == LXB_CSS_SELECTOR_COMBINATOR_CLOSE) continue;
+    if (nc >= MKR_CSS_MAX_COMPOUNDS) {
+      mkr_err_set(B->err, MKR_XPATH_ERR_LIMIT, "CSS selector too complex");
       return NULL;
     }
+    comps[nc].first = cstart; comps[nc].last = s; comps[nc].comb = cstart->combinator;
+    nc++;
+    cstart = nxt;
   }
-  free(preds.v);
-  mkr_owned_text_clear(&step.test.local);
-  mkr_owned_text_clear(&step.test.prefix);
-  return acc;
+  if (nc == 0) { mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX, "empty CSS selector"); return NULL; }
+
+  /* Build self::<subject> then reverse back-steps to each earlier compound. The
+   * whole path is non-empty (truthy) exactly when self matches the selector. */
+  steps_arr_t steps = {0};
+  if (emit_compound_step(B, &steps, MKR_AXIS_SELF, comps[nc - 1].first, comps[nc - 1].last) != 0) {
+    goto fail;
+  }
+  for (size_t i = nc - 1; i > 0; i--) {
+    lxb_css_selector_combinator_t comb = comps[i].comb; /* connects comps[i] to comps[i-1] */
+    if (comb == LXB_CSS_SELECTOR_COMBINATOR_SIBLING) {
+      /* reverse adjacent: the immediately-preceding sibling must be comps[i-1] */
+      mkr_step_t ps; memset(&ps, 0, sizeof(ps));
+      ps.axis = MKR_AXIS_PRECEDING_SIBLING;
+      ps.test.kind = MKR_NT_WILDCARD;
+      mkr_node_t **p = (mkr_node_t **)mkr_callocarray(1, sizeof(mkr_node_t *));
+      if (p == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); goto fail; }
+      p[0] = cb_num(B, 1.0);
+      if (p[0] == NULL) { free(p); goto fail; }
+      ps.predicates = p; ps.npredicates = 1;
+      if (steps_push(B, &steps, ps) != 0) { mkr_node_free(p[0]); free(p); goto fail; }
+      if (emit_compound_step(B, &steps, MKR_AXIS_SELF, comps[i - 1].first, comps[i - 1].last) != 0) {
+        goto fail;
+      }
+    } else {
+      if (emit_compound_step(B, &steps, reverse_axis(comb),
+                             comps[i - 1].first, comps[i - 1].last) != 0) {
+        goto fail;
+      }
+    }
+  }
+
+  mkr_node_t *path = cb_node(B, MKR_NK_PATH);
+  if (path == NULL) goto fail;
+  path->u.path.absolute = 0;
+  path->u.path.steps = steps.v;
+  path->u.path.nsteps = steps.n;
+  return path;
 
 fail:
-  for (size_t i = 0; i < preds.n; i++) mkr_node_free(preds.v[i]);
-  free(preds.v);
-  mkr_owned_text_clear(&step.test.local);
-  mkr_owned_text_clear(&step.test.prefix);
+  for (size_t i = 0; i < steps.n; i++) mkr_step_clear(&steps.v[i]);
+  free(steps.v);
   return NULL;
 }
 

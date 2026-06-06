@@ -55,4 +55,7 @@ CSS_SEED = [
   "li:first-child", "li:last-child", "li:nth-child(2)", "li:nth-of-type(odd)",
   "p:not(.lead)", ":root", "section:has(p)", "div, span, a",
   "svg circle", "header, footer", "*:empty",
+  # complex (combinator) arguments inside :is/:where/:not + :has variants
+  "a:not(nav a)", ":is(div > p, section a)", ":where(ul li)", "li:has(> a)",
+  "p:has(+ span)", "div:not(.x):not(.y)",
 ].freeze

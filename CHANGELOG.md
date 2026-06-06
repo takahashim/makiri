@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     resolves against in-scope / supplied namespaces (Nokogiri-compatible).
   * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
     operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
-    `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`. jQuery extensions and the
-    `[attr=v i]` case flag remain unsupported (use XPath).
+    `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
+    (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. jQuery
+    extensions and the `[attr=v i]` case flag remain unsupported (use XPath).
 
 ## [0.3.0] - 2026-06-06
 

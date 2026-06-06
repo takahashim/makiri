@@ -118,11 +118,20 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(doc.css("a:only-of-type").length).to eq(0) # 3 a's
     end
 
-    it ":not / :is / :where" do
+    it ":not / :is / :where (compound args)" do
       d = Makiri::XML(%(<r><a class="x"/><a/><b/></r>))
       expect(d.css("a:not(.x)").length).to eq(1)
       expect(d.css(":is(a, b)").length).to eq(3)
       expect(d.css(":where(b)").length).to eq(1)
+    end
+
+    it ":not / :is / :where with combinator arguments" do
+      d = Makiri::XML(%(<r><nav><a id="n"/></nav><sec><a id="s"/><a id="k" class="k"/></sec><a id="t"/></r>))
+      ids = ->(sel) { d.css(sel).map { |e| e["id"] } }
+      expect(ids.("a:not(nav a)")).to eq(%w[s k t])          # exclude descendants of nav
+      expect(ids.(":is(nav a, sec a)")).to eq(%w[n s k])     # union of two complex args
+      expect(ids.(":is(sec > a.k)")).to eq(%w[k])            # child + compound
+      expect(ids.("a:not(sec a):not(nav a)")).to eq(%w[t])   # chained :not
     end
 
     it ":has with every combinator (descendant / child / adjacent / general sibling)" do
