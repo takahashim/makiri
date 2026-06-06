@@ -17,12 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     including that passing an explicit namespaces hash disables the default
     binding, so a bare selector then matches the no-namespace element).
   * Verified by a CSS-selector differential against Nokogiri::XML/libxml2
-    (`rake conformance:css_xml`).
+    (`rake conformance:css_xml`) and property-based metamorphic tests over random
+    documents (index-vs-walk, `at_css == css.first`, `#matches?` membership, the
+    comma-union law).
   * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
     operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
     `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
     (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. jQuery
-    extensions and the `[attr=v i]` case flag remain unsupported (use XPath).
+    extensions and the `[attr=v i]` case flag remain unsupported (use XPath);
+    `|el` (no namespace) is treated as `*|el` (any), a Lexbor parser limitation.
 
 ### Changed
 

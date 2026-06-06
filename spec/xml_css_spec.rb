@@ -205,4 +205,18 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect { doc.css("*:first-of-type") }.to raise_error(Makiri::CSS::SyntaxError) # untyped of-type
     end
   end
+
+  describe "known limitation: |el (no-namespace) is treated as *|el (any namespace)" do
+    # Lexbor's selector parser does not preserve the distinction: a leading-pipe
+    # `|el` and `*|el` arrive with the same namespace component, so Makiri cannot
+    # tell them apart and both match any namespace. (Bare `el` and XPath `//el`
+    # are unaffected and match the no-namespace element correctly.)
+    let(:doc) { Makiri::XML(%(<r><wrap/><x xmlns:p="urn:b"><p:wrap/></x></r>)) }
+
+    it "matches |wrap the same as *|wrap (any namespace), not strictly no-namespace" do
+      expect(doc.css("|wrap").length).to eq(doc.css("*|wrap").length) # both 2 (any ns)
+      expect(doc.xpath("//wrap").length).to eq(1)                     # XPath: no-namespace, correct
+      expect(doc.css("wrap").length).to eq(1)                         # bare: no default ns -> no-namespace
+    end
+  end
 end
