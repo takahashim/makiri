@@ -5,7 +5,8 @@
 # Where the :xml target fuzzes the PARSER, this fuzzes the MUTATION surface: it
 # applies a random, seeded SEQUENCE of tree edits - factories + add_child/<<,
 # before/after, add_previous/next_sibling, replace, []=/delete, content=/name=,
-# remove, cross-document import and in-tree moves, plus deliberate cycle /
+# remove, clone_node (deep/shallow), cross-document import and in-tree moves,
+# plus deliberate cycle /
 # cross-representation / frozen attempts - to a fresh document, then checks the
 # structural INVARIANTS every edit must preserve:
 #
@@ -102,7 +103,7 @@ module MutateFuzz
 
   def apply(doc, nodes, src, rng)
     t = nodes.sample(random: rng)
-    case rng.rand(20)
+    case rng.rand(21)
     when 0  then t.add_child(make(doc, rng))
     when 1  then t << make(doc, rng)
     when 2  then t.before(make(doc, rng))
@@ -123,6 +124,7 @@ module MutateFuzz
     when 17 then t.add_child(Makiri::HTML("<x/>").at_xpath("//x")) # cross-representation -> TypeError
     when 18 then t.freeze                                         # later edits on it -> FrozenError
     when 19 then t.add_child(doc.create_cdata(TEXTS.sample(random: rng)))
+    when 20 then t.add_child(t.clone_node(rng.rand(2).zero?)) # clone (deep/shallow) reinserted as an independent copy
     end
   end
 

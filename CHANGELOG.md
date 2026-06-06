@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`Makiri::XML::Element#element_children` and `Node#clone_node` for XML nodes**,
+  matching the HTML node surface. `element_children` returns a `NodeSet` of the
+  child element nodes (nodeType 1) in document order. `clone_node(deep = false)`
+  returns a detached copy in the same document, preserving element/attribute name
+  **case**, the resolved **namespaces**, and the **CDATA** node type (a clone is
+  never re-resolved, so its `namespace_uri` is carried over); this also makes
+  `Node#dup` / `#clone` work on XML nodes. (Backend parity for a DOM library; the
+  remaining `*_NS` attribute operations stay in the DOM layer - Makiri keeps a
+  declaration-driven, fail-closed namespace model.)
+
 * **`Makiri::XML::Document.parse(source)` / `Makiri::XML(source)` - a native,
   security-first XML reader + in-place editor** (no libxml2, like the rest of
   Makiri). It parses

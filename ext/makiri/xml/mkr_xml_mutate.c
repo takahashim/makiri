@@ -454,9 +454,12 @@ resolve_into(mkr_xml_node_t *node, mkr_xml_node_t *context)
 }
 
 /* A single arena copy of +src+ (its own fields + attributes, NOT its children).
- * Namespaces are left unresolved. Returns NULL on OOM. */
+ * When +with_ns+ is false the resolved namespace URI is left unset (the import
+ * path re-resolves it at the insertion site); when true it is copied too, for
+ * clone_node, whose detached result must keep its namespace (it is never
+ * re-resolved). Returns NULL on OOM. */
 static mkr_xml_node_t *
-copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src)
+copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
 {
     mkr_xml_node_t *n = mkr_xml_arena_node(doc, src->type);
     if (n == NULL) return NULL;
@@ -478,10 +481,15 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src)
     } else if (src->value != NULL) {
         n->value = "";
     }
+    if (with_ns && src->ns_uri != NULL && src->ns_uri_len > 0) {
+        const char *u = mkr_xml_arena_bytes(doc, src->ns_uri, src->ns_uri_len);
+        if (u == NULL) return NULL;
+        n->ns_uri = u; n->ns_uri_len = src->ns_uri_len;
+    }
     /* copy attributes (each an arena node), preserving order */
     mkr_xml_node_t *tail = NULL;
     for (mkr_xml_node_t *a = src->attrs; a != NULL; a = a->next) {
-        mkr_xml_node_t *ca = copy_one(doc, a);     /* an attribute has no children/attrs */
+        mkr_xml_node_t *ca = copy_one(doc, a, with_ns);   /* an attribute has no children/attrs */
         if (ca == NULL) return NULL;
         ca->parent = n;
         if (tail) tail->next = ca; else n->attrs = ca;
@@ -490,11 +498,15 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src)
     return n;
 }
 
-mkr_xml_mut_status_t
-mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, mkr_xml_node_t **out)
+/* Deep copy of +src+'s subtree into +doc+'s arena. +with_ns+ is threaded to
+ * copy_one: false for import (the insertion site re-resolves namespaces), true
+ * for clone_node (the detached result keeps its resolved namespaces). */
+static mkr_xml_mut_status_t
+deep_copy(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns,
+          mkr_xml_node_t **out)
 {
     *out = NULL;
-    mkr_xml_node_t *root = copy_one(doc, src);
+    mkr_xml_node_t *root = copy_one(doc, src, with_ns);
     if (root == NULL) return MKR_XML_MUT_OOM;
 
     /* Iterative pre-order: an explicit heap stack of (src, dst) pairs copies each
@@ -512,7 +524,7 @@ mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, mkr_xml_no
         frame_t f = stack[--top];
         mkr_xml_node_t *dtail = NULL;
         for (const mkr_xml_node_t *sc = f.s->first_child; sc != NULL; sc = sc->next) {
-            mkr_xml_node_t *dc = copy_one(doc, sc);
+            mkr_xml_node_t *dc = copy_one(doc, sc, with_ns);
             if (dc == NULL) { st = MKR_XML_MUT_OOM; goto done; }
             dc->parent = f.d;
             if (dtail) { dtail->next = dc; dc->prev = dtail; }
@@ -532,6 +544,23 @@ done:
     if (st != MKR_XML_MUT_OK) return st;       /* partial copy abandoned in the arena */
     *out = root;
     return MKR_XML_MUT_OK;
+}
+
+mkr_xml_mut_status_t
+mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, mkr_xml_node_t **out)
+{
+    return deep_copy(doc, src, false, out);   /* namespaces re-resolved at the insertion site */
+}
+
+mkr_xml_mut_status_t
+mkr_xml_clone_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool deep,
+                   mkr_xml_node_t **out)
+{
+    if (deep) {
+        return deep_copy(doc, src, true, out);
+    }
+    *out = copy_one(doc, src, true);   /* shallow: own fields + attributes, no children */
+    return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
 }
 
 /* ---- insertion ---- */

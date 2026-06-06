@@ -1183,6 +1183,36 @@ mkr_xml_create_attr_i(VALUE key, VALUE val, VALUE rb_el)
     return ST_CONTINUE;
 }
 
+/* element_children -> NodeSet of the child element nodes (nodeType 1) only, in
+ * document order (the counterpart of HTML's #element_children). */
+static VALUE
+mkr_xml_node_element_children(VALUE self)
+{
+    VALUE doc = mkr_xml_node_document(self);
+    VALUE set = mkr_node_set_new(doc);
+    for (mkr_xml_node_t *c = mkr_xml_node_unwrap(self)->first_child; c != NULL; c = c->next) {
+        if (c->type == MKR_XML_NODE_TYPE_ELEMENT) {
+            mkr_node_set_push(set, (mkr_raw_node_t *)c);
+        }
+    }
+    return set;
+}
+
+/* clone_node(deep = false) -> a detached copy of this node in the same document
+ * (element/attribute name case, namespaces, and the CDATA node type preserved);
+ * deep copies the whole subtree. Backs Node#dup / #clone and DOM cloneNode. */
+static VALUE
+mkr_xml_node_clone_node(int argc, VALUE *argv, VALUE self)
+{
+    VALUE rb_deep;
+    rb_scan_args(argc, argv, "01", &rb_deep);
+    mkr_xml_node_t *out = NULL;
+    mkr_xml_mut_check(mkr_xml_clone_node(mkr_xml_node_xdoc(self),
+                                         mkr_xml_node_unwrap(self),
+                                         RTEST(rb_deep), &out));
+    return mkr_xml_wrap_rel(self, out);
+}
+
 /* create_element(name, content = nil, attributes = {}) -> Element.
  * Nokogiri-style trailing arguments: a Hash sets attributes, any other (non-nil)
  * argument is the element's text content. */
@@ -1292,6 +1322,8 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "child",         mkr_xml_node_first_child, 0);
     rb_define_method(mkr_mXmlNodeMethods, "last_element_child", mkr_xml_node_last_child, 0);
     rb_define_method(mkr_mXmlNodeMethods, "children",      mkr_xml_node_children, 0);
+    rb_define_method(mkr_mXmlNodeMethods, "element_children", mkr_xml_node_element_children, 0);
+    rb_define_method(mkr_mXmlNodeMethods, "clone_node",    mkr_xml_node_clone_node, -1);
     rb_define_method(mkr_mXmlNodeMethods, "[]",            mkr_xml_node_aref, 1);
     rb_define_method(mkr_mXmlNodeMethods, "attribute_nodes", mkr_xml_node_attribute_nodes, 0);
 

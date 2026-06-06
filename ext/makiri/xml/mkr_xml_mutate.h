@@ -19,6 +19,7 @@
 #ifndef MKR_XML_MUTATE_H
 #define MKR_XML_MUTATE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "mkr_xml_node.h"
 
@@ -101,6 +102,14 @@ mkr_xml_mut_status_t mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint
  * arena and freed with the document). For moving a node BETWEEN documents. */
 mkr_xml_mut_status_t mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_node_t *src,
                                             mkr_xml_node_t **out);
+
+/* cloneNode: a detached deep (+deep+ true) or shallow copy of +src+ in the SAME
+ * document's arena, returned in *out (parent/siblings NULL). Unlike import the
+ * resolved namespace URI IS copied (a clone is never re-resolved), so the result
+ * keeps its namespace; element/attribute name case and the CDATA node type are
+ * preserved. Fails closed on budget/OOM. */
+mkr_xml_mut_status_t mkr_xml_clone_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src,
+                                        bool deep, mkr_xml_node_t **out);
 
 /* Insert +node+ into +doc+'s tree: as the last child of +parent+, or before /
  * after the sibling +ref+, or in place of +ref+ (replace). +node+ MUST already
