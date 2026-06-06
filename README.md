@@ -1,8 +1,8 @@
 # Makiri
 
-Standards-oriented HTML5 parsing, CSS selector querying, XPath 1.0 querying, and
-a native XML 1.0 reader for Ruby, powered by Lexbor and a native XPath engine -
-with no libxml2 dependency.
+Standards-oriented HTML5/XML parsing, CSS selector querying, XPath 1.0 querying,
+and a native XML 1.0 reader/editor for Ruby, powered by Lexbor and a native XPath
+engine - with no libxml2 dependency.
 
 > [!WARNING]
 > Status: early release. APIs and behavior may change before v1.0.
@@ -22,7 +22,7 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
   * XPath is parsed and evaluated by Makiri's own engine, written from scratch.
   * Makiri does not depend on libxml2 for parsing, DOM representation, or XPath evaluation.
 * Native XML 1.0 reader + in-place editor (`Makiri::XML`)
-  * A strict, non-validating, security-first parser with its own node arena (not
+  * A strict, non-validating, fail-closed parser with its own node arena (not
     Lexbor's HTML DOM), queried through the same native XPath engine, with
     in-place tree edits (attributes, content, rename, remove).
   * Conformance is held by the W3C XML Conformance Test Suite, an XPath
@@ -79,7 +79,7 @@ ctx.register_variable("cls", "lead")
 ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 ```
 
-### XML (read-only, secure)
+### XML (with in-place editing)
 
 `Makiri::XML(source)` parses **XML 1.0** with a native, strict,
 well-formedness-checking parser (no libxml2) and queries it through the same
@@ -187,8 +187,12 @@ doc.to_xml   # => "...<entry dc:id=\"42\"><title>Hello</title></entry>..."
 
 Supported edits: `#[]=`, `#delete` / `#remove_attribute`, `#content=`, `#name=`,
 `#remove` / `#unlink`, the factories above, and `#add_child` / `<<` /
-`#before` / `#after` / `#replace`. Insertion takes a single `Makiri::XML` node;
-parsing a string/fragment and `DocumentFragment` are a later phase.
+`#before` / `#after` / `#replace`. Insertion takes a `Makiri::XML` node or a
+`DocumentFragment` (its children are spliced in); a fragment is parsed by
+`Document#fragment(str)` (bound to the document) or `DocumentFragment.parse(str)`
+(standalone). A raw string handed straight to `#add_child` is **not** accepted -
+parse it into a fragment first. A whole document can also be built from scratch
+with `XML::Document.new` + `#root=` and the factories.
 
 The character encoding is autodetected (XML 1.0 Appendix F): a byte-order mark or
 the `<?xml encoding="..."?>` declaration selects it, so raw bytes (`File.binread`)
@@ -212,11 +216,12 @@ Nokogiri's over generated documents (`rake conformance:xml_pbt`).
 
 ## Non-goals (v1.0)
 
-* Constructing a `Makiri::XML::Document` from scratch, and parsing an XML
-  string/fragment into nodes (`#add_child("<x/>")`, `DocumentFragment`). (In-place
-  edits, the node factories - `Document#create_element` etc. - node insertion
-  (`#add_child` / `#before` / `#after` / `#replace`), and `#to_xml` serialization
-  ARE supported.)
+* Passing a raw markup string straight to an insertion method
+  (`node.add_child("<x/>")`); parse it into a fragment first
+  (`Document#fragment` / `DocumentFragment.parse`). (Building XML from scratch
+  (`XML::Document.new` + `#root=`), the node factories - `Document#create_element`
+  etc. - fragments, node insertion (`#add_child` / `#before` / `#after` /
+  `#replace`), and `#to_xml` serialization ARE supported.)
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.
 * Streaming / SAX parsing.
 * Drop-in replacement for every Nokogiri method. Makiri covers the common
@@ -254,9 +259,11 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
   * The DTD is recognized but not processed: DTD-defined entities are not
     expanded and DTD default attributes are not applied (Nokogiri/libxml2 can do
     both). External entities/subsets are never fetched (no I/O).
-  * Mutation supports in-place edits, the node factories, and node insertion, but
-    not yet parsing a string/fragment into nodes or constructing a document from
-    scratch. (`#to_xml` serialization is supported; HTML serialization - `to_html`
+  * Mutation supports in-place edits, the node factories, fragments
+    (`Document#fragment` / `DocumentFragment.parse`), node insertion, and building
+    a document from scratch (`XML::Document.new` + `#root=`); only handing a raw
+    markup string straight to `#add_child` is unsupported (parse it into a fragment
+    first). (`#to_xml` serialization is supported; HTML serialization - `to_html`
     / `inner_html` / `outer_html` - is not.)
 * Otherwise the parsed tree is byte-identical to `Nokogiri::XML`'s (verified by
   the property-based differential), including namespaces, prolog/epilog comments
