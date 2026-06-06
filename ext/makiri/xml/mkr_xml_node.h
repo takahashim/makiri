@@ -85,6 +85,8 @@ typedef struct mkr_xml_doc {
                                     * node: local/qname = name, prefix = public
                                     * (external) id, value = system id; a 0-length
                                     * prefix/value means that id is absent. */
+    void    *name_index;           /* lazily-built element-name index (mkr_xml_index.c),
+                                    * or NULL; dropped on every structural mutation. */
 } mkr_xml_doc_t;
 /* The PER-ELEMENT attribute cap (MKR_XML_MAX_ATTRS) is enforced by the tree
  * builder; the arena counts every node - attributes included - toward max_nodes. */

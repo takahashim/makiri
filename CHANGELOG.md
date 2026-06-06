@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. jQuery
     extensions and the `[attr=v i]` case flag remain unsupported (use XPath).
 
+### Changed
+
+* **Faster XML queries.** A document-rooted descendant name test (`//name`,
+  `css("name")`) is now served from a lazily-built, mutation-invalidated
+  element-name index instead of walking the whole tree - the XML analogue of the
+  HTML `//tag` index. On the benchmark feed `css("entry")` goes from ~1.1x to
+  ~11x faster than Nokogiri and `feed > entry` to ~4.8x (its `//feed` step is
+  indexed too). Also: a name test resolves its namespace prefix once per step
+  rather than per node (~20% on namespace-dense queries), and `at_css` /
+  `at_xpath` short-circuit on prefixed name tests (an early match is ~100x).
+
 ## [0.3.0] - 2026-06-06
 
 ### Added

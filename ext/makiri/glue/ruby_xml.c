@@ -15,8 +15,36 @@
 #include "ruby_xpath.h"   /* mkr_xpath_value_to_ruby / mkr_xpath_raise (shared) */
 #include "../xpath/mkr_xpath.h"
 #include "../xpath/mkr_css.h"   /* mkr_css_compile - CSS selectors over XML via the XPath engine */
+#include "../xml/mkr_xml_index.h"   /* element-name index for the //name fast path */
 
 #include <ruby/thread.h>
+
+/* void-typed adapters so the engine's representation-neutral name-index hooks
+ * can reach the XML element-name index (mkr_xml_index.c) without the engine
+ * knowing its concrete types. */
+static void *
+mkr_xml_name_index_get_v(void *owner)
+{
+    return mkr_xml_name_index_get((mkr_xml_doc_t *)owner);
+}
+
+static void *const *
+mkr_xml_name_index_lookup_v(const void *idx, const char *local, size_t local_len,
+                            const char *ns_uri, size_t ns_uri_len, size_t *count)
+{
+    return (void *const *)mkr_xml_name_index_lookup(
+        (const mkr_xml_name_index_t *)idx, local, local_len, ns_uri, ns_uri_len, count);
+}
+
+/* Install the document's element-name index hooks on +ctx+ (the engine lazily
+ * builds it only when a document-rooted descendant name test runs). */
+static void
+mkr_xml_install_name_index(mkr_xpath_context_t *ctx, mkr_xml_doc_t *xdoc)
+{
+    mkr_xpath_context_set_name_index(ctx, (void *)xdoc,
+                                     mkr_xml_name_index_get_v,
+                                     mkr_xml_name_index_lookup_v);
+}
 
 /* ---- GVL-released parse ---- */
 typedef struct {
@@ -212,6 +240,7 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
         rb_raise(mkr_eError, "failed to allocate XPath context");
     }
     mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_install_name_index(ctx, xdoc);
     mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
 
     /* Mint the borrowed expression view AFTER namespace registration: that step
@@ -328,6 +357,7 @@ mkr_xml_doc_css_run(VALUE self, VALUE rb_selector, VALUE rb_ns, int first_only)
         rb_raise(mkr_eError, "failed to allocate XPath context");
     }
     mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_install_name_index(ctx, xdoc);
     mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
 
     mkr_node_t *ast = mkr_css_compile_or_raise(ctx, rb_selector, rb_ns); /* frees ctx + raises on error */
@@ -382,6 +412,7 @@ mkr_xml_node_css_matches(VALUE self, VALUE selector, VALUE ns)
         rb_raise(mkr_eError, "failed to allocate XPath context");
     }
     mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_install_name_index(ctx, xdoc);
     mkr_xml_register_query_namespaces(ctx, ns); /* frees ctx + raises on error */
 
     mkr_node_t *ast = mkr_css_compile_or_raise(ctx, selector, ns); /* frees ctx + raises on error */

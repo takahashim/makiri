@@ -2,6 +2,7 @@
  * Ruby-free. See mkr_xml_node.h and docs/xml_parser_plan.ja.md §8.1/§8.2. */
 #include "mkr_xml_node.h"
 #include "mkr_xml.h"
+#include "mkr_xml_index.h"
 #include "../core/mkr_core.h"
 
 #include <stddef.h>   /* max_align_t */
@@ -37,6 +38,7 @@ void
 mkr_xml_doc_destroy(mkr_xml_doc_t *doc)
 {
     if (doc == NULL) return;
+    mkr_xml_name_index_invalidate(doc); /* free the heap-side element-name index */
     /* whole-arena free: no individual node/byte free anywhere (read-only). */
     for (mkr_xml_arena_chunk_t *c = doc->chunks; c != NULL; ) {
         mkr_xml_arena_chunk_t *n = c->next;

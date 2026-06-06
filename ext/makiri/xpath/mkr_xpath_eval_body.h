@@ -646,6 +646,7 @@ is_reverse_axis(mkr_axis_t a)
  * byte-identical to the walk (this also makes case/normalization quirks in the
  * tag-name lookup harmless: a non-matching candidate is simply dropped).
  */
+#ifndef MKR_HOST_XML
 static int
 try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
                          const mkr_nodeset_t *context_set, mkr_nodeset_t *result,
@@ -692,6 +693,59 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   }
   return 1;
 }
+#else  /* MKR_HOST_XML */
+/*
+ * XML analogue of the //tag fast path: a document-rooted, predicate-free
+ * descendant name test answered from the element-name index (mkr_xml_index.c)
+ * instead of walking. The index is keyed by (local name + namespace URI), so it
+ * serves a prefixed test (resolved URI) and an unprefixed strict test (the
+ * no-namespace bucket); an unprefixed LAX test means "any namespace", which a
+ * single bucket cannot express, so it falls back to the walk. The bucket already
+ * holds exactly the matching elements in document order, so they are pushed
+ * directly. Returns 1 (filled), 0 (does not qualify -> walk), -1 (error).
+ */
+static int
+try_descendant_name_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
+                          const mkr_nodeset_t *context_set, mkr_nodeset_t *result,
+                          const char *pre_uri, size_t pre_uri_len, int have_pre,
+                          mkr_xpath_error_t *err)
+{
+  if (step->axis != MKR_AXIS_DESCENDANT
+      || step->test.kind != MKR_NT_NAME
+      || step->test.local.ptr == NULL
+      || context_set->count != 1
+      || context_set->items[0] != (MKR_DOM_NODE *)mkr_ctx_document(ctx)) {
+    return 0;
+  }
+
+  const char *ns_uri; size_t ns_uri_len;
+  if (step->test.prefix.ptr != NULL) {
+    if (!have_pre) return 0;             /* should not happen: eval_step pre-resolves */
+    ns_uri = pre_uri; ns_uri_len = pre_uri_len;
+  } else if (mkr_ctx_unprefixed_lax(ctx)) {
+    return 0;                            /* "any namespace" - not a single bucket */
+  } else {
+    ns_uri = ""; ns_uri_len = 0;          /* strict unprefixed -> no namespace */
+  }
+
+  void                    *owner  = mkr_ctx_name_index_owner(ctx);
+  mkr_name_index_get_t     get    = mkr_ctx_name_index_get(ctx);
+  mkr_name_index_lookup_t  lookup = mkr_ctx_name_index_lookup(ctx);
+  if (owner == NULL || get == NULL || lookup == NULL) return 0;
+  void *idx = get(owner);                /* lazily builds + caches; NULL on OOM */
+  if (idx == NULL) return 0;
+
+  size_t cnt = 0;
+  void *const *bucket = lookup(idx, step->test.local.ptr, step->test.local.len,
+                               ns_uri, ns_uri_len, &cnt);
+  for (size_t i = 0; i < cnt; ++i) {
+    if (mkr_nodeset_push(result, (MKR_DOM_NODE *)bucket[i], mkr_ctx_limits(ctx), err) != 0) {
+      return -1;
+    }
+  }
+  return 1;
+}
+#endif /* MKR_HOST_XML */
 
 /* ---------------------------------------------------------------------------
  * at_xpath() first-match short-circuit (Node#at_xpath / Node#at).
@@ -873,9 +927,14 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   mkr_nodeset_init(&result);
 
   if (step->npredicates == 0) {
-    /* `//tag` from the document: serve from the element index, skipping the
-     * tree walk entirely. */
+    /* A document-rooted descendant name test served from the element index,
+     * skipping the tree walk entirely (HTML: tag-id index; XML: name index). */
+#ifdef MKR_HOST_XML
+    int fp = try_descendant_name_index(ctx, step, context_set, &result,
+                                       pre_uri, pre_uri_len, have_pre, err);
+#else
     int fp = try_descendant_tag_index(ctx, step, context_set, &result, err);
+#endif
     if (fp < 0) {
       mkr_nodeset_clear(&result);
       return -1;

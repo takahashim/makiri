@@ -13,6 +13,7 @@
 #include "glue.h"
 #include "../xml/mkr_xml_node.h"
 #include "../xml/mkr_xml_mutate.h"
+#include "../xml/mkr_xml_index.h"   /* element-name index invalidation on mutation */
 #include "../core/mkr_core.h"   /* mkr_buf */
 
 #include <ruby/encoding.h>     /* rb_to_encoding / rb_str_encode (output encoding) */
@@ -977,6 +978,10 @@ static mkr_xml_node_t *
 mkr_xml_node_unwrap_mutable(VALUE self)
 {
     rb_check_frozen(self);
+    /* Single mutation choke point (every mutator calls this): drop the cached
+     * element-name index so the next query rebuilds it. Same discipline as the
+     * HTML attr/text indices, in one place that cannot be forgotten. */
+    mkr_xml_name_index_invalidate(mkr_xml_node_xdoc(self));
     return mkr_xml_node_unwrap(self);
 }
 

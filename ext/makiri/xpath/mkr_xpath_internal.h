@@ -352,6 +352,11 @@ void *mkr_ctx_element_index(struct mkr_xpath_context_s *ctx);
 mkr_tag_index_lookup_t  mkr_ctx_tag_lookup(struct mkr_xpath_context_s *ctx);
 mkr_tag_index_foreign_t mkr_ctx_tag_has_foreign(struct mkr_xpath_context_s *ctx);
 
+/* XML element-name index hooks (NULL for HTML). */
+void *mkr_ctx_name_index_owner(struct mkr_xpath_context_s *ctx);
+mkr_name_index_get_t    mkr_ctx_name_index_get(struct mkr_xpath_context_s *ctx);
+mkr_name_index_lookup_t mkr_ctx_name_index_lookup(struct mkr_xpath_context_s *ctx);
+
 void mkr_val_clear(mkr_val_t *v);
 
 /* The value model's node-DEREFERENCING half is file-static in the per-instance
