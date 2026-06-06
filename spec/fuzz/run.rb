@@ -99,8 +99,14 @@ end
 # --- execution + categorization -------------------------------------------
 
 # Returns [category, detail]. Categories: :ok, :expected, :unexpected.
+# Runs both the full-set and the first-match (#at_*) path so the engine's
+# first-match short-circuit gets the same fuzz coverage as the full evaluator.
 def run_inproc(doc, target, query)
-  target == :css ? doc.css(query) : doc.xpath(query)
+  if target == :css
+    doc.css(query); doc.at_css(query)
+  else
+    doc.xpath(query); doc.at_xpath(query)
+  end
   [:ok, nil]
 rescue Makiri::Error => e
   [:expected, e.class.name] # malformed input rejected cleanly - fine
@@ -114,7 +120,11 @@ def run_isolated(doc, target, query, timeout_sec)
     rd.close
     result =
       begin
-        target == :css ? doc.css(query) : doc.xpath(query)
+        if target == :css
+          doc.css(query); doc.at_css(query)
+        else
+          doc.xpath(query); doc.at_xpath(query)
+        end
         [:ok, nil]
       rescue Makiri::Error => e
         [:expected, e.class.name]

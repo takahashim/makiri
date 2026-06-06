@@ -5,8 +5,11 @@
 # shapes it walks the subtree in document order and stops at the first match
 # instead of building the whole node-set and taking [0]. The result MUST stay
 # byte-identical to xpath(e).first; everything outside the recognised subset
-# (positional predicates, functions, reverse axes, unions, prefixes, longer
-# paths) falls back to the full evaluator. These examples pin that invariant.
+# (positional predicates, functions, reverse axes, unions, longer paths) falls
+# back to the full evaluator. A prefixed name test (e.g. //a:entry) IS
+# recognised - it resolves the prefix exactly as the full evaluator and raises
+# on an unbound one (see the XML CSS / namespace specs). These examples pin the
+# byte-identity invariant.
 RSpec.describe "Makiri Node#at_xpath first-match short-circuit" do
   let(:html) do
     <<~HTML

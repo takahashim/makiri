@@ -136,6 +136,24 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
   end
 
+  describe "first-match short-circuit (prefixed name tests)" do
+    let(:doc) do
+      Makiri::XML("<feed xmlns=\"urn:a\">" +
+                  (1..50).map { |i| "<entry><id>#{i}</id></entry>" }.join + "</feed>")
+    end
+
+    it "#at_css and #at_xpath stay byte-identical to the full set's first" do
+      expect(doc.at_css("entry")).to eq(doc.css("entry").first)
+      expect(doc.at_xpath("//a:entry", "a" => "urn:a"))
+        .to eq(doc.xpath("//a:entry", "a" => "urn:a").first)
+      expect(doc.at_css("entry").at_css("id").text).to eq("1")
+    end
+
+    it "raises on an unbound prefix rather than returning nil" do
+      expect { doc.at_xpath("//z:entry") }.to raise_error(Makiri::Error)
+    end
+  end
+
   describe "#matches?" do
     let(:doc) { Makiri::XML(%(<r><a class="x"/><b/></r>)) }
 

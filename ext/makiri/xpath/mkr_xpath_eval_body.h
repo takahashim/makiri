@@ -709,9 +709,11 @@ mkr_first_recognise(const mkr_node_t *ast, const mkr_step_t **out_step)
   } else {
     return 0;
   }
-  /* A prefixed name test needs the step driver's "unknown prefix -> RUNTIME
-   * error" semantics, which this path does not reproduce; fall back. */
-  if (nt->test.prefix.ptr != NULL) return 0;
+  /* A prefixed name test is allowed; mkr_try_first_match reproduces the step
+   * driver's "unknown prefix -> RUNTIME error" before walking, and
+   * node_principal_match resolves the prefix to a URI exactly as the full
+   * evaluator does. (Prefixed ATTRIBUTE predicates still fall back: their
+   * mkr_match_attr_step requires an unprefixed @name.) */
   /* Every predicate must be a position-independent attribute predicate (no
    * position()/last()/numeric, no function/variable -> no handler involvement). */
   for (size_t p = 0; p < nt->npredicates; p++) {
@@ -761,6 +763,16 @@ mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
   const mkr_step_t *step;
   if (out_node == NULL || !mkr_first_recognise(ast, &step)) return 0;
   *out_node = NULL;
+
+  /* Reproduce the step driver's namespace-prefix validation: a prefixed name
+   * test with an unbound prefix is a RUNTIME error, not a silently empty match,
+   * so the fast path stays byte-identical to the full evaluator (incl. errors). */
+  if (step->test.prefix.ptr != NULL
+      && mkr_ctx_lookup_ns(ctx, step->test.prefix.ptr, step->test.prefix.len, NULL) == NULL) {
+    mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
+                 "unknown namespace prefix '%s' in name test", step->test.prefix.ptr);
+    return -1;
+  }
 
   MKR_DOM_NODE *start = ast->u.path.absolute
       ? (MKR_DOM_NODE *)mkr_ctx_document(ctx)
