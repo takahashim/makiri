@@ -58,4 +58,6 @@ CSS_SEED = [
   # complex (combinator) arguments inside :is/:where/:not + :has variants
   "a:not(nav a)", ":is(div > p, section a)", ":where(ul li)", "li:has(> a)",
   "p:has(+ span)", "div:not(.x):not(.y)",
+  # jQuery-style text containment (Lexbor extension, both hosts)
+  'p:lexbor-contains("text")', 'li:lexbor-contains("X" i)', ':lexbor-contains("a")',
 ].freeze

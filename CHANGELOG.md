@@ -23,10 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
     operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
     `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
-    (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. jQuery
-    extensions and the `[attr=v i]` case flag remain unsupported (use XPath);
-    `|el` (no namespace) fails closed with a `CSS::SyntaxError` because Lexbor's
-    parser cannot distinguish it from `*|el` (use a bare `el` or XPath).
+    (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. The
+    `[attr=v i]` case flag and other jQuery extensions remain unsupported (use
+    XPath); `|el` (no namespace) fails closed with a `CSS::SyntaxError` because
+    Lexbor's parser cannot distinguish it from `*|el` (use a bare `el` or XPath).
+  * `:lexbor-contains("text")` is supported on XML too, matching the HTML side:
+    Lexbor's substring text filter, lowered to XPath `contains()` on the element
+    string-value, with the ` i` flag (`:lexbor-contains("text" i)`) for an ASCII
+    case-insensitive match. (It is Lexbor's spelling of jQuery's `:contains()`;
+    the bare `:contains` name is still unsupported.)
 
 ### Changed
 

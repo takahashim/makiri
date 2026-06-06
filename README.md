@@ -154,8 +154,9 @@ namespace and a prefixed `ns|el` resolves against the in-scope (or a supplied)
 namespaces - Nokogiri-compatible. The common selector surface is supported
 (descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]` operators,
 and `:first/last/only-child`, `:empty`, `:root`, the `:*-of-type` family,
-`:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`); jQuery extensions and the
-`[attr=v i]` case flag are not (use XPath). One namespace caveat: `|el`
+`:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`, and Lexbor's
+`:lexbor-contains()` text filter - see below); the `[attr=v i]` case flag and
+other jQuery extensions are not (use XPath). One namespace caveat: `|el`
 (explicit no-namespace) **raises** rather than matching - Lexbor's selector
 parser cannot distinguish it from `*|el` (any namespace), so Makiri fails closed
 instead of returning a wrong result; use a bare `el` or XPath `//el` for a
@@ -287,10 +288,16 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
 
 ### CSS
 
-* jQuery/Nokogiri CSS extensions are not supported (`:contains`, `:gt`, `:lt`, `:eq`, `:first`, ...)
-  * Makiri uses Lexbor's standards-only selector engine.
-    Use XPath (`xpath("//p[contains(., 'x')]")`) or Enumerable (`css('li')[1]`).
+* Most jQuery/Nokogiri CSS extensions are not supported (`:gt`, `:lt`, `:eq`, `:first`, ...)
+  * Makiri uses Lexbor's selector engine, which is standards-based apart from one
+    text-containment extension. Use XPath (`xpath("//p[contains(., 'x')]")`) or
+    Enumerable (`css('li')[1]`) for the rest.
     Standard Level-4 selectors (`:is` / `:where` / `:has`) are supported; some of which Nokogiri rejects.
+  * `:lexbor-contains("text")` **is** supported (on both HTML and XML) - Lexbor's
+    spelling of the jQuery `:contains()` substring filter, matching an element
+    whose text contains the string; append ` i` (`:lexbor-contains("text" i)`)
+    for an ASCII case-insensitive match. (Nokogiri's name `:contains` is not an
+    alias.) On XML it lowers to XPath `contains()` on the element string-value.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
 * Class/ID selectors are matched case-insensitively regardless of quirks mode (a Lexbor behaviour)

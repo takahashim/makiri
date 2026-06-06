@@ -660,6 +660,48 @@ lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t 
       return acc;
     }
 
+    case LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_LEXBOR_CONTAINS: {
+      /* :lexbor-contains("t")  -> contains(., "t")  (the element's text contains
+       * t). The `i` flag is ASCII case-insensitive (matching Lexbor's matcher,
+       * so the XML path agrees with the HTML one): lower both sides with
+       * translate(). Mirrors Lexbor's own selector; not a CSS standard. */
+      const lxb_css_selector_contains_t *c =
+          (const lxb_css_selector_contains_t *)s->u.pseudo.data;
+      if (c == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX, "malformed :lexbor-contains()"); return NULL; }
+      const char *needle = (const char *)c->str.data;
+      size_t      nlen   = c->str.length;
+
+      if (!c->insensitive) {
+        mkr_node_t **a = cb_args(2);
+        if (a == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
+        a[0] = cb_step_path(B, MKR_AXIS_SELF, MKR_NT_NODE, NULL, 0);  /* "." */
+        a[1] = cb_literal(B, needle, nlen);
+        return cb_fncall(B, "contains", a, 2);
+      }
+
+      /* ASCII case-insensitive: contains(translate(., A-Z, a-z), lower(needle)) */
+      static const char UPPER[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      static const char LOWER[] = "abcdefghijklmnopqrstuvwxyz";
+      char *low = mkr_str_alloc(nlen);
+      if (low == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
+      for (size_t i = 0; i < nlen; i++) {
+        unsigned char ch = (unsigned char)needle[i];
+        low[i] = (ch >= 'A' && ch <= 'Z') ? (char)(ch - 'A' + 'a') : (char)ch;
+      }
+      mkr_node_t **ta = cb_args(3);
+      if (ta == NULL) { free(low); mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
+      ta[0] = cb_step_path(B, MKR_AXIS_SELF, MKR_NT_NODE, NULL, 0);
+      ta[1] = cb_literal(B, UPPER, sizeof(UPPER) - 1);
+      ta[2] = cb_literal(B, LOWER, sizeof(LOWER) - 1);
+      mkr_node_t *folded = cb_fncall(B, "translate", ta, 3);
+      mkr_node_t **a = cb_args(2);
+      if (a == NULL) { free(low); mkr_node_free(folded); mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
+      a[0] = folded;
+      a[1] = cb_literal(B, low, nlen);
+      free(low);
+      return cb_fncall(B, "contains", a, 2);
+    }
+
     default:
       mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX, "unsupported functional CSS pseudo-class");
       return NULL;

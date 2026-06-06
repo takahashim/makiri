@@ -250,4 +250,32 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(doc.css(%([id|="x"])).length).to eq(0)               # |= operator unaffected
     end
   end
+
+  describe ":lexbor-contains() text containment (parity with the HTML side)" do
+    # Makiri's HTML CSS exposes Lexbor's :lexbor-contains() jQuery-style text
+    # filter; XML matches it by lowering to XPath contains() on the element's
+    # string-value, so the same selector works (and agrees) on both hosts.
+    let(:doc) do
+      Makiri::XML("<r><i>apple PIE</i><i>banana</i><i>cherry pie</i></r>")
+    end
+
+    it "matches the substring case-sensitively" do
+      expect(doc.css(%(i:lexbor-contains("pie"))).map(&:text)).to eq(["cherry pie"])
+      expect(doc.css(%(i:lexbor-contains("PIE"))).map(&:text)).to eq(["apple PIE"])
+    end
+
+    it "is ASCII case-insensitive with the ` i` flag" do
+      expect(doc.css(%(i:lexbor-contains("pie" i))).map(&:text))
+        .to eq(["apple PIE", "cherry pie"])
+    end
+
+    it "is byte-identical to the equivalent XPath contains()" do
+      expect(doc.css(%(i:lexbor-contains("pie"))).map(&:text))
+        .to eq(doc.xpath(%(//i[contains(., "pie")])).map(&:text))
+    end
+
+    it "uses the element string-value, so an ancestor containing it matches too" do
+      expect(doc.css(%(:lexbor-contains("cherry"))).map(&:name)).to eq(%w[r i])
+    end
+  end
 end
