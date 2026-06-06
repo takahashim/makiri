@@ -59,9 +59,26 @@ def dumps(xml)
   [m, n]
 end
 
+# Inclusive Canonical XML 1.0 under both parsers (document + root element, with
+# and without comments) — empty unless they disagree.
+def c14n_disagreements(xml)
+  m = Makiri::XML(xml)
+  n = parse_noko(xml)
+  return [] unless n.errors.empty?
+
+  [[m, false], [m, true]].zip([[n, false], [n, true]]).flat_map do |(mn, mc), (nn, nc)|
+    [[mn.canonicalize(comments: mc), nn.canonicalize(Nokogiri::XML::XML_C14N_1_0, nil, nc)],
+     [mn.root.canonicalize(comments: mc),
+      nn.root.canonicalize(Nokogiri::XML::XML_C14N_1_0, nil, nc)]]
+  end.reject { |mc, nc| mc == nc }
+rescue Makiri::XML::SyntaxError, Nokogiri::XML::SyntaxError
+  []
+end
+
 def diverges?(doc)
-  m, n = dumps(XmlPbt.serialize(doc))
-  m != n
+  xml = XmlPbt.serialize(doc)
+  m, n = dumps(xml)
+  m != n || !c14n_disagreements(xml).empty?
 end
 
 diverge = []
@@ -83,8 +100,14 @@ diverge.each do |doc|
   puts "\n#{'=' * 72}"
   puts "DIVERGE (#{xml.bytesize} bytes)"
   puts "  xml:      #{xml}"
-  puts "  makiri:   #{m}"
-  puts "  nokogiri: #{n}"
+  if m != n
+    puts "  tree makiri:   #{m}"
+    puts "  tree nokogiri: #{n}"
+  end
+  c14n_disagreements(xml).first(2).each do |mc, nc|
+    puts "  c14n makiri:   #{mc.inspect}"
+    puts "  c14n nokogiri: #{nc.inspect}"
+  end
 end
 puts "\n... #{diverge.length - shown} more not shown (--verbose)" if !opts[:verbose] && diverge.length > shown
 

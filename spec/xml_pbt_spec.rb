@@ -70,6 +70,38 @@ RSpec.describe "Makiri::XML property-based testing" do
     expect(bad).to be_nil, -> { "metamorphic mismatch: #{bad&.first}" }
   end
 
+  it "to_xml round-trips: re-parsing the (default) serialization yields the same tree" do
+    bad = nil
+    COUNT.times do |i|
+      parsed = Makiri::XML(XmlPbt.serialize(XmlPbt.gen_document(Random.new(i + 4_000), max_depth: 5)))
+      want = XmlPbt.dump_parsed(parsed, XmlPbt::Makiri)
+      got  = XmlPbt.dump_parsed(Makiri::XML(parsed.to_xml), XmlPbt::Makiri)
+      next if want == got
+
+      bad = parsed.to_xml
+      break
+    end
+    expect(bad).to be_nil, -> { "to_xml did not round-trip to the same tree:\n#{bad}" }
+  end
+
+  it "pretty to_xml stays well-formed and preserves elements + character content" do
+    # pretty-printing adds whitespace (so the tree gains text nodes on reparse),
+    # but it must stay well-formed, keep every element, and never alter the text
+    # inside a text-bearing element.
+    bad = nil
+    COUNT.times do |i|
+      parsed = Makiri::XML(XmlPbt.serialize(XmlPbt.gen_document(Random.new(i + 5_000), max_depth: 5)))
+      pretty = Makiri::XML(parsed.to_xml(pretty: true))
+      ok = pretty.xpath("count(//*)") == parsed.xpath("count(//*)") &&
+           pretty.root.text.gsub(/\s/, "") == parsed.root.text.gsub(/\s/, "")
+      next if ok
+
+      bad = parsed.to_xml(pretty: true)
+      break
+    end
+    expect(bad).to be_nil, -> { "pretty to_xml lost content:\n#{bad}" }
+  end
+
   it "metamorphic: XPath algebraic identities hold on generated documents" do
     bad = nil
     COUNT.times do |i|

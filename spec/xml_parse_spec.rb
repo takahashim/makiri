@@ -12,6 +12,39 @@ RSpec.describe "Makiri::XML minimal parse" do
     Makiri::XML(src).is_a?(Makiri::XML::Document)
   end
 
+  describe "source: a String or any #read-able object (IO / File / StringIO)" do
+    require "stringio"
+    require "tempfile"
+
+    it "reads a StringIO / IO via #read" do
+      expect(Makiri::XML(StringIO.new("<r>io</r>")).root.text).to eq("io")
+    end
+
+    it "reads a File (and Makiri.parse_xml accepts one too)" do
+      Tempfile.create(["t", ".xml"]) do |f|
+        f.write("<r>file</r>")
+        f.flush
+        expect(Makiri::XML(File.open(f.path)).root.text).to eq("file")
+        expect(Makiri.parse_xml(File.open(f.path)).root.text).to eq("file")
+      end
+    end
+
+    it "autodetects the encoding of a file read in binary mode (BOM)" do
+      Tempfile.create(["u", ".xml"]) do |f|
+        f.binmode
+        f.write("\xFE\xFF".b + "<r>x</r>".encode("UTF-16BE").b) # UTF-16BE BOM
+        f.flush
+        expect(Makiri::XML(File.open(f.path, "rb")).root.text).to eq("x")
+        expect(Makiri::XML(File.binread(f.path)).root.text).to eq("x")
+      end
+    end
+
+    it "still honours keyword options (max_bytes) with an IO source" do
+      io = StringIO.new("<r>#{'<a/>' * 100}</r>")
+      expect { Makiri::XML(io, max_bytes: 50) }.to raise_error(Makiri::XML::LimitExceeded)
+    end
+  end
+
   describe "accepts well-formed documents" do
     %w[
       <a/>

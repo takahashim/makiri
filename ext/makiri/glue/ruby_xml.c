@@ -66,7 +66,10 @@ mkr_xml_parse_limits(VALUE rb_opts)
 
 /* call-seq: Makiri.parse_xml(source, max_bytes: nil) -> Makiri::XML::Document
  *           Makiri::XML(source, max_bytes: nil)      -> Makiri::XML::Document
- * +max_bytes+ overrides the default arena memory ceiling for this parse. */
+ * +source+ is a String or any object responding to +#read+ (an IO / File /
+ * StringIO); +max_bytes+ overrides the default arena memory ceiling for this
+ * parse. Read a non-UTF-8 file in binary mode (File.binread / "rb") so the
+ * encoding is autodetected from its BOM / declaration. */
 static VALUE
 mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
 {
@@ -75,6 +78,12 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
     rb_scan_args(argc, argv, "1:", &rb_source, &rb_opts);
     mkr_xml_limits_t limits = mkr_xml_parse_limits(rb_opts);  /* validates; may raise */
     size_t budget = limits.max_bytes ? limits.max_bytes : (size_t)MKR_XML_MAX_BYTES;
+
+    /* Read an IO/File-like source (an object responding to #read), like the HTML
+     * entry; a String passes straight through. */
+    if (rb_respond_to(rb_source, rb_intern("read"))) {
+        rb_source = rb_funcall(rb_source, rb_intern("read"), 0);
+    }
 
     /* Strict decode under the GVL: invalid UTF-8 / undecodable byte / NUL all
      * raise Makiri::XML::SyntaxError here (no U+FFFD repair). Passing the budget

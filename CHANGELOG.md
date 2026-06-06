@@ -56,7 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `#at_xpath` (with an optional `{prefix => uri}` Hash for that query),
     `#root`, `#name` / `#local_name` / `#prefix` / `#namespace_uri`,
     `#text` / `#content`, `#[]`, `#parent` / `#children` / `#next` / `#previous`,
-    `#attribute_nodes`. `Makiri::XPathContext` also works over an XML node
+    `#attribute_nodes`, and namespace introspection (`#namespace` /
+    `#namespace_definitions` / `#namespaces` / `Document#collect_namespaces`,
+    returning `Makiri::XML::Namespace` `(prefix, href)` value objects), like
+    Nokogiri. `source` may be a String or any `#read`-able object (IO / File /
+    StringIO). `Makiri::XPathContext` also works over an XML node
     (`register_namespace` + `evaluate`), which is the way to query a
     default-namespace document (RSS/Atom): under strict matching `//entry` does
     not match a default namespace, so register a prefix and use `//a:entry`.
@@ -70,12 +74,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the XPath data model's maximal-grouping rule; text and CDATA stay distinct.
     The tree is verified to be byte-identical to Nokogiri's by a property-based
     differential over generated documents (`rake conformance:xml_pbt`).
+  * `#to_xml` / `#to_s` serialize the tree back to XML (UTF-8). The default
+    preserves the content as parsed; `pretty: true` (or `indent: n`) indents
+    element-only content, leaving any element with text/CDATA inline so character
+    data is never altered. A `Document#to_xml` also emits the `<?xml … ?>`
+    declaration and the DOCTYPE; xmlns declarations round-trip as ordinary
+    attributes. Output is always well-formed and (in the default mode) re-parses
+    to the same tree — checked by a property-based round-trip over generated
+    documents. `encoding: "…"` (a String or Encoding) transcodes the output,
+    naming the encoding in a Document's declaration and replacing any
+    unrepresentable character with a hexadecimal character reference.
+  * `#canonicalize` produces Inclusive Canonical XML 1.0 (the form used for XML
+    signatures): sorted attributes/namespaces, superfluous namespace
+    declarations removed, explicit end tags, CDATA as text, comments omitted
+    unless `comments: true`. It is byte-identical to libxml2/Nokogiri, verified
+    by the property-based differential. Exclusive C14N is not implemented.
   * Fail-closed on the unsupported surface: CSS selectors (`#css` / `#at_css`)
-    and serialization (`#to_xml` / `#to_html` / `#to_s` / `#inner_html` /
-    `#outer_html`) raise `NotImplementedError` rather than returning a wrong
+    and HTML serialization (`#to_html` / `#inner_html` / `#outer_html`, which is
+    an HTML concept) raise `NotImplementedError` rather than returning a wrong
     result. `id()` is the empty node-set (no DTD-declared IDs) and `lang()` reads
-    `xml:lang`, per the XML host policy. XML mutation and serialization are a
-    later phase.
+    `xml:lang`, per the XML host policy. XML tree mutation is a later phase.
 * `Node` includes `Enumerable` over its child nodes — `node.each` yields each
   child (returning an `Enumerator` without a block), so `node.map` / `select` /
   `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
