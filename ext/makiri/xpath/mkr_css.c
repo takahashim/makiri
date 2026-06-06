@@ -408,7 +408,12 @@ lower_attribute(css_build_t *B, const lxb_css_selector_t *s)
 
 /* Forward declarations (mutual recursion: functional pseudos lower sub-selectors
  * back through the compound/complex lowering). */
-static mkr_node_t *lower_complex(css_build_t *B, const lxb_css_selector_t *first);
+/* +relative_first+: when nonzero the first compound honours its own combinator
+ * relative to the context node (used by :has, where `:has(> a)` / `:has(+ a)` /
+ * `:has(~ a)` mean child / adjacent / general-sibling of self); the top-level
+ * query passes 0, making the first compound a plain descendant of the context. */
+static mkr_node_t *lower_complex(css_build_t *B, const lxb_css_selector_t *first,
+                                 int relative_first);
 static mkr_node_t *lower_compound_selftest(css_build_t *B,
                                            const lxb_css_selector_t *cfirst,
                                            const lxb_css_selector_t *clast);
@@ -615,12 +620,9 @@ lower_pseudo_func(css_build_t *B, const lxb_css_selector_t *s, const mkr_step_t 
       const lxb_css_selector_list_t *list = (const lxb_css_selector_list_t *)s->u.pseudo.data;
       mkr_node_t *acc = NULL;
       for (const lxb_css_selector_list_t *g = list; g != NULL; g = g->next) {
-        mkr_node_t *path = lower_complex(B, g->first);   /* descendant-rooted */
+        /* relative to self: honours a leading >, +, ~ (else descendant) */
+        mkr_node_t *path = lower_complex(B, g->first, 1);
         if (path == NULL) { mkr_node_free(acc); return NULL; }
-        if (path->kind == MKR_NK_PATH && path->u.path.nsteps > 0
-            && g->first->combinator == LXB_CSS_SELECTOR_COMBINATOR_CHILD) {
-          path->u.path.steps[0].axis = MKR_AXIS_CHILD;   /* :has(> a) */
-        }
         acc = (acc == NULL) ? path : cb_binop(B, MKR_OP_OR, acc, path);
         if (acc == NULL) return NULL;
       }
@@ -721,7 +723,7 @@ emit_compound_step(css_build_t *B, steps_arr_t *steps, mkr_axis_t axis,
 
 /* Lower one complex selector (a chain) into a relative PATH node. */
 static mkr_node_t *
-lower_complex(css_build_t *B, const lxb_css_selector_t *first)
+lower_complex(css_build_t *B, const lxb_css_selector_t *first, int relative_first)
 {
   steps_arr_t steps = {0};
   const lxb_css_selector_t *cstart = first;
@@ -731,7 +733,9 @@ lower_complex(css_build_t *B, const lxb_css_selector_t *first)
     int compound_ends = (nxt == NULL) || (nxt->combinator != LXB_CSS_SELECTOR_COMBINATOR_CLOSE);
     if (!compound_ends) continue;
 
-    int is_first = (cstart == first);
+    /* In relative mode the first compound honours its own combinator (so it can
+     * be a child/adjacent/general-sibling of the context), not a forced descendant. */
+    int is_first = (cstart == first) && !relative_first;
     lxb_css_selector_combinator_t comb = cstart->combinator;
 
     if (!is_first && comb == LXB_CSS_SELECTOR_COMBINATOR_SIBLING) {
@@ -851,7 +855,7 @@ mkr_css_compile(mkr_verified_text_t selector, const mkr_css_ns_t *ns,
   /* Lower each comma-group (list -> list->next) to a PATH, union them. */
   mkr_node_t *acc = NULL;
   for (lxb_css_selector_list_t *g = list; g != NULL; g = g->next) {
-    mkr_node_t *path = lower_complex(&B, g->first);
+    mkr_node_t *path = lower_complex(&B, g->first, 0);  /* top-level: descendant of context */
     if (path == NULL) { mkr_node_free(acc); acc = NULL; break; }
     acc = (acc == NULL) ? path : cb_binop(&B, MKR_OP_UNION, acc, path);
     if (acc == NULL) break;  /* cb_binop freed both on failure */

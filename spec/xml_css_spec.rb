@@ -118,13 +118,20 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(doc.css("a:only-of-type").length).to eq(0) # 3 a's
     end
 
-    it ":not / :is / :where / :has" do
-      d = Makiri::XML(%(<r><a class="x"/><a/><b/><wrap><deep/></wrap></r>))
+    it ":not / :is / :where" do
+      d = Makiri::XML(%(<r><a class="x"/><a/><b/></r>))
       expect(d.css("a:not(.x)").length).to eq(1)
       expect(d.css(":is(a, b)").length).to eq(3)
       expect(d.css(":where(b)").length).to eq(1)
-      expect(d.css("wrap:has(deep)").length).to eq(1)
-      expect(d.css("wrap:has(> deep)").length).to eq(1)
+    end
+
+    it ":has with every combinator (descendant / child / adjacent / general sibling)" do
+      d = Makiri::XML(%(<r><b/><c/><wrap><deep/></wrap><y/></r>))
+      expect(d.css("wrap:has(deep)").length).to eq(1)   # descendant
+      expect(d.css("wrap:has(> deep)").length).to eq(1) # child
+      expect(d.css("b:has(+ c)").length).to eq(1)       # adjacent: c immediately follows b
+      expect(d.css("b:has(+ wrap)").length).to eq(0)    # wrap is not immediately after b
+      expect(d.css("b:has(~ y)").length).to eq(1)       # general sibling
       expect(d.css("r:has(nope)").length).to eq(0)
     end
   end
