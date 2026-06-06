@@ -206,6 +206,29 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
   end
 
+  describe "compound correctness (cases a random differential caught Nokogiri::XML failing)" do
+    let(:doc) do
+      Makiri::XML(%(<catalog><book id="b1" class="lead big"><title lang="en">A</title></book>) +
+                  %(<book id="b2" class="big"><title lang="fr">B</title></book><note/></catalog>))
+    end
+
+    it ":not(type.class) honours the whole compound (not just the type)" do
+      # No element has class 'x', so :not(*.x) / :not(book.x) match everything,
+      # books included. (Nokogiri drops the .x and emits not(self::book).)
+      expect(doc.css(":not(*.x)").map(&:name)).to eq(%w[catalog book title book title note])
+      expect(doc.css(":not(book.x)").map(&:name)).to include("book")
+      expect(doc.css("book:not(.lead)").map { |e| e["id"] }).to eq(%w[b2])
+    end
+
+    it "ANDs an attribute operator with a sibling class in one compound" do
+      # [lang|="en"].lead needs BOTH; the lang=en title has no class, so no match.
+      # (Nokogiri emits `@lang=.. or starts-with(..) and contains(..class..)`,
+      # whose operator precedence wrongly matches the title on lang alone.)
+      expect(doc.css('[lang|="en"].lead')).to be_empty
+      expect(doc.css('title[lang|="en"]').map { |e| e.text }).to eq(%w[A])
+    end
+  end
+
   describe "the |el (no-namespace) selector fails closed" do
     # Lexbor's parser cannot represent `|el` distinctly from `*|el` (both arrive
     # as ns="*"), so rather than silently matching any namespace, Makiri rejects
