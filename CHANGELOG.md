@@ -9,305 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* **`Makiri::XML::Element#element_children` and `Node#clone_node` for XML nodes**,
-  matching the HTML node surface. `element_children` returns a `NodeSet` of the
-  child element nodes (nodeType 1) in document order. `clone_node(deep = false)`
-  returns a detached copy in the same document, preserving element/attribute name
-  **case**, the resolved **namespaces**, and the **CDATA** node type (a clone is
-  never re-resolved, so its `namespace_uri` is carried over); this also makes
-  `Node#dup` / `#clone` work on XML nodes. (Backend parity for a DOM library; the
-  remaining `*_NS` attribute operations stay in the DOM layer - Makiri keeps a
-  declaration-driven, fail-closed namespace model.)
-
-* **`Makiri::XML::Document.parse(source)` / `Makiri::XML(source)` - a native,
-  security-first XML reader + in-place editor** (no libxml2, like the rest of
-  Makiri). It parses
-  with its own strict, well-formedness-checking parser into a custom node arena
-  (not Lexbor's HTML DOM) and queries through the same native XPath 1.0 engine,
-  compiled a second time against the XML node (one runtime branch at the query
-  entry, zero per-node overhead).
-  * Strict by design: input is decoded fail-closed (invalid UTF-8 / undecodable
-    bytes / embedded NUL raise `Makiri::XML::SyntaxError`, never U+FFFD repair),
-    duplicate attributes are rejected, and every parse runs under document
-    budgets. Element-name case and namespaces are preserved (unlike the HTML
-    path).
-  * Character encoding is autodetected (XML 1.0 Appendix F): a leading byte-order
-    mark (UTF-8 / UTF-16 / UTF-32) or the `<?xml encoding="..."?>` declaration
-    selects the encoding, so raw bytes (`File.binread`) in UTF-16, Shift_JIS,
-    etc. parse correctly; a leading BOM is stripped (not treated as content). A
-    concrete String encoding stays authoritative - a BOM or declaration that
-    contradicts it (or each other) is a fatal `SyntaxError` rather than a silent
-    mis-decode. The strict XML declaration grammar (§2.8) and well-formedness
-    rules (`]]>` in content, S-separated attributes, reserved/colon PI targets,
-    lowercase `&#x` hex refs) are enforced; verified against the **W3C XML
-    Conformance Test Suite** (`rake conformance:xmlconf`, 100% of the in-scope,
-    non-validating, XML-1.0 tests). Makiri implements **XML 1.0 only**: a
-    well-formed document that declares `version="1.1"` (or any non-`1.0`
-    version) is rejected with a clear `SyntaxError` rather than silently parsed
-    under 1.0 rules.
-  * DoS-bounded by a single arena memory ceiling (default **256 MiB**), which
-    counts node structs *and* copied name/value bytes - so it subsumes the
-    node-count limit and caps tiny-element amplification, and an over-length
-    input is rejected before any allocation. 256 MiB fits every standard
-    document (a 50 MB sitemap is ~82 MB of arena) and only rejects documents
-    past ~2M elements; raise it per parse with
-    `Makiri::XML(src, max_bytes: 512 * 1024 * 1024)` /
-    `Makiri::XML::Document.parse(src, max_bytes:)` (a positive Integer; other
-    per-document budget overrides will join this keyword later).
-  * A `<!DOCTYPE ...>` is **recognized but its DTD is not processed**: the doctype
-    name and external identifiers are retained and exposed via
-    `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DocumentType` -
-    aliased `Makiri::XML::DTD` for Nokogiri - with `#name`,
-    `#external_id` / `#public_id`, and `#system_id`), but no
-    entity or element declarations are loaded and no external subset is ever
-    fetched (zero I/O). Consequently a DTD-defined entity reference stays an
-    undefined-entity error, so **XXE and billion-laughs amplification are
-    structurally impossible** rather than merely disabled. The doctype node is
-    kept off the tree (XPath 1.0 has no doctype node type, as in libxml2).
-  * Read API on `Makiri::XML::Document` / `Makiri::XML::*` nodes: `#xpath` /
-    `#at_xpath` (with an optional `{prefix => uri}` Hash for that query),
-    `#root`, `#name` / `#local_name` / `#prefix` / `#namespace_uri`,
-    `#text` / `#content`, `#[]`, `#parent` / `#children` / `#next` / `#previous`,
-    `#attribute_nodes`, and namespace introspection (`#namespace` /
-    `#namespace_definitions` / `#namespaces` / `Document#collect_namespaces`,
-    returning `Makiri::XML::Namespace` `(prefix, href)` value objects), like
-    Nokogiri. `source` may be a String or any `#read`-able object (IO / File /
-    StringIO). `Makiri::XPathContext` also works over an XML node
-    (`register_namespace` + `evaluate`), which is the way to query a
-    default-namespace document (RSS/Atom): under strict matching `//entry` does
-    not match a default namespace, so register a prefix and use `//a:entry`.
-  * Comments and processing instructions in the prolog/epilog (around the root
-    element) are retained as children of the document node - reachable by XPath
-    (`//comment()`, `//processing-instruction()`, `/node()`) and `#children`, in
-    document order - matching the XPath data model and Nokogiri. (Inter-construct
-    whitespace there is not a text node; the DOCTYPE stays off-tree, via
-    `#internal_subset`.) Adjacent same-type character data is coalesced into one
-    node (`<![CDATA[a]]><![CDATA[b]]>` → one CDATA node), as libxml2 does and per
-    the XPath data model's maximal-grouping rule; text and CDATA stay distinct.
-    The tree is verified to be byte-identical to Nokogiri's by a property-based
-    differential over generated documents (`rake conformance:xml_pbt`).
-  * `#to_xml` / `#to_s` serialize the tree back to XML (UTF-8). The default
-    preserves the content as parsed; `pretty: true` (or `indent: n`) indents
-    element-only content, leaving any element with text/CDATA inline so character
-    data is never altered. A `Document#to_xml` also emits the `<?xml ... ?>`
-    declaration and the DOCTYPE; xmlns declarations round-trip as ordinary
-    attributes. Output is always well-formed and (in the default mode) re-parses
-    to the same tree - checked by a property-based round-trip over generated
-    documents. `encoding: "..."` (a String or Encoding) transcodes the output,
-    naming the encoding in a Document's declaration and replacing any
-    unrepresentable character with a hexadecimal character reference. The
-    serialization buffer is bounded by a content-scaled cap (a multiple of the
-    document's size), so a pathological tree fails closed with `Makiri::Error`
-    rather than exhausting memory; the HTML serializer is bounded likewise.
-  * `#canonicalize` produces Inclusive Canonical XML 1.0 (the form used for XML
-    signatures): sorted attributes/namespaces, superfluous namespace
-    declarations removed, explicit end tags, CDATA as text, comments omitted
-    unless `comments: true`. It is byte-identical to libxml2/Nokogiri, verified
-    by the property-based differential. Exclusive C14N is not implemented.
-  * Fail-closed on the unsupported surface: CSS selectors (`#css` / `#at_css`)
-    and HTML serialization (`#to_html` / `#inner_html` / `#outer_html`, which is
-    an HTML concept) raise `NotImplementedError` rather than returning a wrong
-    result. `id()` is the empty node-set (no DTD-declared IDs) and `lang()` reads
-    `xml:lang`, per the XML host policy.
-  * Tree mutation - in-place edits, construction, and insertion. Every edit is
-    **fully fail-closed**: it validates (names as XML 1.0 QNames; values as XML
-    Char, and free of the sequences that would not round-trip - `--` or a trailing
-    `-` in a comment, `]]>` in a CDATA section, `?>` in PI data, a prefix bound to
-    the empty namespace via `xmlns:p=""`) and resolves before any structural
-    change, so a failure (bad name/char/sequence, unbound prefix, cycle, a second
-    document root, an attribute/document used as a tree child) leaves the tree
-    untouched, even on a move. Detach-never-destroy: a removed/replaced node is
-    unlinked, never freed, so a live wrapper aliasing it stays usable.
-    * **In-place:** `#[]=` and `#delete` / `#remove_attribute` (attributes),
-      `#content=` (replace an element's children with text, or set a leaf's data),
-      `#name=` (rename, re-resolving the namespace), `#remove` / `#unlink` (detach).
-    * **Factories** on `Document`: `#create_element` (optional text content and/or
-      an attributes Hash, Nokogiri-style), `#create_text_node`, `#create_comment`,
-      `#create_cdata`, `#create_processing_instruction`. Plus the Nokogiri-style
-      node-class constructors `Element.new(name, doc)` / `Text.new(content, doc)`
-      and (document first) `Comment.new(doc, content)` / `CDATASection.new(doc, content)` /
-      `ProcessingInstruction.new(doc, target, data)` - shared base constructors that
-      delegate to the factories, so they work for HTML and XML and raise a
-      consistent `TypeError` on a non-document.
-    * **Insertion:** `#add_child` / `<<`, `#add_previous_sibling` / `#before`,
-      `#add_next_sibling` / `#after`, `#replace`. A node's namespace is resolved at
-      its insertion position (parser-faithful: a prefixed name binds to the in-scope
-      `xmlns`, an unprefixed element to the default), so the same tree results
-      whether names are set before or after attaching; an unbound prefix is deferred
-      while a fragment is detached and only errors once it joins the live tree. A
-      node from another document is deep-copied into the target arena (the source is
-      untouched); a same-document node moves.
-    * **Fragments:** `XML::DocumentFragment.parse(source)` (self-contained, its own
-      backing document) and `XML::Document#fragment(source)` (bound, resolving names
-      against the document's in-scope namespaces). The parser has a dedicated
-      fragment mode (no synthetic wrapper element) that fails closed on an XML
-      declaration, DOCTYPE, stray end tag, or unbound prefix; inserting a fragment
-      splices its children (not the fragment node) for every verb, re-resolving each
-      child's namespaces at the insertion point.
-    * **From scratch:** `XML::Document.new` is an empty document (no root) to
-      assemble with the factories and `#add_child`; `XML::Document#root=` sets or
-      replaces the root element (subject to the single-root rule).
-* `Node` includes `Enumerable` over its child nodes - `node.each` yields each
-  child (returning an `Enumerator` without a block), so `node.map` / `select` /
-  `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
-  move or remove the current child. `Node#to_h` still returns the attribute hash.
-* `Node#<=>` orders nodes by document (pre-order) position, and `Node` includes
-  `Comparable`, so nodes can be sorted (`nodes.sort`, `min`/`max`, `<`/`>`).
-  Returns `nil` (incomparable) across documents or detached subtrees and for
-  attribute nodes - matching how `Comparable` treats an unorderable pair.
-* `NodeSet.new(document_or_node, list = [])` builds a set from a document (or any
-  node, whose document is used) and an optional Array of its nodes, like Nokogiri.
-  Every listed node must belong to that document - a foreign-document or
-  cross-representation node is rejected (fail-closed, since the set re-wraps its
-  stored pointers by document kind).
-* `NodeSet#[]` now accepts a `Range` or `start, length` like `Array#[]`
-  (returning a new `NodeSet`), in addition to a single Integer index (a `Node`).
-* `Node#dup` / `Node#clone`, `NodeSet#dup` / `#clone`, and `Document#dup` /
-  `#clone` - the native allocator is undef'd (so wrapper objects stay
-  memory-safe), which made Ruby's default `dup`/`clone` raise a confusing
-  "allocator undefined" `TypeError`. They now return a real, independent copy
-  like Nokogiri: a node is deep-cloned and detached (`#dup(0)` for a shallow
-  copy, matching Nokogiri's level argument); a `NodeSet` becomes a new set over
-  the same nodes; a `Document` is copied by serialise-and-re-parse. `#clone`
-  honours Ruby's `freeze:` keyword.
-* A **frozen node is now genuinely immutable**: every tree/attribute mutator
-  (`add_child`/`<<`, `before`/`after`, `remove`, `replace`, `[]=`, `delete`,
-  `content=`, `name=`, `inner_html=`/`outer_html=`) raises `FrozenError` on a
-  frozen node instead of silently editing it. Previously `freeze` set the flag
-  but the C mutators ignored it, so a "frozen" node could still be changed (and
-  `clone(freeze: true)` returned an unfrozen copy).
+* **Native XML 1.0 reader + in-place editor** - `Makiri::XML::Document.parse(source)`
+  / `Makiri::XML(source)`. No libxml2: a strict, fail-closed parser builds its own
+  node arena (case- and namespace-preserving), queried by the native XPath engine.
+  * Strict & secure: fail-closed decode (bad UTF-8 / NUL -> `XML::SyntaxError`),
+    duplicate attributes rejected, XML 1.0 only; verified against the W3C XML
+    Conformance Test Suite.
+  * Encoding autodetected (BOM / `<?xml encoding?>`); a contradicting String
+    encoding is a fatal error, not a silent mis-decode.
+  * DoS-bounded by a single arena byte ceiling (default 256 MiB; raise per parse
+    with `max_bytes:`).
+  * `<!DOCTYPE>` recognized but **not processed** (`#internal_subset` ->
+    `XML::DocumentType`); zero entity/DTD I/O, so **XXE and billion-laughs are
+    structurally impossible**. Kept off the tree, as in libxml2.
+  * Read API mirrors Nokogiri: `#xpath` / `#at_xpath` (`{prefix => uri}`),
+    name/namespace readers, `#text`, `#[]`, traversal, and namespace introspection
+    (`Makiri::XML::Namespace`); `XPathContext` works over XML nodes too.
+  * Prolog/epilog comments & PIs kept on the document node; adjacent same-type
+    character data coalesced - byte-identical to Nokogiri (property-based diff).
+  * `#to_xml` / `#to_s` (`pretty:` / `indent:` / `encoding:`) and `#canonicalize`
+    (Inclusive C14N 1.0, byte-identical to libxml2); buffers fail closed.
+  * Unsupported surface raises `NotImplementedError`: `#css` / `#at_css` and HTML
+    serialization.
+  * Tree mutation - fully fail-closed, detach-never-destroy:
+    * in-place: `#[]=` / `#delete`, `#content=`, `#name=`, `#remove` / `#unlink`;
+    * factories: `Document#create_{element,text_node,comment,cdata,processing_instruction}`
+      (+ Nokogiri-style `.new` constructors);
+    * insertion: `#add_child` / `<<`, `#before` / `#after`, `#replace` - namespaces
+      resolved at the insertion point; a cross-document insert deep-copies;
+    * fragments: `XML::DocumentFragment.parse` / `XML::Document#fragment`;
+    * from scratch: `XML::Document.new` + `#root=`.
+* `XML::Element#element_children` and `Node#clone_node` for XML nodes (also enabling
+  `Node#dup` / `#clone`); a clone keeps name case, namespace and the CDATA type.
+* `Node` includes `Enumerable` over its child nodes (`each` / `map` / `select` / ...).
+* `Node#<=>` + `Comparable` - sort by document position (`nil` across documents or
+  for attributes).
+* `NodeSet.new(document_or_node, list = [])` - foreign / cross-representation nodes
+  are rejected.
+* `NodeSet#[]` accepts a `Range` or `start, length` (like `Array#[]`).
+* `Node` / `NodeSet` / `Document` `#dup` / `#clone` now return real independent
+  copies (`#dup(0)` shallow; `#clone(freeze:)` honoured).
+* A **frozen node is genuinely immutable** - every mutator raises `FrozenError`.
 
 ### Changed
 
-* **HTML serialization pre-reserves its output buffer** (`mkr_buf_reserve`), so
-  `to_html` / `inner_html` no longer realloc the collecting buffer on every
-  geometric growth step. This removes the extra churn that left `to_html` ~1.03×
-  slower than nokolexbor; it is now at parity (the remaining cost - Lexbor's
-  serializer walk plus one copy into a Ruby String - is shared with nokolexbor).
-
-* **CSS queries reuse one shared Lexbor engine instead of building and tearing
-  it down per call**, and `at_css` now wraps the single first match directly
-  (no intermediate `NodeSet` / Ruby `#first`). The per-call create/destroy of
-  the selector parser + arena + traversal engine dominated a cheap query like
-  `at_css('#id')`, which had been ~1.16× *slower* than nokolexbor; the shared
-  engine (safe because CSS evaluation holds the GVL throughout) makes it ~5×
-  *faster* than nokolexbor (~6000× Nokogiri). A malformed selector still raises
-  `Makiri::CSS::SyntaxError`, and the shared engine is reset so it recovers.
-
-* **Node-class names are now the WHATWG DOM interface names, with the
-  libxml2/Nokogiri spellings kept as aliases.** The canonical leaf names are
-  `Element`, `Attr`, `Text`, `Comment`, `CDATASection`, `ProcessingInstruction`,
-  `DocumentType`, `Document`, `DocumentFragment` (at all three levels - the
-  abstract base and the `HTML::` / `XML::` leaves). Two of these differ from the
-  previous spelling: `CData`/`CDATA` → **`CDATASection`** and the XML doctype
-  `DTD` → **`DocumentType`** (so an XML doctype now shares the
-  `Makiri::DocumentType` base with the HTML one, and `is_a?(Makiri::DocumentType)`
-  holds for both). `Attribute` → **`Attr`** (which is itself the DOM name).
-  Nokogiri's names resolve as aliases - `CDATA` (→ `CDATASection`) and `DTD`
-  (→ `DocumentType`) at every level - so a ported `is_a?` / `case` check works
-  unchanged; only `#class.name` reports the canonical DOM name. The `attribute?`
-  predicate keeps its name, and a `Node#cdata?` predicate was added alongside
-  `element?` / `text?` / `comment?`.
-
-* The text index's per-element range table stores its slice-run bounds as
-  `uint32` indices instead of `size_t`, shrinking each entry from 24 to 16 bytes
-  (the node pointer plus two 32-bit indices) - about a third off the table, the
-  index's largest allocation. On a 2k-element document the retained text index
-  drops ~27% (~480 → ~352 KB) with byte-identical text and no change in
-  extraction speed (still ~4× Nokogiri). A document with more than `UINT32_MAX`
-  text slices (impossible in practice) fails the index build closed and the
-  caller falls back to a walk.
-
-* Parsing now **honours the input String's encoding**. UTF-8, US-ASCII and
-  ASCII-8BIT (binary) are used directly (the UTF-8 common case is unchanged - a
-  single encoding check, no extra work); any other encoding (Shift_JIS, EUC-JP,
-  ISO-8859-1, Windows-1252, ...) is transcoded to UTF-8 (invalid/undefined →
-  U+FFFD) so its content is preserved. Previously every input was read as raw
-  UTF-8 bytes, so a Shift_JIS or EUC-JP document was mangled into U+FFFD; it now
-  decodes correctly (matching `Nokogiri`). Applies to `Makiri::HTML` /
-  `Makiri.parse`, `DocumentFragment.parse`, and `Document#fragment` / `Node#parse`.
-* Parsing skips its UTF-8 validation scan when the input String's cached
-  coderange already proves it valid (pure ASCII, or valid in the UTF-8
-  encoding) - read without forcing a scan. Invalid/unknown input is sanitised
-  as before. Most effective on multibyte-heavy already-validated input; the DOM
-  is unchanged.
-* The HTML serializer's line table is built with `memchr`, and the UTF-8
-  validity check is a dedicated validate-only scan (Unicode well-formed table +
-  word-at-a-time ASCII), instead of decoding every code point - together ~7%
-  faster parsing on a 235 KB document, output byte-identical.
-* `Node#{to_html,to_s,outer_html,inner_html}` collect Lexbor's serializer output
-  into one growing C buffer (`mkr_buf`) and copy it into a Ruby String once,
-  instead of `rb_str_cat` per emitted chunk. The per-chunk Ruby-string growth
-  (capacity + coderange bookkeeping over thousands of appends) was the dominant
-  cost; the single-copy path is ~1.2–1.3× faster on a 2k-element document
-  (now at parity with `nokolexbor`), with byte-identical output.
+* CSS queries reuse one shared Lexbor engine (GVL-safe) and `at_css` wraps the match
+  directly: `at_css('#id')` ~5x faster than nokolexbor (was ~1.16x slower).
+* HTML serialization pre-reserves its buffer - `to_html` now at parity with nokolexbor.
+* Node-class names are the WHATWG DOM interface names (`CDATASection`, `Attr`,
+  `DocumentType`, ...), with the Nokogiri spellings (`CDATA`, `DTD`) kept as aliases;
+  added `Node#cdata?`.
+* Text-index range table uses `uint32` bounds (24 -> 16 B/entry; ~27% less retained
+  index, byte-identical text).
+* Parsing **honours the input String's encoding** - Shift_JIS / EUC-JP / ... are now
+  transcoded to UTF-8 instead of mangled.
+* Parsing skips its UTF-8 validation scan when the String's coderange already proves
+  it valid.
+* Faster HTML parse/serialize: `memchr` line table + validate-only UTF-8 scan (~7%),
+  and a single-copy serializer buffer (~1.2-1.3x).
 
 ### Fixed
 
-* **Hardened the HTML/XML representation boundary in the shared glue.** The
-  XPath engine, `NodeSet`, and node identity are shared by the HTML (Lexbor) and
-  XML (custom arena) representations, and three shared paths assumed HTML:
-  * `Node#==` against an XML `Document`, and `XPathContext#node=` with an XML
-    `Document`, fell through the kind-blind unwrap to the HTML-only document
-    accessor and **aborted the process** (an `assert` in a non-`NDEBUG` build).
-    The shared unwrap is now kind-aware (an XML `Document` resolves to its arena
-    document node), so both return correctly instead of crashing.
-  * A custom XPath function handler that returned a node was validated by reading
-    the HTML-only `owner_document` field, which is meaningless for an XML node;
-    the same-document check is now done at the Ruby level (the node's keepalive
-    `Document`), correct for both representations.
-  * `NodeSet#|`, `#+`, `#&`, `#-` borrowed one operand's document for the result
-    and silently wrapped the other operand's nodes under the wrong
-    representation (an XML node as HTML or vice versa) without keeping its
-    document alive. They now **raise `Makiri::Error`** when the operands belong
-    to different documents.
-  * An HTML-only API that hands a node *argument* to Lexbor accepted any
-    `Makiri::Node` and unwrapped it, so passing a `Makiri::XML` node read its
-    `mkr_xml_node_t*` as an `lxb_dom_node_t` and **segfaulted** -
-    `HTML::Document#import_node`, the `add_child` / `before` / `after` /
-    `replace` family, and `fragment(..., context:)` /
-    `DocumentFragment.parse(..., context:)`. All such sites now raise `TypeError`.
-
-  The root cause was structural - HTML and XML nodes shared one TypedData type and
-  one `lxb_dom_node_t*`-typed pointer field, so neither C nor Ruby could tell them
-  apart and a single ambiguous unwrap could return an XML pointer as an HTML one.
-  The boundary is now enforced by **Ruby's own type machinery**: HTML and XML
-  nodes are wrapped under **distinct TypedData types** (`mkr_html_node_type` /
-  `mkr_xml_node_type`, both deriving from a shared base `mkr_node_type`), and the
-  representation-specific accessors `mkr_html_node` / `mkr_xml_node_unwrap` use
-  `TypedData_Get_Struct`, which **raises `TypeError` on the wrong representation**
-  automatically - it is structurally impossible to read one representation's
-  pointer as the other's, for `self` or for any argument. Identity
-  (`==`/`eql?`/`hash`/`pointer_id`) uses an integer id that is never dereferenced;
-  the ambiguous `lxb_dom_node_t`-returning unwrap was removed. The HTML-only
-  document unwrap was also renamed `mkr_html_doc_unwrap` (intention-revealing), and
-  the C-safety lint (`rake security:clint`) fences the representation-specific
-  symbols (`mkr_html_doc_unwrap`, `mkr_parsed_html_doc`, `mkr_parsed_xml_doc`,
-  `mkr_node_raw`, the lxb `owner_document` field) to their representation-correct /
-  kind-checked files, so a future misuse in shared glue fails CI. The node
-  wrapper's stored pointer (`mkr_node_data_t.node`) and `NodeSet`'s node array
-  likewise hold a representation-opaque `mkr_raw_node_t *` (an incomplete type -
-  it cannot be dereferenced and, unlike `void *`, does not implicitly convert to
-  a typed pointer) instead of a misleading `lxb_dom_node_t *`, so an XML node or
-  set can never have its `mkr_xml_node_t *` pointer read as a Lexbor node; the
-  only casts back to a typed pointer are the kind-checked accessors
-  (`mkr_html_node` / `mkr_xml_node_unwrap`) and the NodeSet's wrap function.
-  HTML and XML `Document` wrappers are likewise split into distinct TypedData
-  types (`mkr_html_doc_type` / `mkr_xml_doc_type`), so `mkr_html_doc_unwrap` -
-  which reinterprets the parsed document as a Lexbor `lxb_html_document_t` -
-  rejects an XML `Document` at the type boundary rather than relying on an assert
-  that vanishes under `NDEBUG`.
-
-* The compiled extension exported the entire vendored Lexbor symbol table
-  (~1700 `lxb_*` / `lexbor_*` symbols) instead of only `Init_makiri`:
-  `-fvisibility=hidden` hides our own sources but not the prebuilt Lexbor static
-  library, whose symbols were re-exported into the bundle's dynamic table.
-  Loading Makiri together with another Lexbor-based extension (e.g. `nokolexbor`)
-  in the same process could then bind that gem's `lxb_*` calls to Makiri's
-  different Lexbor version and **segfault**. The linker now exports only
-  `Init_makiri` (`-Wl,-exported_symbol,_Init_makiri` on macOS,
-  `-Wl,--exclude-libs,ALL` on Linux), keeping Makiri's Lexbor fully private.
-  Affects precompiled gems; rebuild required.
+* **Hardened the HTML/XML representation boundary.** HTML (Lexbor) and XML (arena)
+  nodes are now distinct TypedData types, so the wrong representation raises
+  `TypeError` instead of corrupting memory:
+  * `Node#==` / `XPathContext#node=` with an XML `Document` no longer aborts the
+    process;
+  * `NodeSet#|` / `+` / `&` / `-` across different documents raise `Makiri::Error`
+    (was a silent mis-wrap);
+  * HTML-only APIs (`import_node`, `add_child` / `before` / `after` / `replace`,
+    `fragment(context:)`) reject an XML node argument (was a segfault).
+* The bundle exported the entire vendored Lexbor symbol table (~1700 `lxb_*`); now
+  only `Init_makiri` is exported, so loading alongside another Lexbor gem (e.g.
+  nokolexbor) no longer segfaults. (Precompiled gems: rebuild required.)
 
 ## [0.2.0] - 2026-06-04
 
