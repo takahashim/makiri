@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 #
-# W3C XML Conformance Test Suite (xmlconf) runner — the XML counterpart of the
+# W3C XML Conformance Test Suite (xmlconf) runner - the XML counterpart of the
 # html5lib runner. It drives Makiri's native XML parser (Makiri::XML, no libxml2)
 # over the ~2200 OASIS/NIST/Sun/IBM/Japanese/Edinburgh test files and checks that
 # Makiri ACCEPTS / REJECTS each document as the spec requires.
@@ -18,14 +18,14 @@
 #   * NAMESPACE="no" tests (colons used in non-namespace ways; Makiri, like
 #     Nokogiri::XML, is always namespace-aware).
 #   * valid/invalid tests needing DTD-defined general/parameter entities
-#     (Makiri does not process the DTD, so &name; stays undefined — by design).
+#     (Makiri does not process the DTD, so &name; stays undefined - by design).
 #   * the optional "error" category (a parser may accept or reject).
 #   * files whose declared encoding we cannot transcode here.
 #
 # The interesting buckets:
-#   * FAIL    — a genuine divergence to investigate (e.g. a not-wf document with
+#   * FAIL    - a genuine divergence to investigate (e.g. a not-wf document with
 #               NO doctype that Makiri wrongly accepts: a real wf bug).
-#   * POLICY  — an expected difference from Makiri's no-DTD-validation stance
+#   * POLICY  - an expected difference from Makiri's no-DTD-validation stance
 #               (e.g. a not-wf document whose only defect is inside the DTD that
 #               Makiri recognizes-but-does-not-validate).
 #
@@ -33,7 +33,7 @@
 # into spec/conformance/data/ (gitignored). Use --no-fetch to require a local copy.
 #
 # Nokogiri (a bench-only dependency) parses the manifests, so run OUTSIDE the
-# bundle — the rake task does this:
+# bundle - the rake task does this:
 #   rake conformance:xmlconf
 #   ruby -Ilib spec/conformance/xmlconf_runner.rb --verbose
 #   ruby -Ilib spec/conformance/xmlconf_runner.rb --show-policy
@@ -134,7 +134,7 @@ end
 #
 # Makiri autodetects the encoding from the BOM / XML declaration (XML 1.0
 # Appendix F), so each test file is handed to it as raw bytes (ASCII-8BIT) and
-# Makiri does the decoding — its encoding handling is now part of what is scored.
+# Makiri does the decoding - its encoding handling is now part of what is scored.
 # A no-BOM, non-UTF-8 document that omits its encoding declaration is undecodable
 # by anything and is rejected; that matches the spec default of UTF-8.
 
@@ -177,7 +177,7 @@ tests.each do |t|
   raw = File.binread(t.path) # ASCII-8BIT; Makiri autodetects the encoding
 
   # A document that DECLARES version!="1.0" is XML 1.1/1.x even if its manifest
-  # entry is version-agnostic — out of scope (Makiri implements XML 1.0 only,
+  # entry is version-agnostic - out of scope (Makiri implements XML 1.0 only,
   # rejecting other versions by design). Skip it like a manifest-1.1 test rather
   # than scoring Makiri's deliberate rejection.
   if raw.byteslice(0, 256).delete("\x00") =~ /\A\s*(?:\xEF\xBB\xBF)?<\?xml\s[^>]*?version\s*=\s*["']([\d.]+)["']/n &&
@@ -193,7 +193,7 @@ tests.each do |t|
     rescue Makiri::XML::SyntaxError
       :reject
     rescue StandardError => e
-      # a non-SyntaxError Makiri error (budget, etc.) — treat as a flavour of
+      # a non-SyntaxError Makiri error (budget, etc.) - treat as a flavour of
       # reject for accept/reject scoring, but remember it for the report.
       (@odd ||= {})[t.id] = "#{e.class}: #{e.message}"
       :reject
@@ -243,7 +243,7 @@ end
 
 if opts[:show_policy]
   puts "\n#{'-' * 72}\nPOLICY differences (expected, not failures):"
-  policies.first(80).each { |t, why| puts "  #{t.manifest} #{t.id} [#{t.type}] — #{why}" }
+  policies.first(80).each { |t, why| puts "  #{t.manifest} #{t.id} [#{t.type}] - #{why}" }
   puts "  ... #{policies.length - 80} more" if policies.length > 80
 end
 

@@ -14,7 +14,7 @@ RSpec.configure do |config|
   end
 
   # The concurrency suite (spec/threading_spec.rb, tagged :threading) is heavy
-  # — many threads under GC.stress — and dominates the run time, so it runs only
+  # - many threads under GC.stress - and dominates the run time, so it runs only
   # when THREADING=1 is set explicitly. The CI workflow sets THREADING=1 on a
   # single representative job (the safety it checks is structural, not OS/Ruby
   # specific) rather than on every matrix job. It is NOT auto-enabled by CI=true,

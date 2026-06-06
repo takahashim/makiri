@@ -16,7 +16,7 @@
  * the tokenizer callback and capture element offsets, then build the line
  * table. Returns the document on success, NULL on failure (everything it
  * allocated is released). On success *out_lines receives the line table
- * (possibly NULL if that allocation failed — line info then degrades to nil). */
+ * (possibly NULL if that allocation failed - line info then degrades to nil). */
 static lxb_html_document_t *
 mkr_parse_tracked(const lxb_char_t *src, size_t len, void **out_lines)
 {
@@ -84,7 +84,7 @@ mkr_parse_html(const lxb_char_t *src, size_t len, bool assume_valid)
     }
     p->kind = MKR_DOC_HTML;
 
-    /* Empty input (NULL source): nothing to sanitise or track — just create an
+    /* Empty input (NULL source): nothing to sanitise or track - just create an
      * empty document. */
     if (src == NULL) {
         p->doc = lxb_html_document_create();
@@ -104,7 +104,7 @@ mkr_parse_html(const lxb_char_t *src, size_t len, bool assume_valid)
      * (WHATWG byte-stream decoding) so parsing never fails on bad bytes and the
      * DOM is always valid UTF-8. Valid input (the common case) is used as-is
      * with no copy. Source offsets / line numbers are then relative to the
-     * sanitised bytes — exact for valid input, best-effort when replacement
+     * sanitised bytes - exact for valid input, best-effort when replacement
      * shifted byte positions. Source locations always ride the parse pipeline
      * (cheap). `assume_valid` (the caller already verified UTF-8, e.g. via the
      * Ruby String's coderange) skips the validation scan entirely. */
@@ -192,4 +192,46 @@ mkr_parsed_set_xml_doc(mkr_parsed_t *p, struct mkr_xml_doc *xdoc)
 {
     assert(p->kind == MKR_DOC_XML);
     p->doc = xdoc;
+}
+
+/* Bytes handed out from one Lexbor mem pool. Lexbor exposes no running total, so
+ * walk the chunk list summing each chunk's bump length. Cheap: chunks are few,
+ * large blocks. Saturates to SIZE_MAX on the (unreachable) overflow; the caller
+ * clamps the derived cap to the buffer hard ceiling anyway. */
+static size_t
+mkr_lxb_mem_used(const lexbor_mem_t *mem)
+{
+    size_t total = 0;
+    for (const lexbor_mem_chunk_t *c = (mem != NULL) ? mem->chunk_first : NULL;
+         c != NULL; c = c->next) {
+        if (!mkr_size_add(total, c->length, &total)) {
+            return SIZE_MAX;
+        }
+    }
+    return total;
+}
+
+size_t
+mkr_lxb_document_bytes(lxb_dom_node_t *node)
+{
+    if (node == NULL) {
+        return 0;
+    }
+    /* The document node owns itself; every other node points back via owner_document. */
+    lxb_dom_document_t *doc = (node->type == LXB_DOM_NODE_TYPE_DOCUMENT)
+                                  ? lxb_dom_interface_document(node)
+                                  : node->owner_document;
+    if (doc == NULL) {
+        return 0;
+    }
+    size_t total = 0;
+    if (doc->mraw != NULL
+        && !mkr_size_add(total, mkr_lxb_mem_used(doc->mraw->mem), &total)) {
+        return SIZE_MAX;
+    }
+    if (doc->text != NULL
+        && !mkr_size_add(total, mkr_lxb_mem_used(doc->text->mem), &total)) {
+        return SIZE_MAX;
+    }
+    return total;
 }

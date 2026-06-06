@@ -3,7 +3,7 @@
 require "spec_helper"
 
 # Strict input decode for the XML reader (§2.1): honours the String's declared
-# encoding like the HTML path, but fail-closed — invalid UTF-8, an undecodable
+# encoding like the HTML path, but fail-closed - invalid UTF-8, an undecodable
 # byte, or an embedded NUL all raise Makiri::XML::SyntaxError (no U+FFFD repair).
 # Makiri::XML.__decode is the internal hook exercising this until the full
 # Makiri::XML(...) parse pipeline lands.

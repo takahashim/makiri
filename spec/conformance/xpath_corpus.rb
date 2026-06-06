@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 #
 # Curated XPath 1.0 corpus for the differential harness (xpath_diff.rb). A
-# deterministic baseline that walks the spec's surface — every axis, the node
+# deterministic baseline that walks the spec's surface - every axis, the node
 # tests, position/predicate semantics, the built-in function library, and the
-# operators — so a regression shows up without relying on the random generator.
+# operators - so a regression shows up without relying on the random generator.
 # Add a case here whenever a divergence is found and fixed.
 
 module XPathCorpus

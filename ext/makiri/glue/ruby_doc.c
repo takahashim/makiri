@@ -45,8 +45,8 @@ mkr_doc_memsize(const void *ptr)
 
 /* Like nodes, HTML and XML Documents share the mkr_doc_data_t layout and GC
  * functions but are wrapped under DISTINCT TypedData types (both deriving from
- * the shared base mkr_doc_type), so mkr_html_doc_unwrap — which reinterprets the
- * parsed document as a Lexbor lxb_html_document_t — RAISES TypeError on an XML
+ * the shared base mkr_doc_type), so mkr_html_doc_unwrap - which reinterprets the
+ * parsed document as a Lexbor lxb_html_document_t - RAISES TypeError on an XML
  * Document via Ruby's type machinery, instead of relying on the (NDEBUG-erased)
  * assert in mkr_parsed_html_doc. mkr_doc_type (base) is kept for the kind-agnostic
  * accessors (mkr_doc_parsed, #errors) that legitimately accept either. */
@@ -244,7 +244,7 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
     if (u8 != html) {
         /* Transcoded to UTF-8: a fresh String that nothing keeps alive past this
          * return, so we must NOT borrow its bytes. It is already valid UTF-8, so
-         * copy it into an owned buffer (the caller frees *owned) — no sanitise. */
+         * copy it into an owned buffer (the caller frees *owned) - no sanitise. */
         size_t n = (hv.len > 0) ? hv.len : 1;
         char  *buf = mkr_reallocarray(NULL, n, 1);
         if (buf == NULL) {
@@ -312,7 +312,7 @@ mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
 }
 
 /* Node#clone_node(deep = false): a shallow (or deep, with deep truthy) copy of
- * this node, owned by the same document and detached from any parent — the DOM
+ * this node, owned by the same document and detached from any parent - the DOM
  * cloneNode, whose `deep` defaults to false (a missing/nil/false argument =>
  * shallow). Built on the same import_node + <template>-content fixup the
  * fragment parser uses, so a deep-cloned <template> carries its contents (which
@@ -339,7 +339,7 @@ mkr_node_clone_node(int argc, VALUE *argv, VALUE self)
 }
 
 /* Document#import_node(node, deep = false): a shallow (or deep, with deep
- * truthy) copy of +node+ owned by THIS document — the DOM importNode, whose
+ * truthy) copy of +node+ owned by THIS document - the DOM importNode, whose
  * `deep` defaults to false (a missing/nil/false argument => shallow). Unlike
  * Node#clone_node, the copy is owned by the receiver rather than the node's own
  * document, so it is the way to bring a node across documents (Makiri never

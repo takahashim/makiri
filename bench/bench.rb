@@ -3,7 +3,7 @@
 # Makiri performance benchmark. Measures the main operations and, when they are
 # installed, compares against Nokogiri (libxml2) and Nokolexbor (a
 # Nokogiri-compatible API also built on Lexbor) as references. Both are
-# bench-only dependencies — Makiri itself never links libxml2.
+# bench-only dependencies - Makiri itself never links libxml2.
 #
 # Run:
 #   rake bench
@@ -23,7 +23,7 @@ begin
   NOKO = true
 rescue LoadError
   NOKO = false
-  warn "nokogiri not available — skipping its column"
+  warn "nokogiri not available - skipping its column"
 end
 
 begin
@@ -31,7 +31,7 @@ begin
   NOKOLEX = true
 rescue LoadError
   NOKOLEX = false
-  warn "nokolexbor not available — skipping its column"
+  warn "nokolexbor not available - skipping its column"
 end
 
 # --- representative document ----------------------------------------------

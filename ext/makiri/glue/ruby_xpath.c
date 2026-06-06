@@ -314,7 +314,7 @@ mkr_arg_to_ruby(mkr_handler_bridge_t *b, const mkr_val_t *v)
 
 /* Validate a handler-returned node and push it into the result node-set. The
  * same-document check compares the node's keepalive document VALUE against the
- * context's document VALUE, NOT the HTML-only lxb owner_document field — so it is
+ * context's document VALUE, NOT the HTML-only lxb owner_document field - so it is
  * correct for an XML node too (whose pointer is an mkr_xml_node_t*, not an
  * lxb_dom_node_t). A node from a different document fails closed. */
 static int
@@ -516,7 +516,7 @@ mkr_handler_resolver(void *user_data, mkr_xpath_context_t *ctx,
  * Ruby-thread C code, so an XPath walk can never run in parallel with a tree
  * mutation, with another evaluation on the same context, or with a
  * register_variable/register_namespace/node= on the same context. No extra
- * locking is required (and none is used). Parsing still releases the GVL —
+ * locking is required (and none is used). Parsing still releases the GVL -
  * a freshly parsed document is not yet shared, so it has no such hazard.
  *
  * (Releasing the GVL for the handler-free case was measured to scale XPath
@@ -667,7 +667,7 @@ mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 /* ------------------------------------------------------------------ */
 
 /* Evaluate expr against self with a throwaway context and optional handler.
- * Evaluation runs under the GVL (see mkr_eval_compiled — XPath never releases
+ * Evaluation runs under the GVL (see mkr_eval_compiled - XPath never releases
  * it). */
 static VALUE
 mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax, int first_only)

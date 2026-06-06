@@ -15,7 +15,7 @@
  */
 
 /* Count Unicode code points in a UTF-8 string. XPath 1.0 string-length
- * and substring offsets are measured in characters, not bytes — Lexbor
+ * and substring offsets are measured in characters, not bytes - Lexbor
  * exposes content as UTF-8 byte strings, so we walk and count leading
  * bytes (any byte that isn't a 10xxxxxx continuation). */
 static size_t
@@ -152,7 +152,7 @@ fn_false(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
  * (no DTD-declared IDs, §8.6), so it never walks the tree by id attribute.
  * Guarded so the XML engine TU does not carry (and warn about) dead code. */
 
-/* id(string|nodeset) — looks up by HTML id attribute. */
+/* id(string|nodeset) - looks up by HTML id attribute. */
 static MKR_DOM_NODE *
 find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
 {
@@ -180,7 +180,7 @@ find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
 
 /*
  * Look up each whitespace-separated token in 's' (mutated) and push
- * every hit into 'out'. Duplicates are pushed unconditionally — the
+ * every hit into 'out'. Duplicates are pushed unconditionally - the
  * caller (fn_id) deduplicates the entire result via sort + adjacent
  * pass after all tokens have been processed, which is O(n log n)
  * versus O(n^2) per-insert contains() checks.
@@ -224,7 +224,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 
 #ifdef MKR_HOST_XML
   /* Host policy (§8.6): in XML an ID is an attribute DECLARED ID-typed by the
-   * DTD/schema — not any attribute named "id". DTDs are rejected at parse
+   * DTD/schema - not any attribute named "id". DTDs are rejected at parse
    * (§9.4), so a document read here carries no ID-typed attributes and id() is
    * the empty node-set. (xml:id is a separate, optional spec, not implemented.) */
   (void)ctx; (void)args;
@@ -234,7 +234,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   if (root == NULL) return 0;
 
   /* XPath 1.0 §4.1: id() argument may be a node-set; in that case each
-   * node's string-value is treated as IDREFS — whitespace-separated tokens.
+   * node's string-value is treated as IDREFS - whitespace-separated tokens.
    * For non-node-set, the value is converted to string and split likewise. */
   if (args[0].type == MKR_XPATH_TYPE_NODESET) {
     for (size_t i = 0; i < args[0].u.nodeset.count; ++i) {
@@ -271,7 +271,7 @@ static int two_owned_texts(mkr_xpath_context_t *ctx, mkr_val_t *args,
 /* ---------- nokogiri-builtin namespace ---------- */
 
 /*
- * css-class(haystack, needle) — true iff 'needle' is a whitespace-
+ * css-class(haystack, needle) - true iff 'needle' is a whitespace-
  * separated token of 'haystack'. The libxml2 version of this function
  * ships in nl_xpath_context.c (builtin_css_class); we keep behavior
  * identical.
@@ -314,7 +314,7 @@ fn_nokogiri_css_class(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 }
 
 /*
- * local-name-is(elementName) — true iff the context node's qualified
+ * local-name-is(elementName) - true iff the context node's qualified
  * name (for HTML this is the lowercase local name) equals the argument.
  */
 static int
@@ -536,7 +536,7 @@ fn_substring_after(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   return 0;
 }
 
-/* substring(s, start[, length]) — XPath positions are 1-based and round
+/* substring(s, start[, length]) - XPath positions are 1-based and round
  * to nearest; out-of-range positions clip to the string. */
 static int
 fn_substring(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
@@ -690,7 +690,7 @@ fn_translate(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   }
 
   /* The string-literal lexer validates UTF-8 and DOM string-values are valid
-   * UTF-8, so a decode error here should not happen — but if it does, fail
+   * UTF-8, so a decode error here should not happen - but if it does, fail
    * closed (RUNTIME error) rather than silently truncating the result. */
   size_t from_n = 0;
   for (const lxb_char_t *p = (const lxb_char_t *)from.ptr, *e = p + from.len; p < e;) {
@@ -1076,7 +1076,7 @@ mkr_lookup_function(const char *ns_uri, const char *local_name)
   if (local_name == NULL) return NULL;
   if (ns_uri != NULL) {
     /* Nokogiri-compatible builtins live in MKR_NS_NOKOGIRI_BUILTIN_URI.
-     * Other registered namespaces resolve to user-defined functions —
+     * Other registered namespaces resolve to user-defined functions -
      * not yet implemented (Phase 3 TODO: custom function registry). */
     if (strcmp(ns_uri, MKR_NS_NOKOGIRI_BUILTIN_URI) == 0) {
       for (size_t i = 0; fn_table_nokogiri_builtin[i].name; ++i) {
@@ -1087,7 +1087,7 @@ mkr_lookup_function(const char *ns_uri, const char *local_name)
     }
     return NULL;
   }
-  /* Default namespace — XPath 1.0 standard library. */
+  /* Default namespace - XPath 1.0 standard library. */
   for (size_t i = 0; fn_table[i].name; ++i) {
     if (strcmp(fn_table[i].name, local_name) == 0) return fn_table[i].fn;
   }

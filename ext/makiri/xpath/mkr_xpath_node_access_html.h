@@ -1,10 +1,10 @@
-/* mkr_xpath_node_access_html.h — node-access contract for the XPath engine.
+/* mkr_xpath_node_access_html.h - node-access contract for the XPath engine.
  *
  * The engine's per-node work (navigation, name tests, namespace tests) is
  * expressed through these MKR_NODE_* / MKR_ELEM_* macros instead of touching a
  * concrete node struct directly. This lets the same engine logic be compiled
  * for two node representations with ZERO runtime dispatch (compile-time
- * monomorphization — measured ~0% vs direct field reads, whereas a runtime
+ * monomorphization - measured ~0% vs direct field reads, whereas a runtime
  * kind-branch costs ~+150%; see tmp/xml_spike/accessor_perf.c and
  * docs/xml_parser_plan.ja.md §2.5):
  *
@@ -25,7 +25,7 @@
 #include <lexbor/ns/ns.h>
 
 /* (The DOM node handle for this instance is lxb_dom_node_t; the XML instance
- * will bind these macros to mkr_xml_node_t. No engine-wide typedef here — the
+ * will bind these macros to mkr_xml_node_t. No engine-wide typedef here - the
  * engine already uses mkr_node_t for its XPath AST node.) */
 
 /* --- neutral node-type constants ---

@@ -105,7 +105,7 @@ module Grammar
   end
 
   # Byte-level mutation: delete, insert, substitute, or duplicate a small
-  # range. The output is not guaranteed to be valid — that's the point; the
+  # range. The output is not guaranteed to be valid - that's the point; the
   # parser must handle garbage gracefully (fail closed, never crash).
   def mutate(s, rng)
     return "" if s.nil?

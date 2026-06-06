@@ -20,7 +20,7 @@
  * "well-formed UTF-8 byte sequences" table, RFC 3629 / WHATWG): it rejects bad
  * continuation bytes, overlong forms, surrogates (U+D800..U+DFFF) and code
  * points above U+10FFFF, and an incomplete trailing sequence. This is the same
- * accept set as Lexbor's decoder but validate-only — it never materialises code
+ * accept set as Lexbor's decoder but validate-only - it never materialises code
  * points, and rips through ASCII (the common case) a machine word at a time, so
  * it is much cheaper than decode-and-discard. NUL bytes are valid here and are
  * left for the HTML tokenizer to handle per the spec.
@@ -124,9 +124,17 @@ mkr_utf8_replace_invalid(const lxb_char_t *src, size_t len, size_t *out_len)
     (void) lxb_encoding_encode_replace_set(&enc, LXB_ENCODING_REPLACEMENT_BYTES,
                                            LXB_ENCODING_REPLACEMENT_SIZE);
 
-    /* HTML parse input is not byte-capped; mkr_buf grows overflow-safe and fails
-     * closed (NULL) on OOM. */
-    mkr_buf_init(&buf, 0);
+    /* The output is at most 3x the input: WHATWG byte-stream decoding replaces
+     * each invalid byte with U+FFFD (3 bytes) and passes valid bytes through 1:1.
+     * Cap the buffer at exactly that bound - tight and tied to the actual input,
+     * so a large document still parses but nothing runs away - rather than a
+     * blanket ceiling. (len > 0 here: mkr_utf8_sanitize returns early on len == 0.)
+     * It grows overflow-safe and fails closed (NULL) on OOM or the cap. */
+    size_t cap;
+    if (!mkr_size_mul(len, 3, &cap)) {
+        cap = MKR_BUF_HARD_MAX;   /* unreachable for any real in-memory string */
+    }
+    mkr_buf_init(&buf, cap);
 
 #define MKR_FLUSH()                                                            \
     do {                                                                       \

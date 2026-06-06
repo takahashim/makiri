@@ -1,10 +1,10 @@
-/* mkr_xml_mutate.c — Ruby-free XML tree mutation primitives.
+/* mkr_xml_mutate.c - Ruby-free XML tree mutation primitives.
  *
  * See mkr_xml_mutate.h for the contract. Phase 1 (in-place edits: rename,
  * attribute set/remove, content set, detach) and Phase 2 (building: node
  * factories, deep-copy import, and insertion that resolves the inserted subtree's
  * namespaces against its new context). Every primitive validates first and
- * allocates all arena bytes — and, for insertion, resolves namespaces — BEFORE
+ * allocates all arena bytes - and, for insertion, resolves namespaces - BEFORE
  * mutating any node link, so a failure (bad name, bad chars, unbound prefix,
  * cycle, hierarchy, OOM) leaves the tree untouched, even for a move. The
  * namespace resolver mirrors the parser's §7 rules (mkr_xml_tree.c) so a mutated
@@ -81,7 +81,7 @@ resolve_in_scope(const mkr_xml_node_t *node, const char *prefix, uint32_t pl,
 /* True if +node+ is part of the live document tree (its topmost ancestor is the
  * document node), as opposed to a detached fragment still being assembled. An
  * unbound prefix is a hard error only once connected (so the live tree stays
- * serializable to well-formed XML); on a detached node it is deferred — left
+ * serializable to well-formed XML); on a detached node it is deferred - left
  * unresolved until the fragment is inserted, when resolution runs again. */
 static int
 is_connected(const mkr_xml_node_t *node)
@@ -199,6 +199,10 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
     if (el->type != MKR_XML_NODE_TYPE_ELEMENT) return MKR_XML_MUT_TYPE;
     const char *pfx, *loc; uint32_t pl, ll;
     if (qname_split(name, nlen, &pfx, &pl, &loc, &ll) != 0) return MKR_XML_MUT_BAD_NAME;
+    /* A prefixed namespace declaration (xmlns:foo="") must not bind a prefix to
+     * the empty namespace: XML Namespaces 1.0 forbids it and it serializes to
+     * invalid XML. (Undeclaring the DEFAULT namespace, xmlns="", is allowed.) */
+    if (vlen == 0 && pl == 5 && slice_eq(pfx, pl, "xmlns", 5)) return MKR_XML_MUT_BAD_NS_DECL;
     if (vlen > 0 && mkr_xml_validate_chars(val, vlen) != 0) return MKR_XML_MUT_BAD_CHARS;
 
     const char *uri; uint32_t ulen;
@@ -217,7 +221,7 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
         }
     }
 
-    /* New attribute — allocate node + qname + value before linking. */
+    /* New attribute - allocate node + qname + value before linking. */
     mkr_xml_node_t *attr = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
     if (attr == NULL) return MKR_XML_MUT_OOM;
     st = assign_qname(doc, attr, name, nlen, loc, ll, pl);
@@ -254,6 +258,37 @@ mkr_xml_remove_attribute(mkr_xml_node_t *el, const char *name, uint32_t nlen)
     return 0;
 }
 
+/* Reject a forbidden character SEQUENCE for a leaf node's serialized value:
+ * "--" (or a trailing "-") in a comment, "]]>" in a CDATA section, "?>" in a PI
+ * - each would break the node's terminator and is not well-formed XML. Plain
+ * XML-Char validity is checked separately. Shared by every path that fills a
+ * leaf value (the factories and #content=), so none can bypass it. */
+static mkr_xml_mut_status_t
+mkr_xml_check_value_seq(uint8_t type, const char *text, uint32_t tlen)
+{
+    switch (type) {
+    case MKR_XML_NODE_TYPE_COMMENT:
+        if (tlen > 0 && text[tlen - 1] == '-') return MKR_XML_MUT_BAD_CHARS;
+        for (uint32_t i = 1; i < tlen; i++) {
+            if (text[i] == '-' && text[i - 1] == '-') return MKR_XML_MUT_BAD_CHARS;
+        }
+        break;
+    case MKR_XML_NODE_TYPE_CDATA_SECTION:
+        for (uint32_t i = 2; i < tlen; i++) {
+            if (text[i] == '>' && text[i - 1] == ']' && text[i - 2] == ']') return MKR_XML_MUT_BAD_CHARS;
+        }
+        break;
+    case MKR_XML_NODE_TYPE_PI:
+        for (uint32_t i = 1; i < tlen; i++) {
+            if (text[i] == '>' && text[i - 1] == '?') return MKR_XML_MUT_BAD_CHARS;
+        }
+        break;
+    default:
+        break;
+    }
+    return MKR_XML_MUT_OK;
+}
+
 mkr_xml_mut_status_t
 mkr_xml_set_content(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *text, uint32_t tlen)
 {
@@ -264,6 +299,8 @@ mkr_xml_set_content(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *text, 
     case MKR_XML_NODE_TYPE_CDATA_SECTION:
     case MKR_XML_NODE_TYPE_COMMENT:
     case MKR_XML_NODE_TYPE_PI: {
+        mkr_xml_mut_status_t seq = mkr_xml_check_value_seq(node->type, text, tlen);
+        if (seq != MKR_XML_MUT_OK) return seq;
         const char *nv = mkr_xml_arena_bytes(doc, text, tlen);
         if (tlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
         node->value = nv ? nv : ""; node->value_len = tlen;
@@ -328,6 +365,8 @@ mkr_xml_new_chardata(mkr_xml_doc_t *doc, uint8_t type, const char *text, uint32_
         return MKR_XML_MUT_TYPE;
     }
     if (tlen > 0 && mkr_xml_validate_chars(text, tlen) != 0) return MKR_XML_MUT_BAD_CHARS;
+    mkr_xml_mut_status_t seq = mkr_xml_check_value_seq(type, text, tlen);
+    if (seq != MKR_XML_MUT_OK) return seq;
     mkr_xml_node_t *n = mkr_xml_arena_node(doc, type);
     if (n == NULL) return MKR_XML_MUT_OOM;
     const char *v = mkr_xml_arena_bytes(doc, text, tlen);
@@ -347,10 +386,8 @@ mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
     if (qname_split(target, tlen, &pfx, &pl, &loc, &ll) != 0 || pl != 0) return MKR_XML_MUT_BAD_NAME;
     if (is_reserved_pi_target(target, tlen)) return MKR_XML_MUT_BAD_NAME;
     if (dlen > 0 && mkr_xml_validate_chars(data, dlen) != 0) return MKR_XML_MUT_BAD_CHARS;
-    /* The data may not contain "?>", which would close the PI early. */
-    for (uint32_t i = 1; i < dlen; i++) {
-        if (data[i] == '>' && data[i - 1] == '?') return MKR_XML_MUT_BAD_CHARS;
-    }
+    mkr_xml_mut_status_t seq = mkr_xml_check_value_seq(MKR_XML_NODE_TYPE_PI, data, dlen);
+    if (seq != MKR_XML_MUT_OK) return seq;
     mkr_xml_node_t *pi = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_PI);
     if (pi == NULL) return MKR_XML_MUT_OOM;
     const char *t = mkr_xml_arena_bytes(doc, target, tlen);
@@ -364,7 +401,7 @@ mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
 }
 
 /* Resolve the namespace of every element (and prefixed attribute) in +root+'s
- * subtree against the in-scope declarations reachable from each node — which,
+ * subtree against the in-scope declarations reachable from each node - which,
  * because the caller has temporarily pointed root->parent at the prospective
  * context, includes that context and its ancestors. Order-independent (it reads
  * xmlns attribute values, never resolved ns_uri). Iterative pre-order, no
@@ -588,6 +625,7 @@ mkr_xml_insert_child(mkr_xml_doc_t *doc, mkr_xml_node_t *parent, mkr_xml_node_t 
 mkr_xml_mut_status_t
 mkr_xml_insert_before(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *node)
 {
+    if (node == ref) return MKR_XML_MUT_OK;   /* inserting a node before itself is a no-op */
     mkr_xml_node_t *container = ref->parent;
     if (container == NULL) return MKR_XML_MUT_HIERARCHY;   /* a parentless ref has no sibling slot */
     mkr_xml_mut_status_t st = prepare_insert(container, node, NULL);
@@ -605,6 +643,7 @@ mkr_xml_insert_before(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *n
 mkr_xml_mut_status_t
 mkr_xml_insert_after(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *node)
 {
+    if (node == ref) return MKR_XML_MUT_OK;   /* inserting a node after itself is a no-op */
     mkr_xml_node_t *container = ref->parent;
     if (container == NULL) return MKR_XML_MUT_HIERARCHY;
     mkr_xml_mut_status_t st = prepare_insert(container, node, NULL);
@@ -666,9 +705,22 @@ mkr_xml_mutate_selftest(void)
         || at->value_len != 2 || r->attrs->next != NULL) { rc = 10; goto done; } /* replaced, still one */
 
     /* 3. fail-closed: non-XML-Char value. An unbound prefix on a DETACHED element
-     *    defers (left unresolved), not an error — the live-tree error is exercised
+     *    defers (left unresolved), not an error - the live-tree error is exercised
      *    in the Phase 2 checks below. */
     if (mkr_xml_set_attribute(doc, r, "k", 1, "\x01", 1, NULL) != MKR_XML_MUT_BAD_CHARS) { rc = 11; goto done; }
+
+    /* 3b. fail-closed: forbidden value SEQUENCES (would serialize to invalid XML),
+     *     enforced uniformly by the factories AND by set_content (no bypass). */
+    mkr_xml_node_t *chk = NULL;
+    if (mkr_xml_new_chardata(doc, MKR_XML_NODE_TYPE_COMMENT, "a--b", 4, &chk) != MKR_XML_MUT_BAD_CHARS) { rc = 111; goto done; }
+    if (mkr_xml_new_chardata(doc, MKR_XML_NODE_TYPE_COMMENT, "x-", 2, &chk) != MKR_XML_MUT_BAD_CHARS) { rc = 112; goto done; } /* trailing - */
+    if (mkr_xml_new_chardata(doc, MKR_XML_NODE_TYPE_CDATA_SECTION, "a]]>b", 5, &chk) != MKR_XML_MUT_BAD_CHARS) { rc = 113; goto done; }
+    if (mkr_xml_new_chardata(doc, MKR_XML_NODE_TYPE_COMMENT, "a-b", 3, &chk) != MKR_XML_MUT_OK || chk == NULL) { rc = 114; goto done; } /* single - fine */
+    if (mkr_xml_set_content(doc, chk, "x--y", 4) != MKR_XML_MUT_BAD_CHARS) { rc = 115; goto done; } /* set_content guarded too */
+    /* fail-closed: a prefixed namespace declaration may not bind to "" (default xmlns="" IS allowed). */
+    if (mkr_xml_set_attribute(doc, r, "xmlns:q", 7, "", 0, NULL) != MKR_XML_MUT_BAD_NS_DECL) { rc = 116; goto done; }
+    if (mkr_xml_set_attribute(doc, r, "xmlns", 5, "", 0, NULL) != MKR_XML_MUT_OK) { rc = 117; goto done; }
+
     mkr_xml_node_t *det = NULL;
     if (mkr_xml_new_element(doc, "det", 3, &det) != MKR_XML_MUT_OK
         || mkr_xml_set_attribute(doc, det, "p:k", 3, "v", 1, &at) != MKR_XML_MUT_OK
@@ -715,7 +767,7 @@ mkr_xml_mutate_selftest(void)
     mkr_xml_detach(a2);
     if (r->first_child != NULL || r->last_child != NULL || a2->parent != NULL) { rc = 25; goto done; }
 
-    /* 10. Phase 2 — a live document node + a connected root carrying xmlns:p */
+    /* 10. Phase 2 - a live document node + a connected root carrying xmlns:p */
     mkr_xml_node_t *docn = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT);
     if (docn == NULL) { rc = 26; goto done; }
     doc->doc_node = docn;
@@ -742,7 +794,7 @@ mkr_xml_mutate_selftest(void)
         || ub->parent != NULL || pr->last_child != ne) { rc = 35; goto done; }
 
     /* 13. deferred resolution: build a detached fragment whose prefix is unbound
-     *     there, then connect it — resolution succeeds against the live context */
+     *     there, then connect it - resolution succeeds against the live context */
     mkr_xml_node_t *wrap = NULL, *inner = NULL;
     if (mkr_xml_new_element(doc, "p:wrap", 6, &wrap) != MKR_XML_MUT_OK
         || mkr_xml_new_element(doc, "p:inner", 7, &inner) != MKR_XML_MUT_OK) { rc = 36; goto done; }
@@ -762,6 +814,9 @@ mkr_xml_mutate_selftest(void)
     if (mkr_xml_insert_before(doc, ne, b1) != MKR_XML_MUT_OK || pr->first_child != b1
         || b1->next != ne) { rc = 41; goto done; }
     if (mkr_xml_insert_after(doc, ne, b2) != MKR_XML_MUT_OK || ne->next != b2) { rc = 42; goto done; }
+    /* inserting a node before/after ITSELF is a no-op (must not form a self-cycle) */
+    if (mkr_xml_insert_before(doc, ne, ne) != MKR_XML_MUT_OK || ne->next == ne || ne->prev == ne
+        || mkr_xml_insert_after(doc, ne, ne) != MKR_XML_MUT_OK || ne->next == ne) { rc = 99; goto done; }
 
     /* 16. replace swaps a node in place (detach-never-destroy of the old node) */
     mkr_xml_node_t *rep = NULL;

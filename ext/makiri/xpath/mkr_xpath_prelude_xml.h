@@ -1,4 +1,4 @@
-/* mkr_xpath_prelude_xml.h — XML engine-instance prelude.
+/* mkr_xpath_prelude_xml.h - XML engine-instance prelude.
  *
  * Included at the top of mkr_xpath_engine_xml.c BEFORE the engine bodies. It
  * binds the DOM types + MKR_NODE_* node-access contract to the custom

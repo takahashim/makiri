@@ -1,8 +1,8 @@
-/* mkr_xml_chars.c — XML Char validation + character/entity reference expansion.
+/* mkr_xml_chars.c - XML Char validation + character/entity reference expansion.
  *
  * Ruby-free. §9.1: only the 5 predefined entities (lt gt amp apos quot) and
  * numeric character references (&#nn; / &#xhh;) are expanded; any other &name;
- * is an undefined entity (SyntaxError) — there is no DTD, so no entity can be
+ * is an undefined entity (SyntaxError) - there is no DTD, so no entity can be
  * defined, which makes billion-laughs structurally impossible. §9.2: every
  * resulting codepoint (literal or from a numeric reference) must be an XML 1.0
  * Char; control characters / surrogates / out-of-range are rejected. The input
@@ -27,7 +27,7 @@ mkr_xml_is_char(uint32_t c)
 /* Decode one codepoint from UTF-8. STRICT (self-contained, not trusting the
  * caller): rejects truncation, bad continuation bytes, overlong encodings,
  * surrogates and out-of-range values. Returns the byte length (1-4) or 0 on any
- * violation — fail closed, even if some future caller feeds unvalidated bytes. */
+ * violation - fail closed, even if some future caller feeds unvalidated bytes. */
 static int
 is_cont(const char *p, const char *end)
 {
@@ -161,7 +161,7 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
             int bl = utf8_decode(p, end, &cp);
             if (bl == 0 || !mkr_xml_is_char(cp)) { *status = MKR_XML_ERR_SYNTAX; return NULL; }
             /* §3.3.3: in an attribute value a *literal* TAB/LF/CR normalizes to a
-             * space (reference-derived whitespace is preserved — see below). */
+             * space (reference-derived whitespace is preserved - see below). */
             if (mode == MKR_XML_EXPAND_ATTR
                 && (cp == 0x9u || cp == 0xAu || cp == 0xDu)) {
                 buf[o++] = ' ';
@@ -179,7 +179,7 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
         if (p < end && *p == '#') {                 /* numeric character reference */
             p++;
             int hex = 0;
-            /* §4.1: the hex marker is a lowercase 'x' only — "&#X58;" is not-wf
+            /* §4.1: the hex marker is a lowercase 'x' only - "&#X58;" is not-wf
              * (an uppercase 'X' is not a decimal digit either, so it is rejected
              * as "no digits" below). */
             if (p < end && *p == 'x') { hex = 1; p++; }
@@ -193,7 +193,7 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
                 else if (hex && d >= 'a' && d <= 'f')  dig = (uint32_t)(d - 'a' + 10);
                 else if (hex && d >= 'A' && d <= 'F')  dig = (uint32_t)(d - 'A' + 10);
                 else { *status = MKR_XML_ERR_SYNTAX; return NULL; }
-                /* check BEFORE the multiply-add so a giant &#999…; can never wrap
+                /* check BEFORE the multiply-add so a giant &#999...; can never wrap
                  * uint32_t into the valid range and be falsely accepted. */
                 if (cp > (0x10FFFFu - dig) / base) { *status = MKR_XML_ERR_SYNTAX; return NULL; }
                 cp = cp * base + dig;

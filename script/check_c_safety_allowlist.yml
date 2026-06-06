@@ -65,6 +65,9 @@ ignore_paths:
     rule: parsed_xml_doc_boundary
     reason: the kind-aware mkr_node_raw resolves an XML Document only after a MKR_DOC_XML check.
   # owner_document (HTML-only lxb_dom_node_t field)
+  - path: ext/makiri/lexbor_compat/post_parse.c
+    rule: owner_document_boundary
+    reason: mkr_lxb_document_bytes resolves a Lexbor node's owner document to size its mraw pools (HTML-only; the XML serializer uses arena_bytes instead).
   - path: ext/makiri/glue/ruby_html_node.c
     rule: owner_document_boundary
     reason: HTML node readers operate on lxb_dom_node_t.

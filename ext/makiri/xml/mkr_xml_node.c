@@ -1,4 +1,4 @@
-/* mkr_xml_node.c — secure-by-design append-only arena + custom XML node.
+/* mkr_xml_node.c - secure-by-design append-only arena + custom XML node.
  * Ruby-free. See mkr_xml_node.h and docs/xml_parser_plan.ja.md §8.1/§8.2. */
 #include "mkr_xml_node.h"
 #include "mkr_xml.h"
@@ -63,20 +63,20 @@ mkr_xml_doc_memsize(const mkr_xml_doc_t *doc)
     return total;
 }
 
-/* THE single checked alloc choke point. PRIVATE — callers use the typed
+/* THE single checked alloc choke point. PRIVATE - callers use the typed
  * wrappers below. Overflow- and budget-checked; on any failure sets doc->oom
  * (sticky) and returns NULL. Nothing else cuts arena. */
 static void *
 arena_alloc(mkr_xml_doc_t *doc, size_t size)
 {
     /* fail-closed contract: the internal callers never pass NULL, but a primitive
-     * must not deref it — return NULL rather than crash (there is no doc to mark). */
+     * must not deref it - return NULL rather than crash (there is no doc to mark). */
     if (doc == NULL || doc->oom) return NULL;
 
     size_t need = align_up(size, ARENA_ALIGN);
     if (need < size) { doc->oom = MKR_XML_ERR_LIMIT; return NULL; } /* align overflow */
 
-    /* budget BEFORE allocation — fail-closed */
+    /* budget BEFORE allocation - fail-closed */
     size_t projected;
     if (!mkr_size_add(doc->arena_bytes, need, &projected) || projected > doc->max_bytes) {
         doc->oom = MKR_XML_ERR_LIMIT;
@@ -123,7 +123,7 @@ mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type)
 {
     if (doc == NULL) return NULL;   /* fail-closed: never deref a NULL document */
     /* guard against a caller passing a bogus type (programming error) so it can
-     * never be silently miscounted/mis-walked — caught by the self-test/ASan. */
+     * never be silently miscounted/mis-walked - caught by the self-test/ASan. */
     if (!valid_xn_type(type)) { doc->oom = MKR_XML_ERR_INTERNAL; return NULL; }
     /* every node (attributes included) counts toward the single node budget; the
      * per-element attribute cap is enforced by the tree builder. */
@@ -154,7 +154,7 @@ mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len)
 char *
 mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
 {
-    /* a 0-length buffer needs no storage — never cut a whole chunk for it. The
+    /* a 0-length buffer needs no storage - never cut a whole chunk for it. The
      * sentinel is a valid non-NULL pointer the caller must not write to (there is
      * nothing to write), mirroring mkr_xml_arena_bytes's "" return. */
     if (len == 0) return (char *)"";
@@ -176,7 +176,7 @@ mkr_xml_node_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *
     return 1;
 }
 
-/* ---- self-test (Makiri.__c_selftest) — mirrors tmp/xml_spike/arena_spike.c --- */
+/* ---- self-test (Makiri.__c_selftest) - mirrors tmp/xml_spike/arena_spike.c --- */
 int
 mkr_xml_node_selftest(void)
 {

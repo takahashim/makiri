@@ -7,13 +7,13 @@
 #
 # Unlike the XPath differential, the *matching* engine here is Lexbor's
 # (mature, upstream-tested) rather than original Makiri code, so this primarily
-# exercises (a) Makiri's glue — descendant-only scope, document order,
-# comma-list de-duplication, error mapping — and (b) where the two engines'
+# exercises (a) Makiri's glue - descendant-only scope, document order,
+# comma-list de-duplication, error mapping - and (b) where the two engines'
 # SUPPORTED-SELECTOR vocabularies differ. Those vocabulary differences are
 # tallied, not scored as bugs:
 #   * lexbor-only  : Makiri matches, Nokogiri raises (e.g. Level-4 :is/:where).
 #   * nokogiri-only: Nokogiri matches, Makiri raises (jQuery extensions such as
-#                    :contains, :gt, :lt, :eq, :first — non-standard; Makiri,
+#                    :contains, :gt, :lt, :eq, :first - non-standard; Makiri,
 #                    being standards-only, deliberately does not support them).
 #   * agree-reject : both raise (pseudo-elements, genuinely invalid selectors).
 # A real divergence is both engines succeeding with a DIFFERENT node set.

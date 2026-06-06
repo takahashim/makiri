@@ -10,7 +10,7 @@
  * compiled against (§2.5 monomorphization). Each instance binds these to its
  * representation BEFORE including this header (mkr_xpath_{html,xml}_prelude.h):
  * the HTML instance to Lexbor's lxb_dom, the XML instance to mkr_xml_node_t. The
- * default here is the neutral `void` — used by the representation-independent
+ * default here is the neutral `void` - used by the representation-independent
  * translation units (driver / lexer / parser / shared engine helpers), which
  * only move node pointers around and never dereference them, so void* is exact
  * and neither representation is privileged as "the default". The MKR_NODE_*
@@ -34,7 +34,7 @@
 /*
  * Evaluation limits and live counters. mkr_xpath_limits_t lives in mkr_xpath.h
  * (the glue reads/writes its fields); the init + the per-op check helpers below
- * are engine-internal. Every overrun returns MKR_XPATH_ERR_LIMIT — NEVER silent
+ * are engine-internal. Every overrun returns MKR_XPATH_ERR_LIMIT - NEVER silent
  * truncation and NEVER an empty result.
  */
 void mkr_xpath_limits_init_defaults(mkr_xpath_limits_t *L);
@@ -58,7 +58,7 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  */
 
 /*
- * Namespace semantics — the rules the evaluator follows. The DEFAULT is
+ * Namespace semantics - the rules the evaluator follows. The DEFAULT is
  * strict / HTML5-faithful: it matches browsers' document.evaluate and
  * Nokogiri::HTML5. A per-context/per-call opt-in (namespace_matching: :lax,
  * see mkr_ctx_unprefixed_lax) relaxes only the unprefixed element rule (§2)
@@ -72,7 +72,7 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  *      - strict (default): resolves in the HTML namespace. Matches an
  *        element iff its local name matches AND its namespace is HTML
  *        (LXB_NS_HTML) or none (LXB_NS__UNDEF). So "//p" matches an HTML
- *        <p>, but "//path" does NOT match an SVG <path> — foreign content
+ *        <p>, but "//path" does NOT match an SVG <path> - foreign content
  *        needs a prefix (or :lax). This is the browser / Nokogiri::HTML5
  *        behaviour. (Pure XPath 1.0 would require the null namespace only,
  *        which would break "//p" since Lexbor marks HTML elements LXB_NS_HTML;
@@ -99,7 +99,7 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  *      of the axis regardless of namespace (foreign included), in both
  *      modes. "prefix:*" matches any node in the namespace bound to prefix.
  *
- *   6. Namespace axis. Currently NOT implemented — Lexbor has no
+ *   6. Namespace axis. Currently NOT implemented - Lexbor has no
  *      DOM-level namespace nodes and the namespace axis is rarely
  *      used in HTML practice. The step driver returns NOT_IMPLEMENTED.
  *      A future Phase may synthesise virtual namespace nodes by
@@ -217,7 +217,7 @@ typedef enum {
   MKR_NK_FILTER,      /* PrimaryExpr Predicate*  optionally followed by /Path */
 } mkr_nk_t;
 
-/* mkr_node_t (opaque), mkr_nodeset_t and mkr_val_t live in mkr_xpath.h — they
+/* mkr_node_t (opaque), mkr_nodeset_t and mkr_val_t live in mkr_xpath.h - they
  * are embedded in mkr_node_s below (the memoization slot) and handed to the glue
  * via the custom-function resolver, so they sit on the public boundary. */
 
@@ -370,9 +370,9 @@ void mkr_val_clear(mkr_val_t *v);
  * Per-evaluation string-value cache.
  *
  * The cache holds (node, string) entries owned by the context. During
- * a single evaluate() call, the same node may be visited many times —
+ * a single evaluate() call, the same node may be visited many times -
  * for example by compare_eq across a node-set, or by fn_sum walking
- * every numeric leaf — and each visit otherwise re-walks the subtree
+ * every numeric leaf - and each visit otherwise re-walks the subtree
  * and re-allocates the result.
  *
  * Lookup returns a BORROWED const char *: ownership stays with the
@@ -447,7 +447,7 @@ void mkr_node_clear_memos        (mkr_node_t *n);
 void mkr_apply_peephole(mkr_node_t *n);
 
 /* mkr_parse (parser entry) and mkr_xpath_set_engine_kind both live in
- * mkr_xpath.h — the glue parses, selects the instance, then evaluates. */
+ * mkr_xpath.h - the glue parses, selects the instance, then evaluates. */
 
 /* Structural self-test of the XML engine instance (Makiri.__c_selftest): parses
  * a small XML document and runs a few XPath queries through the _xml engine,

@@ -1,4 +1,4 @@
-/* mkr_xpath_node_access_xml.h — node-access contract bound to the custom XML node.
+/* mkr_xpath_node_access_xml.h - node-access contract bound to the custom XML node.
  *
  * The XML counterpart of mkr_xpath_node_access_html.h: it binds the MKR_NODE_* / MKR_ELEM_*
  * field-access macros + per-instance services to mkr_xml_node_t, so the shared
@@ -32,7 +32,7 @@
 /* The whole monomorphization rests on the two representations agreeing on the
  * node-type encoding (so a node's `type` integer means the same thing whichever
  * instance walks it). Enforce that agreement at compile time rather than by
- * comment — the XML constants must equal the Lexbor ones. */
+ * comment - the XML constants must equal the Lexbor ones. */
 _Static_assert((int)MKR_XML_NODE_TYPE_ELEMENT == (int)LXB_DOM_NODE_TYPE_ELEMENT,                "node-type encoding drift: ELEMENT");
 _Static_assert((int)MKR_XML_NODE_TYPE_ATTRIBUTE == (int)LXB_DOM_NODE_TYPE_ATTRIBUTE,              "node-type encoding drift: ATTRIBUTE");
 _Static_assert((int)MKR_XML_NODE_TYPE_TEXT == (int)LXB_DOM_NODE_TYPE_TEXT,                   "node-type encoding drift: TEXT");
@@ -56,7 +56,7 @@ _Static_assert((int)MKR_XML_NODE_TYPE_NOTATION == (int)LXB_DOM_NODE_TYPE_NOTATIO
 #define MKR_NODE_PREV(n)          ((n)->prev)
 #define MKR_NODE_PARENT(n)        ((n)->parent)
 
-/* element / attribute handles & iteration — the node IS its own element handle;
+/* element / attribute handles & iteration - the node IS its own element handle;
  * attributes are a sibling-linked list off the element's `attrs`.
  *
  * Host policy (§8.6): a namespace declaration (xmlns / xmlns:*) is a NAMESPACE

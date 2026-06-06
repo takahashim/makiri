@@ -1,4 +1,4 @@
-/* ruby_xml.c — Ruby boundary for the native XML reader (Phase 1).
+/* ruby_xml.c - Ruby boundary for the native XML reader (Phase 1).
  *
  * Makiri::XML(source) / Makiri.parse_xml(source): strict-decode the input
  * (§2.1), then run the Ruby-free parser with the GVL released, and return a
@@ -88,7 +88,7 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
     /* Strict decode under the GVL: invalid UTF-8 / undecodable byte / NUL all
      * raise Makiri::XML::SyntaxError here (no U+FFFD repair). Passing the budget
      * lets decode reject an over-budget input (LimitExceeded) before its
-     * validation copy and the GVL-release copy below — so a hostile oversized
+     * validation copy and the GVL-release copy below - so a hostile oversized
      * document is not materialised twice for a doomed parse. */
     VALUE decoded = mkr_xml_decode_input(rb_String(rb_source), budget);
 
@@ -148,7 +148,7 @@ mkr_xml_query_context(VALUE self, VALUE *out_document)
 
 /* Register a {prefix => uri} Ruby Hash onto +ctx+ for a single query. On any bad
  * entry (non-string-coercible, invalid UTF-8 / embedded NUL, or OOM) the context
- * is freed and an exception is raised — never a partial registration. RSS/Atom
+ * is freed and an exception is raised - never a partial registration. RSS/Atom
  * live in a default namespace, so a prefix is the strict-mode way to select them
  * (e.g. xpath("//a:entry", "a" => "http://www.w3.org/2005/Atom")). */
 static void
@@ -270,7 +270,7 @@ mkr_xml_doc_root(VALUE self)
 /* The document's DOCTYPE as a Makiri::XML::DTD, or nil if the document had no
  * `<!DOCTYPE ...>`. Mirrors Nokogiri's Document#internal_subset. The DTD's name
  * and external/system identifiers are read; the DTD body is NOT parsed (no
- * entity/element declarations are loaded — &name; stays an undefined-entity
+ * entity/element declarations are loaded - &name; stays an undefined-entity
  * error and no external subset is fetched). The doctype node is kept off the
  * tree, so XPath never sees it (XPath 1.0 has no doctype node type). */
 static VALUE
@@ -287,7 +287,7 @@ mkr_init_xml(void)
 {
     /* XML::Document is a Makiri::Document leaf (§12): is_a?(Makiri::Document) is
      * true, but it carries no HTML readers (those are on Makiri::HTML, which it
-     * does not include) — the read-only XML surface is structural. */
+     * does not include) - the read-only XML surface is structural. */
     mkr_cXmlDocument = rb_define_class_under(mkr_mXML, "Document", mkr_cDocument);
     rb_undef_alloc_func(mkr_cXmlDocument); /* created only from C, never .new */
     rb_include_module(mkr_cXmlDocument, mkr_mXmlNodeMethods);
@@ -303,7 +303,7 @@ mkr_init_xml(void)
     rb_define_method(mkr_mXmlNodeMethods, "at_xpath", mkr_xml_doc_at_xpath, -1);
 
     rb_define_module_function(mkr_mMakiri, "parse_xml", mkr_xml_s_parse, -1);
-    /* Makiri::XML(source) — a method named XML on the Makiri module, coexisting
+    /* Makiri::XML(source) - a method named XML on the Makiri module, coexisting
      * with the Makiri::XML constant (the module), as Nokogiri::XML does. */
     rb_define_module_function(mkr_mMakiri, "XML", mkr_xml_s_parse, -1);
 }

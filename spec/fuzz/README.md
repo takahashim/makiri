@@ -11,12 +11,12 @@ A *finding* is therefore one of:
 | category | meaning |
 | --- | --- |
 | `ok` | the query returned a value |
-| `expected` | the query raised a `Makiri::Error` (incl. `XPath::SyntaxError`, `XPath::LimitExceeded`, `CSS::SyntaxError`) — malformed input rejected cleanly, **not** a finding |
+| `expected` | the query raised a `Makiri::Error` (incl. `XPath::SyntaxError`, `XPath::LimitExceeded`, `CSS::SyntaxError`) - malformed input rejected cleanly, **not** a finding |
 | `unexpected` | a non-`Makiri::Error` Ruby exception leaked (contract violation) |
-| `crash` | the worker died from a signal — only `--isolated` catches this |
-| `timeout` | the query didn't return in time (missing budget / runaway) — only `--isolated` |
+| `crash` | the worker died from a signal - only `--isolated` catches this |
+| `timeout` | the query didn't return in time (missing budget / runaway) - only `--isolated` |
 
-The high-value mode is **under AddressSanitizer** — that turns latent memory
+The high-value mode is **under AddressSanitizer** - that turns latent memory
 errors (UAF, heap overflow) in the C engine into `crash` findings.
 
 ## Run
@@ -60,10 +60,10 @@ in-process death leaves a trace.
 ## Outputs
 
 * `spec/fuzz/regressions/<category>_<hash>/` per new finding:
-  * `document.html` — the fixture
-  * `query.txt` — `<target>` then the query
-  * `note.md` — category + the exception / signal
-* `spec/fuzz/regressions/last_input.txt` — most recent input (cleaned on a clean exit)
+  * `document.html` - the fixture
+  * `query.txt` - `<target>` then the query
+  * `note.md` - category + the exception / signal
+* `spec/fuzz/regressions/last_input.txt` - most recent input (cleaned on a clean exit)
 
 Findings are gitignored (the directory is kept via `.gitkeep`).
 

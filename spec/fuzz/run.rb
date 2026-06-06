@@ -2,18 +2,18 @@
 #
 # Robustness fuzzer for Makiri's query surface.
 #
-# Makiri has no second engine to diff against (that is the whole point — no
+# Makiri has no second engine to diff against (that is the whole point - no
 # libxml2), so this fuzzer targets *robustness* rather than differential
 # correctness: it throws generated and mutated XPath / CSS at fixture
 # documents and asserts that Makiri NEVER does anything worse than raise one of
 # its own exceptions. Concretely, a finding is:
 #
-#   * unexpected — a non-Makiri Ruby exception leaked (a contract violation:
-#     malformed input must surface as Makiri::Error, not TypeError/EncodingError/…);
-#   * crash      — the worker died from a signal (segfault, abort) — only
+#   * unexpected - a non-Makiri Ruby exception leaked (a contract violation:
+#     malformed input must surface as Makiri::Error, not TypeError/EncodingError/...);
+#   * crash      - the worker died from a signal (segfault, abort) - only
 #     catchable with --isolated;
-#   * timeout    — the query did not return within --query-timeout (a missing
-#     budget / runaway loop) — only catchable with --isolated.
+#   * timeout    - the query did not return within --query-timeout (a missing
+#     budget / runaway loop) - only catchable with --isolated.
 #
 # Run it under AddressSanitizer (see the project's `rake sanitize` machinery)
 # to turn latent memory errors into crash findings.
@@ -37,6 +37,7 @@ require_relative "grammar"
 require_relative "fixtures"
 require_relative "seed_corpus"
 require_relative "xml_corpus"
+require_relative "mutate"
 
 REGRESSIONS_DIR = File.expand_path("regressions", __dir__)
 STATE_FILE      = File.join(REGRESSIONS_DIR, "last_input.txt")
@@ -48,7 +49,7 @@ OptionParser.new do |o|
   o.banner = "Usage: ruby spec/fuzz/run.rb [options]"
   o.on("--time SEC", Integer, "seconds to run (default 60)")          { |v| opts[:time] = v }
   o.on("--seed N", Integer, "RNG seed (default random)")              { |v| opts[:seed] = v }
-  o.on("--target T", %i[xpath css both xml], "xpath (default), css, both, xml") { |v| opts[:target] = v }
+  o.on("--target T", %i[xpath css both xml mutate], "xpath (default), css, both, xml, mutate") { |v| opts[:target] = v }
   o.on("--isolated", "fork per query (crash/hang safe)")              { opts[:isolated] = true }
   o.on("--query-timeout SEC", Integer, "per-query timeout in --isolated (default 5)") { |v| opts[:query_timeout] = v }
   o.on("-q", "--quiet", "suppress per-finding output")               { opts[:quiet] = true }
@@ -89,9 +90,9 @@ def run_inproc(doc, target, query)
   target == :css ? doc.css(query) : doc.xpath(query)
   [:ok, nil]
 rescue Makiri::Error => e
-  [:expected, e.class.name] # malformed input rejected cleanly — fine
+  [:expected, e.class.name] # malformed input rejected cleanly - fine
 rescue StandardError => e
-  [:unexpected, "#{e.class}: #{e.message}"] # contract violation — a finding
+  [:unexpected, "#{e.class}: #{e.message}"] # contract violation - a finding
 end
 
 def run_isolated(doc, target, query, timeout_sec)
@@ -140,9 +141,9 @@ def run_xml_inproc(input)
   Makiri::XML(input)
   [:ok, nil]
 rescue Makiri::Error => e
-  [:expected, e.class.name] # malformed/hostile input rejected cleanly — fine
+  [:expected, e.class.name] # malformed/hostile input rejected cleanly - fine
 rescue StandardError => e
-  [:unexpected, "#{e.class}: #{e.message}"] # contract violation — a finding
+  [:unexpected, "#{e.class}: #{e.message}"] # contract violation - a finding
 end
 
 def run_xml_isolated(input, timeout_sec)
@@ -155,6 +156,52 @@ def run_xml_isolated(input, timeout_sec)
         [:ok, nil]
       rescue Makiri::Error => e
         [:expected, e.class.name]
+      rescue StandardError => e
+        [:unexpected, "#{e.class}: #{e.message}"&.slice(0, 2000)]
+      end
+    wr.write(Marshal.dump(result))
+    wr.close
+    exit!(0)
+  end
+  wr.close
+
+  unless IO.select([rd], nil, nil, timeout_sec)
+    Process.kill("KILL", pid) rescue nil
+    Process.wait(pid)
+    rd.close
+    return [:timeout, "no response in #{timeout_sec}s"]
+  end
+
+  data = rd.read
+  Process.wait(pid)
+  rd.close
+  if $?.signaled? || !$?.exitstatus.zero?
+    return [:crash, $?.signaled? ? "signal #{$?.termsig}" : "exit #{$?.exitstatus}"]
+  end
+  Marshal.load(data)
+rescue StandardError
+  [:crash, "corrupt worker response"]
+end
+
+# --- XML mutation fuzzing (target :mutate) --------------------------------
+# Here the "query" is a seed: MutateFuzz.run applies a deterministic random edit
+# sequence to a fresh document and checks the structural invariants (no cycle,
+# link consistency, serialization terminates + is a stable fixed point). It
+# returns [category, detail] directly.
+
+def run_mutate_inproc(seed)
+  MutateFuzz.run(seed)
+rescue StandardError => e
+  [:unexpected, "#{e.class}: #{e.message}"]
+end
+
+def run_mutate_isolated(seed, timeout_sec)
+  rd, wr = IO.pipe
+  pid = fork do
+    rd.close
+    result =
+      begin
+        MutateFuzz.run(seed)
       rescue StandardError => e
         [:unexpected, "#{e.class}: #{e.message}"&.slice(0, 2000)]
       end
@@ -215,6 +262,11 @@ while Time.now - t0 < opts[:time]
     query  = XmlFuzz.next_input(rng)
     name   = "xml-input"
     html   = query
+  elsif opts[:target] == :mutate
+    target = :mutate
+    query  = MutateFuzz.next_seed(rng)
+    name   = "mutate"
+    html   = "seed: #{query}\n# replay: ruby -Ilib -r makiri -r ./spec/fuzz/mutate -e 'p MutateFuzz.run(#{query})'"
   else
     target, query = next_query(opts[:target], rng)
     name, html, doc = fixtures.sample(random: rng)
@@ -225,6 +277,9 @@ while Time.now - t0 < opts[:time]
     if target == :xml
       opts[:isolated] ? run_xml_isolated(query, opts[:query_timeout])
                       : run_xml_inproc(query)
+    elsif target == :mutate
+      opts[:isolated] ? run_mutate_isolated(query, opts[:query_timeout])
+                      : run_mutate_inproc(query)
     elsif opts[:isolated]
       run_isolated(doc, target, query, opts[:query_timeout])
     else

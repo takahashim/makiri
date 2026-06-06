@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# v0.2: DOM mutation — attribute set/delete, node creation, tree insertion /
+# v0.2: DOM mutation - attribute set/delete, node creation, tree insertion /
 # removal / replacement, and inner_html= / outer_html=.
 RSpec.describe "Makiri mutation" do
   let(:doc) do

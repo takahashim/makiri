@@ -13,7 +13,12 @@ mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n)
     if (!mkr_size_add(b->len, n, &need)) {
         return MKR_ERR_OOM;
     }
-    if (b->max != 0 && need > b->max) {
+    /* max == 0 is NOT unbounded: it falls back to the conservative default
+     * ceiling, so a caller that never set a cap still fails closed. Either way the
+     * absolute hard ceiling clamps it, so no buffer can exhaust memory. */
+    size_t soft  = (b->max != 0) ? b->max : MKR_BUF_DEFAULT_LIMIT;
+    size_t limit = (soft < MKR_BUF_HARD_MAX) ? soft : MKR_BUF_HARD_MAX;
+    if (need > limit) {
         return MKR_ERR_LIMIT;
     }
     size_t need_term; /* room for the NUL terminator too */

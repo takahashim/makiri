@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# CSS Selectors conformance — a resident, browser-authoritative regression for
+# CSS Selectors conformance - a resident, browser-authoritative regression for
 # Makiri's CSS query surface (Node#css, backed by Lexbor's selector engine).
 # Pure Ruby, no Nokogiri, so it runs under `rake spec`. The matching engine is
 # Lexbor's (mature); these specs pin the supported selector surface and Makiri's

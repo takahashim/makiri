@@ -20,7 +20,7 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
   end
 
   # The two cases below USED to assert-abort. They are kept as subprocess specs so
-  # a regression surfaces as a failed child, not a crash of the whole rspec run —
+  # a regression surfaces as a failed child, not a crash of the whole rspec run -
   # but on macOS a child can't inherit the ASan DYLD preload (SIP strips DYLD_*),
   # so skip them under the sanitizer (the in-process examples that follow cover
   # the same kind-aware Document-branch under ASan).
@@ -148,7 +148,7 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
   end
 
   # An HTML-only API that hands a node ARGUMENT to Lexbor must reject a Makiri::XML
-  # node first — its stored pointer is an mkr_xml_node_t*, not an lxb_dom_node_t,
+  # node first - its stored pointer is an mkr_xml_node_t*, not an lxb_dom_node_t,
   # so reading it as one corrupts memory / segfaults. Coercion goes through
   # mkr_html_arg_node, which fails closed with TypeError.
   describe "HTML APIs reject an XML node argument" do

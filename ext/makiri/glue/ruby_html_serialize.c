@@ -2,6 +2,26 @@
 
 #include <lexbor/html/serialize.h>
 
+/* The serializer's buffer cap, scaled to the document's content - the Lexbor
+ * analogue of the XML serializer's arena_bytes cap (mkr_xml_serialize_cap): 32x
+ * the document's live bytes (covering escaping + maximal pretty indentation) plus
+ * a 64 KiB floor. Tight for a small document, yet it scales with a large one so a
+ * legitimate parse still round-trips through to_html (HTML parsing is itself
+ * byte-uncapped); a pathologically deep pretty-print exceeds it and fails closed
+ * (MKR_ERR_LIMIT) rather than growing without bound. mkr_buf clamps it to
+ * MKR_BUF_HARD_MAX. The HTML tree cannot cycle (mutation guards + Lexbor's insert
+ * checks), so the cap is never reached in normal operation. */
+static size_t
+mkr_html_serialize_cap(lxb_dom_node_t *node)
+{
+    size_t bytes = mkr_lxb_document_bytes(node);
+    size_t cap = 65536;   /* floor for a small subtree */
+    if (bytes > 0) {
+        cap = (bytes <= (SIZE_MAX - cap) / 32) ? cap + bytes * 32 : SIZE_MAX;
+    }
+    return cap;
+}
+
 /*
  * HTML serialization, delegated to Lexbor's serializer.
  *
@@ -11,7 +31,7 @@
  * Lexbor's serializer streams the output in many small chunks (one per tag /
  * attribute / text piece). We collect them into a single growing C buffer
  * (mkr_buf) and copy that into a Ruby String once at the end, instead of
- * rb_str_cat per chunk — the per-chunk Ruby-string growth (a capacity check +
+ * rb_str_cat per chunk - the per-chunk Ruby-string growth (a capacity check +
  * coderange bookkeeping on each of thousands of appends) was the dominant cost.
  * Lexbor emits UTF-8, which is the string's encoding.
  *
@@ -61,7 +81,7 @@ mkr_node_to_html(int argc, VALUE *argv, VALUE self)
     int pretty = mkr_serialize_pretty_opt(argc, argv);
     lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     mkr_buf_t buf;
-    mkr_buf_init(&buf, 0);
+    mkr_buf_init(&buf, mkr_html_serialize_cap(node));
 
     /* A document fragment has no tag of its own; "outer" == its children, so
      * the deep (children) serializer is the right one (the tree serializer
@@ -89,7 +109,7 @@ mkr_node_inner_html(int argc, VALUE *argv, VALUE self)
     int pretty = mkr_serialize_pretty_opt(argc, argv);
     lxb_dom_node_t *node = mkr_html_node_unwrap(self);
     mkr_buf_t buf;
-    mkr_buf_init(&buf, 0);
+    mkr_buf_init(&buf, mkr_html_serialize_cap(node));
     lxb_status_t st = pretty
         ? lxb_html_serialize_pretty_deep_cb(node, LXB_HTML_SERIALIZE_OPT_UNDEF,
                                             0, mkr_serialize_cb, &buf)

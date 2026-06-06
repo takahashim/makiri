@@ -217,7 +217,7 @@ module XmlXPathCorpus
       name: "misc",
       ns: {},
       # Comments and PIs in the prolog/epilog (around the root) are children of
-      # the document node, like Nokogiri / the XPath data model — with realistic
+      # the document node, like Nokogiri / the XPath data model - with realistic
       # whitespace between them to pin that prolog whitespace is not a text node.
       xml: <<~XML,
         <?xml version="1.0"?>

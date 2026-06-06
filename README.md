@@ -1,7 +1,7 @@
 # Makiri
 
 Standards-oriented HTML5 parsing, CSS selector querying, XPath 1.0 querying, and
-a native XML 1.0 reader for Ruby, powered by Lexbor and a native XPath engine —
+a native XML 1.0 reader for Ruby, powered by Lexbor and a native XPath engine -
 with no libxml2 dependency.
 
 > [!WARNING]
@@ -53,7 +53,7 @@ HTML
 doc.css("a").map { |a| a["href"] }      # => ["/a", "/b"]
 doc.at_css("p.lead").text               # => "Hello"
 
-# XPath 1.0 (native engine — no libxml2)
+# XPath 1.0 (native engine - no libxml2)
 doc.xpath("//a").length                 # => 2
 doc.xpath("count(//a)")                 # => 2.0
 doc.at_xpath('//*[@id="main"]/p').text  # => "Hello"
@@ -90,8 +90,8 @@ native XPath 1.0 engine. `source` is a String or any object responding to
 non-`1.0` version declaration raises `Makiri::XML::SyntaxError`, and operations
 XML does not support raise `NotImplementedError` rather than returning a wrong
 result. The tree supports in-place edits and building new subtrees (see below).
-A `<!DOCTYPE …>` is recognized but its **DTD is not processed** (no
-entity/element declarations are loaded, no external subset is fetched) — so a
+A `<!DOCTYPE ...>` is recognized but its **DTD is not processed** (no
+entity/element declarations are loaded, no external subset is fetched) - so a
 DTD-defined entity reference stays an undefined-entity error and **XXE /
 billion-laughs are structurally impossible**. The doctype's name and identifiers
 are still readable:
@@ -136,7 +136,7 @@ dtd.system_id    # => "x.dtd"
 
 Comments and processing instructions in the prolog/epilog are document-node
 children (reachable via `//comment()` / `//processing-instruction()` and
-`#children`), and adjacent CDATA is coalesced — matching libxml2 and the XPath
+`#children`), and adjacent CDATA is coalesced - matching libxml2 and the XPath
 data model. `#to_xml` / `#to_s` serialize the tree back to XML (`pretty: true`,
 or `indent: n`, for indented element-only content; `encoding: "Shift_JIS"` to
 transcode, with a hex character reference for anything the encoding can't hold);
@@ -146,7 +146,7 @@ comments), byte-identical to libxml2. CSS is intentionally unavailable for XML
 (Lexbor's selector engine lower-cases names, which breaks XML case/namespace
 matching) - use XPath.
 
-The tree supports in-place mutation — every edit validates its input (names as
+The tree supports in-place mutation - every edit validates its input (names as
 XML 1.0 QNames, values as XML Char) so the tree stays serializable to
 well-formed XML, and a removed node is detached, never freed, so a live wrapper
 that aliases it stays usable:
@@ -165,7 +165,7 @@ doc.at_xpath("//draft").remove
 doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><post dc:k=\"v\">Bye</post></feed>"
 ```
 
-New subtrees can be built too — `Document#create_element` (and
+New subtrees can be built too - `Document#create_element` (and
 `#create_text_node` / `#create_comment` / `#create_cdata` /
 `#create_processing_instruction`) make detached nodes, and `#add_child` / `<<`,
 `#add_previous_sibling` / `#before`, `#add_next_sibling` / `#after`, `#replace`
@@ -191,9 +191,9 @@ Supported edits: `#[]=`, `#delete` / `#remove_attribute`, `#content=`, `#name=`,
 parsing a string/fragment and `DocumentFragment` are a later phase.
 
 The character encoding is autodetected (XML 1.0 Appendix F): a byte-order mark or
-the `<?xml encoding="…"?>` declaration selects it, so raw bytes (`File.binread`)
+the `<?xml encoding="..."?>` declaration selects it, so raw bytes (`File.binread`)
 in UTF-16, Shift_JIS, etc. parse correctly and a leading BOM is stripped. A
-concrete String encoding stays authoritative — a BOM or declaration that
+concrete String encoding stays authoritative - a BOM or declaration that
 contradicts it is a fatal error, not a silent mis-decode.
 
 Parsing is DoS-bounded by a single arena memory ceiling (default 256 MiB,
@@ -214,7 +214,7 @@ Nokogiri's over generated documents (`rake conformance:xml_pbt`).
 
 * Constructing a `Makiri::XML::Document` from scratch, and parsing an XML
   string/fragment into nodes (`#add_child("<x/>")`, `DocumentFragment`). (In-place
-  edits, the node factories — `Document#create_element` etc. — node insertion
+  edits, the node factories - `Document#create_element` etc. - node insertion
   (`#add_child` / `#before` / `#after` / `#replace`), and `#to_xml` serialization
   ARE supported.)
 * XSLT, DTD / Schema / RelaxNG validation, XPointer, XInclude.
@@ -256,15 +256,15 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     both). External entities/subsets are never fetched (no I/O).
   * Mutation supports in-place edits, the node factories, and node insertion, but
     not yet parsing a string/fragment into nodes or constructing a document from
-    scratch. (`#to_xml` serialization is supported; HTML serialization — `to_html`
-    / `inner_html` / `outer_html` — is not.)
+    scratch. (`#to_xml` serialization is supported; HTML serialization - `to_html`
+    / `inner_html` / `outer_html` - is not.)
 * Otherwise the parsed tree is byte-identical to `Nokogiri::XML`'s (verified by
   the property-based differential), including namespaces, prolog/epilog comments
   and PIs, and adjacent-CDATA coalescing.
 
 ### CSS
 
-* jQuery/Nokogiri CSS extensions are not supported (`:contains`, `:gt`, `:lt`, `:eq`, `:first`, …)
+* jQuery/Nokogiri CSS extensions are not supported (`:contains`, `:gt`, `:lt`, `:eq`, `:first`, ...)
   * Makiri uses Lexbor's standards-only selector engine.
     Use XPath (`xpath("//p[contains(., 'x')]")`) or Enumerable (`css('li')[1]`).
     Standard Level-4 selectors (`:is` / `:where` / `:has`) are supported; some of which Nokogiri rejects.

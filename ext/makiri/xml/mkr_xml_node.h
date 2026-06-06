@@ -1,9 +1,9 @@
-/* mkr_xml_node.h — custom XML DOM node + secure-by-design append-only arena.
+/* mkr_xml_node.h - custom XML DOM node + secure-by-design append-only arena.
  *
  * XML does NOT use lxb_dom (§2.5): a custom node held in a per-document arena,
  * case-preserved, with zero dependency on Lexbor or its internal APIs. The arena
  * is append-only and freed whole with the document; nodes are never individually
- * freed, so Ruby wrappers that alias a node stay valid — including across a
+ * freed, so Ruby wrappers that alias a node stay valid - including across a
  * mutation, which only detaches (mkr_xml_mutate.c is detach-never-destroy).
  * Ruby-free. Memory-safety structure documented in docs/xml_parser_plan.ja.md
  * §8.1/§8.2 and proven by mkr_xml_node_selftest().
@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* The XML representation's DOM node-type constants — the counterpart of Lexbor's
+/* The XML representation's DOM node-type constants - the counterpart of Lexbor's
  * LXB_DOM_NODE_TYPE_* for HTML. The numeric values mirror the DOM/Lexbor
  * encoding exactly (asserted in mkr_xpath_node_access_xml.h) so the monomorphized
  * XPath engine's neutral MKR_NTYPE_* bind to whichever representation it compiles
@@ -43,7 +43,7 @@ typedef enum {
  *   3. their lengths grouped at the end.
  * Grouping the uint32 lengths lets adjacent ones pack into shared 8-byte slots
  * instead of each wasting 4 bytes of padding before the next 8-aligned pointer
- * — 144 -> 128 bytes/node (measured), ~160 MB saved at the 10M-node cap. The
+ * - 144 -> 128 bytes/node (measured), ~160 MB saved at the 10M-node cap. The
  * split is invisible to callers: a length is only ever read via its paired
  * pointer (n->qname / n->qname_len), the field NAMES are unchanged, and the
  * lengths stay uint32 (the deliberate per-slice 4 GiB cap; see the enum note).
@@ -86,7 +86,7 @@ typedef struct mkr_xml_doc {
                                     * prefix/value means that id is absent. */
 } mkr_xml_doc_t;
 /* The PER-ELEMENT attribute cap (MKR_XML_MAX_ATTRS) is enforced by the tree
- * builder; the arena counts every node — attributes included — toward max_nodes. */
+ * builder; the arena counts every node - attributes included - toward max_nodes. */
 
 mkr_xml_doc_t *mkr_xml_doc_new(void);            /* budgets from MKR_XML_MAX_*; NULL on OOM */
 void           mkr_xml_doc_destroy(mkr_xml_doc_t *doc);   /* whole-arena free */

@@ -35,7 +35,7 @@ P_strndup(mkr_parser_t *P, const char *s, size_t n)
 
 /* strndup into an owned-text AST slot (node-test name, literal, varref/fncall
  * name). Returns 0 on success, -1 on OOM (P->err set, slot left {NULL,0}).
- * Callers MUST propagate the failure — a {NULL,0} slot left in the AST would
+ * Callers MUST propagate the failure - a {NULL,0} slot left in the AST would
  * silently mis-compare at evaluation, so the parse fails closed instead. The
  * stored length lets the evaluator compare names without a per-node strlen.
  * `text` is a slice of the already-validated expr buffer, so the copy is valid. */
@@ -198,14 +198,14 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
   }
 
   if (TOK(P).kind == MKR_TK_QNAME) {
-    /* QName name test: `prefix:local` or `prefix:*` — split at the colon. */
+    /* QName name test: `prefix:local` or `prefix:*` - split at the colon. */
     const char *s = TOK(P).text.ptr;
     size_t      n = TOK(P).text.len;
     size_t      colon = 0;
     while (colon < n && s[colon] != ':') colon++;
     if (P_fill_owned_text(P, mkr_borrowed_text(s, colon), &out->prefix) != 0) return -1;
     if (n - colon - 1 == 1 && s[colon + 1] == '*') {
-      /* prefix:* — any element in the prefix's namespace. */
+      /* prefix:* - any element in the prefix's namespace. */
       out->kind = MKR_NT_WILDCARD;
     } else {
       out->kind  = MKR_NT_NAME;
@@ -581,7 +581,7 @@ looks_like_filter_expr(mkr_parser_t *P)
     if (TOK(P).kind == MKR_TK_NAME && is_nodetype_name(s, n)) {
       return 0;
     }
-    /* peek next char (skipping ws) for '(' — cheaper than running the lexer. */
+    /* peek next char (skipping ws) for '(' - cheaper than running the lexer. */
     const char *p = P->L.cur;
     while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
     return (*p == '(');
@@ -804,7 +804,7 @@ mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_
    * pass so the latter sees the rewritten step structure. */
   mkr_apply_peephole(root);
   /* Static hoisting pass: marks subtrees that can be memoized during
-   * eval. Cheap (single AST walk) and runs once per parse — cached by
+   * eval. Cheap (single AST walk) and runs once per parse - cached by
    * the wrapper-level AST cache. */
   mkr_mark_context_independent(root);
   return root;

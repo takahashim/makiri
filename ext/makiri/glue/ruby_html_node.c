@@ -1,4 +1,4 @@
-/* ruby_html_node.c — the HTML (Lexbor) node representation: wrapping an
+/* ruby_html_node.c - the HTML (Lexbor) node representation: wrapping an
  * lxb_dom_node_t into a Makiri::HTML::* leaf, the HTML node-pointer accessor, and
  * all the HTML node reader methods. The XML counterpart is ruby_xml_node.c; the
  * shared, representation-neutral node type system (the TypedData types plus the
@@ -27,7 +27,7 @@ mkr_wrap_html_node(lxb_dom_node_t *node, VALUE document)
     /* An HTML (lxb_dom) node wraps to a Makiri::HTML::* leaf; the leaf carries the
      * lxb_dom reader methods via the included mkr_mHtmlNodeMethods module. XML
      * nodes get their own wrap path (Makiri::XML::* leaves) in step 2. An uncommon
-     * DOM node type with no specific leaf (entity/notation — Lexbor's HTML parser
+     * DOM node type with no specific leaf (entity/notation - Lexbor's HTML parser
      * does not produce these) falls back to the generic Makiri::HTML::Node rather
      * than being misclassified as an Element. */
     VALUE klass;
@@ -54,7 +54,7 @@ mkr_wrap_html_node(lxb_dom_node_t *node, VALUE document)
 
 /* The HTML node-pointer accessor: returns the lxb_dom_node_t for an HTML node or
  * HTML Document, and RAISES TypeError for an XML node/Document (TypedData_Get_Struct
- * checks mkr_html_node_type, which an XML node — wrapped under mkr_xml_node_type —
+ * checks mkr_html_node_type, which an XML node - wrapped under mkr_xml_node_type -
  * does not satisfy). Every HTML-glue site that dereferences a node or hands its
  * pointer to Lexbor MUST use this, for `self` and for arguments alike. */
 lxb_dom_node_t *
@@ -116,7 +116,7 @@ mkr_node_name(VALUE self)
 /* ------------------------------------------------------------------ */
 
 /*
- * Local name (DOM `localName`): the name without any prefix — "div" for
+ * Local name (DOM `localName`): the name without any prefix - "div" for
  * <div>, "path" for an SVG <path>, "href" for an xlink:href attribute.
  * Defined on Element and Attribute only; nil for the other node kinds (the DOM
  * gives a Text/Comment/Document no localName).
@@ -157,7 +157,7 @@ mkr_node_local_name(VALUE self)
 
 /*
  * Namespace prefix (DOM `prefix`): nil unless the qualified name is
- * `prefix:local` — typically nil for HTML5-parsed content. Derived from the
+ * `prefix:local` - typically nil for HTML5-parsed content. Derived from the
  * qualified-vs-local length (qualified == prefix ":" local), so a colon inside
  * a local name can't be mistaken for a separator. Element/Attribute only.
  */
@@ -210,7 +210,7 @@ mkr_attr_ns_for_prefix(const char *p, size_t n)
 /*
  * Namespace URI (DOM `namespaceURI`).
  *
- * Element: resolved from node->ns, so — DOM-faithfully — an HTML element is in
+ * Element: resolved from node->ns, so - DOM-faithfully - an HTML element is in
  * the XHTML namespace ("http://www.w3.org/1999/xhtml"), not nil (an HTML
  * element is never namespaceless; this is what browsers' DOM and `namespace-uri()`
  * return). SVG/MathML elements get their own URI; nil only when truly
@@ -247,7 +247,7 @@ mkr_node_namespace_uri(VALUE self)
         lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
 
         /* An attribute set via set_attribute_ns records its OWN namespace on the
-         * attr node — distinguishable because it differs from the owner element's
+         * attr node - distinguishable because it differs from the owner element's
          * ns (a normally-set/parsed attr inherits the element's). Resolve it from
          * the interned id; LXB_NS__UNDEF (set by set_attribute_ns(nil, ...)) is
          * the null namespace. */
@@ -281,7 +281,7 @@ mkr_node_namespace_uri(VALUE self)
 
 /*
  * Element#tag_name (DOM `tagName`): the qualified name, uppercased for an HTML
- * element in an HTML document ("DIV"), as the DOM specifies — unlike #name,
+ * element in an HTML document ("DIV"), as the DOM specifies - unlike #name,
  * which is the lowercase qualified name. SVG/MathML elements keep their case.
  * nil for non-element nodes.
  */
@@ -331,7 +331,7 @@ mkr_node_get_type(VALUE self)
  * Returns the String, or nil when the doctype carries no such identifier.
  * Lexbor represents a missing id inconsistently (NULL after `SYSTEM`, but an
  * empty string for a bare `<!DOCTYPE html>`), so we treat empty as absent and
- * return nil for both — matching Nokogiri (which also reports nil for an empty
+ * return nil for both - matching Nokogiri (which also reports nil for an empty
  * or missing id). Defined only on Makiri::DocumentType, so the receiver is
  * always a doctype node; the guard is belt-and-suspenders.
  */
@@ -364,7 +364,7 @@ mkr_doctype_system_id(VALUE self)
 }
 
 /*
- * A <template> element's "template contents" — the separate DocumentFragment
+ * A <template> element's "template contents" - the separate DocumentFragment
  * the HTML parser fills instead of making the parsed nodes children of the
  * <template> (WHATWG DOM `HTMLTemplateElement.content`; browsers behave the
  * same: template.children is empty, template.content holds the nodes). Lexbor
@@ -374,7 +374,7 @@ mkr_doctype_system_id(VALUE self)
  * Returns nil for any node that is not an HTML <template>. Note: CSS/XPath over
  * the *template element itself* deliberately do NOT descend into the content
  * (matching the DOM, and unavoidable for CSS since it runs Lexbor's selector
- * engine over the real tree) — query the fragment instead.
+ * engine over the real tree) - query the fragment instead.
  */
 static VALUE
 mkr_node_content_fragment(VALUE self)
@@ -411,11 +411,11 @@ mkr_node_content(VALUE self)
      * Preferred: the per-document text index (lexbor_compat/text_index.c) maps
      * this node to the contiguous, document-order run of its descendants' text
      * slices, so we serve a single pre-sized memcpy run with no per-extraction
-     * tree walk — the walk is otherwise the dominant, cache-bound cost. Built
+     * tree walk - the walk is otherwise the dominant, cache-bound cost. Built
      * lazily on first use and dropped on any mutation, so a slice can never
      * point at reallocated/detached storage.
      *
-     * Fallback (index unavailable — node outside the indexed tree, e.g. a
+     * Fallback (index unavailable - node outside the indexed tree, e.g. a
      * fragment, or a build OOM): stream each descendant text/CDATA node's data
      * straight into the Ruby string via an iterative pre-order walk (stack-safe;
      * skips Lexbor's intermediate arena buffer + copy). */
@@ -738,7 +738,7 @@ mkr_node_equals(VALUE self, VALUE other)
         return Qfalse;
     }
     /* Identity by pointer, kind-agnostic (an HTML node is simply never equal to an
-     * XML node) — mkr_node_id never dereferences, so comparing across
+     * XML node) - mkr_node_id never dereferences, so comparing across
      * representations is safe. */
     return mkr_node_id(self) == mkr_node_id(other) ? Qtrue : Qfalse;
 }
@@ -766,7 +766,7 @@ mkr_node_spaceship(VALUE self, VALUE other)
 {
     if (!rb_obj_is_kind_of(other, mkr_cNode)
         || rb_obj_is_kind_of(mkr_node_document(other), mkr_cXmlDocument)) {
-        return Qnil;   /* not a node, or an XML node — never order-comparable to HTML */
+        return Qnil;   /* not a node, or an XML node - never order-comparable to HTML */
     }
     lxb_dom_node_t *a = mkr_html_node_unwrap(self);
     lxb_dom_node_t *b = mkr_html_node_unwrap(other);

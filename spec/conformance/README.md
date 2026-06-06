@@ -36,7 +36,7 @@ bench-only dependency, so `conformance:xpath` runs outside the bundle, like
 
 ---
 
-## 1. HTML5 parsing — `html5lib_runner.rb`
+## 1. HTML5 parsing - `html5lib_runner.rb`
 
 Runs the WHATWG [html5lib-tests](https://github.com/html5lib/html5lib-tests)
 `tree-construction` suite through `Makiri::HTML(...)` and string-compares
@@ -65,23 +65,23 @@ skipped: 8 script
 unsupported: 0
 ```
 
-**Makiri's HTML5 parsing matches html5lib-tests exactly** — every full-document
+**Makiri's HTML5 parsing matches html5lib-tests exactly** - every full-document
 and fragment test its Ruby API can represent passes. The only tests not run are
 the 8 scripting-on ones (out of scope).
 
 ---
 
-## 2. XPath 1.0 — `xpath_diff.rb`
+## 2. XPath 1.0 - `xpath_diff.rb`
 
 Makiri's XPath engine is original code (no libxml2 anywhere), so it has no
-mature implementation backing it — making a differential against libxml2 (via
+mature implementation backing it - making a differential against libxml2 (via
 Nokogiri) its highest-value correctness net. Both sides parse with their HTML5
 frontend, so the DOM trees are isomorphic and matched nodes are compared by
 absolute path.
 
 - **Corpus:** a curated, deterministic set (`xpath_corpus.rb`) covering every
   axis, the node tests, position/predicate semantics, the function library, and
-  the operators — plus optional grammar-generated expressions
+  the operators - plus optional grammar-generated expressions
   (`--generate N --seed S`, reusing the fuzzer's grammar).
 - **Comparison:** node-sets by set-of-paths (order tracked separately, since
   XPath node-sets are formally unordered); scalars by value (numbers within
@@ -99,19 +99,19 @@ generated (8000, seed 1): ~69700 pairs, 0 result/raise divergences
 
 Buckets that are tallied, not scored as bugs:
 
-- **`noko-strict`** — Makiri evaluates a *top-level* `position()`/`last()` (the
+- **`noko-strict`** - Makiri evaluates a *top-level* `position()`/`last()` (the
   document-root context position/size is 1) where libxml2 raises a syntax error.
   Makiri's behaviour is defensible per XPath 1.0.
-- **`ns-repr`** — `namespace-uri()` of an HTML element is the XHTML URI in
+- **`ns-repr`** - `namespace-uri()` of an HTML element is the XHTML URI in
   Makiri (DOM-correct, what browsers report) but `""` in Nokogiri::HTML5, which
   drops the HTML namespace. A representation difference where Makiri is the more
   correct side; not a bug.
 
 ### Findings
 
-1. **Namespace matching — now strict by default (resolved).** Makiri's
+1. **Namespace matching - now strict by default (resolved).** Makiri's
    unprefixed element name tests resolve in the HTML namespace: `//div` matches,
-   but `//svg` / `//path` do NOT — foreign content needs a registered prefix
+   but `//svg` / `//path` do NOT - foreign content needs a registered prefix
    (`//svg:path`), exactly like browsers' `document.evaluate` and
    `Nokogiri::HTML5`. The old namespace-agnostic behaviour (where `//path` finds
    the SVG element) is available per-call/per-context via
@@ -120,11 +120,11 @@ Buckets that are tallied, not scored as bugs:
 
 ---
 
-## 3. XPath over HTML — `wpt_domxpath_spec.rb`
+## 3. XPath over HTML - `wpt_domxpath_spec.rb`
 
 A hand-port of the evaluation-semantics subset of Web Platform Tests'
 [`domxpath/`](https://github.com/web-platform-tests/wpt/tree/master/domxpath)
-suite — the browser `document.evaluate` tests, the de-facto reference for XPath
+suite - the browser `document.evaluate` tests, the de-facto reference for XPath
 over the HTML DOM. Unlike the harnesses above this is a plain `*_spec.rb` (pure
 Ruby, no Nokogiri), so it runs under `rake spec`.
 
@@ -141,19 +141,19 @@ of HTML name tests (Makiri and Nokogiri::HTML5 are case-sensitive), and hiding
 
 ---
 
-## 4. CSS Selectors — `css_diff.rb` + `css_selectors_spec.rb`
+## 4. CSS Selectors - `css_diff.rb` + `css_selectors_spec.rb`
 
 Makiri's `Node#css` is backed by **Lexbor's selector engine** (mature,
 upstream-tested), not original code, so unlike XPath the matching itself is not
-the main risk. These check (a) Makiri's glue — descendant-only scope, document
-order, comma de-duplication, error mapping — and (b) where Lexbor's and
+the main risk. These check (a) Makiri's glue - descendant-only scope, document
+order, comma de-duplication, error mapping - and (b) where Lexbor's and
 Nokogiri's *supported-selector vocabularies* differ.
 
 - `css_diff.rb` (`rake conformance:css`): differential vs `Nokogiri::HTML5#css`
   over a standard-selector corpus (`css_corpus.rb`). On standard selectors the
   two agree exactly; the differences are vocabulary only and are bucketed:
   `lexbor-only` (Level-4 `:is`/`:where` Nokogiri rejects), `nokogiri-only`
-  (jQuery extensions `:contains`/`:gt`/`:eq`/`:first` — non-standard, Makiri
+  (jQuery extensions `:contains`/`:gt`/`:eq`/`:first` - non-standard, Makiri
   rejects by design), `agree-reject` (pseudo-elements / invalid).
 - `css_selectors_spec.rb`: a resident pure-Ruby spec pinning the supported
   surface (type/universal/class/id, all combinators, every attribute operator,
@@ -163,12 +163,12 @@ Nokogiri's *supported-selector vocabularies* differ.
 ### Findings
 
 1. **jQuery/Nokogiri CSS extensions are not supported (by design).**
-   `:contains`, `:gt`, `:lt`, `:eq`, `:first`, `:last`, … are not standard CSS;
+   `:contains`, `:gt`, `:lt`, `:eq`, `:first`, `:last`, ... are not standard CSS;
    Lexbor rejects them. Use XPath (`xpath("//p[contains(.,'x')]")`) or
    Enumerable (`css('li')[1]`) instead.
 2. **Type selectors are case-insensitive; class/id are not quirks-aware.**
    Lexbor matches type selectors ASCII-case-insensitively (CSS-correct for HTML;
-   `LI` matches `<li>` — Nokogiri::HTML5 is wrongly case-sensitive here), but it
+   `LI` matches `<li>` - Nokogiri::HTML5 is wrongly case-sensitive here), but it
    matches class/id case-INsensitively regardless of the document's quirks mode,
    whereas a no-quirks document should treat them case-sensitively (browsers /
    Nokogiri::HTML5 do). That is Lexbor's behaviour (not patched); recorded as a

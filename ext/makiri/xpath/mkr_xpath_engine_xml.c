@@ -1,4 +1,4 @@
-/* mkr_xpath_engine_xml.c — the XML monomorphization of the XPath engine.
+/* mkr_xpath_engine_xml.c - the XML monomorphization of the XPath engine.
  *
  * Byte-for-byte the same bodies as mkr_xpath_engine_html.c, but the prelude
  * binds the MKR_NODE_* / MKR_DOM_* contract to the custom mkr_xml_node_t and

@@ -39,7 +39,7 @@ module Makiri
 
       # An independent copy of the whole document (like Nokogiri's Document#dup).
       # Built by serialising and re-parsing, so the copy shares no nodes with the
-      # original — Node#dup's clone_node delegation is wrong for a document node,
+      # original - Node#dup's clone_node delegation is wrong for a document node,
       # hence this override. (A DOM mutated into a shape the HTML parser would not
       # itself produce, e.g. a foster-parented table cell, may be re-normalised on
       # re-parse; a freshly parsed document round-trips unchanged.) Any level /

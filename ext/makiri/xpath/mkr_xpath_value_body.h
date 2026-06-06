@@ -10,7 +10,7 @@
 
 /*
  * Per-instance value model: the node-DEREFERENCING half of the runtime values
- * — node string-value construction (XPath 1.0 §5), the value coercions that
+ * - node string-value construction (XPath 1.0 §5), the value coercions that
  * read a node-set's first node, document-order comparison/sort, and the
  * string-value cache's node-keyed insert. Compiled once per representation
  * (HTML / XML) with MKR_NODE_* bound by the including prelude.
@@ -122,7 +122,7 @@ append_text_content(MKR_DOM_NODE *node, mkr_buf_t *buf)
 /* Append the string-value of every character-data descendant of `node`, in
  * document order. Both TEXT and CDATA-section nodes are character data (XPath
  * 1.0 §3 / §5: a CDATA section is text, not a distinct node type), so both
- * contribute — matching the text index that backs Node#text. Iterative
+ * contribute - matching the text index that backs Node#text. Iterative
  * (parent-pointer) pre-order walk rather than C recursion, so an adversarially
  * deep tree cannot overflow the stack (fail-closed / no DoS); O(1) extra space.
  * Descends only into elements. */
@@ -134,7 +134,7 @@ append_text_descendants(MKR_DOM_NODE *node, mkr_buf_t *buf)
     if (MKR_NODE_TYPE(cur) == MKR_NTYPE_TEXT
         || MKR_NODE_TYPE(cur) == MKR_NTYPE_CDATA_SECTION) {
       mkr_status_t st = append_text_content(cur, buf);
-      if (st != MKR_OK) return st; /* LIMIT or OOM — caller fails closed */
+      if (st != MKR_OK) return st; /* LIMIT or OOM - caller fails closed */
     }
     if (MKR_NODE_TYPE(cur) == MKR_NTYPE_ELEMENT && MKR_NODE_FIRST_CHILD(cur) != NULL) {
       cur = MKR_NODE_FIRST_CHILD(cur);
@@ -175,8 +175,12 @@ build_string_value(const MKR_DOM_NODE *node, mkr_buf_t *buf)
 static void
 mkr_build_node_text_unchecked(const MKR_DOM_NODE *node, mkr_owned_text_t *out)
 {
-  /* Uncapped, best-effort: callers (number/string coercion) require a non-NULL
-   * text, so on any failure fall back to an owned "" rather than NULL. */
+  /* Best-effort node string-value, used only for NUMBER coercion (its sole
+   * caller): the text is parsed straight to a double, so mkr_buf's conservative
+   * default ceiling (max == 0) is ample - a node whose text exceeds it was never a
+   * valid number, and the build then falls back to an owned "" (-> NaN), which is
+   * the correct coercion result anyway. On any failure return "" rather than NULL,
+   * since callers require a non-NULL text. */
   mkr_owned_text_init(out);
   mkr_buf_t buf;
   mkr_buf_init(&buf, 0);
@@ -442,7 +446,7 @@ doc_order_cmp(const MKR_DOM_NODE *a, const MKR_DOM_NODE *b)
    * doc-order index would only avoid once a single sort reaches its build
    * threshold. */
   if (MKR_NODE_PARENT(aa) == NULL) {
-    /* Different documents/roots — undefined; keep stable. */
+    /* Different documents/roots - undefined; keep stable. */
     return 0;
   }
   const MKR_DOM_NODE *fa = aa, *fb = bb;
@@ -578,7 +582,7 @@ doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const MKR_DOM_NODE *a, const MKR_DOM
   size_t oa, ob;
   if (order_index_lookup(idx, a, &oa) != 0) return doc_order_cmp(a, b);
   if (order_index_lookup(idx, b, &ob) != 0) return doc_order_cmp(a, b);
-  /* Safe comparison — compare, don't subtract (unsigned difference wraps). */
+  /* Safe comparison - compare, don't subtract (unsigned difference wraps). */
   if (oa < ob) return -1;
   if (oa > ob) return 1;
   return 0;
@@ -586,7 +590,7 @@ doc_order_cmp_ctx(mkr_xpath_context_t *ctx, const MKR_DOM_NODE *a, const MKR_DOM
 
 /* Bottom-up merge sort. Threading ctx through avoids the qsort_r /
  * thread-local hack and keeps everything reentrant. Stable as a
- * bonus: ties (same ord — only possible for synthesised nodes that
+ * bonus: ties (same ord - only possible for synthesised nodes that
  * weren't in the index) preserve insertion order. */
 static void
 ms_merge(void **arr, void **tmp,

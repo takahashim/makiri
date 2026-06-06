@@ -119,7 +119,7 @@ Init_makiri(void)
      * every leaf, so XML nodes (added in step 2) never inherit an HTML reader. */
     mkr_mHTML          = rb_define_module_under(mkr_mMakiri, "HTML");
     mkr_mHtmlNodeMethods = rb_define_module_under(mkr_mHTML, "NodeMethods");
-    /* The concrete generic HTML node — the wrap fallback for an uncommon DOM node
+    /* The concrete generic HTML node - the wrap fallback for an uncommon DOM node
      * type with no more specific leaf. Carries the readers but is not an Element. */
     mkr_cHtmlNode      = rb_define_class_under(mkr_mHTML, "Node",         mkr_cNode);
     mkr_cHtmlDocument  = rb_define_class_under(mkr_mHTML, "Document",     mkr_cDocument);
@@ -135,7 +135,7 @@ Init_makiri(void)
     mkr_cHtmlDocumentFragment =
         rb_define_class_under(mkr_mHTML, "DocumentFragment", mkr_cDocumentFragment);
 
-    /* Every HTML leaf — the generic node and the typed leaves — gets the shared
+    /* Every HTML leaf - the generic node and the typed leaves - gets the shared
      * lxb_dom reader/query methods. */
     VALUE html_leaves[] = {
         mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttribute,
@@ -159,7 +159,7 @@ Init_makiri(void)
     mkr_cXmlCData     = rb_define_class_under(mkr_mXML, "CData",     mkr_cCData);
     mkr_cXmlProcessingInstruction =
         rb_define_class_under(mkr_mXML, "ProcessingInstruction", mkr_cProcessingInstruction);
-    /* Makiri::XML::DTD — the off-tree DOCTYPE metadata node (doc->doctype),
+    /* Makiri::XML::DTD - the off-tree DOCTYPE metadata node (doc->doctype),
      * reachable only via Document#internal_subset (XPath has no doctype node, as
      * in Nokogiri/libxml2). It is an XML node leaf (identity, fail-closed
      * css/serialize) with its own name/external_id/system_id readers. */

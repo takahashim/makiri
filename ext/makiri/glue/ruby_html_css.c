@@ -54,8 +54,8 @@ mkr_css_match_cb(lxb_dom_node_t *node, lxb_css_selector_specificity_t spec,
 /* Compile +rb_selector+, hand the established engine + parsed list to +run+
  * (which performs the actual find / match_node against +node+), then tear the
  * Lexbor CSS object graph down in the required order and fail closed. Centralises
- * the engine lifecycle so the construction/teardown order — a delicate
- * Lexbor-specific detail — lives in exactly one place. Raises
+ * the engine lifecycle so the construction/teardown order - a delicate
+ * Lexbor-specific detail - lives in exactly one place. Raises
  * Makiri::CSS::SyntaxError on a bad selector, Makiri::Error on engine init
  * failure; any result-specific limits are checked by the caller after return. */
 static void
@@ -152,7 +152,7 @@ mkr_css_query(VALUE self, VALUE rb_selector, int first_only)
 }
 
 /* Node#matches?(selector): does THIS node match the CSS selector? (Like
- * Nokogiri — tested against the node itself, not its descendants.) A malformed
+ * Nokogiri - tested against the node itself, not its descendants.) A malformed
  * selector raises Makiri::CSS::SyntaxError. */
 static VALUE
 mkr_node_matches(VALUE self, VALUE rb_selector)

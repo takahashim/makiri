@@ -10,7 +10,7 @@
  *   mkr_text.h   string-type lattice (owned/borrowed/verified text + bytes)
  *   mkr_buf.h    mkr_buf_t (growable, capped byte buffer)
  *
- * NOTHING here touches Ruby — exception mapping happens at the glue boundary.
+ * NOTHING here touches Ruby - exception mapping happens at the glue boundary.
  */
 
 #include "mkr_alloc.h"

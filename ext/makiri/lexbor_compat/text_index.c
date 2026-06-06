@@ -10,7 +10,7 @@
  * Per-document text-extraction index (lexbor_compat/text_index.c).
  *
  * Descendant-text aggregation (Node#text, XPath string-value) walks every node
- * of a subtree chasing pointers through Lexbor's 96-byte nodes — at scale this
+ * of a subtree chasing pointers through Lexbor's 96-byte nodes - at scale this
  * is cache-bound and dominates the cost. This index removes the per-extraction
  * walk: one build pass records, in document order, a flat array of every
  * TEXT/CDATA node's byte slice, plus a pointer-keyed map from each element /
@@ -47,7 +47,7 @@ typedef struct {
     lxb_dom_node_t   *root;      /* the indexed subtree root (document root element) */
 } mkr_text_idx_t;
 
-/* Explicit (heap) DFS frame — recursion is avoided so a deep tree cannot blow
+/* Explicit (heap) DFS frame - recursion is avoided so a deep tree cannot blow
  * the C stack (matches the attr/element index discipline). */
 typedef struct {
     lxb_dom_node_t *node;
@@ -211,7 +211,7 @@ mkr_text_idx_build(lxb_dom_node_t *root)
                 size_t i = t->nslices;
                 size_t total;
                 if (!mkr_size_add(t->prefix[i], d->length, &total)) {
-                    /* cumulative text length overflows size_t — give up the
+                    /* cumulative text length overflows size_t - give up the
                      * index (fail closed); the caller falls back to a walk. */
                     free(st);
                     mkr_text_idx_destroy(t);

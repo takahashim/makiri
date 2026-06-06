@@ -18,7 +18,7 @@ extern "C" {
  * kind selects the destroy path and (later) the engine / Node-API instance. */
 typedef enum { MKR_DOC_HTML = 0, MKR_DOC_XML = 1 } mkr_doc_kind_t;
 
-struct mkr_xml_doc; /* forward decl — the XML arena (xml/mkr_xml.h); no include here */
+struct mkr_xml_doc; /* forward decl - the XML arena (xml/mkr_xml.h); no include here */
 
 /* Result of a parse. Owns the document arena (Lexbor for HTML, our own for XML).
  * The compat indices (dom_index, newline_idx, text_index) are HTML-only, created
@@ -47,7 +47,7 @@ void                 mkr_parsed_set_xml_doc(mkr_parsed_t *p, struct mkr_xml_doc 
 
 /* Parse HTML5 from src[0..len). Returns NULL on allocation or parse failure
  * (fail-closed). Source locations for Node#line are always tracked via the
- * tokenizer (cheap — it rides the parse). The src buffer is not retained:
+ * tokenizer (cheap - it rides the parse). The src buffer is not retained:
  * Lexbor copies what it needs into the arena, and we build the line table up
  * front. */
 /* `assume_valid` skips the UTF-8 sanitisation pass: pass it only when the caller
@@ -181,6 +181,14 @@ void mkr_parsed_text_index_invalidate(mkr_parsed_t *p);
 
 /* Free a text index. Safe on NULL. Called by mkr_parsed_destroy. */
 void mkr_text_index_free(void *idx);
+
+/* Approximate live byte size of the Lexbor document +node+ belongs to: the sum
+ * of the bytes handed out from its two mraw pools (node structs + text data).
+ * The content signal for the HTML serializer's buffer cap - the Lexbor analogue
+ * of the XML arena's arena_bytes - so the cap can scale to the document (a large
+ * HTML document still round-trips through to_html, since HTML parsing is itself
+ * byte-uncapped) while a small one stays tightly bounded. 0 if unresolvable. */
+size_t mkr_lxb_document_bytes(lxb_dom_node_t *node);
 
 #ifdef __cplusplus
 }

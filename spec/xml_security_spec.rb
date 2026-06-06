@@ -5,7 +5,7 @@ require "tempfile"
 
 # Security invariants of the native XML reader (plan §10). The parser is
 # fail-closed by construction: it does no I/O and defines no entities (a DOCTYPE
-# is recognized but its DTD is NOT processed — no entity/element declarations are
+# is recognized but its DTD is NOT processed - no entity/element declarations are
 # loaded and no external subset is fetched), and it bounds every resource with a
 # per-document budget. These specs pin those guarantees from Ruby. Structural
 # details that need to read the built tree are asserted in C (Makiri.__c_selftest,
@@ -156,7 +156,7 @@ RSpec.describe "Makiri::XML security" do
   describe "strict decoding never repairs (no U+FFFD substitution)" do
     it "raises a Makiri error on invalid UTF-8 rather than replacing or leaking EncodingError" do
       # A Makiri::Error (here the strict-decode SyntaxError) rather than a bare
-      # Ruby EncodingError or a silent success with U+FFFD-repaired content —
+      # Ruby EncodingError or a silent success with U+FFFD-repaired content -
       # EncodingError is not a Makiri::Error, so this assertion excludes it.
       ["<a>\xFF\xFE</a>".b, "<a>\xC0\xAF</a>".b, "<a>\xED\xA0\x80</a>".b].each do |bytes|
         expect { parse(bytes) }.to raise_error(Makiri::Error)

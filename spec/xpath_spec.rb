@@ -234,7 +234,7 @@ RSpec.describe "Makiri XPath" do
   end
 
   describe "node-set vs node-set comparison (XPath 1.0 §3.4)" do
-    # True iff SOME pair of nodes — one from each set — satisfies the relation,
+    # True iff SOME pair of nodes - one from each set - satisfies the relation,
     # so every pair must be considered (not just the first node of each side).
     let(:ns) { Makiri::HTML("<body><a>3</a><b>2</b><b>4</b><a>5</a></body>") }
 
@@ -350,7 +350,7 @@ RSpec.describe "Makiri XPath" do
 
     it "strict: the '*' wildcard still matches any namespace" do
       # html, head, body, 2×div, svg, path, svg-title, math, mi = 10 elements,
-      # foreign ones included — the wildcard is namespace-agnostic by design.
+      # foreign ones included - the wildcard is namespace-agnostic by design.
       expect(mixed.xpath("//*").length).to eq(10)
       # foreign children are reachable via the wildcard even in strict mode
       expect(mixed.xpath("//*[local-name()='svg']/*").length).to eq(2) # path + title
@@ -391,7 +391,7 @@ RSpec.describe "Makiri XPath" do
 
   describe "non-ASCII names (XML NCName, not ASCII-only)" do
     # XPath 1.0 §3.7 builds NCName on the XML Name production, whose letters
-    # span a large non-ASCII range — so an HTML element named "dØdd" is a valid
+    # span a large non-ASCII range - so an HTML element named "dØdd" is a valid
     # name test. (HTML can only create such elements when the tag starts with
     # an ASCII letter: "<dØdd>" is a tag, "<Ødd>" is text.)
     it "accepts and matches a non-ASCII element name test" do
@@ -555,7 +555,7 @@ RSpec.describe "Makiri XPath" do
 
     it "applies predicates on a descendant tag step" do
       # //li[1] = the first li *child within each parent* (a in <ul>, c in
-      # <div>), not the first li in the document — and predicates disable the
+      # <div>), not the first li in the document - and predicates disable the
       # fast path, so this also checks the generic step still works.
       expect(doc.xpath("//li[1]").map { |n| n["id"] }).to eq(%w[a c])
       expect(doc.xpath("//li[@id='c']").map(&:text)).to eq(%w[nested])

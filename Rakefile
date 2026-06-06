@@ -19,7 +19,7 @@ task release: %w[release:guard_clean release:source_control_push] do
     Pushed tag v#{GEMSPEC.version}. GitHub Actions (release.yml) will now:
       1. build the source gem + precompiled native gems,
       2. create the GitHub Release and attach them, then
-      3. publish to RubyGems via OIDC — after the `rubygems` environment approval.
+      3. publish to RubyGems via OIDC - after the `rubygems` environment approval.
     Approve the pending deployment in the Actions run to publish; nothing is
     pushed to RubyGems from this machine.
   MSG
@@ -44,7 +44,7 @@ end
 
 # `rake clean` (from rake-compiler) removes the ext build dir under tmp/,
 # including the generated Makefile. The next `rake compile` re-runs extconf,
-# so newly-added .c files are picked up — without this, a stale Makefile omits
+# so newly-added .c files are picked up - without this, a stale Makefile omits
 # new sources and macOS's -undefined dynamic_lookup turns the missing symbols
 # into runtime NULL calls. The vendored Lexbor build is deliberately NOT wiped
 # here (it is slow to rebuild and rarely changes); use `rake clean:lexbor` for
@@ -81,6 +81,17 @@ def asan_runtime_path
   nil
 end
 
+# The compiled extension, and whether it carries sanitizer instrumentation, so
+# `fuzz:sanitize SKIP_BUILD=1` can refuse to run a plain (non-ASan) build.
+def ext_bundle_path
+  Dir["lib/makiri/makiri.{bundle,so}"].first
+end
+
+def ext_sanitized?
+  bundle = ext_bundle_path or return false
+  !(`nm "#{bundle}" 2>/dev/null` =~ /asan|ubsan/i).nil?
+end
+
 desc "Build the extension with sanitizers (MAKIRI_SANITIZE, default " \
      "address,undefined) and run the spec suite under them"
 task :sanitize do
@@ -113,6 +124,11 @@ end
 desc "Fuzz the XML parser (hostile/mutated documents; override via FUZZ_ARGS)"
 task "fuzz:xml": :compile do
   sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target xml #{ENV['FUZZ_ARGS']}"
+end
+
+desc "Fuzz the XML mutation surface (random edit sequences + invariants; override via FUZZ_ARGS)"
+task "fuzz:mutate": :compile do
+  sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target mutate #{ENV['FUZZ_ARGS']}"
 end
 
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
@@ -180,10 +196,27 @@ desc "Run all conformance suites"
 task conformance: %w[conformance:html5 conformance:xpath conformance:css conformance:xmlconf conformance:xpath_xml]
 
 namespace :fuzz do
-  desc "Run the fuzzer under AddressSanitizer (rebuilds the ext; --isolated)"
+  # Run the fuzzer under the sanitizer. Toggles (all via env):
+  #   FAST=1        run the surfaces NON-isolated (one process, no fork-per-query).
+  #                 Far higher throughput; ASan still aborts on a memory error
+  #                 (halt_on_error). The default (isolated) is the complete net:
+  #                 it also survives + attributes a genuine segfault and catches a
+  #                 hang via the per-query timeout, at much lower throughput.
+  #   SKIP_BUILD=1  reuse the current build instead of rebuilding (refuses to run
+  #                 if it is not a sanitizer build, so you never fuzz a plain ext).
+  #   FUZZ_TIME=N   seconds per surface (default 90).
+  #   FUZZ_ARGS=... run a single custom invocation instead of the three surfaces.
+  desc "Run the fuzzer under AddressSanitizer (FAST=1 non-isolated, SKIP_BUILD=1 reuse build)"
   task :sanitize do
     sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
-    sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
+    if %w[1 true yes].include?(ENV["SKIP_BUILD"].to_s.downcase)
+      ext_sanitized? or
+        abort "fuzz:sanitize: SKIP_BUILD set but lib/makiri is not a sanitizer build; " \
+              "drop SKIP_BUILD to rebuild with MAKIRI_SANITIZE"
+      puts "fuzz:sanitize: reusing the existing sanitizer build (SKIP_BUILD)"
+    else
+      sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
+    end
 
     env = {
       "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
@@ -196,13 +229,18 @@ namespace :fuzz do
       preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
       env[preload] = runtime
     end
+
     if ENV["FUZZ_ARGS"]
       sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
     else
-      # By default cover both surfaces under the sanitizer: the query engine
-      # (XPath/CSS over parsed fixtures) and the XML parser (hostile documents).
-      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --isolated --time 90")
-      sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target xml --isolated --time 90")
+      iso  = %w[1 true yes].include?(ENV["FAST"].to_s.downcase) ? "" : "--isolated"
+      secs = ENV["FUZZ_TIME"] || "90"
+      # Cover every surface under the sanitizer: the query engine (XPath/CSS over
+      # parsed fixtures), the XML parser (hostile documents), and the XML mutation
+      # surface (random edit sequences + invariants).
+      ["", "--target xml", "--target mutate"].each do |surface|
+        sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{surface} #{iso} --time #{secs}".squeeze(" ").strip)
+      end
     end
   end
 end

@@ -6,15 +6,15 @@
 # document, and a shrinker that minimises a failing model.
 #
 # It powers two harnesses:
-#   * spec/xml_pbt_spec.rb        — Makiri-only properties (round-trip +
+#   * spec/xml_pbt_spec.rb        - Makiri-only properties (round-trip +
 #     metamorphic), no oracle, runs in `rake spec` with shrinking.
-#   * spec/conformance/xml_pbt_diff.rb — a differential property vs Nokogiri
+#   * spec/conformance/xml_pbt_diff.rb - a differential property vs Nokogiri
 #     (the parsed trees must be identical), runs in `rake conformance:xml_pbt`.
 #
 # The generator deliberately stays inside the round-trippable subset (no
 # whitespace in attribute values or as standalone text, no adjacent text runs,
 # no empty CDATA, only XML-1.0-legal namespace declarations), so that a parsed
-# tree is expected to equal the generated model exactly — any difference is a
+# tree is expected to equal the generated model exactly - any difference is a
 # real parser/modelling bug, which the shrinker then reduces to a minimal case.
 module XmlPbt
   # --- model -----------------------------------------------------------------
@@ -62,7 +62,7 @@ module XmlPbt
     if chance(rng, 0.35) # (re)declare the default namespace (may undeclare with "")
       decls[:default] = chance(rng, 0.2) ? "" : pick(rng, URIS)
     end
-    if chance(rng, 0.35) # declare a prefix (never "" — illegal to undeclare in XML 1.0)
+    if chance(rng, 0.35) # declare a prefix (never "" - illegal to undeclare in XML 1.0)
       decls[pick(rng, PREFIXES)] = pick(rng, URIS)
     end
     scope2 = apply_decls(scope, decls)

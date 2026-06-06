@@ -64,7 +64,7 @@ end
 # Canonical node key: a NAME-FREE positional path. Node#path renders namespaced
 # steps differently in the two libraries (Nokogiri emits "*[n]" for a default-
 # namespace element where Makiri uses the local name, and labels a CDATA node
-# "#cdata-section" vs "text()"), so we key by structural position instead — the
+# "#cdata-section" vs "text()"), so we key by structural position instead - the
 # 1-based-from-zero index among all preceding siblings, up to the root. The two
 # DOMs are isomorphic, so corresponding nodes get the same key. Attributes key by
 # their owner's path + local name.

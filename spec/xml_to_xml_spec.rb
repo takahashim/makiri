@@ -126,4 +126,19 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect { n.outer_html }.to raise_error(NotImplementedError)
     end
   end
+
+  describe "the serialization buffer is bounded (fails closed, never OOM)" do
+    # The buffer cap is scaled to the document's content (arena_bytes), so any
+    # legitimate document serialises, but a pathologically deep CONSTRUCTED tree
+    # whose pretty-printed form is super-linear in the content fails closed with
+    # Makiri::Error rather than growing the buffer without limit.
+    it "serialises a deep tree but fails closed pretty-printing one whose indentation explodes" do
+      doc = Makiri::XML("<r/>")
+      cur = doc.root
+      8000.times { e = doc.create_element("a"); cur.add_child(e); cur = e }
+      expect(doc.to_xml.bytesize).to be < 100_000          # compact form is bounded
+      expect { doc.to_xml(pretty: true) }                  # indentation would be ~quadratic
+        .to raise_error(Makiri::Error, /size limit|out of memory/)
+    end
+  end
 end

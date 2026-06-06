@@ -57,7 +57,7 @@ end.parse!(ARGV)
 # Makiri's default (:strict) namespace matching now agrees with Nokogiri::HTML5:
 # an unprefixed name test resolves in the HTML namespace, so //div matches but
 # //path (SVG) does not. We therefore compare against an UNMODIFIED Nokogiri DOM
-# (no remove_namespaces!) — node selection lines up. The one residual is the
+# (no remove_namespaces!) - node selection lines up. The one residual is the
 # namespace MODEL: Makiri keeps HTML elements in the XHTML namespace (the
 # DOM-correct value browsers report), while Nokogiri::HTML5 puts them in the
 # null namespace; this surfaces only in namespace-uri()/name() scalar results
@@ -97,7 +97,7 @@ end
 
 # Canonical node key: the absolute path with any namespace prefix stripped
 # from each step. The two libraries' DOM trees are isomorphic, but they render
-# the path of a foreign (SVG/MathML) element differently — Nokogiri qualifies
+# the path of a foreign (SVG/MathML) element differently - Nokogiri qualifies
 # it ("svg:circle"), Makiri does not ("circle"). That is a Node#path rendering
 # nuance, NOT an XPath-evaluation difference, so we normalise it away here to
 # keep the comparison about which nodes matched.

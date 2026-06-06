@@ -1,4 +1,4 @@
-/* mkr_xml.h — public boundary of the native XML reader (Phase 1, read-only).
+/* mkr_xml.h - public boundary of the native XML reader (Phase 1, read-only).
  *
  * Ruby-free. The Ruby surface (Makiri::XML(...) / Makiri.parse_xml) lives in
  * glue/ruby_xml.c, which decodes input (bridge/mkr_xml_decode_input), releases
@@ -21,14 +21,14 @@ typedef enum {
 } mkr_xml_status_t;
 
 /* Per-document budgets (§4). Enforced in the arena / tree builder; exceeding any
- * of them is fail-closed (no partial/truncated document — raise instead). */
+ * of them is fail-closed (no partial/truncated document - raise instead). */
 #define MKR_XML_MAX_DEPTH   1024u                 /* element nesting (no stack DoS) */
-#define MKR_XML_MAX_NODES   (10u * 1000u * 1000u) /* total DOM nodes — a SECONDARY guard; the
+#define MKR_XML_MAX_NODES   (10u * 1000u * 1000u) /* total DOM nodes - a SECONDARY guard; the
                                                    * byte budget below is the primary memory
                                                    * ceiling (at ~128 B/node it caps node count
                                                    * well under 10M, so it trips first). */
 #define MKR_XML_MAX_ATTRS   4096u                 /* attributes per element */
-#define MKR_XML_MAX_NS      4096u                 /* namespace bindings IN SCOPE at once — the
+#define MKR_XML_MAX_NS      4096u                 /* namespace bindings IN SCOPE at once - the
                                                    * scope-stack depth, popped on element close.
                                                    * Bounds concurrent bindings + the binds array,
                                                    * NOT document-wide distinct declarations (those
@@ -37,7 +37,7 @@ typedef enum {
 #ifndef MKR_XML_MAX_BYTES
 /* Arena payload cap: the single arena choke (arena_alloc) counts BOTH node
  * structs and copied name/value bytes against this, so it is the master memory
- * ceiling — it subsumes the node-count limit and bounds tiny-element
+ * ceiling - it subsumes the node-count limit and bounds tiny-element
  * amplification (a `<a/>` flood is ~23x input→arena, measured) to ~11 MB of
  * hostile input. Enforced before each allocation, and the parse entry rejects
  * any input longer than this up front (so the line-ending scratch is bounded

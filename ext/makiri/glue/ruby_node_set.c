@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 /* MKR_NODE_SET_MAX (the per-set node cap, shared with the CSS/XPath glue) is
- * defined in glue.h. Every node-collecting path — tree walks
- * (children / element_children / attribute_nodes), XPath, and CSS — fails
+ * defined in glue.h. Every node-collecting path - tree walks
+ * (children / element_children / attribute_nodes), XPath, and CSS - fails
  * closed at that bound instead of growing without limit. */
 
 /* A NodeSet is a plain dynamic array of Lexbor node pointers plus a keepalive
@@ -25,7 +25,7 @@ typedef struct {
 } mkr_node_set_data_t;
 
 /* Wrap a stored node into a Ruby Node, choosing the representation by the set's
- * (fixed) document kind — an XML document's nodes are custom mkr_xml_node_t. This
+ * (fixed) document kind - an XML document's nodes are custom mkr_xml_node_t. This
  * is the ONLY place a stored raw node is cast back to a typed pointer, and the
  * cast is justified by doc_is_xml. The kind is cached at construction so this
  * stays a single branch per node (a per-node is_kind_of/parsed-kind probe would
@@ -199,8 +199,8 @@ mkr_node_set_get(VALUE v)
 
 /* The "other" operand of a set operation, requiring it to share +s+'s document.
  * A result NodeSet borrows exactly one document VALUE (GC keepalive) and one
- * representation flag (HTML vs XML) to wrap its nodes; mixing two documents —
- * which also means possibly mixing HTML and XML — would wrap a node under the
+ * representation flag (HTML vs XML) to wrap its nodes; mixing two documents -
+ * which also means possibly mixing HTML and XML - would wrap a node under the
  * wrong representation and fail to keep its document alive. Fail closed instead
  * of silently producing a corrupt set. */
 static mkr_node_set_data_t *
@@ -227,7 +227,7 @@ mkr_node_set_member(const mkr_node_set_data_t *s, const mkr_raw_node_t *n)
 /* Open-addressing pointer-hash set, used to keep the set operators below O(n²)
  * (a CPU-DoS vector at large operand sizes). NULL is the empty sentinel; DOM
  * node pointers are never NULL. Sized once for the expected element count (load
- * factor < 0.5), so it never rehashes. cap == 0 means "not built" — the caller
+ * factor < 0.5), so it never rehashes. cap == 0 means "not built" - the caller
  * then falls back to a linear scan (small operands, or allocation failure). */
 typedef struct {
     const mkr_raw_node_t **slots;
@@ -380,8 +380,8 @@ mkr_node_set_op_minus(VALUE self, VALUE other)
     return mkr_node_set_op_filter(self, other, 0);
 }
 
-/* #dup / #clone: a new NodeSet over the same nodes (the nodes are shared — they
- * are owned by the document arena — but the set itself is independent), like
+/* #dup / #clone: a new NodeSet over the same nodes (the nodes are shared - they
+ * are owned by the document arena - but the set itself is independent), like
  * Nokogiri. Defined here because the allocator is undef'd, so Ruby's default
  * allocate-then-copy raises; any level/freeze argument is ignored. */
 static VALUE

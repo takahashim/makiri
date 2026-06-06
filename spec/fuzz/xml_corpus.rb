@@ -5,7 +5,7 @@
 # Unlike the XPath/CSS fuzzer (which throws queries at a parsed document), the
 # XML target fuzzes the *parser* itself: it feeds well-formed and deliberately
 # hostile XML byte streams to Makiri::XML and asserts the parser never does
-# anything worse than raise a Makiri::Error — no segfault, no hang, and no
+# anything worse than raise a Makiri::Error - no segfault, no hang, and no
 # non-Makiri Ruby exception leaking (a strict-decode / contract violation).
 #
 # The seeds cover the whole grammar (elements, attributes, namespaces, CDATA,
@@ -17,7 +17,7 @@
 module XmlFuzz
   module_function
 
-  # Well-formed seeds — the parser must accept these (after mutation, usually
+  # Well-formed seeds - the parser must accept these (after mutation, usually
   # not). They double as the "valid" anchors the mutator edits away from.
   WELL_FORMED = [
     "<a/>",
@@ -37,7 +37,7 @@ module XmlFuzz
     "<r>\r\n  <c a=\"p\r\nq\"/>\r\n</r>",
   ].freeze
 
-  # Hostile / malformed seeds — every one of these must be rejected with a
+  # Hostile / malformed seeds - every one of these must be rejected with a
   # Makiri::Error (SyntaxError or LimitExceeded), never a crash or a foreign
   # exception. These encode the §10 security invariants directly.
   HOSTILE = [
@@ -82,7 +82,7 @@ module XmlFuzz
 
   # One fuzz input: ~70% a mutated seed, ~30% a raw seed (so valid documents
   # keep flowing through too). Returns an ASCII-8BIT string that may be invalid
-  # UTF-8 on purpose — the parser must still fail closed.
+  # UTF-8 on purpose - the parser must still fail closed.
   def next_input(rng)
     seed = ALL_SEEDS.sample(random: rng)
     rng.rand(100) < 70 ? mutate(seed, rng) : seed.b

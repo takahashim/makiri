@@ -8,7 +8,7 @@
 /*
  * XPath 1.0 lexer. The parser drives token consumption and handles
  * context-sensitive keywords (and, or, div, mod, *, node()...) via
- * lookahead — the lexer is intentionally context-free.
+ * lookahead - the lexer is intentionally context-free.
  */
 
 /* Decode one UTF-8 code point at NUL-terminated +p+. Returns its byte length
@@ -82,7 +82,7 @@ static void
 skip_ws(mkr_lexer_t *L)
 {
   /* XPath 1.0 §3.7 ExprWhitespace = XML S = (#x20 | #x9 | #xD | #xA)+ only.
-   * Not C isspace(), which would also skip #xB (\v) and #xC (\f) — those are
+   * Not C isspace(), which would also skip #xB (\v) and #xC (\f) - those are
    * not XPath whitespace and must surface as a syntax error. */
   char c;
   while ((c = *L->cur) == ' ' || c == '\t' || c == '\r' || c == '\n') L->cur++;

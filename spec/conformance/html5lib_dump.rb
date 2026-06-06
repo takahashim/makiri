@@ -46,9 +46,9 @@ module Html5libDump
   def dump_document(doc)
     # Fast path: namespace handling only matters when foreign content exists.
     # Detecting it once lets the common pure-HTML document skip per-node XPath.
-    # We can't use doc.css("svg, math") — Lexbor's selector engine does not
+    # We can't use doc.css("svg, math") - Lexbor's selector engine does not
     # descend into <template> content, so foreign content nested in a template
-    # would be missed — so walk the tree (including template fragments).
+    # would be missed - so walk the tree (including template fragments).
     foreign = subtree_has_foreign?(doc)
     lines = []
     doc.children.each { |child| dump_node(child, 0, lines, foreign) }
@@ -56,7 +56,7 @@ module Html5libDump
   end
 
   # Dump a fragment's children at depth 0 (the html5lib #document form for a
-  # #document-fragment test — no html/head/body wrapper). A fragment parsed in a
+  # #document-fragment test - no html/head/body wrapper). A fragment parsed in a
   # foreign context can contain SVG/MathML elements with no <svg>/<math> wrapper
   # to detect, so we always resolve each element's namespace here.
   def dump_fragment(frag)
@@ -95,7 +95,7 @@ module Html5libDump
         node.children.each { |c| dump_node(c, depth + 1, lines, foreign) }
       end
     when 3 # text
-      # Raw characters wrapped in double quotes (newlines kept literal) — NOT
+      # Raw characters wrapped in double quotes (newlines kept literal) - NOT
       # Ruby String#inspect escaping.
       lines << pad + %("#{node.content}")
     when 8 # comment

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Web Platform Tests — XPath over HTML (the `domxpath/` suite), ported.
+# Web Platform Tests - XPath over HTML (the `domxpath/` suite), ported.
 #
 # WPT's domxpath tests drive browsers' document.evaluate over the HTML DOM and
 # are the de-facto reference for "XPath over HTML5". They are browser JS
@@ -129,7 +129,7 @@ RSpec.describe "WPT domxpath (XPath over HTML)" do
     end
 
     it "attribute matching is uniformly case-sensitive (predicate and axis)" do
-      # Exact case matches; wrong case does not — consistently across the
+      # Exact case matches; wrong case does not - consistently across the
       # [@attr] predicate and the attribute axis (= XPath 1.0 = Nokogiri::HTML5).
       expect(doc.xpath("//div[@id='log']").length).to eq(1)
       expect(doc.xpath("//div[@Id='log']")).to be_empty

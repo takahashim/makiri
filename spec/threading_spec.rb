@@ -6,7 +6,7 @@
 # each thread owns its own Document (no shared mutable state), and we assert the
 # results are exactly what the single-threaded path produces.
 
-# Tagged :threading — skipped by default for a fast local run, REQUIRED in CI.
+# Tagged :threading - skipped by default for a fast local run, REQUIRED in CI.
 # See spec/spec_helper.rb (THREADING=1 / CI forces it on).
 RSpec.describe "concurrency", :threading do
   HTML = (<<~HTML).freeze
@@ -21,13 +21,13 @@ RSpec.describe "concurrency", :threading do
   # munmap" aborts under DYLD_INSERT_LIBRARIES with an uninstrumented Ruby), and
   # it can't detect data races anyway (that's TSan's job). The concurrent parse
   # path is the same C as the single-threaded path, which every other spec
-  # already runs under ASan thousands of times — so skip these under the
+  # already runs under ASan thousands of times - so skip these under the
   # sanitizer build; they carry no extra ASan signal.
   SANITIZING = !ENV["ASAN_OPTIONS"].to_s.empty?
   NTHREADS = 8
   ITERS    = 50
   # GC.stress forces a full GC at every allocation, so a handful of iterations
-  # across NTHREADS already exercises the interleavings thoroughly — many more
+  # across NTHREADS already exercises the interleavings thoroughly - many more
   # only multiply CI cost (the suite was >15 min on CI runners). The :stress
   # examples use this smaller count.
   STRESS_ITERS = 12

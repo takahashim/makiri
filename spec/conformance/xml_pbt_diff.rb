@@ -2,14 +2,14 @@
 #
 # Differential property-based testing: generate well-formed XML documents (by
 # construction, with an explicit model) and require that Makiri's native parser
-# and Nokogiri (libxml2, strict mode) produce the SAME tree — same accept/reject
+# and Nokogiri (libxml2, strict mode) produce the SAME tree - same accept/reject
 # and same canonical dump. A divergence is shrunk to a minimal counterexample; it
 # is either a Makiri bug or a documented modelling difference.
 #
 # Generation is by construction valid, so this explores the *valid* input space
-# (semantics / tree modelling) — complementing the W3C xmlconf suite (the
+# (semantics / tree modelling) - complementing the W3C xmlconf suite (the
 # well-formedness boundary) and the fixed XPath corpus. Nokogiri is a bench-only
-# dependency, so run OUTSIDE the bundle — the rake task does this:
+# dependency, so run OUTSIDE the bundle - the rake task does this:
 #   rake conformance:xml_pbt
 #   ruby -Ilib spec/conformance/xml_pbt_diff.rb --count 20000 --verbose
 
@@ -37,7 +37,7 @@ OptionParser.new do |o|
   o.on("-h", "--help") { puts o; exit }
 end.parse!(ARGV)
 
-# Nokogiri in STRICT mode (no error recovery, no network) — so it accepts/rejects
+# Nokogiri in STRICT mode (no error recovery, no network) - so it accepts/rejects
 # like a conforming parser, comparable to Makiri.
 def parse_noko(xml)
   Nokogiri::XML(xml) { |c| c.strict.nonet }
@@ -60,7 +60,7 @@ def dumps(xml)
 end
 
 # Inclusive Canonical XML 1.0 under both parsers (document + root element, with
-# and without comments) — empty unless they disagree.
+# and without comments) - empty unless they disagree.
 def c14n_disagreements(xml)
   m = Makiri::XML(xml)
   n = parse_noko(xml)

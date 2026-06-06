@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 /* ---------------------------------------------------------------- */
-/* mkr_verified_text_t — a string proven to meet the engine text contract */
+/* mkr_verified_text_t - a string proven to meet the engine text contract */
 /* ---------------------------------------------------------------- */
 
 /* A borrowed byte slice whose contents are guaranteed to satisfy Makiri's
@@ -39,7 +39,7 @@ typedef struct {
 /*
  * Makiri's string types form a small lattice over two axes plus a shape marker.
  * They look alike ({ptr,len}) but C has no subtyping, so each contract is its
- * own type — that distinctness IS the guarantee, and is why there is no single
+ * own type - that distinctness IS the guarantee, and is why there is no single
  * "string" type.
  *
  *   axis 1  ownership : borrowed (we never free) | owned (free via *_clear)
@@ -51,7 +51,7 @@ typedef struct {
  *   shape \ contract        raw (bytes)               valid (text)
  *   ----------------------  ------------------------  -------------------------
  *   ruby-anchored borrowed  mkr_ruby_borrowed_bytes_t mkr_ruby_borrowed_text_t  (bridge.h)
- *   borrowed slice          (none yet — would be      mkr_borrowed_text_t /
+ *   borrowed slice          (none yet - would be      mkr_borrowed_text_t /
  *                            mkr_borrowed_bytes_t)     mkr_verified_text_t (*)
  *   owned                   mkr_owned_bytes_t         mkr_owned_text_t
  *
@@ -65,22 +65,22 @@ typedef struct {
  *   cannot reach the engine's public API. Internally the engine carries the
  *   freely-constructible mkr_borrowed_text_t instead.
  *
- * Conversions — the only sanctioned edges. The points that actually VALIDATE
+ * Conversions - the only sanctioned edges. The points that actually VALIDATE
  * raw bytes are the bridge's checked entry points; everything else only moves
  * already-valid text between shapes (no edge re-validates, and none turns raw
  * bytes into text without one of those checks):
- *   validate raw -> valid : the bridge's checked entry points only —
+ *   validate raw -> valid : the bridge's checked entry points only -
  *                           mkr_ruby_verified_text / mkr_ruby_try_verified_text
  *                           (both validate UTF-8 + no NUL); never a cast.
  *   drop the GC anchor    : mkr_verified_text_from_view (ruby_borrowed_text -> verified_text)
  *   assert valid (no copy) : mkr_borrowed_text (const char*,len -> borrowed_text)
- *                            — caller asserts the bytes already meet the contract
+ *                            - caller asserts the bytes already meet the contract
  *   downgrade to borrow   : mkr_borrowed_text_from_owned (owned_text -> borrowed_text)
  *                           mkr_borrowed_text_from_verified (verified_text -> borrowed_text)
  *   copy into owned       : mkr_owned_text_from_borrowed_copy /
- *                           mkr_owned_text_from_buf_steal — accept only
+ *                           mkr_owned_text_from_buf_steal - accept only
  *                           already-asserted-valid text; they copy, not validate.
- *   take ownership        : mkr_owned_text (char*,len -> owned_text) — caller
+ *   take ownership        : mkr_owned_text (char*,len -> owned_text) - caller
  *                           transfers an already-valid heap buffer it produced
  *                           (substring/concat/format output); asserts validity.
  */

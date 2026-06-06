@@ -1,4 +1,4 @@
-/* mkr_xml_tree.c — XML tokenizer + tree builder (§14 steps 5-9).
+/* mkr_xml_tree.c - XML tokenizer + tree builder (§14 steps 5-9).
  *
  * Ruby-free. Parses a decoded, validated-UTF-8 byte buffer (§2.1) into the
  * custom node arena: elements, attributes, character data, namespaces (§7),
@@ -6,7 +6,7 @@
  * instructions / the XML declaration (§9). A '<!DOCTYPE' is RECOGNIZED but its
  * DTD is not processed (§9.4 alternative): the name + external id are kept (in an
  * off-tree DOCUMENT_TYPE node, for Document#internal_subset) and the rest is
- * skipped to its true '>'. NOTHING in the DTD is registered — no entity is
+ * skipped to its true '>'. NOTHING in the DTD is registered - no entity is
  * defined (a DTD-defined &name; stays an undefined-entity error) and no external
  * subset is fetched (zero I/O), so XXE / billion-laughs remain structurally
  * impossible. Comments and PIs in the prolog/epilog (outside the root) are
@@ -15,7 +15,7 @@
  * NameStartChar/NameChar (§9.2b) and duplicate-attribute rejection (§9.3) apply.
  *
  * Budgets (§4): element depth (MKR_XML_MAX_DEPTH) and node/attr counts (enforced
- * in the arena) are fail-closed — a violation aborts with no partial document.
+ * in the arena) are fail-closed - a violation aborts with no partial document.
  */
 #include "mkr_xml.h"
 #include "mkr_xml_node.h"
@@ -139,7 +139,7 @@ append_child(mkr_xml_node_t *parent, mkr_xml_node_t *child)
 /* Append a character-data node (TEXT or CDATA) whose value is the arena slice
  * [val, val+len). Adjacent character data of the SAME type is coalesced into the
  * preceding sibling (as libxml2's xmlAddChild does, and per the XPath data
- * model's "as much character data as possible is grouped" rule) — so
+ * model's "as much character data as possible is grouped" rule) - so
  * <![CDATA[a]]><![CDATA[b]]> is one CDATA node, not two. Different types stay
  * separate (text vs CDATA remain distinct DOM nodes). 0 / -1 (P->status set). */
 static int
@@ -288,7 +288,7 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         if (vraw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; } /* fail closed */
         uint32_t vlen = (uint32_t)vraw;
         advance(P);                                              /* closing quote */
-        /* §3.1: attributes are S-separated — after a value the next byte must be
+        /* §3.1: attributes are S-separated - after a value the next byte must be
          * whitespace or the tag close ('>' / '/'), never another name. Rejects
          * `<a x="1"y="2"/>`. */
         if (P->p < P->end && *P->p != '>' && *P->p != '/' && !is_space_byte(*P->p)) {
@@ -343,7 +343,7 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
     }
 
     /* Phase 4: create the attribute nodes (xmlns declarations kept, §7.2). The
-     * list is built with an explicit tail so each append is O(1) — walking to the
+     * list is built with an explicit tail so each append is O(1) - walking to the
      * tail per attribute would be O(n^2) over a MKR_XML_MAX_ATTRS-bounded set. */
     mkr_xml_node_t *attr_tail = NULL;
     for (size_t i = 0; i < P->nratt; i++) {
@@ -376,7 +376,7 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         attr_tail = attr;
     }
 
-    /* §9.3: no two attributes may share the same (namespace URI, local name) —
+    /* §9.3: no two attributes may share the same (namespace URI, local name) -
      * compared AFTER resolution, so "a:x" and "b:x" bound to the same URI collide
      * while "xmlns:a"/"xmlns:b" (same xmlns URI, different local) do not. O(n^2)
      * over a per-element set bounded by MKR_XML_MAX_ATTRS. */
@@ -406,7 +406,7 @@ is_space_byte(char c)
 
 /* '<!--' comment (P->p at '!'). XML 1.0: the content is XML Char and may not
  * contain '--' except as part of the closing '-->'. Creates a COMMENT node under
- * +parent+ — its open element, or the DOCUMENT node in the prolog/epilog (XPath
+ * +parent+ - its open element, or the DOCUMENT node in the prolog/epilog (XPath
  * data model; like Nokogiri). */
 static int
 parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
@@ -473,7 +473,7 @@ eat_keyword(mkr_xml_parser_t *P, const char *kw, size_t n)
     return 1;
 }
 
-/* Eq ::= S? '=' S?  — 0 on success, -1 if '=' is missing. */
+/* Eq ::= S? '=' S?  - 0 on success, -1 if '=' is missing. */
 static int
 decl_eq(mkr_xml_parser_t *P)
 {
@@ -531,7 +531,7 @@ static int is_yes_no(const char *s, uint32_t n) {
 
 /* '<?xml' already consumed (cursor just past "xml"). Validate
  *   S 'version' Eq VersionNum (S 'encoding' Eq EncName)? (S 'standalone' Eq ('yes'|'no'))? S? '?>'
- * — pseudo-attributes are lowercase, in this order, each at most once, S-separated.
+ * - pseudo-attributes are lowercase, in this order, each at most once, S-separated.
  * The declaration is not retained as a node. 0 on success / -1 (P->status set). */
 static int
 parse_xml_decl_body(mkr_xml_parser_t *P)
@@ -571,7 +571,7 @@ parse_xml_decl_body(mkr_xml_parser_t *P)
  * lowercase target, document start only) is validated strictly by
  * parse_xml_decl_body and not retained; a target matching "xml" in any OTHER case
  * is a reserved PITarget (§2.6) and rejected. Every other PI is retained as a
- * node — under its open element, or under the DOCUMENT node in the
+ * node - under its open element, or under the DOCUMENT node in the
  * prolog/epilog (XPath data model; like Nokogiri). */
 static int
 parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
@@ -627,7 +627,7 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
  * leaves P->p just past the construct. */
 
 /* The parent a node created at the cursor attaches to: the innermost open
- * element, or — at the document level (prolog/epilog) — the DOCUMENT node, so a
+ * element, or - at the document level (prolog/epilog) - the DOCUMENT node, so a
  * top-level comment / PI becomes its child (XPath data model; like Nokogiri).
  * The document node exists from the start of the parse. */
 static inline mkr_xml_node_t *
@@ -818,7 +818,7 @@ parse_text(mkr_xml_parser_t *P)
     int nonspace = 0;
     while (P->p < P->end && *P->p != '<') {
         char c = *P->p;
-        /* §2.4: the literal "]]>" MUST NOT appear in character data — only a
+        /* §2.4: the literal "]]>" MUST NOT appear in character data - only a
          * CDATA section (handled by parse_cdata) may end with it. A lone ']' or
          * "]]" not followed by '>' is fine. */
         if (c == ']' && lit_ahead(P, "]]>", 3)) { set_syntax(P); return -1; }
@@ -859,7 +859,7 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
 
     /* Fail closed on an over-budget input before ANY allocation (src is not yet
      * read): every retained byte is copied into the arena, so an input longer
-     * than the arena byte budget can never succeed — reject it now instead of
+     * than the arena byte budget can never succeed - reject it now instead of
      * after building most of a doomed document. This also bounds the line-ending
      * scratch below (norm <= len <= max_bytes), so it cannot run a large
      * out-of-budget allocation ahead of the arena's own checks. */
@@ -879,7 +879,7 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
         return NULL;
     }
 
-    /* §9.3b-A: line-ending normalization — fold CRLF and a lone CR to LF over the
+    /* §9.3b-A: line-ending normalization - fold CRLF and a lone CR to LF over the
      * whole input BEFORE tokenizing, so every later stage (attribute-value
      * normalization, line counting) sees only LF. It can only shrink, so we
      * normalize into a scratch buffer only when a CR is actually present (the
@@ -1067,7 +1067,7 @@ mkr_xml_parse_selftest(void)
     st = MKR_XML_OK;
     e = PARSE_LIT("<a>&#;</a>",    &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* no digits */
 
-    /* §7: namespaces — prefixed element + attribute, default-ns inheritance,
+    /* §7: namespaces - prefixed element + attribute, default-ns inheritance,
      * unprefixed attribute has no namespace, xmlns kept as a DOM attribute */
     i++; /* 10 */
     d = PARSE_LIT("<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>", &st);
@@ -1100,7 +1100,7 @@ mkr_xml_parse_selftest(void)
     st = MKR_XML_OK;
     e = PARSE_LIT("<a:b xmlns:a=''/>",      &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* xmlns:p="" */
 
-    /* §3.3.3: attribute-value normalization — a LITERAL tab/newline/CR in the
+    /* §3.3.3: attribute-value normalization - a LITERAL tab/newline/CR in the
      * source folds to a space, while a tab/LF from a numeric reference is kept.
      * Text content is NOT folded (the literal newline survives verbatim). */
     i++; /* 12 */
@@ -1170,7 +1170,7 @@ mkr_xml_parse_selftest(void)
     st = MKR_XML_OK;
     e = PARSE_LIT("<![CDATA[x]]><r/>",  &st); if (e || st != MKR_XML_ERR_SYNTAX) { if (e) mkr_xml_doc_destroy(e); return i; } /* CDATA outside root */
 
-    /* §9.4 alternative: DOCTYPE is recognized but not processed — the external ID
+    /* §9.4 alternative: DOCTYPE is recognized but not processed - the external ID
      * and the internal subset (with a '>' inside a markup decl, and '>' inside a
      * quoted literal) are skipped to the true '>', nothing in the DTD is
      * registered, and parsing continues into the root. The name + external ID are
@@ -1275,7 +1275,7 @@ mkr_xml_parse_selftest(void)
     /* §4 byte-budget entry guard: an input longer than MKR_XML_MAX_BYTES fails
      * closed (MKR_XML_ERR_LIMIT) before any allocation. The guard tests `len`
      * only, so a tiny buffer with a huge claimed length exercises it without
-     * allocating — and proves `src` is not dereferenced past the budget. */
+     * allocating - and proves `src` is not dereferenced past the budget. */
     i++; /* 18 */
     st = MKR_XML_OK;
     {

@@ -1,4 +1,4 @@
-/* mkr_xpath_shared.c — the representation-independent engine primitives.
+/* mkr_xpath_shared.c - the representation-independent engine primitives.
  *
  * Compiled exactly ONCE (one normal .c, not a monomorphized body): none of
  * these functions dereferences a DOM node. They move node *pointers* (node-set
@@ -35,7 +35,7 @@ uint32_t
 mkr_pointer_hash(const void *p)
 {
   uintptr_t x = (uintptr_t)p;
-  /* SplitMix-style mixing — cheap and good enough for pointer keys. */
+  /* SplitMix-style mixing - cheap and good enough for pointer keys. */
   x = (x ^ (x >> 16)) * 0x9E3779B9u;
   x = (x ^ (x >> 13)) * 0x85EBCA6Bu;
   return (uint32_t)(x ^ (x >> 16));
@@ -160,7 +160,7 @@ mkr_val_set_owned_text(mkr_val_t *v, mkr_owned_text_t text)
 
 /* Set +v+ to a STRING by copying a borrowed view: the engine allocates and owns
  * the copy. This is how callers outside the engine (the glue handler bridge)
- * hand a string into a value — they pass what they have, a borrowed slice, and
+ * hand a string into a value - they pass what they have, a borrowed slice, and
  * never construct an mkr_owned_text_t themselves. Keeping the copy-and-own step
  * here keeps allocation and freeing of owned strings in one layer. Returns 0 on
  * success, -1 on OOM (err populated; +v+ left untouched). */
@@ -312,11 +312,11 @@ static int
 is_pure_builtin_name(const char *name, size_t nargs)
 {
   if (name == NULL) return 0;
-  /* 0-arg only — these read no input. */
+  /* 0-arg only - these read no input. */
   if (nargs == 0) {
     return strcmp(name, "true") == 0 || strcmp(name, "false") == 0;
   }
-  /* n-arg pure functions — all args must themselves be CI (checked
+  /* n-arg pure functions - all args must themselves be CI (checked
    * by the caller). */
   static const char *pure_names[] = {
     "count", "string-length", "number", "boolean", "not",
@@ -390,7 +390,7 @@ mkr_mark_context_independent(mkr_node_t *n)
      * outer context. Relative paths use the outer context node and
      * are not hoistable. Predicates inside the path are evaluated
      * against the path's own context, so their position()/last() do
-     * not leak — recurse so any pure sub-expressions still get marks. */
+     * not leak - recurse so any pure sub-expressions still get marks. */
     ci = n->u.path.absolute ? 1 : 0;
     for (size_t i = 0; i < n->u.path.nsteps; ++i) {
       mark_step_predicates(&n->u.path.steps[i]);
@@ -432,7 +432,7 @@ clear_memos_step(mkr_step_t *s)
  * predicates: otherwise '//X[1]' would change meaning ("first X per
  * parent" vs "first X in doc order"). The synthesised // step always
  * has no predicates by construction, so we don't need to check the
- * first step's predicate list — only the child step's.
+ * first step's predicate list - only the child step's.
  */
 static void
 fuse_descendant_or_self_steps(mkr_step_t *steps, size_t *nsteps_ptr)

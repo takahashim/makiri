@@ -1,4 +1,4 @@
-/* mkr_xpath_prelude_html.h — HTML engine-instance prelude.
+/* mkr_xpath_prelude_html.h - HTML engine-instance prelude.
  *
  * Included at the top of mkr_xpath_engine_html.c BEFORE the engine bodies,
  * symmetric with mkr_xpath_prelude_xml.h. It binds the DOM types + the

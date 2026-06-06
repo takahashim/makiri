@@ -16,7 +16,7 @@ module Makiri
   class XPathContext
     # +#evaluate+ is defined in C. It evaluates under the GVL (XPath never
     # releases it), so concurrent +evaluate+ / +register_*+ / +node=+ on the
-    # same context — and any tree mutation of the document being queried — are
+    # same context - and any tree mutation of the document being queried - are
     # serialised by the GVL and cannot corrupt memory.
 
     # Nokogiri-compatible name for {#register_namespace}.

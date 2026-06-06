@@ -35,7 +35,7 @@ mkr_ptr_hash(const void *p)
 
 /* Smallest power of two >= n, into *out. Returns false on overflow (no power of
  * two >= n fits in size_t) so the caller fails closed rather than sizing a
- * power-of-two hash table below the element count it must hold — which would
+ * power-of-two hash table below the element count it must hold - which would
  * never find a free slot under linear probing. Shared by the pointer-keyed
  * indexes (attr->owner, text-index). */
 static inline bool

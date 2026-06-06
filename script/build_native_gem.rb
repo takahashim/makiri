@@ -24,7 +24,7 @@ root = File.expand_path("..", __dir__)
 spec = Gem::Specification.load(File.join(root, "makiri.gemspec"))
 
 libs = Dir[File.join(root, "lib", "makiri", "*", "makiri.{so,bundle}")].sort
-abort "no precompiled libraries found under lib/makiri/*/ — stage them first" if libs.empty?
+abort "no precompiled libraries found under lib/makiri/*/ - stage them first" if libs.empty?
 
 # Native gem: ship binaries, not the C sources or the vendored Lexbor tree, and
 # declare no extension so install never tries to compile.
@@ -34,7 +34,7 @@ spec.files = spec.files.reject { |f| f.start_with?("ext/", "vendor/") }
 spec.files += libs.map { |p| p.sub("#{root}/", "") }
 spec.files.uniq!
 
-# Bound the Ruby versions this binary gem serves — one subdir per ABI minor.
+# Bound the Ruby versions this binary gem serves - one subdir per ABI minor.
 abis = libs.map { |p| File.basename(File.dirname(p)) }.sort_by { |v| v.split(".").map(&:to_i) }
 lo_major, lo_minor = abis.first.split(".").map(&:to_i)
 hi_major, hi_minor = abis.last.split(".").map(&:to_i)

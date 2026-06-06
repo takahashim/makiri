@@ -1,4 +1,4 @@
-/* ruby_node.c — the shared, representation-neutral node core.
+/* ruby_node.c - the shared, representation-neutral node core.
  *
  * HTML (Lexbor) nodes and XML (custom-arena) nodes are two representations of the
  * same Ruby-facing Node abstraction. This file owns what is common to BOTH: the
@@ -39,7 +39,7 @@ mkr_node_memsize(const void *ptr)
  * Document) and the same GC functions, but are wrapped under DISTINCT TypedData
  * types so the representation is checked by Ruby's own type machinery: an HTML
  * accessor (mkr_html_node_unwrap, via mkr_html_node_type) raises TypeError when
- * handed an XML node and vice versa — it is structurally impossible to read one
+ * handed an XML node and vice versa - it is structurally impossible to read one
  * representation's pointer as the other's. mkr_node_type is the shared base (both
  * derive from it via .parent), so the kind-agnostic identity accessors accept
  * either. This is the single source of HTML/XML node-pointer safety; there is no
@@ -65,7 +65,7 @@ const rb_data_type_t mkr_xml_node_type = {
 /* ------------------------------------------------------------------ */
 
 /* The kind-AGNOSTIC raw node pointer (base mkr_node_type, accepts HTML or XML),
- * as an opaque void* — dereferencing it requires an explicit cast, so it cannot be
+ * as an opaque void* - dereferencing it requires an explicit cast, so it cannot be
  * mistaken for a typed pointer. Only for the few sites where the representation is
  * either irrelevant (identity comparison) or already guaranteed by an external
  * same-document/kind check (the XPath context node). The Document branch is
@@ -86,7 +86,7 @@ mkr_node_raw(VALUE rb_node)
     return nd->node;
 }
 
-/* Node identity as an integer, for #==/#eql?/#hash/#pointer_id — kind-agnostic and
+/* Node identity as an integer, for #==/#eql?/#hash/#pointer_id - kind-agnostic and
  * never dereferenced. */
 uintptr_t
 mkr_node_id(VALUE rb_node)

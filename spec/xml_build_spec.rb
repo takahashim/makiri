@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# Phase 2 XML mutation: building new subtrees — Document factories and node
+# Phase 2 XML mutation: building new subtrees - Document factories and node
 # insertion (add_child/<<, before/after, replace), with namespace resolution at
 # the insertion point, cross-document import (deep copy), and fail-closed guards.
 RSpec.describe "Makiri::XML building (Phase 2)" do
@@ -31,6 +31,25 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { doc.create_text_node("xy") }.to raise_error(Makiri::Error) # non-XML-Char
       expect { doc.create_processing_instruction("xml", "x") }.to raise_error(ArgumentError) # reserved
       expect { doc.create_processing_instruction("ok", "a?>b") }.to raise_error(Makiri::Error) # "?>"
+    end
+
+    it "rejects content that would serialize to invalid XML (comment '--', CDATA ']]>')" do
+      expect { doc.create_comment("a--b") }.to raise_error(Makiri::Error)      # "--" in a comment
+      expect { doc.create_comment("trailing-") }.to raise_error(Makiri::Error) # a trailing "-"
+      expect { doc.create_cdata("a]]>b") }.to raise_error(Makiri::Error)       # "]]>" closes the section
+      # the same rules apply through #content=, not just the factories
+      expect { doc.create_comment("ok").content = "x--y" }.to raise_error(Makiri::Error)
+      expect { doc.create_cdata("ok").content = "x]]>y" }.to raise_error(Makiri::Error)
+      # valid content is still accepted and round-trips
+      expect(doc.create_comment("a-b").to_xml).to eq("<!--a-b-->")
+      expect(doc.create_cdata("a < b").to_xml).to eq("<![CDATA[a < b]]>")
+    end
+
+    it "rejects binding a namespace prefix to the empty namespace" do
+      expect { doc.root["xmlns:q"] = "" }.to raise_error(Makiri::Error)
+      doc.root["xmlns"] = ""          # undeclaring the DEFAULT namespace is allowed
+      doc.root["xmlns:q"] = "urn:q"   # a real prefix binding is fine
+      expect(doc.root["xmlns:q"]).to eq("urn:q")
     end
 
     it "exposes Element.new / Text.new delegating to the document" do
@@ -86,6 +105,14 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect(doc.root.children.map(&:name)).to eq(%w[z])
       expect(a.parent).to be_nil          # detached
       expect(a.text).to eq("keep")        # detach-never-destroy: still readable
+    end
+
+    it "treats inserting/replacing a node relative to itself as a no-op (no self-cycle)" do
+      a = doc.at_xpath("//d:a", "d" => "urn:d")
+      %i[before after add_previous_sibling add_next_sibling replace].each { |m| a.public_send(m, a) }
+      # the sibling list stays well-formed: serialization terminates, re-parses identically
+      expect(doc.root.children.map(&:name)).to eq(%w[a])
+      expect(doc.to_xml).to eq(Makiri::XML(doc.to_xml).to_xml)
     end
   end
 

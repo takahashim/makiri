@@ -22,10 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     budgets. Element-name case and namespaces are preserved (unlike the HTML
     path).
   * Character encoding is autodetected (XML 1.0 Appendix F): a leading byte-order
-    mark (UTF-8 / UTF-16 / UTF-32) or the `<?xml encoding="…"?>` declaration
+    mark (UTF-8 / UTF-16 / UTF-32) or the `<?xml encoding="..."?>` declaration
     selects the encoding, so raw bytes (`File.binread`) in UTF-16, Shift_JIS,
     etc. parse correctly; a leading BOM is stripped (not treated as content). A
-    concrete String encoding stays authoritative — a BOM or declaration that
+    concrete String encoding stays authoritative - a BOM or declaration that
     contradicts it (or each other) is a fatal `SyntaxError` rather than a silent
     mis-decode. The strict XML declaration grammar (§2.8) and well-formedness
     rules (`]]>` in content, S-separated attributes, reserved/colon PI targets,
@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     version) is rejected with a clear `SyntaxError` rather than silently parsed
     under 1.0 rules.
   * DoS-bounded by a single arena memory ceiling (default **256 MiB**), which
-    counts node structs *and* copied name/value bytes — so it subsumes the
+    counts node structs *and* copied name/value bytes - so it subsumes the
     node-count limit and caps tiny-element amplification, and an over-length
     input is rejected before any allocation. 256 MiB fits every standard
     document (a 50 MB sitemap is ~82 MB of arena) and only rejects documents
@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Makiri::XML(src, max_bytes: 512 * 1024 * 1024)` /
     `Makiri.parse_xml(src, max_bytes:)` (a positive Integer; other per-document
     budget overrides will join this keyword later).
-  * A `<!DOCTYPE …>` is **recognized but its DTD is not processed**: the doctype
+  * A `<!DOCTYPE ...>` is **recognized but its DTD is not processed**: the doctype
     name and external identifiers are retained and exposed via
     `Makiri::XML::Document#internal_subset` (a `Makiri::XML::DTD` with `#name`,
     `#external_id` / `#public_id`, and `#system_id`, like Nokogiri), but no
@@ -66,9 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     default-namespace document (RSS/Atom): under strict matching `//entry` does
     not match a default namespace, so register a prefix and use `//a:entry`.
   * Comments and processing instructions in the prolog/epilog (around the root
-    element) are retained as children of the document node — reachable by XPath
+    element) are retained as children of the document node - reachable by XPath
     (`//comment()`, `//processing-instruction()`, `/node()`) and `#children`, in
-    document order — matching the XPath data model and Nokogiri. (Inter-construct
+    document order - matching the XPath data model and Nokogiri. (Inter-construct
     whitespace there is not a text node; the DOCTYPE stays off-tree, via
     `#internal_subset`.) Adjacent same-type character data is coalesced into one
     node (`<![CDATA[a]]><![CDATA[b]]>` → one CDATA node), as libxml2 does and per
@@ -78,11 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * `#to_xml` / `#to_s` serialize the tree back to XML (UTF-8). The default
     preserves the content as parsed; `pretty: true` (or `indent: n`) indents
     element-only content, leaving any element with text/CDATA inline so character
-    data is never altered. A `Document#to_xml` also emits the `<?xml … ?>`
+    data is never altered. A `Document#to_xml` also emits the `<?xml ... ?>`
     declaration and the DOCTYPE; xmlns declarations round-trip as ordinary
     attributes. Output is always well-formed and (in the default mode) re-parses
-    to the same tree — checked by a property-based round-trip over generated
-    documents. `encoding: "…"` (a String or Encoding) transcodes the output,
+    to the same tree - checked by a property-based round-trip over generated
+    documents. `encoding: "..."` (a String or Encoding) transcodes the output,
     naming the encoding in a Document's declaration and replacing any
     unrepresentable character with a hexadecimal character reference.
   * `#canonicalize` produces Inclusive Canonical XML 1.0 (the form used for XML
@@ -107,31 +107,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `#replace`. A node's namespace is resolved against its position **at
     insertion** (parser-faithful: a prefixed name binds to the in-scope `xmlns`,
     an unprefixed element to the default namespace), so the same tree results
-    whether names are set before or after attaching — an unbound prefix is
+    whether names are set before or after attaching - an unbound prefix is
     deferred while a fragment is detached and only errors once it joins the live
     tree, keeping the live document serializable to well-formed XML. A node from
     another document is **deep-copied** into the target arena (the source is
     untouched); a same-document node moves. The Ruby-free primitives live in
     `ext/makiri/xml/mkr_xml_mutate.c`; every edit validates first (names as XML
     1.0 QNames, values as XML Char) and resolves before any structural change, so
-    a failure — bad name/char, unbound prefix, cycle, a second document root, an
-    attribute/document used as a tree child — leaves the tree untouched (fully
+    a failure - bad name/char, unbound prefix, cycle, a second document root, an
+    attribute/document used as a tree child - leaves the tree untouched (fully
     fail-closed, even on a move). Detach-never-destroy: a removed/replaced node is
     unlinked, never freed, so a live wrapper aliasing it stays usable (the arena
     owns the memory). Parsing a string/fragment into nodes and `DocumentFragment`
     are a later phase.
-* `Node` includes `Enumerable` over its child nodes — `node.each` yields each
+* `Node` includes `Enumerable` over its child nodes - `node.each` yields each
   child (returning an `Enumerator` without a block), so `node.map` / `select` /
   `find` / `to_a` etc. work, like Nokogiri. Iterates a snapshot, so the block may
   move or remove the current child. `Node#to_h` still returns the attribute hash.
 * `Node#<=>` orders nodes by document (pre-order) position, and `Node` includes
   `Comparable`, so nodes can be sorted (`nodes.sort`, `min`/`max`, `<`/`>`).
   Returns `nil` (incomparable) across documents or detached subtrees and for
-  attribute nodes — matching how `Comparable` treats an unorderable pair.
+  attribute nodes - matching how `Comparable` treats an unorderable pair.
 * `NodeSet#[]` now accepts a `Range` or `start, length` like `Array#[]`
   (returning a new `NodeSet`), in addition to a single Integer index (a `Node`).
 * `Node#dup` / `Node#clone`, `NodeSet#dup` / `#clone`, and `Document#dup` /
-  `#clone` — the native allocator is undef'd (so wrapper objects stay
+  `#clone` - the native allocator is undef'd (so wrapper objects stay
   memory-safe), which made Ruby's default `dup`/`clone` raise a confusing
   "allocator undefined" `TypeError`. They now return a real, independent copy
   like Nokogiri: a node is deep-cloned and detached (`#dup(0)` for a shallow
@@ -149,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * The text index's per-element range table stores its slice-run bounds as
   `uint32` indices instead of `size_t`, shrinking each entry from 24 to 16 bytes
-  (the node pointer plus two 32-bit indices) — about a third off the table, the
+  (the node pointer plus two 32-bit indices) - about a third off the table, the
   index's largest allocation. On a 2k-element document the retained text index
   drops ~27% (~480 → ~352 KB) with byte-identical text and no change in
   extraction speed (still ~4× Nokogiri). A document with more than `UINT32_MAX`
@@ -157,21 +157,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller falls back to a walk.
 
 * Parsing now **honours the input String's encoding**. UTF-8, US-ASCII and
-  ASCII-8BIT (binary) are used directly (the UTF-8 common case is unchanged — a
+  ASCII-8BIT (binary) are used directly (the UTF-8 common case is unchanged - a
   single encoding check, no extra work); any other encoding (Shift_JIS, EUC-JP,
-  ISO-8859-1, Windows-1252, …) is transcoded to UTF-8 (invalid/undefined →
+  ISO-8859-1, Windows-1252, ...) is transcoded to UTF-8 (invalid/undefined →
   U+FFFD) so its content is preserved. Previously every input was read as raw
   UTF-8 bytes, so a Shift_JIS or EUC-JP document was mangled into U+FFFD; it now
   decodes correctly (matching `Nokogiri`). Applies to `Makiri::HTML` /
   `Makiri.parse`, `DocumentFragment.parse`, and `Document#fragment` / `Node#parse`.
 * Parsing skips its UTF-8 validation scan when the input String's cached
   coderange already proves it valid (pure ASCII, or valid in the UTF-8
-  encoding) — read without forcing a scan. Invalid/unknown input is sanitised
+  encoding) - read without forcing a scan. Invalid/unknown input is sanitised
   as before. Most effective on multibyte-heavy already-validated input; the DOM
   is unchanged.
 * The HTML serializer's line table is built with `memchr`, and the UTF-8
   validity check is a dedicated validate-only scan (Unicode well-formed table +
-  word-at-a-time ASCII), instead of decoding every code point — together ~7%
+  word-at-a-time ASCII), instead of decoding every code point - together ~7%
   faster parsing on a 235 KB document, output byte-identical.
 * `Node#{to_html,to_s,outer_html,inner_html}` collect Lexbor's serializer output
   into one growing C buffer (`mkr_buf`) and copy it into a Ruby String once,
@@ -201,12 +201,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to different documents.
   * An HTML-only API that hands a node *argument* to Lexbor accepted any
     `Makiri::Node` and unwrapped it, so passing a `Makiri::XML` node read its
-    `mkr_xml_node_t*` as an `lxb_dom_node_t` and **segfaulted** —
+    `mkr_xml_node_t*` as an `lxb_dom_node_t` and **segfaulted** -
     `HTML::Document#import_node`, the `add_child` / `before` / `after` /
     `replace` family, and `fragment(..., context:)` /
     `DocumentFragment.parse(..., context:)`. All such sites now raise `TypeError`.
 
-  The root cause was structural — HTML and XML nodes shared one TypedData type and
+  The root cause was structural - HTML and XML nodes shared one TypedData type and
   one `lxb_dom_node_t*`-typed pointer field, so neither C nor Ruby could tell them
   apart and a single ambiguous unwrap could return an XML pointer as an HTML one.
   The boundary is now enforced by **Ruby's own type machinery**: HTML and XML
@@ -214,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mkr_xml_node_type`, both deriving from a shared base `mkr_node_type`), and the
   representation-specific accessors `mkr_html_node` / `mkr_xml_node_unwrap` use
   `TypedData_Get_Struct`, which **raises `TypeError` on the wrong representation**
-  automatically — it is structurally impossible to read one representation's
+  automatically - it is structurally impossible to read one representation's
   pointer as the other's, for `self` or for any argument. Identity
   (`==`/`eql?`/`hash`/`pointer_id`) uses an integer id that is never dereferenced;
   the ambiguous `lxb_dom_node_t`-returning unwrap was removed. The HTML-only
@@ -224,15 +224,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mkr_node_raw`, the lxb `owner_document` field) to their representation-correct /
   kind-checked files, so a future misuse in shared glue fails CI. The node
   wrapper's stored pointer (`mkr_node_data_t.node`) and `NodeSet`'s node array
-  likewise hold a representation-opaque `mkr_raw_node_t *` (an incomplete type —
+  likewise hold a representation-opaque `mkr_raw_node_t *` (an incomplete type -
   it cannot be dereferenced and, unlike `void *`, does not implicitly convert to
   a typed pointer) instead of a misleading `lxb_dom_node_t *`, so an XML node or
   set can never have its `mkr_xml_node_t *` pointer read as a Lexbor node; the
   only casts back to a typed pointer are the kind-checked accessors
   (`mkr_html_node` / `mkr_xml_node_unwrap`) and the NodeSet's wrap function.
   HTML and XML `Document` wrappers are likewise split into distinct TypedData
-  types (`mkr_html_doc_type` / `mkr_xml_doc_type`), so `mkr_html_doc_unwrap` —
-  which reinterprets the parsed document as a Lexbor `lxb_html_document_t` —
+  types (`mkr_html_doc_type` / `mkr_xml_doc_type`), so `mkr_html_doc_unwrap` -
+  which reinterprets the parsed document as a Lexbor `lxb_html_document_t` -
   rejects an XML `Document` at the type boundary rather than relying on an assert
   that vanishes under `NDEBUG`.
 
@@ -251,24 +251,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* `Element#tag_name` (DOM `tagName`) — the qualified name uppercased for an
+* `Element#tag_name` (DOM `tagName`) - the qualified name uppercased for an
   HTML element in an HTML document (`"DIV"`), keeping the original case for
   SVG/MathML; `nil` for non-elements. Complements `#name`, which stays the
   lowercase qualified name.
-* `ProcessingInstruction#target` (DOM `target`) — a PI's target name; `nil` for
+* `ProcessingInstruction#target` (DOM `target`) - a PI's target name; `nil` for
   other node kinds. Its data is read via `#content`/`#text`.
 * `Document#create_processing_instruction(target, data)` (DOM
   `createProcessingInstruction`) and `Document#create_document_fragment` (DOM
-  `createDocumentFragment`, an empty fragment to build up programmatically —
+  `createDocumentFragment`, an empty fragment to build up programmatically -
   unlike `#fragment` / `DocumentFragment.parse`, which parse HTML). Both produce
   a detached node owned by the document; PI creation fails closed when the data
   contains the `?>` terminator (matching the DOM constraint). (DOM
   `createCDATASection` is intentionally not provided: per WHATWG DOM it throws on
   an HTML document, which is the only kind Makiri produces.)
-* `Node#{namespace_uri, prefix, local_name}` — the WHATWG DOM per-node
+* `Node#{namespace_uri, prefix, local_name}` - the WHATWG DOM per-node
   namespace accessors on `Element` and `Attribute` (`nil` on other node kinds).
   `namespace_uri` resolves an element's namespace from its node (so an HTML
-  element is the XHTML namespace `http://www.w3.org/1999/xhtml`, not `nil` — the
+  element is the XHTML namespace `http://www.w3.org/1999/xhtml`, not `nil` - the
   DOM-faithful value browsers and `namespace-uri()` return; SVG/MathML get their
   own URI), and agrees byte-for-byte with the `namespace-uri()` XPath function.
   For attributes it is `nil` unless prefixed, where it returns the parser-assigned
@@ -276,21 +276,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   segment of the qualified name (`nil` for the usual unprefixed HTML5 case), and
   `local_name` is the name without that prefix. Previously a node's namespace was
   reachable only through XPath (`namespace-uri()`/`local-name()`).
-* `Node#clone_node(deep = false)` — a copy of the node, owned by the same
+* `Node#clone_node(deep = false)` - a copy of the node, owned by the same
   document and detached from any parent (the DOM `cloneNode`, whose `deep`
-  defaults to `false` — a missing/`nil`/`false` argument is a shallow clone; a
+  defaults to `false` - a missing/`nil`/`false` argument is a shallow clone; a
   truthy one copies the subtree). Built on the same `import_node` +
   `<template>`-content fixup the fragment parser uses, so a deep-cloned
   `<template>` keeps its contents. Fails closed: a failed import raises rather
   than returning a partial node.
-* `Document#import_node(node, deep = false)` — a copy of `node` owned by the
+* `Document#import_node(node, deep = false)` - a copy of `node` owned by the
   receiver document (the DOM `importNode`, whose `deep` likewise defaults to
   `false`). Unlike `Node#clone_node`, the copy is owned by the target rather
   than the node's own document, so it is the way to bring a node across
   documents (Makiri never moves a node between arenas); the source is left
   untouched. Same import + `<template>`-content fixup as `clone_node`, and fails
   closed on a failed import.
-* `Node#pointer_id` — the underlying `lxb_dom_node_t` pointer as an Integer,
+* `Node#pointer_id` - the underlying `lxb_dom_node_t` pointer as an Integer,
   matching `Nokogiri::XML::Node#pointer_id`. Shares the value `#hash`/`#eql?`
   are built on, so it is a stable, Nokogiri-compatible identity key for
   consumers (e.g. wrapper caches) that key nodes by pointer. Stable for a
@@ -313,19 +313,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-06-02
 
 First public release. An HTML5 parser, a native XPath 1.0 query engine, and CSS
-selectors for Ruby — built on vendored [Lexbor](https://lexbor.com/) with **no
+selectors for Ruby - built on vendored [Lexbor](https://lexbor.com/) with **no
 libxml2 / libxslt dependency at any layer**.
 
 ### Added
 
 **Parsing & DOM**
 
-* `Makiri::HTML` / `Makiri.parse` — HTML5 parsing via vendored, unpatched Lexbor,
+* `Makiri::HTML` / `Makiri.parse` - HTML5 parsing via vendored, unpatched Lexbor,
   with browser-compatible UTF-8 decoding (invalid bytes → U+FFFD; parsing never
   fails on bad bytes). Read-only navigation and attribute/text readers across
   `Document`, `Element`, `Attribute`, `Text`, `CData`, `Comment`,
   `ProcessingInstruction`, `DocumentType`, and `DocumentFragment`.
-* `Node#line` — 1-based source line of an element, reconstructed from the
+* `Node#line` - 1-based source line of an element, reconstructed from the
   tokenizer without patching Lexbor (nil when the location is unknown).
 * `Element#attribute_nodes` and `Attribute#{name,value,parent,element}`, backed
   by a lazily-built attribute→owner index in the Lexbor compat layer.
@@ -378,7 +378,7 @@ libxml2 / libxslt dependency at any layer**.
 * UTF-8 text-input contract: HTML and fragment parsing are lenient (invalid
   bytes → U+FFFD, never reject), while strings passed to the XPath / CSS /
   DOM-mutation APIs must be valid UTF-8 with no NUL byte, otherwise they raise
-  `Makiri::Error` — never silently truncated, repaired, or reinterpreted.
+  `Makiri::Error` - never silently truncated, repaired, or reinterpreted.
 * Thread-safe by construction: parsing releases the GVL (concurrent parse scales
   ~2× on 8 cores), while XPath evaluation holds the GVL so sharing a document or
   context across threads cannot corrupt memory. Fail-closed string caps and

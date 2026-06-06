@@ -1,11 +1,11 @@
-# Makiri — project guide for Claude Code
+# Makiri - project guide for Claude Code
 
 Makiri is a Ruby gem: an HTML5 parser + native XPath 1.0 query engine + CSS
 selectors, with **no libxml2 / libxslt dependency at any layer**. It parses via
 vendored Lexbor and queries via an original XPath engine. Security is a
 first-class goal.
 
-The authoritative design is **`docs/design_doc.ja.md`** (Japanese) — read it
+The authoritative design is **`docs/design_doc.ja.md`** (Japanese) - read it
 before architectural decisions. This file is the operational summary: constraints,
 how to build/test, the subsystem map, and the non-obvious gotchas. The exhaustive
 API list lives in the code + specs + `CHANGELOG.md`, not here.
@@ -15,10 +15,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 - **Vanilla Lexbor, no fork, no patches.** `vendor/lexbor` is a git submodule
   pinned to a release **tag**. Never `git apply` to it. Lexbor gaps are absorbed
   in `ext/makiri/lexbor_compat/`, never by editing Lexbor.
-- **No libxml2 / libxslt** anywhere — not linked, vendored, or derived. The
+- **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
 - **C identifier prefix `mkr_`** for everything we write (`mkr_xpath_*`,
-  `mkr_parse_html`, `mkr_node_data_t`, `mkr_c{Element,…}`); Lexbor stays `lxb_*`.
+  `mkr_parse_html`, `mkr_node_data_t`, `mkr_c{Element,...}`); Lexbor stays `lxb_*`.
 - **Security-first / fail-closed.** Enforce per-evaluate XPath budgets and
   node-set caps, validate inputs, never return a truncated/wrong result (raise
   instead). Keep the build hardening flags (`-D_FORTIFY_SOURCE=2`,
@@ -36,7 +36,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 ## Lexbor version
 
 Pinned to **v3.0.0** (builds cleanly with our `LEXBOR_BUILD_SHARED=OFF` config).
-Fixes landed on master *after* v3.0.0 that we want — pick them up at the **next
+Fixes landed on master *after* v3.0.0 that we want - pick them up at the **next
 release tag** via `git submodule update`, not an untagged commit:
 `#365` tokenizer size-limit fix (DoS-relevant), `<select size>` NULL-deref fix,
 ruby `rp`/`rt` parse-error fix.
@@ -54,7 +54,7 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
 bundle exec rake sanitize          # rebuild ext w/ -fsanitize=address,undefined, run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
-bundle exec rake fuzz:sanitize     # fuzz under ASan — the C engine's memory-safety net
+bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-safety net
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
@@ -74,7 +74,7 @@ Requires CRuby >= 3.2 and `cmake`.
   and `bundle exec` drops `DYLD_*` on macOS. `ASAN_OPTIONS` disables
   LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap-overflow + UB
   in our code still fire. CI runs a separate `sanitize` job on Linux.
-- **`node->user` is reserved** for source-location byte offsets (see below) — do
+- **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
   ignores them; findings land in `spec/fuzz/regressions/` (gitignored).
@@ -89,7 +89,7 @@ ext/makiri/
                            the mkr_core.h umbrella: mkr_alloc (overflow-checked
                            alloc/grow), mkr_hash (ptr hash + pow2 sizer), mkr_text
                            (string-type lattice / mkr_verified_text_t), mkr_buf
-  bridge/                  the Ruby boundary — the ONLY layer allowed raw Ruby String
+  bridge/                  the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and mkr_verified_text_t minting
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
                            xpath/css/serialize/mutate.c)
@@ -105,8 +105,8 @@ docs/design_doc.ja.md      authoritative design (read this)
 
 **Text-input contract.** Parsing **honours the input String's encoding**
 (`mkr_ruby_to_utf8`, `bridge/ruby_string.c`): UTF-8 / US-ASCII / ASCII-8BIT pass
-through untouched (the UTF-8 common case is a single encoding compare — no
-transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, …) is
+through untouched (the UTF-8 common case is a single encoding compare - no
+transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
 instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
 parsing then decodes leniently like a browser**: `mkr_utf8_sanitize`
@@ -115,11 +115,11 @@ for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
 bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
-no forced scan) already proves it valid — `mkr_parse_html`'s `assume_valid` and
+no forced scan) already proves it valid - `mkr_parse_html`'s `assume_valid` and
 `mkr_ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
 `mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for invalid UTF-8 or an
 embedded NUL at the XPath/CSS/mutation boundaries (expr, selector, attribute
-name/value, `content=`, `name=`, `create_*`, variable/namespace) — never
+name/value, `content=`, `name=`, `create_*`, variable/namespace) - never
 truncate/repair. Don't drop these checks; the engine assumes NUL-terminated,
 valid-UTF-8 C strings.
 
@@ -132,16 +132,16 @@ element start-tag's byte offset (`token->begin`). After the tree is built,
 recorded token by tag id (bounded lookahead), and stamps `offset+1` into
 `node->user`; a line table (`mkr_lines_t`, built once) resolves that to a
 1-based line. `Node#line` returns an Integer, or **nil** when unplaceable
-(parser-inserted implicit html/head/body, text/comment/attribute nodes) — never
+(parser-inserted implicit html/head/body, text/comment/attribute nodes) - never
 a wrong line. Recorder bounded by `MKR_POS_MAX_TOKENS` (fail closed → nil, never
 wrong). The document outlives `lxb_html_parser_destroy` (it only unrefs
 tkz/tree). Tracking is **always on**: it rides the parse (~7% over no-tracking,
-measured). An earlier `line: :text`/`:none` option was removed — `:text` (a
+measured). An earlier `line: :text`/`:none` option was removed - `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
 
 **attr→owner index** (`lexbor_compat/dom_index.c`). Lexbor never links an
 attribute back to its element, so we build an open-addressing hash (pointer
-keys, lazy two-phase build — count, size once, fill; iterative DFS, no recursion
+keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 → no stack DoS; OOM fails closed and retries). The build also **backfills each
 attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
 first_child/next, never attr.parent), so the XPath engine handles
@@ -150,7 +150,7 @@ Reached via `mkr_parsed_attr_owner`; `mkr_parsed_dom_index_invalidate` drops it
 after any mutation so it rebuilds on the next query. The same walk **co-builds
 an element index** (`tag id → elements`, document-order CSR) used by the XPath
 `//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
-is bucketed — custom-element tag ids are *pointer values* (`lxb_tag_append`),
+is bucketed - custom-element tag ids are *pointer values* (`lxb_tag_append`),
 so those elements are left out and `//customtag` falls back to the tree walk.
 Reached via `mkr_parsed_element_index` / `mkr_element_index_tag` /
 `mkr_element_index_has_foreign`; invalidated with the attr index.
@@ -185,12 +185,12 @@ becomes `Makiri::Error`, never a long-jump through the evaluator); node-set
 returns from a foreign document are rejected. The **namespace axis is not
 implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
 *does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
-nodes), so this is a documented behaviour difference — see README "Differences
+nodes), so this is a documented behaviour difference - see README "Differences
 from Nokogiri". `namespace-uri()`/`local-name()` are implemented.
 **Namespace matching of name tests is strict by default** (HTML5/WHATWG-faithful,
 like browsers' `document.evaluate` and `Nokogiri::HTML5`): an *unprefixed*
 element name test resolves in the HTML namespace, so `//div` matches but
-`//svg`/`//path` do NOT — foreign (SVG/MathML) elements need a registered
+`//svg`/`//path` do NOT - foreign (SVG/MathML) elements need a registered
 prefix (`//svg:path`). Pass `namespace_matching: :lax` (on `Node#{xpath,at_xpath}`
 or `XPathContext.new`) for the namespace-agnostic, `Nokogiri::HTML`-style match
 where `//path` finds the SVG element. The mode affects *only* unprefixed
@@ -209,24 +209,24 @@ document order; capped at `MKR_NODE_SET_MAX`; malformed → `Makiri::CSS::Syntax
 **Serialization** (`glue/ruby_serialize.c`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
 collects Lexbor's many small chunks into one growing C buffer (`mkr_buf`) and the
-whole thing is copied into a UTF-8 Ruby String once — markedly faster than
+whole thing is copied into a UTF-8 Ruby String once - markedly faster than
 `rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
 serializer's dominant cost), and at parity with `nokolexbor`. `pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
 serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
 (`mkr_node_content`) serves descendant text from the **text index** (see
-below) — a hash lookup + one pre-sized `mkr_ruby_str_from_slices` memcpy run,
-no per-call tree walk — and falls back to a direct iterative walk for
+below) - a hash lookup + one pre-sized `mkr_ruby_str_from_slices` memcpy run,
+no per-call tree walk - and falls back to a direct iterative walk for
 non-indexed nodes (fragments). For a Document it returns the **root element's**
 text (DOM makes a Document's textContent null, which is not what callers want).
 
 **Mutation** (`glue/ruby_mutate.c`). Tree edits (`add_child`/`<<`,
 `add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
-`replace`) over Lexbor insert/remove. We **detach, never destroy** — the arena
+`replace`) over Lexbor insert/remove. We **detach, never destroy** - the arena
 owns node memory and live Ruby wrappers may alias a removed node; move semantics
 = detach-then-insert. Attribute `[]=` / `delete`; `Node#name=` renames in place
 (create a fresh element so the doc interns the name, copy its
-`local_name`/`prefix`/`ns`/`upper_name`/`qualified_name`, destroy the throwaway —
+`local_name`/`prefix`/`ns`/`upper_name`/`qualified_name`, destroy the throwaway -
 identity preserved); `Node#content=`. `Document#{create_element,create_text_node}`.
 Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 `Document#fragment(html)` (bound to a doc) parse in a throwaway `<body>` context
@@ -257,14 +257,14 @@ it releases the GVL. Key decisions that got there, worth not regressing:
 
 - **Parsing releases the GVL; XPath evaluation does NOT** (`ruby_doc.c`,
   `ruby_xpath.c`): parse copies the source to a C buffer then runs
-  `mkr_parse_html` under `rb_thread_call_without_gvl` — safe because a freshly
+  `mkr_parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. **XPath holds
   the GVL for the whole evaluation by design** (`mkr_eval_compiled` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL
   serialises all Ruby-thread C code, so an XPath walk never runs in parallel
   with a tree mutation, with another `evaluate` on the same context, or with a
-  `register_variable`/`register_namespace`/`node=` on the same context — no
+  `register_variable`/`register_namespace`/`node=` on the same context - no
   locking needed (and none is used). An earlier version released the GVL for
   handler-free XPath (it scaled queries ~3.3× across threads), but the locking
   required to make a GVL-released walk safe against shared-document mutation was
@@ -301,9 +301,9 @@ it releases the GVL. Key decisions that got there, worth not regressing:
 - **`Node#at_xpath` first-match short-circuit** (`mkr_xpath_eval.c`
   `mkr_try_first_match`, entered via `mkr_xpath_eval_compiled_first`): `at_xpath`
   wants only node-set[0], so for the common "first descendant by name (+ a
-  position-independent `[@a]`/`[@a='v']` predicate)" shapes — `//x`, `//x[@a]`,
+  position-independent `[@a]`/`[@a='v']` predicate)" shapes - `//x`, `//x[@a]`,
   `//*[@a='v']`, `.//x`, `descendant::x[...]` (after the `//` peephole; one or two
-  steps) — it walks the subtree in **document order and stops at the first match**
+  steps) - it walks the subtree in **document order and stops at the first match**
   instead of materialising+sorting the whole set, the XPath analogue of at_css's
   `MATCH_FIRST`. Cost becomes O(position of first match): a front hit is ~µs
   (vs ~280µs full-eval), trailing/absent fall back to a full scan. Reuses
@@ -322,6 +322,6 @@ it releases the GVL. Key decisions that got there, worth not regressing:
 
 Working on perf: capture a `rake bench` baseline, change one thing, re-bench,
 and **ship only a measurable win** that keeps `rake spec` + `rake fuzz:sanitize`
-green. (Note: a per-node Ruby wrapper cache was considered and rejected —
+green. (Note: a per-node Ruby wrapper cache was considered and rejected -
 `node->user` is taken, and a node→VALUE side table creates a GC-lifetime problem
 for no clear gain on already-winning paths.)

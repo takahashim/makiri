@@ -1,4 +1,4 @@
-/* ruby_xml_node.c — Ruby read + mutation API for custom XML nodes.
+/* ruby_xml_node.c - Ruby read + mutation API for custom XML nodes.
  *
  * The XML counterpart of ruby_node.c: it wraps a mkr_xml_node_t into the right
  * Makiri::XML::* leaf and defines the reader/query/mutation methods on the
@@ -51,7 +51,7 @@ mkr_wrap_xml_node(mkr_xml_node_t *node, VALUE document)
 /* The XML node-pointer accessor (the counterpart of mkr_html_node_unwrap): returns the
  * mkr_xml_node_t for an XML node or XML Document, and RAISES TypeError for an HTML
  * node/Document (TypedData_Get_Struct checks mkr_xml_node_type, which an HTML node
- * — wrapped under mkr_html_node_type — does not satisfy). Non-static so the shared
+ * - wrapped under mkr_html_node_type - does not satisfy). Non-static so the shared
  * XPath glue can resolve an XML context/result node safely. */
 mkr_xml_node_t *
 mkr_xml_node_unwrap(VALUE self)
@@ -279,7 +279,7 @@ mkr_xml_node_content(VALUE self)
         return rb_utf8_str_new(n->value ? n->value : "", (long)n->value_len);
     }
     /* element / document: concatenate every TEXT/CDATA descendant in document
-     * order. Iterative pre-order (parent-pointer) walk — no C recursion, so a
+     * order. Iterative pre-order (parent-pointer) walk - no C recursion, so a
      * deep tree cannot overflow the stack. */
     VALUE str = rb_utf8_str_new("", 0);
     mkr_xml_node_t *cur = n->first_child;
@@ -507,11 +507,32 @@ mkr_xser_doctype(mkr_buf_t *b, const mkr_xml_node_t *dt)
     return 0;
 }
 
+/* An upper bound for a serialization buffer, scaled to the document's content
+ * (its tracked arena_bytes). The serialized form of any acyclic, depth-bounded
+ * document is a small multiple of its arena bytes, so 32x - which covers
+ * worst-case escaping and maximal pretty-print indentation for a parsed document
+ * (depth <= MKR_XML_MAX_DEPTH) - admits every legitimate serialization, with a
+ * 64 KiB floor for tiny documents. A cyclic or pathologically deep CONSTRUCTED
+ * tree exceeds the bound, so the serializer fails closed with MKR_ERR_LIMIT
+ * (-> Makiri::Error) instead of growing the buffer without limit and exhausting
+ * memory. Defence-in-depth: the tree-mutation guards already prevent cycles. */
+static size_t
+mkr_xml_serialize_cap(VALUE self)
+{
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(mkr_xml_node_document(self)));
+    size_t cap = 65536;   /* floor: declaration/DOCTYPE + a small subtree */
+    size_t arena = xdoc ? xdoc->arena_bytes : 0;
+    if (arena > 0) {
+        cap = (arena <= (SIZE_MAX - cap) / 32) ? cap + arena * 32 : SIZE_MAX;
+    }
+    return cap;
+}
+
 /* call-seq: node.to_xml(pretty: false, indent: 2, encoding: "UTF-8") -> String
  * A Document also emits the XML declaration and its DOCTYPE; any other node
  * serializes just its own subtree. +encoding+ (a String or Encoding) transcodes
- * the output — a character the target cannot represent becomes a hexadecimal
- * character reference — and is named in a Document's declaration. */
+ * the output - a character the target cannot represent becomes a hexadecimal
+ * character reference - and is named in a Document's declaration. */
 static VALUE
 mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
 {
@@ -531,7 +552,7 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
 
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
     mkr_buf_t buf;
-    mkr_buf_init(&buf, 0);
+    mkr_buf_init(&buf, mkr_xml_serialize_cap(self));   /* fail closed past the cap, never OOM */
     int rc = 0;
 
     if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
@@ -558,7 +579,7 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
 
     if (rc != 0) {
         mkr_buf_free(&buf);
-        rb_raise(mkr_eError, "out of memory serializing XML");
+        rb_raise(mkr_eError, "failed to serialize XML: output exceeded the size limit or out of memory");
     }
     VALUE str = rb_utf8_str_new(buf.len ? buf.data : "", (long)buf.len);
     mkr_buf_free(&buf);
@@ -579,7 +600,7 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
  * sorted by prefix with superfluous ones removed, CDATA emitted as escaped text,
  * comments omitted unless requested. Exclusive C14N is not implemented. */
 
-/* C14N escaping — text: & < > #xD ; attribute value: & < " #x9 #xA #xD. */
+/* C14N escaping - text: & < > #xD ; attribute value: & < " #x9 #xA #xD. */
 static int
 mkr_c14n_escaped(mkr_buf_t *b, const char *s, uint32_t n, int attr)
 {
@@ -818,7 +839,7 @@ mkr_xml_node_canonicalize(int argc, VALUE *argv, VALUE self)
 
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
     mkr_buf_t buf;
-    mkr_buf_init(&buf, 0);
+    mkr_buf_init(&buf, mkr_xml_serialize_cap(self));   /* fail closed past the cap, never OOM */
     int rc = 0;
 
     if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
@@ -842,7 +863,7 @@ mkr_xml_node_canonicalize(int argc, VALUE *argv, VALUE self)
 
     if (rc != 0) {
         mkr_buf_free(&buf);
-        rb_raise(mkr_eError, "out of memory canonicalizing XML");
+        rb_raise(mkr_eError, "failed to canonicalize XML: output exceeded the size limit or out of memory");
     }
     VALUE str = rb_utf8_str_new(buf.len ? buf.data : "", (long)buf.len);
     mkr_buf_free(&buf);
@@ -855,7 +876,7 @@ mkr_xml_node_canonicalize(int argc, VALUE *argv, VALUE self)
  * conveniences would silently misbehave on XML and are turned into explicit
  * NotImplementedError instead of a wrong result:
  *   - CSS selectors: Lexbor's lxb_selectors lower-cases names, which destroys
- *     XML's case- and namespace-sensitive matching — use #xpath.
+ *     XML's case- and namespace-sensitive matching - use #xpath.
  *   - HTML serialization (to_html/inner_html/outer_html): emitting
  *     HTML-serialized markup for an XML document would be wrong (escaping /
  *     CDATA / void elements differ). Use #to_xml. */
@@ -907,8 +928,8 @@ mkr_xml_node_equals(VALUE self, VALUE other)
  * layer only coerces+verifies arguments through the bridge and maps the
  * mutation status to a Ruby exception. Detach-never-destroy: a removed node is
  * unlinked, never freed, so live wrappers stay valid (the same invariant the
- * read-only reader had). The XML reader keeps no attr/text index, so — unlike
- * the HTML side — there is nothing to invalidate after an edit. */
+ * read-only reader had). The XML reader keeps no attr/text index, so - unlike
+ * the HTML side - there is nothing to invalidate after an edit. */
 
 static mkr_xml_doc_t *
 mkr_xml_node_xdoc(VALUE self)
@@ -935,7 +956,7 @@ mkr_xml_mut_check(mkr_xml_mut_status_t st)
     case MKR_XML_MUT_OOM:       rb_raise(mkr_eError, "out of memory mutating XML");
     case MKR_XML_MUT_BAD_NAME:  rb_raise(rb_eArgError, "not a well-formed XML name");
     case MKR_XML_MUT_BAD_CHARS: rb_raise(mkr_eError,
-                                    "value contains a character not permitted in XML");
+                                    "value contains a character or sequence not permitted in XML");
     case MKR_XML_MUT_UNBOUND_NS: rb_raise(mkr_eError,
                                     "namespace prefix is not bound in this scope");
     case MKR_XML_MUT_TYPE:      rb_raise(mkr_eError, "operation unsupported for this node type");
@@ -944,6 +965,8 @@ mkr_xml_mut_check(mkr_xml_mut_status_t st)
                                     "invalid placement (an attribute/document node cannot be a "
                                     "tree child, a document allows a single root element, and a "
                                     "sibling target must have a parent)");
+    case MKR_XML_MUT_BAD_NS_DECL: rb_raise(mkr_eError,
+                                    "cannot bind a namespace prefix to the empty namespace");
     }
     rb_raise(mkr_eError, "unknown XML mutation error");   /* unreachable; keeps the compiler happy */
 }
@@ -1156,7 +1179,7 @@ mkr_xml_doc_create_pi(VALUE self, VALUE rb_target, VALUE rb_data)
     return mkr_wrap_xml_node(pi, self);
 }
 
-/* Makiri::XML::Element.new(name, document) / Text.new(content, document) — the
+/* Makiri::XML::Element.new(name, document) / Text.new(content, document) - the
  * allocator is undef'd (nodes come only from C), so these delegate to the
  * document's factory, like Nokogiri. +document+ must be a Makiri::XML::Document. */
 static VALUE

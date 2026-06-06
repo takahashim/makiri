@@ -2,7 +2,7 @@
 #define MAKIRI_CORE_MKR_BUF_H
 
 /*
- * mkr_buf_t — an owned, growable, optionally capped byte buffer, kept
+ * mkr_buf_t - an owned, growable, optionally capped byte buffer, kept
  * NUL-terminated. Built on the fail-closed allocators in mkr_alloc.h.
  * (mkr_core.h is a thin umbrella over mkr_alloc.h + mkr_text.h + this.)
  */
@@ -13,14 +13,42 @@
 extern "C" {
 #endif
 
+/* Memory safety for buffers lives HERE, at the one buffer primitive, not at each
+ * call site: "max == 0" can no longer mean "unbounded". Two ceilings bound every
+ * mkr_buf so a runaway - a cycle, an unbounded loop, or a caller that forgot to
+ * pass a cap - fails closed with MKR_ERR_LIMIT instead of exhausting memory and
+ * freezing the machine:
+ *
+ *   MKR_BUF_DEFAULT_LIMIT  the cap applied when the caller passes max == 0. A
+ *                          conservative default (100 MiB): code that did not
+ *                          think about a bound gets a tight one for free, and a
+ *                          buffer that genuinely needs to be large must opt in
+ *                          EXPLICITLY by passing a larger max.
+ *   MKR_BUF_HARD_MAX       an absolute ceiling no buffer may exceed, even one
+ *                          with an explicit max - the last-resort backstop.
+ *                          Tight, content-scaled bounds still belong to the
+ *                          caller (e.g. the XML serializer caps itself at a
+ *                          multiple of arena_bytes); this stops total runaway.
+ *
+ * Override either at build time: -DMKR_BUF_DEFAULT_LIMIT=<bytes> / -DMKR_BUF_HARD_MAX=<bytes>. */
+#ifndef MKR_BUF_DEFAULT_LIMIT
+#define MKR_BUF_DEFAULT_LIMIT ((size_t)100 << 20)   /* 100 MiB */
+#endif
+#ifndef MKR_BUF_HARD_MAX
+#define MKR_BUF_HARD_MAX ((size_t)4 << 30)        /* 4 GiB */
+#endif
+
 typedef struct {
     char  *data; /* owned; kept NUL-terminated after any append */
     size_t len;  /* bytes used (excluding the terminator) */
     size_t cap;  /* bytes allocated */
-    size_t max;  /* 0 = unbounded; else append past max returns MKR_ERR_LIMIT */
+    size_t max;  /* 0 = the conservative MKR_BUF_DEFAULT_LIMIT; else this value -
+                  * either way clamped by MKR_BUF_HARD_MAX (past it -> ERR_LIMIT) */
 } mkr_buf_t;
 
-/* Initialise an empty buffer. max == 0 means unbounded. */
+/* Initialise an empty buffer. max == 0 applies the conservative default ceiling
+ * (MKR_BUF_DEFAULT_LIMIT) - it is NOT unbounded; pass an explicit (larger or
+ * smaller) value to opt into a different bound, always under MKR_BUF_HARD_MAX. */
 static inline void
 mkr_buf_init(mkr_buf_t *b, size_t max)
 {

@@ -11,7 +11,7 @@ module Makiri
   # (the fragment-parsing algorithm is context-sensitive). It may be:
   #   * a tag-name String (HTML namespace), e.g. <tt>context: "tr"</tt>; the
   #     bare strings <tt>"svg"</tt> / <tt>"math"</tt> name the foreign roots;
-  #   * a {Makiri::Node} element — its tag and namespace are used (the way to
+  #   * a {Makiri::Node} element - its tag and namespace are used (the way to
   #     reach a foreign non-root context such as an SVG <desc>).
   # The default context is <tt><body></tt>. See also {Makiri::Node#parse}.
   #

@@ -17,7 +17,7 @@ extern "C" {
  *
  * Security: every evaluate enforces per-call budgets (op count, recursion
  * depth, node-set / string caps); any overrun fails closed with
- * MKR_XPATH_ERR_LIMIT — never a truncated or wrong result.
+ * MKR_XPATH_ERR_LIMIT - never a truncated or wrong result.
  */
 
 typedef enum {
@@ -62,7 +62,7 @@ typedef struct {
   char *message; /* heap-allocated, freed with mkr_xpath_error_free */
 } mkr_xpath_error_t;
 
-/* Create a context for +node+ in +doc+ (representation-agnostic void* — the glue
+/* Create a context for +node+ in +doc+ (representation-agnostic void* - the glue
  * passes lxb_dom_* for HTML, mkr_xml_* for XML; the engine kind is selected via
  * mkr_xpath_set_engine_kind). */
 mkr_xpath_context_t *mkr_xpath_context_new(void *doc, void *node);
@@ -114,7 +114,7 @@ void  mkr_xpath_set_func_resolver   (mkr_xpath_context_t *ctx, mkr_func_resolver
 
 /*
  * Element-index hooks, injected by the glue layer alongside an opaque index
- * pointer. The engine never sees the index's concrete type — it only calls
+ * pointer. The engine never sees the index's concrete type - it only calls
  * back through these, exactly as it calls Ruby only through the func resolver
  * above. This keeps the engine free of the lexbor_compat headers.
  *

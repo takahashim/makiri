@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 /* Next node of a pre-order (document-order) traversal bounded to `root`'s
- * subtree, walked via parent pointers — no recursion and no heap stack, so an
+ * subtree, walked via parent pointers - no recursion and no heap stack, so an
  * adversarially deep tree cannot exhaust the C stack (DoS-safe). Returns the
  * first child, then the next sibling, climbing back toward `root` (never above
  * it) when a branch is exhausted; NULL after the last node in the subtree.

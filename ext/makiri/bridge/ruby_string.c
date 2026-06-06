@@ -116,7 +116,7 @@ mkr_ruby_to_utf8(VALUE str)
      *  - UTF-8 / US-ASCII / ASCII-8BIT (binary): returned unchanged. These are
      *    already UTF-8 bytes (or deliberately raw bytes), and the native parser
      *    does the WHATWG invalid-byte replacement for them. The UTF-8 common
-     *    case costs only this encoding comparison — no transcode, no copy.
+     *    case costs only this encoding comparison - no transcode, no copy.
      *
      *  - any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, Windows-1252, ...):
      *    transcoded to UTF-8 with invalid/undef -> U+FFFD, so e.g. Shift_JIS
@@ -244,7 +244,7 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
     }
     if (!is_binary && decl && !mkr_xml_enc_compatible(decl, tag)) {
         /* A concrete String encoding is authoritative for decoding, so the
-         * declaration is not used to transcode — but a declaration that names a
+         * declaration is not used to transcode - but a declaration that names a
          * different encoding than the String is tagged with (e.g. a Shift_JIS
          * String declaring encoding="UTF-8") is a self-inconsistent document and
          * a fatal error, not a silently-ignored mismatch. */
@@ -278,7 +278,7 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
 
     const char *ptr = RSTRING_PTR(s);
     long        len = RSTRING_LEN(s);
-    /* §4.3.3: a leading BOM is the encoding signature, not document content —
+    /* §4.3.3: a leading BOM is the encoding signature, not document content -
      * strip a U+FEFF (the transcode above turns any UTF-16/32 BOM into one). */
     if (len >= 3 && (unsigned char)ptr[0] == 0xEF && (unsigned char)ptr[1] == 0xBB
         && (unsigned char)ptr[2] == 0xBF) {
@@ -294,7 +294,7 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
     }
 
     /* Strict UTF-8 validation: an embedded NUL or any invalid UTF-8 is fatal
-     * (no U+FFFD repair — unlike the HTML mkr_utf8_sanitize path). */
+     * (no U+FFFD repair - unlike the HTML mkr_utf8_sanitize path). */
     if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
         rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
     }

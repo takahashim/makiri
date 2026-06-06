@@ -1,4 +1,4 @@
-/* mkr_xml_mutate.h — Ruby-free XML tree mutation primitives (Phase 1).
+/* mkr_xml_mutate.h - Ruby-free XML tree mutation primitives (Phase 1).
  *
  * The write counterpart of mkr_xml_tree.c's read-only build: in-place edits over
  * the custom node arena (rename, attribute set/remove, content set, detach). All
@@ -7,7 +7,7 @@
  * ruby_xml_node.c) coerces+verifies arguments and maps the status codes below to
  * exceptions.
  *
- * DETACH-NEVER-DESTROY: a removed node is unlinked, never freed — the arena owns
+ * DETACH-NEVER-DESTROY: a removed node is unlinked, never freed - the arena owns
  * node memory and a live Ruby wrapper may still alias a removed node (the same
  * invariant the read-only reader relied on). New nodes append to the arena and
  * count against the per-document byte/node budgets (fail-closed -> MKR_XML_MUT_OOM).
@@ -27,15 +27,18 @@ typedef enum {
     MKR_XML_MUT_OK = 0,
     MKR_XML_MUT_OOM,         /* arena byte/node budget or allocation failure */
     MKR_XML_MUT_BAD_NAME,    /* not a well-formed XML 1.0 QName (or a reserved one) */
-    MKR_XML_MUT_BAD_CHARS,   /* a value byte is not XML Char (§2.2) */
+    MKR_XML_MUT_BAD_CHARS,   /* a non-XML-Char byte (§2.2) or a forbidden sequence
+                              * for the context ("?>" in a PI, "--" in a comment,
+                              * "]]>" in a CDATA section) */
     MKR_XML_MUT_UNBOUND_NS,  /* a prefix has no in-scope namespace binding */
     MKR_XML_MUT_TYPE,        /* the operation is invalid for this node type */
     MKR_XML_MUT_CYCLE,       /* the node would become a descendant of itself */
-    MKR_XML_MUT_HIERARCHY    /* invalid placement (attr/document child, second root, parentless ref) */
+    MKR_XML_MUT_HIERARCHY,   /* invalid placement (attr/document child, second root, parentless ref) */
+    MKR_XML_MUT_BAD_NS_DECL  /* a namespace declaration is invalid (xmlns:prefix bound to "") */
 } mkr_xml_mut_status_t;
 
-/* Detach +node+ from the tree: from its parent's child list, or — for an
- * attribute — from its owner element's attribute list. No-op when already
+/* Detach +node+ from the tree: from its parent's child list, or - for an
+ * attribute - from its owner element's attribute list. No-op when already
  * detached (no parent). The arena keeps the memory (detach-never-destroy); the
  * caller clears doc->root if it detaches the root element. */
 void mkr_xml_detach(mkr_xml_node_t *node);
@@ -44,7 +47,7 @@ void mkr_xml_detach(mkr_xml_node_t *node);
  * validates it, copies it contiguously into the arena, re-splits prefix/local,
  * and re-resolves the namespace against the node's in-scope declarations (the
  * element itself for an element; the owner element for an attribute). The node
- * pointer — and thus its identity and tree position — is preserved. */
+ * pointer - and thus its identity and tree position - is preserved. */
 mkr_xml_mut_status_t mkr_xml_rename(mkr_xml_doc_t *doc, mkr_xml_node_t *node,
                                     const char *name, uint32_t nlen);
 
@@ -105,7 +108,7 @@ mkr_xml_mut_status_t mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_no
  *   - validates placement first (no cycle, no attribute/document/doctype as a
  *     child, a single document-element root, a ref that has a parent) and
  *     resolves the inserted subtree's namespaces against the prospective context
- *     — ALL before any structural change, so a failure leaves the tree untouched
+ *     - ALL before any structural change, so a failure leaves the tree untouched
  *     (fully fail-closed, even for a move);
  *   - then detaches +node+ from any current position (move) and links it;
  *   - keeps doc->root in sync when the container is the document node.

@@ -11,7 +11,7 @@
 
 /*
  * Per-document indices, all built in one walk of the tree (two tree passes:
- * count/size, then fill — so each table is sized once and never rehashes
+ * count/size, then fill - so each table is sized once and never rehashes
  * mid-build, which keeps the OOM path trivial).
  *
  *  - attribute -> owner element: an open-addressing hash keyed on the
@@ -98,7 +98,7 @@ mkr_dom_index_build(mkr_dom_index_t *idx, lxb_dom_document_t *doc)
      * [1, LXB_TAG__LAST_ENTRY); a custom element's tag id is the *pointer* to
      * its interned tag data (lxb_tag_append: `data->tag_id = (lxb_tag_id_t)
      * data`), an enormous value that can't key a dense array. Elements with a
-     * tag id at/above the cap are left out of the index — the engine falls
+     * tag id at/above the cap are left out of the index - the engine falls
      * back to a tree walk for `//customtag`, which is rare in practice. */
     size_t   counts[MKR_TAG_INDEX_CAP] = {0}; /* counts[t] = #elements, tag t */
     size_t   n_attrs = 0;

@@ -9,7 +9,7 @@
 #include <string.h>
 
 /*
- * Native XPath engine — top-level: context lifetime, namespace + variable
+ * Native XPath engine - top-level: context lifetime, namespace + variable
  * registries, the eval entry point that drives parser + evaluator.
  *
  * Phase 1 builds the engine up to a working subset (see plan file).
@@ -77,7 +77,7 @@ struct mkr_xpath_context_s {
 };
 
 /* The two node-dereferencing engine ENTRY points, one pair per monomorphized
- * instance (mkr_xpath_engine_{html,xml}.c — the bodies suffix them _html / _xml
+ * instance (mkr_xpath_engine_{html,xml}.c - the bodies suffix them _html / _xml
  * via the prelude). The driver holds them as void node pointers and dispatches
  * on ctx->engine_kind; every other per-evaluate helper is representation-neutral
  * and shared (mkr_xpath_shared.c), called by its bare name. The signatures are
@@ -191,7 +191,7 @@ mkr_xpath_limits_init_defaults(mkr_xpath_limits_t *L)
   L->max_steps           = 256;             /* path step count     */
   L->max_predicates      = 64;              /* per-step predicates */
   L->max_function_args   = 64;
-  L->max_nodeset_size    = 10 * 1000 * 1000; /* 10M nodes — large but bounded */
+  L->max_nodeset_size    = 10 * 1000 * 1000; /* 10M nodes - large but bounded */
   L->max_eval_ops        = 50 * 1000 * 1000; /* 50M evaluator steps */
   L->max_string_bytes    = 64 * 1024 * 1024; /* 64 MB string-value */
   L->max_recursion_depth = 256;
@@ -572,7 +572,7 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
 
   /* String-value cache snapshot. Nested eval (handler that calls back
    * into XPath on the same context) sees outer entries but anything it
-   * adds is discarded on return — outer borrowed pointers stay valid. */
+   * adds is discarded on return - outer borrowed pointers stay valid. */
   size_t str_cache_snapshot = ctx->str_cache.count;
   /* Document-order index: outermost evaluate owns the lifecycle. If the
    * outer wasn't built, the inner's build (if any) gets cleared at this
@@ -588,7 +588,7 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
     mkr_doc_order_index_clear(&ctx->order_index);
   }
   /* Clear memoized values regardless of success: they are valid only
-   * within a single evaluate scope. Defensive — also clears on error. */
+   * within a single evaluate scope. Defensive - also clears on error. */
   mkr_node_clear_memos(ast);
   if (eval_rc != 0) {
     if (out_error) *out_error = err; else mkr_xpath_error_clear(&err);
@@ -623,7 +623,7 @@ mkr_xpath_eval_compiled_first(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   int matched = ctx->engine_kind ? mkr_try_first_match_xml(ctx, ast, &node, &err)
                                  : mkr_try_first_match_html(ctx, ast, &node, &err);
   if (matched < 0) {
-    /* Op budget exceeded while walking — fail closed (do NOT fall back to the
+    /* Op budget exceeded while walking - fail closed (do NOT fall back to the
      * full evaluator, which would hit the same wall). */
     if (out_error) *out_error = err; else mkr_xpath_error_clear(&err);
     return -1;

@@ -119,7 +119,7 @@ node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
     /* XPath 1.0 §5 data model: only element, attribute, text,
      * namespace, processing-instruction, comment, and the root are
      * model nodes. Lexbor additionally exposes DOCUMENT_TYPE, ENTITY,
-     * ENTITY_REFERENCE, and NOTATION nodes — none belong in the
+     * ENTITY_REFERENCE, and NOTATION nodes - none belong in the
      * model, so node() must not match them. DocumentFragment IS
      * matched: it acts as the root for fragment-rooted contexts,
      * so '.' / 'self::node()' over a fragment has to see it. */
@@ -176,7 +176,7 @@ node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
     }
     /* The local-name + namespace match for an element/attribute name test is
      * host-specific (HTML's qualified-name model vs XML's local+namespace-URI
-     * model, §8.6), so it lives in name_test_match — defined per instance. */
+     * model, §8.6), so it lives in name_test_match - defined per instance. */
     return name_test_match(test, node, axis, ctx);
   }
   return 0;
@@ -324,7 +324,7 @@ walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
  * throwaway node-set (malloc/free) per context node for the attribute path plus
  * a string-cache insert; recognising the shape lets us filter with a direct
  * attribute lookup instead. Both shapes are boolean (no position dependence),
- * so this is a pure per-node filter — identical result to the generic path.
+ * so this is a pure per-node filter - identical result to the generic path.
  */
 typedef struct {
   const char *name;
@@ -335,7 +335,7 @@ typedef struct {
 } mkr_attr_pred_t;
 
 /* Shape A: a relative path that is a single unprefixed attribute name test with
- * no predicates — i.e. `@name`. Fills name/name_len; returns 1 on match. */
+ * no predicates - i.e. `@name`. Fills name/name_len; returns 1 on match. */
 static int
 mkr_match_attr_step(const mkr_node_t *n, const char **name, size_t *name_len)
 {
@@ -387,7 +387,7 @@ mkr_match_attr_pred(const mkr_node_t *p, mkr_attr_pred_t *out)
 /* Find an element's attribute whose qualified name equals +name+ exactly
  * (case-SENSITIVE), or NULL. We scan rather than calling
  * lxb_dom_element_get_attribute, because that does an HTML case-INsensitive
- * lookup — which would make `[@Id]` match `id`, diverging from XPath 1.0, from
+ * lookup - which would make `[@Id]` match `id`, diverging from XPath 1.0, from
  * Nokogiri::HTML5, AND from Makiri's own case-sensitive attribute-axis name
  * test (node_principal_match compares the qualified name byte-for-byte). The
  * fast path only handles unprefixed names, matching that comparison. */
@@ -448,7 +448,7 @@ apply_predicates(mkr_xpath_context_t *ctx,
     mkr_nodeset_t kept;
     mkr_nodeset_init(&kept);
 
-    /* Specialise [@name] / [@name='lit'] — a position-independent filter, so
+    /* Specialise [@name] / [@name='lit'] - a position-independent filter, so
      * applying it per predicate (even amid others) matches the generic path. */
     mkr_attr_pred_t ap;
     if (mkr_match_attr_pred(preds[p], &ap)) {
@@ -543,7 +543,7 @@ axis_can_alias(mkr_axis_t a)
 }
 
 /*
- * 13 axes — Phase 2b adds the remaining six. The namespace axis stays
+ * 13 axes - Phase 2b adds the remaining six. The namespace axis stays
  * unimplemented for now (spec section 6 in mkr_xpath_internal.h).
  */
 static int
@@ -606,7 +606,7 @@ is_reverse_axis(mkr_axis_t a)
 }
 
 /*
- * Fast path for `//tag` — a descendant, unprefixed, predicate-free name-test
+ * Fast path for `//tag` - a descendant, unprefixed, predicate-free name-test
  * whose context is exactly the document node. `descendant::tag` from the
  * document is precisely "every element whose name is tag", which the
  * document's element index already groups by tag id in document order, so we
@@ -616,7 +616,7 @@ is_reverse_axis(mkr_axis_t a)
  * context does not qualify (caller falls back to the walk), -1 on error.
  *
  * Correctness: only taken for pure-HTML documents (mkr_element_index_has_foreign
- * is false) — in foreign content an element's qualified name need not equal its
+ * is false) - in foreign content an element's qualified name need not equal its
  * tag's canonical name, so a match could live in another tag bucket. Each
  * candidate is still re-checked with node_principal_match, so the result is
  * byte-identical to the walk (this also makes case/normalization quirks in the
@@ -675,7 +675,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
  * Node#at_xpath wants only the first node in document order; today it builds the
  * whole node-set and takes [0]. For the common "find a descendant by name (plus
  * a simple attribute predicate)" shapes we can instead walk the subtree in
- * document order and stop at the first match — the XPath-side analogue of
+ * document order and stop at the first match - the XPath-side analogue of
  * at_css's lxb_selectors MATCH_FIRST.
  *
  * Recognised shapes (after the parser's // peephole, see mkr_apply_peephole):
@@ -686,7 +686,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
  * position-independent [@name] / [@name='lit'] (exactly mkr_match_attr_pred's
  * shape). Each denotes "the strict descendants of <start> matching the
  * test+predicates, in document order", so the first node the pre-order walk
- * reaches IS node-set[0] of the full evaluation — byte-identical, just without
+ * reaches IS node-set[0] of the full evaluation - byte-identical, just without
  * building the rest. Anything else (positional predicates, functions/variables,
  * reverse axes, unions, prefixes, longer paths) returns 0 and the caller falls
  * back to the full evaluator.
@@ -818,7 +818,7 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
    *   3. The axis does NOT aliase but multiple contexts can still
    *      produce results that interleave in doc order. child is the
    *      canonical case: html's children include head and body, and
-   *      head's children include title — concatenated naively gives
+   *      head's children include title - concatenated naively gives
    *      [head, body, title, ...] but doc order is [head, title, body,
    *      ...]. Only SELF and ATTRIBUTE are safe to concatenate without
    *      sorting (their outputs stay in doc order when inputs are). */
@@ -858,7 +858,7 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   } else {
     /* Predicate path: position() / last() are per-context, so we have
      * to materialise each context's fragment before filtering. Reuse
-     * a single fragment buffer across iterations — its items[] grows
+     * a single fragment buffer across iterations - its items[] grows
      * to the largest single-context cardinality once instead of
      * malloc/freeing on every iteration. */
     mkr_nodeset_t fragment;
@@ -1015,7 +1015,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
   }
   if (l->type == MKR_XPATH_TYPE_NUMBER || r->type == MKR_XPATH_TYPE_NUMBER) {
     /* Both operands are non-nodeset (the nodeset case is handled
-     * above); _unchecked is the right entry — no allocation possible. */
+     * above); _unchecked is the right entry - no allocation possible. */
     double a = mkr_val_to_number_unchecked(l);
     double b = mkr_val_to_number_unchecked(r);
     int eq = (a == b);
@@ -1051,8 +1051,8 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
 {
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
 
-  /* node-set vs node-set (XPath 1.0 §3.4): true iff SOME pair of nodes — one
-   * from each set — satisfies the relation on their numeric string-values.
+  /* node-set vs node-set (XPath 1.0 §3.4): true iff SOME pair of nodes - one
+   * from each set - satisfies the relation on their numeric string-values.
    * Must compare every pair, not just the first node of each side. */
   if (l->type == MKR_XPATH_TYPE_NODESET && r->type == MKR_XPATH_TYPE_NODESET) {
     (void)L;
@@ -1121,7 +1121,7 @@ union_nodeset(mkr_xpath_context_t *ctx, mkr_val_t *l, mkr_val_t *r, mkr_val_t *o
   }
   /* Push both sides without per-insert deduplication (the old contains()
    * loop was O(n^2)). Sort once at the end and collapse adjacent
-   * duplicates — total cost is O(n log n) plus a single linear pass. */
+   * duplicates - total cost is O(n log n) plus a single linear pass. */
   mkr_nodeset_t merged;
   mkr_nodeset_init(&merged);
   for (size_t i = 0; i < l->u.nodeset.count; ++i) {
@@ -1381,7 +1381,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
   /* Hoisting fast path: a CI subtree that's already been computed in
    * this evaluate is returned as a clone. The clone keeps ownership
-   * semantics clean — mkr_val_clear on either copy is safe. */
+   * semantics clean - mkr_val_clear on either copy is safe. */
   if (n->is_context_independent && n->memoized) {
     int rc = mkr_val_clone(&n->memo_value, out, err);
     mkr_limit_recurse_leave(L);
@@ -1462,7 +1462,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   }
 
   /* Memoize on success when the subtree is CI. The clone keeps the
-   * caller's out value independent of the cached one — important
+   * caller's out value independent of the cached one - important
    * because the caller is free to consume/modify their copy. */
   if (rc == 0 && n->is_context_independent && !n->memoized) {
     mkr_val_t memo = {0};
@@ -1473,7 +1473,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       mut->memo_value = memo;
       mut->memoized   = 1;
     } else {
-      /* OOM during clone — the caller's `out` is still valid. We
+      /* OOM during clone - the caller's `out` is still valid. We
        * leave the node unmemoized and surface the error. */
       rc = -1;
     }

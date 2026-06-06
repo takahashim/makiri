@@ -234,7 +234,7 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
 }
 
 /* An attribute's OWN namespace id: the one recorded by set_attribute_ns (which
- * differs from the owner element's), else the null namespace — a normally-set or
+ * differs from the owner element's), else the null namespace - a normally-set or
  * parsed attribute inherits the element's ns, which for matching purposes is the
  * null namespace (an unprefixed attribute is namespaceless). */
 static lxb_ns_id_t
@@ -246,7 +246,7 @@ mkr_attr_own_ns(const lxb_dom_attr_t *at)
     return LXB_NS__UNDEF;
 }
 
-/* Find the attribute on `el` matching (ns_id, local_name) case-sensitively — the
+/* Find the attribute on `el` matching (ns_id, local_name) case-sensitively - the
  * DOM keys attributes on (namespace, local name), so two with the same qualified
  * name but different namespaces coexist (unlike Lexbor's by-qualified-name,
  * case-insensitive-for-HTML lookup). */
@@ -275,7 +275,7 @@ mkr_attr_find_ns(lxb_dom_element_t *el, lxb_ns_id_t ns_id,
 
 /* element.set_attribute_ns(namespace_or_nil, qualified_name, value) -> value.
  *
- * Stores the attribute under its qualified name (case-preserved — setAttributeNS
+ * Stores the attribute under its qualified name (case-preserved - setAttributeNS
  * is case-sensitive, unlike the HTML setAttribute family) and records its OWN
  * namespace on the attr node, so namespaceURI / getAttributeNS resolve it. The
  * namespace URI is interned in the document's ns table; nil/"" stores the null
@@ -300,7 +300,7 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
     }
 
     /* Intern the wanted namespace (null/"" => LXB_NS__UNDEF) so the existing
-     * attribute is matched on (namespace, local name) — the DOM key — rather than
+     * attribute is matched on (namespace, local name) - the DOM key - rather than
      * the qualified name. */
     lxb_ns_id_t want_ns = LXB_NS__UNDEF;
     if (have_ns && node->owner_document != NULL && node->owner_document->ns != NULL) {
@@ -319,7 +319,7 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
     /* A match keeps its qualified name (so re-setting with a different prefix
      * leaves the prefix unchanged); only the value updates. A miss appends a new
      * attribute, even when its qualified name collides with an existing one in a
-     * different namespace — the namespace-aware setter splits prefix/local and
+     * different namespace - the namespace-aware setter splits prefix/local and
      * records the namespace; a null namespace just sets the bare name. */
     lxb_dom_attr_t *attr = mkr_attr_find_ns(el, want_ns, local, local_len);
     if (attr != NULL) {
@@ -359,7 +359,7 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
 }
 
 /* element.remove_attribute_ns(namespace_or_nil, local_name) -> nil. Removes the
- * attribute matching (namespace, local name) — the DOM key — so a namespaced
+ * attribute matching (namespace, local name) - the DOM key - so a namespaced
  * attribute is removed without disturbing a same-qualified-name one in another
  * namespace (which removal by qualified name, case-insensitive for HTML, would). */
 static VALUE
@@ -597,7 +597,7 @@ mkr_doc_create_comment(VALUE self, VALUE rb_text)
     return mkr_wrap_html_node(lxb_dom_interface_node(c), self);
 }
 
-/* Document#create_processing_instruction(target, data) — DOM
+/* Document#create_processing_instruction(target, data) - DOM
  * createProcessingInstruction: a detached ProcessingInstruction owned by this
  * document. Lexbor validates the target, so an invalid one fails closed. */
 static VALUE
@@ -616,7 +616,7 @@ mkr_doc_create_processing_instruction(VALUE self, VALUE rb_target, VALUE rb_data
     return mkr_wrap_html_node(lxb_dom_interface_node(pi), self);
 }
 
-/* Document#create_document_fragment — DOM createDocumentFragment: an empty
+/* Document#create_document_fragment - DOM createDocumentFragment: an empty
  * DocumentFragment owned by this document (unlike #fragment / DocumentFragment.parse,
  * which parse HTML; this makes an empty one to build up programmatically). */
 static VALUE

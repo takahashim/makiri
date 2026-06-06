@@ -141,7 +141,7 @@ def fragment_context(ctx)
   return ctx unless ctx.include?(" ")
 
   ns, local = ctx.split(" ", 2)
-  if local == ns # "svg svg" / "math math" — the foreign root element itself
+  if local == ns # "svg svg" / "math math" - the foreign root element itself
     Makiri::HTML("<#{ns}></#{ns}>").at_css(ns)
   else
     host = Makiri::HTML("<#{ns}><#{local}></#{local}></#{ns}>")

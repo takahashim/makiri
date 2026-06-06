@@ -31,7 +31,7 @@ extern VALUE mkr_cDocumentFragment;
 /* Makiri::HTML module + leaves. mkr_mHtmlNodeMethods (Makiri::HTML::NodeMethods)
  * is a behavior module holding the lxb_dom-backed reader/query methods, included
  * into every HTML leaf (so an XML node never inherits an HTML reader).
- * mkr_cHtmlNode (Makiri::HTML::Node) is the concrete generic HTML node — the
+ * mkr_cHtmlNode (Makiri::HTML::Node) is the concrete generic HTML node - the
  * wrap fallback for an uncommon DOM node type that has no more specific leaf
  * (it carries the readers but is NOT classified as an Element). */
 extern VALUE mkr_mHTML;

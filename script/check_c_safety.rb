@@ -65,7 +65,7 @@ RULES = [
   # --- HTML/XML representation boundary (see docs/html_xml_boundary_hardening) ---
   # These symbols assume one DOM representation; using them outside their
   # representation-correct / kind-checked home is how shared glue (XPath, NodeSet,
-  # node identity) silently treats an XML node as HTML (or vice versa) — an
+  # node identity) silently treats an XML node as HTML (or vice versa) - an
   # assert-abort or memory type-confusion. Each is allowlisted only in the files
   # that legitimately own it; anywhere else trips the lint.
   Rule.new(

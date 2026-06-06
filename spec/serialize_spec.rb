@@ -91,5 +91,18 @@ RSpec.describe "Makiri serialization" do
         GC.stress = false
       end
     end
+
+    # The serialization buffer is capped at a multiple of the document's live size
+    # (its Lexbor mraw pools), so a normal document serializes but a pathologically
+    # deep CONSTRUCTED tree, whose pretty-printed indentation is super-linear in the
+    # content, fails closed with Makiri::Error rather than growing without bound.
+    it "bounds the serialization buffer, failing closed on a deep pretty-print" do
+      doc = Makiri::HTML("<div/>")
+      cur = doc.at_css("div")
+      6000.times { e = doc.create_element("div"); cur.add_child(e); cur = e }
+      expect(doc.at_css("body").inner_html.bytesize).to be < 200_000   # compact form is bounded
+      expect { doc.at_css("body").to_html(pretty: true) }              # indentation would explode
+        .to raise_error(Makiri::Error)
+    end
   end
 end

@@ -1,4 +1,4 @@
-/* mkr_xpath_xml_selftest.c — exercise the XML engine instance end to end.
+/* mkr_xpath_xml_selftest.c - exercise the XML engine instance end to end.
  *
  * Compiled as a normal TU (HTML default MKR_DOM_* types), it parses a small XML
  * document and drives the shared engine entry (mkr_xpath_eval_compiled), which
@@ -12,7 +12,7 @@
 /* Evaluate +expr+ (length +elen+) against the XML +doc+ and return the resulting
  * node-set count, or SIZE_MAX on any error / non-node-set. Registers prefix
  * "d" -> "urn:d". Lengths come from sizeof on the compile-time literals (no
- * strlen — this file is outside the clint core+bridge allowlist). */
+ * strlen - this file is outside the clint core+bridge allowlist). */
 static size_t
 xml_count(mkr_xml_doc_t *doc, const char *expr, size_t elen)
 {

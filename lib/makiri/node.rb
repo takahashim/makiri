@@ -10,7 +10,7 @@ module Makiri
     include Comparable
 
     # A Node is Enumerable over its child nodes (#each yields each child), so
-    # node.map / node.select / node.find / node.to_a, etc. work — like Nokogiri.
+    # node.map / node.select / node.find / node.to_a, etc. work - like Nokogiri.
     # (#to_h is unaffected: Node defines its own, returning the attribute hash.)
     include Enumerable
 
@@ -202,7 +202,7 @@ module Makiri
 
     # Like {#dup}, always a deep copy, and honouring Ruby's +freeze:+ keyword:
     # +true+ returns a frozen copy, +false+ an unfrozen one, the default (+nil+)
-    # copies the receiver's frozen state. A frozen node is genuinely immutable —
+    # copies the receiver's frozen state. A frozen node is genuinely immutable -
     # its mutators raise +FrozenError+ (see Makiri's mutation methods).
     def clone(freeze: nil)
       copy = clone_node(true)

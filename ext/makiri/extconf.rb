@@ -12,7 +12,7 @@ require "etc"
 #   1. Build vendored Lexbor (unpatched) via cmake into vendor/lexbor/build,
 #      install headers + a static archive into vendor/lexbor/dist.
 #   2. Compile ext/makiri/**/*.c with rake-compiler, linking against the
-#      static Lexbor archive only — no system libxml2/libxslt.
+#      static Lexbor archive only - no system libxml2/libxslt.
 #
 # Security note: the C extension is built with -D_FORTIFY_SOURCE=2,
 # -fstack-protector-strong, and -Wformat -Wformat-security. -O2 is kept
@@ -60,7 +60,7 @@ $LDFLAGS << " #{lexbor_archive.shellescape}"
 # Sanitizer build (opt-in): MAKIRI_SANITIZE=address,undefined rake clean compile
 # Then run the suite under the runtime via `rake sanitize` (which preloads the
 # ASan runtime). Sanitizers replace the heap allocator, so even the vendored
-# (uninstrumented) Lexbor's allocations get red-zoned — heap overflows on
+# (uninstrumented) Lexbor's allocations get red-zoned - heap overflows on
 # Lexbor-owned buffers are still caught. _FORTIFY_SOURCE is dropped here because
 # it conflicts with the sanitizer interceptors.
 sanitize = ENV["MAKIRI_SANITIZE"].to_s.strip
@@ -120,8 +120,8 @@ end
 # is built (by Lexbor's own CMake) with default visibility, so without this the
 # linker re-exports ~1700 `lxb_*` / `lexbor_*` symbols into the bundle's dynamic
 # table. Another Lexbor-based extension loaded in the same process (e.g.
-# nokolexbor) would then resolve its own `lxb_*` calls to OUR copy — a different
-# Lexbor version with an incompatible ABI — and segfault. Restricting the export
+# nokolexbor) would then resolve its own `lxb_*` calls to OUR copy - a different
+# Lexbor version with an incompatible ABI - and segfault. Restricting the export
 # list to Init_makiri keeps Makiri's Lexbor entirely private (Ruby only needs
 # Init_makiri, found via dlsym at require time).
 if RbConfig::CONFIG["target_os"] =~ /darwin/
