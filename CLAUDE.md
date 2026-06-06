@@ -199,19 +199,32 @@ unchanged (see `mkr_xpath_internal.h` §2–§5). Makiri keeps HTML elements in 
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null).
 
-**CSS** (`glue/ruby_css.c`). `Node#{css,at_css}` via Lexbor's `lxb_selectors`
-(per call: build `css_memory`→`css_parser`+`css_selectors`→`selectors`, parse,
-`lxb_selectors_find` with `MATCH_FIRST` to dedup comma lists, tear down).
-Results are **descendant-only** (context node excluded, like Nokogiri) and in
-document order; capped at `MKR_NODE_SET_MAX`; malformed → `Makiri::CSS::SyntaxError`;
-`at_css` stops at the first match.
+**CSS** (`glue/ruby_html_css.c`). `Node#{css,at_css,matches?}` via Lexbor's
+`lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the
+`selectors` traversal object) is **built once and reused for every query** -
+safe with no locking because CSS holds the GVL throughout (it never releases
+it), so calls are serialized; between calls only the parsed list's arena is
+reset (`lxb_css_memory_clean`) and the parser returned to its CLEAN stage
+(`lxb_css_parser_clean`), and the traversal engine self-cleans after each
+find/match. Per-call create/destroy used to dominate a cheap query and lost to
+nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
+`lxb_selectors_find` runs with `MATCH_FIRST` to dedup comma lists; `at_css`
+**stops at the first match and wraps that one node** (no NodeSet / no Ruby
+`#first`). Results are **descendant-only** (context node excluded, like Nokogiri)
+and in document order; capped at `MKR_NODE_SET_MAX`; malformed →
+`Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
 
-**Serialization** (`glue/ruby_serialize.c`). `Node#{to_html,to_s,outer_html}` =
+**Serialization** (`glue/ruby_html_serialize.c`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
-collects Lexbor's many small chunks into one growing C buffer (`mkr_buf`) and the
+collects Lexbor's many small chunks into one growing C buffer (`mkr_buf`,
+**pre-reserved to ~the output size** via `mkr_buf_reserve` so the per-chunk
+appends don't realloc on every geometric step) and the
 whole thing is copied into a UTF-8 Ruby String once - markedly faster than
 `rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
-serializer's dominant cost), and at parity with `nokolexbor`. `pretty: true` uses `serialize_pretty_*` (Lexbor
+serializer's dominant cost), and at parity with `nokolexbor`. (Serializing
+straight into a growing Ruby String avoids the final copy but measured *slower* -
+the intermediate growth is GC-tracked; the untracked C buffer + one copy wins.)
+`pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
 serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
 (`mkr_node_content`) serves descendant text from the **text index** (see
@@ -250,7 +263,7 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 ## Performance
 
 **Makiri currently meets or beats Nokogiri/libxml2 on every `rake bench` row**
-(parse ~3×, css ~12×, at_css ~1000×, serialize ~4×, traverse ~1.2×, xpath
+(parse ~3×, css ~12×, at_css ~6000× vs Nokogiri / ~5× vs nokolexbor, serialize ~4×, traverse ~1.2×, xpath
 attr-axis ~1.3×, `[@attr='v']` predicate ~1.5×, `//tag` ~3.4× faster, full-text
 extraction ~4×). Plus parsing scales across threads (~2× on 8 cores) since
 it releases the GVL. Key decisions that got there, worth not regressing:
@@ -281,6 +294,15 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   `node_principal_match`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
+- **The CSS engine is built once and reused** (`glue/ruby_html_css.c`, see the
+  subsystem note): the per-call create/init/destroy of the Lexbor CSS object
+  graph dominated a cheap query and lost to nokolexbor on `at_css('#id')`; a
+  process-global engine (safe because CSS holds the GVL throughout) reset with
+  `lxb_css_memory_clean` + `lxb_css_parser_clean` between calls makes `at_css`
+  ~6000× Nokogiri / ~5× nokolexbor (was ~1.16× *slower* than nokolexbor). `at_css`
+  also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
+  not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
+  rows and `fuzz:sanitize --target css` (the reuse is the memory-safety risk).
 - **`Node#text` is served from the text index** (`lexbor_compat/text_index.c`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction

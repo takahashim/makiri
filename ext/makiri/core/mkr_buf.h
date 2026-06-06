@@ -63,6 +63,12 @@ mkr_buf_init(mkr_buf_t *b, size_t max)
  * failure (the buffer is left intact in every failure case). n == 0 is a no-op. */
 mkr_status_t mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n);
 
+/* Pre-allocate capacity for at least n bytes (best-effort, clamped to the
+ * buffer's cap), so a fill of known approximate size avoids per-append reallocs.
+ * A no-op if the buffer already has room. Returns MKR_ERR_OOM on overflow /
+ * allocation failure (the buffer is left intact). */
+mkr_status_t mkr_buf_reserve(mkr_buf_t *b, size_t n);
+
 /* Take ownership of the (NUL-terminated) bytes; the buffer is reset to empty.
  * Returns a freshly owned "" for an empty buffer, or NULL on OOM. */
 char *mkr_buf_steal(mkr_buf_t *b, size_t *out_len);

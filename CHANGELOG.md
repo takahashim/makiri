@@ -169,6 +169,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **HTML serialization pre-reserves its output buffer** (`mkr_buf_reserve`), so
+  `to_html` / `inner_html` no longer realloc the collecting buffer on every
+  geometric growth step. This removes the extra churn that left `to_html` ~1.03×
+  slower than nokolexbor; it is now at parity (the remaining cost - Lexbor's
+  serializer walk plus one copy into a Ruby String - is shared with nokolexbor).
+
+* **CSS queries reuse one shared Lexbor engine instead of building and tearing
+  it down per call**, and `at_css` now wraps the single first match directly
+  (no intermediate `NodeSet` / Ruby `#first`). The per-call create/destroy of
+  the selector parser + arena + traversal engine dominated a cheap query like
+  `at_css('#id')`, which had been ~1.16× *slower* than nokolexbor; the shared
+  engine (safe because CSS evaluation holds the GVL throughout) makes it ~5×
+  *faster* than nokolexbor (~6000× Nokogiri). A malformed selector still raises
+  `Makiri::CSS::SyntaxError`, and the shared engine is reset so it recovers.
+
 * **Node-class names are now the WHATWG DOM interface names, with the
   libxml2/Nokogiri spellings kept as aliases.** The canonical leaf names are
   `Element`, `Attr`, `Text`, `Comment`, `CDATASection`, `ProcessingInstruction`,
