@@ -173,5 +173,18 @@ mkr_core_selftest(void)
         mkr_buf_free(&b);
     }
 
+    /* buf_append: geometric growth is clamped to the content ceiling (max + the
+     * NUL), so a near-limit append never over-allocates to ~2x. Here filling to
+     * max(10) would geometrically reach cap 16; the clamp holds it at max+1(11),
+     * the same property that keeps a real buffer's cap under MKR_BUF_HARD_MAX. */
+    {
+        mkr_buf_t b;
+        mkr_buf_init(&b, 10);
+        if (mkr_buf_append(&b, "0123456789", 10) != MKR_OK) { mkr_buf_free(&b); return 63; }
+        if (b.len != 10 || b.cap > 11) { mkr_buf_free(&b); return 64; }  /* clamped, not the geometric 16 */
+        if (mkr_buf_append(&b, "x", 1) != MKR_ERR_LIMIT) { mkr_buf_free(&b); return 65; } /* still capped */
+        mkr_buf_free(&b);
+    }
+
     return 0;
 }

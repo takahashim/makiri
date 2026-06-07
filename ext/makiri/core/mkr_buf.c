@@ -30,6 +30,16 @@ mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n)
         if (!mkr_grow_capacity(b->cap, need_term, 1, &new_cap)) {
             return MKR_ERR_OOM;
         }
+        /* Geometric growth can overshoot to ~2x need_term; clamp the ALLOCATION
+         * to the same ceiling as the content (limit, plus one byte for the NUL),
+         * so cap never runs to ~2x MKR_BUF_HARD_MAX near the limit. Safe: this
+         * append already passed need <= limit, so need_term <= limit + 1 and the
+         * clamp never drops new_cap below what this append needs. (If limit + 1
+         * overflows - only a pathological -DMKR_BUF_HARD_MAX=SIZE_MAX - skip it.) */
+        size_t cap_ceiling;
+        if (mkr_size_add(limit, 1, &cap_ceiling) && new_cap > cap_ceiling) {
+            new_cap = cap_ceiling;
+        }
         char *p = realloc(b->data, new_cap);
         if (p == NULL) {
             return MKR_ERR_OOM;

@@ -24,11 +24,15 @@ extern "C" {
  *                          think about a bound gets a tight one for free, and a
  *                          buffer that genuinely needs to be large must opt in
  *                          EXPLICITLY by passing a larger max.
- *   MKR_BUF_HARD_MAX       an absolute ceiling no buffer may exceed, even one
- *                          with an explicit max - the last-resort backstop.
- *                          Tight, content-scaled bounds still belong to the
- *                          caller (e.g. the XML serializer caps itself at a
- *                          multiple of arena_bytes); this stops total runaway.
+ *   MKR_BUF_HARD_MAX       an absolute ceiling on a buffer's CONTENT length, even
+ *                          with an explicit max - the last-resort backstop. The
+ *                          ALLOCATION is bounded by it too: geometric growth is
+ *                          clamped so cap never exceeds HARD_MAX + 1 (the one NUL
+ *                          terminator byte), i.e. it does NOT overshoot to ~2x
+ *                          near the limit. Tight, content-scaled bounds still
+ *                          belong to the caller (e.g. the XML serializer caps
+ *                          itself at a multiple of arena_bytes); this stops total
+ *                          runaway.
  *
  * Override either at build time: -DMKR_BUF_DEFAULT_LIMIT=<bytes> / -DMKR_BUF_HARD_MAX=<bytes>. */
 #ifndef MKR_BUF_DEFAULT_LIMIT
