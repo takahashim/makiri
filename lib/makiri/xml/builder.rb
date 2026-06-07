@@ -42,14 +42,8 @@ module Makiri
       attr_reader :doc
 
       # The node new children are currently appended to. While a nested block is
-      # running this is that block's element; otherwise it is {#doc}. Writable so
-      # the {NodeBuilder} attribute-shortcut chain can re-root the builder while
-      # its own block runs.
-      attr_accessor :parent
-
-      # The block form (instance_eval vs yield) chosen for this build, memoised
-      # from the first block seen. Read by {NodeBuilder} for nested blocks.
-      attr_reader :arity
+      # running this is that block's element; otherwise it is {#doc}.
+      attr_reader :parent
 
       # @param options [Hash] accepted for Nokogiri compatibility and ignored - a
       #   Makiri document has no configurable options (it is always UTF-8).
@@ -179,16 +173,23 @@ module Makiri
       # from a fragment), so the Nokogiri attribute-shortcut chain works.
       def insert(node, &block)
         node = @parent.add_child(node)
-        if block
-          previous = @parent
-          @parent = node
-          begin
-            run(&block)
-          ensure
-            @parent = previous
-          end
-        end
+        descend(node, &block) if block
         NodeBuilder.new(node, self)
+      end
+
+      # Run +block+ with +node+ as the current parent, restoring the previous
+      # parent afterward (even if the block raises) and returning the block's
+      # value. The single place the parent is pushed/popped - shared by #insert and
+      # NodeBuilder's nested-block chain, so neither manipulates the parent state
+      # directly.
+      def descend(node, &block)
+        previous = @parent
+        @parent = node
+        begin
+          run(&block)
+        ensure
+          @parent = previous
+        end
       end
 
       # Run a DSL block, choosing instance_eval vs yield once (from the first
@@ -246,14 +247,9 @@ module Makiri
             @node[key.to_s] = ((@node[key.to_s] || "").split(/\s/) + [value]).join(" ")
           end
 
-          if block
-            old_parent = @doc_builder.parent
-            @doc_builder.parent = @node
-            arity = @doc_builder.arity || block.arity
-            value = arity <= 0 ? @doc_builder.instance_eval(&block) : block.call(@doc_builder)
-            @doc_builder.parent = old_parent
-            return value
-          end
+          # Descend into this node for a nested block via the builder's own parent
+          # stack (with its ensure-based restore), rather than re-rooting it by hand.
+          return @doc_builder.send(:descend, @node, &block) if block
 
           self
         end
