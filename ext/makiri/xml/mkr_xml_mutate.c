@@ -27,38 +27,6 @@ slice_eq(const char *a, uint32_t al, const char *b, uint32_t bl)
     return al == bl && (al == 0 || memcmp(a, b, al) == 0);
 }
 
-/* Validate that [s, s+len) is a well-formed XML 1.0 QName and split it into
- * prefix:local (pfx_len 0 = no prefix). Mirrors scan_name + split_qname in the
- * tree builder: the whole name is NameStartChar NameChar* (a colon is a NameChar),
- * then at most one colon separates two NCNames. 0 on success, -1 if malformed. */
-static int
-qname_split(const char *s, uint32_t len, const char **pfx, uint32_t *pl,
-            const char **loc, uint32_t *ll)
-{
-    if (len == 0) return -1;
-    const char *p = s, *end = s + len;
-    uint32_t cp;
-    int bl = mkr_xml_utf8_decode(p, end, &cp);
-    if (bl == 0 || !mkr_xml_is_name_start(cp)) return -1;
-    p += bl;
-    while (p < end) {
-        bl = mkr_xml_utf8_decode(p, end, &cp);
-        if (bl == 0 || !mkr_xml_is_name_char(cp)) return -1;
-        p += bl;
-    }
-    const char *colon = memchr(s, ':', len);
-    if (colon == NULL) { *pfx = s; *pl = 0; *loc = s; *ll = len; return 0; }
-    uint32_t prefix_len = (uint32_t)(colon - s);
-    const char *ls = colon + 1;
-    uint32_t local_len = len - prefix_len - 1;
-    if (prefix_len == 0 || local_len == 0) return -1;             /* ":x" or "x:" */
-    if (memchr(ls, ':', local_len) != NULL) return -1;           /* a second colon */
-    if (mkr_xml_utf8_decode(ls, ls + local_len, &cp) == 0 || !mkr_xml_is_name_start(cp))
-        return -1;                                               /* local must be an NCName */
-    *pfx = s; *pl = prefix_len; *loc = ls; *ll = local_len;
-    return 0;
-}
-
 /* Nearest in-scope binding for +prefix+ (pl 0 = the default namespace) at or
  * above +node+, walking the real tree (no scope dictionary is threaded). */
 static int
@@ -91,58 +59,45 @@ is_connected(const mkr_xml_node_t *node)
     return top->type == MKR_XML_NODE_TYPE_DOCUMENT;
 }
 
-/* Resolve the namespace for the QName [qname,qlen] (already split into pfx/pl)
- * applied at +scope+ (the element whose in-scope declarations apply). +is_attr+
- * selects attribute rules (xmlns* declarations live in the xmlns namespace, an
- * unprefixed attribute is in no namespace). +connected+ decides what an unbound
- * prefix means: an error in the live tree, deferred (unresolved) when detached.
- * Mirrors mkr_xml_tree.c §7. */
+/* Resolve the namespace for QName +qn+ applied at +scope+ (the element whose
+ * in-scope declarations apply). +is_attr+ selects attribute rules (xmlns*
+ * declarations live in the xmlns namespace, an unprefixed attribute is in no
+ * namespace). +connected+ decides what an unbound prefix means: an error in the
+ * live tree, deferred (unresolved) when detached. Mirrors mkr_xml_tree.c §7. */
 static mkr_xml_mut_status_t
-resolve_ns(const mkr_xml_node_t *scope, const char *qname, uint32_t qlen,
-           const char *pfx, uint32_t pl, int is_attr, int connected,
-           const char **uri, uint32_t *ulen)
+resolve_ns(const mkr_xml_node_t *scope, const mkr_xml_qname_t *qn, int is_attr,
+           int connected, const char **uri, uint32_t *ulen)
 {
     *uri = NULL; *ulen = 0;
-    if (is_attr) {
-        int is_default_decl = (qlen == 5 && memcmp(qname, "xmlns", 5) == 0);
-        int is_pfx_decl     = (qlen > 6 && memcmp(qname, "xmlns:", 6) == 0);
-        if (is_default_decl || is_pfx_decl) {
-            *uri = XMLNS_NS_URI; *ulen = LIT_LEN(XMLNS_NS_URI);
-            return MKR_XML_MUT_OK;
-        }
+    if (is_attr && mkr_xml_xmlns_prefix(qn->qname, qn->qname_len, NULL, NULL)) {
+        *uri = XMLNS_NS_URI; *ulen = LIT_LEN(XMLNS_NS_URI);   /* an xmlns declaration */
+        return MKR_XML_MUT_OK;
     }
-    if (pl == 0) {
+    if (qn->prefix_len == 0) {
         if (is_attr) return MKR_XML_MUT_OK;       /* unprefixed attribute -> no namespace */
         const char *u; uint32_t ul;               /* unprefixed element -> the default ns */
         if (resolve_in_scope(scope, "", 0, &u, &ul) && ul > 0) { *uri = u; *ulen = ul; }
         return MKR_XML_MUT_OK;
     }
-    if (slice_eq(pfx, pl, "xml", 3)) {             /* the predefined xml: prefix */
+    if (slice_eq(qn->prefix, qn->prefix_len, "xml", 3)) {       /* the predefined xml: prefix */
         *uri = XML_NS_URI; *ulen = LIT_LEN(XML_NS_URI);
         return MKR_XML_MUT_OK;
     }
-    if (slice_eq(pfx, pl, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME;  /* xmlns: as a normal name */
+    if (slice_eq(qn->prefix, qn->prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME; /* xmlns: as a normal name */
     const char *u; uint32_t ul;
-    if (!resolve_in_scope(scope, pfx, pl, &u, &ul) || ul == 0) {
+    if (!resolve_in_scope(scope, qn->prefix, qn->prefix_len, &u, &ul) || ul == 0) {
         return connected ? MKR_XML_MUT_UNBOUND_NS : MKR_XML_MUT_OK;  /* defer when detached */
     }
     *uri = u; *ulen = ul;
     return MKR_XML_MUT_OK;
 }
 
-/* Copy the QName into the arena as ONE contiguous slice and point qname/local/
- * prefix into it (the read API and serializers borrow these). +loc+ points into
- * +name+ (from qname_split). */
+/* Copy +qn+ into the arena and point the node's name fields at it (shared
+ * mkr_xml_qname_assign), mapping its OOM to the mutation status. */
 static mkr_xml_mut_status_t
-assign_qname(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *name, uint32_t nl,
-             const char *loc, uint32_t ll, uint32_t pl)
+assign_qname(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const mkr_xml_qname_t *qn)
 {
-    const char *q = mkr_xml_arena_bytes(doc, name, nl);
-    if (nl > 0 && q == NULL) return MKR_XML_MUT_OOM;
-    node->qname  = q;                          node->qname_len  = nl;
-    node->local  = q + (size_t)(loc - name);   node->local_len  = ll;
-    node->prefix = q;                          node->prefix_len = pl;
-    return MKR_XML_MUT_OK;
+    return mkr_xml_qname_assign(doc, node, qn) == 0 ? MKR_XML_MUT_OK : MKR_XML_MUT_OOM;
 }
 
 void
@@ -171,23 +126,20 @@ mkr_xml_rename(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *name, uint3
 {
     if (node->type != MKR_XML_NODE_TYPE_ELEMENT && node->type != MKR_XML_NODE_TYPE_ATTRIBUTE)
         return MKR_XML_MUT_TYPE;
-    const char *pfx, *loc; uint32_t pl, ll;
-    if (qname_split(name, nlen, &pfx, &pl, &loc, &ll) != 0) return MKR_XML_MUT_BAD_NAME;
+    mkr_xml_qname_t qn;
+    if (mkr_xml_qname_split(name, nlen, &qn) != 0) return MKR_XML_MUT_BAD_NAME;
 
     int is_attr = (node->type == MKR_XML_NODE_TYPE_ATTRIBUTE);
     const mkr_xml_node_t *scope = is_attr ? node->parent : node;
     const char *uri; uint32_t ulen;
     int connected = scope != NULL && is_connected(scope);
-    mkr_xml_mut_status_t st = resolve_ns(scope, name, nlen, pfx, pl, is_attr, connected, &uri, &ulen);
+    mkr_xml_mut_status_t st = resolve_ns(scope, &qn, is_attr, connected, &uri, &ulen);
     if (st != MKR_XML_MUT_OK) return st;
 
-    /* Copy the new qname BEFORE writing any field, so an OOM leaves node intact. */
-    const char *q = mkr_xml_arena_bytes(doc, name, nlen);
-    if (nlen > 0 && q == NULL) return MKR_XML_MUT_OOM;
-    node->qname  = q;                          node->qname_len  = nlen;
-    node->local  = q + (size_t)(loc - name);   node->local_len  = ll;
-    node->prefix = q;                          node->prefix_len = pl;
-    node->ns_uri = uri;                        node->ns_uri_len = ulen;
+    /* Copy the new qname BEFORE writing ns_uri, so an OOM leaves node intact. */
+    st = assign_qname(doc, node, &qn);
+    if (st != MKR_XML_MUT_OK) return st;
+    node->ns_uri = uri; node->ns_uri_len = ulen;
     return MKR_XML_MUT_OK;
 }
 
@@ -197,16 +149,17 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
 {
     if (out) *out = NULL;
     if (el->type != MKR_XML_NODE_TYPE_ELEMENT) return MKR_XML_MUT_TYPE;
-    const char *pfx, *loc; uint32_t pl, ll;
-    if (qname_split(name, nlen, &pfx, &pl, &loc, &ll) != 0) return MKR_XML_MUT_BAD_NAME;
+    mkr_xml_qname_t qn;
+    if (mkr_xml_qname_split(name, nlen, &qn) != 0) return MKR_XML_MUT_BAD_NAME;
     /* A prefixed namespace declaration (xmlns:foo="") must not bind a prefix to
      * the empty namespace: XML Namespaces 1.0 forbids it and it serializes to
      * invalid XML. (Undeclaring the DEFAULT namespace, xmlns="", is allowed.) */
-    if (vlen == 0 && pl == 5 && slice_eq(pfx, pl, "xmlns", 5)) return MKR_XML_MUT_BAD_NS_DECL;
+    if (vlen == 0 && qn.prefix_len == 5 && slice_eq(qn.prefix, qn.prefix_len, "xmlns", 5))
+        return MKR_XML_MUT_BAD_NS_DECL;
     if (vlen > 0 && mkr_xml_validate_chars(val, vlen) != 0) return MKR_XML_MUT_BAD_CHARS;
 
     const char *uri; uint32_t ulen;
-    mkr_xml_mut_status_t st = resolve_ns(el, name, nlen, pfx, pl, 1, is_connected(el), &uri, &ulen);
+    mkr_xml_mut_status_t st = resolve_ns(el, &qn, 1, is_connected(el), &uri, &ulen);
     if (st != MKR_XML_MUT_OK) return st;
 
     /* An existing attribute with the same raw QName -> replace its value. */
@@ -224,7 +177,7 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
     /* New attribute - allocate node + qname + value before linking. */
     mkr_xml_node_t *attr = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
     if (attr == NULL) return MKR_XML_MUT_OOM;
-    st = assign_qname(doc, attr, name, nlen, loc, ll, pl);
+    st = assign_qname(doc, attr, &qn);
     if (st != MKR_XML_MUT_OK) return st;          /* abandoned in the arena; freed with doc */
     const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
     if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
@@ -344,12 +297,12 @@ mkr_xml_mut_status_t
 mkr_xml_new_element(mkr_xml_doc_t *doc, const char *name, uint32_t nlen, mkr_xml_node_t **out)
 {
     *out = NULL;
-    const char *pfx, *loc; uint32_t pl, ll;
-    if (qname_split(name, nlen, &pfx, &pl, &loc, &ll) != 0) return MKR_XML_MUT_BAD_NAME;
-    if (slice_eq(pfx, pl, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME;  /* xmlns: is not an element prefix */
+    mkr_xml_qname_t qn;
+    if (mkr_xml_qname_split(name, nlen, &qn) != 0) return MKR_XML_MUT_BAD_NAME;
+    if (slice_eq(qn.prefix, qn.prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME;  /* xmlns: is not an element prefix */
     mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
     if (el == NULL) return MKR_XML_MUT_OOM;
-    mkr_xml_mut_status_t st = assign_qname(doc, el, name, nlen, loc, ll, pl);
+    mkr_xml_mut_status_t st = assign_qname(doc, el, &qn);
     if (st != MKR_XML_MUT_OK) return st;
     *out = el;                              /* ns_uri stays unresolved until insertion */
     return MKR_XML_MUT_OK;
@@ -382,8 +335,8 @@ mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
 {
     *out = NULL;
     /* PITarget is an NCName (a QName with no colon) and not "xml" in any case. */
-    const char *pfx, *loc; uint32_t pl, ll;
-    if (qname_split(target, tlen, &pfx, &pl, &loc, &ll) != 0 || pl != 0) return MKR_XML_MUT_BAD_NAME;
+    mkr_xml_qname_t qn;
+    if (mkr_xml_qname_split(target, tlen, &qn) != 0 || qn.prefix_len != 0) return MKR_XML_MUT_BAD_NAME;
     if (is_reserved_pi_target(target, tlen)) return MKR_XML_MUT_BAD_NAME;
     if (dlen > 0 && mkr_xml_validate_chars(data, dlen) != 0) return MKR_XML_MUT_BAD_CHARS;
     mkr_xml_mut_status_t seq = mkr_xml_check_value_seq(MKR_XML_NODE_TYPE_PI, data, dlen);
@@ -410,12 +363,13 @@ static mkr_xml_mut_status_t
 resolve_node_ns(mkr_xml_node_t *e, int connected)
 {
     const char *uri; uint32_t ulen;
-    mkr_xml_mut_status_t st =
-        resolve_ns(e, e->qname, e->qname_len, e->prefix, e->prefix_len, 0, connected, &uri, &ulen);
+    mkr_xml_qname_t eq = mkr_xml_qname_of(e);
+    mkr_xml_mut_status_t st = resolve_ns(e, &eq, 0, connected, &uri, &ulen);
     if (st != MKR_XML_MUT_OK) return st;
     e->ns_uri = uri; e->ns_uri_len = ulen;
     for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
-        st = resolve_ns(e, a->qname, a->qname_len, a->prefix, a->prefix_len, 1, connected, &uri, &ulen);
+        mkr_xml_qname_t aq = mkr_xml_qname_of(a);
+        st = resolve_ns(e, &aq, 1, connected, &uri, &ulen);
         if (st != MKR_XML_MUT_OK) return st;
         a->ns_uri = uri; a->ns_uri_len = ulen;
     }
@@ -425,15 +379,11 @@ resolve_node_ns(mkr_xml_node_t *e, int connected)
 static mkr_xml_mut_status_t
 resolve_subtree(mkr_xml_node_t *root, int connected)
 {
-    for (mkr_xml_node_t *cur = root; cur != NULL;) {
+    for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
         if (cur->type == MKR_XML_NODE_TYPE_ELEMENT) {
             mkr_xml_mut_status_t st = resolve_node_ns(cur, connected);
             if (st != MKR_XML_MUT_OK) return st;
         }
-        if (cur->first_child != NULL) { cur = cur->first_child; continue; }
-        while (cur != root && cur->next == NULL) cur = cur->parent;
-        if (cur == root) break;
-        cur = cur->next;
     }
     return MKR_XML_MUT_OK;
 }
@@ -464,11 +414,8 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
     mkr_xml_node_t *n = mkr_xml_arena_node(doc, src->type);
     if (n == NULL) return NULL;
     if (src->qname != NULL && src->qname_len > 0) {       /* element / attribute QName */
-        if (assign_qname(doc, n, src->qname, src->qname_len,
-                         src->qname + (size_t)(src->local - src->qname),
-                         src->local_len, src->prefix_len) != MKR_XML_MUT_OK) {
-            return NULL;
-        }
+        mkr_xml_qname_t qn = mkr_xml_qname_of(src);
+        if (assign_qname(doc, n, &qn) != MKR_XML_MUT_OK) return NULL;
     } else if (src->local != NULL && src->local_len > 0) { /* PI target */
         const char *t = mkr_xml_arena_bytes(doc, src->local, src->local_len);
         if (t == NULL) return NULL;
@@ -713,19 +660,20 @@ mkr_xml_mutate_selftest(void)
     mkr_xml_doc_t *doc = mkr_xml_doc_new();
     if (doc == NULL) return 1;
     int rc = 0;
-    const char *pfx, *loc; uint32_t pl, ll;
+    mkr_xml_qname_t qn;
 
-    /* 1. QName validation + split */
-    if (qname_split("a:b", 3, &pfx, &pl, &loc, &ll) != 0 || pl != 1 || ll != 1) { rc = 2;  goto done; }
-    if (qname_split("1bad", 4, &pfx, &pl, &loc, &ll) == 0)  { rc = 3;  goto done; } /* bad NameStartChar */
-    if (qname_split("a:b:c", 5, &pfx, &pl, &loc, &ll) == 0) { rc = 4;  goto done; } /* two colons */
-    if (qname_split(":x", 2, &pfx, &pl, &loc, &ll) == 0)    { rc = 5;  goto done; } /* empty prefix */
-    if (qname_split("x:", 2, &pfx, &pl, &loc, &ll) == 0)    { rc = 6;  goto done; } /* empty local */
+    /* 1. QName validation + split (the shared mkr_xml_qname_split) */
+    if (mkr_xml_qname_split("a:b", 3, &qn) != 0 || qn.prefix_len != 1 || qn.local_len != 1) { rc = 2;  goto done; }
+    if (mkr_xml_qname_split("1bad", 4, &qn) == 0)  { rc = 3;  goto done; } /* bad NameStartChar */
+    if (mkr_xml_qname_split("a:b:c", 5, &qn) == 0) { rc = 4;  goto done; } /* two colons */
+    if (mkr_xml_qname_split(":x", 2, &qn) == 0)    { rc = 5;  goto done; } /* empty prefix */
+    if (mkr_xml_qname_split("x:", 2, &qn) == 0)    { rc = 6;  goto done; } /* empty local */
 
     /* 2. build a root element, exercise attribute set/replace */
     mkr_xml_node_t *r = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
     if (r == NULL) { rc = 7; goto done; }
-    if (assign_qname(doc, r, "r", 1, "r", 1, 0) != MKR_XML_MUT_OK) { rc = 8; goto done; }
+    mkr_xml_qname_t rq = { "r", 1, "r", 0, "r", 1 };
+    if (assign_qname(doc, r, &rq) != MKR_XML_MUT_OK) { rc = 8; goto done; }
 
     mkr_xml_node_t *at = NULL;
     if (mkr_xml_set_attribute(doc, r, "id", 2, "x", 1, &at) != MKR_XML_MUT_OK

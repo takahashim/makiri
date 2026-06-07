@@ -214,18 +214,84 @@ mkr_xml_arena_spanbuf(mkr_xml_doc_t *doc, size_t cap)
 }
 
 int
-mkr_xml_node_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *plen,
-                        const char **uri, uint32_t *ulen)
+mkr_xml_xmlns_prefix(const char *name, uint32_t len, const char **prefix, uint32_t *plen)
 {
-    if (a->qname_len == 5 && memcmp(a->qname, "xmlns", 5) == 0) {
-        *prefix = ""; *plen = 0;
-    } else if (a->qname_len > 6 && memcmp(a->qname, "xmlns:", 6) == 0) {
-        *prefix = a->local; *plen = a->local_len;
+    const char *p; uint32_t pl;
+    if (len == 5 && memcmp(name, "xmlns", 5) == 0) {
+        p = ""; pl = 0;
+    } else if (len > 6 && memcmp(name, "xmlns:", 6) == 0) {
+        p = name + 6; pl = len - 6;
     } else {
         return 0;
     }
+    if (prefix != NULL) *prefix = p;
+    if (plen != NULL)   *plen = pl;
+    return 1;
+}
+
+int
+mkr_xml_node_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *plen,
+                        const char **uri, uint32_t *ulen)
+{
+    /* a built node's local IS qname+6 for "xmlns:p", so the byte detector's
+     * prefix slice equals the node's local - one shared rule, value read here. */
+    if (!mkr_xml_xmlns_prefix(a->qname, a->qname_len, prefix, plen)) return 0;
     *uri = a->value ? a->value : ""; *ulen = a->value_len;
     return 1;
+}
+
+mkr_xml_node_t *
+mkr_xml_preorder_next(const mkr_xml_node_t *root, mkr_xml_node_t *cur)
+{
+    if (cur->first_child != NULL) return cur->first_child;
+    /* climb until a node with a next sibling, stopping at (and not above) root */
+    while (cur != root && cur->next == NULL) cur = cur->parent;
+    if (cur == root) return NULL;
+    return cur->next;
+}
+
+int
+mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out)
+{
+    if (len == 0) return -1;
+    const char *p = name, *end = name + len;
+    uint32_t cp;
+    int bl = mkr_xml_utf8_decode(p, end, &cp);
+    if (bl == 0 || !mkr_xml_is_name_start(cp)) return -1;
+    p += bl;
+    while (p < end) {
+        bl = mkr_xml_utf8_decode(p, end, &cp);
+        if (bl == 0 || !mkr_xml_is_name_char(cp)) return -1;
+        p += bl;
+    }
+    out->qname = name; out->qname_len = len;
+    const char *colon = memchr(name, ':', len);
+    if (colon == NULL) {                                  /* no prefix */
+        out->prefix = name; out->prefix_len = 0;
+        out->local  = name; out->local_len  = len;
+        return 0;
+    }
+    uint32_t pl = (uint32_t)(colon - name);
+    const char *ls = colon + 1;
+    uint32_t ll = len - pl - 1;
+    if (pl == 0 || ll == 0) return -1;                    /* ":x" or "x:" */
+    if (memchr(ls, ':', ll) != NULL) return -1;           /* a second colon */
+    if (mkr_xml_utf8_decode(ls, ls + ll, &cp) == 0 || !mkr_xml_is_name_start(cp))
+        return -1;                                        /* local must be an NCName */
+    out->prefix = name; out->prefix_len = pl;
+    out->local  = ls;   out->local_len  = ll;
+    return 0;
+}
+
+int
+mkr_xml_qname_assign(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const mkr_xml_qname_t *qn)
+{
+    const char *q = mkr_xml_arena_bytes(doc, qn->qname, qn->qname_len);
+    if (qn->qname_len > 0 && q == NULL) return -1;        /* OOM: node left untouched */
+    node->qname  = q;                                  node->qname_len  = qn->qname_len;
+    node->local  = q + (size_t)(qn->local - qn->qname); node->local_len  = qn->local_len;
+    node->prefix = q;                                  node->prefix_len = qn->prefix_len;
+    return 0;
 }
 
 /* ---- self-test (Makiri.__c_selftest) - mirrors tmp/xml_spike/arena_spike.c --- */

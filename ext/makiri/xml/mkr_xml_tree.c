@@ -185,17 +185,16 @@ own(mkr_xml_parser_t *P, const char *src, uint32_t len)
 
 /* Store an element/attribute's raw "prefix:local" QName as ONE arena copy, with
  * local and prefix slicing into it. Keeping the qualified name contiguous lets
- * Node#name / the XPath name() borrow it without rebuilding it. +loc+/+pfx_len+
- * come from split_qname (loc points into +name+). 0 on success, -1 on OOM. */
+ * Node#name / the XPath name() borrow it without rebuilding it. +loc+/+pl+ come
+ * from split_qname (loc points into +name+). 0 on success, -1 on OOM. Thin
+ * wrapper over the shared mkr_xml_qname_assign (one arena-copy rule with the
+ * mutators), propagating an OOM to P->status. */
 static int
 set_node_qname(mkr_xml_parser_t *P, mkr_xml_node_t *node, const char *name,
                uint32_t nl, const char *loc, uint32_t ll, uint32_t pl)
 {
-    const char *q = own(P, name, nl);
-    if (nl > 0 && q == NULL) return -1;
-    node->qname  = q;                          node->qname_len  = nl;
-    node->local  = q + (size_t)(loc - name);   node->local_len  = ll;
-    node->prefix = q;                          node->prefix_len = pl; /* pl 0 = unprefixed */
+    mkr_xml_qname_t qn = { name, nl, name, pl, loc, ll };
+    if (mkr_xml_qname_assign(P->doc, node, &qn) != 0) { propagate_oom(P); return -1; }
     return 0;
 }
 
@@ -314,12 +313,8 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
     /* Phase 2: xmlns declarations -> namespace bindings (§7.1 reserved rules). */
     for (size_t i = 0; i < P->nratt; i++) {
         raw_attr_t *r = &P->ratt[i];
-        int is_default  = slice_eq(r->name, r->name_len, "xmlns", 5);
-        int is_prefixed = (r->name_len > 6 && memcmp(r->name, "xmlns:", 6) == 0);
-        if (!is_default && !is_prefixed) continue;
-
-        const char *bpfx = ""; uint32_t bpl = 0;
-        if (is_prefixed) { bpfx = r->name + 6; bpl = r->name_len - 6; }
+        const char *bpfx; uint32_t bpl;
+        if (!mkr_xml_xmlns_prefix(r->name, r->name_len, &bpfx, &bpl)) continue;
         if (slice_eq(bpfx, bpl, "xmlns", 5)) { set_syntax(P); return -1; }   /* xmlns:xmlns reserved */
 
         uint32_t ulen;
@@ -332,7 +327,7 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
                 || slice_eq(uri, ulen, XMLNS_NS_URI, LIT_LEN(XMLNS_NS_URI))) {
             set_syntax(P); return -1;                  /* reserved URI bound to another prefix */
         }
-        if (is_prefixed && ulen == 0) { set_syntax(P); return -1; } /* xmlns:p="" (XML 1.0) */
+        if (bpl > 0 && ulen == 0) { set_syntax(P); return -1; } /* xmlns:p="" (XML 1.0) */
         if (push_binding(P, bpfx, bpl, uri, ulen) != 0) return -1;
     }
 
@@ -364,9 +359,7 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         (void)pfx;
         if (set_node_qname(P, attr, r->name, r->name_len, loc, ll, pl) != 0) return -1;
 
-        int is_default  = slice_eq(r->name, r->name_len, "xmlns", 5);
-        int is_pfx_decl = (r->name_len > 6 && memcmp(r->name, "xmlns:", 6) == 0);
-        if (is_default || is_pfx_decl) {
+        if (mkr_xml_xmlns_prefix(r->name, r->name_len, NULL, NULL)) {
             attr->ns_uri = XMLNS_NS_URI; attr->ns_uri_len = LIT_LEN(XMLNS_NS_URI);
         } else if (pl > 0) {                           /* prefixed attribute */
             uint32_t ulen;
@@ -920,11 +913,8 @@ seed_doc_namespaces(mkr_xml_parser_t *P)
     mkr_xml_node_t *root = P->doc->root;
     if (root == NULL) return 0;
     for (mkr_xml_node_t *a = root->attrs; a != NULL; a = a->next) {
-        int is_default  = slice_eq(a->qname, a->qname_len, "xmlns", 5);
-        int is_prefixed = (a->qname_len > 6 && memcmp(a->qname, "xmlns:", 6) == 0);
-        if (!is_default && !is_prefixed) continue;
-        const char *bpfx = ""; uint32_t bpl = 0;
-        if (is_prefixed) { bpfx = a->qname + 6; bpl = a->qname_len - 6; }
+        const char *bpfx; uint32_t bpl;
+        if (!mkr_xml_xmlns_prefix(a->qname, a->qname_len, &bpfx, &bpl)) continue;
         if (push_binding(P, bpfx, bpl, a->value, a->value_len) != 0) return -1;
     }
     return 0;

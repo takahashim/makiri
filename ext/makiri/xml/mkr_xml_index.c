@@ -84,12 +84,8 @@ static size_t
 count_elements(mkr_xml_node_t *root)
 {
   size_t n = 0;
-  for (mkr_xml_node_t *cur = root; cur != NULL; ) {
+  for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
     if (cur->type == MKR_XML_NODE_TYPE_ELEMENT) n++;
-    if (cur->first_child != NULL) { cur = cur->first_child; continue; }
-    while (cur != root && cur->next == NULL) cur = cur->parent;
-    if (cur == root) break;
-    cur = cur->next;
   }
   return n;
 }
@@ -115,14 +111,10 @@ build(mkr_xml_doc_t *doc)
   if (idx->buckets == NULL) { free(idx); return NULL; }
 
   /* Fill pass: pre-order (document order), elements only. */
-  for (mkr_xml_node_t *cur = root; cur != NULL; ) {
+  for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
     if (cur->type == MKR_XML_NODE_TYPE_ELEMENT) {
       if (index_push(idx, cur) != 0) { mkr_xml_name_index_free(idx); return NULL; }
     }
-    if (cur->first_child != NULL) { cur = cur->first_child; continue; }
-    while (cur != root && cur->next == NULL) cur = cur->parent;
-    if (cur == root) break;
-    cur = cur->next;
   }
   return idx;
 }

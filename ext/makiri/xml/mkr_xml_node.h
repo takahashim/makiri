@@ -65,6 +65,17 @@ typedef struct mkr_xml_node {
     uint32_t line, col;            /* source position (element only; 0 = none) */
 } mkr_xml_node_t;
 
+/* A QName decomposed into its contiguous "prefix:local" parts (the same layout a
+ * built node carries): +qname+ is the whole name, +prefix+/+local+ slice into it
+ * (prefix points at +qname+; prefix_len 0 = unprefixed). The single value passed
+ * through the split/resolve/assign primitives below, so those never take the six
+ * fields as loose arguments. */
+typedef struct {
+    const char *qname;   uint32_t qname_len;
+    const char *prefix;  uint32_t prefix_len;   /* prefix_len 0 = unprefixed */
+    const char *local;   uint32_t local_len;
+} mkr_xml_qname_t;
+
 typedef struct mkr_xml_arena_chunk mkr_xml_arena_chunk_t;
 
 /* A document: its append-only arena, the root element (NULL until built), and
@@ -130,6 +141,40 @@ mkr_spanbuf_t mkr_xml_arena_spanbuf(mkr_xml_doc_t *doc, size_t cap);
  * walk, and the mutation namespace resolver (all read these node fields). */
 int mkr_xml_node_xmlns_decl(const mkr_xml_node_t *a, const char **prefix, uint32_t *plen,
                             const char **uri, uint32_t *ulen);
+
+/* If the raw name [name,len) is an xmlns declaration ("xmlns" or "xmlns:PREFIX"),
+ * set the out-params to the declared prefix ("" / 0 for the default xmlns) and
+ * return 1; else return 0. prefix/plen may be NULL when only the boolean is
+ * wanted. The single byte-level xmlns detector the parser, the namespace
+ * resolver, and mkr_xml_node_xmlns_decl all share (the node version just reads
+ * the value too). */
+int mkr_xml_xmlns_prefix(const char *name, uint32_t len, const char **prefix, uint32_t *plen);
+
+/* Pre-order (document-order) descendant iteration over +root+'s subtree without
+ * recursion: start at +root+, then `cur = mkr_xml_preorder_next(root, cur)` until
+ * NULL. Visits +root+ first. The one shared form of the iterative DFS the index
+ * build and the mutation namespace resolver both need (no scope/state threaded). */
+mkr_xml_node_t *mkr_xml_preorder_next(const mkr_xml_node_t *root, mkr_xml_node_t *cur);
+
+/* Validate [name,len) as a well-formed XML 1.0 QName (full NameStartChar/NameChar
+ * scan) and split it into +out+ (prefix_len 0 = unprefixed). 0 on success, -1 if
+ * malformed. For the mutation path, whose input is not pre-scanned; the tree
+ * builder keeps its own lighter split (the name is already scan_name'd). */
+int mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out);
+
+/* Copy +qn+'s name into +doc+'s arena as one contiguous slice and point
+ * node->qname/local/prefix into it (ns_uri is the caller's concern). 0 on
+ * success, -1 on arena OOM (node left untouched, so the caller stays fail-closed).
+ * The single arena-copy-and-assign both the tree builder and the mutators use. */
+int mkr_xml_qname_assign(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const mkr_xml_qname_t *qn);
+
+/* The QName parts a built node already carries, as a mkr_xml_qname_t value. */
+static inline mkr_xml_qname_t
+mkr_xml_qname_of(const mkr_xml_node_t *n)
+{
+    mkr_xml_qname_t q = { n->qname, n->qname_len, n->prefix, n->prefix_len, n->local, n->local_len };
+    return q;
+}
 
 /* Self-test of the arena's secure-by-design properties (overflow, budgets,
  * alignment, zero-init, copy-on-store, whole-free). Returns 0 on success or the
