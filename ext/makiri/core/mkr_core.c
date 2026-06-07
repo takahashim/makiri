@@ -18,6 +18,12 @@ mkr_core_selftest(void)
     if (!mkr_size_mul(4, 5, &out) || out != 20) return 3;
     if (mkr_size_mul(SIZE_MAX / 2 + 1, 2, &out)) return 4;  /* must overflow */
     if (!mkr_size_mul(0, SIZE_MAX, &out) || out != 0) return 5;
+    /* exact-boundary: the largest non-overflowing result MUST succeed (catches an
+     * off-by-one in the `a > SIZE_MAX - b` / `b > SIZE_MAX / a` predicates). */
+    if (!mkr_size_add(SIZE_MAX, 0, &out) || out != SIZE_MAX) return 55;
+    if (!mkr_size_add(SIZE_MAX - 1, 1, &out) || out != SIZE_MAX) return 56;
+    if (!mkr_size_mul(SIZE_MAX, 1, &out) || out != SIZE_MAX) return 57;
+    if (!mkr_size_mul(SIZE_MAX / 2, 2, &out) || out != (SIZE_MAX / 2) * 2) return 58;
 
     /* grow_capacity: geometric, and overflow on a huge element */
     if (!mkr_grow_capacity(0, 1, 1, &out) || out < 1) return 6;
@@ -39,6 +45,9 @@ mkr_core_selftest(void)
     /* str_alloc / strndup / strdup: copy, terminate, fail closed on NULL+len */
     {
         if (mkr_str_alloc(SIZE_MAX) != NULL) return 26;          /* n + 1 overflow */
+        char *z = mkr_str_alloc(0);                              /* boundary: 0 -> 1-byte "\0" */
+        if (z == NULL || z[0] != '\0') { free(z); return 59; }
+        free(z);
         char *p = mkr_strndup("hello", 3);
         if (p == NULL || memcmp(p, "hel", 4) != 0) { free(p); return 27; } /* "hel\0" */
         free(p);
@@ -115,8 +124,10 @@ mkr_core_selftest(void)
     {
         char store[2];
         mkr_spanbuf_t f = mkr_spanbuf(store, sizeof store);
-        mkr_spanbuf_write(&f, "xy", 2);                  /* exactly cap */
+        mkr_spanbuf_write(&f, "xy", 2);                  /* exactly cap -> still ok */
         if (!f.ok || mkr_spanbuf_finish(&f) != store || f.pos != 2) return 40;
+        mkr_spanbuf_putc(&f, 'z');                       /* boundary: at pos==cap -> refused */
+        if (f.ok || f.pos != 2) return 60;
 
         mkr_spanbuf_t g = mkr_spanbuf(NULL, 8);         /* alloc-failed backing */
         mkr_spanbuf_putc(&g, 'z');                       /* no-op, no crash */
@@ -133,7 +144,9 @@ mkr_core_selftest(void)
 
         size_t *d0 = p; size_t c0 = cap;
         if (mkr_grow_reserve((void **)&p, &cap, 5, sizeof(*p)) != MKR_OK) { free(p); return 44; }
-        if (p != d0 || cap != c0) { free(p); return 45; }   /* need <= cap -> no-op */
+        if (p != d0 || cap != c0) { free(p); return 45; }   /* need < cap -> no-op */
+        if (mkr_grow_reserve((void **)&p, &cap, cap, sizeof(*p)) != MKR_OK) { free(p); return 61; }
+        if (p != d0 || cap != c0) { free(p); return 62; }   /* boundary: need == cap -> no-op */
 
         if (mkr_grow_reserve((void **)&p, &cap, SIZE_MAX, sizeof(*p)) != MKR_ERR_OOM) { free(p); return 46; }
         if (p != d0 || cap != c0) { free(p); return 47; }   /* overflow -> unchanged */
