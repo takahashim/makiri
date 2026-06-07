@@ -104,3 +104,42 @@ mkr_node_document(VALUE rb_node)
     TypedData_Get_Struct(rb_node, mkr_node_data_t, &mkr_node_type, nd);
     return nd->document;
 }
+
+/* ------------------------------------------------------------------ */
+/* identity (representation-neutral)                                  */
+/* ------------------------------------------------------------------ */
+/* These depend only on the kind-agnostic mkr_node_id (which never dereferences a
+ * node), so they are identical for HTML and XML and live here, in the shared
+ * node core, rather than duplicated in each representation's reader file. The
+ * HTML and XML NodeMethods modules both bind their ==/eql?/hash/pointer_id to
+ * these. */
+
+/* Pointer identity: equal iff both wrappers resolve to the same node pointer (an
+ * HTML node is thus never equal to an XML node). */
+VALUE
+mkr_node_equals(VALUE self, VALUE other)
+{
+    if (!rb_obj_is_kind_of(other, mkr_cNode)) {
+        return Qfalse;
+    }
+    return mkr_node_id(self) == mkr_node_id(other) ? Qtrue : Qfalse;
+}
+
+/* Nokogiri-compatible identity: the underlying node pointer as an Integer. Stable
+ * for the node's lifetime and unique among currently-live nodes; a
+ * freed-then-reallocated node may reuse an address (same caveat as
+ * Nokogiri::XML::Node#pointer_id). a.pointer_id == b.pointer_id iff a.eql?(b). */
+VALUE
+mkr_node_pointer_id(VALUE self)
+{
+    return ULL2NUM((unsigned long long)mkr_node_id(self));
+}
+
+/* Stable hash derived from the node pointer, so a == b implies a.hash == b.hash
+ * even across separately-created wrappers. Shares the pointer value with
+ * #pointer_id. */
+VALUE
+mkr_node_hash(VALUE self)
+{
+    return mkr_node_pointer_id(self);
+}

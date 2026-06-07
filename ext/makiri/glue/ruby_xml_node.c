@@ -914,23 +914,10 @@ mkr_xml_node_no_serialize(int argc, VALUE *argv, VALUE self)
 /* ---- node identity (== / eql? / hash / pointer_id) ----
  *
  * XML nodes share the mkr_node_data_t typed-data with HTML nodes, so the
- * underlying node pointer (mkr_node_id, representation-agnostic) IS the
- * identity. Without these, two wrappers for the same XML node compared unequal
- * (Object identity), which broke #path, NodeSet/Set dedup, and Hash keys.
- * Same contract as the HTML nodes (ruby_node.c): a.pointer_id == b.pointer_id
- * iff a.eql?(b). */
-static VALUE
-mkr_xml_node_pointer_id(VALUE self)
-{
-    return ULL2NUM((unsigned long long)mkr_node_id(self));
-}
-
-static VALUE
-mkr_xml_node_equals(VALUE self, VALUE other)
-{
-    if (!rb_obj_is_kind_of(other, mkr_cNode)) return Qfalse;
-    return mkr_node_id(self) == mkr_node_id(other) ? Qtrue : Qfalse;
-}
+ * underlying node pointer (mkr_node_id, representation-agnostic) IS the identity.
+ * The implementations are therefore representation-neutral and live once in
+ * ruby_node.c (mkr_node_equals / mkr_node_hash / mkr_node_pointer_id); the XML
+ * NodeMethods module just binds to them below, exactly as the HTML module does. */
 
 /* ---- mutation (Phase 1: in-place edits) ----------------------------------
  *
@@ -1360,10 +1347,10 @@ mkr_init_xml_node(void)
 
     /* Node identity by underlying pointer, so #path / NodeSet dedup / Set / Hash
      * work (the same contract HTML nodes have). */
-    rb_define_method(mkr_mXmlNodeMethods, "==",         mkr_xml_node_equals, 1);
-    rb_define_method(mkr_mXmlNodeMethods, "eql?",       mkr_xml_node_equals, 1);
-    rb_define_method(mkr_mXmlNodeMethods, "hash",       mkr_xml_node_pointer_id, 0);
-    rb_define_method(mkr_mXmlNodeMethods, "pointer_id", mkr_xml_node_pointer_id, 0);
+    rb_define_method(mkr_mXmlNodeMethods, "==",         mkr_node_equals, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "eql?",       mkr_node_equals, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "hash",       mkr_node_hash, 0);
+    rb_define_method(mkr_mXmlNodeMethods, "pointer_id", mkr_node_pointer_id, 0);
 
     /* XML serialization: #to_xml / #to_s re-emit the subtree (a Document also
      * emits the declaration + DOCTYPE). Also defined on XML::Document below. */

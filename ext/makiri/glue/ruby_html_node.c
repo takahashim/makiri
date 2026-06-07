@@ -729,19 +729,9 @@ mkr_node_line(VALUE self)
 /* ------------------------------------------------------------------ */
 /* identity                                                           */
 /* ------------------------------------------------------------------ */
-
-/* Pointer identity: equal iff both wrap the same lxb_dom_node_t. */
-static VALUE
-mkr_node_equals(VALUE self, VALUE other)
-{
-    if (!rb_obj_is_kind_of(other, mkr_cNode)) {
-        return Qfalse;
-    }
-    /* Identity by pointer, kind-agnostic (an HTML node is simply never equal to an
-     * XML node) - mkr_node_id never dereferences, so comparing across
-     * representations is safe. */
-    return mkr_node_id(self) == mkr_node_id(other) ? Qtrue : Qfalse;
-}
+/* ==/eql?/hash/pointer_id are representation-neutral (mkr_node_id only) and live
+ * in ruby_node.c (the shared node core); this file just binds them below. The
+ * HTML-only <=> (document-order comparison) stays here. */
 
 /* Distance from `n` to the root (a node with no parent). */
 static size_t
@@ -810,25 +800,6 @@ mkr_node_spaceship(VALUE self, VALUE other)
         if (c == pb) return INT2FIX(1);
     }
     return Qnil; /* unreachable for a well-formed tree */
-}
-
-/* Nokogiri-compatible identity: the underlying lxb_dom_node_t pointer as an
- * Integer. Stable for the node's lifetime and unique among currently-live
- * nodes; a freed-then-reallocated node may reuse an address (same caveat as
- * Nokogiri::XML::Node#pointer_id). a.pointer_id == b.pointer_id iff a.eql?(b). */
-static VALUE
-mkr_node_pointer_id(VALUE self)
-{
-    return ULL2NUM((unsigned long long)mkr_node_id(self));
-}
-
-/* Stable hash derived from the node pointer, so a == b implies a.hash ==
- * b.hash even across separately-created wrappers. Shares the pointer value
- * with #pointer_id. */
-static VALUE
-mkr_node_hash(VALUE self)
-{
-    return mkr_node_pointer_id(self);
 }
 
 void

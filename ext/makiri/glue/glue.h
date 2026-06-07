@@ -64,6 +64,14 @@ lxb_dom_node_t *mkr_html_node_unwrap(VALUE rb_node);
 void           *mkr_node_raw(VALUE rb_node);
 uintptr_t       mkr_node_id(VALUE rb_node);
 
+/* Representation-neutral identity methods (ruby_node.c): depend only on
+ * mkr_node_id, so the HTML and XML NodeMethods modules bind ==/eql? to
+ * mkr_node_equals, hash to mkr_node_hash, and pointer_id to mkr_node_pointer_id -
+ * one implementation, not one per representation. */
+VALUE mkr_node_equals(VALUE self, VALUE other);
+VALUE mkr_node_pointer_id(VALUE self);
+VALUE mkr_node_hash(VALUE self);
+
 /* XML node bridge (glue/ruby_xml_node.c): wrap a custom XML node into the right
  * Makiri::XML::* leaf (Qnil for NULL, the Document VALUE for the document node). */
 struct mkr_xml_node;
