@@ -18,4 +18,9 @@
 #include "mkr_text.h"
 #include "mkr_buf.h"
 
+/* Self-test of the overflow / allocation / buffer edge cases (incl. paths real
+ * inputs cannot reach). Returns 0 on success, nonzero on the first failure.
+ * Wired to a private Ruby method for the spec suite. */
+int mkr_core_selftest(void);
+
 #endif /* MAKIRI_CORE_MKR_CORE_H */

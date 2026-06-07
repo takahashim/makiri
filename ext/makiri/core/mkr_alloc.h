@@ -97,11 +97,6 @@ char *mkr_strdup(const char *s);
  * `cap *= 2; realloc(p, cap * sizeof(T))` pattern in one call. */
 mkr_status_t mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem);
 
-/* Self-test of the overflow / allocation / buffer edge cases (incl. paths real
- * inputs cannot reach). Returns 0 on success, nonzero on the first failure.
- * Wired to a private Ruby method for the spec suite. */
-int mkr_core_selftest(void);
-
 #ifdef __cplusplus
 }
 #endif
