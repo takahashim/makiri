@@ -116,6 +116,38 @@ task :sanitize do
   sh(env, "#{FileUtils::RUBY} -S rspec")
 end
 
+desc "Like :sanitize but also builds the vendored Lexbor under ASan, so overflows " \
+     "INSIDE Lexbor's mraw arena are caught (slow: full Lexbor rebuild). Runs the " \
+     "spec suite, or FUZZ_ARGS via the fuzzer when set."
+task "sanitize:lexbor" do
+  sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+  sanitize.include?("address") or
+    abort "sanitize:lexbor needs an address build (MAKIRI_SANITIZE must include 'address')"
+
+  # MAKIRI_SANITIZE_LEXBOR makes extconf build Lexbor with -DLEXBOR_BUILD_WITH_ASAN
+  # (enabling its mraw poisoning); the build-mode stamp auto-rebuilds Lexbor on the
+  # plain<->asan switch, so no manual clean:lexbor is needed before or after.
+  build_env = { "MAKIRI_SANITIZE" => sanitize, "MAKIRI_SANITIZE_LEXBOR" => "1" }
+  sh(build_env, "#{FileUtils::RUBY} -S rake clean compile")
+
+  env = {
+    "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
+                       "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
+    "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+  }
+  runtime = asan_runtime_path or
+    abort "sanitize:lexbor: could not locate the ASan runtime for #{RbConfig::CONFIG['CC']}"
+  preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
+  env[preload] = runtime
+  puts "sanitize:lexbor: preloading #{runtime} via #{preload}"
+
+  if ENV["FUZZ_ARGS"]
+    sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
+  else
+    sh(env, "#{FileUtils::RUBY} -S rspec")
+  end
+end
+
 desc "Run the robustness fuzzer (override options via FUZZ_ARGS)"
 task fuzz: :compile do
   sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}"

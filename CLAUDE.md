@@ -64,6 +64,7 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 bundle exec rake sanitize          # rebuild ext w/ -fsanitize=address,undefined, run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
 bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-safety net
+bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
@@ -83,6 +84,19 @@ Requires CRuby >= 3.2 and `cmake`.
   and `bundle exec` drops `DYLD_*` on macOS. `ASAN_OPTIONS` disables
   LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap-overflow + UB
   in our code still fire. CI runs a separate `sanitize` job on Linux.
+- **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
+  bump arena.** A sub-allocation overrunning into the next one stays within one
+  malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
+  how the v3.0.0 `:lexbor-contains()` overflow hid from ASan). To catch that
+  class, build Lexbor *itself* under ASan: `MAKIRI_SANITIZE_LEXBOR=1` makes
+  extconf pass `-DLEXBOR_BUILD_WITH_ASAN=ON` (Lexbor's mraw is ASan-aware - it
+  poisons the arena and unpoisons each allocation, so an intra-arena overrun
+  writes into poisoned memory and ASan reports it). Drive it with `rake
+  "sanitize:lexbor"` (slow: full instrumented Lexbor rebuild; FUZZ_ARGS routes to
+  the fuzzer). extconf stamps the Lexbor install mode (`plain`/`asan`) and
+  auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
+  build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
+  tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
