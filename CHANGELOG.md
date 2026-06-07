@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`Makiri::XML::Builder`** - a Nokogiri-compatible DSL for building an XML
+  document or subtree from scratch over the existing node factories (the block
+  and `instance_eval` forms, namespaced elements via `xml["prefix"]`, the
+  `tag.class.id!` attribute short-cuts, raw-XML `<<`, and `.with`).
+
 * **CSS selectors on `Makiri::XML`** - `#css` / `#at_css` / `#matches?` now work
   on XML nodes, lowered to the native XPath engine (so matching is
   case-sensitive and namespace-aware, sharing its budgets / document order).
@@ -57,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   newer than v3.0.0 carries the fix yet; see the Lexbor-version note in CLAUDE.md.)
 
 ### Changed
+
+* **The XML declaration emits `encoding="UTF-8"` only when the source declared an
+  encoding** (or an explicit `encoding:` is passed to `#to_xml`); a built or
+  declaration-less document now serializes to a bare `<?xml version="1.0"?>`,
+  matching Nokogiri. The output is UTF-8 either way.
 
 * **Faster XML queries.** A document-rooted descendant name test (`//name`,
   `css("name")`) is now served from a lazily-built, mutation-invalidated
