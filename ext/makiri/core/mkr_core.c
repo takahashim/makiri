@@ -97,5 +97,31 @@ mkr_core_selftest(void)
         free(s);
     }
 
+    /* spanbuf: writes that fit, then one that overruns -> refused + sticky */
+    {
+        char store[4];
+        mkr_spanbuf_t f = mkr_spanbuf(store, sizeof store);
+        mkr_spanbuf_putc(&f, 'a');
+        mkr_spanbuf_write(&f, "bc", 2);                  /* pos == 3, room for 1 */
+        if (!f.ok || f.pos != 3) return 35;
+        mkr_spanbuf_write(&f, "de", 2);                  /* exceeds cap -> refused */
+        if (f.ok) return 36;                              /* must have latched */
+        if (f.pos != 3) return 37;                        /* refused write didn't advance */
+        if (mkr_spanbuf_finish(&f) != NULL) return 38;   /* not-ok -> NULL */
+        if (memcmp(store, "abc", 3) != 0) return 39;      /* no overrun past pos */
+    }
+
+    /* spanbuf: exact fill is ok; a NULL backing buffer is never ok */
+    {
+        char store[2];
+        mkr_spanbuf_t f = mkr_spanbuf(store, sizeof store);
+        mkr_spanbuf_write(&f, "xy", 2);                  /* exactly cap */
+        if (!f.ok || mkr_spanbuf_finish(&f) != store || f.pos != 2) return 40;
+
+        mkr_spanbuf_t g = mkr_spanbuf(NULL, 8);         /* alloc-failed backing */
+        mkr_spanbuf_putc(&g, 'z');                       /* no-op, no crash */
+        if (g.ok || mkr_spanbuf_finish(&g) != NULL) return 41;
+    }
+
     return 0;
 }

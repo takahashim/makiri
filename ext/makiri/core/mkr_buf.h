@@ -82,6 +82,77 @@ mkr_buf_free(mkr_buf_t *b)
     b->len = b->cap = 0;
 }
 
+/* ------------------------------------------------------------------------- */
+/* mkr_spanbuf_t - a bounded writer over a borrowed, fixed-capacity buffer    */
+/* ------------------------------------------------------------------------- */
+/*
+ * "span" = a non-owning view of a fixed-extent contiguous region; a spanbuf is
+ * the bounded *writer* over such a span. The complement to mkr_buf_t: where
+ * mkr_buf_t GROWS and OWNS its malloc storage, a spanbuf BORROWS a fixed buffer
+ * owned elsewhere (e.g. an arena cut) and never grows it.
+ *
+ * The name leads with "borrowed/fixed" deliberately, for safety: the
+ * fixed/bounded property is SELF-ENFORCED (a write past `cap` is refused, so
+ * misunderstanding it costs at most a truncation, caught by _finish), but the
+ * BORROWED property is the caller's responsibility - the type cannot stop you
+ * from free()ing `buf` or holding `finish()`'s pointer past the owner's
+ * lifetime, and getting that wrong is a use-after-free / double-free. So:
+ *   - never free() buf (the owner does, e.g. the arena is freed wholesale);
+ *   - finish()'s pointer is valid only while the backing storage lives.
+ *
+ * Bounds safety is BY CONSTRUCTION (the writer owns the cursor + check, not the
+ * caller's per-write guard): an over-long write is refused and latches `ok` to
+ * false (sticky). The caller's only duty is one check at the end (via _finish or
+ * the public `ok` field), failing closed rather than using a truncated buffer.
+ * This is the sanctioned way to hand-fill a raw region; see mkr_xml_arena_spanbuf
+ * for the arena adapter.
+ */
+typedef struct {
+    char  *buf;   /* borrowed; the owner keeps it alive - do NOT free. NULL => never ok. */
+    size_t cap;   /* capacity in bytes (fixed) */
+    size_t pos;   /* bytes written so far (always <= cap) */
+    bool   ok;    /* false once a write would overflow, or buf was NULL */
+} mkr_spanbuf_t;
+
+/* Wrap [buf, buf+cap) for bounded writing. buf == NULL yields a permanently
+ * not-ok writer (every write a no-op), so an upstream allocation failure flows
+ * straight through without a separate guard at each call site. */
+static inline mkr_spanbuf_t
+mkr_spanbuf(char *buf, size_t cap)
+{
+    return (mkr_spanbuf_t){ .buf = buf, .cap = cap, .pos = 0, .ok = (buf != NULL) };
+}
+
+/* Append one byte; refuse (latch ok=false) if it would exceed cap. */
+static inline void
+mkr_spanbuf_putc(mkr_spanbuf_t *b, char c)
+{
+    if (!b->ok) return;
+    if (b->pos >= b->cap) { b->ok = false; return; }
+    b->buf[b->pos++] = c;
+}
+
+/* Append n bytes; refuse (latch ok=false) if they would exceed cap. n == 0 is a
+ * no-op. pos <= cap is the invariant (a refused write never advances pos), so
+ * cap - pos cannot underflow; the pos > cap arm is belt-and-suspenders. */
+static inline void
+mkr_spanbuf_write(mkr_spanbuf_t *b, const void *src, size_t n)
+{
+    if (!b->ok || n == 0) return;
+    if (b->pos > b->cap || n > b->cap - b->pos) { b->ok = false; return; }
+    memcpy(b->buf + b->pos, src, n);
+    b->pos += n;
+}
+
+/* The filled prefix [buf, buf+pos), or NULL if any write was refused (or buf was
+ * NULL); on a non-NULL return the length is `b->pos`. Forces the caller through a
+ * single fail-closed check instead of trusting the writes individually. */
+static inline const char *
+mkr_spanbuf_finish(const mkr_spanbuf_t *b)
+{
+    return b->ok ? b->buf : NULL;
+}
+
 #ifdef __cplusplus
 }
 #endif

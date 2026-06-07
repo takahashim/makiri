@@ -187,17 +187,30 @@ mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len)
     return p;
 }
 
-/* A raw, uninitialised arena buffer of exactly +len+ bytes, for the one caller
- * that must fill it itself (entity expansion writes the expanded, never-longer
- * output here). Budget-/overflow-checked via the same choke point. */
-char *
-mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
+/* A raw, uninitialised arena buffer of exactly +len+ bytes. PRIVATE: the only
+ * way to fill arena bytes by hand is mkr_xml_arena_spanbuf below, which wraps
+ * this in a core mkr_spanbuf (cursor + bounds check) so a caller can never
+ * overrun it. Budget-/
+ * overflow-checked via the same choke point. */
+static char *
+arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
 {
     /* a 0-length buffer needs no storage - never cut a whole chunk for it. The
      * sentinel is a valid non-NULL pointer the caller must not write to (there is
      * nothing to write), mirroring mkr_xml_arena_bytes's "" return. */
     if (len == 0) return (char *)"";
     return arena_alloc(doc, len);
+}
+
+/* Carve +cap+ arena bytes and wrap them in a core mkr_spanbuf (see
+ * mkr_xml_node.h). The spanbuf owns the cursor + bounds check, so no caller can
+ * overrun the cut; this is the sole sanctioned hand-fill path and the only thing
+ * that touches the private arena_scratch_bytes. On alloc failure the buffer is
+ * NULL, so the returned writer is already not-ok (every write a no-op). */
+mkr_spanbuf_t
+mkr_xml_arena_spanbuf(mkr_xml_doc_t *doc, size_t cap)
+{
+    return mkr_spanbuf(arena_scratch_bytes(doc, cap), cap);
 }
 
 int
@@ -294,7 +307,7 @@ mkr_xml_node_selftest(void)
     idx++;                                     /* 8 */
     if (mkr_xml_arena_node(NULL, MKR_XML_NODE_TYPE_ELEMENT) != NULL
         || mkr_xml_arena_bytes(NULL, "x", 1) != NULL
-        || mkr_xml_arena_scratch_bytes(NULL, 1) != NULL) {
+        || mkr_xml_arena_spanbuf(NULL, 1).ok) {  /* alloc fails -> not ok */
         return idx;
     }
 

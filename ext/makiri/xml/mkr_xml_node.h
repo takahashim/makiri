@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "../core/mkr_buf.h"   /* mkr_spanbuf_t (the arena hand-fill writer) */
 
 /* The XML representation's DOM node-type constants - the counterpart of Lexbor's
  * LXB_DOM_NODE_TYPE_* for HTML. The numeric values mirror the DOM/Lexbor
@@ -99,12 +100,21 @@ size_t         mkr_xml_doc_memsize(const mkr_xml_doc_t *doc);
  * The single overflow- and budget-checked alloc choke point is PRIVATE to
  * mkr_xml_node.c. Callers never get a void* to cast: nodes via *_node (zeroed,
  * type-validated), copied name/value bytes via *_bytes (the arena owns them).
- * mkr_xml_arena_scratch_bytes returns a raw, uninitialised char buffer of exactly
- * +len+ bytes for the one caller that must fill it itself (entity expansion). On
- * any failure doc->oom is set (sticky) and the wrapper returns NULL. */
+ * A caller that must fill a buffer itself uses mkr_xml_arena_spanbuf (below),
+ * never a raw pointer. On any failure doc->oom is set (sticky) and the wrapper
+ * returns NULL. */
 mkr_xml_node_t *mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type);
 const char     *mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len);
-char           *mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len);
+
+/* Carve +cap+ arena bytes and return a bounded writer (core mkr_spanbuf) over
+ * them - the ONLY way to hand-fill arena bytes. The writer owns the cursor and
+ * the bounds check, so a write past the cut is impossible by construction (it is
+ * refused and latches ok=false, never overruns the next cut). Fill it with the
+ * core mkr_spanbuf_putc / _write, then mkr_spanbuf_finish; a NULL finish means
+ * the backing alloc failed (doc->oom set) OR a write was refused (doc->oom stays
+ * OK -> a broken invariant, i.e. our bug). On alloc failure the returned writer
+ * is already not-ok (buf == NULL), so every write is a safe no-op. */
+mkr_spanbuf_t mkr_xml_arena_spanbuf(mkr_xml_doc_t *doc, size_t cap);
 
 /* If attribute +a+ is an xmlns declaration, set the declared namespace prefix
  * (NULL/plen 0 for the default xmlns) and its URI as arena slices, and return 1;
