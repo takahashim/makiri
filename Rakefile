@@ -116,6 +116,33 @@ task :sanitize do
   sh(env, "#{FileUtils::RUBY} -S rspec")
 end
 
+desc "Measure C coverage of OUR sources (clang source-based) over the spec suite. " \
+     "Prints an llvm-cov region+branch report (excludes vendored Lexbor) and writes " \
+     "a line-level detail file to tmp/coverage/show.txt."
+task :coverage do
+  require "fileutils"
+  dir = File.expand_path("tmp/coverage")
+  FileUtils.rm_rf(dir)
+  FileUtils.mkdir_p(dir)
+
+  # Instrument only our sources (Lexbor is built separately, uninstrumented).
+  sh({ "MAKIRI_COVERAGE" => "1" }, "#{FileUtils::RUBY} -S rake clean compile")
+  # %p -> PID, so any forked spec process gets its own raw profile.
+  sh({ "LLVM_PROFILE_FILE" => File.join(dir, "makiri-%p.profraw") }, "#{FileUtils::RUBY} -S rspec")
+
+  profdata = File.join(dir, "makiri.profdata")
+  bundle   = "lib/makiri/makiri.bundle"
+  ignore   = "(vendor/lexbor|/usr/|/Library/|ruby/|rubygems)"
+  sh "xcrun llvm-profdata merge -sparse #{dir}/*.profraw -o #{profdata}"
+  sh "xcrun llvm-cov report #{bundle} -instr-profile=#{profdata} " \
+     "-ignore-filename-regex='#{ignore}' -show-branch-summary"
+  show = File.join(dir, "show.txt")
+  sh "xcrun llvm-cov show #{bundle} -instr-profile=#{profdata} " \
+     "-ignore-filename-regex='#{ignore}' -show-branches=count -show-line-counts-or-regions > #{show}"
+  puts "\ncoverage line/branch detail: #{show}"
+  puts "(coverage build left in place; run `rake clean compile` to restore a normal build)"
+end
+
 desc "Like :sanitize but also builds the vendored Lexbor under ASan, so overflows " \
      "INSIDE Lexbor's mraw arena are caught (slow: full Lexbor rebuild). Runs the " \
      "spec suite, or FUZZ_ARGS via the fuzzer when set."

@@ -91,7 +91,19 @@ $LDFLAGS << " #{lexbor_archive.shellescape}"
 # Lexbor under ASan via MAKIRI_SANITIZE_LEXBOR=1 (see the Lexbor build above and
 # `rake sanitize:lexbor`). _FORTIFY_SOURCE is dropped here because it conflicts
 # with the sanitizer interceptors.
-if sanitize.empty?
+# Coverage build (opt-in): MAKIRI_COVERAGE=1 instruments OUR sources with clang
+# source-based coverage (the vendored Lexbor is built separately and is NOT
+# instrumented - we measure only the code we write). Run via `rake coverage`,
+# which sets LLVM_PROFILE_FILE and renders an llvm-cov report. -O0 keeps the
+# region map close to the source; _FORTIFY_SOURCE is dropped (it needs -O2).
+coverage = !ENV["MAKIRI_COVERAGE"].to_s.strip.empty?
+
+if coverage
+  $CFLAGS   << " -O0 -g -fprofile-instr-generate -fcoverage-mapping"
+  $LDFLAGS  << " -fprofile-instr-generate"
+  $DLDFLAGS << " -fprofile-instr-generate"
+  warn "makiri: building with clang source-based coverage"
+elsif sanitize.empty?
   # Security hardening flags. Keep -O2 active so _FORTIFY_SOURCE works.
   $CFLAGS << " -O2"
   $CFLAGS << " -D_FORTIFY_SOURCE=2"

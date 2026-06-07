@@ -209,6 +209,16 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect { doc.css("a\x00b") }.to raise_error(Makiri::Error)
       expect { doc.at_css("a\x00") }.to raise_error(Makiri::Error)
     end
+
+    it "fails closed on an over-long :is()/:not() argument (fixed compounds bound)" do
+      # The :is()/:not() argument lowering splits the chain into a fixed
+      # comps[64] stack array; >64 combinator-chained compounds must be refused,
+      # never overflow it. Boundary: exactly 64 is accepted, 65 is rejected.
+      ok65  = ":is(#{(['a'] * 64).join(' ')})"
+      over  = ":is(#{(['a'] * 65).join(' ')})"
+      expect { doc.css(ok65) }.not_to raise_error
+      expect { doc.css(over) }.to raise_error(Makiri::Error, /too complex/)
+    end
   end
 
   describe "untyped of-type pseudo-classes (no explicit type selector)" do
