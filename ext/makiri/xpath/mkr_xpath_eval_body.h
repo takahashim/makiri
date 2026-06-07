@@ -1011,26 +1011,24 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   return 0;
 }
 
-#ifdef MKR_HOST_XML
-/* Fast path for `//name[N]` (the two leading steps
- * `descendant-or-self::node()` / `child::name[N]`, N a positive integer
- * literal, rooted at the document): answer it from the element-name index with
- * per-parent counting instead of the descendant-or-self full-tree walk.
+/* --- `//name[N]` index fast path (shared shape + per-parent emit) -----------
  *
- * `//name[N]` selects, for every node c, c's Nth name-child - i.e. every name
- * element that is the Nth name-child of its parent (this is NOT `(//name)[N]`
- * nor `descendant::name[N]`). The index lists all matching name elements in
+ * `//name[N]` (the two leading steps `descendant-or-self::node()` /
+ * `child::name[N]`, N a positive integer literal, rooted at the document)
+ * selects, for every node c, c's Nth name-child - i.e. every name element that
+ * is the Nth name-child of its parent. This is NOT `(//name)[N]` nor
+ * `descendant::name[N]`. Both hosts answer it from their element index (XML: the
+ * name index; HTML: the tag-id index) with per-parent counting, instead of the
+ * descendant-or-self full-tree walk: the index lists matching elements in
  * document order, so a parent's name-children appear among them in child order;
  * one sweep with a pointer-keyed parent->count map emits exactly those whose
- * running count reaches N, already in document order (no sort/dedup needed).
- *
- * Returns 1 (filled *result; the caller consumes the two leading steps),
- * 0 (shape/context not eligible -> caller evaluates normally), -1 (error). */
+ * running count reaches N, already in document order (no sort/dedup). The bucket
+ * retrieval is host-specific; the shape check and the count loop are shared. */
+
+/* Host-neutral shape check: sets *need = N. 1 = matches, 0 = no. */
 static int
-try_descendant_name_index_nth(mkr_xpath_context_t *ctx,
-                              const mkr_step_t *s0, const mkr_step_t *s1,
-                              const mkr_nodeset_t *seed,
-                              mkr_nodeset_t *result, mkr_xpath_error_t *err)
+nth_shape(mkr_xpath_context_t *ctx, const mkr_step_t *s0, const mkr_step_t *s1,
+          const mkr_nodeset_t *seed, size_t *need)
 {
   if (s0->axis != MKR_AXIS_DESCENDANT_OR_SELF || s0->test.kind != MKR_NT_NODE
       || s0->test.prefix.ptr != NULL || s0->npredicates != 0)
@@ -1038,17 +1036,65 @@ try_descendant_name_index_nth(mkr_xpath_context_t *ctx,
   if (s1->axis != MKR_AXIS_CHILD || s1->test.kind != MKR_NT_NAME
       || s1->test.local.ptr == NULL || s1->npredicates != 1)
     return 0;
-  /* The sole predicate must be a bare positive-integer literal `[N]` (which in
-   * predicate position means position()==N). `[position()=N]`, `[last()]`, etc.
-   * are binops/calls -> not recognised, fall back. */
+  /* The sole predicate must be a bare positive-integer literal `[N]` (= position()
+   * == N). `[position()=N]`, `[last()]`, etc. are binops/calls -> fall back. */
   const mkr_node_t *pred = s1->predicates[0];
   if (pred == NULL || pred->kind != MKR_NK_LITERAL_NUM) return 0;
   double dn = pred->u.literal_num;
   if (!(dn >= 1.0) || dn != (double)(size_t)dn) return 0;
-  size_t need = (size_t)dn;
   /* Context must be exactly the document node (the index's scope). */
   if (seed->count != 1 || seed->items[0] != (MKR_DOM_NODE *)mkr_ctx_document(ctx))
     return 0;
+  *need = (size_t)dn;
+  return 1;
+}
+
+/* Emit, in document order, each bucket element that is the +need+th of its
+ * parent. When +test+ != NULL only elements matching it count (the HTML tag
+ * bucket may include tag-id-quirk non-matches; node_principal_match re-checks).
+ * The op budget is charged per element. Returns 0, -1 (OOM/limit), or -2
+ * (cap-sizer overflow -> caller falls back to the generic evaluator). */
+static int
+emit_nth_per_parent(mkr_xpath_context_t *ctx, MKR_DOM_NODE *const *bucket, size_t cnt,
+                    size_t need, const mkr_nodetest_t *test, mkr_axis_t axis,
+                    mkr_nodeset_t *result, mkr_xpath_error_t *err)
+{
+  if (cnt == 0) return 0;
+  size_t cap;
+  if (!mkr_pow2_ceil(cnt + (cnt >> 1) + 1, &cap)) return -2;
+  struct nth_slot { const void *parent; size_t count; } *tab =
+      mkr_callocarray(cap, sizeof(*tab));
+  if (tab == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory (//name[N])"); return -1; }
+  const size_t mask = cap - 1;
+  mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
+  int rc = 0;
+  for (size_t i = 0; i < cnt; ++i) {
+    if (mkr_limit_eval_op(limits, err) != 0) { rc = -1; break; } /* same budget as the walk */
+    MKR_DOM_NODE *e = bucket[i];
+    if (test != NULL && !node_principal_match(test, e, axis, ctx)) continue;
+    const void *par = (const void *)MKR_NODE_PARENT(e);
+    size_t h = (size_t)mkr_ptr_hash(par) & mask;
+    while (tab[h].parent != NULL && tab[h].parent != par) h = (h + 1) & mask;
+    if (tab[h].parent == NULL) { tab[h].parent = par; tab[h].count = 0; }
+    if (++tab[h].count == need) {           /* e is the Nth name-child of its parent */
+      if (mkr_nodeset_push(result, e, limits, err) != 0) { rc = -1; break; }
+    }
+  }
+  free(tab);
+  return rc;
+}
+
+/* Returns 1 (filled *result; the caller consumes the two leading steps),
+ * 0 (not eligible -> caller evaluates normally), -1 (error). */
+#ifdef MKR_HOST_XML
+static int
+try_descendant_index_nth(mkr_xpath_context_t *ctx,
+                         const mkr_step_t *s0, const mkr_step_t *s1,
+                         const mkr_nodeset_t *seed,
+                         mkr_nodeset_t *result, mkr_xpath_error_t *err)
+{
+  size_t need;
+  if (!nth_shape(ctx, s0, s1, seed, &need)) return 0;
 
   /* Resolve the name test's namespace, mirroring try_descendant_name_index. */
   const char *ns_uri; size_t ns_uri_len;
@@ -1075,32 +1121,40 @@ try_descendant_name_index_nth(mkr_xpath_context_t *ctx,
   size_t cnt = 0;
   void *const *bucket = lookup(idx, s1->test.local.ptr, s1->test.local.len,
                                ns_uri, ns_uri_len, &cnt);
-  if (cnt == 0) return 1;                   /* recognised; no such elements */
-
-  size_t cap;
-  if (!mkr_pow2_ceil(cnt + (cnt >> 1) + 1, &cap)) return 0; /* sizer overflow -> fall back */
-  struct nth_slot { const void *parent; size_t count; } *tab =
-      mkr_callocarray(cap, sizeof(*tab));
-  if (tab == NULL) { mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory (//name[N])"); return -1; }
-  const size_t mask = cap - 1;
-  mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
-
-  int rc = 1;
-  for (size_t i = 0; i < cnt; ++i) {
-    if (mkr_limit_eval_op(limits, err) != 0) { rc = -1; break; } /* same budget as the walk */
-    MKR_DOM_NODE *e = (MKR_DOM_NODE *)bucket[i];
-    const void *par = (const void *)MKR_NODE_PARENT(e);
-    size_t h = (size_t)mkr_ptr_hash(par) & mask;
-    while (tab[h].parent != NULL && tab[h].parent != par) h = (h + 1) & mask;
-    if (tab[h].parent == NULL) { tab[h].parent = par; tab[h].count = 0; }
-    if (++tab[h].count == need) {           /* e is the Nth name-child of its parent */
-      if (mkr_nodeset_push(result, e, limits, err) != 0) { rc = -1; break; }
-    }
-  }
-  free(tab);
-  return rc;
+  /* The name-index bucket already holds exactly the matches, so no re-check. */
+  int rc = emit_nth_per_parent(ctx, (MKR_DOM_NODE *const *)bucket, cnt, need,
+                               NULL, s1->axis, result, err);
+  return rc == -2 ? 0 : (rc < 0 ? -1 : 1);
 }
-#endif /* MKR_HOST_XML */
+#else  /* HTML: tag-id index analogue (unprefixed, pure-HTML, static tag range) */
+static int
+try_descendant_index_nth(mkr_xpath_context_t *ctx,
+                         const mkr_step_t *s0, const mkr_step_t *s1,
+                         const mkr_nodeset_t *seed,
+                         mkr_nodeset_t *result, mkr_xpath_error_t *err)
+{
+  size_t need;
+  if (!nth_shape(ctx, s0, s1, seed, &need)) return 0;
+  if (s1->test.prefix.ptr != NULL) return 0;   /* the tag index is unprefixed-only */
+
+  void                    *eidx        = mkr_ctx_element_index(ctx);
+  mkr_tag_index_lookup_t   lookup      = mkr_ctx_tag_lookup(ctx);
+  mkr_tag_index_foreign_t  has_foreign = mkr_ctx_tag_has_foreign(ctx);
+  if (eidx == NULL || lookup == NULL || has_foreign == NULL || has_foreign(eidx)) return 0;
+  MKR_DOM_DOCUMENT *doc = mkr_ctx_document(ctx);
+  if (doc == NULL) return 0;
+  lxb_tag_id_t tag = MKR_DOC_TAG_ID_BY_NAME(doc, s1->test.local.ptr, s1->test.local.len);
+  if (tag == LXB_TAG__UNDEF || (uintptr_t)tag >= LXB_TAG__LAST_ENTRY) return 0;
+
+  size_t cnt = 0;
+  MKR_DOM_NODE *const *bucket = (MKR_DOM_NODE *const *)lookup(eidx, tag, &cnt);
+  /* Re-check each candidate (tag-name lookup can have case/normalization quirks),
+   * so the per-parent count is over the actual matches - byte-identical to the
+   * walk, exactly as try_descendant_tag_index does for the no-predicate case. */
+  int rc = emit_nth_per_parent(ctx, bucket, cnt, need, &s1->test, s1->axis, result, err);
+  return rc == -2 ? 0 : (rc < 0 ? -1 : 1);
+}
+#endif
 
 static int
 eval_steps(mkr_xpath_context_t *ctx, mkr_step_t *steps, size_t nsteps,
@@ -1109,13 +1163,13 @@ eval_steps(mkr_xpath_context_t *ctx, mkr_step_t *steps, size_t nsteps,
   mkr_nodeset_t current = *seed;  /* take ownership */
   memset(seed, 0, sizeof(*seed));
   size_t s_start = 0;
-#ifdef MKR_HOST_XML
   /* `//name[N]` (descendant-or-self::node()/child::name[N]) from the document:
-   * serve the two leading steps from the element-name index instead of walking. */
+   * serve the two leading steps from the element index (XML: name index; HTML:
+   * tag-id index) with per-parent counting instead of the full-tree walk. */
   if (nsteps >= 2) {
     mkr_nodeset_t nth;
     mkr_nodeset_init(&nth);
-    int fp = try_descendant_name_index_nth(ctx, &steps[0], &steps[1], &current, &nth, err);
+    int fp = try_descendant_index_nth(ctx, &steps[0], &steps[1], &current, &nth, err);
     if (fp < 0) { mkr_nodeset_clear(&nth); mkr_nodeset_clear(&current); return -1; }
     if (fp == 1) {
       mkr_nodeset_clear(&current);
@@ -1125,7 +1179,6 @@ eval_steps(mkr_xpath_context_t *ctx, mkr_step_t *steps, size_t nsteps,
       mkr_nodeset_clear(&nth);
     }
   }
-#endif
   for (size_t s = s_start; s < nsteps; ++s) {
     mkr_nodeset_t next;
     mkr_nodeset_init(&next);

@@ -225,6 +225,15 @@ RSpec.describe "Makiri XPath" do
         expect(cat.xpath("//au[1]").map(&:text)).to eq(%w[x y])
         expect(cat.xpath("//au[2]")).to be_empty
       end
+
+      it "applies the same per-parent fast path to HTML //tag[N]" do
+        h = Makiri::HTML("<html><body><ul><li>a1</li><li>a2</li></ul>" \
+                         "<ul><li>b1</li></ul></body></html>")
+        expect(h.xpath("//li[1]").map(&:text)).to eq(%w[a1 b1]) # each ul's first
+        expect(h.xpath("//li[2]").map(&:text)).to eq(%w[a2])    # only ul#1 has a 2nd
+        expect(h.xpath("//li[3]")).to be_empty
+        expect(h.xpath("(//li)[1]").map(&:text)).to eq(%w[a1])  # global first - differs
+      end
     end
   end
 
