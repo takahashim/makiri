@@ -14,6 +14,7 @@ rake conformance:css       # HTML CSS selectors vs Nokogiri::HTML5
 rake conformance:xmlconf   # XML 1.0 well-formedness vs W3C XML Test Suite
 rake conformance:xpath_xml # XML XPath 1.0 vs Nokogiri::XML
 rake conformance:css_xml   # XML CSS selectors vs Nokogiri::XML
+rake conformance:builder   # XML::Builder DSL vs Nokogiri::XML::Builder
 rake conformance           # all tasks above, excluding xml_pbt
 
 rake conformance:xml_pbt   # generated XML trees vs Nokogiri::XML
@@ -28,6 +29,7 @@ XPATH_ARGS="--verbose"                       rake conformance:xpath_xml
 CSS_ARGS="--verbose"                         rake conformance:css
 CSS_XML_ARGS="--generate 5000 --seed 1"      rake conformance:css_xml
 XMLCONF_ARGS="--verbose --show-policy"       rake conformance:xmlconf
+BUILDER_ARGS="--verbose"                     rake conformance:builder
 PBT_ARGS="--count 50000 --verbose"           rake conformance:xml_pbt
 ```
 
@@ -297,3 +299,28 @@ It feeds two test layers:
 `xml_pbt` is not included in the aggregate `rake conformance` target. It is a
 scalable stress pass. Use `PBT_ARGS="--count ..."` to raise the document count
 for release runs or investigations.
+
+---
+
+## 9. XML Builder - `builder_diff.rb`
+
+This runner runs the same builder program (a curated corpus of blocks, inline in
+the runner) through `Makiri::XML::Builder` and `Nokogiri::XML::Builder`, then
+compares the trees they build. It covers the surface the two builders share: the
+block and `instance_eval` forms, attribute/text/namespace arguments,
+`xml["prefix"]` prefixed elements, the `tag.class.id!` attribute short-cuts,
+raw-XML `<<`, and nested blocks.
+
+Nokogiri is built with `namespace_inheritance: false` so the two share Makiri's
+namespace model (a child does not inherit a prefixed ancestor's namespace; an
+unprefixed child binds only to the in-scope default xmlns). With that aligned,
+the corpus should have zero divergences.
+
+The comparison is a canonical structural dump keyed on each node's (LOCAL name,
+namespace URI) plus its non-xmlns attributes and content, so prefix spellings and
+which ancestor declared a namespace do not matter - only the effective
+namespaces. (Makiri keeps xmlns declarations as DOM attributes while Nokogiri
+does not, so the dump filters them out and compares the resolved namespaces.)
+
+A real divergence is the two builders producing different trees, or one raising
+where the other builds.
