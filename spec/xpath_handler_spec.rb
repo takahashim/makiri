@@ -13,6 +13,8 @@ RSpec.describe "Makiri XPath custom function handler" do
     def is_paragraph(set) = set.first&.name == "p"
     def first_node(set) = set.first          # returns a Node
     def boom = raise("kaboom")
+    def type_of(arg) = arg.class.name        # echoes the Ruby type of the arg
+    def echo(arg) = arg                       # round-trips the arg back
   end
 
   let(:doc) do
@@ -42,6 +44,15 @@ RSpec.describe "Makiri XPath custom function handler" do
       result = ctx.evaluate("ng:first-node(//p)", handler)
       expect(result).to be_a(Makiri::NodeSet)
       expect(result.first.text).to eq("hi")
+    end
+
+    it "passes number and boolean arguments to the handler" do
+      # number arg -> Ruby Float, boolean arg -> Ruby true/false (the non-string,
+      # non-node-set argument conversions).
+      expect(ctx.evaluate("ng:type-of(count(//p))", handler)).to eq("Float")
+      expect(ctx.evaluate("ng:echo(count(//p))", handler)).to eq(2.0)
+      expect(ctx.evaluate("ng:type-of(1 = 1)", handler)).to eq("TrueClass")
+      expect(ctx.evaluate("ng:echo(1 = 0)", handler)).to be(false)
     end
 
     it "maps '-' in the function name to '_' in the method" do

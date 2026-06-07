@@ -42,6 +42,26 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("//x")).to be_a(Makiri::NodeSet) # empty set, not false
       expect(doc.xpath("boolean(//x)")).to be(false)
     end
+
+    it "formats numbers as strings per XPath 1.0 (string(number))" do
+      # Integers print without a fraction, no exponent; the special values use
+      # their XPath spellings. These are the classic conversion edge cases.
+      expect(doc.xpath("string(42)")).to eq("42")
+      expect(doc.xpath("string(0)")).to eq("0")
+      expect(doc.xpath("string(-7)")).to eq("-7")
+      expect(doc.xpath("string(1.5)")).to eq("1.5")
+      expect(doc.xpath("string(1 div 3)")).to eq("0.333333333333333")
+      expect(doc.xpath("string(0 div 0)")).to eq("NaN")
+      expect(doc.xpath("string(1 div 0)")).to eq("Infinity")
+      expect(doc.xpath("string(-1 div 0)")).to eq("-Infinity")
+    end
+
+    it "converts booleans to/from strings and numbers" do
+      expect(doc.xpath("string(true())")).to eq("true")
+      expect(doc.xpath("string(false())")).to eq("false")
+      expect(doc.xpath("number(true())")).to eq(1.0)
+      expect(doc.xpath("number(false())")).to eq(0.0)
+    end
   end
 
   describe "#at_xpath" do
