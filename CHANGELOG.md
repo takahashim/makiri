@@ -5,77 +5,43 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0]
 
 ### Added
 
-* **`Makiri::XML::Builder`** - a Nokogiri-compatible DSL for building an XML
-  document or subtree from scratch over the existing node factories (the block
-  and `instance_eval` forms, namespaced elements via `xml["prefix"]`, the
-  `tag.class.id!` attribute short-cuts, raw-XML `<<`, and `.with`).
+* CSS selectors on `Makiri::XML`. `#css` / `#at_css` / `#matches?`, lowered
+  to the native XPath engine (case-sensitive, namespace-aware). Covers the
+  standard selector set including combinator arguments to `:is`/`:where`/`:not`/
+  `:has`, untyped `:*-of-type`, and `:lexbor-contains`. Verified by a differential
+  against `Nokogiri::XML` plus property-based tests.
 
-* **CSS selectors on `Makiri::XML`** - `#css` / `#at_css` / `#matches?` now work
-  on XML nodes, lowered to the native XPath engine (so matching is
-  case-sensitive and namespace-aware, sharing its budgets / document order).
-  * Bare type selectors bind to the document's default namespace and `ns|el`
-    resolves against in-scope / supplied namespaces (Nokogiri-compatible -
-    including that passing an explicit namespaces hash disables the default
-    binding, so a bare selector then matches the no-namespace element).
-  * Verified by a CSS-selector differential against Nokogiri::XML/libxml2
-    (`rake conformance:css_xml`) and property-based metamorphic tests over random
-    documents (index-vs-walk, `at_css == css.first`, `#matches?` membership, the
-    comma-union law).
-  * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
-    operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
-    `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
-    (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. The
-    `[attr=v i]` case flag and other jQuery extensions remain unsupported (use
-    XPath); `|el` (no namespace) fails closed with a `CSS::SyntaxError` because
-    Lexbor's parser cannot distinguish it from `*|el` (use a bare `el` or XPath).
-  * `:lexbor-contains("text")` is supported on XML too, matching the HTML side:
-    Lexbor's substring text filter, with the ` i` flag (`:lexbor-contains("text"
-    i)`) for an ASCII case-insensitive match. Like Lexbor's matcher it tests the
-    element's immediate child text nodes (not the deep string-value), so HTML and
-    XML agree; on XML it lowers to `child::text()[contains(., "text")]`. (It is
-    Lexbor's spelling of jQuery's `:contains()`; the bare `:contains` name is
-    still unsupported.)
-  * The `:*-of-type` family now also works **without an explicit type selector**
-    (`:first-of-type`, `:nth-of-type(an+b)`, `*:only-of-type`, ...), where the
-    "type" is each element's own expanded name. That self-comparison cannot be
-    expressed in XPath 1.0 (no `current()`), so the engine resolves it natively
-    (an internal, XPath-unreachable position function); the result matches
-    Lexbor's HTML matcher. (Nokogiri - both XML and HTML5 - mistranslates untyped
-    of-type to first-/only-child, `//*[position()=1]` / `//*[last()=1]`; Makiri is
-    correct here, pinned in `spec/xml_css_spec.rb`.)
-
-### Security
-
-* **Updated the vendored Lexbor** from v3.0.0 to `7b4c38c` (`v3.0.0-19`) to pick
-  up a **heap buffer overflow fix in Lexbor's `:lexbor-contains()` parser**
-  (`8a14bc0`): pre-fix it sized the needle buffer by `sizeof(lexbor_str_t)` but
-  copied the full string, overflowing the arena for any needle longer than ~15
-  bytes. Makiri reaches Lexbor's CSS parser for `:lexbor-contains` on both HTML
-  and XML, so this was reachable from `Node#css`. The same bump also folds in
-  Lexbor's `#365` tokenizer size-limit (DoS) fix, the `<select size>` NULL-deref
-  fix, the ruby `rp`/`rt` parse-error fix, and URL uninitialized-memory fixes.
-  (This is an untagged master commit, taken deliberately because no release tag
-  newer than v3.0.0 carries the fix yet; see the Lexbor-version note in CLAUDE.md.)
+* `Makiri::XML::Builder`, a Nokogiri-compatible DSL for building an XML
+  document or subtree from scratch (block / `instance_eval` forms, namespaced
+  elements via `xml["prefix"]`, the `tag.class.id!` attribute short-cuts, raw-XML
+  `<<`, and `.with`). Verified by a differential against `Nokogiri::XML::Builder`.
 
 ### Changed
 
-* **The XML declaration emits `encoding="UTF-8"` only when the source declared an
-  encoding** (or an explicit `encoding:` is passed to `#to_xml`); a built or
-  declaration-less document now serializes to a bare `<?xml version="1.0"?>`,
-  matching Nokogiri. The output is UTF-8 either way.
+* The XML declaration emits `encoding="UTF-8"` only when the source declared
+  one (or `#to_xml(encoding:)` is passed); built or declaration-less documents
+  now serialize to a bare `<?xml version="1.0"?>`, like Nokogiri (the output is
+  UTF-8 either way).
 
-* **Faster XML queries.** A document-rooted descendant name test (`//name`,
-  `css("name")`) is now served from a lazily-built, mutation-invalidated
-  element-name index instead of walking the whole tree - the XML analogue of the
-  HTML `//tag` index. On the benchmark feed `css("entry")` goes from ~1.1x to
-  ~11x faster than Nokogiri and `feed > entry` to ~4.8x (its `//feed` step is
-  indexed too). Also: a name test resolves its namespace prefix once per step
-  rather than per node (~20% on namespace-dense queries), and `at_css` /
-  `at_xpath` short-circuit on prefixed name tests (an early match is ~100x).
+* Faster XML queries. A document-rooted `//name` / `css("name")` is served
+  from a lazily-built element-name index instead of a full-tree walk (~11x
+  Nokogiri on the benchmark feed); name tests resolve their prefix once per step,
+  and `at_css` / `at_xpath` short-circuit on prefixed name tests.
+
+### Security
+
+* Updated the vendored Lexbor (v3.0.0 -> `7b4c38c`) for a heap-overflow fix
+  in its `:lexbor-contains()` parser, reachable from `Node#css`, plus other
+  post-v3.0.0 bugfixes. (An untagged master commit, taken deliberately; see
+  CLAUDE.md.)
+
+* Hardened native memory safety. The XML arena is ASan-red-zoned to catch
+  intra-arena overflows, the engines are fuzzed under ASan/UBSan, and buffer
+  growth is bounded by a hard ceiling.
 
 ## [0.3.0] - 2026-06-06
 
