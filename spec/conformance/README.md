@@ -1,176 +1,299 @@
 # Conformance & differential testing
 
-Harnesses that check Makiri against external standards, complementing the
-robustness fuzzer (`spec/fuzz/`, which only checks that Makiri never does worse
-than raise its own error). These check that Makiri is *correct*, not just safe.
+This directory contains tests that check Makiri's correctness.
+The tests here check that accepted input produces the expected DOM, XPath result, CSS result, or XML tree.
 
-The `rake conformance:*` harnesses below need network/Nokogiri and live outside
-the unit suite (their files are not `*_spec.rb`). Two normal specs (pure Ruby,
-no Nokogiri) run under `rake spec`: `wpt_domxpath_spec.rb` ("3. XPath over HTML")
-and `css_selectors_spec.rb` ("4. CSS Selectors").
+Most `rake conformance:*` tasks do not run as part of `rake spec`.
+Some tasks fetch external test data. Others compare Makiri with Nokogiri/libxml2.
+The pure Ruby specs listed below are part of the normal spec suite.
 
 ```bash
-rake conformance:html5     # WHATWG HTML5 parsing  vs html5lib-tests
-rake conformance:xpath     # XPath 1.0 evaluation  vs Nokogiri (libxml2)
-rake conformance:css       # CSS Selectors         vs Nokogiri::HTML5
-rake conformance           # all three
-rake conformance:xpath_xml # XML XPath 1.0         vs Nokogiri::XML
-rake conformance:xmlconf   # XML well-formedness    vs the W3C XML Test Suite
-rake conformance:xml_pbt   # XML tree (PBT)         vs Nokogiri::XML (generated docs)
+rake conformance:html5     # HTML tree construction vs html5lib-tests
+rake conformance:xpath     # HTML XPath 1.0 vs Nokogiri::HTML5
+rake conformance:css       # HTML CSS selectors vs Nokogiri::HTML5
+rake conformance:xmlconf   # XML 1.0 well-formedness vs W3C XML Test Suite
+rake conformance:xpath_xml # XML XPath 1.0 vs Nokogiri::XML
+rake conformance:css_xml   # XML CSS selectors vs Nokogiri::XML
+rake conformance           # all tasks above, excluding xml_pbt
 
-# pass through options:
+rake conformance:xml_pbt   # generated XML trees vs Nokogiri::XML
+```
+
+Pass options through environment variables:
+
+```bash
 H5_ARGS="--file tests1.dat --verbose"        rake conformance:html5
 XPATH_ARGS="--generate 8000 --seed 1"        rake conformance:xpath
+XPATH_ARGS="--verbose"                       rake conformance:xpath_xml
 CSS_ARGS="--verbose"                         rake conformance:css
+CSS_XML_ARGS="--generate 5000 --seed 1"      rake conformance:css_xml
 XMLCONF_ARGS="--verbose --show-policy"       rake conformance:xmlconf
 PBT_ARGS="--count 50000 --verbose"           rake conformance:xml_pbt
 ```
 
-Makiri-only property-based tests (round-trip + metamorphic, with shrinking) run
-in the normal suite: `spec/xml_pbt_spec.rb` (raise `PBT_COUNT` to do more).
+Nokogiri is a bench-only dependency, so Nokogiri-based conformance tasks run
+outside Bundler, like `rake bench`. Every conformance task depends on `compile`.
 
-The Nokogiri baseline is **`Nokogiri::HTML5`** (Gumbo, WHATWG-compliant), never
-`Nokogiri::HTML` (libxml2's non-conformant HTML4 parser). Nokogiri is a
-bench-only dependency, so `conformance:xpath` runs outside the bundle, like
-`bench`.
+These conformance specs live in the normal suite:
+
+- `spec/conformance/wpt_domxpath_spec.rb` - XPath over HTML, ported from WPT
+  `domxpath/`.
+- `spec/conformance/css_selectors_spec.rb` - the supported HTML CSS selector
+  surface and Makiri's CSS glue rules.
+- `spec/xml_conformance_spec.rb` - XML XPath regressions found by the XML
+  differential.
+- `spec/xml_pbt_spec.rb` - generated XML model round-trip and metamorphic
+  properties. Set `PBT_COUNT` to run more cases. The default is 300.
+- `spec/xml_css_pbt_spec.rb` - generated XML CSS self-consistency properties.
+  Set `CSS_PBT_COUNT` to run more cases. The default is 300.
+
+The expected result is zero real failures. `fail`, `error`, and `DIVERGE` counts
+should stay at zero unless a case is explicitly listed in a documented policy or
+vocabulary bucket. Some runners also print order-only differences. Treat those
+as investigation signals, and follow the exit policy of that runner.
 
 ---
 
 ## 1. HTML5 parsing - `html5lib_runner.rb`
 
-Runs the WHATWG [html5lib-tests](https://github.com/html5lib/html5lib-tests)
-`tree-construction` suite through `Makiri::HTML(...)` and string-compares
-Makiri's DOM (rendered by `html5lib_dump.rb`) against each test's expected tree.
-Lexbor passes this suite upstream; running it through Makiri verifies the
-post-parse layer (attr→owner index, source-location stamping, Ruby wrappers)
-does not perturb the tree.
+This runner uses the WHATWG
+[html5lib-tests](https://github.com/html5lib/html5lib-tests)
+`tree-construction` corpus. It parses each case with `Makiri::HTML(...)` or
+`Makiri::DocumentFragment.parse(...)`. Then it dumps Makiri's DOM and compares
+that dump with the expected html5lib tree.
 
-Test data is **not vendored**: the runner fetches a pinned master commit of
-html5lib-tests via a sparse, blobless clone into `data/` (gitignored) on first
-run. Bump `DATA_COMMIT` in the runner to update.
+The test data is not vendored. On the first run, the runner fetches a pinned
+commit of `html5lib/html5lib-tests` into `spec/conformance/data/`. That directory
+is gitignored. To update the corpus, update `DATA_COMMIT` in the runner.
 
-**Scope:** full-document AND fragment (`#document-fragment`) tests. Fragment
-tests parse in their context element via the Nokogiri-compatible `context:`
-(String for HTML / `"svg"` / `"math"`, or a Node for foreign non-root contexts
-like an SVG `<desc>`). Only `#script-on` tests are skipped (scripting changes
-parsing and is out of scope). A test exercising a DOM detail Makiri cannot
-represent at all would be reclassified as *unsupported* rather than scored as a
-failure; in practice that count is 0.
+Scope:
 
-### Result
+- Full-document tests use `Makiri::HTML`.
+- Fragment tests use their `#document-fragment` context.
+- HTML fragment contexts use `context: "tag"`.
+- Foreign fragment contexts use a Makiri node context.
+- `#script-on` tests are skipped because Makiri does not implement scripting,
+  and scripting changes tree construction.
+- If an expected node cannot be represented by Makiri's Ruby API, the case is
+  counted as `unsupported`. The current corpus should keep this count at zero.
 
-```
-ran 1770  pass 1770  fail 0  error 0   (100.00% of ran)
-skipped: 8 script
-unsupported: 0
-```
-
-**Makiri's HTML5 parsing matches html5lib-tests exactly** - every full-document
-and fragment test its Ruby API can represent passes. The only tests not run are
-the 8 scripting-on ones (out of scope).
+This runner mainly checks Makiri's Lexbor integration. It also checks that the
+post-parse indexes, source-location stamping, and Ruby wrappers do not change
+the HTML5 tree.
 
 ---
 
-## 2. XPath 1.0 - `xpath_diff.rb`
+## 2. HTML XPath 1.0 - `xpath_diff.rb`
 
-Makiri's XPath engine is original code (no libxml2 anywhere), so it has no
-mature implementation backing it - making a differential against libxml2 (via
-Nokogiri) its highest-value correctness net. Both sides parse with their HTML5
-frontend, so the DOM trees are isomorphic and matched nodes are compared by
-absolute path.
+This runner evaluates the same XPath expression in Makiri and Nokogiri. Makiri
+uses its original XPath engine. Nokogiri uses libxml2.
 
-- **Corpus:** a curated, deterministic set (`xpath_corpus.rb`) covering every
-  axis, the node tests, position/predicate semantics, the function library, and
-  the operators - plus optional grammar-generated expressions
-  (`--generate N --seed S`, reusing the fuzzer's grammar).
-- **Comparison:** node-sets by set-of-paths (order tracked separately, since
-  XPath node-sets are formally unordered); scalars by value (numbers within
-  1e-9, NaN==NaN).
-- The Nokogiri DOM is used **unmodified**: Makiri's strict-by-default namespace
-  matching now lines up with Nokogiri::HTML5 (`//path` matches nothing on both),
-  so no `remove_namespaces!` neutralisation is needed.
+Both sides parse with an HTML5 parser: `Makiri::HTML` and `Nokogiri::HTML5`.
+The trees should be isomorphic, so the runner compares node identity by using a
+normalised absolute path.
 
-### Result
+Inputs:
 
-```
-curated:                  ~1089 pairs, 0 divergences
-generated (8000, seed 1): ~69700 pairs, 0 result/raise divergences
-```
+- `xpath_corpus.rb` is the curated deterministic corpus. It covers axes, node
+  tests, predicates, operators, functions, variables, namespaces, and error
+  cases.
+- `--generate N --seed S` adds grammar-generated expressions. This uses the same
+  grammar as the fuzzer.
 
-Buckets that are tallied, not scored as bugs:
+Comparison rules:
 
-- **`noko-strict`** - Makiri evaluates a *top-level* `position()`/`last()` (the
-  document-root context position/size is 1) where libxml2 raises a syntax error.
-  Makiri's behaviour is defensible per XPath 1.0.
-- **`ns-repr`** - `namespace-uri()` of an HTML element is the XHTML URI in
-  Makiri (DOM-correct, what browsers report) but `""` in Nokogiri::HTML5, which
-  drops the HTML namespace. A representation difference where Makiri is the more
-  correct side; not a bug.
+- Node-sets are compared by the set of normalised node paths.
+- Order-only node-set differences are reported separately.
+- Strings and booleans are compared by exact value.
+- Numbers are compared with a `1e-9` tolerance. `NaN` is treated as equal to
+  `NaN`.
+- Makiri's fail-closed cases are tallied but not scored as bugs. This includes
+  evaluation budget limits and the unimplemented namespace axis.
 
-### Findings
+Documented non-bug buckets:
 
-1. **Namespace matching - now strict by default (resolved).** Makiri's
-   unprefixed element name tests resolve in the HTML namespace: `//div` matches,
-   but `//svg` / `//path` do NOT - foreign content needs a registered prefix
-   (`//svg:path`), exactly like browsers' `document.evaluate` and
-   `Nokogiri::HTML5`. The old namespace-agnostic behaviour (where `//path` finds
-   the SVG element) is available per-call/per-context via
-   `namespace_matching: :lax`. This made the differential agree without
-   `remove_namespaces!`; the only residual is the `ns-repr` bucket above.
+- `noko-strict`: libxml2 rejects some top-level `position()` and `last()` forms.
+  Makiri evaluates them with document-root context position and size equal to 1.
+- `ns-repr`: Makiri keeps HTML elements in the XHTML namespace, matching the
+  browser DOM model. `Nokogiri::HTML5` reports the empty namespace.
+
+HTML namespace matching is strict by default. An unprefixed element test resolves
+in the HTML namespace. This means `//div` matches HTML elements, but `//svg` and
+`//path` do not match SVG elements. Use a registered prefix for foreign content,
+or pass `namespace_matching: :lax` for the legacy namespace-agnostic mode.
 
 ---
 
 ## 3. XPath over HTML - `wpt_domxpath_spec.rb`
 
-A hand-port of the evaluation-semantics subset of Web Platform Tests'
+This resident spec runs under `rake spec`. It is a hand-port of the
+evaluation-semantics part of Web Platform Tests'
 [`domxpath/`](https://github.com/web-platform-tests/wpt/tree/master/domxpath)
-suite - the browser `document.evaluate` tests, the de-facto reference for XPath
-over the HTML DOM. Unlike the harnesses above this is a plain `*_spec.rb` (pure
-Ruby, no Nokogiri), so it runs under `rake spec`.
+suite.
 
-Ported: element/attribute name tests (incl. namespaces, non-ASCII names),
-attribute parent axis, numeric/boolean operators, lexical structure (quotes &
-whitespace), node-set operators, predicates, document order, and the string
-functions. Out of scope: the DOM Level 3 XPath *API* (XPathEvaluator / resolver
-/ XPathResult), Shadow DOM, cross-realm, crash tests.
+It covers:
 
-Browser behaviours Makiri intentionally does not match are `pending` with a
-reason (a pending example that starts passing fails the run): ASCII case-folding
-of HTML name tests (Makiri and Nokogiri::HTML5 are case-sensitive), and hiding
-`xmlns` from attribute tests.
+- HTML and foreign element name tests.
+- Namespace registration.
+- Attribute tests.
+- Attribute parent-axis behaviour.
+- Numeric, boolean, and relational operators.
+- Node-set operators, predicates, and ordering.
+- String function semantics.
+- XPath lexer rules for quotes and whitespace.
+
+These browser-specific areas are out of scope:
+
+- DOM Level 3 XPath API objects, such as `XPathEvaluator`, `XPathResult`, and
+  resolver callbacks.
+- Shadow DOM.
+- Browser realm tests.
+- Browser crash tests.
+
+Known browser differences are marked `pending` with a reason. If a pending
+example starts passing, RSpec fails the run. This keeps intentional differences
+visible and also catches future behaviour changes.
 
 ---
 
-## 4. CSS Selectors - `css_diff.rb` + `css_selectors_spec.rb`
+## 4. HTML CSS selectors - `css_diff.rb` + `css_selectors_spec.rb`
 
-Makiri's `Node#css` is backed by **Lexbor's selector engine** (mature,
-upstream-tested), not original code, so unlike XPath the matching itself is not
-the main risk. These check (a) Makiri's glue - descendant-only scope, document
-order, comma de-duplication, error mapping - and (b) where Lexbor's and
-Nokogiri's *supported-selector vocabularies* differ.
+Makiri uses Lexbor's selector engine for HTML CSS matching. This differential is
+therefore mostly about Makiri's glue code and selector vocabulary differences.
+The glue code controls scope, result order, de-duplication, and error mapping.
+The vocabulary differences come from Lexbor and Nokogiri's CSS-to-XPath layer
+supporting different selector sets.
 
-- `css_diff.rb` (`rake conformance:css`): differential vs `Nokogiri::HTML5#css`
-  over a standard-selector corpus (`css_corpus.rb`). On standard selectors the
-  two agree exactly; the differences are vocabulary only and are bucketed:
-  `lexbor-only` (Level-4 `:is`/`:where` Nokogiri rejects), `nokogiri-only`
-  (jQuery extensions `:contains`/`:gt`/`:eq`/`:first` - non-standard, Makiri
-  rejects by design), `agree-reject` (pseudo-elements / invalid).
-- `css_selectors_spec.rb`: a resident pure-Ruby spec pinning the supported
-  surface (type/universal/class/id, all combinators, every attribute operator,
-  structural pseudo-classes, `:not`/`:is`/`:where`/`:has`, grouping) and the
-  glue semantics, plus the deliberate non-support of jQuery extensions.
+`css_diff.rb` compares `Node#css` with `Nokogiri::HTML5#css`. It uses the
+standard-selector corpus in `css_corpus.rb`. Fixtures are forced into no-quirks
+mode because CSS class and id matching depends on quirks mode.
 
-### Findings
+Vocabulary buckets are tallied but not scored as bugs:
 
-1. **jQuery/Nokogiri CSS extensions are not supported (by design).**
-   `:contains`, `:gt`, `:lt`, `:eq`, `:first`, `:last`, ... are not standard CSS;
-   Lexbor rejects them. Use XPath (`xpath("//p[contains(.,'x')]")`) or
-   Enumerable (`css('li')[1]`) instead.
-2. **Type selectors are case-insensitive; class/id are not quirks-aware.**
-   Lexbor matches type selectors ASCII-case-insensitively (CSS-correct for HTML;
-   `LI` matches `<li>` - Nokogiri::HTML5 is wrongly case-sensitive here), but it
-   matches class/id case-INsensitively regardless of the document's quirks mode,
-   whereas a no-quirks document should treat them case-sensitively (browsers /
-   Nokogiri::HTML5 do). That is Lexbor's behaviour (not patched); recorded as a
-   `pending` in `css_selectors_spec.rb`.
+- `lexbor-only`: standards selectors supported by Lexbor but rejected by
+  Nokogiri. This includes some Selectors Level 4 forms.
+- `nokogiri-only`: Nokogiri's jQuery-style extensions, such as `:contains`,
+  `:gt`, `:lt`, `:eq`, `:first`, and `:last`. Makiri rejects these by design.
+- `agree-reject`: both engines reject the selector. This is usually a
+  pseudo-element or an invalid selector.
 
+`css_selectors_spec.rb` pins Makiri's supported HTML CSS surface:
+
+- type, universal, class, and id selectors.
+- combinators.
+- all attribute operators.
+- structural pseudo-classes.
+- `:not`, `:is`, `:where`, and `:has`.
+- grouping.
+- descendant-only context matching.
+- document-order results.
+- comma-list de-duplication.
+- `at_css`.
+- syntax-error mapping.
+
+One Lexbor behaviour is recorded as pending. Class and id selectors currently
+match case-insensitively even in no-quirks mode. Browsers and `Nokogiri::HTML5`
+treat them case-sensitively in no-quirks mode.
+
+---
+
+## 5. XML well-formedness - `xmlconf_runner.rb`
+
+This runner checks Makiri's native XML parser, `Makiri::XML`. Makiri does not use
+libxml2. The runner compares Makiri's accept/reject result with the W3C XML
+Conformance Test Suite, `xmlts20130923`.
+
+The test data is not vendored. On the first run, the runner downloads the pinned
+W3C zip into `spec/conformance/data/xmlconf/`. Use `--no-fetch` when the data
+must already be present.
+
+Makiri is an XML 1.0 parser. It is namespace-aware, non-validating, and
+no-DTD-processing.
+
+Scoring rules:
+
+- `not-wf` tests must reject with `Makiri::XML::SyntaxError`.
+- `valid` and `invalid` tests must accept when they do not depend on DTD-defined
+  entities or validation.
+- XML 1.1 and Namespaces 1.1 tests are skipped.
+- non-namespace-mode tests are skipped.
+- optional `error` cases are skipped.
+- missing files are skipped.
+- DTD-entity-dependent validation cases are skipped.
+- Expected no-DTD differences are reported as `policy differences`, not
+  failures. Use `--show-policy` to list them.
+
+---
+
+## 6. XML XPath 1.0 - `xml_xpath_diff.rb`
+
+This runner compares Makiri's XML XPath engine with `Nokogiri::XML` and libxml2.
+It uses documents and namespace maps from `xml_xpath_corpus.rb`.
+
+The result comparison is the same as the HTML XPath differential. The node key is
+different: XML node identity uses a namespace-free positional key, not rendered
+`#path`. This avoids false differences when the two libraries print namespaced
+paths in different ways.
+
+Makiri's documented fail-closed paths are tallied. This includes evaluation
+limits and the unimplemented namespace axis.
+
+A real divergence is one of these:
+
+- one side raises and the other side succeeds.
+- both sides succeed but return different scalar values.
+- both sides succeed but return different node sets.
+
+After a fix, regressions found here should usually be pinned in
+`spec/xml_conformance_spec.rb`.
+
+---
+
+## 7. XML CSS selectors - `xml_css_diff.rb`
+
+This runner compares `Makiri::XML#css` with `Nokogiri::XML#css`.
+
+Makiri lowers XML CSS selectors to its own XPath engine. Nokogiri lowers CSS to
+libxml2 XPath. The curated corpus in `xml_css_corpus.rb` is the default gate, and
+it should have zero real node-set divergences.
+
+`--generate N --seed S` is for exploration. It is not part of the default gate.
+Generated selectors can expose Makiri limitations, Nokogiri translation bugs, or
+both.
+
+Documented vocabulary buckets:
+
+- `makiri-unsupported`: selectors Makiri rejects. Examples include `[a=v i]`,
+  `*|attr`, some untyped of-type cases that cannot be represented safely in
+  XPath 1.0, and jQuery extensions.
+- `nokogiri-unsupported`: selectors Makiri supports and Nokogiri rejects.
+- `agree-reject`: both engines reject the selector.
+
+`spec/xml_css_pbt_spec.rb` is the resident Makiri-only companion. It checks XML
+CSS self-consistency on generated XML documents with namespaces:
+
+- bare and prefixed type selectors against a ground-truth walk.
+- `at_css == css.first`.
+- `matches?` membership.
+- comma-list union semantics.
+
+---
+
+## 8. XML property testing - `xml_pbt.rb` + `xml_pbt_diff.rb`
+
+`xml_pbt.rb` is the shared generator for well-formed XML documents. Each
+generated document also has an explicit model.
+
+It feeds two test layers:
+
+- `spec/xml_pbt_spec.rb` runs in `rake spec`. It checks Makiri-only properties:
+  parse equals the generated model, parsing is deterministic, `to_xml`
+  round-trips, pretty serialization stays well-formed and preserves content, and
+  basic XPath algebraic identities hold.
+- `rake conformance:xml_pbt` runs `xml_pbt_diff.rb`. It compares Makiri's parsed
+  tree and canonical XML output with `Nokogiri::XML` in strict, non-networked
+  mode. Divergences are shrunk to minimal counterexamples.
+
+`xml_pbt` is not included in the aggregate `rake conformance` target. It is a
+scalable stress pass. Use `PBT_ARGS="--count ..."` to raise the document count
+for release runs or investigations.

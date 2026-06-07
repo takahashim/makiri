@@ -1,8 +1,9 @@
 # Makiri
 
-Standards-oriented HTML5/XML parsing, CSS selector querying, XPath 1.0 querying,
-and a native XML 1.0 reader/editor for Ruby, powered by Lexbor and a native XPath
-engine - with no libxml2 dependency.
+Makiri is a Ruby library for parsing and querying HTML and XML documents.
+
+It uses [Lexbor](https://lexbor.com/) for HTML parsing and CSS selector matching, and includes a built-in native XPath 1.0 engine and XML 1.0 parser.
+Makiri does not depend on libxml2.
 
 > [!WARNING]
 > Status: early release. APIs and behavior may change before v1.0.
@@ -21,7 +22,7 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
 * Native XPath 1.0 engine
   * XPath is parsed and evaluated by Makiri's own engine, written from scratch.
   * Makiri does not depend on libxml2 for parsing, DOM representation, or XPath evaluation.
-* Native XML 1.0 reader + in-place editor (`Makiri::XML`)
+* Native XML 1.0 parser + in-place editor (`Makiri::XML`)
   * A strict, non-validating, fail-closed parser with its own node arena (not
     Lexbor's HTML DOM), queried through the same native XPath engine, with
     in-place tree edits (attributes, content, rename, remove).
@@ -81,21 +82,6 @@ ctx.evaluate('//p[@class=$cls]').first.text   # => "Hello"
 
 ### XML (with in-place editing)
 
-`Makiri::XML(source)` parses **XML 1.0** with a native, strict,
-well-formedness-checking parser (no libxml2) and queries it through the same
-native XPath 1.0 engine. `source` is a String or any object responding to
-`#read` (an `IO` / `File` / `StringIO`); read a non-UTF-8 file in binary mode
-(`File.binread`) so its encoding is autodetected. Element-name case and namespaces are preserved. It is
-**fail-closed**: malformed input, a duplicate attribute, or a
-non-`1.0` version declaration raises `Makiri::XML::SyntaxError`, and operations
-XML does not support raise `NotImplementedError` rather than returning a wrong
-result. The tree supports in-place edits and building new subtrees (see below).
-A `<!DOCTYPE ...>` is recognized but its **DTD is not processed** (no
-entity/element declarations are loaded, no external subset is fetched) - so a
-DTD-defined entity reference stays an undefined-entity error and **XXE /
-billion-laughs are structurally impossible**. The doctype's name and identifiers
-are still readable:
-
 ```ruby
 doc = Makiri::XML(<<~XML)
   <feed xmlns="http://www.w3.org/2005/Atom">
@@ -137,36 +123,7 @@ dtd.external_id  # => "-//W3C//DTD XHTML 1.0//EN"  (alias: #public_id)
 dtd.system_id    # => "x.dtd"
 ```
 
-Comments and processing instructions in the prolog/epilog are document-node
-children (reachable via `//comment()` / `//processing-instruction()` and
-`#children`), and adjacent CDATA is coalesced - matching libxml2 and the XPath
-data model. `#to_xml` / `#to_s` serialize the tree back to XML (`pretty: true`,
-or `indent: n`, for indented element-only content; `encoding: "Shift_JIS"` to
-transcode, with a hex character reference for anything the encoding can't hold);
-a `Document#to_xml` adds the declaration and the DOCTYPE. `#canonicalize` emits
-Inclusive Canonical XML 1.0 (for XML signatures; `comments: true` to keep
-comments), byte-identical to libxml2.
-
-`#css` / `#at_css` / `#matches?` also work on XML. They are **lowered to the
-native XPath engine** (not Lexbor's HTML matcher), so matching is case-sensitive
-and namespace-aware: a bare type selector binds to the document's default
-namespace and a prefixed `ns|el` resolves against the in-scope (or a supplied)
-namespaces - Nokogiri-compatible. The common selector surface is supported
-(descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]` operators,
-and `:first/last/only-child`, `:empty`, `:root`, the `:*-of-type` family,
-`:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`, and Lexbor's
-`:lexbor-contains()` text filter - see below); the `[attr=v i]` case flag and
-other jQuery extensions are not (use XPath). One namespace caveat: `|el`
-(explicit no-namespace) **raises** rather than matching - Lexbor's selector
-parser cannot distinguish it from `*|el` (any namespace), so Makiri fails closed
-instead of returning a wrong result; use a bare `el` or XPath `//el` for a
-strict no-namespace match. Cross-checked against Nokogiri::XML by a differential
-(`rake conformance:css_xml`) and property-based metamorphic tests.
-
-The tree supports in-place mutation - every edit validates its input (names as
-XML 1.0 QNames, values as XML Char) so the tree stays serializable to
-well-formed XML, and a removed node is detached, never freed, so a live wrapper
-that aliases it stays usable:
+The tree supports in-place mutation.
 
 ```ruby
 doc = Makiri::XML(%(<feed xmlns:dc="urn:dc"><entry id="1">Hi</entry><draft/></feed>))
@@ -182,15 +139,9 @@ doc.at_xpath("//draft").remove
 doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><post dc:k=\"v\">Bye</post></feed>"
 ```
 
-New subtrees can be built too - `Document#create_element` (and
-`#create_text_node` / `#create_comment` / `#create_cdata` /
-`#create_processing_instruction`) make detached nodes, and `#add_child` / `<<`,
-`#add_previous_sibling` / `#before`, `#add_next_sibling` / `#after`, `#replace`
-link them. A node's namespace is resolved against its position **at insertion**
-(a prefixed name binds to the in-scope `xmlns`, an unprefixed element to the
-default namespace), so the same tree results whether you set names before or
-after attaching; an unbound prefix in the live tree fails closed. A node from
-another document is **deep-copied** into the target (the source is untouched):
+XML subtrees can be built with `Document#create_element` and related node factory methods,
+then inserted with `#add_child`, `#before`, `#after`, or `#replace`;
+namespaces are resolved at insertion time, and cross-document nodes are deep-copied.
 
 ```ruby
 doc   = Makiri::XML(%(<feed xmlns="urn:a" xmlns:dc="urn:dc"/>))
@@ -202,34 +153,12 @@ doc.root.add_child(entry)
 doc.to_xml   # => "...<entry dc:id=\"42\"><title>Hello</title></entry>..."
 ```
 
-Supported edits: `#[]=`, `#delete` / `#remove_attribute`, `#content=`, `#name=`,
-`#remove` / `#unlink`, the factories above, and `#add_child` / `<<` /
-`#before` / `#after` / `#replace`. Insertion takes a `Makiri::XML` node or a
-`DocumentFragment` (its children are spliced in); a fragment is parsed by
-`Document#fragment(str)` (bound to the document) or `DocumentFragment.parse(str)`
-(standalone). A raw string handed straight to `#add_child` is **not** accepted -
-parse it into a fragment first. A whole document can also be built from scratch
-with `XML::Document.new` + `#root=` and the factories.
-
-The character encoding is autodetected (XML 1.0 Appendix F): a byte-order mark or
-the `<?xml encoding="..."?>` declaration selects it, so raw bytes (`File.binread`)
-in UTF-16, Shift_JIS, etc. parse correctly and a leading BOM is stripped. A
-concrete String encoding stays authoritative - a BOM or declaration that
-contradicts it is a fatal error, not a silent mis-decode.
-
-Parsing is DoS-bounded by a single arena memory ceiling (default 256 MiB,
-counting node structs and text), which fits every standard document. Raise it
-per parse for an unusually large one:
+XML parsing is bounded by an arena memory limit, 256 MiB by default,
+and unusually large documents can raise it with `max_bytes:`.
 
 ```ruby
 Makiri::XML(huge_xml, max_bytes: 512 * 1024 * 1024)   # also Makiri::XML::Document.parse(..., max_bytes:)
 ```
-
-Conformance is held by a regression net: the **W3C XML Conformance Test Suite**
-(`rake conformance:xmlconf`, 100% of the in-scope non-validating XML-1.0 tests),
-an XPath 1.0 differential vs Nokogiri/libxml2 (`rake conformance:xpath_xml`), and
-property-based testing that requires Makiri's tree to be byte-identical to
-Nokogiri's over generated documents (`rake conformance:xml_pbt`).
 
 ## Non-goals (v1.0)
 
@@ -310,6 +239,28 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
   * `Nokogiri::HTML5` is case-sensitive there.
 * Class/ID selectors are matched case-insensitively regardless of quirks mode (a Lexbor behaviour)
   * In a no-quirks document browsers and `Nokogiri::HTML5` match them case-sensitively.
+
+## Conformance
+
+The XPath engine and XML parser are original code, so their correctness is held by
+differential and standards harnesses in `spec/conformance/`.
+The HTML XPath and CSS suites are differentials against **`Nokogiri::HTML5`**
+(Gumbo / WHATWG, never libxml2's non-conformant HTML4 parser): both sides parse
+HTML5, so the DOM is isomorphic and results are compared node-for-node. HTML
+parsing itself is checked against the WHATWG html5lib-tests corpus, and
+XPath-over-HTML semantics additionally against browsers via a WPT port.
+See also [`spec/conformance/README.md`](spec/conformance/README.md).
+
+| Suite | Input | Oracle | `rake` task |
+|---|---|---|---|
+| HTML parsing | HTML | WHATWG html5lib-tests (expected-tree corpus) | `conformance:html5` |
+| XPath 1.0 | HTML | `Nokogiri::HTML5` (libxml2 XPath) — differential | `conformance:xpath` |
+| XPath over HTML | HTML | browsers (WPT `domxpath`, hand-ported; runs under `rake spec`) | — |
+| CSS selectors | HTML | `Nokogiri::HTML5#css` — differential | `conformance:css` |
+| Well-formedness | XML | W3C XML Conformance Test Suite | `conformance:xmlconf` |
+| XPath 1.0 | XML | `Nokogiri::XML` — differential | `conformance:xpath_xml` |
+| Parsed tree (property-based) | XML | `Nokogiri::XML` — differential | `conformance:xml_pbt` |
+| CSS selectors | XML | `Nokogiri::XML` — differential | `conformance:css_xml` |
 
 ## Requirements
 
