@@ -62,6 +62,26 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("number(true())")).to eq(1.0)
       expect(doc.xpath("number(false())")).to eq(0.0)
     end
+
+    it "converts numbers and strings to boolean" do
+      expect(doc.xpath("boolean(1)")).to be(true)
+      expect(doc.xpath("boolean(0)")).to be(false)
+      expect(doc.xpath("boolean(0 div 0)")).to be(false) # NaN -> false
+      expect(doc.xpath("boolean('x')")).to be(true)
+      expect(doc.xpath("boolean('')")).to be(false)
+    end
+
+    it "sorts a large out-of-document-order node-set into document order" do
+      # A union of 100 interleaved <a>/<b> is concatenated as [a*100, b*100] -
+      # not document order - and at 200 nodes it crosses the doc-order index
+      # build threshold, exercising the large-sort fast path (otherwise never hit
+      # by the suite). The result must come back in document order.
+      xml = "<r>#{(0...100).map { |i| %(<a i="#{i}"/><b i="#{i}"/>) }.join}</r>"
+      set = Makiri::XML(xml).xpath("//a | //b")
+      expect(set.length).to eq(200)
+      expect(set.map(&:name)).to eq(%w[a b] * 100)            # interleaved doc order
+      expect(set.map { |n| n["i"].to_i }).to eq((0...100).flat_map { |i| [i, i] })
+    end
   end
 
   describe "#at_xpath" do
