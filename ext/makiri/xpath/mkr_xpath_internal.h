@@ -450,6 +450,12 @@ mkr_str_cache_t *mkr_ctx_str_cache(struct mkr_xpath_context_s *ctx);
 /* mkr_node_free lives in mkr_xpath.h (the glue frees a parsed AST). */
 void mkr_step_clear(mkr_step_t *s);
 
+/* AST node allocator: charges max_ast_nodes, then returns a zeroed node with its
+ * kind set (NULL + *err on LIMIT or OOM, reported distinctly). The one factory
+ * the XPath parser (new_node) and the CSS lowering (cb_node) both delegate to,
+ * co-located with mkr_node_free in mkr_xpath_shared.c. */
+mkr_node_t *mkr_node_alloc(mkr_xpath_limits_t *limits, mkr_xpath_error_t *err, mkr_nk_t kind);
+
 /* Hoisting / memoization. After parse, the parser entry calls
  * mkr_mark_context_independent on the AST root once. During eval,
  * eval_node consults the memo slot before re-evaluating CI subtrees.

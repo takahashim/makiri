@@ -497,6 +497,19 @@ mkr_apply_peephole(mkr_node_t *n)
   }
 }
 
+mkr_node_t *
+mkr_node_alloc(mkr_xpath_limits_t *limits, mkr_xpath_error_t *err, mkr_nk_t kind)
+{
+  if (mkr_limit_ast_node(limits, err) != 0) return NULL;
+  mkr_node_t *n = mkr_callocarray(1, sizeof(*n));
+  if (n == NULL) {
+    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory allocating AST node");
+    return NULL;
+  }
+  n->kind = kind;
+  return n;
+}
+
 void
 mkr_node_clear_memos(mkr_node_t *n)
 {

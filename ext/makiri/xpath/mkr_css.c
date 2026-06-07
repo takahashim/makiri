@@ -106,11 +106,7 @@ css_has_leading_pipe(const char *s, size_t len)
 static mkr_node_t *
 cb_node(css_build_t *B, mkr_nk_t kind)
 {
-  if (mkr_limit_ast_node(B->limits, B->err) != 0) return NULL;
-  mkr_node_t *n = mkr_callocarray(1, sizeof(*n));
-  if (n == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "out of memory (css)"); return NULL; }
-  n->kind = kind;
-  return n;
+  return mkr_node_alloc(B->limits, B->err, kind);  /* shared AST factory (co-located with mkr_node_free) */
 }
 
 static int

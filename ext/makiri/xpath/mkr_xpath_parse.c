@@ -64,19 +64,12 @@ P_eat(mkr_parser_t *P, mkr_tok_kind_t k, const char *what)
   return P_advance(P);
 }
 
-/* AST node allocator. Counts against max_ast_nodes and reports both
- * OOM and LIMIT distinctly. */
+/* AST node allocator - the shared mkr_node_alloc with this parser's limits/err
+ * (counts against max_ast_nodes, reports OOM and LIMIT distinctly). */
 static mkr_node_t *
 new_node(mkr_parser_t *P, mkr_nk_t kind)
 {
-  if (mkr_limit_ast_node(P->limits, P->err) != 0) return NULL;
-  mkr_node_t *n = mkr_callocarray(1, sizeof(*n));
-  if (n == NULL) {
-    mkr_err_set(P->err, MKR_XPATH_ERR_OOM, "out of memory allocating AST node");
-    return NULL;
-  }
-  n->kind = kind;
-  return n;
+  return mkr_node_alloc(P->limits, P->err, kind);
 }
 
 /* ---------- axis lookup ---------- */
