@@ -127,11 +127,14 @@ module Makiri
       # Any other method name is a tag: create the element and insert it.
       def method_missing(name, *args, &block)
         tag = name.to_s.sub(/[_!]\z/, "")
-        if @ns_prefix
-          tag = "#{@ns_prefix}:#{tag}"
+        prefix = @ns_prefix
+        if prefix
+          tag = "#{prefix}:#{tag}"
           @ns_prefix = nil
         end
-        insert(create_element(tag, args), &block)
+        node = create_element(tag, args)
+        check_prefix_defined!(node, prefix) if prefix
+        insert(node, &block)
       end
 
       # Tag methods are open-ended, so report respond_to? truthfully for them
@@ -158,6 +161,16 @@ module Makiri
         cargs << text.to_s unless text.nil?
         cargs << attributes unless attributes.nil?
         @doc.create_element(tag, *cargs)
+      end
+
+      # Raise like Nokogiri when a prefix selected via +[]+ resolves nowhere: not
+      # in scope at the insertion point (+@parent+ and its ancestors) and not
+      # self-declared on +node+ itself (e.g. +xml["foo"].root("xmlns:foo" => ...)+).
+      def check_prefix_defined!(node, prefix)
+        return if @parent.respond_to?(:namespaces) && @parent.namespaces.key?("xmlns:#{prefix}")
+        return if node.namespace_definitions.any? { |ns| ns.prefix == prefix }
+
+        raise ArgumentError, "Namespace #{prefix} has not been defined"
       end
 
       # Append +node+ to the current parent, then, if a block is given, descend

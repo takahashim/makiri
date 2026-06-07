@@ -101,14 +101,23 @@ RSpec.describe Makiri::XML::Builder do
       expect(id.text).to eq("42")
     end
 
-    it "fails closed when a selected prefix is not in scope" do
+    it "raises ArgumentError like Nokogiri when a selected prefix is not defined" do
       expect do
         described_class.new do |xml|
           xml.root do
             xml["zzz"].item   # zzz declared nowhere
           end
         end
-      end.to raise_error(Makiri::Error, /not bound/)
+      end.to raise_error(ArgumentError, "Namespace zzz has not been defined")
+    end
+
+    it "accepts a prefix declared on the element itself (self-declaring root)" do
+      b = described_class.new do |xml|
+        xml["foo"].root("xmlns:foo" => "bar") do
+          xml["foo"].child
+        end
+      end
+      expect(b.to_xml).to include(%(<foo:root xmlns:foo="bar"><foo:child/></foo:root>))
     end
   end
 
