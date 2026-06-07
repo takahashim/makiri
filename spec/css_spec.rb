@@ -74,6 +74,15 @@ RSpec.describe "Makiri CSS" do
       expect { doc.css(">>>bad") }.to raise_error(Makiri::CSS::SyntaxError)
       expect { doc.css("div[") }.to raise_error(Makiri::CSS::SyntaxError)
     end
+
+    it "rejects a selector with invalid UTF-8 / an embedded NUL (verify_text)" do
+      # The CSS boundary verifies the selector text before parsing - invalid
+      # bytes never reach the engine.
+      expect { doc.css("a\xFF".b) }.to raise_error(Makiri::Error)
+      expect { doc.css("a\x00b") }.to raise_error(Makiri::Error)
+      expect { doc.at_css("a\x00") }.to raise_error(Makiri::Error)
+      expect { doc.at_css("p")&.matches?("p\x00") }.to raise_error(Makiri::Error)
+    end
   end
 
   describe "memory safety" do

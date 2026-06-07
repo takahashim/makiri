@@ -203,6 +203,12 @@ RSpec.describe "Makiri::XML CSS selectors" do
     it "raises CSS::SyntaxError on an unsupported construct" do
       expect { doc.css("a::before") }.to raise_error(Makiri::CSS::SyntaxError)
     end
+
+    it "rejects a selector with invalid UTF-8 / an embedded NUL (verify_text)" do
+      expect { doc.css("a\xFF".b) }.to raise_error(Makiri::Error)
+      expect { doc.css("a\x00b") }.to raise_error(Makiri::Error)
+      expect { doc.at_css("a\x00") }.to raise_error(Makiri::Error)
+    end
   end
 
   describe "untyped of-type pseudo-classes (no explicit type selector)" do

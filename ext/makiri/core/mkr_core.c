@@ -123,5 +123,42 @@ mkr_core_selftest(void)
         if (g.ok || mkr_spanbuf_finish(&g) != NULL) return 41;
     }
 
+    /* grow_reserve: grows + updates ptr/cap; already-enough is a no-op; an
+     * overflowing (need*elem) request fails closed (OOM) leaving ptr/cap as-is. */
+    {
+        size_t *p = NULL, cap = 0;
+        if (mkr_grow_reserve((void **)&p, &cap, 10, sizeof(*p)) != MKR_OK) { free(p); return 42; }
+        if (p == NULL || cap < 10) { free(p); return 43; }
+        p[0] = 1; p[9] = 2;                                 /* in-bounds after grow */
+
+        size_t *d0 = p; size_t c0 = cap;
+        if (mkr_grow_reserve((void **)&p, &cap, 5, sizeof(*p)) != MKR_OK) { free(p); return 44; }
+        if (p != d0 || cap != c0) { free(p); return 45; }   /* need <= cap -> no-op */
+
+        if (mkr_grow_reserve((void **)&p, &cap, SIZE_MAX, sizeof(*p)) != MKR_ERR_OOM) { free(p); return 46; }
+        if (p != d0 || cap != c0) { free(p); return 47; }   /* overflow -> unchanged */
+        free(p);
+    }
+
+    /* buf_reserve: pre-allocates capacity without touching len; no-op when room
+     * already exists; clamps a request to the buffer's max (never allocates past
+     * it); the buffer stays usable afterwards. */
+    {
+        mkr_buf_t b;
+        mkr_buf_init(&b, 16);                                /* small ceiling */
+        if (mkr_buf_reserve(&b, 8) != MKR_OK) { mkr_buf_free(&b); return 48; }
+        if (b.cap < 9 || b.len != 0) { mkr_buf_free(&b); return 49; } /* reserved (+NUL), still empty */
+
+        char *d0 = b.data; size_t c0 = b.cap;
+        if (mkr_buf_reserve(&b, 4) != MKR_OK) { mkr_buf_free(&b); return 50; }
+        if (b.data != d0 || b.cap != c0) { mkr_buf_free(&b); return 51; } /* already room -> no-op */
+
+        if (mkr_buf_reserve(&b, (size_t)1 << 40) != MKR_OK) { mkr_buf_free(&b); return 52; }
+        if (b.cap > 17) { mkr_buf_free(&b); return 53; }     /* clamped to max(16)+NUL, no huge alloc */
+
+        if (mkr_buf_append(&b, "abc", 3) != MKR_OK || b.len != 3) { mkr_buf_free(&b); return 54; }
+        mkr_buf_free(&b);
+    }
+
     return 0;
 }
