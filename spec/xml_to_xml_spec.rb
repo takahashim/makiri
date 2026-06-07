@@ -4,10 +4,23 @@ require "spec_helper"
 
 RSpec.describe "Makiri::XML#to_xml" do
   describe "Document#to_xml" do
-    it "emits the UTF-8 XML declaration, then the document's nodes" do
+    it "emits a bare XML declaration for a declaration-less source, then the nodes" do
       out = Makiri::XML("<r><a/></r>").to_xml
-      expect(out).to start_with(%(<?xml version="1.0" encoding="UTF-8"?>\n))
+      expect(out).to start_with(%(<?xml version="1.0"?>\n))
       expect(out).to include("<r><a/></r>")
+    end
+
+    it "emits encoding=\"UTF-8\" only when the source declared an encoding (like Nokogiri)" do
+      # No declaration / version-only -> bare; the output is UTF-8 either way.
+      expect(Makiri::XML("<r/>").to_xml).to start_with(%(<?xml version="1.0"?>\n))
+      expect(Makiri::XML(%(<?xml version="1.0"?><r/>)).to_xml).to start_with(%(<?xml version="1.0"?>\n))
+      # An encoding pseudo-attribute in the source is reflected (named UTF-8, the
+      # always-UTF-8 output encoding) ...
+      expect(Makiri::XML(%(<?xml version="1.0" encoding="UTF-8"?><r/>)).to_xml)
+        .to start_with(%(<?xml version="1.0" encoding="UTF-8"?>\n))
+      # ... as is an explicit encoding: request on a declaration-less document.
+      expect(Makiri::XML("<r/>").to_xml(encoding: "UTF-8"))
+        .to start_with(%(<?xml version="1.0" encoding="UTF-8"?>\n))
     end
 
     it "emits the DOCTYPE (SYSTEM / PUBLIC) when present" do

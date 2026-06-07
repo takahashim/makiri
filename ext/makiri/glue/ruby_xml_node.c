@@ -566,15 +566,25 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
     int rc = 0;
 
     if (rb_obj_is_kind_of(self, mkr_cXmlDocument)) {
-        static const char decl_a[] = "<?xml version=\"1.0\" encoding=\"";
-        static const char decl_b[] = "\"?>\n";
-        VALUE name = NIL_P(enc_name) ? rb_utf8_str_new_cstr("UTF-8") : enc_name;
-        mkr_ruby_borrowed_bytes_t nv = mkr_ruby_bytes_view(name);
         mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(self));
-        rc = (mkr_buf_append(&buf, decl_a, sizeof(decl_a) - 1) == MKR_OK) ? 0 : -1;
-        if (rc == 0) rc = (mkr_buf_append(&buf, nv.ptr, nv.len) == MKR_OK) ? 0 : -1;
-        if (rc == 0) rc = (mkr_buf_append(&buf, decl_b, sizeof(decl_b) - 1) == MKR_OK) ? 0 : -1;
-        RB_GC_GUARD(nv.value);
+        /* Emit the encoding pseudo-attribute only when an explicit encoding: was
+         * requested or the parsed source declared one; otherwise a built or
+         * declaration-less document round-trips to a bare `<?xml version="1.0"?>`,
+         * matching Nokogiri (the output is UTF-8 either way). */
+        int emit_enc = !NIL_P(enc_name) || (xdoc != NULL && xdoc->has_encoding_decl);
+        if (emit_enc) {
+            static const char decl_a[] = "<?xml version=\"1.0\" encoding=\"";
+            static const char decl_b[] = "\"?>\n";
+            VALUE name = NIL_P(enc_name) ? rb_utf8_str_new_cstr("UTF-8") : enc_name;
+            mkr_ruby_borrowed_bytes_t nv = mkr_ruby_bytes_view(name);
+            rc = (mkr_buf_append(&buf, decl_a, sizeof(decl_a) - 1) == MKR_OK) ? 0 : -1;
+            if (rc == 0) rc = (mkr_buf_append(&buf, nv.ptr, nv.len) == MKR_OK) ? 0 : -1;
+            if (rc == 0) rc = (mkr_buf_append(&buf, decl_b, sizeof(decl_b) - 1) == MKR_OK) ? 0 : -1;
+            RB_GC_GUARD(nv.value);
+        } else {
+            static const char decl[] = "<?xml version=\"1.0\"?>\n";
+            rc = (mkr_buf_append(&buf, decl, sizeof(decl) - 1) == MKR_OK) ? 0 : -1;
+        }
         if (rc == 0 && xdoc != NULL && xdoc->doctype != NULL) {
             rc = mkr_xser_doctype(&buf, xdoc->doctype);
             if (rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;

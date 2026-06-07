@@ -90,6 +90,12 @@ typedef struct mkr_xml_doc {
                                     * prefix/value means that id is absent. */
     void    *name_index;           /* lazily-built element-name index (mkr_xml_index.c),
                                     * or NULL; dropped on every structural mutation. */
+    int      has_encoding_decl;    /* the parsed source's <?xml?> declaration carried an
+                                    * `encoding` pseudo-attribute. The serializer emits
+                                    * `encoding="UTF-8"` only when this is set (or an
+                                    * explicit encoding: is requested), so a built or
+                                    * declaration-less document round-trips to a bare
+                                    * `<?xml version="1.0"?>`, like Nokogiri. */
 } mkr_xml_doc_t;
 /* The PER-ELEMENT attribute cap (MKR_XML_MAX_ATTRS) is enforced by the tree
  * builder; the arena counts every node - attributes included - toward max_nodes. */

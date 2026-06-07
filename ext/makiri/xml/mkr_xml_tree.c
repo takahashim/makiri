@@ -565,6 +565,7 @@ parse_xml_decl_body(mkr_xml_parser_t *P)
         if (!had_s) { set_syntax(P); return -1; }                 /* attrs need an S separator */
         if (!saw_enc && !saw_sd && eat_keyword(P, "encoding", 8)) {
             saw_enc = 1;                                          /* encoding precedes standalone */
+            P->doc->has_encoding_decl = 1;  /* serializer emits encoding="UTF-8" only then */
             if (decl_eq(P) != 0 || decl_value(P, is_enc_name) != 0) return -1;
         } else if (!saw_sd && eat_keyword(P, "standalone", 10)) {
             saw_sd = 1;

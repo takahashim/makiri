@@ -15,14 +15,12 @@ XPath 1.0 evaluation in its own native engine, with no libxml2 dependency.
 
 * HTML5 parsing via [Lexbor](https://lexbor.com)
   * Makiri uses Lexbor as the parsing backend and provides a Ruby-facing DOM/query layer.
-  * Lexbor-specific behavior is isolated in a thin compatibility layer
-    (`ext/makiri/lexbor_compat/`).
 * CSS selector support via Lexbor
   * Supports Lexbor-backed standard CSS selector querying, including `:is`/`:where`/`:has`
 * Native XPath 1.0 engine
   * XPath is parsed and evaluated by Makiri's own engine, written from scratch.
   * Makiri does not depend on libxml2 for parsing, DOM representation, or XPath evaluation.
-* Native XML 1.0 parser + in-place editor (`Makiri::XML`)
+* Native XML 1.0 parser
   * A strict, non-validating, fail-closed parser with its own node arena (not
     Lexbor's HTML DOM), queried through the same native XPath engine, with
     in-place tree edits (attributes, content, rename, remove).
@@ -111,7 +109,7 @@ doc.css("entry").length                        # => 2
 doc.css("feed > entry").map { |e| e.at_css("title").text }  # => ["Hello", "World"]
 
 # Serialize back to XML
-doc.to_xml                                 # => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed ...>...</feed>\n"
+doc.to_xml                                 # => "<?xml version=\"1.0\"?>\n<feed ...>...</feed>\n"
 doc.at_xpath("//a:entry", ns).to_xml       # => "<entry><title>Hello</title></entry>" (no declaration)
 doc.to_xml(pretty: true)                   # indented, element-only content
 
@@ -151,6 +149,23 @@ entry.add_child(doc.create_element("title", "Hello"))
 doc.root.add_child(entry)
 
 doc.to_xml   # => "...<entry dc:id=\"42\"><title>Hello</title></entry>..."
+```
+
+`Makiri::XML::Builder` is the Nokogiri-compatible DSL over those factories.
+
+```ruby
+builder = Makiri::XML::Builder.new do |xml|
+  xml.feed("xmlns" => "http://www.w3.org/2005/Atom", "xmlns:dc" => "urn:dc") do
+    xml.title("Example Feed")
+    xml.entry("dc:id" => "1") do
+      xml.title("First")
+      xml.summary { xml.cdata("raw <b>html</b>") }
+    end
+  end
+end
+
+builder.to_xml                 # the whole document (with XML declaration)
+builder.doc                    # the Makiri::XML::Document being built
 ```
 
 XML parsing is bounded by an arena memory limit, 256 MiB by default,
