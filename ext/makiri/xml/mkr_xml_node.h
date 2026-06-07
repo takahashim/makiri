@@ -51,7 +51,9 @@ typedef enum {
  * lengths stay uint32 (the deliberate per-slice 4 GiB cap; see the enum note).
  * Names/values are arena-owned byte slices (case-preserved). */
 typedef struct mkr_xml_node {
-    uint8_t  type;                 /* mkr_xml_node_type_t */
+    mkr_xml_node_type_t type;      /* free: the next field is an 8-aligned pointer,
+                                    * so this sits in padding either way (node stays
+                                    * 128 B) - keep the real enum type for safety */
     struct mkr_xml_node *parent, *first_child, *last_child, *prev, *next;
     struct mkr_xml_node *attrs;    /* element: head of attribute list (type=ATTRIBUTE) */
     const char *qname;   /* element/attr raw "prefix:local" (contiguous; local/prefix slice into it) */
@@ -103,7 +105,7 @@ size_t         mkr_xml_doc_memsize(const mkr_xml_doc_t *doc);
  * A caller that must fill a buffer itself uses mkr_xml_arena_spanbuf (below),
  * never a raw pointer. On any failure doc->oom is set (sticky) and the wrapper
  * returns NULL. */
-mkr_xml_node_t *mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type);
+mkr_xml_node_t *mkr_xml_arena_node(mkr_xml_doc_t *doc, mkr_xml_node_type_t type);
 const char     *mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len);
 
 /* Carve +cap+ arena bytes and return a bounded writer (core mkr_spanbuf) over

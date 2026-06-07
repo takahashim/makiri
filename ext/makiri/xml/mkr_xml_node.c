@@ -144,7 +144,7 @@ arena_alloc(mkr_xml_doc_t *doc, size_t size)
 }
 
 static int
-valid_xn_type(uint8_t type)
+valid_xn_type(mkr_xml_node_type_t type)
 {
     switch (type) {
     case MKR_XML_NODE_TYPE_ELEMENT: case MKR_XML_NODE_TYPE_ATTRIBUTE: case MKR_XML_NODE_TYPE_TEXT:
@@ -158,7 +158,7 @@ valid_xn_type(uint8_t type)
 }
 
 mkr_xml_node_t *
-mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type)
+mkr_xml_arena_node(mkr_xml_doc_t *doc, mkr_xml_node_type_t type)
 {
     if (doc == NULL) return NULL;   /* fail-closed: never deref a NULL document */
     /* guard against a caller passing a bogus type (programming error) so it can
