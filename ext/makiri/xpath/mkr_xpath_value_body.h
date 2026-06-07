@@ -482,7 +482,7 @@ order_index_insert(mkr_doc_order_index_t *idx, const MKR_DOM_NODE *node, size_t 
     for (size_t i = 0; i < old_cap; ++i) {
       if (old_buckets[i].node != NULL) {
         size_t mask = new_cap - 1;
-        size_t j = mkr_pointer_hash(old_buckets[i].node) & mask;
+        size_t j = mkr_ptr_hash(old_buckets[i].node) & mask;
         while (idx->buckets[j].node != NULL) j = (j + 1) & mask;
         idx->buckets[j].node = old_buckets[i].node;
         idx->buckets[j].ord  = old_buckets[i].ord;
@@ -492,7 +492,7 @@ order_index_insert(mkr_doc_order_index_t *idx, const MKR_DOM_NODE *node, size_t 
     free(old_buckets);
   }
   size_t mask = idx->cap - 1;
-  size_t j = mkr_pointer_hash(node) & mask;
+  size_t j = mkr_ptr_hash(node) & mask;
   while (idx->buckets[j].node != NULL) {
     if (idx->buckets[j].node == node) return 0; /* already present */
     j = (j + 1) & mask;
@@ -509,7 +509,7 @@ order_index_lookup(const mkr_doc_order_index_t *idx, const MKR_DOM_NODE *node,
 {
   if (idx->cap == 0) return -1;
   size_t mask = idx->cap - 1;
-  size_t j = mkr_pointer_hash(node) & mask;
+  size_t j = mkr_ptr_hash(node) & mask;
   while (idx->buckets[j].node != NULL) {
     if (idx->buckets[j].node == node) {
       if (out_ord) *out_ord = idx->buckets[j].ord;
@@ -723,7 +723,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
   /* O(1) lookup via the pointer-keyed index. */
   if (c->bucket_cap != 0) {
     size_t mask = c->bucket_cap - 1;
-    size_t j = mkr_pointer_hash(node) & mask;
+    size_t j = mkr_ptr_hash(node) & mask;
     while (c->buckets[j] != 0) {
       mkr_str_cache_entry_t *e = &c->entries[c->buckets[j] - 1];
       if (e->node == node) {

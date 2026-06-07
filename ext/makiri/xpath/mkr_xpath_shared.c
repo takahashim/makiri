@@ -16,11 +16,12 @@
  * never dereferenced, so void* is exact.
  *
  * The driver (mkr_xpath.c), the parser/lexer, AND both engine instances call
- * these by their bare names. Three are extern rather than file-static
- * (mkr_pointer_hash, mkr_str_cache_index_put, mkr_str_cache_reindex): the
- * string-value cache splits its pure index bookkeeping (here) from its
- * node-dereferencing insert (mkr_get_cached_node_text, in the per-instance
- * value body), so both sides share the one index implementation.
+ * these by their bare names. Two are extern rather than file-static
+ * (mkr_str_cache_index_put, mkr_str_cache_reindex): the string-value cache
+ * splits its pure index bookkeeping (here) from its node-dereferencing insert
+ * (mkr_get_cached_node_text, in the per-instance value body), so both sides
+ * share the one index implementation. Pointer hashing is mkr_ptr_hash
+ * (core/mkr_hash.h) - the single pointer hash for every pointer-keyed index.
  */
 #include "mkr_xpath_internal.h"
 #include "../core/mkr_core.h"
@@ -29,17 +30,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---------- pointer hash (shared by str-cache + doc-order index) ---------- */
-
-uint32_t
-mkr_pointer_hash(const void *p)
-{
-  uintptr_t x = (uintptr_t)p;
-  /* SplitMix-style mixing - cheap and good enough for pointer keys. */
-  x = (x ^ (x >> 16)) * 0x9E3779B9u;
-  x = (x ^ (x >> 13)) * 0x85EBCA6Bu;
-  return (uint32_t)(x ^ (x >> 16));
-}
+/* Pointer hashing for the str-cache + doc-order index is shared: mkr_ptr_hash
+ * (core/mkr_hash.h), the one pointer hash for every pointer-keyed index. */
 
 /* ---------- node-set ---------- */
 
@@ -221,7 +213,7 @@ void
 mkr_str_cache_index_put(mkr_str_cache_t *c, size_t idx)
 {
   size_t mask = c->bucket_cap - 1;
-  size_t j = mkr_pointer_hash(c->entries[idx].node) & mask;
+  size_t j = mkr_ptr_hash(c->entries[idx].node) & mask;
   while (c->buckets[j] != 0) {
     j = (j + 1) & mask;
   }

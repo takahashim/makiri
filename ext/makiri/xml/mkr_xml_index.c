@@ -45,16 +45,6 @@ key_eq(const mkr_xml_index_entry_t *e, const char *local, size_t local_len,
   return 1;
 }
 
-static size_t
-next_pow2(size_t n)
-{
-  size_t p = 8;
-  while (p < n) {
-    if (p > (SIZE_MAX >> 1)) return p; /* saturate (unreachable for real docs) */
-    p <<= 1;
-  }
-  return p;
-}
 
 /* Find the entry for the key, or the empty slot to create it (open addressing,
  * power-of-two mask). The table is sized so it never fills (load < 0.5). */
@@ -114,7 +104,13 @@ build(mkr_xml_doc_t *doc)
   if (idx == NULL) return NULL;
 
   size_t n = count_elements(root);
-  idx->cap = next_pow2(n * 2 + 1);              /* load factor < 0.5 */
+  /* Size for load factor < 0.5 (2n+1 slots). The overflow-checked sizer fails
+   * closed - unlike the old next_pow2, which saturated to a too-small table on
+   * overflow, where open addressing could never find a free slot. */
+  size_t want;
+  if (!mkr_size_mul(n, 2, &want) || !mkr_size_add(want, 1, &want)
+      || !mkr_pow2_ceil(want, &idx->cap)) { free(idx); return NULL; }
+  if (idx->cap < 8) idx->cap = 8;              /* small floor */
   idx->buckets = (mkr_xml_index_entry_t *)mkr_callocarray(idx->cap, sizeof(*idx->buckets));
   if (idx->buckets == NULL) { free(idx); return NULL; }
 

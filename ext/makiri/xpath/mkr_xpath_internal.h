@@ -133,7 +133,6 @@ int mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
 
 /* Pointer hash (SplitMix-style). Shared primitive: keys both the per-evaluate
  * document-order index and the string-value cache index. */
-uint32_t mkr_pointer_hash(const void *p);
 
 /* ---------- tokens ---------- */
 
