@@ -326,6 +326,13 @@ bundle exec rake compile
 bundle exec rake spec
 ```
 
+### Vendored Lexbor version
+
+`vendor/lexbor` is pinned to `7b4c38c` (`v3.0.0-19`), an untagged `master`
+commit, for a heap-overflow fix in Lexbor's `:lexbor-contains()` parser (and
+other post-v3.0.0 bugfixes) that v3.0.0 lacks. Lexbor stays vanilla; we return
+to a release tag once one ships after v3.0.0. See `CLAUDE.md` for details.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
