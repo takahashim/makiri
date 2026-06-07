@@ -300,7 +300,7 @@ namespace :fuzz do
     if ENV["FUZZ_ARGS"]
       sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
     else
-      iso  = %w[1 true yes].include?(ENV["FAST"].to_s.downcase) ? "" : "--isolated"
+      iso  = %w[1 true yes].include?(ENV["ISOLATED"].to_s.downcase) ? "--isolated" : ""
       secs = ENV["FUZZ_TIME"] || "90"
       # Cover every surface under the sanitizer: the query engine (XPath/CSS over
       # parsed fixtures), the XML parser (hostile documents), and the XML mutation

@@ -70,7 +70,7 @@ jobs:
           bundler-cache: true
 
       - name: Run short fuzz under sanitizers
-        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--isolated --time 30"
+        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--time 30"
 
   security-fuzz-nightly:
     name: Nightly sanitized fuzz
@@ -92,4 +92,4 @@ jobs:
           bundler-cache: true
 
       - name: Run nightly fuzz under sanitizers
-        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--isolated --time 300"
+        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--time 300"
