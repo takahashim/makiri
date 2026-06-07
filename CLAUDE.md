@@ -35,11 +35,20 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 
 ## Lexbor version
 
-Pinned to **v3.0.0** (builds cleanly with our `LEXBOR_BUILD_SHARED=OFF` config).
-Fixes landed on master *after* v3.0.0 that we want - pick them up at the **next
-release tag** via `git submodule update`, not an untagged commit:
-`#365` tokenizer size-limit fix (DoS-relevant), `<select size>` NULL-deref fix,
-ruby `rp`/`rt` parse-error fix.
+Pinned to **`7b4c38c`** (`v3.0.0-19-g7b4c38c`, builds cleanly with our
+`LEXBOR_BUILD_SHARED=OFF` config). **Normally we pin to a release tag**, but this
+is an *untagged master* commit taken deliberately for security: the next release
+tag is still v3.0.0, and master carries a **heap-overflow fix in the
+`:lexbor-contains()` parser** (`8a14bc0`; pre-fix it allocated `sizeof(lexbor_str_t)`
+for the needle but copied its full length, overflowing the arena for any needle
+>15 bytes) - which Makiri now reaches via `Node#css` on both HTML and XML. The
+same 19 commits also fold in the fixes we already wanted: `#365` tokenizer
+size-limit (DoS), `<select size>` NULL-deref, ruby `rp`/`rt` parse-error, plus
+URL uninitialized-memory fixes. All 19 are bugfixes (no feature/breaking churn).
+**Move back to a release tag** as soon as one ships after v3.0.0 (it should
+contain all of the above) via `git submodule update`; until then, keep this pin.
+Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
+only", not "no fork".
 
 ## Build / test
 
@@ -95,7 +104,7 @@ ext/makiri/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
   lexbor_compat/           attr->owner index, source location, post-parse orchestration
-vendor/lexbor/             git submodule, pinned v3.0.0, NEVER patched
+vendor/lexbor/             git submodule, pinned 7b4c38c (v3.0.0-19), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)

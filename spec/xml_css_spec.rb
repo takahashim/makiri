@@ -322,6 +322,15 @@ RSpec.describe "Makiri::XML CSS selectors" do
         .to eq(["apple PIE", "cherry pie"])
     end
 
+    it "handles a long needle (Lexbor >v3.0.0 heap-overflow fix in the parser)" do
+      # Pre-fix, Lexbor allocated sizeof(lexbor_str_t) (~16 B) for the needle but
+      # copied its full length, overflowing the arena for any needle >15 bytes.
+      # Makiri reaches Lexbor's CSS parser for :lexbor-contains, so guard it here.
+      needle = "A" * 200
+      big = Makiri::XML("<r><i>#{needle}</i><i>x</i></r>")
+      expect(big.css(%(i:lexbor-contains("#{needle}"))).map { |n| n.text.length }).to eq([200])
+    end
+
     it "matches a direct child text node like XPath child::text()[contains()]" do
       expect(doc.css(%(i:lexbor-contains("pie"))).map(&:text))
         .to eq(doc.xpath(%(//i[text()[contains(., "pie")]])).map(&:text))

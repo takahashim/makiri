@@ -43,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     of-type to first-/only-child, `//*[position()=1]` / `//*[last()=1]`; Makiri is
     correct here, pinned in `spec/xml_css_spec.rb`.)
 
+### Security
+
+* **Updated the vendored Lexbor** from v3.0.0 to `7b4c38c` (`v3.0.0-19`) to pick
+  up a **heap buffer overflow fix in Lexbor's `:lexbor-contains()` parser**
+  (`8a14bc0`): pre-fix it sized the needle buffer by `sizeof(lexbor_str_t)` but
+  copied the full string, overflowing the arena for any needle longer than ~15
+  bytes. Makiri reaches Lexbor's CSS parser for `:lexbor-contains` on both HTML
+  and XML, so this was reachable from `Node#css`. The same bump also folds in
+  Lexbor's `#365` tokenizer size-limit (DoS) fix, the `<select size>` NULL-deref
+  fix, the ruby `rp`/`rt` parse-error fix, and URL uninitialized-memory fixes.
+  (This is an untagged master commit, taken deliberately because no release tag
+  newer than v3.0.0 carries the fix yet; see the Lexbor-version note in CLAUDE.md.)
+
 ### Changed
 
 * **Faster XML queries.** A document-rooted descendant name test (`//name`,
