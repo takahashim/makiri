@@ -20,11 +20,13 @@ mkr_callocarray(size_t count, size_t elem)
     if (count == 0 || elem == 0) {
         return NULL;
     }
-    size_t bytes;
-    if (!mkr_size_mul(count, elem, &bytes)) {
+    /* 2-arg calloc is itself overflow-safe, but check explicitly so every core
+     * allocator fails the SAME way (deterministic NULL) rather than leaving the
+     * overflow case to calloc's implementation-defined behaviour. */
+    if (count > SIZE_MAX / elem) {
         return NULL; /* overflow */
     }
-    return calloc(count, elem); /* 2-arg calloc is itself overflow-safe */
+    return calloc(count, elem);
 }
 
 char *
