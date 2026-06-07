@@ -13,9 +13,7 @@ module Makiri
     # @param content [String]
     # @return [Makiri::CDATASection]
     def self.new(document, content)
-      raise TypeError, "expected a Makiri::Document" unless document.is_a?(Makiri::Document)
-
-      document.create_cdata(content)
+      Makiri::Document.coerce!(document).create_cdata(content)
     end
   end
 end

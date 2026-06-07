@@ -11,9 +11,7 @@ module Makiri
     # @param document [Makiri::Document]
     # @return [Makiri::Element]
     def self.new(name, document)
-      raise TypeError, "expected a Makiri::Document" unless document.is_a?(Makiri::Document)
-
-      document.create_element(name)
+      Makiri::Document.coerce!(document).create_element(name)
     end
   end
 end

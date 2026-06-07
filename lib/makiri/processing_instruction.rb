@@ -12,9 +12,7 @@ module Makiri
     # @param content [String]
     # @return [Makiri::ProcessingInstruction]
     def self.new(document, target, content)
-      raise TypeError, "expected a Makiri::Document" unless document.is_a?(Makiri::Document)
-
-      document.create_processing_instruction(target, content)
+      Makiri::Document.coerce!(document).create_processing_instruction(target, content)
     end
   end
 end

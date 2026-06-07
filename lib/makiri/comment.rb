@@ -10,9 +10,7 @@ module Makiri
     # @param content [String]
     # @return [Makiri::Comment]
     def self.new(document, content)
-      raise TypeError, "expected a Makiri::Document" unless document.is_a?(Makiri::Document)
-
-      document.create_comment(content)
+      Makiri::Document.coerce!(document).create_comment(content)
     end
   end
 end

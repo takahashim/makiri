@@ -10,9 +10,7 @@ module Makiri
     # @param document [Makiri::Document]
     # @return [Makiri::Text]
     def self.new(content, document)
-      raise TypeError, "expected a Makiri::Document" unless document.is_a?(Makiri::Document)
-
-      document.create_text_node(content)
+      Makiri::Document.coerce!(document).create_text_node(content)
     end
   end
 end
