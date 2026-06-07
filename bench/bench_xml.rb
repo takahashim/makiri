@@ -105,6 +105,31 @@ bench("at_xpath: //a:entry[500]/a:id (first-match)") do |x|
   x.report("nokogiri") { n_doc.at_xpath("//a:entry[500]/a:id", NS)&.text } if NOKO
 end
 
+# --- CSS selectors --------------------------------------------------------
+# Makiri lowers CSS to its native XPath engine; Nokogiri compiles CSS to an
+# XPath run through libxml2. Both auto-bind a bare type selector to the
+# document's default namespace, so these run namespace-free at the call site.
+
+bench("css: entry (type, default-ns)") do |x|
+  x.report("makiri")   { m_doc.css("entry").length }
+  x.report("nokogiri") { n_doc.css("entry").length } if NOKO
+end
+
+bench("css: feed > entry (child combinator)") do |x|
+  x.report("makiri")   { m_doc.css("feed > entry").length }
+  x.report("nokogiri") { n_doc.css("feed > entry").length } if NOKO
+end
+
+bench("css: link[rel=\"alternate\"] (attribute)") do |x|
+  x.report("makiri")   { m_doc.css('link[rel="alternate"]').length }
+  x.report("nokogiri") { n_doc.css('link[rel="alternate"]').length } if NOKO
+end
+
+bench("at_css: entry (first-match)") do |x|
+  x.report("makiri")   { m_doc.at_css("entry")&.text }
+  x.report("nokogiri") { n_doc.at_css("entry")&.text } if NOKO
+end
+
 bench("traverse: count elements via children walk") do |x|
   walk = lambda do |node, &blk|
     node.children.each do |c|

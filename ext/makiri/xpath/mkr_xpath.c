@@ -60,6 +60,14 @@ struct mkr_xpath_context_s {
   mkr_tag_index_lookup_t   tag_lookup;
   mkr_tag_index_foreign_t  tag_has_foreign;
 
+  /* XML element-name index: the owning document plus a lazy getter and a
+   * string-keyed lookup, injected by the XML glue. NULL disables the
+   * descendant-name fast path (the engine then walks). HTML uses the tag-id
+   * index above instead. */
+  void                    *name_index_owner;
+  mkr_name_index_get_t     name_index_get;
+  mkr_name_index_lookup_t  name_index_lookup;
+
   /* Namespace-matching policy for UNPREFIXED name tests. 0 (default) =
    * strict/HTML5-faithful: an unprefixed name resolves in the HTML namespace
    * (matches HTML-namespace or no-namespace nodes only; foreign SVG/MathML
@@ -130,6 +138,35 @@ mkr_tag_index_foreign_t
 mkr_ctx_tag_has_foreign(mkr_xpath_context_t *ctx)
 {
   return ctx ? ctx->tag_has_foreign : NULL;
+}
+
+void
+mkr_xpath_context_set_name_index(mkr_xpath_context_t *ctx, void *owner,
+                                 mkr_name_index_get_t get,
+                                 mkr_name_index_lookup_t lookup)
+{
+  if (ctx == NULL) return;
+  ctx->name_index_owner  = owner;
+  ctx->name_index_get    = get;
+  ctx->name_index_lookup = lookup;
+}
+
+void *
+mkr_ctx_name_index_owner(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->name_index_owner : NULL;
+}
+
+mkr_name_index_get_t
+mkr_ctx_name_index_get(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->name_index_get : NULL;
+}
+
+mkr_name_index_lookup_t
+mkr_ctx_name_index_lookup(mkr_xpath_context_t *ctx)
+{
+  return ctx ? ctx->name_index_lookup : NULL;
 }
 
 mkr_str_cache_t *

@@ -53,6 +53,14 @@ CSS_SEED = [
   "div > p", "section p", "ul li + li", "li ~ li",
   "a[href]", 'a[href="x"]', '[data-i="1"]', '[class~="hot"]', '[lang|="ja"]',
   "li:first-child", "li:last-child", "li:nth-child(2)", "li:nth-of-type(odd)",
+  ":first-of-type", ":only-of-type", ":nth-of-type(2n+1)", "*:last-of-type",
   "p:not(.lead)", ":root", "section:has(p)", "div, span, a",
   "svg circle", "header, footer", "*:empty",
+  # complex (combinator) arguments inside :is/:where/:not + :has variants
+  "a:not(nav a)", ":is(div > p, section a)", ":where(ul li)", "li:has(> a)",
+  "p:has(+ span)", "div:not(.x):not(.y)",
+  # jQuery-style text containment (Lexbor extension, both hosts); the long needle
+  # exercises Lexbor's >v3.0.0 :lexbor-contains() parser heap-overflow fix.
+  'p:lexbor-contains("text")', 'li:lexbor-contains("X" i)', ':lexbor-contains("a")',
+  'span:lexbor-contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")',
 ].freeze

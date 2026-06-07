@@ -32,6 +32,34 @@ RSpec.describe "Makiri mutation" do
       text = div.at_css("p").child
       expect { text["x"] = "y" }.to raise_error(Makiri::Error)
     end
+
+    describe "#set_attribute_ns" do
+      it "sets a namespaced attribute, reusing the slot on (ns, local) match" do
+        div.set_attribute_ns("urn:x", "x:foo", "1")
+        expect(div.to_html).to include('x:foo="1"')
+        div.set_attribute_ns("urn:x", "x:foo", "2")           # same ns+local -> replace
+        expect(div.to_html.scan("x:foo").length).to eq(1)     # not duplicated
+        expect(div.to_html).to include('x:foo="2"')
+      end
+
+      it "treats nil/empty namespace as the null namespace" do
+        div.set_attribute_ns(nil, "bare", "b")
+        expect(div["bare"]).to eq("b")
+      end
+
+      it "keeps same-local attributes in different namespaces distinct" do
+        div.set_attribute_ns("urn:a", "a:k", "1")
+        div.set_attribute_ns("urn:b", "b:k", "2")
+        expect(div.to_html).to include('a:k="1"').and include('b:k="2"')
+      end
+
+      it "fails closed on a non-element node and on invalid bytes" do
+        text = div.at_css("p").child
+        expect { text.set_attribute_ns("urn:x", "x:y", "v") }.to raise_error(Makiri::Error)
+        expect { div.set_attribute_ns("urn:x", "x:y", "v\x00") }.to raise_error(Makiri::Error)
+        expect { div.set_attribute_ns("urn\x00", "x:y", "v") }.to raise_error(Makiri::Error)
+      end
+    end
   end
 
   describe "node creation" do
@@ -134,6 +162,17 @@ RSpec.describe "Makiri mutation" do
       span << doc.create_text_node("S")
       expect(p.replace(span)).to equal(span)
       expect(div.inner_html).to eq("<span>S</span>")
+    end
+
+    it "fails closed adding a sibling to / replacing a parentless node" do
+      p = div.at_css("p")
+      p.remove # now detached: no parent
+      expect { p.add_previous_sibling(doc.create_element("hr")) }
+        .to raise_error(Makiri::Error, /no parent/)
+      expect { p.add_next_sibling(doc.create_element("hr")) }
+        .to raise_error(Makiri::Error, /no parent/)
+      expect { p.replace(doc.create_element("hr")) }
+        .to raise_error(Makiri::Error, /no parent/)
     end
   end
 

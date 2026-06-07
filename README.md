@@ -119,7 +119,10 @@ el = doc.at_xpath("//a:entry", ns)
 el.local_name                                  # => "entry"
 el.namespace_uri                               # => "http://www.w3.org/2005/Atom"
 
-doc.css("entry")     # raises NotImplementedError (use #xpath)
+# CSS selectors work too (lowered to the native XPath engine): a bare type
+# selector binds to the document's default namespace, so this just works.
+doc.css("entry").length                        # => 2
+doc.css("feed > entry").map { |e| e.at_css("title").text }  # => ["Hello", "World"]
 
 # Serialize back to XML
 doc.to_xml                                 # => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed ...>...</feed>\n"
@@ -142,9 +145,23 @@ or `indent: n`, for indented element-only content; `encoding: "Shift_JIS"` to
 transcode, with a hex character reference for anything the encoding can't hold);
 a `Document#to_xml` adds the declaration and the DOCTYPE. `#canonicalize` emits
 Inclusive Canonical XML 1.0 (for XML signatures; `comments: true` to keep
-comments), byte-identical to libxml2. CSS is intentionally unavailable for XML
-(Lexbor's selector engine lower-cases names, which breaks XML case/namespace
-matching) - use XPath.
+comments), byte-identical to libxml2.
+
+`#css` / `#at_css` / `#matches?` also work on XML. They are **lowered to the
+native XPath engine** (not Lexbor's HTML matcher), so matching is case-sensitive
+and namespace-aware: a bare type selector binds to the document's default
+namespace and a prefixed `ns|el` resolves against the in-scope (or a supplied)
+namespaces - Nokogiri-compatible. The common selector surface is supported
+(descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]` operators,
+and `:first/last/only-child`, `:empty`, `:root`, the `:*-of-type` family,
+`:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has`, and Lexbor's
+`:lexbor-contains()` text filter - see below); the `[attr=v i]` case flag and
+other jQuery extensions are not (use XPath). One namespace caveat: `|el`
+(explicit no-namespace) **raises** rather than matching - Lexbor's selector
+parser cannot distinguish it from `*|el` (any namespace), so Makiri fails closed
+instead of returning a wrong result; use a bare `el` or XPath `//el` for a
+strict no-namespace match. Cross-checked against Nokogiri::XML by a differential
+(`rake conformance:css_xml`) and property-based metamorphic tests.
 
 The tree supports in-place mutation - every edit validates its input (names as
 XML 1.0 QNames, values as XML Char) so the tree stays serializable to
@@ -271,10 +288,24 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
 
 ### CSS
 
-* jQuery/Nokogiri CSS extensions are not supported (`:contains`, `:gt`, `:lt`, `:eq`, `:first`, ...)
-  * Makiri uses Lexbor's standards-only selector engine.
-    Use XPath (`xpath("//p[contains(., 'x')]")`) or Enumerable (`css('li')[1]`).
+* Most jQuery/Nokogiri CSS extensions are not supported (`:gt`, `:lt`, `:eq`, `:first`, ...)
+  * Makiri uses Lexbor's selector engine, which is standards-based apart from one
+    text-containment extension. Use XPath (`xpath("//p[contains(., 'x')]")`) or
+    Enumerable (`css('li')[1]`) for the rest.
     Standard Level-4 selectors (`:is` / `:where` / `:has`) are supported; some of which Nokogiri rejects.
+  * `:lexbor-contains("text")` **is** supported (on both HTML and XML) - Lexbor's
+    spelling of the jQuery `:contains()` substring filter, matching an element
+    whose text contains the string; append ` i` (`:lexbor-contains("text" i)`)
+    for an ASCII case-insensitive match. (Nokogiri's name `:contains` is not an
+    alias.) Like Lexbor's matcher, it tests the element's **immediate child text
+    nodes** (not the deep string-value), so HTML and XML agree; on XML it lowers
+    to XPath `child::text()[contains(., "text")]`.
+* Untyped `:*-of-type` (`:first-of-type`, `:nth-of-type(an+b)`, ... with no type
+  selector) is supported and correct on both HTML and XML - the "type" is the
+  element's own expanded name.
+  * Nokogiri (XML and HTML5) mistranslates these to first-/only-child
+    (`//*[position()=1]` / `//*[last()=1]`), so it under-matches; Makiri matches
+    Lexbor's HTML matcher.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
 * Class/ID selectors are matched case-insensitively regardless of quirks mode (a Lexbor behaviour)
@@ -294,6 +325,13 @@ bundle install
 bundle exec rake compile
 bundle exec rake spec
 ```
+
+### Vendored Lexbor version
+
+`vendor/lexbor` is pinned to `7b4c38c` (`v3.0.0-19`), an untagged `master`
+commit, for a heap-overflow fix in Lexbor's `:lexbor-contains()` parser (and
+other post-v3.0.0 bugfixes) that v3.0.0 lacks. Lexbor stays vanilla; we return
+to a release tag once one ships after v3.0.0. See `CLAUDE.md` for details.
 
 ## License
 

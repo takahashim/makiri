@@ -155,11 +155,14 @@ append_chardata(mkr_xml_parser_t *P, mkr_xml_node_t *parent, uint8_t type,
     if (last != NULL && last->type == type) {
         size_t total = (size_t)last->value_len + len;
         if (total > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
-        char *buf = mkr_xml_arena_scratch_bytes(P->doc, total);
-        if (buf == NULL) { propagate_oom(P); return -1; }   /* total>0 here (len could be 0, but last+len) */
-        if (last->value_len) memcpy(buf, last->value, last->value_len);
-        if (len)             memcpy(buf + last->value_len, val, len);
-        last->value = buf; last->value_len = (uint32_t)total;
+        /* concatenate via the bounded writer: total == the two parts exactly, so
+         * it never overflows; the writer just removes the raw-pointer arithmetic. */
+        mkr_spanbuf_t b = mkr_xml_arena_spanbuf(P->doc, total);
+        mkr_spanbuf_write(&b, last->value, last->value_len);
+        mkr_spanbuf_write(&b, val, len);
+        const char *buf = mkr_spanbuf_finish(&b);
+        if (buf == NULL) { propagate_oom(P); return -1; }   /* alloc failure */
+        last->value = buf; last->value_len = (uint32_t)b.pos;
         return 0;
     }
     mkr_xml_node_t *n = mkr_xml_arena_node(P->doc, type);

@@ -42,6 +42,46 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("//x")).to be_a(Makiri::NodeSet) # empty set, not false
       expect(doc.xpath("boolean(//x)")).to be(false)
     end
+
+    it "formats numbers as strings per XPath 1.0 (string(number))" do
+      # Integers print without a fraction, no exponent; the special values use
+      # their XPath spellings. These are the classic conversion edge cases.
+      expect(doc.xpath("string(42)")).to eq("42")
+      expect(doc.xpath("string(0)")).to eq("0")
+      expect(doc.xpath("string(-7)")).to eq("-7")
+      expect(doc.xpath("string(1.5)")).to eq("1.5")
+      expect(doc.xpath("string(1 div 3)")).to eq("0.333333333333333")
+      expect(doc.xpath("string(0 div 0)")).to eq("NaN")
+      expect(doc.xpath("string(1 div 0)")).to eq("Infinity")
+      expect(doc.xpath("string(-1 div 0)")).to eq("-Infinity")
+    end
+
+    it "converts booleans to/from strings and numbers" do
+      expect(doc.xpath("string(true())")).to eq("true")
+      expect(doc.xpath("string(false())")).to eq("false")
+      expect(doc.xpath("number(true())")).to eq(1.0)
+      expect(doc.xpath("number(false())")).to eq(0.0)
+    end
+
+    it "converts numbers and strings to boolean" do
+      expect(doc.xpath("boolean(1)")).to be(true)
+      expect(doc.xpath("boolean(0)")).to be(false)
+      expect(doc.xpath("boolean(0 div 0)")).to be(false) # NaN -> false
+      expect(doc.xpath("boolean('x')")).to be(true)
+      expect(doc.xpath("boolean('')")).to be(false)
+    end
+
+    it "sorts a large out-of-document-order node-set into document order" do
+      # A union of 100 interleaved <a>/<b> is concatenated as [a*100, b*100] -
+      # not document order - and at 200 nodes it crosses the doc-order index
+      # build threshold, exercising the large-sort fast path (otherwise never hit
+      # by the suite). The result must come back in document order.
+      xml = "<r>#{(0...100).map { |i| %(<a i="#{i}"/><b i="#{i}"/>) }.join}</r>"
+      set = Makiri::XML(xml).xpath("//a | //b")
+      expect(set.length).to eq(200)
+      expect(set.map(&:name)).to eq(%w[a b] * 100)            # interleaved doc order
+      expect(set.map { |n| n["i"].to_i }).to eq((0...100).flat_map { |i| [i, i] })
+    end
   end
 
   describe "#at_xpath" do

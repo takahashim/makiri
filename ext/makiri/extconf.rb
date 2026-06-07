@@ -28,7 +28,29 @@ abort "Lexbor source not found at #{LEXBOR_SRC}. Did you `git submodule update -
 
 cmake = find_executable("cmake") or abort "cmake is required to build Lexbor."
 
-unless File.exist?(File.join(LEXBOR_DST, "lib", "liblexbor_static.a"))
+# Optionally build the vendored Lexbor itself under AddressSanitizer. This is the
+# ONLY way to catch overflows *inside* Lexbor's bump (mraw) arena: a sub-allocation
+# overrunning into the next one stays within one big malloc'd chunk, so the heap
+# allocator's red-zones (and thus a plain ASan build of just our ext) never see it.
+# Lexbor's own mraw is ASan-aware - with -DLEXBOR_BUILD_WITH_ASAN=ON its CMake
+# defines LEXBOR_HAVE_ADDRESS_SANITIZER, and mraw then unpoisons exactly each
+# allocation and re-poisons the gap, so an intra-arena overrun writes into
+# poisoned memory and ASan reports it. Opt-in (slow full rebuild), only meaningful
+# with MAKIRI_SANITIZE=...address...; drive it via `rake sanitize:lexbor`.
+# vendor/lexbor stays vanilla - this is a build flag, not a source patch.
+sanitize = ENV["MAKIRI_SANITIZE"].to_s.strip
+lexbor_asan = !ENV["MAKIRI_SANITIZE_LEXBOR"].to_s.strip.empty? && sanitize.include?("address")
+lexbor_mode = lexbor_asan ? "asan" : "plain"
+lexbor_stamp = File.join(LEXBOR_DST, ".makiri_build_mode")
+
+# Reuse the cached archive only when it was built in the mode we now want; a mode
+# switch (plain <-> asan) forces a rebuild, so a sanitized Lexbor can never leak
+# into a normal build or vice versa.
+have_archive = File.exist?(File.join(LEXBOR_DST, "lib", "liblexbor_static.a"))
+stamp_ok = have_archive && File.exist?(lexbor_stamp) && File.read(lexbor_stamp).strip == lexbor_mode
+unless stamp_ok
+  FileUtils.rm_rf(LEXBOR_BLD)
+  FileUtils.rm_rf(LEXBOR_DST) if have_archive   # drop a wrong-mode install
   FileUtils.mkdir_p(LEXBOR_BLD)
   Dir.chdir(LEXBOR_BLD) do
     cmd = [
@@ -41,12 +63,15 @@ unless File.exist?(File.join(LEXBOR_DST, "lib", "liblexbor_static.a"))
       "-DCMAKE_BUILD_TYPE=Release",
       "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
       "-DCMAKE_INSTALL_PREFIX=#{LEXBOR_DST}",
+      *(lexbor_asan ? ["-DLEXBOR_BUILD_WITH_ASAN=ON"] : []),
       LEXBOR_SRC,
     ].shelljoin
+    warn "makiri: building vendored Lexbor (mode=#{lexbor_mode})"
     system(cmd) or abort "cmake configure failed for Lexbor."
     system("#{cmake.shellescape} --build . --target install -- -j#{Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 4}") or
       abort "cmake build/install failed for Lexbor."
   end
+  File.write(lexbor_stamp, lexbor_mode)
 end
 
 $INCFLAGS << " -I#{File.join(LEXBOR_DST, 'include').shellescape}"
@@ -60,11 +85,25 @@ $LDFLAGS << " #{lexbor_archive.shellescape}"
 # Sanitizer build (opt-in): MAKIRI_SANITIZE=address,undefined rake clean compile
 # Then run the suite under the runtime via `rake sanitize` (which preloads the
 # ASan runtime). Sanitizers replace the heap allocator, so even the vendored
-# (uninstrumented) Lexbor's allocations get red-zoned - heap overflows on
-# Lexbor-owned buffers are still caught. _FORTIFY_SOURCE is dropped here because
-# it conflicts with the sanitizer interceptors.
-sanitize = ENV["MAKIRI_SANITIZE"].to_s.strip
-if sanitize.empty?
+# (uninstrumented) Lexbor's allocations get red-zoned - a heap overflow off the
+# END of a Lexbor malloc is caught. Overflows *inside* Lexbor's mraw arena are
+# NOT caught this way (they stay within one malloc'd chunk); for those, also build
+# Lexbor under ASan via MAKIRI_SANITIZE_LEXBOR=1 (see the Lexbor build above and
+# `rake sanitize:lexbor`). _FORTIFY_SOURCE is dropped here because it conflicts
+# with the sanitizer interceptors.
+# Coverage build (opt-in): MAKIRI_COVERAGE=1 instruments OUR sources with clang
+# source-based coverage (the vendored Lexbor is built separately and is NOT
+# instrumented - we measure only the code we write). Run via `rake coverage`,
+# which sets LLVM_PROFILE_FILE and renders an llvm-cov report. -O0 keeps the
+# region map close to the source; _FORTIFY_SOURCE is dropped (it needs -O2).
+coverage = !ENV["MAKIRI_COVERAGE"].to_s.strip.empty?
+
+if coverage
+  $CFLAGS   << " -O0 -g -fprofile-instr-generate -fcoverage-mapping"
+  $LDFLAGS  << " -fprofile-instr-generate"
+  $DLDFLAGS << " -fprofile-instr-generate"
+  warn "makiri: building with clang source-based coverage"
+elsif sanitize.empty?
   # Security hardening flags. Keep -O2 active so _FORTIFY_SOURCE works.
   $CFLAGS << " -O2"
   $CFLAGS << " -D_FORTIFY_SOURCE=2"

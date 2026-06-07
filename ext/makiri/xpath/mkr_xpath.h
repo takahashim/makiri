@@ -135,6 +135,19 @@ void  mkr_xpath_context_set_element_index(mkr_xpath_context_t *ctx, void *index,
                                           mkr_tag_index_lookup_t lookup,
                                           mkr_tag_index_foreign_t has_foreign);
 
+/* XML element-name index hooks (string-keyed; the HTML tag-id index above is
+ * integer-keyed). get(owner) lazily builds + caches the index on the owning
+ * document and returns it (or NULL on OOM -> the engine walks); lookup returns
+ * the document-ordered bucket for (local, ns_uri). Node pointers are void*. */
+typedef void *(*mkr_name_index_get_t)(void *owner);
+typedef void *const *(*mkr_name_index_lookup_t)(const void *index,
+                                                const char *local, size_t local_len,
+                                                const char *ns_uri, size_t ns_uri_len,
+                                                size_t *count);
+void  mkr_xpath_context_set_name_index(mkr_xpath_context_t *ctx, void *owner,
+                                       mkr_name_index_get_t get,
+                                       mkr_name_index_lookup_t lookup);
+
 
 void mkr_xpath_value_clear(mkr_xpath_value_t *v);
 void mkr_xpath_error_clear(mkr_xpath_error_t *e);

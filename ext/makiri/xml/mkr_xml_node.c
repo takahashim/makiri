@@ -2,11 +2,38 @@
  * Ruby-free. See mkr_xml_node.h and docs/xml_parser_plan.ja.md §8.1/§8.2. */
 #include "mkr_xml_node.h"
 #include "mkr_xml.h"
+#include "mkr_xml_index.h"
 #include "../core/mkr_core.h"
 
 #include <stddef.h>   /* max_align_t */
 #include <stdlib.h>
 #include <string.h>
+
+/* ASan red-zoning for the bump arena. Like Lexbor's mraw, our arena carves many
+ * sub-allocations out of one malloc'd chunk, so a write past one cut into the
+ * next stays inside that single malloc and is INVISIBLE to a plain ASan build
+ * (the heap red-zones only guard the chunk's outer boundary - this is exactly
+ * how the v3.0.0 :lexbor-contains overflow hid). So we poison each fresh chunk
+ * and unpoison only the bytes a cut actually hands out, leaving the alignment
+ * tail and not-yet-cut space poisoned: an intra-arena overrun then writes into
+ * poisoned memory and ASan reports it. Auto-active whenever our ext is built
+ * with -fsanitize=address (rake sanitize / fuzz:sanitize) - no extra flag,
+ * because unlike vendored Lexbor this is our own TU. A no-op otherwise. */
+#if defined(__SANITIZE_ADDRESS__)
+#  define MKR_XML_HAVE_ASAN 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define MKR_XML_HAVE_ASAN 1
+#  endif
+#endif
+#if defined(MKR_XML_HAVE_ASAN)
+#  include <sanitizer/asan_interface.h>
+#  define MKR_ARENA_POISON(p, n)   __asan_poison_memory_region((p), (n))
+#  define MKR_ARENA_UNPOISON(p, n) __asan_unpoison_memory_region((p), (n))
+#else
+#  define MKR_ARENA_POISON(p, n)   ((void)(p), (void)(n))
+#  define MKR_ARENA_UNPOISON(p, n) ((void)(p), (void)(n))
+#endif
 
 /* Alignment for arena cuts: the strictest fundamental alignment, so any object
  * fits. The chunk payload starts at an aligned offset past the header, and every
@@ -37,9 +64,12 @@ void
 mkr_xml_doc_destroy(mkr_xml_doc_t *doc)
 {
     if (doc == NULL) return;
+    mkr_xml_name_index_invalidate(doc); /* free the heap-side element-name index */
     /* whole-arena free: no individual node/byte free anywhere (read-only). */
+    const size_t hdr = align_up(sizeof(mkr_xml_arena_chunk_t), ARENA_ALIGN);
     for (mkr_xml_arena_chunk_t *c = doc->chunks; c != NULL; ) {
         mkr_xml_arena_chunk_t *n = c->next;
+        MKR_ARENA_UNPOISON((char *)c, hdr + c->cap); /* hand clean memory back to ASan's allocator */
         free(c);
         c = n;
     }
@@ -98,15 +128,23 @@ arena_alloc(mkr_xml_doc_t *doc, size_t size)
         nc->cap  = cap;
         doc->chunks = nc;
         c = nc;
+        /* poison the whole payload; each cut unpoisons only what it returns. */
+        MKR_ARENA_POISON((char *)nc + hdr, cap);
     }
     void *p = (char *)c + hdr + c->used;
     c->used += need;
     doc->arena_bytes += need;
+    /* Hand out exactly +size+ usable bytes; the [size, need) alignment tail (and
+     * everything past it in the chunk) stays poisoned as a red-zone, so a write
+     * one byte past the request is caught instead of silently clobbering the
+     * next cut. ASan tolerates the sub-granule trailing byte (ARENA_ALIGN cuts
+     * keep each slot on an 8-byte shadow boundary). */
+    MKR_ARENA_UNPOISON(p, size);
     return p;
 }
 
 static int
-valid_xn_type(uint8_t type)
+valid_xn_type(mkr_xml_node_type_t type)
 {
     switch (type) {
     case MKR_XML_NODE_TYPE_ELEMENT: case MKR_XML_NODE_TYPE_ATTRIBUTE: case MKR_XML_NODE_TYPE_TEXT:
@@ -120,7 +158,7 @@ valid_xn_type(uint8_t type)
 }
 
 mkr_xml_node_t *
-mkr_xml_arena_node(mkr_xml_doc_t *doc, uint8_t type)
+mkr_xml_arena_node(mkr_xml_doc_t *doc, mkr_xml_node_type_t type)
 {
     if (doc == NULL) return NULL;   /* fail-closed: never deref a NULL document */
     /* guard against a caller passing a bogus type (programming error) so it can
@@ -149,17 +187,30 @@ mkr_xml_arena_bytes(mkr_xml_doc_t *doc, const char *src, uint32_t len)
     return p;
 }
 
-/* A raw, uninitialised arena buffer of exactly +len+ bytes, for the one caller
- * that must fill it itself (entity expansion writes the expanded, never-longer
- * output here). Budget-/overflow-checked via the same choke point. */
-char *
-mkr_xml_arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
+/* A raw, uninitialised arena buffer of exactly +len+ bytes. PRIVATE: the only
+ * way to fill arena bytes by hand is mkr_xml_arena_spanbuf below, which wraps
+ * this in a core mkr_spanbuf (cursor + bounds check) so a caller can never
+ * overrun it. Budget-/
+ * overflow-checked via the same choke point. */
+static char *
+arena_scratch_bytes(mkr_xml_doc_t *doc, size_t len)
 {
     /* a 0-length buffer needs no storage - never cut a whole chunk for it. The
      * sentinel is a valid non-NULL pointer the caller must not write to (there is
      * nothing to write), mirroring mkr_xml_arena_bytes's "" return. */
     if (len == 0) return (char *)"";
     return arena_alloc(doc, len);
+}
+
+/* Carve +cap+ arena bytes and wrap them in a core mkr_spanbuf (see
+ * mkr_xml_node.h). The spanbuf owns the cursor + bounds check, so no caller can
+ * overrun the cut; this is the sole sanctioned hand-fill path and the only thing
+ * that touches the private arena_scratch_bytes. On alloc failure the buffer is
+ * NULL, so the returned writer is already not-ok (every write a no-op). */
+mkr_spanbuf_t
+mkr_xml_arena_spanbuf(mkr_xml_doc_t *doc, size_t cap)
+{
+    return mkr_spanbuf(arena_scratch_bytes(doc, cap), cap);
 }
 
 int
@@ -256,7 +307,7 @@ mkr_xml_node_selftest(void)
     idx++;                                     /* 8 */
     if (mkr_xml_arena_node(NULL, MKR_XML_NODE_TYPE_ELEMENT) != NULL
         || mkr_xml_arena_bytes(NULL, "x", 1) != NULL
-        || mkr_xml_arena_scratch_bytes(NULL, 1) != NULL) {
+        || mkr_xml_arena_spanbuf(NULL, 1).ok) {  /* alloc fails -> not ok */
         return idx;
     }
 

@@ -131,9 +131,12 @@ utf8_encode(uint32_t cp, char *out)
 
 /* Expand references in [src, src+len) and validate XML Char. Output is never
  * longer than the input (every &...; reference is >= 4 chars and yields <= 4
- * bytes), so a single arena buffer of `len` bytes suffices. Returns the arena
- * slice and sets *out_len; returns NULL on an undefined entity / bad reference /
- * non-XML-Char (sets *status = MKR_XML_ERR_SYNTAX) or arena OOM/LIMIT. */
+ * bytes), so a buffer of `len` bytes suffices - and the bounded arena writer
+ * (mkr_xml_arena_spanbuf + core mkr_spanbuf) enforces that bound rather than
+ * trusting it (a write past it fails closed instead of overrunning the arena).
+ * Returns the arena slice and sets *out_len;
+ * returns NULL on an undefined entity / bad reference / non-XML-Char (sets
+ * *status = MKR_XML_ERR_SYNTAX) or arena OOM/LIMIT. */
 const char *
 mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
                mkr_xml_expand_mode_t mode, uint32_t *out_len, mkr_xml_status_t *status)
@@ -148,10 +151,10 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
     if (len == 0) { *out_len = 0; return ""; }
     if (doc == NULL || src == NULL) { *status = MKR_XML_ERR_INTERNAL; return NULL; }
 
-    char *buf = mkr_xml_arena_scratch_bytes(doc, len);
-    if (buf == NULL) { *status = doc->oom; return NULL; } /* doc non-NULL here (guarded above) */
-
-    size_t      o   = 0;
+    /* All output goes through the bounded writer, so no code below can overrun
+     * the buffer - a write that would exceed `len` is refused and latches ok=0. */
+    mkr_spanbuf_t b = mkr_xml_arena_spanbuf(doc, len);
+    if (!b.ok) { *status = doc->oom; return NULL; } /* backing alloc failed */
     const char *p   = src;
     const char *end = src + len;
 
@@ -164,12 +167,11 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
              * space (reference-derived whitespace is preserved - see below). */
             if (mode == MKR_XML_EXPAND_ATTR
                 && (cp == 0x9u || cp == 0xAu || cp == 0xDu)) {
-                buf[o++] = ' ';
+                mkr_spanbuf_putc(&b, ' ');
                 p += bl;
                 continue;
             }
-            memcpy(buf + o, p, (size_t)bl);
-            o += (size_t)bl;
+            mkr_spanbuf_write(&b, p, (size_t)bl);
             p += bl;
             continue;
         }
@@ -202,7 +204,10 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
             if (p >= end || p == digits) { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* no ';' / no digits */
             p++; /* past ';' */
             if (!mkr_xml_is_char(cp)) { *status = MKR_XML_ERR_SYNTAX; return NULL; }
-            o += (size_t)utf8_encode(cp, buf + o);
+            /* encode into a safe 4-byte local, then hand the exact length to the
+             * bounded writer (the encode itself can never overrun `enc`). */
+            char enc[4];
+            mkr_spanbuf_write(&b, enc, (size_t)utf8_encode(cp, enc));
         } else {                                    /* named entity */
             const char *ns = p;
             while (p < end && *p != ';') p++;
@@ -216,10 +221,16 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
             else if (nlen == 4 && memcmp(ns, "apos", 4) == 0) ch = '\'';
             else if (nlen == 4 && memcmp(ns, "quot", 4) == 0) ch = '"';
             else { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* undefined entity */
-            buf[o++] = ch;
+            mkr_spanbuf_putc(&b, ch);
         }
     }
 
-    *out_len = (uint32_t)o;
-    return buf;
+    /* By construction the buffer was never overrun; finish returns NULL if a
+     * write was refused (the "output <= input" invariant broke - our bug). The
+     * backing alloc was already checked at init, so a NULL here means a refused
+     * write: fail closed rather than return a truncated expansion. */
+    const char *out = mkr_spanbuf_finish(&b);
+    if (out == NULL) { *status = MKR_XML_ERR_INTERNAL; return NULL; }
+    *out_len = (uint32_t)b.pos;
+    return out;
 }

@@ -35,11 +35,20 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 
 ## Lexbor version
 
-Pinned to **v3.0.0** (builds cleanly with our `LEXBOR_BUILD_SHARED=OFF` config).
-Fixes landed on master *after* v3.0.0 that we want - pick them up at the **next
-release tag** via `git submodule update`, not an untagged commit:
-`#365` tokenizer size-limit fix (DoS-relevant), `<select size>` NULL-deref fix,
-ruby `rp`/`rt` parse-error fix.
+Pinned to **`7b4c38c`** (`v3.0.0-19-g7b4c38c`, builds cleanly with our
+`LEXBOR_BUILD_SHARED=OFF` config). **Normally we pin to a release tag**, but this
+is an *untagged master* commit taken deliberately for security: the next release
+tag is still v3.0.0, and master carries a **heap-overflow fix in the
+`:lexbor-contains()` parser** (`8a14bc0`; pre-fix it allocated `sizeof(lexbor_str_t)`
+for the needle but copied its full length, overflowing the arena for any needle
+>15 bytes) - which Makiri now reaches via `Node#css` on both HTML and XML. The
+same 19 commits also fold in the fixes we already wanted: `#365` tokenizer
+size-limit (DoS), `<select size>` NULL-deref, ruby `rp`/`rt` parse-error, plus
+URL uninitialized-memory fixes. All 19 are bugfixes (no feature/breaking churn).
+**Move back to a release tag** as soon as one ships after v3.0.0 (it should
+contain all of the above) via `git submodule update`; until then, keep this pin.
+Still **vanilla, NEVER patched** - the constraint that relaxed is "release tag
+only", not "no fork".
 
 ## Build / test
 
@@ -55,6 +64,7 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 bundle exec rake sanitize          # rebuild ext w/ -fsanitize=address,undefined, run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
 bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-safety net
+bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
@@ -74,6 +84,32 @@ Requires CRuby >= 3.2 and `cmake`.
   and `bundle exec` drops `DYLD_*` on macOS. `ASAN_OPTIONS` disables
   LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap-overflow + UB
   in our code still fire. CI runs a separate `sanitize` job on Linux.
+- **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
+  bump arena.** A sub-allocation overrunning into the next one stays within one
+  malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
+  how the v3.0.0 `:lexbor-contains()` overflow hid from ASan). To catch that
+  class, build Lexbor *itself* under ASan: `MAKIRI_SANITIZE_LEXBOR=1` makes
+  extconf pass `-DLEXBOR_BUILD_WITH_ASAN=ON` (Lexbor's mraw is ASan-aware - it
+  poisons the arena and unpoisons each allocation, so an intra-arena overrun
+  writes into poisoned memory and ASan reports it). Drive it with `rake
+  "sanitize:lexbor"` (slow: full instrumented Lexbor rebuild; FUZZ_ARGS routes to
+  the fuzzer). extconf stamps the Lexbor install mode (`plain`/`asan`) and
+  auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
+  build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
+  tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
+- **Our XML bump arena (`mkr_xml_node.c`) is ASan-red-zoned, so its intra-arena
+  overflows ARE caught** - the same blind spot as Lexbor's mraw, but this is our
+  own TU. `arena_alloc` poisons each fresh 64 KiB chunk and unpoisons only the
+  bytes a cut hands out (the `[size, need)` alignment tail stays poisoned), so a
+  write past one `arena_node`/`arena_bytes`/`scratch_bytes` cut hits poisoned
+  memory and ASan reports it. It auto-activates under any `-fsanitize=address`
+  build (`__has_feature`/`__SANITIZE_ADDRESS__`) - no extra flag, unlike Lexbor -
+  and is a no-op otherwise. So plain `rake sanitize` / `fuzz:sanitize --target
+  xml,mutate` already cover the arena. Everything else we write (XPath engine,
+  CSS lowering, glue, core) uses plain malloc/calloc/realloc, which ASan
+  red-zones per allocation - no arena, no special handling. Keep the unpoison at
+  exactly the requested `size` (not `need`); widening it to `need` would silence
+  off-by-one-into-padding overflows.
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
@@ -95,7 +131,7 @@ ext/makiri/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
   lexbor_compat/           attr->owner index, source location, post-parse orchestration
-vendor/lexbor/             git submodule, pinned v3.0.0, NEVER patched
+vendor/lexbor/             git submodule, pinned 7b4c38c (v3.0.0-19), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)

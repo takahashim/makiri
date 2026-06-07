@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* **CSS selectors on `Makiri::XML`** - `#css` / `#at_css` / `#matches?` now work
+  on XML nodes, lowered to the native XPath engine (so matching is
+  case-sensitive and namespace-aware, sharing its budgets / document order).
+  * Bare type selectors bind to the document's default namespace and `ns|el`
+    resolves against in-scope / supplied namespaces (Nokogiri-compatible -
+    including that passing an explicit namespaces hash disables the default
+    binding, so a bare selector then matches the no-namespace element).
+  * Verified by a CSS-selector differential against Nokogiri::XML/libxml2
+    (`rake conformance:css_xml`) and property-based metamorphic tests over random
+    documents (index-vs-walk, `at_css == css.first`, `#matches?` membership, the
+    comma-union law).
+  * Supports descendant/`>`/`+`/`~` combinators, `.class`, `#id`, the `[attr]`
+    operators, and `:first/last/only-child`, `:empty`, `:root`, `:*-of-type`,
+    `:nth-child(an+b)`, `:not`, `:is`/`:where`, `:has` - including complex
+    (combinator) arguments such as `:not(nav a)` and `:is(.a > .b)`. The
+    `[attr=v i]` case flag and other jQuery extensions remain unsupported (use
+    XPath); `|el` (no namespace) fails closed with a `CSS::SyntaxError` because
+    Lexbor's parser cannot distinguish it from `*|el` (use a bare `el` or XPath).
+  * `:lexbor-contains("text")` is supported on XML too, matching the HTML side:
+    Lexbor's substring text filter, with the ` i` flag (`:lexbor-contains("text"
+    i)`) for an ASCII case-insensitive match. Like Lexbor's matcher it tests the
+    element's immediate child text nodes (not the deep string-value), so HTML and
+    XML agree; on XML it lowers to `child::text()[contains(., "text")]`. (It is
+    Lexbor's spelling of jQuery's `:contains()`; the bare `:contains` name is
+    still unsupported.)
+  * The `:*-of-type` family now also works **without an explicit type selector**
+    (`:first-of-type`, `:nth-of-type(an+b)`, `*:only-of-type`, ...), where the
+    "type" is each element's own expanded name. That self-comparison cannot be
+    expressed in XPath 1.0 (no `current()`), so the engine resolves it natively
+    (an internal, XPath-unreachable position function); the result matches
+    Lexbor's HTML matcher. (Nokogiri - both XML and HTML5 - mistranslates untyped
+    of-type to first-/only-child, `//*[position()=1]` / `//*[last()=1]`; Makiri is
+    correct here, pinned in `spec/xml_css_spec.rb`.)
+
+### Security
+
+* **Updated the vendored Lexbor** from v3.0.0 to `7b4c38c` (`v3.0.0-19`) to pick
+  up a **heap buffer overflow fix in Lexbor's `:lexbor-contains()` parser**
+  (`8a14bc0`): pre-fix it sized the needle buffer by `sizeof(lexbor_str_t)` but
+  copied the full string, overflowing the arena for any needle longer than ~15
+  bytes. Makiri reaches Lexbor's CSS parser for `:lexbor-contains` on both HTML
+  and XML, so this was reachable from `Node#css`. The same bump also folds in
+  Lexbor's `#365` tokenizer size-limit (DoS) fix, the `<select size>` NULL-deref
+  fix, the ruby `rp`/`rt` parse-error fix, and URL uninitialized-memory fixes.
+  (This is an untagged master commit, taken deliberately because no release tag
+  newer than v3.0.0 carries the fix yet; see the Lexbor-version note in CLAUDE.md.)
+
+### Changed
+
+* **Faster XML queries.** A document-rooted descendant name test (`//name`,
+  `css("name")`) is now served from a lazily-built, mutation-invalidated
+  element-name index instead of walking the whole tree - the XML analogue of the
+  HTML `//tag` index. On the benchmark feed `css("entry")` goes from ~1.1x to
+  ~11x faster than Nokogiri and `feed > entry` to ~4.8x (its `//feed` step is
+  indexed too). Also: a name test resolves its namespace prefix once per step
+  rather than per node (~20% on namespace-dense queries), and `at_css` /
+  `at_xpath` short-circuit on prefixed name tests (an early match is ~100x).
+
 ## [0.3.0] - 2026-06-06
 
 ### Added

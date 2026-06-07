@@ -70,9 +70,8 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
       .to raise_error(Makiri::XML::SyntaxError)
   end
 
-  it "serializes back to a DOCTYPE declaration but rejects CSS" do
+  it "serializes back to a DOCTYPE declaration" do
     expect(dtd("<!DOCTYPE html><html/>").to_xml).to eq("<!DOCTYPE html>")
     expect(dtd(%(<!DOCTYPE r SYSTEM "r.dtd"><r/>)).to_xml).to eq(%(<!DOCTYPE r SYSTEM "r.dtd">))
-    expect { dtd("<!DOCTYPE html><html/>").css("x") }.to raise_error(NotImplementedError)
   end
 end

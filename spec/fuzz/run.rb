@@ -49,7 +49,7 @@ OptionParser.new do |o|
   o.banner = "Usage: ruby spec/fuzz/run.rb [options]"
   o.on("--time SEC", Integer, "seconds to run (default 60)")          { |v| opts[:time] = v }
   o.on("--seed N", Integer, "RNG seed (default random)")              { |v| opts[:seed] = v }
-  o.on("--target T", %i[xpath css both xml mutate], "xpath (default), css, both, xml, mutate") { |v| opts[:target] = v }
+  o.on("--target T", %i[xpath css both xml mutate xmlcss], "xpath (default), css, both, xml, mutate, xmlcss") { |v| opts[:target] = v }
   o.on("--isolated", "fork per query (crash/hang safe)")              { opts[:isolated] = true }
   o.on("--query-timeout SEC", Integer, "per-query timeout in --isolated (default 5)") { |v| opts[:query_timeout] = v }
   o.on("-q", "--quiet", "suppress per-finding output")               { opts[:quiet] = true }
@@ -65,6 +65,19 @@ rescue StandardError => e
   nil
 end.compact
 abort "no fixtures loaded" if fixtures.empty?
+
+# A single namespaced XML fixture for the :xmlcss target - the same generated CSS
+# torrent the :css target throws at HTML is run against this through the native
+# XPath-engine CSS path (mkr_css.c), exercising the AST builder for robustness.
+XMLCSS_SRC = <<~XML
+  <feed xmlns="urn:atom" xmlns:dc="urn:dc">
+    <entry id="e1" class="lead big" dc:role="x"><title lang="en">A</title><link href="/p/1"/></entry>
+    <entry id="e2" class="big"><title>B</title><sub><deep/></sub></entry>
+    <dc:meta>m</dc:meta>
+    <empty/>
+  </feed>
+XML
+xmlcss_doc = (Makiri::XML(XMLCSS_SRC) rescue nil)
 
 # --- query generation -----------------------------------------------------
 
@@ -86,8 +99,14 @@ end
 # --- execution + categorization -------------------------------------------
 
 # Returns [category, detail]. Categories: :ok, :expected, :unexpected.
+# Runs both the full-set and the first-match (#at_*) path so the engine's
+# first-match short-circuit gets the same fuzz coverage as the full evaluator.
 def run_inproc(doc, target, query)
-  target == :css ? doc.css(query) : doc.xpath(query)
+  if target == :css
+    doc.css(query); doc.at_css(query)
+  else
+    doc.xpath(query); doc.at_xpath(query)
+  end
   [:ok, nil]
 rescue Makiri::Error => e
   [:expected, e.class.name] # malformed input rejected cleanly - fine
@@ -101,7 +120,11 @@ def run_isolated(doc, target, query, timeout_sec)
     rd.close
     result =
       begin
-        target == :css ? doc.css(query) : doc.xpath(query)
+        if target == :css
+          doc.css(query); doc.at_css(query)
+        else
+          doc.xpath(query); doc.at_xpath(query)
+        end
         [:ok, nil]
       rescue Makiri::Error => e
         [:expected, e.class.name]
@@ -267,6 +290,12 @@ while Time.now - t0 < opts[:time]
     query  = MutateFuzz.next_seed(rng)
     name   = "mutate"
     html   = "seed: #{query}\n# replay: ruby -Ilib -r makiri -r ./spec/fuzz/mutate -e 'p MutateFuzz.run(#{query})'"
+  elsif opts[:target] == :xmlcss
+    target = :css                       # same CSS execution path, against an XML doc
+    query  = next_query(:css, rng)[1]
+    name   = "xml-css"
+    html   = XMLCSS_SRC
+    doc    = xmlcss_doc
   else
     target, query = next_query(opts[:target], rng)
     name, html, doc = fixtures.sample(random: rng)

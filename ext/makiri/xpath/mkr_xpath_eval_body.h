@@ -45,9 +45,13 @@ node_ns_text(MKR_DOM_NODE *node, MKR_DOM_DOCUMENT *doc)
  * strict mode, restricts elements to the HTML/no namespace; a prefixed test
  * compares the local name plus the namespace URI bound to the prefix. The XML
  * instance defines MKR_HOST_XML and provides its own local-name + ns_uri match. */
+/* +have_pre+ supplies the prefix's already-resolved namespace URI (pre_uri /
+ * pre_uri_len), so a hot multi-node walk resolves the test prefix once in
+ * eval_step instead of per node. have_pre == 0 resolves it here as before. */
 static int
 name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
-                mkr_axis_t axis, mkr_xpath_context_t *ctx)
+                mkr_axis_t axis, mkr_xpath_context_t *ctx,
+                const char *pre_uri, size_t pre_uri_len, int have_pre)
 {
 #ifdef MKR_HOST_XML
   /* XML name match (local name + namespace URI). An unprefixed test matches a
@@ -66,8 +70,9 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
   size_t node_uri_len = 0;
   const char *node_uri = MKR_NODE_NS_URI(node, mkr_ctx_document(ctx), &node_uri_len);
   if (test->prefix.ptr != NULL) {
-    size_t want_uri_len = 0;
-    const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
+    size_t want_uri_len = pre_uri_len;
+    const char *want_uri = have_pre ? pre_uri
+        : mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
     if (want_uri == NULL) return 0;
     if (want_uri_len != node_uri_len
         || (want_uri_len && memcmp(want_uri, node_uri, want_uri_len) != 0)) return 0;
@@ -92,8 +97,9 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
                             mkr_borrowed_text((const char *)got, got_len))) return 0;
 
   if (test->prefix.ptr != NULL) {
-    size_t want_uri_len = 0;
-    const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
+    size_t want_uri_len = pre_uri_len;
+    const char *want_uri = have_pre ? pre_uri
+        : mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
     if (want_uri == NULL) return 0; /* unknown prefix -> non-match (step driver reports) */
     mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
     if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
@@ -111,8 +117,9 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
 }
 
 static int
-node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
-                     mkr_axis_t axis, mkr_xpath_context_t *ctx)
+node_principal_match_pre(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
+                         mkr_axis_t axis, mkr_xpath_context_t *ctx,
+                         const char *pre_uri, size_t pre_uri_len, int have_pre)
 {
   switch (test->kind) {
   case MKR_NT_NODE:
@@ -159,8 +166,9 @@ node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
      * to prefix (internal.h §5). Unknown prefix is reported up front by the
      * step driver; here it is a non-match. */
     if (test->prefix.ptr != NULL) {
-      size_t want_uri_len = 0;
-      const char *want_uri = mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
+      size_t want_uri_len = pre_uri_len;
+      const char *want_uri = have_pre ? pre_uri
+          : mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
       if (want_uri == NULL) return 0;
       mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
       if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
@@ -177,9 +185,19 @@ node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
     /* The local-name + namespace match for an element/attribute name test is
      * host-specific (HTML's qualified-name model vs XML's local+namespace-URI
      * model, §8.6), so it lives in name_test_match - defined per instance. */
-    return name_test_match(test, node, axis, ctx);
+    return name_test_match(test, node, axis, ctx, pre_uri, pre_uri_len, have_pre);
   }
   return 0;
+}
+
+/* Behaviour-preserving wrapper: resolve the prefix per call, as before. Used by
+ * the first-match path and the //tag index re-check (not hot enough to pre-
+ * resolve); the hot step walk calls node_principal_match_pre directly. */
+static int
+node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
+                     mkr_axis_t axis, mkr_xpath_context_t *ctx)
+{
+  return node_principal_match_pre(test, node, axis, ctx, NULL, 0, 0);
 }
 
 /* ---------- axis walkers ---------- */
@@ -499,13 +517,19 @@ typedef struct {
   int                 aborted; /* set when push or match failed; the walk
                                 * is short-circuited and the step driver
                                 * propagates the error. */
+  /* The name test's prefix resolved once by eval_step (see have_pre), so a
+   * multi-node walk does not re-resolve it per node. */
+  const char         *pre_uri;
+  size_t              pre_uri_len;
+  int                 have_pre;
 } step_visit_t;
 
 static int
 step_visit_cb(MKR_DOM_NODE *n, void *u)
 {
   step_visit_t *st = (step_visit_t *)u;
-  if (node_principal_match(&st->step->test, n, st->step->axis, st->ctx)) {
+  if (node_principal_match_pre(&st->step->test, n, st->step->axis, st->ctx,
+                               st->pre_uri, st->pre_uri_len, st->have_pre)) {
     if (mkr_nodeset_push(st->out, n, mkr_ctx_limits(st->ctx), st->err) != 0) {
       st->aborted = 1;
       return 1; /* stop the walk; eval_step inspects st.aborted */
@@ -622,6 +646,7 @@ is_reverse_axis(mkr_axis_t a)
  * byte-identical to the walk (this also makes case/normalization quirks in the
  * tag-name lookup harmless: a non-matching candidate is simply dropped).
  */
+#ifndef MKR_HOST_XML
 static int
 try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
                          const mkr_nodeset_t *context_set, mkr_nodeset_t *result,
@@ -668,6 +693,59 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   }
   return 1;
 }
+#else  /* MKR_HOST_XML */
+/*
+ * XML analogue of the //tag fast path: a document-rooted, predicate-free
+ * descendant name test answered from the element-name index (mkr_xml_index.c)
+ * instead of walking. The index is keyed by (local name + namespace URI), so it
+ * serves a prefixed test (resolved URI) and an unprefixed strict test (the
+ * no-namespace bucket); an unprefixed LAX test means "any namespace", which a
+ * single bucket cannot express, so it falls back to the walk. The bucket already
+ * holds exactly the matching elements in document order, so they are pushed
+ * directly. Returns 1 (filled), 0 (does not qualify -> walk), -1 (error).
+ */
+static int
+try_descendant_name_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
+                          const mkr_nodeset_t *context_set, mkr_nodeset_t *result,
+                          const char *pre_uri, size_t pre_uri_len, int have_pre,
+                          mkr_xpath_error_t *err)
+{
+  if (step->axis != MKR_AXIS_DESCENDANT
+      || step->test.kind != MKR_NT_NAME
+      || step->test.local.ptr == NULL
+      || context_set->count != 1
+      || context_set->items[0] != (MKR_DOM_NODE *)mkr_ctx_document(ctx)) {
+    return 0;
+  }
+
+  const char *ns_uri; size_t ns_uri_len;
+  if (step->test.prefix.ptr != NULL) {
+    if (!have_pre) return 0;             /* should not happen: eval_step pre-resolves */
+    ns_uri = pre_uri; ns_uri_len = pre_uri_len;
+  } else if (mkr_ctx_unprefixed_lax(ctx)) {
+    return 0;                            /* "any namespace" - not a single bucket */
+  } else {
+    ns_uri = ""; ns_uri_len = 0;          /* strict unprefixed -> no namespace */
+  }
+
+  void                    *owner  = mkr_ctx_name_index_owner(ctx);
+  mkr_name_index_get_t     get    = mkr_ctx_name_index_get(ctx);
+  mkr_name_index_lookup_t  lookup = mkr_ctx_name_index_lookup(ctx);
+  if (owner == NULL || get == NULL || lookup == NULL) return 0;
+  void *idx = get(owner);                /* lazily builds + caches; NULL on OOM */
+  if (idx == NULL) return 0;
+
+  size_t cnt = 0;
+  void *const *bucket = lookup(idx, step->test.local.ptr, step->test.local.len,
+                               ns_uri, ns_uri_len, &cnt);
+  for (size_t i = 0; i < cnt; ++i) {
+    if (mkr_nodeset_push(result, (MKR_DOM_NODE *)bucket[i], mkr_ctx_limits(ctx), err) != 0) {
+      return -1;
+    }
+  }
+  return 1;
+}
+#endif /* MKR_HOST_XML */
 
 /* ---------------------------------------------------------------------------
  * at_xpath() first-match short-circuit (Node#at_xpath / Node#at).
@@ -709,9 +787,11 @@ mkr_first_recognise(const mkr_node_t *ast, const mkr_step_t **out_step)
   } else {
     return 0;
   }
-  /* A prefixed name test needs the step driver's "unknown prefix -> RUNTIME
-   * error" semantics, which this path does not reproduce; fall back. */
-  if (nt->test.prefix.ptr != NULL) return 0;
+  /* A prefixed name test is allowed; mkr_try_first_match reproduces the step
+   * driver's "unknown prefix -> RUNTIME error" before walking, and
+   * node_principal_match resolves the prefix to a URI exactly as the full
+   * evaluator does. (Prefixed ATTRIBUTE predicates still fall back: their
+   * mkr_match_attr_step requires an unprefixed @name.) */
   /* Every predicate must be a position-independent attribute predicate (no
    * position()/last()/numeric, no function/variable -> no handler involvement). */
   for (size_t p = 0; p < nt->npredicates; p++) {
@@ -762,6 +842,16 @@ mkr_try_first_match(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
   if (out_node == NULL || !mkr_first_recognise(ast, &step)) return 0;
   *out_node = NULL;
 
+  /* Reproduce the step driver's namespace-prefix validation: a prefixed name
+   * test with an unbound prefix is a RUNTIME error, not a silently empty match,
+   * so the fast path stays byte-identical to the full evaluator (incl. errors). */
+  if (step->test.prefix.ptr != NULL
+      && mkr_ctx_lookup_ns(ctx, step->test.prefix.ptr, step->test.prefix.len, NULL) == NULL) {
+    mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
+                 "unknown namespace prefix '%s' in name test", step->test.prefix.ptr);
+    return -1;
+  }
+
   MKR_DOM_NODE *start = ast->u.path.absolute
       ? (MKR_DOM_NODE *)mkr_ctx_document(ctx)
       : mkr_ctx_node(ctx);
@@ -798,15 +888,20 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
                 axis_name_str(step->axis));
     return -1;
   }
-  /* Validate the namespace prefix once up front so we get a uniform
-   * RUNTIME error instead of a silently empty match. Covers both `prefix:local`
-   * (MKR_NT_NAME) and `prefix:*` (MKR_NT_WILDCARD). */
-  if (step->test.prefix.ptr != NULL
-      && mkr_ctx_lookup_ns(ctx, step->test.prefix.ptr, step->test.prefix.len, NULL) == NULL) {
-    mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
-                "unknown namespace prefix '%s' in name test",
-                step->test.prefix.ptr);
-    return -1;
+  /* Resolve the namespace prefix once up front (covers `prefix:local` and
+   * `prefix:*`): a uniform RUNTIME error instead of a silently empty match, and
+   * the resolved URI is then handed to every per-node match via step_visit_t so
+   * the walk does not re-resolve it per node. */
+  const char *pre_uri = NULL; size_t pre_uri_len = 0; int have_pre = 0;
+  if (step->test.prefix.ptr != NULL) {
+    pre_uri = mkr_ctx_lookup_ns(ctx, step->test.prefix.ptr, step->test.prefix.len, &pre_uri_len);
+    if (pre_uri == NULL) {
+      mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME,
+                  "unknown namespace prefix '%s' in name test",
+                  step->test.prefix.ptr);
+      return -1;
+    }
+    have_pre = 1;
   }
 
   /* Post-pass = sort to doc order, then optional adjacent-dedup. We
@@ -832,9 +927,14 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   mkr_nodeset_init(&result);
 
   if (step->npredicates == 0) {
-    /* `//tag` from the document: serve from the element index, skipping the
-     * tree walk entirely. */
+    /* A document-rooted descendant name test served from the element index,
+     * skipping the tree walk entirely (HTML: tag-id index; XML: name index). */
+#ifdef MKR_HOST_XML
+    int fp = try_descendant_name_index(ctx, step, context_set, &result,
+                                       pre_uri, pre_uri_len, have_pre, err);
+#else
     int fp = try_descendant_tag_index(ctx, step, context_set, &result, err);
+#endif
     if (fp < 0) {
       mkr_nodeset_clear(&result);
       return -1;
@@ -846,7 +946,8 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
      * path needs. Big win for //h3/parent::*, //h3/ancestor::div, and
      * other multi-context reverse-axis sweeps where every context
      * produces a single result. */
-    step_visit_t st = { .out = &result, .step = step, .ctx = ctx, .err = err, .aborted = 0 };
+    step_visit_t st = { .out = &result, .step = step, .ctx = ctx, .err = err, .aborted = 0,
+                        .pre_uri = pre_uri, .pre_uri_len = pre_uri_len, .have_pre = have_pre };
     for (size_t ci = 0; ci < context_set->count; ++ci) {
       walk_axis(step->axis, context_set->items[ci], step_visit_cb, &st);
       if (st.aborted) {
@@ -865,7 +966,8 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     mkr_nodeset_init(&fragment);
     for (size_t ci = 0; ci < context_set->count; ++ci) {
       fragment.count = 0;
-      step_visit_t st = { .out = &fragment, .step = step, .ctx = ctx, .err = err, .aborted = 0 };
+      step_visit_t st = { .out = &fragment, .step = step, .ctx = ctx, .err = err, .aborted = 0,
+                          .pre_uri = pre_uri, .pre_uri_len = pre_uri_len, .have_pre = have_pre };
       walk_axis(step->axis, context_set->items[ci], step_visit_cb, &st);
       if (st.aborted) {
         mkr_nodeset_clear(&fragment);
