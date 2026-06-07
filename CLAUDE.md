@@ -97,6 +97,19 @@ Requires CRuby >= 3.2 and `cmake`.
   auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
   build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
   tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
+- **Our XML bump arena (`mkr_xml_node.c`) is ASan-red-zoned, so its intra-arena
+  overflows ARE caught** - the same blind spot as Lexbor's mraw, but this is our
+  own TU. `arena_alloc` poisons each fresh 64 KiB chunk and unpoisons only the
+  bytes a cut hands out (the `[size, need)` alignment tail stays poisoned), so a
+  write past one `arena_node`/`arena_bytes`/`scratch_bytes` cut hits poisoned
+  memory and ASan reports it. It auto-activates under any `-fsanitize=address`
+  build (`__has_feature`/`__SANITIZE_ADDRESS__`) - no extra flag, unlike Lexbor -
+  and is a no-op otherwise. So plain `rake sanitize` / `fuzz:sanitize --target
+  xml,mutate` already cover the arena. Everything else we write (XPath engine,
+  CSS lowering, glue, core) uses plain malloc/calloc/realloc, which ASan
+  red-zones per allocation - no arena, no special handling. Keep the unpoison at
+  exactly the requested `size` (not `need`); widening it to `need` would silence
+  off-by-one-into-padding overflows.
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`

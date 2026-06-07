@@ -9,6 +9,32 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ASan red-zoning for the bump arena. Like Lexbor's mraw, our arena carves many
+ * sub-allocations out of one malloc'd chunk, so a write past one cut into the
+ * next stays inside that single malloc and is INVISIBLE to a plain ASan build
+ * (the heap red-zones only guard the chunk's outer boundary - this is exactly
+ * how the v3.0.0 :lexbor-contains overflow hid). So we poison each fresh chunk
+ * and unpoison only the bytes a cut actually hands out, leaving the alignment
+ * tail and not-yet-cut space poisoned: an intra-arena overrun then writes into
+ * poisoned memory and ASan reports it. Auto-active whenever our ext is built
+ * with -fsanitize=address (rake sanitize / fuzz:sanitize) - no extra flag,
+ * because unlike vendored Lexbor this is our own TU. A no-op otherwise. */
+#if defined(__SANITIZE_ADDRESS__)
+#  define MKR_XML_HAVE_ASAN 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define MKR_XML_HAVE_ASAN 1
+#  endif
+#endif
+#if defined(MKR_XML_HAVE_ASAN)
+#  include <sanitizer/asan_interface.h>
+#  define MKR_ARENA_POISON(p, n)   __asan_poison_memory_region((p), (n))
+#  define MKR_ARENA_UNPOISON(p, n) __asan_unpoison_memory_region((p), (n))
+#else
+#  define MKR_ARENA_POISON(p, n)   ((void)(p), (void)(n))
+#  define MKR_ARENA_UNPOISON(p, n) ((void)(p), (void)(n))
+#endif
+
 /* Alignment for arena cuts: the strictest fundamental alignment, so any object
  * fits. The chunk payload starts at an aligned offset past the header, and every
  * cut size is rounded up to ARENA_ALIGN, so each returned pointer is aligned. */
@@ -40,8 +66,10 @@ mkr_xml_doc_destroy(mkr_xml_doc_t *doc)
     if (doc == NULL) return;
     mkr_xml_name_index_invalidate(doc); /* free the heap-side element-name index */
     /* whole-arena free: no individual node/byte free anywhere (read-only). */
+    const size_t hdr = align_up(sizeof(mkr_xml_arena_chunk_t), ARENA_ALIGN);
     for (mkr_xml_arena_chunk_t *c = doc->chunks; c != NULL; ) {
         mkr_xml_arena_chunk_t *n = c->next;
+        MKR_ARENA_UNPOISON((char *)c, hdr + c->cap); /* hand clean memory back to ASan's allocator */
         free(c);
         c = n;
     }
@@ -100,10 +128,18 @@ arena_alloc(mkr_xml_doc_t *doc, size_t size)
         nc->cap  = cap;
         doc->chunks = nc;
         c = nc;
+        /* poison the whole payload; each cut unpoisons only what it returns. */
+        MKR_ARENA_POISON((char *)nc + hdr, cap);
     }
     void *p = (char *)c + hdr + c->used;
     c->used += need;
     doc->arena_bytes += need;
+    /* Hand out exactly +size+ usable bytes; the [size, need) alignment tail (and
+     * everything past it in the chunk) stays poisoned as a red-zone, so a write
+     * one byte past the request is caught instead of silently clobbering the
+     * next cut. ASan tolerates the sub-granule trailing byte (ARENA_ALIGN cuts
+     * keep each slot on an 8-byte shadow boundary). */
+    MKR_ARENA_UNPOISON(p, size);
     return p;
 }
 
