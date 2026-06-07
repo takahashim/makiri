@@ -40,6 +40,10 @@ module XmlXPathCorpus
         "//book[@available]", "//book[price>10]", "//book[price<10]", "//book[price=0]",
         "//title[@lang='en']", "//book[author='Ada']", "count(//book[author='Ada'])",
         "//tag", "//tag[2]", "//book[1]/tags/tag[position()=2]",
+        # //name[N] is per-context (the Nth name-child of EACH parent), not
+        # (//name)[N]; these exercise that across multiple parents (each book is
+        # a separate parent of one author/title) vs single-parent //book[2].
+        "//author[1]", "//author[2]", "//title[1]", "//tag[1]", "//tag[3]", "//tag[4]",
         "//book[1]/following-sibling::book", "//book[3]/preceding-sibling::book",
         "//book[2]/ancestor::catalog", "//title/ancestor::book/@id",
         "//book/parent::*", "//price[@currency='EUR']/..",

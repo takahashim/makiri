@@ -200,6 +200,32 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("//p[@id]").length).to eq(3)
       expect(doc.xpath("//p[@lang]").length).to eq(1)
     end
+
+    # //name[N] is served from the XML element-name index with per-parent
+    # counting (a fast path); pin that it keeps exact XPath 1.0 semantics - the
+    # Nth name-child of EACH parent, distinct from (//name)[N] and
+    # descendant::name[N].
+    describe "//name[N] (per-context positional, index fast path)" do
+      let(:ns) { { "a" => "u" } }
+
+      it "selects the Nth name-child of every parent, not the global Nth" do
+        nested = Makiri::XML(%(<r xmlns="u"><e><e>i1</e><e>i2</e></e><e>2</e><e>3</e></r>))
+        expect(nested.xpath("//a:e[1]", ns).map(&:text)).to eq(%w[i1i2 i1]) # outer 1st + inner 1st
+        expect(nested.xpath("//a:e[2]", ns).map(&:text)).to eq(%w[i2 2])    # inner 2nd + outer 2nd
+        expect(nested.xpath("(//a:e)[1]", ns).map(&:text)).to eq(%w[i1i2])  # global first - differs
+        expect(nested.root.xpath("descendant::a:e[2]", ns).map(&:text)).to eq(%w[i1]) # axis 2nd
+      end
+
+      it "spans many parents and handles out-of-range / no-namespace" do
+        flat = Makiri::XML(%(<r xmlns="u"><e>1</e><e>2</e><e>3</e></r>))
+        expect(flat.xpath("//a:e[3]", ns).map(&:text)).to eq(%w[3])
+        expect(flat.xpath("//a:e[4]", ns)).to be_empty
+        # each <b> is a separate parent of one <au> -> //au[1] = all <au>
+        cat = Makiri::XML("<c><b><au>x</au></b><b><au>y</au></b></c>")
+        expect(cat.xpath("//au[1]").map(&:text)).to eq(%w[x y])
+        expect(cat.xpath("//au[2]")).to be_empty
+      end
+    end
   end
 
   describe "node-set functions" do
