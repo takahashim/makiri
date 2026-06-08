@@ -204,6 +204,7 @@ mkr_str_cache_init(mkr_str_cache_t *c)
   c->cap        = 0;
   c->buckets    = NULL;
   c->bucket_cap = 0;
+  c->total_bytes = 0;
 }
 
 /* Insert entry index `idx` (keyed by entries[idx].node) into the index. The
@@ -240,6 +241,11 @@ mkr_str_cache_truncate(mkr_str_cache_t *c, size_t target_count)
 {
   if (c == NULL || target_count >= c->count) return;
   for (size_t i = target_count; i < c->count; ++i) {
+    if (c->total_bytes >= c->entries[i].len) {
+      c->total_bytes -= c->entries[i].len;
+    } else {
+      c->total_bytes = 0;
+    }
     free(c->entries[i].str);
   }
   c->count = target_count;
@@ -252,9 +258,11 @@ mkr_str_cache_truncate(mkr_str_cache_t *c, size_t target_count)
         free(c->buckets);
         c->buckets = NULL;
         c->bucket_cap = 0;
+        c->total_bytes = 0;
         return;
       }
       memset(c->buckets, 0, buckets_bytes);
+      c->total_bytes = 0;
     } else {
       mkr_str_cache_reindex(c, c->bucket_cap);
     }
@@ -270,11 +278,12 @@ mkr_str_cache_clear(mkr_str_cache_t *c)
   }
   free(c->entries);
   free(c->buckets);
-  c->entries    = NULL;
-  c->count      = 0;
-  c->cap        = 0;
-  c->buckets    = NULL;
-  c->bucket_cap = 0;
+  c->entries     = NULL;
+  c->count       = 0;
+  c->cap         = 0;
+  c->buckets     = NULL;
+  c->bucket_cap  = 0;
+  c->total_bytes = 0;
 }
 
 /* ---------- AST destructors ---------- */

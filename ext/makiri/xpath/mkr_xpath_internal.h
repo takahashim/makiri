@@ -424,6 +424,9 @@ typedef struct {
    * size_t (not uint32_t) so the stored entry index can never truncate. */
   size_t   *buckets;
   size_t    bucket_cap; /* power of two, or 0 */
+  /* Total bytes stored across all cached strings; bounded by max_string_bytes
+   * so a single evaluate cannot grow the cache without limit. */
+  size_t    total_bytes;
 } mkr_str_cache_t;
 
 void mkr_str_cache_init    (mkr_str_cache_t *c);

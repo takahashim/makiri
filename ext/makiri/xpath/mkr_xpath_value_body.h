@@ -743,6 +743,15 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
     mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in node string cache");
     return -1;
   }
+
+  /* Enforce a total cap on the cached string bytes (fail-closed). */
+  size_t new_total;
+  if (!mkr_size_add(c->total_bytes, text.len, &new_total)
+      || mkr_limit_check_string_bytes(mkr_ctx_limits(ctx), new_total, err) != 0) {
+    mkr_owned_text_clear(&text);
+    return -1;
+  }
+
   c->entries[c->count].node = node;
   c->entries[c->count].str  = text.ptr;
   c->entries[c->count].len  = text.len;
@@ -768,6 +777,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
     }
   }
   mkr_str_cache_index_put(c, c->count);
+  c->total_bytes += text.len;
   c->count++;
 
   *out = mkr_borrowed_text_from_owned(text);

@@ -684,6 +684,7 @@ try_descendant_tag_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
    * cast keeps the shared body warning-clean under the XML instantiation. */
   MKR_DOM_NODE *const *bucket = (MKR_DOM_NODE *const *)lookup(eidx, tag, &cnt);
   for (size_t i = 0; i < cnt; ++i) {
+    if (mkr_limit_eval_op(mkr_ctx_limits(ctx), err) != 0) return -1;
     MKR_DOM_NODE *n = bucket[i];
     if (node_principal_match(&step->test, n, step->axis, ctx)) {
       if (mkr_nodeset_push(result, n, mkr_ctx_limits(ctx), err) != 0) {
@@ -739,6 +740,7 @@ try_descendant_name_index(mkr_xpath_context_t *ctx, const mkr_step_t *step,
   void *const *bucket = lookup(idx, step->test.local.ptr, step->test.local.len,
                                ns_uri, ns_uri_len, &cnt);
   for (size_t i = 0; i < cnt; ++i) {
+    if (mkr_limit_eval_op(mkr_ctx_limits(ctx), err) != 0) return -1;
     if (mkr_nodeset_push(result, (MKR_DOM_NODE *)bucket[i], mkr_ctx_limits(ctx), err) != 0) {
       return -1;
     }
