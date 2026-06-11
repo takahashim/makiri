@@ -642,10 +642,11 @@ static VALUE
 mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
-    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "variable name");
-    /* The value gets the stricter engine-string check (adds the byte cap on top
-     * of no-NUL / valid-UTF-8). */
+    /* Coerce the value FIRST (rb_obj_as_string allocates = a GC point), so no
+     * borrowed name bytes are held across it. The value gets the stricter
+     * engine-string check (adds the byte cap on top of no-NUL / valid-UTF-8). */
     VALUE value = rb_obj_as_string(rb_value);
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "variable name");
     mkr_ruby_borrowed_text_t vv;
     const char *bad =
         mkr_ruby_try_verified_text(value, mkr_ctx_limits(d->ctx)->max_string_bytes, &vv);

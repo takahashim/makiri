@@ -509,28 +509,29 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
      * preserved rather than read as raw UTF-8 bytes. */
     rb_source = mkr_ruby_to_utf8(rb_source);
 
-    /* Allocate the wrapper first (with parsed == NULL) so that if parsing
-     * fails the GC-managed object frees cleanly. This is the HTML parse entry
-     * (defined on Makiri::HTML::Document), so the result is always HTML. */
-    mkr_doc_data_t *d;
-    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_html_doc_type, d);
-    d->parsed = NULL;
-    d->errors = rb_ary_new();
-
-    /* Copy the source into a C buffer so the parse can run with the GVL
-     * released without racing GC/compaction on the Ruby String's backing
-     * store. The source is not retained past the parse (Lexbor copies what it
-     * needs into the arena and the line table is built up front), so the
-     * buffer is freed immediately after. */
+    /* Copy the source into a C buffer up front - BEFORE allocating the wrapper
+     * (a Ruby allocation, and thus a GC point) - so no GC can run between
+     * obtaining rb_source (possibly a fresh transcoded String) and copying its
+     * bytes, and the parse can then run with the GVL released without racing
+     * GC/compaction on the Ruby String's backing store. The source is not
+     * retained past the parse (Lexbor copies what it needs into the arena and
+     * the line table is built up front), so the buffer is freed immediately
+     * after. The coderange is read first (no scan): a source Ruby already knows
+     * is valid UTF-8 lets the parse skip its sanitisation scan. */
+    bool assume_valid = mkr_ruby_str_known_valid_utf8(rb_source);
     mkr_owned_bytes_t source = {0};
     if (mkr_ruby_copy_bytes(rb_source, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying source");
     }
-    /* Read the coderange (no scan) before releasing the GVL; the copy is
-     * byte-identical, so a source Ruby already knows is valid UTF-8 lets the
-     * parse skip its sanitisation scan. */
-    bool assume_valid = mkr_ruby_str_known_valid_utf8(rb_source);
     RB_GC_GUARD(rb_source);
+
+    /* Allocate the wrapper (with parsed == NULL) so that if parsing fails the
+     * GC-managed object frees cleanly. This is the HTML parse entry (defined on
+     * Makiri::HTML::Document), so the result is always HTML. */
+    mkr_doc_data_t *d;
+    VALUE obj = TypedData_Make_Struct(klass, mkr_doc_data_t, &mkr_html_doc_type, d);
+    d->parsed = NULL;
+    d->errors = rb_ary_new();
 
     mkr_parse_nogvl_t args = { (const lxb_char_t *)source.ptr, source.len,
                                assume_valid, NULL };

@@ -241,6 +241,10 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
      * with File.binread now parses). */
     long bom_len = 0;
     rb_encoding *bom  = mkr_xml_bom_encoding(raw, rawlen, &bom_len);
+    /* rb_enc_find inside the BOM lookup can autoload an encoding (a Ruby
+     * allocation = a GC point), so re-borrow the bytes before reading them
+     * again - a borrowed RSTRING pointer must not be held across one. */
+    raw = (const unsigned char *)RSTRING_PTR(str);
     rb_encoding *decl = mkr_xml_decl_encoding(raw + bom_len, rawlen - bom_len, bom);
     int is_binary = (tag == rb_ascii8bit_encoding());
 
@@ -288,14 +292,15 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
 
     const char *ptr = RSTRING_PTR(s);
     long        len = RSTRING_LEN(s);
+    long        off = 0;
     /* §4.3.3: a leading BOM is the encoding signature, not document content -
      * strip a U+FEFF (the transcode above turns any UTF-16/32 BOM into one). */
     if (len >= 3 && (unsigned char)ptr[0] == 0xEF && (unsigned char)ptr[1] == 0xBB
         && (unsigned char)ptr[2] == 0xBF) {
-        ptr += 3; len -= 3;
+        off = 3; len -= 3;
     }
 
-    /* Fail closed on an over-budget input BEFORE the validation copy and the
+    /* Fail closed on an over-budget input BEFORE the validation scan and the
      * caller's GVL-release copy (an input whose UTF-8 length exceeds the arena
      * budget can never parse). max_bytes == 0 disables the check (__decode). */
     if (max_bytes != 0 && (size_t)len > max_bytes) {
@@ -303,15 +308,23 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
         rb_raise(mkr_eXmlLimitExceeded, "XML input exceeds the byte budget");
     }
 
-    /* Strict UTF-8 validation: an embedded NUL or any invalid UTF-8 is fatal
-     * (no U+FFFD repair - unlike the HTML mkr_utf8_sanitize path). */
-    if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
+    /* Strict UTF-8 validation, allocation-free - no GC point while `ptr` is
+     * borrowed (the former rb_enc_str_new copy handed the borrow straight into
+     * an allocating call): an embedded NUL or any invalid UTF-8 is fatal (no
+     * U+FFFD repair - unlike the HTML mkr_utf8_sanitize path). A whole-string
+     * cached coderange covers the BOM-stripped suffix too (the BOM is one
+     * complete UTF-8 character). */
+    if (len > 0 && memchr(ptr + off, '\0', (size_t)len) != NULL) {
         rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
     }
-    VALUE u = rb_enc_str_new(ptr, len, rb_utf8_encoding());
-    if (rb_enc_str_coderange(u) == ENC_CODERANGE_BROKEN) {
+    if (!mkr_ruby_str_known_valid_utf8(s)
+        && !mkr_utf8_valid((const unsigned char *)ptr + off, (size_t)len)) {
         rb_raise(mkr_eXmlSyntaxError, "XML input must be valid UTF-8");
     }
+    /* Build the result through the VALUE, not the borrowed ptr (rb_str_subseq
+     * allocates, so the ptr must not be what it copies from). */
+    VALUE u = rb_str_subseq(s, off, len);
+    rb_enc_associate(u, rb_utf8_encoding());
     RB_GC_GUARD(s);
     return u; /* validated, UTF-8-tagged, BOM-stripped */
 }
