@@ -72,8 +72,67 @@ jobs:
       - name: Run short fuzz under sanitizers
         run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--time 30"
 
+  # macOS-only malloc-leak gate: ASan everywhere runs with detect_leaks=0 (Ruby
+  # and Lexbor are uninstrumented), so this is the ONLY automated leak check. It
+  # flags per-call leak stacks through the extension, including on rescued
+  # failure paths (see script/check_leaks.rb).
+  security-leaks:
+    name: Malloc-leak gate (macOS leaks)
+    runs-on: macos-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run the leak gate
+        run: bundle exec rake leaks
+
+  # Nightly: fuzz EVERY target (the 30s PR fuzz covers only the default xpath
+  # target; the CSS engine reuse and the XML parser/mutator are each their own
+  # documented memory-safety risk, so each gets a full 300s run).
   security-fuzz-nightly:
-    name: Nightly sanitized fuzz
+    name: Nightly sanitized fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [xpath, css, xml, mutate, xmlcss]
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run nightly fuzz under sanitizers
+        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--target ${{ matrix.target }} --time 300"
+
+  # Nightly: the whole spec suite with Lexbor ITSELF built under ASan (mraw
+  # poisoning on), catching intra-arena overflows that a plain ASan build cannot
+  # see - the class the v3.0.0 :lexbor-contains overflow belonged to. Heavy
+  # (full instrumented Lexbor rebuild), so nightly only.
+  security-sanitize-lexbor:
+    name: Nightly instrumented-Lexbor ASan suite
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
@@ -91,5 +150,5 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      - name: Run nightly fuzz under sanitizers
-        run: bundle exec rake fuzz:sanitize FUZZ_ARGS="--time 300"
+      - name: Build Lexbor under ASan and run the suite
+        run: bundle exec rake "sanitize:lexbor"

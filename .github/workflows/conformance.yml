@@ -57,6 +57,15 @@ jobs:
       - name: CSS Selectors differential vs Nokogiri::HTML5
         run: bundle exec rake conformance:css
 
+      - name: XML XPath 1.0 differential vs Nokogiri::XML
+        run: bundle exec rake conformance:xpath_xml
+
+      - name: XML CSS-selector differential vs Nokogiri::XML
+        run: bundle exec rake conformance:css_xml
+
+      - name: XML Builder differential vs Nokogiri::XML::Builder
+        run: bundle exec rake conformance:builder
+
   # Nightly: a wide XPath differential sweep across many seeds and a high
   # generated volume, to surface divergences the curated corpus and a single
   # seed miss. Fails fast (bash -e) on the first real divergence.
@@ -92,3 +101,16 @@ jobs:
             XPATH_ARGS="--generate 20000 --seed ${seed}" bundle exec rake conformance:xpath
             echo "::endgroup::"
           done
+
+      # The W3C XML conformance suite fetches its (pinned) test corpus on first
+      # run, so it lives in the nightly rather than on every PR.
+      - name: XML 1.0 well-formedness vs the W3C XML Conformance Test Suite
+        run: bundle exec rake conformance:xmlconf
+
+      # Property-based tree differential: generated documents, Makiri's parsed
+      # tree + canonical output vs Nokogiri::XML. Scalable volume - nightly gets
+      # a much larger batch than the resident in-suite PBT specs.
+      - name: XML property-based tree differential vs Nokogiri::XML
+        run: bundle exec rake conformance:xml_pbt
+        env:
+          PBT_ARGS: "--count 20000"
