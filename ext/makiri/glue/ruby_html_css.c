@@ -71,11 +71,20 @@ mkr_css_engine_init(void)
     g_css_ready  = 1;
 }
 
+/* find: the callback runs inside Lexbor's traversal frames, so it must NOT
+ * raise - a longjmp would abort lxb_selectors_find mid-walk AND skip the
+ * post-run reset in mkr_with_compiled_selector, leaving the process-global
+ * parser/memory/selectors dirty for every later query. So matches are collected
+ * into a plain C array here (no Ruby at all); the node cap and a growth failure
+ * each latch a flag and STOP, and the caller raises only after the traversal
+ * has unwound normally and the engine was reset. */
 typedef struct {
-    VALUE           set;
-    lxb_dom_node_t *root;       /* excluded from results: css is descendant-only */
-    size_t          count;
-    int             overflow;
+    lxb_dom_node_t **nodes;     /* malloc-backed; the caller owns + frees it */
+    size_t           count;
+    size_t           cap;
+    lxb_dom_node_t  *root;      /* excluded from results: css is descendant-only */
+    int              overflow;
+    int              oom;
 } mkr_css_ctx_t;
 
 static lxb_status_t
@@ -92,10 +101,37 @@ mkr_css_find_cb(lxb_dom_node_t *node, lxb_css_selector_specificity_t spec,
         c->overflow = 1;
         return LXB_STATUS_STOP; /* fail closed without raising mid-traversal */
     }
-
-    mkr_node_set_push(c->set, (mkr_raw_node_t *)node);
-    c->count++;
+    if (mkr_grow_reserve((void **)&c->nodes, &c->cap, c->count + 1,
+                         sizeof(*c->nodes)) != MKR_OK) {
+        c->oom = 1;
+        return LXB_STATUS_STOP; /* ditto: report OOM after the walk unwinds */
+    }
+    c->nodes[c->count++] = node;
     return LXB_STATUS_OK;
+}
+
+/* Move the collected matches into the NodeSet under rb_ensure, so the C array
+ * cannot leak even if a push raises (NoMemoryError). */
+typedef struct {
+    VALUE          set;
+    mkr_css_ctx_t *ctx;
+} mkr_css_fill_t;
+
+static VALUE
+mkr_css_fill_set(VALUE p)
+{
+    mkr_css_fill_t *f = (mkr_css_fill_t *)p;
+    for (size_t i = 0; i < f->ctx->count; i++) {
+        mkr_node_set_push(f->set, (mkr_raw_node_t *)f->ctx->nodes[i]);
+    }
+    return Qnil;
+}
+
+static VALUE
+mkr_css_free_nodes(VALUE p)
+{
+    free(((mkr_css_ctx_t *)p)->nodes);
+    return Qnil;
 }
 
 /* at_css: capture the first matching descendant and stop. Avoids materialising a
@@ -199,15 +235,25 @@ mkr_node_css(VALUE self, VALUE rb_selector)
 {
     lxb_dom_node_t *root = mkr_html_node_unwrap(self);
     VALUE document = mkr_node_document(self);
-    VALUE set = mkr_node_set_new(document);
 
-    mkr_css_ctx_t ctx = { .set = set, .root = root, .count = 0, .overflow = 0 };
+    /* A syntax error raises inside mkr_with_compiled_selector BEFORE the find
+     * runs, so ctx.nodes is still NULL there - nothing leaks on that path. */
+    mkr_css_ctx_t ctx = { .nodes = NULL, .count = 0, .cap = 0,
+                          .root = root, .overflow = 0, .oom = 0 };
     mkr_with_compiled_selector(rb_selector, root, mkr_run_find, &ctx);
 
-    if (ctx.overflow) {
-        rb_raise(mkr_eError, "CSS result set exceeded the node limit (%u)",
-                 MKR_NODE_SET_MAX);
+    if (ctx.overflow || ctx.oom) {
+        free(ctx.nodes);
+        if (ctx.overflow) {
+            rb_raise(mkr_eError, "CSS result set exceeded the node limit (%u)",
+                     MKR_NODE_SET_MAX);
+        }
+        rb_raise(mkr_eError, "out of memory collecting CSS results");
     }
+
+    VALUE set = mkr_node_set_new(document);
+    mkr_css_fill_t fill = { set, &ctx };
+    rb_ensure(mkr_css_fill_set, (VALUE)&fill, mkr_css_free_nodes, (VALUE)&ctx);
     return set;
 }
 
