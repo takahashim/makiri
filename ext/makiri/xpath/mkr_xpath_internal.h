@@ -127,8 +127,9 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  * an owned text directly; the lexer token, node tests, literals, and names use
  * them too. */
 
-/* Borrowed-text equality, NUL-safe (NULL only equals NULL). The single name/
- * value/registry/token comparison used across the engine. */
+/* Borrowed-text equality via mkr_bytes_eq: equal lengths AND equal bytes; two
+ * empty views are equal regardless of ptr (NULL never dereferenced). The single
+ * name/value/registry/token comparison used across the engine. */
 int mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
 
 /* ---------- XPath Number parsing (grammar-exact, locale-independent) ---------- */
@@ -136,7 +137,7 @@ int mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
 /* Byte length of the longest prefix of [p, p+len) matching the XPath 1.0 Number
  * production `Digits ('.' Digits?)? | '.' Digits` (Digits = [0-9]+; NO sign, NO
  * exponent, NO hex - "5." IS a Number, a bare "." is NOT). Returns 0 if the
- * input does not begin with a Number. Shared (mkr_xpath_shared.c); the lexer and
+ * input does not begin with a Number. One home (mkr_xpath_number.c); the lexer and
  * the string->number coercion both scan through it so they honour the exact
  * grammar instead of C strtod's superset (hex "0x1A", exponent "1e3", INF/NAN,
  * and LC_NUMERIC comma-decimal). */
@@ -148,8 +149,28 @@ size_t mkr_xpath_number_extent(const char *p, size_t len);
  * NUL-terminated at or after p+extent (the engine text contract), so the
  * internal strtod cannot read past the extent. Fast path is a single strtod with
  * no allocation; it fails closed (never raises, never returns a wrong value) on
- * OOM by assembling the digits by hand. Shared (mkr_xpath_shared.c). */
+ * OOM by assembling the digits by hand. One home (mkr_xpath_number.c). */
 double mkr_xpath_number_from_extent(const char *p, size_t extent);
+
+/* ---------- XPath whitespace ---------- */
+
+/* XPath 1.0 whitespace: S = (#x20 | #x9 | #xD | #xA) ONLY - both §3.7
+ * ExprWhitespace and the §4.4 string->number coercion use XML S. NOT C
+ * isspace(), which also accepts #xB (\v) and #xC (\f). The single definition
+ * shared by the lexer, the number coercion, and the function library's
+ * whitespace tokenizers - one place to be right, in sync by construction. */
+static inline int
+mkr_xpath_is_ws(int c)
+{
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+/* Skip the run of XPath S at the span's cursor (peek is -1 at end: not S). */
+static inline void
+mkr_span_skip_xpath_ws(mkr_span_t *s)
+{
+  while (mkr_xpath_is_ws(mkr_span_peek(s))) mkr_span_skip(s, 1);
+}
 
 /* Pointer hash (SplitMix-style). Shared primitive: keys both the per-evaluate
  * document-order index and the string-value cache index. */

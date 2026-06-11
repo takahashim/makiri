@@ -315,19 +315,6 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
 
 /* ---------- coercions ---------- */
 
-/* Skip XPath S whitespace - (#x20 | #x9 | #xD | #xA) ONLY (XPath 1.0 §3.7). NOT
- * C isspace(), which would also swallow #xB (\v) and #xC (\f); those are not
- * XPath whitespace, so a string padded with them must coerce to NaN, not parse. */
-static void
-mkr_span_skip_xpath_ws(mkr_span_t *s)
-{
-  for (;;) {
-    int c = mkr_span_peek(s);
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') mkr_span_skip(s, 1);
-    else break;
-  }
-}
-
 /* string -> number coercion (XPath 1.0 §4.4): optional leading whitespace, an
  * optional single '-' (NO whitespace between it and the digits, and NO '+'),
  * then a Number, then optional trailing whitespace - anything else is NaN. The

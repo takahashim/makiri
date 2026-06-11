@@ -56,6 +56,7 @@ XPATH_SRCS = \
   $(EXT_DIR)/xpath/mkr_xpath_lex.c \
   $(EXT_DIR)/xpath/mkr_xpath_parse.c \
   $(EXT_DIR)/xpath/mkr_xpath_shared.c \
+  $(EXT_DIR)/xpath/mkr_xpath_number.c \
   $(EXT_DIR)/xpath/mkr_xpath_engine_xml.c \
   $(EXT_DIR)/xpath/mkr_xpath_engine_html.c
 

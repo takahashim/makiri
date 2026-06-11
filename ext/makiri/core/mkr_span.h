@@ -154,16 +154,17 @@ mkr_bytes_eq(const void *a, size_t alen, const void *b, size_t blen)
  * within [hay, hay+hay_len). On a hit returns true and writes the byte offset to
  * *idx; on a miss returns false and leaves *idx untouched. The audited
  * replacement for an open-coded substring memcmp (a scan, so it lives in core).
- * Boundary behavior, kept identical to the hand-rolled original:
- *   - a NULL hay or needle is a miss (false) - checked FIRST, so an empty needle
- *     against a NULL haystack is still a miss, not a match at 0;
- *   - otherwise an empty needle (needle_len == 0) matches at offset 0;
- *   - a needle longer than the haystack never matches. */
+ * Boundary behavior mirrors mkr_bytes_eq's: lengths are the truth, pointers are
+ * never dereferenced at length 0 -
+ *   - an empty needle (needle_len == 0) matches at offset 0 in ANY haystack,
+ *     including an empty or NULL "" one (the substring analogue of two empty
+ *     slices comparing equal);
+ *   - a needle longer than the haystack never matches, so a NULL/empty haystack
+ *     misses every non-empty needle without a read. */
 static inline bool
 mkr_bytes_find(const void *hay, size_t hay_len,
                const void *needle, size_t needle_len, size_t *idx)
 {
-    if (hay == NULL || needle == NULL) return false;
     if (needle_len == 0) { *idx = 0; return true; }
     if (needle_len > hay_len) return false;
     const char *h = (const char *)hay;

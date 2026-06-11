@@ -141,8 +141,8 @@ find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
 }
 
 /*
- * Look up each whitespace-separated token in [s, s+len) and push every hit into
- * 'out'. Duplicates are pushed unconditionally - the caller (fn_id) deduplicates
+ * Look up each whitespace-separated token in the borrowed text 's' and push
+ * every hit into 'out'. Duplicates are pushed unconditionally - the caller (fn_id) deduplicates
  * the entire result via sort + adjacent pass after all tokens have been
  * processed, which is O(n log n) versus O(n^2) per-insert contains() checks.
  *
@@ -152,19 +152,16 @@ find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
  * compares by explicit length, never as a C string).
  */
 static int
-id_collect_from_string(const char *s, size_t len, MKR_DOM_NODE *root,
+id_collect_from_string(mkr_borrowed_text_t s, MKR_DOM_NODE *root,
                        mkr_nodeset_t *out, mkr_xpath_context_t *ctx,
                        mkr_xpath_error_t *err)
 {
-  mkr_span_t sp = mkr_span(s, len);
-  int c;
+  mkr_span_t sp = mkr_span(s.ptr, s.len);
   for (;;) {
-    while ((c = mkr_span_peek(&sp)) == ' ' || c == '\t' || c == '\n' || c == '\r')
-      mkr_span_skip(&sp, 1);
+    mkr_span_skip_xpath_ws(&sp);
     if (mkr_span_peek(&sp) < 0) break;
     const char *tok = mkr_span_mark(&sp);
-    while ((c = mkr_span_peek(&sp)) >= 0 &&
-           !(c == ' ' || c == '\t' || c == '\n' || c == '\r'))
+    while (mkr_span_peek(&sp) >= 0 && !mkr_xpath_is_ws(mkr_span_peek(&sp)))
       mkr_span_skip(&sp, 1);
     size_t tok_len = mkr_span_since(&sp, tok);
     MKR_DOM_NODE *hit = find_by_id(root, tok, tok_len);
@@ -207,7 +204,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         mkr_nodeset_clear(&out->u.nodeset);
         return -1;
       }
-      int rc = id_collect_from_string(text.ptr, text.len, root, &out->u.nodeset, ctx, err);
+      int rc = id_collect_from_string(mkr_borrowed_text_from_owned(text), root, &out->u.nodeset, ctx, err);
       mkr_owned_text_clear(&text);
       if (rc != 0) { mkr_nodeset_clear(&out->u.nodeset); return -1; }
     }
@@ -217,7 +214,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
       mkr_nodeset_clear(&out->u.nodeset);
       return -1;
     }
-    int rc = id_collect_from_string(text.ptr, text.len, root, &out->u.nodeset, ctx, err);
+    int rc = id_collect_from_string(mkr_borrowed_text_from_owned(text), root, &out->u.nodeset, ctx, err);
     mkr_owned_text_clear(&text);
     if (rc != 0) { mkr_nodeset_clear(&out->u.nodeset); return -1; }
   }
@@ -241,27 +238,23 @@ static int two_owned_texts(mkr_xpath_context_t *ctx, mkr_val_t *args,
  * identical.
  */
 static int
-ws_token_match(const char *str, size_t str_len, const char *val, size_t val_len)
+ws_token_match(mkr_borrowed_text_t hay, mkr_borrowed_text_t val)
 {
   /* NULL ordering preserved from the original: a NULL haystack/needle is a
-   * non-match BEFORE the empty-needle short-circuit (so empty val + NULL str
+   * non-match BEFORE the empty-needle short-circuit (so empty val + NULL hay
    * stays 0, not 1). */
-  if (str == NULL || val == NULL) return 0;
-  if (val_len == 0) return 1; /* libxml2 returns non-NULL for empty val */
+  if (hay.ptr == NULL || val.ptr == NULL) return 0;
+  if (val.len == 0) return 1; /* libxml2 returns non-NULL for empty val */
 
-  mkr_span_t sp = mkr_span(str, str_len);
-  int c;
+  mkr_span_t sp = mkr_span(hay.ptr, hay.len);
   while (mkr_span_peek(&sp) >= 0) {
     const char *tok = mkr_span_mark(&sp);
-    while ((c = mkr_span_peek(&sp)) >= 0 &&
-           !(c == ' ' || c == '\t' || c == '\n' || c == '\r'))
+    while (mkr_span_peek(&sp) >= 0 && !mkr_xpath_is_ws(mkr_span_peek(&sp)))
       mkr_span_skip(&sp, 1);
-    if (mkr_bytes_eq(tok, mkr_span_since(&sp, tok), val, val_len)) {
+    if (mkr_bytes_eq(tok, mkr_span_since(&sp, tok), val.ptr, val.len)) {
       return 1;
     }
-    /* skip whitespace */
-    while ((c = mkr_span_peek(&sp)) == ' ' || c == '\t' || c == '\n' || c == '\r')
-      mkr_span_skip(&sp, 1);
+    mkr_span_skip_xpath_ws(&sp);
   }
   return 0;
 }
@@ -276,7 +269,8 @@ fn_nokogiri_css_class(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   mkr_owned_text_t hay, needle;
   if (two_owned_texts(ctx, args, &hay, &needle, err) != 0) return -1;
   out->type = MKR_XPATH_TYPE_BOOLEAN;
-  out->u.boolean = ws_token_match(hay.ptr, hay.len, needle.ptr, needle.len);
+  out->u.boolean = ws_token_match(mkr_borrowed_text_from_owned(hay),
+                                 mkr_borrowed_text_from_owned(needle));
   mkr_owned_text_clear(&hay);
   mkr_owned_text_clear(&needle);
   return 0;

@@ -54,19 +54,6 @@ ncname_char(const mkr_span_t *in, size_t off, int start)
   return (start ? is_ncname_start_cp(cp) : is_ncname_cont_cp(cp)) ? len : 0;
 }
 
-static void
-skip_ws(mkr_lexer_t *L)
-{
-  /* XPath 1.0 §3.7 ExprWhitespace = XML S = (#x20 | #x9 | #xD | #xA)+ only.
-   * Not C isspace(), which would also skip #xB (\v) and #xC (\f) - those are
-   * not XPath whitespace and must surface as a syntax error. */
-  for (;;) {
-    int c = mkr_span_peek(&L->in);
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') mkr_span_skip(&L->in, 1);
-    else break;
-  }
-}
-
 static int
 lex_number(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
@@ -147,7 +134,7 @@ static int
 next_token(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
   memset(t, 0, sizeof(*t));
-  skip_ws(L);
+  mkr_span_skip_xpath_ws(&L->in);  /* XPath S only - see mkr_xpath_is_ws */
   const char *s = mkr_span_mark(&L->in);
   int c = mkr_span_peek(&L->in);
 
@@ -233,7 +220,7 @@ mkr_lexer_peek_nonws(const mkr_lexer_t *L)
   mkr_span_t s = L->in;
   for (;;) {
     int c = mkr_span_peek(&s);
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { mkr_span_skip(&s, 1); continue; }
+    if (mkr_xpath_is_ws(c)) { mkr_span_skip(&s, 1); continue; }
     return c;
   }
 }
