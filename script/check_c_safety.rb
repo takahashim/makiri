@@ -23,6 +23,7 @@ PARSER_TUS = %w[
   ext/makiri/xml/mkr_xml_node.c
   ext/makiri/xpath/mkr_xpath_lex.c
   ext/makiri/bridge/ruby_string.c
+  ext/makiri/lexbor_compat/source_loc.c
 ].freeze
 
 RULES = [
@@ -74,7 +75,11 @@ RULES = [
   Rule.new(
     id: "verified_text_forge",
     message: "mkr_verified_text_t must be minted only by mkr_verified_text_from_view (the validated boundary)",
-    regex: /\(\s*mkr_verified_text_t\s*\)\s*\{/
+    # Both forge shapes: the compound-literal cast AND the declaration
+    # initializer (`mkr_verified_text_t x = {...}`), which the cast-only regex
+    # used to miss - that gap let a fuzz harness mint over a non-NUL-terminated
+    # buffer unnoticed.
+    regex: /\(\s*mkr_verified_text_t\s*\)\s*\{|\bmkr_verified_text_t\s+\w+\s*=\s*\{/
   ),
   # --- HTML/XML representation boundary (see docs/html_xml_boundary_hardening) ---
   # These symbols assume one DOM representation; using them outside their

@@ -203,6 +203,13 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
-$VPATH += Dir.glob(File.join(EXT_DIR, "**/")).map { |d| "$(srcdir)/#{d.sub("#{EXT_DIR}/", "")}".chomp("/") }
+# fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,
+# fuzz/build/{core,xml,xpath}/ hold sanitizer-instrumented .o files, and a
+# VPATH that includes them lets make resolve the extension's object
+# prerequisites there instead of compiling them - breaking the link (or worse,
+# silently mixing differently-flagged objects).
+$VPATH += Dir.glob(File.join(EXT_DIR, "**/"))
+             .reject { |d| d.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+             .map { |d| "$(srcdir)/#{d.sub("#{EXT_DIR}/", "")}".chomp("/") }
 
 create_makefile("makiri/makiri")

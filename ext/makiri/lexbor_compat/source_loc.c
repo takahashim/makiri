@@ -8,7 +8,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>   /* memchr */
 
 /*
  * Source location tracking. Lexbor does not record where in the input a node
@@ -39,18 +38,15 @@ typedef struct {
 void *
 mkr_lines_build(const lxb_char_t *src, size_t len)
 {
-    if (src == NULL) {
-        len = 0;
-    }
+    /* mkr_span normalizes src == NULL to the empty span, so the absent-input
+     * case (no newlines, one line) flows through with no special guard. */
 
-    const lxb_char_t *const end = src + len;
-
-    /* One pass to count newlines (vectorised memchr), so the array is sized
-     * once. */
-    size_t nl = 0;
-    for (const lxb_char_t *p = src;
-         (p = memchr(p, '\n', (size_t)(end - p))) != NULL;
-         p++) {
+    /* One pass to count newlines (mkr_span_find is still one memchr per line,
+     * inside the audited core), so the array is sized once. */
+    mkr_span_t s = mkr_span((const char *)src, len);
+    size_t nl = 0, at;
+    while (mkr_span_find(&s, '\n', &at)) {
+        mkr_span_skip(&s, at + 1); /* past the '\n' (find proved it exists) */
         nl++;
     }
 
@@ -65,12 +61,14 @@ mkr_lines_build(const lxb_char_t *src, size_t len)
         return NULL;
     }
 
+    mkr_span_t f = mkr_span((const char *)src, len);
+    const char *start = mkr_span_mark(&f);
     size_t line = 0;
     t->starts[line++] = 0;
-    for (const lxb_char_t *p = src;
-         (p = memchr(p, '\n', (size_t)(end - p))) != NULL;
-         p++) {
-        t->starts[line++] = (size_t)(p - src) + 1;
+    while (mkr_span_find(&f, '\n', &at)) {
+        mkr_span_skip(&f, at + 1);
+        /* offset just past the '\n' = next line's start */
+        t->starts[line++] = mkr_span_since(&f, start);
     }
     return t;
 }

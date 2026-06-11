@@ -156,24 +156,40 @@ mkr_xml_strict_transcode_thunk(VALUE str)
 /* --- XML 1.0 Appendix F: byte-encoding autodetection (BOM, then declaration) ---
  *
  * The leading byte-order mark, or NULL; *bom_len gets its length. UTF-32 BOMs are
- * checked before the UTF-16 LE BOM they share a prefix with. */
+ * checked before the UTF-16 LE BOM they share a prefix with.
+ *
+ * *stride / *ascii_off get the interleave geometry of the ASCII column the decl
+ * scanner later extracts (default 1/0 for a single-byte stream). It is resolved
+ * HERE, at the match, rather than re-derived downstream, because that derivation
+ * needs rb_enc_find (it can autoload an encoding = a GC point) and the decl
+ * scanner reads a borrowed RSTRING view that must not be held across one - so
+ * the scanner is kept allocation-free until its reads are done. Each span read
+ * of p still finishes before the rb_enc_find in the return. */
 static rb_encoding *
-mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len)
+mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len, long *stride, long *ascii_off)
 {
     mkr_span_t s = mkr_span((const char *)p, (size_t)len);
     *bom_len = 0;
-    if (mkr_span_starts(&s, "\x00\x00\xFE\xFF", 4)) { *bom_len = 4; return rb_enc_find("UTF-32BE"); }
-    if (mkr_span_starts(&s, "\xFF\xFE\x00\x00", 4)) { *bom_len = 4; return rb_enc_find("UTF-32LE"); }
-    if (mkr_span_starts(&s, "\xFE\xFF", 2)) { *bom_len = 2; return rb_enc_find("UTF-16BE"); }
-    if (mkr_span_starts(&s, "\xFF\xFE", 2)) { *bom_len = 2; return rb_enc_find("UTF-16LE"); }
+    *stride = 1;
+    *ascii_off = 0;
+    if (mkr_span_starts(&s, "\x00\x00\xFE\xFF", 4)) { *bom_len = 4; *stride = 4; *ascii_off = 3; return rb_enc_find("UTF-32BE"); }
+    if (mkr_span_starts(&s, "\xFF\xFE\x00\x00", 4)) { *bom_len = 4; *stride = 4; *ascii_off = 0; return rb_enc_find("UTF-32LE"); }
+    if (mkr_span_starts(&s, "\xFE\xFF", 2)) { *bom_len = 2; *stride = 2; *ascii_off = 1; return rb_enc_find("UTF-16BE"); }
+    if (mkr_span_starts(&s, "\xFF\xFE", 2)) { *bom_len = 2; *stride = 2; *ascii_off = 0; return rb_enc_find("UTF-16LE"); }
     if (mkr_span_starts(&s, "\xEF\xBB\xBF", 3)) { *bom_len = 3; return rb_utf8_encoding(); }
     return NULL;
 }
 
 /* The encoding named in the '<?xml ... encoding="NAME" ?>' declaration, or NULL.
  * The declaration is ASCII; for a UTF-16/32-detected document its bytes are
- * stride-interleaved, so the ASCII column is extracted (per the BOM) before the
- * scan, letting a BOM-vs-declaration conflict be caught even in UTF-16. */
+ * stride-interleaved, so the ASCII column is extracted (stride/off resolved by
+ * the BOM matcher) before the scan, letting a BOM-vs-declaration conflict be
+ * caught even in UTF-16.
+ *
+ * p is a borrowed RSTRING view, so this stays allocation-free until every read
+ * of p is done: the stride/off geometry is passed in (rather than derived here
+ * via rb_enc_find, which can autoload = a GC point), and the only rb_enc_find -
+ * the final name lookup - runs after the bytes have been copied into head[]. */
 static int
 mkr_decl_ws(int c)
 {
@@ -181,14 +197,8 @@ mkr_decl_ws(int c)
 }
 
 static rb_encoding *
-mkr_xml_decl_encoding(const unsigned char *p, long len, rb_encoding *bom)
+mkr_xml_decl_encoding(const unsigned char *p, long len, long stride, long off)
 {
-    long stride = 1, off = 0;
-    if (bom == rb_enc_find("UTF-16LE"))      { stride = 2; off = 0; }
-    else if (bom == rb_enc_find("UTF-16BE")) { stride = 2; off = 1; }
-    else if (bom == rb_enc_find("UTF-32LE")) { stride = 4; off = 0; }
-    else if (bom == rb_enc_find("UTF-32BE")) { stride = 4; off = 3; }
-
     /* Extract the ASCII column (per the BOM stride) through bounded reads into
      * a bounded writer - neither side trusts the loop arithmetic. */
     mkr_span_t in = mkr_span((const char *)p, len < 0 ? 0 : (size_t)len);
@@ -256,13 +266,15 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
      * conflict. ASCII-8BIT means "raw bytes, no claimed encoding", so there the
      * detected encoding decodes the input (a UTF-16/Shift_JIS/BOM'd file read
      * with File.binread now parses). */
-    long bom_len = 0;
-    rb_encoding *bom  = mkr_xml_bom_encoding(raw, rawlen, &bom_len);
+    long bom_len = 0, bom_stride = 1, bom_off = 0;
+    rb_encoding *bom  = mkr_xml_bom_encoding(raw, rawlen, &bom_len, &bom_stride, &bom_off);
     /* rb_enc_find inside the BOM lookup can autoload an encoding (a Ruby
      * allocation = a GC point), so re-borrow the bytes before reading them
-     * again - a borrowed RSTRING pointer must not be held across one. */
+     * again - a borrowed RSTRING pointer must not be held across one. The
+     * interleave geometry (stride/off) is resolved by the BOM matcher and
+     * passed through, keeping the decl scanner itself allocation-free. */
     raw = (const unsigned char *)RSTRING_PTR(str);
-    rb_encoding *decl = mkr_xml_decl_encoding(raw + bom_len, rawlen - bom_len, bom);
+    rb_encoding *decl = mkr_xml_decl_encoding(raw + bom_len, rawlen - bom_len, bom_stride, bom_off);
     int is_binary = (tag == rb_ascii8bit_encoding());
 
     if (bom && decl && !mkr_xml_enc_compatible(bom, decl)) {

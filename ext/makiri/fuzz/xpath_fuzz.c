@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include "core/mkr_alloc.h"
 #include "xml/mkr_xml.h"
 #include "xpath/mkr_xpath.h"
 #include "xpath/mkr_xpath_internal.h"
@@ -39,10 +40,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
 
     /* 2. The fuzzer input is the XPath expression.
-     *    The engine text contract requires NUL-terminated, no interior NUL.
-     *    If the input contains a NUL we treat the prefix as the expression
-     *    (the lexer will hit the terminator and report a syntax error, which
-     *    is a valid path for the fuzzer to exercise). */
+     *    The engine text contract requires no interior NUL and a NUL at
+     *    ptr[len]. libFuzzer hands us exactly `size` bytes with no terminator,
+     *    so we copy the expression prefix into an owned, NUL-terminated heap
+     *    buffer and mint the verified-text token over that copy - this is what
+     *    supplies the NUL-termination + no-interior-NUL the lexer's strtod and
+     *    "%.10s" error path rely on. If the input contains a NUL we truncate to
+     *    the prefix (the lexer hits the terminator and reports a syntax error,
+     *    a path worth exercising). UTF-8 validity is deliberately NOT
+     *    pre-checked: the lexer's strict decoder rejecting invalid UTF-8 is
+     *    itself a path the fuzzer should hit. */
     size_t expr_len = size;
     for (size_t i = 0; i < size; i++) {
         if (data[i] == '\0') {
@@ -50,8 +57,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             break;
         }
     }
+    char *expr_copy = mkr_strndup((const char *) data, expr_len);
+    if (!expr_copy) {
+        mkr_xml_doc_destroy(doc);
+        return 0;
+    }
     /* Empty expression is a quick syntax error; still worth a run. */
-    mkr_verified_text_t expr = { (const char *) data, expr_len };
+    mkr_verified_text_t expr = { expr_copy, expr_len };
 
     /* 3. Compile the expression. */
     mkr_xpath_limits_t limits;
@@ -65,6 +77,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     mkr_node_t *ast = mkr_parse(expr, &limits, &err);
     if (!ast) {
         mkr_xpath_error_clear(&err);
+        free(expr_copy);
         mkr_xml_doc_destroy(doc);
         return 0;
     }
@@ -90,6 +103,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
 
     mkr_node_free(ast);
+    free(expr_copy);
     mkr_xml_doc_destroy(doc);
     return 0;
 }
