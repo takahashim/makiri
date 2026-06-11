@@ -43,13 +43,18 @@ typedef struct {
 } mkr_span_t;
 
 /* Wrap [ptr, ptr+len) for bounded reading. ptr == NULL yields the empty span
- * (every read -1 / false), so an absent input flows through without a guard. */
+ * (every read -1 / false), so an absent input flows through without a guard.
+ * The NULL case is normalized to a VALID empty address (not p = end = NULL):
+ * the helpers do pointer subtraction and relational compares, which C defines
+ * only within one object - NULL - NULL / NULL < NULL is formally UB - so the
+ * normalization here keeps every helper unconditional AND well-defined. */
 static inline mkr_span_t
 mkr_span(const char *ptr, size_t len)
 {
+    if (ptr == NULL) { ptr = ""; len = 0; }
     mkr_span_t s;
     s.p   = ptr;
-    s.end = (ptr == NULL) ? NULL : ptr + len;
+    s.end = ptr + len;
     return s;
 }
 
@@ -89,10 +94,13 @@ mkr_span_skip(mkr_span_t *s, size_t n)
     s->p += (n <= left) ? n : left;
 }
 
-/* True if the remaining input begins with the n-byte literal. */
+/* True if the remaining input begins with the n-byte literal. n == 0 is true
+ * regardless of lit (even NULL - aligned with mkr_bytes_eq; also keeps the
+ * memcmp away from a possibly-NULL lit, which is formally UB even for 0). */
 static inline bool
 mkr_span_starts(const mkr_span_t *s, const char *lit, size_t n)
 {
+    if (n == 0) return true;
     return mkr_span_left(s) >= n && memcmp(s->p, lit, n) == 0;
 }
 
@@ -105,6 +113,16 @@ mkr_span_find(const mkr_span_t *s, char c, size_t *idx)
     if (hit == NULL) return false;
     *idx = (size_t)(hit - s->p);
     return true;
+}
+
+/* The remaining input from cursor+off onward, as a fresh sub-span (clamped at
+ * the end). For bounded lookahead scans that must not consume the parent. */
+static inline mkr_span_t
+mkr_span_tail(const mkr_span_t *s, size_t off)
+{
+    mkr_span_t t = *s;
+    mkr_span_skip(&t, off);
+    return t;
 }
 
 /* The cursor position, for capturing a slice start (an address, NEVER read

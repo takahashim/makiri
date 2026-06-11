@@ -48,8 +48,7 @@ is_ncname_cont_cp(uint32_t c)
 static int
 ncname_char(const mkr_span_t *in, size_t off, int start)
 {
-  mkr_span_t s = *in;
-  mkr_span_skip(&s, off);
+  mkr_span_t s = mkr_span_tail(in, off);
   uint32_t cp;
   int len = mkr_utf8_decode1_span(&s, &cp);
   if (len == 0) return 0;

@@ -180,15 +180,6 @@ mkr_decl_ws(int c)
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-/* The remaining head bytes starting at offset i (a sub-span; reads bounded). */
-static mkr_span_t
-mkr_decl_tail(const mkr_span_t *h, size_t i)
-{
-    mkr_span_t t = *h;
-    mkr_span_skip(&t, i);
-    return t;
-}
-
 static rb_encoding *
 mkr_xml_decl_encoding(const unsigned char *p, long len, rb_encoding *bom)
 {
@@ -214,14 +205,14 @@ mkr_xml_decl_encoding(const unsigned char *p, long len, rb_encoding *bom)
     size_t i = 0;
     while (mkr_decl_ws(mkr_span_at(&h, i))) i++;
     {
-        mkr_span_t t = mkr_decl_tail(&h, i);
+        mkr_span_t t = mkr_span_tail(&h, i);
         if (!mkr_span_starts(&t, "<?xml", 5)) return NULL;
     }
     i += 5;
     /* find a whitespace-introduced "encoding" before the '?>' */
     for (; i + 8 <= hn; i++) {
         if (mkr_span_at(&h, i) == '?' && mkr_span_at(&h, i + 1) == '>') return NULL; /* end of decl */
-        mkr_span_t t = mkr_decl_tail(&h, i);
+        mkr_span_t t = mkr_span_tail(&h, i);
         if (!mkr_decl_ws(mkr_span_at(&h, i - 1)) || !mkr_span_starts(&t, "encoding", 8)) continue;
         size_t j = i + 8;
         while (mkr_decl_ws(mkr_span_at(&h, j))) j++;

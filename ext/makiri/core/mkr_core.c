@@ -203,8 +203,17 @@ mkr_core_selftest(void)
         if (mkr_span_peek(&s) != -1 || mkr_span_take(&s) != -1) return 73; /* empty: every read -1 */
         if (mkr_span_take(&s) != -1) return 74;                   /* and stays empty (no underflow) */
 
-        mkr_span_t e = mkr_span(NULL, 8);                         /* NULL -> empty span */
+        mkr_span_t e = mkr_span(NULL, 8);   /* NULL -> empty span over a VALID address */
+        if (e.p == NULL || e.p != e.end) return 89;               /* normalized, no NULL arithmetic */
         if (mkr_span_left(&e) != 0 || mkr_span_peek(&e) != -1 || mkr_span_starts(&e, "x", 1)) return 75;
+        if (!mkr_span_starts(&e, NULL, 0)) return 90;             /* zero-length literal: always true */
+
+        mkr_span_t base = mkr_span("abcdef", 6);
+        mkr_span_t tl = mkr_span_tail(&base, 2);                  /* sub-span, parent unconsumed */
+        if (mkr_span_peek(&tl) != 'c' || mkr_span_left(&tl) != 4) return 91;
+        if (mkr_span_peek(&base) != 'a' || mkr_span_left(&base) != 6) return 92;
+        mkr_span_t tc = mkr_span_tail(&base, 9);                  /* past the end: clamped empty */
+        if (mkr_span_left(&tc) != 0 || mkr_span_peek(&tc) != -1) return 93;
 
         if (!mkr_bytes_eq("ab", 2, "ab", 2) || mkr_bytes_eq("ab", 2, "ac", 2)
             || mkr_bytes_eq("a", 1, "ab", 2) || !mkr_bytes_eq(NULL, 0, "x", 0)) return 76;
