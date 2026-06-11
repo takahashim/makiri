@@ -1,0 +1,110 @@
+name: Valgrind + GC.compact
+
+on:
+  # Nightly: these jobs are heavy (Valgrind is ~10-50x slower, GC.stress is ~10x
+  # slower) and check structural properties that do not vary by day-to-day code
+  # churn, so run them on a schedule rather than on every push/PR.
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  # Valgrind memcheck on the full spec suite.  Complements ASan by catching
+  # layout-independent errors ASan misses: use of uninitialised values, and
+  # invalid reads/writes that happen to land inside valid malloc regions
+  # (intra-arena overflows).  Runs on Linux because Valgrind is x86_64/amd64
+  # Linux only.
+  valgrind-memcheck:
+    name: Valgrind memcheck (Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.4"]
+
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Compile the extension
+        run: bundle exec rake compile
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Fetch Ruby valgrind suppressions
+        run: |
+          RUBY_TAG=$(ruby -e 'puts "v" + RUBY_VERSION.tr(".", "_")')
+          curl -fsSL "https://raw.githubusercontent.com/ruby/ruby/${RUBY_TAG}/tool/valgrind/ruby.supp" -o ruby.supp || \
+          curl -fsSL "https://raw.githubusercontent.com/ruby/ruby/master/tool/valgrind/ruby.supp" -o ruby.supp
+
+      - name: Run spec suite under Valgrind
+        run: |
+          valgrind --error-exitcode=1 \
+            --tool=memcheck \
+            --leak-check=no \
+            --track-origins=yes \
+            --num-callers=50 \
+            --suppressions=ruby.supp \
+            bundle exec ruby -Ilib -e 'require "rspec/core"; exit RSpec::Core::Runner.run(ARGV)' spec
+        env:
+          # Enable the heavy threading suite so Valgrind also covers
+          # cross-thread memory interactions.
+          THREADING: "1"
+
+  # GC.auto_compact + GC.stress run of the full spec suite.  This structurally
+  # tests the borrowed-pointer discipline under the condition that Ruby Strings
+  # actually move (compaction) and that every allocation triggers a full GC
+  # cycle (stress).  Failures here are typically use-after-move or stale
+  # pointer bugs in the C extension or bridge layer.
+  gc-compact-stress:
+    name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.4"]
+
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Compile the extension
+        run: bundle exec rake compile
+
+      - name: Run spec suite under GC.auto_compact + GC.stress
+        run: |
+          bundle exec ruby -Ilib -e '
+            GC.auto_compact = true
+            GC.stress = true
+            require "rspec/core"
+            exit RSpec::Core::Runner.run(ARGV)
+          ' spec
+        env:
+          # Enable the heavy threading suite so compaction stress also covers
+          # cross-thread memory interactions.
+          THREADING: "1"
