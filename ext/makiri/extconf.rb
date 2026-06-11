@@ -196,8 +196,12 @@ elsif RbConfig::CONFIG["target_os"] =~ /linux/
   $DLDFLAGS << " -Wl,--exclude-libs,ALL"
 end
 
-# Recursively pick up C sources under ext/makiri/.
-$srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c")).map { |f| f.sub("#{EXT_DIR}/", "") }
+# Recursively pick up C sources under ext/makiri/, excluding standalone
+# libFuzzer harnesses. Those define LLVMFuzzerTestOneInput and are linked by
+# ext/makiri/fuzz/Makefile, never into the Ruby extension.
+$srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
+           .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+           .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 $VPATH += Dir.glob(File.join(EXT_DIR, "**/")).map { |d| "$(srcdir)/#{d.sub("#{EXT_DIR}/", "")}".chomp("/") }
 

@@ -1,0 +1,83 @@
+name: libFuzzer
+
+on:
+  # Nightly: libFuzzer runs are coverage-guided and long-running; they complement
+  # the PR-level short fuzz (30s) and the nightly sanitizer fuzz (300s per target).
+  # We run them on a schedule because the coverage signal needs sustained CPU
+  # time to reach deep branches (e.g. DOCTYPE quote/bracket state machine,
+  # reference expansion boundaries).
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  # Build the libFuzzer harnesses under clang with -fsanitize=fuzzer,address
+  # and run each target for 300s.  The corpus is stored as a build artifact so
+  # it can be seeded in subsequent runs (regression asset per the roadmap).
+  libfuzzer-nightly:
+    name: libFuzzer ${{ matrix.target }} (clang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [xml, xpath]
+
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # Build the vendored Lexbor first (plain mode is fine; the harness links
+      # the static archive).  The fuzzer binary itself is built with ASan.
+      - name: Compile the extension (builds Lexbor)
+        run: bundle exec rake compile
+
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Build libFuzzer harnesses
+        run: |
+          cd ext/makiri/fuzz
+          make clean
+          make all
+
+      # Restore the previous corpus so the fuzzer starts from the accumulated
+      # regression seeds rather than from scratch.
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: ext/makiri/fuzz/corpus/${{ matrix.target }}
+          key: libfuzzer-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            libfuzzer-corpus-${{ matrix.target }}-
+
+      - name: Run libFuzzer ${{ matrix.target }} (300s)
+        run: |
+          mkdir -p ext/makiri/fuzz/corpus/${{ matrix.target }}
+          cd ext/makiri/fuzz
+          ./${{ matrix.target }}_fuzz \
+            -max_total_time=300 \
+            -max_len=4096 \
+            -print_final_stats=1 \
+            corpus/${{ matrix.target }}
+
+      # Save the mutated corpus as an artifact for download / seeding.
+      - name: Upload corpus artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libfuzzer-corpus-${{ matrix.target }}
+          path: ext/makiri/fuzz/corpus/${{ matrix.target }}
+          retention-days: 7

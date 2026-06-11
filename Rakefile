@@ -4,6 +4,7 @@ require "bundler/gem_tasks"
 require "rspec/core/rake_task"
 require "rake/extensiontask"
 require "shellwords"
+require "tmpdir"
 
 GEMSPEC = Gem::Specification.load("makiri.gemspec")
 
@@ -79,6 +80,17 @@ def asan_runtime_path
     return path if path != name && !path.empty? && File.exist?(path)
   end
   nil
+end
+
+def libfuzzer_available?
+  cxx = ENV["CXX"].to_s.empty? ? "clang++" : ENV["CXX"]
+  Dir.mktmpdir("makiri-libfuzzer-check") do |dir|
+    src = File.join(dir, "check.cc")
+    exe = File.join(dir, "check")
+    File.write(src, "extern \"C\" int LLVMFuzzerTestOneInput(const unsigned char*, unsigned long){return 0;}\n")
+    return system(cxx, "-fsanitize=fuzzer,address,undefined", src, "-o", exe,
+                  out: File::NULL, err: File::NULL)
+  end
 end
 
 # The compiled extension, and whether it carries sanitizer instrumentation, so
@@ -335,6 +347,33 @@ namespace :fuzz do
       ["", "--target xml", "--target mutate", "--target xmlcss"].each do |surface|
         sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{surface} #{iso} --time #{secs}".squeeze(" ").strip)
       end
+    end
+  end
+
+  # Coverage-guided libFuzzer harnesses for the pure-C surfaces (XML parser and
+  # XPath compile+eval).  These are Ruby-free standalone binaries, so they run
+  # directly under clang's libFuzzer driver without the Ruby interpreter.
+  # They complement the Ruby-based robustness fuzzer by providing coverage
+  # feedback and 2-3 orders of magnitude faster execution for the C core.
+  desc "Build the libFuzzer harnesses (requires clang with libFuzzer support)"
+  task :libfuzzer_build => :compile do
+    libfuzzer_available? or
+      abort "fuzz:libfuzzer_build: #{ENV['CXX'] || 'clang++'} cannot link libFuzzer. " \
+            "Install an LLVM clang with libFuzzer support and run with " \
+            "CLANG=/path/to/clang CXX=/path/to/clang++."
+    Dir.chdir("ext/makiri/fuzz") do
+      sh "make clean"
+      sh "make all"
+    end
+  end
+
+  desc "Run the libFuzzer coverage-guided harnesses (default: 60s per target)"
+  task :libfuzzer => :libfuzzer_build do
+    time = ENV["FUZZ_TIME"] || "60"
+    Dir.chdir("ext/makiri/fuzz") do
+      sh "mkdir -p corpus/xml corpus/xpath"
+      sh "./xml_fuzz -max_total_time=#{time} -max_len=4096 corpus/xml"
+      sh "./xpath_fuzz -max_total_time=#{time} -max_len=4096 corpus/xpath"
     end
   end
 end
