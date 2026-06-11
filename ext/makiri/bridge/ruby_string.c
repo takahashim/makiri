@@ -59,7 +59,9 @@ mkr_verify_text(VALUE str, const char *what)
     long        len = RSTRING_LEN(str);
     const char *ptr = RSTRING_PTR(str);
 
-    if (len > 0 && memchr(ptr, '\0', (size_t)len) != NULL) {
+    mkr_span_t sv = mkr_span(ptr, (size_t)len);
+    size_t nul_at;
+    if (mkr_span_find(&sv, '\0', &nul_at)) {
         rb_raise(mkr_eError, "%s must not contain a NUL byte", what);
     }
 
@@ -158,16 +160,13 @@ mkr_xml_strict_transcode_thunk(VALUE str)
 static rb_encoding *
 mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len)
 {
+    mkr_span_t s = mkr_span((const char *)p, (size_t)len);
     *bom_len = 0;
-    if (len >= 4 && p[0] == 0x00 && p[1] == 0x00 && p[2] == 0xFE && p[3] == 0xFF) {
-        *bom_len = 4; return rb_enc_find("UTF-32BE");
-    }
-    if (len >= 4 && p[0] == 0xFF && p[1] == 0xFE && p[2] == 0x00 && p[3] == 0x00) {
-        *bom_len = 4; return rb_enc_find("UTF-32LE");
-    }
-    if (len >= 2 && p[0] == 0xFE && p[1] == 0xFF) { *bom_len = 2; return rb_enc_find("UTF-16BE"); }
-    if (len >= 2 && p[0] == 0xFF && p[1] == 0xFE) { *bom_len = 2; return rb_enc_find("UTF-16LE"); }
-    if (len >= 3 && p[0] == 0xEF && p[1] == 0xBB && p[2] == 0xBF) { *bom_len = 3; return rb_utf8_encoding(); }
+    if (mkr_span_starts(&s, "\x00\x00\xFE\xFF", 4)) { *bom_len = 4; return rb_enc_find("UTF-32BE"); }
+    if (mkr_span_starts(&s, "\xFF\xFE\x00\x00", 4)) { *bom_len = 4; return rb_enc_find("UTF-32LE"); }
+    if (mkr_span_starts(&s, "\xFE\xFF", 2)) { *bom_len = 2; return rb_enc_find("UTF-16BE"); }
+    if (mkr_span_starts(&s, "\xFF\xFE", 2)) { *bom_len = 2; return rb_enc_find("UTF-16LE"); }
+    if (mkr_span_starts(&s, "\xEF\xBB\xBF", 3)) { *bom_len = 3; return rb_utf8_encoding(); }
     return NULL;
 }
 
@@ -175,6 +174,21 @@ mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len)
  * The declaration is ASCII; for a UTF-16/32-detected document its bytes are
  * stride-interleaved, so the ASCII column is extracted (per the BOM) before the
  * scan, letting a BOM-vs-declaration conflict be caught even in UTF-16. */
+static int
+mkr_decl_ws(int c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+/* The remaining head bytes starting at offset i (a sub-span; reads bounded). */
+static mkr_span_t
+mkr_decl_tail(const mkr_span_t *h, size_t i)
+{
+    mkr_span_t t = *h;
+    mkr_span_skip(&t, i);
+    return t;
+}
+
 static rb_encoding *
 mkr_xml_decl_encoding(const unsigned char *p, long len, rb_encoding *bom)
 {
@@ -184,33 +198,46 @@ mkr_xml_decl_encoding(const unsigned char *p, long len, rb_encoding *bom)
     else if (bom == rb_enc_find("UTF-32LE")) { stride = 4; off = 0; }
     else if (bom == rb_enc_find("UTF-32BE")) { stride = 4; off = 3; }
 
+    /* Extract the ASCII column (per the BOM stride) through bounded reads into
+     * a bounded writer - neither side trusts the loop arithmetic. */
+    mkr_span_t in = mkr_span((const char *)p, len < 0 ? 0 : (size_t)len);
     char head[256];
-    long hn = 0;
-    for (long i = off; i < len && hn < (long)sizeof(head); i += stride) head[hn++] = (char)p[i];
+    mkr_spanbuf_t hw = mkr_spanbuf(head, sizeof(head));
+    for (size_t i = (size_t)off; hw.pos < sizeof(head); i += (size_t)stride) {
+        int c = mkr_span_at(&in, i);
+        if (c < 0) break;
+        mkr_spanbuf_putc(&hw, (char)c);
+    }
+    mkr_span_t h = mkr_span(head, hw.pos);
+    size_t hn = hw.pos;
 
-    long i = 0;
-    while (i < hn && (head[i] == ' ' || head[i] == '\t' || head[i] == '\r' || head[i] == '\n')) i++;
-    if (i + 5 > hn || memcmp(head + i, "<?xml", 5) != 0) return NULL;
+    size_t i = 0;
+    while (mkr_decl_ws(mkr_span_at(&h, i))) i++;
+    {
+        mkr_span_t t = mkr_decl_tail(&h, i);
+        if (!mkr_span_starts(&t, "<?xml", 5)) return NULL;
+    }
     i += 5;
     /* find a whitespace-introduced "encoding" before the '?>' */
     for (; i + 8 <= hn; i++) {
-        if (head[i] == '?' && i + 1 < hn && head[i + 1] == '>') return NULL; /* end of decl */
-        int ws_before = (head[i - 1] == ' ' || head[i - 1] == '\t' || head[i - 1] == '\r' || head[i - 1] == '\n');
-        if (!ws_before || memcmp(head + i, "encoding", 8) != 0) continue;
-        long j = i + 8;
-        while (j < hn && (head[j] == ' ' || head[j] == '\t' || head[j] == '\r' || head[j] == '\n')) j++;
-        if (j >= hn || head[j] != '=') return NULL;
+        if (mkr_span_at(&h, i) == '?' && mkr_span_at(&h, i + 1) == '>') return NULL; /* end of decl */
+        mkr_span_t t = mkr_decl_tail(&h, i);
+        if (!mkr_decl_ws(mkr_span_at(&h, i - 1)) || !mkr_span_starts(&t, "encoding", 8)) continue;
+        size_t j = i + 8;
+        while (mkr_decl_ws(mkr_span_at(&h, j))) j++;
+        if (mkr_span_at(&h, j) != '=') return NULL;
         j++;
-        while (j < hn && (head[j] == ' ' || head[j] == '\t' || head[j] == '\r' || head[j] == '\n')) j++;
-        if (j >= hn || (head[j] != '"' && head[j] != '\'')) return NULL;
-        char q = head[j++];
-        long ns = j;
-        while (j < hn && head[j] != q) j++;
+        while (mkr_decl_ws(mkr_span_at(&h, j))) j++;
+        int q = mkr_span_at(&h, j);
+        if (q != '"' && q != '\'') return NULL;
+        j++;
+        size_t ns = j;
+        while (mkr_span_at(&h, j) >= 0 && mkr_span_at(&h, j) != q) j++;
         if (j >= hn) return NULL;
         char name[64];
-        long nl = j - ns;
-        if (nl <= 0 || nl >= (long)sizeof(name)) return NULL;
-        memcpy(name, head + ns, (size_t)nl);
+        size_t nl = j - ns;
+        if (nl == 0 || nl >= sizeof(name)) return NULL;
+        memcpy(name, head + ns, nl);
         name[nl] = '\0';
         return rb_enc_find(name);   /* NULL for an unknown encoding name */
     }
@@ -293,9 +320,10 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
     long        off = 0;
     /* §4.3.3: a leading BOM is the encoding signature, not document content -
      * strip a U+FEFF (the transcode above turns any UTF-16/32 BOM into one). */
-    if (len >= 3 && (unsigned char)ptr[0] == 0xEF && (unsigned char)ptr[1] == 0xBB
-        && (unsigned char)ptr[2] == 0xBF) {
+    mkr_span_t sv = mkr_span(ptr, (size_t)len);
+    if (mkr_span_starts(&sv, "\xEF\xBB\xBF", 3)) {
         off = 3; len -= 3;
+        mkr_span_skip(&sv, 3);
     }
 
     /* Fail closed on an over-budget input BEFORE the validation scan and the
@@ -311,7 +339,8 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
      * U+FFFD repair - unlike the HTML mkr_utf8_sanitize path). A whole-string
      * cached coderange covers the BOM-stripped suffix too (the BOM is one
      * complete UTF-8 character). */
-    if (len > 0 && memchr(ptr + off, '\0', (size_t)len) != NULL) {
+    size_t nul_at;
+    if (mkr_span_find(&sv, '\0', &nul_at)) {
         rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
     }
     if (!mkr_ruby_str_known_valid_utf8(s)
@@ -355,7 +384,9 @@ mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t 
         return "string exceeds the maximum length";
     }
     const char *ptr = RSTRING_PTR(sv);
-    if (memchr(ptr, '\0', (size_t)len) != NULL) {
+    mkr_span_t view = mkr_span(ptr, (size_t)len);
+    size_t nul_at;
+    if (mkr_span_find(&view, '\0', &nul_at)) {
         return "string contains a NUL byte";
     }
     if (!mkr_ruby_str_known_valid_utf8(sv)
