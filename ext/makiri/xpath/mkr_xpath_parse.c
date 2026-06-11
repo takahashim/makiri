@@ -591,10 +591,8 @@ looks_like_filter_expr(mkr_parser_t *P)
     if (TOK(P).kind == MKR_TK_NAME && is_nodetype_name(s, n)) {
       return 0;
     }
-    /* peek next char (skipping ws) for '(' - cheaper than running the lexer. */
-    const char *p = P->L.cur;
-    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-    return (*p == '(');
+    /* peek next byte (skipping ws) for '(' - cheaper than running the lexer. */
+    return (mkr_lexer_peek_nonws(&P->L) == '(');
   }
   default:
     return 0;
@@ -797,8 +795,8 @@ mkr_parse(mkr_verified_text_t expr, mkr_xpath_limits_t *limits, mkr_xpath_error_
   mkr_parser_t P;
   P.err    = err;
   P.limits = limits;
-  /* expr.ptr is a validated, NUL-terminated C string (mkr_verified_text_t). */
-  mkr_lexer_init(&P.L, expr.ptr, err);
+  /* expr is a validated, NUL-terminated text of known length (mkr_verified_text_t). */
+  mkr_lexer_init(&P.L, expr.ptr, expr.len, err);
   if (!P.L.good) return NULL;
 
   mkr_node_t *root = parse_expr(&P);

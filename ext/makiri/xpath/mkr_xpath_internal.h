@@ -164,13 +164,15 @@ typedef struct {
 
 typedef struct {
   const char *src;
-  const char *cur;
+  mkr_span_t   in;    /* bounded input reader (cursor + end) */
   mkr_token_t  tok;   /* current (peeked) token */
   int         good;
 } mkr_lexer_t;
 
-void mkr_lexer_init(mkr_lexer_t *L, const char *src, mkr_xpath_error_t *err);
+void mkr_lexer_init(mkr_lexer_t *L, const char *src, size_t len, mkr_xpath_error_t *err);
 int  mkr_lexer_advance(mkr_lexer_t *L, mkr_xpath_error_t *err);
+/* Next non-ws byte after the current token (or -1) - never consumes. */
+int  mkr_lexer_peek_nonws(const mkr_lexer_t *L);
 /* Token spelling helpers (string equality with a compile-time literal). */
 int  mkr_tok_is_word_len(const mkr_token_t *t, const char *word, size_t word_len);
 #define mkr_tok_is_word_lit(t, word) \

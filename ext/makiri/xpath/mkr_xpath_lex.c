@@ -9,38 +9,13 @@
  * XPath 1.0 lexer. The parser drives token consumption and handles
  * context-sensitive keywords (and, or, div, mod, *, node()...) via
  * lookahead - the lexer is intentionally context-free.
+ *
+ * All input reads go through the bounded reader (core mkr_span_t): the input
+ * is a verified text (NUL-free, NUL-terminated, valid UTF-8) of known length,
+ * and the span makes an out-of-bounds read structurally impossible rather
+ * than a per-site convention. One-codepoint decoding is the strict core
+ * mkr_utf8_decode1 (the lexer formerly carried its own equivalent copy).
  */
-
-/* Decode one UTF-8 code point at NUL-terminated +p+. Returns its byte length
- * (1-4) and writes the code point to *cp; returns 0 at the terminator or on a
- * malformed/truncated/overlong/surrogate/out-of-range sequence (fail closed).
- * Never reads past the NUL: a NUL where a continuation byte is expected fails
- * the (b & 0xC0) == 0x80 check. */
-static int
-utf8_decode(const char *p, uint32_t *cp)
-{
-  const unsigned char *u = (const unsigned char *)p;
-  unsigned char b0 = u[0];
-  if (b0 < 0x80) { *cp = b0; return b0 == 0 ? 0 : 1; }
-
-  int n;
-  uint32_t c, min;
-  if      ((b0 & 0xE0) == 0xC0) { n = 1; c = b0 & 0x1Fu; min = 0x80; }
-  else if ((b0 & 0xF0) == 0xE0) { n = 2; c = b0 & 0x0Fu; min = 0x800; }
-  else if ((b0 & 0xF8) == 0xF0) { n = 3; c = b0 & 0x07u; min = 0x10000; }
-  else return 0; /* continuation byte or 0xF8+ as a lead: invalid */
-
-  for (int i = 1; i <= n; i++) {
-    unsigned char b = u[i];
-    if ((b & 0xC0) != 0x80) return 0; /* truncated (incl. NUL) or bad continuation */
-    c = (c << 6) | (b & 0x3Fu);
-  }
-  if (c < min) return 0;                      /* overlong */
-  if (c >= 0xD800 && c <= 0xDFFF) return 0;   /* surrogate */
-  if (c > 0x10FFFF) return 0;                 /* out of Unicode range */
-  *cp = c;
-  return n + 1;
-}
 
 /* NCName code-point classes per XPath 1.0 §3.7 -> Namespaces in XML -> the
  * XML 1.0 (5th ed.) Name production, minus ':' (NCName). NameStartChar and
@@ -67,13 +42,16 @@ is_ncname_cont_cp(uint32_t c)
       || (c >= 0x0300 && c <= 0x036F) || (c >= 0x203F && c <= 0x2040);
 }
 
-/* If +p+ begins an NCName character, return its byte length (1-4); else 0.
- * +start+ selects the NameStartChar (1) vs NameChar (0) class. */
+/* If the span's cursor (+off bytes) begins an NCName character, return its
+ * byte length (1-4); else 0 (including at end-of-input - the strict decode
+ * fails closed there). +start+ selects NameStartChar (1) vs NameChar (0). */
 static int
-ncname_char(const char *p, int start)
+ncname_char(const mkr_span_t *in, size_t off, int start)
 {
+  mkr_span_t s = *in;
+  mkr_span_skip(&s, off);
   uint32_t cp;
-  int len = utf8_decode(p, &cp);
+  int len = mkr_utf8_decode1_span(&s, &cp);
   if (len == 0) return 0;
   return (start ? is_ncname_start_cp(cp) : is_ncname_cont_cp(cp)) ? len : 0;
 }
@@ -84,15 +62,21 @@ skip_ws(mkr_lexer_t *L)
   /* XPath 1.0 §3.7 ExprWhitespace = XML S = (#x20 | #x9 | #xD | #xA)+ only.
    * Not C isspace(), which would also skip #xB (\v) and #xC (\f) - those are
    * not XPath whitespace and must surface as a syntax error. */
-  char c;
-  while ((c = *L->cur) == ' ' || c == '\t' || c == '\r' || c == '\n') L->cur++;
+  for (;;) {
+    int c = mkr_span_peek(&L->in);
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') mkr_span_skip(&L->in, 1);
+    else break;
+  }
 }
 
 static int
 lex_number(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
-  const char *s = L->cur;
+  const char *s = mkr_span_mark(&L->in);
   char *end = NULL;
+  /* strtod scans the raw bytes, but the engine text contract makes that
+   * bounded: the input is NUL-terminated and NUL-free, so the scan can never
+   * leave the buffer (lint-allowlisted as the one sanctioned raw scan). */
   double v = strtod(s, &end);
   if (end == s) {
     mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX, "expected number at '%.10s'", s);
@@ -102,74 +86,60 @@ lex_number(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
   t->text.ptr = s;
   t->text.len   = (size_t)(end - s);
   t->num   = v;
-  L->cur   = end;
+  mkr_span_skip(&L->in, (size_t)(end - s));
   return 0;
-}
-
-/* Is [s, s+len) well-formed UTF-8? Strict (same rules as utf8_decode: rejects
- * malformed/overlong/surrogate/out-of-range). */
-static int
-utf8_valid_range(const char *s, size_t len)
-{
-  const char *p = s, *e = s + len;
-  while (p < e) {
-    uint32_t cp;
-    int n = utf8_decode(p, &cp);
-    if (n <= 0 || (size_t)n > (size_t)(e - p)) return 0;
-    p += n;
-  }
-  return 1;
 }
 
 static int
 lex_string(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
-  char quote = *L->cur;
-  const char *start = L->cur + 1;
-  const char *p = start;
-  while (*p && *p != quote) p++;
-  if (*p != quote) {
+  int quote = mkr_span_peek(&L->in);
+  mkr_span_skip(&L->in, 1);
+  const char *start = mkr_span_mark(&L->in);
+  size_t len;
+  if (!mkr_span_find(&L->in, (char)quote, &len)) {
     mkr_err_set(err, MKR_XPATH_ERR_SYNTAX, "unterminated string literal");
     return -1;
   }
   /* Validate UTF-8 here, once, so every character-wise string function
    * (translate, substring, string-length, ...) can assume well-formed input
    * and so an invalid literal fails closed (SyntaxError) rather than producing
-   * a silently wrong/truncated result. */
-  size_t len = (size_t)(p - start);
-  if (!utf8_valid_range(start, len)) {
+   * a silently wrong/truncated result. The strict core validator applies the
+   * same rules (overlong/surrogate/out-of-range rejected) as the strict
+   * decoder the rest of the lexer uses. */
+  if (!mkr_utf8_valid((const unsigned char *)start, len)) {
     mkr_err_set(err, MKR_XPATH_ERR_SYNTAX, "invalid UTF-8 in string literal");
     return -1;
   }
   t->kind  = MKR_TK_LITERAL;
   t->text.ptr = start;
   t->text.len   = len;
-  L->cur   = p + 1;
+  mkr_span_skip(&L->in, len + 1);   /* content + closing quote */
   return 0;
 }
 
 static int
 lex_name(mkr_lexer_t *L, mkr_token_t *t)
 {
-  const char *s = L->cur;
+  const char *s = mkr_span_mark(&L->in);
   int n;
-  while ((n = ncname_char(L->cur, 0)) > 0) L->cur += n;
+  while ((n = ncname_char(&L->in, 0, 0)) > 0) mkr_span_skip(&L->in, (size_t)n);
   /* QName NameTest is `prefix:local` OR `prefix:*` (XPath 1.0 §2.3); the ':'
    * must not be the '::' axis separator. */
-  if (*L->cur == ':' && L->cur[1] != ':'
-      && (L->cur[1] == '*' || ncname_char(L->cur + 1, 1) > 0)) {
-    L->cur++; /* eat ':' */
-    if (*L->cur == '*') {
-      L->cur++; /* prefix:* */
+  if (mkr_span_peek(&L->in) == ':' && mkr_span_at(&L->in, 1) != ':'
+      && (mkr_span_at(&L->in, 1) == '*' || ncname_char(&L->in, 1, 1) > 0)) {
+    mkr_span_skip(&L->in, 1); /* eat ':' */
+    if (mkr_span_peek(&L->in) == '*') {
+      mkr_span_skip(&L->in, 1); /* prefix:* */
     } else {
-      while ((n = ncname_char(L->cur, 0)) > 0) L->cur += n;
+      while ((n = ncname_char(&L->in, 0, 0)) > 0) mkr_span_skip(&L->in, (size_t)n);
     }
     t->kind = MKR_TK_QNAME;
   } else {
     t->kind = MKR_TK_NAME;
   }
   t->text.ptr = s;
-  t->text.len   = (size_t)(L->cur - s);
+  t->text.len   = mkr_span_since(&L->in, s);
   return 0;
 }
 
@@ -178,44 +148,45 @@ next_token(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
   memset(t, 0, sizeof(*t));
   skip_ws(L);
-  const char *s = L->cur;
-  char c = *s;
+  const char *s = mkr_span_mark(&L->in);
+  int c = mkr_span_peek(&L->in);
 
-  if (c == '\0') {
+  if (c < 0) {
     t->kind = MKR_TK_EOF;
     t->text.ptr = s;
     t->text.len = 0;
     return 0;
   }
 
-  if (c == '/' && s[1] == '/') { t->kind = MKR_TK_DSLASH;     t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
-  if (c == '.' && s[1] == '.') { t->kind = MKR_TK_DOTDOT;     t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
-  if (c == ':' && s[1] == ':') { t->kind = MKR_TK_COLONCOLON; t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
-  if (c == '!' && s[1] == '=') { t->kind = MKR_TK_NE;         t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
-  if (c == '<' && s[1] == '=') { t->kind = MKR_TK_LE;         t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
-  if (c == '>' && s[1] == '=') { t->kind = MKR_TK_GE;         t->text.ptr = s; t->text.len = 2; L->cur += 2; return 0; }
+  int c1 = mkr_span_at(&L->in, 1);
+  if (c == '/' && c1 == '/') { t->kind = MKR_TK_DSLASH;     t->text.ptr = s; t->text.len = 2; mkr_span_skip(&L->in, 2); return 0; }
+  if (c == '.' && c1 == '.') { t->kind = MKR_TK_DOTDOT;     t->text.ptr = s; t->text.len = 2; mkr_span_skip(&L->in, 2); return 0; }
+  if (c == ':' && c1 == ':') { t->kind = MKR_TK_COLONCOLON; t->text.ptr = s; t->text.len = 2; mkr_span_skip(&L->in, 2); return 0; }
+  if (c == '!' && c1 == '=') { t->kind = MKR_TK_NE;         t->text.ptr = s; t->text.len = 2; mkr_span_skip(&L->in, 2); return 0; }
+  if (c == '<' && c1 == '=') { t->kind = MKR_TK_LE;         t->text.ptr = s; t->text.len = 2; mkr_span_skip(&L->in, 2); return 0; }
+  if (c == '>' && c1 == '=') { t->kind = MKR_TK_GE;         t->text.ptr = s; t->text.len = 2; mkr_span_skip(&L->in, 2); return 0; }
 
   switch (c) {
-  case '(': t->kind = MKR_TK_LPAREN;   t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case ')': t->kind = MKR_TK_RPAREN;   t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '[': t->kind = MKR_TK_LBRACKET; t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case ']': t->kind = MKR_TK_RBRACKET; t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+  case '(': t->kind = MKR_TK_LPAREN;   t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case ')': t->kind = MKR_TK_RPAREN;   t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '[': t->kind = MKR_TK_LBRACKET; t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case ']': t->kind = MKR_TK_RBRACKET; t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
   case '.':
-    if (isdigit((unsigned char)s[1])) {
+    if (c1 >= 0 && isdigit(c1)) {
       return lex_number(L, t, err);
     }
-    t->kind = MKR_TK_DOT; t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '@': t->kind = MKR_TK_AT;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case ',': t->kind = MKR_TK_COMMA;    t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '|': t->kind = MKR_TK_PIPE;     t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '/': t->kind = MKR_TK_SLASH;    t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '+': t->kind = MKR_TK_PLUS;     t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '-': t->kind = MKR_TK_MINUS;    t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '*': t->kind = MKR_TK_STAR;     t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '=': t->kind = MKR_TK_EQ;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '<': t->kind = MKR_TK_LT;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '>': t->kind = MKR_TK_GT;       t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
-  case '$': t->kind = MKR_TK_DOLLAR;   t->text.ptr = s; t->text.len = 1; L->cur++; return 0;
+    t->kind = MKR_TK_DOT; t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '@': t->kind = MKR_TK_AT;       t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case ',': t->kind = MKR_TK_COMMA;    t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '|': t->kind = MKR_TK_PIPE;     t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '/': t->kind = MKR_TK_SLASH;    t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '+': t->kind = MKR_TK_PLUS;     t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '-': t->kind = MKR_TK_MINUS;    t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '*': t->kind = MKR_TK_STAR;     t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '=': t->kind = MKR_TK_EQ;       t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '<': t->kind = MKR_TK_LT;       t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '>': t->kind = MKR_TK_GT;       t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
+  case '$': t->kind = MKR_TK_DOLLAR;   t->text.ptr = s; t->text.len = 1; mkr_span_skip(&L->in, 1); return 0;
   case '\'':
   case '"':
     return lex_string(L, t, err);
@@ -223,27 +194,26 @@ next_token(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
     break;
   }
 
-  if (isdigit((unsigned char)c)) {
+  if (isdigit(c)) {
     return lex_number(L, t, err);
   }
-  if (ncname_char(s, 1) > 0) {
+  if (ncname_char(&L->in, 0, 1) > 0) {
     return lex_name(L, t);
   }
 
-  unsigned char uc = (unsigned char)c;
-  if (uc >= 0x20 && uc < 0x7F) {
+  if (c >= 0x20 && c < 0x7F) {
     mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX, "unexpected character '%c'", c);
   } else {
-    mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX, "unexpected byte 0x%02x", uc);
+    mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX, "unexpected byte 0x%02x", (unsigned)c);
   }
   return -1;
 }
 
 void
-mkr_lexer_init(mkr_lexer_t *L, const char *src, mkr_xpath_error_t *err)
+mkr_lexer_init(mkr_lexer_t *L, const char *src, size_t len, mkr_xpath_error_t *err)
 {
   L->src = src;
-  L->cur = src;
+  L->in  = mkr_span(src, len);
   memset(&L->tok, 0, sizeof(L->tok));
   L->good = (next_token(L, &L->tok, err) == 0);
 }
@@ -253,6 +223,20 @@ mkr_lexer_advance(mkr_lexer_t *L, mkr_xpath_error_t *err)
 {
   L->good = (next_token(L, &L->tok, err) == 0);
   return L->good ? 0 : -1;
+}
+
+/* The next non-whitespace byte after the current token (or -1 at the end),
+ * without consuming anything - the parser's function-call lookahead ("is this
+ * NAME followed by '('?"), kept here so the raw cursor never leaves the lexer. */
+int
+mkr_lexer_peek_nonws(const mkr_lexer_t *L)
+{
+  mkr_span_t s = L->in;
+  for (;;) {
+    int c = mkr_span_peek(&s);
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { mkr_span_skip(&s, 1); continue; }
+    return c;
+  }
 }
 
 int
