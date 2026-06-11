@@ -98,6 +98,16 @@ $LDFLAGS << " #{lexbor_archive.shellescape}"
 # region map close to the source; _FORTIFY_SOURCE is dropped (it needs -O2).
 coverage = !ENV["MAKIRI_COVERAGE"].to_s.strip.empty?
 
+# OOM-injection build (opt-in): MAKIRI_ALLOC_INJECT=1 compiles the core
+# allocation-failure hook (mkr_alloc.h) so `rake oom` can sweep "the nth core
+# allocation fails" over representative workloads and assert every OOM branch
+# fails closed. Debug/test builds only - a normal build carries no hook.
+# Composes with the sanitize/coverage modes below.
+if ENV["MAKIRI_ALLOC_INJECT"].to_s.strip == "1"
+  $CFLAGS << " -DMKR_ALLOC_INJECT=1"
+  warn "makiri: building with allocation-failure injection (MKR_ALLOC_INJECT)"
+end
+
 if coverage
   $CFLAGS   << " -O0 -g -fprofile-instr-generate -fcoverage-mapping"
   $LDFLAGS  << " -fprofile-instr-generate"

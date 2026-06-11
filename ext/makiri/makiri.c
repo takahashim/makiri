@@ -79,6 +79,48 @@ mkr_c_selftest(VALUE self)
     return Qtrue;
 }
 
+/* Makiri.__alloc_inject(n) / __alloc_inject_calls / __alloc_inject? - the OOM
+ * sweep harness's controls (script/check_alloc_failures.rb, `rake oom`): arm
+ * "the nth core allocation fails once", and read how many core allocations a
+ * workload attempted. Compiled to a real hook only under MKR_ALLOC_INJECT
+ * (extconf: MAKIRI_ALLOC_INJECT=1); in a normal build __alloc_inject? is
+ * false and the others raise, so the harness fails loudly on the wrong build
+ * instead of sweeping nothing. Test hooks only. */
+static VALUE
+mkr_s_alloc_inject_p(VALUE self)
+{
+    (void)self;
+#ifdef MKR_ALLOC_INJECT
+    return Qtrue;
+#else
+    return Qfalse;
+#endif
+}
+
+static VALUE
+mkr_s_alloc_inject(VALUE self, VALUE nth)
+{
+    (void)self;
+#ifdef MKR_ALLOC_INJECT
+    mkr_alloc_inject_arm((long long)NUM2LL(nth));
+    return Qnil;
+#else
+    (void)nth;
+    rb_raise(rb_eNotImpError, "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)");
+#endif
+}
+
+static VALUE
+mkr_s_alloc_inject_calls(VALUE self)
+{
+    (void)self;
+#ifdef MKR_ALLOC_INJECT
+    return ULL2NUM(mkr_alloc_inject_calls());
+#else
+    rb_raise(rb_eNotImpError, "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)");
+#endif
+}
+
 /* Makiri::XML.__decode(str) -> validated, UTF-8-tagged String, or raises
  * Makiri::XML::SyntaxError. Internal test hook exercising the strict input
  * decode (§2.1) on its own, until the full Makiri::XML(...) parse pipeline
@@ -223,5 +265,8 @@ Init_makiri(void)
     mkr_init_xml_node();
 
     rb_define_singleton_method(mkr_mMakiri, "__c_selftest", mkr_c_selftest, 0);
+    rb_define_singleton_method(mkr_mMakiri, "__alloc_inject?", mkr_s_alloc_inject_p, 0);
+    rb_define_singleton_method(mkr_mMakiri, "__alloc_inject", mkr_s_alloc_inject, 1);
+    rb_define_singleton_method(mkr_mMakiri, "__alloc_inject_calls", mkr_s_alloc_inject_calls, 0);
     rb_define_singleton_method(mkr_mXML, "__decode", mkr_xml_s_decode, 1);
 }

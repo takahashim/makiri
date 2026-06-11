@@ -197,6 +197,18 @@ task leaks: :compile do
   sh "#{FileUtils::RUBY} script/check_leaks.rb"
 end
 
+desc "OOM-injection gate: rebuild with MAKIRI_ALLOC_INJECT=1 and sweep every core " \
+     "allocation site, verifying each failure fails closed (clean raise or " \
+     "baseline-identical result, never truncated output)"
+task :oom do
+  # The hook is compiled in only under MAKIRI_ALLOC_INJECT=1 (zero overhead in
+  # a normal build), so this needs its own rebuild; see
+  # script/check_alloc_failures.rb for the protocol and the property gated.
+  sh({ "MAKIRI_ALLOC_INJECT" => "1" }, "#{FileUtils::RUBY} -S rake clean compile")
+  sh "#{FileUtils::RUBY} -Ilib script/check_alloc_failures.rb"
+  puts "(injection build left in place; run `rake clean compile` to restore a normal build)"
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)

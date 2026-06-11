@@ -68,6 +68,10 @@ bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-saf
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
                                    # so this is the ONLY leak check; flags per-call
                                    # leak stacks through the ext incl. rescued raises)
+bundle exec rake oom               # OOM-injection sweep: rebuilds with
+                                   # MAKIRI_ALLOC_INJECT=1 and fails each core alloc
+                                   # site in turn - every OOM branch must fail closed
+                                   # (clean raise or baseline-identical result)
 bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```

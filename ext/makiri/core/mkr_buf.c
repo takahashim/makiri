@@ -40,7 +40,7 @@ mkr_buf_append(mkr_buf_t *b, const void *bytes, size_t n)
         if (mkr_size_add(limit, 1, &cap_ceiling) && new_cap > cap_ceiling) {
             new_cap = cap_ceiling;
         }
-        char *p = realloc(b->data, new_cap);
+        char *p = MKR_ALLOC_INJECT_FAIL() ? NULL : realloc(b->data, new_cap);
         if (p == NULL) {
             return MKR_ERR_OOM;
         }
@@ -72,7 +72,7 @@ mkr_buf_reserve(mkr_buf_t *b, size_t n)
     if (need_term <= b->cap) {
         return MKR_OK; /* already have room */
     }
-    char *p = realloc(b->data, need_term);
+    char *p = MKR_ALLOC_INJECT_FAIL() ? NULL : realloc(b->data, need_term);
     if (p == NULL) {
         return MKR_ERR_OOM;
     }
@@ -86,7 +86,7 @@ char *
 mkr_buf_steal(mkr_buf_t *b, size_t *out_len)
 {
     if (b->data == NULL) {
-        char *empty = malloc(1);
+        char *empty = MKR_ALLOC_INJECT_FAIL() ? NULL : malloc(1);
         if (empty == NULL) {
             return NULL;
         }

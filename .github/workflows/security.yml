@@ -98,6 +98,32 @@ jobs:
       - name: Run the leak gate
         run: bundle exec rake leaks
 
+  # OOM-injection sweep: rebuilds with MAKIRI_ALLOC_INJECT=1 and fails each core
+  # C allocation site in turn, gating that every OOM branch fails closed - a
+  # clean exception or a baseline-identical result, never truncated output
+  # (see script/check_alloc_failures.rb).
+  security-alloc-inject:
+    name: OOM-injection sweep
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run the OOM-injection sweep
+        run: bundle exec rake oom
+
   # Nightly: fuzz EVERY target (the 30s PR fuzz covers only the default xpath
   # target; the CSS engine reuse and the XML parser/mutator are each their own
   # documented memory-safety risk, so each gets a full 300s run).

@@ -97,6 +97,34 @@ char *mkr_strdup(const char *s);
  * `cap *= 2; realloc(p, cap * sizeof(T))` pattern in one call. */
 mkr_status_t mkr_grow_reserve(void **ptr, size_t *cap, size_t need, size_t elem);
 
+/* --- allocation-failure injection (debug builds only) ------------------- */
+/*
+ * The OOM sweep harness (script/check_alloc_failures.rb, `rake oom`) verifies
+ * that every fail-closed OOM branch actually fails closed: it arms "the nth
+ * core allocation fails", runs a workload, and asserts the result is either a
+ * clean exception or byte-identical to the baseline - never truncated.
+ *
+ * Compiled in ONLY under -DMKR_ALLOC_INJECT (extconf: MAKIRI_ALLOC_INJECT=1);
+ * a release build carries no counter and no branch. Covers every core libc
+ * allocation site (mkr_alloc.c + mkr_buf.c - the funnel the direct_alloc lint
+ * forces all engine allocations through). Ruby's xmalloc family and Lexbor's
+ * internal allocations are out of scope (Ruby raises NoMemoryError itself;
+ * Lexbor is vendor code). Not thread-safe by design (the harness is
+ * single-threaded).
+ */
+#ifdef MKR_ALLOC_INJECT
+/* Arm: the nth subsequent core allocation (1-based) fails once, then the
+ * injection disarms itself. nth <= 0 disarms. Resets the call counter. */
+void mkr_alloc_inject_arm(long long nth);
+/* Core allocation attempts since the last arm (sizes the sweep). */
+unsigned long long mkr_alloc_inject_calls(void);
+/* Internal: consulted by each core libc allocation site. */
+int mkr_alloc_inject_should_fail(void);
+#define MKR_ALLOC_INJECT_FAIL() (mkr_alloc_inject_should_fail())
+#else
+#define MKR_ALLOC_INJECT_FAIL() 0
+#endif
+
 #ifdef __cplusplus
 }
 #endif

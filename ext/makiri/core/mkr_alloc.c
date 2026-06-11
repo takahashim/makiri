@@ -1,5 +1,37 @@
 #include "mkr_alloc.h"
 
+#ifdef MKR_ALLOC_INJECT
+/* See mkr_alloc.h: the OOM sweep's failure injection. The counter counts
+ * ATTEMPTS (every consult), armed or not, so the harness can size its sweep
+ * from a disarmed baseline run; the countdown fails exactly one allocation
+ * and then disarms itself, modelling a single transient OOM per run. */
+static long long          mkr_inject_countdown = 0;  /* 0 = disarmed */
+static unsigned long long mkr_inject_attempts  = 0;
+
+void
+mkr_alloc_inject_arm(long long nth)
+{
+    mkr_inject_countdown = (nth > 0) ? nth : 0;
+    mkr_inject_attempts  = 0;
+}
+
+unsigned long long
+mkr_alloc_inject_calls(void)
+{
+    return mkr_inject_attempts;
+}
+
+int
+mkr_alloc_inject_should_fail(void)
+{
+    mkr_inject_attempts++;
+    if (mkr_inject_countdown > 0 && --mkr_inject_countdown == 0) {
+        return 1; /* fail this one allocation; now disarmed */
+    }
+    return 0;
+}
+#endif
+
 void *
 mkr_reallocarray(void *ptr, size_t count, size_t elem)
 {
@@ -11,6 +43,7 @@ mkr_reallocarray(void *ptr, size_t count, size_t elem)
     if (!mkr_size_mul(count, elem, &bytes)) {
         return NULL; /* overflow: leave ptr unchanged */
     }
+    if (MKR_ALLOC_INJECT_FAIL()) return NULL;
     return realloc(ptr, bytes);
 }
 
@@ -26,6 +59,7 @@ mkr_callocarray(size_t count, size_t elem)
     if (count > SIZE_MAX / elem) {
         return NULL; /* overflow */
     }
+    if (MKR_ALLOC_INJECT_FAIL()) return NULL;
     return calloc(count, elem);
 }
 
@@ -36,6 +70,7 @@ mkr_str_alloc(size_t n)
     if (!mkr_size_add(n, 1, &total)) {
         return NULL; /* n + 1 overflow */
     }
+    if (MKR_ALLOC_INJECT_FAIL()) return NULL;
     char *p = malloc(total);
     if (p == NULL) {
         return NULL;
