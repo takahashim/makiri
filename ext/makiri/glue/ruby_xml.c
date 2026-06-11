@@ -130,7 +130,6 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
     if (mkr_ruby_copy_bytes(decoded, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying XML source");
     }
-    RB_GC_GUARD(decoded); /* +decoded+ is dead past the copy */
 
     /* Build an empty XML handle and wrap it (doc == NULL) so a failure mid-parse
      * frees cleanly via GC (mkr_parsed_destroy -> the XML branch ->
@@ -157,7 +156,6 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
         }
     }
     mkr_parsed_set_xml_doc(parsed, args.result);
-    RB_GC_GUARD(obj);
     return obj;
 }
 
@@ -215,7 +213,6 @@ mkr_xml_register_query_namespaces(mkr_xpath_context_t *ctx, VALUE rb_ns)
             rb_raise(mkr_eError, "failed to register namespace");
         }
     }
-    RB_GC_GUARD(keys);
 }
 
 /* Makiri::XML::{Document,*}#xpath(expr, namespaces = nil) / #at_xpath(...):
@@ -492,7 +489,6 @@ mkr_xml_fragment_into(mkr_xml_doc_t *xdoc, VALUE rb_source, int inherit_doc_ns)
     if (mkr_ruby_copy_bytes(decoded, &src) != 0) {
         rb_raise(mkr_eError, "out of memory copying XML fragment source");
     }
-    RB_GC_GUARD(decoded);
 
     mkr_xml_status_t st = MKR_XML_OK;
     mkr_xml_node_t *frag = mkr_xml_parse_fragment(xdoc, src.ptr, src.len, inherit_doc_ns, &st);
@@ -550,7 +546,6 @@ mkr_xml_fragment_s_parse(VALUE klass, VALUE rb_source)
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(doc_obj));
     mkr_xml_node_t *frag = mkr_xml_fragment_into(xdoc, rb_source, 0);
     VALUE result = mkr_wrap_xml_node(frag, doc_obj);
-    RB_GC_GUARD(doc_obj);
     return result;
 }
 
@@ -567,7 +562,6 @@ mkr_xml_doc_fragment(VALUE self, VALUE rb_source)
     }
     mkr_xml_node_t *frag = mkr_xml_fragment_into(xdoc, rb_source, 1);
     VALUE result = mkr_wrap_xml_node(frag, self);
-    RB_GC_GUARD(self);
     return result;
 }
 

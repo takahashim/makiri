@@ -106,7 +106,6 @@ mkr_ruby_copy_bytes(VALUE in, mkr_owned_bytes_t *out)
     size_t alloc_len = (v.len > 0) ? v.len : 1;
     char *buf = mkr_reallocarray(NULL, alloc_len, 1);
     if (buf == NULL) {
-        RB_GC_GUARD(v.value);
         return -1;
     }
     if (v.len > 0) {
@@ -287,7 +286,6 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
             rb_raise(mkr_eXmlSyntaxError,
                      "XML input could not be decoded to UTF-8: %s", msg);
         }
-        RB_GC_GUARD(in);
     }
 
     const char *ptr = RSTRING_PTR(s);
@@ -304,7 +302,6 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
      * caller's GVL-release copy (an input whose UTF-8 length exceeds the arena
      * budget can never parse). max_bytes == 0 disables the check (__decode). */
     if (max_bytes != 0 && (size_t)len > max_bytes) {
-        RB_GC_GUARD(s);
         rb_raise(mkr_eXmlLimitExceeded, "XML input exceeds the byte budget");
     }
 
@@ -325,7 +322,6 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
      * allocates, so the ptr must not be what it copies from). */
     VALUE u = rb_str_subseq(s, off, len);
     rb_enc_associate(u, rb_utf8_encoding());
-    RB_GC_GUARD(s);
     return u; /* validated, UTF-8-tagged, BOM-stripped */
 }
 
@@ -393,9 +389,7 @@ mkr_ruby_exception_message(VALUE exc, char *buf, size_t len)
     }
     if (!RB_TYPE_P(msg, T_STRING)) {
         snprintf(buf, len, "%s", "error");
-        RB_GC_GUARD(msg);
         return;
     }
     snprintf(buf, len, "%s", RSTRING_PTR(msg));
-    RB_GC_GUARD(msg);
 }

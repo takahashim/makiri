@@ -248,7 +248,6 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
         size_t n = (hv.len > 0) ? hv.len : 1;
         char  *buf = mkr_reallocarray(NULL, n, 1);
         if (buf == NULL) {
-            RB_GC_GUARD(hv.value);
             return -1;
         }
         if (hv.len > 0) {
@@ -268,19 +267,16 @@ mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
         *owned   = NULL;
         *out     = (const lxb_char_t *)hv.ptr;
         *out_len = hv.len;
-        RB_GC_GUARD(hv.value);
         return 0;
     }
     lxb_char_t *clean = NULL;
     size_t      clean_len = 0;
     if (mkr_utf8_sanitize((const lxb_char_t *)hv.ptr, hv.len, &clean, &clean_len) != 0) {
-        RB_GC_GUARD(hv.value);
         return -1;
     }
     *owned   = clean;
     *out     = (clean != NULL) ? clean : (const lxb_char_t *)hv.ptr;
     *out_len = (clean != NULL) ? clean_len : hv.len;
-    RB_GC_GUARD(hv.value);
     return 0;
 }
 
@@ -523,7 +519,6 @@ mkr_doc_s_parse(VALUE klass, VALUE rb_source)
     if (mkr_ruby_copy_bytes(rb_source, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying source");
     }
-    RB_GC_GUARD(rb_source);
 
     /* Allocate the wrapper (with parsed == NULL) so that if parsing fails the
      * GC-managed object frees cleanly. This is the HTML parse entry (defined on

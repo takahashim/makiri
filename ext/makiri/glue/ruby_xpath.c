@@ -396,7 +396,6 @@ mkr_ruby_to_out(mkr_xpath_context_t *ctx, VALUE document, VALUE r, mkr_val_t *ou
         if (mkr_val_set_borrowed_text_copy(out, mkr_borrowed_text(vv.ptr, vv.len),
                                            NULL, NULL) != 0) {
             snprintf(errbuf, errlen, "out of memory converting handler result");
-            RB_GC_GUARD(vv.value);
             return -1;
         }
         RB_GC_GUARD(vv.value);
