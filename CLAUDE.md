@@ -65,6 +65,9 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 bundle exec rake sanitize          # rebuild ext w/ -fsanitize=address,undefined, run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
 bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-safety net
+bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
+                                   # so this is the ONLY leak check; flags per-call
+                                   # leak stacks through the ext incl. rescued raises)
 bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```

@@ -190,6 +190,13 @@ task "fuzz:mutate": :compile do
   sh "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb --target mutate #{ENV['FUZZ_ARGS']}"
 end
 
+desc "Malloc-leak gate (macOS `leaks`): fails on per-call leak stacks through the ext"
+task leaks: :compile do
+  # ASan runs with detect_leaks=0 (Ruby/Lexbor are uninstrumented), so plain
+  # leaks are otherwise never machine-checked; see script/check_leaks.rb.
+  sh "#{FileUtils::RUBY} script/check_leaks.rb"
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)
