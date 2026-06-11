@@ -122,22 +122,26 @@ mkr_xml_s_parse(int argc, VALUE *argv, VALUE self)
      * document is not materialised twice for a doomed parse. */
     VALUE decoded = mkr_xml_decode_input(rb_String(rb_source), budget);
 
-    /* Build an empty XML handle and wrap it first (doc == NULL) so a failure
-     * mid-parse frees cleanly via GC (mkr_parsed_destroy -> the XML branch ->
-     * mkr_xml_doc_destroy(NULL), a no-op). */
-    mkr_parsed_t *parsed = mkr_parsed_new_xml(NULL);
-    if (parsed == NULL) {
-        rb_raise(mkr_eError, "out of memory allocating XML document");
-    }
-    VALUE obj = mkr_wrap_document(parsed); /* GC owns +parsed+ from here */
-
-    /* Copy the decoded bytes so the parse can run with the GVL released without
-     * racing GC/compaction on the String's backing store. */
+    /* Copy the decoded bytes into a private C buffer up front - BEFORE allocating
+     * any Ruby object (the wrap below) - so there is NO GC point between obtaining
+     * +decoded+ and copying it, and the parse can then run with the GVL released
+     * without racing GC/compaction on the String's backing store. */
     mkr_owned_bytes_t source = {0};
     if (mkr_ruby_copy_bytes(decoded, &source) != 0) {
         rb_raise(mkr_eError, "out of memory copying XML source");
     }
-    RB_GC_GUARD(decoded);
+    RB_GC_GUARD(decoded); /* +decoded+ is dead past the copy */
+
+    /* Build an empty XML handle and wrap it (doc == NULL) so a failure mid-parse
+     * frees cleanly via GC (mkr_parsed_destroy -> the XML branch ->
+     * mkr_xml_doc_destroy(NULL), a no-op). The source is already copied, so this
+     * Ruby allocation cannot disturb it. */
+    mkr_parsed_t *parsed = mkr_parsed_new_xml(NULL);
+    if (parsed == NULL) {
+        mkr_owned_bytes_clear(&source);
+        rb_raise(mkr_eError, "out of memory allocating XML document");
+    }
+    VALUE obj = mkr_wrap_document(parsed); /* GC owns +parsed+ from here */
 
     mkr_xml_parse_nogvl_t args = { source.ptr, source.len, limits, NULL, MKR_XML_OK };
     rb_thread_call_without_gvl(mkr_xml_parse_nogvl, &args, NULL, NULL);
