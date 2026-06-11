@@ -186,5 +186,50 @@ mkr_core_selftest(void)
         mkr_buf_free(&b);
     }
 
+    /* span: bounded reads - in-bounds values, out-of-bounds -1/false/clamp,
+     * never an overrun. Exercises every helper at its boundary. */
+    {
+        mkr_span_t s = mkr_span("abc", 3);
+        if (mkr_span_left(&s) != 3 || mkr_span_peek(&s) != 'a') return 66;
+        if (mkr_span_at(&s, 2) != 'c' || mkr_span_at(&s, 3) != -1) return 67; /* exact bound */
+        if (!mkr_span_starts(&s, "abc", 3) || mkr_span_starts(&s, "abcd", 4)) return 68;
+        if (mkr_span_take(&s) != 'a' || mkr_span_left(&s) != 2) return 69;
+        size_t idx = 99;
+        if (!mkr_span_find(&s, 'c', &idx) || idx != 1) return 70;
+        if (mkr_span_find(&s, 'z', &idx)) return 71;             /* absent -> false */
+        const char *mark = mkr_span_mark(&s);
+        mkr_span_skip(&s, 5);                                     /* clamped to the 2 left */
+        if (mkr_span_left(&s) != 0 || mkr_span_since(&s, mark) != 2) return 72;
+        if (mkr_span_peek(&s) != -1 || mkr_span_take(&s) != -1) return 73; /* empty: every read -1 */
+        if (mkr_span_take(&s) != -1) return 74;                   /* and stays empty (no underflow) */
+
+        mkr_span_t e = mkr_span(NULL, 8);                         /* NULL -> empty span */
+        if (mkr_span_left(&e) != 0 || mkr_span_peek(&e) != -1 || mkr_span_starts(&e, "x", 1)) return 75;
+
+        if (!mkr_bytes_eq("ab", 2, "ab", 2) || mkr_bytes_eq("ab", 2, "ac", 2)
+            || mkr_bytes_eq("a", 1, "ab", 2) || !mkr_bytes_eq(NULL, 0, "x", 0)) return 76;
+
+        /* peek/at return bytes as 0..255, never sign-extended negatives */
+        mkr_span_t hb = mkr_span("\xFF", 1);
+        if (mkr_span_peek(&hb) != 0xFF || mkr_span_at(&hb, 0) != 0xFF) return 77;
+    }
+
+    /* utf8_decode1: strict - valid lengths 1-4; truncation / overlong /
+     * surrogate / out-of-range / bad lead all fail closed with 0. */
+    {
+        uint32_t cp = 0;
+        if (mkr_utf8_decode1((const unsigned char *)"A", 1, &cp) != 1 || cp != 'A') return 78;
+        if (mkr_utf8_decode1((const unsigned char *)"\xC3\xA9", 2, &cp) != 2 || cp != 0xE9u) return 79;
+        if (mkr_utf8_decode1((const unsigned char *)"\xE3\x81\x82", 3, &cp) != 3 || cp != 0x3042u) return 80;
+        if (mkr_utf8_decode1((const unsigned char *)"\xF0\x9F\x98\x80", 4, &cp) != 4 || cp != 0x1F600u) return 81;
+        if (mkr_utf8_decode1((const unsigned char *)"", 0, &cp) != 0) return 82;                 /* empty */
+        if (mkr_utf8_decode1((const unsigned char *)"\xC3", 1, &cp) != 0) return 83;             /* truncated */
+        if (mkr_utf8_decode1((const unsigned char *)"\xC0\xAF", 2, &cp) != 0) return 84;         /* overlong */
+        if (mkr_utf8_decode1((const unsigned char *)"\xED\xA0\x80", 3, &cp) != 0) return 85;     /* surrogate */
+        if (mkr_utf8_decode1((const unsigned char *)"\xF4\x90\x80\x80", 4, &cp) != 0) return 86; /* > U+10FFFF */
+        if (mkr_utf8_decode1((const unsigned char *)"\x80", 1, &cp) != 0) return 87;             /* stray cont. */
+        if (mkr_utf8_decode1((const unsigned char *)"\xC3\x28", 2, &cp) != 0) return 88;         /* bad cont. */
+    }
+
     return 0;
 }

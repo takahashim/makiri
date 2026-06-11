@@ -8,8 +8,9 @@
  *   mkr_alloc.h  fail-closed size arithmetic + allocators (the foundation)
  *   mkr_hash.h   pointer hash + power-of-two sizer (pointer-keyed index tables)
  *   mkr_text.h   string-type lattice (owned/borrowed/verified text + bytes)
- *   mkr_utf8.h   the one pure-C UTF-8 validator (allocation-free)
- *   mkr_buf.h    mkr_buf_t (growable, capped byte buffer)
+ *   mkr_utf8.h   the one pure-C UTF-8 validator + strict 1-cp decoder
+ *   mkr_buf.h    mkr_buf_t (growable, capped byte buffer) + mkr_spanbuf_t
+ *   mkr_span.h   mkr_span_t (bounded reader - the spanbuf's read twin)
  *
  * NOTHING here touches Ruby - exception mapping happens at the glue boundary.
  */
@@ -17,6 +18,7 @@
 #include "mkr_alloc.h"
 #include "mkr_hash.h"
 #include "mkr_text.h"
+#include "mkr_span.h"
 #include "mkr_utf8.h"
 #include "mkr_buf.h"
 

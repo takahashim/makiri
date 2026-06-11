@@ -72,3 +72,30 @@ mkr_utf8_valid(const unsigned char *src, size_t len)
     }
     return true;
 }
+
+int
+mkr_utf8_decode1(const unsigned char *p, size_t len, uint32_t *cp)
+{
+    if (len == 0) return 0;
+    unsigned char b0 = p[0];
+    if (b0 < 0x80u) { *cp = b0; return 1; }
+
+    int n;
+    uint32_t c, min;
+    if      ((b0 & 0xE0u) == 0xC0u) { n = 2; c = b0 & 0x1Fu; min = 0x80u; }
+    else if ((b0 & 0xF0u) == 0xE0u) { n = 3; c = b0 & 0x0Fu; min = 0x800u; }
+    else if ((b0 & 0xF8u) == 0xF0u) { n = 4; c = b0 & 0x07u; min = 0x10000u; }
+    else return 0;                              /* continuation / 0xF8+ lead */
+
+    if ((size_t)n > len) return 0;              /* truncated */
+    for (int i = 1; i < n; i++) {
+        unsigned char b = p[i];
+        if ((b & 0xC0u) != 0x80u) return 0;     /* bad continuation byte */
+        c = (c << 6) | (b & 0x3Fu);
+    }
+    if (c < min) return 0;                      /* overlong */
+    if (c >= 0xD800u && c <= 0xDFFFu) return 0; /* surrogate */
+    if (c > 0x10FFFFu) return 0;                /* out of Unicode range */
+    *cp = c;
+    return n;
+}
