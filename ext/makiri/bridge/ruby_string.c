@@ -48,6 +48,14 @@ mkr_ruby_str_from_borrowed(mkr_borrowed_text_t text)
 void
 mkr_verify_text(VALUE str, const char *what)
 {
+    /* ALLOCATION-FREE by design: this gate runs between a caller taking a
+     * borrowed RSTRING pointer and using it, so it must not be a GC point. The
+     * former implementation built a throwaway Ruby String (rb_enc_str_new) to
+     * ask for its coderange - a Ruby allocation inside every borrow, which both
+     * passed the borrowed ptr into an allocating call and opened a GC window
+     * under every OTHER borrow already held at multi-borrow call sites. Bytes
+     * are validated as UTF-8 regardless of the String's declared encoding,
+     * exactly as before. */
     long        len = RSTRING_LEN(str);
     const char *ptr = RSTRING_PTR(str);
 
@@ -55,12 +63,14 @@ mkr_verify_text(VALUE str, const char *what)
         rb_raise(mkr_eError, "%s must not contain a NUL byte", what);
     }
 
-    /* Validate the bytes as UTF-8 regardless of the String's declared encoding. */
-    VALUE u = rb_enc_str_new(ptr, len, rb_utf8_encoding());
-    if (rb_enc_str_coderange(u) == ENC_CODERANGE_BROKEN) {
+    /* Cached-coderange fast path (reads flags, never scans, never allocates);
+     * NUL is valid UTF-8, so the memchr above stays either way. */
+    if (mkr_ruby_str_known_valid_utf8(str)) {
+        return;
+    }
+    if (!mkr_utf8_valid((const unsigned char *)ptr, (size_t)len)) {
         rb_raise(mkr_eError, "%s must be valid UTF-8", what);
     }
-    RB_GC_GUARD(str);
 }
 
 mkr_ruby_borrowed_text_t
@@ -328,6 +338,9 @@ mkr_ruby_str_known_valid_utf8(VALUE str)
 const char *
 mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
 {
+    /* ALLOCATION-FREE, like mkr_verify_text: the returned borrow must not have
+     * crossed a Ruby allocation (the former rb_utf8_str_new + valid_encoding?
+     * funcall allocated twice with `ptr` already taken). */
     long len = RSTRING_LEN(sv);
     if ((size_t)len > max_bytes) {
         return "string exceeds the maximum length";
@@ -336,14 +349,13 @@ mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t 
     if (memchr(ptr, '\0', (size_t)len) != NULL) {
         return "string contains a NUL byte";
     }
-    VALUE u = rb_utf8_str_new(ptr, len);
-    if (!RTEST(rb_funcall(u, rb_intern("valid_encoding?"), 0))) {
+    if (!mkr_ruby_str_known_valid_utf8(sv)
+        && !mkr_utf8_valid((const unsigned char *)ptr, (size_t)len)) {
         return "string is not valid UTF-8";
     }
     out->value = sv;
     out->ptr   = ptr;
     out->len   = (size_t)len;
-    RB_GC_GUARD(u);
     return NULL;
 }
 
