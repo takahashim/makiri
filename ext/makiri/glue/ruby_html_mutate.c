@@ -507,7 +507,11 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
 
     mkr_import_fragment_children(doc, frag, emit, u);
 
-    /* Frees the transient fragment document; our imported copies live on. */
+    /* lxb_html_parse_fragment built the fragment in a TRANSIENT document that
+     * destroying the parser does NOT free (measured: one document leaked per
+     * inner_html=/outer_html= call); our imported copies live in `doc`, so the
+     * transient document is destroyed explicitly. */
+    lxb_html_document_destroy(lxb_html_interface_document(frag->owner_document));
     lxb_html_parser_destroy(parser);
     RB_GC_GUARD(html);
 }

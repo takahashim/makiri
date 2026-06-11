@@ -242,8 +242,25 @@ parse_predicates(mkr_parser_t *P, mkr_node_t ***preds, size_t *npreds)
 
 /* ---------- step ---------- */
 
+static int parse_step_inner(mkr_parser_t *P, mkr_step_t *out);
+
+/* Parse one Step into *out. On failure *out is CLEARED here - a failing
+ * parse_step_inner can leave a partially-built step behind (an owned name-test
+ * text already strndup'd, predicates already pushed) and the callers all just
+ * bail, so freeing the partial step in one place keeps every error path
+ * leak-free without per-call-site cleanup. */
 static int
 parse_step(mkr_parser_t *P, mkr_step_t *out)
+{
+  if (parse_step_inner(P, out) == 0) {
+    return 0;
+  }
+  mkr_step_clear(out);
+  return -1;
+}
+
+static int
+parse_step_inner(mkr_parser_t *P, mkr_step_t *out)
 {
   memset(out, 0, sizeof(*out));
 
