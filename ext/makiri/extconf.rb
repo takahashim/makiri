@@ -111,6 +111,20 @@ else
   $CFLAGS << " -O1 -g -fno-omit-frame-pointer -fsanitize=#{sanitize}"
   $LDFLAGS  << " -fsanitize=#{sanitize}"
   $DLDFLAGS << " -fsanitize=#{sanitize}"
+  if sanitize.include?("address")
+    # No ASan *stack* red zones in the ext. CRuby is built with
+    # RUBY_SETJMP = __builtin_setjmp, so rb_raise unwinds via __builtin_longjmp,
+    # which the ASan runtime does not intercept (no __asan_handle_no_return):
+    # any raise crossing an instrumented frame - ours, or Ruby code raising
+    # through rb_protect under the evaluator - leaves that frame's stack poison
+    # behind, and an interceptor (memcpy & co.) in the uninstrumented interpreter
+    # later trips over the stale shadow: a spurious report, which ASan itself
+    # then aborts while rendering (asan_thread.cpp kCurrentStackFrameMagic
+    # CHECK). Heap red zones, UBSan, and the manual arena poisoning in
+    # mkr_xml_node.c are unaffected; only stack-buffer checks are lost.
+    $CFLAGS << (RbConfig::CONFIG["CC"] =~ /clang/ || RbConfig::CONFIG["target_os"] =~ /darwin/ ?
+                  " -mllvm -asan-stack=0" : " --param asan-stack=0")
+  end
   warn "makiri: building with -fsanitize=#{sanitize}"
 end
 

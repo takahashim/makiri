@@ -88,6 +88,20 @@ Requires CRuby >= 3.2 and `cmake`.
   and `bundle exec` drops `DYLD_*` on macOS. `ASAN_OPTIONS` disables
   LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap-overflow + UB
   in our code still fire. CI runs a separate `sanitize` job on Linux.
+- **ASan *stack* instrumentation is deliberately OFF in sanitize builds**
+  (`--param asan-stack=0` / clang `-mllvm -asan-stack=0` in extconf). CRuby is
+  built with `RUBY_SETJMP = __builtin_setjmp`, so `rb_raise` unwinds via
+  `__builtin_longjmp`, which ASan cannot intercept: a raise crossing an
+  instrumented frame (ours, or a Ruby raise through `rb_protect` under the
+  evaluator) leaves that frame's stack-redzone poison behind, and a later
+  interceptor (memcpy & co.) in the uninstrumented interpreter trips over the
+  stale shadow - a layout-sensitive spurious report that ASan then aborts on
+  while rendering (`asan_thread.cpp` `kCurrentStackFrameMagic` CHECK; this took
+  CI's sanitize jobs down via the XML-mutation PBT, which raises thousands of
+  times - see `docs/ci-crash/INVESTIGATION.md`). Heap red zones, UBSan, and the
+  `mkr_xml_node.c` arena poisoning are unaffected; only stack-buffer checks are
+  lost (`-fstack-protector-strong` still covers smashing). Do not re-enable
+  without solving the `__builtin_longjmp` shadow problem.
 - **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
   bump arena.** A sub-allocation overrunning into the next one stays within one
   malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
