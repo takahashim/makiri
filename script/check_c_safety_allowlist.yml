@@ -93,3 +93,10 @@ ignore_paths:
   - path: ext/makiri/glue/ruby_node_set.c
     rule: node_raw_boundary
     reason: NodeSet.new stores representation-opaque pointers; mkr_node_raw takes a seed node's pointer only after same-document validation guarantees its kind matches the set.
+
+# --- parser-TU reader discipline (raw_scan_call / raw_cursor_member) ---
+allowlist:
+  - path: ext/makiri/xpath/mkr_xpath_lex.c
+    rule: raw_scan_call
+    max: 1
+    reason: "lex_number's strtod, the one sanctioned raw scan: the engine text contract (NUL-terminated, NUL-free verified text) bounds it - it can never leave the buffer - and XPath Number semantics intentionally match strtod's C-double parse."

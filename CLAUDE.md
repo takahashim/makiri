@@ -143,6 +143,11 @@ ext/makiri/
                            the mkr_core.h umbrella: mkr_alloc (overflow-checked
                            alloc/grow), mkr_hash (ptr hash + pow2 sizer), mkr_text
                            (string-type lattice / mkr_verified_text_t), mkr_buf
+                           (growable buffer + mkr_spanbuf bounded writer),
+                           mkr_span (bounded reader - byte-scanning parser TUs
+                           may read input ONLY through it; lint-enforced via
+                           raw_scan_call / raw_cursor_member), mkr_utf8 (the one
+                           validator + strict 1-codepoint decoder)
   bridge/                  the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and mkr_verified_text_t minting
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/

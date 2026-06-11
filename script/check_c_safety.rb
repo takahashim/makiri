@@ -8,8 +8,22 @@ require "yaml"
 ROOT = Pathname.new(__dir__).join("..").expand_path
 ALLOWLIST_PATH = ROOT.join("script/check_c_safety_allowlist.yml")
 
-Rule = Struct.new(:id, :message, :regex, keyword_init: true)
+# A rule may carry `paths` (an array of path globs): it then applies ONLY to
+# matching files. Used for the parser-TU reader discipline, where the ban is
+# meaningful only in TUs whose input reads must go through mkr_span_t.
+Rule = Struct.new(:id, :message, :regex, :paths, keyword_init: true)
 Finding = Struct.new(:path, :line, :rule, :text, keyword_init: true)
+
+# Byte-scanning parser TUs: every input read goes through the bounded reader
+# (core/mkr_span.h) - see its header comment. The rules below turn that from a
+# convention into a machine-enforced invariant for these files.
+PARSER_TUS = %w[
+  ext/makiri/xml/mkr_xml_tree.c
+  ext/makiri/xml/mkr_xml_chars.c
+  ext/makiri/xml/mkr_xml_node.c
+  ext/makiri/xpath/mkr_xpath_lex.c
+  ext/makiri/bridge/ruby_string.c
+].freeze
 
 RULES = [
   Rule.new(
@@ -94,6 +108,27 @@ RULES = [
              "to dereference a node use mkr_html_node or mkr_xml_node_unwrap (kind-checked)",
     regex: /\bmkr_node_raw\s*\(/
   ),
+  # --- parser-TU reader discipline (see core/mkr_span.h) ---
+  # In the byte-scanning parser TUs every input read must go through the
+  # bounded reader: a raw libc scan reintroduces the "forgot the bounds check"
+  # class the span made structurally impossible. memcpy stays allowed (an
+  # explicit-length copy, not a scan).
+  Rule.new(
+    id: "raw_scan_call",
+    message: "parser TUs must read input through mkr_span_* / mkr_bytes_eq / mkr_utf8_* " \
+             "(core), not raw libc scanning",
+    regex: /\b(?:memchr|memcmp|strchr|strrchr|strstr|strn?cmp|strcspn|strspn|strpbrk|strtod|strtol|strtoull?|sscanf)\s*\(/,
+    paths: PARSER_TUS
+  ),
+  # The span's own cursor/bound fields are private to core/mkr_span.h: touching
+  # `.p` / `.end` in a parser TU is how a hand-rolled (uncovered) cursor starts.
+  Rule.new(
+    id: "raw_cursor_member",
+    message: "parser TUs must not access a span's .p/.end (or keep a raw cursor struct); " \
+             "use the mkr_span_* helpers (mark/since for slice capture)",
+    regex: /(?:->|\.)\s*(?:p|end)\b/,
+    paths: PARSER_TUS
+  ),
 ].freeze
 
 def load_config
@@ -163,6 +198,7 @@ def scan_findings(ignores)
       next [] unless code_line?(line)
 
       RULES.filter_map do |rule|
+        next if rule.paths && rule.paths.none? { |pat| path_matches?(pat, rel) }
         next unless line.match?(rule.regex)
         next if rule_ignored?(rel, rule.id, ignores)
 
