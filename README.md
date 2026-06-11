@@ -252,8 +252,6 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     Lexbor's HTML matcher.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
-* Class/ID selectors are matched case-insensitively regardless of quirks mode (a Lexbor behaviour)
-  * In a no-quirks document browsers and `Nokogiri::HTML5` match them case-sensitively.
 
 ## Conformance
 
@@ -294,10 +292,12 @@ bundle exec rake spec
 
 ### Vendored Lexbor version
 
-`vendor/lexbor` is pinned to `7b4c38c` (`v3.0.0-19`), an untagged `master`
-commit, for a heap-overflow fix in Lexbor's `:lexbor-contains()` parser (and
-other post-v3.0.0 bugfixes) that v3.0.0 lacks. Lexbor stays vanilla; we return
-to a release tag once one ships after v3.0.0. See `CLAUDE.md` for details.
+`vendor/lexbor` is pinned to `3a2d595` (`v3.0.0-25`), an untagged `master`
+commit, for fixes that v3.0.0 lacks: two upstreamed CSS-selector fixes (class/ID
+case-sensitivity in quirks mode, and prefix-less type-selector namespacing), a
+heap-overflow fix in the `:lexbor-contains()` parser, and other post-v3.0.0
+bugfixes. Lexbor stays vanilla; we return to a release tag once one ships after
+v3.0.0. See `CLAUDE.md` for details.
 
 ## License
 

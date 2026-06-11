@@ -32,12 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Nokogiri on the benchmark feed); name tests resolve their prefix once per step,
   and `at_css` / `at_xpath` short-circuit on prefixed name tests.
 
+* CSS class/ID selectors now match case-sensitively in no-quirks documents
+  (case-insensitively only in quirks mode), like browsers and `Nokogiri::HTML5` -
+  via an upstreamed Lexbor fix (see below).
+
 ### Security
 
-* Updated the vendored Lexbor (v3.0.0 -> `7b4c38c`) for a heap-overflow fix
-  in its `:lexbor-contains()` parser, reachable from `Node#css`, plus other
-  post-v3.0.0 bugfixes. (An untagged master commit, taken deliberately; see
-  CLAUDE.md.)
+* Updated the vendored Lexbor (v3.0.0 -> `3a2d595`), which includes two
+  CSS-selector fixes we upstreamed - class/ID case-sensitivity follows quirks
+  mode, and a prefix-less type selector no longer defaults to the universal
+  namespace - plus a heap-overflow fix in its `:lexbor-contains()` parser
+  (reached from `Node#css`) and other post-v3.0.0 bugfixes. (An untagged master
+  commit, taken deliberately; see CLAUDE.md.)
 
 * Hardened native memory safety. The XML arena is ASan-red-zoned to catch
   intra-arena overflows, the engines are fuzzed under ASan/UBSan, and buffer

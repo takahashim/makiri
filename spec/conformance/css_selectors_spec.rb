@@ -134,11 +134,17 @@ RSpec.describe "CSS Selectors conformance" do
     end
   end
 
-  describe "known divergence from browsers (Lexbor behaviour)" do
-    it "class/id selectors are case-sensitive in no-quirks mode" do
-      pending "Lexbor matches class/id case-insensitively regardless of quirks mode; " \
-              "browsers (no-quirks) and Nokogiri::HTML5 are case-sensitive"
-      expect(doc.css(".ITEM")).to be_empty # browser/no-quirks: 'ITEM' != 'item'
+  describe "class/id case-sensitivity follows quirks mode (Lexbor #369)" do
+    it "is case-sensitive in no-quirks mode (like browsers / Nokogiri::HTML5)" do
+      # `doc` declares <!DOCTYPE html>, so it is in no-quirks mode.
+      expect(doc.css(".ITEM")).to be_empty # 'ITEM' != 'item'
+      expect(doc.css("#MAIN")).to be_empty # 'MAIN' != 'main'
+    end
+
+    it "is case-insensitive in quirks mode (no DOCTYPE)" do
+      quirks = Makiri::HTML("<html><body><p class='item' id='main'></p></body></html>")
+      expect(quirks.css(".ITEM").length).to eq(1)
+      expect(quirks.css("#MAIN").length).to eq(1)
     end
   end
 end
