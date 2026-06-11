@@ -150,6 +150,34 @@ mkr_bytes_eq(const void *a, size_t alen, const void *b, size_t blen)
     return alen == blen && (alen == 0 || memcmp(a, b, alen) == 0);
 }
 
+/* Substring search: find the first occurrence of [needle, needle+needle_len)
+ * within [hay, hay+hay_len). On a hit returns true and writes the byte offset to
+ * *idx; on a miss returns false and leaves *idx untouched. The audited
+ * replacement for an open-coded substring memcmp (a scan, so it lives in core).
+ * Boundary behavior, kept identical to the hand-rolled original:
+ *   - a NULL hay or needle is a miss (false) - checked FIRST, so an empty needle
+ *     against a NULL haystack is still a miss, not a match at 0;
+ *   - otherwise an empty needle (needle_len == 0) matches at offset 0;
+ *   - a needle longer than the haystack never matches. */
+static inline bool
+mkr_bytes_find(const void *hay, size_t hay_len,
+               const void *needle, size_t needle_len, size_t *idx)
+{
+    if (hay == NULL || needle == NULL) return false;
+    if (needle_len == 0) { *idx = 0; return true; }
+    if (needle_len > hay_len) return false;
+    const char *h = (const char *)hay;
+    const char *n = (const char *)needle;
+    size_t last = hay_len - needle_len;
+    for (size_t i = 0; i <= last; ++i) {
+        if (h[i] == n[0] && memcmp(h + i, n, needle_len) == 0) {
+            *idx = i;
+            return true;
+        }
+    }
+    return false;
+}
+
 #ifdef __cplusplus
 }
 #endif

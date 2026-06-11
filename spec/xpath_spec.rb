@@ -265,7 +265,12 @@ RSpec.describe "Makiri XPath" do
     it "substring handles Infinity / NaN / huge positions (no UB)" do
       expect(doc.xpath('substring("12345", 1 div 0)')).to eq("")          # start = +Inf
       expect(doc.xpath('substring("12345", -1 div 0, 1 div 0)')).to eq("") # end = NaN
-      expect(doc.xpath('substring("12345", 1e309)')).to eq("")            # overflows to +Inf
+      # A 400-digit Number literal overflows a double to +Inf. (NB: "1e309" is
+      # NOT an XPath 1.0 Number - the grammar has no exponent - so it lexes as
+      # NUMBER 1 then NAME "e309" and is a syntax error; use a plain Digits
+      # literal to exercise the overflow-to-Infinity path.)
+      huge = "9" * 400
+      expect(doc.xpath(%(substring("12345", #{huge})))).to eq("")         # overflows to +Inf
       expect(doc.xpath('substring("12345", 2, 1 div 0)')).to eq("2345")   # length = +Inf
       expect(doc.xpath('substring("12345", -1 div 0)')).to eq("12345")    # start = -Inf
     end
@@ -297,6 +302,39 @@ RSpec.describe "Makiri XPath" do
     it "sum over a node-set" do
       nums = Makiri::HTML("<html><body><n>1</n><n>2</n><n>3</n></body></html>")
       expect(nums.xpath("sum(//n)")).to eq(6.0)
+    end
+  end
+
+  # The Number production is `Digits ('.' Digits?)? | '.' Digits` (XPath 1.0
+  # §3.7) - no sign, no exponent, no hex, no INF/NAN, and decimal-point only
+  # (locale-independent). The lexer and the string->number coercion both honour
+  # exactly that grammar rather than C strtod's superset.
+  describe "Number grammar (no exponent / hex / locale)" do
+    it "lexes a digit-then-letter run as NUMBER + NAME, so exponent/hex forms are syntax errors" do
+      # "1e3" -> NUMBER 1 then NAME "e3"; "0x1A" -> NUMBER 0 then NAME "x1A".
+      # A Number cannot be followed by a NAME, so the whole expression is invalid.
+      expect { doc.xpath("1e3") }.to raise_error(Makiri::XPath::SyntaxError)
+      expect { doc.xpath("0x1A") }.to raise_error(Makiri::XPath::SyntaxError)
+    end
+
+    it "still lexes the valid Number literal shapes" do
+      expect(doc.xpath("5.")).to eq(5.0)    # Digits '.'  (trailing dot allowed)
+      expect(doc.xpath(".5")).to eq(0.5)    # '.' Digits
+      expect(doc.xpath("1.5")).to eq(1.5)   # Digits '.' Digits
+    end
+
+    it "coerces only grammar-exact Numbers via number(); superset forms are NaN" do
+      expect(doc.xpath('number("0x10")')).to be_nan   # hex rejected (stops before 'x')
+      expect(doc.xpath('number("1e3")')).to be_nan    # exponent rejected (stops before 'e')
+      expect(doc.xpath('number(" 12.5 ")')).to eq(12.5) # leading/trailing XPath whitespace ok
+      expect(doc.xpath('number("-.5")')).to eq(-0.5)  # optional single leading minus
+      expect(doc.xpath('number("5.")')).to eq(5.0)    # trailing dot
+    end
+
+    it "treats only XPath S as whitespace - a form feed makes the coercion NaN" do
+      # \f (#xC) is C isspace() whitespace but NOT XPath whitespace, so a string
+      # padded with it does not coerce to a Number.
+      expect(doc.xpath(%(number("5\f")))).to be_nan
     end
   end
 

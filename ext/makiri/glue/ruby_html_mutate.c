@@ -265,8 +265,7 @@ mkr_attr_find_ns(lxb_dom_element_t *el, lxb_ns_id_t ns_id,
         const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
         (void) lxb_dom_attr_local_name(at, &llen);
         if (q != NULL && qlen >= llen
-            && llen == local_len
-            && memcmp(q + (qlen - llen), local, local_len) == 0) {
+            && mkr_bytes_eq(q + (qlen - llen), llen, local, local_len)) {
             return at;
         }
     }
@@ -312,9 +311,11 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
     }
 
     const lxb_char_t *qn = (const lxb_char_t *)qv.ptr;
-    const lxb_char_t *colon = memchr(qn, ':', qv.len);
-    const lxb_char_t *local = colon ? colon + 1 : qn;
-    size_t local_len = colon ? (size_t)(qv.len - (colon - qn) - 1) : qv.len;
+    mkr_span_t qspan = mkr_span((const char *)qn, qv.len);
+    size_t colon_off;
+    bool has_colon = mkr_span_find(&qspan, ':', &colon_off);
+    const lxb_char_t *local = has_colon ? qn + colon_off + 1 : qn;
+    size_t local_len = has_colon ? qv.len - colon_off - 1 : qv.len;
 
     /* A match keeps its qualified name (so re-setting with a different prefix
      * leaves the prefix unchanged); only the value updates. A miss appends a new

@@ -14,48 +14,10 @@
  * functions are added in Phase 2.
  */
 
-/* Count Unicode code points in a UTF-8 string. XPath 1.0 string-length
- * and substring offsets are measured in characters, not bytes - Lexbor
- * exposes content as UTF-8 byte strings, so we walk and count leading
- * bytes (any byte that isn't a 10xxxxxx continuation). */
-static size_t
-utf8_char_count(const char *s)
-{
-  if (s == NULL) return 0;
-  size_t n = 0;
-  for (const unsigned char *p = (const unsigned char *)s; *p; ++p) {
-    if ((*p & 0xC0) != 0x80) ++n;
-  }
-  return n;
-}
-
-/* Step forward by n UTF-8 characters from s; returns byte pointer.
- * Returns the trailing NUL if n exceeds the string length. */
-static const char *
-utf8_advance(const char *s, size_t n)
-{
-  const unsigned char *p = (const unsigned char *)s;
-  while (n > 0 && *p) {
-    do { ++p; } while ((*p & 0xC0) == 0x80);
-    --n;
-  }
-  return (const char *)p;
-}
-
-static const char *
-mkr_text_find(const char *hay, size_t hay_len, const char *needle, size_t needle_len)
-{
-  if (hay == NULL || needle == NULL) return NULL;
-  if (needle_len == 0) return hay;
-  if (needle_len > hay_len) return NULL;
-  size_t last = hay_len - needle_len;
-  for (size_t i = 0; i <= last; ++i) {
-    if (hay[i] == needle[0] && memcmp(hay + i, needle, needle_len) == 0) {
-      return hay + i;
-    }
-  }
-  return NULL;
-}
+/* Character-counting (mkr_utf8_count_chars), character-advance
+ * (mkr_utf8_advance_chars) and substring search (mkr_bytes_find) are
+ * length-bounded core primitives - see core/mkr_utf8.h and core/mkr_span.h.
+ * The byte-equality compares below go through mkr_bytes_eq (core/mkr_span.h). */
 
 static int
 arity_check(size_t got, size_t want_min, size_t want_max, mkr_xpath_error_t *err, const char *name)
@@ -163,7 +125,7 @@ find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
       MKR_DOM_ELEMENT *el = MKR_NODE_AS_ELEMENT(n);
       size_t vlen = 0;
       const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "id", 2, &vlen);
-      if (v && vlen == id_len && memcmp(v, id, id_len) == 0) {
+      if (v && mkr_bytes_eq(v, vlen, id, id_len)) {
         return n;
       }
     }
@@ -179,34 +141,36 @@ find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
 }
 
 /*
- * Look up each whitespace-separated token in 's' (mutated) and push
- * every hit into 'out'. Duplicates are pushed unconditionally - the
- * caller (fn_id) deduplicates the entire result via sort + adjacent
- * pass after all tokens have been processed, which is O(n log n)
- * versus O(n^2) per-insert contains() checks.
+ * Look up each whitespace-separated token in [s, s+len) and push every hit into
+ * 'out'. Duplicates are pushed unconditionally - the caller (fn_id) deduplicates
+ * the entire result via sort + adjacent pass after all tokens have been
+ * processed, which is O(n log n) versus O(n^2) per-insert contains() checks.
+ *
+ * Length-bounded over an mkr_span_t: each token is captured as a borrowed slice
+ * (mark/since) and handed to find_by_id by ptr+len, so the buffer is never
+ * mutated (the earlier temp-NUL splice was vestigial - find_by_id already
+ * compares by explicit length, never as a C string).
  */
 static int
-id_collect_from_string(char *s, MKR_DOM_NODE *root, mkr_nodeset_t *out,
-                       mkr_xpath_context_t *ctx, mkr_xpath_error_t *err)
+id_collect_from_string(const char *s, size_t len, MKR_DOM_NODE *root,
+                       mkr_nodeset_t *out, mkr_xpath_context_t *ctx,
+                       mkr_xpath_error_t *err)
 {
-  if (s == NULL) return 0;
-  char *p = s;
-  while (*p) {
-    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-    if (*p == '\0') break;
-    char *tok = p;
-    while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') p++;
-    size_t tok_len = (size_t)(p - tok);
-    char saved = *p;
-    *p = '\0';
+  mkr_span_t sp = mkr_span(s, len);
+  int c;
+  for (;;) {
+    while ((c = mkr_span_peek(&sp)) == ' ' || c == '\t' || c == '\n' || c == '\r')
+      mkr_span_skip(&sp, 1);
+    if (mkr_span_peek(&sp) < 0) break;
+    const char *tok = mkr_span_mark(&sp);
+    while ((c = mkr_span_peek(&sp)) >= 0 &&
+           !(c == ' ' || c == '\t' || c == '\n' || c == '\r'))
+      mkr_span_skip(&sp, 1);
+    size_t tok_len = mkr_span_since(&sp, tok);
     MKR_DOM_NODE *hit = find_by_id(root, tok, tok_len);
-    if (hit) {
-      if (mkr_nodeset_push(out, hit, mkr_ctx_limits(ctx), err) != 0) {
-        return -1;
-      }
+    if (hit && mkr_nodeset_push(out, hit, mkr_ctx_limits(ctx), err) != 0) {
+      return -1;
     }
-    if (saved == '\0') break;
-    *p++ = saved;
   }
   return 0;
 }
@@ -243,7 +207,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         mkr_nodeset_clear(&out->u.nodeset);
         return -1;
       }
-      int rc = id_collect_from_string(text.ptr, root, &out->u.nodeset, ctx, err);
+      int rc = id_collect_from_string(text.ptr, text.len, root, &out->u.nodeset, ctx, err);
       mkr_owned_text_clear(&text);
       if (rc != 0) { mkr_nodeset_clear(&out->u.nodeset); return -1; }
     }
@@ -253,7 +217,7 @@ fn_id(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
       mkr_nodeset_clear(&out->u.nodeset);
       return -1;
     }
-    int rc = id_collect_from_string(text.ptr, root, &out->u.nodeset, ctx, err);
+    int rc = id_collect_from_string(text.ptr, text.len, root, &out->u.nodeset, ctx, err);
     mkr_owned_text_clear(&text);
     if (rc != 0) { mkr_nodeset_clear(&out->u.nodeset); return -1; }
   }
@@ -277,22 +241,27 @@ static int two_owned_texts(mkr_xpath_context_t *ctx, mkr_val_t *args,
  * identical.
  */
 static int
-ws_token_match(const char *str, const char *val, size_t val_len)
+ws_token_match(const char *str, size_t str_len, const char *val, size_t val_len)
 {
+  /* NULL ordering preserved from the original: a NULL haystack/needle is a
+   * non-match BEFORE the empty-needle short-circuit (so empty val + NULL str
+   * stays 0, not 1). */
   if (str == NULL || val == NULL) return 0;
   if (val_len == 0) return 1; /* libxml2 returns non-NULL for empty val */
 
-  const char *p = str;
-  while (*p) {
-    const char *tok = p;
-    while (*p && !(*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-    size_t tok_len = (size_t)(p - tok);
-    if (tok_len == val_len && tok_len > 0 && tok[0] == val[0]
-        && memcmp(tok, val, val_len) == 0) {
+  mkr_span_t sp = mkr_span(str, str_len);
+  int c;
+  while (mkr_span_peek(&sp) >= 0) {
+    const char *tok = mkr_span_mark(&sp);
+    while ((c = mkr_span_peek(&sp)) >= 0 &&
+           !(c == ' ' || c == '\t' || c == '\n' || c == '\r'))
+      mkr_span_skip(&sp, 1);
+    if (mkr_bytes_eq(tok, mkr_span_since(&sp, tok), val, val_len)) {
       return 1;
     }
     /* skip whitespace */
-    while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
+    while ((c = mkr_span_peek(&sp)) == ' ' || c == '\t' || c == '\n' || c == '\r')
+      mkr_span_skip(&sp, 1);
   }
   return 0;
 }
@@ -307,7 +276,7 @@ fn_nokogiri_css_class(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   mkr_owned_text_t hay, needle;
   if (two_owned_texts(ctx, args, &hay, &needle, err) != 0) return -1;
   out->type = MKR_XPATH_TYPE_BOOLEAN;
-  out->u.boolean = ws_token_match(hay.ptr, needle.ptr, needle.len);
+  out->u.boolean = ws_token_match(hay.ptr, hay.len, needle.ptr, needle.len);
   mkr_owned_text_clear(&hay);
   mkr_owned_text_clear(&needle);
   return 0;
@@ -333,7 +302,7 @@ fn_nokogiri_local_name_is(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
     size_t got_len = 0;
     const lxb_char_t *got = MKR_ELEM_QUALIFIED_NAME(self_node, &got_len);
     if (got != NULL) {
-      out->u.boolean = (got_len == want.len && memcmp(got, want.ptr, want.len) == 0);
+      out->u.boolean = mkr_bytes_eq(got, got_len, want.ptr, want.len);
     }
   }
   mkr_owned_text_clear(&want);
@@ -363,12 +332,11 @@ mkr_xml_same_type(MKR_DOM_NODE *a, MKR_DOM_NODE *b)
   size_t al = 0, bl = 0;
   const lxb_char_t *an = MKR_ELEM_LOCAL_NAME(a, &al);
   const lxb_char_t *bn = MKR_ELEM_LOCAL_NAME(b, &bl);
-  if (al != bl || (al != 0 && memcmp(an, bn, al) != 0)) return 0;
+  if (!mkr_bytes_eq(an, al, bn, bl)) return 0;
   size_t au = 0, bu = 0;
   const char *ap = MKR_NODE_NS_URI(a, NULL, &au);
   const char *bp = MKR_NODE_NS_URI(b, NULL, &bu);
-  if (au != bu) return 0;
-  return au == 0 || memcmp(ap, bp, au) == 0;
+  return mkr_bytes_eq(ap, au, bp, bu);
 }
 
 /* 1-based position of +self+ among its same-type element siblings; forward walks
@@ -520,7 +488,8 @@ fn_starts_with(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   mkr_owned_text_t s, t;
   if (two_owned_texts(ctx, args, &s, &t, err) != 0) return -1;
   out->type = MKR_XPATH_TYPE_BOOLEAN;
-  out->u.boolean = (s.len >= t.len && memcmp(s.ptr, t.ptr, t.len) == 0);
+  mkr_span_t ss = mkr_span(s.ptr, s.len);
+  out->u.boolean = mkr_span_starts(&ss, t.ptr, t.len);
   mkr_owned_text_clear(&s);
   mkr_owned_text_clear(&t);
   return 0;
@@ -536,7 +505,8 @@ fn_contains(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   mkr_owned_text_t s, t;
   if (two_owned_texts(ctx, args, &s, &t, err) != 0) return -1;
   out->type = MKR_XPATH_TYPE_BOOLEAN;
-  out->u.boolean = (mkr_text_find(s.ptr, s.len, t.ptr, t.len) != NULL);
+  size_t idx;
+  out->u.boolean = mkr_bytes_find(s.ptr, s.len, t.ptr, t.len, &idx);
   mkr_owned_text_clear(&s);
   mkr_owned_text_clear(&t);
   return 0;
@@ -551,8 +521,10 @@ fn_substring_before(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   if (arity_check(nargs, 2, 2, err, "substring-before") != 0) return -1;
   mkr_owned_text_t s, t;
   if (two_owned_texts(ctx, args, &s, &t, err) != 0) return -1;
-  const char *found = (t.len == 0) ? NULL : mkr_text_find(s.ptr, s.len, t.ptr, t.len);
-  size_t n = (found != NULL) ? (size_t)(found - s.ptr) : 0;
+  /* substring-before(s, t): bytes of s up to the first occurrence of t, or ""
+   * when t is empty or absent. */
+  size_t n = 0, idx;
+  if (t.len != 0 && mkr_bytes_find(s.ptr, s.len, t.ptr, t.len, &idx)) n = idx;
   char *p = mkr_strndup(s.ptr, n); /* n == 0 yields an owned "" */
   mkr_owned_text_clear(&s);
   mkr_owned_text_clear(&t);
@@ -579,9 +551,14 @@ fn_substring_after(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
     out_len = s.len;
     p = mkr_strndup(s.ptr, s.len);
   } else {
-    const char *found = mkr_text_find(s.ptr, s.len, t.ptr, t.len);
-    out_len = found ? s.len - (size_t)((found + t.len) - s.ptr) : 0;
-    p = found ? mkr_strndup(found + t.len, out_len) : mkr_strdup("");
+    size_t idx;
+    if (mkr_bytes_find(s.ptr, s.len, t.ptr, t.len, &idx)) {
+      out_len = s.len - (idx + t.len);
+      p = mkr_strndup(s.ptr + idx + t.len, out_len);
+    } else {
+      out_len = 0;
+      p = mkr_strdup("");
+    }
   }
   mkr_owned_text_clear(&s);
   mkr_owned_text_clear(&t);
@@ -607,7 +584,7 @@ fn_substring(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   if (mkr_val_to_owned_text_or_fail(&args[0], L, err, &s) != 0) return -1;
   double start_d, end_d;
   if (mkr_val_to_number_or_fail(&args[1], L, err, &start_d) != 0) { mkr_owned_text_clear(&s); return -1; }
-  size_t s_chars = utf8_char_count(s.ptr);
+  size_t s_chars = mkr_utf8_count_chars(s.ptr, s.len);
   if (nargs == 3) {
     double len_d;
     if (mkr_val_to_number_or_fail(&args[2], L, err, &len_d) != 0) { mkr_owned_text_clear(&s); return -1; }
@@ -639,10 +616,12 @@ fn_substring(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
     if (end <= start) {
       p = mkr_strdup("");
     } else {
-      const char *byte_start = utf8_advance(s.ptr, (size_t)(start - 1));
-      const char *byte_end   = utf8_advance(byte_start, (size_t)(end - start));
-      out_len = (size_t)(byte_end - byte_start);
-      p = mkr_strndup(byte_start, out_len);
+      size_t start_off = mkr_utf8_advance_chars(s.ptr, s.len, (size_t)(start - 1));
+      size_t end_off   = start_off + mkr_utf8_advance_chars(s.ptr + start_off,
+                                                            s.len - start_off,
+                                                            (size_t)(end - start));
+      out_len = end_off - start_off;
+      p = mkr_strndup(s.ptr + start_off, out_len);
     }
   }
   mkr_owned_text_clear(&s);
@@ -668,7 +647,7 @@ fn_string_length(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
               : mkr_val_to_owned_text_or_fail(&args[0], L, err, &s);
   if (rc != 0) return -1;
   out->type = MKR_XPATH_TYPE_NUMBER;
-  out->u.number = (double)utf8_char_count(s.ptr);
+  out->u.number = (double)mkr_utf8_count_chars(s.ptr, s.len);
   mkr_owned_text_clear(&s);
   return 0;
 }

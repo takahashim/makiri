@@ -77,7 +77,7 @@ new_node(mkr_parser_t *P, mkr_nk_t kind)
 static int
 axis_by_name(const char *s, size_t n, mkr_axis_t *out)
 {
-#define A(name, val) do { if (n == sizeof(name)-1 && memcmp(s, name, n) == 0) { *out = val; return 1; } } while (0)
+#define A(name, val) do { if (mkr_bytes_eq(s, n, name, sizeof(name)-1)) { *out = val; return 1; } } while (0)
   A("child",                MKR_AXIS_CHILD);
   A("descendant",           MKR_AXIS_DESCENDANT);
   A("parent",               MKR_AXIS_PARENT);
@@ -98,10 +98,10 @@ axis_by_name(const char *s, size_t n, mkr_axis_t *out)
 static int
 is_nodetype_name(const char *s, size_t n)
 {
-  return (n == 4 && memcmp(s, "node", 4) == 0)
-      || (n == 4 && memcmp(s, "text", 4) == 0)
-      || (n == 7 && memcmp(s, "comment", 7) == 0)
-      || (n == 22 && memcmp(s, "processing-instruction", 22) == 0);
+  return mkr_bytes_eq(s, n, "node", 4)
+      || mkr_bytes_eq(s, n, "text", 4)
+      || mkr_bytes_eq(s, n, "comment", 7)
+      || mkr_bytes_eq(s, n, "processing-instruction", 22);
 }
 
 /* ---------- forward decls ---------- */
@@ -166,9 +166,9 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
       if (P_advance(P) != 0) return -1;
       if (TOK(P).kind == MKR_TK_LPAREN) {
         if (P_advance(P) != 0) return -1;
-        if      (saved.text.len == 4 && memcmp(saved.text.ptr, "node", 4)    == 0) out->kind = MKR_NT_NODE;
-        else if (saved.text.len == 4 && memcmp(saved.text.ptr, "text", 4)    == 0) out->kind = MKR_NT_TEXT;
-        else if (saved.text.len == 7 && memcmp(saved.text.ptr, "comment", 7) == 0) out->kind = MKR_NT_COMMENT;
+        if      (mkr_bytes_eq(saved.text.ptr, saved.text.len, "node", 4))    out->kind = MKR_NT_NODE;
+        else if (mkr_bytes_eq(saved.text.ptr, saved.text.len, "text", 4))    out->kind = MKR_NT_TEXT;
+        else if (mkr_bytes_eq(saved.text.ptr, saved.text.len, "comment", 7)) out->kind = MKR_NT_COMMENT;
         else /* processing-instruction */ {
           out->kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
@@ -194,8 +194,9 @@ parse_node_test(mkr_parser_t *P, mkr_axis_t axis, mkr_nodetest_t *out)
     /* QName name test: `prefix:local` or `prefix:*` - split at the colon. */
     const char *s = TOK(P).text.ptr;
     size_t      n = TOK(P).text.len;
-    size_t      colon = 0;
-    while (colon < n && s[colon] != ':') colon++;
+    mkr_span_t  sp = mkr_span(s, n);
+    size_t      colon;
+    if (!mkr_span_find(&sp, ':', &colon)) colon = n;
     if (P_fill_owned_text(P, mkr_borrowed_text(s, colon), &out->prefix) != 0) return -1;
     if (n - colon - 1 == 1 && s[colon + 1] == '*') {
       /* prefix:* - any element in the prefix's namespace. */
@@ -302,9 +303,9 @@ parse_step_inner(mkr_parser_t *P, mkr_step_t *out)
        * but without re-consuming (we already advanced). */
       if (is_nodetype_name(saved.text.ptr, saved.text.len) && TOK(P).kind == MKR_TK_LPAREN) {
         if (P_advance(P) != 0) return -1;
-        if      (saved.text.len == 4 && memcmp(saved.text.ptr, "node", 4)    == 0) out->test.kind = MKR_NT_NODE;
-        else if (saved.text.len == 4 && memcmp(saved.text.ptr, "text", 4)    == 0) out->test.kind = MKR_NT_TEXT;
-        else if (saved.text.len == 7 && memcmp(saved.text.ptr, "comment", 7) == 0) out->test.kind = MKR_NT_COMMENT;
+        if      (mkr_bytes_eq(saved.text.ptr, saved.text.len, "node", 4))    out->test.kind = MKR_NT_NODE;
+        else if (mkr_bytes_eq(saved.text.ptr, saved.text.len, "text", 4))    out->test.kind = MKR_NT_TEXT;
+        else if (mkr_bytes_eq(saved.text.ptr, saved.text.len, "comment", 7)) out->test.kind = MKR_NT_COMMENT;
         else {
           out->test.kind = MKR_NT_PI;
           if (TOK(P).kind == MKR_TK_LITERAL) {
@@ -433,8 +434,9 @@ parse_function_call(mkr_parser_t *P, mkr_token_t name_tok)
   if (n == NULL) return NULL;
 
   if (name_tok.kind == MKR_TK_QNAME) {
-    size_t colon = 0;
-    while (colon < name_tok.text.len && name_tok.text.ptr[colon] != ':') colon++;
+    mkr_span_t sp = mkr_span(name_tok.text.ptr, name_tok.text.len);
+    size_t colon;
+    if (!mkr_span_find(&sp, ':', &colon)) colon = name_tok.text.len;
     if (P_fill_owned_text(P, mkr_borrowed_text(name_tok.text.ptr, colon), &n->u.fncall.prefix) != 0) goto fail;
     if (P_fill_owned_text(P, mkr_borrowed_text(name_tok.text.ptr + colon + 1, name_tok.text.len - colon - 1), &n->u.fncall.name) != 0) goto fail;
   } else {
@@ -479,8 +481,9 @@ parse_primary(mkr_parser_t *P)
     n = new_node(P, MKR_NK_VARREF);
     if (n == NULL) return NULL;
     if (TOK(P).kind == MKR_TK_QNAME) {
-      size_t colon = 0;
-      while (colon < TOK(P).text.len && TOK(P).text.ptr[colon] != ':') colon++;
+      mkr_span_t sp = mkr_span(TOK(P).text.ptr, TOK(P).text.len);
+      size_t colon;
+      if (!mkr_span_find(&sp, ':', &colon)) colon = TOK(P).text.len;
       if (P_fill_owned_text(P, mkr_borrowed_text(TOK(P).text.ptr, colon), &n->u.varref.prefix) != 0) { mkr_node_free(n); return NULL; }
       if (P_fill_owned_text(P, mkr_borrowed_text(TOK(P).text.ptr + colon + 1, TOK(P).text.len - colon - 1), &n->u.varref.name) != 0) { mkr_node_free(n); return NULL; }
     } else {

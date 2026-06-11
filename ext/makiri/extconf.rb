@@ -213,3 +213,24 @@ $VPATH += Dir.glob(File.join(EXT_DIR, "**/"))
              .map { |d| "$(srcdir)/#{d.sub("#{EXT_DIR}/", "")}".chomp("/") }
 
 create_makefile("makiri/makiri")
+
+# mkmf's generated Makefile carries NO header dependencies, so editing a header
+# (e.g. a struct layout in an internal .h) recompiles only the .c files whose
+# own timestamps changed - the rest keep their stale layout and the objects
+# silently disagree (ABI mismatch, runtime breakage). Append the coarsest sound
+# rule instead: every object depends on every project header. A header edit
+# then recompiles everything - a few seconds for this ext, and it can never
+# rot (the list regenerates each configure; a header NEW since the last
+# configure is reachable only from .c files edited to include it, which rebuild
+# on their own timestamp). Ruby/Lexbor headers are deliberately excluded: a
+# Ruby upgrade gets a fresh build dir from rake-compiler, and a Lexbor pin
+# change already requires `rake clean:lexbor` (see CLAUDE.md).
+project_headers = Dir.glob(File.join(EXT_DIR, "**", "*.h"))
+                     .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+                     .map { |f| "$(srcdir)/#{f.sub("#{EXT_DIR}/", "")}" }
+                     .sort
+File.open("Makefile", "a") do |mk|
+  mk.puts
+  mk.puts "# Project-header dependencies appended by extconf.rb (mkmf emits none)."
+  mk.puts "$(OBJS): #{project_headers.join(" ")}"
+end

@@ -426,19 +426,19 @@ static int
 parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
     advance_n(P, 3);                                  /* consume "!--" */
-    const char *cstart = mkr_span_mark(&P->in), *close = NULL;
+    const char *cstart = mkr_span_mark(&P->in);
     mkr_span_t s = P->in;                             /* scan copy: looks ahead, consumes nothing */
     for (;;) {
         size_t at;
         if (!mkr_span_find(&s, '-', &at)) { set_syntax(P); return -1; } /* unterminated */
         mkr_span_skip(&s, at);                        /* cursor on the '-' */
         if (mkr_span_at(&s, 1) == '-') {
-            if (mkr_span_at(&s, 2) == '>') { close = mkr_span_mark(&s); break; }
+            if (mkr_span_at(&s, 2) == '>') break;     /* cursor on the closing "-->" */
             set_syntax(P); return -1;                 /* '--' not part of '-->' */
         }
         mkr_span_skip(&s, 1);
     }
-    size_t craw = (size_t)(close - cstart);
+    size_t craw = mkr_span_since(&s, cstart);
     if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
     uint32_t clen = (uint32_t)craw;
     if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
@@ -460,16 +460,16 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
     if (P->depth == 0 && P->fragment == NULL) { set_syntax(P); return -1; } /* CDATA outside the root */
     advance_n(P, 8);                                  /* consume "![CDATA[" */
-    const char *cstart = mkr_span_mark(&P->in), *close = NULL;
+    const char *cstart = mkr_span_mark(&P->in);
     mkr_span_t s = P->in;                             /* scan copy */
     for (;;) {
         size_t at;
         if (!mkr_span_find(&s, ']', &at)) { set_syntax(P); return -1; } /* unterminated */
         mkr_span_skip(&s, at);                        /* cursor on the ']' */
-        if (mkr_span_at(&s, 1) == ']' && mkr_span_at(&s, 2) == '>') { close = mkr_span_mark(&s); break; }
+        if (mkr_span_at(&s, 1) == ']' && mkr_span_at(&s, 2) == '>') break; /* cursor on "]]>" */
         mkr_span_skip(&s, 1);
     }
-    size_t craw = (size_t)(close - cstart);
+    size_t craw = mkr_span_since(&s, cstart);
     if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
     uint32_t clen = (uint32_t)craw;
     if (mkr_xml_validate_chars(cstart, clen) != 0) { set_syntax(P); return -1; }
@@ -513,7 +513,9 @@ decl_value_get(mkr_xml_parser_t *P, const char **out, uint32_t *out_len)
     const char *vs = mkr_span_mark(&P->in);
     while (mkr_span_peek(&P->in) >= 0 && mkr_span_peek(&P->in) != qch) advance(P);
     if (mkr_span_left(&P->in) == 0) { set_syntax(P); return -1; } /* unterminated / mismatched quote */
-    *out = vs; *out_len = (uint32_t)mkr_span_since(&P->in, vs);
+    size_t n = mkr_span_since(&P->in, vs);
+    if (n > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; } /* fail closed */
+    *out = vs; *out_len = (uint32_t)n;
     advance(P);                                         /* closing quote */
     return 0;
 }
@@ -623,16 +625,16 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
         if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; } /* need S */
         skip_ws(P);
     }
-    const char *dstart = mkr_span_mark(&P->in), *close = NULL;
+    const char *dstart = mkr_span_mark(&P->in);
     mkr_span_t s = P->in;                             /* scan copy */
     for (;;) {
         size_t at;
         if (!mkr_span_find(&s, '?', &at)) { set_syntax(P); return -1; } /* unterminated */
         mkr_span_skip(&s, at);                        /* cursor on the '?' */
-        if (mkr_span_at(&s, 1) == '>') { close = mkr_span_mark(&s); break; }
+        if (mkr_span_at(&s, 1) == '>') break;         /* cursor on the closing "?>" */
         mkr_span_skip(&s, 1);
     }
-    size_t draw = (size_t)(close - dstart);
+    size_t draw = mkr_span_since(&s, dstart);
     if (draw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
     uint32_t dlen = (uint32_t)draw;
     if (mkr_xml_validate_chars(dstart, dlen) != 0) { set_syntax(P); return -1; }
@@ -955,7 +957,7 @@ seed_doc_namespaces(mkr_xml_parser_t *P)
     for (mkr_xml_node_t *a = root->attrs; a != NULL; a = a->next) {
         const char *bpfx; uint32_t bpl;
         if (!mkr_xml_xmlns_prefix(a->qname, a->qname_len, &bpfx, &bpl)) continue;
-        if (push_binding(P, bpfx, bpl, a->value, a->value_len) != 0) return -1;
+        if (push_binding(P, bpfx, bpl, a->value ? a->value : "", a->value_len) != 0) return -1;
     }
     return 0;
 }

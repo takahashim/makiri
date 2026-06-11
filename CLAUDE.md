@@ -83,7 +83,10 @@ Requires CRuby >= 3.2 and `cmake`.
 - **After adding a new `.c` file, run `rake clean compile`** (not plain
   `compile`). extconf globs sources at configure time; a stale Makefile silently
   drops the new file, and macOS's `-undefined dynamic_lookup` turns the missing
-  symbols into runtime NULL jumps (segfault), not a link error.
+  symbols into runtime NULL jumps (segfault), not a link error. (*Header* edits
+  are covered without a clean: extconf appends a coarse `$(OBJS): <all project
+  headers>` rule to the Makefile, so touching any `.h` - e.g. a struct layout -
+  recompiles every object instead of leaving stale-ABI ones behind.)
 - **Sanitizer must be run via the rake task, not `bundle exec rspec`.**
   `MAKIRI_SANITIZE=<set>` makes extconf drop `_FORTIFY_SOURCE` and add
   `-fsanitize=<set> -O1 -g`; the task then preloads the ASan runtime

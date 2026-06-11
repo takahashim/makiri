@@ -131,6 +131,26 @@ int  mkr_limit_check_expr_bytes (mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_
  * value/registry/token comparison used across the engine. */
 int mkr_borrowed_text_eq(mkr_borrowed_text_t a, mkr_borrowed_text_t b);
 
+/* ---------- XPath Number parsing (grammar-exact, locale-independent) ---------- */
+
+/* Byte length of the longest prefix of [p, p+len) matching the XPath 1.0 Number
+ * production `Digits ('.' Digits?)? | '.' Digits` (Digits = [0-9]+; NO sign, NO
+ * exponent, NO hex - "5." IS a Number, a bare "." is NOT). Returns 0 if the
+ * input does not begin with a Number. Shared (mkr_xpath_shared.c); the lexer and
+ * the string->number coercion both scan through it so they honour the exact
+ * grammar instead of C strtod's superset (hex "0x1A", exponent "1e3", INF/NAN,
+ * and LC_NUMERIC comma-decimal). */
+size_t mkr_xpath_number_extent(const char *p, size_t len);
+
+/* Convert exactly `extent` bytes at p - which the caller has already confirmed
+ * match the Number grammar via mkr_xpath_number_extent - to a double, in the C
+ * locale and independently of LC_NUMERIC. CONTRACT: p's buffer MUST be
+ * NUL-terminated at or after p+extent (the engine text contract), so the
+ * internal strtod cannot read past the extent. Fast path is a single strtod with
+ * no allocation; it fails closed (never raises, never returns a wrong value) on
+ * OOM by assembling the digits by hand. Shared (mkr_xpath_shared.c). */
+double mkr_xpath_number_from_extent(const char *p, size_t extent);
+
 /* Pointer hash (SplitMix-style). Shared primitive: keys both the per-evaluate
  * document-order index and the string-value cache index. */
 
@@ -163,7 +183,6 @@ typedef struct {
 } mkr_token_t;
 
 typedef struct {
-  const char *src;
   mkr_span_t   in;    /* bounded input reader (cursor + end) */
   mkr_token_t  tok;   /* current (peeked) token */
   int         good;

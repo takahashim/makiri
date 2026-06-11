@@ -96,10 +96,10 @@ ignore_paths:
 
 # --- parser-TU reader discipline (raw_scan_call / raw_cursor_member) ---
 allowlist:
-  - path: ext/makiri/xpath/mkr_xpath_lex.c
+  - path: ext/makiri/xpath/mkr_xpath_funcs_body.h
     rule: raw_scan_call
-    max: 1
-    reason: "lex_number's strtod, the one sanctioned raw scan: the engine text contract (NUL-terminated, NUL-free verified text) bounds it - it can never leave the buffer - and XPath Number semantics intentionally match strtod's C-double parse."
+    max: 3
+    reason: "mkr_lookup_function's three strcmp over compile-time function-name tables: both sides are NUL-terminated (table literals / owned AST text), and the lookup signature takes bare const char* from the evaluator."
 
   # --- verified_text_forge: the two Ruby-free test entry points. Neither can use
   #     mkr_verified_text_from_view (bridge = Ruby boundary), so each mints the

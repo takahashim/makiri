@@ -22,6 +22,8 @@ PARSER_TUS = %w[
   ext/makiri/xml/mkr_xml_chars.c
   ext/makiri/xml/mkr_xml_node.c
   ext/makiri/xpath/mkr_xpath_lex.c
+  ext/makiri/xpath/mkr_xpath_funcs_body.h
+  ext/makiri/xpath/mkr_xpath_value_body.h
   ext/makiri/bridge/ruby_string.c
   ext/makiri/lexbor_compat/source_loc.c
 ].freeze

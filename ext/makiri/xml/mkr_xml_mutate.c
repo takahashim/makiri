@@ -21,12 +21,6 @@
 #define XMLNS_NS_URI  "http://www.w3.org/2000/xmlns/"
 #define LIT_LEN(s)    ((uint32_t)(sizeof(s) - 1))
 
-static int
-slice_eq(const char *a, uint32_t al, const char *b, uint32_t bl)
-{
-    return al == bl && (al == 0 || memcmp(a, b, al) == 0);
-}
-
 /* Nearest in-scope binding for +prefix+ (pl 0 = the default namespace) at or
  * above +node+, walking the real tree (no scope dictionary is threaded). */
 static int
@@ -38,7 +32,7 @@ resolve_in_scope(const mkr_xml_node_t *node, const char *prefix, uint32_t pl,
         for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
             const char *p, *u; uint32_t apl, ul;
             if (mkr_xml_node_xmlns_decl(a, &p, &apl, &u, &ul)
-                && apl == pl && (pl == 0 || memcmp(p, prefix, pl) == 0)) {
+                && mkr_bytes_eq(p, apl, prefix, pl)) {
                 *uri = u; *ulen = ul; return 1;
             }
         }
@@ -79,11 +73,11 @@ resolve_ns(const mkr_xml_node_t *scope, const mkr_xml_qname_t *qn, int is_attr,
         if (resolve_in_scope(scope, "", 0, &u, &ul) && ul > 0) { *uri = u; *ulen = ul; }
         return MKR_XML_MUT_OK;
     }
-    if (slice_eq(qn->prefix, qn->prefix_len, "xml", 3)) {       /* the predefined xml: prefix */
+    if (mkr_bytes_eq(qn->prefix, qn->prefix_len, "xml", 3)) {       /* the predefined xml: prefix */
         *uri = XML_NS_URI; *ulen = LIT_LEN(XML_NS_URI);
         return MKR_XML_MUT_OK;
     }
-    if (slice_eq(qn->prefix, qn->prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME; /* xmlns: as a normal name */
+    if (mkr_bytes_eq(qn->prefix, qn->prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME; /* xmlns: as a normal name */
     const char *u; uint32_t ul;
     if (!resolve_in_scope(scope, qn->prefix, qn->prefix_len, &u, &ul) || ul == 0) {
         return connected ? MKR_XML_MUT_UNBOUND_NS : MKR_XML_MUT_OK;  /* defer when detached */
@@ -154,7 +148,7 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
     /* A prefixed namespace declaration (xmlns:foo="") must not bind a prefix to
      * the empty namespace: XML Namespaces 1.0 forbids it and it serializes to
      * invalid XML. (Undeclaring the DEFAULT namespace, xmlns="", is allowed.) */
-    if (vlen == 0 && qn.prefix_len == 5 && slice_eq(qn.prefix, qn.prefix_len, "xmlns", 5))
+    if (vlen == 0 && qn.prefix_len == 5 && mkr_bytes_eq(qn.prefix, qn.prefix_len, "xmlns", 5))
         return MKR_XML_MUT_BAD_NS_DECL;
     if (vlen > 0 && mkr_xml_validate_chars(val, vlen) != 0) return MKR_XML_MUT_BAD_CHARS;
 
@@ -164,7 +158,7 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
 
     /* An existing attribute with the same raw QName -> replace its value. */
     for (mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
-        if (slice_eq(a->qname, a->qname_len, name, nlen)) {
+        if (mkr_bytes_eq(a->qname, a->qname_len, name, nlen)) {
             const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
             if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
             a->value = nv ? nv : ""; a->value_len = vlen;
@@ -202,7 +196,7 @@ mkr_xml_remove_attribute(mkr_xml_node_t *el, const char *name, uint32_t nlen)
     if (el->type != MKR_XML_NODE_TYPE_ELEMENT) return 0;
     mkr_xml_node_t *prev = NULL;
     for (mkr_xml_node_t *a = el->attrs; a != NULL; prev = a, a = a->next) {
-        if (slice_eq(a->qname, a->qname_len, name, nlen)) {
+        if (mkr_bytes_eq(a->qname, a->qname_len, name, nlen)) {
             if (prev) prev->next = a->next; else el->attrs = a->next;
             a->next = NULL; a->parent = NULL;
             return 1;
@@ -299,7 +293,7 @@ mkr_xml_new_element(mkr_xml_doc_t *doc, const char *name, uint32_t nlen, mkr_xml
     *out = NULL;
     mkr_xml_qname_t qn;
     if (mkr_xml_qname_split(name, nlen, &qn) != 0) return MKR_XML_MUT_BAD_NAME;
-    if (slice_eq(qn.prefix, qn.prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME;  /* xmlns: is not an element prefix */
+    if (mkr_bytes_eq(qn.prefix, qn.prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME;  /* xmlns: is not an element prefix */
     mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
     if (el == NULL) return MKR_XML_MUT_OOM;
     mkr_xml_mut_status_t st = assign_qname(doc, el, &qn);
@@ -705,14 +699,14 @@ mkr_xml_mutate_selftest(void)
 
     /* 4. the predefined xml: prefix resolves with no declaration */
     if (mkr_xml_set_attribute(doc, r, "xml:lang", 8, "en", 2, &at) != MKR_XML_MUT_OK
-        || !slice_eq(at->ns_uri, at->ns_uri_len, XML_NS_URI, LIT_LEN(XML_NS_URI))) { rc = 13; goto done; }
+        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, XML_NS_URI, LIT_LEN(XML_NS_URI))) { rc = 13; goto done; }
 
     /* 5. adding an xmlns:* declaration lands in the xmlns namespace and then binds
      *    a previously-unbound prefix */
     if (mkr_xml_set_attribute(doc, r, "xmlns:p", 7, "urn:p", 5, &at) != MKR_XML_MUT_OK
-        || !slice_eq(at->ns_uri, at->ns_uri_len, XMLNS_NS_URI, LIT_LEN(XMLNS_NS_URI))) { rc = 14; goto done; }
+        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, XMLNS_NS_URI, LIT_LEN(XMLNS_NS_URI))) { rc = 14; goto done; }
     if (mkr_xml_set_attribute(doc, r, "p:k", 3, "v", 1, &at) != MKR_XML_MUT_OK
-        || !slice_eq(at->ns_uri, at->ns_uri_len, "urn:p", 5)) { rc = 15; goto done; }
+        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, "urn:p", 5)) { rc = 15; goto done; }
 
     /* 6. remove by name (idempotent) */
     if (mkr_xml_remove_attribute(r, "id", 2) != 1) { rc = 16; goto done; }
@@ -761,7 +755,7 @@ mkr_xml_mutate_selftest(void)
     if (mkr_xml_new_element(doc, "p:c", 3, &ne) != MKR_XML_MUT_OK) { rc = 31; goto done; }
     if (mkr_xml_insert_child(doc, pr, ne) != MKR_XML_MUT_OK
         || pr->first_child != ne || ne->parent != pr
-        || !slice_eq(ne->ns_uri, ne->ns_uri_len, "urn:p", 5)) { rc = 32; goto done; }
+        || !mkr_bytes_eq(ne->ns_uri, ne->ns_uri_len, "urn:p", 5)) { rc = 32; goto done; }
     if (mkr_xml_insert_child(doc, ne, tx) != MKR_XML_MUT_OK || ne->first_child != tx) { rc = 33; goto done; }
 
     /* 12. an unbound prefix is a hard error in the live tree, leaving it unchanged */
@@ -778,8 +772,8 @@ mkr_xml_mutate_selftest(void)
     if (mkr_xml_insert_child(doc, wrap, inner) != MKR_XML_MUT_OK
         || inner->ns_uri_len != 0) { rc = 37; goto done; }   /* deferred while detached */
     if (mkr_xml_insert_child(doc, pr, wrap) != MKR_XML_MUT_OK
-        || !slice_eq(wrap->ns_uri, wrap->ns_uri_len, "urn:p", 5)
-        || !slice_eq(inner->ns_uri, inner->ns_uri_len, "urn:p", 5)) { rc = 38; goto done; }
+        || !mkr_bytes_eq(wrap->ns_uri, wrap->ns_uri_len, "urn:p", 5)
+        || !mkr_bytes_eq(inner->ns_uri, inner->ns_uri_len, "urn:p", 5)) { rc = 38; goto done; }
 
     /* 14. cycle rejection: a node cannot be inserted under its own descendant */
     if (mkr_xml_insert_child(doc, ne, pr) != MKR_XML_MUT_CYCLE) { rc = 39; goto done; }
@@ -807,7 +801,7 @@ mkr_xml_mutate_selftest(void)
     mkr_xml_node_t *imp = NULL;
     int irc = mkr_xml_import_subtree(doc2, pr, &imp);
     if (irc != MKR_XML_MUT_OK || imp == NULL || imp == pr
-        || imp->qname_len != 2 || memcmp(imp->qname, "pr", 2) != 0
+        || !mkr_bytes_eq(imp->qname, imp->qname_len, "pr", 2)
         || imp->first_child == NULL || imp->first_child == pr->first_child) { rc = 46; }
     mkr_xml_doc_destroy(doc2);
     if (rc != 0) goto done;

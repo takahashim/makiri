@@ -340,7 +340,7 @@ mkr_xml_node_aref(VALUE self, VALUE rb_name)
     mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
     VALUE out = Qnil;
     for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
-        if (a->qname_len == nv.len && memcmp(a->qname, nv.ptr, nv.len) == 0) {
+        if (mkr_bytes_eq(a->qname, a->qname_len, nv.ptr, nv.len)) {
             out = rb_utf8_str_new(a->value ? a->value : "", (long)a->value_len);
             break;
         }
@@ -689,8 +689,8 @@ mkr_c14n_nearest(const mkr_xml_node_t *node, const char *prefix, uint32_t plen,
         if (e->type != MKR_XML_NODE_TYPE_ELEMENT) continue;
         for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
             const char *p, *u; uint32_t pl, ul;
-            if (mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul) && pl == plen
-                && (pl == 0 || memcmp(p, prefix, pl) == 0)) {
+            if (mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)
+                && mkr_bytes_eq(p, pl, prefix, plen)) {
                 *uri = u; *ulen = ul; return 1;
             }
         }
@@ -702,7 +702,7 @@ static int
 mkr_c14n_has_prefix(const mkr_c14n_ns_t *arr, size_t n, const char *p, uint32_t pl)
 {
     for (size_t i = 0; i < n; i++)
-        if (arr[i].plen == pl && (pl == 0 || memcmp(arr[i].prefix, p, pl) == 0)) return 1;
+        if (mkr_bytes_eq(arr[i].prefix, arr[i].plen, p, pl)) return 1;
     return 0;
 }
 
@@ -735,7 +735,7 @@ mkr_c14n_namespaces(const mkr_xml_node_t *n, int is_apex, mkr_c14n_ns_t **out)
             for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
                 const char *p, *u; uint32_t pl, ul;
                 if (!mkr_xml_node_xmlns_decl(a, &p, &pl, &u, &ul)) continue;
-                if (pl == 3 && memcmp(p, "xml", 3) == 0) continue;             /* implicit xml: */
+                if (mkr_bytes_eq(p, pl, "xml", 3)) continue;                   /* implicit xml: */
                 if (is_apex) {
                     if (pl == 0) {                /* default: nearest decl wins */
                         if (default_seen) continue;
@@ -747,7 +747,7 @@ mkr_c14n_namespaces(const mkr_xml_node_t *n, int is_apex, mkr_c14n_ns_t **out)
                 } else {                          /* descendant: only changes to the binding */
                     const char *au; uint32_t aul;
                     int above = mkr_c14n_nearest(e->parent, p, pl, &au, &aul);
-                    if (above && aul == ul && (ul == 0 || memcmp(au, u, ul) == 0)) continue; /* superfluous */
+                    if (above && mkr_bytes_eq(au, aul, u, ul)) continue; /* superfluous */
                     if (pl == 0 && ul == 0 && !(above && aul > 0)) continue; /* xmlns="" only undeclares */
                 }
                 arr[cnt].prefix = p; arr[cnt].plen = pl;

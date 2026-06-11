@@ -85,10 +85,11 @@ css_is_name_byte(unsigned char c)
 static int
 css_has_leading_pipe(const char *s, size_t len)
 {
+  mkr_span_t sp = mkr_span(s, len);
   int bracket = 0;
   unsigned char prev = 0;   /* last significant byte; 0 = start, ' ' = whitespace */
-  for (size_t i = 0; i < len; i++) {
-    unsigned char c = (unsigned char)s[i];
+  for (int b; (b = mkr_span_take(&sp)) != -1; ) {
+    unsigned char c = (unsigned char)b;
     if (c == '[') { bracket++; prev = c; continue; }
     if (c == ']') { if (bracket > 0) bracket--; prev = c; continue; }
     if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f') {

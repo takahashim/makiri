@@ -2,7 +2,6 @@
 
 #include <ctype.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -71,21 +70,23 @@ skip_ws(mkr_lexer_t *L)
 static int
 lex_number(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 {
-  const char *s = mkr_span_mark(&L->in);
-  char *end = NULL;
-  /* strtod scans the raw bytes, but the engine text contract makes that
-   * bounded: the input is NUL-terminated and NUL-free, so the scan can never
-   * leave the buffer (lint-allowlisted as the one sanctioned raw scan). */
-  double v = strtod(s, &end);
-  if (end == s) {
-    mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX, "expected number at '%.10s'", s);
+  /* Grammar-exact Number lex: the audited shared helpers scan and convert ONLY
+   * the bytes matching XPath 1.0 `Digits ('.' Digits?)? | '.' Digits`. We hand
+   * the helper a mark+length slice of the bounded reader (the sanctioned
+   * parser-TU pattern); it stays C-locale, so "0x1A" lexes as NUMBER 0 then NAME
+   * "x1A" and "1e3" as NUMBER 1 then NAME "e3", matching libxml2 / browsers. No
+   * raw scan (no strtod) remains in this TU. */
+  const char *mark = mkr_span_mark(&L->in);
+  size_t extent = mkr_xpath_number_extent(mark, mkr_span_left(&L->in));
+  if (extent == 0) {
+    mkr_err_setf(err, MKR_XPATH_ERR_SYNTAX, "expected number at '%.10s'", mark);
     return -1;
   }
-  t->kind  = MKR_TK_NUMBER;
-  t->text.ptr = s;
-  t->text.len   = (size_t)(end - s);
-  t->num   = v;
-  mkr_span_skip(&L->in, (size_t)(end - s));
+  t->kind     = MKR_TK_NUMBER;
+  t->text.ptr = mark;
+  t->text.len = extent;
+  t->num      = mkr_xpath_number_from_extent(mark, extent);
+  mkr_span_skip(&L->in, extent);
   return 0;
 }
 
@@ -211,7 +212,6 @@ next_token(mkr_lexer_t *L, mkr_token_t *t, mkr_xpath_error_t *err)
 void
 mkr_lexer_init(mkr_lexer_t *L, const char *src, size_t len, mkr_xpath_error_t *err)
 {
-  L->src = src;
   L->in  = mkr_span(src, len);
   memset(&L->tok, 0, sizeof(L->tok));
   L->good = (next_token(L, &L->tok, err) == 0);

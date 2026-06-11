@@ -12,6 +12,8 @@
 
 #include <lexbor/dom/dom.h>          /* for the MKR_XML_NODE_TYPE_* == LXB asserts + lxb_char_t */
 #include "../xml/mkr_xml_node.h"
+#include "../core/mkr_span.h"        /* mkr_bytes_eq / mkr_span_starts (this header is
+                                      * included before mkr_core.h in the XML engine TU) */
 #include <string.h>
 
 #define MKR_HOST_XML 1
@@ -74,8 +76,9 @@ _Static_assert((int)MKR_XML_NODE_TYPE_NOTATION == (int)LXB_DOM_NODE_TYPE_NOTATIO
 static inline int
 mkr_xml_attr_is_ns_decl(const mkr_xml_node_t *a)
 {
-    return (a->qname_len == 5 && memcmp(a->qname, "xmlns", 5) == 0)
-        || (a->qname_len >= 6 && memcmp(a->qname, "xmlns:", 6) == 0);
+    mkr_span_t q = mkr_span(a->qname, a->qname_len);
+    return mkr_bytes_eq(a->qname, a->qname_len, "xmlns", 5)   /* exact "xmlns" */
+        || mkr_span_starts(&q, "xmlns:", 6);                  /* "xmlns:*" prefix */
 }
 static inline mkr_xml_node_t *
 mkr_xml_first_xpath_attr(const mkr_xml_node_t *el)
@@ -111,7 +114,7 @@ mkr_xml_node_get_attribute(mkr_xml_node_t *el, const char *name, size_t nlen, si
 {
     for (mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
         if (mkr_xml_attr_is_ns_decl(a)) continue;   /* xmlns is a namespace node, not @attr */
-        if (a->qname_len == nlen && memcmp(a->qname, name, nlen) == 0) {
+        if (mkr_bytes_eq(a->qname, a->qname_len, name, nlen)) {
             *vlenp = a->value_len;
             return (const lxb_char_t *)a->value;
         }

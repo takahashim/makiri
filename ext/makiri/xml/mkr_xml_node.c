@@ -218,7 +218,7 @@ mkr_xml_xmlns_prefix(const char *name, uint32_t len, const char **prefix, uint32
 {
     const char *p; uint32_t pl;
     mkr_span_t s = mkr_span(name, len);
-    if (mkr_bytes_eq(name, len, "xmlns", 5)) {
+    if (len == 5 && mkr_span_starts(&s, "xmlns", 5)) {   /* read through the span - no raw name deref (NULL-safe) */
         p = ""; pl = 0;
     } else if (len > 6 && mkr_span_starts(&s, "xmlns:", 6)) {
         p = name + 6; pl = len - 6;
@@ -290,6 +290,17 @@ mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out)
 int
 mkr_xml_qname_assign(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const mkr_xml_qname_t *qn)
 {
+    /* Contract: qn->local must alias INTO [qn->qname, qn->qname+qname_len) - the
+     * rebase below adds (local - qname) onto the arena copy, so a non-aliasing
+     * local would mint an out-of-bounds slice (wrong-but-plausible data, the worst
+     * failure mode here). Both in-tree producers (split_qname in mkr_xml_tree.c,
+     * mkr_xml_qname_split above) honour it; pin it so a violation fails closed
+     * (INTERNAL, sticky) instead of silently passing. */
+    if (!(qn->local >= qn->qname && qn->local_len <= qn->qname_len
+          && (size_t)(qn->local - qn->qname) <= qn->qname_len - qn->local_len)) {
+        if (doc != NULL) doc->oom = MKR_XML_ERR_INTERNAL;
+        return -1;
+    }
     const char *q = mkr_xml_arena_bytes(doc, qn->qname, qn->qname_len);
     if (qn->qname_len > 0 && q == NULL) return -1;        /* OOM: node left untouched */
     node->qname  = q;                                  node->qname_len  = qn->qname_len;

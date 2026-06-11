@@ -50,6 +50,37 @@ mkr_utf8_decode1_span(const mkr_span_t *s, uint32_t *cp)
     return mkr_utf8_decode1((const unsigned char *)s->p, mkr_span_left(s), cp);
 }
 
+/* mkr_utf8_count_chars - count Unicode code points in [ptr, ptr+len): every
+ * byte that is NOT a 0x80..0xBF continuation byte starts a new code point.
+ * Length-bounded (does not rely on a NUL terminator); ptr may be NULL when
+ * len == 0. Used where XPath measures string length / offsets in characters. */
+static inline size_t
+mkr_utf8_count_chars(const char *ptr, size_t len)
+{
+    size_t n = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (((unsigned char)ptr[i] & 0xC0) != 0x80) ++n;
+    }
+    return n;
+}
+
+/* mkr_utf8_advance_chars - byte offset within [ptr, ptr+len) after advancing up
+ * to nchars UTF-8 characters from the start, clamped at len. A character is its
+ * leading byte plus the run of 0x80..0xBF continuation bytes that follow;
+ * advancing stops at len even mid-sequence. Length-bounded (no NUL reliance).
+ * Returns len when nchars exceeds the available character count. */
+static inline size_t
+mkr_utf8_advance_chars(const char *ptr, size_t len, size_t nchars)
+{
+    size_t i = 0;
+    while (nchars > 0 && i < len) {
+        ++i;
+        while (i < len && ((unsigned char)ptr[i] & 0xC0) == 0x80) ++i;
+        --nchars;
+    }
+    return i;
+}
+
 #ifdef __cplusplus
 }
 #endif

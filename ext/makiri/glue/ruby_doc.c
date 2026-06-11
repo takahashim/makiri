@@ -140,10 +140,10 @@ mkr_resolve_fragment_context(lxb_dom_document_t *doc, VALUE context,
     mkr_ruby_borrowed_text_t cv = mkr_ruby_verified_text(context, "fragment context element");
     const lxb_char_t *p = (const lxb_char_t *)cv.ptr;
     size_t n = cv.len;
-    if (n == 3 && memcmp(p, "svg", 3) == 0) {
+    if (mkr_bytes_eq(p, n, "svg", 3)) {
         *out_tag = LXB_TAG_SVG;  *out_ns = LXB_NS_SVG;  return;
     }
-    if (n == 4 && memcmp(p, "math", 4) == 0) {
+    if (mkr_bytes_eq(p, n, "math", 4)) {
         *out_tag = LXB_TAG_MATH; *out_ns = LXB_NS_MATH; return;
     }
     lxb_tag_id_t tid = lxb_tag_id_by_name(doc->tags, p, n);

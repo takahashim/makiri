@@ -74,8 +74,7 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
     const char *want_uri = have_pre ? pre_uri
         : mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
     if (want_uri == NULL) return 0;
-    if (want_uri_len != node_uri_len
-        || (want_uri_len && memcmp(want_uri, node_uri, want_uri_len) != 0)) return 0;
+    if (!mkr_bytes_eq(want_uri, want_uri_len, node_uri, node_uri_len)) return 0;
   } else if (node_uri_len != 0 && !mkr_ctx_unprefixed_lax(ctx)) {
     /* unprefixed test, strict: the node must be in no namespace */
     return 0;
@@ -102,7 +101,7 @@ name_test_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
         : mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
     if (want_uri == NULL) return 0; /* unknown prefix -> non-match (step driver reports) */
     mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
-    if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
+    if (!mkr_bytes_eq(want_uri, want_uri_len, node_uri.ptr, node_uri.len)) return 0;
   } else if (!mkr_ctx_unprefixed_lax(ctx)
              && axis != MKR_AXIS_ATTRIBUTE
              && MKR_NODE_IS_FOREIGN_NS(node)) {
@@ -171,7 +170,7 @@ node_principal_match_pre(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
           : mkr_ctx_lookup_ns(ctx, test->prefix.ptr, test->prefix.len, &want_uri_len);
       if (want_uri == NULL) return 0;
       mkr_borrowed_text_t node_uri = node_ns_text(node, mkr_ctx_document(ctx));
-      if (want_uri_len != node_uri.len || memcmp(want_uri, node_uri.ptr, want_uri_len) != 0) return 0;
+      if (!mkr_bytes_eq(want_uri, want_uri_len, node_uri.ptr, node_uri.len)) return 0;
     }
     return 1;
   }
@@ -415,7 +414,7 @@ mkr_attr_by_qualified_name(MKR_DOM_ELEMENT *el, const char *name, size_t name_le
   for (MKR_DOM_ATTR *a = MKR_ELEM_FIRST_ATTR(el); a != NULL; a = MKR_ATTR_NEXT(a)) {
     size_t qlen = 0;
     const lxb_char_t *q = MKR_ATTR_QUALIFIED_NAME(a, &qlen);
-    if (q != NULL && qlen == name_len && memcmp(q, name, name_len) == 0) {
+    if (q != NULL && mkr_bytes_eq(q, qlen, name, name_len)) {
       return a;
     }
   }
@@ -443,9 +442,7 @@ mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
           if (got == NULL) {
             got_len = 0;
           }
-          keep = (got_len == ap->value_len
-                  && (ap->value_len == 0
-                      || memcmp(got, ap->value, ap->value_len) == 0));
+          keep = mkr_bytes_eq(got, got_len, ap->value, ap->value_len);
         }
       }
     }
@@ -820,8 +817,7 @@ mkr_first_node_ok(const mkr_step_t *step, MKR_DOM_NODE *n)
       size_t got_len = 0;
       const lxb_char_t *got = MKR_ATTR_VALUE(a, &got_len);
       if (got == NULL) got_len = 0;
-      if (got_len != ap.value_len
-          || (ap.value_len != 0 && memcmp(got, ap.value, ap.value_len) != 0)) {
+      if (!mkr_bytes_eq(got, got_len, ap.value, ap.value_len)) {
         return 0;
       }
     }

@@ -2,7 +2,6 @@
 #include "../core/mkr_core.h"
 
 #include <lexbor/dom/dom.h>
-#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -316,19 +315,47 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
 
 /* ---------- coercions ---------- */
 
+/* Skip XPath S whitespace - (#x20 | #x9 | #xD | #xA) ONLY (XPath 1.0 §3.7). NOT
+ * C isspace(), which would also swallow #xB (\v) and #xC (\f); those are not
+ * XPath whitespace, so a string padded with them must coerce to NaN, not parse. */
+static void
+mkr_span_skip_xpath_ws(mkr_span_t *s)
+{
+  for (;;) {
+    int c = mkr_span_peek(s);
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') mkr_span_skip(s, 1);
+    else break;
+  }
+}
+
+/* string -> number coercion (XPath 1.0 §4.4): optional leading whitespace, an
+ * optional single '-' (NO whitespace between it and the digits, and NO '+'),
+ * then a Number, then optional trailing whitespace - anything else is NaN. The
+ * Number scan/convert uses the same grammar-exact, locale-independent helpers as
+ * the lexer, so "0x10" / "1e3" / "INF" all coerce to NaN (the extent stops
+ * before x/e and the trailing garbage trips the end check). All reads go through
+ * the bounded span. */
 static double
 mkr_borrowed_text_to_number(mkr_borrowed_text_t t)
 {
   if (t.ptr == NULL) return (double)NAN;
-  const char *s = t.ptr;
-  while (*s && isspace((unsigned char)*s)) s++;
-  if (*s == '\0') return (double)NAN;
-  char *end = NULL;
-  double d = strtod(s, &end);
-  if (end == s) return (double)NAN;
-  while (*end && isspace((unsigned char)*end)) end++;
-  if (*end != '\0') return (double)NAN;
-  return d;
+  mkr_span_t s = mkr_span(t.ptr, t.len);
+
+  mkr_span_skip_xpath_ws(&s);
+
+  int neg = 0;
+  if (mkr_span_peek(&s) == '-') { neg = 1; mkr_span_skip(&s, 1); }
+
+  const char *mark = mkr_span_mark(&s);
+  size_t extent = mkr_xpath_number_extent(mark, mkr_span_left(&s));
+  if (extent == 0) return (double)NAN;
+  double d = mkr_xpath_number_from_extent(mark, extent);
+  mkr_span_skip(&s, extent);
+
+  mkr_span_skip_xpath_ws(&s);
+  if (mkr_span_peek(&s) != -1) return (double)NAN; /* trailing garbage */
+
+  return neg ? -d : d;
 }
 
 static double
