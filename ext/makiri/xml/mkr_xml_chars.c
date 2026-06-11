@@ -7,9 +7,16 @@
  * resulting codepoint (literal or from a numeric reference) must be an XML 1.0
  * Char; control characters / surrogates / out-of-range are rejected. The input
  * is already valid UTF-8 (§2.1).
+ *
+ * All input reads go through the bounded reader (core mkr_span_t) and the
+ * strict core decoder (mkr_utf8_decode1) - an out-of-bounds read is
+ * structurally impossible, not a per-site convention; all output goes through
+ * the bounded writer (mkr_spanbuf_t). The lint (raw_scan_call /
+ * raw_cursor_member) keeps it that way.
  */
 #include "mkr_xml.h"
 #include "mkr_xml_node.h"
+#include "../core/mkr_core.h"   /* mkr_span_t + mkr_utf8_decode1 */
 
 #include <string.h>
 
@@ -24,71 +31,23 @@ mkr_xml_is_char(uint32_t c)
         || (c >= 0x10000u && c <= 0x10FFFFu);
 }
 
-/* Decode one codepoint from UTF-8. STRICT (self-contained, not trusting the
- * caller): rejects truncation, bad continuation bytes, overlong encodings,
- * surrogates and out-of-range values. Returns the byte length (1-4) or 0 on any
- * violation - fail closed, even if some future caller feeds unvalidated bytes. */
-static int
-is_cont(const char *p, const char *end)
-{
-    return p < end && ((unsigned char)*p & 0xC0u) == 0x80u;
-}
-
-/* forward decl: utf8_decode is defined below but mkr_xml_validate_chars uses it. */
-static int utf8_decode(const char *p, const char *end, uint32_t *cp);
-
 /* Validate that [src, src+len) is entirely XML 1.0 Char, with NO entity/reference
  * recognition (for comment/CDATA/PI content, where '&' and '<' are literal). 0 if
- * all valid, -1 on the first malformed UTF-8 or non-Char (caller raises SYNTAX). */
+ * all valid, -1 on the first malformed UTF-8 or non-Char (caller raises SYNTAX).
+ * The strict decode (truncation / bad continuation / overlong / surrogate /
+ * out-of-range -> 0) is the core mkr_utf8_decode1 - self-contained, not trusting
+ * the caller, even if some future caller feeds unvalidated bytes. */
 int
 mkr_xml_validate_chars(const char *src, uint32_t len)
 {
-    const char *p = src, *end = src + len;
-    while (p < end) {
+    mkr_span_t s = mkr_span(src, len);
+    while (mkr_span_left(&s) > 0) {
         uint32_t cp;
-        int bl = utf8_decode(p, end, &cp);
+        int bl = mkr_utf8_decode1_span(&s, &cp);
         if (bl == 0 || !mkr_xml_is_char(cp)) return -1;
-        p += bl;
+        mkr_span_skip(&s, (size_t)bl);
     }
     return 0;
-}
-
-static int
-utf8_decode(const char *p, const char *end, uint32_t *cp)
-{
-    unsigned char c = (unsigned char)p[0];
-    if (c < 0x80u) { *cp = c; return 1; }
-    if ((c & 0xE0u) == 0xC0u) {
-        if (!is_cont(p + 1, end)) return 0;
-        uint32_t v = ((uint32_t)(c & 0x1Fu) << 6) | ((unsigned char)p[1] & 0x3Fu);
-        if (v < 0x80u) return 0;                                /* overlong */
-        *cp = v; return 2;
-    }
-    if ((c & 0xF0u) == 0xE0u) {
-        if (!is_cont(p + 1, end) || !is_cont(p + 2, end)) return 0;
-        uint32_t v = ((uint32_t)(c & 0x0Fu) << 12) | (((unsigned char)p[1] & 0x3Fu) << 6)
-            | ((unsigned char)p[2] & 0x3Fu);
-        if (v < 0x800u) return 0;                               /* overlong */
-        if (v >= 0xD800u && v <= 0xDFFFu) return 0;             /* surrogate */
-        *cp = v; return 3;
-    }
-    if ((c & 0xF8u) == 0xF0u) {
-        if (!is_cont(p + 1, end) || !is_cont(p + 2, end) || !is_cont(p + 3, end)) return 0;
-        uint32_t v = ((uint32_t)(c & 0x07u) << 18) | (((unsigned char)p[1] & 0x3Fu) << 12)
-            | (((unsigned char)p[2] & 0x3Fu) << 6) | ((unsigned char)p[3] & 0x3Fu);
-        if (v < 0x10000u || v > 0x10FFFFu) return 0;            /* overlong / out of range */
-        *cp = v; return 4;
-    }
-    return 0;
-}
-
-/* Public, bounds-checked one-codepoint decode for the tokenizer's name scanning
- * (returns 0 at end-of-input as well as on any malformed byte). */
-int
-mkr_xml_utf8_decode(const char *p, const char *end, uint32_t *cp)
-{
-    if (p >= end) return 0;
-    return utf8_decode(p, end, cp);
 }
 
 /* XML 1.0 §2.3 NameStartChar / NameChar (the full Unicode sets, not just ASCII).
@@ -155,41 +114,41 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
      * the buffer - a write that would exceed `len` is refused and latches ok=0. */
     mkr_spanbuf_t b = mkr_xml_arena_spanbuf(doc, len);
     if (!b.ok) { *status = doc->oom; return NULL; } /* backing alloc failed */
-    const char *p   = src;
-    const char *end = src + len;
+    mkr_span_t s = mkr_span(src, len);
 
-    while (p < end) {
-        if (*p != '&') {
+    while (mkr_span_left(&s) > 0) {
+        if (mkr_span_peek(&s) != '&') {
             uint32_t cp;
-            int bl = utf8_decode(p, end, &cp);
+            int bl = mkr_utf8_decode1_span(&s, &cp);
             if (bl == 0 || !mkr_xml_is_char(cp)) { *status = MKR_XML_ERR_SYNTAX; return NULL; }
             /* §3.3.3: in an attribute value a *literal* TAB/LF/CR normalizes to a
              * space (reference-derived whitespace is preserved - see below). */
             if (mode == MKR_XML_EXPAND_ATTR
                 && (cp == 0x9u || cp == 0xAu || cp == 0xDu)) {
                 mkr_spanbuf_putc(&b, ' ');
-                p += bl;
+                mkr_span_skip(&s, (size_t)bl);
                 continue;
             }
-            mkr_spanbuf_write(&b, p, (size_t)bl);
-            p += bl;
+            mkr_spanbuf_write(&b, mkr_span_mark(&s), (size_t)bl);
+            mkr_span_skip(&s, (size_t)bl);
             continue;
         }
 
         /* a reference: '&' ... ';' */
-        p++; /* past '&' */
-        if (p < end && *p == '#') {                 /* numeric character reference */
-            p++;
+        mkr_span_skip(&s, 1); /* past '&' */
+        if (mkr_span_peek(&s) == '#') {             /* numeric character reference */
+            mkr_span_skip(&s, 1);
             int hex = 0;
             /* §4.1: the hex marker is a lowercase 'x' only - "&#X58;" is not-wf
              * (an uppercase 'X' is not a decimal digit either, so it is rejected
              * as "no digits" below). */
-            if (p < end && *p == 'x') { hex = 1; p++; }
-            const char *digits = p;
+            if (mkr_span_peek(&s) == 'x') { hex = 1; mkr_span_skip(&s, 1); }
             uint32_t base = hex ? 16u : 10u;
             uint32_t cp = 0;
-            while (p < end && *p != ';') {
-                unsigned char d = (unsigned char)*p;
+            int ndigits = 0;
+            for (;;) {
+                int d = mkr_span_peek(&s);
+                if (d < 0 || d == ';') break;
                 uint32_t dig;
                 if (d >= '0' && d <= '9')              dig = (uint32_t)(d - '0');
                 else if (hex && d >= 'a' && d <= 'f')  dig = (uint32_t)(d - 'a' + 10);
@@ -199,27 +158,27 @@ mkr_xml_expand(mkr_xml_doc_t *doc, const char *src, uint32_t len,
                  * uint32_t into the valid range and be falsely accepted. */
                 if (cp > (0x10FFFFu - dig) / base) { *status = MKR_XML_ERR_SYNTAX; return NULL; }
                 cp = cp * base + dig;
-                p++;
+                ndigits++;
+                mkr_span_skip(&s, 1);
             }
-            if (p >= end || p == digits) { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* no ';' / no digits */
-            p++; /* past ';' */
+            if (mkr_span_peek(&s) != ';' || ndigits == 0) { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* no ';' / no digits */
+            mkr_span_skip(&s, 1); /* past ';' */
             if (!mkr_xml_is_char(cp)) { *status = MKR_XML_ERR_SYNTAX; return NULL; }
             /* encode into a safe 4-byte local, then hand the exact length to the
              * bounded writer (the encode itself can never overrun `enc`). */
             char enc[4];
             mkr_spanbuf_write(&b, enc, (size_t)utf8_encode(cp, enc));
         } else {                                    /* named entity */
-            const char *ns = p;
-            while (p < end && *p != ';') p++;
-            if (p >= end) { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* unterminated */
-            size_t nlen = (size_t)(p - ns);
-            p++; /* past ';' */
+            size_t nlen;
+            if (!mkr_span_find(&s, ';', &nlen)) { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* unterminated */
+            const char *ns = mkr_span_mark(&s);
+            mkr_span_skip(&s, nlen + 1); /* name + ';' */
             char ch;
-            if      (nlen == 2 && memcmp(ns, "lt",   2) == 0) ch = '<';
-            else if (nlen == 2 && memcmp(ns, "gt",   2) == 0) ch = '>';
-            else if (nlen == 3 && memcmp(ns, "amp",  3) == 0) ch = '&';
-            else if (nlen == 4 && memcmp(ns, "apos", 4) == 0) ch = '\'';
-            else if (nlen == 4 && memcmp(ns, "quot", 4) == 0) ch = '"';
+            if      (mkr_bytes_eq(ns, nlen, "lt",   2)) ch = '<';
+            else if (mkr_bytes_eq(ns, nlen, "gt",   2)) ch = '>';
+            else if (mkr_bytes_eq(ns, nlen, "amp",  3)) ch = '&';
+            else if (mkr_bytes_eq(ns, nlen, "apos", 4)) ch = '\'';
+            else if (mkr_bytes_eq(ns, nlen, "quot", 4)) ch = '"';
             else { *status = MKR_XML_ERR_SYNTAX; return NULL; } /* undefined entity */
             mkr_spanbuf_putc(&b, ch);
         }

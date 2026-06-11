@@ -217,9 +217,10 @@ int
 mkr_xml_xmlns_prefix(const char *name, uint32_t len, const char **prefix, uint32_t *plen)
 {
     const char *p; uint32_t pl;
-    if (len == 5 && memcmp(name, "xmlns", 5) == 0) {
+    mkr_span_t s = mkr_span(name, len);
+    if (mkr_bytes_eq(name, len, "xmlns", 5)) {
         p = ""; pl = 0;
-    } else if (len > 6 && memcmp(name, "xmlns:", 6) == 0) {
+    } else if (len > 6 && mkr_span_starts(&s, "xmlns:", 6)) {
         p = name + 6; pl = len - 6;
     } else {
         return 0;
@@ -254,29 +255,32 @@ int
 mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out)
 {
     if (len == 0) return -1;
-    const char *p = name, *end = name + len;
+    mkr_span_t s = mkr_span(name, len);
     uint32_t cp;
-    int bl = mkr_xml_utf8_decode(p, end, &cp);
+    int bl = mkr_utf8_decode1_span(&s, &cp);
     if (bl == 0 || !mkr_xml_is_name_start(cp)) return -1;
-    p += bl;
-    while (p < end) {
-        bl = mkr_xml_utf8_decode(p, end, &cp);
+    mkr_span_skip(&s, (size_t)bl);
+    while (mkr_span_left(&s) > 0) {
+        bl = mkr_utf8_decode1_span(&s, &cp);
         if (bl == 0 || !mkr_xml_is_name_char(cp)) return -1;
-        p += bl;
+        mkr_span_skip(&s, (size_t)bl);
     }
     out->qname = name; out->qname_len = len;
-    const char *colon = memchr(name, ':', len);
-    if (colon == NULL) {                                  /* no prefix */
+    mkr_span_t q = mkr_span(name, len);
+    size_t colon_at;
+    if (!mkr_span_find(&q, ':', &colon_at)) {             /* no prefix */
         out->prefix = name; out->prefix_len = 0;
         out->local  = name; out->local_len  = len;
         return 0;
     }
-    uint32_t pl = (uint32_t)(colon - name);
-    const char *ls = colon + 1;
+    uint32_t pl = (uint32_t)colon_at;
+    const char *ls = name + colon_at + 1;
     uint32_t ll = len - pl - 1;
     if (pl == 0 || ll == 0) return -1;                    /* ":x" or "x:" */
-    if (memchr(ls, ':', ll) != NULL) return -1;           /* a second colon */
-    if (mkr_xml_utf8_decode(ls, ls + ll, &cp) == 0 || !mkr_xml_is_name_start(cp))
+    mkr_span_t lsp = mkr_span(ls, ll);
+    size_t second;
+    if (mkr_span_find(&lsp, ':', &second)) return -1;     /* a second colon */
+    if (mkr_utf8_decode1_span(&lsp, &cp) == 0 || !mkr_xml_is_name_start(cp))
         return -1;                                        /* local must be an NCName */
     out->prefix = name; out->prefix_len = pl;
     out->local  = ls;   out->local_len  = ll;
@@ -308,7 +312,7 @@ mkr_xml_node_selftest(void)
     char nm[] = "Feed";
     const char *local = mkr_xml_arena_bytes(doc, nm, 4);
     if (root == NULL || root->first_child != NULL || root->type != MKR_XML_NODE_TYPE_ELEMENT
-        || local == NULL || local == nm || memcmp(local, "Feed", 4) != 0) {
+        || local == NULL || local == nm || !mkr_bytes_eq(local, 4, "Feed", 4)) {
         mkr_xml_doc_destroy(doc); return idx;
     }
     /* pointer alignment */

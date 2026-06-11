@@ -42,8 +42,10 @@ typedef struct {
 } raw_attr_t;
 
 typedef struct {
-    const char     *p, *end, *start;  /* cursor, end, buffer origin (the only place
-                                       * the XML declaration is valid) */
+    mkr_span_t      in;              /* bounded input reader (cursor + end; every
+                                      * read is bounds-checked by construction) */
+    const char     *start;           /* buffer origin (the only place the XML
+                                      * declaration is valid; compared, never read) */
     uint32_t        line, col;       /* 1-based; col in bytes (§5) */
     mkr_xml_doc_t  *doc;
     mkr_xml_node_t *fragment;        /* NULL = parse a whole document; else parse a
@@ -65,7 +67,7 @@ typedef struct {
 #define LIT_LEN(s)    ((uint32_t)(sizeof(s) - 1))
 
 /* small leaf predicates defined later but used by earlier handlers */
-static int is_space_byte(char c);
+static int is_space_byte(int c);
 static int lit_ahead(const mkr_xml_parser_t *P, const char *lit, size_t n);
 
 static void
@@ -85,8 +87,8 @@ propagate_oom(mkr_xml_parser_t *P)
 static void
 advance(mkr_xml_parser_t *P)
 {
-    if (P->p >= P->end) return;
-    char c = *P->p++;
+    int c = mkr_span_take(&P->in);
+    if (c < 0) return;
     if (c == '\n') { P->line++; P->col = 1; }
     else           { P->col++; }
 }
@@ -96,14 +98,14 @@ advance(mkr_xml_parser_t *P)
 static void
 advance_n(mkr_xml_parser_t *P, size_t n)
 {
-    while (n-- > 0 && P->p < P->end) advance(P);
+    while (n-- > 0 && mkr_span_left(&P->in) > 0) advance(P);
 }
 
 static void
 skip_ws(mkr_xml_parser_t *P)
 {
-    while (P->p < P->end) {
-        char c = *P->p;
+    for (;;) {
+        int c = mkr_span_peek(&P->in);
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r') advance(P);
         else break;
     }
@@ -115,17 +117,17 @@ skip_ws(mkr_xml_parser_t *P)
 static int
 scan_name(mkr_xml_parser_t *P, const char **out, uint32_t *len)
 {
-    const char *start = P->p;
+    const char *start = mkr_span_mark(&P->in);
     uint32_t cp;
-    int bl = mkr_xml_utf8_decode(P->p, P->end, &cp);
+    int bl = mkr_utf8_decode1_span(&P->in, &cp);
     if (bl == 0 || !mkr_xml_is_name_start(cp)) { set_syntax(P); return -1; }
     advance_n(P, (size_t)bl);
     for (;;) {
-        bl = mkr_xml_utf8_decode(P->p, P->end, &cp);
+        bl = mkr_utf8_decode1_span(&P->in, &cp);
         if (bl == 0 || !mkr_xml_is_name_char(cp)) break;
         advance_n(P, (size_t)bl);
     }
-    size_t n = (size_t)(P->p - start);
+    size_t n = mkr_span_since(&P->in, start);
     if (n > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; } /* fail closed, never truncate */
     *out = start;
     *len = (uint32_t)n;
@@ -201,7 +203,7 @@ set_node_qname(mkr_xml_parser_t *P, mkr_xml_node_t *node, const char *name,
 static int
 slice_eq(const char *a, uint32_t al, const char *b, uint32_t bl)
 {
-    return al == bl && (al == 0 || memcmp(a, b, al) == 0);
+    return mkr_bytes_eq(a, al, b, bl);
 }
 
 /* Split a QName into prefix:local. 0 on success (no-colon names get prefix_len
@@ -210,19 +212,24 @@ static int
 split_qname(const char *name, uint32_t len, const char **pfx, uint32_t *pfx_len,
             const char **loc, uint32_t *loc_len)
 {
-    const char *colon = memchr(name, ':', len);
-    if (colon == NULL) { *pfx = name; *pfx_len = 0; *loc = name; *loc_len = len; return 0; }
-    uint32_t pl = (uint32_t)(colon - name);
-    const char *ls = colon + 1;
+    mkr_span_t s = mkr_span(name, len);
+    size_t colon_at;
+    if (!mkr_span_find(&s, ':', &colon_at)) {
+        *pfx = name; *pfx_len = 0; *loc = name; *loc_len = len; return 0;
+    }
+    uint32_t pl = (uint32_t)colon_at;
+    const char *ls = name + colon_at + 1;
     uint32_t ll = len - pl - 1;
     if (pl == 0 || ll == 0) return -1;                  /* ":x" or "x:" */
-    if (memchr(ls, ':', ll) != NULL) return -1;         /* second colon */
+    mkr_span_t lsp = mkr_span(ls, ll);
+    size_t second;
+    if (mkr_span_find(&lsp, ':', &second)) return -1;   /* second colon */
     /* §9.2b: prefix and local must each be an NCName. scan_name already proved the
      * whole QName is NameStartChar + NameChar* and split removed the only colon, so
      * the one remaining check is that the local part starts with a NameStartChar
      * (the prefix starts the QName, so it already does). Rejects e.g. "a:1b". */
     uint32_t cp;
-    if (mkr_xml_utf8_decode(ls, ls + ll, &cp) == 0 || !mkr_xml_is_name_start(cp)) return -1;
+    if (mkr_utf8_decode1_span(&lsp, &cp) == 0 || !mkr_xml_is_name_start(cp)) return -1;
     *pfx = name; *pfx_len = pl; *loc = ls; *loc_len = ll;
     return 0;
 }
@@ -270,35 +277,39 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
     /* Phase 1: scan all attributes + the tag close into the raw buffer. */
     for (;;) {
         skip_ws(P);
-        if (P->p >= P->end) { set_syntax(P); return -1; }       /* unterminated tag */
-        char c = *P->p;
+        int c = mkr_span_peek(&P->in);
+        if (c < 0) { set_syntax(P); return -1; }                /* unterminated tag */
         if (c == '>') { advance(P); *pushed = 1; break; }
         if (c == '/') {
             advance(P);
-            if (P->p >= P->end || *P->p != '>') { set_syntax(P); return -1; }
+            if (mkr_span_peek(&P->in) != '>') { set_syntax(P); return -1; }
             advance(P); break;                                  /* self-closing */
         }
         const char *an; uint32_t alen;
         if (scan_name(P, &an, &alen) != 0) return -1;
         skip_ws(P);
-        if (P->p >= P->end || *P->p != '=') { set_syntax(P); return -1; }
+        if (mkr_span_peek(&P->in) != '=') { set_syntax(P); return -1; }
         advance(P); skip_ws(P);
-        if (P->p >= P->end || (*P->p != '"' && *P->p != '\'')) { set_syntax(P); return -1; }
-        char q = *P->p; advance(P);
-        const char *vs = P->p;
-        while (P->p < P->end && *P->p != q) {
-            if (*P->p == '<') { set_syntax(P); return -1; }     /* raw '<' in AttValue */
+        int q = mkr_span_peek(&P->in);
+        if (q != '"' && q != '\'') { set_syntax(P); return -1; }
+        advance(P);
+        const char *vs = mkr_span_mark(&P->in);
+        for (;;) {
+            int vc = mkr_span_peek(&P->in);
+            if (vc < 0 || vc == q) break;
+            if (vc == '<') { set_syntax(P); return -1; }        /* raw '<' in AttValue */
             advance(P);
         }
-        if (P->p >= P->end) { set_syntax(P); return -1; }       /* unterminated value */
-        size_t vraw = (size_t)(P->p - vs);
+        if (mkr_span_left(&P->in) == 0) { set_syntax(P); return -1; } /* unterminated value */
+        size_t vraw = mkr_span_since(&P->in, vs);
         if (vraw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; } /* fail closed */
         uint32_t vlen = (uint32_t)vraw;
         advance(P);                                              /* closing quote */
         /* §3.1: attributes are S-separated - after a value the next byte must be
          * whitespace or the tag close ('>' / '/'), never another name. Rejects
          * `<a x="1"y="2"/>`. */
-        if (P->p < P->end && *P->p != '>' && *P->p != '/' && !is_space_byte(*P->p)) {
+        int nx = mkr_span_peek(&P->in);
+        if (nx >= 0 && nx != '>' && nx != '/' && !is_space_byte(nx)) {
             set_syntax(P); return -1;
         }
         if (P->nratt + 1 > MKR_XML_MAX_ATTRS) { P->status = MKR_XML_ERR_LIMIT; return -1; }
@@ -396,11 +407,13 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
 static int
 lit_ahead(const mkr_xml_parser_t *P, const char *lit, size_t n)
 {
-    return (size_t)(P->end - P->p) >= n && memcmp(P->p, lit, n) == 0;
+    return mkr_span_starts(&P->in, lit, n);
 }
 
+/* Takes the int-or-minus-one a span peek returns (-1 / end-of-input is never a
+ * space, so a "peek is space" test needs no separate end check). */
 static int
-is_space_byte(char c)
+is_space_byte(int c)
 {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
@@ -413,15 +426,17 @@ static int
 parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
     advance_n(P, 3);                                  /* consume "!--" */
-    const char *cstart = P->p, *q = P->p, *close = NULL;
+    const char *cstart = mkr_span_mark(&P->in), *close = NULL;
+    mkr_span_t s = P->in;                             /* scan copy: looks ahead, consumes nothing */
     for (;;) {
-        const char *dash = memchr(q, '-', (size_t)(P->end - q));
-        if (dash == NULL || dash + 1 >= P->end) { set_syntax(P); return -1; } /* unterminated */
-        if (dash[1] == '-') {
-            if (dash + 2 < P->end && dash[2] == '>') { close = dash; break; }
+        size_t at;
+        if (!mkr_span_find(&s, '-', &at)) { set_syntax(P); return -1; } /* unterminated */
+        mkr_span_skip(&s, at);                        /* cursor on the '-' */
+        if (mkr_span_at(&s, 1) == '-') {
+            if (mkr_span_at(&s, 2) == '>') { close = mkr_span_mark(&s); break; }
             set_syntax(P); return -1;                 /* '--' not part of '-->' */
         }
-        q = dash + 1;
+        mkr_span_skip(&s, 1);
     }
     size_t craw = (size_t)(close - cstart);
     if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
@@ -434,7 +449,7 @@ parse_comment(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
         if (clen > 0 && c->value == NULL) return -1;
         append_child(parent, c);
     }
-    advance_n(P, (size_t)(close + 3 - P->p));         /* content + "-->" */
+    advance_n(P, craw + 3);                           /* content + "-->" */
     return 0;
 }
 
@@ -445,12 +460,14 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 {
     if (P->depth == 0 && P->fragment == NULL) { set_syntax(P); return -1; } /* CDATA outside the root */
     advance_n(P, 8);                                  /* consume "![CDATA[" */
-    const char *cstart = P->p, *q = P->p, *close = NULL;
+    const char *cstart = mkr_span_mark(&P->in), *close = NULL;
+    mkr_span_t s = P->in;                             /* scan copy */
     for (;;) {
-        const char *b = memchr(q, ']', (size_t)(P->end - q));
-        if (b == NULL || b + 2 >= P->end) { set_syntax(P); return -1; } /* unterminated */
-        if (b[1] == ']' && b[2] == '>') { close = b; break; }
-        q = b + 1;
+        size_t at;
+        if (!mkr_span_find(&s, ']', &at)) { set_syntax(P); return -1; } /* unterminated */
+        mkr_span_skip(&s, at);                        /* cursor on the ']' */
+        if (mkr_span_at(&s, 1) == ']' && mkr_span_at(&s, 2) == '>') { close = mkr_span_mark(&s); break; }
+        mkr_span_skip(&s, 1);
     }
     size_t craw = (size_t)(close - cstart);
     if (craw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
@@ -459,7 +476,7 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
     const char *cval = own(P, cstart, clen);
     if (clen > 0 && cval == NULL) return -1;
     if (append_chardata(P, parent, MKR_XML_NODE_TYPE_CDATA_SECTION, cval, clen) != 0) return -1;
-    advance_n(P, (size_t)(close + 3 - P->p));         /* content + "]]>" */
+    advance_n(P, craw + 3);                           /* content + "]]>" */
     return 0;
 }
 
@@ -469,7 +486,7 @@ parse_cdata(mkr_xml_parser_t *P, mkr_xml_node_t *parent)
 static int
 eat_keyword(mkr_xml_parser_t *P, const char *kw, size_t n)
 {
-    if ((size_t)(P->end - P->p) < n || memcmp(P->p, kw, n) != 0) return 0;
+    if (!mkr_span_starts(&P->in, kw, n)) return 0;
     advance_n(P, n);
     return 1;
 }
@@ -479,7 +496,7 @@ static int
 decl_eq(mkr_xml_parser_t *P)
 {
     skip_ws(P);
-    if (P->p >= P->end || *P->p != '=') { set_syntax(P); return -1; }
+    if (mkr_span_peek(&P->in) != '=') { set_syntax(P); return -1; }
     advance(P);
     skip_ws(P);
     return 0;
@@ -490,12 +507,13 @@ decl_eq(mkr_xml_parser_t *P)
 static int
 decl_value_get(mkr_xml_parser_t *P, const char **out, uint32_t *out_len)
 {
-    if (P->p >= P->end || (*P->p != '"' && *P->p != '\'')) { set_syntax(P); return -1; }
-    char qch = *P->p; advance(P);
-    const char *vs = P->p;
-    while (P->p < P->end && *P->p != qch) advance(P);
-    if (P->p >= P->end) { set_syntax(P); return -1; }   /* unterminated / mismatched quote */
-    *out = vs; *out_len = (uint32_t)(P->p - vs);
+    int qch = mkr_span_peek(&P->in);
+    if (qch != '"' && qch != '\'') { set_syntax(P); return -1; }
+    advance(P);
+    const char *vs = mkr_span_mark(&P->in);
+    while (mkr_span_peek(&P->in) >= 0 && mkr_span_peek(&P->in) != qch) advance(P);
+    if (mkr_span_left(&P->in) == 0) { set_syntax(P); return -1; } /* unterminated / mismatched quote */
+    *out = vs; *out_len = (uint32_t)mkr_span_since(&P->in, vs);
     advance(P);                                         /* closing quote */
     return 0;
 }
@@ -511,23 +529,27 @@ decl_value(mkr_xml_parser_t *P, int (*ok)(const char *, uint32_t))
 }
 
 static int is_version_num(const char *s, uint32_t n) {   /* '1.' [0-9]+ */
-    if (n < 3 || s[0] != '1' || s[1] != '.') return 0;
-    for (uint32_t i = 2; i < n; i++) if (s[i] < '0' || s[i] > '9') return 0;
+    mkr_span_t v = mkr_span(s, n);
+    if (n < 3 || !mkr_span_starts(&v, "1.", 2)) return 0;
+    for (uint32_t i = 2; i < n; i++) {
+        int c = mkr_span_at(&v, i);
+        if (c < '0' || c > '9') return 0;
+    }
     return 1;
 }
 static int is_enc_name(const char *s, uint32_t n) {      /* [A-Za-z] ([A-Za-z0-9._] | '-')* */
-    if (n == 0) return 0;
-    char c0 = s[0];
+    mkr_span_t v = mkr_span(s, n);
+    int c0 = mkr_span_peek(&v);
     if (!((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z'))) return 0;
     for (uint32_t i = 1; i < n; i++) {
-        char c = s[i];
+        int c = mkr_span_at(&v, i);
         if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
               || c == '.' || c == '_' || c == '-')) return 0;
     }
     return 1;
 }
 static int is_yes_no(const char *s, uint32_t n) {
-    return (n == 3 && memcmp(s, "yes", 3) == 0) || (n == 2 && memcmp(s, "no", 2) == 0);
+    return mkr_bytes_eq(s, n, "yes", 3) || mkr_bytes_eq(s, n, "no", 2);
 }
 
 /* '<?xml' already consumed (cursor just past "xml"). Validate
@@ -537,14 +559,14 @@ static int is_yes_no(const char *s, uint32_t n) {
 static int
 parse_xml_decl_body(mkr_xml_parser_t *P)
 {
-    if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; } /* S */
+    if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; } /* S */
     skip_ws(P);
     if (!eat_keyword(P, "version", 7)) { set_syntax(P); return -1; }
     if (decl_eq(P) != 0) return -1;
     const char *ver; uint32_t ver_len;
     if (decl_value_get(P, &ver, &ver_len) != 0) return -1;
     if (!is_version_num(ver, ver_len)) { set_syntax(P); return -1; }   /* bad VersionNum syntax */
-    if (!(ver_len == 3 && memcmp(ver, "1.0", 3) == 0)) {
+    if (!mkr_bytes_eq(ver, ver_len, "1.0", 3)) {
         /* well-formed, but a version Makiri does not implement (XML 1.1 / 1.x):
          * fail closed rather than silently parse it under XML 1.0 rules. */
         P->status = MKR_XML_ERR_VERSION; return -1;
@@ -553,7 +575,7 @@ parse_xml_decl_body(mkr_xml_parser_t *P)
     int saw_enc = 0, saw_sd = 0;
     for (;;) {
         int had_s = 0;
-        while (P->p < P->end && is_space_byte(*P->p)) { advance(P); had_s = 1; }
+        while (is_space_byte(mkr_span_peek(&P->in))) { advance(P); had_s = 1; }
         if (lit_ahead(P, "?>", 2)) { advance_n(P, 2); return 0; }  /* end of declaration */
         if (!had_s) { set_syntax(P); return -1; }                 /* attrs need an S separator */
         if (!saw_enc && !saw_sd && eat_keyword(P, "encoding", 8)) {
@@ -583,11 +605,13 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
     if (scan_name(P, &tgt, &tl) != 0) return -1;      /* PITarget (a Name) */
     /* Namespaces in XML §3: a PITarget is an NCName, so a colon is not-wf under
      * namespace processing (which Makiri always does, like Nokogiri::XML). */
-    if (memchr(tgt, ':', tl) != NULL) { set_syntax(P); return -1; }
-    int ci_xml  = (tl == 3 && (tgt[0] | 0x20) == 'x'
-                           && (tgt[1] | 0x20) == 'm'
-                           && (tgt[2] | 0x20) == 'l');
-    int is_decl = (tl == 3 && tgt[0] == 'x' && tgt[1] == 'm' && tgt[2] == 'l');
+    mkr_span_t tsp = mkr_span(tgt, tl);
+    size_t colon_at;
+    if (mkr_span_find(&tsp, ':', &colon_at)) { set_syntax(P); return -1; }
+    int ci_xml  = (tl == 3 && (mkr_span_at(&tsp, 0) | 0x20) == 'x'
+                           && (mkr_span_at(&tsp, 1) | 0x20) == 'm'
+                           && (mkr_span_at(&tsp, 2) | 0x20) == 'l');
+    int is_decl = (tl == 3 && mkr_span_starts(&tsp, "xml", 3));
     if (is_decl) {
         if (!at_doc_start || P->depth != 0) { set_syntax(P); return -1; }  /* decl: doc start only */
         return parse_xml_decl_body(P);
@@ -596,15 +620,17 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
 
     int empty_data = lit_ahead(P, "?>", 2);
     if (!empty_data) {
-        if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; } /* need S */
+        if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; } /* need S */
         skip_ws(P);
     }
-    const char *dstart = P->p, *q = P->p, *close = NULL;
+    const char *dstart = mkr_span_mark(&P->in), *close = NULL;
+    mkr_span_t s = P->in;                             /* scan copy */
     for (;;) {
-        const char *qm = memchr(q, '?', (size_t)(P->end - q));
-        if (qm == NULL || qm + 1 >= P->end) { set_syntax(P); return -1; } /* unterminated */
-        if (qm[1] == '>') { close = qm; break; }
-        q = qm + 1;
+        size_t at;
+        if (!mkr_span_find(&s, '?', &at)) { set_syntax(P); return -1; } /* unterminated */
+        mkr_span_skip(&s, at);                        /* cursor on the '?' */
+        if (mkr_span_at(&s, 1) == '>') { close = mkr_span_mark(&s); break; }
+        mkr_span_skip(&s, 1);
     }
     size_t draw = (size_t)(close - dstart);
     if (draw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
@@ -619,7 +645,7 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
         if (pi->local == NULL || (dlen > 0 && pi->value == NULL)) return -1;
         append_child(parent, pi);
     }
-    advance_n(P, (size_t)(close + 2 - P->p));         /* data + "?>" */
+    advance_n(P, draw + 2);                           /* data + "?>" */
     return 0;
 }
 
@@ -648,18 +674,22 @@ parse_end_tag(mkr_xml_parser_t *P)
     const char *nm; uint32_t nl;
     if (scan_name(P, &nm, &nl) != 0) return -1;
     skip_ws(P);
-    if (P->p >= P->end || *P->p != '>') { set_syntax(P); return -1; }
+    if (mkr_span_peek(&P->in) != '>') { set_syntax(P); return -1; }
     advance(P);
     if (P->depth == 0) { set_syntax(P); return -1; }  /* end tag with no open element */
     mkr_xml_node_t *top = P->stack[P->depth - 1];
     uint32_t tql = top->prefix_len ? top->prefix_len + 1 + top->local_len : top->local_len;
     int match;
     if (top->prefix_len) {
-        match = (nl == tql && memcmp(nm, top->prefix, top->prefix_len) == 0
-                 && nm[top->prefix_len] == ':'
-                 && memcmp(nm + top->prefix_len + 1, top->local, top->local_len) == 0);
+        mkr_span_t nsp = mkr_span(nm, nl);
+        match = (nl == tql && mkr_span_starts(&nsp, top->prefix, top->prefix_len)
+                 && mkr_span_at(&nsp, top->prefix_len) == ':');
+        if (match) {
+            mkr_span_skip(&nsp, (size_t)top->prefix_len + 1);
+            match = mkr_span_starts(&nsp, top->local, top->local_len);
+        }
     } else {
-        match = (top->local_len == nl && memcmp(top->local, nm, nl) == 0);
+        match = mkr_bytes_eq(top->local, top->local_len, nm, nl);
     }
     if (!match) { set_syntax(P); return -1; }          /* mismatched end tag */
     P->depth--;
@@ -672,12 +702,13 @@ parse_end_tag(mkr_xml_parser_t *P)
 static int
 parse_quoted(mkr_xml_parser_t *P, const char **out, uint32_t *out_len)
 {
-    if (P->p >= P->end || (*P->p != '"' && *P->p != '\'')) { set_syntax(P); return -1; }
-    char q = *P->p; advance(P);
-    const char *s = P->p;
-    while (P->p < P->end && *P->p != q) advance(P);
-    if (P->p >= P->end) { set_syntax(P); return -1; }   /* unterminated literal */
-    size_t n = (size_t)(P->p - s);
+    int q = mkr_span_peek(&P->in);
+    if (q != '"' && q != '\'') { set_syntax(P); return -1; }
+    advance(P);
+    const char *s = mkr_span_mark(&P->in);
+    while (mkr_span_peek(&P->in) >= 0 && mkr_span_peek(&P->in) != q) advance(P);
+    if (mkr_span_left(&P->in) == 0) { set_syntax(P); return -1; }   /* unterminated literal */
+    size_t n = mkr_span_since(&P->in, s);
     if (n > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }
     *out = s; *out_len = (uint32_t)n;
     advance(P);                                          /* closing quote */
@@ -701,7 +732,7 @@ parse_doctype(mkr_xml_parser_t *P)
     }
     P->saw_doctype = 1;
     advance_n(P, LIT_LEN("!DOCTYPE"));
-    if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; } /* S required */
+    if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; } /* S required */
     skip_ws(P);
     const char *name; uint32_t name_len;
     if (scan_name(P, &name, &name_len) != 0) return -1; /* the document type name (a Name) */
@@ -709,29 +740,30 @@ parse_doctype(mkr_xml_parser_t *P)
     const char *pub = NULL, *sys = NULL;
     uint32_t pub_len = 0, sys_len = 0;
 
-    if (P->p < P->end && is_space_byte(*P->p)) {
+    if (is_space_byte(mkr_span_peek(&P->in))) {
         skip_ws(P);
         if (lit_ahead(P, "SYSTEM", 6)) {
             advance_n(P, 6);
-            if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; }
+            if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; }
             skip_ws(P);
             if (parse_quoted(P, &sys, &sys_len) != 0) return -1;
         } else if (lit_ahead(P, "PUBLIC", 6)) {
             advance_n(P, 6);
-            if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; }
+            if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; }
             skip_ws(P);
             if (parse_quoted(P, &pub, &pub_len) != 0) return -1;
-            if (P->p >= P->end || !is_space_byte(*P->p)) { set_syntax(P); return -1; }
+            if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; }
             skip_ws(P);
             if (parse_quoted(P, &sys, &sys_len) != 0) return -1;
         }
     }
 
     /* Skip the optional internal subset + trailing whitespace to the true '>'. */
-    char quote = 0;
-    int  depth = 0, closed = 0;
-    while (P->p < P->end) {
-        char c = *P->p;
+    int quote = 0;
+    int depth = 0, closed = 0;
+    for (;;) {
+        int c = mkr_span_peek(&P->in);
+        if (c < 0) break;
         if (quote)                          { if (c == quote) quote = 0; }
         else if (c == '"' || c == '\'')     { quote = c; }
         else if (c == '[')                  { depth++; }
@@ -820,10 +852,11 @@ parse_start_tag(mkr_xml_parser_t *P, uint32_t tl, uint32_t tc)
 static int
 parse_text(mkr_xml_parser_t *P)
 {
-    const char *tstart = P->p;
+    const char *tstart = mkr_span_mark(&P->in);
     int nonspace = 0;
-    while (P->p < P->end && *P->p != '<') {
-        char c = *P->p;
+    for (;;) {
+        int c = mkr_span_peek(&P->in);
+        if (c < 0 || c == '<') break;
         /* §2.4: the literal "]]>" MUST NOT appear in character data - only a
          * CDATA section (handled by parse_cdata) may end with it. A lone ']' or
          * "]]" not followed by '>' is fine. */
@@ -831,7 +864,7 @@ parse_text(mkr_xml_parser_t *P)
         if (!(c == ' ' || c == '\t' || c == '\n' || c == '\r')) nonspace = 1;
         advance(P);
     }
-    size_t traw = (size_t)(P->p - tstart);
+    size_t traw = mkr_span_since(&P->in, tstart);
     if (traw > UINT32_MAX) { P->status = MKR_XML_ERR_LIMIT; return -1; }   /* fail closed */
     uint32_t tlen = (uint32_t)traw;
     if (P->depth == 0 && P->fragment == NULL) {
@@ -856,20 +889,26 @@ static int
 normalize_newlines(const char *src, size_t len, const char **body, size_t *blen, char **norm)
 {
     *body = src; *blen = len; *norm = NULL;
-    if (memchr(src, '\r', len) == NULL) return 0;
+    mkr_span_t s = mkr_span(src, len);
+    size_t cr_at;
+    if (!mkr_span_find(&s, '\r', &cr_at)) return 0;
     char *buf = mkr_reallocarray(NULL, len == 0 ? 1 : len, 1);
     if (buf == NULL) return -1;
-    size_t o = 0;
-    for (size_t k = 0; k < len; k++) {
-        char ch = src[k];
+    /* read through the span, write through the bounded writer (the output can
+     * only shrink, so `len` capacity always suffices - enforced, not trusted). */
+    mkr_spanbuf_t w = mkr_spanbuf(buf, len);
+    for (;;) {
+        int ch = mkr_span_take(&s);
+        if (ch < 0) break;
         if (ch == '\r') {
-            buf[o++] = '\n';
-            if (k + 1 < len && src[k + 1] == '\n') k++;   /* CRLF -> single LF */
+            mkr_spanbuf_putc(&w, '\n');
+            if (mkr_span_peek(&s) == '\n') mkr_span_skip(&s, 1);   /* CRLF -> single LF */
         } else {
-            buf[o++] = ch;
+            mkr_spanbuf_putc(&w, (char)ch);
         }
     }
-    *body = buf; *blen = o; *norm = buf;
+    if (mkr_spanbuf_finish(&w) == NULL) { free(buf); return -1; }  /* can't happen; fail closed */
+    *body = buf; *blen = w.pos; *norm = buf;
     return 0;
 }
 
@@ -881,16 +920,17 @@ normalize_newlines(const char *src, size_t len, const char **body, size_t *blen,
 static void
 run_tokenizer(mkr_xml_parser_t *P)
 {
-    while (P->p < P->end) {
-        if (*P->p != '<') {
+    while (mkr_span_left(&P->in) > 0) {
+        if (mkr_span_peek(&P->in) != '<') {
             if (parse_text(P) != 0) break;
         } else {
             uint32_t tl = P->line, tc = P->col;     /* the '<' position (start-tag line/col) */
-            int at_start = (P->p == P->start) && P->fragment == NULL; /* '<?xml ...?>' only in a document prolog */
+            int at_start = (mkr_span_mark(&P->in) == P->start) && P->fragment == NULL; /* '<?xml ...?>' only in a document prolog */
             advance(P);                              /* '<' */
-            if (P->p >= P->end) { set_syntax(P); break; }
+            int c = mkr_span_peek(&P->in);
+            if (c < 0) { set_syntax(P); break; }
             int rc;
-            switch (*P->p) {
+            switch (c) {
             case '/': rc = parse_end_tag(P);                          break;
             case '!': rc = parse_markup(P);                           break;  /* comment / CDATA / DTD */
             case '?': rc = parse_pi(P, cur_parent(P), at_start);      break;
@@ -967,7 +1007,7 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
         return NULL;
     }
 
-    mkr_xml_parser_t P = { .p = body, .end = body + blen, .start = body,
+    mkr_xml_parser_t P = { .in = mkr_span(body, blen), .start = body,
                            .line = 1, .col = 1, .doc = doc, .status = MKR_XML_OK };
     run_tokenizer(&P);
 
@@ -1008,7 +1048,7 @@ mkr_xml_parse_fragment(mkr_xml_doc_t *doc, const char *src, size_t len,
         return NULL;   /* frag stays in the arena, detached (never freed) */
     }
 
-    mkr_xml_parser_t P = { .p = body, .end = body + blen, .start = body, .line = 1,
+    mkr_xml_parser_t P = { .in = mkr_span(body, blen), .start = body, .line = 1,
                            .col = 1, .doc = doc, .fragment = frag, .status = MKR_XML_OK };
 
     if (inherit_doc_ns && seed_doc_namespaces(&P) != 0) {
@@ -1039,19 +1079,19 @@ mkr_xml_parse_fragment(mkr_xml_doc_t *doc, const char *src, size_t len,
  * strlen on a non-validated string -> clint clean). */
 static int nlname(const mkr_xml_node_t *n, const char *s, size_t l)
 {
-    return n && n->local_len == l && memcmp(n->local, s, l) == 0;
+    return n && mkr_bytes_eq(n->local, n->local_len, s, l);
 }
 static int nlval(const mkr_xml_node_t *n, const char *s, size_t l)
 {
-    return n && n->value_len == l && memcmp(n->value, s, l) == 0;
+    return n && mkr_bytes_eq(n->value, n->value_len, s, l);
 }
 static int nlns(const mkr_xml_node_t *n, const char *s, size_t l)
 {
-    return n && n->ns_uri_len == l && (l == 0 || memcmp(n->ns_uri, s, l) == 0);
+    return n && mkr_bytes_eq(n->ns_uri, n->ns_uri_len, s, l);
 }
 static int nlpfx(const mkr_xml_node_t *n, const char *s, size_t l)
 {
-    return n && n->prefix_len == l && (l == 0 || memcmp(n->prefix, s, l) == 0);
+    return n && mkr_bytes_eq(n->prefix, n->prefix_len, s, l);
 }
 #define NAME_IS(n, lit) nlname((n), (lit), sizeof(lit) - 1)
 #define VAL_IS(n, lit)  nlval((n),  (lit), sizeof(lit) - 1)

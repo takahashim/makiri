@@ -99,9 +99,8 @@ int mkr_xml_is_char(uint32_t c);
  * recognition (comment/CDATA/PI content, where '&'/'<' are literal). 0 / -1. */
 int mkr_xml_validate_chars(const char *src, uint32_t len);
 
-/* Bounds-checked one-codepoint UTF-8 decode (byte length 1-4, or 0 at end /
- * on malformed input) + XML 1.0 §2.3 NameStartChar / NameChar (§9.2b). */
-int mkr_xml_utf8_decode(const char *p, const char *end, uint32_t *cp);
+/* XML 1.0 §2.3 NameStartChar / NameChar (§9.2b). One-codepoint decoding is the
+ * core mkr_utf8_decode1 / mkr_utf8_decode1_span (strict, bounds-checked). */
 int mkr_xml_is_name_start(uint32_t c);
 int mkr_xml_is_name_char(uint32_t c);
 
