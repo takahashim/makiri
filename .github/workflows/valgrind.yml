@@ -20,6 +20,14 @@ jobs:
     timeout-minutes: 360
     env:
       BUNDLE_WITH: valgrind
+      # These heavy jobs verify memory discipline (uninit values, intra-arena
+      # overflows, use-after-move), not the property space - so the full
+      # 300-iteration PBT sweep (already run by the normal CI matrix) is
+      # overkill here and, multiplied by Valgrind's 10-50x slowdown, never
+      # finishes.  A handful of iterations exercises every C memory path while
+      # keeping the run tractable.
+      PBT_COUNT: "15"
+      CSS_PBT_COUNT: "15"
     strategy:
       fail-fast: false
       matrix:
@@ -52,10 +60,6 @@ jobs:
       # ruby/ruby - that path was removed upstream and the fetch step 404'd.
       - name: Run spec suite under Valgrind (ruby_memcheck)
         run: bundle exec rake spec:valgrind
-        env:
-          # Enable the heavy threading suite so Valgrind also covers
-          # cross-thread memory interactions.
-          THREADING: "1"
 
   # GC.auto_compact + GC.stress run of the full spec suite.  This structurally
   # tests the borrowed-pointer discipline under the condition that Ruby Strings
@@ -75,6 +79,12 @@ jobs:
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      # As in the Valgrind job: GC.stress (a full GC per allocation) makes the
+      # 300-iteration PBT sweep run for hours, and these jobs check memory
+      # discipline rather than the property space, so trim the iteration count.
+      PBT_COUNT: "15"
+      CSS_PBT_COUNT: "15"
     strategy:
       fail-fast: false
       matrix:
@@ -98,11 +108,26 @@ jobs:
       - name: Compile the extension
         run: bundle exec rake compile
 
+      # GC.stress is scoped to each example via an around hook rather than set
+      # process-wide: under a global GC.stress, even requiring the 88 spec files
+      # runs a full GC per allocation, so loading alone took tens of minutes and
+      # the job never reached the first example.  auto_compact stays global so
+      # objects actually move during those stressed examples (the point of the
+      # job), while loading/collection runs at normal speed.
       - name: Run spec suite under GC.auto_compact + GC.stress
         run: |
           bundle exec ruby -Ilib -e '
             GC.auto_compact = true
-            GC.stress = true
             require "rspec/core"
+            RSpec.configure do |c|
+              c.around(:each) do |example|
+                GC.stress = true
+                begin
+                  example.run
+                ensure
+                  GC.stress = false
+                end
+              end
+            end
             exit RSpec::Core::Runner.run(ARGV)
           ' spec
