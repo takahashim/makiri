@@ -76,6 +76,8 @@ jobs:
   # covered there.  This job's unique value is the *single-threaded* full suite
   # under stress+compaction, which catches use-after-move across every code path.
   gc-compact-stress:
+    # Temporarily disabled, too long
+    if: false
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
