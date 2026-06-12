@@ -5,28 +5,7 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed
-
-* XPath number parsing now follows the XPath 1.0 `Number` grammar exactly and
-  is locale-independent, matching libxml2/Nokogiri and browsers. C `strtod`'s
-  superset forms are no longer accepted: `1e3` / `0x1A` lex as a Number followed
-  by a name (a syntax error as a full expression, where they previously parsed
-  as 1000 / 26), `number()` returns NaN for exponent/hex/`+`-signed strings, and
-  only XPath whitespace (space/tab/CR/LF, not `\v`/`\f`) is trimmed around the
-  coerced value. Valid literals (`5.`, `.5`, `1.5`) are unchanged.
-
-### Security
-
-* Extended the lint-enforced bounded-reader (`mkr_span`) discipline to the
-  remaining byte-scanning code: the source-location line table, the XPath
-  string-function scanners (now explicitly length-bounded instead of relying on
-  the NUL contract), and the number parse above. Fixed a borrowed-RSTRING
-  pointer held across a potential GC point in the XML encoding sniffer, and a
-  missing NUL-termination guarantee in the libFuzzer XPath harness.
-
-## [0.4.0] - 2026-06-08
+## [0.4.0] - 2026-06-12
 
 ### Added
 
@@ -57,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (case-insensitively only in quirks mode), like browsers and `Nokogiri::HTML5` -
   via an upstreamed Lexbor fix (see below).
 
+* XPath number parsing now follows the XPath 1.0 `Number` grammar exactly and
+  is locale-independent, matching libxml2/Nokogiri and browsers. C `strtod`'s
+  superset forms are no longer accepted: `1e3` / `0x1A` lex as a Number followed
+  by a name (a syntax error as a full expression, where they previously parsed
+  as 1000 / 26), `number()` returns NaN for exponent/hex/`+`-signed strings, and
+  only XPath whitespace (space/tab/CR/LF, not `\v`/`\f`) is trimmed around the
+  coerced value. Valid literals (`5.`, `.5`, `1.5`) are unchanged.
+
 ### Security
 
 * Updated the vendored Lexbor (v3.0.0 -> `3a2d595`), which includes two
@@ -69,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Hardened native memory safety. The XML arena is ASan-red-zoned to catch
   intra-arena overflows, the engines are fuzzed under ASan/UBSan, and buffer
   growth is bounded by a hard ceiling.
+
+* Extended the lint-enforced bounded-reader (`mkr_span`) discipline to the
+  remaining byte-scanning code: the source-location line table, the XPath
+  string-function scanners (now explicitly length-bounded instead of relying on
+  the NUL contract), and the number parse above. Fixed a borrowed-RSTRING
+  pointer held across a potential GC point in the XML encoding sniffer, and a
+  missing NUL-termination guarantee in the libFuzzer XPath harness.
 
 ## [0.3.0] - 2026-06-06
 
@@ -302,7 +296,8 @@ libxml2 / libxslt dependency at any layer**.
   domxpath, CSS differential vs `Nokogiri::HTML5`). GitHub Actions CI across
   Ruby 3.2–4.0 × Ubuntu/macOS plus a sanitizer job.
 
-[Unreleased]: https://github.com/takahashim/makiri/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/takahashim/makiri/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/takahashim/makiri/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/takahashim/makiri/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/takahashim/makiri/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/takahashim/makiri/releases/tag/v0.1.0
