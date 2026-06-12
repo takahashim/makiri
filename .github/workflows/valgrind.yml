@@ -37,6 +37,10 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
+        env:
+          # Install the optional :valgrind bundler group (ruby_memcheck), which
+          # drives the run below. See the Gemfile.
+          BUNDLE_WITH: valgrind
 
       - name: Compile the extension
         run: bundle exec rake compile
@@ -44,21 +48,12 @@ jobs:
       - name: Install Valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
-      - name: Fetch Ruby valgrind suppressions
-        run: |
-          RUBY_TAG=$(ruby -e 'puts "v" + RUBY_VERSION.tr(".", "_")')
-          curl -fsSL "https://raw.githubusercontent.com/ruby/ruby/${RUBY_TAG}/tool/valgrind/ruby.supp" -o ruby.supp || \
-          curl -fsSL "https://raw.githubusercontent.com/ruby/ruby/master/tool/valgrind/ruby.supp" -o ruby.supp
-
-      - name: Run spec suite under Valgrind
-        run: |
-          valgrind --error-exitcode=1 \
-            --tool=memcheck \
-            --leak-check=no \
-            --track-origins=yes \
-            --num-callers=50 \
-            --suppressions=ruby.supp \
-            bundle exec ruby -Ilib -e 'require "rspec/core"; exit RSpec::Core::Runner.run(ARGV)' spec
+      # ruby_memcheck (the `spec:valgrind` rake task) runs the suite under
+      # memcheck. It ships Ruby's Valgrind suppression files itself (matched to
+      # the running Ruby), so there is no longer a ruby.supp to fetch from
+      # ruby/ruby - that path was removed upstream and the fetch step 404'd.
+      - name: Run spec suite under Valgrind (ruby_memcheck)
+        run: bundle exec rake spec:valgrind
         env:
           # Enable the heavy threading suite so Valgrind also covers
           # cross-thread memory interactions.

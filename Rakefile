@@ -36,6 +36,44 @@ RSpec::Core::RakeTask.new(:spec)
 
 task default: %i[compile spec]
 
+# `rake spec:valgrind` - run the spec suite under Valgrind memcheck via
+# ruby_memcheck (Linux CI; see .github/workflows/valgrind.yml). The gem ships
+# Ruby's own Valgrind suppression files (matched by Ruby version) and filters
+# the report down to errors whose stack touches our extension, so we no longer
+# have to fetch ruby.supp from ruby/ruby (that path was removed upstream).
+#
+# We keep this job's historical contract: catch *use of uninitialised values*
+# and *invalid reads/writes* (incl. intra-arena overflows) - NOT leaks (leak
+# detection stays with `rake leaks`). So we override ruby_memcheck's defaults,
+# which disable undef-value errors and turn on full leak-check.
+#
+# Guarded: ruby_memcheck lives in the optional :valgrind bundler group, so a
+# normal `bundle exec rake` (without that group) must not fail to load.
+begin
+  require "ruby_memcheck"
+  require "ruby_memcheck/rspec/rake_task"
+
+  RubyMemcheck.config(
+    binary_name: "makiri",
+    valgrind_options: [
+      "--num-callers=50",
+      "--error-limit=no",
+      "--trace-children=yes",   # spec processes may fork
+      "--undef-value-errors=yes", # the point of this job (ruby_memcheck defaults to =no)
+      "--track-origins=yes",    # report where an uninitialised value came from
+      "--leak-check=no",        # leaks are `rake leaks`' job, not this one
+    ],
+  )
+
+  namespace :spec do
+    desc "Run the spec suite under Valgrind memcheck (ruby_memcheck; needs the " \
+         ":valgrind bundler group and the valgrind binary)"
+    RubyMemcheck::RSpec::RakeTask.new(valgrind: :compile)
+  end
+rescue LoadError
+  # ruby_memcheck not installed (optional :valgrind group absent) - skip the task.
+end
+
 namespace :security do
   desc "Run mechanical C safety lint over ext/makiri"
   task :clint do
