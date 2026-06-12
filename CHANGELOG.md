@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* `Makiri::Lexbor::CSS.parse_stylesheet(text)`, a thin binding over Lexbor's
+  CSS stylesheet parser that returns the parsed rules as plain Ruby primitives
+  (`{type: :style, selectors: [{text:, specificity: [a,b,c]}, ...],
+  declarations: [{name:, value:, important:}, ...]}` and nested
+  `{type: :media, condition:, rules: [...]}`, in source order). Selector
+  specificity and value normalization come from Lexbor; `css-syntax-3` error
+  recovery means a broken stylesheet yields its valid rules instead of raising.
+  Hosts the new `Makiri::Lexbor::*` namespace (the unabstracted lexbor-native
+  surface, distinct from the Nokogiri-compatible `Makiri::*`).
+
 * CSS selectors on `Makiri::XML`. `#css` / `#at_css` / `#matches?`, lowered
   to the native XPath engine (case-sensitive, namespace-aware). Covers the
   standard selector set including combinator arguments to `:is`/`:where`/`:not`/

@@ -43,6 +43,7 @@ VALUE mkr_cXPathContext;
 VALUE mkr_mXPath;
 VALUE mkr_mCSS;
 VALUE mkr_mXML;
+VALUE mkr_mLexbor;
 VALUE mkr_eError;
 VALUE mkr_eXPathSyntaxError;
 VALUE mkr_eXPathLimitExceeded;
@@ -155,6 +156,7 @@ Init_makiri(void)
     mkr_mXPath         = rb_define_module_under(mkr_mMakiri, "XPath");
     mkr_mCSS           = rb_define_module_under(mkr_mMakiri, "CSS");
     mkr_mXML           = rb_define_module_under(mkr_mMakiri, "XML");
+    mkr_mLexbor        = rb_define_module_under(mkr_mMakiri, "Lexbor");
 
     /* Per-kind hierarchy (§12): the classes above are abstract bases; concrete
      * HTML nodes are Makiri::HTML::* leaves. The reader/query methods (which read
@@ -259,6 +261,7 @@ Init_makiri(void)
     mkr_init_node_set();
     mkr_init_xpath();
     mkr_init_css();
+    mkr_init_lexbor_css();
     mkr_init_serialize();
     mkr_init_mutate();
     mkr_init_xml();
