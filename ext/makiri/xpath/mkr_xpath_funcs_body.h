@@ -33,6 +33,31 @@ arity_check(size_t got, size_t want_min, size_t want_max, mkr_xpath_error_t *err
   return 0;
 }
 
+/* Require +arg+ to be a node-set; returns it, or NULL with a TYPE error naming
+ * +fname+. The single front for the "argument must be a node-set" check that
+ * count()/sum()/the name functions all share. */
+static const mkr_nodeset_t *
+require_nodeset(const mkr_val_t *arg, const char *fname, mkr_xpath_error_t *err)
+{
+  if (arg->type != MKR_XPATH_TYPE_NODESET) {
+    mkr_err_setf(err, MKR_XPATH_ERR_TYPE, "%s(): argument must be a node-set", fname);
+    return NULL;
+  }
+  return &arg->u.nodeset;
+}
+
+/* string-value of args[0], or of the context node when there is no argument -
+ * the "optional node-set arg defaults to self, as a string" idiom shared by
+ * string() / string-length() / normalize-space(). */
+static int
+fn_string_arg_or_self(MKR_DOM_NODE *self_node, const mkr_val_t *args, size_t nargs,
+                      mkr_xpath_limits_t *L, mkr_xpath_error_t *err, mkr_owned_text_t *out)
+{
+  return (nargs == 0)
+      ? mkr_node_to_owned_text_or_fail(self_node, L, err, out)
+      : mkr_val_to_owned_text_or_fail(&args[0], L, err, out);
+}
+
 static int
 fn_last(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
         size_t self_pos, size_t self_size,
@@ -64,12 +89,10 @@ fn_count(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 {
   (void)ctx; (void)self_node; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 1, 1, err, "count") != 0) return -1;
-  if (args[0].type != MKR_XPATH_TYPE_NODESET) {
-    mkr_err_set(err, MKR_XPATH_ERR_TYPE, "count(): argument must be a node-set");
-    return -1;
-  }
+  const mkr_nodeset_t *ns = require_nodeset(&args[0], "count", err);
+  if (ns == NULL) return -1;
   out->type = MKR_XPATH_TYPE_NUMBER;
-  out->u.number = (double)args[0].u.nodeset.count;
+  out->u.number = (double)ns->count;
   return 0;
 }
 
@@ -117,8 +140,8 @@ fn_false(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 /* id(string|nodeset) - looks up by HTML id attribute. Walks the whole tree per
  * token, so it charges each visited node to the op budget and fails closed on
  * overrun (returns -1, *out untouched-meaningful); a hit sets *out, a miss
- * leaves *out NULL. Without this, id(//*) (a token per node, a tree walk per
- * token) drives O(nodes^2) work as ~0 ops. */
+ * leaves *out NULL. Without this, id() over a large node-set (a token per node,
+ * a tree walk per token) drives O(nodes^2) work as ~0 ops. */
 static int
 find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len,
            mkr_xpath_limits_t *L, mkr_xpath_error_t *err, MKR_DOM_NODE **out)
@@ -404,11 +427,7 @@ fn_string(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
   if (arity_check(nargs, 0, 1, err, "string") != 0) return -1;
   out->type = MKR_XPATH_TYPE_STRING;
   mkr_owned_text_t text;
-  if (nargs == 0) {
-    if (mkr_node_to_owned_text_or_fail(self_node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
-  } else {
-    if (mkr_val_to_owned_text_or_fail(&args[0], mkr_ctx_limits(ctx), err, &text) != 0) return -1;
-  }
+  if (fn_string_arg_or_self(self_node, args, nargs, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
   mkr_val_set_owned_text(out, text);
   return 0;
 }
@@ -645,12 +664,8 @@ fn_string_length(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 {
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "string-length") != 0) return -1;
-  mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   mkr_owned_text_t s;
-  int rc = (nargs == 0)
-              ? mkr_node_to_owned_text_or_fail(self_node, L, err, &s)
-              : mkr_val_to_owned_text_or_fail(&args[0], L, err, &s);
-  if (rc != 0) return -1;
+  if (fn_string_arg_or_self(self_node, args, nargs, mkr_ctx_limits(ctx), err, &s) != 0) return -1;
   out->type = MKR_XPATH_TYPE_NUMBER;
   out->u.number = (double)mkr_utf8_count_chars(s.ptr, s.len);
   mkr_owned_text_clear(&s);
@@ -665,12 +680,8 @@ fn_normalize_space(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 {
   (void)self_pos; (void)self_size;
   if (arity_check(nargs, 0, 1, err, "normalize-space") != 0) return -1;
-  mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   mkr_owned_text_t s;
-  int rc = (nargs == 0)
-              ? mkr_node_to_owned_text_or_fail(self_node, L, err, &s)
-              : mkr_val_to_owned_text_or_fail(&args[0], L, err, &s);
-  if (rc != 0) return -1;
+  if (fn_string_arg_or_self(self_node, args, nargs, mkr_ctx_limits(ctx), err, &s) != 0) return -1;
   char  *buf = mkr_str_alloc(s.len);
   if (buf == NULL) { mkr_owned_text_clear(&s); mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory in normalize-space"); return -1; }
   size_t out_i = 0;
@@ -835,17 +846,15 @@ fn_sum(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
 {
   (void)self_node; (void)self_pos; (void)self_size;
   if (arity_check(nargs, 1, 1, err, "sum") != 0) return -1;
-  if (args[0].type != MKR_XPATH_TYPE_NODESET) {
-    mkr_err_set(err, MKR_XPATH_ERR_TYPE, "sum(): argument must be a node-set");
-    return -1;
-  }
+  const mkr_nodeset_t *ns = require_nodeset(&args[0], "sum", err);
+  if (ns == NULL) return -1;
   /* mkr_get_cached_node_text consults ctx->limits internally for the
    * cache-miss path; no need to thread max_string_bytes here. */
   double total = 0.0;
-  for (size_t i = 0; i < args[0].u.nodeset.count; ++i) {
+  for (size_t i = 0; i < ns->count; ++i) {
     if (mkr_limit_eval_op(mkr_ctx_limits(ctx), err) != 0) return -1;
     mkr_borrowed_text_t s;
-    if (mkr_get_cached_node_text(ctx, args[0].u.nodeset.items[i], &s, err) != 0) {
+    if (mkr_get_cached_node_text(ctx, ns->items[i], &s, err) != 0) {
       return -1;
     }
     total += mkr_borrowed_text_to_number(s);
@@ -907,12 +916,10 @@ static MKR_DOM_NODE *
 name_func_target(mkr_val_t *args, size_t nargs, MKR_DOM_NODE *self_node, mkr_xpath_error_t *err, const char *fname)
 {
   if (nargs == 0) return self_node;
-  if (args[0].type != MKR_XPATH_TYPE_NODESET) {
-    mkr_err_setf(err, MKR_XPATH_ERR_TYPE, "%s(): argument must be a node-set", fname);
-    return NULL;
-  }
-  if (args[0].u.nodeset.count == 0) return NULL;
-  return args[0].u.nodeset.items[0];
+  const mkr_nodeset_t *ns = require_nodeset(&args[0], fname, err);
+  if (ns == NULL) return NULL;
+  if (ns->count == 0) return NULL;
+  return ns->items[0];
 }
 
 /* Set out to an empty string and report OOM if strdup fails. */

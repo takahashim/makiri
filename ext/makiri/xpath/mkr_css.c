@@ -824,22 +824,59 @@ emit_compound_step(css_build_t *B, steps_arr_t *steps, mkr_axis_t axis,
   return 0;
 }
 
+/* A compound selector (a CLOSE-combinator-linked run of simples) plus the
+ * combinator that connects it to its left neighbour. */
+typedef struct {
+  const lxb_css_selector_t      *first, *last;
+  lxb_css_selector_combinator_t  comb;
+} mkr_css_compound_t;
+
+typedef struct { const lxb_css_selector_t *cstart; } css_compound_iter_t;
+
+/* Walk a complex-selector chain compound by compound, left to right. This is
+ * the single splitter shared by lower_complex (forward) and lower_complex_selftest
+ * (right-to-left), so the boundary rule - and the MKR_CSS_MAX_COMPOUNDS cap the
+ * callers apply - live in one place. Returns 1 + fills *out, or 0 at the end. */
+static int
+css_compound_next(css_compound_iter_t *it, mkr_css_compound_t *out)
+{
+  const lxb_css_selector_t *cstart = it->cstart;
+  if (cstart == NULL) return 0;
+  for (const lxb_css_selector_t *s = cstart; s != NULL; s = s->next) {
+    const lxb_css_selector_t *nxt = s->next;
+    if (nxt != NULL && nxt->combinator == LXB_CSS_SELECTOR_COMBINATOR_CLOSE) continue;
+    out->first = cstart;
+    out->last  = s;
+    out->comb  = cstart->combinator;
+    it->cstart = nxt;
+    return 1;
+  }
+  it->cstart = NULL;
+  return 0;
+}
+
 /* Lower one complex selector (a chain) into a relative PATH node. */
 static mkr_node_t *
 lower_complex(css_build_t *B, const lxb_css_selector_t *first, int relative_first)
 {
   steps_arr_t steps = {0};
-  const lxb_css_selector_t *cstart = first;
+  css_compound_iter_t it = { first };
+  mkr_css_compound_t comp;
+  size_t nc = 0;
+  int first_compound = 1;
 
-  for (const lxb_css_selector_t *s = first; s != NULL; s = s->next) {
-    const lxb_css_selector_t *nxt = s->next;
-    int compound_ends = (nxt == NULL) || (nxt->combinator != LXB_CSS_SELECTOR_COMBINATOR_CLOSE);
-    if (!compound_ends) continue;
+  while (css_compound_next(&it, &comp)) {
+    if (nc >= MKR_CSS_MAX_COMPOUNDS) {
+      mkr_err_set(B->err, MKR_XPATH_ERR_LIMIT, "CSS selector too complex");
+      goto fail;
+    }
+    nc++;
 
     /* In relative mode the first compound honours its own combinator (so it can
      * be a child/adjacent/general-sibling of the context), not a forced descendant. */
-    int is_first = (cstart == first) && !relative_first;
-    lxb_css_selector_combinator_t comb = cstart->combinator;
+    int is_first = first_compound && !relative_first;
+    first_compound = 0;
+    lxb_css_selector_combinator_t comb = comp.comb;
 
     if (!is_first && comb == LXB_CSS_SELECTOR_COMBINATOR_SIBLING) {
       /* a + b  ->  following-sibling::*[1] / self::b  (two steps) */
@@ -852,12 +889,11 @@ lower_complex(css_build_t *B, const lxb_css_selector_t *first, int relative_firs
       if (p[0] == NULL) { free(p); goto fail; }
       fs.predicates = p; fs.npredicates = 1;
       if (steps_push(B, &steps, fs) != 0) { mkr_node_free(p[0]); free(p); goto fail; }
-      if (emit_compound_step(B, &steps, MKR_AXIS_SELF, cstart, s) != 0) goto fail;
+      if (emit_compound_step(B, &steps, MKR_AXIS_SELF, comp.first, comp.last) != 0) goto fail;
     } else {
       mkr_axis_t axis = axis_for_combinator(comb, is_first);
-      if (emit_compound_step(B, &steps, axis, cstart, s) != 0) goto fail;
+      if (emit_compound_step(B, &steps, axis, comp.first, comp.last) != 0) goto fail;
     }
-    cstart = nxt;
   }
 
   mkr_node_t *path = cb_node(B, MKR_NK_PATH);
@@ -890,28 +926,22 @@ reverse_axis(lxb_css_selector_combinator_t c)
   }
 }
 
-typedef struct {
-  const lxb_css_selector_t      *first, *last;
-  lxb_css_selector_combinator_t  comb;   /* how this compound connects to its left neighbour */
-} mkr_css_compound_t;
-
 static mkr_node_t *
 lower_complex_selftest(css_build_t *B, const lxb_css_selector_t *first)
 {
-  /* Split the chain into compounds (CLOSE-linked runs), left to right. */
+  /* Split the chain into compounds (CLOSE-linked runs), left to right, via the
+   * shared splitter so the boundary rule and MKR_CSS_MAX_COMPOUNDS cap match
+   * lower_complex's exactly. */
   mkr_css_compound_t comps[MKR_CSS_MAX_COMPOUNDS];
   size_t nc = 0;
-  const lxb_css_selector_t *cstart = first;
-  for (const lxb_css_selector_t *s = first; s != NULL; s = s->next) {
-    const lxb_css_selector_t *nxt = s->next;
-    if (nxt != NULL && nxt->combinator == LXB_CSS_SELECTOR_COMBINATOR_CLOSE) continue;
+  css_compound_iter_t it = { first };
+  mkr_css_compound_t comp;
+  while (css_compound_next(&it, &comp)) {
     if (nc >= MKR_CSS_MAX_COMPOUNDS) {
       mkr_err_set(B->err, MKR_XPATH_ERR_LIMIT, "CSS selector too complex");
       return NULL;
     }
-    comps[nc].first = cstart; comps[nc].last = s; comps[nc].comb = cstart->combinator;
-    nc++;
-    cstart = nxt;
+    comps[nc++] = comp;
   }
   if (nc == 0) { mkr_err_set(B->err, MKR_XPATH_ERR_SYNTAX, "empty CSS selector"); return NULL; }
 

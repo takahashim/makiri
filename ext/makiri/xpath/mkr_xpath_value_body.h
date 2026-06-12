@@ -766,30 +766,32 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
     return -1;
   }
 
-  c->entries[c->count].node = node;
-  c->entries[c->count].str  = text.ptr;
-  c->entries[c->count].len  = text.len;
-
-  /* Grow / build the index, keeping load factor <= 1/2. */
+  /* Grow / build the index FIRST. It rebuilds only from the already-committed
+   * [0, count) entries (mkr_str_cache_reindex), so doing it before the new
+   * entry is written means every fallible step happens while the slot at
+   * [count] is still untouched - the entry is committed only once nothing can
+   * fail, eliminating the tentative-write-then-null-out rollback. Load factor
+   * is kept <= 1/2. */
   if (c->bucket_cap == 0 || (c->count + 1) * 2 > c->bucket_cap) {
     size_t new_bucket_cap = 64;
     if (c->bucket_cap != 0 && !mkr_size_mul(c->bucket_cap, 2, &new_bucket_cap)) {
       mkr_owned_text_clear(&text);
-      c->entries[c->count].node = NULL;
-      c->entries[c->count].str = NULL;
-      c->entries[c->count].len = 0;
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "node string cache index overflow");
       return -1;
     }
     if (mkr_str_cache_reindex(c, new_bucket_cap) != 0) {
       mkr_owned_text_clear(&text);
-      c->entries[c->count].node = NULL;
-      c->entries[c->count].str = NULL;
-      c->entries[c->count].len = 0;
       mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory indexing node string cache");
       return -1;
     }
   }
+
+  /* Commit: no fallible step remains, so write the entry, index it, and bump
+   * the counters. mkr_str_cache_index_put reads entries[count].node, so the
+   * write must precede it. */
+  c->entries[c->count].node = node;
+  c->entries[c->count].str  = text.ptr;
+  c->entries[c->count].len  = text.len;
   mkr_str_cache_index_put(c, c->count);
   c->total_bytes += text.len;
   c->count++;
