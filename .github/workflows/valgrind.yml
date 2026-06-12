@@ -18,6 +18,8 @@ jobs:
     name: Valgrind memcheck (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      BUNDLE_WITH: valgrind
     strategy:
       fail-fast: false
       matrix:
@@ -37,10 +39,6 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-        env:
-          # Install the optional :valgrind bundler group (ruby_memcheck), which
-          # drives the run below. See the Gemfile.
-          BUNDLE_WITH: valgrind
 
       - name: Compile the extension
         run: bundle exec rake compile
