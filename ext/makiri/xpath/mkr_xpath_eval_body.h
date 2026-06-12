@@ -421,6 +421,26 @@ mkr_attr_by_qualified_name(MKR_DOM_ELEMENT *el, const char *name, size_t name_le
   return NULL;
 }
 
+/* Does element node +n+ satisfy the recognised attribute predicate +ap+
+ * ([@name] or [@name='value'])? This is THE single per-node test - shared by
+ * the predicate filter (mkr_filter_attr_pred) and the at_xpath first-match path
+ * (mkr_first_node_ok) so the two stay byte-identical by construction rather than
+ * by a hand-kept copy. Position-independent (no context size/position), matching
+ * the recogniser's "boolean predicate only" contract. */
+static int
+mkr_attr_pred_matches_node(const mkr_attr_pred_t *ap, MKR_DOM_NODE *n)
+{
+  if (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT) return 0;
+  MKR_DOM_ATTR *a =
+      mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap->name, ap->name_len);
+  if (a == NULL) return 0;
+  if (!ap->has_value) return 1;
+  size_t got_len = 0;
+  const lxb_char_t *got = MKR_ATTR_VALUE(a, &got_len);
+  if (got == NULL) got_len = 0;
+  return mkr_bytes_eq(got, got_len, ap->value, ap->value_len);
+}
+
 /* Filter `inout` by a recognised attribute predicate into `kept`. */
 static int
 mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
@@ -433,24 +453,8 @@ mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
      * the [@a]/[@a='v'] filter under the same budget as the path it shortcuts. */
     if (mkr_limit_eval_op(mkr_ctx_limits(ctx), err) != 0) return -1;
     MKR_DOM_NODE *n = inout->items[i];
-    int keep = 0;
-    if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
-      MKR_DOM_ATTR *a =
-          mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap->name, ap->name_len);
-      if (a != NULL) {
-        if (!ap->has_value) {
-          keep = 1;
-        } else {
-          size_t got_len = 0;
-          const lxb_char_t *got = MKR_ATTR_VALUE(a, &got_len);
-          if (got == NULL) {
-            got_len = 0;
-          }
-          keep = mkr_bytes_eq(got, got_len, ap->value, ap->value_len);
-        }
-      }
-    }
-    if (keep && mkr_nodeset_push(kept, n, mkr_ctx_limits(ctx), err) != 0) {
+    if (mkr_attr_pred_matches_node(ap, n)
+        && mkr_nodeset_push(kept, n, mkr_ctx_limits(ctx), err) != 0) {
       return -1;
     }
   }
@@ -818,25 +822,15 @@ mkr_first_recognise(const mkr_node_t *ast, const mkr_step_t **out_step)
 }
 
 /* Does +n+ satisfy every (already-recognised) attribute predicate of +step+?
- * Mirrors mkr_filter_attr_pred's per-node test so the result is identical. */
+ * Uses the shared mkr_attr_pred_matches_node so it is identical to the
+ * predicate filter's per-node test by construction. */
 static int
 mkr_first_node_ok(const mkr_step_t *step, MKR_DOM_NODE *n)
 {
   for (size_t p = 0; p < step->npredicates; p++) {
     mkr_attr_pred_t ap;
     (void)mkr_match_attr_pred(step->predicates[p], &ap); /* recogniser ensured it matches */
-    if (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT) return 0;
-    MKR_DOM_ATTR *a =
-        mkr_attr_by_qualified_name(MKR_NODE_AS_ELEMENT(n), ap.name, ap.name_len);
-    if (a == NULL) return 0;
-    if (ap.has_value) {
-      size_t got_len = 0;
-      const lxb_char_t *got = MKR_ATTR_VALUE(a, &got_len);
-      if (got == NULL) got_len = 0;
-      if (!mkr_bytes_eq(got, got_len, ap.value, ap.value_len)) {
-        return 0;
-      }
-    }
+    if (!mkr_attr_pred_matches_node(&ap, n)) return 0;
   }
   return 1;
 }

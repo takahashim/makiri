@@ -139,6 +139,31 @@ make_implicit_step(mkr_step_t *out, mkr_axis_t axis, mkr_nt_kind_t nt_kind)
   return 0;
 }
 
+/* Parse a run of `('/' | '//') Step` continuations onto the step array,
+ * expanding each `//` to an implicit descendant-or-self::node() step. TOK(P)
+ * must be positioned at the (possible) leading separator; a non-separator token
+ * makes this a no-op (zero iterations). On failure the steps pushed so far stay
+ * in the array - the caller's owning node frees them (the path/filter node, via
+ * mkr_node_free). This is the single home for the slash-step loop that the
+ * relative-path, absolute `//`, and filter-expr trailing-path forms all share. */
+static int
+parse_step_tail(mkr_parser_t *P, mkr_step_t **steps, size_t *nsteps, size_t *cap)
+{
+  while (TOK(P).kind == MKR_TK_SLASH || TOK(P).kind == MKR_TK_DSLASH) {
+    int dslash = (TOK(P).kind == MKR_TK_DSLASH);
+    if (P_advance(P) != 0) return -1;
+    if (dslash) {
+      mkr_step_t implicit;
+      make_implicit_step(&implicit, MKR_AXIS_DESCENDANT_OR_SELF, MKR_NT_NODE);
+      if (push_step(P, steps, nsteps, cap, implicit) != 0) return -1;
+    }
+    mkr_step_t next = {0};
+    if (parse_step(P, &next) != 0) return -1;
+    if (push_step(P, steps, nsteps, cap, next) != 0) { mkr_step_clear(&next); return -1; }
+  }
+  return 0;
+}
+
 /* ---------- node-test parsing ---------- */
 
 /*
@@ -341,19 +366,7 @@ parse_relative_path(mkr_parser_t *P, mkr_step_t **steps, size_t *nsteps)
   if (parse_step(P, &s) != 0) return -1;
   if (push_step(P, steps, nsteps, &cap, s) != 0) { mkr_step_clear(&s); return -1; }
 
-  while (TOK(P).kind == MKR_TK_SLASH || TOK(P).kind == MKR_TK_DSLASH) {
-    int dslash = (TOK(P).kind == MKR_TK_DSLASH);
-    if (P_advance(P) != 0) return -1;
-    if (dslash) {
-      mkr_step_t implicit;
-      make_implicit_step(&implicit, MKR_AXIS_DESCENDANT_OR_SELF, MKR_NT_NODE);
-      if (push_step(P, steps, nsteps, &cap, implicit) != 0) return -1;
-    }
-    mkr_step_t next = {0};
-    if (parse_step(P, &next) != 0) return -1;
-    if (push_step(P, steps, nsteps, &cap, next) != 0) { mkr_step_clear(&next); return -1; }
-  }
-  return 0;
+  return parse_step_tail(P, steps, nsteps, &cap);
 }
 
 /* Returns 1 if the current token can begin a Step. */
@@ -384,28 +397,11 @@ parse_location_path(mkr_parser_t *P)
     return n;
   }
   if (TOK(P).kind == MKR_TK_DSLASH) {
+    /* '//' = '/descendant-or-self::node()/'. Leave TOK at the DSLASH so the
+     * shared loop expands it (implicit step + the following step) itself. */
     n->u.path.absolute = 1;
-    if (P_advance(P) != 0) goto fail;
-    /* '//' = '/descendant-or-self::node()/' */
     size_t cap = 0;
-    mkr_step_t implicit;
-    make_implicit_step(&implicit, MKR_AXIS_DESCENDANT_OR_SELF, MKR_NT_NODE);
-    if (push_step(P, &n->u.path.steps, &n->u.path.nsteps, &cap, implicit) != 0) goto fail;
-    mkr_step_t s = {0};
-    if (parse_step(P, &s) != 0) goto fail;
-    if (push_step(P, &n->u.path.steps, &n->u.path.nsteps, &cap, s) != 0) { mkr_step_clear(&s); goto fail; }
-    while (TOK(P).kind == MKR_TK_SLASH || TOK(P).kind == MKR_TK_DSLASH) {
-      int dslash = (TOK(P).kind == MKR_TK_DSLASH);
-      if (P_advance(P) != 0) goto fail;
-      if (dslash) {
-        mkr_step_t imp2;
-        make_implicit_step(&imp2, MKR_AXIS_DESCENDANT_OR_SELF, MKR_NT_NODE);
-        if (push_step(P, &n->u.path.steps, &n->u.path.nsteps, &cap, imp2) != 0) goto fail;
-      }
-      mkr_step_t s2 = {0};
-      if (parse_step(P, &s2) != 0) goto fail;
-      if (push_step(P, &n->u.path.steps, &n->u.path.nsteps, &cap, s2) != 0) { mkr_step_clear(&s2); goto fail; }
-    }
+    if (parse_step_tail(P, &n->u.path.steps, &n->u.path.nsteps, &cap) != 0) goto fail;
     return n;
   }
   /* Relative location path. */
@@ -546,30 +542,12 @@ parse_filter_expr(mkr_parser_t *P)
     mkr_node_free(f);
     return NULL;
   }
-  if (TOK(P).kind == MKR_TK_SLASH || TOK(P).kind == MKR_TK_DSLASH) {
-    int dslash = (TOK(P).kind == MKR_TK_DSLASH);
-    if (P_advance(P) != 0) { mkr_node_free(f); return NULL; }
-    size_t cap = 0;
-    if (dslash) {
-      mkr_step_t implicit;
-      make_implicit_step(&implicit, MKR_AXIS_DESCENDANT_OR_SELF, MKR_NT_NODE);
-      if (push_step(P, &f->u.filter.path_steps, &f->u.filter.npath, &cap, implicit) != 0) { mkr_node_free(f); return NULL; }
-    }
-    mkr_step_t s = {0};
-    if (parse_step(P, &s) != 0) { mkr_node_free(f); return NULL; }
-    if (push_step(P, &f->u.filter.path_steps, &f->u.filter.npath, &cap, s) != 0) { mkr_step_clear(&s); mkr_node_free(f); return NULL; }
-    while (TOK(P).kind == MKR_TK_SLASH || TOK(P).kind == MKR_TK_DSLASH) {
-      int dd = (TOK(P).kind == MKR_TK_DSLASH);
-      if (P_advance(P) != 0) { mkr_node_free(f); return NULL; }
-      if (dd) {
-        mkr_step_t imp2;
-        make_implicit_step(&imp2, MKR_AXIS_DESCENDANT_OR_SELF, MKR_NT_NODE);
-        if (push_step(P, &f->u.filter.path_steps, &f->u.filter.npath, &cap, imp2) != 0) { mkr_node_free(f); return NULL; }
-      }
-      mkr_step_t s2 = {0};
-      if (parse_step(P, &s2) != 0) { mkr_node_free(f); return NULL; }
-      if (push_step(P, &f->u.filter.path_steps, &f->u.filter.npath, &cap, s2) != 0) { mkr_step_clear(&s2); mkr_node_free(f); return NULL; }
-    }
+  /* Optional trailing location path (e.g. `$x/foo`, `(expr)//bar`). The shared
+   * loop is a no-op when no separator follows, so call it unconditionally. */
+  size_t cap = 0;
+  if (parse_step_tail(P, &f->u.filter.path_steps, &f->u.filter.npath, &cap) != 0) {
+    mkr_node_free(f);
+    return NULL;
   }
   return f;
 }
