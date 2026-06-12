@@ -64,6 +64,15 @@ jobs:
   # actually move (compaction) and that every allocation triggers a full GC
   # cycle (stress).  Failures here are typically use-after-move or stale
   # pointer bugs in the C extension or bridge layer.
+  #
+  # THREADING is deliberately OFF here.  The :threading suite (spec/threading_spec.rb)
+  # is 8 threads x tens of iterations, and forcing the job-level GC.stress onto it
+  # means a full GC per allocation across every thread - which made this job run
+  # for 30+ minutes without finishing.  It also adds little: that suite already
+  # runs in ci.yml (ubuntu/3.4), and its GC-sensitive examples opt into GC.stress
+  # themselves via their own `around` hook, so cross-thread interactions are
+  # covered there.  This job's unique value is the *single-threaded* full suite
+  # under stress+compaction, which catches use-after-move across every code path.
   gc-compact-stress:
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
@@ -99,7 +108,3 @@ jobs:
             require "rspec/core"
             exit RSpec::Core::Runner.run(ARGV)
           ' spec
-        env:
-          # Enable the heavy threading suite so compaction stress also covers
-          # cross-thread memory interactions.
-          THREADING: "1"
