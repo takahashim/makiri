@@ -415,3 +415,8 @@ namespace :fuzz do
     end
   end
 end
+
+desc "Show code statistics"
+task :stats do
+  sh "tokei lib ext spec script --exclude tmp --exclude vendor --exclude docs"
+end
