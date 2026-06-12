@@ -73,7 +73,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     limits.max_ast_nodes = 10000;
     limits.max_expr_bytes = 16 * 1024;
 
-    mkr_xpath_error_t err;
+    mkr_xpath_error_t err = {0};
     mkr_node_t *ast = mkr_parse(expr, &limits, &err);
     if (!ast) {
         mkr_xpath_error_clear(&err);
@@ -92,8 +92,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         limits.max_string_bytes    = 1024 * 1024;
         limits.max_recursion_depth = 64;
 
-        mkr_xpath_value_t out;
-        mkr_xpath_error_t eval_err;
+        mkr_xpath_value_t out = {0};
+        mkr_xpath_error_t eval_err = {0};
         if (mkr_xpath_eval_compiled(ctx, ast, &out, &eval_err) == 0) {
             mkr_xpath_value_clear(&out);
         } else {
