@@ -114,19 +114,27 @@ fn_false(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
  * (no DTD-declared IDs, §8.6), so it never walks the tree by id attribute.
  * Guarded so the XML engine TU does not carry (and warn about) dead code. */
 
-/* id(string|nodeset) - looks up by HTML id attribute. */
-static MKR_DOM_NODE *
-find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
+/* id(string|nodeset) - looks up by HTML id attribute. Walks the whole tree per
+ * token, so it charges each visited node to the op budget and fails closed on
+ * overrun (returns -1, *out untouched-meaningful); a hit sets *out, a miss
+ * leaves *out NULL. Without this, id(//*) (a token per node, a tree walk per
+ * token) drives O(nodes^2) work as ~0 ops. */
+static int
+find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len,
+           mkr_xpath_limits_t *L, mkr_xpath_error_t *err, MKR_DOM_NODE **out)
 {
-  if (root == NULL || id == NULL || id_len == 0) return NULL;
+  *out = NULL;
+  if (root == NULL || id == NULL || id_len == 0) return 0;
   MKR_DOM_NODE *n = root;
   while (n) {
+    if (mkr_limit_eval_op(L, err) != 0) return -1;
     if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
       MKR_DOM_ELEMENT *el = MKR_NODE_AS_ELEMENT(n);
       size_t vlen = 0;
       const lxb_char_t *v = MKR_ELEM_GET_ATTRIBUTE(el, "id", 2, &vlen);
       if (v && mkr_bytes_eq(v, vlen, id, id_len)) {
-        return n;
+        *out = n;
+        return 0;
       }
     }
     if (MKR_NODE_FIRST_CHILD(n)) {
@@ -137,7 +145,7 @@ find_by_id(MKR_DOM_NODE *root, const char *id, size_t id_len)
       n = MKR_NODE_NEXT(n);
     }
   }
-  return NULL;
+  return 0;
 }
 
 /*
@@ -164,7 +172,10 @@ id_collect_from_string(mkr_borrowed_text_t s, MKR_DOM_NODE *root,
     while (mkr_span_peek(&sp) >= 0 && !mkr_xpath_is_ws(mkr_span_peek(&sp)))
       mkr_span_skip(&sp, 1);
     size_t tok_len = mkr_span_since(&sp, tok);
-    MKR_DOM_NODE *hit = find_by_id(root, tok, tok_len);
+    MKR_DOM_NODE *hit;
+    if (find_by_id(root, tok, tok_len, mkr_ctx_limits(ctx), err, &hit) != 0) {
+      return -1;
+    }
     if (hit && mkr_nodeset_push(out, hit, mkr_ctx_limits(ctx), err) != 0) {
       return -1;
     }
@@ -832,6 +843,7 @@ fn_sum(mkr_xpath_context_t *ctx, MKR_DOM_NODE *self_node,
    * cache-miss path; no need to thread max_string_bytes here. */
   double total = 0.0;
   for (size_t i = 0; i < args[0].u.nodeset.count; ++i) {
+    if (mkr_limit_eval_op(mkr_ctx_limits(ctx), err) != 0) return -1;
     mkr_borrowed_text_t s;
     if (mkr_get_cached_node_text(ctx, args[0].u.nodeset.items[i], &s, err) != 0) {
       return -1;

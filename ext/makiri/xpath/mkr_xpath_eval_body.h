@@ -428,6 +428,10 @@ mkr_filter_attr_pred(mkr_xpath_context_t *ctx, const mkr_attr_pred_t *ap,
                      mkr_xpath_error_t *err)
 {
   for (size_t i = 0; i < inout->count; ++i) {
+    /* Per-candidate op charge: this fast path replaces a per-node generic
+     * predicate eval (which would tick via eval_node), so tick here too to keep
+     * the [@a]/[@a='v'] filter under the same budget as the path it shortcuts. */
+    if (mkr_limit_eval_op(mkr_ctx_limits(ctx), err) != 0) return -1;
     MKR_DOM_NODE *n = inout->items[i];
     int keep = 0;
     if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
@@ -525,6 +529,18 @@ static int
 step_visit_cb(MKR_DOM_NODE *n, void *u)
 {
   step_visit_t *st = (step_visit_t *)u;
+  /* Charge every visited node to the op budget. The axis walk is the dominant
+   * work of a step, and a low-selectivity walk visits (and name-tests) many
+   * nodes while pushing few or none - so without this the node-set cap (which
+   * only bounds the matched/pushed nodes) leaves the walk itself bounded only
+   * by document size, defeating max_eval_ops on a descendant walk that matches
+   * nothing. The index/first-match fast paths already tick per node; this
+   * brings the general walk to parity. On overrun we abort the walk exactly
+   * like a push failure. */
+  if (mkr_limit_eval_op(mkr_ctx_limits(st->ctx), st->err) != 0) {
+    st->aborted = 1;
+    return 1;
+  }
   if (node_principal_match_pre(&st->step->test, n, st->step->axis, st->ctx,
                                st->pre_uri, st->pre_uri_len, st->have_pre)) {
     if (mkr_nodeset_push(st->out, n, mkr_ctx_limits(st->ctx), st->err) != 0) {
@@ -1211,13 +1227,17 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     /* All node string-values go through the per-eval cache. For an
      * M-by-N nodeset comparison this turns O(M*N) computations into
      * at most O(M+N). */
-    (void)L;
+    /* O(M*N) pair scan: string-value CONSTRUCTION is O(M+N) via the cache, but
+     * the comparison loop itself is M*N, so charge each pair to the op budget -
+     * otherwise an all-pairs node-set equality drives up to ~1e14 memcmps as a
+     * handful of ops. */
     for (size_t i = 0; i < l->u.nodeset.count; ++i) {
       mkr_borrowed_text_t ls;
       if (mkr_get_cached_node_text(ctx, l->u.nodeset.items[i], &ls, err) != 0) {
         return -1;
       }
       for (size_t j = 0; j < r->u.nodeset.count; ++j) {
+        if (mkr_limit_eval_op(L, err) != 0) return -1;
         mkr_borrowed_text_t rs;
         if (mkr_get_cached_node_text(ctx, r->u.nodeset.items[j], &rs, err) != 0) {
           return -1;
@@ -1237,6 +1257,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     if (sc->type == MKR_XPATH_TYPE_NUMBER) {
       double target = sc->u.number;
       for (size_t i = 0; i < ns->u.nodeset.count; ++i) {
+        if (mkr_limit_eval_op(L, err) != 0) return -1;
         mkr_borrowed_text_t s;
         if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
           return -1;
@@ -1257,6 +1278,7 @@ compare_eq(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     mkr_owned_text_t target;
     if (mkr_val_to_owned_text_or_fail(sc, L, err, &target) != 0) return -1;
     for (size_t i = 0; i < ns->u.nodeset.count; ++i) {
+      if (mkr_limit_eval_op(L, err) != 0) { mkr_owned_text_clear(&target); return -1; }
       mkr_borrowed_text_t s;
       if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
         mkr_owned_text_clear(&target); return -1;
@@ -1317,7 +1339,9 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
    * from each set - satisfies the relation on their numeric string-values.
    * Must compare every pair, not just the first node of each side. */
   if (l->type == MKR_XPATH_TYPE_NODESET && r->type == MKR_XPATH_TYPE_NODESET) {
-    (void)L;
+    /* O(M*N) pair scan (see compare_eq): charge each pair to the op budget so
+     * an all-pairs relational compare cannot drive M*N number conversions as a
+     * handful of ops. */
     for (size_t i = 0; i < l->u.nodeset.count; ++i) {
       mkr_borrowed_text_t ls;
       if (mkr_get_cached_node_text(ctx, l->u.nodeset.items[i], &ls, err) != 0) {
@@ -1325,6 +1349,7 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
       }
       double a = mkr_borrowed_text_to_number(ls);
       for (size_t j = 0; j < r->u.nodeset.count; ++j) {
+        if (mkr_limit_eval_op(L, err) != 0) return -1;
         mkr_borrowed_text_t rs;
         if (mkr_get_cached_node_text(ctx, r->u.nodeset.items[j], &rs, err) != 0) {
           return -1;
@@ -1346,6 +1371,7 @@ compare_rel(mkr_xpath_context_t *ctx, const mkr_val_t *l, const mkr_val_t *r,
     double scn;
     if (mkr_val_to_number_or_fail(sc, L, err, &scn) != 0) return -1;
     for (size_t i = 0; i < ns->u.nodeset.count; ++i) {
+      if (mkr_limit_eval_op(L, err) != 0) return -1;
       mkr_borrowed_text_t s;
       if (mkr_get_cached_node_text(ctx, ns->u.nodeset.items[i], &s, err) != 0) {
         return -1;

@@ -582,6 +582,28 @@ RSpec.describe "Makiri XPath" do
         .to raise_error(Makiri::XPath::LimitExceeded, /recursion depth/i)
     end
 
+    it "charges a low-selectivity axis walk to the op budget" do
+      # A descendant walk that visits the whole subtree but matches NOTHING must
+      # be bounded by the op budget - the node-set cap only bounds matched/pushed
+      # nodes and never fires here (zero matches). Regression for the gap where
+      # the general step walk ticked no op budget per visited node.
+      n = 11_000
+      big = Makiri::HTML("<html><body>#{"<div>" * n}#{"</div>" * n}</body></html>")
+      expect { big.xpath("//div/descendant::zzz") }
+        .to raise_error(Makiri::XPath::LimitExceeded, /evaluation budget|budget exceeded/i)
+    end
+
+    it "charges an all-pairs node-set comparison to the op budget" do
+      # //i < //i compares every (i, j) pair; text "x" is NaN so no pair
+      # satisfies and the O(M*N) scan runs to completion - it must be op-budget
+      # bounded. Regression for the gap where the M*N compare loop discarded the
+      # limits (the old `(void)L;`).
+      n = 8_000
+      big = Makiri::HTML("<html><body>#{"<i>x</i>" * n}</body></html>")
+      expect { big.xpath("//i < //i") }
+        .to raise_error(Makiri::XPath::LimitExceeded, /evaluation budget|budget exceeded/i)
+    end
+
     it "fails closed when a node string-value exceeds the byte cap" do
       # string(.) of a >64MB text node must raise, not return a truncated/empty
       # string (the builder must trip the limit, not stop short of it).
