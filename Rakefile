@@ -47,6 +47,18 @@ task default: %i[compile spec]
 # detection stays with `rake leaks`). So we override ruby_memcheck's defaults,
 # which disable undef-value errors and turn on full leak-check.
 #
+# `filter_all_errors: true` is essential: by default ruby_memcheck only applies
+# its "stack must touch the makiri binary" filter to *leak*-kind errors
+# (`ValgrindError#should_filter? = filter_all_errors? || kind_leak?`), so every
+# uninitialised-value report is surfaced regardless of where it comes from. Ruby's
+# conservative GC (machine-context scan, RVALUE flag aging, free-at-exit teardown)
+# legitimately reads uninitialised words, and the bundled ruby.supp does not cover
+# the free-at-exit / subprocess stacks the `:isolated` specs spin up under
+# `--trace-children=yes` - which buried the run in ~3500 pure-Ruby false positives.
+# Filtering all error kinds by the same binary-touch rule keeps the gate scoped to
+# *our* code: a real uninit/invalid access in mkr_*/Lexbor still has a makiri frame
+# and is still reported.
+#
 # Guarded: ruby_memcheck lives in the optional :valgrind bundler group, so a
 # normal `bundle exec rake` (without that group) must not fail to load.
 begin
@@ -55,6 +67,9 @@ begin
 
   RubyMemcheck.config(
     binary_name: "makiri",
+    filter_all_errors: true,    # apply the binary-touch filter to ALL error kinds,
+                                # not just leaks (see note above) - drops Ruby's own
+                                # GC uninitialised-value noise, keeps mkr_* reports
     valgrind_options: [
       "--num-callers=50",
       "--error-limit=no",

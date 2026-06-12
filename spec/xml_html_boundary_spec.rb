@@ -14,7 +14,13 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
   # the whole rspec run.
   def run_isolated(code)
     lib = File.expand_path("../lib", __dir__)
-    out = IO.popen([RbConfig.ruby, "-I#{lib}", "-e", %(require "makiri"\n#{code})],
+    # Run the child as a normal process: drop RUBY_FREE_AT_EXIT, which the
+    # ruby_memcheck Valgrind harness sets in our env. Inherited, it makes Ruby 3.4
+    # print "warning: Free at exit is experimental and may be unstable" to stderr,
+    # which - since we fold stderr into stdout below - would pollute the captured
+    # output these specs assert on (and its full-heap teardown adds Valgrind noise).
+    env = { "RUBY_FREE_AT_EXIT" => nil }
+    out = IO.popen([env, RbConfig.ruby, "-I#{lib}", "-e", %(require "makiri"\n#{code})],
                    err: %i[child out], &:read)
     [$?, out]
   end
