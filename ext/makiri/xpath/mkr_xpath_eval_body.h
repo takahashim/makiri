@@ -19,7 +19,7 @@
 /* ---------- forward decls ---------- */
 
 static int eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-                     MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
+                     const mkr_focus_t *focus,
                      mkr_val_t *out, mkr_xpath_error_t *err);
 
 /* ---------- node test ---------- */
@@ -487,7 +487,8 @@ apply_predicates(mkr_xpath_context_t *ctx,
     size_t size = inout->count;
     for (size_t i = 0; i < size; ++i) {
       mkr_val_t v = {0};
-      if (eval_node(ctx, preds[p], inout->items[i], i + 1, size, &v, err) != 0) {
+      mkr_focus_t pf = { inout->items[i], i + 1, size };
+      if (eval_node(ctx, preds[p], &pf, &v, err) != 0) {
         mkr_nodeset_clear(&kept);
         return -1;
       }
@@ -1456,11 +1457,11 @@ eval_path(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_filter(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-            MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
+            const mkr_focus_t *focus,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
   mkr_val_t primary = {0};
-  if (eval_node(ctx, n->u.filter.expr, self_node, self_pos, self_size, &primary, err) != 0) return -1;
+  if (eval_node(ctx, n->u.filter.expr, focus, &primary, err) != 0) return -1;
   if (n->u.filter.npreds > 0) {
     if (primary.type != MKR_XPATH_TYPE_NODESET) {
       mkr_val_clear(&primary);
@@ -1494,7 +1495,7 @@ eval_filter(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-            MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
+            const mkr_focus_t *focus,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
   const char *ns_uri = NULL;
@@ -1517,7 +1518,7 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       return -1;
     }
     for (size_t i = 0; i < nargs; ++i) {
-      if (eval_node(ctx, n->u.fncall.args[i], self_node, self_pos, self_size, &args[i], err) != 0) {
+      if (eval_node(ctx, n->u.fncall.args[i], focus, &args[i], err) != 0) {
         for (size_t j = 0; j <= i; ++j) mkr_val_clear(&args[j]);
         free(args);
         return -1;
@@ -1527,7 +1528,7 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
   int rc;
   if (fn != NULL) {
-    rc = fn(ctx, self_node, self_pos, self_size, args, nargs, out, err);
+    rc = fn(ctx, focus, args, nargs, out, err);
   } else {
     /* No built-in match. Delegate to the per-call resolver (the Ruby
      * handler bridge installs one for the duration of evaluate()). */
@@ -1535,7 +1536,7 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     int resolved = 1; /* not found by default */
     if (resolver != NULL) {
       resolved = resolver(mkr_xpath_get_user_data(ctx),
-                          ctx, (void *)self_node, self_pos, self_size,
+                          ctx, (void *)focus->node, focus->pos, focus->size,
                           ns_uri, n->u.fncall.name.ptr,
                           (void *)args, nargs, (void *)out, err);
     }
@@ -1557,13 +1558,13 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_binop(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-           MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
+           const mkr_focus_t *focus,
            mkr_val_t *out, mkr_xpath_error_t *err)
 {
   /* AND/OR short-circuit. */
   if (n->u.binop.op == MKR_OP_OR || n->u.binop.op == MKR_OP_AND) {
     mkr_val_t l = {0};
-    if (eval_node(ctx, n->u.binop.lhs, self_node, self_pos, self_size, &l, err) != 0) return -1;
+    if (eval_node(ctx, n->u.binop.lhs, focus, &l, err) != 0) return -1;
     int lb = mkr_val_to_boolean(&l);
     mkr_val_clear(&l);
     if (n->u.binop.op == MKR_OP_OR && lb) {
@@ -1573,7 +1574,7 @@ eval_binop(mkr_xpath_context_t *ctx, const mkr_node_t *n,
       out->type = MKR_XPATH_TYPE_BOOLEAN; out->u.boolean = 0; return 0;
     }
     mkr_val_t r = {0};
-    if (eval_node(ctx, n->u.binop.rhs, self_node, self_pos, self_size, &r, err) != 0) return -1;
+    if (eval_node(ctx, n->u.binop.rhs, focus, &r, err) != 0) return -1;
     int rb = mkr_val_to_boolean(&r);
     mkr_val_clear(&r);
     out->type = MKR_XPATH_TYPE_BOOLEAN; out->u.boolean = rb;
@@ -1581,8 +1582,8 @@ eval_binop(mkr_xpath_context_t *ctx, const mkr_node_t *n,
   }
 
   mkr_val_t l = {0}, r = {0};
-  if (eval_node(ctx, n->u.binop.lhs, self_node, self_pos, self_size, &l, err) != 0) return -1;
-  if (eval_node(ctx, n->u.binop.rhs, self_node, self_pos, self_size, &r, err) != 0) {
+  if (eval_node(ctx, n->u.binop.lhs, focus, &l, err) != 0) return -1;
+  if (eval_node(ctx, n->u.binop.rhs, focus, &r, err) != 0) {
     mkr_val_clear(&l); return -1;
   }
   int rc = 0;
@@ -1651,7 +1652,7 @@ eval_binop(mkr_xpath_context_t *ctx, const mkr_node_t *n,
 
 static int
 eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
-          MKR_DOM_NODE *self_node, size_t self_pos, size_t self_size,
+          const mkr_focus_t *focus,
           mkr_val_t *out, mkr_xpath_error_t *err)
 {
   /* Budget + recursion bookkeeping. Every AST node visit counts as one
@@ -1708,11 +1709,11 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     break;
   }
   case MKR_NK_FNCALL:
-    rc = eval_fncall(ctx, n, self_node, self_pos, self_size, out, err);
+    rc = eval_fncall(ctx, n, focus, out, err);
     break;
   case MKR_NK_UNARY: {
     mkr_val_t v = {0};
-    if (eval_node(ctx, n->u.unary.expr, self_node, self_pos, self_size, &v, err) != 0) {
+    if (eval_node(ctx, n->u.unary.expr, focus, &v, err) != 0) {
       rc = -1;
       break;
     }
@@ -1729,13 +1730,13 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     break;
   }
   case MKR_NK_BINOP:
-    rc = eval_binop(ctx, n, self_node, self_pos, self_size, out, err);
+    rc = eval_binop(ctx, n, focus, out, err);
     break;
   case MKR_NK_PATH:
-    rc = eval_path(ctx, n, self_node, out, err);
+    rc = eval_path(ctx, n, focus->node, out, err);
     break;
   case MKR_NK_FILTER:
-    rc = eval_filter(ctx, n, self_node, self_pos, self_size, out, err);
+    rc = eval_filter(ctx, n, focus, out, err);
     break;
   default:
     mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown AST node");
@@ -1769,6 +1770,6 @@ int
 mkr_eval_ast(mkr_xpath_context_t *ctx, const mkr_node_t *ast,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
-  MKR_DOM_NODE *self_node = mkr_ctx_node(ctx);
-  return eval_node(ctx, ast, self_node, 1, 1, out, err);
+  mkr_focus_t focus = { mkr_ctx_node(ctx), 1, 1 };
+  return eval_node(ctx, ast, &focus, out, err);
 }

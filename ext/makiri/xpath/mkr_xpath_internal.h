@@ -571,12 +571,23 @@ mkr_func_resolver_t  mkr_ctx_func_resolver(struct mkr_xpath_context_s *ctx);
 /* Namespace-matching policy read-back (the setter is in mkr_xpath.h). */
 int  mkr_ctx_unprefixed_lax(struct mkr_xpath_context_s *ctx);
 
+/* ---------- evaluation focus ---------- */
+
+/* The dynamic-context "focus" of XPath 1.0: the context node plus its 1-based
+ * position and the context size. These three always travel together through the
+ * evaluator and into every built-in, so they ride in one struct instead of
+ * three parallel parameters (the static bindings/caches stay in the context,
+ * passed separately). */
+typedef struct {
+  MKR_DOM_NODE *node;
+  size_t        pos;
+  size_t        size;
+} mkr_focus_t;
+
 /* ---------- function library ---------- */
 
 typedef int (*mkr_func_impl_t)(struct mkr_xpath_context_s *ctx,
-                              MKR_DOM_NODE *self_node,
-                              size_t self_pos,
-                              size_t self_size,
+                              const mkr_focus_t *focus,
                               mkr_val_t *args, size_t nargs,
                               mkr_val_t *out,
                               mkr_xpath_error_t *err);
