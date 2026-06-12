@@ -15,6 +15,8 @@ ITERATIONS = Integer(ENV.fetch("LEAKS_ITERATIONS", "120"))
 
 HTML = "<div id=m class='a b'><ul><li class=item>x</li><li>y<svg><path/></svg></li></ul><p>t&amp;</p></div>"
 XML  = %(<r xmlns:p="urn:p" xmlns="urn:d"><a id="1">t</a><p:b/><!--c--><![CDATA[z]]></r>)
+CSS  = "div.a, #b > span { color: red !important; --v: 1px }\n" \
+       "@media (min-width: 600px) { .x { opacity: 0 } }\n@font-face { font-family: y }"
 
 handler = Class.new { def my_fn(nodes) = nodes.length.to_s }.new
 
@@ -57,6 +59,11 @@ ITERATIONS.times do |i|
   ctx.register_namespace("d", "urn:d"); ctx.register_variable("v", "1")
   ctx.evaluate("//d:a[@id=$v]"); ctx.evaluate("//d:a[@id=$v]")
   begin ctx.evaluate("//(") rescue Makiri::XPath::SyntaxError; end
+
+  # --- Lexbor CSS stylesheet parser (per-call parser+stylesheet lifetime,
+  # freed under rb_ensure) including the NUL-reject raise path ---
+  Makiri::Lexbor::CSS.parse_stylesheet(CSS)
+  begin Makiri::Lexbor::CSS.parse_stylesheet("a{}\0x") rescue Makiri::Error; end
 end
 
 GC.start

@@ -67,6 +67,10 @@ extern VALUE mkr_cXPathContext;
 extern VALUE mkr_mXPath;
 extern VALUE mkr_mCSS;
 extern VALUE mkr_mXML;
+/* Makiri::Lexbor - the unabstracted, lexbor-native surface (semantics track the
+ * vendored lexbor version), distinct from the Nokogiri-compatible Makiri::*
+ * surface. Hosts Makiri::Lexbor::CSS (raw stylesheet parser binding). */
+extern VALUE mkr_mLexbor;
 extern VALUE mkr_eError;
 extern VALUE mkr_eXPathSyntaxError;
 extern VALUE mkr_eXPathLimitExceeded;
@@ -81,6 +85,7 @@ void mkr_init_node(void);
 void mkr_init_node_set(void);
 void mkr_init_xpath(void);
 void mkr_init_css(void);
+void mkr_init_lexbor_css(void);
 void mkr_init_serialize(void);
 void mkr_init_mutate(void);
 void mkr_init_xml(void);
