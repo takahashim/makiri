@@ -73,7 +73,7 @@ module XmlCssCorpus
     ":is(title, link)", "feed :not(title)", "entry:has(title)",
     "entry:has(> link)", "title + link", "entry ~ entry", "book:not(.lead)",
     # Makiri-unsupported by design (XPath-1.0 / standards-only) -> tallied:
-    "*|entry", "title[lang='EN' i]", "title:contains('x')",
+    "*|entry", "|title", "|entry", "|book", "title[lang='EN' i]", "title:contains('x')",
     # (Untyped of-type like `*:first-of-type` is NOT here: Makiri now supports it
     #  correctly, but Nokogiri mistranslates it to first-child, so it would
     #  diverge. Makiri's correct behaviour is pinned in spec/xml_css_spec.rb.)

@@ -298,18 +298,14 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
   end
 
-  describe "the |el (no-namespace) selector fails closed" do
-    # Lexbor's parser cannot represent `|el` distinctly from `*|el` (both arrive
-    # as ns="*"), so rather than silently matching any namespace, Makiri rejects
-    # a leading-pipe type selector. A bare `el` or XPath `//el` matches the
-    # no-namespace element correctly.
+  describe "the |el (no-namespace) selector" do
     let(:doc) { Makiri::XML(%(<r><wrap/><x xmlns:p="urn:b"><p:wrap/></x></r>)) }
 
-    it "raises CSS::SyntaxError on |el (any position), not a wrong any-namespace match" do
-      expect { doc.css("|wrap") }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { doc.css("r > |wrap") }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { doc.css(":is(|wrap)") }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { doc.at_css("|wrap") }.to raise_error(Makiri::CSS::SyntaxError)
+    it "matches no-namespace elements only" do
+      expect(doc.css("|wrap").map(&:name)).to eq(%w[wrap])
+      expect(doc.css("r > |wrap").map(&:name)).to eq(%w[wrap])
+      expect(doc.css(":is(|wrap)").map(&:name)).to eq(%w[wrap])
+      expect(doc.at_css("|wrap").name).to eq("wrap")
     end
 
     it "still supports *|el (any namespace), bare el, and the [a|=v] operator" do

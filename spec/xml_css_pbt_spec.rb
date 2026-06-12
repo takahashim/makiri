@@ -11,10 +11,8 @@ require_relative "conformance/xml_pbt"
 # #matches?, and the comma-list union law.
 #
 # Selectors stay namespace-unambiguous: a BARE type selector (bound to the root
-# default namespace, like the engine does) and an explicit `x|local` + {x=>uri}.
-# The `|local` no-namespace syntax is avoided here because Lexbor's parser does
-# not distinguish it from `*|local` (see spec/xml_css_spec.rb for that pinned
-# limitation), so it is not a sound oracle.
+# default namespace, like the engine does), an explicit no-namespace `|local`,
+# and an explicit `x|local` + {x=>uri}.
 #
 # CSS_PBT_COUNT controls how many random documents each property runs (seeds are
 # fixed so a failure reproduces).
@@ -57,11 +55,15 @@ RSpec.describe "Makiri::XML CSS property-based testing" do
         truth = els.select { |e| e.local_name == local && e.namespace_uri == droot }
         doc.css(local).to_a == truth
       end
+      pipe_ok = els.map(&:local_name).uniq.all? do |local|
+        truth = els.select { |e| e.local_name == local && e.namespace_uri.nil? }
+        doc.css("|#{local}").to_a == truth
+      end
       px_ok = els.map { |e| [e.local_name, e.namespace_uri] }.uniq.reject { |_, u| u.nil? }.all? do |local, uri|
         truth = els.select { |e| e.local_name == local && e.namespace_uri == uri }
         doc.css("x|#{local}", "x" => uri).to_a == truth
       end
-      next if bare_ok && px_ok
+      next if bare_ok && pipe_ok && px_ok
 
       bad = doc.to_xml
       break
@@ -73,6 +75,7 @@ RSpec.describe "Makiri::XML CSS property-based testing" do
   def selectors_for(doc)
     els = all_elements(doc)
     sels = els.map(&:local_name).uniq.map { |l| [l, {}] }
+    els.map(&:local_name).uniq.each { |l| sels << ["|#{l}", {}] }
     els.map { |e| [e.local_name, e.namespace_uri] }.uniq.reject { |_, u| u.nil? }.each do |l, u|
       sels << ["x|#{l}", { "x" => u }]
     end

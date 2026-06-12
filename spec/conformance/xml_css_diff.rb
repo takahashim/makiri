@@ -61,9 +61,10 @@ end.parse!(ARGV)
 # --- random selector generator (for --generate) ----------------------------
 # Builds mostly-valid selectors over a fixed vocabulary so the two engines'
 # supported-selector vocabularies and matching are exercised broadly. Prefix
-# (ns|el) and the |el form are omitted: the former needs a per-doc prefix map,
-# the latter is a known Lexbor-parser limitation pinned elsewhere.
-GEN_TYPES   = %w[* entry title item book link circle rect g sub channel feed id nope].freeze
+# selectors (ns|el) need a per-doc prefix map, so the random pass keeps them in
+# the curated corpus. The no-namespace form (|el) is safe to generate.
+GEN_TYPES   = %w[* entry title item book link circle rect g sub channel feed id nope
+                 |entry |title |item |book |link |circle |rect].freeze
 GEN_CLASS   = %w[.big .lead .x .nope].freeze
 GEN_ID      = %w[#b1 #e1 #e2 #x #nope].freeze
 GEN_ATTR    = ['[id]', '[href]', '[fill]', '[id="e1"]', '[class~="big"]',
