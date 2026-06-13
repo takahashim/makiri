@@ -67,6 +67,22 @@ mkr_xml_mut_status_t mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *e
  * Returns 1 if one was removed, 0 if none matched (detach-never-destroy). */
 int mkr_xml_remove_attribute(mkr_xml_node_t *el, const char *name, uint32_t nlen);
 
+/* DOM setAttributeNS: set/replace element +el+'s attribute keyed on the EXPLICIT
+ * namespace [ns,nslen] (verbatim, not resolved from declarations; null/"" = no
+ * namespace) and the qualified name [name,nlen]'s local part. A match updates the
+ * value (keeping the qualified name); a miss appends. *out (may be NULL) receives
+ * the affected attribute node. */
+mkr_xml_mut_status_t mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
+                                              const char *ns, uint32_t nslen,
+                                              const char *name, uint32_t nlen,
+                                              const char *val, uint32_t vlen,
+                                              mkr_xml_node_t **out);
+
+/* DOM removeAttributeNS: remove the attribute of +el+ keyed on (namespace
+ * [ns,nslen], local name [local,llen]). Returns 1 if removed, 0 if none matched. */
+int mkr_xml_remove_attribute_ns(mkr_xml_node_t *el, const char *ns, uint32_t nslen,
+                                const char *local, uint32_t llen);
+
 /* Set +node+'s text content. For an ELEMENT: detach every child and append a
  * single TEXT node holding [text,tlen] (an empty +text+ leaves an empty element).
  * For a TEXT/CDATA/COMMENT/PI leaf: replace its value. +text+ must be all XML

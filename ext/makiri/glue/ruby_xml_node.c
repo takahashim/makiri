@@ -1016,6 +1016,56 @@ mkr_xml_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
     return rb_value;
 }
 
+/* element.set_attribute_ns(namespace_or_nil, qualified_name, value) -> value.
+ *
+ * Stores the attribute keyed on (explicit namespace, local name) - the DOM key -
+ * with its qualified name case-preserved. A null/"" namespace is the null
+ * namespace. xmlns declarations pass through as ordinary attributes in the xmlns
+ * namespace. */
+static VALUE
+mkr_xml_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_value)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    if (n->type != MKR_XML_NODE_TYPE_ELEMENT) {
+        rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
+    }
+    mkr_ruby_borrowed_text_t qv = mkr_ruby_verified_text(rb_qname, "attribute qualified name");
+    mkr_ruby_borrowed_text_t vv = mkr_ruby_verified_text(rb_value, "attribute value");
+    mkr_ruby_borrowed_text_t nv = {0};
+    const char *ns_ptr = NULL; uint32_t ns_len = 0;
+    if (!NIL_P(rb_ns)) {
+        nv = mkr_ruby_verified_text(rb_ns, "namespace");
+        ns_ptr = nv.ptr; ns_len = mkr_xml_u32_len(nv.len);
+    }
+    mkr_xml_mut_status_t st = mkr_xml_set_attribute_ns(
+        mkr_xml_node_xdoc(self), n, ns_ptr, ns_len,
+        qv.ptr, mkr_xml_u32_len(qv.len), vv.ptr, mkr_xml_u32_len(vv.len), NULL);
+    RB_GC_GUARD(qv.value);
+    RB_GC_GUARD(vv.value);
+    RB_GC_GUARD(nv.value);
+    mkr_xml_mut_check(st);
+    return rb_value;
+}
+
+/* element.remove_attribute_ns(namespace_or_nil, local_name) -> self. */
+static VALUE
+mkr_xml_node_remove_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_local)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
+    if (n->type != MKR_XML_NODE_TYPE_ELEMENT) return self;
+    mkr_ruby_borrowed_text_t lv = mkr_ruby_verified_text(rb_local, "attribute local name");
+    mkr_ruby_borrowed_text_t nv = {0};
+    const char *ns_ptr = NULL; uint32_t ns_len = 0;
+    if (!NIL_P(rb_ns)) {
+        nv = mkr_ruby_verified_text(rb_ns, "namespace");
+        ns_ptr = nv.ptr; ns_len = mkr_xml_u32_len(nv.len);
+    }
+    mkr_xml_remove_attribute_ns(n, ns_ptr, ns_len, lv.ptr, mkr_xml_u32_len(lv.len));
+    RB_GC_GUARD(lv.value);
+    RB_GC_GUARD(nv.value);
+    return self;
+}
+
 /* element.delete(name) -> self. Removes the attribute if present (no-op otherwise). */
 static VALUE
 mkr_xml_node_delete(VALUE self, VALUE rb_name)
@@ -1322,6 +1372,8 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "[]=",      mkr_xml_node_aset,        2);
     rb_define_method(mkr_mXmlNodeMethods, "delete",   mkr_xml_node_delete,      1);
     rb_define_method(mkr_mXmlNodeMethods, "remove_attribute", mkr_xml_node_delete, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "set_attribute_ns",    mkr_xml_node_set_attribute_ns,    3);
+    rb_define_method(mkr_mXmlNodeMethods, "remove_attribute_ns", mkr_xml_node_remove_attribute_ns, 2);
     rb_define_method(mkr_mXmlNodeMethods, "content=", mkr_xml_node_set_content, 1);
     rb_define_method(mkr_mXmlNodeMethods, "name=",    mkr_xml_node_set_name,    1);
 

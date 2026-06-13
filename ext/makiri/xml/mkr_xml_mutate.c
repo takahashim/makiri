@@ -205,6 +205,98 @@ mkr_xml_remove_attribute(mkr_xml_node_t *el, const char *name, uint32_t nlen)
     return 0;
 }
 
+/* True when attribute +a+ is keyed by (+ns+/+nslen+, +local+/+llen+) - the DOM
+ * key. A null/empty wanted namespace matches an attribute with no namespace. */
+static int
+mkr_attr_matches_ns(const mkr_xml_node_t *a, const char *ns, uint32_t nslen,
+                    const char *local, uint32_t llen)
+{
+    if (a->ns_uri_len != nslen) return 0;
+    if (nslen != 0 && !mkr_bytes_eq(a->ns_uri, a->ns_uri_len, ns, nslen)) return 0;
+    return mkr_bytes_eq(a->local, a->local_len, local, llen);
+}
+
+/* DOM setAttributeNS: store an attribute keyed on (explicit namespace, local
+ * name). Unlike mkr_xml_set_attribute, the namespace is the caller's URI
+ * verbatim (not resolved from in-scope xmlns declarations) - a null/"" namespace
+ * is the null namespace. A match (same namespace + local) updates the value and
+ * keeps the existing qualified name (the DOM "set an attribute value" changes
+ * only the value); a miss appends a new attribute, so two attributes with the
+ * same qualified name in different namespaces coexist. xmlns declarations come
+ * through here as ordinary attributes in the xmlns namespace (qname
+ * "xmlns"/"xmlns:PREFIX"), matching how the reader stores them. */
+mkr_xml_mut_status_t
+mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
+                         const char *ns, uint32_t nslen, const char *name, uint32_t nlen,
+                         const char *val, uint32_t vlen, mkr_xml_node_t **out)
+{
+    if (out) *out = NULL;
+    if (el->type != MKR_XML_NODE_TYPE_ELEMENT) return MKR_XML_MUT_TYPE;
+    mkr_xml_qname_t qn;
+    if (mkr_xml_qname_split(name, nlen, &qn) != 0) return MKR_XML_MUT_BAD_NAME;
+    /* Unlike the parser/[]= path, setAttributeNS is permissive: the DOM lets a
+     * prefix be bound to the empty namespace (xmlns:foo=""); whether that
+     * serializes to well-formed XML is the serializer's concern, not set's. */
+    if (vlen > 0 && mkr_xml_validate_chars(val, vlen) != 0) return MKR_XML_MUT_BAD_CHARS;
+
+    /* The explicit namespace, copied into the arena (null/"" => no namespace). */
+    const char *uri = NULL; uint32_t ulen = 0;
+    if (ns != NULL && nslen > 0) {
+        uri = mkr_xml_arena_bytes(doc, ns, nslen);
+        if (uri == NULL) return MKR_XML_MUT_OOM;
+        ulen = nslen;
+    }
+
+    for (mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
+        if (mkr_attr_matches_ns(a, uri, ulen, qn.local, qn.local_len)) {
+            const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
+            if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
+            a->value = nv ? nv : ""; a->value_len = vlen;
+            if (out) *out = a;
+            return MKR_XML_MUT_OK;
+        }
+    }
+
+    /* New attribute - allocate node + qname + value before linking. */
+    mkr_xml_node_t *attr = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
+    if (attr == NULL) return MKR_XML_MUT_OOM;
+    mkr_xml_mut_status_t st = assign_qname(doc, attr, &qn);
+    if (st != MKR_XML_MUT_OK) return st;          /* abandoned in the arena; freed with doc */
+    const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
+    if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
+    attr->value = nv ? nv : ""; attr->value_len = vlen;
+    attr->ns_uri = uri; attr->ns_uri_len = ulen;
+    attr->parent = el;
+
+    if (el->attrs == NULL) {
+        el->attrs = attr;
+    } else {
+        mkr_xml_node_t *t = el->attrs;
+        while (t->next != NULL) t = t->next;
+        t->next = attr;
+    }
+    if (out) *out = attr;
+    return MKR_XML_MUT_OK;
+}
+
+/* DOM removeAttributeNS: remove the attribute keyed on (namespace, local). */
+int
+mkr_xml_remove_attribute_ns(mkr_xml_node_t *el, const char *ns, uint32_t nslen,
+                            const char *local, uint32_t llen)
+{
+    if (el->type != MKR_XML_NODE_TYPE_ELEMENT) return 0;
+    uint32_t want = (ns != NULL) ? nslen : 0;
+    mkr_xml_node_t *prev = NULL;
+    for (mkr_xml_node_t *a = el->attrs; a != NULL; prev = a, a = a->next) {
+        if (mkr_attr_matches_ns(a, ns, want, local, llen)) {
+            if (prev) prev->next = a->next; else el->attrs = a->next;
+            a->next = NULL; a->parent = NULL;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Reject a forbidden character SEQUENCE for a leaf node's serialized value:
  * "--" (or a trailing "-") in a comment, "]]>" in a CDATA section, "?>" in a PI
  * - each would break the node's terminator and is not well-formed XML. Plain
