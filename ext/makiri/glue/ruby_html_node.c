@@ -408,7 +408,7 @@ mkr_node_content(VALUE self)
 
     /* Fast path for elements / fragments (the common case, incl. document text).
      *
-     * Preferred: the per-document text index (lexbor_compat/text_index.c) maps
+     * Preferred: the per-document text index (dom_adapter/text_index.c) maps
      * this node to the contiguous, document-order run of its descendants' text
      * slices, so we serve a single pre-sized memcpy run with no per-extraction
      * tree walk - the walk is otherwise the dominant, cache-bound cost. Built

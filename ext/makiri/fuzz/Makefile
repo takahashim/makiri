@@ -30,7 +30,7 @@ CFLAGS = -O2 -g -Wall -Wextra \
   -I$(EXT_DIR)/core \
   -I$(EXT_DIR)/xml \
   -I$(EXT_DIR)/xpath \
-  -I$(EXT_DIR)/lexbor_compat
+  -I$(EXT_DIR)/dom_adapter
 
 # Linker flags: libFuzzer driver + sanitizers.
 LDFLAGS  = -fsanitize=fuzzer,$(SANITIZE)

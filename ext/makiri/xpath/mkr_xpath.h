@@ -116,7 +116,7 @@ void  mkr_xpath_set_func_resolver   (mkr_xpath_context_t *ctx, mkr_func_resolver
  * Element-index hooks, injected by the glue layer alongside an opaque index
  * pointer. The engine never sees the index's concrete type - it only calls
  * back through these, exactly as it calls Ruby only through the func resolver
- * above. This keeps the engine free of the lexbor_compat headers.
+ * above. This keeps the engine free of the dom_adapter headers.
  *
  *   lookup(index, tag_id, &count) -> the document-ordered bucket of elements
  *     whose tag id == tag_id (count via *count), or NULL / *count == 0.

@@ -67,7 +67,7 @@ int mkr_utf8_sanitize(const lxb_char_t *src, size_t len,
 
 void mkr_parsed_destroy(mkr_parsed_t *p);
 
-/* ---- attribute -> owner element index (lexbor_compat/dom_index.c) ----
+/* ---- attribute -> owner element index (dom_adapter/dom_index.c) ----
  *
  * Lexbor sets neither lxb_dom_attr_t::owner nor attr->node.parent, so an
  * attribute node has no usable back-pointer to its element. We build our own
@@ -94,7 +94,7 @@ int mkr_parsed_dom_index_build(mkr_parsed_t *p);
  * removing a subtree). */
 void mkr_parsed_dom_index_invalidate(mkr_parsed_t *p);
 
-/* ---- element index: tag id -> elements (lexbor_compat/dom_index.c) ----
+/* ---- element index: tag id -> elements (dom_adapter/dom_index.c) ----
  *
  * Co-built with the attr->owner index in the same document walk (same object,
  * same lazy build, same invalidation). Groups every element by tag id in
@@ -119,7 +119,7 @@ lxb_dom_node_t *const *mkr_element_index_tag(const void *idx, lxb_tag_id_t tag_i
  * (fail safe) for a NULL index. */
 int mkr_element_index_has_foreign(const void *idx);
 
-/* ---- source location (lexbor_compat/source_loc.c) ----
+/* ---- source location (dom_adapter/source_loc.c) ----
  *
  * mkr_parse_html drives Lexbor's low-level parser pipeline and chains the
  * tokenizer's token-done callback so we can record the byte offset of every
@@ -156,7 +156,7 @@ size_t mkr_parsed_node_line(mkr_parsed_t *p, lxb_dom_node_t *node);
  * mkr_parsed_destroy; exposed so post_parse.c need not see the index layout. */
 void mkr_dom_index_free(void *idx);
 
-/* ---- text-extraction index (lexbor_compat/text_index.c) ----
+/* ---- text-extraction index (dom_adapter/text_index.c) ----
  *
  * Maps a node to the contiguous run of document-order TEXT/CDATA byte slices
  * its subtree owns, so Node#text / XPath string-value can serve a pre-sized

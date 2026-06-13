@@ -91,7 +91,7 @@ mkr_node_raw(VALUE rb_node)
  * discriminator - not the Ruby class). A Document, a NodeSet, or any non-node is
  * MKR_NODE_KIND_OTHER. The cross-kind Document#import_node entries use this to
  * route a node to the same-representation copy or the cross-representation
- * translator (lexbor_compat/cross_import.c). */
+ * translator (dom_adapter/cross_import.c). */
 mkr_node_kind_t
 mkr_node_kind(VALUE v)
 {

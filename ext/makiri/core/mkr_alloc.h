@@ -4,7 +4,7 @@
 /*
  * Fail-closed memory primitives: overflow-checked size arithmetic and
  * allocators, the foundation every other C layer (glue, xpath engine,
- * lexbor_compat) builds on, so the ad-hoc `cap *= 2` / `n + 1` /
+ * dom_adapter) builds on, so the ad-hoc `cap *= 2` / `n + 1` /
  * `malloc(n * sizeof(T))` patterns are written once, here, and fail closed.
  * NOTHING in this header touches Ruby - exception mapping happens at the glue
  * boundary. (mkr_core.h is a thin umbrella over this + the other core headers.)

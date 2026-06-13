@@ -33,20 +33,20 @@ ignore_paths:
     rule: html_doc_unwrap_boundary
     reason: the HTML branch of mkr_xpath_context_for, entered only after the XML kind returns early.
   # mkr_parsed_html_doc (asserts kind == HTML)
-  - path: ext/makiri/lexbor_compat/compat.h
+  - path: ext/makiri/dom_adapter/compat.h
     rule: parsed_html_doc_boundary
     reason: declaration of the HTML parsed-document accessor.
-  - path: ext/makiri/lexbor_compat/post_parse.c
+  - path: ext/makiri/dom_adapter/post_parse.c
     rule: parsed_html_doc_boundary
     reason: definition (the kind assert lives here) + HTML post-parse pipeline.
   - path: ext/makiri/glue/ruby_doc.c
     rule: parsed_html_doc_boundary
     reason: mkr_html_doc_unwrap is defined here over the HTML parsed document.
   # mkr_parsed_xml_doc (XML arena accessor) — kept out of the pure-HTML glue files
-  - path: ext/makiri/lexbor_compat/compat.h
+  - path: ext/makiri/dom_adapter/compat.h
     rule: parsed_xml_doc_boundary
     reason: declaration of the XML parsed-document accessor.
-  - path: ext/makiri/lexbor_compat/post_parse.c
+  - path: ext/makiri/dom_adapter/post_parse.c
     rule: parsed_xml_doc_boundary
     reason: definition + XML document wrapping/teardown.
   - path: ext/makiri/glue/ruby_xml.c
@@ -65,7 +65,7 @@ ignore_paths:
     rule: parsed_xml_doc_boundary
     reason: the kind-aware mkr_node_raw resolves an XML Document only after a MKR_DOC_XML check.
   # owner_document (HTML-only lxb_dom_node_t field)
-  - path: ext/makiri/lexbor_compat/post_parse.c
+  - path: ext/makiri/dom_adapter/post_parse.c
     rule: owner_document_boundary
     reason: mkr_lxb_document_bytes resolves a Lexbor node's owner document to size its mraw pools (HTML-only; the XML serializer uses arena_bytes instead).
   - path: ext/makiri/glue/ruby_html_node.c
@@ -80,7 +80,7 @@ ignore_paths:
   - path: ext/makiri/xpath/mkr_xpath_node_access_html.h
     rule: owner_document_boundary
     reason: the HTML monomorphization of the engine's node-access layer.
-  - path: ext/makiri/lexbor_compat/cross_import.c
+  - path: ext/makiri/dom_adapter/cross_import.c
     rule: owner_document_boundary
     reason: mkr_html_ns_uri reads the SOURCE HTML node's owner document ns table to resolve its namespace id to a URI; reached only on the HTML (lxb) side of HTML->XML translation, never on an XML node (no cross-kind document comparison).
   # mkr_node_raw (kind-agnostic void* raw pointer; never dereferenced as a typed node)

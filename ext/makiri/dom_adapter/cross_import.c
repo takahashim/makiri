@@ -5,7 +5,7 @@
  * them: it deep/shallow-copies a subtree from one representation into the other,
  * owned by the target document, returning a DETACHED copy (the caller links it).
  *
- * Ruby-FREE and lives in lexbor_compat (not glue): it reads/writes BOTH lexbor and
+ * Ruby-FREE and lives in dom_adapter (not glue): it reads/writes BOTH lexbor and
  * the XML arena, exactly the bridge this layer is for. The glue import_node entries
  * (ruby_doc.c / ruby_xml_node.c) do the Ruby-VALUE kind check (mkr_node_kind), call
  * these, and wrap/raise. Both directions:

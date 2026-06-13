@@ -2,7 +2,7 @@
 #define MAKIRI_GLUE_H
 
 #include "../makiri.h"
-#include "../lexbor_compat/compat.h"
+#include "../dom_adapter/compat.h"
 
 #ifdef __cplusplus
 extern "C" {

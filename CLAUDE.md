@@ -14,7 +14,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 
 - **Vanilla Lexbor, no fork, no patches.** `vendor/lexbor` is a git submodule
   pinned to a release **tag**. Never `git apply` to it. Lexbor gaps are absorbed
-  in `ext/makiri/lexbor_compat/`, never by editing Lexbor.
+  in `ext/makiri/dom_adapter/`, never by editing Lexbor.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
 - **C identifier prefix `mkr_`** for everything we write (`mkr_xpath_*`,
@@ -160,7 +160,7 @@ ext/makiri/
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
-  lexbor_compat/           attr->owner index, source location, post-parse orchestration
+  dom_adapter/           attr->owner index, source location, post-parse orchestration
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 bench/                     Nokogiri-comparison benchmark
@@ -189,7 +189,7 @@ name/value, `content=`, `name=`, `create_*`, variable/namespace) - never
 truncate/repair. Don't drop these checks; the engine assumes NUL-terminated,
 valid-UTF-8 C strings.
 
-**Parsing & source location** (`lexbor_compat/post_parse.c`, `source_loc.c`).
+**Parsing & source location** (`dom_adapter/post_parse.c`, `source_loc.c`).
 `mkr_parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
 the parser's tree builder → `chunk_process`/`chunk_end`) so it can record each
@@ -205,7 +205,7 @@ tkz/tree). Tracking is **always on**: it rides the parse (~7% over no-tracking,
 measured). An earlier `line: :text`/`:none` option was removed - `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
 
-**attr→owner index** (`lexbor_compat/dom_index.c`). Lexbor never links an
+**attr→owner index** (`dom_adapter/dom_index.c`). Lexbor never links an
 attribute back to its element, so we build an open-addressing hash (pointer
 keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 → no stack DoS; OOM fails closed and retries). The build also **backfills each
@@ -221,7 +221,7 @@ so those elements are left out and `//customtag` falls back to the tree walk.
 Reached via `mkr_parsed_element_index` / `mkr_element_index_tag` /
 `mkr_element_index_has_foreign`; invalidated with the attr index.
 
-**text index** (`lexbor_compat/text_index.c`). Removes the per-call descendant
+**text index** (`dom_adapter/text_index.c`). Removes the per-call descendant
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
 `mkr_grow_reserve`, no recursion → no stack DoS) records a flat document-order
@@ -369,7 +369,7 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
   not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
   rows and `fuzz:sanitize --target css` (the reuse is the memory-safety risk).
-- **`Node#text` is served from the text index** (`lexbor_compat/text_index.c`,
+- **`Node#text` is served from the text index** (`dom_adapter/text_index.c`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction
   into a hash lookup + one pre-sized memcpy instead of a cache-bound walk over

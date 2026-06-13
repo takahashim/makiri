@@ -2,12 +2,12 @@
 #define MAKIRI_CROSS_IMPORT_H
 
 /* Glue-side helpers for cross-kind Document#import_node. The Ruby-FREE subtree
- * translators live in lexbor_compat/cross_import.c (they read/write both Lexbor
+ * translators live in dom_adapter/cross_import.c (they read/write both Lexbor
  * and the XML arena); this header adds the Ruby-boundary pieces the import_node
  * entries (ruby_doc.c / ruby_xml_node.c) need on top of them. */
 
 #include "../makiri.h"
-#include "../lexbor_compat/cross_import.h"  /* mkr_cross_html_to_xml / _xml_to_html */
+#include "../dom_adapter/cross_import.h"  /* mkr_cross_html_to_xml / _xml_to_html */
 
 #ifdef __cplusplus
 extern "C" {

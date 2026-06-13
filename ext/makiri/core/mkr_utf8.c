@@ -1,6 +1,6 @@
 /* mkr_utf8.c - the shared pure-C UTF-8 validator. Ruby-free, allocation-free.
  * See mkr_utf8.h for the contract and why it lives in core. Moved verbatim from
- * lexbor_compat/utf8_input.c (whose sanitiser fast path now calls this). */
+ * dom_adapter/utf8_input.c (whose sanitiser fast path now calls this). */
 #include "mkr_utf8.h"
 
 #include <string.h>   /* memcpy for the word-at-a-time ASCII scan */

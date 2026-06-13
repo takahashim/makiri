@@ -13,7 +13,7 @@
  * separately (memchr).
  *
  * This lives in core so the Ruby bridge (mkr_verify_text - the strict
- * programmatic-input gate) and the HTML input sanitiser (lexbor_compat/
+ * programmatic-input gate) and the HTML input sanitiser (dom_adapter/
  * utf8_input.c fast path) share a single implementation, and so the bridge's
  * validation never allocates: a borrowed RSTRING pointer must not be held
  * across a Ruby allocation (= GC point), so the validator the bridge runs

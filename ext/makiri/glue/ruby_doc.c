@@ -1,6 +1,6 @@
 #include "glue.h"
 #include "cross_import.h"   /* cross-kind import_node (XML node -> this HTML doc) */
-#include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
+#include "../dom_adapter/compat_internal.h" /* mkr_dom_preorder_next */
 #include "../core/mkr_core.h"
 #include "../xml/mkr_xml.h"   /* mkr_xml_doc_memsize for an XML-backed document */
 

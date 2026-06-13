@@ -7,7 +7,7 @@
 #include <string.h>
 
 /*
- * Per-document text-extraction index (lexbor_compat/text_index.c).
+ * Per-document text-extraction index (dom_adapter/text_index.c).
  *
  * Descendant-text aggregation (Node#text, XPath string-value) walks every node
  * of a subtree chasing pointers through Lexbor's 96-byte nodes - at scale this

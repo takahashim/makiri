@@ -2,7 +2,7 @@
 #define MAKIRI_COMPAT_INTERNAL_H
 
 /* Low-level helpers shared across the extension's C translation units (the
- * lexbor_compat layer and the Ruby↔C glue) but not part of the compat public
+ * dom_adapter layer and the Ruby↔C glue) but not part of the compat public
  * API in compat.h. */
 
 #include <lexbor/dom/dom.h>
