@@ -1,0 +1,125 @@
+# Valgrind suppressions for `rake spec:valgrind` (ruby_memcheck).
+#
+# ruby_memcheck auto-loads every `<suppressions>/<ruby-version>.supp` it finds,
+# and `ruby.supp` (the bare RUBY_ENGINE name) matches every Ruby version. These
+# entries are ADDED to the ones the gem already bundles.
+#
+# Why this file exists: our job runs with `--undef-value-errors=yes` and
+# `filter_all_errors: true`, which surfaces *every* uninitialised-value report
+# whose stack touches the makiri binary. CRuby's garbage collector legitimately
+# reads uninitialised memory - the conservative machine-stack scan reads stale
+# stack words, and incremental mark/sweep reads not-yet-written RVALUE flags -
+# and when a GC cycle fires inside one of our allocations (or marks through our
+# mark callback) the makiri frame is on the stack, so the binary-touch filter
+# keeps the report. The gem's bundled ruby.supp only covers `each_location*`
+# under `Memcheck:Addr8`, not the `Cond`/`Value8` reads we see, so ~190 of these
+# Ruby-GC false positives slip through and fail the run.
+#
+# Each suppression below is anchored on a CRuby GC driver function (gc marks /
+# sweep / conservative root scan), with leading `...` absorbing the GC-internal
+# error-origin frames above it. A real uninitialised read in our own code does
+# NOT descend from these GC drivers, so it still fails the gate. We do NOT
+# suppress Addr/Overlap/Param/etc. - only the GC uninit reads and a couple of
+# Ruby-internal leaks the VM never frees before exit.
+
+# ---- conservative GC: uninitialised-value reads (Memcheck:Cond) ----
+{
+  ruby-gc-cond-garbage_collect
+  Memcheck:Cond
+  ...
+  fun:garbage_collect
+}
+{
+  ruby-gc-cond-gc_start
+  Memcheck:Cond
+  ...
+  fun:gc_start
+}
+{
+  ruby-gc-cond-gc_marks
+  Memcheck:Cond
+  ...
+  fun:gc_marks*
+}
+{
+  ruby-gc-cond-gc_sweep
+  Memcheck:Cond
+  ...
+  fun:gc_sweep*
+}
+{
+  ruby-gc-cond-rb_gc_impl_mark
+  Memcheck:Cond
+  ...
+  fun:rb_gc_impl_mark*
+}
+{
+  ruby-gc-cond-machine_context
+  Memcheck:Cond
+  ...
+  fun:rb_gc_mark_machine_context
+}
+{
+  ruby-gc-cond-mark_roots
+  Memcheck:Cond
+  ...
+  fun:mark_roots
+}
+
+# ---- conservative GC: uninitialised-value reads (Memcheck:Value8) ----
+{
+  ruby-gc-value8-garbage_collect
+  Memcheck:Value8
+  ...
+  fun:garbage_collect
+}
+{
+  ruby-gc-value8-gc_start
+  Memcheck:Value8
+  ...
+  fun:gc_start
+}
+{
+  ruby-gc-value8-gc_marks
+  Memcheck:Value8
+  ...
+  fun:gc_marks*
+}
+{
+  ruby-gc-value8-gc_sweep
+  Memcheck:Value8
+  ...
+  fun:gc_sweep*
+}
+{
+  ruby-gc-value8-rb_gc_impl_mark
+  Memcheck:Value8
+  ...
+  fun:rb_gc_impl_mark*
+}
+{
+  ruby-gc-value8-machine_context
+  Memcheck:Value8
+  ...
+  fun:rb_gc_mark_machine_context
+}
+{
+  ruby-gc-value8-mark_roots
+  Memcheck:Value8
+  ...
+  fun:mark_roots
+}
+
+# ---- Ruby VM internal caches that are never freed before exit ----
+# The global constant-cache / inline method-cache id_table is allocated lazily
+# on method lookup and lives for the life of the VM, so RUBY_FREE_AT_EXIT still
+# reports it as "definitely lost" whenever the first lookup happened under one
+# of our cfuncs. Not ours to free.
+{
+  ruby-vm-method-cache-id_table
+  Memcheck:Leak
+  ...
+  fun:rb_id_table_create
+  fun:vm_search_cc
+  ...
+}

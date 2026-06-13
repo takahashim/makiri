@@ -706,8 +706,11 @@ mkr_node_xpath_run(VALUE self, VALUE rb_expr, VALUE handler, int lax, int first_
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error); /* never returns */
     }
-    VALUE result = mkr_xpath_value_to_ruby(&value, document);
+    /* Free ctx BEFORE converting: the value owns its own data and never
+     * references ctx, so a raise inside mkr_xpath_value_to_ruby (node-set cap /
+     * OOM) can no longer leak ctx. */
     mkr_xpath_context_free(ctx);
+    VALUE result = mkr_xpath_value_to_ruby(&value, document);
     return result;
 }
 

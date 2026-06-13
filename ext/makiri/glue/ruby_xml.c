@@ -266,8 +266,13 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error);
     }
-    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
+    /* Free ctx BEFORE converting: the value owns its own data (node-set points
+     * at the document's DOM, strings into value's buffers) and never references
+     * ctx, so converting after the free is safe - and it means a raise inside
+     * mkr_xpath_value_to_ruby (e.g. a node-set cap / OOM building Ruby objects)
+     * can no longer leak ctx. */
     mkr_xpath_context_free(ctx);
+    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
 
     if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
         return rb_funcall(result, rb_intern("first"), 0);
@@ -372,8 +377,13 @@ mkr_xml_doc_css_run(VALUE self, VALUE rb_selector, VALUE rb_ns, int first_only)
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error);
     }
-    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
+    /* Free ctx BEFORE converting: the value owns its own data (node-set points
+     * at the document's DOM, strings into value's buffers) and never references
+     * ctx, so converting after the free is safe - and it means a raise inside
+     * mkr_xpath_value_to_ruby (e.g. a node-set cap / OOM building Ruby objects)
+     * can no longer leak ctx. */
     mkr_xpath_context_free(ctx);
+    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
 
     if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
         return rb_funcall(result, rb_intern("first"), 0);
