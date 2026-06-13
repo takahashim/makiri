@@ -29,10 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ways, and an HTML `<template>`'s contents (which HTML keeps in a separate
   fragment) are carried across rather than silently dropped; an XML CDATA section
   has no HTML counterpart, so translating one into an HTML document fails closed
-  (`Makiri::Error`). Namespaces are not yet translated
-  (null-namespace); namespace fidelity is a later phase. The other node-argument
-  mutators (`add_child`/`before`/`after`/`replace`/`fragment`) still reject a
-  foreign-kind node; `import_node` is the one sanctioned crossing point.
+  (`Makiri::Error`). Namespaces are preserved across the translation: HTML->XML
+  synthesizes the xmlns declarations needed to reproduce each node's namespace
+  (so e.g. an inline `<svg>` stays in the SVG namespace and HTML elements in the
+  XHTML namespace), and XML->HTML maps the namespace URI back to a Lexbor
+  namespace id (the namespaces Lexbor knows - XHTML/SVG/MathML/XLink/XML/XMLNS;
+  an unknown URI becomes the null namespace). The other node-argument mutators
+  (`add_child`/`before`/`after`/`replace`/`fragment`) still reject a foreign-kind
+  node; `import_node` is the one sanctioned crossing point.
 
 ## [0.4.0] - 2026-06-12
 

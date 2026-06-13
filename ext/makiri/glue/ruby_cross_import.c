@@ -17,13 +17,35 @@
  *   - report failure via mkr_xml_mut_status_t (never rb_raise here, which would
  *     leak the stack); the Ruby entry maps it with mkr_xml_mut_check.
  *
- * Phase: namespaces are NOT yet translated (null-ns). Names/values are carried as
- * raw bytes; the destination factories re-validate (XML QName / XML Char) and fail
- * closed, so a name not well-formed in the target representation raises.
+ * Namespaces (phase 4): preserved across the two representations.
+ *   - HTML->XML: an mkr node's namespace is resolved from xmlns declarations at
+ *     insertion time (resolve_node_ns), so a directly-set ns_uri would be
+ *     overwritten when the imported subtree is later linked. We therefore SYNTHESIZE
+ *     xmlns declarations: each element declares xmlns="URI" when its namespace
+ *     differs from the one inherited from its translated parent (so unprefixed
+ *     elements resolve correctly), and a foreign-prefixed attribute (e.g. xlink:*)
+ *     gets an xmlns:PREFIX declaration on its element. The predefined xml: prefix
+ *     needs none.
+ *   - XML->HTML: Lexbor stores a namespace as an id, so the element's node.ns is set
+ *     from the URI and a namespaced attribute is built with lxb_dom_attr_set_name_ns.
+ *     Only the namespaces Lexbor knows by id (XHTML/SVG/MathML/XLink/XML/XMLNS) map;
+ *     an unknown URI falls back to the null namespace (fail-soft).
  */
 #include "cross_import.h"
 #include "glue.h"
 #include "../core/mkr_core.h"   /* mkr_grow_reserve, MKR_OK */
+
+#include <lexbor/ns/ns.h>       /* lxb_ns_by_id, LXB_NS_* */
+#include <stdlib.h>             /* malloc / free (xmlns:PREFIX scratch) */
+#include <string.h>             /* memcmp / memcpy / memchr */
+
+/* Exported by Lexbor but omitted from its public headers: names an attribute from
+ * (namespace URI, qualified name), splitting prefix/local and interning the ns.
+ * (Same forward declaration ruby_html_mutate.c uses.) */
+extern lxb_status_t
+lxb_dom_attr_set_name_ns(lxb_dom_attr_t *attr, const lxb_char_t *link,
+                         size_t link_length, const lxb_char_t *name,
+                         size_t name_length, bool to_lowercase);
 
 mkr_node_kind_t
 mkr_node_kind(VALUE v)
@@ -37,32 +59,139 @@ mkr_node_kind(VALUE v)
  * factory signatures). A >4 GiB slice is rejected fail-closed rather than wrapped. */
 #define MKR_FITS_U32(n) ((n) <= UINT32_MAX)
 
-/* ----- explicit (src, dst) work stack shared by both directions -------------- */
+/* The namespaces Lexbor knows by id (lexbor/ns/res.h); the only ones that map
+ * URI <-> id. Anything else is the null namespace at the boundary (fail-soft). */
+static lxb_ns_id_t
+mkr_ns_id_for_uri(const char *uri, uint32_t len)
+{
+    static const struct { const char *uri; uint32_t len; lxb_ns_id_t id; } known[] = {
+        { "http://www.w3.org/1999/xhtml",         28, LXB_NS_HTML  },
+        { "http://www.w3.org/2000/svg",           26, LXB_NS_SVG   },
+        { "http://www.w3.org/1998/Math/MathML",   34, LXB_NS_MATH  },
+        { "http://www.w3.org/1999/xlink",         28, LXB_NS_XLINK },
+        { "http://www.w3.org/XML/1998/namespace", 36, LXB_NS_XML   },
+        { "http://www.w3.org/2000/xmlns/",        29, LXB_NS_XMLNS },
+    };
+    if (uri == NULL || len == 0) return LXB_NS__UNDEF;
+    for (size_t i = 0; i < sizeof known / sizeof known[0]; i++) {
+        if (known[i].len == len && memcmp(known[i].uri, uri, len) == 0) return known[i].id;
+    }
+    return LXB_NS__UNDEF;
+}
 
-typedef struct { void *s; void *d; } mkr_xframe_t;
+/* The URI string for an HTML node's namespace id (borrowed from the source
+ * document's interned ns table - stable for that document's lifetime), or NULL/0
+ * for the null namespace. */
+static const char *
+mkr_html_ns_uri(lxb_dom_node_t *n, uint32_t *out_len)
+{
+    *out_len = 0;
+    if (n->ns == LXB_NS__UNDEF) return NULL;
+    size_t len = 0;
+    const lxb_char_t *u = lxb_ns_by_id(n->owner_document->ns, n->ns, &len);
+    if (u == NULL || !MKR_FITS_U32(len)) return NULL;
+    *out_len = (uint32_t)len;
+    return (const char *)u;
+}
+
+static int
+mkr_uri_eq(const char *a, uint32_t al, const char *b, uint32_t bl)
+{
+    return al == bl && (al == 0 || memcmp(a, b, al) == 0);
+}
+
+/* ----- explicit (src, dst) work stack shared by both directions --------------
+ * +def+/+deflen+ carry, for HTML->XML, the default-namespace URI in scope for the
+ * destination node's children (so a child only redeclares xmlns when it differs);
+ * unused (NULL/0) for XML->HTML. */
+typedef struct { void *s; void *d; const char *def; uint32_t deflen; } mkr_xframe_t;
 typedef struct { mkr_xframe_t *v; size_t n, cap; } mkr_xstack_t;
 
 static int
-mkr_xstack_push(mkr_xstack_t *st, void *s, void *d)
+mkr_xstack_push(mkr_xstack_t *st, void *s, void *d, const char *def, uint32_t deflen)
 {
     if (mkr_grow_reserve((void **)&st->v, &st->cap, st->n + 1, sizeof(*st->v)) != MKR_OK) {
         return -1;
     }
     st->v[st->n].s = s;
     st->v[st->n].d = d;
+    st->v[st->n].def = def;
+    st->v[st->n].deflen = deflen;
     st->n++;
     return 0;
 }
 
 /* ===================== HTML (lxb) -> XML (mkr) =============================== */
 
-/* Translate ONE lxb node into a fresh mkr node (its own fields + attributes, NOT
- * its children). *out is the new node, or NULL to SKIP an unsupported type (e.g.
- * a stray document node); an error status fails the whole import. */
+/* Declare xmlns (prefix NULL/plen 0) or xmlns:PREFIX = uri on the detached mkr
+ * element +el+, as an ordinary attribute, so the inserted subtree's prefix-based
+ * namespace resolution reproduces +uri+. */
 static mkr_xml_mut_status_t
-h2x_make(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, mkr_xml_node_t **out)
+h2x_declare_ns(mkr_xml_doc_t *xdoc, mkr_xml_node_t *el,
+               const char *prefix, uint32_t plen, const char *uri, uint32_t ulen)
+{
+    if (plen == 0) {
+        return mkr_xml_set_attribute(xdoc, el, "xmlns", 5, uri != NULL ? uri : "", ulen, NULL);
+    }
+    size_t nlen = (size_t)6 + plen;   /* "xmlns:" + prefix */
+    if (!MKR_FITS_U32(nlen)) return MKR_XML_MUT_OOM;
+    char *nm = malloc(nlen);
+    if (nm == NULL) return MKR_XML_MUT_OOM;
+    memcpy(nm, "xmlns:", 6);
+    memcpy(nm + 6, prefix, plen);
+    mkr_xml_mut_status_t st = mkr_xml_set_attribute(xdoc, el, nm, (uint32_t)nlen,
+                                                    uri != NULL ? uri : "", ulen, NULL);
+    free(nm);
+    return st;
+}
+
+/* Copy +s+'s attributes onto the translated mkr element +el+, declaring an
+ * xmlns:PREFIX for each foreign-prefixed attribute so resolution at link time
+ * succeeds (the predefined xml: prefix needs none). */
+static mkr_xml_mut_status_t
+h2x_copy_attrs(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, mkr_xml_node_t *el)
+{
+    for (lxb_dom_attr_t *a = lxb_dom_element_first_attribute(lxb_dom_interface_element(s));
+         a != NULL; a = lxb_dom_element_next_attribute(a)) {
+        size_t anl, avl;
+        const lxb_char_t *an = lxb_dom_attr_qualified_name(a, &anl);
+        const lxb_char_t *av = lxb_dom_attr_value(a, &avl);
+        if (!MKR_FITS_U32(anl) || !MKR_FITS_U32(avl)) return MKR_XML_MUT_OOM;
+
+        lxb_ns_id_t ans = a->node.ns;
+        if (ans != LXB_NS__UNDEF && ans != LXB_NS_HTML && ans != LXB_NS_XML) {
+            const lxb_char_t *colon = memchr(an, ':', anl);
+            if (colon != NULL) {
+                uint32_t ulen;
+                const char *uri = mkr_html_ns_uri(&a->node, &ulen);
+                if (uri != NULL) {
+                    mkr_xml_mut_status_t st = h2x_declare_ns(
+                        xdoc, el, (const char *)an, (uint32_t)(colon - an), uri, ulen);
+                    if (st != MKR_XML_MUT_OK) return st;
+                }
+            }
+        }
+        mkr_xml_mut_status_t st = mkr_xml_set_attribute(
+            xdoc, el, (const char *)an, (uint32_t)anl,
+            av != NULL ? (const char *)av : "", (uint32_t)avl, NULL);
+        if (st != MKR_XML_MUT_OK) return st;
+    }
+    return MKR_XML_MUT_OK;
+}
+
+/* Translate ONE lxb node into a fresh mkr node (own fields + attributes, NOT its
+ * children). +pdef+/+pdef_len+ is the default namespace inherited from the
+ * translated parent; *cdef/*cdef_len receive the default namespace in scope for
+ * THIS node's children. *out is the new node, or NULL to SKIP an unsupported type;
+ * an error status fails the whole import. */
+static mkr_xml_mut_status_t
+h2x_make(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, const char *pdef, uint32_t pdef_len,
+         const char **cdef, uint32_t *cdef_len, mkr_xml_node_t **out)
 {
     *out = NULL;
+    *cdef = pdef;            /* default: a non-element does not change the scope */
+    *cdef_len = pdef_len;
+
     switch (s->type) {
     case LXB_DOM_NODE_TYPE_ELEMENT: {
         size_t nl;
@@ -71,18 +200,21 @@ h2x_make(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, mkr_xml_node_t **out)
         mkr_xml_node_t *el = NULL;
         mkr_xml_mut_status_t st = mkr_xml_new_element(xdoc, (const char *)nm, (uint32_t)nl, &el);
         if (st != MKR_XML_MUT_OK) return st;
-        for (lxb_dom_attr_t *a = lxb_dom_element_first_attribute(lxb_dom_interface_element(s));
-             a != NULL; a = lxb_dom_element_next_attribute(a)) {
-            size_t anl, avl;
-            const lxb_char_t *an = lxb_dom_attr_qualified_name(a, &anl);
-            const lxb_char_t *av = lxb_dom_attr_value(a, &avl);
-            if (!MKR_FITS_U32(anl) || !MKR_FITS_U32(avl)) return MKR_XML_MUT_OOM;
-            /* Detached element: an unknown prefix's namespace is deferred (not an
-             * error) by set_attribute, so the raw QName + value carry across. */
-            st = mkr_xml_set_attribute(xdoc, el, (const char *)an, (uint32_t)anl,
-                                       av != NULL ? (const char *)av : "", (uint32_t)avl, NULL);
+
+        /* Declare the element's default namespace iff it differs from the inherited
+         * one, so this (unprefixed, like all HTML elements) element resolves to it.
+         * An element with no namespace under an inherited default undeclares (xmlns=""). */
+        uint32_t eul;
+        const char *euri = mkr_html_ns_uri(s, &eul);
+        if (!mkr_uri_eq(euri, eul, pdef, pdef_len)) {
+            st = h2x_declare_ns(xdoc, el, NULL, 0, euri, eul);
             if (st != MKR_XML_MUT_OK) return st;
+            *cdef = (euri != NULL) ? euri : "";
+            *cdef_len = eul;
         }
+
+        st = h2x_copy_attrs(xdoc, s, el);
+        if (st != MKR_XML_MUT_OK) return st;
         *out = el;
         return MKR_XML_MUT_OK;
     }
@@ -138,25 +270,28 @@ mkr_cross_html_to_xml(mkr_xml_doc_t *xdoc, lxb_dom_node_t *src, int deep, mkr_xm
 {
     *out = NULL;
     mkr_xml_node_t *root = NULL;
-    mkr_xml_mut_status_t st = h2x_make(xdoc, src, &root);
+    const char *rdef = NULL; uint32_t rdef_len = 0;
+    mkr_xml_mut_status_t st = h2x_make(xdoc, src, NULL, 0, &rdef, &rdef_len, &root);
     if (st != MKR_XML_MUT_OK) return st;
     if (root == NULL) return MKR_XML_MUT_TYPE;   /* root node type has no XML counterpart */
 
     if (deep) {
         mkr_xstack_t stk = { NULL, 0, 0 };
-        if (mkr_xstack_push(&stk, src, root) != 0) { free(stk.v); return MKR_XML_MUT_OOM; }
+        if (mkr_xstack_push(&stk, src, root, rdef, rdef_len) != 0) { free(stk.v); return MKR_XML_MUT_OOM; }
         while (stk.n > 0) {
             mkr_xframe_t f = stk.v[--stk.n];
             lxb_dom_node_t *s = (lxb_dom_node_t *)f.s;
             mkr_xml_node_t *d = (mkr_xml_node_t *)f.d;
             for (lxb_dom_node_t *c = h2x_children_of(s); c != NULL; c = c->next) {
                 mkr_xml_node_t *dc = NULL;
-                st = h2x_make(xdoc, c, &dc);
+                const char *cdef = NULL; uint32_t cdef_len = 0;
+                st = h2x_make(xdoc, c, f.def, f.deflen, &cdef, &cdef_len, &dc);
                 if (st != MKR_XML_MUT_OK) goto done;
                 if (dc == NULL) continue;                 /* skipped node type */
                 st = mkr_xml_insert_child(xdoc, d, dc);    /* detached parent: ns deferred */
                 if (st != MKR_XML_MUT_OK) goto done;
-                if (h2x_children_of(c) != NULL && mkr_xstack_push(&stk, c, dc) != 0) {
+                if (h2x_children_of(c) != NULL
+                    && mkr_xstack_push(&stk, c, dc, cdef, cdef_len) != 0) {
                     st = MKR_XML_MUT_OOM; goto done;
                 }
             }
@@ -171,6 +306,33 @@ mkr_cross_html_to_xml(mkr_xml_doc_t *xdoc, lxb_dom_node_t *src, int deep, mkr_xm
 
 /* ===================== XML (mkr) -> HTML (lxb) =============================== */
 
+/* Copy +s+'s attributes onto the translated lxb element +el+, preserving each
+ * attribute's namespace (a null-namespace attribute via set_attribute, a
+ * namespaced one via an explicit lxb_dom_attr_set_name_ns). */
+static mkr_xml_mut_status_t
+x2h_copy_attrs(lxb_dom_document_t *hdoc, const mkr_xml_node_t *s, lxb_dom_element_t *el)
+{
+    for (const mkr_xml_node_t *a = s->attrs; a != NULL; a = a->next) {
+        const char *val = a->value != NULL ? a->value : "";
+        if (a->ns_uri_len == 0) {
+            if (lxb_dom_element_set_attribute(el, (const lxb_char_t *)a->qname, a->qname_len,
+                                              (const lxb_char_t *)val, a->value_len) == NULL) {
+                return MKR_XML_MUT_OOM;
+            }
+            continue;
+        }
+        lxb_dom_attr_t *at = lxb_dom_attr_interface_create(hdoc);
+        if (at == NULL) return MKR_XML_MUT_OOM;
+        if (lxb_dom_attr_set_name_ns(at, (const lxb_char_t *)a->ns_uri, a->ns_uri_len,
+                                     (const lxb_char_t *)a->qname, a->qname_len, false) != LXB_STATUS_OK
+            || lxb_dom_attr_set_value(at, (const lxb_char_t *)val, a->value_len) != LXB_STATUS_OK) {
+            return MKR_XML_MUT_OOM;   /* the un-appended attr is abandoned in mraw */
+        }
+        lxb_dom_element_attr_append(el, at);
+    }
+    return MKR_XML_MUT_OK;
+}
+
 /* Translate ONE mkr node into a fresh, detached lxb node (own fields + attributes,
  * NOT children). *out is the new node, or NULL to SKIP an unsupported type. An XML
  * CDATA section has no HTML counterpart, so it fails closed (MKR_XML_MUT_TYPE). */
@@ -183,12 +345,10 @@ x2h_make(lxb_dom_document_t *hdoc, const mkr_xml_node_t *s, lxb_dom_node_t **out
         lxb_dom_element_t *el = lxb_dom_document_create_element(
             hdoc, (const lxb_char_t *)s->qname, s->qname_len, NULL);
         if (el == NULL) return MKR_XML_MUT_OOM;
-        for (const mkr_xml_node_t *a = s->attrs; a != NULL; a = a->next) {
-            lxb_dom_attr_t *at = lxb_dom_element_set_attribute(
-                el, (const lxb_char_t *)a->qname, a->qname_len,
-                (const lxb_char_t *)(a->value != NULL ? a->value : ""), a->value_len);
-            if (at == NULL) return MKR_XML_MUT_OOM;
-        }
+        /* Preserve the namespace as a Lexbor id (known URIs only; else null). */
+        lxb_dom_interface_node(el)->ns = mkr_ns_id_for_uri(s->ns_uri, s->ns_uri_len);
+        mkr_xml_mut_status_t st = x2h_copy_attrs(hdoc, s, el);
+        if (st != MKR_XML_MUT_OK) return st;
         *out = lxb_dom_interface_node(el);
         return MKR_XML_MUT_OK;
     }
@@ -240,7 +400,7 @@ mkr_cross_xml_to_html(lxb_dom_document_t *hdoc, const mkr_xml_node_t *src, int d
 
     if (deep) {
         mkr_xstack_t stk = { NULL, 0, 0 };
-        if (mkr_xstack_push(&stk, (void *)src, root) != 0) { free(stk.v); return MKR_XML_MUT_OOM; }
+        if (mkr_xstack_push(&stk, (void *)src, root, NULL, 0) != 0) { free(stk.v); return MKR_XML_MUT_OOM; }
         while (stk.n > 0) {
             mkr_xframe_t f = stk.v[--stk.n];
             const mkr_xml_node_t *s = (const mkr_xml_node_t *)f.s;
@@ -251,7 +411,8 @@ mkr_cross_xml_to_html(lxb_dom_document_t *hdoc, const mkr_xml_node_t *src, int d
                 if (st != MKR_XML_MUT_OK) goto done;
                 if (dc == NULL) continue;                 /* skipped node type */
                 lxb_dom_node_insert_child(d, dc);
-                if (c->first_child != NULL && mkr_xstack_push(&stk, (void *)c, dc) != 0) {
+                if (c->first_child != NULL
+                    && mkr_xstack_push(&stk, (void *)c, dc, NULL, 0) != 0) {
                     st = MKR_XML_MUT_OOM; goto done;
                 }
             }
