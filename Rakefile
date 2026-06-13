@@ -59,6 +59,19 @@ task default: %i[compile spec]
 # *our* code: a real uninit/invalid access in mkr_*/Lexbor still has a makiri frame
 # and is still reported.
 #
+# BUT the binary-touch filter is too coarse for one residual class: when a GC
+# cycle fires *inside* one of our allocations (or marks through our mark
+# callback), CRuby's conservative collector legitimately reads uninitialised
+# words (machine-stack scan reading stale frames, incremental mark/sweep reading
+# not-yet-written RVALUE flags) while a makiri frame sits on the stack - so ~190
+# of these pure-Ruby-GC false positives pass the filter. The gem's bundled
+# ruby.supp only covers `each_location*` under Addr8, not the Cond/Value8 reads
+# we hit. `suppressions/ruby.supp` (auto-loaded by ruby_memcheck: it globs
+# `<dir>/<ruby-version>.supp`, and the bare `ruby.supp` matches every version)
+# suppresses exactly those GC-driver-anchored uninit reads, plus the VM
+# method-cache id_table the interpreter never frees before exit. A real uninit
+# read in our code does not descend from a GC driver, so it still fails.
+#
 # Guarded: ruby_memcheck lives in the optional :valgrind bundler group, so a
 # normal `bundle exec rake` (without that group) must not fail to load.
 begin
