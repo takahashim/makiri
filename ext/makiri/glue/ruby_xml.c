@@ -232,6 +232,13 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
 
+    /* Verify the expression's text contract BEFORE allocating ctx: the mint below
+     * raises on invalid UTF-8 / a NUL, and such a raise after ctx is allocated
+     * (but before it is freed) would leak ctx. This check raises with nothing to
+     * leak; the real borrow is still minted late (after ns registration) so the
+     * bytes are never held across that step's GC points. */
+    mkr_verify_text(rb_String(rb_expr), "XPath expression");
+
     /* The document node is the "document" (the engine's XML namespace services
      * ignore it) and the "/" root for absolute paths; +context+ is the relative
      * context node (the document node for a Document, else the node itself). */
@@ -357,6 +364,13 @@ mkr_xml_doc_css_run(VALUE self, VALUE rb_selector, VALUE rb_ns, int first_only)
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
 
+    /* Verify the selector's text contract BEFORE allocating ctx: the mint inside
+     * mkr_css_compile_or_raise raises on invalid UTF-8 / a NUL, and such a raise
+     * after ctx is allocated (but before it is freed) would leak ctx. This check
+     * raises with nothing to leak; the real borrow is still taken late (after ns
+     * registration) so the bytes are never held across that step's GC points. */
+    mkr_verify_text(rb_String(rb_selector), "CSS selector");
+
     mkr_xpath_context_t *ctx =
         mkr_xpath_context_new((void *)xdoc->doc_node, (void *)context);
     if (ctx == NULL) {
@@ -416,6 +430,11 @@ mkr_xml_node_css_matches(VALUE self, VALUE selector, VALUE ns)
         return Qfalse;
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
+
+    /* Verify the selector BEFORE allocating ctx (see mkr_xml_doc_css_run): a
+     * text-contract raise after ctx is allocated but before it is freed leaks it.
+     * The real borrow is still taken late, inside mkr_css_compile_or_raise. */
+    mkr_verify_text(rb_String(selector), "CSS selector");
 
     mkr_xpath_context_t *ctx =
         mkr_xpath_context_new((void *)xdoc->doc_node, (void *)xdoc->doc_node);
