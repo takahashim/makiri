@@ -577,17 +577,29 @@ prepare_insert(mkr_xml_node_t *container, mkr_xml_node_t *node, const mkr_xml_no
     return resolve_into(node, container);              /* fail-closed: no link changed yet */
 }
 
+/* Splice +node+ into +container+'s child list between +prev+ and +next+ (each
+ * NULL = the corresponding list end). Sets node's parent/prev/next and patches
+ * the neighbours and the container's first/last_child - the ONE place the
+ * doubly-linked-list invariant is written. The caller has already validated and
+ * detached +node+ (move semantics). */
+static void
+splice_between(mkr_xml_node_t *container, mkr_xml_node_t *node,
+               mkr_xml_node_t *prev, mkr_xml_node_t *next)
+{
+    node->parent = container;
+    node->prev = prev;
+    node->next = next;
+    if (prev) prev->next = node; else container->first_child = node;
+    if (next) next->prev = node; else container->last_child = node;
+}
+
 mkr_xml_mut_status_t
 mkr_xml_insert_child(mkr_xml_doc_t *doc, mkr_xml_node_t *parent, mkr_xml_node_t *node)
 {
     mkr_xml_mut_status_t st = prepare_insert(parent, node, NULL);
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);                              /* move semantics */
-    node->parent = parent;
-    node->prev = parent->last_child;
-    node->next = NULL;
-    if (parent->last_child) parent->last_child->next = node; else parent->first_child = node;
-    parent->last_child = node;
+    splice_between(parent, node, parent->last_child, NULL);   /* tail append */
     sync_doc_root(doc, parent);
     return MKR_XML_MUT_OK;
 }
@@ -601,11 +613,7 @@ mkr_xml_insert_before(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *n
     mkr_xml_mut_status_t st = prepare_insert(container, node, NULL);
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);
-    node->parent = container;
-    node->next = ref;
-    node->prev = ref->prev;
-    if (ref->prev) ref->prev->next = node; else container->first_child = node;
-    ref->prev = node;
+    splice_between(container, node, ref->prev, ref);
     sync_doc_root(doc, container);
     return MKR_XML_MUT_OK;
 }
@@ -619,11 +627,7 @@ mkr_xml_insert_after(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *no
     mkr_xml_mut_status_t st = prepare_insert(container, node, NULL);
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);
-    node->parent = container;
-    node->prev = ref;
-    node->next = ref->next;
-    if (ref->next) ref->next->prev = node; else container->last_child = node;
-    ref->next = node;
+    splice_between(container, node, ref, ref->next);
     sync_doc_root(doc, container);
     return MKR_XML_MUT_OK;
 }
@@ -637,11 +641,7 @@ mkr_xml_replace_node(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *no
     mkr_xml_mut_status_t st = prepare_insert(container, node, ref);
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);
-    node->parent = container;
-    node->prev = ref->prev;
-    node->next = ref->next;
-    if (ref->prev) ref->prev->next = node; else container->first_child = node;
-    if (ref->next) ref->next->prev = node; else container->last_child = node;
+    splice_between(container, node, ref->prev, ref->next);
     ref->parent = ref->prev = ref->next = NULL;           /* detach the replaced node */
     sync_doc_root(doc, container);
     return MKR_XML_MUT_OK;
