@@ -94,6 +94,16 @@ assign_qname(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const mkr_xml_qname_t *qn
     return mkr_xml_qname_assign(doc, node, qn) == 0 ? MKR_XML_MUT_OK : MKR_XML_MUT_OOM;
 }
 
+/* Unlink attribute +a+ (predecessor +prev+, NULL if it is the head) from +el+'s
+ * attribute list and clear its links (detach-never-destroy). The one place the
+ * single-linked attribute list is spliced; shared by detach and both removers. */
+static void
+unlink_attr(mkr_xml_node_t *el, mkr_xml_node_t *prev, mkr_xml_node_t *a)
+{
+    if (prev) prev->next = a->next; else el->attrs = a->next;
+    a->next = NULL; a->parent = NULL;
+}
+
 void
 mkr_xml_detach(mkr_xml_node_t *node)
 {
@@ -102,12 +112,9 @@ mkr_xml_detach(mkr_xml_node_t *node)
     if (node->type == MKR_XML_NODE_TYPE_ATTRIBUTE) {
         mkr_xml_node_t *prev = NULL;
         for (mkr_xml_node_t *a = parent->attrs; a != NULL; prev = a, a = a->next) {
-            if (a == node) {
-                if (prev) prev->next = a->next; else parent->attrs = a->next;
-                break;
-            }
+            if (a == node) { unlink_attr(parent, prev, a); break; }
         }
-        node->next = NULL; node->parent = NULL;
+        node->next = NULL; node->parent = NULL;   /* also covers a not-in-list node */
         return;
     }
     if (node->prev) node->prev->next = node->next; else parent->first_child = node->next;
@@ -134,6 +141,41 @@ mkr_xml_rename(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *name, uint3
     st = assign_qname(doc, node, &qn);
     if (st != MKR_XML_MUT_OK) return st;
     node->ns_uri = uri; node->ns_uri_len = ulen;
+    return MKR_XML_MUT_OK;
+}
+
+/* Append +attr+ to +el+'s attribute list, O(attrs) (bounded per element by
+ * MKR_XML_MAX_ATTRS). Sets attr->parent. */
+static void
+append_attr(mkr_xml_node_t *el, mkr_xml_node_t *attr)
+{
+    attr->parent = el;
+    if (el->attrs == NULL) { el->attrs = attr; return; }
+    mkr_xml_node_t *t = el->attrs;
+    while (t->next != NULL) t = t->next;
+    t->next = attr;
+}
+
+/* Build a fresh ATTRIBUTE node (qname + value + namespace) and append it to +el+.
+ * All arena bytes are allocated before the link, so an OOM leaves +el+ untouched
+ * (fail-closed); a half-built node is abandoned in the arena and freed with the
+ * doc. *out (may be NULL) receives the new node. The shared new-attribute path of
+ * mkr_xml_set_attribute and mkr_xml_set_attribute_ns. */
+static mkr_xml_mut_status_t
+build_attr(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const mkr_xml_qname_t *qn,
+           const char *val, uint32_t vlen, const char *uri, uint32_t ulen,
+           mkr_xml_node_t **out)
+{
+    mkr_xml_node_t *attr = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
+    if (attr == NULL) return MKR_XML_MUT_OOM;
+    mkr_xml_mut_status_t st = assign_qname(doc, attr, qn);
+    if (st != MKR_XML_MUT_OK) return st;
+    const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
+    if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
+    attr->value = nv ? nv : ""; attr->value_len = vlen;
+    attr->ns_uri = uri; attr->ns_uri_len = ulen;
+    append_attr(el, attr);
+    if (out) *out = attr;
     return MKR_XML_MUT_OK;
 }
 
@@ -168,26 +210,8 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
         }
     }
 
-    /* New attribute - allocate node + qname + value before linking. */
-    mkr_xml_node_t *attr = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
-    if (attr == NULL) return MKR_XML_MUT_OOM;
-    st = assign_qname(doc, attr, &qn);
-    if (st != MKR_XML_MUT_OK) return st;          /* abandoned in the arena; freed with doc */
-    const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
-    if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
-    attr->value = nv ? nv : ""; attr->value_len = vlen;
-    attr->ns_uri = uri; attr->ns_uri_len = ulen;
-    attr->parent = el;
-
-    if (el->attrs == NULL) {
-        el->attrs = attr;
-    } else {
-        mkr_xml_node_t *t = el->attrs;          /* O(attrs) tail find; bounded per element */
-        while (t->next != NULL) t = t->next;
-        t->next = attr;
-    }
-    if (out) *out = attr;
-    return MKR_XML_MUT_OK;
+    /* New attribute (raw-qname miss). */
+    return build_attr(doc, el, &qn, val, vlen, uri, ulen, out);
 }
 
 int
@@ -197,8 +221,7 @@ mkr_xml_remove_attribute(mkr_xml_node_t *el, const char *name, uint32_t nlen)
     mkr_xml_node_t *prev = NULL;
     for (mkr_xml_node_t *a = el->attrs; a != NULL; prev = a, a = a->next) {
         if (mkr_bytes_eq(a->qname, a->qname_len, name, nlen)) {
-            if (prev) prev->next = a->next; else el->attrs = a->next;
-            a->next = NULL; a->parent = NULL;
+            unlink_attr(el, prev, a);
             return 1;
         }
     }
@@ -239,16 +262,11 @@ mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
      * serializes to well-formed XML is the serializer's concern, not set's. */
     if (vlen > 0 && mkr_xml_validate_chars(val, vlen) != 0) return MKR_XML_MUT_BAD_CHARS;
 
-    /* The explicit namespace, copied into the arena (null/"" => no namespace). */
-    const char *uri = NULL; uint32_t ulen = 0;
-    if (ns != NULL && nslen > 0) {
-        uri = mkr_xml_arena_bytes(doc, ns, nslen);
-        if (uri == NULL) return MKR_XML_MUT_OOM;
-        ulen = nslen;
-    }
-
+    /* Match on the EXPLICIT namespace bytes (null/"" => no namespace), same
+     * normalization as mkr_xml_remove_attribute_ns - no arena copy needed yet. */
+    uint32_t want = (ns != NULL) ? nslen : 0;
     for (mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
-        if (mkr_attr_matches_ns(a, uri, ulen, qn.local, qn.local_len)) {
+        if (mkr_attr_matches_ns(a, ns, want, qn.local, qn.local_len)) {
             const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
             if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
             a->value = nv ? nv : ""; a->value_len = vlen;
@@ -257,26 +275,15 @@ mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
         }
     }
 
-    /* New attribute - allocate node + qname + value before linking. */
-    mkr_xml_node_t *attr = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ATTRIBUTE);
-    if (attr == NULL) return MKR_XML_MUT_OOM;
-    mkr_xml_mut_status_t st = assign_qname(doc, attr, &qn);
-    if (st != MKR_XML_MUT_OK) return st;          /* abandoned in the arena; freed with doc */
-    const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
-    if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
-    attr->value = nv ? nv : ""; attr->value_len = vlen;
-    attr->ns_uri = uri; attr->ns_uri_len = ulen;
-    attr->parent = el;
-
-    if (el->attrs == NULL) {
-        el->attrs = attr;
-    } else {
-        mkr_xml_node_t *t = el->attrs;
-        while (t->next != NULL) t = t->next;
-        t->next = attr;
+    /* No match: copy the namespace into the arena ONLY now (a replace above must
+     * not grow the append-only arena), then build + append the new attribute. */
+    const char *uri = NULL; uint32_t ulen = 0;
+    if (want > 0) {
+        uri = mkr_xml_arena_bytes(doc, ns, nslen);
+        if (uri == NULL) return MKR_XML_MUT_OOM;
+        ulen = nslen;
     }
-    if (out) *out = attr;
-    return MKR_XML_MUT_OK;
+    return build_attr(doc, el, &qn, val, vlen, uri, ulen, out);
 }
 
 /* DOM removeAttributeNS: remove the attribute keyed on (namespace, local). */
@@ -289,8 +296,7 @@ mkr_xml_remove_attribute_ns(mkr_xml_node_t *el, const char *ns, uint32_t nslen,
     mkr_xml_node_t *prev = NULL;
     for (mkr_xml_node_t *a = el->attrs; a != NULL; prev = a, a = a->next) {
         if (mkr_attr_matches_ns(a, ns, want, local, llen)) {
-            if (prev) prev->next = a->next; else el->attrs = a->next;
-            a->next = NULL; a->parent = NULL;
+            unlink_attr(el, prev, a);
             return 1;
         }
     }
