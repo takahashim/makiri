@@ -1,9 +1,18 @@
 name: Valgrind + GC.compact
 
 on:
-  # Nightly: these jobs are heavy (Valgrind is ~10-50x slower, GC.stress is ~10x
-  # slower) and check structural properties that do not vary by day-to-day code
-  # churn, so run them on a schedule rather than on every push/PR.
+  # Valgrind memcheck ALSO runs on push to main: it is the only check without a
+  # frequency threshold (any "definitely lost" / uninitialised-value use fails,
+  # unlike the PR-level macOS leak gate, which only flags stacks repeated >=30x),
+  # so a leak on a rarely-hit error path slips past the PR gates and would
+  # otherwise surface only on the next nightly. Running it post-merge catches such
+  # regressions within ~30 min without adding ~20 min to every PR. (It is gated to
+  # main only, not pull_request, to keep PR latency low.)
+  #
+  # The GC.stress job stays nightly-only (see its `if:` below): it is heavy and
+  # checks structural properties that do not vary by day-to-day churn.
+  push:
+    branches: [main, master]
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -86,6 +95,9 @@ jobs:
   # of iterations; it runs in ci.yml and its GC-sensitive examples opt into
   # GC.stress themselves, so cross-thread interactions are covered there.
   gc-compact-stress:
+    # Nightly / on-demand only - not on push (the valgrind job is the post-merge
+    # gate; GC.stress is heavy and structural, so it does not need per-push runs).
+    if: github.event_name != 'push'
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
