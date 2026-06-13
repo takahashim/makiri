@@ -23,9 +23,10 @@
  *     { type: :bad_style,                 # selector lexbor rejected (e.g. ::before)
  *       selector_text: "p::before",       # raw prelude for the caller to re-validate
  *       declarations:  [ ... ] },
- *     { type: :media,
- *       condition: "(min-width: 600px)",
- *       rules:     [ ...same style/media hashes, nested... ] },
+ *     { type: :at_rule,                   # every at-rule, surfaced uniformly
+ *       name:    "media",                 # the keyword after `@`
+ *       prelude: "(min-width: 600px)",    # text before the block (condition/name/...)
+ *       rules:   [ ...same style/at_rule hashes, nested... ] },  # [] for @import etc.
  *     ... ]   # source order
  *
  * Error recovery follows css-syntax-3: a malformed declaration is dropped, an
@@ -44,6 +45,14 @@
 /* Bound on at-rule nesting depth: fail closed instead of unbounded recursion on
  * a pathologically nested stylesheet. */
 #define MKR_LEXBOR_CSS_MAX_DEPTH 64u
+
+/* Interned IDs for the fixed result-hash keys and :type values, cached once in
+ * mkr_init_lexbor_css so the conversion loops avoid a per-entry rb_intern hash
+ * lookup (ID2SYM at the use sites is a free bit-shift). */
+static ID id_type, id_selectors, id_declarations, id_name, id_value,
+          id_important, id_text, id_specificity, id_selector_text, id_prelude,
+          id_rules;
+static ID id_sym_style, id_sym_bad_style, id_sym_at_rule;
 
 /* ----- serialization into an owned, growable buffer ----------------------- */
 
@@ -168,9 +177,9 @@ mkr_css_declarations_ary(mkr_css_conv_t *c, lxb_css_rule_declaration_list_t *lis
         VALUE value = mkr_css_serialize_to_str(&c->scratch, mkr_ser_prop_value, &subj);
 
         VALUE h = rb_hash_new();
-        rb_hash_aset(h, ID2SYM(rb_intern("name")),  name);
-        rb_hash_aset(h, ID2SYM(rb_intern("value")), value);
-        rb_hash_aset(h, ID2SYM(rb_intern("important")),
+        rb_hash_aset(h, ID2SYM(id_name),  name);
+        rb_hash_aset(h, ID2SYM(id_value), value);
+        rb_hash_aset(h, ID2SYM(id_important),
                      decl->important ? Qtrue : Qfalse);
         rb_ary_push(arr, h);
     }
@@ -186,8 +195,8 @@ mkr_css_selectors_ary(mkr_css_conv_t *c, lxb_css_selector_list_t *sel)
         VALUE text = mkr_css_serialize_to_str(&c->scratch, mkr_ser_selector_chain,
                                               l->first);
         VALUE h = rb_hash_new();
-        rb_hash_aset(h, ID2SYM(rb_intern("text")), text);
-        rb_hash_aset(h, ID2SYM(rb_intern("specificity")),
+        rb_hash_aset(h, ID2SYM(id_text), text);
+        rb_hash_aset(h, ID2SYM(id_specificity),
                      mkr_css_specificity_ary(l->specificity));
         rb_ary_push(arr, h);
     }
@@ -199,10 +208,10 @@ static VALUE
 mkr_css_style_hash(mkr_css_conv_t *c, lxb_css_rule_style_t *style)
 {
     VALUE h = rb_hash_new();
-    rb_hash_aset(h, ID2SYM(rb_intern("type")), ID2SYM(rb_intern("style")));
-    rb_hash_aset(h, ID2SYM(rb_intern("selectors")),
+    rb_hash_aset(h, ID2SYM(id_type), ID2SYM(id_sym_style));
+    rb_hash_aset(h, ID2SYM(id_selectors),
                  mkr_css_selectors_ary(c, style->selector));
-    rb_hash_aset(h, ID2SYM(rb_intern("declarations")),
+    rb_hash_aset(h, ID2SYM(id_declarations),
                  mkr_css_declarations_ary(c, style->declarations));
     return h;
 }
@@ -287,10 +296,10 @@ mkr_css_bad_style_hash(mkr_css_conv_t *c, lxb_css_rule_bad_style_t *bad)
     VALUE h = rb_hash_new();
     const char *txt = (bad->selectors.data != NULL)
                           ? (const char *)bad->selectors.data : "";
-    rb_hash_aset(h, ID2SYM(rb_intern("type")), ID2SYM(rb_intern("bad_style")));
-    rb_hash_aset(h, ID2SYM(rb_intern("selector_text")),
+    rb_hash_aset(h, ID2SYM(id_type), ID2SYM(id_sym_bad_style));
+    rb_hash_aset(h, ID2SYM(id_selector_text),
                  rb_utf8_str_new(txt, (long)bad->selectors.length));
-    rb_hash_aset(h, ID2SYM(rb_intern("declarations")),
+    rb_hash_aset(h, ID2SYM(id_declarations),
                  mkr_css_declarations_ary(c, bad->declarations));
     return h;
 }
@@ -310,11 +319,11 @@ mkr_css_at_rule_hash(mkr_css_conv_t *c, lxb_css_rule_at_t *at, unsigned depth)
     lxb_css_rule_t *block_first = (block != NULL) ? block->first : NULL;
 
     VALUE h = rb_hash_new();
-    rb_hash_aset(h, ID2SYM(rb_intern("type")), ID2SYM(rb_intern("at_rule")));
-    rb_hash_aset(h, ID2SYM(rb_intern("name")), mkr_css_at_name(at));
-    rb_hash_aset(h, ID2SYM(rb_intern("prelude")),
+    rb_hash_aset(h, ID2SYM(id_type), ID2SYM(id_sym_at_rule));
+    rb_hash_aset(h, ID2SYM(id_name), mkr_css_at_name(at));
+    rb_hash_aset(h, ID2SYM(id_prelude),
                  mkr_css_slice_trim(c, at->prelude_begin, at->prelude_end));
-    rb_hash_aset(h, ID2SYM(rb_intern("rules")),
+    rb_hash_aset(h, ID2SYM(id_rules),
                  mkr_css_rules_to_ary(c, block_first, depth + 1));
     return h;
 }
@@ -432,6 +441,21 @@ mkr_lexbor_css_parse_stylesheet(VALUE self, VALUE rb_text)
 void
 mkr_init_lexbor_css(void)
 {
+    id_type          = rb_intern("type");
+    id_selectors     = rb_intern("selectors");
+    id_declarations  = rb_intern("declarations");
+    id_name          = rb_intern("name");
+    id_value         = rb_intern("value");
+    id_important     = rb_intern("important");
+    id_text          = rb_intern("text");
+    id_specificity   = rb_intern("specificity");
+    id_selector_text = rb_intern("selector_text");
+    id_prelude       = rb_intern("prelude");
+    id_rules         = rb_intern("rules");
+    id_sym_style     = rb_intern("style");
+    id_sym_bad_style = rb_intern("bad_style");
+    id_sym_at_rule   = rb_intern("at_rule");
+
     VALUE mod = rb_define_module_under(mkr_mLexbor, "CSS");
     rb_define_module_function(mod, "parse_stylesheet",
                               mkr_lexbor_css_parse_stylesheet, 1);
