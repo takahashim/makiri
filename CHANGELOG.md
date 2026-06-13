@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* XML processing-instruction targets now follow XML 1.0 §2.6: a PITarget is a
+  `Name`, not an NCName, so a colon is permitted (`<?a:b ...?>` parses, and
+  `create_processing_instruction("a:b", ...)` succeeds). Only the reserved `xml`
+  (any case) is still rejected. Previously a colon in a PI target was rejected as
+  not-well-formed, which was stricter than the spec (a PI target is not subject to
+  namespace processing).
+
 ## [0.4.0] - 2026-06-12
 
 ### Added

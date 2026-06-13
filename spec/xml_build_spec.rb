@@ -32,6 +32,8 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       pi = doc.create_processing_instruction("xml-stylesheet", %(href="a.xsl"))
       expect(pi).to be_a(Makiri::XML::ProcessingInstruction)
       expect(pi.name).to eq("xml-stylesheet")
+      # §2.6: PITarget is a Name (not an NCName), so a colon is allowed.
+      expect(doc.create_processing_instruction("a:b", "d").name).to eq("a:b")
     end
 
     it "fails closed on invalid factory input" do
