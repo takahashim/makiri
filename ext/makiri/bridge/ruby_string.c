@@ -45,33 +45,61 @@ mkr_ruby_str_from_borrowed(mkr_borrowed_text_t text)
     return rb_utf8_str_new(text.ptr, (long)text.len);
 }
 
+/* The shared core of Makiri's strict text contract: no NUL byte, valid UTF-8.
+ * Returns the specific violation (or MKR_TEXT_OK); each caller maps the verdict
+ * to its own error surface (Makiri::Error, XML::SyntaxError, or a reason string).
+ *
+ * ALLOCATION-FREE BY DESIGN, which every caller relies on: it runs between a
+ * caller taking a borrowed RSTRING pointer and using it, so it must not be a GC
+ * point. (The former per-caller implementations each built a throwaway Ruby
+ * String (rb_enc_str_new) to read its coderange - a Ruby allocation inside every
+ * borrow, which both passed the borrowed ptr into an allocating call and opened a
+ * GC window under every OTHER borrow already held at multi-borrow call sites.)
+ *
+ * +coderange_str+ is the String consulted for its CACHED coderange (no scan, no
+ * alloc); +ptr+/+len+ are the bytes validated. They may differ: the XML path
+ * passes the whole decoded String for the coderange but a BOM-stripped suffix as
+ * the bytes (the BOM is one complete UTF-8 char, so a whole-string VALID
+ * coderange still proves the suffix valid). Bytes are validated as UTF-8
+ * regardless of the String's declared encoding. */
+typedef enum {
+    MKR_TEXT_OK = 0,
+    MKR_TEXT_HAS_NUL,
+    MKR_TEXT_INVALID_UTF8,
+} mkr_text_verdict_t;
+
+static mkr_text_verdict_t
+mkr_text_check(VALUE coderange_str, const char *ptr, size_t len)
+{
+    mkr_span_t sv = mkr_span(ptr, len);
+    size_t nul_at;
+    if (mkr_span_find(&sv, '\0', &nul_at)) {
+        return MKR_TEXT_HAS_NUL;
+    }
+    /* Cached-coderange fast path (reads flags, never scans, never allocates);
+     * NUL is valid UTF-8, so the find above stays either way. */
+    if (mkr_ruby_str_known_valid_utf8(coderange_str)) {
+        return MKR_TEXT_OK;
+    }
+    if (!mkr_utf8_valid((const unsigned char *)ptr, len)) {
+        return MKR_TEXT_INVALID_UTF8;
+    }
+    return MKR_TEXT_OK;
+}
+
 void
 mkr_verify_text(VALUE str, const char *what)
 {
-    /* ALLOCATION-FREE by design: this gate runs between a caller taking a
-     * borrowed RSTRING pointer and using it, so it must not be a GC point. The
-     * former implementation built a throwaway Ruby String (rb_enc_str_new) to
-     * ask for its coderange - a Ruby allocation inside every borrow, which both
-     * passed the borrowed ptr into an allocating call and opened a GC window
-     * under every OTHER borrow already held at multi-borrow call sites. Bytes
-     * are validated as UTF-8 regardless of the String's declared encoding,
-     * exactly as before. */
-    long        len = RSTRING_LEN(str);
     const char *ptr = RSTRING_PTR(str);
+    size_t      len = (size_t)RSTRING_LEN(str);
 
-    mkr_span_t sv = mkr_span(ptr, (size_t)len);
-    size_t nul_at;
-    if (mkr_span_find(&sv, '\0', &nul_at)) {
-        rb_raise(mkr_eError, "%s must not contain a NUL byte", what);
-    }
-
-    /* Cached-coderange fast path (reads flags, never scans, never allocates);
-     * NUL is valid UTF-8, so the memchr above stays either way. */
-    if (mkr_ruby_str_known_valid_utf8(str)) {
-        return;
-    }
-    if (!mkr_utf8_valid((const unsigned char *)ptr, (size_t)len)) {
-        rb_raise(mkr_eError, "%s must be valid UTF-8", what);
+    switch (mkr_text_check(str, ptr, len)) {
+        case MKR_TEXT_HAS_NUL:
+            rb_raise(mkr_eError, "%s must not contain a NUL byte", what);
+        case MKR_TEXT_INVALID_UTF8:
+            rb_raise(mkr_eError, "%s must be valid UTF-8", what);
+        case MKR_TEXT_OK:
+            break;
     }
 }
 
@@ -180,6 +208,12 @@ mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len, long *stri
     return NULL;
 }
 
+static int
+mkr_decl_ws(int c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
 /* The encoding named in the '<?xml ... encoding="NAME" ?>' declaration, or NULL.
  * The declaration is ASCII; for a UTF-16/32-detected document its bytes are
  * stride-interleaved, so the ASCII column is extracted (stride/off resolved by
@@ -190,12 +224,6 @@ mkr_xml_bom_encoding(const unsigned char *p, long len, long *bom_len, long *stri
  * of p is done: the stride/off geometry is passed in (rather than derived here
  * via rb_enc_find, which can autoload = a GC point), and the only rb_enc_find -
  * the final name lookup - runs after the bytes have been copied into head[]. */
-static int
-mkr_decl_ws(int c)
-{
-    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
 static rb_encoding *
 mkr_xml_decl_encoding(const unsigned char *p, long len, long stride, long off)
 {
@@ -336,19 +364,19 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
         rb_raise(mkr_eXmlLimitExceeded, "XML input exceeds the byte budget");
     }
 
-    /* Strict UTF-8 validation, allocation-free - no GC point while `ptr` is
-     * borrowed (the former rb_enc_str_new copy handed the borrow straight into
-     * an allocating call): an embedded NUL or any invalid UTF-8 is fatal (no
-     * U+FFFD repair - unlike the HTML mkr_utf8_sanitize path). A whole-string
-     * cached coderange covers the BOM-stripped suffix too (the BOM is one
-     * complete UTF-8 character). */
-    size_t nul_at;
-    if (mkr_span_find(&sv, '\0', &nul_at)) {
-        rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
-    }
-    if (!mkr_ruby_str_known_valid_utf8(s)
-        && !mkr_utf8_valid((const unsigned char *)ptr + off, (size_t)len)) {
-        rb_raise(mkr_eXmlSyntaxError, "XML input must be valid UTF-8");
+    /* Strict UTF-8 validation via the shared, allocation-free core - no GC point
+     * while `ptr` is borrowed: an embedded NUL or any invalid UTF-8 is fatal (no
+     * U+FFFD repair - unlike the HTML mkr_utf8_sanitize path). The whole-string
+     * `s` is consulted for the cached coderange (it covers the BOM-stripped
+     * suffix too - the BOM is one complete UTF-8 character), while the validated
+     * bytes are the stripped suffix `ptr + off`. */
+    switch (mkr_text_check(s, ptr + off, (size_t)len)) {
+        case MKR_TEXT_HAS_NUL:
+            rb_raise(mkr_eXmlSyntaxError, "XML input must not contain a NUL byte");
+        case MKR_TEXT_INVALID_UTF8:
+            rb_raise(mkr_eXmlSyntaxError, "XML input must be valid UTF-8");
+        case MKR_TEXT_OK:
+            break;
     }
     /* Build the result through the VALUE, not the borrowed ptr (rb_str_subseq
      * allocates, so the ptr must not be what it copies from). */
@@ -379,26 +407,24 @@ mkr_ruby_str_known_valid_utf8(VALUE str)
 const char *
 mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes, mkr_ruby_borrowed_text_t *out)
 {
-    /* ALLOCATION-FREE, like mkr_verify_text: the returned borrow must not have
-     * crossed a Ruby allocation (the former rb_utf8_str_new + valid_encoding?
-     * funcall allocated twice with `ptr` already taken). */
-    long len = RSTRING_LEN(sv);
-    if ((size_t)len > max_bytes) {
+    /* ALLOCATION-FREE, like mkr_verify_text (see mkr_text_check): the returned
+     * borrow must not have crossed a Ruby allocation. */
+    size_t len = (size_t)RSTRING_LEN(sv);
+    if (len > max_bytes) {
         return "string exceeds the maximum length";
     }
     const char *ptr = RSTRING_PTR(sv);
-    mkr_span_t view = mkr_span(ptr, (size_t)len);
-    size_t nul_at;
-    if (mkr_span_find(&view, '\0', &nul_at)) {
-        return "string contains a NUL byte";
-    }
-    if (!mkr_ruby_str_known_valid_utf8(sv)
-        && !mkr_utf8_valid((const unsigned char *)ptr, (size_t)len)) {
-        return "string is not valid UTF-8";
+    switch (mkr_text_check(sv, ptr, len)) {
+        case MKR_TEXT_HAS_NUL:
+            return "string contains a NUL byte";
+        case MKR_TEXT_INVALID_UTF8:
+            return "string is not valid UTF-8";
+        case MKR_TEXT_OK:
+            break;
     }
     out->value = sv;
     out->ptr   = ptr;
-    out->len   = (size_t)len;
+    out->len   = len;
     return NULL;
 }
 
