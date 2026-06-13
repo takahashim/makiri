@@ -251,7 +251,7 @@ RSpec.describe "Makiri mutation" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "survives mutation churn under GC stress" do
       GC.stress = true
       begin

@@ -85,7 +85,7 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "stays correct under GC stress and compaction" do
       GC.stress = true
       begin
@@ -99,7 +99,7 @@ RSpec.describe "Makiri CSS" do
     end
 
     it "survives many queries across dropped documents" do
-      300.times do |i|
+      gc_churn_iters(300).times do |i|
         d = Makiri::HTML("<html><body><p class='c#{i}'>#{i}</p></body></html>")
         expect(d.at_css(".c#{i}").text).to eq(i.to_s)
       end

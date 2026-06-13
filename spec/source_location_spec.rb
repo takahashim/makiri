@@ -92,7 +92,7 @@ RSpec.describe "Makiri source location" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "stays correct under GC stress and compaction" do
       GC.stress = true
       begin
@@ -107,7 +107,7 @@ RSpec.describe "Makiri source location" do
     end
 
     it "survives many tracked parses being dropped" do
-      300.times do |i|
+      gc_churn_iters(300).times do |i|
         d = Makiri::HTML("<html><body>\n<p id='p#{i}'>#{i}</p></body></html>")
         expect(d.at_xpath("//p").line).to eq(2)
       end

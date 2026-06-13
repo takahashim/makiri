@@ -167,7 +167,7 @@ RSpec.describe "Makiri Nokogiri-compat API (part 2)" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "survives fragment churn under GC stress" do
       GC.stress = true
       begin

@@ -89,7 +89,7 @@ RSpec.describe Makiri::Attr do
     end
   end
 
-  describe "lazy build + memory safety" do
+  describe "lazy build + memory safety", :gc_compact do
     it "builds the index only when first needed and stays correct under GC" do
       attrs = div.attribute_nodes.to_a # index not built yet
       GC.stress = true
@@ -103,7 +103,7 @@ RSpec.describe Makiri::Attr do
     end
 
     it "survives dropping many documents that built the index" do
-      1000.times do
+      gc_churn_iters(1000).times do
         d = Makiri::HTML('<p id="z" data-x="y">t</p>')
         p_node = find(d.root, "p")
         p_node.attribute_nodes.each { |a| a.parent } # forces the index build

@@ -635,7 +635,7 @@ RSpec.describe "Makiri XPath" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "stays correct under GC stress and compaction" do
       GC.stress = true
       begin
@@ -649,7 +649,7 @@ RSpec.describe "Makiri XPath" do
     end
 
     it "survives many independent queries across dropped documents" do
-      200.times do |i|
+      gc_churn_iters(200).times do |i|
         d = Makiri::HTML("<html><body><p class='c#{i}'>#{i}</p></body></html>")
         expect(d.xpath("//p[@class='c#{i}']").first.text).to eq(i.to_s)
       end

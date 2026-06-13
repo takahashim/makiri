@@ -2,9 +2,41 @@
 
 require "makiri"
 
+# GC.auto_compact + GC.stress mode (CI's nightly gc-compact-stress job, set
+# GC_COMPACT_STRESS=1). auto_compact is enabled process-wide so Ruby objects
+# actually move on every GC; GC.stress is enabled per-example via an around hook
+# (process-wide stress makes even loading the spec files run a full GC per
+# allocation - tens of minutes before the first example). Under this combination
+# every allocation inside an example triggers a *compacting* GC, the strongest
+# form of the borrowed-pointer / use-after-move test for the C extension.
+GC_COMPACT_STRESS = !ENV["GC_COMPACT_STRESS"].to_s.empty?
+GC.auto_compact = true if GC_COMPACT_STRESS
+
+# Iteration count for the high-volume "churn" memory-safety loops (parse/drop
+# cycles, index rebuilds). Normally they run at high volume WITHOUT per-allocation
+# GC.stress. Under GC_COMPACT_STRESS the around hook forces a compacting GC on
+# *every* allocation - orders of magnitude heavier per iteration - so a far
+# smaller count exercises the same paths under maximum object movement while
+# keeping the nightly job within its time budget. Override the stressed count
+# with GC_COMPACT_ITERS to dial the runtime.
+def gc_churn_iters(normal, stressed = Integer(ENV.fetch("GC_COMPACT_ITERS", "30")))
+  GC_COMPACT_STRESS ? stressed : normal
+end
+
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
   config.example_status_persistence_file_path = ".rspec_status"
+
+  if GC_COMPACT_STRESS
+    config.around(:each) do |example|
+      GC.stress = true
+      begin
+        example.run
+      ensure
+        GC.stress = false
+      end
+    end
+  end
 
   # Disable RSpec exposing methods globally on `Module` and `main`
   config.disable_monkey_patching!

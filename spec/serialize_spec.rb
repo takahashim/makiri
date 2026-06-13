@@ -80,7 +80,7 @@ RSpec.describe "Makiri serialization" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "serializes correctly under GC stress" do
       GC.stress = true
       begin
@@ -96,7 +96,10 @@ RSpec.describe "Makiri serialization" do
     # (its Lexbor mraw pools), so a normal document serializes but a pathologically
     # deep CONSTRUCTED tree, whose pretty-printed indentation is super-linear in the
     # content, fails closed with Makiri::Error rather than growing without bound.
-    it "bounds the serialization buffer, failing closed on a deep pretty-print" do
+    # Not a movement test - it deep-nests 6000 elements to force the pretty-print
+    # buffer bound, so it opts out of GC_COMPACT_STRESS (6000 allocations under a
+    # per-allocation compacting GC would dominate the nightly job for no signal).
+    it "bounds the serialization buffer, failing closed on a deep pretty-print", gc_compact: false do
       doc = Makiri::HTML("<div/>")
       cur = doc.at_css("div")
       6000.times { e = doc.create_element("div"); cur.add_child(e); cur = e }

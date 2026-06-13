@@ -162,7 +162,7 @@ RSpec.describe "Makiri XPath custom function handler" do
     end
   end
 
-  describe "memory safety" do
+  describe "memory safety", :gc_compact do
     it "survives handler dispatch under GC stress" do
       GC.stress = true
       begin
