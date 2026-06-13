@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not-well-formed, which was stricter than the spec (a PI target is not subject to
   namespace processing).
 
+* Memory leaks of the internal XPath evaluation context on error / edge paths: a
+  `Makiri::XML` `#css` / `#xpath` / `#at_xpath` whose selector or expression failed
+  the text-input contract leaked the context (it is now verified BEFORE the context
+  is allocated), and a context could leak if building the Ruby result raised (it is
+  now freed before conversion).
+
 ### Added
 
 * Cross-kind `Document#import_node(node, deep = false)`. `import_node` now
@@ -40,9 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`add_child`/`before`/`after`/`replace`/`fragment`) still reject a foreign-kind
   node; `import_node` is the one sanctioned crossing point.
 
-## [0.4.0] - 2026-06-12
-
-### Added
+* `set_attribute_ns(namespace, qualified_name, value)` and
+  `remove_attribute_ns(namespace, local_name)` on `Makiri::XML` elements - the DOM
+  setAttributeNS / removeAttributeNS, keyed on the (explicit namespace, local name)
+  pair so two attributes with the same qualified name in different namespaces
+  coexist (a null/"" namespace is the null namespace).
 
 * `Makiri::Lexbor::CSS.parse_stylesheet(text)`, a thin binding over Lexbor's
   CSS stylesheet parser that returns the parsed rules as plain Ruby primitives
@@ -53,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recovery means a broken stylesheet yields its valid rules instead of raising.
   Hosts the new `Makiri::Lexbor::*` namespace (the unabstracted lexbor-native
   surface, distinct from the Nokogiri-compatible `Makiri::*`).
+
+## [0.4.0] - 2026-06-12
+
+### Added
 
 * CSS selectors on `Makiri::XML`. `#css` / `#at_css` / `#matches?`, lowered
   to the native XPath engine (case-sensitive, namespace-aware). Covers the
