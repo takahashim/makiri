@@ -178,7 +178,7 @@ h2x_copy_attrs(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, mkr_xml_node_t *el)
 
 /* Translate ONE lxb node into a fresh mkr node (own fields + attributes, NOT its
  * children). +pdef+/+pdef_len+ is the default namespace inherited from the
- * translated parent; *cdef/*cdef_len receive the default namespace in scope for
+ * translated parent; *cdef / *cdef_len receive the default namespace in scope for
  * THIS node's children. *out is the new node, or NULL to SKIP an unsupported type;
  * an error status fails the whole import. */
 static mkr_xml_mut_status_t
