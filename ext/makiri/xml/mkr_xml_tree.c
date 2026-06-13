@@ -262,19 +262,14 @@ push_binding(mkr_xml_parser_t *P, const char *pfx, uint32_t pfx_len,
     return 0;
 }
 
-/* Parse a start tag's attributes and close, resolving namespaces (§7). Collects
- * the attributes, processes xmlns declarations into scope bindings, resolves the
- * element's own namespace, then creates the attribute nodes (xmlns declarations
- * kept as DOM attributes, §7.2). On '>' sets *pushed; on '/>' leaves a leaf.
- * The element's prefix/local are already set by the caller; bindings pushed here
- * are popped by the caller when the element closes. Returns 0 / -1. */
+/* Phase 1: scan all attributes + the tag close into P->ratt (the raw, pre-
+ * namespace-resolution buffer). Sets *pushed=1 on '>' (an open tag), 0 on '/>'
+ * (self-closing). Returns 0 / -1. */
 static int
-parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
+scan_raw_attrs(mkr_xml_parser_t *P, int *pushed)
 {
     *pushed = 0;
     P->nratt = 0;
-
-    /* Phase 1: scan all attributes + the tag close into the raw buffer. */
     for (;;) {
         skip_ws(P);
         int c = mkr_span_peek(&P->in);
@@ -320,8 +315,14 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         P->ratt[P->nratt].val  = vs; P->ratt[P->nratt].val_len  = vlen;
         P->nratt++;
     }
+    return 0;
+}
 
-    /* Phase 2: xmlns declarations -> namespace bindings (§7.1 reserved rules). */
+/* Phase 2: process the start tag's xmlns declarations into the scope bindings
+ * (§7.1 reserved-prefix / reserved-URI rules). Returns 0 / -1. */
+static int
+apply_xmlns_bindings(mkr_xml_parser_t *P)
+{
     for (size_t i = 0; i < P->nratt; i++) {
         raw_attr_t *r = &P->ratt[i];
         const char *bpfx; uint32_t bpl;
@@ -341,8 +342,14 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         if (bpl > 0 && ulen == 0) { set_syntax(P); return -1; } /* xmlns:p="" (XML 1.0) */
         if (push_binding(P, bpfx, bpl, uri, ulen) != 0) return -1;
     }
+    return 0;
+}
 
-    /* Phase 3: resolve the element's own namespace. */
+/* Phase 3: resolve the element's own namespace URI from the in-scope bindings.
+ * Returns 0 / -1 (unbound prefix). */
+static int
+resolve_element_ns(mkr_xml_parser_t *P, mkr_xml_node_t *el)
+{
     if (el->prefix_len > 0) {
         if (slice_eq(el->prefix, el->prefix_len, "xmlns", 5)) { set_syntax(P); return -1; }
         uint32_t ulen;
@@ -355,10 +362,16 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         if (uri != NULL && ulen > 0) { el->ns_uri = uri; el->ns_uri_len = ulen; }
         /* else: no default namespace -> the element is in no namespace */
     }
+    return 0;
+}
 
-    /* Phase 4: create the attribute nodes (xmlns declarations kept, §7.2). The
-     * list is built with an explicit tail so each append is O(1) - walking to the
-     * tail per attribute would be O(n^2) over a MKR_XML_MAX_ATTRS-bounded set. */
+/* Phase 4: create the attribute DOM nodes (xmlns declarations kept, §7.2), then
+ * reject duplicates (§9.3). The list is built with an explicit tail so each
+ * append is O(1) - walking to the tail per attribute would be O(n^2) over a
+ * MKR_XML_MAX_ATTRS-bounded set. Returns 0 / -1. */
+static int
+build_attr_nodes(mkr_xml_parser_t *P, mkr_xml_node_t *el)
+{
     mkr_xml_node_t *attr_tail = NULL;
     for (size_t i = 0; i < P->nratt; i++) {
         raw_attr_t *r = &P->ratt[i];
@@ -401,6 +414,23 @@ parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
         }
     }
     return 0;
+}
+
+/* Parse a start tag's attributes and close, resolving namespaces (§7), as four
+ * ordered phases: scan the raw attributes, process xmlns declarations into scope
+ * bindings, resolve the element's own namespace, then create the attribute nodes
+ * (xmlns declarations kept as DOM attributes, §7.2). On '>' sets *pushed; on '/>'
+ * leaves a leaf. The element's prefix/local are already set by the caller;
+ * bindings pushed here are popped by the caller when the element closes. The
+ * phase order matters: xmlns must be in scope before the element's and the
+ * attributes' prefixes resolve. Returns 0 / -1. */
+static int
+parse_element_body(mkr_xml_parser_t *P, mkr_xml_node_t *el, int *pushed)
+{
+    if (scan_raw_attrs(P, pushed) != 0)     return -1;
+    if (apply_xmlns_bindings(P) != 0)       return -1;
+    if (resolve_element_ns(P, el) != 0)     return -1;
+    return build_attr_nodes(P, el);
 }
 
 /* True if the remaining input begins with the literal [lit, lit+n). */
