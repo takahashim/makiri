@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not-well-formed, which was stricter than the spec (a PI target is not subject to
   namespace processing).
 
+### Added
+
+* Cross-kind `Document#import_node(node, deep = false)`. `import_node` now
+  translates a subtree across representations: `Makiri::XML::Document#import_node`
+  (newly added) imports an HTML (Lexbor) node by translating it to the XML node
+  representation, and `Makiri::HTML::Document#import_node` likewise translates an
+  XML node to HTML. Same-representation imports keep working (HTML to HTML via
+  Lexbor, XML to XML via the arena deep/shallow copy). The result is a detached
+  copy owned by the target document; the source is untouched. Elements (with
+  attributes), text, comment, and processing-instruction nodes translate both
+  ways, and an HTML `<template>`'s contents (which HTML keeps in a separate
+  fragment) are carried across rather than silently dropped; an XML CDATA section
+  has no HTML counterpart, so translating one into an HTML document fails closed
+  (`Makiri::Error`). Namespaces are not yet translated
+  (null-namespace); namespace fidelity is a later phase. The other node-argument
+  mutators (`add_child`/`before`/`after`/`replace`/`fragment`) still reject a
+  foreign-kind node; `import_node` is the one sanctioned crossing point.
+
 ## [0.4.0] - 2026-06-12
 
 ### Added

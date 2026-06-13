@@ -1,4 +1,5 @@
 #include "glue.h"
+#include "cross_import.h"   /* cross-kind import_node (XML node -> this HTML doc) */
 #include "../lexbor_compat/compat_internal.h" /* mkr_dom_preorder_next */
 #include "../core/mkr_core.h"
 #include "../xml/mkr_xml.h"   /* mkr_xml_doc_memsize for an XML-backed document */
@@ -348,10 +349,17 @@ mkr_doc_import_node(int argc, VALUE *argv, VALUE self)
     VALUE node_v, deep_v;
     rb_scan_args(argc, argv, "11", &node_v, &deep_v);
     bool deep = RTEST(deep_v);
-
-    lxb_dom_node_t   *src = mkr_html_node_unwrap(node_v);   /* reject an XML node before lxb use */
     lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
 
+    /* An XML node is TRANSLATED across representations (mkr -> lxb) by
+     * ruby_cross_import.c into a detached lxb subtree owned by this document. */
+    if (mkr_node_kind(node_v) == MKR_NODE_KIND_XML) {
+        lxb_dom_node_t *imp = NULL;
+        mkr_xml_mut_check(mkr_cross_xml_to_html(doc, mkr_xml_node_unwrap(node_v), deep, &imp));
+        return mkr_wrap_html_node(imp, self);
+    }
+
+    lxb_dom_node_t *src = mkr_html_node_unwrap(node_v);   /* HTML node (raises on a non-node) */
     lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, src, deep);
     if (imp == NULL) {
         rb_raise(mkr_eError, "failed to import node");

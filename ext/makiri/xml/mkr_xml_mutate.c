@@ -603,6 +603,17 @@ mkr_xml_clone_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool deep,
     return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
 }
 
+mkr_xml_mut_status_t
+mkr_xml_copy_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, int deep,
+                  mkr_xml_node_t **out)
+{
+    if (deep) {
+        return deep_copy(doc, src, false, out);   /* import: ns re-resolved when linked */
+    }
+    *out = copy_one(doc, src, false);             /* shallow: own fields + attributes */
+    return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
+}
+
 /* ---- insertion ---- */
 
 /* +node+ may be placed in the tree at all (not an attribute / document / doctype,

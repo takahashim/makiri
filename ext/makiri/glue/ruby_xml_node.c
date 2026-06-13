@@ -11,6 +11,7 @@
  * mkr_xml_node_t* (the document arena outlives the wrapper via the Document).
  */
 #include "glue.h"
+#include "cross_import.h"          /* mkr_node_kind, mkr_cross_html_to_xml, mut_check decl */
 #include "../xml/mkr_xml_node.h"
 #include "../xml/mkr_xml_mutate.h"
 #include "../xml/mkr_xml_index.h"   /* element-name index invalidation on mutation */
@@ -945,8 +946,10 @@ mkr_xml_u32_len(size_t len)
     return (uint32_t)len;
 }
 
-/* Map a mutation status to a Ruby exception (MKR_XML_MUT_OK returns). */
-static void
+/* Map a mutation status to a Ruby exception (MKR_XML_MUT_OK returns). Shared with
+ * ruby_doc.c / ruby_cross_import.c via cross_import.h (the cross-kind import entries
+ * reuse it), so it is not static. */
+void
 mkr_xml_mut_check(mkr_xml_mut_status_t st)
 {
     switch (st) {
@@ -1320,6 +1323,35 @@ mkr_xml_doc_create_pi(VALUE self, VALUE rb_target, VALUE rb_data)
     return mkr_wrap_xml_node(pi, self);
 }
 
+/* Makiri::XML::Document#import_node(node, deep = false) - the DOM importNode for
+ * an XML document. A same-representation (XML) node is deep/shallow-copied into
+ * this document's arena (namespaces re-resolved when it is later linked); an HTML
+ * node is TRANSLATED across representations (lxb -> mkr) by ruby_cross_import.c.
+ * The result is detached and owned by this document; the source is untouched.
+ * Fails closed (no partial node returned). */
+static VALUE
+mkr_xml_doc_import_node(int argc, VALUE *argv, VALUE self)
+{
+    VALUE node_v, deep_v;
+    rb_scan_args(argc, argv, "11", &node_v, &deep_v);
+    int deep = RTEST(deep_v);
+
+    mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(self));
+    mkr_xml_node_t *copy = NULL;
+
+    switch (mkr_node_kind(node_v)) {
+    case MKR_NODE_KIND_XML:
+        mkr_xml_mut_check(mkr_xml_copy_node(xdoc, mkr_xml_node_unwrap(node_v), deep, &copy));
+        break;
+    case MKR_NODE_KIND_HTML:
+        mkr_xml_mut_check(mkr_cross_html_to_xml(xdoc, mkr_html_node_unwrap(node_v), deep, &copy));
+        break;
+    default:
+        rb_raise(rb_eTypeError, "import_node expects a Makiri node");
+    }
+    return mkr_wrap_xml_node(copy, self);
+}
+
 /* The node-class .new constructors (Element/Text/Comment/CDATASection/ProcessingInstruction.new)
  * and Document#root= are pure delegations to the document factories / insertion
  * verbs and live in the Ruby convenience layer (lib/makiri/), so a single
@@ -1396,6 +1428,7 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_cXmlDocument, "create_cdata",                 mkr_xml_doc_create_cdata, 1);
     rb_define_method(mkr_cXmlDocument, "create_cdata_node",            mkr_xml_doc_create_cdata, 1);
     rb_define_method(mkr_cXmlDocument, "create_processing_instruction", mkr_xml_doc_create_pi, 2);
+    rb_define_method(mkr_cXmlDocument, "import_node",                   mkr_xml_doc_import_node, -1);
 
     /* Node identity by underlying pointer, so #path / NodeSet dedup / Set / Hash
      * work (the same contract HTML nodes have). */
