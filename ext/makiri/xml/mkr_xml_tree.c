@@ -992,6 +992,18 @@ seed_doc_namespaces(mkr_xml_parser_t *P)
     return 0;
 }
 
+/* Free a parser's heap-side scratch arrays (NOT the document or its arena). Safe
+ * on a zero-initialised parser - every free(NULL) is a no-op - so it serves every
+ * exit path of both parse entries. */
+static void
+parser_dispose(mkr_xml_parser_t *P)
+{
+    free(P->stack);
+    free(P->frame);
+    free(P->binds);
+    free(P->ratt);
+}
+
 mkr_xml_doc_t *
 mkr_xml_parse(const char *src, size_t len, mkr_xml_status_t *status)
 {
@@ -1048,10 +1060,7 @@ mkr_xml_parse_ex(const char *src, size_t len, const mkr_xml_limits_t *limits,
         else if (doc->root == NULL) set_syntax(&P);   /* no root element */
     }
 
-    free(P.stack);
-    free(P.frame);
-    free(P.binds);
-    free(P.ratt);
+    parser_dispose(&P);
     free(norm);                       /* scratch line-ending-normalized buffer (if any) */
     if (P.status != MKR_XML_OK) {
         if (status) *status = P.status;
@@ -1084,7 +1093,7 @@ mkr_xml_parse_fragment(mkr_xml_doc_t *doc, const char *src, size_t len,
                            .col = 1, .doc = doc, .fragment = frag, .status = MKR_XML_OK };
 
     if (inherit_doc_ns && seed_doc_namespaces(&P) != 0) {
-        free(P.binds); free(norm);
+        parser_dispose(&P); free(norm);
         if (status) *status = P.status;
         return NULL;
     }
@@ -1092,10 +1101,7 @@ mkr_xml_parse_fragment(mkr_xml_doc_t *doc, const char *src, size_t len,
     run_tokenizer(&P);
     if (P.status == MKR_XML_OK && P.depth != 0) set_syntax(&P);   /* unclosed element(s) */
 
-    free(P.stack);
-    free(P.frame);
-    free(P.binds);
-    free(P.ratt);
+    parser_dispose(&P);
     free(norm);
     if (P.status != MKR_XML_OK) {
         if (status) *status = P.status;
