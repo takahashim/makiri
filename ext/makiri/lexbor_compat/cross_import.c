@@ -1,21 +1,22 @@
-/* ruby_cross_import.c - cross-kind subtree translation for Document#import_node.
+/* cross_import.c - cross-kind subtree translation for Document#import_node.
  *
  * Makiri keeps HTML nodes (Lexbor lxb_dom_node_t) and XML nodes (mkr_xml_node_t)
  * as distinct C representations that cannot share a tree. import_node bridges
  * them: it deep/shallow-copies a subtree from one representation into the other,
  * owned by the target document, returning a DETACHED copy (the caller links it).
  *
- * The XML TUs (ext/makiri/xml) never include Lexbor, so this translation - the
- * one place both representations are read/written together - lives here in glue.
- * Both directions:
+ * Ruby-FREE and lives in lexbor_compat (not glue): it reads/writes BOTH lexbor and
+ * the XML arena, exactly the bridge this layer is for. The glue import_node entries
+ * (ruby_doc.c / ruby_xml_node.c) do the Ruby-VALUE kind check (mkr_node_kind), call
+ * these, and wrap/raise. Both directions:
  *   - build the destination subtree DETACHED, then return it (never linking into a
  *     live tree mid-build), so a failure abandons a self-contained partial subtree
  *     in the destination arena (HTML mraw or the XML node arena), freed with the
  *     document - the same fail-closed model the XML deep-copy uses;
  *   - walk the source with an explicit heap stack (no C recursion -> no stack DoS),
  *     freed on every path;
- *   - report failure via mkr_xml_mut_status_t (never rb_raise here, which would
- *     leak the stack); the Ruby entry maps it with mkr_xml_mut_check.
+ *   - report failure via mkr_xml_mut_status_t; the Ruby entry maps it with
+ *     mkr_xml_mut_check.
  *
  * Namespaces (phase 4): preserved across the two representations.
  *   - HTML->XML: an mkr node's namespace is resolved from xmlns declarations at
@@ -27,13 +28,11 @@
  *     gets an xmlns:PREFIX declaration on its element. The predefined xml: prefix
  *     needs none.
  *   - XML->HTML: Lexbor stores a namespace as an id, so the element's node.ns is set
- *     from the URI and a namespaced attribute is built with lxb_dom_attr_set_name_ns.
- *     Only the namespaces Lexbor knows by id (XHTML/SVG/MathML/XLink/XML/XMLNS) map;
- *     an unknown URI falls back to the null namespace (fail-soft).
+ *     from the URI (interning any URI via lxb_ns_append) and a namespaced attribute
+ *     is built with lxb_dom_attr_set_name_ns.
  */
 #include "cross_import.h"
-#include "glue.h"
-#include "../core/mkr_core.h"   /* mkr_grow_reserve, MKR_OK */
+#include "../core/mkr_core.h"   /* mkr_grow_reserve, mkr_reallocarray, MKR_OK */
 
 #include <lexbor/ns/ns.h>       /* lxb_ns_by_id, LXB_NS_* */
 #include <stdlib.h>             /* free (the xmlns:PREFIX scratch; alloc via mkr_reallocarray) */
@@ -51,14 +50,6 @@ lxb_dom_attr_set_name_ns(lxb_dom_attr_t *attr, const lxb_char_t *link,
  * returning the entry (whose ns_id we set on a translated element's node.ns). */
 extern const lxb_ns_data_t *
 lxb_ns_append(lexbor_hash_t *hash, const lxb_char_t *link, size_t length);
-
-mkr_node_kind_t
-mkr_node_kind(VALUE v)
-{
-    if (rb_typeddata_is_kind_of(v, &mkr_html_node_type)) return MKR_NODE_KIND_HTML;
-    if (rb_typeddata_is_kind_of(v, &mkr_xml_node_type))  return MKR_NODE_KIND_XML;
-    return MKR_NODE_KIND_OTHER;
-}
 
 /* A DOM name/value slice must fit uint32 (the mkr arena's per-slice cap and the
  * factory signatures). A >4 GiB slice is rejected fail-closed rather than wrapped. */

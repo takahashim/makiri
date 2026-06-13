@@ -8,6 +8,7 @@
  * lookup. The HTML node implementation (wrap/unwrap + reader methods) lives in
  * ruby_html_node.c, the XML one in ruby_xml_node.c. */
 #include "glue.h"
+#include "cross_import.h"          /* mkr_node_kind_t, for the import_node kind dispatch */
 #include "../xml/mkr_xml_node.h"   /* mkr_xml_doc_t::doc_node, for the kind-aware mkr_node_raw */
 
 /* ------------------------------------------------------------------ */
@@ -84,6 +85,19 @@ mkr_node_raw(VALUE rb_node)
     mkr_node_data_t *nd;
     TypedData_Get_Struct(rb_node, mkr_node_data_t, &mkr_node_type, nd);
     return nd->node;
+}
+
+/* Which representation a wrapped node is, by its TypedData type (the robust
+ * discriminator - not the Ruby class). A Document, a NodeSet, or any non-node is
+ * MKR_NODE_KIND_OTHER. The cross-kind Document#import_node entries use this to
+ * route a node to the same-representation copy or the cross-representation
+ * translator (lexbor_compat/cross_import.c). */
+mkr_node_kind_t
+mkr_node_kind(VALUE v)
+{
+    if (rb_typeddata_is_kind_of(v, &mkr_html_node_type)) return MKR_NODE_KIND_HTML;
+    if (rb_typeddata_is_kind_of(v, &mkr_xml_node_type))  return MKR_NODE_KIND_XML;
+    return MKR_NODE_KIND_OTHER;
 }
 
 /* Node identity as an integer, for #==/#eql?/#hash/#pointer_id - kind-agnostic and
