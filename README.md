@@ -145,9 +145,9 @@ namespaces are resolved at insertion time, and cross-document nodes are deep-cop
 detached copy, and works **across representations**: importing a `Makiri::HTML`
 node into a `Makiri::XML::Document` (or vice versa) translates the subtree between
 the two node representations, preserving namespaces (e.g. an inline `<svg>` keeps
-the SVG namespace, HTML elements the XHTML namespace; an XML namespace that Lexbor
-does not know becomes the null namespace when translated to HTML). An XML CDATA
-section has no HTML counterpart, so importing one into an HTML document raises.
+the SVG namespace, HTML elements the XHTML namespace; custom namespaces are
+preserved across both directions). An XML CDATA section has no HTML counterpart,
+so importing one into an HTML document raises.
 
 ```ruby
 doc   = Makiri::XML(%(<feed xmlns="urn:a" xmlns:dc="urn:dc"/>))

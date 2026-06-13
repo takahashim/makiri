@@ -33,8 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   synthesizes the xmlns declarations needed to reproduce each node's namespace
   (so e.g. an inline `<svg>` stays in the SVG namespace and HTML elements in the
   XHTML namespace), and XML->HTML maps the namespace URI back to a Lexbor
-  namespace id (the namespaces Lexbor knows - XHTML/SVG/MathML/XLink/XML/XMLNS;
-  an unknown URI becomes the null namespace). The other node-argument mutators
+  namespace id, interning any URI (not only the ones Lexbor knows by default) so
+  custom namespaces survive too. An HTML-namespaced `<template>`'s content is
+  placed in its content fragment (HTMLTemplateElement.content), like a parsed
+  template. The other node-argument mutators
   (`add_child`/`before`/`after`/`replace`/`fragment`) still reject a foreign-kind
   node; `import_node` is the one sanctioned crossing point.
 

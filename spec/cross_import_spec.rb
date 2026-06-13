@@ -109,6 +109,15 @@ RSpec.describe "cross-kind import_node" do
       expect(el.name).to eq("template")
       expect(el.to_html).to include("<p>x</p>")
     end
+
+    it "XML -> HTML routes an HTML-namespaced template's content into the content fragment" do
+      xhtml = "http://www.w3.org/1999/xhtml"
+      t = Makiri::XML(%(<template xmlns="#{xhtml}"><p>x</p></template>))
+            .at_xpath("//*[local-name()='template']")
+      el = Makiri::HTML("<body/>").import_node(t, true)
+      expect(el.children).to be_empty                              # not normal children (DOM-correct)
+      expect(el.content_fragment.children.map(&:name)).to eq(["p"]) # HTMLTemplateElement.content
+    end
   end
 
   describe "namespace fidelity" do
@@ -125,10 +134,12 @@ RSpec.describe "cross-kind import_node" do
       expect(child.attribute_nodes.first.namespace_uri).to eq(XLINK)
     end
 
-    it "XML -> HTML maps an unknown namespace to the null namespace (fail-soft)" do
-      xn = Makiri::XML(%(<r xmlns="urn:custom"/>)).root
+    it "XML -> HTML preserves a namespace Lexbor does not know (interned)" do
+      xn = Makiri::XML(%(<e xmlns="urn:elem" xmlns:c="urn:attr" c:k="v"/>)).root
       el = Makiri::HTML("<body/>").import_node(xn, true)
-      expect(el.namespace_uri).to be_nil
+      expect(el.namespace_uri).to eq("urn:elem")             # element ns interned, not lost
+      ck = el.attribute_nodes.find { |a| a.name == "c:k" }
+      expect(ck.namespace_uri).to eq("urn:attr")             # attribute ns too (symmetric)
     end
 
     it "HTML -> XML preserves a foreign (SVG + xlink) subtree through linking" do

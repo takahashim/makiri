@@ -47,6 +47,11 @@ lxb_dom_attr_set_name_ns(lxb_dom_attr_t *attr, const lxb_char_t *link,
                          size_t link_length, const lxb_char_t *name,
                          size_t name_length, bool to_lowercase);
 
+/* Also Lexbor-internal: intern a namespace URI in the document's ns table,
+ * returning the entry (whose ns_id we set on a translated element's node.ns). */
+extern const lxb_ns_data_t *
+lxb_ns_append(lexbor_hash_t *hash, const lxb_char_t *link, size_t length);
+
 mkr_node_kind_t
 mkr_node_kind(VALUE v)
 {
@@ -59,24 +64,16 @@ mkr_node_kind(VALUE v)
  * factory signatures). A >4 GiB slice is rejected fail-closed rather than wrapped. */
 #define MKR_FITS_U32(n) ((n) <= UINT32_MAX)
 
-/* The namespaces Lexbor knows by id (lexbor/ns/res.h); the only ones that map
- * URI <-> id. Anything else is the null namespace at the boundary (fail-soft). */
+/* Intern +uri+ in the destination HTML document's namespace table and return its
+ * Lexbor id, so an element's namespace survives translation for ANY URI (not just
+ * the few Lexbor knows by default) - the same interning lxb_dom_attr_set_name_ns
+ * does for attributes. A null/empty URI (or an intern OOM) is the null namespace. */
 static lxb_ns_id_t
-mkr_ns_id_for_uri(const char *uri, uint32_t len)
+x2h_ns_id(lxb_dom_document_t *hdoc, const char *uri, uint32_t len)
 {
-    static const struct { const char *uri; uint32_t len; lxb_ns_id_t id; } known[] = {
-        { "http://www.w3.org/1999/xhtml",         28, LXB_NS_HTML  },
-        { "http://www.w3.org/2000/svg",           26, LXB_NS_SVG   },
-        { "http://www.w3.org/1998/Math/MathML",   34, LXB_NS_MATH  },
-        { "http://www.w3.org/1999/xlink",         28, LXB_NS_XLINK },
-        { "http://www.w3.org/XML/1998/namespace", 36, LXB_NS_XML   },
-        { "http://www.w3.org/2000/xmlns/",        29, LXB_NS_XMLNS },
-    };
     if (uri == NULL || len == 0) return LXB_NS__UNDEF;
-    for (size_t i = 0; i < sizeof known / sizeof known[0]; i++) {
-        if (known[i].len == len && memcmp(known[i].uri, uri, len) == 0) return known[i].id;
-    }
-    return LXB_NS__UNDEF;
+    const lxb_ns_data_t *d = lxb_ns_append(hdoc->ns, (const lxb_char_t *)uri, len);
+    return (d != NULL) ? d->ns_id : LXB_NS__UNDEF;   /* fail-soft on OOM */
 }
 
 /* The URI string for an HTML node's namespace id (borrowed from the source
@@ -345,8 +342,8 @@ x2h_make(lxb_dom_document_t *hdoc, const mkr_xml_node_t *s, lxb_dom_node_t **out
         lxb_dom_element_t *el = lxb_dom_document_create_element(
             hdoc, (const lxb_char_t *)s->qname, s->qname_len, NULL);
         if (el == NULL) return MKR_XML_MUT_OOM;
-        /* Preserve the namespace as a Lexbor id (known URIs only; else null). */
-        lxb_dom_interface_node(el)->ns = mkr_ns_id_for_uri(s->ns_uri, s->ns_uri_len);
+        /* Preserve the namespace as a Lexbor id (any URI, interned; else null). */
+        lxb_dom_interface_node(el)->ns = x2h_ns_id(hdoc, s->ns_uri, s->ns_uri_len);
         mkr_xml_mut_status_t st = x2h_copy_attrs(hdoc, s, el);
         if (st != MKR_XML_MUT_OK) return st;
         *out = lxb_dom_interface_node(el);
@@ -388,6 +385,22 @@ x2h_make(lxb_dom_document_t *hdoc, const mkr_xml_node_t *s, lxb_dom_node_t **out
     }
 }
 
+/* Where a translated element's CHILDREN attach. An HTML <template> holds its
+ * content in a separate document fragment (HTMLTemplateElement.content), not the
+ * normal child chain, so children go there - matching a parsed template and the
+ * HTML->HTML import_node fixup (mkr_fixup_template_content). Other elements link
+ * children directly. */
+static lxb_dom_node_t *
+x2h_link_target(lxb_dom_node_t *el)
+{
+    if (el->type == LXB_DOM_NODE_TYPE_ELEMENT
+        && el->local_name == LXB_TAG_TEMPLATE && el->ns == LXB_NS_HTML) {
+        lxb_dom_document_fragment_t *content = lxb_html_interface_template(el)->content;
+        if (content != NULL) return lxb_dom_interface_node(content);
+    }
+    return el;
+}
+
 mkr_xml_mut_status_t
 mkr_cross_xml_to_html(lxb_dom_document_t *hdoc, const mkr_xml_node_t *src, int deep,
                       lxb_dom_node_t **out)
@@ -400,7 +413,11 @@ mkr_cross_xml_to_html(lxb_dom_document_t *hdoc, const mkr_xml_node_t *src, int d
 
     if (deep) {
         mkr_xstack_t stk = { NULL, 0, 0 };
-        if (mkr_xstack_push(&stk, (void *)src, root, NULL, 0) != 0) { free(stk.v); return MKR_XML_MUT_OOM; }
+        /* The frame's d is the link target for the source node's children (a
+         * template element's content fragment, else the element itself). */
+        if (mkr_xstack_push(&stk, (void *)src, x2h_link_target(root), NULL, 0) != 0) {
+            free(stk.v); return MKR_XML_MUT_OOM;
+        }
         while (stk.n > 0) {
             mkr_xframe_t f = stk.v[--stk.n];
             const mkr_xml_node_t *s = (const mkr_xml_node_t *)f.s;
@@ -412,7 +429,7 @@ mkr_cross_xml_to_html(lxb_dom_document_t *hdoc, const mkr_xml_node_t *src, int d
                 if (dc == NULL) continue;                 /* skipped node type */
                 lxb_dom_node_insert_child(d, dc);
                 if (c->first_child != NULL
-                    && mkr_xstack_push(&stk, (void *)c, dc, NULL, 0) != 0) {
+                    && mkr_xstack_push(&stk, (void *)c, x2h_link_target(dc), NULL, 0) != 0) {
                     st = MKR_XML_MUT_OOM; goto done;
                 }
             }
