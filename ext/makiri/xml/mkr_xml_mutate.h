@@ -119,6 +119,14 @@ mkr_xml_mut_status_t mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint
 mkr_xml_mut_status_t mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_node_t *src,
                                             mkr_xml_node_t **out);
 
+/* importNode: a detached deep (+deep+ true) or shallow copy of +src+ in +doc+'s
+ * arena, returned in *out. Like mkr_xml_import_subtree, namespaces are left
+ * unresolved (re-resolved when the result is later linked), so this is the
+ * same-document import_node primitive; +deep+ selects whole-subtree vs the node +
+ * its attributes only. Fails closed on budget/OOM. */
+mkr_xml_mut_status_t mkr_xml_copy_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src,
+                                       int deep, mkr_xml_node_t **out);
+
 /* cloneNode: a detached deep (+deep+ true) or shallow copy of +src+ in the SAME
  * document's arena, returned in *out (parent/siblings NULL). Unlike import the
  * resolved namespace URI IS copied (a clone is never re-resolved), so the result

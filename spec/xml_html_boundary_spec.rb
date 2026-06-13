@@ -156,13 +156,14 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
   # An HTML-only API that hands a node ARGUMENT to Lexbor must reject a Makiri::XML
   # node first - its stored pointer is an mkr_xml_node_t*, not an lxb_dom_node_t,
   # so reading it as one corrupts memory / segfaults. Coercion goes through
-  # mkr_html_arg_node, which fails closed with TypeError.
+  # mkr_html_arg_node, which fails closed with TypeError. The ONE sanctioned
+  # crossing point is Document#import_node, which TRANSLATES across representations
+  # (see "cross-kind import_node") rather than rejecting.
   describe "HTML APIs reject an XML node argument" do
     let(:html) { Makiri::HTML("<div><p/></div>") }
     let(:xml_node) { Makiri::XML("<r><a/></r>").root }
 
-    it "raises TypeError on import_node / add_child / before / after / replace / fragment" do
-      expect { html.import_node(xml_node) }.to raise_error(TypeError)
+    it "raises TypeError on add_child / before / after / replace / fragment" do
       expect { html.at_css("div").add_child(xml_node) }.to raise_error(TypeError)
       expect { html.at_css("p").before(xml_node) }.to raise_error(TypeError)
       expect { html.at_css("p").after(xml_node) }.to raise_error(TypeError)
@@ -176,22 +177,20 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
       expect(div.to_html).to eq("<div><p></p><span></span></div>")
     end
 
-    # Regression guard for the reported segfault, isolated so a regression fails
-    # the child rather than crashing the whole run (skipped under the sanitizer,
-    # where the child can't inherit the ASan preload on macOS).
-    it "does not crash the process on import_node(xml_node)" do
+    # import_node now TRANSLATES an XML node (it is the cross-kind crossing point),
+    # so it must not crash and must yield an HTML node. Isolated so a regression
+    # fails the child rather than crashing the whole run (skipped under the
+    # sanitizer, where the child can't inherit the ASan preload on macOS).
+    it "translates (does not crash on) import_node(xml_node)" do
       skip_under_sanitizer!
       status, out = run_isolated(<<~RUBY)
         h = Makiri::HTML("<div/>")
         x = Makiri::XML("<r/>")
-        begin
-          h.import_node(x.root)
-        rescue TypeError
-          print("rejected")
-        end
+        imp = h.import_node(x.root)
+        print(imp.is_a?(Makiri::HTML::Element) ? "translated" : "wrong")
       RUBY
       expect(status).to be_success, "process aborted: #{out}"
-      expect(out).to eq("rejected")
+      expect(out).to eq("translated")
     end
   end
 end

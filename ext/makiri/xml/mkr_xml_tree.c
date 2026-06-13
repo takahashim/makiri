@@ -635,11 +635,11 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
     advance_n(P, 1);                                  /* consume '?' */
     const char *tgt; uint32_t tl;
     if (scan_name(P, &tgt, &tl) != 0) return -1;      /* PITarget (a Name) */
-    /* Namespaces in XML §3: a PITarget is an NCName, so a colon is not-wf under
-     * namespace processing (which Makiri always does, like Nokogiri::XML). */
+    /* §2.6: PITarget is a Name, NOT an NCName - a colon is permitted (a PI target
+     * is not subject to namespace processing). scan_name already validated it as a
+     * Name (NameStartChar NameChar*); only the reserved "xml" (any case) below is
+     * excluded. */
     mkr_span_t tsp = mkr_span(tgt, tl);
-    size_t colon_at;
-    if (mkr_span_find(&tsp, ':', &colon_at)) { set_syntax(P); return -1; }
     int ci_xml  = (tl == 3 && (mkr_span_at(&tsp, 0) | 0x20) == 'x'
                            && (mkr_span_at(&tsp, 1) | 0x20) == 'm'
                            && (mkr_span_at(&tsp, 2) | 0x20) == 'l');

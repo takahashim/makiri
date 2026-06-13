@@ -104,6 +104,11 @@ int mkr_xml_validate_chars(const char *src, uint32_t len);
 int mkr_xml_is_name_start(uint32_t c);
 int mkr_xml_is_name_char(uint32_t c);
 
+/* Validate [src, src+len) as a well-formed XML 1.0 Name (NameStartChar NameChar*).
+ * A Name MAY contain a colon (unlike an NCName), so this is the PITarget check
+ * (§2.6: PITarget is a Name). 0 if a Name, -1 otherwise. */
+int mkr_xml_validate_name(const char *src, uint32_t len);
+
 /* Expansion context. ATTR adds XML 1.0 §3.3.3 attribute-value normalization:
  * a *literal* white-space byte (TAB/LF/CR) becomes a space, while a white-space
  * character produced by a numeric reference (&#9;/&#10;/&#13;) is preserved. TEXT

@@ -230,10 +230,13 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect { Makiri::XML("<?xml version='2.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
     end
 
-    it "reserves the PI target 'xml' (any case) and forbids a colon in a target" do
+    it "reserves the PI target 'xml' (any case) but allows a Name target with a colon" do
       expect { Makiri::XML("<?XML version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
       expect { Makiri::XML("<?xmL version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
-      expect { Makiri::XML("<r><?a:b data?></r>") }.to raise_error(Makiri::XML::SyntaxError) # NS: NCName
+      # §2.6: PITarget is a Name, not an NCName, so a colon is well-formed.
+      expect(ok?("<r><?a:b data?></r>")).to be true
+      pi = Makiri::XML("<r><?a:b data?></r>").at_xpath("//processing-instruction()")
+      expect(pi.name).to eq("a:b")
       expect(ok?("<r><?xml-stylesheet href='s'?></r>")).to be true # not the reserved 3-letter name
     end
 

@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* XML processing-instruction targets now follow XML 1.0 §2.6: a PITarget is a
+  `Name`, not an NCName, so a colon is permitted (`<?a:b ...?>` parses, and
+  `create_processing_instruction("a:b", ...)` succeeds). Only the reserved `xml`
+  (any case) is still rejected. Previously a colon in a PI target was rejected as
+  not-well-formed, which was stricter than the spec (a PI target is not subject to
+  namespace processing).
+
+### Added
+
+* Cross-kind `Document#import_node(node, deep = false)`. `import_node` now
+  translates a subtree across representations: `Makiri::XML::Document#import_node`
+  (newly added) imports an HTML (Lexbor) node by translating it to the XML node
+  representation, and `Makiri::HTML::Document#import_node` likewise translates an
+  XML node to HTML. Same-representation imports keep working (HTML to HTML via
+  Lexbor, XML to XML via the arena deep/shallow copy). The result is a detached
+  copy owned by the target document; the source is untouched. Elements (with
+  attributes), text, comment, and processing-instruction nodes translate both
+  ways, and an HTML `<template>`'s contents (which HTML keeps in a separate
+  fragment) are carried across rather than silently dropped; an XML CDATA section
+  has no HTML counterpart, so translating one into an HTML document fails closed
+  (`Makiri::Error`). Namespaces are preserved across the translation: HTML->XML
+  synthesizes the xmlns declarations needed to reproduce each node's namespace
+  (so e.g. an inline `<svg>` stays in the SVG namespace and HTML elements in the
+  XHTML namespace), and XML->HTML maps the namespace URI back to a Lexbor
+  namespace id, interning any URI (not only the ones Lexbor knows by default) so
+  custom namespaces survive too. An HTML-namespaced `<template>`'s content is
+  placed in its content fragment (HTMLTemplateElement.content), like a parsed
+  template. The other node-argument mutators
+  (`add_child`/`before`/`after`/`replace`/`fragment`) still reject a foreign-kind
+  node; `import_node` is the one sanctioned crossing point.
+
 ## [0.4.0] - 2026-06-12
 
 ### Added

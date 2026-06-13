@@ -426,9 +426,10 @@ mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
                const char *data, uint32_t dlen, mkr_xml_node_t **out)
 {
     *out = NULL;
-    /* PITarget is an NCName (a QName with no colon) and not "xml" in any case. */
-    mkr_xml_qname_t qn;
-    if (mkr_xml_qname_split(target, tlen, &qn) != 0 || qn.prefix_len != 0) return MKR_XML_MUT_BAD_NAME;
+    /* PITarget is a Name (§2.6), NOT an NCName: a colon is permitted (a PI target
+     * is not namespace-processed), and only the reserved "xml" (any case) is
+     * excluded. */
+    if (mkr_xml_validate_name(target, tlen) != 0) return MKR_XML_MUT_BAD_NAME;
     if (is_reserved_pi_target(target, tlen)) return MKR_XML_MUT_BAD_NAME;
     if (dlen > 0 && mkr_xml_validate_chars(data, dlen) != 0) return MKR_XML_MUT_BAD_CHARS;
     mkr_xml_mut_status_t seq = mkr_xml_check_value_seq(MKR_XML_NODE_TYPE_PI, data, dlen);
@@ -599,6 +600,17 @@ mkr_xml_clone_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool deep,
         return deep_copy(doc, src, true, out);
     }
     *out = copy_one(doc, src, true);   /* shallow: own fields + attributes, no children */
+    return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
+}
+
+mkr_xml_mut_status_t
+mkr_xml_copy_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, int deep,
+                  mkr_xml_node_t **out)
+{
+    if (deep) {
+        return deep_copy(doc, src, false, out);   /* import: ns re-resolved when linked */
+    }
+    *out = copy_one(doc, src, false);             /* shallow: own fields + attributes */
     return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
 }
 

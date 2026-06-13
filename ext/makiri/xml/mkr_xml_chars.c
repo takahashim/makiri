@@ -72,6 +72,28 @@ mkr_xml_is_name_char(uint32_t c)
         || c == 0xB7u || (c >= 0x300u && c <= 0x36Fu) || (c >= 0x203Fu && c <= 0x2040u);
 }
 
+/* Validate that [src, src+len) is a well-formed XML 1.0 Name (§2.3): a
+ * NameStartChar followed by NameChar*. Unlike an NCName a Name MAY contain a
+ * colon (':' is a NameStartChar), so this is the right check for a PITarget,
+ * which is a Name (§2.6), not an NCName. 0 if a Name, -1 otherwise (empty or
+ * malformed UTF-8 / non-Name codepoint). */
+int
+mkr_xml_validate_name(const char *src, uint32_t len)
+{
+    if (len == 0) return -1;
+    mkr_span_t s = mkr_span(src, len);
+    uint32_t cp;
+    int bl = mkr_utf8_decode1_span(&s, &cp);
+    if (bl == 0 || !mkr_xml_is_name_start(cp)) return -1;
+    mkr_span_skip(&s, (size_t)bl);
+    while (mkr_span_left(&s) > 0) {
+        bl = mkr_utf8_decode1_span(&s, &cp);
+        if (bl == 0 || !mkr_xml_is_name_char(cp)) return -1;
+        mkr_span_skip(&s, (size_t)bl);
+    }
+    return 0;
+}
+
 static int
 utf8_encode(uint32_t cp, char *out)
 {
