@@ -62,13 +62,14 @@ RSpec.describe Makiri::Lexbor::CSS do
     end
   end
 
-  describe "@media" do
-    it "nests rules and recovers the condition text" do
+  describe "at-rules" do
+    it "surfaces @media uniformly with name, prelude (condition), and nested rules" do
       rules = parse("@media (min-width: 600px) { .x { opacity: 0 } }")
       expect(rules.size).to eq(1)
       media = rules[0]
-      expect(media[:type]).to eq(:media)
-      expect(media[:condition]).to eq("(min-width: 600px)")
+      expect(media[:type]).to eq(:at_rule)
+      expect(media[:name]).to eq("media")
+      expect(media[:prelude]).to eq("(min-width: 600px)")
       expect(media[:rules].size).to eq(1)
       inner = media[:rules][0]
       expect(inner[:type]).to eq(:style)
@@ -76,9 +77,30 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect(inner[:declarations]).to eq([{ name: "opacity", value: "0", important: false }])
     end
 
-    it "trims surrounding whitespace from the condition" do
+    it "trims surrounding whitespace from the prelude" do
       rules = parse("@media   screen and (max-width: 5px)   { a { x: y } }")
-      expect(rules[0][:condition]).to eq("screen and (max-width: 5px)")
+      expect(rules[0][:prelude]).to eq("screen and (max-width: 5px)")
+    end
+
+    it "surfaces @layer with its name and nested rules" do
+      rules = parse("@layer base { p { color: red } }")
+      expect(rules[0][:name]).to eq("layer")
+      expect(rules[0][:prelude]).to eq("base")
+      expect(rules[0][:rules][0][:selectors][0][:text]).to eq("p")
+    end
+
+    it "surfaces @supports with its condition prelude" do
+      rules = parse("@supports (display: grid) { .g { display: grid } }")
+      expect(rules[0][:name]).to eq("supports")
+      expect(rules[0][:prelude]).to eq("(display: grid)")
+      expect(rules[0][:rules].size).to eq(1)
+    end
+
+    it "surfaces other at-rules (e.g. @keyframes, @import) without dropping them" do
+      rules = parse("@keyframes spin { from { opacity: 0 } } @import url(x.css);")
+      expect(rules.map { |r| r[:name] }).to eq(%w[keyframes import])
+      expect(rules[0][:rules].size).to eq(1)   # the `from` keyframe block
+      expect(rules[1][:rules]).to eq([])       # statement at-rule, no block
     end
 
     it "fails closed on pathologically deep nesting" do
@@ -93,16 +115,36 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect(parse("   \n\t  ")).to eq([])
     end
 
-    it "drops a rule with an invalid selector but keeps a following good rule" do
+    it "surfaces an unknown at-rule (as :at_rule) and keeps a following good rule" do
       rules = parse("@unknown foo { x: y } .good { color: blue }")
-      expect(rules.size).to eq(1)
-      expect(rules[0][:selectors][0][:text]).to eq(".good")
+      expect(rules.map { |r| r[:type] }).to eq(%i[at_rule style])
+      expect(rules[0][:name]).to eq("unknown")
+      expect(rules[1][:selectors][0][:text]).to eq(".good")
     end
 
-    it "skips unknown at-rules" do
+    it "surfaces (does not drop) recognized at-rules like @font-face" do
       rules = parse("@font-face { font-family: x } .a { color: red }")
-      expect(rules.map { |r| r[:type] }).to eq([:style])
-      expect(rules[0][:selectors][0][:text]).to eq(".a")
+      expect(rules.map { |r| r[:type] }).to eq(%i[at_rule style])
+      expect(rules[0][:name]).to eq("font-face")
+      expect(rules[1][:selectors][0][:text]).to eq(".a")
+    end
+
+    it "surfaces a pseudo-element rule as :bad_style with raw text + declarations" do
+      rules = parse('p::before { content: "x"; color: blue }')
+      expect(rules.size).to eq(1)
+      expect(rules[0][:type]).to eq(:bad_style)
+      expect(rules[0][:selector_text].strip).to eq("p::before")
+      expect(rules[0][:declarations]).to eq(
+        [{ name: "content", value: '"x"', important: false },
+         { name: "color", value: "blue", important: false }]
+      )
+    end
+
+    it "surfaces a syntactically rejected selector as :bad_style too (caller re-validates)" do
+      rules = parse("p:unknown-pseudo { color: red } .good { color: blue }")
+      expect(rules.map { |r| r[:type] }).to eq([:bad_style, :style])
+      expect(rules[0][:selector_text].strip).to eq("p:unknown-pseudo")
+      expect(rules[1][:selectors][0][:text]).to eq(".good")
     end
 
     it "never raises a syntax error on broken input" do

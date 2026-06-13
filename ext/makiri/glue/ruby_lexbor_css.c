@@ -20,16 +20,20 @@
  *   [ { type: :style,
  *       selectors:    [ { text: "div.a", specificity: [a, b, c] }, ... ],
  *       declarations: [ { name: "display", value: "flex", important: false }, ... ] },
+ *     { type: :bad_style,                 # selector lexbor rejected (e.g. ::before)
+ *       selector_text: "p::before",       # raw prelude for the caller to re-validate
+ *       declarations:  [ ... ] },
  *     { type: :media,
  *       condition: "(min-width: 600px)",
  *       rules:     [ ...same style/media hashes, nested... ] },
  *     ... ]   # source order
  *
- * Error recovery follows css-syntax-3 (and dommy's contract): a malformed
- * declaration is dropped, a rule with an invalid selector list surfaces as a
- * LXB_CSS_RULE_BAD_STYLE and is SKIPPED, an unknown at-rule is skipped. So a
- * broken stylesheet never raises a syntax error - it yields the valid rules
- * only. A hard parser failure (OOM) raises Makiri::Error.
+ * Error recovery follows css-syntax-3: a malformed declaration is dropped, an
+ * unknown at-rule is skipped. A rule whose selector list lexbor cannot parse
+ * surfaces as :bad_style with its raw prelude text (lexbor is stricter/older
+ * than Selectors L4, so the caller re-validates with its own selector parser).
+ * So a broken stylesheet never raises a syntax error - it yields the parsed
+ * rules. A hard parser failure (OOM) raises Makiri::Error.
  *
  * Unlike Node#css's engine, the stylesheet parser is created and destroyed per
  * call: stylesheet parsing is rare (once per <style>), not a hot path, so a
@@ -37,7 +41,7 @@
  * lifetime trivially fail-closed (freed under rb_ensure on any Ruby raise).
  */
 
-/* Bound on @media nesting depth: fail closed instead of unbounded recursion on
+/* Bound on at-rule nesting depth: fail closed instead of unbounded recursion on
  * a pathologically nested stylesheet. */
 #define MKR_LEXBOR_CSS_MAX_DEPTH 64u
 
@@ -203,53 +207,125 @@ mkr_css_style_hash(mkr_css_conv_t *c, lxb_css_rule_style_t *style)
     return h;
 }
 
-/* Slice the @media condition text out of the original input using the at-rule's
- * recorded prelude byte offsets, trimming ASCII whitespace. Lexbor does not
- * retain the media query on the parsed media struct, but it keeps the offsets
- * on the rule, and we still hold the input bytes. Returns "" if the offsets are
- * unusable (fail closed - never a wrong slice). */
+/* Slice [begin, end) out of the original input, trimming ASCII whitespace.
+ * Lexbor keeps byte offsets (name / prelude) on every at-rule and we still hold
+ * the input bytes, so this recovers an at-rule's name and prelude uniformly.
+ * Returns "" if the offsets are unusable (fail closed - never a wrong slice). */
 static VALUE
-mkr_css_media_condition(mkr_css_conv_t *c, lxb_css_rule_at_t *at)
+mkr_css_slice_trim(mkr_css_conv_t *c, size_t begin, size_t end)
 {
-    size_t b = at->prelude_begin;
-    size_t e = at->prelude_end;
-    if (b > e || e > c->css_len) {
+    if (begin > end || end > c->css_len) {
         return rb_utf8_str_new("", 0);
     }
-    const char *p = c->css + b;
-    size_t n = e - b;
+    const char *p = c->css + begin;
+    size_t n = end - begin;
     while (n > 0 && (unsigned char)p[0] <= ' ')   { p++; n--; }
     while (n > 0 && (unsigned char)p[n - 1] <= ' ') { n--; }
     return rb_utf8_str_new(p, (long)n);
 }
 
-/* { type: :media, condition: "...", rules: [...] } or Qnil if not @media. */
+/* The at-rule keyword (without `@`). Typed at-rules carry no name field, so map
+ * from the type; a custom at-rule (any keyword lexbor has no dedicated parser
+ * for - @supports/@layer/@keyframes/...) keeps the verbatim ident in
+ * custom->name. The on-rule name_begin offset is unreliable (not reset between
+ * sibling rules), so it is intentionally not used. */
+static VALUE
+mkr_css_at_name(lxb_css_rule_at_t *at)
+{
+    switch (at->type) {
+        case LXB_CSS_AT_RULE_MEDIA:
+            return rb_utf8_str_new("media", 5);
+        case LXB_CSS_AT_RULE_FONT_FACE:
+            return rb_utf8_str_new("font-face", 9);
+        case LXB_CSS_AT_RULE_NAMESPACE:
+            return rb_utf8_str_new("namespace", 9);
+        case LXB_CSS_AT_RULE__CUSTOM: {
+            lxb_css_at_rule__custom_t *cu = at->u.custom;
+            if (cu != NULL && cu->name.data != NULL) {
+                return rb_utf8_str_new((const char *)cu->name.data,
+                                       (long)cu->name.length);
+            }
+            return rb_utf8_str_new("", 0);
+        }
+        default: /* __UNDEF (malformed) and anything else: unnamed */
+            return rb_utf8_str_new("", 0);
+    }
+}
+
+/* The nested block of any at-rule that has one (@media/@supports/@layer/
+ * @keyframes/@font-face/... all parse their `{ ... }` into a rule list at a
+ * type-specific union member), or NULL for statement at-rules (@import,
+ * @namespace, @charset). */
+static lxb_css_rule_list_t *
+mkr_css_at_block(lxb_css_rule_at_t *at)
+{
+    switch (at->type) {
+        case LXB_CSS_AT_RULE_MEDIA:
+            return (at->u.media != NULL) ? at->u.media->block : NULL;
+        case LXB_CSS_AT_RULE_FONT_FACE:
+            return (at->u.font_face != NULL) ? at->u.font_face->block : NULL;
+        case LXB_CSS_AT_RULE__CUSTOM:
+            return (at->u.custom != NULL) ? at->u.custom->block : NULL;
+        case LXB_CSS_AT_RULE__UNDEF:
+            return (at->u.undef != NULL) ? at->u.undef->block : NULL;
+        default: /* @namespace and other statement at-rules: no block */
+            return NULL;
+    }
+}
+
+/* { type: :bad_style, selector_text: "...", declarations: [...] }
+ *
+ * Lexbor's selectors parser rejects some selectors that Selectors L4 accepts -
+ * pseudo-elements (`::before`) most notably - and records them as BAD_STYLE,
+ * keeping the raw prelude text and the (still parsed) declaration block. Rather
+ * than drop these, surface the raw selector text so the caller can re-validate
+ * with its own (newer) selector parser. The caller owns the W3C selector
+ * semantics; this binding stays a thin lexbor face. */
+static VALUE
+mkr_css_bad_style_hash(mkr_css_conv_t *c, lxb_css_rule_bad_style_t *bad)
+{
+    VALUE h = rb_hash_new();
+    const char *txt = (bad->selectors.data != NULL)
+                          ? (const char *)bad->selectors.data : "";
+    rb_hash_aset(h, ID2SYM(rb_intern("type")), ID2SYM(rb_intern("bad_style")));
+    rb_hash_aset(h, ID2SYM(rb_intern("selector_text")),
+                 rb_utf8_str_new(txt, (long)bad->selectors.length));
+    rb_hash_aset(h, ID2SYM(rb_intern("declarations")),
+                 mkr_css_declarations_ary(c, bad->declarations));
+    return h;
+}
+
+/* { type: :at_rule, name: "media", prelude: "(min-width: 600px)", rules: [...] }
+ *
+ * Every at-rule is surfaced uniformly: `name` is the keyword after `@`,
+ * `prelude` the text before the block (the media/supports condition, the layer
+ * name, the keyframes name, ...), `rules` the nested block (empty for statement
+ * at-rules like @import). The caller decides which at-rules it understands
+ * (@media/@supports/@layer) and ignores the rest; lexbor already parsed the
+ * nested rules regardless, so nothing is lost at this layer. */
 static VALUE
 mkr_css_at_rule_hash(mkr_css_conv_t *c, lxb_css_rule_at_t *at, unsigned depth)
 {
-    if (at->type != LXB_CSS_AT_RULE_MEDIA) {
-        return Qnil; /* @font-face/@namespace/unknown: skipped for now */
-    }
-
-    lxb_css_at_rule_media_t *media = at->u.media;
-    lxb_css_rule_t *block_first =
-        (media != NULL && media->block != NULL) ? media->block->first : NULL;
+    lxb_css_rule_list_t *block = mkr_css_at_block(at);
+    lxb_css_rule_t *block_first = (block != NULL) ? block->first : NULL;
 
     VALUE h = rb_hash_new();
-    rb_hash_aset(h, ID2SYM(rb_intern("type")), ID2SYM(rb_intern("media")));
-    rb_hash_aset(h, ID2SYM(rb_intern("condition")), mkr_css_media_condition(c, at));
+    rb_hash_aset(h, ID2SYM(rb_intern("type")), ID2SYM(rb_intern("at_rule")));
+    rb_hash_aset(h, ID2SYM(rb_intern("name")), mkr_css_at_name(at));
+    rb_hash_aset(h, ID2SYM(rb_intern("prelude")),
+                 mkr_css_slice_trim(c, at->prelude_begin, at->prelude_end));
     rb_hash_aset(h, ID2SYM(rb_intern("rules")),
                  mkr_css_rules_to_ary(c, block_first, depth + 1));
     return h;
 }
 
-/* Convert a sibling chain of rules (first..NULL) into an Array, skipping rules
- * we do not surface (bad-style, non-media at-rules). */
+/* Convert a sibling chain of rules (first..NULL) into an Array, surfacing every
+ * style / at-rule / recovered bad-style rule in source order. */
 static VALUE
 mkr_css_rules_to_ary(mkr_css_conv_t *c, lxb_css_rule_t *first, unsigned depth)
 {
     if (depth > MKR_LEXBOR_CSS_MAX_DEPTH) {
-        rb_raise(mkr_eError, "CSS @media nesting too deep (max %u)",
+        rb_raise(mkr_eError, "CSS at-rule nesting too deep (max %u)",
                  MKR_LEXBOR_CSS_MAX_DEPTH);
     }
 
@@ -263,9 +339,13 @@ mkr_css_rules_to_ary(mkr_css_conv_t *c, lxb_css_rule_t *first, unsigned depth)
             case LXB_CSS_RULE_AT_RULE:
                 entry = mkr_css_at_rule_hash(c, lxb_css_rule_at(r), depth);
                 break;
+            case LXB_CSS_RULE_BAD_STYLE:
+                /* Recovered selector lexbor rejected (e.g. a pseudo-element):
+                 * surface the raw prelude for the caller to re-validate. */
+                entry = mkr_css_bad_style_hash(c, lxb_css_rule_bad_style(r));
+                break;
             default:
-                /* LXB_CSS_RULE_BAD_STYLE and anything else: error recovery
-                 * dropped it; do not surface it. */
+                /* Anything else error recovery dropped: do not surface it. */
                 break;
         }
         if (!NIL_P(entry)) {
