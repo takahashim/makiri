@@ -36,7 +36,7 @@
 #include "../core/mkr_core.h"   /* mkr_grow_reserve, MKR_OK */
 
 #include <lexbor/ns/ns.h>       /* lxb_ns_by_id, LXB_NS_* */
-#include <stdlib.h>             /* malloc / free (xmlns:PREFIX scratch) */
+#include <stdlib.h>             /* free (the xmlns:PREFIX scratch; alloc via mkr_reallocarray) */
 #include <string.h>             /* memcmp / memcpy / memchr */
 
 /* Exported by Lexbor but omitted from its public headers: names an attribute from
@@ -132,7 +132,7 @@ h2x_declare_ns(mkr_xml_doc_t *xdoc, mkr_xml_node_t *el,
     }
     size_t nlen = (size_t)6 + plen;   /* "xmlns:" + prefix */
     if (!MKR_FITS_U32(nlen)) return MKR_XML_MUT_OOM;
-    char *nm = malloc(nlen);
+    char *nm = mkr_reallocarray(NULL, nlen, 1);   /* overflow-checked safe alloc */
     if (nm == NULL) return MKR_XML_MUT_OOM;
     memcpy(nm, "xmlns:", 6);
     memcpy(nm + 6, prefix, plen);

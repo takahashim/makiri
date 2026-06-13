@@ -80,6 +80,9 @@ ignore_paths:
   - path: ext/makiri/xpath/mkr_xpath_node_access_html.h
     rule: owner_document_boundary
     reason: the HTML monomorphization of the engine's node-access layer.
+  - path: ext/makiri/glue/ruby_cross_import.c
+    rule: owner_document_boundary
+    reason: mkr_html_ns_uri reads the SOURCE HTML node's owner document ns table to resolve its namespace id to a URI; reached only on the HTML (lxb) side of HTML->XML translation, never on an XML node (no cross-kind document comparison).
   # mkr_node_raw (kind-agnostic void* raw pointer; never dereferenced as a typed node)
   - path: ext/makiri/glue/glue.h
     rule: node_raw_boundary
