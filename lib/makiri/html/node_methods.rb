@@ -10,7 +10,6 @@ module Makiri
       alias_method :attr, :[]
       alias_method :get_attribute, :[]
       alias_method :has_attribute?, :key?
-      alias_method :remove_attribute, :delete
       alias_method :node_name, :name
       alias_method :node_name=, :name=
       alias_method :type, :node_type
