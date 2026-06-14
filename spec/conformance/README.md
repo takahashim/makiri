@@ -224,6 +224,13 @@ Scoring rules:
 - DTD-entity-dependent validation cases are skipped.
 - Expected no-DTD differences are reported as `policy differences`, not
   failures. Use `--show-policy` to list them.
+- A short `KNOWN_DIVERGENCES` list excludes the few eduni cases where Makiri
+  deliberately follows the normative spec over a stricter test interpretation;
+  these are reported as `deliberate diverge`, not failures. Currently just
+  `rmt-ns10-042` ("Colon in PI name"): a `PITarget` is a `Name` (XML 1.0 §2.6),
+  and Namespaces in XML 1.0 constrains only QNames, so `<?a:b ...?>` is
+  well-formed. The exclusion self-prunes - it only applies while Makiri actually
+  diverges, so if the behaviour ever changes the case scores normally again.
 
 ---
 

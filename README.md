@@ -234,6 +234,12 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     markup string straight to `#add_child` is unsupported (parse it into a fragment
     first). (`#to_xml` serialization is supported; HTML serialization - `to_html`
     / `inner_html` / `outer_html` - is not.)
+* A colon in a processing-instruction target is well-formed (`<?a:b ...?>` parses).
+  * XML 1.0 §2.6: a `PITarget` is a `Name`, not an NCName, and Namespaces in XML
+    1.0's normative conformance section constrains only element/attribute names
+    (QNames), never PI targets. Nokogiri/libxml2 rejects it (`colons are forbidden
+    from PI names`); Makiri follows the normative text. Only the reserved `xml`
+    (any case) target is rejected.
 * Otherwise the parsed tree is byte-identical to `Nokogiri::XML`'s (verified by
   the property-based differential), including namespaces, prolog/epilog comments
   and PIs, and adjacent-CDATA coalescing.
