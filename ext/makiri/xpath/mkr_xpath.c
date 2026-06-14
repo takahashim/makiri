@@ -258,6 +258,18 @@ mkr_limit_ast_node(mkr_xpath_limits_t *L, mkr_xpath_error_t *err)
   return 0;
 }
 
+/*
+ * THE evaluator progress gate. This is the single primitive that bounds runtime
+ * work: every loop in the engine whose trip count is input-derived charges ONE
+ * tick per iteration through here (the axis walk per visited node, the M*N
+ * compare per pair, the index-bucket scan per element, eval_node per AST node).
+ * One uniform rule - "input-bounded loop => one eval_op per step" - so checking
+ * the DoS bound is local: confirm each such loop calls this. Kept deliberately
+ * uniform (no bulk/up-front variant): a bulk charge would only suit
+ * run-to-completion loops and would wrongly reject an early-exiting query if
+ * misapplied, trading one foot-gun-free rule for a conditional one. Overrun is
+ * fail-closed (MKR_XPATH_ERR_LIMIT), never a truncated result.
+ */
 int
 mkr_limit_eval_op(mkr_xpath_limits_t *L, mkr_xpath_error_t *err)
 {
