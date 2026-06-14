@@ -1666,22 +1666,30 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
           mkr_val_t *out, mkr_xpath_error_t *err)
 {
   /* Budget + recursion bookkeeping. Every AST node visit counts as one
-   * eval op; recursion depth tracks how deep we are in expression
-   * nodes so we abort cleanly on pathological inputs. */
+   * eval op; recursion depth tracks how deep we are in expression nodes
+   * so we abort cleanly on pathological inputs.
+   *
+   * eval_node is the engine's ONLY recursive function, so "AST-driven
+   * recursion is bounded" reduces entirely to this one enter/leave pair:
+   * charge one op + one recursion level on entry, release the level at the
+   * SINGLE exit below. Keeping eval_node single-exit is what makes that
+   * balance locally verifiable - there is no path from the enter here to a
+   * return that skips the mkr_limit_recurse_leave. Do not add an early
+   * `return` between here and the leave; set `rc` and fall through. */
   mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
   if (mkr_limit_eval_op(L, err) != 0) return -1;
   if (mkr_limit_recurse_enter(L, err) != 0) return -1;
+
+  int rc;
 
   /* Hoisting fast path: a CI subtree that's already been computed in
    * this evaluate is returned as a clone. The clone keeps ownership
    * semantics clean - mkr_val_clear on either copy is safe. */
   if (n->is_context_independent && n->memoized) {
-    int rc = mkr_val_clone(&n->memo_value, out, err);
-    mkr_limit_recurse_leave(L);
-    return rc;
+    rc = mkr_val_clone(&n->memo_value, out, err);
+    goto done; /* single exit: the recurse_leave below still runs */
   }
 
-  int rc;
   switch (n->kind) {
   case MKR_NK_LITERAL_STR: {
     mkr_owned_text_t text;
@@ -1772,6 +1780,7 @@ eval_node(mkr_xpath_context_t *ctx, const mkr_node_t *n,
     }
   }
 
+done:
   mkr_limit_recurse_leave(L);
   return rc;
 }
