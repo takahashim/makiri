@@ -55,12 +55,7 @@ module Makiri
       # @param text [String]
       # @return [String]
       def title=(text)
-        t = at_css("title")
-        unless t
-          t = Element.new("title", self)
-          (head || root).add_child(t)
-        end
-        t.content = text
+        ensure_in_head("title", "title").content = text
         text
       end
 
@@ -93,13 +88,17 @@ module Makiri
       # @param value [String]
       # @return [String]
       def meta_encoding=(value)
-        meta = at_css("meta[charset]")
-        unless meta
-          meta = Element.new("meta", self)
-          (head || root).add_child(meta)
-        end
-        meta["charset"] = value
+        ensure_in_head("meta[charset]", "meta")["charset"] = value
         value
+      end
+
+      private
+
+      # The first node matching +css_query+, or a freshly created <+tag+>
+      # appended to <head> (or the root when the document has no head). Shared by
+      # #title= and #meta_encoding=, which then set content / attributes on it.
+      def ensure_in_head(css_query, tag)
+        at_css(css_query) || Element.new(tag, self).tap { |el| (head || root).add_child(el) }
       end
     end
   end

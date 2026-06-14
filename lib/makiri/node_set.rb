@@ -48,17 +48,13 @@ module Makiri
     # Run a CSS selector against every node and return the unioned matches.
     # @return [Makiri::NodeSet]
     def css(selector)
-      return self if empty?
-
-      map { |node| node.css(selector) }.reduce(:|)
+      union_query(:css, selector)
     end
 
     # Run an XPath expression against every node and union the node-set results.
     # @return [Makiri::NodeSet]
     def xpath(expr)
-      return self if empty?
-
-      map { |node| node.xpath(expr) }.reduce(:|)
+      union_query(:xpath, expr)
     end
 
     # First node matching the CSS selector across the set, or nil.
@@ -77,9 +73,7 @@ module Makiri
     # CSS- or XPath-detecting query against every node (see {Node#search}).
     # @return [Makiri::NodeSet]
     def search(path)
-      return self if empty?
-
-      map { |node| node.search(path) }.reduce(:|)
+      union_query(:search, path)
     end
 
     # Remove the named attribute from every node in the set.
@@ -108,6 +102,17 @@ module Makiri
 
     def inspect
       "#<#{self.class.name} length=#{length}>"
+    end
+
+    private
+
+    # Run +method+(+arg+) on every node in the set and union the per-node
+    # results. An empty set returns self unchanged, so it stays a NodeSet (the
+    # shared shape behind #css / #xpath / #search).
+    def union_query(method, arg)
+      return self if empty?
+
+      map { |node| node.public_send(method, arg) }.reduce(:|)
     end
   end
 end
