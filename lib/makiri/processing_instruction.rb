@@ -14,5 +14,13 @@ module Makiri
     def self.new(document, target, content)
       Makiri::Document.coerce!(document).create_processing_instruction(target, content)
     end
+
+    # DOM `ProcessingInstruction#target` — the PI's target name. Defined once on
+    # the shared base so both backends expose it: the XML node reaches it here
+    # (its target IS its node name), while the HTML node overrides it with a
+    # native implementation earlier in the ancestor chain.
+    def target
+      name
+    end
   end
 end
