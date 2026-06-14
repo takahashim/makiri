@@ -14,10 +14,18 @@ module Makiri
   # The bulk of the implementation lives in C (see
   # ext/makiri/glue/ruby_xpath.c and ext/makiri/xpath/).
   class XPathContext
-    # +#evaluate+ is defined in C. It evaluates under the GVL (XPath never
-    # releases it), so concurrent +evaluate+ / +register_*+ / +node=+ on the
-    # same context - and any tree mutation of the document being queried - are
-    # serialised by the GVL and cannot corrupt memory.
+    # +#evaluate+ is defined in C and runs under the GVL (XPath never releases
+    # it), so it cannot corrupt memory under concurrency. Two distinct hazards,
+    # handled differently:
+    #
+    # * Cross-thread: the GVL serialises all of +evaluate+ / +register_*+ /
+    #   +node=+ and any tree mutation of the queried document, so threads can
+    #   never run two of them at once.
+    # * Same-thread re-entrancy: a custom function handler runs mid-evaluate and
+    #   could call back into this same context. A re-entrant +register_namespace+
+    #   / +register_variable+ / +node=+ is refused (raises) while an evaluate is
+    #   in progress, since it would free/swap state the suspended evaluator still
+    #   borrows; a nested +evaluate+ is allowed.
 
     # Nokogiri-compatible name for {#register_namespace}.
     alias register_ns register_namespace
