@@ -249,6 +249,16 @@ RSpec.describe "Makiri mutation" do
       div.delete("class")
       expect(doc.css(".fresh").length).to eq(0)
     end
+
+    it "invalidates the element-by-tag index when #name= renames an element" do
+      multi = Makiri::HTML("<html><body><div>x</div><div>y</div></body></html>")
+      multi.xpath("//div")           # build the persisted tag index
+      multi.at_xpath("//div").name = "section"
+      # the //newtag fast path is served from the tag index; without invalidation
+      # the renamed element would be missing from it (a truncated wrong result).
+      expect(multi.xpath("//section").map(&:text)).to eq(["x"])
+      expect(multi.xpath("//div").map(&:text)).to eq(["y"])
+    end
   end
 
   describe "memory safety", :gc_compact do

@@ -426,6 +426,12 @@ mkr_node_set_name(VALUE self, VALUE rb_name)
     el->qualified_name  = fresh->qualified_name;
 
     lxb_dom_node_destroy(lxb_dom_interface_node(fresh));
+    /* The element's tag id (local_name) is the key the element-by-tag index
+     * buckets on and the //tag fast path serves from; renaming changes it, so
+     * the persisted index would otherwise miss the element under its new name
+     * (a truncated, wrong //newtag result). Drop the indexes like every other
+     * mutator. */
+    mkr_invalidate_index(self);
     return rb_name;
 }
 
