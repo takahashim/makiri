@@ -226,6 +226,10 @@ mkr_xpath_limits_t *mkr_ctx_limits           (mkr_xpath_context_t *ctx);
 void               *mkr_ctx_document         (mkr_xpath_context_t *ctx);
 void                mkr_ctx_set_node         (mkr_xpath_context_t *ctx, void *node);
 void                mkr_ctx_set_unprefixed_lax(mkr_xpath_context_t *ctx, int lax);
+/* >0 while an evaluate() runs on this context; the glue refuses re-entrant
+ * register_namespace / register_variable / node= mutations from a handler
+ * while it holds. */
+int                 mkr_ctx_is_evaluating    (mkr_xpath_context_t *ctx);
 
 /* Error helpers (fill *err; never raise). */
 void mkr_err_set (mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *msg);

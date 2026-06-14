@@ -173,5 +173,77 @@ RSpec.describe "Makiri XPath custom function handler" do
         GC.stress = false
       end
     end
+
+    # Regression: a handler invoked from a predicate could re-enter the SAME
+    # context and mutate it mid-walk. Re-registering the prefixed name test's own
+    # namespace prefix freed the URI string the evaluator still borrowed -> an
+    # ASan-confirmed use-after-free read on the next context iteration's walk.
+    # The fix refuses register_namespace / register_variable / node= while an
+    # evaluate is in progress on that context (mkr_ctx_is_evaluating), so the
+    # borrowed registrations and context node can never be freed/swapped under
+    # the suspended evaluator. The mutation fails closed; the handler exception
+    # surfaces as a clean Makiri::Error.
+    let(:multi) do
+      Makiri::HTML(<<~HTML)
+        <html><body>
+          <div><p>a</p></div>
+          <div><p>b</p></div>
+          <div><p>c</p></div>
+        </body></html>
+      HTML
+    end
+    let(:multi_ctx) do
+      c = Makiri::XPathContext.new(multi)
+      c.register_namespace("ng", "http://www.w3.org/1999/xhtml")
+      c
+    end
+
+    it "fails closed when a handler re-registers the name-test's prefix mid-walk" do
+      c = multi_ctx
+      reg = Object.new
+      reg.instance_variable_set(:@ctx, c)
+      def reg.touch
+        @ctx.register_namespace("ng", "http://www.w3.org/1999/xhtml") # would free borrowed URI
+        true
+      end
+      # `ng:p` resolves over a multi-context set (the three divs); the predicate
+      # would re-register on the first, freeing the URI the later iterations read.
+      expect { c.evaluate("//div/ng:p[ng:touch()]", reg) }
+        .to raise_error(Makiri::Error, /while evaluating/)
+    end
+
+    it "fails closed when a handler swaps the context node mid-walk" do
+      c = multi_ctx
+      target = multi.at_xpath("//p")
+      reg = Object.new
+      reg.instance_variable_set(:@ctx, c)
+      reg.instance_variable_set(:@n, target)
+      def reg.touch
+        @ctx.node = @n
+        true
+      end
+      expect { c.evaluate("//div/ng:p[ng:touch()]", reg) }
+        .to raise_error(Makiri::Error, /while evaluating/)
+    end
+
+    it "fails closed when a handler registers a variable mid-walk" do
+      c = multi_ctx
+      reg = Object.new
+      reg.instance_variable_set(:@ctx, c)
+      def reg.touch
+        @ctx.register_variable("x", "1")
+        true
+      end
+      expect { c.evaluate("//div/ng:p[ng:touch()]", reg) }
+        .to raise_error(Makiri::Error, /while evaluating/)
+    end
+
+    it "still allows a nested evaluate() on the same context from a handler" do
+      c = multi_ctx
+      reg = Object.new
+      reg.instance_variable_set(:@ctx, c)
+      def reg.inner(*) = @ctx.evaluate("count(//p)")
+      expect(c.evaluate("ng:inner()", reg)).to eq(3.0)
+    end
   end
 end

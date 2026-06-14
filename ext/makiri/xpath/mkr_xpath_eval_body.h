@@ -901,7 +901,9 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
    * `prefix:*`): a uniform RUNTIME error instead of a silently empty match, and
    * the resolved URI is then handed to every per-node match via step_visit_t so
    * the walk does not re-resolve it per node. */
-  const char *pre_uri = NULL; size_t pre_uri_len = 0; int have_pre = 0;
+  const char *pre_uri = NULL;
+  size_t pre_uri_len = 0;
+  int have_pre = 0;
   if (step->test.prefix.ptr != NULL) {
     pre_uri = mkr_ctx_lookup_ns(ctx, step->test.prefix.ptr, step->test.prefix.len, &pre_uri_len);
     if (pre_uri == NULL) {
@@ -974,6 +976,14 @@ eval_step(mkr_xpath_context_t *ctx, const mkr_step_t *step,
     mkr_nodeset_t fragment;
     mkr_nodeset_init(&fragment);
     for (size_t ci = 0; ci < context_set->count; ++ci) {
+      /* pre_uri borrows ctx->ns[i].uri.ptr and is reused across iterations.
+       * Safe because the URI string cannot be freed mid-evaluate: the only path
+       * that frees it is re-registering the same prefix, and the glue refuses
+       * register_namespace (and register_variable / node=) while an evaluate is
+       * in progress on this context (mkr_ctx_is_evaluating), e.g. when the
+       * apply_predicates() handler below re-enters. Without that guard a handler
+       * re-registering this prefix would dangle pre_uri for the next walk_axis -
+       * an ASan-confirmed use-after-free read (see xpath_handler_spec). */
       fragment.count = 0;
       step_visit_t st = { .out = &fragment, .step = step, .ctx = ctx, .err = err, .aborted = 0,
                           .pre_uri = pre_uri, .pre_uri_len = pre_uri_len, .have_pre = have_pre };

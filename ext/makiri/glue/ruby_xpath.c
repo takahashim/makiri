@@ -271,6 +271,10 @@ mkr_xpath_ctx_set_node(VALUE self, VALUE rb_node)
         rb_raise(rb_eTypeError, "expected a Makiri::Node");
     }
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    if (mkr_ctx_is_evaluating(d->ctx)) {
+        rb_raise(mkr_eError, "cannot change the context node while evaluating "
+                             "(re-entrant mutation from a handler)");
+    }
     if (mkr_node_document(rb_node) != d->document) {
         rb_raise(mkr_eError, "context node must belong to the same document");
     }
@@ -625,6 +629,10 @@ static VALUE
 mkr_xpath_ctx_register_ns(VALUE self, VALUE rb_prefix, VALUE rb_uri)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    if (mkr_ctx_is_evaluating(d->ctx)) {
+        rb_raise(mkr_eError, "cannot register a namespace while evaluating "
+                             "(re-entrant mutation from a handler)");
+    }
     mkr_ruby_borrowed_text_t pv = mkr_ruby_verified_text(rb_prefix, "namespace prefix");
     mkr_ruby_borrowed_text_t uv = mkr_ruby_verified_text(rb_uri, "namespace URI");
     int rc = mkr_xpath_register_ns(d->ctx, mkr_verified_text_from_view(pv),
@@ -641,6 +649,10 @@ static VALUE
 mkr_xpath_ctx_register_variable(VALUE self, VALUE rb_name, VALUE rb_value)
 {
     mkr_xpath_ctx_data_t *d = mkr_xpath_ctx_unwrap(self);
+    if (mkr_ctx_is_evaluating(d->ctx)) {
+        rb_raise(mkr_eError, "cannot register a variable while evaluating "
+                             "(re-entrant mutation from a handler)");
+    }
     /* Coerce the value FIRST (rb_obj_as_string allocates = a GC point), so no
      * borrowed name bytes are held across it. The value gets the stricter
      * engine-string check (adds the byte cap on top of no-NUL / valid-UTF-8). */

@@ -82,6 +82,16 @@ struct mkr_xpath_context_s {
    * other per-evaluate machinery is representation-neutral (pointer/string only),
    * so it runs the HTML copy for both. */
   int engine_kind;
+
+  /* Re-entrancy depth: >0 while an evaluate() is running on this context.
+   * mkr_xpath_eval_compiled bumps it around the walk. A custom function handler
+   * runs arbitrary Ruby mid-walk and could re-enter to mutate this same context
+   * (register_namespace / register_variable / node=); such a mutation can free a
+   * registration string the suspended evaluator still borrows (use-after-free)
+   * or swap the context node mid-walk. The glue refuses those mutations while
+   * this is >0 (mkr_ctx_is_evaluating), failing closed. A nested evaluate() is
+   * fine - it just bumps the depth further. */
+  int evaluating;
 };
 
 /* The two node-dereferencing engine ENTRY points, one pair per monomorphized
@@ -505,6 +515,17 @@ mkr_ctx_set_node(mkr_xpath_context_t *ctx, MKR_DOM_NODE *node)
   if (ctx) ctx->node = node;
 }
 
+/* True while an evaluate() is in progress on this context (including nested
+ * evaluates). The glue uses it to refuse register_namespace / register_variable
+ * / node= re-entered from a custom function handler mid-walk - those mutate the
+ * live registration tables / context node the suspended evaluator still borrows.
+ * See the `evaluating` field comment. */
+int
+mkr_ctx_is_evaluating(mkr_xpath_context_t *ctx)
+{
+  return ctx != NULL && ctx->evaluating > 0;
+}
+
 MKR_DOM_DOCUMENT *
 mkr_ctx_document(mkr_xpath_context_t *ctx)
 {
@@ -602,6 +623,12 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   }
   mkr_xpath_error_t err = {0};
 
+  /* Mark this context as evaluating for the duration of the walk, so a custom
+   * function handler that re-enters cannot mutate it out from under the
+   * evaluator (the glue checks mkr_ctx_is_evaluating). Bracketed by the matching
+   * decrement at every return below; nested evaluates just stack the depth. */
+  ctx->evaluating++;
+
   /* Per-eval counters reset. ast_nodes is NOT reset because the AST is
    * already built and its budget was checked at parse time. */
   ctx->limits.eval_ops        = 0;
@@ -627,6 +654,7 @@ mkr_xpath_eval_compiled(mkr_xpath_context_t *ctx, mkr_node_t *ast,
   /* Clear memoized values regardless of success: they are valid only
    * within a single evaluate scope. Defensive - also clears on error. */
   mkr_node_clear_memos(ast);
+  ctx->evaluating--;
   if (eval_rc != 0) {
     if (out_error) *out_error = err; else mkr_xpath_error_clear(&err);
     return -1;
