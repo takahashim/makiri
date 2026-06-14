@@ -5,9 +5,16 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-06-14
 
 ### Fixed
+
+* Use-after-free when an XPath custom-function handler mutated the same
+  `XPathContext` (`register_*` / `node=`) mid-`evaluate`: such re-entrant context
+  mutation is now refused instead of invalidating the running evaluation's state.
+
+* `Node#name=` now invalidates the element-name index, so a later `//tag` query
+  reflects the rename instead of seeing a stale bucket.
 
 * XML processing-instruction targets now follow XML 1.0 §2.6: a PITarget is a
   `Name`, not an NCName, so a colon is permitted (`<?a:b ...?>` parses, and
@@ -23,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now freed before conversion).
 
 ### Added
+
+* `ProcessingInstruction#target` on the XML node (the PI's target name).
 
 * Cross-kind `Document#import_node(node, deep = false)`. `import_node` now
   translates a subtree across representations: `Makiri::XML::Document#import_node`
