@@ -67,6 +67,21 @@
 }
 
 # ---- conservative GC: uninitialised-value reads (Memcheck:Value8) ----
+# `gc_aging` (Ruby's default.c) ages objects during incremental marking and
+# reads the not-yet-written RVALUE flag word - the same false positive as the
+# drivers below, but here it is the ONLY resolved frame (every caller is
+# `<unknown stack frame>`), so the `...`-then-driver anchors miss it. Anchor on
+# the top frame itself (the `.part.0` GCC partial-inline clone is matched by `*`).
+{
+  ruby-gc-cond-gc_aging
+  Memcheck:Cond
+  fun:gc_aging*
+}
+{
+  ruby-gc-value8-gc_aging
+  Memcheck:Value8
+  fun:gc_aging*
+}
 {
   ruby-gc-value8-garbage_collect
   Memcheck:Value8
