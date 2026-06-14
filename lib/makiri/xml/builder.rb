@@ -30,7 +30,7 @@ module Makiri
     #
     # Tag names that collide with a Ruby/Kernel method (or with one of this
     # builder's own helpers below - +text+, +cdata+, +comment+, +doc+, +parent+,
-    # +to_xml+, +to_s+) must be written with a trailing underscore, which is
+    # +to_xml+, +to_s+, +descend+) must be written with a trailing underscore, which is
     # stripped: +xml.id_("9")+ produces +<id>9</id>+. This matches Nokogiri.
     #
     # A namespace prefix is selected for the next element with +[]+:
@@ -137,6 +137,22 @@ module Makiri
         true
       end
 
+      # Run +block+ with +node+ as the current parent, restoring the previous
+      # parent afterward (even if the block raises) and returning the block's
+      # value. The single place +@parent+ is pushed/popped - shared by #insert and
+      # by {NodeBuilder}'s nested-block chain, so neither manipulates the parent
+      # state directly. Public so NodeBuilder (a separate class) can reuse it
+      # without reaching into a private method.
+      def descend(node, &block)
+        previous = @parent
+        @parent = node
+        begin
+          run(&block)
+        ensure
+          @parent = previous
+        end
+      end
+
       private
 
       # Translate the Nokogiri-style trailing arguments (a Hash is attributes,
@@ -175,21 +191,6 @@ module Makiri
         node = @parent.add_child(node)
         descend(node, &block) if block
         NodeBuilder.new(node, self)
-      end
-
-      # Run +block+ with +node+ as the current parent, restoring the previous
-      # parent afterward (even if the block raises) and returning the block's
-      # value. The single place the parent is pushed/popped - shared by #insert and
-      # NodeBuilder's nested-block chain, so neither manipulates the parent state
-      # directly.
-      def descend(node, &block)
-        previous = @parent
-        @parent = node
-        begin
-          run(&block)
-        ensure
-          @parent = previous
-        end
       end
 
       # Run a DSL block, choosing instance_eval vs yield once (from the first
@@ -239,23 +240,30 @@ module Makiri
           when /\A(.*)=\z/
             @node[Regexp.last_match(1)] = args.first
           else
-            @node["class"] = ((@node["class"] || "").split(/\s/) + [method.to_s]).join(" ")
+            append_attr("class", method.to_s)
             @node.content = args.first if args.first
           end
 
-          opts.each do |key, value|
-            @node[key.to_s] = ((@node[key.to_s] || "").split(/\s/) + [value]).join(" ")
-          end
+          opts.each { |key, value| append_attr(key.to_s, value) }
 
           # Descend into this node for a nested block via the builder's own parent
           # stack (with its ensure-based restore), rather than re-rooting it by hand.
-          return @doc_builder.send(:descend, @node, &block) if block
+          return @doc_builder.descend(@node, &block) if block
 
           self
         end
 
         def respond_to_missing?(_name, _include_private = false)
           true
+        end
+
+        private
+
+        # Append +value+ as a space-separated token to the +key+ attribute,
+        # preserving any existing tokens. The shared idiom behind the terse
+        # class-append and the trailing-Hash attribute shortcut.
+        def append_attr(key, value)
+          @node[key] = ((@node[key] || "").split(/\s/) + [value]).join(" ")
         end
       end
     end
