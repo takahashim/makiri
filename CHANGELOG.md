@@ -1,9 +1,11 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.5.1] - 2026-06-22
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Changed
+
+* Faster CSS queries that reuse the same selector: compiled selectors are now
+  cached and reused across queries instead of being re-parsed each time.
 
 ## [0.5.0] - 2026-06-14
 
@@ -362,7 +364,8 @@ libxml2 / libxslt dependency at any layer**.
   domxpath, CSS differential vs `Nokogiri::HTML5`). GitHub Actions CI across
   Ruby 3.2–4.0 × Ubuntu/macOS plus a sanitizer job.
 
-[Unreleased]: https://github.com/takahashim/makiri/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/takahashim/makiri/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/takahashim/makiri/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/takahashim/makiri/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/takahashim/makiri/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/takahashim/makiri/compare/v0.2.0...v0.3.0
