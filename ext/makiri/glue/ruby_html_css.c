@@ -33,6 +33,34 @@ static lxb_css_selectors_t *g_css_sel;
 static lxb_selectors_t     *g_selectors;
 static int                  g_css_ready;
 
+/* Compiled-selector cache: a Ruby Hash mapping a selector String to the parsed
+ * lxb_css_selector_list_t (stored as an Integer pointer). Parsing a selector is
+ * the dominant cost when the same selectors are queried over and over (a
+ * querySelector-heavy SPA fires tens of thousands of identical queries), so the
+ * compiled list is reused instead of re-parsed. The parsed lists live in the
+ * shared g_css_mem arena, which is therefore NOT cleaned per call (the original
+ * code reset it after every query); to bound growth, when the cache fills we drop
+ * every compiled list at once (clean the arena + clear the Hash) and start over. */
+static VALUE                g_css_cache;
+#define MKR_CSS_CACHE_CAP   256
+
+/* Adaptive caching. Holding many distinct compiled lists in the shared arena
+ * makes each new parse slower (a bigger arena = more allocator work), so a flood
+ * of one-off selectors -- e.g. getElementById on unique React `useId` ids, which
+ * are never requeried -- turned the cache into a net loss vs the original
+ * parse+clean (measured ~22% slower per call). Track the cache hit rate over a
+ * window and, when it is low, BYPASS the cache: parse + clean per call, exactly
+ * as before, so the arena stays small and the worst case is merely "as fast as no
+ * cache". Periodically drop back into caching to re-test, so a workload that
+ * starts repeating selectors regains the cache. */
+static size_t               g_css_win;        /* lookups in the current window */
+static size_t               g_css_win_hits;   /* cache hits in the current window */
+static int                  g_css_bypass;     /* 1 = parse+clean, no caching */
+static size_t               g_css_bypass_runs; /* consecutive bypass windows */
+#define MKR_CSS_WIN          1024  /* re-evaluate the hit rate every N lookups */
+#define MKR_CSS_MIN_HIT_PCT  15    /* below this hit rate, bypass the cache */
+#define MKR_CSS_RETEST_GAP   32    /* re-test caching every N bypass windows */
+
 /* Build the shared engine on first use; raises Makiri::Error on init failure
  * (leaving the globals unset, so a later call retries). */
 static void
@@ -179,22 +207,83 @@ mkr_with_compiled_selector(VALUE rb_selector, lxb_dom_node_t *node,
 
     mkr_css_engine_init(); /* raises on init failure */
 
-    lxb_css_selector_list_t *list =
-        lxb_css_selectors_parse(g_css_parser, (const lxb_char_t *)sv.ptr, sv.len);
-
-    int syntax_error = (list == NULL || g_css_parser->status != LXB_STATUS_OK);
-    if (!syntax_error) {
-        (void)run(g_selectors, node, list, u);
+    if (g_css_cache == 0) {
+        g_css_cache = rb_hash_new();
+        rb_gc_register_address(&g_css_cache);
     }
 
-    /* Reset the shared engine for the next query: drop the parsed list's arena
-     * allocations and return the parser to its CLEAN stage. Both preserve the
-     * memory/selectors objects we set once; the traversal engine self-cleans
-     * after find/match. */
+    /* Adaptive window: every MKR_CSS_WIN lookups, decide whether caching is
+     * paying off. A low hit rate (mostly one-off selectors) means the cache is
+     * only growing the arena and slowing parses, so bypass it; periodically
+     * re-test so a workload that becomes selector-repetitive regains the cache. */
+    if (++g_css_win > MKR_CSS_WIN) {
+        if (!g_css_bypass) {
+            if (g_css_win_hits * 100 < (size_t)MKR_CSS_WIN * MKR_CSS_MIN_HIT_PCT) {
+                g_css_bypass = 1;
+                g_css_bypass_runs = 0;
+                lxb_css_memory_clean(g_css_mem); /* drop the cached lists' arena */
+                rb_hash_clear(g_css_cache);
+            }
+        } else if (++g_css_bypass_runs >= MKR_CSS_RETEST_GAP) {
+            g_css_bypass = 0; /* re-test caching over the next window */
+        }
+        g_css_win = 1;
+        g_css_win_hits = 0;
+    }
+
+    if (!g_css_bypass) {
+        /* Reuse the compiled selector when we have already parsed this string. */
+        VALUE cached = rb_hash_lookup(g_css_cache, sv.value);
+        if (!NIL_P(cached)) {
+            lxb_css_selector_list_t *list =
+                (lxb_css_selector_list_t *)(intptr_t)NUM2LL(cached);
+            g_css_win_hits++;
+            (void)run(g_selectors, node, list, u);
+            /* The traversal engine self-cleans; the cached list + arena persist. */
+            RB_GC_GUARD(sv.value);
+            return;
+        }
+
+        /* Cache miss. Bound the cache before parsing: when full, drop every
+         * compiled list at once by cleaning the shared arena, then start fresh —
+         * so the new list is parsed into the now-empty arena (cleaning AFTER
+         * parsing would invalidate it). */
+        if (RHASH_SIZE(g_css_cache) >= MKR_CSS_CACHE_CAP) {
+            lxb_css_memory_clean(g_css_mem);
+            rb_hash_clear(g_css_cache);
+        }
+
+        lxb_css_selector_list_t *list =
+            lxb_css_selectors_parse(g_css_parser, (const lxb_char_t *)sv.ptr, sv.len);
+        int syntax_error = (list == NULL || g_css_parser->status != LXB_STATUS_OK);
+
+        /* Return the parser to its CLEAN stage; do NOT clean the memory arena —
+         * the freshly parsed list lives there and we keep it. */
+        lxb_css_parser_clean(g_css_parser);
+
+        if (syntax_error) {
+            rb_raise(mkr_eCSSSyntaxError, "invalid CSS selector: %" PRIsVALUE, sv.value);
+        }
+
+        /* Cache the compiled list (the Hash dups + freezes the String key), then
+         * run. Store the pointer as a Ruby Integer; the list outlives the call. */
+        rb_hash_aset(g_css_cache, sv.value, LL2NUM((long long)(intptr_t)list));
+        (void)run(g_selectors, node, list, u);
+        RB_GC_GUARD(sv.value);
+        return;
+    }
+
+    /* Bypass mode: parse + clean per call (the original behavior), so the arena
+     * stays small and a one-off-selector flood is no slower than no cache. */
+    lxb_css_selector_list_t *l0 =
+        lxb_css_selectors_parse(g_css_parser, (const lxb_char_t *)sv.ptr, sv.len);
+    int err0 = (l0 == NULL || g_css_parser->status != LXB_STATUS_OK);
+    if (!err0) {
+        (void)run(g_selectors, node, l0, u);
+    }
     lxb_css_memory_clean(g_css_mem);
     lxb_css_parser_clean(g_css_parser);
-
-    if (syntax_error) {
+    if (err0) {
         rb_raise(mkr_eCSSSyntaxError, "invalid CSS selector: %" PRIsVALUE, sv.value);
     }
     RB_GC_GUARD(sv.value);
