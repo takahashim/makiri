@@ -125,6 +125,28 @@
   fun:mark_roots
 }
 
+# ---- incremental GC write barrier: uninitialised-value reads ----
+# An allocating Ruby C-API call from one of our cfuncs (e.g. rb_str_subseq in
+# mkr_xml_decode_input) fires the incremental-GC write barrier synchronously;
+# `gc_writebarrier_incremental` then reads an object's not-yet-written RVALUE
+# flag word via `RVALUE_BLACK_P` - the same uninit-flag false positive as the GC
+# drivers above, but reached through the barrier rather than a mark/sweep cycle,
+# so the driver-anchored entries miss it. Our code never touches RVALUE flags;
+# it only calls the allocating API, so anchoring on the barrier cannot mask a
+# real uninit read of ours.
+{
+  ruby-gc-cond-writebarrier_incremental
+  Memcheck:Cond
+  ...
+  fun:gc_writebarrier_incremental
+}
+{
+  ruby-gc-value8-writebarrier_incremental
+  Memcheck:Value8
+  ...
+  fun:gc_writebarrier_incremental
+}
+
 # ---- Ruby VM internal caches that are never freed before exit ----
 # The global constant-cache / inline method-cache id_table is allocated lazily
 # on method lookup and lives for the life of the VM, so RUBY_FREE_AT_EXIT still
