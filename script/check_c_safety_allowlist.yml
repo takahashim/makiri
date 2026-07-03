@@ -104,14 +104,16 @@ allowlist:
     max: 3
     reason: "mkr_lookup_function's three strcmp over compile-time function-name tables: both sides are NUL-terminated (table literals / owned AST text), and the lookup signature takes bare const char* from the evaluator."
 
-  # --- verified_text_forge: the two Ruby-free test entry points. Neither can use
-  #     mkr_verified_text_from_view (bridge = Ruby boundary), so each mints the
-  #     token itself and must supply the contract by construction. ---
-  - path: ext/makiri/xpath/mkr_xpath_xml_selftest.c
-    rule: verified_text_forge
-    max: 2
-    reason: "Selftest expressions are compile-time string literals: NUL-terminated, NUL-free, valid UTF-8 by construction."
+  # --- verified_text_forge: the Ruby-free test entry points that mint over a
+  #     runtime buffer (not a compile-time literal, which uses
+  #     mkr_verified_text_lit). Neither can use mkr_verified_text_from_view
+  #     (bridge = Ruby boundary), so each mints itself and must supply the
+  #     contract by construction. ---
   - path: ext/makiri/fuzz/xpath_fuzz.c
     rule: verified_text_forge
     max: 1
     reason: "The libFuzzer harness mints over an owned mkr_strndup copy, which supplies NUL-termination and no-interior-NUL; UTF-8 validity is deliberately left to the lexer's strict decoder (its rejection path is fuzz-target behavior)."
+  - path: ext/makiri/fuzz/xml_xpath_fuzz.c
+    rule: verified_text_forge
+    max: 1
+    reason: "The expression mint is over an owned mkr_strndup copy, which supplies NUL-termination and no-interior-NUL; UTF-8 validity is pre-checked (the harness filters invalid UTF-8 before parsing). Mirrors xpath_fuzz.c."

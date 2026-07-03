@@ -22,16 +22,27 @@ extern "C" {
 /* A borrowed byte slice whose contents are guaranteed to satisfy Makiri's
  * engine text contract: valid UTF-8, no interior NUL, and NUL-terminated at
  * ptr[len]. The XPath engine's public string entry points accept ONLY this
- * type, so a raw `const char *` cannot be passed without a compile error. The
- * sole constructor is mkr_verified_text_from_view() at the Ruby boundary (bridge),
- * which can only be fed a view that mkr_ruby_verified_text() already validated;
- * there is deliberately no Ruby-free constructor, so unvalidated bytes have no
- * path into the engine. (ptr is non-owning: the caller keeps it alive for the
- * duration of the engine call.) */
+ * type, so a raw `const char *` cannot be passed without a compile error.
+ * Constructors:
+ *   - mkr_verified_text_from_view() at the Ruby boundary (bridge), fed a view
+ *     that mkr_ruby_verified_text() already validated;
+ *   - mkr_verified_text_lit() below, for compile-time string literals (which
+ *     meet the contract by construction).
+ * There is deliberately no Ruby-free constructor over runtime bytes, so
+ * unvalidated bytes have no path into the engine. (ptr is non-owning: the
+ * caller keeps it alive for the duration of the engine call.) */
 typedef struct {
     const char *ptr;
     size_t      len;
 } mkr_verified_text_t;
+
+/* Wrap a compile-time string literal as a verified-text token. The literal is
+ * NUL-terminated, NUL-free, and valid UTF-8 by construction, so it meets the
+ * engine text contract without validation - the sole Ruby-free mint, for
+ * selftest / fuzz harness literals that the bridge cannot reach. Do not pass a
+ * char* variable: sizeof(pointer) would not be the byte length. */
+#define mkr_verified_text_lit(lit) \
+    ((mkr_verified_text_t){ (lit), sizeof(lit) - 1 })
 
 /* ---------------------------------------------------------------- */
 /* string-type lattice                                              */
@@ -60,9 +71,10 @@ typedef struct {
  *   convention above; do not resurrect a placeholder before there is a user.
  *
  *   (*) mkr_verified_text_t (defined above) is the one deliberate naming exception:
- *   it is a borrowed valid text AND a capability token. Its sole constructor is
- *   mkr_verified_text_from_view() at the Ruby boundary, so an unvalidated const char*
- *   cannot reach the engine's public API. Internally the engine carries the
+ *   it is a borrowed valid text AND a capability token. Its constructors are
+ *   mkr_verified_text_from_view() at the Ruby boundary and mkr_verified_text_lit()
+ *   for compile-time literals, so an unvalidated runtime const char* cannot
+ *   reach the engine's public API. Internally the engine carries the
  *   freely-constructible mkr_borrowed_text_t instead.
  *
  * Conversions - the only sanctioned edges. The points that actually VALIDATE

@@ -9,12 +9,11 @@
 #include "mkr_xpath_internal.h"
 #include "../xml/mkr_xml.h"
 
-/* Evaluate +expr+ (length +elen+) against the XML +doc+ and return the resulting
- * node-set count, or SIZE_MAX on any error / non-node-set. Registers prefix
- * "d" -> "urn:d". Lengths come from sizeof on the compile-time literals (no
- * strlen - this file is outside the clint core+bridge allowlist). */
+/* Evaluate +expr+ (a verified-text token over a compile-time literal) against
+ * the XML +doc+ and return the resulting node-set count, or SIZE_MAX on any
+ * error / non-node-set. Registers prefix "d" -> "urn:d". */
 static size_t
-xml_count(mkr_xml_doc_t *doc, const char *expr, size_t elen)
+xml_count(mkr_xml_doc_t *doc, mkr_verified_text_t expr)
 {
     /* The context's "document" and root context node are both the DOCUMENT node
      * (the XPath "/" root); for XML the engine's namespace services ignore the
@@ -24,13 +23,11 @@ xml_count(mkr_xml_doc_t *doc, const char *expr, size_t elen)
     if (ctx == NULL) return (size_t)-1;
     mkr_xpath_set_engine_kind(ctx, 1);
 
-    mkr_verified_text_t dp = { "d", 1 }, du = { "urn:d", 5 };
-    mkr_xpath_register_ns(ctx, dp, du);
+    mkr_xpath_register_ns(ctx, mkr_verified_text_lit("d"), mkr_verified_text_lit("urn:d"));
 
     mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
     mkr_xpath_error_t err = {0};
-    mkr_verified_text_t e = { expr, elen };
-    mkr_node_t *ast = mkr_parse(e, L, &err);
+    mkr_node_t *ast = mkr_parse(expr, L, &err);
     size_t out = (size_t)-1;
     if (ast != NULL) {
         mkr_xpath_value_t v = {0};
@@ -57,7 +54,7 @@ mkr_xml_xpath_selftest(void)
     if (doc == NULL) return ++idx;                                  /* 1 */
 
 #define CHECK(expr, want)                                                     \
-    do { idx++; if (xml_count(doc, (expr), sizeof(expr) - 1) != (size_t)(want)) { \
+    do { idx++; if (xml_count(doc, mkr_verified_text_lit(expr)) != (size_t)(want)) { \
              mkr_xml_doc_destroy(doc); return idx; } } while (0)
 
     CHECK("//b", 2);          /* 1: unprefixed -> no-namespace only (excludes d:b) */

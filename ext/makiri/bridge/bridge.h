@@ -84,10 +84,12 @@ const char *mkr_ruby_try_verified_text(VALUE sv, size_t max_bytes,
  * escape. Embedded NULs are intentionally truncated by %s formatting. */
 void mkr_ruby_exception_message(VALUE exc, char *buf, size_t len);
 
-/* The sole constructor of mkr_verified_text_t. Turns an already-validated view
- * (from mkr_ruby_verified_text or mkr_ruby_try_verified_text) into the token the
- * XPath engine accepts. The returned token borrows v.ptr; the caller must keep
- * v.value alive for the duration of the engine call. */
+/* The Ruby-bound constructor of mkr_verified_text_t. Turns an already-validated
+ * view (from mkr_ruby_verified_text or mkr_ruby_try_verified_text) into the token
+ * the XPath engine accepts. The returned token borrows v.ptr; the caller must
+ * keep v.value alive for the duration of the engine call. The sole Ruby-free
+ * constructor is mkr_verified_text_lit (core/mkr_text.h), for compile-time
+ * literals. */
 mkr_verified_text_t mkr_verified_text_from_view(mkr_ruby_borrowed_text_t v);
 
 /* Assemble a UTF-8 Ruby String of exactly +total+ bytes by concatenating +n+

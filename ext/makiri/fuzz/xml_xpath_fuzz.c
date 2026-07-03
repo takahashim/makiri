@@ -54,11 +54,23 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         L->max_nodeset_size = 1024;
         L->max_string_bytes = 4096;
 
-        mkr_verified_text_t dp = { "d", 1 }, du = { "urn:d", 5 };
-        mkr_xpath_register_ns(ctx, dp, du);
+        mkr_xpath_register_ns(ctx, mkr_verified_text_lit("d"), mkr_verified_text_lit("urn:d"));
+
+        /* The expression is the bytes after the separator NUL. libFuzzer
+         * gives exactly `size` bytes with no trailing terminator, so copy
+         * into an owned, NUL-terminated heap buffer and mint over that
+         * (mirroring xpath_fuzz.c): this supplies the NUL at ptr[len] the
+         * lexer's strtod / "%.10s" error path rely on. UTF-8 validity was
+         * checked above; the copy preserves it. */
+        char *expr_copy = mkr_strndup(expr, expr_len);
+        if (expr_copy == NULL) {
+            mkr_xpath_context_free(ctx);
+            mkr_xml_doc_destroy(doc);
+            return 0;
+        }
 
         mkr_xpath_error_t err = {0};
-        mkr_verified_text_t e = { expr, expr_len };
+        mkr_verified_text_t e = { expr_copy, expr_len };
         mkr_node_t *ast = mkr_parse(e, L, &err);
         if (ast != NULL) {
             mkr_xpath_value_t v = {0};
@@ -67,6 +79,7 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             mkr_node_free(ast);
         }
         mkr_xpath_error_clear(&err);
+        free(expr_copy);
         mkr_xpath_context_free(ctx);
     }
     mkr_xml_doc_destroy(doc);
