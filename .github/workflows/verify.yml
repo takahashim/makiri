@@ -1,0 +1,37 @@
+name: Verify
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  cbmc:
+    name: CBMC proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Install CBMC
+        env:
+          CBMC_VERSION: "6.9.0"
+        run: |
+          curl -fsSLO "https://github.com/diffblue/cbmc/releases/download/cbmc-${CBMC_VERSION}/ubuntu-24.04-cbmc-${CBMC_VERSION}-Linux.deb"
+          sudo apt-get update
+          sudo apt-get install -y "./ubuntu-24.04-cbmc-${CBMC_VERSION}-Linux.deb"
+          cbmc --version
+
+      - name: Run verification suite
+        run: bundle exec rake verify
