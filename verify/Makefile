@@ -30,6 +30,8 @@ LXB  := $(ROOT)/vendor/lexbor/source
 CC     ?= cc
 CBMC   ?= cbmc
 CFLAGS ?= -O1 -g -Wall -Wextra
+# fmod & co. need an explicit -lm on Linux (folded into libc on macOS).
+LDLIBS ?= -lm
 INC    := -I $(EXT) -I $(LXB) -I .
 
 CORE_SRC  := $(EXT)/core/mkr_alloc.c $(EXT)/core/mkr_buf.c \
@@ -60,34 +62,34 @@ smoke: $(HARNESSES:%=$(BUILD)/harness-%)
 	@echo "smoke: all harnesses link and run"
 
 $(BUILD)/harness-alloc: harness_alloc.c $(EXT)/core/mkr_alloc.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-utf8: harness_utf8.c $(EXT)/core/mkr_utf8.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-utf8-chain: harness_utf8_chain.c $(EXT)/core/mkr_utf8.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-span: harness_span.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-spanbuf: harness_spanbuf.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-buf: harness_buf.c $(EXT)/core/mkr_buf.c $(EXT)/core/mkr_alloc.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-hash: harness_hash.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 # mkr_parse's limit checks + limits_init_defaults live in mkr_xpath.c (the
 # dispatcher), which references both engine instances - so the smoke link
 # takes the full engine (stub.c supplies the HTML side).
 $(BUILD)/harness-xpath-parse: harness_xpath_parse.c $(ENGINE_SRC) | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-xpath-lex: harness_xpath_lex.c $(ENGINE_SRC) | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-xml-parse: harness_xml_parse.c $(XML_SRC) $(CORE_SRC) | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 
 selftest: $(BUILD)/selftest
 	$(BUILD)/selftest
 
 $(BUILD)/selftest: selftest_main.c $(ENGINE_SRC) $(EXT)/xpath/mkr_xpath_xml_selftest.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) $^ -o $@
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
