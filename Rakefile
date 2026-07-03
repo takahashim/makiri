@@ -287,6 +287,12 @@ task :oom do
   puts "(injection build left in place; run `rake clean compile` to restore a normal build)"
 end
 
+desc "CBMC proofs over the Ruby/Lexbor-free carve-out (core + XML + XPath front; " \
+     "needs cbmc; see docs/formal_verification.ja.md and verify/Makefile)"
+task :verify do
+  sh "make -C verify smoke selftest cbmc"
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)

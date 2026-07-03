@@ -1,9 +1,10 @@
 # ext/makiri/fuzz/Makefile - libFuzzer harness build
 #
 # Usage:
-#   make xml_fuzz      # build the XML parser harness
-#   make xpath_fuzz    # build the XPath compile+eval harness
-#   make clean         # remove build artifacts
+#   make xml_fuzz       # build the XML parser harness
+#   make xpath_fuzz     # build the XPath compile+eval harness (fixed document)
+#   make xml_xpath_fuzz # build the combined harness (fuzzer-controlled document + expression)
+#   make clean          # remove build artifacts
 #
 # Requires: clang with libFuzzer support (usually part of the clang distribution)
 #   and the vendored Lexbor static library already built (via `rake compile`).
@@ -64,9 +65,9 @@ CORE_OBJS  = $(patsubst $(EXT_DIR)/%.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))
 XML_OBJS   = $(patsubst $(EXT_DIR)/%.c,$(BUILD_DIR)/%.o,$(XML_SRCS))
 XPATH_OBJS = $(patsubst $(EXT_DIR)/%.c,$(BUILD_DIR)/%.o,$(XPATH_SRCS))
 
-.PHONY: all clean check-libfuzzer xml_fuzz xpath_fuzz
+.PHONY: all clean check-libfuzzer xml_fuzz xpath_fuzz xml_xpath_fuzz
 
-all: check-libfuzzer xml_fuzz xpath_fuzz
+all: check-libfuzzer xml_fuzz xpath_fuzz xml_xpath_fuzz
 
 check-libfuzzer:
 	@mkdir -p $(BUILD_DIR)
@@ -77,6 +78,9 @@ xml_fuzz: $(BUILD_DIR)/xml_fuzz.o $(CORE_OBJS) $(XML_OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 xpath_fuzz: $(BUILD_DIR)/xpath_fuzz.o $(CORE_OBJS) $(XML_OBJS) $(XPATH_OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LEXBOR_DST)/lib/liblexbor_static.a
+
+xml_xpath_fuzz: $(BUILD_DIR)/xml_xpath_fuzz.o $(CORE_OBJS) $(XML_OBJS) $(XPATH_OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LEXBOR_DST)/lib/liblexbor_static.a
 
 $(BUILD_DIR)/%.o: $(EXT_DIR)/%.c
@@ -91,5 +95,9 @@ $(BUILD_DIR)/xpath_fuzz.o: xpath_fuzz.c
 	@mkdir -p $(dir $@)
 	$(CLANG) $(CFLAGS) -c -o $@ $<
 
+$(BUILD_DIR)/xml_xpath_fuzz.o: xml_xpath_fuzz.c
+	@mkdir -p $(dir $@)
+	$(CLANG) $(CFLAGS) -c -o $@ $<
+
 clean:
-	rm -rf $(BUILD_DIR) xml_fuzz xpath_fuzz
+	rm -rf $(BUILD_DIR) xml_fuzz xpath_fuzz xml_xpath_fuzz

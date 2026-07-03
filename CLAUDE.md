@@ -73,6 +73,10 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # site in turn - every OOM branch must fail closed
                                    # (clean raise or baseline-identical result)
 bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
+bundle exec rake verify            # CBMC proofs over the Ruby/Lexbor-free carve-out
+                                   # (every logic-bearing core primitive: size arithmetic,
+                                   # UTF-8 validate/decode, span/spanbuf, mkr_buf, pow2 sizer;
+                                   # needs `brew install cbmc`;
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
@@ -160,10 +164,13 @@ ext/makiri/
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
-  dom_adapter/           attr->owner index, source location, post-parse orchestration
+  xml/                     native XML reader (Ruby/Lexbor-free; own arena)
+  dom_adapter/             attr->owner index, source location, post-parse orchestration
+  fuzz/                    native libFuzzer harnesses (xml/xpath/xml_xpath; nightly CI)
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 bench/                     Nokogiri-comparison benchmark
+verify/                    CBMC proof harnesses (rake verify)
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 

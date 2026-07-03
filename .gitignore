@@ -41,3 +41,6 @@ spec/fuzz/regressions/*
 
 # Conformance test data (fetched on demand & pinned by the runner; not vendored)
 spec/conformance/data/
+
+# verification build (verify/Makefile)
+/verify/build/
