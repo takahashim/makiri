@@ -1509,14 +1509,15 @@ eval_fncall(mkr_xpath_context_t *ctx, const mkr_node_t *n,
             mkr_val_t *out, mkr_xpath_error_t *err)
 {
   const char *ns_uri = NULL;
+  size_t ns_uri_len = 0;
   if (n->u.fncall.prefix.ptr) {
-    ns_uri = mkr_ctx_lookup_ns(ctx, n->u.fncall.prefix.ptr, n->u.fncall.prefix.len, NULL);
+    ns_uri = mkr_ctx_lookup_ns(ctx, n->u.fncall.prefix.ptr, n->u.fncall.prefix.len, &ns_uri_len);
     if (ns_uri == NULL) {
       mkr_err_setf(err, MKR_XPATH_ERR_RUNTIME, "unknown namespace prefix '%s'", n->u.fncall.prefix.ptr);
       return -1;
     }
   }
-  mkr_func_impl_t fn = mkr_lookup_function(ns_uri, n->u.fncall.name.ptr);
+  mkr_func_impl_t fn = mkr_lookup_function(ns_uri, ns_uri_len, n->u.fncall.name.ptr, n->u.fncall.name.len);
 
   /* Evaluate arguments once and reuse for either path. */
   mkr_val_t *args = NULL;

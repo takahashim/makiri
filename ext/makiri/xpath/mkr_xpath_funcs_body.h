@@ -329,13 +329,17 @@ fn_nokogiri_local_name_is(mkr_xpath_context_t *ctx, const mkr_focus_t *focus,
 
 typedef struct {
   const char     *name;
-  mkr_func_impl_t  fn;
+  size_t          name_len;
+  mkr_func_impl_t fn;
 } fn_entry_t;
 
+#define FN_ENTRY(name, fn) { (name), sizeof(name) - 1, (fn) }
+#define FN_ENTRY_END       { NULL, 0, NULL }
+
 static const fn_entry_t fn_table_nokogiri_builtin[] = {
-  { "css-class",     fn_nokogiri_css_class     },
-  { "local-name-is", fn_nokogiri_local_name_is },
-  { NULL,            NULL                      },
+  FN_ENTRY("css-class",     fn_nokogiri_css_class),
+  FN_ENTRY("local-name-is", fn_nokogiri_local_name_is),
+  FN_ENTRY_END,
 };
 
 #ifdef MKR_HOST_XML
@@ -1047,58 +1051,61 @@ fn_lang(mkr_xpath_context_t *ctx, const mkr_focus_t *focus,
 
 static const fn_entry_t fn_table[] = {
   /* node-set */
-  { "last",             fn_last             },
-  { "position",         fn_position         },
-  { "count",            fn_count            },
-  { "id",               fn_id               },
-  { "local-name",       fn_local_name       },
-  { "namespace-uri",    fn_namespace_uri    },
-  { "name",             fn_name             },
+  FN_ENTRY("last",             fn_last),
+  FN_ENTRY("position",         fn_position),
+  FN_ENTRY("count",            fn_count),
+  FN_ENTRY("id",               fn_id),
+  FN_ENTRY("local-name",       fn_local_name),
+  FN_ENTRY("namespace-uri",    fn_namespace_uri),
+  FN_ENTRY("name",             fn_name),
   /* string */
-  { "string",           fn_string           },
-  { "concat",           fn_concat           },
-  { "starts-with",      fn_starts_with      },
-  { "contains",         fn_contains         },
-  { "substring-before", fn_substring_before },
-  { "substring-after",  fn_substring_after  },
-  { "substring",        fn_substring        },
-  { "string-length",    fn_string_length    },
-  { "normalize-space",  fn_normalize_space  },
-  { "translate",        fn_translate        },
+  FN_ENTRY("string",           fn_string),
+  FN_ENTRY("concat",           fn_concat),
+  FN_ENTRY("starts-with",      fn_starts_with),
+  FN_ENTRY("contains",         fn_contains),
+  FN_ENTRY("substring-before", fn_substring_before),
+  FN_ENTRY("substring-after",  fn_substring_after),
+  FN_ENTRY("substring",        fn_substring),
+  FN_ENTRY("string-length",    fn_string_length),
+  FN_ENTRY("normalize-space",  fn_normalize_space),
+  FN_ENTRY("translate",        fn_translate),
   /* boolean */
-  { "not",              fn_not              },
-  { "true",             fn_true             },
-  { "false",            fn_false            },
-  { "boolean",          fn_boolean          },
-  { "lang",             fn_lang             },
+  FN_ENTRY("not",              fn_not),
+  FN_ENTRY("true",             fn_true),
+  FN_ENTRY("false",            fn_false),
+  FN_ENTRY("boolean",          fn_boolean),
+  FN_ENTRY("lang",             fn_lang),
   /* number */
-  { "number",           fn_number           },
-  { "sum",              fn_sum              },
-  { "floor",            fn_floor            },
-  { "ceiling",          fn_ceiling          },
-  { "round",            fn_round            },
+  FN_ENTRY("number",           fn_number),
+  FN_ENTRY("sum",              fn_sum),
+  FN_ENTRY("floor",            fn_floor),
+  FN_ENTRY("ceiling",          fn_ceiling),
+  FN_ENTRY("round",            fn_round),
 #ifdef MKR_HOST_XML
   /* CSS-only internal hooks for untyped :*-of-type; the \x01-prefixed names are
    * unreachable from a user XPath expression (the lexer cannot produce them). */
-  { MKR_FN_OF_TYPE_POS,      fn_xml_of_type_pos      },
-  { MKR_FN_OF_TYPE_POS_LAST, fn_xml_of_type_pos_last },
+  FN_ENTRY(MKR_FN_OF_TYPE_POS,      fn_xml_of_type_pos),
+  FN_ENTRY(MKR_FN_OF_TYPE_POS_LAST, fn_xml_of_type_pos_last),
 #endif
-  { NULL,               NULL                },
+  FN_ENTRY_END,
 };
 
 /* File-static: the function table is engine-internal. eval_fncall (later in the
  * merged engine TU) resolves through it; nothing outside the engine does. */
 static mkr_func_impl_t
-mkr_lookup_function(const char *ns_uri, const char *local_name)
+mkr_lookup_function(const char *ns_uri, size_t ns_uri_len,
+                    const char *local_name, size_t local_name_len)
 {
   if (local_name == NULL) return NULL;
   if (ns_uri != NULL) {
     /* Nokogiri-compatible builtins live in MKR_NS_NOKOGIRI_BUILTIN_URI.
      * Other registered namespaces resolve to user-defined functions -
      * not yet implemented (Phase 3 TODO: custom function registry). */
-    if (strcmp(ns_uri, MKR_NS_NOKOGIRI_BUILTIN_URI) == 0) {
+    if (mkr_bytes_eq(ns_uri, ns_uri_len, MKR_NS_NOKOGIRI_BUILTIN_URI,
+                     sizeof(MKR_NS_NOKOGIRI_BUILTIN_URI) - 1)) {
       for (size_t i = 0; fn_table_nokogiri_builtin[i].name; ++i) {
-        if (strcmp(fn_table_nokogiri_builtin[i].name, local_name) == 0) {
+        if (mkr_bytes_eq(fn_table_nokogiri_builtin[i].name, fn_table_nokogiri_builtin[i].name_len,
+                         local_name, local_name_len)) {
           return fn_table_nokogiri_builtin[i].fn;
         }
       }
@@ -1107,7 +1114,9 @@ mkr_lookup_function(const char *ns_uri, const char *local_name)
   }
   /* Default namespace - XPath 1.0 standard library. */
   for (size_t i = 0; fn_table[i].name; ++i) {
-    if (strcmp(fn_table[i].name, local_name) == 0) return fn_table[i].fn;
+    if (mkr_bytes_eq(fn_table[i].name, fn_table[i].name_len, local_name, local_name_len)) {
+      return fn_table[i].fn;
+    }
   }
   return NULL;
 }
