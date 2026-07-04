@@ -85,6 +85,57 @@ main(void)
         VERIFY_ASSERT(mkr_strndup(NULL, 1) == NULL, "strndup: NULL src with n>0 fails closed");
     }
     {
+        /* strdup: copies up to the first NUL, terminated; NULL -> NULL. The
+         * source is force-terminated inside the buffer so strlen is bounded.
+         * (unsigned char storage + a pointer cast: a VALUE cast of a >127 byte
+         * to char is implementation-defined and --conversion-check flags it.) */
+        unsigned char src[4];
+        for (size_t i = 0; i + 1 < sizeof src; ++i) src[i] = nondet_uchar();
+        src[sizeof src - 1] = '\0';
+        char *d = mkr_strdup((const char *)src);
+        if (d != NULL) {
+            size_t n = strlen((const char *)src);
+            VERIFY_ASSERT(d[n] == '\0', "strdup: terminated");
+            VERIFY_ASSERT(n == 0 || memcmp(d, src, n) == 0, "strdup: copies");
+            free(d);
+        }
+        VERIFY_ASSERT(mkr_strdup(NULL) == NULL, "strdup: NULL -> NULL");
+    }
+    {
+        /* str_alloc at ANY n: the n + 1 sizing is right (the terminator slot
+         * exists) or the call fails closed with NULL - the off-by-one class,
+         * proved at full range (the bounded block above covers the content
+         * writes). */
+        size_t n = nondet_size_t();
+        char *s = mkr_str_alloc(n);
+        if (s != NULL) {
+            VERIFY_ASSERT(s[n] == '\0', "str_alloc: terminator slot exists at any n");
+            if (n > 0) s[0] = 'x';
+            free(s);
+        }
+    }
+    {
+        /* reallocarray's MOVE path: growing a live allocation preserves the
+         * prefix and makes the new tail writable; a failed grow leaves the
+         * original owned and intact; count == 0 frees and returns NULL. */
+        uint32_t *p = mkr_reallocarray(NULL, 2, sizeof(uint32_t));
+        if (p != NULL) {
+            p[0] = 0x11111111u; p[1] = 0x22222222u;
+            uint32_t *q = mkr_reallocarray(p, 4, sizeof(uint32_t));
+            if (q != NULL) {
+                VERIFY_ASSERT(q[0] == 0x11111111u && q[1] == 0x22222222u,
+                              "reallocarray: grow preserves content");
+                q[3] = 0x33333333u; /* new tail writable */
+                VERIFY_ASSERT(mkr_reallocarray(q, 0, sizeof(uint32_t)) == NULL,
+                              "reallocarray: count 0 frees and returns NULL");
+            } else {
+                VERIFY_ASSERT(p[0] == 0x11111111u && p[1] == 0x22222222u,
+                              "reallocarray: failed grow leaves the original intact");
+                free(p);
+            }
+        }
+    }
+    {
         void  *arr = NULL;
         size_t cap = 0;
         size_t need = nondet_size_t();
