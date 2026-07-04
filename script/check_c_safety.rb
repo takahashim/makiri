@@ -83,6 +83,17 @@ RULES = [
     # buffer unnoticed.
     regex: /\(\s*mkr_verified_text_t\s*\)\s*\{|\bmkr_verified_text_t\s+\w+\s*=\s*\{/
   ),
+  Rule.new(
+    id: "borrowed_text_forge",
+    message: "mkr_borrowed_text_t must be built via mkr_borrowed_text()/mkr_borrowed_text_lit()/mkr_borrowed_text_from_*, not a raw struct literal",
+    # Same two forge shapes as verified_text_forge. Not a capability guard (a raw
+    # literal is semantically identical to the constructor); it funnels the
+    # "asserted-valid borrowed slice" through the single named constructor so the
+    # assertion stays auditable, matching mkr_text.h's stated intent ("replacing
+    # scattered casts"). core/** - where the constructors live - is globally
+    # ignore-pathed, so the definitions in mkr_text.h are exempt automatically.
+    regex: /\(\s*mkr_borrowed_text_t\s*\)\s*\{|\bmkr_borrowed_text_t\s+\w+\s*=\s*\{/
+  ),
   # --- HTML/XML representation boundary (see docs/html_xml_boundary_hardening) ---
   # These symbols assume one DOM representation; using them outside their
   # representation-correct / kind-checked home is how shared glue (XPath, NodeSet,
