@@ -39,6 +39,12 @@ mkr_reallocarray(void *ptr, size_t count, size_t elem)
         free(ptr);
         return NULL;
     }
+    if (elem == 0) {
+        /* Fail closed like mkr_callocarray rather than fall through to a
+         * realloc(ptr, 0) whose free-or-not is implementation-defined; the
+         * caller keeps ownership of ptr. */
+        return NULL;
+    }
     size_t bytes;
     if (!mkr_size_mul(count, elem, &bytes)) {
         return NULL; /* overflow: leave ptr unchanged */

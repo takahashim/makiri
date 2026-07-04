@@ -49,6 +49,23 @@ main(void)
         }
     }
 
+    /* --- size_add / size_mul: failure leaves *out unchanged --- */
+    {
+        /* add's failure test is a subtraction (a > SIZE_MAX - b), tractable at
+         * full width, so both operands stay unbounded. */
+        size_t a = nondet_size_t(), b = nondet_size_t(); size_t out = (size_t)0x12345678u;
+        if (!mkr_size_add(a, b, &out)) VERIFY_ASSERT(out == (size_t)0x12345678u, "size_add: failure leaves out unchanged");
+    }
+    {
+        /* mul's failure test is a division (b > SIZE_MAX / a); constrain one
+         * operand to the sizeof-set (as the exact/no-wrap mul block does, §4.2)
+         * so it stays tractable. The failure path is still reached - a huge `a`
+         * overflows even a small b - so the invariance is genuinely exercised. */
+        size_t a = nondet_size_t(), b = nondet_size_t(); size_t out = (size_t)0x12345678u;
+        VERIFY_ASSUME(elem_in_set(b));
+        if (!mkr_size_mul(a, b, &out)) VERIFY_ASSERT(out == (size_t)0x12345678u, "size_mul: failure leaves out unchanged");
+    }
+
     /* --- grow_capacity: unbounded cap/need x sizeof-set elem --- */
     {
         size_t cap = nondet_size_t(), need = nondet_size_t(), elem = nondet_size_t();
@@ -57,6 +74,9 @@ main(void)
         if (mkr_grow_capacity(cap, need, elem, &nc)) {
             VERIFY_ASSERT(nc >= need, "grow_capacity: covers need");
             VERIFY_ASSERT((unsigned __int128)nc * elem <= SIZE_MAX, "grow_capacity: nc*elem fits");
+        } else {
+            VERIFY_ASSERT((unsigned __int128)need * elem > SIZE_MAX,
+                          "grow_capacity: fails only when need*elem cannot fit");
         }
     }
 
@@ -179,6 +199,18 @@ main(void)
             VERIFY_ASSERT(cap >= need, "grow_reserve: capacity covers need");
             uint32_t *w = (uint32_t *)arr;
             for (size_t i = 0; i < need; ++i) w[i] = 0; /* in-bounds writes */
+
+            void  *p0 = arr;
+            size_t c0 = cap;
+            /* no-op: need <= cap must succeed and leave ptr/cap unchanged */
+            VERIFY_ASSERT(mkr_grow_reserve(&arr, &cap, cap, sizeof(uint32_t)) == MKR_OK,
+                          "grow_reserve: need==cap ok");
+            VERIFY_ASSERT(arr == p0 && cap == c0, "grow_reserve: no-op leaves ptr/cap");
+
+            /* overflow -> OOM, state left unchanged */
+            VERIFY_ASSERT(mkr_grow_reserve(&arr, &cap, SIZE_MAX, sizeof(uint32_t)) == MKR_ERR_OOM,
+                          "grow_reserve: overflow OOM");
+            VERIFY_ASSERT(arr == p0 && cap == c0, "grow_reserve: failure leaves ptr/cap");
         } else {
             VERIFY_ASSERT(arr == NULL && cap == 0, "grow_reserve: fail leaves state unchanged");
         }

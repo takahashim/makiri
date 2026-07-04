@@ -32,6 +32,10 @@
 extern "C" {
 #endif
 
+/* src must be non-NULL when len > 0 (it is dereferenced through [0, len)); src
+ * may be NULL only when len == 0 (trivially valid). len > 0 with src == NULL is
+ * a caller-contract violation, not a fail-closed case - this is a hot path
+ * guarded at the call site, not here. */
 bool mkr_utf8_valid(const unsigned char *src, size_t len);
 
 /* mkr_utf8_decode1 - decode ONE code point from [p, p+len), strictly: rejects
@@ -53,7 +57,10 @@ mkr_utf8_decode1_span(const mkr_span_t *s, uint32_t *cp)
 /* mkr_utf8_count_chars - count Unicode code points in [ptr, ptr+len): every
  * byte that is NOT a 0x80..0xBF continuation byte starts a new code point.
  * Length-bounded (does not rely on a NUL terminator); ptr may be NULL when
- * len == 0. Used where XPath measures string length / offsets in characters. */
+ * len == 0. Used where XPath measures string length / offsets in characters.
+ * Semantics: on VALID UTF-8 this equals the code-point count (proved in
+ * cbmc-utf8-chain); on invalid bytes it is only a lead-byte-class scan (no
+ * decoding), so the strong count/boundary guarantees hold for valid text. */
 static inline size_t
 mkr_utf8_count_chars(const char *ptr, size_t len)
 {

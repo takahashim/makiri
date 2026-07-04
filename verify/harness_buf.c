@@ -84,6 +84,27 @@ main(void)
 
     step_append(&b, shadow, &slen, max);
 
+    /* reserve return-value contract: success leaves len/content untouched and
+     * never shrinks cap (still clamped to the buffer's own ceiling); failure
+     * (OOM only - reserve never fails INVALID/LIMIT) leaves len, cap AND
+     * content untouched. */
+    {
+        size_t len0 = b.len, cap0 = b.cap;
+        char   before[2 * NSRC];
+        if (b.len > 0) memcpy(before, b.data, b.len);
+        mkr_status_t st = mkr_buf_reserve(&b, nondet_size_t() % (2 * MAXCAP));
+        if (st == MKR_OK) {
+            VERIFY_ASSERT(b.len == len0, "reserve: success leaves len unchanged");
+            VERIFY_ASSERT(b.cap >= cap0, "reserve: success does not shrink cap");
+            VERIFY_ASSERT(b.cap <= max + 1, "reserve: cap stays clamped");
+        } else {
+            VERIFY_ASSERT(st == MKR_ERR_OOM, "reserve: failure is OOM");
+            VERIFY_ASSERT(b.len == len0 && b.cap == cap0, "reserve: failure leaves len/cap");
+            VERIFY_ASSERT(b.len == 0 || memcmp(b.data, before, b.len) == 0,
+                          "reserve: failure leaves content");
+        }
+    }
+
     /* Ceiling SELECTION at ANY max: max == 0 falls back to the default limit
      * (not unbounded), max past MKR_BUF_HARD_MAX is clamped to it, and a huge
      * reserve request never allocates past limit + 1 (the "no huge alloc"
@@ -125,5 +146,22 @@ main(void)
         VERIFY_ASSERT(mkr_buf_append(&b, "z", 1) != MKR_ERR_INVALID, "steal: buffer stays usable");
     }
     mkr_buf_free(&b);
+
+    /* steal on an empty (never-appended-to) buffer: success hands back an
+     * owned "", OOM (on the internal malloc(1)) leaves out_len untouched (the
+     * impl only sets *out_len on the success path) and the buffer empty. */
+    {
+        mkr_buf_t e;
+        mkr_buf_init(&e, 0);
+        size_t out_len = (size_t)0xABCD; /* sentinel */
+        char *s = mkr_buf_steal(&e, &out_len);
+        if (s != NULL) {
+            VERIFY_ASSERT(out_len == 0 && s[0] == '\0', "steal empty: owned \"\", len 0");
+            free(s);
+        } else {
+            VERIFY_ASSERT(out_len == (size_t)0xABCD, "steal empty OOM: out_len untouched");
+            VERIFY_ASSERT(e.data == NULL && e.len == 0, "steal empty OOM: buffer stays empty");
+        }
+    }
     return 0;
 }

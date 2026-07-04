@@ -65,6 +65,27 @@ main(void)
     VERIFY_ASSERT(eok ? (out == store) : (out == NULL),
                   "spanbuf: finish returns the buffer iff all writes were accepted");
 
+    /* mkr_spanbuf_write with src == NULL over a VALID backing buffer: latches
+     * not-ok and writes nothing (n > 0), and is a no-op on a fresh writer when
+     * n == 0 (the n == 0 short-circuit runs before the NULL check). */
+    {
+        char store2[4];
+        memset(store2, 0x55, sizeof store2);
+        mkr_spanbuf_t w = mkr_spanbuf(store2, sizeof store2);
+        size_t n = nondet_size_t();
+        VERIFY_ASSUME(n >= 1 && n <= sizeof store2);
+        mkr_spanbuf_write(&w, NULL, n); /* NULL src, n>0 */
+        VERIFY_ASSERT(!w.ok, "spanbuf write NULL n>0: latches not-ok");
+        VERIFY_ASSERT(w.pos == 0, "spanbuf write NULL n>0: pos unchanged");
+        for (size_t i = 0; i < sizeof store2; ++i)
+            VERIFY_ASSERT(store2[i] == (char)0x55, "spanbuf write NULL n>0: buffer untouched");
+
+        /* NULL src, n==0 is a no-op on a FRESH ok writer. */
+        mkr_spanbuf_t w0 = mkr_spanbuf(store2, sizeof store2);
+        mkr_spanbuf_write(&w0, NULL, 0);
+        VERIFY_ASSERT(w0.ok && w0.pos == 0, "spanbuf write NULL n==0: no-op");
+    }
+
     /* NULL backing: permanently not-ok, every write a safe no-op. */
     {
         mkr_spanbuf_t g = mkr_spanbuf(NULL, nondet_size_t());

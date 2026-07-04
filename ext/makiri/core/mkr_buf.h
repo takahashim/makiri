@@ -143,6 +143,7 @@ static inline void
 mkr_spanbuf_write(mkr_spanbuf_t *b, const void *src, size_t n)
 {
     if (!b->ok || n == 0) return;
+    if (src == NULL) { b->ok = false; return; } /* fail closed, never memcpy(,NULL,n) */
     if (b->pos > b->cap || n > b->cap - b->pos) { b->ok = false; return; }
     memcpy(b->buf + b->pos, src, n);
     b->pos += n;

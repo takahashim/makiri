@@ -48,8 +48,10 @@ mkr_size_mul(size_t a, size_t b, size_t *out)
 }
 
 /* Compute a new capacity (in elements) that is >= need and grows geometrically
- * from cap, with cap*elem guaranteed to fit in size_t. Returns false on
- * overflow. */
+ * from cap, with new_cap*elem guaranteed to fit in size_t. Succeeds EXACTLY
+ * when need*elem fits: if the geometric target overshoots what elem allows, it
+ * falls back to `need` rather than failing, so the only failure is `need`
+ * itself being too large. (cbmc-alloc proves success <=> need*elem fits.) */
 static inline bool
 mkr_grow_capacity(size_t cap, size_t need, size_t elem, size_t *new_cap)
 {
@@ -59,14 +61,21 @@ mkr_grow_capacity(size_t cap, size_t need, size_t elem, size_t *new_cap)
         nc *= 2;
     }
     size_t bytes;
-    if (!mkr_size_mul(nc, elem, &bytes)) return false;
+    if (!mkr_size_mul(nc, elem, &bytes)) {
+        /* Geometric overshoot doesn't fit; retry at exactly `need` so a
+         * representable need never fails from the *2 headroom alone. */
+        nc = need;
+        if (!mkr_size_mul(nc, elem, &bytes)) return false;
+    }
     *new_cap = nc;
     return true;
 }
 
 /* realloc(ptr, count * elem) with the multiply overflow-checked. Returns NULL
  * on overflow or OOM; the original ptr is then unchanged (caller still owns
- * it). count == 0 frees and returns NULL. */
+ * it). count == 0 frees ptr and returns NULL; elem == 0 (with count > 0)
+ * returns NULL and leaves ptr unchanged (no implementation-defined
+ * realloc(ptr, 0)). */
 void *mkr_reallocarray(void *ptr, size_t count, size_t elem);
 
 /* calloc(count, elem) with the multiply overflow-checked, result zeroed.
