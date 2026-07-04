@@ -84,6 +84,33 @@ main(void)
 
     step_append(&b, shadow, &slen, max);
 
+    /* Ceiling SELECTION at ANY max: max == 0 falls back to the default limit
+     * (not unbounded), max past MKR_BUF_HARD_MAX is clamped to it, and a huge
+     * reserve request never allocates past limit + 1 (the "no huge alloc"
+     * guarantee, at full range - the model-checked block above only sees
+     * max 1..6). Small appends keep the loops bounded; the ceiling arithmetic
+     * is what runs at full width. */
+    {
+        mkr_buf_t h;
+        mkr_buf_init(&h, nondet_size_t()); /* ANY max, 0 included */
+        size_t soft  = (h.max != 0) ? h.max : MKR_BUF_DEFAULT_LIMIT;
+        size_t limit = (soft < MKR_BUF_HARD_MAX) ? soft : MKR_BUF_HARD_MAX;
+
+        if (mkr_buf_reserve(&h, nondet_size_t()) == MKR_OK)  /* ANY request */
+            VERIFY_ASSERT(h.cap <= limit + 1, "reserve: any request clamps to limit+1");
+        VERIFY_ASSERT(h.len == 0, "reserve: len untouched at any max");
+
+        mkr_status_t st = mkr_buf_append(&h, "ab", 2);
+        if (st == MKR_OK) {
+            VERIFY_ASSERT(h.len == 2 && h.data[2] == '\0', "append: works under any ceiling");
+            VERIFY_ASSERT(h.cap <= limit + 1, "append: growth clamped at any max");
+        } else {
+            VERIFY_ASSERT(st == MKR_ERR_LIMIT ? limit < 2 : st == MKR_ERR_OOM,
+                          "append: fails closed only on limit/OOM");
+        }
+        mkr_buf_free(&h);
+    }
+
     /* steal: exact content ownership transfer + reset to a usable buffer. */
     {
         size_t out_len = (size_t)-1;

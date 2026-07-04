@@ -11,8 +11,8 @@
 #                     nondet return, so only the linker catches a wrong source list)
 #   make selftest   - build + run the carve-out selftest (XML parse + XPath eval,
 #                     no Ruby, no Lexbor lib)
-#   make cbmc       - the proven set (alloc/utf8/utf8-chain/span/spanbuf/buf/
-#                     hash; ~2 min total)
+#   make cbmc       - the proven set (alloc/utf8/utf8-chain/utf8-words/span/
+#                     spanbuf/buf/hash; ~7 min total)
 #   make cbmc-deep  - the experimental set (xpath-lex/xpath-parse/xml-parse).
 #                     These do NOT converge in practical time on current
 #                     bit-level solvers (measured: >10 min each even at 3-4
@@ -55,7 +55,7 @@ BUILD := build
 
 # ---------------------------------------------------------------- smoke + selftest
 
-HARNESSES := alloc utf8 utf8-chain span spanbuf buf hash xpath-lex xpath-parse xml-parse
+HARNESSES := alloc utf8 utf8-chain utf8-words span spanbuf buf hash xpath-lex xpath-parse xml-parse
 
 smoke: $(HARNESSES:%=$(BUILD)/harness-%)
 	@for h in $^; do echo "== $$h"; $$h || exit 1; done
@@ -66,6 +66,8 @@ $(BUILD)/harness-alloc: harness_alloc.c $(EXT)/core/mkr_alloc.c | $(BUILD)
 $(BUILD)/harness-utf8: harness_utf8.c $(EXT)/core/mkr_utf8.c | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-utf8-chain: harness_utf8_chain.c $(EXT)/core/mkr_utf8.c | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
+$(BUILD)/harness-utf8-words: harness_utf8_words.c $(EXT)/core/mkr_utf8.c | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-span: harness_span.c | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
@@ -122,9 +124,18 @@ cbmc-utf8:
 	$(CBMC) harness_utf8.c $(CBMC_MODELS) $(EXT)/core/mkr_utf8.c $(INC) \
 	  $(CBMC_MEM) --unwind $(UTF8_UNWIND)
 
+# Chain length and unwind grow together (unwind must exceed the byte count;
+# see the harness header for the measured length/time trade-off).
+UTF8_CHAIN_MAX    ?= 12
+UTF8_CHAIN_UNWIND ?= 16
 cbmc-utf8-chain:
 	$(CBMC) harness_utf8_chain.c $(CBMC_MODELS) $(EXT)/core/mkr_utf8.c $(INC) \
-	  $(CBMC_MEM) --unwind $(UTF8_UNWIND)
+	  -DVERIFY_UTF8_CHAIN_MAX=$(UTF8_CHAIN_MAX) \
+	  $(CBMC_MEM) --unwind $(UTF8_CHAIN_UNWIND)
+
+cbmc-utf8-words:
+	$(CBMC) harness_utf8_words.c $(CBMC_MODELS) $(EXT)/core/mkr_utf8.c $(INC) \
+	  $(CBMC_MEM) --unwind 20
 
 SPAN_UNWIND ?= 12
 cbmc-span:
@@ -146,7 +157,7 @@ cbmc-hash:
 	$(CBMC) harness_hash.c $(CBMC_MODELS) $(INC) \
 	  $(CBMC_MEM) --unwind $(HASH_UNWIND)
 
-cbmc: cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-span cbmc-spanbuf cbmc-buf cbmc-hash
+cbmc: cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-utf8-words cbmc-span cbmc-spanbuf cbmc-buf cbmc-hash
 	@echo "cbmc: all proofs passed"
 
 # ------------------------------------------------- experimental (cbmc-deep)
@@ -182,6 +193,6 @@ cbmc-deep: cbmc-xpath-lex cbmc-xpath-parse cbmc-xml-parse
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: smoke selftest cbmc cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-span \
+.PHONY: smoke selftest cbmc cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-utf8-words cbmc-span \
         cbmc-spanbuf cbmc-buf cbmc-hash \
         cbmc-deep cbmc-xpath-lex cbmc-xpath-parse cbmc-xml-parse clean

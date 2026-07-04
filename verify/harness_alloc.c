@@ -102,6 +102,31 @@ main(void)
         VERIFY_ASSERT(mkr_strdup(NULL) == NULL, "strdup: NULL -> NULL");
     }
     {
+        /* strndup at ANY n over a heap source that really holds n bytes: no
+         * OOB access on either side, the copy matches, and the result is
+         * terminated. Closes the magnitude-dependent class (a truncating
+         * intermediate would break the alloc-length/copy-length relation only
+         * past 2^32) that the small-n block above cannot see; the source is
+         * symbolic-size, so the proof runs at full range up to CBMC's object
+         * ceiling (2^52 with --object-bits 12). */
+        size_t n = nondet_size_t();
+        char *src = malloc(n); /* nondet success under --malloc-may-fail */
+        if (src != NULL) {
+            char *s = mkr_strndup(src, n);
+            if (s != NULL) {
+                VERIFY_ASSERT(s[n] == '\0', "strndup: terminated at any n");
+                /* Content at a nondet index: i ranges over ALL positions, so
+                 * this is whole-content equality without a loop (CBMC's own
+                 * memcmp model unwinds a loop and cannot take a symbolic n). */
+                size_t i = nondet_size_t();
+                if (i < n)
+                    VERIFY_ASSERT(s[i] == src[i], "strndup: copies at any n (every index)");
+                free(s);
+            }
+            free(src);
+        }
+    }
+    {
         /* str_alloc at ANY n: the n + 1 sizing is right (the terminator slot
          * exists) or the call fails closed with NULL - the off-by-one class,
          * proved at full range (the bounded block above covers the content
@@ -116,8 +141,9 @@ main(void)
     }
     {
         /* reallocarray's MOVE path: growing a live allocation preserves the
-         * prefix and makes the new tail writable; a failed grow leaves the
-         * original owned and intact; count == 0 frees and returns NULL. */
+         * prefix and makes the new tail writable; shrinking preserves the
+         * surviving prefix; a failed resize leaves the original owned and
+         * intact; count == 0 frees and returns NULL. */
         uint32_t *p = mkr_reallocarray(NULL, 2, sizeof(uint32_t));
         if (p != NULL) {
             p[0] = 0x11111111u; p[1] = 0x22222222u;
@@ -126,8 +152,17 @@ main(void)
                 VERIFY_ASSERT(q[0] == 0x11111111u && q[1] == 0x22222222u,
                               "reallocarray: grow preserves content");
                 q[3] = 0x33333333u; /* new tail writable */
-                VERIFY_ASSERT(mkr_reallocarray(q, 0, sizeof(uint32_t)) == NULL,
-                              "reallocarray: count 0 frees and returns NULL");
+                uint32_t *r = mkr_reallocarray(q, 1, sizeof(uint32_t));
+                if (r != NULL) {
+                    VERIFY_ASSERT(r[0] == 0x11111111u,
+                                  "reallocarray: shrink preserves the surviving prefix");
+                    VERIFY_ASSERT(mkr_reallocarray(r, 0, sizeof(uint32_t)) == NULL,
+                                  "reallocarray: count 0 frees and returns NULL");
+                } else {
+                    VERIFY_ASSERT(q[0] == 0x11111111u && q[3] == 0x33333333u,
+                                  "reallocarray: failed shrink leaves the original intact");
+                    free(q);
+                }
             } else {
                 VERIFY_ASSERT(p[0] == 0x11111111u && p[1] == 0x22222222u,
                               "reallocarray: failed grow leaves the original intact");
@@ -157,6 +192,21 @@ main(void)
             const unsigned char *z = (const unsigned char *)p;
             for (size_t i = 0; i < count * elem; ++i)
                 VERIFY_ASSERT(z[i] == 0, "callocarray: zeroed");
+            free(p);
+        }
+    }
+    {
+        /* callocarray at ANY size (count unbounded x sizeof-set elem): zeroed
+         * at a nondet index - i ranges over all positions, so this is
+         * whole-allocation zeroing without a loop (same trick as the
+         * symbolic-n strndup content check). */
+        size_t count = nondet_size_t(), elem = nondet_size_t();
+        VERIFY_ASSUME(elem_in_set(elem));
+        unsigned char *p = mkr_callocarray(count, elem);
+        if (p != NULL) {
+            size_t i = nondet_size_t();
+            if (i < count * elem)
+                VERIFY_ASSERT(p[i] == 0, "callocarray: zeroed at any size (every index)");
             free(p);
         }
     }

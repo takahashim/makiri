@@ -16,8 +16,12 @@
 
 #include <stdbool.h>
 
+/* 12 covers a full word-at-a-time iteration in the validator PLUS the
+ * word-to-byte-tail transition (the fast path processes 8-byte words, so
+ * len <= 8 only ever runs one truncated word step). Measured: 8 -> ~20 s,
+ * 12 -> ~2 min, 16 (word-to-word) -> did not converge in 6 min. */
 #ifndef VERIFY_UTF8_CHAIN_MAX
-#define VERIFY_UTF8_CHAIN_MAX 8   /* two full 4-byte code points; ~20 s to prove */
+#define VERIFY_UTF8_CHAIN_MAX 12
 #endif
 
 int
