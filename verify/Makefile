@@ -12,8 +12,9 @@
 #   make selftest   - build + run the carve-out selftest (XML parse + XPath eval,
 #                     no Ruby, no Lexbor lib)
 #   make cbmc       - the proven set (alloc/utf8/utf8-chain/utf8-words/span/
-#                     spanbuf/buf/hash; ~7 min total)
-#   make cbmc-deep  - the experimental set (xpath-lex/xpath-parse/xml-parse).
+#                     spanbuf/buf/hash/xml-chars/xpath-number; ~8 min total)
+#   make cbmc-deep  - the experimental set (xpath-lex/xpath-parse/xml-parse/
+#                     xml-expand).
 #                     These do NOT converge in practical time on current
 #                     bit-level solvers (measured: >10 min each even at 3-4
 #                     byte inputs, with MiniSat, kissat and Bitwuzla alike);
@@ -55,7 +56,7 @@ BUILD := build
 
 # ---------------------------------------------------------------- smoke + selftest
 
-HARNESSES := alloc utf8 utf8-chain utf8-words span spanbuf buf hash xpath-lex xpath-parse xml-parse
+HARNESSES := alloc utf8 utf8-chain utf8-words span spanbuf buf hash xml-chars xml-expand xpath-number xpath-lex xpath-parse xml-parse
 
 smoke: $(HARNESSES:%=$(BUILD)/harness-%)
 	@for h in $^; do echo "== $$h"; $$h || exit 1; done
@@ -77,6 +78,8 @@ $(BUILD)/harness-buf: harness_buf.c $(EXT)/core/mkr_buf.c $(EXT)/core/mkr_alloc.
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-hash: harness_hash.c | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
+$(BUILD)/harness-xpath-number: harness_xpath_number.c $(EXT)/xpath/mkr_xpath_number.c $(EXT)/core/mkr_alloc.c | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 # mkr_parse's limit checks + limits_init_defaults live in mkr_xpath.c (the
 # dispatcher), which references both engine instances - so the smoke link
 # takes the full engine (stub.c supplies the HTML side).
@@ -85,6 +88,10 @@ $(BUILD)/harness-xpath-parse: harness_xpath_parse.c $(ENGINE_SRC) | $(BUILD)
 $(BUILD)/harness-xpath-lex: harness_xpath_lex.c $(ENGINE_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 $(BUILD)/harness-xml-parse: harness_xml_parse.c $(XML_SRC) $(CORE_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
+$(BUILD)/harness-xml-chars: harness_xml_chars.c $(XML_SRC) $(CORE_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
+$(BUILD)/harness-xml-expand: harness_xml_expand.c $(XML_SRC) $(CORE_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $^ -o $@ $(LDLIBS)
 
 selftest: $(BUILD)/selftest
@@ -157,7 +164,24 @@ cbmc-hash:
 	$(CBMC) harness_hash.c $(CBMC_MODELS) $(INC) \
 	  $(CBMC_MEM) --unwind $(HASH_UNWIND)
 
-cbmc: cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-utf8-words cbmc-span cbmc-spanbuf cbmc-buf cbmc-hash
+# XML character classes: predicate inclusions over all code points + the
+# validators cross-checked against the independent UTF-8 validator. CBMC only
+# needs mkr_xml_chars.c + mkr_utf8.c (the other xml/ entries the header
+# declares stay bodyless - unreachable from this harness).
+XML_CHARS_UNWIND ?= 12
+cbmc-xml-chars:
+	$(CBMC) harness_xml_chars.c $(CBMC_MODELS) $(EXT)/xml/mkr_xml_chars.c $(EXT)/core/mkr_utf8.c $(INC) \
+	  $(CBMC_MEM) --unwind $(XML_CHARS_UNWIND)
+
+# The XPath Number scanner/converter. The cbmc_models.c strtod ("conversion
+# unavailable") steers from_extent down its own fallback chain - the isolating
+# reparse and the hand assembly, i.e. exactly our code - on every input; the
+# libc-success path is trusted, not verified (like memcpy).
+cbmc-xpath-number:
+	$(CBMC) harness_xpath_number.c $(CBMC_MODELS) $(EXT)/xpath/mkr_xpath_number.c $(EXT)/core/mkr_alloc.c $(INC) \
+	  $(CBMC_MEM) $(CBMC_OOM) --unwind 12
+
+cbmc: cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-utf8-words cbmc-span cbmc-spanbuf cbmc-buf cbmc-hash cbmc-xml-chars cbmc-xpath-number
 	@echo "cbmc: all proofs passed"
 
 # ------------------------------------------------- experimental (cbmc-deep)
@@ -188,11 +212,26 @@ cbmc-xml-parse:
 	  -DVERIFY_XML_INPUT_MAX=$(XML_INPUT_MAX) \
 	  $(CBMC_MEM) $(CBMC_OOM) --unwind $(XML_UNWIND)
 
-cbmc-deep: cbmc-xpath-lex cbmc-xpath-parse cbmc-xml-parse
+# Entity/char-ref expansion over nondet valid-UTF-8 input (the document it
+# writes into is parsed from a concrete 4-byte input, so only the expansion
+# input is nondet). Does not converge: 7-byte input, --unwind 12, still in
+# BMC when the 420 s alarm killed it (measured; higher unwinds are strictly
+# larger). No $(CBMC_OOM): a NULL doc is treated as early-exit, OOM injection
+# is not what this harness is about.
+# Also measured: 5-byte input still did not converge in 6 min - the cost is
+# the whole-parser+arena state behind the doc handle, not the input length.
+XML_EXPAND_MAX    ?= 7
+XML_EXPAND_UNWIND ?= 12
+cbmc-xml-expand:
+	$(CBMC) harness_xml_expand.c $(CBMC_MODELS) $(XML_SRC) $(CORE_SRC) $(INC) \
+	  -DVERIFY_XML_EXPAND_MAX=$(XML_EXPAND_MAX) \
+	  $(CBMC_MEM) --unwind $(XML_EXPAND_UNWIND)
+
+cbmc-deep: cbmc-xpath-lex cbmc-xpath-parse cbmc-xml-parse cbmc-xml-expand
 
 clean:
 	rm -rf $(BUILD)
 
 .PHONY: smoke selftest cbmc cbmc-alloc cbmc-utf8 cbmc-utf8-chain cbmc-utf8-words cbmc-span \
-        cbmc-spanbuf cbmc-buf cbmc-hash \
-        cbmc-deep cbmc-xpath-lex cbmc-xpath-parse cbmc-xml-parse clean
+        cbmc-spanbuf cbmc-buf cbmc-hash cbmc-xml-chars cbmc-xpath-number \
+        cbmc-deep cbmc-xpath-lex cbmc-xpath-parse cbmc-xml-parse cbmc-xml-expand clean
