@@ -924,32 +924,45 @@ set_bytes_string(mkr_val_t *out, const lxb_char_t *src, size_t len,
   return 0;
 }
 
+/* Emit +n+'s local (qualified=0) or qualified (qualified=1) name as a string
+ * result; a non-element/attribute/PI node (or NULL) yields "". A PI's name is
+ * its target in either mode. In HTML the qualified name matches the local name,
+ * which also avoids surfacing the LXB_NS_HTML prefix. The shared body of the
+ * local-name() and name() built-ins - they differ only in this flag and the
+ * function name they report on OOM. Every path sets out via
+ * set_empty_string / set_bytes_string; an error return leaves the caller's
+ * zero-initialised (clearable) out. */
+static int
+name_func_emit(MKR_DOM_NODE *n, int qualified, mkr_val_t *out,
+               mkr_xpath_error_t *err, const char *fname)
+{
+  if (n == NULL ||
+      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
+       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
+    return set_empty_string(out, err, fname);
+  }
+  size_t len = 0;
+  const lxb_char_t *name;
+  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
+    name = qualified ? MKR_ATTR_QUALIFIED_NAME(n, &len) : MKR_ATTR_LOCAL_NAME(n, &len);
+  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
+    name = qualified ? MKR_ELEM_QUALIFIED_NAME(n, &len) : MKR_ELEM_LOCAL_NAME(n, &len);
+  } else {
+    name = MKR_NODE_PI_NAME(n, &len);   /* a PI's expanded-name is (null, target) */
+  }
+  return set_bytes_string(out, name, len, err, fname);
+}
+
 static int
 fn_local_name(mkr_xpath_context_t *ctx, const mkr_focus_t *focus,
               mkr_val_t *args, size_t nargs, mkr_val_t *out, mkr_xpath_error_t *err)
 {
   (void)ctx;
   if (arity_check(nargs, 0, 1, err, "local-name") != 0) return -1;
-  /* Every return path below sets out via set_empty_string / set_bytes_string;
-   * an error return leaves the caller's zero-initialised (clearable) out. */
   MKR_DOM_NODE *n = name_func_target(args, nargs, focus->node, err, "local-name");
   if (err->status != MKR_XPATH_OK) return -1;
-  if (n == NULL ||
-      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
-       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
-       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
-    return set_empty_string(out, err, "local-name");
-  }
-  size_t len = 0;
-  const lxb_char_t *name;
-  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
-    name = MKR_ATTR_LOCAL_NAME(n, &len);
-  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
-    name = MKR_ELEM_LOCAL_NAME(n, &len);
-  } else {
-    name = MKR_NODE_PI_NAME(n, &len);
-  }
-  return set_bytes_string(out, name, len, err, "local-name");
+  return name_func_emit(n, 0, out, err, "local-name");
 }
 
 static int
@@ -982,24 +995,7 @@ fn_name(mkr_xpath_context_t *ctx, const mkr_focus_t *focus,
   if (arity_check(nargs, 0, 1, err, "name") != 0) return -1;
   MKR_DOM_NODE *n = name_func_target(args, nargs, focus->node, err, "name");
   if (err->status != MKR_XPATH_OK) return -1;
-  if (n == NULL ||
-      (MKR_NODE_TYPE(n) != MKR_NTYPE_ELEMENT &&
-       MKR_NODE_TYPE(n) != MKR_NTYPE_ATTRIBUTE &&
-       MKR_NODE_TYPE(n) != MKR_NTYPE_PI)) {
-    return set_empty_string(out, err, "name");
-  }
-  /* In HTML the qualified name matches the local name; this also avoids
-   * surfacing the LXB_NS_HTML prefix that would otherwise confuse users. */
-  size_t len = 0;
-  const lxb_char_t *name;
-  if (MKR_NODE_TYPE(n) == MKR_NTYPE_ATTRIBUTE) {
-    name = MKR_ATTR_QUALIFIED_NAME(n, &len);
-  } else if (MKR_NODE_TYPE(n) == MKR_NTYPE_ELEMENT) {
-    name = MKR_ELEM_QUALIFIED_NAME(n, &len);
-  } else {
-    name = MKR_NODE_PI_NAME(n, &len);   /* a PI's expanded-name is (null, target) */
-  }
-  return set_bytes_string(out, name, len, err, "name");
+  return name_func_emit(n, 1, out, err, "name");
 }
 
 /* ---------- boolean / language ---------- */
