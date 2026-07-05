@@ -14,8 +14,10 @@
  * Nokogiri); inter-construct whitespace there is not a text node. Strict
  * NameStartChar/NameChar (§9.2b) and duplicate-attribute rejection (§9.3) apply.
  *
- * Budgets (§4): element depth (MKR_XML_MAX_DEPTH) and node/attr counts (enforced
- * in the arena) are fail-closed - a violation aborts with no partial document.
+ * Budgets (§4): element depth (MKR_XML_MAX_DEPTH) and the per-element attribute
+ * count (MKR_XML_MAX_ATTRS) are enforced by the tree builder here, while the total
+ * node count and byte budget are enforced by the arena; all are fail-closed - a
+ * violation aborts with no partial document.
  */
 #include "mkr_xml.h"
 #include "mkr_xml_node.h"

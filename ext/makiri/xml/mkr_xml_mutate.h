@@ -12,9 +12,10 @@
  * invariant the read-only reader relied on). New nodes append to the arena and
  * count against the per-document byte/node budgets (fail-closed -> MKR_XML_MUT_OOM).
  *
- * SECURITY: names are validated as XML 1.0 QNames and values as XML Char, so the
- * tree stays serializable to well-formed XML; an unbound prefix or a reserved
- * name fails closed rather than producing a wrong/unserializable node.
+ * SECURITY: element/attribute names are validated as XML 1.0 QNames (a PI target
+ * as a Name, §2.6) and values as XML Char, so the tree stays serializable to
+ * well-formed XML; an unbound prefix or a reserved name fails closed rather than
+ * producing a wrong/unserializable node.
  */
 #ifndef MKR_XML_MUTATE_H
 #define MKR_XML_MUTATE_H
@@ -106,8 +107,9 @@ mkr_xml_mut_status_t mkr_xml_new_chardata(mkr_xml_doc_t *doc, uint8_t type,
                                           const char *text, uint32_t tlen,
                                           mkr_xml_node_t **out);
 
-/* A new detached PROCESSING_INSTRUCTION with target [target,tlen] (an NCName,
- * not "xml" in any case) and data [data,dlen] (XML Char, may not contain "?>"). */
+/* A new detached PROCESSING_INSTRUCTION with target [target,tlen] (a Name - a
+ * colon is permitted, §2.6 - but not "xml" in any case) and data [data,dlen]
+ * (XML Char, may not contain "?>"). */
 mkr_xml_mut_status_t mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
                                     const char *data, uint32_t dlen, mkr_xml_node_t **out);
 
@@ -156,7 +158,7 @@ mkr_xml_mut_status_t mkr_xml_replace_node (mkr_xml_doc_t *doc, mkr_xml_node_t *r
                                            mkr_xml_node_t *node);
 
 /* Structural self-test (validation, namespace resolution, link/unlink). Returns 0
- * on success or the 1-based index of the first failing check. Run from
+ * on success or a non-zero identifier (>=1) of the first failing check. Run from
  * Makiri.__c_selftest. */
 int mkr_xml_mutate_selftest(void);
 

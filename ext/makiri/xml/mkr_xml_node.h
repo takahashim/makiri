@@ -30,8 +30,10 @@
  * XPath engine's neutral MKR_NTYPE_* bind to whichever representation it compiles
  * for. The reader produces ELEMENT/ATTRIBUTE/TEXT/CDATA_SECTION/PI/COMMENT/
  * DOCUMENT in the tree, plus a single off-tree DOCUMENT_TYPE (the DOCTYPE
- * metadata, see doc->doctype); the remaining members exist only so the shared
- * engine's node-type contract is complete for both instances. */
+ * metadata, see doc->doctype) and a DOCUMENT_FRAGMENT (fragment parse /
+ * cross-import); the remaining members (ENTITY_REFERENCE/ENTITY/NOTATION) are
+ * never produced and exist only so the shared engine's node-type contract is
+ * complete for both instances. */
 typedef enum {
     MKR_XML_NODE_TYPE_ELEMENT          = 1,
     MKR_XML_NODE_TYPE_ATTRIBUTE        = 2,
