@@ -290,7 +290,15 @@ end
 desc "CBMC proofs over the Ruby/Lexbor-free carve-out (core + XML + XPath front; " \
      "needs cbmc; see docs/formal_verification.ja.md and verify/Makefile)"
 task :verify do
-  sh "make -C verify smoke selftest cbmc"
+  # The 10 CBMC proofs are independent processes with a lopsided cost
+  # distribution (a few ~1-2min solves dominate, the rest are trivial), so run
+  # them in parallel: wall-clock drops toward the single slowest harness with no
+  # loss of coverage. Cap -j at the CPU count (Etc.nprocessors; the runner has
+  # RAM for that many concurrent core-set solves). smoke/selftest are quick and
+  # come first as ordered goals.
+  require "etc"
+  jobs = Integer(ENV.fetch("VERIFY_JOBS", Etc.nprocessors))
+  sh "make", "-C", "verify", "-j#{jobs}", "smoke", "selftest", "cbmc"
 end
 
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
