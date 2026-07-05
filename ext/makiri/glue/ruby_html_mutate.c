@@ -79,6 +79,30 @@ mkr_is_fragment(const lxb_dom_node_t *n)
     return n->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 }
 
+/* Insert `node` relative to `anchor` via `insert` (one of Lexbor's
+ * insert_child/before/after), or - when `node` is a document fragment - splice
+ * its children there in order, leaving the fragment empty. With `advance`
+ * (insert_after semantics) each spliced child becomes the anchor for the next so
+ * document order is preserved; child/before splices keep a fixed anchor. The one
+ * place the fragment-vs-single-node insertion rule lives. */
+static void
+mkr_splice_or_insert(lxb_dom_node_t *anchor, lxb_dom_node_t *node,
+                     void (*insert)(lxb_dom_node_t *, lxb_dom_node_t *), int advance)
+{
+    if (!mkr_is_fragment(node)) {
+        insert(anchor, node);
+        return;
+    }
+    lxb_dom_node_t *c;
+    while ((c = node->first_child) != NULL) {
+        lxb_dom_node_remove(c);
+        insert(anchor, c);
+        if (advance) {
+            anchor = c;   /* keep document order after the reference node */
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* tree mutation                                                      */
 /* ------------------------------------------------------------------ */
@@ -101,15 +125,7 @@ mkr_node_add_child(VALUE self, VALUE rb_child)
     lxb_dom_node_t *parent = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *child  = mkr_arg_node(rb_child);
     mkr_prepare_insert(parent, child);
-    if (mkr_is_fragment(child)) {
-        lxb_dom_node_t *c;
-        while ((c = child->first_child) != NULL) {
-            lxb_dom_node_remove(c);
-            lxb_dom_node_insert_child(parent, c);
-        }
-    } else {
-        lxb_dom_node_insert_child(parent, child);
-    }
+    mkr_splice_or_insert(parent, child, lxb_dom_node_insert_child, 0);
     mkr_invalidate_index(self);
     return rb_child;
 }
@@ -131,15 +147,7 @@ mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
     mkr_prepare_insert(ref, node);
-    if (mkr_is_fragment(node)) {
-        lxb_dom_node_t *c;
-        while ((c = node->first_child) != NULL) {
-            lxb_dom_node_remove(c);
-            lxb_dom_node_insert_before(ref, c);
-        }
-    } else {
-        lxb_dom_node_insert_before(ref, node);
-    }
+    mkr_splice_or_insert(ref, node, lxb_dom_node_insert_before, 0);
     mkr_invalidate_index(self);
     return rb_node;
 }
@@ -153,16 +161,7 @@ mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
     mkr_prepare_insert(ref, node);
-    if (mkr_is_fragment(node)) {
-        lxb_dom_node_t *anchor = ref, *c;
-        while ((c = node->first_child) != NULL) {
-            lxb_dom_node_remove(c);
-            lxb_dom_node_insert_after(anchor, c);
-            anchor = c; /* keep document order after ref */
-        }
-    } else {
-        lxb_dom_node_insert_after(ref, node);
-    }
+    mkr_splice_or_insert(ref, node, lxb_dom_node_insert_after, 1);
     mkr_invalidate_index(self);
     return rb_node;
 }
@@ -192,15 +191,7 @@ mkr_node_replace(VALUE self, VALUE rb_other)
         rb_raise(mkr_eError, "cannot replace a node with no parent");
     }
     mkr_prepare_insert(ref, other);
-    if (mkr_is_fragment(other)) {
-        lxb_dom_node_t *c;
-        while ((c = other->first_child) != NULL) {
-            lxb_dom_node_remove(c);
-            lxb_dom_node_insert_before(ref, c);
-        }
-    } else {
-        lxb_dom_node_insert_before(ref, other);
-    }
+    mkr_splice_or_insert(ref, other, lxb_dom_node_insert_before, 0);
     lxb_dom_node_remove(ref);
     mkr_invalidate_index(self);
     return rb_other;
