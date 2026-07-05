@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0] - 2026-07-05
+
+### Changed
+
+* Text and comment node content (`create_text_node`, `create_comment`,
+  `content=`) and attribute values (`[]=`, `set_attribute_ns`) now accept an
+  embedded NUL (U+0000) and store it verbatim, matching the WHATWG DOM and
+  browsers, instead of raising. Names, tag names, namespaces, CSS selectors, and
+  XPath expressions stay NUL-strict, and invalid UTF-8 is still rejected. XML
+  documents (`Makiri::XML`) are unchanged and still reject NUL everywhere, since
+  XML 1.0 has no legal U+0000 character.
+
 ## [0.5.1] - 2026-06-22
 
 ### Changed
