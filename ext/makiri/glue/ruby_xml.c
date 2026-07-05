@@ -215,6 +215,56 @@ mkr_xml_register_query_namespaces(mkr_xpath_context_t *ctx, VALUE rb_ns)
     }
 }
 
+/* Shared query-context construction for every XML XPath/CSS entry point. Verify
+ * the query text's contract FIRST - before any allocation - so a text-contract
+ * raise (invalid UTF-8 / a NUL) has no ctx to leak; then build a ctx rooted at
+ * the document node with +context_node+ as the relative context, mark it XML,
+ * install the name index, and register the {prefix => uri} namespaces. Returns a
+ * ready ctx, or raises (mkr_xml_register_query_namespaces frees ctx on error).
+ * The real borrowed text view is minted later by the caller, so its bytes are
+ * never held across the GC points in ns registration. */
+static mkr_xpath_context_t *
+mkr_xml_build_ctx(mkr_xml_doc_t *xdoc, mkr_xml_node_t *context_node,
+                  VALUE rb_text, const char *what, VALUE rb_ns)
+{
+    mkr_verify_text(rb_String(rb_text), what);
+    mkr_xpath_context_t *ctx =
+        mkr_xpath_context_new((void *)xdoc->doc_node, (void *)context_node);
+    if (ctx == NULL) {
+        rb_raise(mkr_eError, "failed to allocate XPath context");
+    }
+    mkr_xpath_set_engine_kind(ctx, 1);
+    mkr_xml_install_name_index(ctx, xdoc);
+    mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
+    return ctx;
+}
+
+/* Evaluate a compiled AST under a ready ctx and return the Ruby result. Frees the
+ * AST, then on success frees ctx BEFORE converting the value (the value owns its
+ * own data and never references ctx, so a raise during conversion can't leak
+ * ctx); on an eval error frees ctx and raises. +first_only+ selects the
+ * first-match evaluator and, for a node-set result, unwraps NodeSet#first. The
+ * shared eval/free/convert epilogue of the XPath and CSS query paths. */
+static VALUE
+mkr_xml_run_ast(mkr_xpath_context_t *ctx, mkr_node_t *ast, int first_only, VALUE document)
+{
+    mkr_xpath_value_t value = {0};
+    mkr_xpath_error_t error = {0};
+    int rc = first_only ? mkr_xpath_eval_compiled_first(ctx, ast, &value, &error)
+                        : mkr_xpath_eval_compiled(ctx, ast, &value, &error);
+    mkr_node_free(ast);
+    if (rc != 0) {
+        mkr_xpath_context_free(ctx);
+        mkr_xpath_raise(&error);
+    }
+    mkr_xpath_context_free(ctx);
+    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
+    if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
+        return rb_funcall(result, rb_intern("first"), 0);
+    }
+    return result;
+}
+
 /* Makiri::XML::{Document,*}#xpath(expr, namespaces = nil) / #at_xpath(...):
  * evaluate +expr+ over the XML engine instance, rooted at +self+'s context node,
  * and return a NodeSet (node-set) or scalar. +namespaces+ is an optional
@@ -231,29 +281,15 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
         return first_only ? Qnil : mkr_node_set_new(document);
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
-
-    /* Verify the expression's text contract BEFORE allocating ctx: the mint below
-     * raises on invalid UTF-8 / a NUL, and such a raise after ctx is allocated
-     * (but before it is freed) would leak ctx. This check raises with nothing to
-     * leak; the real borrow is still minted late (after ns registration) so the
-     * bytes are never held across that step's GC points. */
-    mkr_verify_text(rb_String(rb_expr), "XPath expression");
-
     /* The document node is the "document" (the engine's XML namespace services
      * ignore it) and the "/" root for absolute paths; +context+ is the relative
      * context node (the document node for a Document, else the node itself). */
     mkr_xpath_context_t *ctx =
-        mkr_xpath_context_new((void *)xdoc->doc_node, (void *)context);
-    if (ctx == NULL) {
-        rb_raise(mkr_eError, "failed to allocate XPath context");
-    }
-    mkr_xpath_set_engine_kind(ctx, 1);
-    mkr_xml_install_name_index(ctx, xdoc);
-    mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
+        mkr_xml_build_ctx(xdoc, context, rb_expr, "XPath expression", rb_ns);
 
-    /* Mint the borrowed expression view AFTER namespace registration: that step
-     * allocates Ruby objects (and may run GC), and the borrowed bytes must not
-     * be held live across it. mkr_parse below runs pure C. */
+    /* Mint the borrowed expression view AFTER namespace registration (inside
+     * build_ctx): that step allocates Ruby objects (and may run GC), and the
+     * borrowed bytes must not be held live across it. mkr_parse below runs pure C. */
     mkr_ruby_borrowed_text_t ev = mkr_ruby_verified_text(rb_expr, "XPath expression");
     mkr_xpath_error_t error = {0};
     mkr_xpath_limits_t *limits = mkr_ctx_limits(ctx);
@@ -264,27 +300,7 @@ mkr_xml_doc_xpath_run(VALUE self, VALUE rb_expr, VALUE rb_ns, int first_only)
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&error);
     }
-
-    mkr_xpath_value_t value = {0};
-    int rc = first_only ? mkr_xpath_eval_compiled_first(ctx, ast, &value, &error)
-                        : mkr_xpath_eval_compiled(ctx, ast, &value, &error);
-    mkr_node_free(ast);
-    if (rc != 0) {
-        mkr_xpath_context_free(ctx);
-        mkr_xpath_raise(&error);
-    }
-    /* Free ctx BEFORE converting: the value owns its own data (node-set points
-     * at the document's DOM, strings into value's buffers) and never references
-     * ctx, so converting after the free is safe - and it means a raise inside
-     * mkr_xpath_value_to_ruby (e.g. a node-set cap / OOM building Ruby objects)
-     * can no longer leak ctx. */
-    mkr_xpath_context_free(ctx);
-    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
-
-    if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
-        return rb_funcall(result, rb_intern("first"), 0);
-    }
-    return result;
+    return mkr_xml_run_ast(ctx, ast, first_only, document);
 }
 
 static VALUE
@@ -363,46 +379,10 @@ mkr_xml_doc_css_run(VALUE self, VALUE rb_selector, VALUE rb_ns, int first_only)
         return first_only ? Qnil : mkr_node_set_new(document);
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
-
-    /* Verify the selector's text contract BEFORE allocating ctx: the mint inside
-     * mkr_css_compile_or_raise raises on invalid UTF-8 / a NUL, and such a raise
-     * after ctx is allocated (but before it is freed) would leak ctx. This check
-     * raises with nothing to leak; the real borrow is still taken late (after ns
-     * registration) so the bytes are never held across that step's GC points. */
-    mkr_verify_text(rb_String(rb_selector), "CSS selector");
-
     mkr_xpath_context_t *ctx =
-        mkr_xpath_context_new((void *)xdoc->doc_node, (void *)context);
-    if (ctx == NULL) {
-        rb_raise(mkr_eError, "failed to allocate XPath context");
-    }
-    mkr_xpath_set_engine_kind(ctx, 1);
-    mkr_xml_install_name_index(ctx, xdoc);
-    mkr_xml_register_query_namespaces(ctx, rb_ns); /* frees ctx + raises on error */
-
+        mkr_xml_build_ctx(xdoc, context, rb_selector, "CSS selector", rb_ns);
     mkr_node_t *ast = mkr_css_compile_or_raise(ctx, rb_selector, rb_ns); /* frees ctx + raises on error */
-
-    mkr_xpath_value_t value = {0};
-    mkr_xpath_error_t error = {0};
-    int rc = first_only ? mkr_xpath_eval_compiled_first(ctx, ast, &value, &error)
-                        : mkr_xpath_eval_compiled(ctx, ast, &value, &error);
-    mkr_node_free(ast);
-    if (rc != 0) {
-        mkr_xpath_context_free(ctx);
-        mkr_xpath_raise(&error);
-    }
-    /* Free ctx BEFORE converting: the value owns its own data (node-set points
-     * at the document's DOM, strings into value's buffers) and never references
-     * ctx, so converting after the free is safe - and it means a raise inside
-     * mkr_xpath_value_to_ruby (e.g. a node-set cap / OOM building Ruby objects)
-     * can no longer leak ctx. */
-    mkr_xpath_context_free(ctx);
-    VALUE result = mkr_xpath_value_to_ruby(&value, document); /* converts AND clears value */
-
-    if (first_only && rb_obj_is_kind_of(result, mkr_cNodeSet)) {
-        return rb_funcall(result, rb_intern("first"), 0);
-    }
-    return result;
+    return mkr_xml_run_ast(ctx, ast, first_only, document);
 }
 
 static VALUE
@@ -430,21 +410,10 @@ mkr_xml_node_css_matches(VALUE self, VALUE selector, VALUE ns)
         return Qfalse;
     }
     mkr_xml_doc_t *xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document));
-
-    /* Verify the selector BEFORE allocating ctx (see mkr_xml_doc_css_run): a
-     * text-contract raise after ctx is allocated but before it is freed leaks it.
-     * The real borrow is still taken late, inside mkr_css_compile_or_raise. */
-    mkr_verify_text(rb_String(selector), "CSS selector");
-
+    /* context = the document node, so the descendant-rooted selector scans the
+     * whole tree and membership is tested by node identity below. */
     mkr_xpath_context_t *ctx =
-        mkr_xpath_context_new((void *)xdoc->doc_node, (void *)xdoc->doc_node);
-    if (ctx == NULL) {
-        rb_raise(mkr_eError, "failed to allocate XPath context");
-    }
-    mkr_xpath_set_engine_kind(ctx, 1);
-    mkr_xml_install_name_index(ctx, xdoc);
-    mkr_xml_register_query_namespaces(ctx, ns); /* frees ctx + raises on error */
-
+        mkr_xml_build_ctx(xdoc, xdoc->doc_node, selector, "CSS selector", ns);
     mkr_node_t *ast = mkr_css_compile_or_raise(ctx, selector, ns); /* frees ctx + raises on error */
 
     mkr_xpath_value_t value = {0};
