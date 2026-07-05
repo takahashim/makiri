@@ -267,6 +267,22 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
 
+### Text input (mutation APIs)
+
+* Programmatic string arguments must be **valid UTF-8** (invalid bytes raise
+  `Makiri::Error`, never silently repaired - unlike HTML *parsing*, which decodes
+  leniently to U+FFFD).
+* An embedded **NUL (U+0000)** is **accepted in HTML data-family content** -
+  text/comment node content (`create_text_node`, `create_comment`, `content=`)
+  and attribute values (`[]=`, `set_attribute_ns`) - and stored/read back
+  verbatim, matching the WHATWG DOM / browsers (`document.createTextNode("\0")`).
+  It is still **rejected** in names, tag names, namespaces, PI target/data, CSS
+  selectors, and XPath expressions/variable names (a NUL there raises).
+  * On re-parse, the HTML tokenizer replaces a U+0000 in text/attributes with
+    U+FFFD (WHATWG), so a serialized-then-reparsed round-trip is not byte-identical.
+  * `Makiri::XML` rejects NUL everywhere: XML 1.0 has no legal U+0000 character,
+    so admitting it would produce non-well-formed XML.
+
 ## Conformance
 
 The XPath engine and XML parser are original code, so their correctness is held by
