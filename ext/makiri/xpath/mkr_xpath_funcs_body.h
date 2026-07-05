@@ -54,7 +54,7 @@ fn_string_arg_or_self(MKR_DOM_NODE *self_node, const mkr_val_t *args, size_t nar
                       mkr_xpath_limits_t *L, mkr_xpath_error_t *err, mkr_owned_text_t *out)
 {
   return (nargs == 0)
-      ? mkr_node_to_owned_text_or_fail(self_node, L, err, out)
+      ? mkr_node_to_owned_text(self_node, L, err, out)
       : mkr_val_to_owned_text_or_fail(&args[0], L, err, out);
 }
 
@@ -227,7 +227,7 @@ fn_id(mkr_xpath_context_t *ctx, const mkr_focus_t *focus,
   if (args[0].type == MKR_XPATH_TYPE_NODESET) {
     for (size_t i = 0; i < args[0].u.nodeset.count; ++i) {
       mkr_owned_text_t text;
-      if (mkr_node_to_owned_text_or_fail(args[0].u.nodeset.items[i], mkr_ctx_limits(ctx), err, &text) != 0) {
+      if (mkr_node_to_owned_text(args[0].u.nodeset.items[i], mkr_ctx_limits(ctx), err, &text) != 0) {
         mkr_nodeset_clear(&out->u.nodeset);
         return -1;
       }

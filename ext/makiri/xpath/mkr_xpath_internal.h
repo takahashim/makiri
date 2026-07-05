@@ -417,7 +417,7 @@ void mkr_val_clear(mkr_val_t *v);
 /* The value model's node-DEREFERENCING half is file-static in the per-instance
  * mkr_xpath_value_body.h (each compiled once per representation):
  *   mkr_val_clone, mkr_val_to_boolean, mkr_val_to_number_unchecked,
- *   mkr_borrowed_text_to_number, mkr_node_to_owned_text_or_fail,
+ *   mkr_borrowed_text_to_number, mkr_node_to_owned_text,
  *   mkr_val_to_owned_text_or_fail, mkr_val_to_number_or_fail,
  *   mkr_nodeset_sort_doc_order, mkr_nodeset_unique_sorted,
  *   mkr_get_cached_node_text.

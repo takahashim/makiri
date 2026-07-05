@@ -171,55 +171,44 @@ build_string_value(const MKR_DOM_NODE *node, mkr_buf_t *buf)
   }
 }
 
-static void
-mkr_build_node_text_unchecked(const MKR_DOM_NODE *node, mkr_owned_text_t *out)
-{
-  /* Best-effort node string-value, used only for NUMBER coercion (its sole
-   * caller): the text is parsed straight to a double, so mkr_buf's conservative
-   * default ceiling (max == 0) is ample - a node whose text exceeds it was never a
-   * valid number, and the build then falls back to an owned "" (-> NaN), which is
-   * the correct coercion result anyway. On any failure return "" rather than NULL,
-   * since callers require a non-NULL text. */
-  mkr_owned_text_init(out);
-  mkr_buf_t buf;
-  mkr_buf_init(&buf, 0);
-  if (build_string_value(node, &buf) != MKR_OK) {
-    mkr_buf_free(&buf);
-    (void)mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), NULL, NULL);
-    return;
-  }
-  if (mkr_owned_text_from_buf_steal(out, &buf, NULL, NULL) != 0) {
-    (void)mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), NULL, NULL);
-  }
-}
-
+/* Build +node+'s XPath string-value into +out+ (the ONE node string-value
+ * builder). When +err+ is non-NULL the build is BOUNDED by +limits+->
+ * max_string_bytes and any failure (limit/OOM) returns -1 with *err set. When
+ * +err+ is NULL it is BEST-EFFORT (mkr_buf's conservative default ceiling; the
+ * sole such caller is NUMBER coercion, which parses the text straight to a
+ * double): any failure yields an owned "" and returns 0, since callers require a
+ * non-NULL text - a node whose text overran the ceiling was never a valid number
+ * and "" -> NaN is the correct coercion result anyway. The checked-vs-best-effort
+ * behaviour is the only thing that differed between the former two builders. */
 static int
-mkr_node_to_owned_text_or_fail(const MKR_DOM_NODE *node,
-                             mkr_xpath_limits_t *limits,
-                             mkr_xpath_error_t *err,
-                             mkr_owned_text_t *out)
+mkr_node_to_owned_text(const MKR_DOM_NODE *node, mkr_xpath_limits_t *limits,
+                       mkr_xpath_error_t *err, mkr_owned_text_t *out)
 {
-  if (out == NULL) {
-    mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "mkr_node_to_owned_text_or_fail: bad args");
-    return -1;
-  }
   mkr_owned_text_init(out);
   mkr_buf_t buf;
   mkr_buf_init(&buf, (limits != NULL) ? limits->max_string_bytes : 0);
   mkr_status_t st = build_string_value(node, &buf);
-  if (st == MKR_ERR_LIMIT) {
+  if (st == MKR_OK) {
+    if (mkr_owned_text_from_buf_steal(out, &buf, err, "out of memory building node string-value") == 0) {
+      return 0;
+    }
+    if (err != NULL) return -1;   /* steal OOM: reported; best-effort falls to "" */
+  } else {
     mkr_buf_free(&buf);
-    mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
-                "string size limit exceeded (%zu bytes) while building node string-value",
-                limits->max_string_bytes);
-    return -1;
+    if (err != NULL) {
+      if (st == MKR_ERR_LIMIT) {
+        mkr_err_setf(err, MKR_XPATH_ERR_LIMIT,
+                     "string size limit exceeded (%zu bytes) while building node string-value",
+                     limits->max_string_bytes);
+      } else {
+        mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
+      }
+      return -1;
+    }
   }
-  if (st != MKR_OK) {
-    mkr_buf_free(&buf);
-    mkr_err_set(err, MKR_XPATH_ERR_OOM, "out of memory building node string-value");
-    return -1;
-  }
-  return mkr_owned_text_from_buf_steal(out, &buf, err, "out of memory building node string-value");
+  /* best-effort (err == NULL): never fail - yield an owned "". */
+  (void)mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), NULL, NULL);
+  return 0;
 }
 
 static int
@@ -282,7 +271,7 @@ mkr_val_to_owned_text_or_fail(const mkr_val_t *v,
       return mkr_owned_text_from_borrowed_copy(out, mkr_borrowed_text_lit(""), err, "out of memory");
     }
     /* XPath 1.0 §4.2: string(node-set) = string-value of first node in doc order. */
-    return mkr_node_to_owned_text_or_fail(v->u.nodeset.items[0], limits, err, out);
+    return mkr_node_to_owned_text(v->u.nodeset.items[0], limits, err, out);
   }
   mkr_err_set(err, MKR_XPATH_ERR_INTERNAL, "unknown value type");
   return -1;
@@ -304,7 +293,7 @@ mkr_val_to_number_or_fail(const mkr_val_t *v,
       return 0;
     }
     mkr_owned_text_t text;
-    if (mkr_node_to_owned_text_or_fail(v->u.nodeset.items[0], limits, err, &text) != 0) return -1;
+    if (mkr_node_to_owned_text(v->u.nodeset.items[0], limits, err, &text) != 0) return -1;
     *out = mkr_borrowed_text_to_number(mkr_borrowed_text_from_owned(text));
     mkr_owned_text_clear(&text);
     return 0;
@@ -359,7 +348,7 @@ mkr_val_to_number_unchecked(const mkr_val_t *v)
     if (v->u.nodeset.count == 0) return (double)NAN;
     /* string-value of first node in document order */
     mkr_owned_text_t text;
-    mkr_build_node_text_unchecked(v->u.nodeset.items[0], &text);
+    (void)mkr_node_to_owned_text(v->u.nodeset.items[0], NULL, NULL, &text);
     double d = mkr_borrowed_text_to_number(mkr_borrowed_text_from_owned(text));
     mkr_owned_text_clear(&text);
     return d;
@@ -749,7 +738,7 @@ mkr_get_cached_node_text(mkr_xpath_context_t *ctx,
   }
 
   mkr_owned_text_t text;
-  if (mkr_node_to_owned_text_or_fail(node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
+  if (mkr_node_to_owned_text(node, mkr_ctx_limits(ctx), err, &text) != 0) return -1;
 
   if (mkr_grow_reserve((void **)&c->entries, &c->cap, c->count + 1,
                        sizeof(*c->entries)) != MKR_OK) {
