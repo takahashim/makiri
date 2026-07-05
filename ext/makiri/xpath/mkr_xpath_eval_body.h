@@ -201,6 +201,28 @@ node_principal_match(const mkr_nodetest_t *test, MKR_DOM_NODE *node,
 
 /* ---------- axis walkers ---------- */
 
+/* Pre-order DFS over +context+'s PROPER descendants (down first_child, then
+ * document order), calling +visit+ on each; returns 1 as soon as visit()
+ * short-circuits, else 0. The shared body of the descendant and
+ * descendant-or-self axes - the latter only additionally visits +context+ first. */
+static int
+walk_descendants(MKR_DOM_NODE *context,
+                 int (*visit)(MKR_DOM_NODE *n, void *u), void *u)
+{
+  MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(context);
+  while (n != NULL && n != context) {
+    if (visit(n, u)) return 1;
+    if (MKR_NODE_FIRST_CHILD(n)) {
+      n = MKR_NODE_FIRST_CHILD(n);
+    } else {
+      while (n != context && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
+      if (n == context) break;
+      n = MKR_NODE_NEXT(n);
+    }
+  }
+  return 0;
+}
+
 static int
 walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
           int (*visit)(MKR_DOM_NODE *n, void *u), void *u)
@@ -227,36 +249,12 @@ walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
     }
     return 0;
   }
-  case MKR_AXIS_DESCENDANT_OR_SELF: {
-    /* DFS pre-order. */
+  case MKR_AXIS_DESCENDANT_OR_SELF:
+    /* Self first, then the pre-order descendant walk. */
     if (visit(context, u)) return 1;
-    MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(context);
-    while (n != NULL && n != context) {
-      if (visit(n, u)) return 1;
-      if (MKR_NODE_FIRST_CHILD(n)) {
-        n = MKR_NODE_FIRST_CHILD(n);
-      } else {
-        while (n != context && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
-        if (n == context) break;
-        n = MKR_NODE_NEXT(n);
-      }
-    }
-    return 0;
-  }
-  case MKR_AXIS_DESCENDANT: {
-    MKR_DOM_NODE *n = MKR_NODE_FIRST_CHILD(context);
-    while (n != NULL && n != context) {
-      if (visit(n, u)) return 1;
-      if (MKR_NODE_FIRST_CHILD(n)) {
-        n = MKR_NODE_FIRST_CHILD(n);
-      } else {
-        while (n != context && MKR_NODE_NEXT(n) == NULL) n = MKR_NODE_PARENT(n);
-        if (n == context) break;
-        n = MKR_NODE_NEXT(n);
-      }
-    }
-    return 0;
-  }
+    return walk_descendants(context, visit, u);
+  case MKR_AXIS_DESCENDANT:
+    return walk_descendants(context, visit, u);
   case MKR_AXIS_ANCESTOR:
     for (MKR_DOM_NODE *p = MKR_NODE_PARENT(context); p != NULL; p = MKR_NODE_PARENT(p)) {
       if (visit(p, u)) return 1;
