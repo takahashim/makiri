@@ -297,14 +297,23 @@ mkr_limit_recurse_leave(mkr_xpath_limits_t *L)
   if (L->recursion_depth) L->recursion_depth--;
 }
 
-int
-mkr_limit_check_nodeset_size(mkr_xpath_limits_t *L, size_t new_count, mkr_xpath_error_t *err)
+/* Shared "value must not exceed max" gate for the count/size limit checks below;
+ * formats "<noun> limit exceeded (<max>)". The byte-oriented checks
+ * (string_bytes, expr_bytes) keep their own byte-specific wording. */
+static int
+mkr_limit_check(size_t value, size_t max, const char *noun, mkr_xpath_error_t *err)
 {
-  if (new_count > L->max_nodeset_size) {
-    mkr_err_setf(err, MKR_XPATH_ERR_LIMIT, "nodeset size limit exceeded (%zu)", L->max_nodeset_size);
+  if (value > max) {
+    mkr_err_setf(err, MKR_XPATH_ERR_LIMIT, "%s limit exceeded (%zu)", noun, max);
     return -1;
   }
   return 0;
+}
+
+int
+mkr_limit_check_nodeset_size(mkr_xpath_limits_t *L, size_t new_count, mkr_xpath_error_t *err)
+{
+  return mkr_limit_check(new_count, L->max_nodeset_size, "nodeset size", err);
 }
 
 int
@@ -320,31 +329,19 @@ mkr_limit_check_string_bytes(mkr_xpath_limits_t *L, size_t bytes, mkr_xpath_erro
 int
 mkr_limit_check_steps(mkr_xpath_limits_t *L, size_t nsteps, mkr_xpath_error_t *err)
 {
-  if (nsteps > L->max_steps) {
-    mkr_err_setf(err, MKR_XPATH_ERR_LIMIT, "path step count limit exceeded (%zu)", L->max_steps);
-    return -1;
-  }
-  return 0;
+  return mkr_limit_check(nsteps, L->max_steps, "path step count", err);
 }
 
 int
 mkr_limit_check_predicates(mkr_xpath_limits_t *L, size_t npreds, mkr_xpath_error_t *err)
 {
-  if (npreds > L->max_predicates) {
-    mkr_err_setf(err, MKR_XPATH_ERR_LIMIT, "predicate count limit exceeded (%zu)", L->max_predicates);
-    return -1;
-  }
-  return 0;
+  return mkr_limit_check(npreds, L->max_predicates, "predicate count", err);
 }
 
 int
 mkr_limit_check_func_args(mkr_xpath_limits_t *L, size_t nargs, mkr_xpath_error_t *err)
 {
-  if (nargs > L->max_function_args) {
-    mkr_err_setf(err, MKR_XPATH_ERR_LIMIT, "function argument count limit exceeded (%zu)", L->max_function_args);
-    return -1;
-  }
-  return 0;
+  return mkr_limit_check(nargs, L->max_function_args, "function argument count", err);
 }
 
 int
@@ -409,6 +406,22 @@ mkr_grow(void **base, size_t *cap, size_t elem)
   return mkr_grow_reserve(base, cap, *cap + 1, elem) == MKR_OK ? 0 : -1;
 }
 
+/* Replace +slot+'s owned text with a fresh copy of +val+: copy FIRST, then clear
+ * the old, so an OOM leaves the slot intact. 0 / -1. The shared value-replace of
+ * the namespace and variable registries (whose append paths differ - the entry
+ * structs carry a different field set - and stay separate). */
+static int
+mkr_owned_slot_set(mkr_owned_text_t *slot, mkr_verified_text_t val, const char *oom)
+{
+  mkr_owned_text_t nv;
+  if (mkr_owned_text_from_borrowed_copy(&nv, mkr_borrowed_text_from_verified(val), NULL, oom) != 0) {
+    return -1;
+  }
+  mkr_owned_text_clear(slot);
+  *slot = nv;
+  return 0;
+}
+
 int
 mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_verified_text_t prefix_t, mkr_verified_text_t uri_t)
 {
@@ -417,12 +430,7 @@ mkr_xpath_register_ns(mkr_xpath_context_t *ctx, mkr_verified_text_t prefix_t, mk
   /* Replace if prefix already registered. */
   for (size_t i = 0; i < ctx->ns_count; ++i) {
     if (mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->ns[i].prefix), prefix)) {
-      mkr_owned_text_t new_uri;
-      if (mkr_owned_text_from_borrowed_copy(&new_uri, mkr_borrowed_text_from_verified(uri_t), NULL,
-                                            "out of memory registering namespace") != 0) return -1;
-      mkr_owned_text_clear(&ctx->ns[i].uri);
-      ctx->ns[i].uri = new_uri;
-      return 0;
+      return mkr_owned_slot_set(&ctx->ns[i].uri, uri_t, "out of memory registering namespace");
     }
   }
   if (ctx->ns_count >= MKR_MAX_NAMESPACES) return -1; /* registration cap */
@@ -452,12 +460,7 @@ mkr_xpath_register_variable_string(mkr_xpath_context_t *ctx, mkr_verified_text_t
   for (size_t i = 0; i < ctx->vars_count; ++i) {
     if (ctx->vars[i].prefix.ptr == NULL &&
         mkr_borrowed_text_eq(mkr_borrowed_text_from_owned(ctx->vars[i].name), name)) {
-      mkr_owned_text_t new_value;
-      if (mkr_owned_text_from_borrowed_copy(&new_value, mkr_borrowed_text_from_verified(value_t), NULL,
-                                            "out of memory registering variable") != 0) return -1;
-      mkr_owned_text_clear(&ctx->vars[i].value);
-      ctx->vars[i].value = new_value;
-      return 0;
+      return mkr_owned_slot_set(&ctx->vars[i].value, value_t, "out of memory registering variable");
     }
   }
   if (ctx->vars_count >= MKR_MAX_VARIABLES) return -1; /* registration cap */
