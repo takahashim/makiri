@@ -75,6 +75,68 @@ mkr_html_node_unwrap(VALUE rb_node)
  * the TypedData types live in ruby_node.c (the shared node core). */
 
 /* ------------------------------------------------------------------ */
+/* qualified-name helpers (shared by prefix / local_name / namespaceURI) */
+/* ------------------------------------------------------------------ */
+
+/* Fetch an Element or Attribute's qualified name (*q, *qlen) and its local-name
+ * length (*llen). Returns 1 for element/attribute, 0 (all-zero) for other kinds.
+ * The one place the element-vs-attribute accessor pair is chosen. */
+static int
+mkr_node_qname(lxb_dom_node_t *node, const lxb_char_t **q, size_t *qlen, size_t *llen)
+{
+    *q = NULL; *qlen = 0; *llen = 0;
+    switch (node->type) {
+    case LXB_DOM_NODE_TYPE_ELEMENT: {
+        lxb_dom_element_t *el = lxb_dom_interface_element(node);
+        *q = lxb_dom_element_qualified_name(el, qlen);
+        (void) lxb_dom_element_local_name(el, llen);
+        return 1;
+    }
+    case LXB_DOM_NODE_TYPE_ATTRIBUTE: {
+        lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
+        *q = lxb_dom_attr_qualified_name(at, qlen);
+        (void) lxb_dom_attr_local_name(at, llen);
+        return 1;
+    }
+    default:
+        return 0;
+    }
+}
+
+/* The prefix slice of a qualified name (q,qlen) whose local part has length llen
+ * (qualified == "prefix:local" or bare "local"): sets *pfx/*pfx_len and returns 1
+ * when a "prefix:" segment is present, else 0. Centralizes the subtle
+ * qlen-vs-(llen+1) boundary so prefix/namespaceURI can't drift. */
+static int
+mkr_qname_prefix(const lxb_char_t *q, size_t qlen, size_t llen,
+                 const lxb_char_t **pfx, size_t *pfx_len)
+{
+    if (q == NULL || qlen <= llen + 1) return 0;   /* no "prefix:" segment */
+    *pfx = q; *pfx_len = qlen - llen - 1;
+    return 1;
+}
+
+/* Resolve +node+'s interned namespace id to its URI String, or Qnil (no
+ * namespace / unresolvable). The one place an lxb ns-id becomes a Ruby URI. */
+static VALUE
+mkr_ns_uri_of_id(const lxb_dom_node_t *node)
+{
+    if (node->ns == LXB_NS__UNDEF) {
+        return Qnil;
+    }
+    lxb_dom_document_t *doc = node->owner_document;
+    if (doc == NULL || doc->ns == NULL) {
+        return Qnil;
+    }
+    size_t len = 0;
+    const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
+    if (uri == NULL || len == 0) {
+        return Qnil;
+    }
+    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)uri, len));
+}
+
+/* ------------------------------------------------------------------ */
 /* name / type / content                                              */
 /* ------------------------------------------------------------------ */
 
@@ -165,30 +227,13 @@ static VALUE
 mkr_node_prefix(VALUE self)
 {
     lxb_dom_node_t *node = mkr_html_node_unwrap(self);
-    const lxb_char_t *q = NULL;
-    size_t qlen = 0, llen = 0;
-
-    switch (node->type) {
-    case LXB_DOM_NODE_TYPE_ELEMENT: {
-        lxb_dom_element_t *el = lxb_dom_interface_element(node);
-        q = lxb_dom_element_qualified_name(el, &qlen);
-        (void) lxb_dom_element_local_name(el, &llen);
-        break;
-    }
-    case LXB_DOM_NODE_TYPE_ATTRIBUTE: {
-        lxb_dom_attr_t *at = lxb_dom_interface_attr(node);
-        q = lxb_dom_attr_qualified_name(at, &qlen);
-        (void) lxb_dom_attr_local_name(at, &llen);
-        break;
-    }
-    default:
+    const lxb_char_t *q, *pfx;
+    size_t qlen, llen, pfx_len;
+    if (!mkr_node_qname(node, &q, &qlen, &llen)
+        || !mkr_qname_prefix(q, qlen, llen, &pfx, &pfx_len)) {
         return Qnil;
     }
-    if (q == NULL || qlen <= llen + 1) {   /* no "prefix:" segment */
-        return Qnil;
-    }
-    return mkr_ruby_str_from_borrowed(
-        mkr_borrowed_text((const char *)q, qlen - llen - 1));
+    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)pfx, pfx_len));
 }
 
 /*
@@ -228,19 +273,7 @@ mkr_node_namespace_uri(VALUE self)
     lxb_dom_node_t *node = mkr_html_node_unwrap(self);
 
     if (node->type == LXB_DOM_NODE_TYPE_ELEMENT) {
-        if (node->ns == LXB_NS__UNDEF) {
-            return Qnil;
-        }
-        lxb_dom_document_t *doc = node->owner_document;
-        if (doc == NULL || doc->ns == NULL) {
-            return Qnil;
-        }
-        size_t len = 0;
-        const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
-        if (uri == NULL || len == 0) {
-            return Qnil;
-        }
-        return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)uri, len));
+        return mkr_ns_uri_of_id(node);
     }
 
     if (node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
@@ -252,27 +285,18 @@ mkr_node_namespace_uri(VALUE self)
          * the interned id; LXB_NS__UNDEF (set by set_attribute_ns(nil, ...)) is
          * the null namespace. */
         if (at->owner != NULL && node->ns != at->owner->node.ns) {
-            if (node->ns == LXB_NS__UNDEF) {
-                return Qnil;
-            }
-            lxb_dom_document_t *doc = node->owner_document;
-            if (doc != NULL && doc->ns != NULL) {
-                size_t len = 0;
-                const lxb_char_t *uri = lxb_ns_by_id(doc->ns, node->ns, &len);
-                if (uri != NULL && len != 0) {
-                    return mkr_ruby_str_from_borrowed(mkr_borrowed_text((const char *)uri, len));
-                }
-            }
-            return Qnil;
+            return mkr_ns_uri_of_id(node);
         }
 
-        size_t qlen = 0, llen = 0;
-        const lxb_char_t *q = lxb_dom_attr_qualified_name(at, &qlen);
-        (void) lxb_dom_attr_local_name(at, &llen);
-        if (q == NULL || qlen <= llen + 1) {
+        /* Otherwise the attr inherits the element's ns; its real namespace (if
+         * any) is the parser-assigned foreign-content one keyed on its prefix. */
+        const lxb_char_t *q, *pfx;
+        size_t qlen, llen, pfx_len;
+        if (!mkr_node_qname(node, &q, &qlen, &llen)
+            || !mkr_qname_prefix(q, qlen, llen, &pfx, &pfx_len)) {
             return Qnil;   /* unprefixed attribute => no namespace */
         }
-        const char *uri = mkr_attr_ns_for_prefix((const char *)q, qlen - llen - 1);
+        const char *uri = mkr_attr_ns_for_prefix((const char *)pfx, pfx_len);
         return uri ? rb_utf8_str_new_cstr(uri) : Qnil;
     }
 
