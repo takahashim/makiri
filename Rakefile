@@ -317,13 +317,6 @@ task "bench:xml" => :compile do
   end
 end
 
-desc "Run the CSS selector-query benchmark on a note.com-style SPA page (set BENCH_CARDS)"
-task "bench:css" => :compile do
-  Bundler.with_unbundled_env do
-    sh "#{FileUtils::RUBY} -Ilib bench/bench_css_query.rb"
-  end
-end
-
 namespace :conformance do
   desc "WHATWG HTML5 parsing conformance: run html5lib-tests through Makiri"
   task html5: :compile do
