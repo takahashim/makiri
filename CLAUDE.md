@@ -160,7 +160,8 @@ ext/makiri/
                            raw_scan_call / raw_cursor_member), mkr_utf8 (the one
                            validator + strict 1-codepoint decoder)
   bridge/                  the Ruby boundary - the ONLY layer allowed raw Ruby String
-                           access (RSTRING) and mkr_verified_text_t minting
+                           access (RSTRING) and verified-string minting
+                           (mkr_verified_text_t + the data-family borrowed view)
   glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
                            xpath/css/serialize/mutate.c)
   xpath/                   native XPath 1.0 engine (mkr_xpath_*)
@@ -190,11 +191,21 @@ validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
 no forced scan) already proves it valid - `mkr_parse_html`'s `assume_valid` and
 `mkr_ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
-`mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for invalid UTF-8 or an
-embedded NUL at the XPath/CSS/mutation boundaries (expr, selector, attribute
-name/value, `content=`, `name=`, `create_*`, variable/namespace) - never
-truncate/repair. Don't drop these checks; the engine assumes NUL-terminated,
-valid-UTF-8 C strings.
+`mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for **invalid
+UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
+attribute name/value, `content=`, `name=`, `create_*`, variable/namespace) -
+never truncate/repair. **Embedded NUL (U+0000) is a two-tier contract**: rejected
+for names/tags/namespaces/PI target+data/selectors/XPath/variables and all engine
+inputs (which assume NUL-terminated C strings), but **accepted for the HTML
+data-family** - text/comment node content (`create_text_node`/`create_comment`/
+`content=`) and attribute values (`[]=`/`set_attribute_ns`) - so the DOM can hold
+U+0000 like browsers. Those data-family sites go through `mkr_ruby_verified_data`
+(distinct type `mkr_ruby_borrowed_data_t`, UTF-8-validated but NUL-permitting;
+consumed only as `(ptr,len)`), never `mkr_verify_text`. `Makiri::XML` keeps
+rejecting NUL everywhere (its `mkr_xml_*` engine enforces the XML 1.0 char class,
+independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
+UTF-8 checks or route a name/engine string through the data path; see
+`docs/string_types.md`.
 
 **Parsing & source location** (`dom_adapter/post_parse.c`, `source_loc.c`).
 `mkr_parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
