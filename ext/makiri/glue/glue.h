@@ -105,6 +105,20 @@ void mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
 void mkr_emit_append(lxb_dom_node_t *imported, void *u);
 void mkr_emit_before(lxb_dom_node_t *imported, void *u);
 
+/* Shared transient-fragment-parser scaffold (glue/ruby_doc.c): create+init an
+ * HTML parser, sanitize +html+ to UTF-8 bytes, run +parse+ (which calls the
+ * appropriate lxb_html_parse_fragment* and returns the fragment root), free the
+ * decoded input, and destroy the parser - returning the root, which is owned by
+ * its (possibly transient) document and survives the parser's destruction.
+ * Raises on parser-create / OOM / parse failure. Both fragment paths
+ * (Document#fragment via a tag-id context, inner_html=/outer_html= via an element
+ * context) share this so the create/sanitize/free/destroy + error cleanup lives
+ * once. */
+typedef lxb_dom_node_t *(*mkr_fragment_parse_fn)(lxb_html_parser_t *parser,
+                                                 const lxb_char_t *hsrc, size_t hlen,
+                                                 void *ctx);
+lxb_dom_node_t *mkr_run_fragment_parser(VALUE html, mkr_fragment_parse_fn parse, void *ctx);
+
 /* Node#clone_node(deep=false): shallow/deep DOM clone owned by this node's
  * document (import_node + <template>-content fixup), detached from any parent.
  * Implemented in ruby_doc.c (next to the import machinery), bound in

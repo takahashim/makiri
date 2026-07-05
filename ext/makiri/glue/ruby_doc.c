@@ -308,6 +308,37 @@ mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
     }
 }
 
+lxb_dom_node_t *
+mkr_run_fragment_parser(VALUE html, mkr_fragment_parse_fn parse, void *ctx)
+{
+    lxb_html_parser_t *parser = lxb_html_parser_create();
+    if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
+        if (parser != NULL) {
+            lxb_html_parser_destroy(parser);
+        }
+        rb_raise(mkr_eError, "failed to create HTML parser");
+    }
+
+    const lxb_char_t *hsrc;
+    size_t            hlen;
+    lxb_char_t       *owned;
+    if (mkr_sanitize_html_input(html, &hsrc, &hlen, &owned) != 0) {
+        lxb_html_parser_destroy(parser);
+        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
+    }
+
+    lxb_dom_node_t *root = parse(parser, hsrc, hlen, ctx);
+    free(owned); /* consumed by the parse; free on every path */
+    /* The fragment tree is owned by its (possibly transient) document, not the
+     * parser, so it survives the parser's destruction - the caller may still read
+     * root->owner_document afterwards (e.g. to free a transient fragment doc). */
+    lxb_html_parser_destroy(parser);
+    if (root == NULL) {
+        rb_raise(mkr_eError, "failed to parse HTML fragment");
+    }
+    return root;
+}
+
 /* Node#clone_node(deep = false): a shallow (or deep, with deep truthy) copy of
  * this node, owned by the same document and detached from any parent - the DOM
  * cloneNode, whose `deep` defaults to false (a missing/nil/false argument =>
@@ -377,6 +408,23 @@ mkr_doc_import_node(int argc, VALUE *argv, VALUE self)
  * contexts, foreign-content adjustment, the form pointer, ...). The parsed
  * nodes are deep-imported into the document's arena and attached to the
  * fragment node. Returns the wrapped fragment. */
+/* Parse callback for mkr_run_fragment_parser: Lexbor's by-tag-id fragment parser
+ * (Document#fragment's context). */
+typedef struct {
+    lxb_dom_document_t *doc;
+    lxb_tag_id_t        tag;
+    lxb_ns_id_t         ns;
+} mkr_frag_tag_ctx_t;
+
+static lxb_dom_node_t *
+mkr_parse_fragment_by_tag(lxb_html_parser_t *parser, const lxb_char_t *hsrc,
+                          size_t hlen, void *ctx)
+{
+    mkr_frag_tag_ctx_t *c = (mkr_frag_tag_ctx_t *)ctx;
+    return lxb_html_parse_fragment_by_tag_id(
+        parser, (lxb_html_document_t *)c->doc, c->tag, c->ns, hsrc, hlen);
+}
+
 static VALUE
 mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
                        lxb_tag_id_t ctx_tag, lxb_ns_id_t ctx_ns)
@@ -390,31 +438,9 @@ mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
     }
     lxb_dom_node_t *frag_node = lxb_dom_interface_node(frag);
 
-    lxb_html_parser_t *parser = lxb_html_parser_create();
-    if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
-        if (parser != NULL) lxb_html_parser_destroy(parser);
-        rb_raise(mkr_eError, "failed to create fragment parser");
-    }
-
-    const lxb_char_t *hsrc;
-    size_t            hlen;
-    lxb_char_t       *owned;
-    if (mkr_sanitize_html_input(html, &hsrc, &hlen, &owned) != 0) {
-        lxb_html_parser_destroy(parser);
-        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
-    }
-
-    lxb_dom_node_t *root = lxb_html_parse_fragment_by_tag_id(
-        parser, (lxb_html_document_t *)doc, ctx_tag, ctx_ns, hsrc, hlen);
-    free(owned);
-    if (root == NULL) {
-        lxb_html_parser_destroy(parser);
-        rb_raise(mkr_eError, "failed to parse fragment");
-    }
-
+    mkr_frag_tag_ctx_t pctx = { doc, ctx_tag, ctx_ns };
+    lxb_dom_node_t *root = mkr_run_fragment_parser(html, mkr_parse_fragment_by_tag, &pctx);
     mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node);
-
-    lxb_html_parser_destroy(parser);
     RB_GC_GUARD(html);
     return mkr_wrap_html_node(frag_node, document);
 }

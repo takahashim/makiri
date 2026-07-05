@@ -472,45 +472,32 @@ mkr_node_delete(VALUE self, VALUE rb_name)
  * / mkr_emit_* in glue/ruby_doc.c). The transient parser is destroyed before
  * returning. Raises on parser or parse failure.
  */
+/* Parse callback for mkr_run_fragment_parser: Lexbor's element-context fragment
+ * parser (inner_html=/outer_html='s context). ctx is the context element. */
+static lxb_dom_node_t *
+mkr_parse_fragment_by_context(lxb_html_parser_t *parser, const lxb_char_t *hsrc,
+                              size_t hlen, void *ctx)
+{
+    return lxb_html_parse_fragment(parser, (lxb_html_element_t *)ctx, hsrc, hlen);
+}
+
 static void
 mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
                         lxb_dom_document_t *doc,
                         void (*emit)(lxb_dom_node_t *imported, void *u), void *u)
 {
     VALUE html = rb_String(rb_html);
-
-    lxb_html_parser_t *parser = lxb_html_parser_create();
-    if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
-        if (parser != NULL) {
-            lxb_html_parser_destroy(parser);
-        }
-        rb_raise(mkr_eError, "failed to create HTML parser");
-    }
-
-    const lxb_char_t *hsrc;
-    size_t            hlen;
-    lxb_char_t       *owned;
-    if (mkr_sanitize_html_input(html, &hsrc, &hlen, &owned) != 0) {
-        lxb_html_parser_destroy(parser);
-        rb_raise(mkr_eError, "out of memory decoding fragment HTML");
-    }
-
-    lxb_dom_node_t *frag = lxb_html_parse_fragment(
-        parser, (lxb_html_element_t *)context_el, hsrc, hlen);
-    free(owned); /* consumed by the parse; free on every subsequent path */
-    if (frag == NULL) {
-        lxb_html_parser_destroy(parser);
-        rb_raise(mkr_eError, "failed to parse HTML fragment");
-    }
+    lxb_dom_node_t *frag =
+        mkr_run_fragment_parser(html, mkr_parse_fragment_by_context, context_el);
 
     mkr_import_fragment_children(doc, frag, emit, u);
 
-    /* lxb_html_parse_fragment built the fragment in a TRANSIENT document that
-     * destroying the parser does NOT free (measured: one document leaked per
-     * inner_html=/outer_html= call); our imported copies live in `doc`, so the
-     * transient document is destroyed explicitly. */
+    /* lxb_html_parse_fragment built the fragment in a TRANSIENT document that the
+     * parser's destruction (inside mkr_run_fragment_parser) does NOT free
+     * (measured: one document leaked per inner_html=/outer_html= call); our
+     * imported copies live in `doc`, so the transient document is destroyed
+     * explicitly here - frag->owner_document is valid after the parser is gone. */
     lxb_html_document_destroy(lxb_html_interface_document(frag->owner_document));
-    lxb_html_parser_destroy(parser);
     RB_GC_GUARD(html);
 }
 
