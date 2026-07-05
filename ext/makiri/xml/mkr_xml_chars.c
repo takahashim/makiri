@@ -94,6 +94,16 @@ mkr_xml_validate_name(const char *src, uint32_t len)
     return 0;
 }
 
+int
+mkr_xml_is_reserved_pi_target(const char *s, uint32_t len)
+{
+    if (len != 3) return 0;
+    mkr_span_t v = mkr_span(s, len);
+    return (mkr_span_at(&v, 0) | 0x20) == 'x'
+        && (mkr_span_at(&v, 1) | 0x20) == 'm'
+        && (mkr_span_at(&v, 2) | 0x20) == 'l';
+}
+
 static int
 utf8_encode(uint32_t cp, char *out)
 {

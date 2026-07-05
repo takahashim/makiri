@@ -17,10 +17,6 @@
 #include <stdlib.h>    /* free (import stack) */
 #include <string.h>
 
-#define XML_NS_URI    "http://www.w3.org/XML/1998/namespace"
-#define XMLNS_NS_URI  "http://www.w3.org/2000/xmlns/"
-#define LIT_LEN(s)    ((uint32_t)(sizeof(s) - 1))
-
 /* Nearest in-scope binding for +prefix+ (pl 0 = the default namespace) at or
  * above +node+, walking the real tree (no scope dictionary is threaded). */
 static int
@@ -64,7 +60,7 @@ resolve_ns(const mkr_xml_node_t *scope, const mkr_xml_qname_t *qn, int is_attr,
 {
     *uri = NULL; *ulen = 0;
     if (is_attr && mkr_xml_xmlns_prefix(qn->qname, qn->qname_len, NULL, NULL)) {
-        *uri = XMLNS_NS_URI; *ulen = LIT_LEN(XMLNS_NS_URI);   /* an xmlns declaration */
+        *uri = MKR_XMLNS_NS_URI; *ulen = MKR_LIT_LEN(MKR_XMLNS_NS_URI);   /* an xmlns declaration */
         return MKR_XML_MUT_OK;
     }
     if (qn->prefix_len == 0) {
@@ -74,7 +70,7 @@ resolve_ns(const mkr_xml_node_t *scope, const mkr_xml_qname_t *qn, int is_attr,
         return MKR_XML_MUT_OK;
     }
     if (mkr_bytes_eq(qn->prefix, qn->prefix_len, "xml", 3)) {       /* the predefined xml: prefix */
-        *uri = XML_NS_URI; *ulen = LIT_LEN(XML_NS_URI);
+        *uri = MKR_XML_NS_URI; *ulen = MKR_LIT_LEN(MKR_XML_NS_URI);
         return MKR_XML_MUT_OK;
     }
     if (mkr_bytes_eq(qn->prefix, qn->prefix_len, "xmlns", 5)) return MKR_XML_MUT_BAD_NAME; /* xmlns: as a normal name */
@@ -378,13 +374,6 @@ mkr_xml_set_content(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *text, 
 
 /* ============================ Phase 2: building ============================ */
 
-/* True if [s,len) is the reserved PI target "xml" in any case (§2.6). */
-static int
-is_reserved_pi_target(const char *s, uint32_t len)
-{
-    return len == 3 && (s[0] | 0x20) == 'x' && (s[1] | 0x20) == 'm' && (s[2] | 0x20) == 'l';
-}
-
 mkr_xml_mut_status_t
 mkr_xml_new_element(mkr_xml_doc_t *doc, const char *name, uint32_t nlen, mkr_xml_node_t **out)
 {
@@ -430,7 +419,7 @@ mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
      * is not namespace-processed), and only the reserved "xml" (any case) is
      * excluded. */
     if (mkr_xml_validate_name(target, tlen) != 0) return MKR_XML_MUT_BAD_NAME;
-    if (is_reserved_pi_target(target, tlen)) return MKR_XML_MUT_BAD_NAME;
+    if (mkr_xml_is_reserved_pi_target(target, tlen)) return MKR_XML_MUT_BAD_NAME;
     if (dlen > 0 && mkr_xml_validate_chars(data, dlen) != 0) return MKR_XML_MUT_BAD_CHARS;
     mkr_xml_mut_status_t seq = mkr_xml_check_value_seq(MKR_XML_NODE_TYPE_PI, data, dlen);
     if (seq != MKR_XML_MUT_OK) return seq;
@@ -809,12 +798,12 @@ mkr_xml_mutate_selftest(void)
 
     /* 4. the predefined xml: prefix resolves with no declaration */
     if (mkr_xml_set_attribute(doc, r, "xml:lang", 8, "en", 2, &at) != MKR_XML_MUT_OK
-        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, XML_NS_URI, LIT_LEN(XML_NS_URI))) { rc = 13; goto done; }
+        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, MKR_XML_NS_URI, MKR_LIT_LEN(MKR_XML_NS_URI))) { rc = 13; goto done; }
 
     /* 5. adding an xmlns:* declaration lands in the xmlns namespace and then binds
      *    a previously-unbound prefix */
     if (mkr_xml_set_attribute(doc, r, "xmlns:p", 7, "urn:p", 5, &at) != MKR_XML_MUT_OK
-        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, XMLNS_NS_URI, LIT_LEN(XMLNS_NS_URI))) { rc = 14; goto done; }
+        || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, MKR_XMLNS_NS_URI, MKR_LIT_LEN(MKR_XMLNS_NS_URI))) { rc = 14; goto done; }
     if (mkr_xml_set_attribute(doc, r, "p:k", 3, "v", 1, &at) != MKR_XML_MUT_OK
         || !mkr_bytes_eq(at->ns_uri, at->ns_uri_len, "urn:p", 5)) { rc = 15; goto done; }
 

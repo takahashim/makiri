@@ -62,10 +62,6 @@ typedef struct {
     int             saw_doctype;                     /* at most one DOCTYPE, prolog only */
 } mkr_xml_parser_t;
 
-#define XML_NS_URI    "http://www.w3.org/XML/1998/namespace"
-#define XMLNS_NS_URI  "http://www.w3.org/2000/xmlns/"
-#define LIT_LEN(s)    ((uint32_t)(sizeof(s) - 1))
-
 /* small leaf predicates defined later but used by earlier handlers */
 static int is_space_byte(int c);
 static int lit_ahead(const mkr_xml_parser_t *P, const char *lit, size_t n);
@@ -206,31 +202,20 @@ slice_eq(const char *a, uint32_t al, const char *b, uint32_t bl)
     return mkr_bytes_eq(a, al, b, bl);
 }
 
-/* Split a QName into prefix:local. 0 on success (no-colon names get prefix_len
- * 0); -1 if malformed (>1 colon, or an empty prefix/local). */
+/* Split a QName into prefix:local, unpacked into loose out-params for the tree
+ * builder's callers. 0 on success (no-colon names get prefix_len 0); -1 if
+ * malformed (>1 colon, or an empty prefix/local). Thin adapter over the shared
+ * mkr_xml_split_scanned_qname (§9.2b NCName rules): the name has already been
+ * scan_name'd here, so no re-scan is needed - one splitting rule with the
+ * mutation path. */
 static int
 split_qname(const char *name, uint32_t len, const char **pfx, uint32_t *pfx_len,
             const char **loc, uint32_t *loc_len)
 {
-    mkr_span_t s = mkr_span(name, len);
-    size_t colon_at;
-    if (!mkr_span_find(&s, ':', &colon_at)) {
-        *pfx = name; *pfx_len = 0; *loc = name; *loc_len = len; return 0;
-    }
-    uint32_t pl = (uint32_t)colon_at;
-    const char *ls = name + colon_at + 1;
-    uint32_t ll = len - pl - 1;
-    if (pl == 0 || ll == 0) return -1;                  /* ":x" or "x:" */
-    mkr_span_t lsp = mkr_span(ls, ll);
-    size_t second;
-    if (mkr_span_find(&lsp, ':', &second)) return -1;   /* second colon */
-    /* §9.2b: prefix and local must each be an NCName. scan_name already proved the
-     * whole QName is NameStartChar + NameChar* and split removed the only colon, so
-     * the one remaining check is that the local part starts with a NameStartChar
-     * (the prefix starts the QName, so it already does). Rejects e.g. "a:1b". */
-    uint32_t cp;
-    if (mkr_utf8_decode1_span(&lsp, &cp) == 0 || !mkr_xml_is_name_start(cp)) return -1;
-    *pfx = name; *pfx_len = pl; *loc = ls; *loc_len = ll;
+    mkr_xml_qname_t qn;
+    if (mkr_xml_split_scanned_qname(name, len, &qn) != 0) return -1;
+    *pfx = qn.prefix; *pfx_len = qn.prefix_len;
+    *loc = qn.local;  *loc_len = qn.local_len;
     return 0;
 }
 
@@ -240,7 +225,7 @@ split_qname(const char *name, uint32_t len, const char **pfx, uint32_t *pfx_len,
 static const char *
 ns_lookup(mkr_xml_parser_t *P, const char *pfx, uint32_t pfx_len, uint32_t *uri_len)
 {
-    if (slice_eq(pfx, pfx_len, "xml", 3)) { *uri_len = LIT_LEN(XML_NS_URI); return XML_NS_URI; }
+    if (slice_eq(pfx, pfx_len, "xml", 3)) { *uri_len = MKR_LIT_LEN(MKR_XML_NS_URI); return MKR_XML_NS_URI; }
     for (size_t i = P->nbind; i > 0; i--) {
         ns_binding_t *b = &P->binds[i - 1];
         if (slice_eq(b->pfx, b->pfx_len, pfx, pfx_len)) { *uri_len = b->uri_len; return b->uri; }
@@ -334,9 +319,9 @@ apply_xmlns_bindings(mkr_xml_parser_t *P)
                                          MKR_XML_EXPAND_ATTR, &ulen, &P->status);
         if (uri == NULL) return -1;
         if (slice_eq(bpfx, bpl, "xml", 3)) {
-            if (!slice_eq(uri, ulen, XML_NS_URI, LIT_LEN(XML_NS_URI))) { set_syntax(P); return -1; }
-        } else if (slice_eq(uri, ulen, XML_NS_URI, LIT_LEN(XML_NS_URI))
-                || slice_eq(uri, ulen, XMLNS_NS_URI, LIT_LEN(XMLNS_NS_URI))) {
+            if (!slice_eq(uri, ulen, MKR_XML_NS_URI, MKR_LIT_LEN(MKR_XML_NS_URI))) { set_syntax(P); return -1; }
+        } else if (slice_eq(uri, ulen, MKR_XML_NS_URI, MKR_LIT_LEN(MKR_XML_NS_URI))
+                || slice_eq(uri, ulen, MKR_XMLNS_NS_URI, MKR_LIT_LEN(MKR_XMLNS_NS_URI))) {
             set_syntax(P); return -1;                  /* reserved URI bound to another prefix */
         }
         if (bpl > 0 && ulen == 0) { set_syntax(P); return -1; } /* xmlns:p="" (XML 1.0) */
@@ -384,7 +369,7 @@ build_attr_nodes(mkr_xml_parser_t *P, mkr_xml_node_t *el)
         if (set_node_qname(P, attr, r->name, r->name_len, loc, ll, pl) != 0) return -1;
 
         if (mkr_xml_xmlns_prefix(r->name, r->name_len, NULL, NULL)) {
-            attr->ns_uri = XMLNS_NS_URI; attr->ns_uri_len = LIT_LEN(XMLNS_NS_URI);
+            attr->ns_uri = MKR_XMLNS_NS_URI; attr->ns_uri_len = MKR_LIT_LEN(MKR_XMLNS_NS_URI);
         } else if (pl > 0) {                           /* prefixed attribute */
             uint32_t ulen;
             const char *uri = ns_lookup(P, pfx, pl, &ulen);
@@ -640,9 +625,7 @@ parse_pi(mkr_xml_parser_t *P, mkr_xml_node_t *parent, int at_doc_start)
      * Name (NameStartChar NameChar*); only the reserved "xml" (any case) below is
      * excluded. */
     mkr_span_t tsp = mkr_span(tgt, tl);
-    int ci_xml  = (tl == 3 && (mkr_span_at(&tsp, 0) | 0x20) == 'x'
-                           && (mkr_span_at(&tsp, 1) | 0x20) == 'm'
-                           && (mkr_span_at(&tsp, 2) | 0x20) == 'l');
+    int ci_xml  = mkr_xml_is_reserved_pi_target(tgt, tl);   /* "xml" in any case */
     int is_decl = (tl == 3 && mkr_span_starts(&tsp, "xml", 3));
     if (is_decl) {
         if (!at_doc_start || P->depth != 0) { set_syntax(P); return -1; }  /* decl: doc start only */
@@ -763,7 +746,7 @@ parse_doctype(mkr_xml_parser_t *P)
         set_syntax(P); return -1;   /* inside an element, after the root, or a second DOCTYPE */
     }
     P->saw_doctype = 1;
-    advance_n(P, LIT_LEN("!DOCTYPE"));
+    advance_n(P, MKR_LIT_LEN("!DOCTYPE"));
     if (!is_space_byte(mkr_span_peek(&P->in))) { set_syntax(P); return -1; } /* S required */
     skip_ws(P);
     const char *name; uint32_t name_len;
@@ -1239,7 +1222,7 @@ mkr_xml_parse_selftest(void)
         if (!NAME_IS(c, "c") || !NS_IS(c, "urn:d")) { mkr_xml_doc_destroy(d); return i; } /* default ns inherited */
         /* attrs in order: xmlns:a, xmlns, a:x, y */
         mkr_xml_node_t *a = r->attrs;
-        if (!a || !NAME_IS(a, "a") || !PFX_IS(a, "xmlns") || !NS_IS(a, XMLNS_NS_URI)) { mkr_xml_doc_destroy(d); return i; }
+        if (!a || !NAME_IS(a, "a") || !PFX_IS(a, "xmlns") || !NS_IS(a, MKR_XMLNS_NS_URI)) { mkr_xml_doc_destroy(d); return i; }
         a = a->next; /* xmlns */
         if (!a || !NAME_IS(a, "xmlns") || a->prefix_len != 0) { mkr_xml_doc_destroy(d); return i; }
         a = a->next; /* a:x */

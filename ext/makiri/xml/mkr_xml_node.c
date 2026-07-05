@@ -252,19 +252,8 @@ mkr_xml_preorder_next(const mkr_xml_node_t *root, mkr_xml_node_t *cur)
 }
 
 int
-mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out)
+mkr_xml_split_scanned_qname(const char *name, uint32_t len, mkr_xml_qname_t *out)
 {
-    if (len == 0) return -1;
-    mkr_span_t s = mkr_span(name, len);
-    uint32_t cp;
-    int bl = mkr_utf8_decode1_span(&s, &cp);
-    if (bl == 0 || !mkr_xml_is_name_start(cp)) return -1;
-    mkr_span_skip(&s, (size_t)bl);
-    while (mkr_span_left(&s) > 0) {
-        bl = mkr_utf8_decode1_span(&s, &cp);
-        if (bl == 0 || !mkr_xml_is_name_char(cp)) return -1;
-        mkr_span_skip(&s, (size_t)bl);
-    }
     out->qname = name; out->qname_len = len;
     mkr_span_t q = mkr_span(name, len);
     size_t colon_at;
@@ -280,11 +269,31 @@ mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out)
     mkr_span_t lsp = mkr_span(ls, ll);
     size_t second;
     if (mkr_span_find(&lsp, ':', &second)) return -1;     /* a second colon */
+    uint32_t cp;
     if (mkr_utf8_decode1_span(&lsp, &cp) == 0 || !mkr_xml_is_name_start(cp))
         return -1;                                        /* local must be an NCName */
     out->prefix = name; out->prefix_len = pl;
     out->local  = ls;   out->local_len  = ll;
     return 0;
+}
+
+int
+mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out)
+{
+    if (len == 0) return -1;
+    /* the mutation path's input is not pre-scanned: prove the whole QName is a
+     * Name (NameStartChar NameChar*) before the shared split enforces NCName. */
+    mkr_span_t s = mkr_span(name, len);
+    uint32_t cp;
+    int bl = mkr_utf8_decode1_span(&s, &cp);
+    if (bl == 0 || !mkr_xml_is_name_start(cp)) return -1;
+    mkr_span_skip(&s, (size_t)bl);
+    while (mkr_span_left(&s) > 0) {
+        bl = mkr_utf8_decode1_span(&s, &cp);
+        if (bl == 0 || !mkr_xml_is_name_char(cp)) return -1;
+        mkr_span_skip(&s, (size_t)bl);
+    }
+    return mkr_xml_split_scanned_qname(name, len, out);
 }
 
 int

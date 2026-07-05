@@ -109,6 +109,11 @@ int mkr_xml_is_name_char(uint32_t c);
  * (§2.6: PITarget is a Name). 0 if a Name, -1 otherwise. */
 int mkr_xml_validate_name(const char *src, uint32_t len);
 
+/* True if [s,len) is the reserved PI target "xml" in ANY case (§2.6) - so
+ * "xml"/"XML"/"xmL"/... are all rejected as PI targets. Shared by the reader
+ * (mkr_xml_tree.c) and the PI factory (mkr_xml_mutate.c). */
+int mkr_xml_is_reserved_pi_target(const char *s, uint32_t len);
+
 /* Expansion context. ATTR adds XML 1.0 §3.3.3 attribute-value normalization:
  * a *literal* white-space byte (TAB/LF/CR) becomes a space, while a white-space
  * character produced by a numeric reference (&#9;/&#10;/&#13;) is preserved. TEXT

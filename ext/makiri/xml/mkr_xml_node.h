@@ -15,6 +15,15 @@
 #include <stddef.h>
 #include "../core/mkr_buf.h"   /* mkr_spanbuf_t (the arena hand-fill writer) */
 
+/* The two reserved namespace URIs (XML Namespaces 1.0 §3): the predefined 'xml'
+ * prefix's URI and the xmlns namespace. Defined once here so the reader
+ * (mkr_xml_tree.c) and the mutators (mkr_xml_mutate.c) share one source of truth
+ * for the §7 rules they mirror. */
+#define MKR_XML_NS_URI    "http://www.w3.org/XML/1998/namespace"
+#define MKR_XMLNS_NS_URI  "http://www.w3.org/2000/xmlns/"
+/* Compile-time length of a string literal, as uint32_t (the per-slice width). */
+#define MKR_LIT_LEN(s)    ((uint32_t)(sizeof(s) - 1))
+
 /* The XML representation's DOM node-type constants - the counterpart of Lexbor's
  * LXB_DOM_NODE_TYPE_* for HTML. The numeric values mirror the DOM/Lexbor
  * encoding exactly (asserted in mkr_xpath_node_access_xml.h) so the monomorphized
@@ -158,9 +167,20 @@ mkr_xml_node_t *mkr_xml_preorder_next(const mkr_xml_node_t *root, mkr_xml_node_t
 
 /* Validate [name,len) as a well-formed XML 1.0 QName (full NameStartChar/NameChar
  * scan) and split it into +out+ (prefix_len 0 = unprefixed). 0 on success, -1 if
- * malformed. For the mutation path, whose input is not pre-scanned; the tree
- * builder keeps its own lighter split (the name is already scan_name'd). */
+ * malformed. For the mutation path, whose input is not pre-scanned: it scans the
+ * name here, then delegates to the shared mkr_xml_split_scanned_qname (which the
+ * tree builder, whose name is already scan_name'd, calls directly - one split
+ * rule, no re-scan). */
 int mkr_xml_qname_split(const char *name, uint32_t len, mkr_xml_qname_t *out);
+
+/* Split a QName [name,len) whose bytes are ALREADY known to be a valid XML 1.0
+ * Name (NameStartChar NameChar*) into +out+ (prefix_len 0 = unprefixed), enforcing
+ * the extra NCName rules a QName adds over a Name: at most one colon, non-empty
+ * prefix and local, and a local part that begins with a NameStartChar. 0 on
+ * success, -1 if malformed. The shared split core: mkr_xml_qname_split scans the
+ * name first then calls it; the tree builder (whose name is already scan_name'd)
+ * calls it directly - one splitting rule, no re-scan. */
+int mkr_xml_split_scanned_qname(const char *name, uint32_t len, mkr_xml_qname_t *out);
 
 /* Copy +qn+'s name into +doc+'s arena as one contiguous slice and point
  * node->qname/local/prefix into it (ns_uri is the caller's concern). 0 on
