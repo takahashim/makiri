@@ -115,6 +115,31 @@ mkr_ruby_verified_text(VALUE in, const char *what)
     return v;
 }
 
+mkr_ruby_borrowed_data_t
+mkr_ruby_verified_data(VALUE in, const char *what)
+{
+    VALUE       s   = rb_String(in);
+    const char *ptr = RSTRING_PTR(s);
+    size_t      len = (size_t)RSTRING_LEN(s);
+
+    /* Data-family (text/comment/CDATA content, attribute value): only invalid
+     * UTF-8 is fatal; an interior NUL is permitted so DOM data can hold U+0000.
+     * mkr_verify_text is not reused because it raises on NUL. mkr_text_check is
+     * allocation-free, so the borrow above is not held across a GC point. */
+    switch (mkr_text_check(s, ptr, len)) {
+        case MKR_TEXT_INVALID_UTF8:
+            rb_raise(mkr_eError, "%s must be valid UTF-8", what);
+        case MKR_TEXT_HAS_NUL: /* permitted for data-family */
+        case MKR_TEXT_OK:
+            break;
+    }
+    mkr_ruby_borrowed_data_t v;
+    v.value = s;
+    v.ptr   = ptr;
+    v.len   = len;
+    return v;
+}
+
 mkr_ruby_borrowed_bytes_t
 mkr_ruby_bytes_view(VALUE in)
 {

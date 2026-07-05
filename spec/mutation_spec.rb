@@ -56,7 +56,11 @@ RSpec.describe "Makiri mutation" do
       it "fails closed on a non-element node and on invalid bytes" do
         text = div.at_css("p").child
         expect { text.set_attribute_ns("urn:x", "x:y", "v") }.to raise_error(Makiri::Error)
-        expect { div.set_attribute_ns("urn:x", "x:y", "v\x00") }.to raise_error(Makiri::Error)
+        # The VALUE is data-family, so an embedded NUL is now permitted (DOM
+        # conformance); the qualified name and namespace stay NUL-strict.
+        div.set_attribute_ns("urn:x", "x:y", "v\x00")
+        expect(div.attribute_nodes.find { |a| a.name == "x:y" }.value.bytesize).to eq(2)
+        expect { div.set_attribute_ns("urn:x", "x\x00:y", "v") }.to raise_error(Makiri::Error)
         expect { div.set_attribute_ns("urn\x00", "x:y", "v") }.to raise_error(Makiri::Error)
       end
     end
@@ -258,6 +262,68 @@ RSpec.describe "Makiri mutation" do
       # the renamed element would be missing from it (a truncated wrong result).
       expect(multi.xpath("//section").map(&:text)).to eq(["x"])
       expect(multi.xpath("//div").map(&:text)).to eq(["y"])
+    end
+  end
+
+  # Data-family mutations (text/comment node content, attribute values) accept an
+  # embedded NUL (U+0000) so the HTML DOM API can hold it, matching browsers /
+  # WHATWG DOM (createTextNode/setAttribute must not reject U+0000). The bytes are
+  # stored and read back verbatim (length-preserved, never truncated at the NUL).
+  # Names, tags, namespaces, PI target/data, selectors, and XPath stay NUL-strict;
+  # invalid UTF-8 is still rejected everywhere, including these relaxed sites.
+  describe "embedded NUL in data-family content (DOM conformance)" do
+    let(:nul) { "a\x00b" } # 3 bytes
+
+    it "allows a NUL in an attribute value and round-trips it verbatim" do
+      div["data-x"] = nul
+      expect(div["data-x"].bytesize).to eq(3)
+      expect(div["data-x"]).to eq(nul)
+    end
+
+    it "allows a NUL in create_text_node and reads it back via #text" do
+      t = doc.create_text_node(nul)
+      expect(t.text.bytesize).to eq(3)
+      expect(t.text).to eq(nul)
+    end
+
+    it "allows a NUL in create_comment and preserves it in serialization" do
+      c = doc.create_comment(nul)
+      expect(c.to_html).to eq("<!--a\x00b-->")
+    end
+
+    it "allows a NUL via content= on an element (single text child) and on a text node" do
+      div.content = nul
+      expect(div.text.bytesize).to eq(3)
+      t = div.at_css("p")&.child || doc.create_text_node("x")
+      t.content = nul
+      expect(t.text).to eq(nul)
+    end
+
+    it "round-trips a NUL-bearing attribute value through serialization" do
+      div["data-x"] = nul
+      reparsed = Makiri::HTML(div.to_html).at_css("#d")
+      # The HTML tokenizer replaces U+0000 in an attribute value with U+FFFD on
+      # re-parse (WHATWG), so this is not byte-identical - assert it stays a valid
+      # single-attribute round-trip rather than a specific byte sequence.
+      expect(reparsed["data-x"]).not_to be_nil
+    end
+
+    it "still rejects a NUL in a NAME / tag (fail closed)" do
+      expect { doc.create_element("a\x00b") }
+        .to raise_error(Makiri::Error, /must not contain a NUL byte/)
+      expect { div["a\x00b"] = "v" }
+        .to raise_error(Makiri::Error, /must not contain a NUL byte/)
+      expect { div.name = "a\x00b" }
+        .to raise_error(Makiri::Error, /must not contain a NUL byte/)
+    end
+
+    it "still rejects invalid UTF-8 in the relaxed data-family sites" do
+      expect { doc.create_text_node("\xFF".b) }
+        .to raise_error(Makiri::Error, /must be valid UTF-8/)
+      expect { div["data-x"] = "\xFF".b }
+        .to raise_error(Makiri::Error, /must be valid UTF-8/)
+      expect { doc.create_comment("\xFF".b) }
+        .to raise_error(Makiri::Error, /must be valid UTF-8/)
     end
   end
 

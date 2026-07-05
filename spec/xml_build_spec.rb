@@ -43,6 +43,17 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect { doc.create_processing_instruction("ok", "a?>b") }.to raise_error(Makiri::Error) # "?>"
     end
 
+    it "rejects an embedded NUL in XML data (U+0000 is not a legal XML char)" do
+      # Unlike the HTML DOM, XML 1.0 cannot represent U+0000, so the data-family
+      # NUL relaxation deliberately does NOT apply here: text/CDATA/comment content
+      # and attribute values keep rejecting NUL, fail-closed, to stay well-formed.
+      expect { doc.create_text_node("a\x00b") }.to raise_error(Makiri::Error)
+      expect { doc.create_cdata("a\x00b") }.to raise_error(Makiri::Error)
+      expect { doc.create_comment("a\x00b") }.to raise_error(Makiri::Error)
+      expect { doc.root["k"] = "a\x00b" }.to raise_error(Makiri::Error)
+      expect { doc.root.content = "a\x00b" }.to raise_error(Makiri::Error)
+    end
+
     it "rejects content that would serialize to invalid XML (comment '--', CDATA ']]>')" do
       expect { doc.create_comment("a--b") }.to raise_error(Makiri::Error)      # "--" in a comment
       expect { doc.create_comment("trailing-") }.to raise_error(Makiri::Error) # a trailing "-"

@@ -219,7 +219,7 @@ mkr_node_aset(VALUE self, VALUE rb_name, VALUE rb_value)
         rb_raise(mkr_eError, "cannot set an attribute on a non-element node");
     }
     mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
-    mkr_ruby_borrowed_text_t vv = mkr_ruby_verified_text(rb_value, "attribute value");
+    mkr_ruby_borrowed_data_t vv = mkr_ruby_verified_data(rb_value, "attribute value");
     lxb_dom_attr_t *attr = lxb_dom_element_set_attribute(
         lxb_dom_interface_element(node),
         (const lxb_char_t *)nv.ptr, nv.len,
@@ -289,7 +289,7 @@ mkr_node_set_attribute_ns(VALUE self, VALUE rb_ns, VALUE rb_qname, VALUE rb_valu
     lxb_dom_element_t *el = lxb_dom_interface_element(node);
 
     mkr_ruby_borrowed_text_t qv = mkr_ruby_verified_text(rb_qname, "attribute qualified name");
-    mkr_ruby_borrowed_text_t vv = mkr_ruby_verified_text(rb_value, "attribute value");
+    mkr_ruby_borrowed_data_t vv = mkr_ruby_verified_data(rb_value, "attribute value");
 
     mkr_ruby_borrowed_text_t nv = {0};
     bool have_ns = false;
@@ -442,7 +442,7 @@ static VALUE
 mkr_node_set_content(VALUE self, VALUE rb_text)
 {
     lxb_dom_node_t *node = mkr_node_unwrap_mutable(self);
-    mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "node content");
+    mkr_ruby_borrowed_data_t tv = mkr_ruby_verified_data(rb_text, "node content");
     lxb_status_t st = lxb_dom_node_text_content_set(
         node, (const lxb_char_t *)tv.ptr, tv.len);
     RB_GC_GUARD(tv.value);
@@ -584,7 +584,7 @@ static VALUE
 mkr_doc_create_text_node(VALUE self, VALUE rb_text)
 {
     lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
-    mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "text content");
+    mkr_ruby_borrowed_data_t tv = mkr_ruby_verified_data(rb_text, "text content");
     lxb_dom_text_t *t = lxb_dom_document_create_text_node(
         doc, (const lxb_char_t *)tv.ptr, tv.len);
     RB_GC_GUARD(tv.value);
@@ -598,7 +598,7 @@ static VALUE
 mkr_doc_create_comment(VALUE self, VALUE rb_text)
 {
     lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
-    mkr_ruby_borrowed_text_t tv = mkr_ruby_verified_text(rb_text, "comment content");
+    mkr_ruby_borrowed_data_t tv = mkr_ruby_verified_data(rb_text, "comment content");
     lxb_dom_comment_t *c = lxb_dom_document_create_comment(
         doc, (const lxb_char_t *)tv.ptr, tv.len);
     RB_GC_GUARD(tv.value);

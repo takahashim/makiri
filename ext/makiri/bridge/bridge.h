@@ -24,6 +24,22 @@ typedef struct {
     size_t      len;
 } mkr_ruby_borrowed_text_t;
 
+/* A validated, borrowed view of a Ruby String argument for a DATA-FAMILY
+ * mutation (text/comment/CDATA node content, attribute value). Contract: valid
+ * UTF-8, interior NUL ALLOWED, NUL-terminated at ptr[len] but - unlike
+ * mkr_ruby_borrowed_text_t - NOT usable as a C string, because an interior NUL
+ * may truncate it. Every consumer MUST pass (ptr, len) explicitly. `value`
+ * keeps `ptr` alive while the view stays on the C stack. This type is
+ * deliberately distinct from mkr_ruby_borrowed_text_t so the compiler forbids a
+ * NUL-bearing value from reaching a name or engine API that requires the
+ * NUL-free contract (DOM createTextNode/setAttribute must accept U+0000; names
+ * and engine strings still must not). */
+typedef struct {
+    VALUE       value;
+    const char *ptr;
+    size_t      len;
+} mkr_ruby_borrowed_data_t;
+
 /* A borrowed raw byte view of a Ruby String. This deliberately does NOT enforce
  * Makiri's strict text contract; HTML parsing consumes raw bytes and decodes
  * invalid UTF-8 leniently. */
@@ -36,6 +52,12 @@ typedef struct {
 /* Coerce +in+ to a String and enforce the text-input contract, raising
  * Makiri::Error (naming +what+) on a NUL byte or invalid UTF-8. */
 mkr_ruby_borrowed_text_t mkr_ruby_verified_text(VALUE in, const char *what);
+
+/* Constructor for mkr_ruby_borrowed_data_t (see its contract above): coerce +in+
+ * to a String, requiring valid UTF-8 but permitting an interior NUL. Raises
+ * Makiri::Error (naming +what+) on invalid UTF-8 only. For data-family values;
+ * names and engine strings use mkr_ruby_verified_text. */
+mkr_ruby_borrowed_data_t mkr_ruby_verified_data(VALUE in, const char *what);
 
 /* Coerce +in+ to a String and return its raw bytes. No UTF-8 / NUL validation.
  * The returned `ptr` borrows the bytes of `value`; use mkr_ruby_copy_bytes when

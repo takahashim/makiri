@@ -84,16 +84,17 @@ RSpec.describe "UTF-8 text-input contract" do
     let(:doc) { Makiri::HTML("<div id='d'>x</div>") }
     let(:el)  { doc.at_css("div") }
 
-    # [boundary description, callable]
+    # [boundary description, callable]. NUL is rejected for NAMES and engine
+    # inputs (below); it is ALLOWED for HTML data-family content (see the separate
+    # "data-family content accepts a NUL" block). Invalid UTF-8 is rejected
+    # everywhere, including the relaxed data-family sites.
     {
       "attribute value (invalid UTF-8)" => -> (d, e) { e["k"] = INVALID.dup.force_encoding("BINARY") },
-      "attribute value (NUL)"           => -> (d, e) { e["k"] = "a#{NUL}b" },
       "attribute name (NUL)"            => -> (d, e) { e["a#{NUL}b"] = "v" },
-      "element content (NUL)"           => -> (d, e) { e.content = "a#{NUL}b" },
       "element content (invalid UTF-8)" => -> (d, e) { e.content = INVALID.dup.force_encoding("BINARY") },
       "create_element (invalid UTF-8)"  => -> (d, e) { d.create_element(INVALID.dup.force_encoding("BINARY")) },
-      "create_text_node (NUL)"          => -> (d, e) { d.create_text_node("a#{NUL}b") },
-      "create_comment (NUL)"            => -> (d, e) { d.create_comment("a#{NUL}b") },
+      "create_text_node (invalid UTF-8)" => -> (d, e) { d.create_text_node(INVALID.dup.force_encoding("BINARY")) },
+      "create_comment (invalid UTF-8)"  => -> (d, e) { d.create_comment(INVALID.dup.force_encoding("BINARY")) },
       "name= (NUL)"                     => -> (d, e) { e.name = "a#{NUL}b" },
       "css selector (NUL)"              => -> (d, e) { d.css("div#{NUL}") },
       "css selector (invalid UTF-8)"    => -> (d, e) { d.css(INVALID.dup.force_encoding("BINARY")) },
@@ -107,6 +108,27 @@ RSpec.describe "UTF-8 text-input contract" do
     }.each do |desc, body|
       it "rejects #{desc} with Makiri::Error" do
         expect { body.call(doc, el) }.to raise_error(Makiri::Error)
+      end
+    end
+
+    # DOM data-family (text/comment content, attribute values) accepts U+0000,
+    # matching the HTML DOM / browsers; the bytes round-trip verbatim. Names and
+    # engine inputs stay NUL-strict (asserted above), and XML rejects NUL
+    # entirely (see xml_build_spec).
+    describe "data-family content accepts a NUL (HTML DOM conformance)" do
+      it "keeps a NUL in an attribute value" do
+        el["k"] = "a#{NUL}b"
+        expect(el["k"].bytesize).to eq(3)
+      end
+
+      it "keeps a NUL in element content" do
+        el.content = "a#{NUL}b"
+        expect(el.text.bytesize).to eq(3)
+      end
+
+      it "keeps a NUL in create_text_node and create_comment" do
+        expect(doc.create_text_node("a#{NUL}b").text.bytesize).to eq(3)
+        expect(doc.create_comment("a#{NUL}b").to_html).to eq("<!--a#{NUL}b-->")
       end
     end
 

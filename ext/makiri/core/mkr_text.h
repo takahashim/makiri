@@ -70,6 +70,13 @@ typedef struct {
  *   raw slice today. When something does, name it mkr_borrowed_bytes_t per the
  *   convention above; do not resurrect a placeholder before there is a user.
  *
+ *   One bridge-only variant sits BETWEEN bytes and text on the contract axis:
+ *   mkr_ruby_borrowed_data_t (bridge.h) is "valid UTF-8 but interior NUL
+ *   PERMITTED" - a strict superset of text - for DOM data-family mutations
+ *   (text/comment/CDATA content, attribute value), where U+0000 is legal data.
+ *   It never enters the engine (the engine still requires NUL-free text), so it
+ *   is deliberately absent from this engine lattice.
+ *
  *   (*) mkr_verified_text_t (defined above) is the one deliberate naming exception:
  *   it is a borrowed valid text AND a capability token. Its constructors are
  *   mkr_verified_text_from_view() at the Ruby boundary and mkr_verified_text_lit()
