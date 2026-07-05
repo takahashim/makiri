@@ -159,17 +159,21 @@ cb_step_path(css_build_t *B, mkr_axis_t axis, mkr_nt_kind_t nt_kind,
   return n;
 }
 
-/* @prefix:name (or @name when prefix is NULL) as a relative attribute-axis path. */
+/* A single-step relative PATH with a NAME test: axis::[prefix:]local (no
+ * predicates). +prefix+ NULL/0 means no namespace. The shared builder for every
+ * named single-step path (@prefix:name, of-type not(), nth-of-type position),
+ * centralizing the step-alloc + local/prefix set + partial-free-on-OOM dance. */
 static mkr_node_t *
-cb_attr_ns(css_build_t *B, const char *prefix, size_t plen, const char *name, size_t len)
+cb_named_step_path(css_build_t *B, mkr_axis_t axis,
+                   const char *prefix, size_t plen, const char *name, size_t nlen)
 {
   mkr_node_t *n = cb_node(B, MKR_NK_PATH);
   if (n == NULL) return NULL;
   mkr_step_t *steps = (mkr_step_t *)mkr_callocarray(1, sizeof(mkr_step_t));
   if (steps == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "out of memory (css)"); mkr_node_free(n); return NULL; }
-  steps[0].axis = MKR_AXIS_ATTRIBUTE;
+  steps[0].axis = axis;
   steps[0].test.kind = MKR_NT_NAME;
-  if (cb_set_text(B, &steps[0].test.local, name, len) != 0) { free(steps); mkr_node_free(n); return NULL; }
+  if (cb_set_text(B, &steps[0].test.local, name, nlen) != 0) { free(steps); mkr_node_free(n); return NULL; }
   if (prefix != NULL && plen > 0) {
     if (cb_set_text(B, &steps[0].test.prefix, prefix, plen) != 0) {
       mkr_owned_text_clear(&steps[0].test.local); free(steps); mkr_node_free(n); return NULL;
@@ -179,6 +183,13 @@ cb_attr_ns(css_build_t *B, const char *prefix, size_t plen, const char *name, si
   n->u.path.steps = steps;
   n->u.path.nsteps = 1;
   return n;
+}
+
+/* @prefix:name (or @name when prefix is NULL) as a relative attribute-axis path. */
+static mkr_node_t *
+cb_attr_ns(css_build_t *B, const char *prefix, size_t plen, const char *name, size_t len)
+{
+  return cb_named_step_path(B, MKR_AXIS_ATTRIBUTE, prefix, plen, name, len);
 }
 
 /* @name as a relative attribute-axis path (no namespace). */
@@ -436,21 +447,9 @@ cb_not_named_axis(css_build_t *B, mkr_axis_t axis, const mkr_nodetest_t *t)
 {
   mkr_node_t **a = cb_args(1);
   if (a == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
-  mkr_node_t *p = cb_node(B, MKR_NK_PATH);
+  mkr_node_t *p = cb_named_step_path(B, axis, (const char *)t->prefix.ptr, t->prefix.len,
+                                     (const char *)t->local.ptr, t->local.len);
   if (p == NULL) { free(a); return NULL; }
-  mkr_step_t *st = (mkr_step_t *)mkr_callocarray(1, sizeof(mkr_step_t));
-  if (st == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); mkr_node_free(p); free(a); return NULL; }
-  st[0].axis = axis;
-  st[0].test.kind = MKR_NT_NAME;
-  if (cb_set_text(B, &st[0].test.local, (const char *)t->local.ptr, t->local.len) != 0) {
-    free(st); mkr_node_free(p); free(a); return NULL;
-  }
-  if (t->prefix.ptr != NULL && t->prefix.len > 0) {
-    if (cb_set_text(B, &st[0].test.prefix, (const char *)t->prefix.ptr, t->prefix.len) != 0) {
-      mkr_owned_text_clear(&st[0].test.local); free(st); mkr_node_free(p); free(a); return NULL;
-    }
-  }
-  p->u.path.absolute = 0; p->u.path.steps = st; p->u.path.nsteps = 1;
   a[0] = p;
   return cb_fncall(B, "not", a, 1);
 }
@@ -464,22 +463,8 @@ cb_pos(css_build_t *B, mkr_axis_t axis, const mkr_nodetest_t *named)
   if (named == NULL) {
     path = cb_step_path(B, axis, MKR_NT_WILDCARD, NULL, 0);
   } else {
-    path = cb_node(B, MKR_NK_PATH);
-    if (path != NULL) {
-      mkr_step_t *st = (mkr_step_t *)mkr_callocarray(1, sizeof(mkr_step_t));
-      if (st == NULL) { mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); mkr_node_free(path); path = NULL; }
-      else {
-        st[0].axis = axis; st[0].test.kind = MKR_NT_NAME;
-        if (cb_set_text(B, &st[0].test.local, (const char *)named->local.ptr, named->local.len) != 0) {
-          free(st); mkr_node_free(path); path = NULL;
-        } else {
-          if (named->prefix.ptr != NULL && named->prefix.len > 0
-              && cb_set_text(B, &st[0].test.prefix, (const char *)named->prefix.ptr, named->prefix.len) != 0) {
-            mkr_owned_text_clear(&st[0].test.local); free(st); mkr_node_free(path); path = NULL;
-          } else { path->u.path.absolute = 0; path->u.path.steps = st; path->u.path.nsteps = 1; }
-        }
-      }
-    }
+    path = cb_named_step_path(B, axis, (const char *)named->prefix.ptr, named->prefix.len,
+                              (const char *)named->local.ptr, named->local.len);
   }
   mkr_node_t **a = cb_args(1);
   if (a == NULL) { mkr_node_free(path); mkr_err_set(B->err, MKR_XPATH_ERR_OOM, "oom"); return NULL; }
