@@ -638,9 +638,15 @@ parse_unary(mkr_parser_t *P)
  * The tightest level's operand is parse_unary (prefix '-'), a distinct production. */
 typedef struct {
   const char       *word;   /* non-NULL: match a word-literal token ("div"/"and"/...) */
+  size_t            wordlen; /* the word's compile-time length (0 when word == NULL) */
   mkr_tok_kind_t    kind;   /* else: match this token kind */
   mkr_op_t          op;
 } mkr_binop_match_t;
+
+/* Table-entry builders: WORD carries the literal's compile-time length (sizeof),
+ * so the match below needs no strlen over the const char *. */
+#define MKR_WORD(w)  (w), (sizeof(w) - 1)
+#define MKR_NOWORD   NULL, 0
 
 typedef struct {
   const mkr_binop_match_t *matches;
@@ -648,26 +654,26 @@ typedef struct {
 } mkr_binop_level_t;
 
 static const mkr_binop_match_t MKR_BINOPS_MUL[] = {
-  { NULL,  MKR_TK_STAR, MKR_OP_MUL },
-  { "div", MKR_TK_EOF,  MKR_OP_DIV },
-  { "mod", MKR_TK_EOF,  MKR_OP_MOD },
+  { MKR_NOWORD,      MKR_TK_STAR, MKR_OP_MUL },
+  { MKR_WORD("div"), MKR_TK_EOF,  MKR_OP_DIV },
+  { MKR_WORD("mod"), MKR_TK_EOF,  MKR_OP_MOD },
 };
 static const mkr_binop_match_t MKR_BINOPS_ADD[] = {
-  { NULL, MKR_TK_PLUS,  MKR_OP_ADD },
-  { NULL, MKR_TK_MINUS, MKR_OP_SUB },
+  { MKR_NOWORD, MKR_TK_PLUS,  MKR_OP_ADD },
+  { MKR_NOWORD, MKR_TK_MINUS, MKR_OP_SUB },
 };
 static const mkr_binop_match_t MKR_BINOPS_REL[] = {
-  { NULL, MKR_TK_LT, MKR_OP_LT },
-  { NULL, MKR_TK_GT, MKR_OP_GT },
-  { NULL, MKR_TK_LE, MKR_OP_LE },
-  { NULL, MKR_TK_GE, MKR_OP_GE },
+  { MKR_NOWORD, MKR_TK_LT, MKR_OP_LT },
+  { MKR_NOWORD, MKR_TK_GT, MKR_OP_GT },
+  { MKR_NOWORD, MKR_TK_LE, MKR_OP_LE },
+  { MKR_NOWORD, MKR_TK_GE, MKR_OP_GE },
 };
 static const mkr_binop_match_t MKR_BINOPS_EQ[] = {
-  { NULL, MKR_TK_EQ, MKR_OP_EQ },
-  { NULL, MKR_TK_NE, MKR_OP_NE },
+  { MKR_NOWORD, MKR_TK_EQ, MKR_OP_EQ },
+  { MKR_NOWORD, MKR_TK_NE, MKR_OP_NE },
 };
-static const mkr_binop_match_t MKR_BINOPS_AND[] = { { "and", MKR_TK_EOF, MKR_OP_AND } };
-static const mkr_binop_match_t MKR_BINOPS_OR[]  = { { "or",  MKR_TK_EOF, MKR_OP_OR  } };
+static const mkr_binop_match_t MKR_BINOPS_AND[] = { { MKR_WORD("and"), MKR_TK_EOF, MKR_OP_AND } };
+static const mkr_binop_match_t MKR_BINOPS_OR[]  = { { MKR_WORD("or"),  MKR_TK_EOF, MKR_OP_OR  } };
 
 /* Precedence order, tightest-binding first (index 0). */
 static const mkr_binop_level_t MKR_BINOP_LEVELS[] = {
@@ -694,9 +700,9 @@ parse_binary_level(mkr_parser_t *P, int li)
     int matched = 0;
     for (size_t i = 0; i < lvl->count; ++i) {
       const mkr_binop_match_t *m = &lvl->matches[i];
-      /* mkr_tok_is_word_lit needs a string LITERAL (sizeof); the table holds a
-       * const char *, so call the length-taking primitive directly. */
-      int hit = m->word ? mkr_tok_is_word_len(&TOK(P), m->word, strlen(m->word))
+      /* wordlen is the literal's compile-time length (MKR_WORD's sizeof), so no
+       * strlen over the stored const char * is needed. */
+      int hit = m->word ? mkr_tok_is_word_len(&TOK(P), m->word, m->wordlen)
                         : (TOK(P).kind == m->kind);
       if (hit) { op = m->op; matched = 1; break; }
     }

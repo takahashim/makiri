@@ -1,8 +1,9 @@
 /* xml_decode.c - XML 1.0 Appendix F byte-encoding autodetection and strict
- * decode-to-UTF-8 for the XML reader. Part of the bridge layer (raw RSTRING
- * access lives here), split out of ruby_string.c so this XML-specific charset
- * subsystem is separate from the generic Ruby String helpers. Shares the
- * allocation-free strict-text-contract core (mkr_text_check) via
+ * decode-to-UTF-8 for the XML reader. Part of the bridge layer, split out of
+ * ruby_string.c so this XML-specific charset subsystem is separate from the
+ * generic Ruby String helpers. Raw RSTRING access stays isolated in
+ * ruby_string.c; this file borrows bytes only through mkr_ruby_bytes_view.
+ * Shares the allocation-free strict-text-contract core (mkr_text_check) via
  * bridge_internal.h. See mkr_xml_decode_input in bridge.h for the contract. */
 #include "bridge.h"
 #include "../makiri.h"
@@ -130,18 +131,20 @@ mkr_xml_enc_compatible(rb_encoding *a, rb_encoding *b)
 static rb_encoding *
 mkr_xml_effective_encoding(VALUE str)
 {
-    rb_encoding         *tag    = rb_enc_get(str);
-    const unsigned char *raw    = (const unsigned char *)RSTRING_PTR(str);
-    long                 rawlen = RSTRING_LEN(str);
+    rb_encoding              *tag = rb_enc_get(str);
+    mkr_ruby_borrowed_bytes_t v   = mkr_ruby_bytes_view(str);
+    const unsigned char      *raw = (const unsigned char *)v.ptr;
+    long                      rawlen = (long)v.len;
 
     long bom_len = 0, bom_stride = 1, bom_off = 0;
     rb_encoding *bom = mkr_xml_bom_encoding(raw, rawlen, &bom_len, &bom_stride, &bom_off);
     /* rb_enc_find inside the BOM lookup can autoload an encoding (a Ruby
      * allocation = a GC point), so re-borrow the bytes before reading them
-     * again - a borrowed RSTRING pointer must not be held across one. The
-     * interleave geometry (stride/off) is resolved by the BOM matcher and
-     * passed through, keeping the decl scanner itself allocation-free. */
-    raw = (const unsigned char *)RSTRING_PTR(str);
+     * again - a borrowed view must not be held across one. The interleave
+     * geometry (stride/off) is resolved by the BOM matcher and passed through,
+     * keeping the decl scanner itself allocation-free. */
+    v   = mkr_ruby_bytes_view(str);
+    raw = (const unsigned char *)v.ptr;
     rb_encoding *decl = mkr_xml_decl_encoding(raw + bom_len, rawlen - bom_len, bom_stride, bom_off);
     int is_binary = (tag == rb_ascii8bit_encoding());
 
@@ -193,8 +196,9 @@ mkr_xml_decode_input(VALUE str, size_t max_bytes)
         }
     }
 
-    const char *ptr = RSTRING_PTR(s);
-    long        len = RSTRING_LEN(s);
+    mkr_ruby_borrowed_bytes_t sv_bytes = mkr_ruby_bytes_view(s);
+    const char *ptr = sv_bytes.ptr;
+    long        len = (long)sv_bytes.len;
     long        off = 0;
     /* §4.3.3: a leading BOM is the encoding signature, not document content -
      * strip a U+FEFF (the transcode above turns any UTF-16/32 BOM into one). */
