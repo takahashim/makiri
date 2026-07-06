@@ -2,9 +2,7 @@
 
 module Makiri
   class Comment < Node
-    # Create a detached comment owned by +document+ (Nokogiri-style constructor;
-    # the document comes FIRST for Comment / CDATASection / ProcessingInstruction, unlike
-    # Element / Text). Delegates to {Document#create_comment}.
+    # Create a detached comment owned by +document+ (Nokogiri-style constructor)
     #
     # @param document [Makiri::Document]
     # @param content [String]
