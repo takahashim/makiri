@@ -123,9 +123,10 @@ mkr_s_alloc_inject_calls(VALUE self)
 }
 
 /* Makiri::XML.__decode(str) -> validated, UTF-8-tagged String, or raises
- * Makiri::XML::SyntaxError. Internal test hook exercising the strict input
- * decode (§2.1) on its own, until the full Makiri::XML(...) parse pipeline
- * (tokenizer + tree builder) lands and subsumes it. */
+ * Makiri::XML::SyntaxError. Internal test hook (spec/xml_decode_spec.rb)
+ * exercising the strict input decode (§2.1) in isolation - the same decode step
+ * the full Makiri::XML(...) parse pipeline runs, tested here without the
+ * tokenizer + tree builder. */
 static VALUE
 mkr_xml_s_decode(VALUE self, VALUE str)
 {
