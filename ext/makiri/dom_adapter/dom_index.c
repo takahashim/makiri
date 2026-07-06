@@ -126,44 +126,36 @@ mkr_dom_index_build(mkr_dom_index_t *idx, lxb_dom_document_t *doc)
         }
     }
 
+    /* The four sizing allocations, all freed once through `fail:` (single-exit).
+     * `cursor` is scratch (not stored on idx) and is freed on the success path too. */
+    mkr_dom_index_attr_slot_t *slots     = NULL;
+    lxb_dom_node_t           **tag_nodes = NULL;
+    size_t                    *tag_off   = NULL;
+    size_t                    *cursor    = NULL;
+    size_t                     cap       = 0;
+
     /* Size the attr->owner table (load factor <= 0.5). */
-    mkr_dom_index_attr_slot_t *slots = NULL;
-    size_t cap = 0;
     if (n_attrs > 0) {
         size_t need;
-        if (!mkr_size_mul(n_attrs, 2, &need) || !mkr_pow2_ceil(need, &cap)) {
-            return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
-        }
+        if (!mkr_size_mul(n_attrs, 2, &need) || !mkr_pow2_ceil(need, &cap)) goto fail;
         if (cap < 8) cap = 8;
         slots = mkr_callocarray(cap, sizeof(*slots));
-        if (slots == NULL) return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+        if (slots == NULL) goto fail;
     }
 
     /* Size the tag CSR: prefix-sum the per-tag counts into offsets, plus a
      * cursor (copy of the offsets) used to scatter in document order. */
-    lxb_dom_node_t **tag_nodes = NULL;
-    size_t          *tag_off   = NULL;
-    size_t          *cursor    = NULL;
     if (n_indexed > 0) {
         size_t noff = (size_t)tag_max + 2;
         size_t off_bytes;
-        if (!mkr_size_mul(noff, sizeof(*cursor), &off_bytes)) {
-            free(slots);
-            return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
-        }
+        if (!mkr_size_mul(noff, sizeof(*cursor), &off_bytes)) goto fail;
         tag_off = mkr_reallocarray(NULL, noff, sizeof(*tag_off));
         cursor  = mkr_reallocarray(NULL, noff, sizeof(*cursor));
         tag_nodes = mkr_reallocarray(NULL, n_indexed, sizeof(*tag_nodes));
-        if (tag_off == NULL || cursor == NULL || tag_nodes == NULL) {
-            free(slots); free(tag_off); free(cursor); free(tag_nodes);
-            return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
-        }
+        if (tag_off == NULL || cursor == NULL || tag_nodes == NULL) goto fail;
         tag_off[0] = 0;
         for (uintptr_t t = 0; t <= tag_max; t++) {
-            if (!mkr_size_add(tag_off[t], counts[t], &tag_off[t + 1])) {
-                free(slots); free(tag_off); free(cursor); free(tag_nodes);
-                return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
-            }
+            if (!mkr_size_add(tag_off[t], counts[t], &tag_off[t + 1])) goto fail;
         }
         memcpy(cursor, tag_off, off_bytes);
     }
@@ -205,6 +197,15 @@ mkr_dom_index_build(mkr_dom_index_t *idx, lxb_dom_document_t *doc)
     free(cursor);
     idx->built = true;
     return LXB_STATUS_OK;
+
+fail:
+    /* Reached only before the idx->... assignments above transfer ownership, so
+     * these are all still locals (phase 2 has no failure path). */
+    free(slots);
+    free(tag_nodes);
+    free(tag_off);
+    free(cursor);
+    return LXB_STATUS_ERROR_MEMORY_ALLOCATION;
 }
 
 static lxb_dom_node_t *

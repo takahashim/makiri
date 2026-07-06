@@ -237,6 +237,21 @@ h2x_make(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, const char *pdef, uint32_t pdef
     }
 }
 
+/* If +n+ is an HTML <template> element, set *content to its content fragment
+ * (which may itself be NULL) and return true; else return false. The shared
+ * template detection for both import directions - the two callers then apply
+ * their own (different) rule for a template whose content is NULL. */
+static bool
+mkr_lxb_template_content(lxb_dom_node_t *n, lxb_dom_document_fragment_t **content)
+{
+    if (n->type == LXB_DOM_NODE_TYPE_ELEMENT
+        && n->local_name == LXB_TAG_TEMPLATE && n->ns == LXB_NS_HTML) {
+        *content = lxb_html_interface_template(n)->content;
+        return true;
+    }
+    return false;
+}
+
 /* The children to translate under +s+. An HTML <template> keeps its content in a
  * separate document fragment, NOT the normal child chain, so a plain first_child
  * walk would silently drop template contents. We descend into the content fragment
@@ -245,9 +260,8 @@ h2x_make(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, const char *pdef, uint32_t pdef
 static lxb_dom_node_t *
 h2x_children_of(lxb_dom_node_t *s)
 {
-    if (s->type == LXB_DOM_NODE_TYPE_ELEMENT
-        && s->local_name == LXB_TAG_TEMPLATE && s->ns == LXB_NS_HTML) {
-        lxb_dom_document_fragment_t *content = lxb_html_interface_template(s)->content;
+    lxb_dom_document_fragment_t *content;
+    if (mkr_lxb_template_content(s, &content)) {
         return content != NULL ? lxb_dom_interface_node(content)->first_child : NULL;
     }
     return s->first_child;
@@ -384,10 +398,9 @@ x2h_make(lxb_dom_document_t *hdoc, const mkr_xml_node_t *s, lxb_dom_node_t **out
 static lxb_dom_node_t *
 x2h_link_target(lxb_dom_node_t *el)
 {
-    if (el->type == LXB_DOM_NODE_TYPE_ELEMENT
-        && el->local_name == LXB_TAG_TEMPLATE && el->ns == LXB_NS_HTML) {
-        lxb_dom_document_fragment_t *content = lxb_html_interface_template(el)->content;
-        if (content != NULL) return lxb_dom_interface_node(content);
+    lxb_dom_document_fragment_t *content;
+    if (mkr_lxb_template_content(el, &content) && content != NULL) {
+        return lxb_dom_interface_node(content);
     }
     return el;
 }

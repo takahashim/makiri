@@ -22,46 +22,45 @@ mkr_parse_tracked(const lxb_char_t *src, size_t len, void **out_lines)
 {
     *out_lines = NULL;
 
-    lxb_html_parser_t *parser = lxb_html_parser_create();
-    if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) {
-        if (parser != NULL) {
-            lxb_html_parser_destroy(parser);
-        }
-        return NULL;
-    }
+    /* All resources declared up front and freed once through `fail:` (single-exit),
+     * so the correct free-set lives in one place instead of being re-spelled at
+     * each early return. Every destructor below is NULL-safe (guarded / by
+     * contract), so ordering across the acquisition points stays trivial. */
+    lxb_html_parser_t   *parser = NULL;
+    lxb_html_document_t *doc    = NULL;
+    mkr_pos_recorder_t  *rec    = NULL;
+    lxb_status_t         st;
 
-    lxb_html_document_t *doc = lxb_html_parse_chunk_begin(parser);
-    if (doc == NULL) {
-        lxb_html_parser_destroy(parser);
-        return NULL;
-    }
+    parser = lxb_html_parser_create();
+    if (parser == NULL || lxb_html_parser_init(parser) != LXB_STATUS_OK) goto fail;
+
+    doc = lxb_html_parse_chunk_begin(parser);
+    if (doc == NULL) goto fail;
 
     /* Install the recorder, chaining the parser's own tree-building callback
      * (set by chunk_begin). If the recorder can't be allocated we simply parse
      * without source tracking. */
-    mkr_pos_recorder_t *rec = mkr_pos_recorder_create(src);
+    rec = mkr_pos_recorder_create(src);
     if (rec != NULL) {
         lxb_html_tokenizer_t *tkz = lxb_html_parser_tokenizer(parser);
+        /* Lexbor has a setter and a ctx getter for the token-done callback but no
+         * getter for the callback function itself, so read that one field
+         * directly (the ctx uses the public getter). */
         mkr_pos_recorder_set_delegate(rec, tkz->callback_token_done,
-                                      tkz->callback_token_ctx);
+                                      lxb_html_tokenizer_callback_token_done_ctx(tkz));
         lxb_html_tokenizer_callback_token_done_set(tkz, mkr_pos_token_cb, rec);
     }
 
-    lxb_status_t st = lxb_html_parse_chunk_process(parser, src, len);
+    st = lxb_html_parse_chunk_process(parser, src, len);
     if (st == LXB_STATUS_OK) {
         st = lxb_html_parse_chunk_end(parser);
     }
-
-    if (st != LXB_STATUS_OK) {
-        mkr_pos_recorder_destroy(rec);
-        lxb_html_document_destroy(doc);
-        lxb_html_parser_destroy(parser);
-        return NULL;
-    }
+    if (st != LXB_STATUS_OK) goto fail;
 
     if (rec != NULL) {
         mkr_pos_assign_to_dom(rec, lxb_dom_interface_node(doc));
         mkr_pos_recorder_destroy(rec);
+        rec = NULL;                    /* consumed */
         *out_lines = mkr_lines_build(src, len);
     }
 
@@ -69,6 +68,12 @@ mkr_parse_tracked(const lxb_char_t *src, size_t len, void **out_lines)
      * tokenizer and tree, never the document). */
     lxb_html_parser_destroy(parser);
     return doc;
+
+fail:
+    mkr_pos_recorder_destroy(rec);                  /* NULL-safe */
+    if (doc != NULL)    lxb_html_document_destroy(doc);
+    if (parser != NULL) lxb_html_parser_destroy(parser);
+    return NULL;
 }
 
 mkr_parsed_t *

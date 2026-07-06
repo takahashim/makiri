@@ -115,6 +115,18 @@ mkr_tix_is_container(const lxb_dom_node_t *n)
         || n->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 }
 
+/* The non-empty character-data payload of a TEXT/CDATA node, or NULL (for a
+ * non-text node or an empty one). The single "does this node contribute a text
+ * slice" test, shared by the count and fill passes so the two-pass sizing and
+ * filling can never disagree about which nodes yield a slice. */
+static const lexbor_str_t *
+mkr_tix_text_slice(lxb_dom_node_t *n)
+{
+    if (!mkr_tix_is_text(n)) return NULL;
+    const lexbor_str_t *d = &lxb_dom_interface_character_data(n)->data;
+    return (d->data != NULL && d->length != 0) ? d : NULL;
+}
+
 /* Pass 1: count text slices and container (element/fragment) nodes under root
  * (inclusive), so the slice arrays and the range table are each sized once. */
 static void
@@ -124,9 +136,8 @@ mkr_tix_count(lxb_dom_node_t *root, size_t *out_slices, size_t *out_containers)
     for (lxb_dom_node_t *n = root; n != NULL; n = mkr_dom_preorder_next(n, root)) {
         if (mkr_tix_is_container(n)) {
             nc++;
-        } else if (mkr_tix_is_text(n)) {
-            const lexbor_str_t *d = &lxb_dom_interface_character_data(n)->data;
-            if (d->data != NULL && d->length != 0) ns++;
+        } else if (mkr_tix_text_slice(n) != NULL) {
+            ns++;
         }
     }
     *out_slices = ns;
@@ -205,23 +216,21 @@ mkr_text_idx_build(lxb_dom_node_t *root)
         }
         top->child = child->next; /* advance the cursor for our return */
 
-        if (mkr_tix_is_text(child)) {
-            const lexbor_str_t *d = &lxb_dom_interface_character_data(child)->data;
-            if (d->data != NULL && d->length != 0) {
-                size_t i = t->nslices;
-                size_t total;
-                if (!mkr_size_add(t->prefix[i], d->length, &total)) {
-                    /* cumulative text length overflows size_t - give up the
-                     * index (fail closed); the caller falls back to a walk. */
-                    free(st);
-                    mkr_text_idx_destroy(t);
-                    return NULL;
-                }
-                t->slices[i].ptr = (const char *)d->data;
-                t->slices[i].len = d->length;
-                t->prefix[i + 1] = total;
-                t->nslices = i + 1;
+        const lexbor_str_t *d = mkr_tix_text_slice(child);
+        if (d != NULL) {
+            size_t i = t->nslices;
+            size_t total;
+            if (!mkr_size_add(t->prefix[i], d->length, &total)) {
+                /* cumulative text length overflows size_t - give up the
+                 * index (fail closed); the caller falls back to a walk. */
+                free(st);
+                mkr_text_idx_destroy(t);
+                return NULL;
             }
+            t->slices[i].ptr = (const char *)d->data;
+            t->slices[i].len = d->length;
+            t->prefix[i + 1] = total;
+            t->nslices = i + 1;
         } else if (mkr_tix_is_container(child)) {
             size_t r = mkr_tix_range_insert(t, child, t->nslices);
             /* grow_reserve may move st; top is re-fetched at the loop head and
