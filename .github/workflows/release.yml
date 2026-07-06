@@ -62,10 +62,16 @@ jobs:
         - x86_64-linux
         - aarch64-linux
         - arm64-darwin
+        - x64-mingw-ucrt
         include:
-          - { platform: x86_64-linux,  os: ubuntu-latest }
-          - { platform: aarch64-linux, os: ubuntu-24.04-arm }
-          - { platform: arm64-darwin,  os: macos-14 }
+          - { platform: x86_64-linux,   os: ubuntu-latest }
+          - { platform: aarch64-linux,  os: ubuntu-24.04-arm }
+          - { platform: arm64-darwin,   os: macos-14 }
+          - { platform: x64-mingw-ucrt, os: windows-latest }
+        exclude:
+          # ruby/setup-ruby has no RubyInstaller-2 build for Ruby 4.0 on Windows
+          # yet. Re-add once it ships.
+          - { platform: x64-mingw-ucrt, ruby: "4.0" }
     steps:
       - uses: actions/checkout@v6
         with:
@@ -79,6 +85,7 @@ jobs:
       - name: Compile (builds vendored Lexbor, then the ext)
         run: bundle exec rake compile
       - name: Smoke-load
+        shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
       - name: Stage the compiled binary under its ABI subdir
         shell: bash
@@ -97,16 +104,25 @@ jobs:
         run: |
           dlext="$(ruby -e 'print RbConfig::CONFIG["DLEXT"]')"
           bin="lib/makiri/makiri.${dlext}"
-          if [ "$(uname)" = "Darwin" ]; then
-            if otool -L "$bin" | grep -i 'libruby'; then
-              echo "::error::$bin hard-links libruby; precompiled gem would not load on other Ruby installs"; exit 1
-            fi
-          else
-            if readelf -d "$bin" 2>/dev/null | grep -iE 'NEEDED.*libruby'; then
-              echo "::error::$bin has a libruby NEEDED entry; precompiled gem may not load on a static Ruby"; exit 1
-            fi
-          fi
-          echo "OK: $bin has no libruby dependency"
+          case "$(uname -s)" in
+            Darwin)
+              if otool -L "$bin" | grep -i 'libruby'; then
+                echo "::error::$bin hard-links libruby; precompiled gem would not load on other Ruby installs"; exit 1
+              fi
+              ;;
+            MINGW*|MSYS*|CYGWIN*)
+              # Windows PE DLLs MUST import the Ruby DLL via the import library
+              # (no dynamic_lookup on PE/COFF). A libruby import here is by design,
+              # not a portability bug, so this assertion does not apply.
+              echo "Windows (x64-mingw-ucrt): Ruby import-library link is by design; skipping libruby assertion"
+              ;;
+            *)
+              if readelf -d "$bin" 2>/dev/null | grep -iE 'NEEDED.*libruby'; then
+                echo "::error::$bin has a libruby NEEDED entry; precompiled gem may not load on a static Ruby"; exit 1
+              fi
+              ;;
+          esac
+          echo "OK: portability check complete for $bin"
       - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.platform }}-${{ matrix.ruby }}
@@ -128,6 +144,8 @@ jobs:
           os: ubuntu-24.04-arm
         - platform: arm64-darwin
           os: macos-14
+        - platform: x64-mingw-ucrt
+          os: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -157,6 +175,7 @@ jobs:
       - name: Build the native gem
         run: ruby script/build_native_gem.rb "${{ matrix.platform }}"
       - name: Verify it installs without recompiling
+        shell: bash
         run: |
           gem install "makiri-"*"-${{ matrix.platform }}.gem" --local
           ruby -e 'require "makiri"; puts Makiri::VERSION'
