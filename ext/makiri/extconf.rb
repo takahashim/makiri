@@ -76,14 +76,18 @@ unless stamp_ok
       "-DCMAKE_INSTALL_PREFIX=#{LEXBOR_DST}",
       *(lexbor_asan ? ["-DLEXBOR_BUILD_WITH_ASAN=ON"] : []),
       LEXBOR_SRC,
-    ].shelljoin
+    ]
     warn "makiri: building vendored Lexbor (mode=#{lexbor_mode})"
-    system(cmd) or abort "cmake configure failed for Lexbor."
+    # Multi-arg system() bypasses the shell, so args pass verbatim on every
+    # platform. Do NOT shelljoin: Shellwords escapes `=` as `\=`, which a POSIX
+    # shell unwraps but Windows cmd.exe does not, mangling every -DNAME=VALUE
+    # (cmake then ignores CMAKE_INSTALL_PREFIX etc. and installs to the default).
+    system(*cmd) or abort "cmake configure failed for Lexbor."
     nproc = Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 4
     # `-- -jN` forwards to make and is wrong for Ninja; use cmake's portable
     # --parallel (cmake >= 3.12, satisfied by get-cmake) on Windows.
-    build_parallel = windows ? "--parallel #{nproc}" : "-- -j#{nproc}"
-    system("#{cmake.shellescape} --build . --target install #{build_parallel}") or
+    build_parallel = windows ? ["--parallel", nproc.to_s] : ["--", "-j#{nproc}"]
+    system(cmake, "--build", ".", "--target", "install", *build_parallel) or
       abort "cmake build/install failed for Lexbor."
   end
   File.write(lexbor_stamp, lexbor_mode)
