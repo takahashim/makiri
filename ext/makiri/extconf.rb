@@ -28,6 +28,10 @@ abort "Lexbor source not found at #{LEXBOR_SRC}. Did you `git submodule update -
 
 cmake = find_executable("cmake") or abort "cmake is required to build Lexbor."
 
+# Windows (RubyInstaller / MinGW-UCRT gcc). Used below to force the GNU
+# toolchain for the Lexbor build and to keep the Ruby import-library link.
+windows = RbConfig::CONFIG["target_os"] =~ /mingw|mswin/
+
 # Optionally build the vendored Lexbor itself under AddressSanitizer. This is the
 # ONLY way to catch overflows *inside* Lexbor's bump (mraw) arena: a sub-allocation
 # overrunning into the next one stays within one big malloc'd chunk, so the heap
@@ -55,6 +59,13 @@ unless stamp_ok
   Dir.chdir(LEXBOR_BLD) do
     cmd = [
       cmake,
+      # On Windows the runner ships Visual Studio, so a bare cmake defaults to the
+      # MSVC generator -> lexbor_static.lib under a Release/ subdir, breaking the
+      # hardcoded liblexbor_static.a path below. Force the GNU toolchain via Ninja
+      # (bundled by lukka/get-cmake; single-config, so no Release/ subdir) and pin
+      # the MinGW-UCRT gcc so cmake can't auto-probe MSVC. "MinGW Makefiles" is
+      # avoided: cmake refuses it when sh.exe is on PATH (MSYS2/Git-Bash put it there).
+      *(windows ? ["-G", "Ninja", "-DCMAKE_C_COMPILER=gcc"] : []),
       "-DLEXBOR_BUILD_SHARED=OFF",
       "-DLEXBOR_BUILD_STATIC=ON",
       "-DLEXBOR_BUILD_TESTS=OFF",
@@ -65,10 +76,18 @@ unless stamp_ok
       "-DCMAKE_INSTALL_PREFIX=#{LEXBOR_DST}",
       *(lexbor_asan ? ["-DLEXBOR_BUILD_WITH_ASAN=ON"] : []),
       LEXBOR_SRC,
-    ].shelljoin
+    ]
     warn "makiri: building vendored Lexbor (mode=#{lexbor_mode})"
-    system(cmd) or abort "cmake configure failed for Lexbor."
-    system("#{cmake.shellescape} --build . --target install -- -j#{Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 4}") or
+    # Multi-arg system() bypasses the shell, so args pass verbatim on every
+    # platform. Do NOT shelljoin: Shellwords escapes `=` as `\=`, which a POSIX
+    # shell unwraps but Windows cmd.exe does not, mangling every -DNAME=VALUE
+    # (cmake then ignores CMAKE_INSTALL_PREFIX etc. and installs to the default).
+    system(*cmd) or abort "cmake configure failed for Lexbor."
+    nproc = Etc.respond_to?(:nprocessors) ? Etc.nprocessors : 4
+    # `-- -jN` forwards to make and is wrong for Ninja; use cmake's portable
+    # --parallel (cmake >= 3.12, satisfied by get-cmake) on Windows.
+    build_parallel = windows ? ["--parallel", nproc.to_s] : ["--", "-j#{nproc}"]
+    system(cmake, "--build", ".", "--target", "install", *build_parallel) or
       abort "cmake build/install failed for Lexbor."
   end
   File.write(lexbor_stamp, lexbor_mode)
@@ -76,6 +95,13 @@ end
 
 $INCFLAGS << " -I#{File.join(LEXBOR_DST, 'include').shellescape}"
 $INCFLAGS << " -I#{File.join(EXT_DIR).shellescape}"
+
+# On Windows, Lexbor's public headers default LXB_API to __declspec(dllimport)
+# (lexbor/core/def.h), emitting __imp_* references that don't resolve against the
+# STATIC archive we link. Lexbor's own static CMake target defines LEXBOR_STATIC to
+# neutralize this, but we link the .a directly (not via CMake's exported target),
+# so we must define it ourselves. Harmless (and a no-op macro) on other platforms.
+$CFLAGS << " -DLEXBOR_STATIC" if windows
 
 # Hard-link the static archive rather than pass -L/-llexbor_static, to
 # avoid accidentally linking a system-installed Lexbor.
@@ -176,6 +202,10 @@ elsif RbConfig::CONFIG["target_os"] =~ /linux/
   $LIBRUBYARG = ""                          # the ruby executable already provides them
   $LIBRUBYARG_SHARED = ""
   $LIBRUBYARG_STATIC = ""
+# else (mingw/mswin): intentionally NOT blanked. PE/COFF has no dynamic_lookup
+# equivalent, so a MinGW extension MUST link the Ruby import library - we fall
+# through to mkmf's default libruby link. The precompiled x64-mingw-ucrt gem
+# still loads on any compatible Ruby of that ABI (they share ruby.dll's name).
 end
 
 # Export ONLY Init_makiri from the compiled extension. `-fvisibility=hidden`
@@ -194,6 +224,13 @@ elsif RbConfig::CONFIG["target_os"] =~ /linux/
   # are already hidden by -fvisibility=hidden, leaving just RUBY_FUNC_EXPORTED
   # Init_makiri in the dynamic symbol table.
   $DLDFLAGS << " -Wl,--exclude-libs,ALL"
+elsif windows
+  # PE DLLs export nothing unless __declspec(dllexport); Init_makiri (marked
+  # RUBY_FUNC_EXPORTED) is the only such export, which already turns off MinGW
+  # ld's auto-export-all. Belt-and-suspenders parity with the arms above: keep
+  # the export table to Init_makiri so a co-loaded Lexbor-based ext (e.g.
+  # nokolexbor) can't bind our private lxb_*.
+  $DLDFLAGS << " -Wl,--exclude-all-symbols"
 end
 
 # Recursively pick up C sources under ext/makiri/, excluding standalone
