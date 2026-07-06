@@ -68,10 +68,6 @@ jobs:
           - { platform: aarch64-linux,  os: ubuntu-24.04-arm }
           - { platform: arm64-darwin,   os: macos-14 }
           - { platform: x64-mingw-ucrt, os: windows-latest }
-        exclude:
-          # ruby/setup-ruby has no RubyInstaller-2 build for Ruby 4.0 on Windows
-          # yet. Re-add once it ships.
-          - { platform: x64-mingw-ucrt, ruby: "4.0" }
     steps:
       - uses: actions/checkout@v6
         with:

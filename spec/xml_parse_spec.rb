@@ -21,8 +21,6 @@ RSpec.describe "Makiri::XML minimal parse" do
     end
 
     it "reads a File (and Makiri::XML::Document.parse accepts one too)" do
-      # Close each handle via the block form: on Windows a still-open handle
-      # blocks Tempfile.create's block-exit unlink (Errno::EACCES).
       Tempfile.create(["t", ".xml"]) do |f|
         f.write("<r>file</r>")
         f.flush
