@@ -86,11 +86,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     mkr_xpath_context_t *ctx = mkr_xpath_context_new(doc->doc_node, doc->doc_node);
     if (ctx) {
         mkr_xpath_set_engine_kind(ctx, 1); /* XML engine */
-        mkr_xpath_limits_init_defaults(&limits);
-        limits.max_eval_ops        = 5 * 1000 * 1000; /* 5M ops - enough for a real query */
-        limits.max_nodeset_size    = 10000;
-        limits.max_string_bytes    = 1024 * 1024;
-        limits.max_recursion_depth = 64;
+        /* Shrink the per-evaluate budgets ON THE CONTEXT the evaluator actually
+         * reads: mkr_xpath_eval_compiled consults ctx->limits, not a local struct,
+         * so tighten via mkr_ctx_limits(ctx) (as xml_xpath_fuzz.c does) - otherwise
+         * a hostile expression would run under the large defaults and stall the
+         * fuzzer. */
+        mkr_xpath_limits_t *L = mkr_ctx_limits(ctx);
+        L->max_eval_ops        = 5 * 1000 * 1000; /* 5M ops - enough for a real query */
+        L->max_nodeset_size    = 10000;
+        L->max_string_bytes    = 1024 * 1024;
+        L->max_recursion_depth = 64;
 
         mkr_xpath_value_t out = {0};
         mkr_xpath_error_t eval_err = {0};
