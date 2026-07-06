@@ -52,7 +52,7 @@ VALUE mkr_eXmlSyntaxError;
 VALUE mkr_eXmlLimitExceeded;
 
 /* Makiri.__c_selftest -> true, or raises if the safe-core primitives
- * (mkr_core.c) fail their internal edge-case checks. Test hook only. */
+ * (mkr_core_selftest.c) fail their internal edge-case checks. Test hook only. */
 static VALUE
 mkr_c_selftest(VALUE self)
 {

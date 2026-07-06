@@ -43,7 +43,7 @@ CORE_SRCS = \
   $(EXT_DIR)/core/mkr_alloc.c \
   $(EXT_DIR)/core/mkr_utf8.c \
   $(EXT_DIR)/core/mkr_buf.c \
-  $(EXT_DIR)/core/mkr_core.c
+  $(EXT_DIR)/core/mkr_core_selftest.c
 
 XML_SRCS = \
   $(EXT_DIR)/xml/mkr_xml_tree.c \

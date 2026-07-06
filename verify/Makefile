@@ -36,7 +36,7 @@ LDLIBS ?= -lm
 INC    := -I $(EXT) -I $(LXB) -I .
 
 CORE_SRC  := $(EXT)/core/mkr_alloc.c $(EXT)/core/mkr_buf.c \
-             $(EXT)/core/mkr_core.c $(EXT)/core/mkr_utf8.c
+             $(EXT)/core/mkr_core_selftest.c $(EXT)/core/mkr_utf8.c
 XML_SRC   := $(EXT)/xml/mkr_xml_chars.c $(EXT)/xml/mkr_xml_index.c \
              $(EXT)/xml/mkr_xml_mutate.c $(EXT)/xml/mkr_xml_node.c \
              $(EXT)/xml/mkr_xml_tree.c
