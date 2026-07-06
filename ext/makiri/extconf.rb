@@ -96,6 +96,13 @@ end
 $INCFLAGS << " -I#{File.join(LEXBOR_DST, 'include').shellescape}"
 $INCFLAGS << " -I#{File.join(EXT_DIR).shellescape}"
 
+# On Windows, Lexbor's public headers default LXB_API to __declspec(dllimport)
+# (lexbor/core/def.h), emitting __imp_* references that don't resolve against the
+# STATIC archive we link. Lexbor's own static CMake target defines LEXBOR_STATIC to
+# neutralize this, but we link the .a directly (not via CMake's exported target),
+# so we must define it ourselves. Harmless (and a no-op macro) on other platforms.
+$CFLAGS << " -DLEXBOR_STATIC" if windows
+
 # Hard-link the static archive rather than pass -L/-llexbor_static, to
 # avoid accidentally linking a system-installed Lexbor.
 lexbor_archive = File.join(LEXBOR_DST, "lib", "liblexbor_static.a")
