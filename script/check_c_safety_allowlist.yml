@@ -96,19 +96,13 @@ ignore_paths:
   - path: ext/makiri/glue/ruby_node_set.c
     rule: node_raw_boundary
     reason: NodeSet.new stores representation-opaque pointers; mkr_node_raw takes a seed node's pointer only after same-document validation guarantees its kind matches the set.
-
-# --- parser-TU reader discipline (raw_scan_call / raw_cursor_member) ---
-allowlist:
-  # --- verified_text_forge: the Ruby-free test entry points that mint over a
-  #     runtime buffer (not a compile-time literal, which uses
-  #     mkr_verified_text_lit). Neither can use mkr_verified_text_from_view
-  #     (bridge = Ruby boundary), so each mints itself and must supply the
-  #     contract by construction. ---
+  # verified_text_forge in fuzz/*.c
   - path: ext/makiri/fuzz/xpath_fuzz.c
     rule: verified_text_forge
-    max: 1
     reason: "The libFuzzer harness mints over an owned mkr_strndup copy, which supplies NUL-termination and no-interior-NUL; UTF-8 validity is deliberately left to the lexer's strict decoder (its rejection path is fuzz-target behavior)."
   - path: ext/makiri/fuzz/xml_xpath_fuzz.c
     rule: verified_text_forge
-    max: 1
     reason: "The expression mint is over an owned mkr_strndup copy, which supplies NUL-termination and no-interior-NUL; UTF-8 validity is pre-checked (the harness filters invalid UTF-8 before parsing). Mirrors xpath_fuzz.c."
+
+# --- parser-TU reader discipline (raw_scan_call / raw_cursor_member) ---
+allowlist: []
