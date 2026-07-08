@@ -15,7 +15,9 @@
  * SECURITY: element/attribute names are validated as XML 1.0 QNames (a PI target
  * as a Name, §2.6) and values as XML Char, so the tree stays serializable to
  * well-formed XML; an unbound prefix or a reserved name fails closed rather than
- * producing a wrong/unserializable node.
+ * producing a wrong/unserializable node. The one exception is the explicit
+ * DOM-loose factory for browser-DOM interop; nodes it creates are flagged and
+ * XML serialization refuses them fail-closed.
  */
 #ifndef MKR_XML_MUTATE_H
 #define MKR_XML_MUTATE_H
@@ -100,6 +102,15 @@ mkr_xml_mut_status_t mkr_xml_set_content(mkr_xml_doc_t *doc, mkr_xml_node_t *nod
 /* A new detached ELEMENT named [name,nlen] (QName-validated + split). */
 mkr_xml_mut_status_t mkr_xml_new_element(mkr_xml_doc_t *doc, const char *name, uint32_t nlen,
                                          mkr_xml_node_t **out);
+
+/* A new detached ELEMENT whose name follows WHATWG DOM element-name rules rather
+ * than XML QName rules. +qn+ must describe slices inside one qualified-name
+ * buffer. +ns/nslen+ is the explicit DOM namespace URI (empty = null namespace).
+ * The node is flagged DOM_LOOSE_NAME and is intentionally not XML-serializable. */
+mkr_xml_mut_status_t mkr_xml_new_loose_dom_element(mkr_xml_doc_t *doc,
+                                                   const mkr_xml_qname_t *qn,
+                                                   const char *ns, uint32_t nslen,
+                                                   mkr_xml_node_t **out);
 
 /* A new detached TEXT / CDATA_SECTION / COMMENT node holding [text,tlen]
  * (validated as XML Char). +type+ selects which. */

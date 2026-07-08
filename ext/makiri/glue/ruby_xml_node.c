@@ -436,6 +436,20 @@ mkr_xser_has_chardata(const mkr_xml_node_t *e)
     return 0;
 }
 
+static int
+mkr_xml_has_dom_loose_name(const mkr_xml_node_t *root)
+{
+    for (mkr_xml_node_t *cur = (mkr_xml_node_t *)root;
+         cur != NULL;
+         cur = mkr_xml_preorder_next(root, cur)) {
+        if (cur->type == MKR_XML_NODE_TYPE_ELEMENT
+            && (cur->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) != 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int mkr_xser_doctype(mkr_buf_t *b, const mkr_xml_node_t *dt);
 
 static int
@@ -562,6 +576,10 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
     VALUE enc_name = NIL_P(enc_opt) ? Qnil : rb_obj_as_string(enc_opt);
 
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
+    if (mkr_xml_has_dom_loose_name(n)) {
+        rb_raise(mkr_eError,
+                 "cannot serialize XML containing a DOM-loose element name");
+    }
     mkr_buf_t buf;
     mkr_buf_init(&buf, mkr_xml_serialize_cap(self));   /* fail closed past the cap, never OOM */
     int rc = 0;
@@ -864,6 +882,10 @@ mkr_xml_node_canonicalize(int argc, VALUE *argv, VALUE self)
     int comments = !NIL_P(opts) && RTEST(rb_hash_aref(opts, ID2SYM(rb_intern("comments"))));
 
     mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
+    if (mkr_xml_has_dom_loose_name(n)) {
+        rb_raise(mkr_eError,
+                 "cannot canonicalize XML containing a DOM-loose element name");
+    }
     mkr_buf_t buf;
     mkr_buf_init(&buf, mkr_xml_serialize_cap(self));   /* fail closed past the cap, never OOM */
     int rc = 0;
@@ -1224,6 +1246,75 @@ mkr_xml_create_attr_i(VALUE key, VALUE val, VALUE rb_el)
     return ST_CONTINUE;
 }
 
+static int
+mkr_xml_dom_name_forbidden_byte(unsigned char c)
+{
+    return c == 0 || c == '\t' || c == '\n' || c == '\f' || c == '\r'
+        || c == ' ' || c == '/' || c == '>';
+}
+
+static int
+mkr_xml_dom_prefix_ok(const char *p, size_t len)
+{
+    if (len == 0) return 0;
+    for (size_t i = 0; i < len; i++) {
+        if (mkr_xml_dom_name_forbidden_byte((unsigned char)p[i])) return 0;
+    }
+    return 1;
+}
+
+static int
+mkr_xml_dom_local_ok(const char *p, size_t len)
+{
+    if (len == 0) return 0;
+    unsigned char first = (unsigned char)p[0];
+    if (first < 0x80
+        && !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+             || first == ':' || first == '_')) {
+        return 0;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (mkr_xml_dom_name_forbidden_byte((unsigned char)p[i])) return 0;
+    }
+    return 1;
+}
+
+static void
+mkr_xml_dom_name_consistency(mkr_ruby_borrowed_text_t qv,
+                             mkr_ruby_borrowed_text_t pv,
+                             int has_prefix,
+                             mkr_ruby_borrowed_text_t lv,
+                             mkr_xml_qname_t *qn)
+{
+    if (!mkr_xml_dom_local_ok(lv.ptr, lv.len)) {
+        rb_raise(rb_eArgError, "invalid DOM element local name");
+    }
+    if (!has_prefix) {
+        if (qv.len != lv.len || memcmp(qv.ptr, lv.ptr, qv.len) != 0) {
+            rb_raise(rb_eArgError,
+                     "qualified name must equal local name when prefix is nil");
+        }
+        qn->qname = qv.ptr; qn->qname_len = mkr_xml_u32_len(qv.len);
+        qn->prefix = qv.ptr; qn->prefix_len = 0;
+        qn->local = qv.ptr; qn->local_len = mkr_xml_u32_len(qv.len);
+        return;
+    }
+
+    if (!mkr_xml_dom_prefix_ok(pv.ptr, pv.len)) {
+        rb_raise(rb_eArgError, "invalid DOM element prefix");
+    }
+    if (qv.len != pv.len + 1 + lv.len
+        || memcmp(qv.ptr, pv.ptr, pv.len) != 0
+        || qv.ptr[pv.len] != ':'
+        || memcmp(qv.ptr + pv.len + 1, lv.ptr, lv.len) != 0) {
+        rb_raise(rb_eArgError,
+                 "qualified name must be prefix + ':' + local name");
+    }
+    qn->qname = qv.ptr; qn->qname_len = mkr_xml_u32_len(qv.len);
+    qn->prefix = qv.ptr; qn->prefix_len = mkr_xml_u32_len(pv.len);
+    qn->local = qv.ptr + pv.len + 1; qn->local_len = mkr_xml_u32_len(lv.len);
+}
+
 /* element_children -> NodeSet of the child element nodes (nodeType 1) only, in
  * document order (the counterpart of HTML's #element_children). */
 static VALUE
@@ -1289,6 +1380,42 @@ mkr_xml_doc_create_element(int argc, VALUE *argv, VALUE self)
         rb_hash_foreach(rb_attrs, mkr_xml_create_attr_i, rb_el);
     }
     return rb_el;
+}
+
+/* create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)
+ * -> Element.
+ *
+ * Internal browser-DOM interop escape hatch: create an XML-backed element whose
+ * element name follows WHATWG DOM element-name rules rather than XML QName
+ * rules. The resulting node is deliberately not XML-serializable. */
+static VALUE
+mkr_xml_doc_create_loose_dom_element(VALUE self, VALUE rb_qname, VALUE rb_prefix,
+                                     VALUE rb_local, VALUE rb_ns)
+{
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+    mkr_ruby_borrowed_text_t qv = mkr_ruby_verified_text(rb_qname, "qualified name");
+    mkr_ruby_borrowed_text_t lv = mkr_ruby_verified_text(rb_local, "local name");
+    mkr_ruby_borrowed_text_t pv = { Qnil, NULL, 0 };
+    int has_prefix = !NIL_P(rb_prefix);
+    if (has_prefix) {
+        pv = mkr_ruby_verified_text(rb_prefix, "prefix");
+    }
+    mkr_ruby_borrowed_text_t nv = { Qnil, NULL, 0 };
+    if (!NIL_P(rb_ns)) {
+        nv = mkr_ruby_verified_text(rb_ns, "namespace URI");
+    }
+
+    mkr_xml_qname_t qn;
+    mkr_xml_dom_name_consistency(qv, pv, has_prefix, lv, &qn);
+    mkr_xml_node_t *el = NULL;
+    mkr_xml_mut_status_t st = mkr_xml_new_loose_dom_element(
+        xdoc, &qn, nv.ptr, mkr_xml_u32_len(nv.len), &el);
+    RB_GC_GUARD(qv.value);
+    RB_GC_GUARD(lv.value);
+    RB_GC_GUARD(pv.value);
+    RB_GC_GUARD(nv.value);
+    mkr_xml_mut_check(st);
+    return mkr_wrap_xml_node(el, self);
 }
 
 /* Shared body for the leaf-data factories (text / comment / cdata). */
@@ -1423,6 +1550,7 @@ mkr_init_xml_node(void)
      * pure delegations to these, defined once in the Ruby layer (lib/makiri/)
      * so HTML and XML share them. */
     rb_define_method(mkr_cXmlDocument, "create_element",                mkr_xml_doc_create_element, -1);
+    rb_define_method(mkr_cXmlDocument, "create_loose_dom_element",      mkr_xml_doc_create_loose_dom_element, 4);
     rb_define_method(mkr_cXmlDocument, "create_text_node",             mkr_xml_doc_create_text_node, 1);
     rb_define_method(mkr_cXmlDocument, "create_comment",               mkr_xml_doc_create_comment, 1);
     rb_define_method(mkr_cXmlDocument, "create_cdata",                 mkr_xml_doc_create_cdata, 1);

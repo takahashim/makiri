@@ -38,9 +38,78 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
 
     it "fails closed on invalid factory input" do
       expect { doc.create_element("1bad") }.to raise_error(ArgumentError)
+      %w[f:o:o : foo: f<oo f}oo].each do |name|
+        expect { doc.create_element(name) }.to raise_error(ArgumentError)
+      end
       expect { doc.create_text_node("xy") }.to raise_error(Makiri::Error) # non-XML-Char
       expect { doc.create_processing_instruction("xml", "x") }.to raise_error(ArgumentError) # reserved
       expect { doc.create_processing_instruction("ok", "a?>b") }.to raise_error(Makiri::Error) # "?>"
+    end
+
+    it "creates DOM-loose elements for browser-DOM interop without loosening XML factories" do
+      el = doc.create_loose_dom_element("f:o:o", "f", "o:o", "http://example.com/")
+      expect(el).to be_a(Makiri::XML::Element)
+      expect(el.name).to eq("f:o:o")
+      expect(el.prefix).to eq("f")
+      expect(el.local_name).to eq("o:o")
+      expect(el.namespace_uri).to eq("http://example.com/")
+
+      cases = [
+        [":", nil, ":", nil],
+        [":foo", nil, ":foo", nil],
+        ["foo:", nil, "foo:", nil],
+        ["prefix::local", "prefix", ":local", "http://example.com/"],
+        ["0:a", "0", "a", "http://example.com/"],
+        ["f<oo", nil, "f<oo", nil],
+        ["f}oo", nil, "f}oo", nil],
+        ["\uFFFFfoo", nil, "\uFFFFfoo", nil]
+      ]
+      cases.each do |qname, prefix, local, ns|
+        n = doc.create_loose_dom_element(qname, prefix, local, ns)
+        expect(n.name).to eq(qname)
+        expect(n.prefix).to eq(prefix)
+        expect(n.local_name).to eq(local)
+        expect(n.namespace_uri).to eq(ns)
+      end
+    end
+
+    it "keeps DOM-loose namespace metadata on insertion but refuses XML serialization" do
+      loose = doc.create_loose_dom_element("f:o:o", "f", "o:o", "http://example.com/")
+      doc.root.add_child(loose)
+      expect(loose.parent).to eq(doc.root)
+      expect(loose.namespace_uri).to eq("http://example.com/")
+      expect { loose.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      expect { doc.canonicalize }.to raise_error(Makiri::Error, /DOM-loose/)
+    end
+
+    it "preserves DOM-loose metadata across clone and import" do
+      loose = doc.create_loose_dom_element("prefix::local", "prefix", ":local", "urn:dom")
+      clone = loose.clone_node
+      expect(clone.name).to eq("prefix::local")
+      expect(clone.prefix).to eq("prefix")
+      expect(clone.local_name).to eq(":local")
+      expect(clone.namespace_uri).to eq("urn:dom")
+      expect { clone.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+
+      other = Makiri::XML("<root/>")
+      imported = other.root.add_child(loose)
+      expect(imported.document).to equal(other)
+      expect(imported.name).to eq("prefix::local")
+      expect(imported.prefix).to eq("prefix")
+      expect(imported.local_name).to eq(":local")
+      expect(imported.namespace_uri).to eq("urn:dom")
+      expect { other.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+    end
+
+    it "returns a DOM-loose element to strict XML mode after a valid rename" do
+      loose = doc.create_loose_dom_element("f:o:o", "f", "o:o", "http://example.com/")
+      expect { loose.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      loose.name = "ok"
+      expect(loose.name).to eq("ok")
+      expect(loose.prefix).to be_nil
+      expect(loose.namespace_uri).to be_nil
+      expect(loose.to_xml).to eq("<ok/>")
     end
 
     it "rejects an embedded NUL in XML data (U+0000 is not a legal XML char)" do

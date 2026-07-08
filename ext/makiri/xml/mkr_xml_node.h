@@ -49,6 +49,8 @@ typedef enum {
     MKR_XML_NODE_TYPE_NOTATION         = 12  /* never produced (no DTD) */
 } mkr_xml_node_type_t;
 
+#define MKR_XML_NODE_FLAG_DOM_LOOSE_NAME 0x00000001u
+
 /* Field order is chosen for size + locality, not readability:
  *   1. the hot navigation/type fields first (the engine reads type + the tree
  *      pointers in its tight walk), kept within the first cache line;
@@ -74,6 +76,7 @@ typedef struct mkr_xml_node {
     const char *value;   /* text/cdata/comment/pi-data/attr value */
     uint32_t qname_len, local_len, prefix_len, ns_uri_len, value_len;
     uint32_t line, col;            /* source position (element only; 0 = none) */
+    uint32_t flags;                /* MKR_XML_NODE_FLAG_* */
 } mkr_xml_node_t;
 
 /* A QName decomposed into its contiguous "prefix:local" parts (the same layout a

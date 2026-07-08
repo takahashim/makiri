@@ -137,6 +137,7 @@ mkr_xml_rename(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *name, uint3
     st = assign_qname(doc, node, &qn);
     if (st != MKR_XML_MUT_OK) return st;
     node->ns_uri = uri; node->ns_uri_len = ulen;
+    node->flags &= ~MKR_XML_NODE_FLAG_DOM_LOOSE_NAME;
     return MKR_XML_MUT_OK;
 }
 
@@ -390,6 +391,30 @@ mkr_xml_new_element(mkr_xml_doc_t *doc, const char *name, uint32_t nlen, mkr_xml
 }
 
 mkr_xml_mut_status_t
+mkr_xml_new_loose_dom_element(mkr_xml_doc_t *doc, const mkr_xml_qname_t *qn,
+                              const char *ns, uint32_t nslen, mkr_xml_node_t **out)
+{
+    *out = NULL;
+    if (qn == NULL || qn->qname_len == 0 || qn->local_len == 0) return MKR_XML_MUT_BAD_NAME;
+    if (!(qn->local >= qn->qname && qn->local_len <= qn->qname_len
+          && (size_t)(qn->local - qn->qname) <= qn->qname_len - qn->local_len)) {
+        return MKR_XML_MUT_BAD_NAME;
+    }
+    mkr_xml_node_t *el = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_ELEMENT);
+    if (el == NULL) return MKR_XML_MUT_OOM;
+    mkr_xml_mut_status_t st = assign_qname(doc, el, qn);
+    if (st != MKR_XML_MUT_OK) return st;
+    if (ns != NULL && nslen > 0) {
+        const char *u = mkr_xml_arena_bytes(doc, ns, nslen);
+        if (u == NULL) return MKR_XML_MUT_OOM;
+        el->ns_uri = u; el->ns_uri_len = nslen;
+    }
+    el->flags |= MKR_XML_NODE_FLAG_DOM_LOOSE_NAME;
+    *out = el;
+    return MKR_XML_MUT_OK;
+}
+
+mkr_xml_mut_status_t
 mkr_xml_new_chardata(mkr_xml_doc_t *doc, uint8_t type, const char *text, uint32_t tlen,
                      mkr_xml_node_t **out)
 {
@@ -445,10 +470,13 @@ static mkr_xml_mut_status_t
 resolve_node_ns(mkr_xml_node_t *e, int connected)
 {
     const char *uri; uint32_t ulen;
-    mkr_xml_qname_t eq = mkr_xml_qname_of(e);
-    mkr_xml_mut_status_t st = resolve_ns(e, &eq, 0, connected, &uri, &ulen);
-    if (st != MKR_XML_MUT_OK) return st;
-    e->ns_uri = uri; e->ns_uri_len = ulen;
+    mkr_xml_mut_status_t st = MKR_XML_MUT_OK;
+    if ((e->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) == 0) {
+        mkr_xml_qname_t eq = mkr_xml_qname_of(e);
+        st = resolve_ns(e, &eq, 0, connected, &uri, &ulen);
+        if (st != MKR_XML_MUT_OK) return st;
+        e->ns_uri = uri; e->ns_uri_len = ulen;
+    }
     for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
         mkr_xml_qname_t aq = mkr_xml_qname_of(a);
         st = resolve_ns(e, &aq, 1, connected, &uri, &ulen);
@@ -510,7 +538,9 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
     } else if (src->value != NULL) {
         n->value = "";
     }
-    if (with_ns && src->ns_uri != NULL && src->ns_uri_len > 0) {
+    n->flags = src->flags;
+    if ((with_ns || (src->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) != 0)
+        && src->ns_uri != NULL && src->ns_uri_len > 0) {
         const char *u = mkr_xml_arena_bytes(doc, src->ns_uri, src->ns_uri_len);
         if (u == NULL) return NULL;
         n->ns_uri = u; n->ns_uri_len = src->ns_uri_len;
