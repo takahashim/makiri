@@ -104,7 +104,7 @@ mkr_node_qname(lxb_dom_node_t *node, const lxb_char_t **q, size_t *qlen, size_t 
 }
 
 /* The prefix slice of a qualified name (q,qlen) whose local part has length llen
- * (qualified == "prefix:local" or bare "local"): sets *pfx/*pfx_len and returns 1
+ * (qualified == "prefix:local" or bare "local"): sets *pfx and *pfx_len, returns 1
  * when a "prefix:" segment is present, else 0. Centralizes the subtle
  * qlen-vs-(llen+1) boundary so prefix/namespaceURI can't drift. */
 static int
