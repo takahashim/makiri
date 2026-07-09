@@ -43,9 +43,15 @@ typedef enum {
 
 /* Detach +node+ from the tree: from its parent's child list, or - for an
  * attribute - from its owner element's attribute list. No-op when already
- * detached (no parent). The arena keeps the memory (detach-never-destroy); the
- * caller clears doc->root if it detaches the root element. */
+ * detached (no parent). The arena keeps the memory (detach-never-destroy). This
+ * is the low-level unlink and does NOT touch the doc->root / doc->doctype cache;
+ * prefer mkr_xml_remove for a tree node so that cache stays consistent. */
 void mkr_xml_detach(mkr_xml_node_t *node);
+
+/* Detach a tree node AND re-derive the cached doc->root / doc->doctype when it
+ * was a document-level child (detach + sync_doc_meta). The removal counterpart of
+ * the mkr_xml_insert_* functions; +doc+ may be NULL (then it is a plain detach). */
+void mkr_xml_remove(mkr_xml_doc_t *doc, mkr_xml_node_t *node);
 
 /* Rename an element or attribute in place to the QName [name, name+nlen):
  * validates it, copies it contiguously into the arena, re-splits prefix/local,
@@ -111,6 +117,16 @@ mkr_xml_mut_status_t mkr_xml_new_loose_dom_element(mkr_xml_doc_t *doc,
                                                    const mkr_xml_qname_t *qn,
                                                    const char *ns, uint32_t nslen,
                                                    mkr_xml_node_t **out);
+
+/* A new detached DOCUMENT_TYPE node (DOM createDocumentType). Fields repurposed
+ * as the parser does: local/qname = name, prefix = public id, value = system id.
+ * +pub+/+sys+ NULL = that id absent. Insert it before the root with the normal
+ * mkr_xml_insert_* (the placement guards keep it document-level, pre-root, one). */
+mkr_xml_mut_status_t mkr_xml_new_document_type(mkr_xml_doc_t *doc,
+                                               const char *name, uint32_t nlen,
+                                               const char *pub, uint32_t plen,
+                                               const char *sys, uint32_t slen,
+                                               mkr_xml_node_t **out);
 
 /* A new detached TEXT / CDATA_SECTION / COMMENT node holding [text,tlen]
  * (validated as XML Char). +type+ selects which. */

@@ -61,6 +61,12 @@ module MutateFuzz
   ATTR_NAMES = ["id", "class", "p:role", "xmlns:q", "1bad", "data-x", "a b", "", "dc:id"].freeze
   ATTR_VALS  = ["v", %(a"b), "x<y", "", "p q", "\x00", "&amp;"].freeze
   PI_TARGETS = ["xml-stylesheet", "php", "xml", "1bad", "ok-target"].freeze
+  # DOCTYPE factory inputs: valid + invalid names, and ids with a '"' / NUL that
+  # must be rejected cleanly. Inserting the resulting node exercises the doctype
+  # placement guards (document-only, pre-root, at most one) - most positions are
+  # rejected, a before-root insert is accepted.
+  DOCTYPE_NAMES = ["r", "root", "svg", "p:doc", "1bad", "a b", "", "SVG"].freeze
+  DOCTYPE_IDS   = [nil, "", "-//W3C//DTD", "sys.dtd", %(a"b), "\x00", "urn:x"].freeze
 
   # A documented, fail-closed rejection of a bad edit (invalid name/char, cycle,
   # second root, cross-document/representation, frozen receiver, bad index): the
@@ -129,7 +135,7 @@ module MutateFuzz
   end
 
   def make(doc, rng)
-    case rng.rand(8)
+    case rng.rand(9)
     when 0, 1 then doc.create_element(ELEM_NAMES.sample(random: rng))
     when 2    then doc.create_element(ELEM_NAMES.sample(random: rng), TEXTS.sample(random: rng))
     when 3    then doc.create_text_node(TEXTS.sample(random: rng))
@@ -137,6 +143,9 @@ module MutateFuzz
     when 5    then doc.create_cdata(TEXTS.sample(random: rng))
     when 6    then doc.create_processing_instruction(PI_TARGETS.sample(random: rng), TEXTS.sample(random: rng))
     when 7    then make_fragment(doc, rng)  # inserting a fragment splices its children
+    when 8    then doc.create_document_type(DOCTYPE_NAMES.sample(random: rng),
+                                             DOCTYPE_IDS.sample(random: rng),
+                                             DOCTYPE_IDS.sample(random: rng))
     end
   end
 

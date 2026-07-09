@@ -740,7 +740,8 @@ parse_quoted(mkr_xml_parser_t *P, const char **out, uint32_t *out_len)
  * a markup declaration). NOTHING in the DTD is processed: no entity is defined
  * (so a DTD-defined &name; stays an undefined-entity error per §9.1, keeping XXE
  * and billion-laughs impossible) and no external subset is fetched (zero I/O).
- * The metadata is kept in an off-tree DOCUMENT_TYPE node (doc->doctype). */
+ * The metadata is kept in a DOCUMENT_TYPE node linked as the document node's
+ * first child, before the root (doc->doctype caches it). */
 static int
 parse_doctype(mkr_xml_parser_t *P)
 {
@@ -790,9 +791,13 @@ parse_doctype(mkr_xml_parser_t *P)
     }
     if (!closed) { set_syntax(P); return -1; }   /* unterminated DOCTYPE */
 
-    /* Retain the metadata off-tree (not a child of any node, so XPath is
-     * unaffected) for Document#internal_subset. Fields are repurposed:
-     * local/qname = name, prefix = public/external id, value = system id. */
+    /* The DOCUMENT_TYPE node is a real child of the document node (linked here, in
+     * prolog order, before the root), exactly like a browser DOM - so it shows up
+     * in Document#children and carries parent/sibling links. XPath is unaffected:
+     * its node model explicitly excludes DOCUMENT_TYPE (mkr_xpath_eval_body.h). The
+     * DTD is still NOT processed (no entities). doc->doctype caches this node for
+     * Document#internal_subset. Fields are repurposed: local/qname = name, prefix =
+     * public/external id, value = system id. */
     mkr_xml_node_t *dt = mkr_xml_arena_node(P->doc, MKR_XML_NODE_TYPE_DOCUMENT_TYPE);
     if (dt == NULL) { propagate_oom(P); return -1; }
     dt->local = dt->qname = own(P, name, name_len);
@@ -806,6 +811,7 @@ parse_doctype(mkr_xml_parser_t *P)
         dt->value = own(P, sys, sys_len); dt->value_len = sys_len;
         if (sys_len > 0 && dt->value == NULL) return -1;
     }
+    append_child(P->doc->doc_node, dt);
     P->doc->doctype = dt;
     return 0;
 }
@@ -1319,9 +1325,10 @@ mkr_xml_parse_selftest(void)
      * and the internal subset (with a '>' inside a markup decl, and '>' inside a
      * quoted literal) are skipped to the true '>', nothing in the DTD is
      * registered, and parsing continues into the root. The name + external ID are
-     * retained in an off-tree DOCUMENT_TYPE node (doc->doctype, NOT a child of any
-     * node, so the tree/XPath is unaffected); here SYSTEM "a>b" (with a quoted
-     * '>') gives system id "a>b" and no public id. */
+     * retained in a DOCUMENT_TYPE node linked as the document node's first child,
+     * BEFORE the root (browser-DOM order), with doc->doctype caching it; XPath is
+     * unaffected (its node model excludes DOCUMENT_TYPE). Here SYSTEM "a>b" (with a
+     * quoted '>') gives system id "a>b" and no public id. */
     i++; /* 14b */
     d = PARSE_LIT("<!DOCTYPE r SYSTEM \"a>b\" [ <!ELEMENT r (#PCDATA)> ]><r>ok</r>", &st);
     if (d == NULL || st != MKR_XML_OK || !NAME_IS(d->root, "r")
@@ -1331,7 +1338,9 @@ mkr_xml_parse_selftest(void)
     {
         mkr_xml_node_t *dt = d->doctype;
         if (dt == NULL || dt->type != MKR_XML_NODE_TYPE_DOCUMENT_TYPE
-            || dt->parent != NULL || dt->next != NULL || dt->prev != NULL  /* off-tree */
+            || dt->parent != d->doc_node                     /* linked under the document */
+            || d->doc_node->first_child != dt || dt->prev != NULL  /* first child, before root */
+            || dt->next != d->root                           /* the root follows it */
             || !slice_eq(dt->local, dt->local_len, "r", 1)
             || dt->prefix != NULL                                          /* no PUBLIC id */
             || !slice_eq(dt->value, dt->value_len, "a>b", 3)) {            /* SYSTEM id */

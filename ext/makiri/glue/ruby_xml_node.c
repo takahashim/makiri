@@ -99,7 +99,7 @@ mkr_xml_node_name(VALUE self)
 
 /* ---- DTD (DOCUMENT_TYPE) identifiers ----
  *
- * The off-tree doctype node repurposes fields: local/qname = the DOCTYPE name
+ * The doctype node repurposes fields: local/qname = the DOCTYPE name
  * (Node#name), prefix = the PUBLIC/external id, value = the SYSTEM id. A field
  * left NULL means that id was absent (-> nil); an empty literal (e.g. PUBLIC "")
  * is a non-NULL 0-length slice (-> ""). Mirrors Nokogiri::XML::DTD#external_id /
@@ -604,10 +604,8 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
             static const char decl[] = "<?xml version=\"1.0\"?>\n";
             rc = (mkr_buf_append(&buf, decl, sizeof(decl) - 1) == MKR_OK) ? 0 : -1;
         }
-        if (rc == 0 && xdoc != NULL && xdoc->doctype != NULL) {
-            rc = mkr_xser_doctype(&buf, xdoc->doctype);
-            if (rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;
-        }
+        /* The DOCTYPE is a document-node child (linked before the root), so the
+         * child walk below serializes it in place - no separate emit. */
         for (mkr_xml_node_t *c = n->first_child; rc == 0 && c != NULL; c = c->next) {
             rc = mkr_xser_node(&buf, c, 0, width);
             if (rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;
@@ -1016,9 +1014,7 @@ mkr_xml_node_remove(VALUE self)
         rb_raise(mkr_eError, "cannot remove the document node");
     }
     mkr_xml_node_t *n = mkr_xml_node_unwrap_mutable(self);
-    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
-    if (xdoc != NULL && n == xdoc->root) xdoc->root = NULL;   /* detaching the root element */
-    mkr_xml_detach(n);
+    mkr_xml_remove(mkr_xml_node_xdoc(self), n);   /* detach + refresh the root/doctype cache */
     return self;
 }
 
@@ -1170,13 +1166,33 @@ typedef enum { MKR_INS_CHILD, MKR_INS_BEFORE, MKR_INS_AFTER, MKR_INS_REPLACE } m
  * DOM): splice them in place of the fragment, in order, leaving it empty. Each
  * child is inserted relative to +target+ per +op+ (resolving its namespaces
  * against the new context, as a single node would); for AFTER the insertion point
- * advances so the children keep their order, and REPLACE inserts the children
- * before +target+ then detaches it. Returns the (now empty) fragment, as
+ * advances so the children keep their order. Returns the (now empty) fragment, as
  * Nokogiri's add_child/before/after/replace return the fragment. */
 static VALUE
 mkr_xml_splice_fragment(mkr_xml_doc_t *xdoc, mkr_xml_node_t *target,
                         mkr_xml_node_t *frag, VALUE doc_v, mkr_ins_op_t op)
 {
+    if (op == MKR_INS_REPLACE) {
+        /* The fragment's children take +target+'s slot, then +target+ is dropped.
+         * Route the FIRST child through mkr_xml_replace_node so the replaced node
+         * is properly EXCLUDED from the placement checks (single-root rule, doctype
+         * ordering) instead of momentarily double-counting - which is what an
+         * insert-before-then-detach would do; the rest follow via insert_after. An
+         * empty fragment degrades to a plain remove. */
+        mkr_xml_node_t *first = frag->first_child;
+        if (first == NULL) {
+            mkr_xml_remove(xdoc, target);
+            return mkr_wrap_xml_node(frag, doc_v);
+        }
+        mkr_xml_mut_check(mkr_xml_replace_node(xdoc, target, first));
+        mkr_xml_node_t *ref = first, *c;
+        while ((c = frag->first_child) != NULL) {
+            mkr_xml_mut_check(mkr_xml_insert_after(xdoc, ref, c));
+            ref = c;
+        }
+        return mkr_wrap_xml_node(frag, doc_v);
+    }
+
     mkr_xml_node_t *ref = target;   /* moving insertion point for AFTER */
     mkr_xml_node_t *c;
     while ((c = frag->first_child) != NULL) {   /* each insert detaches c from frag */
@@ -1184,12 +1200,9 @@ mkr_xml_splice_fragment(mkr_xml_doc_t *xdoc, mkr_xml_node_t *target,
         switch (op) {
         case MKR_INS_CHILD:   st = mkr_xml_insert_child(xdoc, target, c);  break;
         case MKR_INS_AFTER:   st = mkr_xml_insert_after(xdoc, ref, c); ref = c; break;
-        default:              st = mkr_xml_insert_before(xdoc, target, c); break; /* BEFORE + REPLACE */
+        default:              st = mkr_xml_insert_before(xdoc, target, c); break; /* BEFORE */
         }
         mkr_xml_mut_check(st);
-    }
-    if (op == MKR_INS_REPLACE) {
-        mkr_xml_detach(target);     /* drop the replaced node after its children are spliced in */
     }
     return mkr_wrap_xml_node(frag, doc_v);
 }
@@ -1418,6 +1431,38 @@ mkr_xml_doc_create_loose_dom_element(VALUE self, VALUE rb_qname, VALUE rb_prefix
     return mkr_wrap_xml_node(el, self);
 }
 
+/* create_document_type(name, public_id = "", system_id = "") -> DocumentType.
+ *
+ * DOM DOMImplementation.createDocumentType: a detached DocumentType owned by this
+ * document, to be placed before the root with add_child / add_previous_sibling
+ * (the placement guards keep it document-level, pre-root, and single). An
+ * omitted or empty public/system id is absent; an invalid name fails closed. */
+static VALUE
+mkr_xml_doc_create_document_type(int argc, VALUE *argv, VALUE self)
+{
+    VALUE rb_name, rb_pub, rb_sys;
+    rb_scan_args(argc, argv, "12", &rb_name, &rb_pub, &rb_sys);
+    mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
+
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "doctype name");
+    mkr_ruby_borrowed_text_t pv = { Qnil, NULL, 0 }, sv = { Qnil, NULL, 0 };
+    if (!NIL_P(rb_pub)) pv = mkr_ruby_verified_text(rb_pub, "doctype public id");
+    if (!NIL_P(rb_sys)) sv = mkr_ruby_verified_text(rb_sys, "doctype system id");
+    /* empty id == absent (NULL), matching the HTML factory and Nokogiri */
+    const char *pub = pv.len ? pv.ptr : NULL;
+    const char *sys = sv.len ? sv.ptr : NULL;
+
+    mkr_xml_node_t *dt = NULL;
+    mkr_xml_mut_status_t st = mkr_xml_new_document_type(
+        xdoc, nv.ptr, mkr_xml_u32_len(nv.len),
+        pub, mkr_xml_u32_len(pv.len), sys, mkr_xml_u32_len(sv.len), &dt);
+    RB_GC_GUARD(nv.value);
+    RB_GC_GUARD(pv.value);
+    RB_GC_GUARD(sv.value);
+    mkr_xml_mut_check(st);
+    return mkr_wrap_xml_node(dt, self);
+}
+
 /* Shared body for the leaf-data factories (text / comment / cdata). */
 static VALUE
 mkr_xml_doc_create_chardata(VALUE self, VALUE rb_text, uint8_t type, const char *what)
@@ -1551,6 +1596,7 @@ mkr_init_xml_node(void)
      * so HTML and XML share them. */
     rb_define_method(mkr_cXmlDocument, "create_element",                mkr_xml_doc_create_element, -1);
     rb_define_method(mkr_cXmlDocument, "create_loose_dom_element",      mkr_xml_doc_create_loose_dom_element, 4);
+    rb_define_method(mkr_cXmlDocument, "create_document_type",          mkr_xml_doc_create_document_type, -1);
     rb_define_method(mkr_cXmlDocument, "create_text_node",             mkr_xml_doc_create_text_node, 1);
     rb_define_method(mkr_cXmlDocument, "create_comment",               mkr_xml_doc_create_comment, 1);
     rb_define_method(mkr_cXmlDocument, "create_cdata",                 mkr_xml_doc_create_cdata, 1);

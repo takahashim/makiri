@@ -13,6 +13,14 @@ extern lxb_status_t
 lxb_dom_attr_set_name_ns(lxb_dom_attr_t *attr, const lxb_char_t *link,
                          size_t link_length, const lxb_char_t *name,
                          size_t name_length, bool to_lowercase);
+/* Interns a name into the attr hash CASE-PRESERVING (raw), returning its data
+ * (whose attr_id keys the doctype name reader). Lexbor's own document_type.c
+ * forward-declares this the same way. We use it to override the ASCII-lowercased
+ * name that lxb_dom_document_type_create stores, so createDocumentType preserves
+ * case as the DOM requires (the HTML *parser* still lowercases, per HTML5). */
+extern lxb_dom_attr_data_t *
+lxb_dom_attr_qualified_name_append(lexbor_hash_t *hash, const lxb_char_t *name,
+                                   size_t length);
 
 /*
  * DOM mutation (v0.2). Thin wrappers over Lexbor's insert/remove/create
@@ -71,6 +79,69 @@ mkr_prepare_insert(lxb_dom_node_t *ref, lxb_dom_node_t *incoming)
     }
 }
 
+/* WHATWG doctype ordering at the document node (https://dom.spec.whatwg.org/#concept-node-ensure-pre-insertion-validity),
+ * fail-closed so a `<!DOCTYPE>` always precedes the document element:
+ *   - a DocumentType may only be a document child, at most one, with no element
+ *     before it; and, symmetrically,
+ *   - an element may not be inserted ahead of an existing doctype.
+ * `parent` is the future parent, `before` the child `incoming` is inserted before
+ * (NULL = append at the end), `exclude` a node the same operation removes (the
+ * replace target) or NULL. Raises BEFORE any link change (call it before the
+ * detach in mkr_prepare_insert). */
+/* Whether inserting +n+ contributes an element at the insertion point: +n+ is an
+ * element, or a fragment (spliced as its children) that carries one. A fragment
+ * bypasses the per-node guard because mkr_splice_or_insert hands its children
+ * straight to Lexbor, so the element-vs-doctype order is checked here instead. */
+static int
+mkr_contributes_element(const lxb_dom_node_t *n)
+{
+    if (n->type == LXB_DOM_NODE_TYPE_ELEMENT) return 1;
+    if (n->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT) {
+        for (const lxb_dom_node_t *c = n->first_child; c != NULL; c = c->next) {
+            if (c->type == LXB_DOM_NODE_TYPE_ELEMENT) return 1;
+        }
+    }
+    return 0;
+}
+
+static void
+mkr_guard_doc_child_order(const lxb_dom_node_t *parent, const lxb_dom_node_t *before,
+                          const lxb_dom_node_t *exclude, const lxb_dom_node_t *incoming)
+{
+    if (incoming->type == LXB_DOM_NODE_TYPE_DOCUMENT_TYPE) {
+        if (parent == NULL || parent->type != LXB_DOM_NODE_TYPE_DOCUMENT) {
+            rb_raise(mkr_eError, "a doctype node can only be a child of the document");
+        }
+        for (const lxb_dom_node_t *c = parent->first_child; c != NULL; c = c->next) {
+            if (c == exclude || c == incoming) continue;
+            if (c->type == LXB_DOM_NODE_TYPE_DOCUMENT_TYPE) {
+                rb_raise(mkr_eError, "the document already has a doctype");
+            }
+        }
+        /* no element before the doctype (before==NULL append => every element
+         * child precedes the tail; else only the siblings ahead of `before`). */
+        for (const lxb_dom_node_t *c = parent->first_child; c != before; c = c->next) {
+            if (c == exclude || c == incoming) continue;
+            if (c->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+                rb_raise(mkr_eError, "a doctype must precede the document element");
+            }
+        }
+        return;
+    }
+    if (mkr_contributes_element(incoming)
+        && parent != NULL && parent->type == LXB_DOM_NODE_TYPE_DOCUMENT) {
+        /* symmetric: the element (or a fragment carrying one) would sit at
+         * `before`'s slot, so a doctype at or after `before` would end up behind
+         * it - reject. */
+        for (const lxb_dom_node_t *c = before; c != NULL; c = c->next) {
+            if (c == exclude || c == incoming) continue;
+            if (c->type == LXB_DOM_NODE_TYPE_DOCUMENT_TYPE) {
+                rb_raise(mkr_eError, "a doctype must precede the document element");
+            }
+        }
+    }
+}
+
 /* A document fragment is spliced in place of itself: its children are inserted
  * and the fragment node is left empty. */
 static int
@@ -124,6 +195,7 @@ mkr_node_add_child(VALUE self, VALUE rb_child)
 {
     lxb_dom_node_t *parent = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *child  = mkr_arg_node(rb_child);
+    mkr_guard_doc_child_order(parent, NULL, NULL, child);   /* append: before == NULL */
     mkr_prepare_insert(parent, child);
     mkr_splice_or_insert(parent, child, lxb_dom_node_insert_child, 0);
     mkr_invalidate_index(self);
@@ -146,6 +218,7 @@ mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
+    mkr_guard_doc_child_order(ref->parent, ref, NULL, node);   /* inserted before ref */
     mkr_prepare_insert(ref, node);
     mkr_splice_or_insert(ref, node, lxb_dom_node_insert_before, 0);
     mkr_invalidate_index(self);
@@ -160,6 +233,7 @@ mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
+    mkr_guard_doc_child_order(ref->parent, ref->next, NULL, node);   /* inserted after ref */
     mkr_prepare_insert(ref, node);
     mkr_splice_or_insert(ref, node, lxb_dom_node_insert_after, 1);
     mkr_invalidate_index(self);
@@ -190,6 +264,7 @@ mkr_node_replace(VALUE self, VALUE rb_other)
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot replace a node with no parent");
     }
+    mkr_guard_doc_child_order(ref->parent, ref, ref, other);   /* other takes ref's slot */
     mkr_prepare_insert(ref, other);
     mkr_splice_or_insert(ref, other, lxb_dom_node_insert_before, 0);
     lxb_dom_node_remove(ref);
@@ -605,6 +680,62 @@ mkr_doc_create_processing_instruction(VALUE self, VALUE rb_target, VALUE rb_data
     return mkr_wrap_html_node(lxb_dom_interface_node(pi), self);
 }
 
+/* Document#create_document_type(name, public_id = "", system_id = "") - DOM
+ * DOMImplementation.createDocumentType: a detached DocumentType owned by this
+ * document, to be placed before the document element (the tree guards enforce
+ * that). An empty/omitted public or system id is treated as absent. Lexbor
+ * validates the name as a DOM Name, so an invalid one fails closed. */
+static VALUE
+mkr_doc_create_document_type(int argc, VALUE *argv, VALUE self)
+{
+    VALUE rb_name, rb_pub, rb_sys;
+    rb_scan_args(argc, argv, "12", &rb_name, &rb_pub, &rb_sys);
+    lxb_dom_document_t *doc = mkr_html_doc_unwrap(self);
+
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "doctype name");
+    if (!lxb_dom_document_type_valid_name((const lxb_char_t *)nv.ptr, nv.len)) {
+        rb_raise(rb_eArgError, "invalid doctype name");
+    }
+
+    mkr_ruby_borrowed_text_t pv = {0}, sv = {0};
+    if (!NIL_P(rb_pub)) pv = mkr_ruby_verified_text(rb_pub, "doctype public id");
+    if (!NIL_P(rb_sys)) sv = mkr_ruby_verified_text(rb_sys, "doctype system id");
+    const lxb_char_t *pub = pv.len ? (const lxb_char_t *)pv.ptr : NULL;
+    const lxb_char_t *sys = sv.len ? (const lxb_char_t *)sv.ptr : NULL;
+
+    lxb_dom_exception_code_t code = LXB_DOM_EXCEPTION_OK;
+    lxb_dom_document_type_t *dt = lxb_dom_document_type_create(
+        doc, (const lxb_char_t *)nv.ptr, nv.len, pub, pv.len, sys, sv.len, &code);
+    if (dt == NULL) {
+        RB_GC_GUARD(nv.value);
+        rb_raise(mkr_eError, "failed to create doctype");
+    }
+    /* create() interned the name ASCII-lowercased (attr local-name hash); DOM
+     * createDocumentType preserves case, so re-intern it raw and repoint. */
+    lxb_dom_attr_data_t *nd = lxb_dom_attr_qualified_name_append(
+        doc->attrs, (const lxb_char_t *)nv.ptr, nv.len);
+    RB_GC_GUARD(nv.value);
+    RB_GC_GUARD(pv.value);
+    RB_GC_GUARD(sv.value);
+    if (nd == NULL) {
+        rb_raise(mkr_eError, "failed to intern doctype name");
+    }
+    dt->name = nd->attr_id;
+    /* create() leaves an absent public/system id as a {NULL,0} lexbor_str, but
+     * lxb_dom_document_type_interface_clone (used by import_node/clone_node) runs
+     * lexbor_str_copy, which fails on a NULL source - so an absent-id doctype
+     * would be unimportable. Initialise them to an allocated empty string: the
+     * accessor and serializer both key on length==0, so this is nil/absent to
+     * callers but non-NULL to the cloner. */
+    if (dt->public_id.data == NULL) {
+        (void) lexbor_str_init(&dt->public_id, doc->text, 0);
+    }
+    if (dt->system_id.data == NULL) {
+        (void) lexbor_str_init(&dt->system_id, doc->text, 0);
+    }
+    return mkr_wrap_html_node(lxb_dom_interface_node(dt), self);
+}
+
 /* Document#create_document_fragment - DOM createDocumentFragment: an empty
  * DocumentFragment owned by this document (unlike #fragment / DocumentFragment.parse,
  * which parse HTML; this makes an empty one to build up programmatically). */
@@ -644,6 +775,7 @@ mkr_init_mutate(void)
     rb_define_method(mkr_mHtmlNodeMethods, "name=",            mkr_node_set_name,    1);
 
     rb_define_method(mkr_cHtmlDocument, "create_element",   mkr_doc_create_element,   1);
+    rb_define_method(mkr_cHtmlDocument, "create_document_type", mkr_doc_create_document_type, -1);
     rb_define_method(mkr_cHtmlDocument, "create_text_node", mkr_doc_create_text_node, 1);
     rb_define_method(mkr_cHtmlDocument, "create_comment",   mkr_doc_create_comment,   1);
     rb_define_method(mkr_cHtmlDocument, "create_processing_instruction",

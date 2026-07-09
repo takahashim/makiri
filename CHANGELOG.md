@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.7.0] - 2026-07-09
+
+### Added
+
+* `Document#create_document_type(name, public_id = "", system_id = "")` on both
+  `Makiri::HTML::Document` and `Makiri::XML::Document` (DOM
+  `DOMImplementation.createDocumentType`): creates a detached `DocumentType`
+  node, to be placed before the document element (e.g. with
+  `root.add_previous_sibling(doctype)`). The name is case-preserving; an omitted
+  or empty public/system id is treated as absent; an invalid name (or a `"` in an
+  id) raises. Inserting a doctype is validated against the WHATWG rules — it may
+  only be a child of the document, must precede the document element, and a
+  document holds at most one — so a misplaced or duplicate doctype raises rather
+  than producing a malformed tree.
+
+* The XML `DocumentType` is now part of the tree: it appears in
+  `Document#children` (before the root, like a browser DOM) and carries
+  `parent`/sibling links, for both a parsed `<!DOCTYPE>` and the factory above.
+  `Document#internal_subset` still returns it. XPath is unaffected — its 1.0 data
+  model excludes the doctype (`//node()` / `/node()` never surface it), as in
+  Nokogiri/libxml2. This supports building a document with
+  `DOMImplementation.createDocument(namespace, qualifiedName, doctype)`.
+
+* `Makiri::XML::Document#create_loose_dom_element(qualified_name, prefix,
+  local_name, namespace_uri)`, an escape hatch for browser-DOM interop that
+  creates an element whose name follows WHATWG DOM element-name rules rather
+  than the stricter XML QName rules (e.g. `"f:o:o"`, `":foo"`, `"0:a"`). The
+  regular factories stay XML-strict. Such an element is intentionally not
+  XML-serializable: `#to_xml` and `#canonicalize` raise `Makiri::Error` if the
+  tree contains one. Renaming it to a valid XML name (`#name=`) returns it to
+  strict mode.
+
 ## [0.6.0] - 2026-07-05
 
 ### Changed

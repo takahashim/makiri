@@ -460,6 +460,45 @@ mkr_xml_new_pi(mkr_xml_doc_t *doc, const char *target, uint32_t tlen,
     return MKR_XML_MUT_OK;
 }
 
+/* A new detached DOCUMENT_TYPE node (DOM createDocumentType / createDocument),
+ * repurposing fields exactly as the parser does: local/qname = name (a Name),
+ * prefix = public id, value = system id. +pub+/+sys+ NULL means that id is
+ * absent (the caller passes NULL for an empty/omitted id); a present id must be
+ * XML Char and carry no '"' so the "..."-quoted DOCTYPE stays well-formed. */
+mkr_xml_mut_status_t
+mkr_xml_new_document_type(mkr_xml_doc_t *doc, const char *name, uint32_t nlen,
+                          const char *pub, uint32_t plen,
+                          const char *sys, uint32_t slen, mkr_xml_node_t **out)
+{
+    *out = NULL;
+    if (mkr_xml_validate_name(name, nlen) != 0) return MKR_XML_MUT_BAD_NAME;
+    if (pub != NULL && plen > 0
+        && (mkr_xml_validate_chars(pub, plen) != 0 || memchr(pub, '"', plen) != NULL)) {
+        return MKR_XML_MUT_BAD_CHARS;
+    }
+    if (sys != NULL && slen > 0
+        && (mkr_xml_validate_chars(sys, slen) != 0 || memchr(sys, '"', slen) != NULL)) {
+        return MKR_XML_MUT_BAD_CHARS;
+    }
+    mkr_xml_node_t *dt = mkr_xml_arena_node(doc, MKR_XML_NODE_TYPE_DOCUMENT_TYPE);
+    if (dt == NULL) return MKR_XML_MUT_OOM;
+    const char *nm = mkr_xml_arena_bytes(doc, name, nlen);
+    if (nlen > 0 && nm == NULL) return MKR_XML_MUT_OOM;
+    dt->local = dt->qname = nm; dt->local_len = dt->qname_len = nlen;
+    if (pub != NULL) {
+        const char *p = mkr_xml_arena_bytes(doc, pub, plen);
+        if (plen > 0 && p == NULL) return MKR_XML_MUT_OOM;
+        dt->prefix = p ? p : ""; dt->prefix_len = plen;
+    }
+    if (sys != NULL) {
+        const char *s = mkr_xml_arena_bytes(doc, sys, slen);
+        if (slen > 0 && s == NULL) return MKR_XML_MUT_OOM;
+        dt->value = s ? s : ""; dt->value_len = slen;
+    }
+    *out = dt;
+    return MKR_XML_MUT_OK;
+}
+
 /* Resolve the namespace of every element (and prefixed attribute) in +root+'s
  * subtree against the in-scope declarations reachable from each node - which,
  * because the caller has temporarily pointed root->parent at the prospective
@@ -635,8 +674,9 @@ mkr_xml_copy_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, int deep,
 
 /* ---- insertion ---- */
 
-/* +node+ may be placed in the tree at all (not an attribute / document / doctype,
- * which are never element-level children). */
+/* +node+ may be placed in the tree at all (not an attribute or the document
+ * node, which are never children). A DOCUMENT_TYPE is insertable but only under
+ * the document and before the root - enforced by check_doc_child_order. */
 static int
 is_insertable(const mkr_xml_node_t *node)
 {
@@ -646,10 +686,51 @@ is_insertable(const mkr_xml_node_t *node)
     case MKR_XML_NODE_TYPE_CDATA_SECTION:
     case MKR_XML_NODE_TYPE_COMMENT:
     case MKR_XML_NODE_TYPE_PI:
+    case MKR_XML_NODE_TYPE_DOCUMENT_TYPE:
         return 1;
     default:
         return 0;
     }
+}
+
+/* WHATWG doctype ordering at the document node, fail-closed, so the tree always
+ * serializes to well-formed XML (a DOCTYPE must precede the single root element):
+ *   - a DOCUMENT_TYPE may only be a document child, at most one, with no element
+ *     before it; and, symmetrically,
+ *   - an ELEMENT may not be inserted before an existing doctype.
+ * +before+ is the child +node+ is inserted before (NULL = append at the tail);
+ * +exclude+ is the node the same operation removes (the replace target), or NULL.
+ * No-op for comments/PIs/text (free before or after the doctype) and non-document
+ * containers (except a doctype, which is rejected outright there). */
+static mkr_xml_mut_status_t
+check_doc_child_order(const mkr_xml_node_t *container, const mkr_xml_node_t *node,
+                      const mkr_xml_node_t *before, const mkr_xml_node_t *exclude)
+{
+    if (container->type != MKR_XML_NODE_TYPE_DOCUMENT) {
+        /* a doctype is never an element-level child */
+        return node->type == MKR_XML_NODE_TYPE_DOCUMENT_TYPE ? MKR_XML_MUT_HIERARCHY : MKR_XML_MUT_OK;
+    }
+    if (node->type == MKR_XML_NODE_TYPE_DOCUMENT_TYPE) {
+        for (const mkr_xml_node_t *c = container->first_child; c != NULL; c = c->next) {
+            if (c == exclude || c == node) continue;
+            if (c->type == MKR_XML_NODE_TYPE_DOCUMENT_TYPE) return MKR_XML_MUT_HIERARCHY;  /* at most one */
+        }
+        /* no element before the doctype (before==NULL append => every element precedes the tail) */
+        for (const mkr_xml_node_t *c = container->first_child; c != before; c = c->next) {
+            if (c == exclude || c == node) continue;
+            if (c->type == MKR_XML_NODE_TYPE_ELEMENT) return MKR_XML_MUT_HIERARCHY;
+        }
+        return MKR_XML_MUT_OK;
+    }
+    if (node->type == MKR_XML_NODE_TYPE_ELEMENT) {
+        /* symmetric: the element would sit at +before+'s slot, so a doctype at or
+         * after +before+ would end up behind it - reject. */
+        for (const mkr_xml_node_t *c = before; c != NULL; c = c->next) {
+            if (c == exclude || c == node) continue;
+            if (c->type == MKR_XML_NODE_TYPE_DOCUMENT_TYPE) return MKR_XML_MUT_HIERARCHY;
+        }
+    }
+    return MKR_XML_MUT_OK;
 }
 
 /* +node+ must not be an inclusive ancestor of +container+ (else a cycle). */
@@ -678,23 +759,28 @@ doc_root_ok(const mkr_xml_node_t *container, const mkr_xml_node_t *node,
     return 1;
 }
 
-/* After a structural change whose container is the document node, point doc->root
- * at the (single) element child, or NULL. */
+/* After a structural change whose container is the document node, re-derive the
+ * cached doc->root (single element child) and doc->doctype (single DOCUMENT_TYPE
+ * child) from the tree - the single source of truth for both. */
 static void
-sync_doc_root(mkr_xml_doc_t *doc, const mkr_xml_node_t *container)
+sync_doc_meta(mkr_xml_doc_t *doc, const mkr_xml_node_t *container)
 {
     if (container != doc->doc_node) return;
     doc->root = NULL;
+    doc->doctype = NULL;
     for (mkr_xml_node_t *c = doc->doc_node->first_child; c != NULL; c = c->next) {
-        if (c->type == MKR_XML_NODE_TYPE_ELEMENT) { doc->root = c; break; }
+        if (doc->root == NULL && c->type == MKR_XML_NODE_TYPE_ELEMENT) doc->root = c;
+        if (doc->doctype == NULL && c->type == MKR_XML_NODE_TYPE_DOCUMENT_TYPE) doc->doctype = c;
     }
 }
 
 /* Shared validation + namespace resolution for an insertion of +node+ under
- * +container+ (the future parent), replacing +exclude+ (or NULL). Performs NO
- * structural change; on success the caller commits the link. */
+ * +container+ (the future parent), inserted before +before+ (NULL = append) and
+ * replacing +exclude+ (or NULL). Performs NO structural change; on success the
+ * caller commits the link. */
 static mkr_xml_mut_status_t
-prepare_insert(mkr_xml_node_t *container, mkr_xml_node_t *node, const mkr_xml_node_t *exclude)
+prepare_insert(mkr_xml_node_t *container, mkr_xml_node_t *node,
+               const mkr_xml_node_t *before, const mkr_xml_node_t *exclude)
 {
     if (!is_insertable(node)) return MKR_XML_MUT_HIERARCHY;
     if (container->type != MKR_XML_NODE_TYPE_ELEMENT
@@ -703,6 +789,8 @@ prepare_insert(mkr_xml_node_t *container, mkr_xml_node_t *node, const mkr_xml_no
     }
     if (would_cycle(container, node)) return MKR_XML_MUT_CYCLE;
     if (!doc_root_ok(container, node, exclude)) return MKR_XML_MUT_HIERARCHY;
+    mkr_xml_mut_status_t dt = check_doc_child_order(container, node, before, exclude);
+    if (dt != MKR_XML_MUT_OK) return dt;
     return resolve_into(node, container);              /* fail-closed: no link changed yet */
 }
 
@@ -725,11 +813,11 @@ splice_between(mkr_xml_node_t *container, mkr_xml_node_t *node,
 mkr_xml_mut_status_t
 mkr_xml_insert_child(mkr_xml_doc_t *doc, mkr_xml_node_t *parent, mkr_xml_node_t *node)
 {
-    mkr_xml_mut_status_t st = prepare_insert(parent, node, NULL);
+    mkr_xml_mut_status_t st = prepare_insert(parent, node, NULL, NULL);   /* append: before == NULL */
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);                              /* move semantics */
     splice_between(parent, node, parent->last_child, NULL);   /* tail append */
-    sync_doc_root(doc, parent);
+    sync_doc_meta(doc, parent);
     return MKR_XML_MUT_OK;
 }
 
@@ -739,11 +827,11 @@ mkr_xml_insert_before(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *n
     if (node == ref) return MKR_XML_MUT_OK;   /* inserting a node before itself is a no-op */
     mkr_xml_node_t *container = ref->parent;
     if (container == NULL) return MKR_XML_MUT_HIERARCHY;   /* a parentless ref has no sibling slot */
-    mkr_xml_mut_status_t st = prepare_insert(container, node, NULL);
+    mkr_xml_mut_status_t st = prepare_insert(container, node, ref, NULL);   /* inserted before ref */
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);
     splice_between(container, node, ref->prev, ref);
-    sync_doc_root(doc, container);
+    sync_doc_meta(doc, container);
     return MKR_XML_MUT_OK;
 }
 
@@ -753,11 +841,11 @@ mkr_xml_insert_after(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *no
     if (node == ref) return MKR_XML_MUT_OK;   /* inserting a node after itself is a no-op */
     mkr_xml_node_t *container = ref->parent;
     if (container == NULL) return MKR_XML_MUT_HIERARCHY;
-    mkr_xml_mut_status_t st = prepare_insert(container, node, NULL);
+    mkr_xml_mut_status_t st = prepare_insert(container, node, ref->next, NULL);   /* inserted after ref */
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);
     splice_between(container, node, ref, ref->next);
-    sync_doc_root(doc, container);
+    sync_doc_meta(doc, container);
     return MKR_XML_MUT_OK;
 }
 
@@ -767,13 +855,25 @@ mkr_xml_replace_node(mkr_xml_doc_t *doc, mkr_xml_node_t *ref, mkr_xml_node_t *no
     mkr_xml_node_t *container = ref->parent;
     if (container == NULL) return MKR_XML_MUT_HIERARCHY;   /* a parentless / document ref */
     if (node == ref) return MKR_XML_MUT_OK;
-    mkr_xml_mut_status_t st = prepare_insert(container, node, ref);
+    mkr_xml_mut_status_t st = prepare_insert(container, node, ref, ref);   /* node takes ref's slot */
     if (st != MKR_XML_MUT_OK) return st;
     mkr_xml_detach(node);
     splice_between(container, node, ref->prev, ref->next);
     ref->parent = ref->prev = ref->next = NULL;           /* detach the replaced node */
-    sync_doc_root(doc, container);
+    sync_doc_meta(doc, container);
     return MKR_XML_MUT_OK;
+}
+
+/* Detach +node+ from the tree and, if it was a document-level child, re-derive
+ * the cached doc->root / doc->doctype from the tree - the removal counterpart of
+ * the insert functions' sync_doc_meta. Keeps that cache maintenance owned here in
+ * the engine, so callers never poke doc->root / doc->doctype directly. */
+void
+mkr_xml_remove(mkr_xml_doc_t *doc, mkr_xml_node_t *node)
+{
+    mkr_xml_node_t *parent = node->parent;
+    mkr_xml_detach(node);
+    if (doc != NULL) sync_doc_meta(doc, parent);
 }
 
 /* ---- self-test (Makiri.__c_selftest) ---- */

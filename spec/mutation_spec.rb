@@ -106,6 +106,95 @@ RSpec.describe "Makiri mutation" do
       end
     end
 
+    describe "#create_document_type (DOM createDocumentType)" do
+      it "creates a detached DocumentType with name / public / system ids" do
+        dt = doc.create_document_type("html", "-//W3C//DTD HTML 4.01//EN", "http://x/s.dtd")
+        expect(dt).to be_a(Makiri::DocumentType)
+        expect(dt.name).to eq("html")
+        expect(dt.public_id).to eq("-//W3C//DTD HTML 4.01//EN")
+        expect(dt.system_id).to eq("http://x/s.dtd")
+        expect(dt.parent).to be_nil
+      end
+
+      it "preserves the name's case (DOM createDocumentType is case-preserving)" do
+        # Unlike the HTML parser (which lowercases the DOCTYPE name per HTML5),
+        # the programmatic DOM factory keeps case, incl. through serialization.
+        dt = doc.create_document_type("SVG")
+        expect(dt.name).to eq("SVG")
+        expect(doc.create_document_type("ns:MixedCase.").name).to eq("ns:MixedCase.")
+        doc.root.add_previous_sibling(dt)
+        expect(doc.to_html).to start_with("<!DOCTYPE SVG>")
+        expect(Makiri::HTML("<html></html>").import_node(dt, true).name).to eq("SVG")
+      end
+
+      it "treats an omitted or empty public / system id as absent" do
+        dt = doc.create_document_type("html")
+        expect(dt.public_id).to be_nil
+        expect(dt.system_id).to be_nil
+        expect(doc.create_document_type("html", "").public_id).to be_nil
+      end
+
+      it "fails closed on an invalid or non-UTF-8 name" do
+        expect { doc.create_document_type("1 bad>") }.to raise_error(ArgumentError)
+        expect { doc.create_document_type("") }.to raise_error(ArgumentError)
+        expect { doc.create_document_type("h\xFF".b) }.to raise_error(Makiri::Error)
+      end
+
+      it "is placed before the document element" do
+        dt = doc.create_document_type("html")
+        doc.root.add_previous_sibling(dt)
+        expect(doc.children.map(&:class)).to eq([Makiri::HTML::DocumentType, Makiri::HTML::Element])
+        expect(dt.parent).to equal(doc)
+        expect(doc.to_html).to start_with("<!DOCTYPE html>")
+      end
+
+      describe "placement guards (fail-closed, WHATWG doctype rules)" do
+        it "rejects a second doctype in the document" do
+          doc.root.add_previous_sibling(doc.create_document_type("a"))
+          expect { doc.root.add_previous_sibling(doc.create_document_type("b")) }
+            .to raise_error(Makiri::Error, /already has a doctype/)
+        end
+
+        it "rejects a doctype that would follow the document element" do
+          expect { doc.add_child(doc.create_document_type("html")) }
+            .to raise_error(Makiri::Error, /precede the document element/)
+          expect { doc.root.add_next_sibling(doc.create_document_type("html")) }
+            .to raise_error(Makiri::Error, /precede the document element/)
+        end
+
+        it "rejects a doctype under a non-document parent" do
+          expect { div.add_child(doc.create_document_type("html")) }
+            .to raise_error(Makiri::Error, /child of the document/)
+        end
+
+        it "rejects inserting an element (or an element-bearing fragment) ahead of an existing doctype" do
+          d = Makiri::HTML("<!DOCTYPE html><html></html>")
+          dt = d.children.first
+          expect { dt.add_previous_sibling(d.create_element("x")) }
+            .to raise_error(Makiri::Error, /precede the document element/)
+          expect { dt.before(d.fragment("<y></y>")) }
+            .to raise_error(Makiri::Error, /precede the document element/)
+          # a comment before the doctype stays legal (prolog content)
+          dt.add_previous_sibling(d.create_comment("ok"))
+          expect(d.children.map(&:class))
+            .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
+        end
+
+        it "leaves the tree and the rejected node unchanged after a refused insert" do
+          dt = doc.create_document_type("html")
+          before = doc.children.map(&:class)
+          expect { doc.add_child(dt) }.to raise_error(Makiri::Error)
+          expect(doc.children.map(&:class)).to eq(before)
+          expect(dt.parent).to be_nil
+        end
+
+        it "allows replacing the document element itself with a doctype" do
+          doc.root.replace(doc.create_document_type("html"))
+          expect(doc.children.map(&:class)).to eq([Makiri::HTML::DocumentType])
+        end
+      end
+    end
+
     describe "#create_document_fragment (DOM createDocumentFragment)" do
       it "creates an empty fragment bound to the document" do
         fr = doc.create_document_fragment

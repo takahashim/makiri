@@ -205,9 +205,9 @@ Init_makiri(void)
     mkr_cXmlCDATASection     = rb_define_class_under(mkr_mXML, "CDATASection",     mkr_cCDATASection);
     mkr_cXmlProcessingInstruction =
         rb_define_class_under(mkr_mXML, "ProcessingInstruction", mkr_cProcessingInstruction);
-    /* Makiri::XML::DocumentType - the off-tree DOCTYPE metadata node
-     * (doc->doctype), reachable only via Document#internal_subset (XPath has no
-     * doctype node, as in Nokogiri/libxml2). The canonical name is the WHATWG DOM
+    /* Makiri::XML::DocumentType - the DOCTYPE metadata node (a child of the
+     * document node, before the root; also reachable via Document#internal_subset).
+     * XPath still has no doctype node, as in Nokogiri/libxml2. The canonical name is the WHATWG DOM
      * interface name DocumentType (with a Makiri::XML::DTD alias for Nokogiri
      * compatibility, defined in Ruby); it descends from the shared
      * Makiri::DocumentType base (like HTML::DocumentType) - not Makiri::XML::Node -

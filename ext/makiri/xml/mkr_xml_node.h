@@ -29,8 +29,9 @@
  * encoding exactly (asserted in mkr_xpath_node_access_xml.h) so the monomorphized
  * XPath engine's neutral MKR_NTYPE_* bind to whichever representation it compiles
  * for. The reader produces ELEMENT/ATTRIBUTE/TEXT/CDATA_SECTION/PI/COMMENT/
- * DOCUMENT in the tree, plus a single off-tree DOCUMENT_TYPE (the DOCTYPE
- * metadata, see doc->doctype) and a DOCUMENT_FRAGMENT (fragment parse /
+ * DOCUMENT in the tree, plus a single DOCUMENT_TYPE (the DOCTYPE metadata, a
+ * child of doc_node before the root; see doc->doctype) and a DOCUMENT_FRAGMENT
+ * (fragment parse /
  * cross-import); the remaining members (ENTITY_REFERENCE/ENTITY/NOTATION) are
  * never produced and exist only so the shared engine's node-type contract is
  * complete for both instances. */
@@ -104,10 +105,14 @@ typedef struct mkr_xml_doc {
     mkr_xml_node_t *root;          /* the root element */
     mkr_xml_node_t *doc_node;      /* the DOCUMENT node (parent of root); the XPath
                                     * "/" root and what a Ruby Document wraps */
-    mkr_xml_node_t *doctype;       /* a DOCUMENT_TYPE node holding the DOCTYPE's
-                                    * metadata, or NULL. Kept OFF the tree (it is
-                                    * not a child of doc_node, so XPath is
-                                    * unaffected) and exposed only via
+    mkr_xml_node_t *doctype;       /* CACHE of the DOCUMENT_TYPE child (or NULL),
+                                    * kept in sync by sync_doc_meta / the detach
+                                    * hooks - the single source of truth is the
+                                    * tree. The doctype IS a real child of doc_node
+                                    * (linked before the root, browser-DOM order),
+                                    * so it appears in Document#children; XPath is
+                                    * unaffected (its node model excludes
+                                    * DOCUMENT_TYPE). Exposed via
                                     * Document#internal_subset. The DTD itself is
                                     * NOT parsed (no entities/elements). On this
                                     * node: local/qname = name, prefix = public
