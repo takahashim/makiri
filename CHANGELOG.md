@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.0] - 2026-07-09
+## [0.7.0] - 2026-07-11
 
 ### Added
 
@@ -31,6 +31,14 @@
   XML-serializable: `#to_xml` and `#canonicalize` raise `Makiri::Error` if the
   tree contains one. Renaming it to a valid XML name (`#name=`) returns it to
   strict mode.
+
+### Fixed
+
+* Replacing an XML node with a `DocumentFragment` (`node.replace(fragment)`) is
+  now all-or-nothing: if the replacement is rejected (e.g. it would leave the
+  document with two root elements), the target node and the fragment are left
+  untouched, instead of dropping the target and splicing in only part of the
+  fragment. Replacing the root element with a single-element fragment now works.
 
 ## [0.6.0] - 2026-07-05
 
