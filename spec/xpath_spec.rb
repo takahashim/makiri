@@ -438,7 +438,7 @@ RSpec.describe "Makiri XPath" do
         .to raise_error(Makiri::Error)
     end
 
-    it "caps the number of registered namespaces (fail closed)" do
+    it "caps the number of registered namespaces (fail closed)", :slow do
       ctx = Makiri::XPathContext.new(doc)
       expect do
         70_000.times { |i| ctx.register_namespace("p#{i}", "urn:#{i}") }

@@ -59,4 +59,16 @@ RSpec.configure do |config|
       warn "[spec] skipping :threading examples (set THREADING=1 to include them)"
     end
   end
+
+  # Under Valgrind (VALGRIND=1, set by the spec:valgrind task) skip the examples
+  # tagged :slow. These are fail-closed *limit* tests that push a budget to its
+  # cap by sheer volume (e.g. registering 70k namespaces) - the memory operations
+  # they exercise are identical to the smaller tests, so they add no memory-safety
+  # coverage under memcheck, but at ~10-50x slowdown they dominate the run (and,
+  # being single examples, can't be split across the sharded jobs). The normal CI
+  # matrix still runs them for correctness.
+  unless ENV["VALGRIND"].to_s.empty?
+    config.filter_run_excluding :slow
+    config.before(:suite) { warn "[spec] skipping :slow examples under Valgrind" }
+  end
 end

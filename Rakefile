@@ -102,6 +102,10 @@ begin
     desc "Run the spec suite under Valgrind memcheck (ruby_memcheck; needs the " \
          ":valgrind bundler group and the valgrind binary)"
     RubyMemcheck::RSpec::RakeTask.new(valgrind: :compile) do |t|
+      # Let spec_helper skip :slow examples (fail-closed limit tests whose sheer
+      # volume dominates memcheck without adding memory-safety coverage).
+      ENV["VALGRIND"] = "1"
+
       # Optional sharding for CI wall-clock: with VALGRIND_SHARDS=N (>1) the spec
       # files are partitioned into N groups and this run does only group
       # VALGRIND_SHARD_INDEX, so N parallel matrix jobs cover the whole suite in
