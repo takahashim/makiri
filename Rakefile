@@ -88,7 +88,12 @@ begin
       "--error-limit=no",
       "--trace-children=yes",   # spec processes may fork
       "--undef-value-errors=yes", # the point of this job (ruby_memcheck defaults to =no)
-      "--track-origins=yes",    # report where an uninitialised value came from
+      # Origin tracking (where an uninitialised value came from) roughly DOUBLES
+      # memcheck's run time. It is a diagnostic aid, not a detection capability -
+      # memcheck still reports the uninitialised USE without it - so the frequent
+      # post-merge push gate turns it off (VALGRIND_TRACK_ORIGINS=no) to run in
+      # ~half the time, while the nightly / manual runs keep it on for the backtrace.
+      "--track-origins=#{ENV.fetch('VALGRIND_TRACK_ORIGINS', 'yes')}",
       "--leak-check=no",        # leaks are `rake leaks`' job, not this one
     ],
   )
@@ -96,7 +101,30 @@ begin
   namespace :spec do
     desc "Run the spec suite under Valgrind memcheck (ruby_memcheck; needs the " \
          ":valgrind bundler group and the valgrind binary)"
-    RubyMemcheck::RSpec::RakeTask.new(valgrind: :compile)
+    RubyMemcheck::RSpec::RakeTask.new(valgrind: :compile) do |t|
+      # Optional sharding for CI wall-clock: with VALGRIND_SHARDS=N (>1) the spec
+      # files are partitioned into N groups and this run does only group
+      # VALGRIND_SHARD_INDEX, so N parallel matrix jobs cover the whole suite in
+      # ~1/N the time WITHOUT dropping any coverage. Files are packed
+      # largest-first onto the currently-lightest shard (greedy LPT by file size,
+      # a proxy for runtime), so the slowest shard - which sets wall-clock - is
+      # balanced rather than left to name order. Deterministic, so every shard
+      # computes the same partition and takes its own index. Default N=1 = the
+      # whole suite (local `rake spec:valgrind`).
+      shards = Integer(ENV.fetch("VALGRIND_SHARDS", "1"))
+      if shards > 1
+        index   = Integer(ENV.fetch("VALGRIND_SHARD_INDEX", "0"))
+        buckets = Array.new(shards) { { load: 0, files: [] } }
+        # sort by (size desc, name) so the packing is fully deterministic across
+        # shards regardless of Array#sort stability.
+        Dir["spec/**/*_spec.rb"].sort_by { |f| [-File.size(f), f] }.each do |f|
+          b = buckets.min_by { |x| x[:load] }
+          b[:files] << f
+          b[:load] += File.size(f)
+        end
+        t.pattern = buckets.fetch(index)[:files]
+      end
+    end
   end
 rescue LoadError
   # ruby_memcheck not installed (optional :valgrind group absent) - skip the task.

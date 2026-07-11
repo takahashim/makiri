@@ -24,11 +24,16 @@ jobs:
   # (intra-arena overflows).  Runs on Linux because Valgrind is x86_64/amd64
   # Linux only.
   valgrind-memcheck:
-    name: Valgrind memcheck (Ruby ${{ matrix.ruby }})
+    name: Valgrind memcheck (Ruby ${{ matrix.ruby }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
       BUNDLE_WITH: valgrind
+      # Shard the suite across the matrix below: 4 parallel jobs each memcheck a
+      # quarter of the spec files, so the whole suite finishes in ~1/4 the
+      # wall-clock with no loss of coverage (each shard is balanced by file size).
+      VALGRIND_SHARDS: "4"
+      VALGRIND_SHARD_INDEX: ${{ matrix.shard }}
       # These heavy jobs verify memory discipline (uninit values, intra-arena
       # overflows, use-after-move), not the property space - so the full
       # 300-iteration PBT sweep (already run by the normal CI matrix) is
@@ -37,10 +42,16 @@ jobs:
       # keeping the run tractable.
       PBT_COUNT: "15"
       CSS_PBT_COUNT: "15"
+      # --track-origins roughly doubles memcheck's runtime and only adds an origin
+      # backtrace to a finding (the finding itself is still reported without it).
+      # Drop it on the frequent post-merge push gate to halve its runtime; keep it
+      # for the thorough nightly / manual runs, where the backtrace aids triage.
+      VALGRIND_TRACK_ORIGINS: ${{ github.event_name == 'push' && 'no' || 'yes' }}
     strategy:
       fail-fast: false
       matrix:
         ruby: ["3.4"]
+        shard: [0, 1, 2, 3]   # keep in sync with VALGRIND_SHARDS above
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
