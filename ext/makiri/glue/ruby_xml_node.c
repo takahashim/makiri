@@ -1173,23 +1173,10 @@ mkr_xml_splice_fragment(mkr_xml_doc_t *xdoc, mkr_xml_node_t *target,
                         mkr_xml_node_t *frag, VALUE doc_v, mkr_ins_op_t op)
 {
     if (op == MKR_INS_REPLACE) {
-        /* The fragment's children take +target+'s slot, then +target+ is dropped.
-         * Route the FIRST child through mkr_xml_replace_node so the replaced node
-         * is properly EXCLUDED from the placement checks (single-root rule, doctype
-         * ordering) instead of momentarily double-counting - which is what an
-         * insert-before-then-detach would do; the rest follow via insert_after. An
-         * empty fragment degrades to a plain remove. */
-        mkr_xml_node_t *first = frag->first_child;
-        if (first == NULL) {
-            mkr_xml_remove(xdoc, target);
-            return mkr_wrap_xml_node(frag, doc_v);
-        }
-        mkr_xml_mut_check(mkr_xml_replace_node(xdoc, target, first));
-        mkr_xml_node_t *ref = first, *c;
-        while ((c = frag->first_child) != NULL) {
-            mkr_xml_mut_check(mkr_xml_insert_after(xdoc, ref, c));
-            ref = c;
-        }
+        /* Whole-fragment replace is an engine primitive: it validates the fragment
+         * before touching a link and keeps +target+ until every child is spliced
+         * in, so a rejected replace never destroys the replaced subtree. */
+        mkr_xml_mut_check(mkr_xml_replace_with_fragment(xdoc, target, frag));
         return mkr_wrap_xml_node(frag, doc_v);
     }
 

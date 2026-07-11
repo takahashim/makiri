@@ -87,6 +87,22 @@ RSpec.describe "Makiri::XML fragments" do
       t.replace(d.fragment("<x/>mid<y/>"))
       expect(d.root.to_xml).to eq("<r><x/>mid<y/></r>")
     end
+
+    it "replaces the root element with a single-element fragment" do
+      d = Makiri::XML("<r><a/></r>")
+      d.root.replace(d.fragment("<x/>"))
+      expect(d.children.map(&:name)).to eq(%w[x])
+    end
+
+    it "refuses a replace that would leave two roots, destroying nothing" do
+      # The single-root budget is checked across the WHOLE fragment before any
+      # link changes, so the replaced subtree survives a rejected replace.
+      d = Makiri::XML("<r><a/></r>")
+      frag = d.fragment("<x/><y/>")
+      expect { d.root.replace(frag) }.to raise_error(Makiri::Error)
+      expect(d.root.to_xml).to eq("<r><a/></r>")   # untouched
+      expect(frag.children.map(&:name)).to eq(%w[x y]) # fragment intact
+    end
   end
 
   describe "cross-document import" do

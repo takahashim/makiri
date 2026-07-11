@@ -53,6 +53,15 @@ void mkr_xml_detach(mkr_xml_node_t *node);
  * the mkr_xml_insert_* functions; +doc+ may be NULL (then it is a plain detach). */
 void mkr_xml_remove(mkr_xml_doc_t *doc, mkr_xml_node_t *node);
 
+/* Replace +target+ with the children of +frag+ (leaving it empty); an empty
+ * fragment just removes +target+. ATOMIC / fail-closed: the whole fragment is
+ * validated before any link changes and the ensuing splice cannot fail, so a
+ * rejected replace leaves BOTH the tree (including +target+) and +frag+ exactly
+ * as they were. */
+mkr_xml_mut_status_t mkr_xml_replace_with_fragment(mkr_xml_doc_t *doc,
+                                                   mkr_xml_node_t *target,
+                                                   mkr_xml_node_t *frag);
+
 /* Rename an element or attribute in place to the QName [name, name+nlen):
  * validates it, copies it contiguously into the arena, re-splits prefix/local,
  * and re-resolves the namespace against the node's in-scope declarations (the

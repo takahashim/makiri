@@ -876,6 +876,77 @@ mkr_xml_remove(mkr_xml_doc_t *doc, mkr_xml_node_t *node)
     if (doc != NULL) sync_doc_meta(doc, parent);
 }
 
+/* How many ELEMENT children +parent+ would still hold with +exclude+ gone. */
+static size_t
+element_child_count(const mkr_xml_node_t *parent, const mkr_xml_node_t *exclude)
+{
+    size_t n = 0;
+    for (const mkr_xml_node_t *c = parent->first_child; c != NULL; c = c->next) {
+        if (c != exclude && c->type == MKR_XML_NODE_TYPE_ELEMENT) n++;
+    }
+    return n;
+}
+
+/* Replace +target+ with the CHILDREN of +frag+ (the DOM rule: a fragment
+ * contributes its children, not itself), leaving +frag+ empty. An empty fragment
+ * degrades to a plain remove.
+ *
+ * ATOMIC / fail-closed: the WHOLE fragment is validated before a single link
+ * changes, and the splice that follows cannot fail - so a rejected replace leaves
+ * BOTH the tree (including +target+) and +frag+ exactly as they were. This is why
+ * the operation validates and commits in two separate passes instead of splicing
+ * child-by-child: a per-child splice that tripped a rule on, say, the second
+ * child would have already moved the first out of +frag+ and into the tree.
+ *
+ * Every child is validated as if it took +target+'s slot with +target+ EXCLUDED
+ * (so it doesn't double-count against the single-root / doctype rules while
+ * +target+ is still linked). Two rules span the fragment and a per-child check
+ * can't see them - nothing is linked yet, so a child cannot observe its fragment
+ * siblings - so they are enforced across the whole fragment up front. */
+mkr_xml_mut_status_t
+mkr_xml_replace_with_fragment(mkr_xml_doc_t *doc, mkr_xml_node_t *target, mkr_xml_node_t *frag)
+{
+    mkr_xml_node_t *container = target->parent;
+    if (container == NULL) return MKR_XML_MUT_HIERARCHY;
+
+    /* --- validation pass: no links change below this point until it all passes */
+    if (container->type == MKR_XML_NODE_TYPE_DOCUMENT) {
+        /* single-root: the document keeps at most one element child */
+        if (element_child_count(frag, NULL) + element_child_count(container, target) > 1)
+            return MKR_XML_MUT_HIERARCHY;
+        /* refuse ANY doctype in the fragment: once its element siblings are
+         * spliced ahead of it, the all-take-target's-slot commit can't WHATWG-order
+         * a doctype among them, and the per-child pass below (which sees only the
+         * container, not the fragment siblings) would miss it. Blanket-reject up
+         * front rather than commit a mis-ordered document. A doctype-carrying
+         * fragment is unreachable via the current parse path anyway - this is the
+         * fail-closed guard for a future one. */
+        for (const mkr_xml_node_t *c = frag->first_child; c != NULL; c = c->next) {
+            if (c->type == MKR_XML_NODE_TYPE_DOCUMENT_TYPE) return MKR_XML_MUT_HIERARCHY;
+        }
+    }
+    /* per-child: insertability, cycles, namespace resolution, and doctype order
+     * against the CONTAINER - all non-linking (prepare_insert changes nothing). */
+    for (mkr_xml_node_t *c = frag->first_child; c != NULL; c = c->next) {
+        mkr_xml_mut_status_t st = prepare_insert(container, c, target, target);
+        if (st != MKR_XML_MUT_OK) return st;   /* nothing touched yet */
+    }
+
+    /* --- commit pass: every child is validated, so no splice here can fail. It
+     * relies on the pass above having done the work: prepare_insert already
+     * resolved each child's namespaces (wrote ns_uri), so the raw splice below
+     * neither re-validates nor re-resolves - do not drop the resolve there. Each
+     * child takes +target+'s slot in fragment order; +target+ is dropped only once
+     * the fragment is empty. */
+    mkr_xml_node_t *c;
+    while ((c = frag->first_child) != NULL) {
+        mkr_xml_detach(c);
+        splice_between(container, c, target->prev, target);
+    }
+    mkr_xml_remove(doc, target);   /* re-derives doc->root / doc->doctype */
+    return MKR_XML_MUT_OK;
+}
+
 /* ---- self-test (Makiri.__c_selftest) ---- */
 int
 mkr_xml_mutate_selftest(void)
