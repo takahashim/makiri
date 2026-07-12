@@ -185,15 +185,37 @@ h2x_make(mkr_xml_doc_t *xdoc, lxb_dom_node_t *s, const char *pdef, uint32_t pdef
         size_t nl;
         const lxb_char_t *nm = lxb_dom_element_qualified_name(lxb_dom_interface_element(s), &nl);
         if (!MKR_FITS_U32(nl)) return MKR_XML_MUT_OOM;
-        mkr_xml_node_t *el = NULL;
-        mkr_xml_mut_status_t st = mkr_xml_new_element(xdoc, (const char *)nm, (uint32_t)nl, &el);
-        if (st != MKR_XML_MUT_OK) return st;
 
-        /* Declare the element's default namespace iff it differs from the inherited
-         * one, so this (unprefixed, like all HTML elements) element resolves to it.
-         * An element with no namespace under an inherited default undeclares (xmlns=""). */
+        /* The element's namespace URI (borrowed from the source doc's ns table). */
         uint32_t eul;
         const char *euri = mkr_html_ns_uri(s, &eul);
+
+        /* Strict first, so a valid QName stays XML-serializable. importNode/adoptNode
+         * never re-validate an existing node's name (DOM requires the source already
+         * be well-formed for its representation), so an HTML name that is a valid DOM
+         * element name but NOT a well-formed XML QName (":good:times:", "x<", "0:a")
+         * is taken VERBATIM as an unprefixed DOM-loose name (local == whole) rather
+         * than rejected - the same non-serializable escape hatch as
+         * create_loose_dom_element. HTML elements are always unprefixed. The namespace
+         * is passed DIRECTLY because ns resolution at link time skips loose names
+         * (resolve_node_ns), so a synthesized xmlns declaration would not reach it. */
+        mkr_xml_node_t *el = NULL;
+        mkr_xml_mut_status_t st = mkr_xml_new_element(xdoc, (const char *)nm, (uint32_t)nl, &el);
+        if (st == MKR_XML_MUT_BAD_NAME && nl > 0) {
+            mkr_xml_qname_t qn = {
+                (const char *)nm, (uint32_t)nl,   /* qname          */
+                (const char *)nm, 0,              /* prefix (none)  */
+                (const char *)nm, (uint32_t)nl,   /* local == qname */
+            };
+            st = mkr_xml_new_loose_dom_element(xdoc, &qn, euri, eul, &el);
+        }
+        if (st != MKR_XML_MUT_OK) return st;
+
+        /* Declare the default namespace iff it differs from the inherited one, so
+         * this (unprefixed, like all HTML elements) element and its children resolve
+         * to it. An element with no namespace under an inherited default undeclares
+         * (xmlns=""). For a loose element this only feeds child inheritance - its own
+         * ns_uri was already set directly above. */
         if (!mkr_uri_eq(euri, eul, pdef, pdef_len)) {
             st = h2x_declare_ns(xdoc, el, NULL, 0, euri, eul);
             if (st != MKR_XML_MUT_OK) return st;

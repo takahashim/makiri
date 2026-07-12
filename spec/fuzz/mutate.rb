@@ -67,6 +67,10 @@ module MutateFuzz
   # rejected, a before-root insert is accepted.
   DOCTYPE_NAMES = ["r", "root", "svg", "p:doc", "1bad", "a b", "", "SVG"].freeze
   DOCTYPE_IDS   = [nil, "", "-//W3C//DTD", "sys.dtd", %(a"b), "\x00", "urn:x"].freeze
+  # HTML element names for the cross-representation import op: a mix of valid
+  # QNames (strict, serializable) and DOM-lenient names that are not well-formed
+  # XML QNames, which import_node must take verbatim as DOM-loose names.
+  HTML_IMPORT_NAMES = ["div", "span", ":good:times:", "x<", "0:a", "a b", "f}oo", "xmlns:foo"].freeze
 
   # A documented, fail-closed rejection of a bad edit (invalid name/char, cycle,
   # second root, cross-document/representation, frozen receiver, bad index): the
@@ -109,7 +113,7 @@ module MutateFuzz
 
   def apply(doc, nodes, src, rng)
     t = nodes.sample(random: rng)
-    case rng.rand(21)
+    case rng.rand(22)
     when 0  then t.add_child(make(doc, rng))
     when 1  then t << make(doc, rng)
     when 2  then t.before(make(doc, rng))
@@ -131,7 +135,25 @@ module MutateFuzz
     when 18 then t.freeze                                         # later edits on it -> FrozenError
     when 19 then t.add_child(doc.create_cdata(TEXTS.sample(random: rng)))
     when 20 then t.add_child(t.clone_node(rng.rand(2).zero?)) # clone (deep/shallow) reinserted as an independent copy
+    when 21 then import_html(doc, rng)                        # HTML->XML import_node incl DOM-loose element names
     end
+  end
+
+  # Exercise cross-representation import_node (HTML -> XML): build a small HTML
+  # subtree whose element names mix valid QNames and DOM-lenient names, and import
+  # it (deep/shallow). A lenient name is taken verbatim as a non-serializable
+  # DOM-loose element rather than rejected. The detached result is DISCARDED (not
+  # linked into +doc+), so the serialization invariant in verify never sees a
+  # loose name - the arena allocation + deep translation still run under ASan.
+  def import_html(doc, rng)
+    h  = Makiri::HTML("<div></div>")
+    el = h.create_element(HTML_IMPORT_NAMES.sample(random: rng))
+    (rng.rand(3)).times do
+      child = h.create_element(HTML_IMPORT_NAMES.sample(random: rng))
+      child[ATTR_NAMES.sample(random: rng)] = ATTR_VALS.sample(random: rng) if rng.rand(2).zero?
+      el.add_child(child)
+    end
+    doc.import_node(el, rng.rand(2).zero?)
   end
 
   def make(doc, rng)
