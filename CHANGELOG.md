@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0] - 2026-07-12
+
+### Fixed
+
+* `Document#import_node` (DOM `importNode` / `adoptNode`) now imports an HTML
+  element whose name is a valid DOM name but not a well-formed XML QName (e.g.
+  `":good:times:"`, `"x<"`, `"0:a"`) instead of raising. Such an element is not
+  XML-serializable (`#to_xml` raises). An element carrying a similarly lenient
+  attribute name is still rejected.
+
 ## [0.7.0] - 2026-07-11
 
 ### Added
