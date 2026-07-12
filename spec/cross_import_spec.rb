@@ -54,6 +54,61 @@ RSpec.describe "cross-kind import_node" do
       xml.root.add_child(el)
       expect(xml.root.at_xpath(".//*[local-name()='span']")).not_to be_nil
     end
+
+    # DOM importNode / adoptNode never re-validate an existing node's name (the
+    # source is already well-formed for its representation). An HTML element name
+    # that is a valid DOM name but NOT a well-formed XML QName must therefore be
+    # taken verbatim as a DOM-loose name, not rejected - the same non-serializable
+    # escape hatch as create_loose_dom_element (WPT dom/nodes/Document-adoptNode).
+    describe "DOM-lenient element names (not well-formed XML QNames)" do
+      let(:hdoc) { Makiri::HTML::Document.parse("<div></div>") }
+
+      it "imports a lenient-named element verbatim instead of raising" do
+        %w[:good:times: x< 0:a a\ b f}oo xmlns:foo].each do |nm|
+          el  = hdoc.create_element(nm)
+          imp = xml.import_node(el, true)
+          expect(imp).to be_a(Makiri::XML::Element)
+          expect(imp.name).to eq(nm)
+        end
+      end
+
+      it "preserves the element's namespace (HTML elements are XHTML)" do
+        imp = xml.import_node(hdoc.create_element(":good:times:"), true)
+        expect(imp.namespace&.href).to eq("http://www.w3.org/1999/xhtml")
+      end
+
+      it "marks the import non-serializable (a DOM-loose name is not valid XML)" do
+        imp = xml.import_node(hdoc.create_element(":good:times:"), true)
+        expect { imp.to_xml }.to raise_error(Makiri::Error, /DOM-loose/)
+      end
+
+      it "keeps a valid QName on the strict, serializable path" do
+        imp = xml.import_node(hdoc.create_element("section"), true)
+        expect(imp.name).to eq("section")
+        expect(imp.to_xml).to include("section")   # serializes (not loose)
+      end
+
+      it "deep-imports lenient-named elements with children" do
+        parent = hdoc.create_element(":p:")
+        parent.add_child(hdoc.create_element("span"))
+        imp = xml.import_node(parent, true)
+        expect(imp.name).to eq(":p:")
+        expect(imp.children.map(&:name)).to eq(["span"])
+      end
+
+      it "can be appended into the XML tree after import" do
+        imp = xml.import_node(hdoc.create_element(":good:times:"), true)
+        xml.root.add_child(imp)
+        expect(xml.root.children.map(&:name)).to include(":good:times:")
+      end
+
+      it "still copies valid attributes on a loose-named element" do
+        el = hdoc.create_element(":x:")
+        el["id"] = "a"
+        imp = xml.import_node(el, true)
+        expect(imp["id"]).to eq("a")
+      end
+    end
   end
 
   describe "XML -> HTML" do
