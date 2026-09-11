@@ -1,0 +1,399 @@
+//! Ruby String <-> Makiri text (bridge/ruby_string.c).
+//!
+//! # The borrow rule this file exists to hold
+//!
+//! Several functions hand back a pointer *into* a Ruby String. That borrow is
+//! only valid until Ruby is allowed to run: a GC can move or free the backing
+//! buffer. So the verdict check in [`mkr_text_check`] is **allocation-free by
+//! design**, and every caller relies on that - it runs between a caller taking
+//! the pointer and using it, so it must not be a GC point.
+//!
+//! (The C's history is the warning: each caller used to build a throwaway Ruby
+//! String just to read its coderange, which put a Ruby allocation inside every
+//! borrow, and opened a GC window under every *other* borrow already held at a
+//! multi-borrow call site.)
+//!
+//! Rust does not enforce this for us - `RString::as_slice` is `unsafe` for
+//! exactly this reason, and its lifetime is tied to nothing. What it does give
+//! is a place to state the rule once, which is here.
+
+/* Every function takes the `VALUE`s its C caller already holds; the contract is
+ * the one at the declaration in bridge/bridge.h. */
+#![allow(clippy::missing_safety_doc)]
+
+use core::ffi::{c_char, c_int, c_long, c_void};
+
+use magnus::rb_sys::FromRawValue;
+use magnus::encoding::Coderange;
+use magnus::{RString, Value};
+use rb_sys::{StableApiDefinition, VALUE};
+
+/* ---- the C layouts (core/mkr_text.h, bridge/bridge.h) ---- */
+
+/// `mkr_borrowed_text_t` / `mkr_verified_text_t` - an unanchored slice.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BorrowedText {
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+/// `mkr_owned_bytes_t`.
+#[repr(C)]
+pub struct OwnedBytes {
+    pub ptr: *mut c_char,
+    pub len: usize,
+}
+
+/// `mkr_ruby_borrowed_text_t` / `_data_t` / `_bytes_t`.
+///
+/// One layout, three C types. The distinction is the contract, not the shape:
+/// `text` has been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only
+/// (the HTML data family may hold U+0000, like browsers), and `bytes` for
+/// nothing at all (HTML parsing decodes leniently). Keeping them apart is what
+/// makes a name or engine string that took the data path a type error rather
+/// than a silent one, so they stay three types here too.
+#[repr(C)]
+pub struct RubyBorrowedText {
+    pub value: VALUE,
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+#[repr(C)]
+pub struct RubyBorrowedData {
+    pub value: VALUE,
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+#[repr(C)]
+pub struct RubyBorrowedBytes {
+    pub value: VALUE,
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+/// `mkr_text_verdict_t`.
+pub const MKR_TEXT_OK: c_int = 0;
+pub const MKR_TEXT_HAS_NUL: c_int = 1;
+pub const MKR_TEXT_INVALID_UTF8: c_int = 2;
+
+extern "C" {
+    static mkr_eError: VALUE;
+
+    /// The ONE UTF-8 validator (core/mkr_utf8.h), Ruby-free and
+    /// allocation-free, and the subject of the CBMC proofs. Not reimplemented
+    /// here: a second validator is a second answer.
+    fn mkr_utf8_valid(src: *const u8, len: usize) -> bool;
+    fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;
+
+    /// Variadic, so it can be called but not defined from Rust. It longjmps -
+    /// see the borrow rule above and glue/mod.rs: no Rust destructor may be
+    /// live at the call.
+    fn rb_raise(exc: VALUE, fmt: *const c_char, ...) -> !;
+}
+
+/// The `value` + `(ptr, len)` of a String, taken together so the borrow and its
+/// anchor cannot be separated by accident.
+///
+/// # Safety
+/// `s` must be a `T_STRING`. The returned pointer is valid only until Ruby runs.
+#[inline]
+unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
+    let r = RString::from_value(Value::from_raw(s)).expect("a T_STRING");
+    let bytes = r.as_slice();
+    (s, bytes.as_ptr() as *const c_char, bytes.len())
+}
+
+/// Coerce to a String the way `rb_String` does (`to_str`, else `to_s`).
+#[inline]
+unsafe fn to_string(v: VALUE) -> VALUE {
+    rb_sys::rb_String(v)
+}
+
+/* ---- assembling Ruby Strings ---- */
+
+/// Join `n` document-order slices totalling `total` bytes into one UTF-8 String.
+///
+/// This is the text index's output path, so it writes straight into the fresh
+/// String's buffer: one pre-sized allocation and one memcpy run, with no
+/// intermediate. The bounds checks are not redundant with the caller's
+/// bookkeeping - a wrong `total` would otherwise run past the allocation, so
+/// both a long slice and a short sum fail closed.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_str_from_slices(
+    slices: *const BorrowedText,
+    n: usize,
+    total: usize,
+) -> VALUE {
+    if total > c_long::MAX as usize {
+        rb_raise(mkr_eError, c"text too large to assemble".as_ptr());
+    }
+    let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
+    /* We just created it and hold the only reference, so writing through the
+     * buffer is sound - this is what RSTRING_PTR gives the C. */
+    let dst = rb_sys::stable_api::get_default().rstring_ptr(str) as *mut u8;
+
+    let mut off = 0usize;
+    for i in 0..n {
+        let s = &*slices.add(i);
+        if s.len == 0 {
+            continue;
+        }
+        if s.len > total - off {
+            /* off <= total holds, so the subtraction cannot underflow. */
+            rb_raise(mkr_eError, c"text slice length inconsistency".as_ptr());
+        }
+        core::ptr::copy_nonoverlapping(s.ptr as *const u8, dst.add(off), s.len);
+        off += s.len;
+    }
+    if off != total {
+        /* A short sum would leave the tail of the uninitialised String unwritten. */
+        rb_raise(mkr_eError, c"text slice length inconsistency".as_ptr());
+    }
+    str
+}
+
+/// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
+/// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
+    if text.ptr.is_null() {
+        return rb_sys::rb_utf8_str_new(c"".as_ptr(), 0);
+    }
+    rb_sys::rb_utf8_str_new(text.ptr, text.len as c_long)
+}
+
+/* ---- the strict text contract ---- */
+
+/// Check `[ptr, len)` against the strict contract, returning the specific
+/// violation so each caller can map it to its own error surface (`Makiri::Error`,
+/// `XML::SyntaxError`, or a reason string).
+///
+/// `coderange_str` is consulted only for its CACHED coderange and may be a
+/// superstring of the bytes: the XML path passes the whole decoded String for
+/// the coderange but a BOM-stripped suffix as the bytes, which is sound because
+/// the BOM is one complete UTF-8 character, so a whole-string VALID coderange
+/// still proves the suffix valid. Bytes are validated as UTF-8 whatever the
+/// String's declared encoding says.
+///
+/// Allocation-free - see the module docs.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_text_check(
+    coderange_str: VALUE,
+    ptr: *const c_char,
+    len: usize,
+) -> c_int {
+    let bytes = if ptr.is_null() || len == 0 {
+        &[][..]
+    } else {
+        core::slice::from_raw_parts(ptr as *const u8, len)
+    };
+    if bytes.contains(&0) {
+        return MKR_TEXT_HAS_NUL;
+    }
+    /* The cached coderange reads flags; it never scans and never allocates. NUL
+     * is valid UTF-8, so the search above stands either way. */
+    if mkr_ruby_str_known_valid_utf8(coderange_str) {
+        return MKR_TEXT_OK;
+    }
+    if !mkr_utf8_valid(bytes.as_ptr(), bytes.len()) {
+        return MKR_TEXT_INVALID_UTF8;
+    }
+    MKR_TEXT_OK
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mkr_verify_text(str: VALUE, what: *const c_char) {
+    let (_, ptr, len) = borrow(str);
+    match mkr_text_check(str, ptr, len) {
+        MKR_TEXT_HAS_NUL => rb_raise(mkr_eError, c"%s must not contain a NUL byte".as_ptr(), what),
+        MKR_TEXT_INVALID_UTF8 => rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what),
+        _ => {}
+    }
+}
+
+/// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
+/// naming `what` in the error. The names-and-engine-input path.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_verified_text(
+    in_: VALUE,
+    what: *const c_char,
+) -> RubyBorrowedText {
+    let s = to_string(in_);
+    mkr_verify_text(s, what);
+    let (value, ptr, len) = borrow(s);
+    RubyBorrowedText { value, ptr, len }
+}
+
+/// Coerce to a String and enforce the DATA-family contract: invalid UTF-8 is
+/// fatal, an interior NUL is not, so DOM data can hold U+0000 like browsers.
+///
+/// `mkr_verify_text` is not reused because it raises on NUL. The check is
+/// allocation-free, so the borrow taken before it is not held across a GC point.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_verified_data(
+    in_: VALUE,
+    what: *const c_char,
+) -> RubyBorrowedData {
+    let s = to_string(in_);
+    let (value, ptr, len) = borrow(s);
+    if mkr_text_check(s, ptr, len) == MKR_TEXT_INVALID_UTF8 {
+        rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what);
+    }
+    RubyBorrowedData { value, ptr, len }
+}
+
+/// A borrowed raw byte view. Deliberately enforces nothing: HTML parsing
+/// consumes raw bytes and decodes invalid UTF-8 leniently, like a browser.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_bytes_view(in_: VALUE) -> RubyBorrowedBytes {
+    let s = to_string(in_);
+    let (value, ptr, len) = borrow(s);
+    RubyBorrowedBytes { value, ptr, len }
+}
+
+/// Copy a String's raw bytes into owned C storage, at least one byte even for
+/// an empty input, so the result is usable while the GVL is released.
+/// -1 on OOM, with nothing allocated.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_copy_bytes(in_: VALUE, out: *mut OwnedBytes) -> c_int {
+    let v = mkr_ruby_bytes_view(in_);
+    (*out).ptr = core::ptr::null_mut();
+    (*out).len = 0;
+
+    let alloc_len = if v.len > 0 { v.len } else { 1 };
+    let buf = mkr_reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
+    if buf.is_null() {
+        return -1;
+    }
+    if v.len > 0 {
+        core::ptr::copy_nonoverlapping(v.ptr as *const u8, buf, v.len);
+    }
+    (*out).ptr = buf as *mut c_char;
+    (*out).len = v.len;
+    /* Keep the String reachable until the copy is done - the C's RB_GC_GUARD.
+     * `black_box` is the Rust equivalent: it stops the optimiser from deciding
+     * the value is dead before this point. */
+    core::hint::black_box(v.value);
+    0
+}
+
+/* ---- encoding ---- */
+
+/// A UTF-8 String for `str`, honouring its declared encoding so the content
+/// survives.
+///
+///  - UTF-8 / US-ASCII / ASCII-8BIT: returned unchanged. These are already
+///    UTF-8 bytes, or deliberately raw ones, and the native parser does the
+///    WHATWG invalid-byte replacement for them. The common case costs one
+///    encoding comparison - no transcode, no copy.
+///  - anything else (Shift_JIS, EUC-JP, ISO-8859-1, Windows-1252, ...):
+///    transcoded with invalid/undef -> U+FFFD, so the text becomes the right
+///    characters instead of being read as raw UTF-8 and mangled. Only
+///    non-UTF-8 input pays for this.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_to_utf8(str: VALUE) -> VALUE {
+    let enc = rb_sys::rb_enc_get(str);
+    let utf8 = rb_sys::rb_utf8_encoding();
+    if enc == utf8 || enc == rb_sys::rb_usascii_encoding() || enc == rb_sys::rb_ascii8bit_encoding()
+    {
+        return str;
+    }
+    const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
+        | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
+    rb_sys::rb_str_encode(
+        str,
+        rb_sys::rb_enc_from_encoding(utf8),
+        REPLACE,
+        rb_sys::Qnil as VALUE,
+    )
+}
+
+/// Whether Ruby ALREADY knows the String is valid UTF-8.
+///
+/// This reads the cached classification from the object's flags; it does not
+/// scan (a scan would cost as much as running our own validator), so it only
+/// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
+/// the caller validates or sanitises.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_str_known_valid_utf8(str: VALUE) -> bool {
+    let Some(r) = RString::from_value(Value::from_raw(str)) else {
+        return false;
+    };
+    match r.enc_coderange() {
+        /* Every byte < 0x80 in an ASCII-compatible encoding. */
+        Coderange::SevenBit => true,
+        /* Valid for its own encoding - which has to be UTF-8 for that to mean
+         * valid UTF-8. */
+        Coderange::Valid => rb_sys::rb_enc_get(str) == rb_sys::rb_utf8_encoding(),
+        _ => false,
+    }
+}
+
+/// The non-raising form: a static reason string on rejection, NULL on success
+/// with `out` filled in. Allocation-free, like `mkr_verify_text`, so the borrow
+/// it hands back has not crossed a Ruby allocation.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_try_verified_text(
+    sv: VALUE,
+    max_bytes: usize,
+    out: *mut RubyBorrowedText,
+) -> *const c_char {
+    let (value, ptr, len) = borrow(sv);
+    if len > max_bytes {
+        return c"string exceeds the maximum length".as_ptr();
+    }
+    match mkr_text_check(sv, ptr, len) {
+        MKR_TEXT_HAS_NUL => return c"string contains a NUL byte".as_ptr(),
+        MKR_TEXT_INVALID_UTF8 => return c"string is not valid UTF-8".as_ptr(),
+        _ => {}
+    }
+    (*out).value = value;
+    (*out).ptr = ptr;
+    (*out).len = len;
+    core::ptr::null()
+}
+
+/* ---- exception messages ---- */
+
+unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
+    rb_sys::rb_obj_as_string(rb_sys::rb_funcall(
+        exc,
+        rb_sys::rb_intern(c"message".as_ptr()),
+        0,
+    ))
+}
+
+/// Write `exc`'s message into `buf` as a NUL-terminated C string, truncating to
+/// fit. Falls back to "error" if asking for the message raises or answers with
+/// a non-String - this runs on error paths, so it must not raise itself.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize) {
+    if buf.is_null() || len == 0 {
+        return;
+    }
+    let mut state: c_int = 0;
+    let msg = rb_sys::rb_protect(Some(exception_message_thunk), exc, &mut state);
+    if state != 0 {
+        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
+        return write_cstr(buf, len, b"error");
+    }
+    let Some(r) = RString::from_value(Value::from_raw(msg)) else {
+        return write_cstr(buf, len, b"error");
+    };
+    /* snprintf("%s") stops at the first NUL, so match that rather than copying
+     * the String's full byte length. */
+    let bytes = r.as_slice();
+    let n = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    write_cstr(buf, len, &bytes[..n]);
+}
+
+/// Copy `src` into `buf` (capacity `cap`, including the terminator), truncating
+/// as `snprintf` would.
+unsafe fn write_cstr(buf: *mut c_char, cap: usize, src: &[u8]) {
+    let n = core::cmp::min(src.len(), cap - 1);
+    core::ptr::copy_nonoverlapping(src.as_ptr(), buf as *mut u8, n);
+    *buf.add(n) = 0;
+}

@@ -252,6 +252,8 @@ end
 #                            (glue/ruby_html_serialize.c)
 #   MAKIRI_RUST_GLUE_NODE=1  the shared node core              -> `glue-node`
 #                            (glue/ruby_node.c)
+#   MAKIRI_RUST_BRIDGE_STRING=1 the text-input contract       -> `bridge-string`
+#                            (bridge/ruby_string.c)
 #
 # The glue flags differ from the engine ones in what they preserve. An engine
 # flag swaps one C ABI for an identical one; a glue flag swaps C that calls Ruby
@@ -276,6 +278,7 @@ rust_xpath_shared = ENV["MAKIRI_RUST_XPATH_SHARED"].to_s.strip == "1"
 rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
 rust_glue_serialize = ENV["MAKIRI_RUST_GLUE_SERIALIZE"].to_s.strip == "1"
 rust_glue_node = ENV["MAKIRI_RUST_GLUE_NODE"].to_s.strip == "1"
+rust_bridge_string = ENV["MAKIRI_RUST_BRIDGE_STRING"].to_s.strip == "1"
 rust_xpath = rust_xpath_xml || rust_xpath_html || rust_xpath_driver ||
              rust_xpath_shared || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
@@ -286,7 +289,8 @@ RUST_XPATH_DRIVER_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath.c")].freeze
 RUST_XPATH_SHARED_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_shared.c")].freeze
 RUST_GLUE_SERIALIZE_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_serialize.c")].freeze
 RUST_GLUE_NODE_SRCS = [File.join(EXT_DIR, "glue", "ruby_node.c")].freeze
-if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node
+RUST_BRIDGE_STRING_SRCS = [File.join(EXT_DIR, "bridge", "ruby_string.c")].freeze
+if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node || rust_bridge_string
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -298,6 +302,7 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node
   features << "xpath-shared" if rust_xpath_shared
   features << "glue-serialize" if rust_glue_serialize
   features << "glue-node" if rust_glue_node
+  features << "bridge-string" if rust_bridge_string
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -340,6 +345,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_xpath_shared && RUST_XPATH_SHARED_SRCS.include?(f) }
            .reject { |f| rust_glue_serialize && RUST_GLUE_SERIALIZE_SRCS.include?(f) }
            .reject { |f| rust_glue_node && RUST_GLUE_NODE_SRCS.include?(f) }
+           .reject { |f| rust_bridge_string && RUST_BRIDGE_STRING_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,

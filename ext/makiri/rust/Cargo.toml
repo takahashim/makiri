@@ -43,6 +43,10 @@ glue-serialize = ["glue"]
 # method, so it keeps the C ABI exactly and the other glue files link to it
 # unchanged.
 glue-node = ["glue"]
+# bridge/ruby_string.c - the text-input contract. The only layer allowed raw
+# Ruby String access, so it is the one whose port has to preserve the
+# allocation-free borrow rule (see src/bridge/string.rs).
+bridge-string = ["glue"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

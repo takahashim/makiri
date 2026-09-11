@@ -23,6 +23,8 @@ pub mod cbuf;
 /// The Ruby boundary. Present only when a glue feature is on, because it is the
 /// one part of the crate that depends on magnus.
 #[cfg(feature = "glue")]
+pub mod bridge;
+#[cfg(feature = "glue")]
 pub mod glue;
 
 /// The XML node layouts (`xml::abi`) come in with either feature: the XPath
