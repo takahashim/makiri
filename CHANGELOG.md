@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+* `Node#attribute_by_qualified_name(name)` and
+  `Node#attribute_value_by_qualified_name(name)` — the attribute whose
+  **qualified** name is exactly `name` (its node, and its value), or nil.
+
+  `#[]` and `#key?` cannot answer this on the HTML backend: they resolve through
+  Lexbor's attribute-name hash, which for an HTML element in an HTML document is
+  keyed by LOCAL name, so `el["b"]` hands back a prefixed `xml:b`. The DOM's
+  by-name family (`getAttribute` / `setAttribute` / `removeAttribute`) is defined
+  on the qualified name, and a DOM layer on top of Makiri had to scan
+  `#attribute_nodes` in Ruby to get it right — wrapping an Attr per attribute and
+  calling back into the extension for each name. The scan now runs natively:
+  roughly a quarter of the cost for the node, a fifth for the value. Both
+  backends answer; for XML they are the match `#[]` already made.
+
+  The match is byte-exact, where `#[]` lower-cases what it looks up
+  (`el["DATA-X"]` finds `data-x`). `getAttribute`'s ASCII-lowercasing applies
+  only to an HTML element in an HTML document, so the caller does that step.
+
 ### Fixed
 
 * XPath axes from an **attribute context node** now follow XPath 1.0 §2.2 on the

@@ -45,6 +45,69 @@ RSpec.describe Makiri::Attr do
     end
   end
 
+  describe "Element#attribute_by_qualified_name" do
+    it "returns the attribute node with that exact qualified name" do
+      attr = div.attribute_by_qualified_name("class")
+      expect(attr).to be_a(Makiri::Attr)
+      expect(attr.value).to eq("a b")
+    end
+
+    it "does not answer a prefixed attribute for its local name, unlike #[]" do
+      div["xml:b"] = "vv"
+      expect(div.attribute_by_qualified_name("xml:b").value).to eq("vv")
+      expect(div.attribute_by_qualified_name("b")).to be_nil
+    end
+
+    it "is nil for an absent name and for non-element nodes" do
+      expect(div.attribute_by_qualified_name("nope")).to be_nil
+      expect(span.child.attribute_by_qualified_name("id")).to be_nil
+    end
+
+    it "accepts a Symbol and ignores a non-string name, as #[] does" do
+      expect(div.attribute_by_qualified_name(:id).value).to eq("outer")
+      expect(div.attribute_by_qualified_name(nil)).to be_nil
+      expect(div.attribute_by_qualified_name(123)).to be_nil
+    end
+
+    it "rejects a NUL byte in the name" do
+      expect { div.attribute_by_qualified_name("id\0x") }.to raise_error(Makiri::Error)
+    end
+
+    it "finds XML attributes by their qualified name too" do
+      xdoc = Makiri::XML(%(<r xmlns:x="u"><e id="1" x:b="vv"/></r>))
+      e = xdoc.at_css("e")
+      expect(e.attribute_by_qualified_name("x:b").value).to eq("vv")
+      expect(e.attribute_by_qualified_name("b")).to be_nil
+      expect(e.attribute_by_qualified_name("id")).to be_a(Makiri::Attr)
+    end
+  end
+
+  describe "Element#attribute_value_by_qualified_name" do
+    it "returns the value for the same match, and nil when there is none" do
+      div["xml:b"] = "vv"
+      expect(div.attribute_value_by_qualified_name("class")).to eq("a b")
+      expect(div.attribute_value_by_qualified_name("xml:b")).to eq("vv")
+      expect(div.attribute_value_by_qualified_name("b")).to be_nil
+      expect(div.attribute_value_by_qualified_name("nope")).to be_nil
+    end
+
+    it "distinguishes an empty value from an absent attribute" do
+      div["empty"] = ""
+      expect(div.attribute_value_by_qualified_name("empty")).to eq("")
+      expect(div.attribute_value_by_qualified_name("absent")).to be_nil
+    end
+
+    it "is nil for non-element nodes" do
+      expect(span.child.attribute_value_by_qualified_name("id")).to be_nil
+    end
+
+    it "reads XML attributes too" do
+      e = Makiri::XML(%(<r xmlns:x="u"><e id="1" x:b="vv"/></r>)).at_css("e")
+      expect(e.attribute_value_by_qualified_name("x:b")).to eq("vv")
+      expect(e.attribute_value_by_qualified_name("b")).to be_nil
+    end
+  end
+
   describe "#name / #value" do
     it "exposes the attribute name and value" do
       id = div.attribute_nodes.first
