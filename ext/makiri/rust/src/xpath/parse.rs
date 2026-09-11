@@ -114,28 +114,21 @@ fn is_nodetype_name(s: &[u8]) -> bool {
 struct Slots<T> {
     ptr: *mut *mut T,
     len: *mut usize,
+    /// What this value knows it has reserved - a lower bound on the real
+    /// capacity, not the capacity itself. A fresh `Slots` over a populated pair
+    /// starts at 0 and simply reallocates once more than it had to; the grower
+    /// reallocates from the existing pointer, so nothing is lost.
     cap: usize,
 }
 
 impl<T> Slots<T> {
-    /// Take over a node's slots, which `mkr_node_alloc` has already zeroed.
+    /// Take over a node's slots, which are already empty - `mkr_node_alloc`
+    /// zeroes a new node, and `zero_step` a new step.
     ///
     /// # Safety
     /// Both must point into a live AST node that outlives this value.
     unsafe fn at(ptr: *mut *mut T, len: *mut usize) -> Slots<T> {
         Slots { ptr, len, cap: 0 }
-    }
-
-    /// Reset the slots to empty first - for the out-params a caller has not
-    /// zeroed.
-    ///
-    /// # Safety
-    /// See `at`. Any array already in the slots is leaked, so only call this on
-    /// slots that hold none.
-    unsafe fn fresh(ptr: *mut *mut T, len: *mut usize) -> Slots<T> {
-        *ptr = ptr::null_mut();
-        *len = 0;
-        Slots::at(ptr, len)
     }
 
     unsafe fn len(&self) -> usize {
@@ -435,7 +428,7 @@ impl<'a> Parser<'a> {
                     return false;
                 }
                 return self.parse_predicates(&mut unsafe {
-                    Slots::fresh(&raw mut (*out).predicates, &raw mut (*out).npredicates)
+                    Slots::at(&raw mut (*out).predicates, &raw mut (*out).npredicates)
                 });
             }
         } else {
@@ -446,7 +439,7 @@ impl<'a> Parser<'a> {
             return false;
         }
         self.parse_predicates(&mut unsafe {
-            Slots::fresh(&raw mut (*out).predicates, &raw mut (*out).npredicates)
+            Slots::at(&raw mut (*out).predicates, &raw mut (*out).npredicates)
         })
     }
 

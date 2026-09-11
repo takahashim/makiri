@@ -16,7 +16,7 @@ use super::axis::{axis_can_alias, axis_is_implemented, axis_name, is_reverse_axi
 use super::dom::*;
 use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
-use super::funcs::{self, Focus};
+use super::funcs;
 use super::order::nodeset_unique_sorted;
 use super::own::{OwnedVal, Set, Text};
 use super::value::*;

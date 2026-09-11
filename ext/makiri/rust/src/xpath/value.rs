@@ -15,6 +15,19 @@ use crate::err_setf;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
+/// The dynamic context of XPath 1.0 - the "focus": the context node with its
+/// 1-based position and the context size. These three always travel together.
+///
+/// The evaluator is what establishes a focus (a step's per-context predicate
+/// pass, and the outermost evaluate); the function library only ever receives
+/// one, so it lives here with the other runtime values rather than there.
+#[derive(Clone, Copy)]
+pub struct Focus<D: Dom> {
+    pub node: D::Node,
+    pub pos: usize,
+    pub size: usize,
+}
+
 /* mkr_xpath_type_t */
 pub const T_NODESET: u32 = 0;
 pub const T_STRING: u32 = 1;

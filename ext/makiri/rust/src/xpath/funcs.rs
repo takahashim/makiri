@@ -14,6 +14,7 @@ use super::abi::*;
 use super::dom::*;
 use super::order::nodeset_unique_sorted;
 use super::own::Text;
+use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use core::ffi::{c_char, c_void};
@@ -29,15 +30,6 @@ pub const NS_NOKOGIRI_BUILTIN_URI: &[u8] = b"https://www.nokogiri.org/default_ns
 /// these are unreachable from a user expression. XML host only.
 pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
 pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
-
-/// The dynamic context of XPath 1.0: the context node with its 1-based position
-/// and the context size. These three always travel together.
-#[derive(Clone, Copy)]
-pub struct Focus<D: Dom> {
-    pub node: D::Node,
-    pub pos: usize,
-    pub size: usize,
-}
 
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call; `out` starts zeroed, and a false

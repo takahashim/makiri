@@ -8,7 +8,6 @@
 
 use super::abi::*;
 use super::dom::Dom;
-use core::ffi::c_void;
 use core::ptr;
 
 /// An owned `mkr_owned_text_t`.
@@ -88,14 +87,6 @@ impl Set {
     pub unsafe fn get<D: Dom>(&self, i: usize) -> D::Node {
         debug_assert!(i < self.0.count);
         D::from_void(*self.0.items.add(i))
-    }
-    /// The stored pointers, for the passes that reorder the set in place.
-    pub fn items(&mut self) -> &mut [*mut c_void] {
-        if self.0.count == 0 {
-            &mut []
-        } else {
-            unsafe { core::slice::from_raw_parts_mut(self.0.items, self.0.count) }
-        }
     }
 }
 
