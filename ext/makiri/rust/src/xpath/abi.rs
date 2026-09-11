@@ -265,6 +265,7 @@ extern "C" {
 
     pub fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char);
 
+    pub fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> c_int;
     pub fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> c_int;
     pub fn mkr_limit_recurse_leave(l: *mut Limits);
     pub fn mkr_limit_check_steps(l: *mut Limits, nsteps: usize, err: *mut Error) -> c_int;

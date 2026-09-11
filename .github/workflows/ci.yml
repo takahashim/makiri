@@ -97,6 +97,9 @@ jobs:
           - label: "front end"
             flags: "MAKIRI_RUST_XPATH=1"
             features: "xpath"
+          - label: "shared primitives"
+            flags: "MAKIRI_RUST_XPATH_SHARED=1"
+            features: "xpath-shared"
           - label: "XPath XML instance"
             flags: "MAKIRI_RUST_XPATH_XML=1"
             features: "xpath-xml"
@@ -107,8 +110,8 @@ jobs:
             flags: "MAKIRI_RUST_XPATH_DRIVER=1"
             features: "xpath-driver"
           - label: "everything"
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1"
-            features: "xml,xpath-driver,xpath-xml,xpath-html"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1"
+            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6

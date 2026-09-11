@@ -17,6 +17,8 @@
 //!   dom.rs        the node-access contract, as a trait
 //!   own.rs        guards over the C allocations the engine passes around
 //!   ast.rs        the C AST's arrays, viewed as slices
+//!   ast_ops.rs    building, destroying and rewriting one
+//!   shared.rs     node-sets, owned text, values, the per-evaluate caches
 //!   axis.rs       the thirteen axes, as orders over the tree
 //!   order.rs      document order and its per-evaluate index
 //!   value.rs      string-values, coercions, the string-value cache
@@ -42,6 +44,7 @@ pub mod abi;
 pub mod msg;
 
 /* The front end (the `xpath` feature). */
+pub mod ast;
 pub mod lex;
 pub mod number;
 pub mod parse;
@@ -57,8 +60,13 @@ pub mod ctx;
 #[cfg(feature = "xpath-driver")]
 pub mod limits;
 
-#[cfg(feature = "xpath-engine")]
-pub mod ast;
+/* The shared primitives (`xpath-shared`), which ast.rs and shared.rs hold. The
+ * views in ast.rs cost nothing and export nothing, so they come with the front
+ * end; the operations beside them are gated. */
+#[cfg(feature = "xpath-shared")]
+pub mod ast_ops;
+#[cfg(feature = "xpath-shared")]
+pub mod shared;
 #[cfg(feature = "xpath-engine")]
 pub mod attr_pred;
 #[cfg(feature = "xpath-engine")]

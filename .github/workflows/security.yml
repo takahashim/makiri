@@ -262,6 +262,7 @@ jobs:
       - name: XML conformance (W3C xmlts)
         env:
           MAKIRI_RUST_XML: "1"
+          MAKIRI_RUST_XPATH_SHARED: "1"
           MAKIRI_RUST_XPATH_DRIVER: "1"
           MAKIRI_RUST_XPATH_HTML: "1"
           MAKIRI_RUST_XPATH_XML: "1"
@@ -273,6 +274,7 @@ jobs:
       # the of-type hooks).
       - name: Fuzz under sanitizers
         env:
+          MAKIRI_RUST_XPATH_SHARED: "1"
           MAKIRI_RUST_XPATH_DRIVER: "1"
           MAKIRI_RUST_XPATH_HTML: "1"
           MAKIRI_RUST_XPATH_XML: "1"
@@ -285,6 +287,7 @@ jobs:
       # to the un-injected one, never a truncated answer.
       - name: OOM injection sweep
         env:
+          MAKIRI_RUST_XPATH_SHARED: "1"
           MAKIRI_RUST_XPATH_DRIVER: "1"
           MAKIRI_RUST_XPATH_HTML: "1"
           MAKIRI_RUST_XPATH_XML: "1"

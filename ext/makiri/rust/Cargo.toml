@@ -28,6 +28,10 @@ xpath-html = ["xpath-engine"]
 # The driver: the context, the budgets, the evaluate entries. Independent of
 # both instances - it dispatches to whichever language provides each.
 xpath-driver = []
+# The representation-independent primitives every layer calls: node-set, owned
+# text, the runtime value, the two per-evaluate caches, and the AST's build,
+# destroy and rewrite.
+xpath-shared = []
 
 [dependencies]
 

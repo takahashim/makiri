@@ -246,6 +246,8 @@ end
 #                            (xpath/mkr_xpath_engine_html.c)
 #   MAKIRI_RUST_XPATH_DRIVER=1 the driver                    -> `xpath-driver`
 #                            (xpath/mkr_xpath.c: context, budgets, evaluate)
+#   MAKIRI_RUST_XPATH_SHARED=1 the shared primitives        -> `xpath-shared`
+#                            (xpath/mkr_xpath_shared.c)
 #
 # The two instances are independent: either C engine can be replaced on its own,
 # which is what makes a regression bisectable. Both imply the front end, because
@@ -259,15 +261,17 @@ end
 rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
 rust_xpath_html = ENV["MAKIRI_RUST_XPATH_HTML"].to_s.strip == "1"
 rust_xpath_driver = ENV["MAKIRI_RUST_XPATH_DRIVER"].to_s.strip == "1"
+rust_xpath_shared = ENV["MAKIRI_RUST_XPATH_SHARED"].to_s.strip == "1"
 rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
 rust_xpath = rust_xpath_xml || rust_xpath_html || rust_xpath_driver ||
-             ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
+             rust_xpath_shared || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
                     .map { |f| File.join(EXT_DIR, "xpath", f) }.freeze
 RUST_XPATH_XML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_xml.c")].freeze
 RUST_XPATH_HTML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_html.c")].freeze
 RUST_XPATH_DRIVER_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath.c")].freeze
-if rust_xml || rust_xpath || rust_xpath_driver
+RUST_XPATH_SHARED_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_shared.c")].freeze
+if rust_xml || rust_xpath
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -276,6 +280,7 @@ if rust_xml || rust_xpath || rust_xpath_driver
     features << "xpath-html" if rust_xpath_html
   end
   features << "xpath-driver" if rust_xpath_driver
+  features << "xpath-shared" if rust_xpath_shared
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -300,6 +305,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_xpath_xml && RUST_XPATH_XML_SRCS.include?(f) }
            .reject { |f| rust_xpath_html && RUST_XPATH_HTML_SRCS.include?(f) }
            .reject { |f| rust_xpath_driver && RUST_XPATH_DRIVER_SRCS.include?(f) }
+           .reject { |f| rust_xpath_shared && RUST_XPATH_SHARED_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,
