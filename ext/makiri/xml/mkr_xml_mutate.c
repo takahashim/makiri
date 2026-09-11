@@ -49,6 +49,11 @@ is_connected(const mkr_xml_node_t *node)
     return top->type == MKR_XML_NODE_TYPE_DOCUMENT;
 }
 
+/* Defined with the rest of the resolver below; the attribute entry points come
+ * first in this file and are the only callers. */
+static void reresolve_decl_subtree(mkr_xml_node_t *el);
+static int is_xmlns_decl(const char *name, uint32_t nlen);
+
 /* Resolve the namespace for QName +qn+ applied at +scope+ (the element whose
  * in-scope declarations apply). +is_attr+ selects attribute rules (xmlns*
  * declarations live in the xmlns namespace, an unprefixed attribute is in no
@@ -202,13 +207,16 @@ mkr_xml_set_attribute(mkr_xml_doc_t *doc, mkr_xml_node_t *el, const char *name, 
             if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
             a->value = nv ? nv : ""; a->value_len = vlen;
             a->ns_uri = uri; a->ns_uri_len = ulen;
+            if (is_xmlns_decl(name, nlen)) reresolve_decl_subtree(el);
             if (out) *out = a;
             return MKR_XML_MUT_OK;
         }
     }
 
     /* New attribute (raw-qname miss). */
-    return build_attr(doc, el, &qn, val, vlen, uri, ulen, out);
+    st = build_attr(doc, el, &qn, val, vlen, uri, ulen, out);
+    if (st == MKR_XML_MUT_OK && is_xmlns_decl(name, nlen)) reresolve_decl_subtree(el);
+    return st;
 }
 
 int
@@ -219,6 +227,7 @@ mkr_xml_remove_attribute(mkr_xml_node_t *el, const char *name, uint32_t nlen)
     for (mkr_xml_node_t *a = el->attrs; a != NULL; prev = a, a = a->next) {
         if (mkr_bytes_eq(a->qname, a->qname_len, name, nlen)) {
             unlink_attr(el, prev, a);
+            if (is_xmlns_decl(name, nlen)) reresolve_decl_subtree(el);
             return 1;
         }
     }
@@ -267,6 +276,9 @@ mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
             const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
             if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
             a->value = nv ? nv : ""; a->value_len = vlen;
+            /* The stored qualified name decides, not +name+: a match keeps the
+             * existing qname, which is what a declaration is recognised by. */
+            if (is_xmlns_decl(a->qname, a->qname_len)) reresolve_decl_subtree(el);
             if (out) *out = a;
             return MKR_XML_MUT_OK;
         }
@@ -280,7 +292,9 @@ mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
         if (uri == NULL) return MKR_XML_MUT_OOM;
         ulen = nslen;
     }
-    return build_attr(doc, el, &qn, val, vlen, uri, ulen, out);
+    mkr_xml_mut_status_t st = build_attr(doc, el, &qn, val, vlen, uri, ulen, out);
+    if (st == MKR_XML_MUT_OK && is_xmlns_decl(name, nlen)) reresolve_decl_subtree(el);
+    return st;
 }
 
 /* DOM removeAttributeNS: remove the attribute keyed on (namespace, local). */
@@ -293,7 +307,9 @@ mkr_xml_remove_attribute_ns(mkr_xml_node_t *el, const char *ns, uint32_t nslen,
     mkr_xml_node_t *prev = NULL;
     for (mkr_xml_node_t *a = el->attrs; a != NULL; prev = a, a = a->next) {
         if (mkr_attr_matches_ns(a, ns, want, local, llen)) {
+            int was_decl = is_xmlns_decl(a->qname, a->qname_len);
             unlink_attr(el, prev, a);
+            if (was_decl) reresolve_decl_subtree(el);
             return 1;
         }
     }
@@ -504,9 +520,12 @@ mkr_xml_new_document_type(mkr_xml_doc_t *doc, const char *name, uint32_t nlen,
  * because the caller has temporarily pointed root->parent at the prospective
  * context, includes that context and its ancestors. Order-independent (it reads
  * xmlns attribute values, never resolved ns_uri). Iterative pre-order, no
- * recursion. Fails closed on an unbound prefix, having changed no link. */
+ * recursion. Fails closed on an unbound prefix, having changed no link.
+ *
+ * +commit+ selects the pass: 0 only computes (to find out whether every prefix
+ * in the subtree binds), 1 writes the resolved URIs. See resolve_subtree. */
 static mkr_xml_mut_status_t
-resolve_node_ns(mkr_xml_node_t *e, int connected)
+resolve_node_ns(mkr_xml_node_t *e, int connected, int commit)
 {
     const char *uri; uint32_t ulen;
     mkr_xml_mut_status_t st = MKR_XML_MUT_OK;
@@ -514,24 +533,33 @@ resolve_node_ns(mkr_xml_node_t *e, int connected)
         mkr_xml_qname_t eq = mkr_xml_qname_of(e);
         st = resolve_ns(e, &eq, 0, connected, &uri, &ulen);
         if (st != MKR_XML_MUT_OK) return st;
-        e->ns_uri = uri; e->ns_uri_len = ulen;
+        if (commit) { e->ns_uri = uri; e->ns_uri_len = ulen; }
     }
     for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
         mkr_xml_qname_t aq = mkr_xml_qname_of(a);
         st = resolve_ns(e, &aq, 1, connected, &uri, &ulen);
         if (st != MKR_XML_MUT_OK) return st;
-        a->ns_uri = uri; a->ns_uri_len = ulen;
+        if (commit) { a->ns_uri = uri; a->ns_uri_len = ulen; }
     }
     return MKR_XML_MUT_OK;
 }
 
+/* Re-resolve every element in +root+'s subtree, all-or-nothing.
+ *
+ * The walk writes as it goes, so a bare single pass that fails partway leaves the
+ * subtree half-rewritten: the elements before the unbound prefix carry URIs
+ * resolved against a scope the tree is not in, while the rest keep the old ones.
+ * That state is invisible to serialization (only prefixes are written) but wrong
+ * for XPath, which matches on the resolved URI. So: one pass that only computes,
+ * and - only if every prefix in the subtree binds - a second that writes. */
 static mkr_xml_mut_status_t
 resolve_subtree(mkr_xml_node_t *root, int connected)
 {
-    for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
-        if (cur->type == MKR_XML_NODE_TYPE_ELEMENT) {
-            mkr_xml_mut_status_t st = resolve_node_ns(cur, connected);
-            if (st != MKR_XML_MUT_OK) return st;
+    for (int commit = 0; commit <= 1; commit++) {
+        for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
+            if (cur->type != MKR_XML_NODE_TYPE_ELEMENT) continue;
+            mkr_xml_mut_status_t st = resolve_node_ns(cur, connected, commit);
+            if (st != MKR_XML_MUT_OK) return st;   /* commit == 0: nothing written yet */
         }
     }
     return MKR_XML_MUT_OK;
@@ -550,6 +578,29 @@ resolve_into(mkr_xml_node_t *node, mkr_xml_node_t *context)
     mkr_xml_mut_status_t st = resolve_subtree(node, is_connected(node));
     node->parent = saved;
     return st;
+}
+
+/* An xmlns declaration on +el+ changed, so every prefix in its subtree may now
+ * mean something else: re-resolve so the tree agrees with its own declarations
+ * (mkr_xml_mutate.c's invariant - a mutated node's ns_uri is what a re-parse
+ * would compute). Called from the four attribute entry points, which are the
+ * only way a declaration can change after parsing.
+ *
+ * Best-effort by design: when the subtree would no longer resolve (removing the
+ * last declaration of a prefix its descendants still use), it is left alone
+ * rather than half-rewritten. Whether that removal should instead be refused is
+ * a spec question, not a resolution one - see the H3 note in the plan. */
+static void
+reresolve_decl_subtree(mkr_xml_node_t *el)
+{
+    (void)resolve_subtree(el, is_connected(el));
+}
+
+/* True when +name+ is an xmlns declaration ("xmlns" or "xmlns:PREFIX"). */
+static int
+is_xmlns_decl(const char *name, uint32_t nlen)
+{
+    return mkr_xml_xmlns_prefix(name, nlen, NULL, NULL);
 }
 
 /* A single arena copy of +src+ (its own fields + attributes, NOT its children).

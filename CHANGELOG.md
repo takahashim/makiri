@@ -13,6 +13,20 @@
   test never matches an attribute, so only `node()` exposed it. The HTML backend
   (whose attributes live on a separate Lexbor list) was already correct and is
   unchanged; both are now asserted.
+* Changing an **xmlns declaration** re-resolves the affected subtree, so a
+  descendant's `namespace_uri` again equals what a re-parse would compute — the
+  invariant `mkr_xml_mutate.c` documents. Adding, removing or replacing a
+  declaration (via `[]=`, `#delete`, `set_attribute_ns`, `remove_attribute_ns`)
+  previously left descendants bound to the old URI, which serialization cannot
+  show but XPath name tests act on. Removing the last declaration of a prefix the
+  subtree still uses leaves the tree as it was (see below) rather than rewriting
+  part of it.
+* Namespace re-resolution is now **all-or-nothing**. It used to write as it
+  walked, so a subtree that failed partway — a rejected move into a scope where
+  one of its prefixes is unbound — was left half-rewritten, with the elements
+  before the failure carrying URIs resolved against a scope the tree is not in.
+  The rejected operation looked clean (same tree, same serialization) while
+  XPath silently disagreed with the document's own declarations.
 
 ## [0.8.0] - 2026-07-12
 
