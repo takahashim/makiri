@@ -9,6 +9,10 @@
 //!   lex.rs        the tokenizer                                 (no unsafe)
 //!   parse.rs      recursive descent                             (writes C nodes)
 //!
+//! The driver (`xpath-driver`), which mkr_xpath.c holds today:
+//!   ctx.rs        the context, its registries and the evaluate entries
+//!   limits.rs     the per-evaluate budgets
+//!
 //! The engine (`xpath-engine`), generic over `Dom`:
 //!   dom.rs        the node-access contract, as a trait
 //!   own.rs        guards over the C allocations the engine passes around
@@ -45,6 +49,14 @@ pub mod parse;
 /* The generic engine (the `xpath-engine` feature). A cargo feature is what
  * keeps the archive free of symbols the C files it replaces still define, so
  * the split follows the C translation units, not the Rust module tree. */
+/* The driver (`xpath-driver`): the context, the budgets, and the two evaluate
+ * entries. Independent of the instances - it dispatches to whichever language
+ * provides each. */
+#[cfg(feature = "xpath-driver")]
+pub mod ctx;
+#[cfg(feature = "xpath-driver")]
+pub mod limits;
+
 #[cfg(feature = "xpath-engine")]
 pub mod ast;
 #[cfg(feature = "xpath-engine")]

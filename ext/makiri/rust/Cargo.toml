@@ -25,6 +25,9 @@ xpath-engine = ["xpath"]
 # replaced alone - which is what makes a regression bisectable.
 xpath-xml = ["xpath-engine"]
 xpath-html = ["xpath-engine"]
+# The driver: the context, the budgets, the evaluate entries. Independent of
+# both instances - it dispatches to whichever language provides each.
+xpath-driver = []
 
 [dependencies]
 

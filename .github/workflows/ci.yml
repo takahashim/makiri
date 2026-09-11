@@ -80,6 +80,11 @@ jobs:
   # suite is the differential: a configuration that answers differently from the
   # C build fails here.
   #
+  # The gates that need something this job does not have stay elsewhere: the W3C
+  # conformance suite wants nokogiri to read its manifests and fetches a corpus
+  # on first run, and the fuzzers and the OOM sweep want more time than a push
+  # should take. Both run against the port nightly in security.yml.
+  #
   # The instances are listed separately on purpose. Both can be replaced at
   # once, but a regression is only bisectable if each can be replaced alone.
   rust:
@@ -98,9 +103,12 @@ jobs:
           - label: "XPath HTML instance"
             flags: "MAKIRI_RUST_XPATH_HTML=1"
             features: "xpath-html"
+          - label: "XPath driver"
+            flags: "MAKIRI_RUST_XPATH_DRIVER=1"
+            features: "xpath-driver"
           - label: "everything"
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1"
-            features: "xml,xpath-xml,xpath-html"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1"
+            features: "xml,xpath-driver,xpath-xml,xpath-html"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6
@@ -132,9 +140,6 @@ jobs:
 
       - name: Run the test suite
         run: bundle exec rake spec
-
-      - name: XML conformance (W3C xmlts)
-        run: bundle exec rake conformance:xmlconf
 
       - name: Invariants
         run: bundle exec rake invariants

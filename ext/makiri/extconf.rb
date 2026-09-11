@@ -244,6 +244,8 @@ end
 #                            (xpath/mkr_xpath_engine_xml.c)
 #   MAKIRI_RUST_XPATH_HTML=1 the HTML engine instance        -> `xpath-html`
 #                            (xpath/mkr_xpath_engine_html.c)
+#   MAKIRI_RUST_XPATH_DRIVER=1 the driver                    -> `xpath-driver`
+#                            (xpath/mkr_xpath.c: context, budgets, evaluate)
 #
 # The two instances are independent: either C engine can be replaced on its own,
 # which is what makes a regression bisectable. Both imply the front end, because
@@ -256,13 +258,16 @@ end
 # C counterpart still defines, so the two can never both be linked in.
 rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
 rust_xpath_html = ENV["MAKIRI_RUST_XPATH_HTML"].to_s.strip == "1"
+rust_xpath_driver = ENV["MAKIRI_RUST_XPATH_DRIVER"].to_s.strip == "1"
 rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
-rust_xpath = rust_xpath_xml || rust_xpath_html || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
+rust_xpath = rust_xpath_xml || rust_xpath_html || rust_xpath_driver ||
+             ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
                     .map { |f| File.join(EXT_DIR, "xpath", f) }.freeze
 RUST_XPATH_XML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_xml.c")].freeze
 RUST_XPATH_HTML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_html.c")].freeze
-if rust_xml || rust_xpath
+RUST_XPATH_DRIVER_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath.c")].freeze
+if rust_xml || rust_xpath || rust_xpath_driver
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -270,6 +275,7 @@ if rust_xml || rust_xpath
     features << "xpath-xml" if rust_xpath_xml
     features << "xpath-html" if rust_xpath_html
   end
+  features << "xpath-driver" if rust_xpath_driver
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -293,6 +299,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_xpath && RUST_XPATH_SRCS.include?(f) }
            .reject { |f| rust_xpath_xml && RUST_XPATH_XML_SRCS.include?(f) }
            .reject { |f| rust_xpath_html && RUST_XPATH_HTML_SRCS.include?(f) }
+           .reject { |f| rust_xpath_driver && RUST_XPATH_DRIVER_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,

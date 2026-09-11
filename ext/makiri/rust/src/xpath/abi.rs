@@ -131,6 +131,31 @@ pub union ValU {
     pub boolean: c_int,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PublicNodeSet {
+    /// The same array as `NodeSet.items`; the public type names it `nodes`.
+    pub nodes: *mut *mut c_void,
+    pub count: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union XPathValueU {
+    pub nodeset: PublicNodeSet,
+    pub string: OwnedText,
+    pub number: f64,
+    pub boolean: c_int,
+}
+
+/// `mkr_xpath_value_t` - the result the glue receives. Distinct from `Val`: the
+/// node-set arm carries no capacity, because ownership of the array transfers.
+#[repr(C)]
+pub struct XPathValue {
+    pub type_: u32,
+    pub u: XPathValueU,
+}
+
 /// mkr_val_t - the engine's internal value, embedded in a node's memo slot.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -428,6 +453,7 @@ extern "C" {
     /* errors */
     pub fn mkr_err_setf(err: *mut Error, status: c_int, fmt: *const c_char, ...);
     pub fn mkr_xpath_error_clear(e: *mut Error);
+    pub fn mkr_doc_order_index_clear(idx: *mut OrderIndex);
 
     /* context accessors */
     pub fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits;
@@ -469,8 +495,6 @@ extern "C" {
      * drive one open-addressing table */
     pub fn mkr_str_cache_index_put(c: *mut StrCache, idx: usize);
     pub fn mkr_str_cache_reindex(c: *mut StrCache, bucket_cap: usize) -> c_int;
-
-    pub fn mkr_doc_order_index_clear(idx: *mut OrderIndex);
 
     /* allocation */
     pub fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;

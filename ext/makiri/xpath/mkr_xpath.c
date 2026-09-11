@@ -547,58 +547,6 @@ mkr_ctx_document(mkr_xpath_context_t *ctx)
   return ctx ? ctx->doc : NULL;
 }
 
-/* ---------- error helpers ---------- */
-
-void
-mkr_err_set(mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *msg)
-{
-  if (err == NULL) return;
-  free(err->message);
-  err->status  = status;
-  err->message = msg ? mkr_strdup(msg) : NULL;
-}
-
-void
-mkr_err_setf(mkr_xpath_error_t *err, mkr_xpath_status_t status, const char *fmt, ...)
-{
-  if (err == NULL) return;
-  free(err->message);
-  err->status = status;
-  va_list ap;
-  va_start(ap, fmt);
-  char buf[512];
-  vsnprintf(buf, sizeof(buf), fmt, ap);
-  va_end(ap);
-  err->message = mkr_strdup(buf);
-}
-
-void
-mkr_xpath_error_clear(mkr_xpath_error_t *e)
-{
-  if (e == NULL) return;
-  free(e->message);
-  e->message = NULL;
-  e->status  = MKR_XPATH_OK;
-}
-
-void
-mkr_xpath_value_clear(mkr_xpath_value_t *v)
-{
-  if (v == NULL) return;
-  switch (v->type) {
-  case MKR_XPATH_TYPE_NODESET:
-    free(v->u.nodeset.nodes);
-    v->u.nodeset.nodes = NULL;
-    v->u.nodeset.count = 0;
-    break;
-  case MKR_XPATH_TYPE_STRING:
-    mkr_owned_text_clear(&v->u.string);
-    break;
-  default:
-    break;
-  }
-}
-
 /* ---------- eval entry ---------- */
 
 /* Move an internal mkr_val_t into the public mkr_xpath_value_t (different
