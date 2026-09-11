@@ -1,0 +1,27 @@
+[package]
+name = "makiri_xml"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "Spike: the Makiri XML reader/mutator behind the same C ABI as ext/makiri/xml"
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+
+# A panic crossing into C is undefined behaviour, and the engine is written so
+# that no input-dependent path panics; `abort` is the fail-closed backstop
+# (the same outcome as the C `assert`). overflow-checks stays ON in release:
+# a wrapped size is exactly the class of bug fail-closed exists to stop.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+debug = false
+
+[profile.dev]
+panic = "abort"

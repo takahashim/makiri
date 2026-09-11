@@ -233,11 +233,28 @@ elsif windows
   $DLDFLAGS << " -Wl,--exclude-all-symbols"
 end
 
+# Spike (opt-in): MAKIRI_RUST_XML=1 replaces ext/makiri/xml/*.c with the Rust
+# port in ext/makiri/rust, which exports the same `mkr_xml_*` C ABI (symbols +
+# struct layouts), so nothing else changes (see notes/rust_rewrite_plan.ja.md
+# §6). cargo builds a staticlib into this build dir and it is linked like the
+# Lexbor archive; the C xml/ sources are dropped from the object list.
+rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
+if rust_xml
+  cargo = find_executable("cargo") or abort "MAKIRI_RUST_XML=1 needs cargo on PATH."
+  rust_target = File.join(Dir.pwd, "rust-target")
+  warn "makiri: building the Rust XML engine (spike) via cargo"
+  system(cargo, "build", "--release", "--quiet",
+         "--manifest-path", File.join(EXT_DIR, "rust", "Cargo.toml"),
+         "--target-dir", rust_target) or abort "cargo build failed for the Rust XML engine."
+  $LDFLAGS << " #{File.join(rust_target, 'release', 'libmakiri_xml.a').shellescape}"
+end
+
 # Recursively pick up C sources under ext/makiri/, excluding standalone
 # libFuzzer harnesses. Those define LLVMFuzzerTestOneInput and are linked by
 # ext/makiri/fuzz/Makefile, never into the Ruby extension.
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+           .reject { |f| rust_xml && f.start_with?(File.join(EXT_DIR, "xml") + File::SEPARATOR) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,
