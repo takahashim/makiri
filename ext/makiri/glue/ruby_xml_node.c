@@ -351,6 +351,37 @@ mkr_xml_node_aref(VALUE self, VALUE rb_name)
     return out;
 }
 
+/* The Attr node whose qualified name is exactly `name`, or nil. XML attributes
+ * are stored under their qualified name, so this is the same match `#[]` makes
+ * - but it hands back the node, which the DOM's by-name family needs in order
+ * to read the attribute's namespace and prefix. (The HTML side has to look
+ * harder: see Makiri::HTML::NodeMethods#attribute_by_qualified_name.) */
+static VALUE
+mkr_xml_node_attribute_by_qualified_name(VALUE self, VALUE rb_name)
+{
+    mkr_xml_node_t *n = mkr_xml_node_unwrap(self);
+    if (n->type != MKR_XML_NODE_TYPE_ELEMENT) return Qnil;
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
+    VALUE out = Qnil;
+    for (mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
+        if (mkr_bytes_eq(a->qname, a->qname_len, nv.ptr, nv.len)) {
+            out = mkr_wrap_xml_node(a, mkr_xml_node_document(self));
+            break;
+        }
+    }
+    RB_GC_GUARD(nv.value);
+    return out;
+}
+
+/* The value of the attribute with that qualified name, or nil. Same match as
+ * #[], which for XML is already the qualified-name one; it exists so the DOM
+ * layer can ask both representations the same question. */
+static VALUE
+mkr_xml_node_attribute_value_by_qualified_name(VALUE self, VALUE rb_name)
+{
+    return mkr_xml_node_aref(self, rb_name);
+}
+
 static VALUE
 mkr_xml_node_attribute_nodes(VALUE self)
 {
@@ -1813,6 +1844,10 @@ mkr_init_xml_node(void)
     rb_define_method(mkr_mXmlNodeMethods, "clone_node",    mkr_xml_node_clone_node, -1);
     rb_define_method(mkr_mXmlNodeMethods, "[]",            mkr_xml_node_aref, 1);
     rb_define_method(mkr_mXmlNodeMethods, "attribute_nodes", mkr_xml_node_attribute_nodes, 0);
+    rb_define_method(mkr_mXmlNodeMethods, "attribute_by_qualified_name",
+                     mkr_xml_node_attribute_by_qualified_name, 1);
+    rb_define_method(mkr_mXmlNodeMethods, "attribute_value_by_qualified_name",
+                     mkr_xml_node_attribute_value_by_qualified_name, 1);
 
     /* Mutation (Phase 1: in-place edits). Detach-never-destroy; the primitives
      * live in xml/mkr_xml_mutate.c. */

@@ -8,6 +8,8 @@
 
 #include <lexbor/ns/ns.h>   /* lxb_ns_by_id, LXB_NS__UNDEF (namespaceURI) */
 
+#include "../core/mkr_span.h"   /* mkr_bytes_eq */
+
 /* ------------------------------------------------------------------ */
 /* wrap / unwrap                                                      */
 /* ------------------------------------------------------------------ */
@@ -720,6 +722,75 @@ mkr_node_attribute_nodes(VALUE self)
     return set;
 }
 
+/* element.attribute_by_qualified_name(name) -> the Attr node whose QUALIFIED
+ * name is exactly `name`, or nil. Nil for non-elements.
+ *
+ * `#[]` / `#key?` cannot answer this: they go through Lexbor's attribute-name
+ * hash, which for an HTML element in an HTML document is keyed by LOCAL name
+ * (lxb_dom_element_attr_by_name), so `el["b"]` hands back a prefixed `xml:b`.
+ * The DOM's by-name family - getAttribute, setAttribute, removeAttribute - is
+ * defined on the qualified name, and needs the exact match.
+ *
+ * The scan is the element's own attribute list (elements carry a handful), and
+ * compares the same string #name reports for an Attr. */
+static VALUE
+mkr_node_attribute_by_qualified_name(VALUE self, VALUE rb_name)
+{
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        return Qnil;
+    }
+
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
+    VALUE out = Qnil;
+    lxb_dom_attr_t *attr =
+        lxb_dom_element_first_attribute(lxb_dom_interface_element(node));
+    while (attr != NULL) {
+        size_t len = 0;
+        const lxb_char_t *qname = lxb_dom_attr_qualified_name(attr, &len);
+        if (mkr_bytes_eq(qname, len, nv.ptr, nv.len)) {
+            out = mkr_wrap_html_node(lxb_dom_interface_node(attr),
+                                     mkr_node_document(self));
+            break;
+        }
+        attr = lxb_dom_element_next_attribute(attr);
+    }
+    RB_GC_GUARD(nv.value);
+    return out;
+}
+
+/* element.attribute_value_by_qualified_name(name) -> the value String of that
+ * attribute, or nil. The same match as #attribute_by_qualified_name, without
+ * wrapping an Attr node: this is the shape a DOM `getAttribute` / `hasAttribute`
+ * wants, and those run often enough for the wrapper to show up. */
+static VALUE
+mkr_node_attribute_value_by_qualified_name(VALUE self, VALUE rb_name)
+{
+    lxb_dom_node_t *node = mkr_html_node_unwrap(self);
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        return Qnil;
+    }
+
+    mkr_ruby_borrowed_text_t nv = mkr_ruby_verified_text(rb_name, "attribute name");
+    VALUE out = Qnil;
+    lxb_dom_attr_t *attr =
+        lxb_dom_element_first_attribute(lxb_dom_interface_element(node));
+    while (attr != NULL) {
+        size_t len = 0;
+        const lxb_char_t *qname = lxb_dom_attr_qualified_name(attr, &len);
+        if (mkr_bytes_eq(qname, len, nv.ptr, nv.len)) {
+            size_t vlen = 0;
+            const lxb_char_t *val = lxb_dom_attr_value(attr, &vlen);
+            out = mkr_ruby_str_from_borrowed(
+                mkr_borrowed_text((const char *)val, vlen));
+            break;
+        }
+        attr = lxb_dom_element_next_attribute(attr);
+    }
+    RB_GC_GUARD(nv.value);
+    return out;
+}
+
 /* attr.value -> the attribute's value String. For non-attribute nodes, falls
  * back to text content (matching the loose Nokogiri-ish meaning of #value). */
 static VALUE
@@ -862,6 +933,10 @@ mkr_init_node(void)
     rb_define_method(mkr_mHtmlNodeMethods, "keys",   mkr_node_keys,    0);
     rb_define_method(mkr_mHtmlNodeMethods, "values", mkr_node_values,  0);
     rb_define_method(mkr_mHtmlNodeMethods, "attribute_nodes", mkr_node_attribute_nodes, 0);
+    rb_define_method(mkr_mHtmlNodeMethods, "attribute_by_qualified_name",
+                     mkr_node_attribute_by_qualified_name, 1);
+    rb_define_method(mkr_mHtmlNodeMethods, "attribute_value_by_qualified_name",
+                     mkr_node_attribute_value_by_qualified_name, 1);
     rb_define_method(mkr_mHtmlNodeMethods, "value",  mkr_node_value,   0);
     rb_define_method(mkr_mHtmlNodeMethods, "line",   mkr_node_line,    0);
 
