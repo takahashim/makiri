@@ -110,7 +110,9 @@ doc.css("feed > entry").map { |e| e.at_css("title").text }  # => ["Hello", "Worl
 
 # Serialize back to XML
 doc.to_xml                                 # => "<?xml version=\"1.0\"?>\n<feed ...>...</feed>\n"
-doc.at_xpath("//a:entry", ns).to_xml       # => "<entry><title>Hello</title></entry>" (no declaration)
+# A node below the root serializes self-contained: no XML declaration, but the
+# namespace declarations its subtree needs, so the output re-parses the same.
+doc.at_xpath("//a:entry", ns).to_xml       # => "<entry xmlns=\"http://www.w3.org/2005/Atom\"><title>Hello</title></entry>"
 doc.to_xml(pretty: true)                   # indented, element-only content
 
 # DOCTYPE is recognized but the DTD is not processed (no entities, no I/O):
@@ -138,8 +140,11 @@ doc.root.to_xml           # => "<feed xmlns:dc=\"urn:dc\"><post dc:k=\"v\">Bye</
 ```
 
 XML subtrees can be built with `Document#create_element` and related node factory methods,
-then inserted with `#add_child`, `#before`, `#after`, or `#replace`;
-namespaces are resolved at insertion time, and cross-document nodes are deep-copied.
+then inserted with `#add_child`, `#before`, `#after`, or `#replace`. A factory-built
+node takes its namespace from the context it is first inserted into; one that already
+has a namespace keeps it. A node from another document is **adopted** — brought over
+and removed from the document it came from — and the method returns the node now in
+the tree, which is a different object than the one passed in.
 
 `Document#import_node(node, deep = false)` brings a node into a document as a
 detached copy, and works **across representations**: importing a `Makiri::HTML`
