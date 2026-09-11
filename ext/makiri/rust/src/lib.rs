@@ -91,7 +91,14 @@ pub fn empty() -> *const c_char {
     EMPTY.as_ptr() as *const c_char
 }
 
-/// mkr_xml_node_t - byte-for-byte the C layout (128 bytes).
+/// Pointer width, and how far a `u32` field gets padded when the next field is
+/// pointer-aligned. The layout asserts below are tripwires for a field added or
+/// reordered without the same change in `mkr_xml_node.h`, so they have to hold
+/// on every target the gem builds for - including the 32-bit ones.
+const PTR: usize = core::mem::size_of::<*const c_char>();
+const U32_SLOT: usize = if PTR > 4 { PTR } else { 4 };
+
+/// mkr_xml_node_t - byte-for-byte the C layout.
 #[repr(C)]
 pub struct Node {
     pub type_: u32,
@@ -115,7 +122,8 @@ pub struct Node {
     pub col: u32,
     pub flags: u32,
 }
-const _: () = assert!(core::mem::size_of::<Node>() == 128);
+/* 11 pointers, the u32 `type_` in a padded slot, and 8 more u32 */
+const _: () = assert!(core::mem::size_of::<Node>() == 11 * PTR + U32_SLOT + 8 * 4);
 
 /// mkr_xml_qname_t.
 #[repr(C)]
@@ -144,7 +152,8 @@ pub struct Doc {
     pub name_index: *mut c_void,
     pub has_encoding_decl: i32,
 }
-const _: () = assert!(core::mem::size_of::<Doc>() == 88);
+/* 9 pointer-sized fields (5 pointers + 4 usize) and 2 i32, each padded */
+const _: () = assert!(core::mem::size_of::<Doc>() == 9 * PTR + 2 * U32_SLOT);
 
 /// mkr_xml_limits_t.
 #[repr(C)]
