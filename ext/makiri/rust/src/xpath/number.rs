@@ -67,6 +67,9 @@ pub fn from_extent(s: &[u8]) -> f64 {
 /* ---- the C ABI (the string->number coercion in mkr_xpath_value_body.h calls
  * these; the lexer below is Rust now and calls the functions above) ---- */
 
+/// # Safety
+/// A C entry point: the contract is the one at its declaration in
+/// ext/makiri/xpath/mkr_xpath*.h.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_number_extent(p: *const c_char, len: usize) -> usize {
     if p.is_null() || len == 0 {
@@ -75,6 +78,9 @@ pub unsafe extern "C" fn mkr_xpath_number_extent(p: *const c_char, len: usize) -
     extent(core::slice::from_raw_parts(p as *const u8, len))
 }
 
+/// # Safety
+/// A C entry point: the contract is the one at its declaration in
+/// ext/makiri/xpath/mkr_xpath*.h.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_number_from_extent(p: *const c_char, extent: usize) -> f64 {
     if p.is_null() || extent == 0 {

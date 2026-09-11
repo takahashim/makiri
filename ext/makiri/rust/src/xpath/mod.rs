@@ -12,9 +12,11 @@
 //! The engine (`xpath-xml`), generic over `Dom`:
 //!   dom.rs        the node-access contract as a trait, and its backends
 //!   own.rs        guards over the C allocations the engine passes around
+//!   ast.rs        the C AST's arrays, viewed as slices
 //!   axis.rs       the thirteen axes, as orders over the tree
 //!   order.rs      document order and its per-evaluate index
 //!   value.rs      string-values, coercions, the string-value cache
+//!   nodetest.rs   does a node match a step's test?
 //!   attr_pred.rs  the [@name] / [@name='lit'] predicate shapes
 //!   step_index.rs the //tag and //tag[N] index fast paths
 //!   funcs.rs      the built-in function library
@@ -39,6 +41,8 @@ pub mod parse;
  * archive free of symbols the C files it replaces still define, so the split
  * follows the C translation units, not the Rust module tree. */
 #[cfg(feature = "xpath-xml")]
+pub mod ast;
+#[cfg(feature = "xpath-xml")]
 pub mod attr_pred;
 #[cfg(feature = "xpath-xml")]
 pub mod axis;
@@ -50,6 +54,8 @@ pub mod eval;
 pub mod ffi_xml;
 #[cfg(feature = "xpath-xml")]
 pub mod funcs;
+#[cfg(feature = "xpath-xml")]
+pub mod nodetest;
 #[cfg(feature = "xpath-xml")]
 pub mod order;
 #[cfg(feature = "xpath-xml")]

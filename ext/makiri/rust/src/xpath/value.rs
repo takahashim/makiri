@@ -10,7 +10,6 @@
 use super::abi::*;
 use super::dom::*;
 use super::number;
-use super::order::node_key;
 use super::own::Text;
 use crate::err_setf;
 use core::ffi::{c_char, c_int, c_void};
@@ -135,7 +134,7 @@ unsafe fn append_text_descendants<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int
     while !D::is_null(cur) {
         let t = D::node_type(cur);
         if t == NTYPE_TEXT || t == NTYPE_CDATA_SECTION {
-            let st = append_own_text::<D>(cur, buf);
+            let st = D::append_own_text(cur, buf);
             if st != ST_OK {
                 return st; /* LIMIT or OOM - the caller fails closed */
             }
@@ -155,14 +154,6 @@ unsafe fn append_text_descendants<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int
     ST_OK
 }
 
-unsafe fn append_own_text<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
-    let s = D::own_text(node);
-    if s.is_empty() {
-        return ST_OK;
-    }
-    mkr_buf_append(buf, s.as_ptr() as *const c_void, s.len())
-}
-
 unsafe fn build_string_value<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
     if D::is_null(node) {
         return ST_OK;
@@ -177,7 +168,7 @@ unsafe fn build_string_value<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
             }
         }
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
-            append_own_text::<D>(node, buf)
+            D::append_own_text(node, buf)
         }
         _ => append_text_descendants::<D>(node, buf),
     }
@@ -444,7 +435,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         err_setf!(err, XP_ERR_INTERNAL, "cached_node_text called without a context");
         return None;
     }
-    let key = node_key::<D>(node);
+    let key = D::to_void(node) as *const c_void;
 
     /* O(1) lookup through the pointer-keyed index. */
     if (*c).bucket_cap != 0 {

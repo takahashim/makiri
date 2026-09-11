@@ -17,8 +17,6 @@
 //! and the HTML backend is the remaining step
 //! (notes/rust_rewrite_plan.ja.md §7).
 
-#![allow(clippy::missing_safety_doc)]
-
 /// The XML node layouts (`xml::abi`) come in with either feature: the XPath
 /// port's XML backend walks those nodes without needing the reader.
 #[cfg(any(feature = "xml", feature = "xpath"))]

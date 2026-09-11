@@ -3,6 +3,10 @@
 //! No unsafe code: every read is a slice index, every write goes through the
 //! bounded `Writer`.
 
+/* `normalize_newlines` reports failure as `Err(())`: the detail is the parser's
+ * status code, which the caller already holds, exactly as in the C. */
+#![allow(clippy::result_unit_err)]
+
 #![forbid(unsafe_code)]
 
 /// XML 1.0 §2.2 Char.

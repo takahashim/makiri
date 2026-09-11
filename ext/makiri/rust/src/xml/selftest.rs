@@ -3,6 +3,9 @@
 //! exercises the Rust engine exactly as it did the C one. Test code: raw
 //! pointer walks are expected here.
 
+/* Test entry points, called only from ffi.rs with no arguments. */
+#![allow(clippy::missing_safety_doc)]
+
 use crate::xml::arena::{arena_alloc, arena_bytes, arena_node, doc_destroy, doc_new};
 use crate::xml::tree::{parse_ex_raw, parse_fragment_raw};
 use crate::xml::{
@@ -93,7 +96,7 @@ pub unsafe fn node_selftest() -> i32 {
         return idx;
     }
     idx += 1; /* 3: pointer alignment */
-    if (root as usize) % 16 != 0 {
+    if !(root as usize).is_multiple_of(16) {
         doc_destroy(doc);
         return idx;
     }

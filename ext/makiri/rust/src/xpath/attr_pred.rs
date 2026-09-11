@@ -21,6 +21,10 @@ pub struct AttrPred<'a> {
 
 /// Shape A: a relative path that is one unprefixed attribute name test with no
 /// predicates - `@name`.
+///
+/// # Safety
+/// `n` must be NULL or a live AST node, and the returned name borrows that
+/// node's owned text.
 pub unsafe fn match_attr_step<'a>(n: *const Node) -> Option<&'a [u8]> {
     if n.is_null() || (*n).kind != NK_PATH || (*n).u.path.absolute != 0 || (*n).u.path.nsteps != 1 {
         return None;
@@ -38,6 +42,9 @@ pub unsafe fn match_attr_step<'a>(n: *const Node) -> Option<&'a [u8]> {
 }
 
 /// `[@name]`, or `[@name='lit']` in either operand order.
+///
+/// # Safety
+/// Same as `match_attr_step`.
 pub unsafe fn match_attr_pred<'a>(p: *const Node) -> Option<AttrPred<'a>> {
     if let Some(name) = match_attr_step(p) {
         return Some(AttrPred { name, value: None });
@@ -78,6 +85,10 @@ unsafe fn attr_by_qualified_name<D: Dom>(el: D::Node, name: &[u8]) -> D::Node {
 /// THE single per-node test for a recognised attribute predicate, shared by the
 /// predicate filter and the at_xpath first-match path so the two stay identical
 /// by construction rather than by a hand-kept copy.
+///
+/// # Safety
+/// `n` must be a live handle of the document being evaluated, and `ap` must
+/// still borrow the AST it came from.
 pub unsafe fn attr_pred_matches<D: Dom>(ap: &AttrPred, n: D::Node) -> bool {
     if D::node_type(n) != NTYPE_ELEMENT {
         return false;

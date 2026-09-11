@@ -1014,6 +1014,10 @@ impl<'a> Parser<'a> {
 
 /// mkr_xml_parse_ex. `len` is checked against the budget BEFORE the input is
 /// viewed (the self-test passes a bogus length to prove `src` is not read).
+///
+/// # Safety
+/// `src` must name `len` readable bytes, unless `len` is over the budget - the
+/// order of those two checks is the point of the note above.
 pub unsafe fn parse_ex_raw(
     src: *const c_char,
     len: usize,
@@ -1056,10 +1060,8 @@ pub unsafe fn parse_ex_raw(
     };
     let mut p = Parser::new(body, doc, ptr::null_mut());
     p.run();
-    if p.status == OK {
-        if !p.stack.is_empty() || (*doc).root.is_null() {
-            let _ = p.syntax::<()>(); /* unclosed element(s) / no root */
-        }
+    if p.status == OK && (!p.stack.is_empty() || (*doc).root.is_null()) {
+        let _ = p.syntax::<()>(); /* unclosed element(s) / no root */
     }
     let st = p.status;
     drop(p);
@@ -1071,6 +1073,10 @@ pub unsafe fn parse_ex_raw(
 }
 
 /// mkr_xml_parse_fragment.
+///
+/// # Safety
+/// `doc` must be a live document and `src` must name `len` readable bytes; the
+/// fragment's nodes are allocated in that document's arena.
 pub unsafe fn parse_fragment_raw(
     doc: *mut Doc,
     src: *const c_char,

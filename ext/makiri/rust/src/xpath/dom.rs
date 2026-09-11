@@ -13,8 +13,14 @@
 //! with the calls inlined - and a backend that forgets an operation, or gives it
 //! the wrong type, does not build.
 
+/* The trait states the precondition once, for every method: a handle is a raw
+ * pointer into a tree the engine does not own, so the caller promises it is
+ * live and belongs to the document being evaluated. */
+#![allow(clippy::missing_safety_doc)]
+
 use super::abi::*;
 use crate::xml::abi as xml;
+use core::ffi::c_int;
 use core::ptr;
 
 /* ---- node types (shared numeric encoding) ----
@@ -114,8 +120,17 @@ pub unsafe trait Dom {
     /// Separate from `ns_uri` because HTML answers it without the document.
     unsafe fn has_ns(n: Self::Node) -> bool;
 
-    /// The node's own text - the bytes it contributes to a string-value.
-    unsafe fn own_text<'a>(n: Self::Node) -> &'a [u8];
+    /// Append the node's own text - the bytes it contributes to a string-value -
+    /// to `buf`, returning an `mkr_status_t`.
+    ///
+    /// It appends rather than returning a slice because only one backend can
+    /// lend those bytes. The XML node owns its value, but Lexbor builds a node's
+    /// text content on demand and hands back an allocation the caller must free,
+    /// so a borrowed return has nowhere to free it. Owning the append is the one
+    /// shape both can satisfy - and it is what the C contract says
+    /// (`MKR_NODE_APPEND_OWN_TEXT`, which is a statement, not an expression, for
+    /// exactly this reason).
+    unsafe fn append_own_text(n: Self::Node, buf: *mut Buf) -> c_int;
 
     /// The document-level element index's answer for a document-rooted,
     /// predicate-free descendant name test, or None when it cannot serve one.
@@ -283,9 +298,14 @@ unsafe impl Dom for Xml {
         (*n).ns_uri_len != 0
     }
 
+    /// The node owns its value, so this is an append of a borrowed slice.
     #[inline]
-    unsafe fn own_text<'a>(n: Self::Node) -> &'a [u8] {
-        xml::node_value(n)
+    unsafe fn append_own_text(n: Self::Node, buf: *mut Buf) -> c_int {
+        let s = xml::node_value(n);
+        if s.is_empty() {
+            return MKR_OK;
+        }
+        mkr_buf_append(buf, s.as_ptr() as *const core::ffi::c_void, s.len())
     }
 
     /// The XML name index is keyed by (local name, namespace URI), so a bucket

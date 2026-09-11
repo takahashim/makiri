@@ -69,6 +69,9 @@ unsafe fn build(doc: *mut Doc) -> *mut NameIndex {
 
 /// The document's index, built and cached on first call (null on an empty
 /// document; the caller then walks).
+/// # Safety
+/// `doc` must be a live document; the index borrows its nodes, so it is
+/// invalidated by any mutation of that document.
 pub unsafe fn get(doc: *mut Doc) -> *mut NameIndex {
     if doc.is_null() {
         return ptr::null_mut();
@@ -81,12 +84,18 @@ pub unsafe fn get(doc: *mut Doc) -> *mut NameIndex {
     idx
 }
 
+/// # Safety
+/// `doc` must be a live document; the index borrows its nodes, so it is
+/// invalidated by any mutation of that document.
 pub unsafe fn free(idx: *mut NameIndex) {
     if !idx.is_null() {
         drop(Box::from_raw(idx));
     }
 }
 
+/// # Safety
+/// `doc` must be a live document; the index borrows its nodes, so it is
+/// invalidated by any mutation of that document.
 pub unsafe fn invalidate(doc: *mut Doc) {
     if doc.is_null() || (*doc).name_index.is_null() {
         return;
@@ -97,6 +106,9 @@ pub unsafe fn invalidate(doc: *mut Doc) {
 
 /// The document-ordered elements named (local, ns_uri): the borrowed bucket
 /// and its count, or null / 0 on a miss.
+/// # Safety
+/// `doc` must be a live document; the index borrows its nodes, so it is
+/// invalidated by any mutation of that document.
 pub unsafe fn lookup(
     idx: *const NameIndex,
     local: *const c_char,

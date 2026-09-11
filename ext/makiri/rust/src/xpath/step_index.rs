@@ -13,7 +13,8 @@
 use super::abi::*;
 use super::msg::Bytes;
 use super::dom::*;
-use super::eval::{lookup_ns, node_principal_match, step_preds, Bindings};
+use super::ast::step_preds;
+use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::own::Set;
 use super::value::owned_bytes;
 use crate::err_setf;
@@ -29,6 +30,10 @@ unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
 /// filled `result`, Ok(false) when the shape does not qualify.
+///
+/// # Safety
+/// `step` must be a live step of the AST being evaluated, `context_set` hold
+/// live handles, and `b` be bindings built for this context.
 pub unsafe fn try_descendant_index<D: Dom>(
     step: *const Step,
     context_set: &Set,
@@ -115,6 +120,9 @@ unsafe fn nth_shape<D: Dom>(
     Some(dn as usize)
 }
 
+///
+/// # Safety
+/// Same as `try_descendant_index`, for the two leading steps `s0` and `s1`.
 pub unsafe fn try_descendant_index_nth<D: Dom>(
     ctx: *mut Context,
     s0: *const Step,

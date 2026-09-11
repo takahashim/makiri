@@ -1,6 +1,12 @@
 //! The exported `mkr_xml_*` C ABI. Every function here is a thin adapter:
 //! turn C (ptr,len) pairs into slices, call the engine, write out-params.
 
+/* Every function here is a `mkr_xml_*` entry point, and its contract is the one
+ * written at the C declaration in ext/makiri/xml/mkr_xml*.h - which is the
+ * contract, since C callers read that and not this. Restating each here would
+ * be a copy that can drift. */
+#![allow(clippy::missing_safety_doc)]
+
 use crate::xml::arena;
 use crate::xml::chars::{self, ExpandMode};
 use crate::xml::index;

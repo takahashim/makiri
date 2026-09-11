@@ -61,6 +61,106 @@ fn zero_step() -> Step {
     }
 }
 
+/* ---- axis and node-type keywords ---- */
+
+fn axis_by_name(s: &[u8]) -> Option<u32> {
+    Some(match s {
+        b"child" => AXIS_CHILD,
+        b"descendant" => AXIS_DESCENDANT,
+        b"parent" => AXIS_PARENT,
+        b"ancestor" => AXIS_ANCESTOR,
+        b"following-sibling" => AXIS_FOLLOWING_SIBLING,
+        b"preceding-sibling" => AXIS_PRECEDING_SIBLING,
+        b"following" => AXIS_FOLLOWING,
+        b"preceding" => AXIS_PRECEDING,
+        b"attribute" => AXIS_ATTRIBUTE,
+        b"namespace" => AXIS_NAMESPACE,
+        b"self" => AXIS_SELF,
+        b"descendant-or-self" => AXIS_DESCENDANT_OR_SELF,
+        b"ancestor-or-self" => AXIS_ANCESTOR_OR_SELF,
+        _ => return None,
+    })
+}
+
+/// Split a QName at its first ':'.
+///
+/// A QNAME token always carries one - the lexer sets that kind only in the
+/// branch that consumes a ':' - but that invariant lives two modules away and is
+/// invisible here, so this answers "what if there is no colon" once rather than
+/// per call site. Getting it wrong is not a wrong result: a slice index past the
+/// end aborts the process, since a panic cannot become a `Makiri::Error`.
+fn split_qname(s: &[u8]) -> (&[u8], &[u8]) {
+    match s.iter().position(|&b| b == b':') {
+        Some(i) => (&s[..i], &s[i + 1..]),
+        None => (s, b""),
+    }
+}
+
+fn is_nodetype_name(s: &[u8]) -> bool {
+    matches!(s, b"node" | b"text" | b"comment" | b"processing-instruction")
+}
+
+/// A growable array living in an AST node's (pointer, count) slots.
+///
+/// It writes through to the node on every push rather than holding the array
+/// until it is complete, because that is the ownership contract: a parse that
+/// fails partway leaves the elements already pushed reachable from the node,
+/// and `mkr_node_free` is what frees them. The capacity is the only part the
+/// node does not store, so it rides here.
+///
+/// The three arrays an AST carries - a path's steps, a step's predicates, a
+/// call's arguments - differ only in element type and in which budget they
+/// charge, so the growing itself lives here once.
+struct Slots<T> {
+    ptr: *mut *mut T,
+    len: *mut usize,
+    cap: usize,
+}
+
+impl<T> Slots<T> {
+    /// Take over a node's slots, which `mkr_node_alloc` has already zeroed.
+    ///
+    /// # Safety
+    /// Both must point into a live AST node that outlives this value.
+    unsafe fn at(ptr: *mut *mut T, len: *mut usize) -> Slots<T> {
+        Slots { ptr, len, cap: 0 }
+    }
+
+    /// Reset the slots to empty first - for the out-params a caller has not
+    /// zeroed.
+    ///
+    /// # Safety
+    /// See `at`. Any array already in the slots is leaked, so only call this on
+    /// slots that hold none.
+    unsafe fn fresh(ptr: *mut *mut T, len: *mut usize) -> Slots<T> {
+        *ptr = ptr::null_mut();
+        *len = 0;
+        Slots::at(ptr, len)
+    }
+
+    unsafe fn len(&self) -> usize {
+        *self.len
+    }
+
+    /// Append, growing through the C grower so `mkr_node_free` can free it.
+    /// False on OOM, with `*err` naming the array.
+    unsafe fn push(&mut self, v: T, err: *mut Error, what: &str) -> bool {
+        if mkr_grow_reserve(
+            self.ptr as *mut *mut c_void,
+            &mut self.cap,
+            *self.len + 1,
+            core::mem::size_of::<T>(),
+        ) != MKR_OK
+        {
+            err_setf!(err, XP_ERR_OOM, "out of memory growing {} array", what);
+            return false;
+        }
+        *(*self.ptr).add(*self.len) = v;
+        *self.len += 1;
+        true
+    }
+}
+
 impl<'a> Parser<'a> {
     fn tok(&self) -> Token {
         self.lx.tok
@@ -118,84 +218,19 @@ impl<'a> Parser<'a> {
         let (p, l) = split_qname(self.text(t));
         self.fill_owned(p, prefix) && self.fill_owned(l, local)
     }
-}
 
-/// Split a QName at its first ':'.
-///
-/// A QNAME token always carries one - the lexer sets that kind only in the
-/// branch that consumes a ':' - but that invariant lives two modules away and is
-/// invisible here, so this answers "what if there is no colon" once rather than
-/// per call site. Getting it wrong is not a wrong result: a slice index past the
-/// end aborts the process, since a panic cannot become a `Makiri::Error`.
-fn split_qname(s: &[u8]) -> (&[u8], &[u8]) {
-    match s.iter().position(|&b| b == b':') {
-        Some(i) => (&s[..i], &s[i + 1..]),
-        None => (s, b""),
-    }
-}
-
-/* ---- axis and node-type keywords ---- */
-
-fn axis_by_name(s: &[u8]) -> Option<u32> {
-    Some(match s {
-        b"child" => AXIS_CHILD,
-        b"descendant" => AXIS_DESCENDANT,
-        b"parent" => AXIS_PARENT,
-        b"ancestor" => AXIS_ANCESTOR,
-        b"following-sibling" => AXIS_FOLLOWING_SIBLING,
-        b"preceding-sibling" => AXIS_PRECEDING_SIBLING,
-        b"following" => AXIS_FOLLOWING,
-        b"preceding" => AXIS_PRECEDING,
-        b"attribute" => AXIS_ATTRIBUTE,
-        b"namespace" => AXIS_NAMESPACE,
-        b"self" => AXIS_SELF,
-        b"descendant-or-self" => AXIS_DESCENDANT_OR_SELF,
-        b"ancestor-or-self" => AXIS_ANCESTOR_OR_SELF,
-        _ => return None,
-    })
-}
-
-fn is_nodetype_name(s: &[u8]) -> bool {
-    matches!(s, b"node" | b"text" | b"comment" | b"processing-instruction")
-}
-
-/* ---- growable arrays, through the C grower so the C free paths still fit ---- */
-
-unsafe fn grow<T>(ptr_slot: *mut *mut T, cap: *mut usize, need: usize) -> bool {
-    mkr_grow_reserve(
-        ptr_slot as *mut *mut c_void,
-        cap,
-        need,
-        core::mem::size_of::<T>(),
-    ) == MKR_OK
-}
-
-impl<'a> Parser<'a> {
-    fn push_step(&mut self, steps: *mut *mut Step, n: *mut usize, cap: *mut usize, s: Step) -> bool {
+    fn push_step(&mut self, steps: &mut Slots<Step>, s: Step) -> bool {
         unsafe {
-            if mkr_limit_check_steps(self.limits, *n + 1, self.err) != 0 {
-                return false;
-            }
-            if !grow(steps, cap, *n + 1) {
-                err_setf!(self.err, XP_ERR_OOM, "out of memory growing step array");
-                return false;
-            }
-            *(*steps).add(*n) = s;
-            *n += 1;
+            mkr_limit_check_steps(self.limits, steps.len() + 1, self.err) == 0
+                && steps.push(s, self.err, "step")
         }
-        true
     }
 
     /// Parse a run of `('/' | '//') Step`, expanding each `//` into an implicit
     /// `descendant-or-self::node()` step. A non-separator token makes this a
     /// no-op. Steps pushed before a failure stay in the array - the owning node
     /// frees them.
-    fn parse_step_tail(
-        &mut self,
-        steps: *mut *mut Step,
-        nsteps: *mut usize,
-        cap: *mut usize,
-    ) -> bool {
+    fn parse_step_tail(&mut self, steps: &mut Slots<Step>) -> bool {
         while self.kind() == Tok::Slash || self.kind() == Tok::DSlash {
             let dslash = self.kind() == Tok::DSlash;
             if !self.advance() {
@@ -205,7 +240,7 @@ impl<'a> Parser<'a> {
                 let mut implicit = zero_step();
                 implicit.axis = AXIS_DESCENDANT_OR_SELF;
                 implicit.test.kind = NT_NODE;
-                if !self.push_step(steps, nsteps, cap, implicit) {
+                if !self.push_step(steps, implicit) {
                     return false;
                 }
             }
@@ -213,7 +248,7 @@ impl<'a> Parser<'a> {
             if !self.parse_step(&mut next) {
                 return false;
             }
-            if !self.push_step(steps, nsteps, cap, next) {
+            if !self.push_step(steps, next) {
                 unsafe { mkr_step_clear(&mut next) };
                 return false;
             }
@@ -295,15 +330,10 @@ impl<'a> Parser<'a> {
 
     /* ---- predicates ---- */
 
-    fn parse_predicates(&mut self, preds: *mut *mut *mut Node, npreds: *mut usize) -> bool {
-        unsafe {
-            *preds = ptr::null_mut();
-            *npreds = 0;
-        }
-        let mut cap: usize = 0;
+    fn parse_predicates(&mut self, preds: &mut Slots<*mut Node>) -> bool {
         while self.kind() == Tok::LBracket {
             unsafe {
-                if mkr_limit_check_predicates(self.limits, *npreds + 1, self.err) != 0 {
+                if mkr_limit_check_predicates(self.limits, preds.len() + 1, self.err) != 0 {
                     return false;
                 }
             }
@@ -319,13 +349,10 @@ impl<'a> Parser<'a> {
                 return false;
             }
             unsafe {
-                if !grow(preds, &mut cap, *npreds + 1) {
+                if !preds.push(e, self.err, "predicate") {
                     mkr_node_free(e);
-                    err_setf!(self.err, XP_ERR_OOM, "out of memory growing predicate array");
                     return false;
                 }
-                *(*preds).add(*npreds) = e;
-                *npreds += 1;
             }
         }
         true
@@ -407,10 +434,9 @@ impl<'a> Parser<'a> {
                 if !self.parse_nodetype_or_name(saved, unsafe { &raw mut (*out).test }) {
                     return false;
                 }
-                return self.parse_predicates(
-                    unsafe { &raw mut (*out).predicates },
-                    unsafe { &raw mut (*out).npredicates },
-                );
+                return self.parse_predicates(&mut unsafe {
+                    Slots::fresh(&raw mut (*out).predicates, &raw mut (*out).npredicates)
+                });
             }
         } else {
             unsafe { (*out).axis = AXIS_CHILD };
@@ -419,30 +445,23 @@ impl<'a> Parser<'a> {
         if !self.parse_node_test(unsafe { &raw mut (*out).test }) {
             return false;
         }
-        self.parse_predicates(
-            unsafe { &raw mut (*out).predicates },
-            unsafe { &raw mut (*out).npredicates },
-        )
+        self.parse_predicates(&mut unsafe {
+            Slots::fresh(&raw mut (*out).predicates, &raw mut (*out).npredicates)
+        })
     }
 
     /* ---- location paths ---- */
 
-    fn parse_relative_path(&mut self, steps: *mut *mut Step, nsteps: *mut usize) -> bool {
-        unsafe {
-            *steps = ptr::null_mut();
-            *nsteps = 0;
-        }
-        let mut cap: usize = 0;
-
+    fn parse_relative_path(&mut self, steps: &mut Slots<Step>) -> bool {
         let mut s = zero_step();
         if !self.parse_step(&mut s) {
             return false;
         }
-        if !self.push_step(steps, nsteps, &mut cap, s) {
+        if !self.push_step(steps, s) {
             unsafe { mkr_step_clear(&mut s) };
             return false;
         }
-        self.parse_step_tail(steps, nsteps, &mut cap)
+        self.parse_step_tail(steps)
     }
 
     fn can_start_step(&self) -> bool {
@@ -458,6 +477,7 @@ impl<'a> Parser<'a> {
             return n;
         }
         let path = unsafe { &raw mut (*n).u.path };
+        let mut steps = unsafe { Slots::at(&raw mut (*path).steps, &raw mut (*path).nsteps) };
 
         if self.kind() == Tok::Slash {
             unsafe { (*path).absolute = 1 };
@@ -465,11 +485,7 @@ impl<'a> Parser<'a> {
                 unsafe { mkr_node_free(n) };
                 return ptr::null_mut();
             }
-            if self.can_start_step()
-                && !self.parse_relative_path(unsafe { &raw mut (*path).steps }, unsafe {
-                    &raw mut (*path).nsteps
-                })
-            {
+            if self.can_start_step() && !self.parse_relative_path(&mut steps) {
                 unsafe { mkr_node_free(n) };
                 return ptr::null_mut();
             }
@@ -479,21 +495,14 @@ impl<'a> Parser<'a> {
             /* '//' = '/descendant-or-self::node()/'. Leave the token where it is
              * so the shared loop expands it itself. */
             unsafe { (*path).absolute = 1 };
-            let mut cap: usize = 0;
-            if !self.parse_step_tail(
-                unsafe { &raw mut (*path).steps },
-                unsafe { &raw mut (*path).nsteps },
-                &mut cap,
-            ) {
+            if !self.parse_step_tail(&mut steps) {
                 unsafe { mkr_node_free(n) };
                 return ptr::null_mut();
             }
             return n;
         }
         unsafe { (*path).absolute = 0 };
-        if !self.parse_relative_path(unsafe { &raw mut (*path).steps }, unsafe {
-            &raw mut (*path).nsteps
-        }) {
+        if !self.parse_relative_path(&mut steps) {
             unsafe { mkr_node_free(n) };
             return ptr::null_mut();
         }
@@ -529,11 +538,11 @@ impl<'a> Parser<'a> {
             return ptr::null_mut();
         }
 
-        let mut cap: usize = 0;
+        let mut args = unsafe { Slots::at(&raw mut (*f).args, &raw mut (*f).nargs) };
         if self.kind() != Tok::RParen {
             loop {
                 unsafe {
-                    if mkr_limit_check_func_args(self.limits, (*f).nargs + 1, self.err) != 0 {
+                    if mkr_limit_check_func_args(self.limits, args.len() + 1, self.err) != 0 {
                         mkr_node_free(n);
                         return ptr::null_mut();
                     }
@@ -544,14 +553,11 @@ impl<'a> Parser<'a> {
                     return ptr::null_mut();
                 }
                 unsafe {
-                    if !grow(&raw mut (*f).args, &mut cap, (*f).nargs + 1) {
+                    if !args.push(arg, self.err, "function argument") {
                         mkr_node_free(arg);
-                        err_setf!(self.err, XP_ERR_OOM, "out of memory growing function args array");
                         mkr_node_free(n);
                         return ptr::null_mut();
                     }
-                    *(*f).args.add((*f).nargs) = arg;
-                    (*f).nargs += 1;
                 }
                 if self.kind() != Tok::Comma {
                     break;
@@ -671,19 +677,16 @@ impl<'a> Parser<'a> {
         }
         let fl = unsafe { &raw mut (*f).u.filter };
         unsafe { (*fl).expr = primary };
-        if !self.parse_predicates(unsafe { &raw mut (*fl).preds }, unsafe { &raw mut (*fl).npreds })
+        if !self.parse_predicates(&mut unsafe { Slots::at(&raw mut (*fl).preds, &raw mut (*fl).npreds) })
         {
             unsafe { mkr_node_free(f) };
             return ptr::null_mut();
         }
         /* Optional trailing location path (`$x/foo`, `(expr)//bar`). The shared
          * loop is a no-op when no separator follows. */
-        let mut cap: usize = 0;
-        if !self.parse_step_tail(
-            unsafe { &raw mut (*fl).path_steps },
-            unsafe { &raw mut (*fl).npath },
-            &mut cap,
-        ) {
+        if !self.parse_step_tail(&mut unsafe {
+            Slots::at(&raw mut (*fl).path_steps, &raw mut (*fl).npath)
+        }) {
             unsafe { mkr_node_free(f) };
             return ptr::null_mut();
         }
@@ -866,6 +869,9 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// Parse an expression into a compiled AST; NULL on error with `*err` filled.
 ///
 /// `expr` is a verified text: NUL-free, NUL-terminated, valid UTF-8.
+/// # Safety
+/// A C entry point: the contract is the one at its declaration in
+/// ext/makiri/xpath/mkr_xpath*.h.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_parse(
     expr: VerifiedText,

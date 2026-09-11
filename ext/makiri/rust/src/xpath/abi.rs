@@ -261,6 +261,9 @@ extern "C" {
 
 /// The sizes C checks its own `sizeof` against, so a field added on one side
 /// without the other is a build-time failure rather than silent corruption.
+/// # Safety
+/// A C entry point: the contract is the one at its declaration in
+/// ext/makiri/xpath/mkr_xpath*.h.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_rs_sizes(out: *mut usize, cap: usize) -> usize {
     let sizes = [

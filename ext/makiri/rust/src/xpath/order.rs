@@ -170,7 +170,7 @@ unsafe fn order_index_insert<D: Dom>(idx: *mut OrderIndex, node: D::Node, ord: u
             free_c(old_buckets as *mut c_void);
         }
     }
-    let key = node_key::<D>(node);
+    let key = D::to_void(node) as *const c_void;
     let mask = (*idx).cap - 1;
     let mut j = (ptr_hash(key) as usize) & mask;
     loop {
@@ -191,7 +191,7 @@ unsafe fn order_index_lookup<D: Dom>(idx: *const OrderIndex, node: D::Node) -> O
     if (*idx).cap == 0 {
         return None;
     }
-    let key = node_key::<D>(node);
+    let key = D::to_void(node) as *const c_void;
     let mask = (*idx).cap - 1;
     let mut j = (ptr_hash(key) as usize) & mask;
     loop {
@@ -204,12 +204,6 @@ unsafe fn order_index_lookup<D: Dom>(idx: *const OrderIndex, node: D::Node) -> O
         }
         j = (j + 1) & mask;
     }
-}
-
-/// A handle as the void pointer the C-side tables key on.
-#[inline]
-pub fn node_key<D: Dom>(n: D::Node) -> *const c_void {
-    D::to_void(n) as *const c_void
 }
 
 /// Pre-order DFS assigning ordinals: the node, then its attributes (before any

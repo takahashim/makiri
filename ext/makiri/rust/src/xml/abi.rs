@@ -5,6 +5,10 @@
 //! layouts without needing the reader or the mutators - one definition, so the
 //! two cannot drift.
 
+/* The readers below all carry one precondition, stated on `bytes`: the (ptr,
+ * len) pair names arena bytes that live as long as the document. */
+#![allow(clippy::missing_safety_doc)]
+
 use core::ffi::{c_char, c_void};
 
 /* ---- status codes (mkr_xml_status_t) ---- */

@@ -5,6 +5,11 @@
 //! This module is inherently unsafe: it hands out raw memory that the C side
 //! reads through `mkr_xml_node_t` field access.
 
+/* One precondition throughout: `doc` is a live document, and any node handed
+ * in was allocated from its arena. The module header says why that is the
+ * boundary. */
+#![allow(clippy::missing_safety_doc)]
+
 use crate::xml::{
     bytes, empty, index, Chunk, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM,
     MAX_BYTES,
@@ -247,10 +252,10 @@ pub unsafe fn preorder_next(root: *const Node, mut cur: *mut Node) -> *mut Node 
     if !(*cur).first_child.is_null() {
         return (*cur).first_child;
     }
-    while cur as *const Node != root && (*cur).next.is_null() {
+    while !ptr::eq(cur, root) && (*cur).next.is_null() {
         cur = (*cur).parent;
     }
-    if cur as *const Node == root {
+    if ptr::eq(cur, root) {
         return ptr::null_mut();
     }
     (*cur).next

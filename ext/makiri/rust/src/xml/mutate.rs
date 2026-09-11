@@ -2,6 +2,11 @@
 //! allocates BEFORE changing any link, so a failure leaves the tree untouched.
 //! Inherently unsafe: it walks and relinks the C-layout nodes.
 
+/* One precondition throughout: every node passed in is live and allocated from
+ * `doc`'s arena. The primitives validate everything else themselves - that is
+ * what the module header means by allocating before relinking. */
+#![allow(clippy::missing_safety_doc)]
+
 use crate::xml::arena::{arena_bytes, arena_node, preorder_next, qname_assign};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix};
@@ -883,7 +888,7 @@ unsafe fn doc_root_ok(container: *const Node, node: *const Node, exclude: *const
 /// Re-derive doc.root / doc.doctype from the tree after a change at the
 /// document node.
 unsafe fn sync_doc_meta(doc: *mut Doc, container: *const Node) {
-    if doc.is_null() || container != (*doc).doc_node as *const Node {
+    if doc.is_null() || !ptr::eq(container, (*doc).doc_node) {
         return;
     }
     (*doc).root = ptr::null_mut();

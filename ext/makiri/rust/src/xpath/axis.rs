@@ -10,6 +10,10 @@ use super::dom::*;
 /// Pre-order DFS over `context`'s PROPER descendants, calling `visit` on each;
 /// stops as soon as `visit` returns true. The shared body of the descendant and
 /// descendant-or-self axes - the latter only visits `context` first.
+///
+/// # Safety
+/// `context` must be a live handle, and the tree must not be mutated during the
+/// walk - it navigates by following links it reads as it goes.
 pub unsafe fn walk_descendants<D: Dom, F: FnMut(D::Node) -> bool>(
     context: D::Node,
     visit: &mut F,
@@ -43,6 +47,9 @@ pub unsafe fn walk_descendants<D: Dom, F: FnMut(D::Node) -> bool>(
 /// Starting at the owner gets there directly, and matches libxml2:
 /// `following::node()` from an attribute yields what comes after the owner
 /// element's subtree, not the element's own children.
+///
+/// # Safety
+/// `context` must be a live handle.
 pub unsafe fn axis_base<D: Dom>(context: D::Node) -> D::Node {
     if D::node_type(context) == NTYPE_ATTRIBUTE {
         let owner = D::parent(context);
@@ -53,6 +60,9 @@ pub unsafe fn axis_base<D: Dom>(context: D::Node) -> D::Node {
     context
 }
 
+///
+/// # Safety
+/// Same as `walk_descendants`: a live context, and no mutation while it runs.
 pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
     axis: u32,
     context: D::Node,

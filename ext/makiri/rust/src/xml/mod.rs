@@ -17,8 +17,6 @@
 //!   ffi.rs     the exported `mkr_xml_*` symbols                       (unsafe boundary)
 //!   selftest.rs the three C self-tests, ported                       (test code)
 
-#![allow(clippy::missing_safety_doc)]
-
 pub mod abi;
 pub use abi::*;
 

@@ -13,6 +13,9 @@ use core::ffi::{c_int, c_void};
 
 /// Evaluate an AST against the context. 0 on success (filling `out`), -1 with
 /// `*err` set otherwise.
+/// # Safety
+/// A C entry point: the contract is the one at its declaration in
+/// ext/makiri/xpath/mkr_xpath*.h.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_eval_ast_xml(
     ctx: *mut Context,
@@ -31,6 +34,9 @@ pub unsafe extern "C" fn mkr_eval_ast_xml(
 /// expression (`*out_node` is the match or NULL), 0 when the shape is not
 /// recognised and the caller should run the full evaluator, -1 on a budget
 /// overrun with `*err` set.
+/// # Safety
+/// A C entry point: the contract is the one at its declaration in
+/// ext/makiri/xpath/mkr_xpath*.h.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_try_first_match_xml(
     ctx: *mut Context,
