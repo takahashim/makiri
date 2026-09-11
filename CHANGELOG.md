@@ -63,6 +63,18 @@
   `Document#import_node` is unchanged: it still copies and leaves the source
   alone, which is what DOM `importNode` does.
 
+* **XML serialization now honours the reader's nesting cap** (`to_xml`,
+  `to_xml(pretty:)`, `canonicalize`), failing closed with `Makiri::Error` past
+  it. Only parsing bounded nesting before; a tree built with the factories could
+  be any depth, and serializing a deep one emitted XML that Makiri itself could
+  not read back — breaking the serializer's own contract that the output
+  re-parses to the same tree. The walk is recursive, so a deep enough tree also
+  exhausted the C stack before it got there, which on a 1 MB stack (the Windows
+  default) happened at a few thousand elements. The cap counts ELEMENT nesting,
+  the way the reader does, so exactly the documents it accepts are the ones that
+  serialize. A tree past the cap is still fine to hold, walk and query; only
+  serializing it is refused.
+
 * Namespace resolution is **all-or-nothing**. It used to write as it walked, so a
   subtree that failed partway — a rejected insert into a scope where one of its
   prefixes is unbound — was left half-resolved, with the elements before the
