@@ -50,6 +50,9 @@ bridge-string = ["glue"]
 # Makiri::NodeSet - the first wrapper type Rust owns outright (magnus TypedData,
 # private layout), rather than exporting an rb_data_type_t for C to use.
 glue-node-set = ["glue"]
+# Node#css / #at_css / #matches? - the shared Lexbor selector engine, the
+# adaptive compiled-selector cache, and the traversal callbacks.
+glue-css = ["glue"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build
