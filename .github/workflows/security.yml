@@ -227,3 +227,48 @@ jobs:
 
       - name: Build Lexbor under ASan and run the suite
         run: bundle exec rake "sanitize:lexbor"
+
+  # The Rust port's memory-safety and fail-closed gates. The HTML instance is
+  # the one every Node#xpath on an HTML document goes through, so it is the
+  # configuration worth the nightly budget; the per-push matrix in ci.yml covers
+  # the others with the spec suite.
+  rust-fuzz:
+    name: Rust port - fuzz + OOM (HTML instance)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # Under ASan + UBSan: any heap error or UB in the Rust engine aborts the
+      # run. The targets are the ones that drive it - xpath over HTML, css
+      # (whose lowering builds the same AST), and xmlcss (the XML instance plus
+      # the of-type hooks).
+      - name: Fuzz under sanitizers
+        env:
+          MAKIRI_RUST_XPATH_HTML: "1"
+          MAKIRI_RUST_XPATH_XML: "1"
+        run: |
+          bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xpath --time 300"
+          bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target css --time 180"
+          bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xmlcss --time 180"
+
+      # Every OOM branch must fail closed - a clean raise or a result identical
+      # to the un-injected one, never a truncated answer.
+      - name: OOM injection sweep
+        env:
+          MAKIRI_RUST_XPATH_HTML: "1"
+          MAKIRI_RUST_XPATH_XML: "1"
+        run: bundle exec rake oom

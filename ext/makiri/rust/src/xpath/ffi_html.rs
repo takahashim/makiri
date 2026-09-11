@@ -6,7 +6,7 @@
 //! on an HTML document goes through.
 
 use super::abi::*;
-use super::dom::Html;
+use super::dom_html::Html;
 use super::eval;
 use core::ffi::{c_int, c_void};
 

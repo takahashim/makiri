@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # `rust` carries the in-progress Rust port, whose build configurations only
+    # this workflow exercises - so it gets CI on push like the mainlines do.
+    branches: [main, master, rust]
   pull_request:
 
 jobs:
@@ -72,3 +74,67 @@ jobs:
       # the run with a non-zero exit, failing the job.
       - name: Build + test under sanitizers
         run: bundle exec rake sanitize
+
+  # The Rust port (notes/rust_rewrite_plan.ja.md). Each MAKIRI_RUST_* flag
+  # replaces a set of C sources with the Rust one behind the same C ABI, so the
+  # suite is the differential: a configuration that answers differently from the
+  # C build fails here.
+  #
+  # The instances are listed separately on purpose. Both can be replaced at
+  # once, but a regression is only bisectable if each can be replaced alone.
+  rust:
+    name: Rust port (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "front end"
+            flags: "MAKIRI_RUST_XPATH=1"
+            features: "xpath"
+          - label: "XPath XML instance"
+            flags: "MAKIRI_RUST_XPATH_XML=1"
+            features: "xpath-xml"
+          - label: "XPath HTML instance"
+            flags: "MAKIRI_RUST_XPATH_HTML=1"
+            features: "xpath-html"
+          - label: "everything"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1"
+            features: "xml,xpath-xml,xpath-html"
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # Warnings are errors here: the port's own lints (unsafe without a stated
+      # contract, a raw-pointer compare that should be ptr::eq) are the ones
+      # worth not letting through.
+      - name: Clippy
+        working-directory: ext/makiri/rust
+        run: cargo clippy --features "${{ matrix.features }}" -- -D warnings
+
+      - name: Compile with ${{ matrix.flags }}
+        run: env ${{ matrix.flags }} bundle exec rake compile
+
+      - name: Run the test suite
+        run: bundle exec rake spec
+
+      - name: XML conformance (W3C xmlts)
+        run: bundle exec rake conformance:xmlconf
+
+      - name: Invariants
+        run: bundle exec rake invariants

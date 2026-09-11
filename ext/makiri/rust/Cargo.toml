@@ -16,13 +16,15 @@ default = []
 xml = []
 # The XPath front end: lexer, Number, parser.
 xpath = []
-# ...plus the XML engine instance. It implies `xpath` because both halves define
-# symbols the same C files provide - taking one without the other would link the
-# C and Rust definitions of the same function.
-xpath-xml = ["xpath"]
-# ...or the HTML engine instance, which is the one every Makiri user's //div
-# goes through. It shares the generic engine with `xpath-xml`, so it implies it.
-xpath-html = ["xpath-xml"]
+# The generic engine both instances instantiate. Not a replacement for any C
+# file on its own - it exports nothing, so it is named for what it is rather
+# than for one of the two things built on it.
+xpath-engine = ["xpath"]
+# An engine instance: the two `_xml` / `_html` entry points the driver
+# dispatches on. Independent of each other, so either C instance can be
+# replaced alone - which is what makes a regression bisectable.
+xpath-xml = ["xpath-engine"]
+xpath-html = ["xpath-engine"]
 
 [dependencies]
 

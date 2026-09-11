@@ -241,10 +241,14 @@ end
 #   MAKIRI_RUST_XPATH=1      the XPath front end             -> `xpath`
 #                            (xpath/mkr_xpath_{lex,number,parse}.c)
 #   MAKIRI_RUST_XPATH_XML=1  the XML engine instance         -> `xpath-xml`
-#                            (xpath/mkr_xpath_engine_xml.c; implies the front end)
+#                            (xpath/mkr_xpath_engine_xml.c)
 #   MAKIRI_RUST_XPATH_HTML=1 the HTML engine instance        -> `xpath-html`
-#                            (xpath/mkr_xpath_engine_html.c; implies the XML one,
-#                            since both instantiate the same generic engine)
+#                            (xpath/mkr_xpath_engine_html.c)
+#
+# The two instances are independent: either C engine can be replaced on its own,
+# which is what makes a regression bisectable. Both imply the front end, because
+# both halves would otherwise define the same symbols as the C files still in
+# the build.
 #
 # cargo builds one staticlib into this build dir with the selected features and
 # it is linked like the Lexbor archive; the replaced C sources are dropped from
@@ -252,8 +256,8 @@ end
 # C counterpart still defines, so the two can never both be linked in.
 rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
 rust_xpath_html = ENV["MAKIRI_RUST_XPATH_HTML"].to_s.strip == "1"
-rust_xpath_xml = rust_xpath_html || ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
-rust_xpath = rust_xpath_xml || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
+rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
+rust_xpath = rust_xpath_xml || rust_xpath_html || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
                     .map { |f| File.join(EXT_DIR, "xpath", f) }.freeze
 RUST_XPATH_XML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_xml.c")].freeze
@@ -261,13 +265,11 @@ RUST_XPATH_HTML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_html.c")].
 if rust_xml || rust_xpath
   features = []
   features << "xml" if rust_xml
-  features << if rust_xpath_html
-                "xpath-html"
-              elsif rust_xpath_xml
-                "xpath-xml"
-              else
-                "xpath"
-              end if rust_xpath
+  if rust_xpath
+    features << "xpath"
+    features << "xpath-xml" if rust_xpath_xml
+    features << "xpath-html" if rust_xpath_html
+  end
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"

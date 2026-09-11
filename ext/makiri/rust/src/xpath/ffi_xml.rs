@@ -7,7 +7,7 @@
 //! the `Xml` instantiation of the generic engine.
 
 use super::abi::*;
-use super::dom::Xml;
+use super::dom_xml::Xml;
 use super::eval;
 use core::ffi::{c_int, c_void};
 
