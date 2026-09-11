@@ -25,5 +25,8 @@
 
 pub mod abi;
 
+#[cfg(feature = "glue-node")]
+pub mod node;
+
 #[cfg(feature = "glue-serialize")]
 pub mod serialize;

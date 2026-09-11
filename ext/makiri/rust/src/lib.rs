@@ -27,7 +27,7 @@ pub mod glue;
 
 /// The XML node layouts (`xml::abi`) come in with either feature: the XPath
 /// port's XML backend walks those nodes without needing the reader.
-#[cfg(any(feature = "xml", feature = "xpath"))]
+#[cfg(any(feature = "xml", feature = "xpath", feature = "glue-node"))]
 pub mod xml;
 
 #[cfg(feature = "xpath")]
