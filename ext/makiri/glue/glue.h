@@ -124,6 +124,7 @@ lxb_dom_node_t *mkr_run_fragment_parser(VALUE html, mkr_fragment_parse_fn parse,
  * Implemented in ruby_doc.c (next to the import machinery), bound in
  * mkr_init_node. */
 VALUE mkr_node_clone_node(int argc, VALUE *argv, VALUE self);
+lxb_dom_node_t *mkr_html_import_deep(lxb_dom_document_t *doc, lxb_dom_node_t *src);
 
 /* NodeSet bridge (glue/ruby_node_set.c). mkr_raw_node_t (above): callers cast
  * their typed node to it when pushing (forgetting the type is the safe, store

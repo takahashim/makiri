@@ -57,16 +57,19 @@ mkr_arg_node(VALUE v)
     return mkr_html_node_unwrap(v);
 }
 
-/* Validate that `incoming` may be placed relative to `ref` and detach it from
- * any current parent (move semantics). Raises on the unsafe cases. */
-static void
+/* Validate that `incoming` may be placed relative to `ref`, detach it from any
+ * current parent (move semantics), and return the node to actually insert.
+ *
+ * A node from ANOTHER document is adopted: Lexbor's arenas own their own nodes,
+ * so it cannot be relinked across them - it is deep-imported here and taken out
+ * of the document it came from, which is the move the DOM says appendChild
+ * performs. The returned node is therefore not always the one passed in, and
+ * the caller returns it rather than its argument. Raises on the unsafe cases. */
+static lxb_dom_node_t *
 mkr_prepare_insert(lxb_dom_node_t *ref, lxb_dom_node_t *incoming)
 {
     if (incoming->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
         rb_raise(mkr_eError, "an attribute node cannot be inserted into the tree");
-    }
-    if (ref->owner_document != incoming->owner_document) {
-        rb_raise(mkr_eError, "cannot move a node between documents");
     }
     /* incoming must not be an inclusive ancestor of ref. */
     for (lxb_dom_node_t *p = ref; p != NULL; p = p->parent) {
@@ -74,9 +77,22 @@ mkr_prepare_insert(lxb_dom_node_t *ref, lxb_dom_node_t *incoming)
             rb_raise(mkr_eError, "cannot insert a node into its own subtree");
         }
     }
+    if (ref->owner_document != incoming->owner_document) {
+        lxb_dom_node_t *adopted = mkr_html_import_deep(ref->owner_document, incoming);
+        if (incoming->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT) {
+            /* A fragment contributes its children; the DOM leaves a spliced one
+             * empty, so empty the source rather than detaching it. */
+            lxb_dom_node_t *c;
+            while ((c = incoming->first_child) != NULL) lxb_dom_node_remove(c);
+        } else if (incoming->parent != NULL) {
+            lxb_dom_node_remove(incoming);
+        }
+        return adopted;
+    }
     if (incoming->parent != NULL) {
         lxb_dom_node_remove(incoming);
     }
+    return incoming;
 }
 
 /* WHATWG doctype ordering at the document node (https://dom.spec.whatwg.org/#concept-node-ensure-pre-insertion-validity),
@@ -196,10 +212,11 @@ mkr_node_add_child(VALUE self, VALUE rb_child)
     lxb_dom_node_t *parent = mkr_node_unwrap_mutable(self);
     lxb_dom_node_t *child  = mkr_arg_node(rb_child);
     mkr_guard_doc_child_order(parent, NULL, NULL, child);   /* append: before == NULL */
-    mkr_prepare_insert(parent, child);
-    mkr_splice_or_insert(parent, child, lxb_dom_node_insert_child, 0);
+    lxb_dom_node_t *ins = mkr_prepare_insert(parent, child);
+    mkr_splice_or_insert(parent, ins, lxb_dom_node_insert_child, 0);
     mkr_invalidate_index(self);
-    return rb_child;
+    /* An adopted node is a different node: hand back the one now in the tree. */
+    return ins == child ? rb_child : mkr_wrap_html_node(ins, mkr_node_document(self));
 }
 
 /* node << child -> node (chainable). */
@@ -219,10 +236,10 @@ mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
     mkr_guard_doc_child_order(ref->parent, ref, NULL, node);   /* inserted before ref */
-    mkr_prepare_insert(ref, node);
-    mkr_splice_or_insert(ref, node, lxb_dom_node_insert_before, 0);
+    lxb_dom_node_t *ins = mkr_prepare_insert(ref, node);
+    mkr_splice_or_insert(ref, ins, lxb_dom_node_insert_before, 0);
     mkr_invalidate_index(self);
-    return rb_node;
+    return ins == node ? rb_node : mkr_wrap_html_node(ins, mkr_node_document(self));
 }
 
 static VALUE
@@ -234,10 +251,10 @@ mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
     mkr_guard_doc_child_order(ref->parent, ref->next, NULL, node);   /* inserted after ref */
-    mkr_prepare_insert(ref, node);
-    mkr_splice_or_insert(ref, node, lxb_dom_node_insert_after, 1);
+    lxb_dom_node_t *ins = mkr_prepare_insert(ref, node);
+    mkr_splice_or_insert(ref, ins, lxb_dom_node_insert_after, 1);
     mkr_invalidate_index(self);
-    return rb_node;
+    return ins == node ? rb_node : mkr_wrap_html_node(ins, mkr_node_document(self));
 }
 
 /* node.remove / node.unlink -> node. Detaches from the tree (still usable). */
@@ -265,8 +282,8 @@ mkr_node_replace(VALUE self, VALUE rb_other)
         rb_raise(mkr_eError, "cannot replace a node with no parent");
     }
     mkr_guard_doc_child_order(ref->parent, ref, ref, other);   /* other takes ref's slot */
-    mkr_prepare_insert(ref, other);
-    mkr_splice_or_insert(ref, other, lxb_dom_node_insert_before, 0);
+    lxb_dom_node_t *ins = mkr_prepare_insert(ref, other);
+    mkr_splice_or_insert(ref, ins, lxb_dom_node_insert_before, 0);
     lxb_dom_node_remove(ref);
     mkr_invalidate_index(self);
     return rb_other;

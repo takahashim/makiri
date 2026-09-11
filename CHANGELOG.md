@@ -47,6 +47,22 @@
   namespace from the context they are first inserted into, so a subtree can be
   assembled detached and attached afterwards. Only later moves carry.
 
+* **Inserting a node from another document now adopts it** instead of copying it
+  (`Makiri::XML`) or raising (`Makiri::HTML`). `add_child` / `before` / `after` /
+  `replace` bring the node over and take it out of the document it came from —
+  the move the DOM says `appendChild` performs, and what both Chrome 152 and
+  Nokogiri do. A spliced fragment is left empty, as a same-document one already
+  was. A rejected insert leaves the source document untouched.
+
+  Each arena owns its own nodes, so the node cannot be relinked across them: it
+  is copied here and removed there. That is the same thing from the outside with
+  one exception — the node handed back is a **different object** than the one
+  passed in (`pointer_id` differs), so use the return value rather than the
+  argument afterwards. Nokogiri and browsers keep identity here; Makiri cannot.
+
+  `Document#import_node` is unchanged: it still copies and leaves the source
+  alone, which is what DOM `importNode` does.
+
 * Namespace resolution is **all-or-nothing**. It used to write as it walked, so a
   subtree that failed partway — a rejected insert into a scope where one of its
   prefixes is unbound — was left half-resolved, with the elements before the

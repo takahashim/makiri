@@ -1351,8 +1351,9 @@ mkr_xml_node_set_name(VALUE self, VALUE rb_name)
  * target document's arena, whose Ruby VALUE is +target_doc+). A node from another
  * document is deep-copied; a same-document node is returned as-is (move). */
 static mkr_xml_node_t *
-mkr_xml_incoming_node(mkr_xml_doc_t *xdoc, VALUE target_doc, VALUE arg)
+mkr_xml_incoming_node(mkr_xml_doc_t *xdoc, VALUE target_doc, VALUE arg, VALUE *adopt_from)
 {
+    *adopt_from = Qnil;
     if (!rb_obj_is_kind_of(arg, mkr_cNode)
         || !rb_obj_is_kind_of(mkr_xml_node_document(arg), mkr_cXmlDocument)) {
         rb_raise(rb_eTypeError,
@@ -1362,9 +1363,34 @@ mkr_xml_incoming_node(mkr_xml_doc_t *xdoc, VALUE target_doc, VALUE arg)
     if (mkr_xml_node_document(arg) == target_doc) {
         return src;                                 /* same arena -> move */
     }
-    mkr_xml_node_t *copy = NULL;                    /* foreign arena -> import a deep copy */
+    /* Another document: the arenas own their own nodes, so the node cannot be
+     * relinked across them. Copy it here and - once the insert has actually
+     * succeeded - take it out of the document it came from, so the operation
+     * reads as the move the DOM says it is (mkr_xml_adopt_finish). */
+    mkr_xml_node_t *copy = NULL;
     mkr_xml_mut_check(mkr_xml_import_subtree(xdoc, src, &copy));
+    *adopt_from = arg;
     return copy;
+}
+
+/* Finish the adoption: empty the node out of its old document. Called only after
+ * the insert succeeded, so a rejected one leaves the source document alone.
+ * A fragment is emptied rather than detached - it contributed its children, and
+ * the DOM leaves a spliced fragment empty. */
+static void
+mkr_xml_adopt_finish(VALUE arg)
+{
+    if (NIL_P(arg)) return;
+
+    mkr_xml_node_t *src = mkr_xml_node_unwrap(arg);
+    mkr_xml_doc_t *sdoc = mkr_xml_node_xdoc(arg);
+    if (src->type == MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT) {
+        mkr_xml_node_t *c;
+        while ((c = src->first_child) != NULL) mkr_xml_remove(sdoc, c);
+    } else {
+        mkr_xml_remove(sdoc, src);
+    }
+    mkr_xml_name_index_invalidate(sdoc);
 }
 
 /* The four insertion verbs share this shape: frozen-check self, coerce/import the
@@ -1410,21 +1436,25 @@ mkr_xml_node_insert(VALUE self, VALUE arg, mkr_ins_op_t op)
     mkr_xml_node_t *target = mkr_xml_node_unwrap_mutable(self);
     VALUE doc_v = mkr_xml_node_document(self);
     mkr_xml_doc_t *xdoc = mkr_xml_node_xdoc(self);
-    mkr_xml_node_t *node = mkr_xml_incoming_node(xdoc, doc_v, arg);
+VALUE adopt_from;
+mkr_xml_node_t *node = mkr_xml_incoming_node(xdoc, doc_v, arg, &adopt_from);
 
-    if (node->type == MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT) {
-        return mkr_xml_splice_fragment(xdoc, target, node, doc_v, op);
-    }
+if (node->type == MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT) {
+    VALUE out = mkr_xml_splice_fragment(xdoc, target, node, doc_v, op);
+    mkr_xml_adopt_finish(adopt_from);
+    return out;
+}
 
-    mkr_xml_mut_status_t st;
-    switch (op) {
-    case MKR_INS_CHILD:   st = mkr_xml_insert_child(xdoc, target, node);  break;
-    case MKR_INS_BEFORE:  st = mkr_xml_insert_before(xdoc, target, node); break;
-    case MKR_INS_AFTER:   st = mkr_xml_insert_after(xdoc, target, node);  break;
-    default:              st = mkr_xml_replace_node(xdoc, target, node);  break;
-    }
-    mkr_xml_mut_check(st);
-    return mkr_wrap_xml_node(node, doc_v);
+mkr_xml_mut_status_t st;
+switch (op) {
+case MKR_INS_CHILD:   st = mkr_xml_insert_child(xdoc, target, node);  break;
+case MKR_INS_BEFORE:  st = mkr_xml_insert_before(xdoc, target, node); break;
+case MKR_INS_AFTER:   st = mkr_xml_insert_after(xdoc, target, node);  break;
+default:              st = mkr_xml_replace_node(xdoc, target, node);  break;
+}
+mkr_xml_mut_check(st);
+mkr_xml_adopt_finish(adopt_from);
+return mkr_wrap_xml_node(node, doc_v);
 }
 
 /* element.add_child(node) -> the inserted node. */
