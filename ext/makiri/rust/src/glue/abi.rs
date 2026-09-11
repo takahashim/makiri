@@ -56,6 +56,29 @@ pub unsafe fn html_node_methods() -> RModule {
         .expect("Makiri::HTML::NodeMethods is a Module")
 }
 
+/// The wrapped Rust value behind a TypedData object, without magnus's
+/// `rb_protect`.
+///
+/// `<&T>::try_convert` - and so every magnus method with a wrapped receiver -
+/// runs `rb_check_typeddata` inside `rb_protect`, which is a `setjmp` per call.
+/// That is the right default when a Rust caller wants a `Result`, but it is not
+/// free: on the per-node path it measured about a quarter of the throughput of
+/// the C it replaced (`Node#css` over 2000 nodes, `notes/node_set_ab.rb`).
+///
+/// A C-ABI entry point wants the C behaviour anyway - `rb_check_typeddata`
+/// raises `TypeError` on a mismatch, which is exactly what `TypedData_Get_Struct`
+/// did - so it calls this instead.
+///
+/// # Safety
+/// Raises (longjmps) when `v` is not a `T`, so no Rust destructor may be live.
+/// The returned lifetime is unconstrained; the caller must keep `v` rooted.
+pub unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(v: VALUE) -> &'a T {
+    /* magnus::DataType is #[repr(transparent)] over rb_data_type_t, so this
+     * cast is what the repr promises; the accessor for it is crate-private. */
+    let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_sys::rb_data_type_t;
+    &*(rb_sys::rb_check_typeddata(v, dt) as *const T)
+}
+
 /// `Makiri::Error`.
 ///
 /// # Safety

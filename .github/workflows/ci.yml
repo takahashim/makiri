@@ -118,9 +118,12 @@ jobs:
           - label: "bridge: text contract"
             flags: "MAKIRI_RUST_BRIDGE_STRING=1"
             features: "bridge-string"
+          - label: "glue: NodeSet"
+            flags: "MAKIRI_RUST_GLUE_NODE_SET=1"
+            features: "glue-node-set"
           - label: "everything"
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1"
-            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1"
+            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6

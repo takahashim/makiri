@@ -47,6 +47,9 @@ glue-node = ["glue"]
 # Ruby String access, so it is the one whose port has to preserve the
 # allocation-free borrow rule (see src/bridge/string.rs).
 bridge-string = ["glue"]
+# Makiri::NodeSet - the first wrapper type Rust owns outright (magnus TypedData,
+# private layout), rather than exporting an rb_data_type_t for C to use.
+glue-node-set = ["glue"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

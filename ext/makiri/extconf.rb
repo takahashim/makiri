@@ -254,6 +254,8 @@ end
 #                            (glue/ruby_node.c)
 #   MAKIRI_RUST_BRIDGE_STRING=1 the text-input contract       -> `bridge-string`
 #                            (bridge/ruby_string.c)
+#   MAKIRI_RUST_GLUE_NODE_SET=1 Makiri::NodeSet               -> `glue-node-set`
+#                            (glue/ruby_node_set.c)
 #
 # The glue flags differ from the engine ones in what they preserve. An engine
 # flag swaps one C ABI for an identical one; a glue flag swaps C that calls Ruby
@@ -279,6 +281,7 @@ rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
 rust_glue_serialize = ENV["MAKIRI_RUST_GLUE_SERIALIZE"].to_s.strip == "1"
 rust_glue_node = ENV["MAKIRI_RUST_GLUE_NODE"].to_s.strip == "1"
 rust_bridge_string = ENV["MAKIRI_RUST_BRIDGE_STRING"].to_s.strip == "1"
+rust_glue_node_set = ENV["MAKIRI_RUST_GLUE_NODE_SET"].to_s.strip == "1"
 rust_xpath = rust_xpath_xml || rust_xpath_html || rust_xpath_driver ||
              rust_xpath_shared || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
@@ -290,7 +293,9 @@ RUST_XPATH_SHARED_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_shared.c")].fre
 RUST_GLUE_SERIALIZE_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_serialize.c")].freeze
 RUST_GLUE_NODE_SRCS = [File.join(EXT_DIR, "glue", "ruby_node.c")].freeze
 RUST_BRIDGE_STRING_SRCS = [File.join(EXT_DIR, "bridge", "ruby_string.c")].freeze
-if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node || rust_bridge_string
+RUST_GLUE_NODE_SET_SRCS = [File.join(EXT_DIR, "glue", "ruby_node_set.c")].freeze
+if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
+   rust_bridge_string || rust_glue_node_set
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -303,6 +308,7 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node || rust_bridg
   features << "glue-serialize" if rust_glue_serialize
   features << "glue-node" if rust_glue_node
   features << "bridge-string" if rust_bridge_string
+  features << "glue-node-set" if rust_glue_node_set
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -346,6 +352,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_glue_serialize && RUST_GLUE_SERIALIZE_SRCS.include?(f) }
            .reject { |f| rust_glue_node && RUST_GLUE_NODE_SRCS.include?(f) }
            .reject { |f| rust_bridge_string && RUST_BRIDGE_STRING_SRCS.include?(f) }
+           .reject { |f| rust_glue_node_set && RUST_GLUE_NODE_SET_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,
