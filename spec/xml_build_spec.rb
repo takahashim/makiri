@@ -254,7 +254,12 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       expect(imported.document).to equal(doc)
       expect(imported).not_to equal(src)
       expect(imported["a"]).to eq("1")
-      expect(doc.to_xml).to include(%(<deep a="1"><x/></deep>))
+      # <deep> came from a document with no default namespace, so it is in NO
+      # namespace - a decision the import carries. Landing it under this
+      # document's xmlns="urn:d" must not quietly move it there, so the
+      # serializer says so with xmlns="" (Chrome does the same).
+      expect(doc.to_xml).to include(%(<deep xmlns="" a="1"><x/></deep>))
+      expect(imported.namespace_uri).to be_nil
       # the source document is untouched
       expect(other.to_xml).to include(%(<deep a="1"><x/></deep>))
       expect(src.document).to equal(other)

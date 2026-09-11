@@ -385,6 +385,7 @@ mkr_xml_node_get_document(VALUE self)
     do { if (mkr_buf_append((b), (p), (n)) != MKR_OK) return -1; } while (0)
 #define MKR_XSER_LIT(b, lit) MKR_XSER_APPEND((b), (lit), sizeof(lit) - 1)
 
+
 /* Append [s, s+n), escaping &, <, > (and, in an attribute value, " and the
  * whitespace TAB/LF that attribute-value normalization would otherwise fold).
  * CR is always escaped so line-ending normalization cannot alter it on reparse. */
@@ -412,6 +413,158 @@ mkr_xser_escaped(mkr_buf_t *b, const char *s, uint32_t n, int attr)
         }
     }
     if (n > start) MKR_XSER_APPEND(b, s + start, n - start);
+    return 0;
+}
+
+/* ---- namespace declarations -----------------------------------------------
+ *
+ * A node's ns_uri is its identity, not something derived from the declarations
+ * around it (mkr_xml_node.h): a parsed tree carries the URIs its declarations
+ * gave it, and a node that has since been moved keeps the URI it already had.
+ * So the serializer, not the tree, decides which xmlns declarations the output
+ * needs - what browsers do, and the reason to_xml still re-parses to the same
+ * tree after arbitrary mutation.
+ *
+ * The in-scope bindings are a chain threaded down the recursion, ONE LINK PER
+ * ELEMENT - no per-attribute array, because an element may carry up to
+ * MKR_XML_MAX_ATTRS attributes and nest MKR_XML_MAX_DEPTH deep. A link holds the
+ * element (its own xmlns attributes are read straight off it) plus the single
+ * declaration the serializer may have had to synthesize for the element's own
+ * name. A declaration synthesized for a prefixed ATTRIBUTE is emitted but not
+ * chained: a descendant that needs the same prefix simply declares it again,
+ * which is more verbose than a browser but still correct.
+ */
+
+typedef struct mkr_xser_ns {
+    const struct mkr_xser_ns *up;
+    const mkr_xml_node_t *el;            /* its xmlns attributes bind at this level */
+    const char *syn_prefix; uint32_t syn_plen;   /* the synthesized one, if any */
+    const char *syn_uri;    uint32_t syn_ulen;
+    int has_syn;
+} mkr_xser_ns_t;
+
+/* The declaration for +prefix+ on +el+ itself, or NULL. */
+static const mkr_xml_node_t *
+mkr_xser_own_decl(const mkr_xml_node_t *el, const char *prefix, uint32_t plen)
+{
+    for (const mkr_xml_node_t *a = el->attrs; a != NULL; a = a->next) {
+        const char *p; uint32_t pl;
+        if (!mkr_xml_xmlns_prefix(a->qname, a->qname_len, &p, &pl)) continue;
+        if (mkr_bytes_eq(p, pl, prefix, plen)) return a;
+    }
+    return NULL;
+}
+
+/* True when +prefix+ already means exactly [uri,ulen) at this point in the walk.
+ * An undeclared prefix means nothing; an undeclared DEFAULT means no namespace,
+ * so an unprefixed name in no namespace needs no declaration. */
+static int
+mkr_xser_bound_to(const mkr_xser_ns_t *scope, const char *prefix, uint32_t plen,
+                  const char *uri, uint32_t ulen)
+{
+    if (plen == 3 && mkr_bytes_eq(prefix, plen, "xml", 3)) return 1;   /* predefined */
+    for (const mkr_xser_ns_t *s = scope; s != NULL; s = s->up) {
+        const mkr_xml_node_t *d = mkr_xser_own_decl(s->el, prefix, plen);
+        if (d != NULL) return mkr_bytes_eq(d->value ? d->value : "", d->value_len, uri ? uri : "", ulen);
+        if (s->has_syn && mkr_bytes_eq(s->syn_prefix, s->syn_plen, prefix, plen)) {
+            return mkr_bytes_eq(s->syn_uri ? s->syn_uri : "", s->syn_ulen, uri ? uri : "", ulen);
+        }
+    }
+    return plen == 0 && ulen == 0;   /* no default declared == no namespace */
+}
+
+/* Emit `xmlns="uri"` / `xmlns:prefix="uri"`. */
+static int
+mkr_xser_declare(mkr_buf_t *b, const char *prefix, uint32_t plen,
+                 const char *uri, uint32_t ulen)
+{
+    MKR_XSER_LIT(b, " xmlns");
+    if (plen > 0) { MKR_XSER_LIT(b, ":"); MKR_XSER_APPEND(b, prefix, plen); }
+    MKR_XSER_LIT(b, "=\"");
+    if (mkr_xser_escaped(b, uri ? uri : "", ulen, 1) != 0) return -1;
+    MKR_XSER_LIT(b, "\"");
+    return 0;
+}
+
+/* True when +prefix+ is bound to anything at all at this point. */
+static int
+mkr_xser_is_bound(const mkr_xser_ns_t *scope, const char *prefix, uint32_t plen)
+{
+    for (const mkr_xser_ns_t *s = scope; s != NULL; s = s->up) {
+        if (mkr_xser_own_decl(s->el, prefix, plen) != NULL) return 1;
+        if (s->has_syn && mkr_bytes_eq(s->syn_prefix, s->syn_plen, prefix, plen)) return 1;
+    }
+    return 0;
+}
+
+/* True when +prefix+ is not bound to anything at this point - safe to invent. */
+static int
+mkr_xser_prefix_free(const mkr_xser_ns_t *scope, const char *p, uint32_t plen)
+{
+    for (const mkr_xser_ns_t *s = scope; s != NULL; s = s->up) {
+        if (mkr_xser_own_decl(s->el, p, plen) != NULL) return 0;
+        if (s->has_syn && mkr_bytes_eq(s->syn_prefix, s->syn_plen, p, plen)) return 0;
+    }
+    return 0 == 0 ? 1 : 0;
+}
+
+/* Invent a prefix for a name whose own prefix already means something else here
+ * - the one case where the output cannot reuse the name as written. Browsers do
+ * the same ("ns1", "ns2", ...); without it the element would serialize under a
+ * prefix bound to the wrong URI and stop round-tripping.
+ *
+ * +seq+ carries across the calls made for one element so two invented prefixes
+ * can never collide. Writes into +buf+ (whose storage must outlive the use) and
+ * returns 0, or -1 if it runs out of room. */
+static int
+mkr_xser_gen_prefix(const mkr_xser_ns_t *scope, unsigned *seq, char *buf, size_t cap,
+                    const char **out, uint32_t *outlen)
+{
+    for (; *seq < 100000u; (*seq)++) {
+        size_t i = 0;
+        if (cap < 8) return -1;
+        buf[i++] = 'n'; buf[i++] = 's';
+        unsigned v = *seq, div = 10000u;
+        int started = 0;
+        while (div > 0) {
+            unsigned d = (v / div) % 10u;
+            if (d != 0 || started || div == 1) { buf[i++] = (char)('0' + d); started = 1; }
+            div /= 10u;
+        }
+        if (mkr_xser_prefix_free(scope, buf, (uint32_t)i)) {
+            *out = buf; *outlen = (uint32_t)i; (*seq)++;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* The first attribute of +el+ before +stop+ that carries +prefix+, or NULL.
+ * Reaching this means the prefix is not already bound to what +stop+ needs, so
+ * that earlier attribute is the one that declared it - and its URI says whether
+ * this one can ride along on that declaration. */
+static const mkr_xml_node_t *
+mkr_xser_prefix_seen(const mkr_xml_node_t *el, const mkr_xml_node_t *stop,
+                     const char *prefix, uint32_t plen)
+{
+    for (const mkr_xml_node_t *a = el->attrs; a != NULL && a != stop; a = a->next) {
+        if (a->prefix_len == 0) continue;
+        if (mkr_xml_xmlns_prefix(a->qname, a->qname_len, NULL, NULL)) continue;
+        if (mkr_bytes_eq(a->prefix, a->prefix_len, prefix, plen)) return a;
+    }
+    return NULL;
+}
+
+/* Write +n+'s name: its qualified name verbatim, or - when the serializer had to
+ * invent a prefix for it - that prefix with its local name. */
+static int
+mkr_xser_name(mkr_buf_t *b, const mkr_xml_node_t *n,
+              const char *prefix, uint32_t plen, int renamed)
+{
+    if (!renamed) { MKR_XSER_APPEND(b, n->qname, n->qname_len); return 0; }
+    MKR_XSER_APPEND(b, prefix, plen);
+    MKR_XSER_LIT(b, ":");
+    MKR_XSER_APPEND(b, n->local, n->local_len);
     return 0;
 }
 
@@ -453,31 +606,88 @@ mkr_xml_has_dom_loose_name(const mkr_xml_node_t *root)
 static int mkr_xser_doctype(mkr_buf_t *b, const mkr_xml_node_t *dt);
 
 static int
-mkr_xser_node(mkr_buf_t *b, const mkr_xml_node_t *n, int level, int width)
+mkr_xser_node(mkr_buf_t *b, const mkr_xml_node_t *n, int level, int width,
+              const mkr_xser_ns_t *scope)
 {
     switch (n->type) {
     case MKR_XML_NODE_TYPE_DOCUMENT_TYPE:
         return mkr_xser_doctype(b, n);
     case MKR_XML_NODE_TYPE_ELEMENT: {
-        MKR_XSER_LIT(b, "<");
-        MKR_XSER_APPEND(b, n->qname, n->qname_len);
-        for (const mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
-            MKR_XSER_LIT(b, " ");
-            MKR_XSER_APPEND(b, a->qname, a->qname_len);
-            MKR_XSER_LIT(b, "=\"");
-            if (mkr_xser_escaped(b, a->value ? a->value : "", a->value_len, 1) != 0) return -1;
-            MKR_XSER_LIT(b, "\"");
+MKR_XSER_LIT(b, "<");
+
+/* This element's link: its own xmlns attributes bind here, plus at most
+ * one declaration synthesized for its own name. */
+mkr_xser_ns_t here = { scope, n, NULL, 0, NULL, 0, 0 };
+char genbuf[8];
+unsigned genseq = 1;
+const char *eprefix = n->prefix; uint32_t eplen = n->prefix_len;
+int erenamed = 0;
+
+/* Decide the element's name and whether it needs a declaration BEFORE
+ * writing either: the name comes first in the output, but an invented
+ * prefix is only known once we know a declaration is needed. */
+int edecl = (n->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) == 0
+            && !mkr_xser_bound_to(&here, eprefix, eplen, n->ns_uri, n->ns_uri_len);
+if (edecl && mkr_xser_own_decl(n, eprefix, eplen) != NULL) {
+    /* An element declaring this very prefix as something else is the one
+     * case its name cannot be written as-is: invent a prefix rather than
+     * emit a second, contradictory xmlns for it (what browsers do). */
+    if (mkr_xser_gen_prefix(&here, &genseq, genbuf, sizeof genbuf,
+                            &eprefix, &eplen) != 0) return -1;
+    erenamed = 1;
+}
+if (mkr_xser_name(b, n, eprefix, eplen, erenamed) != 0) return -1;
+if (edecl) {
+    if (mkr_xser_declare(b, eprefix, eplen, n->ns_uri, n->ns_uri_len) != 0) return -1;
+    here.syn_prefix = eprefix; here.syn_plen = eplen;
+    here.syn_uri = n->ns_uri;  here.syn_ulen = n->ns_uri_len;
+    here.has_syn = 1;
+}
+
+/* Each attribute, preceded by the declaration it needs - the order a
+ * browser emits. An unprefixed attribute is in no namespace (the default
+ * never applies to one) and a declaration declares itself. */
+for (const mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
+    const char *ap = a->prefix; uint32_t apl = a->prefix_len;
+    int arenamed = 0;
+    if (apl > 0 && !mkr_xml_xmlns_prefix(a->qname, a->qname_len, NULL, NULL)
+        && !mkr_xser_bound_to(&here, ap, apl, a->ns_uri, a->ns_uri_len)) {
+        /* Writing a prefix that already means something else here would
+         * shadow that meaning for the whole subtree and quietly change
+         * what descendants using it stand for. So only a prefix bound
+         * NOWHERE is written as the author had it; anything else takes
+         * an invented prefix, which is free by construction and shadows
+         * nothing. (This is what browsers do.) */
+        const mkr_xml_node_t *prior = mkr_xser_prefix_seen(n, a, ap, apl);
+        int taken = mkr_xser_is_bound(&here, ap, apl);
+        int shared = !taken && prior != NULL
+                     && mkr_bytes_eq(prior->ns_uri ? prior->ns_uri : "", prior->ns_uri_len,
+                                     a->ns_uri ? a->ns_uri : "", a->ns_uri_len);
+        if (!shared) {
+            if (taken || prior != NULL) {
+                if (mkr_xser_gen_prefix(&here, &genseq, genbuf, sizeof genbuf,
+                                        &ap, &apl) != 0) return -1;
+                arenamed = 1;
+            }
+            if (mkr_xser_declare(b, ap, apl, a->ns_uri, a->ns_uri_len) != 0) return -1;
         }
+    }
+    MKR_XSER_LIT(b, " ");
+    if (mkr_xser_name(b, a, ap, apl, arenamed) != 0) return -1;
+    MKR_XSER_LIT(b, "=\"");
+    if (mkr_xser_escaped(b, a->value ? a->value : "", a->value_len, 1) != 0) return -1;
+    MKR_XSER_LIT(b, "\"");
+}
         if (n->first_child == NULL) { MKR_XSER_LIT(b, "/>"); return 0; }
         MKR_XSER_LIT(b, ">");
         int block = width > 0 && !mkr_xser_has_chardata(n);
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
             if (block && mkr_xser_indent(b, level + 1, width) != 0) return -1;
-            if (mkr_xser_node(b, c, level + 1, width) != 0) return -1;
+            if (mkr_xser_node(b, c, level + 1, width, &here) != 0) return -1;
         }
         if (block && mkr_xser_indent(b, level, width) != 0) return -1;
         MKR_XSER_LIT(b, "</");
-        MKR_XSER_APPEND(b, n->qname, n->qname_len);
+        if (mkr_xser_name(b, n, eprefix, eplen, erenamed) != 0) return -1;
         MKR_XSER_LIT(b, ">");
         return 0;
     }
@@ -503,7 +713,7 @@ mkr_xser_node(mkr_buf_t *b, const mkr_xml_node_t *n, int level, int width)
         /* A fragment has no markup of its own: it serializes as its children, in
          * order, spliced together (the same nodes #add_child would insert). */
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
-            if (mkr_xser_node(b, c, level, width) != 0) return -1;
+            if (mkr_xser_node(b, c, level, width, scope) != 0) return -1;
         }
         return 0;
     default:
@@ -607,11 +817,11 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
         /* The DOCTYPE is a document-node child (linked before the root), so the
          * child walk below serializes it in place - no separate emit. */
         for (mkr_xml_node_t *c = n->first_child; rc == 0 && c != NULL; c = c->next) {
-            rc = mkr_xser_node(&buf, c, 0, width);
+            rc = mkr_xser_node(&buf, c, 0, width, NULL);
             if (rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;
         }
     } else {
-        rc = mkr_xser_node(&buf, n, 0, width);
+        rc = mkr_xser_node(&buf, n, 0, width, NULL);
     }
 
     if (rc != 0) {
