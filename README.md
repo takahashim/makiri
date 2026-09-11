@@ -240,6 +240,34 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     (QNames), never PI targets. Nokogiri/libxml2 rejects it (`colons are forbidden
     from PI names`); Makiri follows the normative text. Only the reserved `xml`
     (any case) target is rejected.
+* A node's **namespace URI is its identity**, not something re-derived from the
+  declarations around it - the WHATWG DOM model, measured against Chrome 152
+  (`DOMParser` + `XMLSerializer`).
+  * Moving a node under an element that binds its prefix to a different URI does
+    **not** change `namespace_uri`; the serializer emits the declaration the
+    output needs (`<p:x xmlns:p="urn:a"/>`), and nothing when the destination
+    already agrees. libxml2 keeps the URI on an in-document move but does *not*
+    emit the declaration, so Nokogiri's tree and its own output disagree there.
+  * `#to_xml` on a node below the root is **self-contained**: it declares the
+    prefixes its subtree uses, so the output re-parses to the same namespaces
+    standing alone. Nokogiri omits them, and its subtree output does not
+    round-trip.
+  * Where one prefix would have to mean two things at once, the serializer
+    invents one (`ns1`, `ns2`, ...) rather than shadow the other, as browsers do.
+  * An element in **no** namespace stays that way under a default namespace,
+    serialized as `xmlns=""`.
+  * Nodes from the factories (`create_element` and friends) still take their
+    namespace from the context they are first inserted into, so a subtree can be
+    built detached and attached afterwards. Only later moves carry.
+* Inserting a node **from another document adopts it** (`add_child` / `before` /
+  `after` / `replace`): it is brought over and taken out of the document it came
+  from, as `appendChild` does in the DOM and in both Chrome and Nokogiri.
+  * Each arena owns its own nodes, so the node cannot be relinked across them: it
+    is copied here and removed there. The one visible difference from Nokogiri
+    and browsers is that the node handed back is a **different object** than the
+    one passed in - use the return value afterwards, not the argument.
+  * `Document#import_node` is the copy: it leaves the source alone, like DOM
+    `importNode`.
 * Otherwise the parsed tree is byte-identical to `Nokogiri::XML`'s (verified by
   the property-based differential), including namespaces, prolog/epilog comments
   and PIs, and adjacent-CDATA coalescing.
@@ -266,6 +294,21 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     Lexbor's HTML matcher.
 * Type selectors are ASCII case-insensitive (CSS-correct for HTML; `LI` matches `<li>`)
   * `Nokogiri::HTML5` is case-sensitive there.
+
+### Serialization
+
+* **Comment data is written literally**, as the WHATWG serialization algorithm
+  says and as browsers do: `comment.content = "a-->b"` serializes to
+  `<!--a-->b-->`, which re-parses as the comment `"a"` followed by text.
+  * `Nokogiri::HTML5` escapes it to `<!--a--&gt;b-->` instead. That does not
+    round-trip either - comments do not decode entities, so the data comes back
+    as `"a--&gt;b"`. Neither library round-trips this; Makiri matches Chrome.
+* The same applies to the children of `style` / `script` / `xmp` / `iframe` /
+  `noembed` / `noframes` / `plaintext`, which the algorithm also writes
+  literally. `noscript` is **escaped**, because Makiri parses it with scripting
+  disabled (its children are elements, not raw text) and escaping is what makes
+  that round-trip; `Nokogiri::HTML5` writes it literally and contradicts its own
+  parser there.
 
 ### Text input (mutation APIs)
 
