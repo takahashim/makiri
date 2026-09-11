@@ -6,16 +6,22 @@
 //! time as it drops the C sources that feature replaces. Nothing is shared
 //! between them yet, so a build may enable either, both, or neither:
 //!
-//!   xml    ext/makiri/xml/*.c            - reader, arena, mutators
-//!   xpath  the XPath front end           - lexer, Number, parser
+//!   xml        ext/makiri/xml/*.c                  reader, arena, mutators
+//!   xpath      xpath/mkr_xpath_{lex,number,parse}.c lexer, Number, parser
+//!   xpath-xml  xpath/mkr_xpath_engine_xml.c         the XML engine instance
 //!
-//! The `xpath` feature covers only the front end so far. It builds the C AST
-//! through the C allocator, so the C evaluator runs what it parses and the whole
-//! existing suite is the differential test (notes/rust_rewrite_plan.ja.md §7).
+//! The front end builds the C AST through the C allocator, so either evaluator
+//! runs what it parses. The engine is generic over a `Dom` trait, which is the
+//! type-checked form of the monomorphization the C does by including the same
+//! bodies once per representation; `xpath-xml` instantiates it for the XML node,
+//! and the HTML backend is the remaining step
+//! (notes/rust_rewrite_plan.ja.md §7).
 
 #![allow(clippy::missing_safety_doc)]
 
-#[cfg(feature = "xml")]
+/// The XML node layouts (`xml::abi`) come in with either feature: the XPath
+/// port's XML backend walks those nodes without needing the reader.
+#[cfg(any(feature = "xml", feature = "xpath"))]
 pub mod xml;
 
 #[cfg(feature = "xpath")]

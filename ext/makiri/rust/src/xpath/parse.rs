@@ -384,7 +384,7 @@ impl<'a> Parser<'a> {
                             self.err,
                             XP_ERR_SYNTAX,
                             "unknown axis '{}'",
-                            Latin(name)
+                            Bytes(name)
                         );
                         return false;
                     }
@@ -855,23 +855,6 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 
 /* ---- entry ---- */
 
-/// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
-/// name echoed back into an error cannot carry control bytes into the message.
-struct Latin<'a>(&'a [u8]);
-
-impl core::fmt::Display for Latin<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for &b in self.0 {
-            if (0x20..0x7F).contains(&b) {
-                write!(f, "{}", b as char)?;
-            } else {
-                write!(f, "\\x{:02x}", b)?;
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Parse an expression into a compiled AST; NULL on error with `*err` filled.
 ///
 /// `expr` is a verified text: NUL-free, NUL-terminated, valid UTF-8.
@@ -910,7 +893,7 @@ pub unsafe extern "C" fn mkr_parse(
     }
     if p.kind() != Tok::Eof {
         let t = p.tok();
-        err_setf!(err, XP_ERR_SYNTAX, "trailing input at '{}'", Latin(p.text(&t)));
+        err_setf!(err, XP_ERR_SYNTAX, "trailing input at '{}'", Bytes(p.text(&t)));
         mkr_node_free(root);
         return ptr::null_mut();
     }

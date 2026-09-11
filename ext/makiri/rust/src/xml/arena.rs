@@ -6,7 +6,8 @@
 //! reads through `mkr_xml_node_t` field access.
 
 use crate::xml::{
-    bytes, empty, index, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM, MAX_BYTES,
+    bytes, empty, index, Chunk, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM,
+    MAX_BYTES,
     MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT,
     T_PI, T_TEXT,
 };
@@ -18,13 +19,7 @@ use std::alloc::{alloc, dealloc, Layout};
 const ALIGN: usize = 16;
 const CHUNK_MIN: usize = 64 * 1024;
 
-/// Chunk header; the payload follows at HDR (sizeof rounded up to ALIGN).
-#[repr(C)]
-pub struct Chunk {
-    next: *mut Chunk,
-    used: usize,
-    cap: usize,
-}
+/// Where a chunk's payload starts: the header size rounded up to ALIGN.
 const HDR: usize = (core::mem::size_of::<Chunk>() + ALIGN - 1) & !(ALIGN - 1);
 
 #[inline]

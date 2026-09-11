@@ -14,7 +14,12 @@ default = []
 # Each feature replaces a set of C sources; extconf turns one on at the same
 # time as it drops the sources it replaces.
 xml = []
+# The XPath front end: lexer, Number, parser.
 xpath = []
+# ...plus the XML engine instance. It implies `xpath` because both halves define
+# symbols the same C files provide - taking one without the other would link the
+# C and Rust definitions of the same function.
+xpath-xml = ["xpath"]
 
 [dependencies]
 
