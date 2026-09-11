@@ -109,9 +109,12 @@ jobs:
           - label: "XPath driver"
             flags: "MAKIRI_RUST_XPATH_DRIVER=1"
             features: "xpath-driver"
+          - label: "glue: serialization"
+            flags: "MAKIRI_RUST_GLUE_SERIALIZE=1"
+            features: "glue-serialize"
           - label: "everything"
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1"
-            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1"
+            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6

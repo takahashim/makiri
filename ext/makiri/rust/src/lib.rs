@@ -17,6 +17,14 @@
 //! and the HTML backend is the remaining step
 //! (notes/rust_rewrite_plan.ja.md §7).
 
+/// `mkr_buf_t`, which more than one subsystem writes into.
+pub mod cbuf;
+
+/// The Ruby boundary. Present only when a glue feature is on, because it is the
+/// one part of the crate that depends on magnus.
+#[cfg(feature = "glue")]
+pub mod glue;
+
 /// The XML node layouts (`xml::abi`) come in with either feature: the XPath
 /// port's XML backend walks those nodes without needing the reader.
 #[cfg(any(feature = "xml", feature = "xpath"))]

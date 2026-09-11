@@ -33,7 +33,20 @@ xpath-driver = []
 # destroy and rewrite.
 xpath-shared = []
 
+# The Ruby boundary (ext/makiri/glue/), ported onto magnus. Unlike the engine
+# features these pull in a dependency, so `glue` gates it and each feature below
+# replaces one glue/*.c - Init_makiri keeps calling the same mkr_init_*().
+glue = ["dep:magnus", "dep:rb-sys"]
+glue-serialize = ["glue"]
+
 [dependencies]
+# Only the glue needs Ruby; the engine features stay dependency-free, so a build
+# that enables none of the glue features compiles exactly what it did before.
+# `rb-sys` is magnus's own binding layer - taken directly for the few raw VALUEs
+# that cross to the C glue, and deliberately WITHOUT `link-ruby`: this crate is a
+# staticlib linked into the C extension, which is what resolves the rb_* symbols.
+magnus = { version = "0.8", features = ["rb-sys"], optional = true }
+rb-sys = { version = "0.9", optional = true }
 
 # A panic crossing into C is undefined behaviour, and the engine is written so
 # that no input-dependent path panics; `abort` is the fail-closed backstop

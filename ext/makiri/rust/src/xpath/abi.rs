@@ -319,32 +319,10 @@ pub struct Context {
     _private: [u8; 0],
 }
 
-/// `mkr_buf_t` - a growable byte buffer with a byte ceiling. `init` and `free`
-/// are `static inline` in C, so they are written out here.
-#[repr(C)]
-pub struct Buf {
-    pub data: *mut c_char,
-    pub len: usize,
-    pub cap: usize,
-    /// 0 selects the conservative default ceiling; it is not "unbounded".
-    pub max: usize,
-}
-
-impl Buf {
-    pub fn new(max: usize) -> Buf {
-        Buf { data: core::ptr::null_mut(), len: 0, cap: 0, max }
-    }
-    /// # Safety
-    /// Must not be called twice on the same buffer, or after `mkr_buf_steal`.
-    pub unsafe fn free(&mut self) {
-        if !self.data.is_null() {
-            libc_free(self.data as *mut c_void);
-            self.data = core::ptr::null_mut();
-        }
-        self.len = 0;
-        self.cap = 0;
-    }
-}
+/// `mkr_buf_t` - a growable byte buffer with a byte ceiling. Declared in
+/// `crate::cbuf`, which is where the C layout lives now that the glue writes
+/// into one too.
+pub use crate::cbuf::{mkr_buf_append, mkr_buf_steal, Buf};
 
 #[repr(C)]
 pub struct StrCacheEntry {
@@ -422,8 +400,6 @@ pub type NameIndexLookup = Option<
 
 extern "C" {
     /* buffers */
-    pub fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int;
-    pub fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char;
 
     /* owned text */
     pub fn mkr_owned_text_clear(t: *mut OwnedText);
@@ -500,9 +476,6 @@ extern "C" {
     /* allocation */
     pub fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;
     pub fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void;
-
-    #[link_name = "free"]
-    fn libc_free(p: *mut c_void);
 }
 
 /// `mkr_ptr_hash` (core/mkr_hash.h) - the MurmurHash3 fmix64 finalizer.

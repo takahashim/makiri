@@ -248,6 +248,15 @@ end
 #                            (xpath/mkr_xpath.c: context, budgets, evaluate)
 #   MAKIRI_RUST_XPATH_SHARED=1 the shared primitives        -> `xpath-shared`
 #                            (xpath/mkr_xpath_shared.c)
+#   MAKIRI_RUST_GLUE_SERIALIZE=1 HTML serialization           -> `glue-serialize`
+#                            (glue/ruby_html_serialize.c)
+#
+# The glue flags differ from the engine ones in what they preserve. An engine
+# flag swaps one C ABI for an identical one; a glue flag swaps C that calls Ruby
+# for Rust that calls Ruby through magnus. What stays fixed is the registration
+# seam: Init_makiri still defines every class and still calls the same
+# mkr_init_<feature>(), whichever language provides it. They are also the only
+# flags that pull a dependency (magnus + rb-sys) into the crate.
 #
 # The two instances are independent: either C engine can be replaced on its own,
 # which is what makes a regression bisectable. Both imply the front end, because
@@ -263,6 +272,7 @@ rust_xpath_html = ENV["MAKIRI_RUST_XPATH_HTML"].to_s.strip == "1"
 rust_xpath_driver = ENV["MAKIRI_RUST_XPATH_DRIVER"].to_s.strip == "1"
 rust_xpath_shared = ENV["MAKIRI_RUST_XPATH_SHARED"].to_s.strip == "1"
 rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
+rust_glue_serialize = ENV["MAKIRI_RUST_GLUE_SERIALIZE"].to_s.strip == "1"
 rust_xpath = rust_xpath_xml || rust_xpath_html || rust_xpath_driver ||
              rust_xpath_shared || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
@@ -271,7 +281,8 @@ RUST_XPATH_XML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_xml.c")].fr
 RUST_XPATH_HTML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_html.c")].freeze
 RUST_XPATH_DRIVER_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath.c")].freeze
 RUST_XPATH_SHARED_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_shared.c")].freeze
-if rust_xml || rust_xpath
+RUST_GLUE_SERIALIZE_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_serialize.c")].freeze
+if rust_xml || rust_xpath || rust_glue_serialize
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -281,6 +292,7 @@ if rust_xml || rust_xpath
   end
   features << "xpath-driver" if rust_xpath_driver
   features << "xpath-shared" if rust_xpath_shared
+  features << "glue-serialize" if rust_glue_serialize
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -306,6 +318,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_xpath_html && RUST_XPATH_HTML_SRCS.include?(f) }
            .reject { |f| rust_xpath_driver && RUST_XPATH_DRIVER_SRCS.include?(f) }
            .reject { |f| rust_xpath_shared && RUST_XPATH_SHARED_SRCS.include?(f) }
+           .reject { |f| rust_glue_serialize && RUST_GLUE_SERIALIZE_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,
