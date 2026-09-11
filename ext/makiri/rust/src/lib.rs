@@ -50,6 +50,17 @@ pub const T_FRAGMENT: u32 = 11;
 
 pub const FLAG_DOM_LOOSE_NAME: u32 = 0x0000_0001;
 
+/// Set on an ELEMENT once its namespace URI has been decided - by the parser,
+/// or by resolving it against the context it was first inserted into. From
+/// then on the URI is the node's IDENTITY, not a value derived from the
+/// declarations around it: moving the node does not change it, and the
+/// serializer emits whatever declarations the output needs to reproduce it
+/// (the WHATWG DOM model, matching what browsers do). An element still
+/// carrying no flag - freshly built by a factory - has no namespace yet and
+/// takes one from its insertion context, so building a subtree bottom-up and
+/// attaching it gives the same tree as building it top-down.
+pub const FLAG_NS_RESOLVED: u32 = 0x0000_0002;
+
 /* ---- mutation status (mkr_xml_mut_status_t) ---- */
 pub const MUT_OK: i32 = 0;
 pub const MUT_OOM: i32 = 1;

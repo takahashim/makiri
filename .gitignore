@@ -44,3 +44,6 @@ spec/conformance/data/
 
 # verification build (verify/Makefile)
 /verify/build/
+
+# Rust build output
+ext/makiri/rust/target/

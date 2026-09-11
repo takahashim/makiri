@@ -7,7 +7,8 @@ use crate::chars::validate_chars;
 use crate::qname::{split_checked, value_seq_ok, xmlns_prefix};
 use crate::{
     bytes, empty, node_local, node_ns, node_qname, node_value, qname_from, qname_of, Doc, Node,
-    QName, FLAG_DOM_LOOSE_NAME, MUT_BAD_CHARS, MUT_BAD_NAME, MUT_BAD_NS_DECL, MUT_CYCLE,
+    QName, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME,
+    MUT_BAD_NS_DECL, MUT_CYCLE,
     MUT_HIERARCHY, MUT_OK, MUT_OOM, MUT_TYPE, MUT_UNBOUND_NS, T_ATTRIBUTE, T_CDATA, T_COMMENT,
     T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
 };
@@ -176,6 +177,12 @@ pub unsafe fn rename(doc: *mut Doc, node: *mut Node, name: &[u8]) -> i32 {
     }
     set_ns(node, ns);
     (*node).flags &= !FLAG_DOM_LOOSE_NAME;
+    /* A rename picks a new prefix, so it decides a new URI from the scope the
+     * node is in right now - and that decision is the node's identity from here
+     * (an element's; an attribute follows its element). */
+    if connected && !is_attr {
+        (*node).flags |= FLAG_NS_RESOLVED;
+    }
     MUT_OK
 }
 
@@ -575,11 +582,19 @@ pub unsafe fn new_document_type(
 }
 
 /// Resolve the namespace of element `e` and its attributes.
-unsafe fn resolve_node_ns(e: *mut Node, connected: bool) -> i32 {
+///
+/// `commit` selects the pass: false only computes (to find out whether every
+/// prefix in the subtree binds), true writes the resolved URIs. See
+/// `resolve_subtree`.
+unsafe fn resolve_node_ns(e: *mut Node, connected: bool, commit: bool) -> i32 {
     if (*e).flags & FLAG_DOM_LOOSE_NAME == 0 {
         let eq = qname_of(e);
         match resolve_ns(e, &eq, false, connected) {
-            Ok(ns) => set_ns(e, ns),
+            Ok(ns) => {
+                if commit {
+                    set_ns(e, ns)
+                }
+            }
             Err(st) => return st,
         }
     }
@@ -587,24 +602,56 @@ unsafe fn resolve_node_ns(e: *mut Node, connected: bool) -> i32 {
     while !a.is_null() {
         let aq = qname_of(a);
         match resolve_ns(e, &aq, true, connected) {
-            Ok(ns) => set_ns(a, ns),
+            Ok(ns) => {
+                if commit {
+                    set_ns(a, ns)
+                }
+            }
             Err(st) => return st,
         }
         a = (*a).next;
     }
+    /* Only mark once connected: resolution inside a still-detached fragment is
+     * deferred (an unbound prefix is not an error there), so the node must stay
+     * open to being resolved again when the fragment joins the document. */
+    if commit && connected {
+        (*e).flags |= FLAG_NS_RESOLVED;
+    }
     MUT_OK
 }
 
+/// True once `e`'s namespace has been decided - by the parser, or by resolving
+/// it against the context it was first inserted into. From then on the URI is
+/// the node's identity, so a later move must NOT re-derive it: that is what
+/// makes namespaceURI survive a move the way the DOM and browsers have it, and
+/// the serializer emits whatever declarations the output needs.
+unsafe fn ns_is_decided(e: *const Node) -> bool {
+    (*e).flags & FLAG_NS_RESOLVED != 0
+}
+
+/// Re-resolve every element in `root`'s subtree, all-or-nothing.
+///
+/// The walk writes as it goes, so a bare single pass that fails partway leaves
+/// the subtree half-rewritten: the elements before the unbound prefix carry URIs
+/// resolved against a scope the tree is not in, while the rest keep the old
+/// ones. That state is invisible to serialization (only prefixes are written)
+/// but wrong for XPath, which matches on the resolved URI. So: one pass that
+/// only computes, and - only if every prefix binds - a second that writes.
 unsafe fn resolve_subtree(root: *mut Node, connected: bool) -> i32 {
-    let mut cur = root;
-    while !cur.is_null() {
-        if (*cur).type_ == T_ELEMENT {
-            let st = resolve_node_ns(cur, connected);
-            if st != MUT_OK {
-                return st;
+    /* Both passes run the SAME body - that is the point of the loop rather than
+     * two functions. If the check could drift from the commit, that drift would
+     * be the bug. */
+    for commit in [false, true] {
+        let mut cur = root;
+        while !cur.is_null() {
+            if (*cur).type_ == T_ELEMENT && !ns_is_decided(cur) {
+                let st = resolve_node_ns(cur, connected, commit);
+                if st != MUT_OK {
+                    return st; /* commit == false: nothing written yet */
+                }
             }
+            cur = preorder_next(root, cur);
         }
-        cur = preorder_next(root, cur);
     }
     MUT_OK
 }
@@ -619,8 +666,11 @@ unsafe fn resolve_into(node: *mut Node, context: *mut Node) -> i32 {
     st
 }
 
-/// One arena copy of `src` (own fields + attributes, NOT children).
-unsafe fn copy_one(doc: *mut Doc, src: *const Node, with_ns: bool) -> *mut Node {
+/// One arena copy of `src` (own fields + attributes, NOT children), INCLUDING
+/// its resolved namespace URI. A copy keeps the namespace it had: the URI is the
+/// node identity, so neither cloneNode nor importNode re-derives it from wherever
+/// the copy lands - what the DOM and browsers do.
+unsafe fn copy_one(doc: *mut Doc, src: *const Node) -> *mut Node {
     let n = arena_node(doc, (*src).type_);
     if n.is_null() {
         return n;
@@ -649,10 +699,7 @@ unsafe fn copy_one(doc: *mut Doc, src: *const Node, with_ns: bool) -> *mut Node 
         (*n).value = empty();
     }
     (*n).flags = (*src).flags;
-    if (with_ns || (*src).flags & FLAG_DOM_LOOSE_NAME != 0)
-        && !(*src).ns_uri.is_null()
-        && (*src).ns_uri_len > 0
-    {
+    if !(*src).ns_uri.is_null() && (*src).ns_uri_len > 0 {
         let u = arena_bytes(doc, node_ns(src));
         if u.is_null() {
             return ptr::null_mut();
@@ -663,7 +710,7 @@ unsafe fn copy_one(doc: *mut Doc, src: *const Node, with_ns: bool) -> *mut Node 
     let mut tail: *mut Node = ptr::null_mut();
     let mut a = (*src).attrs;
     while !a.is_null() {
-        let ca = copy_one(doc, a, with_ns); /* an attribute has no children/attrs */
+        let ca = copy_one(doc, a); /* an attribute has no children/attrs */
         if ca.is_null() {
             return ptr::null_mut();
         }
@@ -680,8 +727,8 @@ unsafe fn copy_one(doc: *mut Doc, src: *const Node, with_ns: bool) -> *mut Node 
 }
 
 /// Deep copy of `src`'s subtree (iterative; no recursion).
-unsafe fn deep_copy(doc: *mut Doc, src: *const Node, with_ns: bool) -> Result<*mut Node, i32> {
-    let root = copy_one(doc, src, with_ns);
+unsafe fn deep_copy(doc: *mut Doc, src: *const Node) -> Result<*mut Node, i32> {
+    let root = copy_one(doc, src);
     if root.is_null() {
         return Err(MUT_OOM);
     }
@@ -694,7 +741,7 @@ unsafe fn deep_copy(doc: *mut Doc, src: *const Node, with_ns: bool) -> Result<*m
         let mut dtail: *mut Node = ptr::null_mut();
         let mut sc = (*s).first_child;
         while !sc.is_null() {
-            let dc = copy_one(doc, sc, with_ns);
+            let dc = copy_one(doc, sc);
             if dc.is_null() {
                 return Err(MUT_OOM); /* partial copy abandoned in the arena */
             }
@@ -734,14 +781,14 @@ unsafe fn copied(r: Result<*mut Node, i32>, out: *mut *mut Node) -> i32 {
 }
 
 pub unsafe fn import_subtree(doc: *mut Doc, src: *const Node, out: *mut *mut Node) -> i32 {
-    copied(deep_copy(doc, src, false), out)
+    copied(deep_copy(doc, src), out)
 }
 
 pub unsafe fn clone_node(doc: *mut Doc, src: *const Node, deep: bool, out: *mut *mut Node) -> i32 {
     if deep {
-        return copied(deep_copy(doc, src, true), out);
+        return copied(deep_copy(doc, src), out);
     }
-    *out = copy_one(doc, src, true);
+    *out = copy_one(doc, src);
     if (*out).is_null() {
         MUT_OOM
     } else {
@@ -751,9 +798,9 @@ pub unsafe fn clone_node(doc: *mut Doc, src: *const Node, deep: bool, out: *mut 
 
 pub unsafe fn copy_node(doc: *mut Doc, src: *const Node, deep: bool, out: *mut *mut Node) -> i32 {
     if deep {
-        return copied(deep_copy(doc, src, false), out);
+        return copied(deep_copy(doc, src), out);
     }
-    *out = copy_one(doc, src, false);
+    *out = copy_one(doc, src);
     if (*out).is_null() {
         MUT_OOM
     } else {

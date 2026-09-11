@@ -10,7 +10,8 @@ use crate::chars::{
 use crate::qname::{is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split};
 use crate::{
     bytes, empty, node_local, node_prefix, node_qname, node_value, Doc, Node, ERR_INTERNAL,
-    ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS, MAX_DEPTH, MAX_NS, OK, T_ATTRIBUTE,
+    ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, FLAG_NS_RESOLVED, MAX_ATTRS, MAX_DEPTH, MAX_NS,
+    OK, T_ATTRIBUTE,
     T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
     XML_NS_URI,
 };
@@ -438,6 +439,11 @@ impl<'a> Parser<'a> {
                     (*el).ns_uri_len = l;
                 }
             }
+            /* Decided: from here the URI is the node's identity (lib.rs). A
+             * parsed element in no namespace is resolved too - "no namespace" is
+             * a decision, not an absence, and moving it under a default
+             * namespace must not silently put it in one. */
+            (*el).flags |= FLAG_NS_RESOLVED;
         }
         Ok(())
     }
