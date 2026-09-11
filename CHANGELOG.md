@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+* XPath axes from an **attribute context node** now follow XPath 1.0 §2.2 on the
+  XML backend: `following-sibling` and `preceding-sibling` are empty, and
+  `following` / `preceding` exclude attribute nodes. `@a/following-sibling::node()`
+  used to return the element's later attributes, and `@a/following::node()` both
+  included them and skipped the element's own children, because `mkr_xml_node_t`
+  chains attributes through the same `next`/`prev` fields as tree siblings. A name
+  test never matches an attribute, so only `node()` exposed it. The HTML backend
+  (whose attributes live on a separate Lexbor list) was already correct and is
+  unchanged; both are now asserted.
+
 ## [0.8.0] - 2026-07-12
 
 ### Fixed
