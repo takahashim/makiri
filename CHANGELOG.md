@@ -18,6 +18,10 @@
   roughly a quarter of the cost for the node, a fifth for the value. Both
   backends answer; for XML they are the match `#[]` already made.
 
+  The match is byte-exact, where `#[]` lower-cases what it looks up
+  (`el["DATA-X"]` finds `data-x`). `getAttribute`'s ASCII-lowercasing applies
+  only to an HTML element in an HTML document, so the caller does that step.
+
 ### Fixed
 
 * XPath axes from an **attribute context node** now follow XPath 1.0 §2.2 on the

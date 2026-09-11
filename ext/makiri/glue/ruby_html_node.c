@@ -726,10 +726,15 @@ mkr_node_attribute_nodes(VALUE self)
  * name is exactly `name`, or nil. Nil for non-elements.
  *
  * `#[]` / `#key?` cannot answer this: they go through Lexbor's attribute-name
- * hash, which for an HTML element in an HTML document is keyed by LOCAL name
- * (lxb_dom_element_attr_by_name), so `el["b"]` hands back a prefixed `xml:b`.
- * The DOM's by-name family - getAttribute, setAttribute, removeAttribute - is
- * defined on the qualified name, and needs the exact match.
+ * hash, which is keyed by LOCAL name (lxb_dom_element_attr_by_name), so on an
+ * element carrying a prefixed attribute - `<a xlink:href>` in an inline <svg>,
+ * say - `el["href"]` hands that attribute back. The DOM's by-name family
+ * (getAttribute, setAttribute, removeAttribute) is defined on the qualified
+ * name, where `getAttribute("href")` there is null, and needs the exact match.
+ *
+ * The match is also BYTE-EXACT, where `#[]` lower-cases what it looks up
+ * (`el["DATA-X"]` finds `data-x`). getAttribute's ASCII-lowercasing applies only
+ * to an HTML element in an HTML document, so the caller does that step.
  *
  * The scan is the element's own attribute list (elements carry a handful), and
  * compares the same string #name reports for an Attr. */
@@ -762,7 +767,8 @@ mkr_node_attribute_by_qualified_name(VALUE self, VALUE rb_name)
 /* element.attribute_value_by_qualified_name(name) -> the value String of that
  * attribute, or nil. The same match as #attribute_by_qualified_name, without
  * wrapping an Attr node: this is the shape a DOM `getAttribute` / `hasAttribute`
- * wants, and those run often enough for the wrapper to show up. */
+ * wants, and those run often enough for the wrapper to show up. An empty value
+ * answers "", which is how `hasAttribute` tells it from an absent attribute. */
 static VALUE
 mkr_node_attribute_value_by_qualified_name(VALUE self, VALUE rb_name)
 {

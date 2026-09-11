@@ -355,7 +355,11 @@ mkr_xml_node_aref(VALUE self, VALUE rb_name)
  * are stored under their qualified name, so this is the same match `#[]` makes
  * - but it hands back the node, which the DOM's by-name family needs in order
  * to read the attribute's namespace and prefix. (The HTML side has to look
- * harder: see Makiri::HTML::NodeMethods#attribute_by_qualified_name.) */
+ * harder, and carries the note on case: see
+ * Makiri::HTML::NodeMethods#attribute_by_qualified_name.)
+ *
+ * set_attribute_ns can leave two attributes sharing a qualified name in
+ * different namespaces; the first wins, as getAttribute does. */
 static VALUE
 mkr_xml_node_attribute_by_qualified_name(VALUE self, VALUE rb_name)
 {
