@@ -606,8 +606,12 @@ mkr_xml_has_dom_loose_name(const mkr_xml_node_t *root)
 
 static int mkr_xser_doctype(mkr_buf_t *b, const mkr_xml_node_t *dt);
 
-/* +depth+ counts the frames this walk has already taken, capped at
- * MKR_XML_MAX_DEPTH - the same nesting the READER accepts.
+/* +depth+ is the ELEMENT nesting this walk is already inside, capped at
+ * MKR_XML_MAX_DEPTH - what the READER counts, so exactly the documents it
+ * accepts are the ones that serialize. Counting anything else would refuse
+ * documents the reader takes: a character, comment or PI node at the deepest
+ * element is not another level of nesting, and neither is a fragment (it has no
+ * markup of its own). Only the element case tests and advances it.
  *
  * Two reasons, one of which is the serializer's own contract. A tree built with
  * the factories has no depth limit (only parsing does), so a deeper-than-the-cap
@@ -619,12 +623,12 @@ static int
 mkr_xser_node(mkr_buf_t *b, const mkr_xml_node_t *n, int level, int width,
               const mkr_xser_ns_t *scope, unsigned depth)
 {
-    if (depth >= MKR_XML_MAX_DEPTH) return -1;
     switch (n->type) {
     case MKR_XML_NODE_TYPE_DOCUMENT_TYPE:
         return mkr_xser_doctype(b, n);
     case MKR_XML_NODE_TYPE_ELEMENT: {
-MKR_XSER_LIT(b, "<");
+        if (depth >= MKR_XML_MAX_DEPTH) return -1;
+        MKR_XSER_LIT(b, "<");
 
 /* This element's link: its own xmlns attributes bind here, plus at most
  * one declaration synthesized for its own name. */
@@ -724,7 +728,7 @@ for (const mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
         /* A fragment has no markup of its own: it serializes as its children, in
          * order, spliced together (the same nodes #add_child would insert). */
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
-            if (mkr_xser_node(b, c, level, width, scope, depth + 1) != 0) return -1;
+            if (mkr_xser_node(b, c, level, width, scope, depth) != 0) return -1;
         }
         return 0;
     default:
@@ -1004,9 +1008,10 @@ static int
 mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments,
               unsigned depth)
 {
-    if (depth >= MKR_XML_MAX_DEPTH) return -1;   /* same cap as the reader - see mkr_xser_node */
     switch (n->type) {
     case MKR_XML_NODE_TYPE_ELEMENT: {
+        /* element nesting only, like the reader - see mkr_xser_node */
+        if (depth >= MKR_XML_MAX_DEPTH) return -1;
         MKR_XSER_LIT(b, "<");
         MKR_XSER_APPEND(b, n->qname, n->qname_len);
 
@@ -1083,7 +1088,7 @@ mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments,
         return 0;
     case MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT:
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
-            if (mkr_c14n_node(b, c, 0, comments, depth + 1) != 0) return -1;   /* children are not the apex */
+            if (mkr_c14n_node(b, c, 0, comments, depth) != 0) return -1;       /* a fragment is not a level */
         }
         return 0;
     default:

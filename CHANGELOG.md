@@ -70,8 +70,10 @@
   not read back — breaking the serializer's own contract that the output
   re-parses to the same tree. The walk is recursive, so a deep enough tree also
   exhausted the C stack before it got there, which on a 1 MB stack (the Windows
-  default) happened at a few thousand elements. A tree past the cap is still
-  fine to hold, walk and query; only serializing it is refused.
+  default) happened at a few thousand elements. The cap counts ELEMENT nesting,
+  the way the reader does, so exactly the documents it accepts are the ones that
+  serialize. A tree past the cap is still fine to hold, walk and query; only
+  serializing it is refused.
 
 * Namespace resolution is **all-or-nothing**. It used to write as it walked, so a
   subtree that failed partway — a rejected insert into a scope where one of its

@@ -148,19 +148,45 @@ RSpec.describe "Makiri::XML#to_xml" do
   describe "serialization is bounded (fails closed, never a stack overflow)" do
     # Only PARSING bounds nesting; the factories will build a tree of any depth.
     # Serializing one deeper than the reader accepts would emit XML that Makiri
-    # itself cannot read back, breaking "the output re-parses to the same tree" -
-    # and the walk is recursive, so a deep enough tree would exhaust the C stack
-    # before it got there (a 1 MB stack, which Windows gives by default, runs out
+    # itself cannot read back - which breaks "the output re-parses to the same
+    # tree" - and the walk is recursive, so a deep enough tree would exhaust the
+    # C stack before it got there (a 1 MB stack, the Windows default, runs out
     # around a few thousand frames). Both are refused at the reader's own cap.
+    #
+    # The cap counts ELEMENT nesting, the way the reader does. Anything else
+    # would refuse documents the reader accepts, so the boundary cases below are
+    # what keep the two in step.
     it "round-trips at the deepest nesting the reader accepts" do
-      doc = Makiri::XML("<r>" + ("<a>" * 1023) + ("</a>" * 1023) + "</r>")
+      doc = Makiri::XML("<a>" * 1024 + "</a>" * 1024)
       out = doc.to_xml
       expect(Makiri::XML(out).to_xml).to eq(out)
       expect(doc.root.canonicalize).to be_a(String)
       expect(doc.to_xml(pretty: true)).to be_a(String)   # quadratic but still bounded
     end
 
-    it "fails closed past it instead of emitting XML it could not re-parse" do
+    # A leaf at the deepest element is not another level of nesting.
+    {
+      "text" => "x",
+      "a comment" => "<!--c-->",
+      "CDATA" => "<![CDATA[x]]>",
+      "a processing instruction" => "<?p x?>",
+    }.each do |what, leaf|
+      it "still serializes with #{what} at the deepest element" do
+        doc = Makiri::XML("<a>" * 1024 + leaf + "</a>" * 1024)
+        out = doc.to_xml
+        expect(Makiri::XML(out).to_xml).to eq(out)
+        expect(doc.canonicalize).to be_a(String)
+      end
+    end
+
+    # A fragment has no markup of its own, so it is not a level either.
+    it "does not count a fragment as a level" do
+      doc = Makiri::XML("<r/>")
+      frag = doc.fragment("<a>" * 1024 + "</a>" * 1024)
+      expect(frag.to_xml).to include("<a>")
+    end
+
+    it "fails closed past the cap instead of emitting XML it could not re-parse" do
       doc = Makiri::XML("<r/>")
       cur = doc.root
       8000.times { e = doc.create_element("a"); cur.add_child(e); cur = e }
