@@ -128,6 +128,14 @@ jobs:
         with:
           components: clippy
 
+      # The glue features pull in magnus -> rb-sys, which runs bindgen at build
+      # time to generate bindings against the local Ruby, and bindgen needs
+      # libclang. The runner image ships one, but installing it explicitly is
+      # what keeps a base-image change from turning into "Unable to find
+      # libclang" in the cargo step.
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
