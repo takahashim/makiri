@@ -21,7 +21,9 @@
 //!   step_index.rs the //tag and //tag[N] index fast paths
 //!   funcs.rs      the built-in function library
 //!   eval.rs       node tests, predicates, steps, operators
+//!   html_abi.rs   Lexbor's structs, and the offsets C verifies at load
 //!   ffi_xml.rs    the XML instance's two exported entry points
+//!   ffi_html.rs   the HTML instance's two exported entry points
 //!
 //! What stays in C: the AST allocator / free (`mkr_node_alloc`, `mkr_node_free`)
 //! and the post-parse passes (`mkr_apply_peephole`,
@@ -48,8 +50,12 @@ pub mod attr_pred;
 pub mod axis;
 #[cfg(feature = "xpath-xml")]
 pub mod dom;
+#[cfg(feature = "xpath-html")]
+pub mod html_abi;
 #[cfg(feature = "xpath-xml")]
 pub mod eval;
+#[cfg(feature = "xpath-html")]
+pub mod ffi_html;
 #[cfg(feature = "xpath-xml")]
 pub mod ffi_xml;
 #[cfg(feature = "xpath-xml")]

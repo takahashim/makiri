@@ -242,21 +242,32 @@ end
 #                            (xpath/mkr_xpath_{lex,number,parse}.c)
 #   MAKIRI_RUST_XPATH_XML=1  the XML engine instance         -> `xpath-xml`
 #                            (xpath/mkr_xpath_engine_xml.c; implies the front end)
+#   MAKIRI_RUST_XPATH_HTML=1 the HTML engine instance        -> `xpath-html`
+#                            (xpath/mkr_xpath_engine_html.c; implies the XML one,
+#                            since both instantiate the same generic engine)
 #
 # cargo builds one staticlib into this build dir with the selected features and
 # it is linked like the Lexbor archive; the replaced C sources are dropped from
 # the object list. A feature is what keeps the archive free of the symbols its
 # C counterpart still defines, so the two can never both be linked in.
 rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
-rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
+rust_xpath_html = ENV["MAKIRI_RUST_XPATH_HTML"].to_s.strip == "1"
+rust_xpath_xml = rust_xpath_html || ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
 rust_xpath = rust_xpath_xml || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
 RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
                     .map { |f| File.join(EXT_DIR, "xpath", f) }.freeze
 RUST_XPATH_XML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_xml.c")].freeze
+RUST_XPATH_HTML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_html.c")].freeze
 if rust_xml || rust_xpath
   features = []
   features << "xml" if rust_xml
-  features << (rust_xpath_xml ? "xpath-xml" : "xpath") if rust_xpath
+  features << if rust_xpath_html
+                "xpath-html"
+              elsif rust_xpath_xml
+                "xpath-xml"
+              else
+                "xpath"
+              end if rust_xpath
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -267,6 +278,8 @@ if rust_xml || rust_xpath
   $LDFLAGS << " #{File.join(rust_target, 'release', 'libmakiri_rs.a').shellescape}"
   # Lets the layout cross-check in xpath/mkr_xpath_rs_check.c compile itself in.
   $defs << "-DMAKIRI_RUST_XPATH=1" if rust_xpath
+  # Compiles in the Lexbor shims + the layout cross-check the HTML backend needs.
+  $defs << "-DMAKIRI_RUST_XPATH_HTML=1" if rust_xpath_html
 end
 
 # Recursively pick up C sources under ext/makiri/, excluding standalone
@@ -277,6 +290,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_xml && f.start_with?(File.join(EXT_DIR, "xml") + File::SEPARATOR) }
            .reject { |f| rust_xpath && RUST_XPATH_SRCS.include?(f) }
            .reject { |f| rust_xpath_xml && RUST_XPATH_XML_SRCS.include?(f) }
+           .reject { |f| rust_xpath_html && RUST_XPATH_HTML_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,

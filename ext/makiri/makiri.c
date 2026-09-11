@@ -8,6 +8,10 @@
 /* xpath/mkr_xpath_rs_check.c - only built when the Rust front end is. */
 void mkr_xpath_rs_check(void);
 #endif
+#ifdef MAKIRI_RUST_XPATH_HTML
+/* xpath/mkr_xpath_html_shim.c - only built when the Rust HTML backend is. */
+void mkr_xpath_rs_html_check(void);
+#endif
 
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
@@ -146,6 +150,11 @@ Init_makiri(void)
     /* Before anything can parse: the Rust front end writes C-layout AST nodes,
      * so confirm both sides agree on those layouts (xpath/mkr_xpath_rs_check.c). */
     mkr_xpath_rs_check();
+#endif
+#ifdef MAKIRI_RUST_XPATH_HTML
+    /* Same for Lexbor's layouts, which belong to a pinned dependency rather
+     * than to us (xpath/mkr_xpath_html_shim.c). */
+    mkr_xpath_rs_html_check();
 #endif
     mkr_mMakiri        = rb_define_module("Makiri");
     mkr_cNode          = rb_define_class_under(mkr_mMakiri, "Node",         rb_cObject);

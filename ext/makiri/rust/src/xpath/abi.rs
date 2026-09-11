@@ -373,6 +373,13 @@ pub type FuncResolver = Option<
     ) -> c_int,
 >;
 
+/// Tag-index hooks (HTML only): `lookup` returns the document-ordered bucket of
+/// elements whose tag id matches.
+pub type TagIndexLookup = Option<
+    unsafe extern "C" fn(index: *const c_void, tag_id: usize, count: *mut usize) -> *const *mut c_void,
+>;
+pub type TagIndexForeign = Option<unsafe extern "C" fn(index: *const c_void) -> c_int>;
+
 /// Name-index hooks (XML only): `get` lazily builds and caches the index on the
 /// owning document, `lookup` returns the document-ordered bucket for a name.
 pub type NameIndexGet = Option<unsafe extern "C" fn(owner: *mut c_void) -> *mut c_void>;
@@ -445,6 +452,13 @@ extern "C" {
         name_len: usize,
         out: *mut VerifiedText,
     ) -> c_int;
+
+    /* element index (HTML): a tag-id-keyed bucket of elements in document
+     * order, plus whether the document holds any foreign-namespace element -
+     * the //tag fast path is sound only for pure HTML. */
+    pub fn mkr_ctx_element_index(ctx: *mut Context) -> *mut c_void;
+    pub fn mkr_ctx_tag_lookup(ctx: *mut Context) -> TagIndexLookup;
+    pub fn mkr_ctx_tag_has_foreign(ctx: *mut Context) -> TagIndexForeign;
 
     /* element-name index (XML) */
     pub fn mkr_ctx_name_index_owner(ctx: *mut Context) -> *mut c_void;
