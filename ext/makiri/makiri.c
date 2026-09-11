@@ -4,6 +4,11 @@
 #include "xml/mkr_xml.h"
 #include "xml/mkr_xml_mutate.h"
 
+#ifdef MAKIRI_RUST_XPATH
+/* xpath/mkr_xpath_rs_check.c - only built when the Rust front end is. */
+void mkr_xpath_rs_check(void);
+#endif
+
 VALUE mkr_mMakiri;
 VALUE mkr_cNode;
 VALUE mkr_cDocument;
@@ -137,6 +142,11 @@ mkr_xml_s_decode(VALUE self, VALUE str)
 RUBY_FUNC_EXPORTED void
 Init_makiri(void)
 {
+#ifdef MAKIRI_RUST_XPATH
+    /* Before anything can parse: the Rust front end writes C-layout AST nodes,
+     * so confirm both sides agree on those layouts (xpath/mkr_xpath_rs_check.c). */
+    mkr_xpath_rs_check();
+#endif
     mkr_mMakiri        = rb_define_module("Makiri");
     mkr_cNode          = rb_define_class_under(mkr_mMakiri, "Node",         rb_cObject);
     mkr_cDocument      = rb_define_class_under(mkr_mMakiri, "Document",     mkr_cNode);

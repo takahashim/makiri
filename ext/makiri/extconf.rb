@@ -233,20 +233,36 @@ elsif windows
   $DLDFLAGS << " -Wl,--exclude-all-symbols"
 end
 
-# Spike (opt-in): MAKIRI_RUST_XML=1 replaces ext/makiri/xml/*.c with the Rust
-# port in ext/makiri/rust, which exports the same `mkr_xml_*` C ABI (symbols +
-# struct layouts), so nothing else changes (see notes/rust_rewrite_plan.ja.md
-# §6). cargo builds a staticlib into this build dir and it is linked like the
-# Lexbor archive; the C xml/ sources are dropped from the object list.
+# Spike (opt-in): each MAKIRI_RUST_* flag replaces a set of C sources with the
+# Rust port in ext/makiri/rust, which exports the same C ABI (symbols + struct
+# layouts), so nothing else changes (notes/rust_rewrite_plan.ja.md §6-§7).
+#
+#   MAKIRI_RUST_XML=1    ext/makiri/xml/*.c        -> the `xml` cargo feature
+#   MAKIRI_RUST_XPATH=1  the XPath front end       -> the `xpath` cargo feature
+#                        (xpath/mkr_xpath_{lex,number,parse}.c)
+#
+# cargo builds one staticlib into this build dir with the selected features and
+# it is linked like the Lexbor archive; the replaced C sources are dropped from
+# the object list. A feature is what keeps the archive free of the symbols its
+# C counterpart still defines, so the two can never both be linked in.
 rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
-if rust_xml
-  cargo = find_executable("cargo") or abort "MAKIRI_RUST_XML=1 needs cargo on PATH."
+rust_xpath = ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
+RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
+                    .map { |f| File.join(EXT_DIR, "xpath", f) }.freeze
+if rust_xml || rust_xpath
+  features = []
+  features << "xml" if rust_xml
+  features << "xpath" if rust_xpath
+  cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
-  warn "makiri: building the Rust XML engine (spike) via cargo"
+  warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
   system(cargo, "build", "--release", "--quiet",
          "--manifest-path", File.join(EXT_DIR, "rust", "Cargo.toml"),
-         "--target-dir", rust_target) or abort "cargo build failed for the Rust XML engine."
-  $LDFLAGS << " #{File.join(rust_target, 'release', 'libmakiri_xml.a').shellescape}"
+         "--features", features.join(","),
+         "--target-dir", rust_target) or abort "cargo build failed for the Rust engine."
+  $LDFLAGS << " #{File.join(rust_target, 'release', 'libmakiri_rs.a').shellescape}"
+  # Lets the layout cross-check in xpath/mkr_xpath_rs_check.c compile itself in.
+  $defs << "-DMAKIRI_RUST_XPATH=1" if rust_xpath
 end
 
 # Recursively pick up C sources under ext/makiri/, excluding standalone
@@ -255,6 +271,7 @@ end
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
            .reject { |f| rust_xml && f.start_with?(File.join(EXT_DIR, "xml") + File::SEPARATOR) }
+           .reject { |f| rust_xpath && RUST_XPATH_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,
