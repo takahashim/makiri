@@ -30,7 +30,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   bundle re-exports ~1700 `lxb_*`/`lexbor_*` symbols and another Lexbor-based
   gem in the same process (e.g. `nokolexbor`) binds its `lxb_*` calls to our
   different Lexbor version → segfault. Keep Makiri's Lexbor private; verify with
-  `nm -gU lib/makiri/makiri.bundle | grep -c ' T _lxb_'` → `0`. Every C change
+  `nm -gU lib/makiri/makiri.bundle | grep -c ' T _lxb_'` → `0` (on Linux,
+  `nm -D --defined-only lib/makiri/makiri.so | grep -c ' T lxb_'` → `0`).
+  Every C change
   must stay clean under ASan+UBSan and keep the fuzzer green.
 
 ## Lexbor version
