@@ -157,6 +157,55 @@ jobs:
   # poisoning on), catching intra-arena overflows that a plain ASan build cannot
   # see - the class the v3.0.0 :lexbor-contains overflow belonged to. Heavy
   # (full instrumented Lexbor rebuild), so nightly only.
+  # The randomised property checks (spec/invariants/). Cheap enough to gate a PR
+  # on, so they run on every push; the ASan pass is nightly because an
+  # instrumented build is slow.
+  invariants:
+    name: Invariant checks
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run the invariant checks
+        run: bundle exec rake invariants
+
+  invariants-sanitize:
+    name: Nightly invariant checks under ASan + UBSan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # The text index hands out borrowed slices, so a stale one is a memory bug
+      # as much as a wrong answer - this is the pass that would see it.
+      - name: Run the invariant checks under sanitizers
+        run: bundle exec rake "invariants:sanitize"
+
   security-sanitize-lexbor:
     name: Nightly instrumented-Lexbor ASan suite
     runs-on: ubuntu-latest

@@ -64,6 +64,11 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
 bundle exec rake sanitize          # rebuild ext w/ -fsanitize=address,undefined, run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
+bundle exec rake invariants        # randomized property checks (spec/invariants/):
+                                   # namespaces, tree shape, index staleness,
+                                   # serialization, the text-input contract.
+                                   # INVARIANT_COUNT tunes the sweep;
+                                   # `invariants:sanitize` runs them under ASan
 bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-safety net
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
                                    # so this is the ONLY leak check; flags per-call
@@ -170,6 +175,7 @@ ext/makiri/
   fuzz/                    native libFuzzer harnesses (xml/xpath/xml_xpath; nightly CI)
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
+spec/invariants/           randomized property checks (see its README)
 bench/                     Nokogiri-comparison benchmark
 verify/                    CBMC proof harnesses (rake verify)
 docs/design_doc.ja.md      authoritative design (read this)

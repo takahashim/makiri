@@ -226,6 +226,63 @@ task :sanitize do
   sh(env, "#{FileUtils::RUBY} -S rspec")
 end
 
+# The randomised property checks in spec/invariants/. They are not *_spec.rb, so
+# `rake spec` skips them; they run here and nightly in CI. Each takes
+# [documents] [seed] [html|xml] and is deterministic, so a finding replays.
+INVARIANT_CHECKS = [
+  ["check_ns_reresolve.rb",       %w[]],
+  ["check_import_clone.rb",       %w[]],
+  ["check_tree_invariants.rb",    %w[html xml]],
+  ["check_index_staleness.rb",    %w[html xml]],
+  ["check_serialize_fixpoint.rb", %w[html xml]],
+  ["check_text_input.rb",         nil],           # takes no count
+].freeze
+
+# [[script, argv], ...] for a given document count.
+def invariant_runs(count)
+  INVARIANT_CHECKS.flat_map do |script, backends|
+    path = "spec/invariants/#{script}"
+    next [[path, []]] if backends.nil?
+    next [[path, [count.to_s]]] if backends.empty?
+
+    backends.map { |b| [path, [count.to_s, "20260911", b]] }
+  end
+end
+
+desc "Run the invariant checks (override the document count via INVARIANT_COUNT)"
+task invariants: :compile do
+  count = (ENV["INVARIANT_COUNT"] || 2000).to_i
+  invariant_runs(count).each do |script, argv|
+    sh "#{FileUtils::RUBY} -Ilib #{script} #{argv.join(' ')}"
+  end
+end
+
+desc "Run the invariant checks under AddressSanitizer + UBSan (the text index " \
+     "holds borrowed slices, so staleness there is a memory bug too)"
+task "invariants:sanitize" do
+  sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+  sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
+
+  env = {
+    "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
+                       "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
+    "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+  }
+  if sanitize.include?("address")
+    runtime = asan_runtime_path or
+      abort "invariants:sanitize: could not locate the ASan runtime for #{RbConfig::CONFIG['CC']}"
+    preload = RbConfig::CONFIG["target_os"] =~ /darwin/ ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD"
+    env[preload] = runtime
+    puts "invariants:sanitize: preloading #{runtime} via #{preload}"
+  end
+
+  # Instrumented builds are slow; a smaller sweep still exercises every path.
+  count = (ENV["INVARIANT_COUNT"] || 500).to_i
+  invariant_runs(count).each do |script, argv|
+    sh(env, "#{FileUtils::RUBY} -Ilib #{script} #{argv.join(' ')}")
+  end
+end
+
 desc "Measure C coverage of OUR sources (clang source-based) over the spec suite. " \
      "Prints an llvm-cov region+branch report (excludes vendored Lexbor) and writes " \
      "a line-level detail file to tmp/coverage/show.txt."
