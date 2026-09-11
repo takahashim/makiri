@@ -12,6 +12,7 @@
 //! advancing and keeping the token that was there.
 
 use super::abi::*;
+use super::msg::Bytes;
 use super::lex::{LexErr, Lexer, Tok, Token};
 use crate::err_setf;
 use core::ffi::{c_char, c_void};
@@ -112,16 +113,24 @@ impl<'a> Parser<'a> {
         true
     }
 
-    /// Split a QNAME token at its first ':' into prefix and local. A QNAME token
-    /// always carries one, but the fallback keeps this total.
+    /// Split a QNAME token into prefix and local, and copy both.
     fn fill_qname_split(&mut self, t: &Token, prefix: *mut OwnedText, local: *mut OwnedText) -> bool {
-        let s = self.text(t);
-        let colon = s.iter().position(|&b| b == b':').unwrap_or(s.len());
-        if !self.fill_owned(&s[..colon], prefix) {
-            return false;
-        }
-        let loff = if colon < s.len() { colon + 1 } else { colon };
-        self.fill_owned(&s[loff..], local)
+        let (p, l) = split_qname(self.text(t));
+        self.fill_owned(p, prefix) && self.fill_owned(l, local)
+    }
+}
+
+/// Split a QName at its first ':'.
+///
+/// A QNAME token always carries one - the lexer sets that kind only in the
+/// branch that consumes a ':' - but that invariant lives two modules away and is
+/// invisible here, so this answers "what if there is no colon" once rather than
+/// per call site. Getting it wrong is not a wrong result: a slice index past the
+/// end aborts the process, since a panic cannot become a `Makiri::Error`.
+fn split_qname(s: &[u8]) -> (&[u8], &[u8]) {
+    match s.iter().position(|&b| b == b':') {
+        Some(i) => (&s[..i], &s[i + 1..]),
+        None => (s, b""),
     }
 }
 
@@ -264,18 +273,17 @@ impl<'a> Parser<'a> {
             return self.parse_nodetype_or_name(saved, out);
         }
         if self.kind() == Tok::QName {
-            /* `prefix:local` or `prefix:*` - split at the colon. */
+            /* `prefix:local` or `prefix:*`. */
             let t = self.tok();
-            let s = self.text(&t);
-            let colon = s.iter().position(|&b| b == b':').unwrap_or(s.len());
-            if !self.fill_owned(&s[..colon], unsafe { &raw mut (*out).prefix }) {
+            let (prefix, local) = split_qname(self.text(&t));
+            if !self.fill_owned(prefix, unsafe { &raw mut (*out).prefix }) {
                 return false;
             }
-            if s[colon + 1..] == *b"*" {
+            if local == b"*" {
                 unsafe { (*out).kind = NT_WILDCARD };
             } else {
                 unsafe { (*out).kind = NT_NAME };
-                if !self.fill_owned(&s[colon + 1..], unsafe { &raw mut (*out).local }) {
+                if !self.fill_owned(local, unsafe { &raw mut (*out).local }) {
                     return false;
                 }
             }

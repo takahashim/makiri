@@ -12,6 +12,7 @@
 
 use super::abi::*;
 use super::dom::*;
+use super::order::nodeset_unique_sorted;
 use super::own::Text;
 use super::value::*;
 use crate::err_setf;

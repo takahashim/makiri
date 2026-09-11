@@ -9,30 +9,19 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
+use super::msg::Bytes;
+use super::attr_pred::{attr_pred_matches, match_attr_pred};
+use super::axis::{axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis};
 use super::dom::*;
+use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::funcs::{self, Focus};
+use super::order::nodeset_unique_sorted;
 use super::own::{OwnedVal, Set, Text};
 use super::value::*;
 use crate::err_setf;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
-/* mkr_axis_t, repeated here so the evaluator reads like the grammar. */
-use super::abi::{
-    AXIS_ANCESTOR, AXIS_ANCESTOR_OR_SELF, AXIS_ATTRIBUTE, AXIS_CHILD, AXIS_DESCENDANT,
-    AXIS_DESCENDANT_OR_SELF, AXIS_FOLLOWING, AXIS_FOLLOWING_SIBLING, AXIS_NAMESPACE, AXIS_PARENT,
-    AXIS_PRECEDING, AXIS_PRECEDING_SIBLING, AXIS_SELF,
-};
-
-#[inline]
-fn node_void<D: Dom>(n: D::Node) -> *mut c_void {
-    D::to_void(n)
-}
-
-#[inline]
-unsafe fn void_node<D: Dom>(p: *mut c_void) -> D::Node {
-    D::from_void(p)
-}
 
 /* ---------- node tests ---------- */
 
@@ -141,7 +130,7 @@ unsafe fn resolved_prefix<'a, D: Dom>(
     }
 }
 
-unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
+pub unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
     let mut len = 0usize;
     let p = mkr_ctx_lookup_ns(ctx, prefix.as_ptr() as *const c_char, prefix.len(), &mut len);
     if p.is_null() {
@@ -153,7 +142,7 @@ unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
     }
 }
 
-unsafe fn node_principal_match<D: Dom>(
+pub unsafe fn node_principal_match<D: Dom>(
     test: *const NodeTest,
     node: D::Node,
     axis: u32,
@@ -220,296 +209,6 @@ unsafe fn node_principal_match<D: Dom>(
     }
 }
 
-/* ---------- axis walks ---------- */
-
-/// Pre-order DFS over `context`'s PROPER descendants, calling `visit` on each;
-/// stops as soon as `visit` returns true. The shared body of the descendant and
-/// descendant-or-self axes - the latter only visits `context` first.
-unsafe fn walk_descendants<D: Dom, F: FnMut(D::Node) -> bool>(
-    context: D::Node,
-    visit: &mut F,
-) -> bool {
-    let mut n = D::first_child(context);
-    while !D::is_null(n) && n != context {
-        if visit(n) {
-            return true;
-        }
-        if !D::is_null(D::first_child(n)) {
-            n = D::first_child(n);
-        } else {
-            while n != context && D::is_null(D::next(n)) {
-                n = D::parent(n);
-            }
-            if n == context {
-                break;
-            }
-            n = D::next(n);
-        }
-    }
-    false
-}
-
-/// Where a document-order axis walk starts. For an attribute context node that
-/// is its owner element.
-///
-/// §2.2 keeps attribute nodes out of the following / preceding axes, and §5.3
-/// puts an element's attributes before its children, so a walk beginning at the
-/// attribute itself would have to skip past the rest of the attribute list.
-/// Starting at the owner gets there directly, and matches libxml2:
-/// `following::node()` from an attribute yields what comes after the owner
-/// element's subtree, not the element's own children.
-unsafe fn axis_base<D: Dom>(context: D::Node) -> D::Node {
-    if D::node_type(context) == NTYPE_ATTRIBUTE {
-        let owner = D::parent(context);
-        if !D::is_null(owner) {
-            return owner;
-        }
-    }
-    context
-}
-
-unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
-    axis: u32,
-    context: D::Node,
-    visit: &mut F,
-) -> bool {
-    match axis {
-        AXIS_SELF => visit(context),
-        AXIS_PARENT => {
-            let p = D::parent(context);
-            !D::is_null(p) && visit(p)
-        }
-        AXIS_CHILD => {
-            let mut c = D::first_child(context);
-            while !D::is_null(c) {
-                if visit(c) {
-                    return true;
-                }
-                c = D::next(c);
-            }
-            false
-        }
-        AXIS_ATTRIBUTE => {
-            if D::node_type(context) != NTYPE_ELEMENT {
-                return false;
-            }
-            let mut a = D::first_attr(context);
-            while !D::is_null(a) {
-                if visit(a) {
-                    return true;
-                }
-                a = D::attr_next(a);
-            }
-            false
-        }
-        AXIS_DESCENDANT_OR_SELF => visit(context) || walk_descendants::<D, F>(context, visit),
-        AXIS_DESCENDANT => walk_descendants::<D, F>(context, visit),
-        AXIS_ANCESTOR => {
-            let mut p = D::parent(context);
-            while !D::is_null(p) {
-                if visit(p) {
-                    return true;
-                }
-                p = D::parent(p);
-            }
-            false
-        }
-        AXIS_ANCESTOR_OR_SELF => {
-            let mut p = context;
-            while !D::is_null(p) {
-                if visit(p) {
-                    return true;
-                }
-                p = D::parent(p);
-            }
-            false
-        }
-        /* §2.2: both sibling axes are empty for an attribute context node - an
-         * attribute is not a sibling of anything. */
-        AXIS_FOLLOWING_SIBLING => {
-            if D::node_type(context) == NTYPE_ATTRIBUTE {
-                return false;
-            }
-            let mut s = D::next(context);
-            while !D::is_null(s) {
-                if visit(s) {
-                    return true;
-                }
-                s = D::next(s);
-            }
-            false
-        }
-        AXIS_PRECEDING_SIBLING => {
-            if D::node_type(context) == NTYPE_ATTRIBUTE {
-                return false;
-            }
-            let mut s = D::prev(context);
-            while !D::is_null(s) {
-                if visit(s) {
-                    return true;
-                }
-                s = D::prev(s);
-            }
-            false
-        }
-        AXIS_FOLLOWING => {
-            /* Start at the next node in document order after the base's subtree. */
-            let mut cur = axis_base::<D>(context);
-            while !D::is_null(cur) && D::is_null(D::next(cur)) {
-                cur = D::parent(cur);
-            }
-            if D::is_null(cur) {
-                return false;
-            }
-            cur = D::next(cur);
-            while !D::is_null(cur) {
-                if visit(cur) {
-                    return true;
-                }
-                if !D::is_null(D::first_child(cur)) {
-                    cur = D::first_child(cur);
-                } else {
-                    while !D::is_null(cur) && D::is_null(D::next(cur)) {
-                        cur = D::parent(cur);
-                    }
-                    if !D::is_null(cur) {
-                        cur = D::next(cur);
-                    }
-                }
-            }
-            false
-        }
-        AXIS_PRECEDING => {
-            /* Backward in document order, skipping the context's ancestors, so
-             * the closest preceding node comes first.
-             *
-             * Climbing to a parent reaches an ancestor only when we are climbing
-             * the chain from the context itself, not when climbing back out of a
-             * preceding sibling's subtree - hence the explicit test. It stays
-             * anchored on `context`, not the base: for an attribute context node
-             * the owner element IS an ancestor (§2.2), so starting the walk there
-             * must not emit it. */
-            let mut cur = axis_base::<D>(context);
-            while !D::is_null(cur) {
-                if !D::is_null(D::prev(cur)) {
-                    cur = D::prev(cur);
-                    while !D::is_null(D::last_child(cur)) {
-                        cur = D::last_child(cur);
-                    }
-                    if visit(cur) {
-                        return true;
-                    }
-                } else {
-                    cur = D::parent(cur);
-                    if D::is_null(cur) {
-                        return false;
-                    }
-                    let mut is_ancestor = false;
-                    let mut p = D::parent(context);
-                    while !D::is_null(p) {
-                        if p == cur {
-                            is_ancestor = true;
-                            break;
-                        }
-                        p = D::parent(p);
-                    }
-                    if !is_ancestor && visit(cur) {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        /* The namespace axis is rejected by the step driver before it gets here. */
-        _ => false,
-    }
-}
-
-/* ---------- the [@name] / [@name='lit'] predicate fast path ---------- */
-
-/// The two most common predicate shapes. The generic evaluator services them by
-/// building a throwaway node-set per context node plus a string-cache insert;
-/// recognising the shape filters with a direct attribute lookup instead. Both
-/// are boolean - no position dependence - so this is a pure per-node filter with
-/// the same result as the generic path.
-struct AttrPred<'a> {
-    name: &'a [u8],
-    value: Option<&'a [u8]>,
-}
-
-/// Shape A: a relative path that is one unprefixed attribute name test with no
-/// predicates - `@name`.
-unsafe fn match_attr_step<'a>(n: *const Node) -> Option<&'a [u8]> {
-    if n.is_null() || (*n).kind != NK_PATH || (*n).u.path.absolute != 0 || (*n).u.path.nsteps != 1 {
-        return None;
-    }
-    let s = &*(*n).u.path.steps;
-    if s.axis != AXIS_ATTRIBUTE
-        || s.npredicates != 0
-        || s.test.kind != NT_NAME
-        || !s.test.prefix.ptr.is_null()
-        || s.test.local.ptr.is_null()
-    {
-        return None;
-    }
-    Some(owned_bytes(s.test.local))
-}
-
-/// `[@name]`, or `[@name='lit']` in either operand order.
-unsafe fn match_attr_pred<'a>(p: *const Node) -> Option<AttrPred<'a>> {
-    if let Some(name) = match_attr_step(p) {
-        return Some(AttrPred { name, value: None });
-    }
-    if p.is_null() || (*p).kind != NK_BINOP || (*p).u.binop.op != OP_EQ {
-        return None;
-    }
-    let (lhs, rhs) = ((*p).u.binop.lhs, (*p).u.binop.rhs);
-    let (lit, attr) = if !lhs.is_null() && (*lhs).kind == NK_LITERAL_STR {
-        (lhs, rhs)
-    } else if !rhs.is_null() && (*rhs).kind == NK_LITERAL_STR {
-        (rhs, lhs)
-    } else {
-        return None;
-    };
-    let name = match_attr_step(attr)?;
-    Some(AttrPred { name, value: Some(owned_bytes((*lit).u.literal)) })
-}
-
-/// The attribute whose QUALIFIED name is exactly `name`, case-sensitively.
-///
-/// This scans rather than using the host's attribute lookup, because Lexbor's is
-/// HTML case-INsensitive - which would make `[@Id]` match `id`, diverging from
-/// XPath 1.0, from Nokogiri::HTML5, and from Makiri's own attribute-axis name
-/// test, which compares the qualified name byte for byte. The fast path handles
-/// unprefixed names only, matching that comparison.
-unsafe fn attr_by_qualified_name<D: Dom>(el: D::Node, name: &[u8]) -> D::Node {
-    let mut a = D::first_attr(el);
-    while !D::is_null(a) {
-        if D::attr_qualified_name(a) == name {
-            return a;
-        }
-        a = D::attr_next(a);
-    }
-    D::null()
-}
-
-/// THE single per-node test for a recognised attribute predicate, shared by the
-/// predicate filter and the at_xpath first-match path so the two stay identical
-/// by construction rather than by a hand-kept copy.
-unsafe fn attr_pred_matches<D: Dom>(ap: &AttrPred, n: D::Node) -> bool {
-    if D::node_type(n) != NTYPE_ELEMENT {
-        return false;
-    }
-    let a = attr_by_qualified_name::<D>(n, ap.name);
-    if D::is_null(a) {
-        return false;
-    }
-    match ap.value {
-        None => true,
-        Some(want) => D::attr_value(a) == want,
-    }
-}
-
 /// A path's step list, empty when there are none.
 unsafe fn path_steps<'a>(steps: *mut Step, n: usize) -> &'a [Step] {
     if n == 0 {
@@ -521,7 +220,7 @@ unsafe fn path_steps<'a>(steps: *mut Step, n: usize) -> &'a [Step] {
 
 /// A step's predicate list. Empty when there are none, so the pointer is never
 /// read for a count of zero.
-unsafe fn step_preds<'a>(step: *const Step) -> &'a [*mut Node] {
+pub unsafe fn step_preds<'a>(step: *const Step) -> &'a [*mut Node] {
     if (*step).npredicates == 0 {
         &[]
     } else {
@@ -584,91 +283,6 @@ unsafe fn apply_predicates<D: Dom>(
 }
 
 /* ---------- steps ---------- */
-
-/// Can walking `axis` from distinct context nodes yield the same node twice?
-///
-/// child, attribute and self each anchor a result to one starting node, so
-/// distinct contexts give distinct results. Everything else can overlap: two
-/// contexts share a parent, or sit in an ancestor-descendant relation.
-fn axis_can_alias(a: u32) -> bool {
-    !matches!(a, AXIS_CHILD | AXIS_ATTRIBUTE | AXIS_SELF)
-}
-
-fn axis_is_implemented(a: u32) -> bool {
-    a != AXIS_NAMESPACE && a <= AXIS_ANCESTOR_OR_SELF
-}
-
-fn axis_name(a: u32) -> &'static str {
-    match a {
-        AXIS_ANCESTOR => "ancestor",
-        AXIS_ANCESTOR_OR_SELF => "ancestor-or-self",
-        AXIS_FOLLOWING => "following",
-        AXIS_PRECEDING => "preceding",
-        AXIS_FOLLOWING_SIBLING => "following-sibling",
-        AXIS_PRECEDING_SIBLING => "preceding-sibling",
-        AXIS_NAMESPACE => "namespace",
-        _ => "axis",
-    }
-}
-
-/// A reverse axis in the §2.4 sense: the walker emits in reverse-document order
-/// and proximity position() counts outward from the context node. The step
-/// driver applies predicates in that axis-natural order (so `[1]` is the
-/// closest), then sorts the merged result into document order.
-fn is_reverse_axis(a: u32) -> bool {
-    matches!(
-        a,
-        AXIS_ANCESTOR | AXIS_ANCESTOR_OR_SELF | AXIS_PRECEDING | AXIS_PRECEDING_SIBLING
-    )
-}
-
-/// Is the context exactly the document node? Both index fast paths need that:
-/// `descendant::tag` from the document is precisely "every element named tag",
-/// which is what the index groups.
-unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
-    set.count() == 1 && node_void::<D>(set.get::<D>(0)) == mkr_ctx_document(ctx)
-}
-
-/// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
-/// filled `result`, Ok(false) when the shape does not qualify.
-unsafe fn try_descendant_index<D: Dom>(
-    step: *const Step,
-    context_set: &Set,
-    result: &mut Set,
-    b: &Bindings<D>,
-    err: *mut Error,
-) -> Result<bool, ()> {
-    let test = &raw const (*step).test;
-    if (*step).axis != AXIS_DESCENDANT
-        || (*test).kind != NT_NAME
-        || (*test).local.ptr.is_null()
-        || !context_is_document::<D>(b.ctx, context_set)
-    {
-        return Ok(false);
-    }
-    let ns_uri = if (*test).prefix.ptr.is_null() { None } else { b.pre };
-    if !(*test).prefix.ptr.is_null() && ns_uri.is_none() {
-        return Ok(false); /* eval_step pre-resolves, so this should not happen */
-    }
-    let bucket = match D::name_bucket(b.ctx, owned_bytes((*test).local), ns_uri, b.lax) {
-        Some(bk) => bk,
-        None => return Ok(false),
-    };
-    let limits = mkr_ctx_limits(b.ctx);
-    for &p in bucket.nodes {
-        if mkr_limit_eval_op(limits, err) != 0 {
-            return Err(());
-        }
-        let n = void_node::<D>(p);
-        if bucket.recheck && !node_principal_match::<D>(test, n, (*step).axis, b) {
-            continue;
-        }
-        if !result.push::<D>(n, limits, err) {
-            return Err(());
-        }
-    }
-    Ok(true)
-}
 
 unsafe fn eval_step<D: Dom>(
     ctx: *mut Context,
@@ -819,129 +433,6 @@ unsafe fn eval_step<D: Dom>(
     }
     out.replace(result.take());
     true
-}
-
-/* ---------- the `//name[N]` index fast path ---------- */
-
-/// `//name[N]` - the two leading steps `descendant-or-self::node()` and
-/// `child::name[N]`, rooted at the document - selects, for every node, its Nth
-/// name-child. That is NOT `(//name)[N]` and not `descendant::name[N]`.
-///
-/// The index lists matching elements in document order, so a parent's
-/// name-children appear among them in child order: one sweep with a
-/// pointer-keyed parent -> count map emits exactly those whose running count
-/// reaches N, already in document order, with no sort or dedup.
-unsafe fn nth_shape<D: Dom>(
-    ctx: *mut Context,
-    s0: *const Step,
-    s1: *const Step,
-    seed: &Set,
-) -> Option<usize> {
-    if (*s0).axis != AXIS_DESCENDANT_OR_SELF
-        || (*s0).test.kind != NT_NODE
-        || !(*s0).test.prefix.ptr.is_null()
-        || (*s0).npredicates != 0
-    {
-        return None;
-    }
-    if (*s1).axis != AXIS_CHILD
-        || (*s1).test.kind != NT_NAME
-        || (*s1).test.local.ptr.is_null()
-        || (*s1).npredicates != 1
-    {
-        return None;
-    }
-    /* The sole predicate must be a bare positive-integer literal, which is
-     * position() == N. `[position()=N]` and `[last()]` are binops or calls and
-     * fall back. */
-    let pred = step_preds(s1)[0];
-    if pred.is_null() || (*pred).kind != NK_LITERAL_NUM {
-        return None;
-    }
-    let dn = (*pred).u.literal_num;
-    /* NaN is spelled out rather than left to a negated comparison: `[NaN]`
-     * must fall back, and `!(dn >= 1.0)` says so only by accident. */
-    if dn.is_nan() || dn < 1.0 || dn != dn.trunc() || dn > usize::MAX as f64 {
-        return None;
-    }
-    if !context_is_document::<D>(ctx, seed) {
-        return None;
-    }
-    Some(dn as usize)
-}
-
-unsafe fn try_descendant_index_nth<D: Dom>(
-    ctx: *mut Context,
-    s0: *const Step,
-    s1: *const Step,
-    seed: &Set,
-    result: &mut Set,
-    err: *mut Error,
-) -> Result<bool, ()> {
-    let need = match nth_shape::<D>(ctx, s0, s1, seed) {
-        Some(n) => n,
-        None => return Ok(false),
-    };
-    let test = &raw const (*s1).test;
-    let ns_uri: Option<&[u8]> = if (*test).prefix.ptr.is_null() {
-        None
-    } else {
-        match lookup_ns(ctx, owned_bytes((*test).prefix)) {
-            Some(u) => Some(u),
-            None => {
-                err_setf!(
-                    err,
-                    XP_ERR_RUNTIME,
-                    "unknown namespace prefix '{}' in name test",
-                    Bytes(owned_bytes((*test).prefix))
-                );
-                return Err(());
-            }
-        }
-    };
-    let b = Bindings::<D>::new(ctx, ns_uri);
-    let bucket = match D::name_bucket(ctx, owned_bytes((*test).local), ns_uri, b.lax) {
-        Some(bk) => bk,
-        None => return Ok(false),
-    };
-    if bucket.nodes.is_empty() {
-        return Ok(true);
-    }
-
-    /* A pointer-keyed count per parent. Sized from the bucket so the open
-     * addressing stays under a 2/3 load; an overflow in the sizer falls back to
-     * the generic evaluator rather than risking a table that never finds a slot. */
-    let want = bucket.nodes.len() + (bucket.nodes.len() >> 1) + 1;
-    let cap = want.checked_next_power_of_two().ok_or(())?;
-    let mut tab: Vec<(*const c_void, usize)> = Vec::new();
-    if tab.try_reserve_exact(cap).is_err() {
-        err_setf!(err, XP_ERR_OOM, "out of memory (//name[N])");
-        return Err(());
-    }
-    tab.resize(cap, (ptr::null(), 0));
-    let mask = cap - 1;
-    let limits = mkr_ctx_limits(ctx);
-
-    for &p in bucket.nodes {
-        if mkr_limit_eval_op(limits, err) != 0 {
-            return Err(());
-        }
-        let e = void_node::<D>(p);
-        if bucket.recheck && !node_principal_match::<D>(test, e, (*s1).axis, &b) {
-            continue;
-        }
-        let par = node_void::<D>(D::parent(e)) as *const c_void;
-        let mut h = (ptr_hash(par) as usize) & mask;
-        while !tab[h].0.is_null() && tab[h].0 != par {
-            h = (h + 1) & mask;
-        }
-        tab[h].0 = par;
-        tab[h].1 += 1;
-        if tab[h].1 == need && !result.push::<D>(e, limits, err) {
-            return Err(());
-        }
-    }
-    Ok(true)
 }
 
 unsafe fn eval_steps<D: Dom>(
@@ -1256,28 +747,36 @@ pub unsafe fn try_first_match<D: Dom>(
     let test = &raw const (*step).test;
 
     /* Reproduce the step driver's prefix validation, so the fast path stays
-     * identical to the full evaluator down to the errors. */
-    if !(*test).prefix.ptr.is_null() && lookup_ns(ctx, owned_bytes((*test).prefix)).is_none() {
-        err_setf!(
-            err,
-            XP_ERR_RUNTIME,
-            "unknown namespace prefix '{}' in name test",
-            Bytes(owned_bytes((*test).prefix))
-        );
-        return Err(());
-    }
+     * identical to the full evaluator down to the errors - and keep what it
+     * resolved, so the walk below does not look the prefix up again per node. */
+    let pre = if (*test).prefix.ptr.is_null() {
+        None
+    } else {
+        match lookup_ns(ctx, owned_bytes((*test).prefix)) {
+            Some(u) => Some(u),
+            None => {
+                err_setf!(
+                    err,
+                    XP_ERR_RUNTIME,
+                    "unknown namespace prefix '{}' in name test",
+                    Bytes(owned_bytes((*test).prefix))
+                );
+                return Err(());
+            }
+        }
+    };
 
     let start: D::Node = if (*ast).u.path.absolute != 0 {
-        void_node::<D>(mkr_ctx_document(ctx))
+        D::from_void(mkr_ctx_document(ctx))
     } else {
-        void_node::<D>(mkr_ctx_node(ctx))
+        D::from_void(mkr_ctx_node(ctx))
     };
     if D::is_null(start) {
         return Ok(Some(D::null())); /* recognised; no context means no match */
     }
 
     let limits = mkr_ctx_limits(ctx);
-    let b = Bindings::<D>::new(ctx, None);
+    let b = Bindings::<D>::new(ctx, pre);
     let mut n = D::first_child(start);
     while !D::is_null(n) {
         if mkr_limit_eval_op(limits, err) != 0 {
@@ -1319,7 +818,7 @@ unsafe fn eval_path<D: Dom>(
             err_setf!(err, XP_ERR_RUNTIME, "absolute path with no document");
             return false;
         }
-        if !seed.push::<D>(void_node::<D>(root), limits, err) {
+        if !seed.push::<D>(D::from_void(root), limits, err) {
             return false;
         }
     } else if !seed.push::<D>(self_node, limits, err) {
@@ -1419,7 +918,7 @@ unsafe fn eval_fncall<D: Dom>(
             Some(resolver) => resolver(
                 mkr_xpath_get_user_data(ctx),
                 ctx,
-                node_void::<D>(focus.node),
+                D::to_void(focus.node),
                 focus.pos,
                 focus.size,
                 ns_uri.map_or(ptr::null(), |u| u.as_ptr() as *const c_char),
@@ -1678,7 +1177,7 @@ pub unsafe fn eval_ast<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
-    let focus = Focus::<D> { node: void_node::<D>(mkr_ctx_node(ctx)), pos: 1, size: 1 };
+    let focus = Focus::<D> { node: D::from_void(mkr_ctx_node(ctx)), pos: 1, size: 1 };
     eval_node::<D>(ctx, ast, &focus, out, err)
 }
 
