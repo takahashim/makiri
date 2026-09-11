@@ -36,17 +36,17 @@
 #   E6 the NUL two-tier   accepted in HTML data content, refused in names and
 #                         engine input; Makiri::XML refuses it everywhere
 
-require "makiri"
+require_relative "support"
 
 SYNTAX = %w[< > " ' &].freeze
 MB_ENCODINGS = %w[Shift_JIS EUC-JP Windows-31J].freeze
 INVALID_UTF8 = "\xC3".b.force_encoding("UTF-8")
 NUL = "a\x00b"
 
-$fail = 0
+TALLY = Tally.new
 
 def row(label, ok, extra = "")
-  $fail += 1 unless ok
+  ok ? TALLY.ok(:held) : TALLY.bad(:departed)
   puts format("  %-44s %s %s", label, ok ? "OK" : "NG", extra)
 end
 
@@ -261,5 +261,5 @@ expect_raise("  create_element")   { x.create_element(NUL) }
 
 puts
 puts "=" * 72
-puts $fail.zero? ? "the contract holds" : "*** #{$fail} departures from the contract"
-exit($fail.zero? ? 0 : 1)
+puts TALLY.failed? ? "*** #{TALLY[:departed]} departures from the contract" : "the contract holds"
+exit(TALLY.exit_status)

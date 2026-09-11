@@ -39,20 +39,10 @@
 #   MAKIRI_SANITIZE=address,undefined bundle exec rake compile
 #   DYLD_INSERT_LIBRARIES=<asan.dylib> ruby -Ilib spec/invariants/check_tree_invariants.rb 500
 
-require "makiri"
+require_relative "support"
 
 TAGS = %w[div span b i section ul li].freeze
 MAX_DEPTH = 40
-
-class Rng
-  def initialize(seed) = @s = seed
-  def next_int(n)
-    @s = (@s * 1_103_515_245 + 12_345) % 2_147_483_648
-    n.zero? ? 0 : (@s / 65_536) % n
-  end
-  def pick(list) = list[next_int(list.length)]
-  def chance(num, den) = next_int(den) < num
-end
 
 def build_html(rng)
   body = Array.new(2 + rng.next_int(3)) { build_el(rng, 2) }.join
@@ -62,9 +52,6 @@ end
 def build_xml(rng)
   "<root>#{Array.new(2 + rng.next_int(3)) { build_el(rng, 2) }.join}</root>"
 end
-
-# Where the edits happen: <body> for HTML, the root element for XML.
-def container_of(doc) = doc.at_css("body") || doc.root
 
 def build_el(rng, depth)
   tag = rng.pick(TAGS)
@@ -133,16 +120,6 @@ def reaches_root?(node, root)
     steps += 1
   end
   false
-end
-
-def elements(node, acc = [])
-  node.children.each do |c|
-    next unless c.node_type == 1
-
-    acc << c
-    elements(c, acc)
-  end
-  acc
 end
 
 def ancestor?(node, maybe_desc)

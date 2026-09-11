@@ -26,10 +26,12 @@ lxb_dom_attr_qualified_name_append(lexbor_hash_t *hash, const lxb_char_t *name,
  * DOM mutation (v0.2). Thin wrappers over Lexbor's insert/remove/create
  * functions, with the safety checks Lexbor itself omits:
  *
- *   - same-document: a node can only be inserted into its own document
- *     (cross-document moves would splice foreign-arena pointers);
  *   - no cycles: a node cannot become a descendant of itself;
  *   - attribute nodes are not tree children.
+ *
+ * A node from another document is ADOPTED, as the DOM says appendChild does: it
+ * cannot be relinked across arenas, so it is copied here and released there
+ * (mkr_adopt_copy / mkr_adopt_release), and the verb hands back the copy.
  *
  * We never destroy detached nodes: the document arena owns all node memory and
  * frees it wholesale, and live Ruby wrappers may still point at a removed node.
@@ -57,17 +59,51 @@ mkr_arg_node(VALUE v)
     return mkr_html_node_unwrap(v);
 }
 
-/* Validate that `incoming` may be placed relative to `ref`, detach it from any
- * current parent (move semantics), and return the node to actually insert.
- *
- * A node from ANOTHER document is adopted: Lexbor's arenas own their own nodes,
- * so it cannot be relinked across them - it is deep-imported here and taken out
- * of the document it came from, which is the move the DOM says appendChild
- * performs. The returned node is therefore not always the one passed in, and
- * the caller returns it rather than its argument. Raises on the unsafe cases. */
+/* Copy +node+ into +doc+, for a node that came from another document. Lexbor's
+ * arenas own their own nodes, so it cannot be relinked across them; the copy is
+ * this half of the DOM's adopt, and mkr_adopt_release is the other. */
 static lxb_dom_node_t *
-mkr_prepare_insert(lxb_dom_node_t *ref, lxb_dom_node_t *incoming)
+mkr_adopt_copy(lxb_dom_document_t *doc, lxb_dom_node_t *node)
 {
+    return mkr_html_import_deep(doc, node);
+}
+
+/* The other half: take +node+ out of the document it came from, so the whole
+ * thing reads as the move the DOM says appendChild performs.
+ *
+ * Called only AFTER the insert has gone through, so a refused one leaves the
+ * source document alone - the same ordering the XML backend uses. */
+static void
+mkr_adopt_release(lxb_dom_node_t *node)
+{
+    if (node->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT) {
+        /* A fragment contributes its children; the DOM leaves a spliced one
+         * empty, so empty the source rather than detaching it. */
+        lxb_dom_node_t *c;
+        while ((c = node->first_child) != NULL) lxb_dom_node_remove(c);
+    } else if (node->parent != NULL) {
+        lxb_dom_node_remove(node);
+    }
+}
+
+/* Validate that `rb_incoming` may be placed relative to `ref`, detach it from
+ * any current parent (move semantics), and return the node to actually insert.
+ *
+ * For a node from another document that is its copy (see mkr_adopt_copy), so
+ * the returned node is not always the one passed in and the caller must insert
+ * - and hand back - what this returns. *+adopt_from+ receives the argument in
+ * that case, for mkr_inserted_result to release once the insert has gone
+ * through; Qnil otherwise. Holding the Ruby VALUE, rather than the raw node,
+ * also keeps the source document reachable until then - the same protocol the
+ * XML backend uses (mkr_xml_incoming_node / mkr_xml_adopt_finish).
+ *
+ * Raises on the unsafe cases. */
+static lxb_dom_node_t *
+mkr_prepare_insert(lxb_dom_node_t *ref, VALUE rb_incoming, VALUE *adopt_from)
+{
+    lxb_dom_node_t *incoming = mkr_arg_node(rb_incoming);
+
+    *adopt_from = Qnil;
     if (incoming->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
         rb_raise(mkr_eError, "an attribute node cannot be inserted into the tree");
     }
@@ -78,21 +114,26 @@ mkr_prepare_insert(lxb_dom_node_t *ref, lxb_dom_node_t *incoming)
         }
     }
     if (ref->owner_document != incoming->owner_document) {
-        lxb_dom_node_t *adopted = mkr_html_import_deep(ref->owner_document, incoming);
-        if (incoming->type == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT) {
-            /* A fragment contributes its children; the DOM leaves a spliced one
-             * empty, so empty the source rather than detaching it. */
-            lxb_dom_node_t *c;
-            while ((c = incoming->first_child) != NULL) lxb_dom_node_remove(c);
-        } else if (incoming->parent != NULL) {
-            lxb_dom_node_remove(incoming);
-        }
-        return adopted;
+        *adopt_from = rb_incoming;
+        return mkr_adopt_copy(ref->owner_document, incoming);
     }
     if (incoming->parent != NULL) {
         lxb_dom_node_remove(incoming);
     }
     return incoming;
+}
+
+/* The value an insertion verb hands back: its argument, or - when the node was
+ * adopted - the node now in the tree, which is a different object. Finishing the
+ * adoption here keeps the release after the insert, where it belongs. */
+static VALUE
+mkr_inserted_result(VALUE self, VALUE rb_arg, lxb_dom_node_t *inserted,
+                    VALUE adopt_from)
+{
+    if (NIL_P(adopt_from)) return rb_arg;
+
+    mkr_adopt_release(mkr_arg_node(adopt_from));
+    return mkr_wrap_html_node(inserted, mkr_node_document(self));
 }
 
 /* WHATWG doctype ordering at the document node (https://dom.spec.whatwg.org/#concept-node-ensure-pre-insertion-validity),
@@ -210,13 +251,12 @@ static VALUE
 mkr_node_add_child(VALUE self, VALUE rb_child)
 {
     lxb_dom_node_t *parent = mkr_node_unwrap_mutable(self);
-    lxb_dom_node_t *child  = mkr_arg_node(rb_child);
-    mkr_guard_doc_child_order(parent, NULL, NULL, child);   /* append: before == NULL */
-    lxb_dom_node_t *ins = mkr_prepare_insert(parent, child);
+    mkr_guard_doc_child_order(parent, NULL, NULL, mkr_arg_node(rb_child));   /* append */
+    VALUE adopt_from;
+    lxb_dom_node_t *ins = mkr_prepare_insert(parent, rb_child, &adopt_from);
     mkr_splice_or_insert(parent, ins, lxb_dom_node_insert_child, 0);
     mkr_invalidate_index(self);
-    /* An adopted node is a different node: hand back the one now in the tree. */
-    return ins == child ? rb_child : mkr_wrap_html_node(ins, mkr_node_document(self));
+    return mkr_inserted_result(self, rb_child, ins, adopt_from);
 }
 
 /* node << child -> node (chainable). */
@@ -231,30 +271,30 @@ static VALUE
 mkr_node_add_previous_sibling(VALUE self, VALUE rb_node)
 {
     lxb_dom_node_t *ref  = mkr_node_unwrap_mutable(self);
-    lxb_dom_node_t *node = mkr_arg_node(rb_node);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
-    mkr_guard_doc_child_order(ref->parent, ref, NULL, node);   /* inserted before ref */
-    lxb_dom_node_t *ins = mkr_prepare_insert(ref, node);
+    mkr_guard_doc_child_order(ref->parent, ref, NULL, mkr_arg_node(rb_node));
+    VALUE adopt_from;
+    lxb_dom_node_t *ins = mkr_prepare_insert(ref, rb_node, &adopt_from);
     mkr_splice_or_insert(ref, ins, lxb_dom_node_insert_before, 0);
     mkr_invalidate_index(self);
-    return ins == node ? rb_node : mkr_wrap_html_node(ins, mkr_node_document(self));
+    return mkr_inserted_result(self, rb_node, ins, adopt_from);
 }
 
 static VALUE
 mkr_node_add_next_sibling(VALUE self, VALUE rb_node)
 {
     lxb_dom_node_t *ref  = mkr_node_unwrap_mutable(self);
-    lxb_dom_node_t *node = mkr_arg_node(rb_node);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot add a sibling to a node with no parent");
     }
-    mkr_guard_doc_child_order(ref->parent, ref->next, NULL, node);   /* inserted after ref */
-    lxb_dom_node_t *ins = mkr_prepare_insert(ref, node);
+    mkr_guard_doc_child_order(ref->parent, ref->next, NULL, mkr_arg_node(rb_node));
+    VALUE adopt_from;
+    lxb_dom_node_t *ins = mkr_prepare_insert(ref, rb_node, &adopt_from);
     mkr_splice_or_insert(ref, ins, lxb_dom_node_insert_after, 1);
     mkr_invalidate_index(self);
-    return ins == node ? rb_node : mkr_wrap_html_node(ins, mkr_node_document(self));
+    return mkr_inserted_result(self, rb_node, ins, adopt_from);
 }
 
 /* node.remove / node.unlink -> node. Detaches from the tree (still usable). */
@@ -277,16 +317,16 @@ static VALUE
 mkr_node_replace(VALUE self, VALUE rb_other)
 {
     lxb_dom_node_t *ref   = mkr_node_unwrap_mutable(self);
-    lxb_dom_node_t *other = mkr_arg_node(rb_other);
     if (ref->parent == NULL) {
         rb_raise(mkr_eError, "cannot replace a node with no parent");
     }
-    mkr_guard_doc_child_order(ref->parent, ref, ref, other);   /* other takes ref's slot */
-    lxb_dom_node_t *ins = mkr_prepare_insert(ref, other);
+    mkr_guard_doc_child_order(ref->parent, ref, ref, mkr_arg_node(rb_other));
+    VALUE adopt_from;
+    lxb_dom_node_t *ins = mkr_prepare_insert(ref, rb_other, &adopt_from);
     mkr_splice_or_insert(ref, ins, lxb_dom_node_insert_before, 0);
     lxb_dom_node_remove(ref);
     mkr_invalidate_index(self);
-    return rb_other;
+    return mkr_inserted_result(self, rb_other, ins, adopt_from);
 }
 
 /* ------------------------------------------------------------------ */

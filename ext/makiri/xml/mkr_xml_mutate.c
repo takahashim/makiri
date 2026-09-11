@@ -518,12 +518,6 @@ mkr_xml_new_document_type(mkr_xml_doc_t *doc, const char *name, uint32_t nlen,
 static mkr_xml_mut_status_t
 resolve_node_ns(mkr_xml_node_t *e, int connected, int commit)
 {
-    /* Already decided (parsed, or resolved at an earlier insertion): the URI is
-     * the node's identity, so leave it and its attributes alone. This is what
-     * makes a move keep namespaceURI, the way the DOM and browsers do; the
-     * serializer emits whatever declarations the output needs. */
-    if (e->flags & MKR_XML_NODE_FLAG_NS_RESOLVED) return MKR_XML_MUT_OK;
-
     const char *uri; uint32_t ulen;
     mkr_xml_mut_status_t st = MKR_XML_MUT_OK;
     if ((e->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) == 0) {
@@ -553,12 +547,27 @@ resolve_node_ns(mkr_xml_node_t *e, int connected, int commit)
  * That state is invisible to serialization (only prefixes are written) but wrong
  * for XPath, which matches on the resolved URI. So: one pass that only computes,
  * and - only if every prefix in the subtree binds - a second that writes. */
+/* True once +e+'s namespace has been decided - by the parser, or by resolving it
+ * against the context it was first inserted into. From then on the URI is the
+ * node's identity, so a later move must NOT re-derive it: that is what makes
+ * namespaceURI survive a move the way the DOM and browsers have it, and the
+ * serializer emits whatever declarations the output needs to reproduce it. */
+static int
+mkr_xml_ns_is_decided(const mkr_xml_node_t *e)
+{
+    return (e->flags & MKR_XML_NODE_FLAG_NS_RESOLVED) != 0;
+}
+
 static mkr_xml_mut_status_t
 resolve_subtree(mkr_xml_node_t *root, int connected)
 {
+    /* Both passes run the SAME body - that is the point of the loop rather than
+     * two named functions. If the check and the commit could drift apart, the
+     * drift would be the bug. */
     for (int commit = 0; commit <= 1; commit++) {
         for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
             if (cur->type != MKR_XML_NODE_TYPE_ELEMENT) continue;
+            if (mkr_xml_ns_is_decided(cur)) continue;
             mkr_xml_mut_status_t st = resolve_node_ns(cur, connected, commit);
             if (st != MKR_XML_MUT_OK) return st;   /* commit == 0: nothing written yet */
         }

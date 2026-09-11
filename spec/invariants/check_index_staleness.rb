@@ -43,20 +43,10 @@
 #   MAKIRI_SANITIZE=address,undefined bundle exec rake compile
 #   DYLD_INSERT_LIBRARIES=<asan.dylib> ruby -Ilib spec/invariants/check_index_staleness.rb 500
 
-require "makiri"
+require_relative "support"
 
 TAGS = %w[div span b i p section ul li].freeze
 IDS = %w[k0 k1 k2 k3].freeze
-
-class Rng
-  def initialize(seed) = @s = seed
-  def next_int(n)
-    @s = (@s * 1_103_515_245 + 12_345) % 2_147_483_648
-    n.zero? ? 0 : (@s / 65_536) % n
-  end
-  def pick(list) = list[next_int(list.length)]
-  def chance(num, den) = next_int(den) < num
-end
 
 def build_el(rng, depth)
   tag = rng.pick(TAGS)
@@ -78,8 +68,6 @@ def build_xml(rng)
   "<root>#{Array.new(2 + rng.next_int(3)) { build_el(rng, 2) }.join}</root>"
 end
 
-def container_of(doc) = doc.at_css("body") || doc.root
-
 # --- the paths that do NOT use an index -------------------------------
 
 # A subtree's text, read only from the leaves, so the subtree index is never
@@ -94,16 +82,6 @@ def walk_text(node, out = +"")
   out
 end
 
-def walk_elements(node, acc = [])
-  node.children.each do |c|
-    next unless c.node_type == 1
-
-    acc << c
-    walk_elements(c, acc)
-  end
-  acc
-end
-
 class Stale < StandardError; end
 
 def ids(nodes) = nodes.map(&:pointer_id)
@@ -111,7 +89,7 @@ def ids(nodes) = nodes.map(&:pointer_id)
 def check_indexes(rng, doc)
   bad = []
   root = doc.root
-  all = walk_elements(root)
+  all = elements(root)
 
   # T1
   targets = [root]
@@ -164,7 +142,7 @@ end
 # around.
 def apply_edit(rng, doc)
   body = container_of(doc) or return nil
-  els = walk_elements(body)
+  els = elements(body)
   return nil if els.empty?
 
   target = rng.pick(els)
