@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::chars::{decode1, is_name_start, validate_name};
+use crate::xml::chars::{decode1, is_name_start, validate_name};
 
 /// A QName split into its parts as OFFSETS into the name (prefix is always
 /// at offset 0; prefix_len 0 = unprefixed).
@@ -92,9 +92,9 @@ pub fn is_yes_no(s: &[u8]) -> bool {
 /// a comment, "]]>" in CDATA, "?>" in a PI. mkr_xml_check_value_seq.
 pub fn value_seq_ok(node_type: u32, text: &[u8]) -> bool {
     match node_type {
-        crate::T_COMMENT => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
-        crate::T_CDATA => !text.windows(3).any(|w| w == b"]]>"),
-        crate::T_PI => !text.windows(2).any(|w| w == b"?>"),
+        crate::xml::T_COMMENT => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
+        crate::xml::T_CDATA => !text.windows(3).any(|w| w == b"]]>"),
+        crate::xml::T_PI => !text.windows(2).any(|w| w == b"?>"),
         _ => true,
     }
 }

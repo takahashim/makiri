@@ -2,8 +2,8 @@
 //! document-ordered elements bearing it. Lazily built, cached on the document,
 //! dropped by `invalidate` from the single mutation hook.
 
-use crate::arena::preorder_next;
-use crate::{node_local, node_ns, Doc, Node, T_ELEMENT};
+use crate::xml::arena::preorder_next;
+use crate::xml::{node_local, node_ns, Doc, Node, T_ELEMENT};
 use core::ffi::{c_char, c_void};
 use core::hash::{BuildHasherDefault, Hasher};
 use core::ptr;

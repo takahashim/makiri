@@ -2,13 +2,13 @@
 //! over the input; the unsafe blocks are confined to arena allocation and to
 //! linking / reading the C-layout nodes.
 
-use crate::arena::{append_child, arena_bytes, arena_cut, arena_node, doc_destroy, doc_new, qname_assign};
-use crate::chars::{
+use crate::xml::arena::{append_child, arena_bytes, arena_cut, arena_node, doc_destroy, doc_new, qname_assign};
+use crate::xml::chars::{
     decode1, expand_into, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
     validate_chars, ExpandErr, ExpandMode,
 };
-use crate::qname::{is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split};
-use crate::{
+use crate::xml::qname::{is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split};
+use crate::xml::{
     bytes, empty, node_local, node_prefix, node_qname, node_value, Doc, Node, ERR_INTERNAL,
     ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, FLAG_NS_RESOLVED, MAX_ATTRS, MAX_DEPTH, MAX_NS,
     OK, T_ATTRIBUTE,
@@ -281,7 +281,7 @@ impl<'a> Parser<'a> {
 
     /// Store `name` (prefix:local per `sp`) as one arena copy on `node`.
     fn set_node_qname(&mut self, node: *mut Node, name: &[u8], sp: &Split) -> R {
-        let qn = crate::qname_from(name, sp);
+        let qn = crate::xml::qname_from(name, sp);
         if unsafe { qname_assign(self.doc, node, &qn) } != 0 {
             return self.oom();
         }
@@ -492,7 +492,7 @@ impl<'a> Parser<'a> {
             while !a.is_null() {
                 let mut b = (*a).next;
                 while !b.is_null() {
-                    if node_local(a) == node_local(b) && crate::node_ns(a) == crate::node_ns(b) {
+                    if node_local(a) == node_local(b) && crate::xml::node_ns(a) == crate::xml::node_ns(b) {
                         return self.syntax();
                     }
                     b = (*b).next;

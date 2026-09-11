@@ -5,7 +5,7 @@
 //! This module is inherently unsafe: it hands out raw memory that the C side
 //! reads through `mkr_xml_node_t` field access.
 
-use crate::{
+use crate::xml::{
     bytes, empty, index, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM, MAX_BYTES,
     MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT,
     T_PI, T_TEXT,

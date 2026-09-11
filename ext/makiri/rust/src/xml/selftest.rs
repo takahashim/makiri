@@ -3,9 +3,9 @@
 //! exercises the Rust engine exactly as it did the C one. Test code: raw
 //! pointer walks are expected here.
 
-use crate::arena::{arena_alloc, arena_bytes, arena_node, doc_destroy, doc_new};
-use crate::tree::{parse_ex_raw, parse_fragment_raw};
-use crate::{
+use crate::xml::arena::{arena_alloc, arena_bytes, arena_node, doc_destroy, doc_new};
+use crate::xml::tree::{parse_ex_raw, parse_fragment_raw};
+use crate::xml::{
     mutate, node_local, node_ns, node_prefix, node_value, qname, Doc, Node, QName, ERR_LIMIT,
     ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, MUT_BAD_CHARS, MUT_BAD_NS_DECL, MUT_CYCLE,
     MUT_HIERARCHY, MUT_OK, MUT_UNBOUND_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE,
@@ -87,7 +87,7 @@ pub unsafe fn node_selftest() -> i32 {
         || (*root).type_ != T_ELEMENT
         || local.is_null()
         || local as *const u8 == nm.as_ptr()
-        || crate::bytes(local, 4) != b"Feed"
+        || crate::xml::bytes(local, 4) != b"Feed"
     {
         doc_destroy(doc);
         return idx;
@@ -105,7 +105,7 @@ pub unsafe fn node_selftest() -> i32 {
             doc_destroy(doc);
             return idx;
         }
-        crate::arena::append_child(root, c);
+        crate::xml::arena::append_child(root, c);
     }
     let mut cnt = 0;
     let mut c = (*root).first_child;
@@ -171,7 +171,7 @@ pub unsafe fn node_selftest() -> i32 {
     idx += 1; /* 8: fail-closed on a NULL document */
     if !arena_node(ptr::null_mut(), T_ELEMENT).is_null()
         || !arena_bytes(ptr::null_mut(), b"x").is_null()
-        || crate::arena::arena_spanbuf(ptr::null_mut(), 1).ok
+        || crate::xml::arena::arena_spanbuf(ptr::null_mut(), 1).ok
     {
         return idx;
     }
@@ -706,7 +706,7 @@ pub unsafe fn parse_selftest() -> i32 {
 /* ---- mkr_xml_mutate_selftest ---- */
 
 unsafe fn split(name: &[u8]) -> Option<QName> {
-    qname::split_checked(name).map(|sp| crate::qname_from(name, &sp))
+    qname::split_checked(name).map(|sp| crate::xml::qname_from(name, &sp))
 }
 
 pub unsafe fn mutate_selftest() -> i32 {
@@ -752,7 +752,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
         local: rn.as_ptr() as *const c_char,
         local_len: 1,
     };
-    if crate::arena::qname_assign(doc, r, &rq) != 0 {
+    if crate::xml::arena::qname_assign(doc, r, &rq) != 0 {
         return 8;
     }
     let mut at: *mut Node = ptr::null_mut();
@@ -975,7 +975,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     if irc != MUT_OK
         || imp.is_null()
         || imp == pr
-        || crate::node_qname(imp) != b"pr"
+        || crate::xml::node_qname(imp) != b"pr"
         || (*imp).first_child.is_null()
         || (*imp).first_child == (*pr).first_child
     {

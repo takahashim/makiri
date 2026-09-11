@@ -1,13 +1,20 @@
 [package]
-name = "makiri_xml"
+name = "makiri_rs"
 version = "0.0.1"
 edition = "2021"
 publish = false
-description = "Spike: the Makiri XML reader/mutator behind the same C ABI as ext/makiri/xml"
+description = "Makiri subsystems ported from C behind the same C ABI (see src/lib.rs)"
 
 [lib]
 crate-type = ["staticlib"]
 path = "src/lib.rs"
+
+[features]
+default = []
+# Each feature replaces a set of C sources; extconf turns one on at the same
+# time as it drops the sources it replaces.
+xml = []
+xpath = []
 
 [dependencies]
 

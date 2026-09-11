@@ -1,13 +1,13 @@
 //! The exported `mkr_xml_*` C ABI. Every function here is a thin adapter:
 //! turn C (ptr,len) pairs into slices, call the engine, write out-params.
 
-use crate::arena;
-use crate::chars::{self, ExpandMode};
-use crate::index;
-use crate::mutate;
-use crate::qname;
-use crate::tree;
-use crate::{
+use crate::xml::arena;
+use crate::xml::chars::{self, ExpandMode};
+use crate::xml::index;
+use crate::xml::mutate;
+use crate::xml::qname;
+use crate::xml::tree;
+use crate::xml::{
     bytes, empty, node_qname, Doc, Limits, Node, QName, SpanBuf, ERR_INTERNAL, OK, T_ATTRIBUTE,
 };
 use core::ffi::c_char;
@@ -143,17 +143,17 @@ pub unsafe extern "C" fn mkr_xml_qname_assign(doc: *mut Doc, node: *mut Node, qn
 
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xml_node_selftest() -> i32 {
-    crate::selftest::node_selftest()
+    crate::xml::selftest::node_selftest()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xml_parse_selftest() -> i32 {
-    crate::selftest::parse_selftest()
+    crate::xml::selftest::parse_selftest()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xml_mutate_selftest() -> i32 {
-    crate::selftest::mutate_selftest()
+    crate::xml::selftest::mutate_selftest()
 }
 
 /* ---- parse (mkr_xml.h) ---- */

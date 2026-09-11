@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "makiri_xml"
+name = "makiri_rs"
 version = "0.0.1"

@@ -2,10 +2,10 @@
 //! allocates BEFORE changing any link, so a failure leaves the tree untouched.
 //! Inherently unsafe: it walks and relinks the C-layout nodes.
 
-use crate::arena::{arena_bytes, arena_node, preorder_next, qname_assign};
-use crate::chars::validate_chars;
-use crate::qname::{split_checked, value_seq_ok, xmlns_prefix};
-use crate::{
+use crate::xml::arena::{arena_bytes, arena_node, preorder_next, qname_assign};
+use crate::xml::chars::validate_chars;
+use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix};
+use crate::xml::{
     bytes, empty, node_local, node_ns, node_qname, node_value, qname_from, qname_of, Doc, Node,
     QName, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME,
     MUT_BAD_NS_DECL, MUT_CYCLE,
@@ -504,7 +504,7 @@ pub unsafe fn new_chardata(doc: *mut Doc, ty: u32, text: &[u8], out: *mut *mut N
 
 pub unsafe fn new_pi(doc: *mut Doc, target: &[u8], data: &[u8], out: *mut *mut Node) -> i32 {
     *out = ptr::null_mut();
-    if !crate::chars::validate_name(target) || crate::chars::is_reserved_pi_target(target) {
+    if !crate::xml::chars::validate_name(target) || crate::xml::chars::is_reserved_pi_target(target) {
         return MUT_BAD_NAME;
     }
     if !data.is_empty() && !validate_chars(data) {
@@ -541,7 +541,7 @@ pub unsafe fn new_document_type(
     out: *mut *mut Node,
 ) -> i32 {
     *out = ptr::null_mut();
-    if !crate::chars::validate_name(name) {
+    if !crate::xml::chars::validate_name(name) {
         return MUT_BAD_NAME;
     }
     for id in [pub_id, sys_id].into_iter().flatten() {
