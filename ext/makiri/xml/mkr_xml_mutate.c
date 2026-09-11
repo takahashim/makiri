@@ -49,6 +49,7 @@ is_connected(const mkr_xml_node_t *node)
     return top->type == MKR_XML_NODE_TYPE_DOCUMENT;
 }
 
+
 /* Resolve the namespace for QName +qn+ applied at +scope+ (the element whose
  * in-scope declarations apply). +is_attr+ selects attribute rules (xmlns*
  * declarations live in the xmlns namespace, an unprefixed attribute is in no
@@ -138,6 +139,10 @@ mkr_xml_rename(mkr_xml_doc_t *doc, mkr_xml_node_t *node, const char *name, uint3
     if (st != MKR_XML_MUT_OK) return st;
     node->ns_uri = uri; node->ns_uri_len = ulen;
     node->flags &= ~MKR_XML_NODE_FLAG_DOM_LOOSE_NAME;
+    /* A rename picks a new prefix, so it decides a new URI from the scope the
+     * node is in right now - and that decision is the node's identity from here
+     * (an element's; an attribute follows its element). */
+    if (connected && !is_attr) node->flags |= MKR_XML_NODE_FLAG_NS_RESOLVED;
     return MKR_XML_MUT_OK;
 }
 
@@ -267,6 +272,8 @@ mkr_xml_set_attribute_ns(mkr_xml_doc_t *doc, mkr_xml_node_t *el,
             const char *nv = mkr_xml_arena_bytes(doc, val, vlen);
             if (vlen > 0 && nv == NULL) return MKR_XML_MUT_OOM;
             a->value = nv ? nv : ""; a->value_len = vlen;
+            /* The stored qualified name decides, not +name+: a match keeps the
+             * existing qname, which is what a declaration is recognised by. */
             if (out) *out = a;
             return MKR_XML_MUT_OK;
         }
@@ -504,34 +511,56 @@ mkr_xml_new_document_type(mkr_xml_doc_t *doc, const char *name, uint32_t nlen,
  * because the caller has temporarily pointed root->parent at the prospective
  * context, includes that context and its ancestors. Order-independent (it reads
  * xmlns attribute values, never resolved ns_uri). Iterative pre-order, no
- * recursion. Fails closed on an unbound prefix, having changed no link. */
+ * recursion. Fails closed on an unbound prefix, having changed no link.
+ *
+ * +commit+ selects the pass: 0 only computes (to find out whether every prefix
+ * in the subtree binds), 1 writes the resolved URIs. See resolve_subtree. */
 static mkr_xml_mut_status_t
-resolve_node_ns(mkr_xml_node_t *e, int connected)
+resolve_node_ns(mkr_xml_node_t *e, int connected, int commit)
 {
+    /* Already decided (parsed, or resolved at an earlier insertion): the URI is
+     * the node's identity, so leave it and its attributes alone. This is what
+     * makes a move keep namespaceURI, the way the DOM and browsers do; the
+     * serializer emits whatever declarations the output needs. */
+    if (e->flags & MKR_XML_NODE_FLAG_NS_RESOLVED) return MKR_XML_MUT_OK;
+
     const char *uri; uint32_t ulen;
     mkr_xml_mut_status_t st = MKR_XML_MUT_OK;
     if ((e->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) == 0) {
         mkr_xml_qname_t eq = mkr_xml_qname_of(e);
         st = resolve_ns(e, &eq, 0, connected, &uri, &ulen);
         if (st != MKR_XML_MUT_OK) return st;
-        e->ns_uri = uri; e->ns_uri_len = ulen;
+        if (commit) { e->ns_uri = uri; e->ns_uri_len = ulen; }
     }
     for (mkr_xml_node_t *a = e->attrs; a != NULL; a = a->next) {
         mkr_xml_qname_t aq = mkr_xml_qname_of(a);
         st = resolve_ns(e, &aq, 1, connected, &uri, &ulen);
         if (st != MKR_XML_MUT_OK) return st;
-        a->ns_uri = uri; a->ns_uri_len = ulen;
+        if (commit) { a->ns_uri = uri; a->ns_uri_len = ulen; }
     }
+    /* Only mark once connected: resolution inside a still-detached fragment is
+     * deferred (an unbound prefix is not an error there), so the node must stay
+     * open to being resolved again when the fragment joins the document. */
+    if (commit && connected) e->flags |= MKR_XML_NODE_FLAG_NS_RESOLVED;
     return MKR_XML_MUT_OK;
 }
 
+/* Re-resolve every element in +root+'s subtree, all-or-nothing.
+ *
+ * The walk writes as it goes, so a bare single pass that fails partway leaves the
+ * subtree half-rewritten: the elements before the unbound prefix carry URIs
+ * resolved against a scope the tree is not in, while the rest keep the old ones.
+ * That state is invisible to serialization (only prefixes are written) but wrong
+ * for XPath, which matches on the resolved URI. So: one pass that only computes,
+ * and - only if every prefix in the subtree binds - a second that writes. */
 static mkr_xml_mut_status_t
 resolve_subtree(mkr_xml_node_t *root, int connected)
 {
-    for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
-        if (cur->type == MKR_XML_NODE_TYPE_ELEMENT) {
-            mkr_xml_mut_status_t st = resolve_node_ns(cur, connected);
-            if (st != MKR_XML_MUT_OK) return st;
+    for (int commit = 0; commit <= 1; commit++) {
+        for (mkr_xml_node_t *cur = root; cur != NULL; cur = mkr_xml_preorder_next(root, cur)) {
+            if (cur->type != MKR_XML_NODE_TYPE_ELEMENT) continue;
+            mkr_xml_mut_status_t st = resolve_node_ns(cur, connected, commit);
+            if (st != MKR_XML_MUT_OK) return st;   /* commit == 0: nothing written yet */
         }
     }
     return MKR_XML_MUT_OK;
@@ -552,13 +581,14 @@ resolve_into(mkr_xml_node_t *node, mkr_xml_node_t *context)
     return st;
 }
 
-/* A single arena copy of +src+ (its own fields + attributes, NOT its children).
- * When +with_ns+ is false the resolved namespace URI is left unset (the import
- * path re-resolves it at the insertion site); when true it is copied too, for
- * clone_node, whose detached result must keep its namespace (it is never
- * re-resolved). Returns NULL on OOM. */
+
+/* A single arena copy of +src+ (its own fields + attributes, NOT its children),
+ * INCLUDING its resolved namespace URI. A copy keeps the namespace it had: the
+ * URI is the node identity (mkr_xml_node.h), so neither cloneNode nor importNode
+ * re-derives it from wherever the copy ends up - which is what the DOM and
+ * browsers do. Returns NULL on OOM. */
 static mkr_xml_node_t *
-copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
+copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src)
 {
     mkr_xml_node_t *n = mkr_xml_arena_node(doc, src->type);
     if (n == NULL) return NULL;
@@ -578,8 +608,7 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
         n->value = "";
     }
     n->flags = src->flags;
-    if ((with_ns || (src->flags & MKR_XML_NODE_FLAG_DOM_LOOSE_NAME) != 0)
-        && src->ns_uri != NULL && src->ns_uri_len > 0) {
+    if (src->ns_uri != NULL && src->ns_uri_len > 0) {
         const char *u = mkr_xml_arena_bytes(doc, src->ns_uri, src->ns_uri_len);
         if (u == NULL) return NULL;
         n->ns_uri = u; n->ns_uri_len = src->ns_uri_len;
@@ -587,7 +616,7 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
     /* copy attributes (each an arena node), preserving order */
     mkr_xml_node_t *tail = NULL;
     for (mkr_xml_node_t *a = src->attrs; a != NULL; a = a->next) {
-        mkr_xml_node_t *ca = copy_one(doc, a, with_ns);   /* an attribute has no children/attrs */
+        mkr_xml_node_t *ca = copy_one(doc, a);   /* an attribute has no children/attrs */
         if (ca == NULL) return NULL;
         ca->parent = n;
         if (tail) tail->next = ca; else n->attrs = ca;
@@ -596,15 +625,14 @@ copy_one(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns)
     return n;
 }
 
-/* Deep copy of +src+'s subtree into +doc+'s arena. +with_ns+ is threaded to
- * copy_one: false for import (the insertion site re-resolves namespaces), true
- * for clone_node (the detached result keeps its resolved namespaces). */
+/* Deep copy of +src+'s subtree into +doc+'s arena, namespaces and all. Iterative
+ * (explicit heap stack) so a deep tree cannot overflow the C stack. */
 static mkr_xml_mut_status_t
-deep_copy(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns,
+deep_copy(mkr_xml_doc_t *doc, const mkr_xml_node_t *src,
           mkr_xml_node_t **out)
 {
     *out = NULL;
-    mkr_xml_node_t *root = copy_one(doc, src, with_ns);
+    mkr_xml_node_t *root = copy_one(doc, src);
     if (root == NULL) return MKR_XML_MUT_OOM;
 
     /* Iterative pre-order: an explicit heap stack of (src, dst) pairs copies each
@@ -622,7 +650,7 @@ deep_copy(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool with_ns,
         frame_t f = stack[--top];
         mkr_xml_node_t *dtail = NULL;
         for (const mkr_xml_node_t *sc = f.s->first_child; sc != NULL; sc = sc->next) {
-            mkr_xml_node_t *dc = copy_one(doc, sc, with_ns);
+            mkr_xml_node_t *dc = copy_one(doc, sc);
             if (dc == NULL) { st = MKR_XML_MUT_OOM; goto done; }
             dc->parent = f.d;
             if (dtail) { dtail->next = dc; dc->prev = dtail; }
@@ -647,7 +675,7 @@ done:
 mkr_xml_mut_status_t
 mkr_xml_import_subtree(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, mkr_xml_node_t **out)
 {
-    return deep_copy(doc, src, false, out);   /* namespaces re-resolved at the insertion site */
+    return deep_copy(doc, src, out);   /* the copy keeps the source namespaces (importNode) */
 }
 
 mkr_xml_mut_status_t
@@ -655,9 +683,9 @@ mkr_xml_clone_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, bool deep,
                    mkr_xml_node_t **out)
 {
     if (deep) {
-        return deep_copy(doc, src, true, out);
+        return deep_copy(doc, src, out);
     }
-    *out = copy_one(doc, src, true);   /* shallow: own fields + attributes, no children */
+    *out = copy_one(doc, src);   /* shallow: own fields + attributes, no children */
     return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
 }
 
@@ -666,9 +694,9 @@ mkr_xml_copy_node(mkr_xml_doc_t *doc, const mkr_xml_node_t *src, int deep,
                   mkr_xml_node_t **out)
 {
     if (deep) {
-        return deep_copy(doc, src, false, out);   /* import: ns re-resolved when linked */
+        return deep_copy(doc, src, out);    /* import: the copy keeps the source namespaces */
     }
-    *out = copy_one(doc, src, false);             /* shallow: own fields + attributes */
+    *out = copy_one(doc, src);              /* shallow: own fields + attributes */
     return (*out == NULL) ? MKR_XML_MUT_OOM : MKR_XML_MUT_OK;
 }
 

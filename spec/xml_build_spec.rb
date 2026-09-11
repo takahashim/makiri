@@ -245,26 +245,59 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
     end
   end
 
-  describe "cross-document import (deep copy)" do
-    it "imports a node from another document and keeps the original intact" do
+  # Inserting a node from another document ADOPTS it, as the DOM says
+  # appendChild does and as both Chrome and Nokogiri do: it leaves the document
+  # it came from. Makiri's arenas each own their nodes, so the node cannot be
+  # relinked across them - it is copied here and removed there, which is the
+  # same thing from the outside except that the copy is a different object.
+  describe "cross-document insertion (adopt)" do
+    it "brings the node over and takes it out of its old document" do
       other = Makiri::XML(%(<o><deep a="1"><x/></deep></o>))
       src = other.at_xpath("//deep")
       imported = doc.root.add_child(src)
 
       expect(imported.document).to equal(doc)
-      expect(imported).not_to equal(src)
       expect(imported["a"]).to eq("1")
-      expect(doc.to_xml).to include(%(<deep a="1"><x/></deep>))
-      # the source document is untouched
-      expect(other.to_xml).to include(%(<deep a="1"><x/></deep>))
-      expect(src.document).to equal(other)
+      # <deep> came from a document with no default namespace, so it is in NO
+      # namespace - a decision the adoption carries. Landing it under this
+      # document's xmlns="urn:d" must not quietly move it there, so the
+      # serializer says so with xmlns="" (Chrome does the same).
+      expect(doc.to_xml).to include(%(<deep xmlns="" a="1"><x/></deep>))
+      expect(imported.namespace_uri).to be_nil
+
+      expect(other.to_xml).not_to include("deep")      # gone from the source
+      expect(other.at_xpath("//deep")).to be_nil
     end
 
-    it "produces an independent copy (editing the import does not touch the source)" do
+    it "hands back the node that is now in the tree, not the argument" do
       other = Makiri::XML("<o><deep/></o>")
-      imported = doc.root.add_child(other.at_xpath("//deep"))
+      src = other.at_xpath("//deep")
+      imported = doc.root.add_child(src)
+
+      expect(imported.pointer_id).not_to eq(src.pointer_id)
+      expect(imported.document).to equal(doc)
       imported["new"] = "v"
-      expect(other.at_xpath("//deep")["new"]).to be_nil
+      expect(doc.to_xml).to include(%(new="v"))
+    end
+
+    # Fail-closed: a rejected insert must not empty the source document.
+    it "leaves the source alone when the insert is refused" do
+      other = Makiri::XML("<o><deep/></o>")
+      target = Makiri::XML("<r/>")
+
+      expect { target.add_child(other.at_xpath("//deep")) }
+        .to raise_error(Makiri::Error, /single root/)
+      expect(other.to_xml).to include("<deep/>")
+    end
+
+    it "empties a fragment it splices, like a same-document one" do
+      other = Makiri::XML("<o/>")
+      frag = other.fragment("<m/><n/>")
+      doc.root.add_child(frag)
+
+      # both came from a document with no default namespace and keep it
+      expect(doc.to_xml).to include(%(<m xmlns=""/><n xmlns=""/>))
+      expect(frag.children.length).to eq(0)
     end
   end
 

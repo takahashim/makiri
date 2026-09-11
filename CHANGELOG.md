@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+* XPath axes from an **attribute context node** now follow XPath 1.0 §2.2 on the
+  XML backend: `following-sibling` and `preceding-sibling` are empty, and
+  `following` / `preceding` exclude attribute nodes. `@a/following-sibling::node()`
+  used to return the element's later attributes, and `@a/following::node()` both
+  included them and skipped the element's own children, because `mkr_xml_node_t`
+  chains attributes through the same `next`/`prev` fields as tree siblings. A name
+  test never matches an attribute, so only `node()` exposed it. The HTML backend
+  (whose attributes live on a separate Lexbor list) was already correct and is
+  unchanged; both are now asserted.
+
+### Changed
+
+* **`Makiri::XML` now follows the DOM namespace model.** A node's namespace URI
+  is decided once — by the parser, or by the context it is first inserted into —
+  and is then its identity: moving the node no longer changes it, and the
+  serializer emits whatever xmlns declarations the output needs to reproduce it.
+  Every case was measured against Chrome 152 (`DOMParser` + `XMLSerializer`).
+
+  Previously the URI was re-derived from the declarations around the node on
+  every insertion, so moving `<p:x/>` under an element that binds `p` to a
+  different URI silently changed `namespace_uri`, and `#delete("xmlns:p")` could
+  produce XML that Makiri itself could not re-parse. Both are gone.
+
+  What changes in practice:
+
+  - a move or `import_node` keeps `namespace_uri`; the destination gets the
+    declaration it needs (`<p:x xmlns:p="urn:a"/>`), and nothing is emitted when
+    the destination already binds the prefix the same way;
+  - inserting a node whose prefix is bound nowhere in the destination now
+    succeeds instead of raising, because the output declares the prefix;
+  - an element in **no** namespace stays in no namespace under a default
+    namespace, serialized as `xmlns=""`;
+  - `#to_xml` on a node below the root is self-contained: it declares the
+    prefixes its subtree uses, so the output re-parses to the same namespaces
+    standing alone. (Nokogiri omits them, and its subtree output does not
+    round-trip.)
+  - where a prefix would have to mean two things at once, the serializer invents
+    one (`ns1`, `ns2`, …) rather than shadow the other, as browsers do.
+
+  Nodes built by the factories (`create_element` and friends) still take their
+  namespace from the context they are first inserted into, so a subtree can be
+  assembled detached and attached afterwards. Only later moves carry.
+
+* **Inserting a node from another document now adopts it** instead of copying it
+  (`Makiri::XML`) or raising (`Makiri::HTML`). `add_child` / `before` / `after` /
+  `replace` bring the node over and take it out of the document it came from —
+  the move the DOM says `appendChild` performs, and what both Chrome 152 and
+  Nokogiri do. A spliced fragment is left empty, as a same-document one already
+  was. A rejected insert leaves the source document untouched.
+
+  Each arena owns its own nodes, so the node cannot be relinked across them: it
+  is copied here and removed there. That is the same thing from the outside with
+  one exception — the node handed back is a **different object** than the one
+  passed in (`pointer_id` differs), so use the return value rather than the
+  argument afterwards. Nokogiri and browsers keep identity here; Makiri cannot.
+
+  `Document#import_node` is unchanged: it still copies and leaves the source
+  alone, which is what DOM `importNode` does.
+
+* Namespace resolution is **all-or-nothing**. It used to write as it walked, so a
+  subtree that failed partway — a rejected insert into a scope where one of its
+  prefixes is unbound — was left half-resolved, with the elements before the
+  failure carrying URIs from a scope the tree is not in. The rejected operation
+  looked clean (same tree, same serialization) while XPath silently disagreed
+  with the document's own declarations.
+
 ## [0.8.0] - 2026-07-12
 
 ### Fixed

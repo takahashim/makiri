@@ -275,10 +275,19 @@ RSpec.describe "Makiri mutation" do
       expect { div.add_child(body) }.to raise_error(Makiri::Error)
     end
 
-    it "rejects moving a node across documents" do
-      other = Makiri::HTML("<p>x</p>")
+    # The DOM adopts a node from another document rather than refusing it, and
+    # so do Chrome and Nokogiri. Lexbor cannot relink a node across arenas, so
+    # the node is copied here and removed there - a move from the outside,
+    # except that the node handed back is a different object.
+    it "adopts a node from another document" do
+      other = Makiri::HTML("<p id='foreign'>x</p>")
       foreign = other.at_css("p")
-      expect { div.add_child(foreign) }.to raise_error(Makiri::Error)
+      adopted = div.add_child(foreign)
+
+      expect(adopted.name).to eq("p")
+      expect(adopted.document).to equal(doc)
+      expect(div.to_html).to include("foreign")
+      expect(other.at_css("p")).to be_nil          # gone from the source
     end
 
     it "rejects inserting an attribute node into the tree" do

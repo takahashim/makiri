@@ -63,9 +63,14 @@ RSpec.describe "Makiri::XML#to_xml" do
   describe "node-level #to_xml (no declaration) and #to_s" do
     let(:doc) { Makiri::XML("<r xmlns:p='urn:a'><p:b c='1'>x</p:b></r>") }
 
-    it "serializes just the subtree, preserving namespaces, without a declaration" do
+    it "serializes just the subtree, self-contained, without an XML declaration" do
       el = doc.at_xpath("//p:b", "p" => "urn:a")
-      expect(el.to_xml).to eq(%(<p:b c="1">x</p:b>))
+      # The subtree is cut off from the ancestor that declared the prefix, so the
+      # serializer declares it here - the output re-parses to the same namespace
+      # standing alone. Chrome's XMLSerializer does this; Nokogiri does not, and
+      # its output does not round-trip.
+      expect(el.to_xml).to eq(%(<p:b xmlns:p="urn:a" c="1">x</p:b>))
+      expect(Makiri::XML(el.to_xml).root.namespace_uri).to eq("urn:a")
       expect(el.to_xml).not_to include("<?xml")
     end
 

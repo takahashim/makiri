@@ -223,6 +223,33 @@ walk_descendants(MKR_DOM_NODE *context,
   return 0;
 }
 
+/*
+ * The node a document-order axis walk starts from. For an attribute context node
+ * that is its owner element.
+ *
+ * XPath 1.0 §2.2 keeps attribute nodes out of the following/preceding axes, and
+ * §5.3 puts an element's attributes before its children in document order - so a
+ * walk that begins at the attribute itself has to skip past its siblings in the
+ * attribute list. Starting at the owner element instead gets there directly, and
+ * matches libxml2 (`following::node()` from an attribute yields what comes after
+ * the owner element's subtree, not the element's own children).
+ *
+ * This also repairs the XML backend, whose mkr_xml_node_t chains attributes
+ * through the same next/prev fields as tree siblings: walking from an attribute
+ * wandered into the attribute list and emitted the element's later attributes.
+ * Lexbor keeps attributes on a separate list, so the HTML backend already
+ * behaved this way and is unchanged.
+ */
+static MKR_DOM_NODE *
+axis_base(MKR_DOM_NODE *context)
+{
+  if (MKR_NODE_TYPE(context) == MKR_NTYPE_ATTRIBUTE) {
+    MKR_DOM_NODE *owner = MKR_NODE_PARENT(context);
+    if (owner != NULL) return owner;
+  }
+  return context;
+}
+
 static int
 walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
           int (*visit)(MKR_DOM_NODE *n, void *u), void *u)
@@ -265,19 +292,23 @@ walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
       if (visit(p, u)) return 1;
     }
     return 0;
+  /* XPath 1.0 §2.2: both sibling axes are empty when the context node is an
+   * attribute node - an attribute is not a sibling of anything. */
   case MKR_AXIS_FOLLOWING_SIBLING:
+    if (MKR_NODE_TYPE(context) == MKR_NTYPE_ATTRIBUTE) return 0;
     for (MKR_DOM_NODE *s = MKR_NODE_NEXT(context); s != NULL; s = MKR_NODE_NEXT(s)) {
       if (visit(s, u)) return 1;
     }
     return 0;
   case MKR_AXIS_PRECEDING_SIBLING:
+    if (MKR_NODE_TYPE(context) == MKR_NTYPE_ATTRIBUTE) return 0;
     for (MKR_DOM_NODE *s = MKR_NODE_PREV(context); s != NULL; s = MKR_NODE_PREV(s)) {
       if (visit(s, u)) return 1;
     }
     return 0;
   case MKR_AXIS_FOLLOWING: {
-    /* Start at the next node in doc order after context's subtree. */
-    MKR_DOM_NODE *cur = context;
+    /* Start at the next node in doc order after the base node's subtree. */
+    MKR_DOM_NODE *cur = axis_base(context);
     while (cur != NULL && MKR_NODE_NEXT(cur) == NULL) cur = MKR_NODE_PARENT(cur);
     if (cur == NULL) return 0;
     cur = MKR_NODE_NEXT(cur);
@@ -299,8 +330,12 @@ walk_axis(mkr_axis_t axis, MKR_DOM_NODE *context,
      * When we climb to a parent, that parent may or may not be an
      * ancestor of context: it's an ancestor only when we're climbing
      * the chain from context itself, not when we're climbing back out
-     * of a preceding sibling's subtree. */
-    MKR_DOM_NODE *cur = context;
+     * of a preceding sibling's subtree.
+     *
+     * The ancestor test stays anchored on +context+, not on the base: for an
+     * attribute context node the owner element IS an ancestor (XPath 1.0 §2.2),
+     * so starting the walk there must not emit it. */
+    MKR_DOM_NODE *cur = axis_base(context);
     while (cur != NULL) {
       if (MKR_NODE_PREV(cur)) {
         cur = MKR_NODE_PREV(cur);

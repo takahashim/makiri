@@ -78,9 +78,12 @@ RSpec.describe "Makiri Nokogiri-compat API (part 2)" do
         expect(frag.to_html).to eq('<a href="/x">L</a><b>z</b>')
       end
 
-      it "cannot be spliced into a different document" do
+      it "is adopted into a different document, and left empty" do
         doc = Makiri::HTML("<html><body><div></div></body></html>")
-        expect { doc.at_css("div").add_child(frag) }.to raise_error(Makiri::Error)
+        doc.at_css("div").add_child(frag)
+
+        expect(doc.at_css("div").inner_html).to eq('<a href="/x">L</a><b>z</b>')
+        expect(frag.children.length).to eq(0)    # spliced fragments end up empty
       end
 
       it "preserves <template> contents (deep import handles the content fragment)" do

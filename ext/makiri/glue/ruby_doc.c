@@ -339,6 +339,20 @@ mkr_run_fragment_parser(VALUE html, mkr_fragment_parse_fn parse, void *ctx)
     return root;
 }
 
+/* Deep-import +src+ into +doc+, <template> contents included - the copy step of
+ * adopting a node from another document (ruby_html_mutate.c). Raises rather than
+ * returning a partial node. */
+lxb_dom_node_t *
+mkr_html_import_deep(lxb_dom_document_t *doc, lxb_dom_node_t *src)
+{
+    lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, src, true);
+    if (imp == NULL) {
+        rb_raise(mkr_eError, "failed to import node");
+    }
+    mkr_fixup_template_content(doc, src, imp);
+    return imp;
+}
+
 /* Node#clone_node(deep = false): a shallow (or deep, with deep truthy) copy of
  * this node, owned by the same document and detached from any parent - the DOM
  * cloneNode, whose `deep` defaults to false (a missing/nil/false argument =>

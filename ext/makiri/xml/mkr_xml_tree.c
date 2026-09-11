@@ -349,6 +349,11 @@ resolve_element_ns(mkr_xml_parser_t *P, mkr_xml_node_t *el)
         if (uri != NULL && ulen > 0) { el->ns_uri = uri; el->ns_uri_len = ulen; }
         /* else: no default namespace -> the element is in no namespace */
     }
+    /* Decided: from here the URI is the node's identity (mkr_xml_node.h). A
+     * parsed element in no namespace is resolved too - "no namespace" is a
+     * decision, not an absence, and moving it under a default namespace must
+     * not silently put it in one. */
+    el->flags |= MKR_XML_NODE_FLAG_NS_RESOLVED;
     return 0;
 }
 

@@ -52,6 +52,17 @@ typedef enum {
 
 #define MKR_XML_NODE_FLAG_DOM_LOOSE_NAME 0x00000001u
 
+/* Set on an ELEMENT once its namespace URI has been decided - by the parser, or
+ * by resolving it against the context it was first inserted into. From then on
+ * the URI is the node's IDENTITY, not a value derived from the declarations
+ * around it: moving the node does not change it, and the serializer emits
+ * whatever declarations the output needs to reproduce it (the WHATWG DOM model,
+ * matching what browsers do). An element still carrying no flag - freshly built
+ * by a factory, or copied by the import path - has no namespace yet and takes
+ * one from its insertion context, so building a subtree bottom-up and attaching
+ * it gives the same tree as building it top-down. */
+#define MKR_XML_NODE_FLAG_NS_RESOLVED    0x00000002u
+
 /* Field order is chosen for size + locality, not readability:
  *   1. the hot navigation/type fields first (the engine reads type + the tree
  *      pointers in its tight walk), kept within the first cache line;
