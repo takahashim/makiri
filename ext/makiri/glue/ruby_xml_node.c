@@ -12,6 +12,7 @@
  */
 #include "glue.h"
 #include "cross_import.h"          /* mkr_node_kind, mkr_cross_html_to_xml, mut_check decl */
+#include "../xml/mkr_xml.h"        /* MKR_XML_MAX_DEPTH - the serializer honours the reader's nesting cap */
 #include "../xml/mkr_xml_node.h"
 #include "../xml/mkr_xml_mutate.h"
 #include "../xml/mkr_xml_index.h"   /* element-name index invalidation on mutation */
@@ -605,10 +606,20 @@ mkr_xml_has_dom_loose_name(const mkr_xml_node_t *root)
 
 static int mkr_xser_doctype(mkr_buf_t *b, const mkr_xml_node_t *dt);
 
+/* +depth+ counts the frames this walk has already taken, capped at
+ * MKR_XML_MAX_DEPTH - the same nesting the READER accepts.
+ *
+ * Two reasons, one of which is the serializer's own contract. A tree built with
+ * the factories has no depth limit (only parsing does), so a deeper-than-the-cap
+ * document serializes to XML that Makiri itself cannot read back - which breaks
+ * "output re-parses to the same tree". And the walk is recursive, so a tree deep
+ * enough would exhaust the C stack before it ever got there; the cap turns a
+ * crash into a clean Makiri::Error. */
 static int
 mkr_xser_node(mkr_buf_t *b, const mkr_xml_node_t *n, int level, int width,
-              const mkr_xser_ns_t *scope)
+              const mkr_xser_ns_t *scope, unsigned depth)
 {
+    if (depth >= MKR_XML_MAX_DEPTH) return -1;
     switch (n->type) {
     case MKR_XML_NODE_TYPE_DOCUMENT_TYPE:
         return mkr_xser_doctype(b, n);
@@ -683,7 +694,7 @@ for (const mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
         int block = width > 0 && !mkr_xser_has_chardata(n);
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
             if (block && mkr_xser_indent(b, level + 1, width) != 0) return -1;
-            if (mkr_xser_node(b, c, level + 1, width, &here) != 0) return -1;
+            if (mkr_xser_node(b, c, level + 1, width, &here, depth + 1) != 0) return -1;
         }
         if (block && mkr_xser_indent(b, level, width) != 0) return -1;
         MKR_XSER_LIT(b, "</");
@@ -713,7 +724,7 @@ for (const mkr_xml_node_t *a = n->attrs; a != NULL; a = a->next) {
         /* A fragment has no markup of its own: it serializes as its children, in
          * order, spliced together (the same nodes #add_child would insert). */
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
-            if (mkr_xser_node(b, c, level, width, scope) != 0) return -1;
+            if (mkr_xser_node(b, c, level, width, scope, depth + 1) != 0) return -1;
         }
         return 0;
     default:
@@ -817,11 +828,11 @@ mkr_xml_node_to_xml(int argc, VALUE *argv, VALUE self)
         /* The DOCTYPE is a document-node child (linked before the root), so the
          * child walk below serializes it in place - no separate emit. */
         for (mkr_xml_node_t *c = n->first_child; rc == 0 && c != NULL; c = c->next) {
-            rc = mkr_xser_node(&buf, c, 0, width, NULL);
+            rc = mkr_xser_node(&buf, c, 0, width, NULL, 0);
             if (rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;
         }
     } else {
-        rc = mkr_xser_node(&buf, n, 0, width, NULL);
+        rc = mkr_xser_node(&buf, n, 0, width, NULL, 0);
     }
 
     if (rc != 0) {
@@ -990,8 +1001,10 @@ mkr_c14n_namespaces(const mkr_xml_node_t *n, int is_apex, mkr_c14n_ns_t **out)
 }
 
 static int
-mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments)
+mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments,
+              unsigned depth)
 {
+    if (depth >= MKR_XML_MAX_DEPTH) return -1;   /* same cap as the reader - see mkr_xser_node */
     switch (n->type) {
     case MKR_XML_NODE_TYPE_ELEMENT: {
         MKR_XSER_LIT(b, "<");
@@ -1045,7 +1058,7 @@ mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments)
 
         MKR_XSER_LIT(b, ">");
         for (mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
-            if (mkr_c14n_node(b, c, 0, comments) != 0) return -1;  /* children are not the apex */
+            if (mkr_c14n_node(b, c, 0, comments, depth + 1) != 0) return -1;  /* children are not the apex */
         }
         MKR_XSER_LIT(b, "</");
         MKR_XSER_APPEND(b, n->qname, n->qname_len);
@@ -1070,7 +1083,7 @@ mkr_c14n_node(mkr_buf_t *b, const mkr_xml_node_t *n, int is_apex, int comments)
         return 0;
     case MKR_XML_NODE_TYPE_DOCUMENT_FRAGMENT:
         for (const mkr_xml_node_t *c = n->first_child; c != NULL; c = c->next) {
-            if (mkr_c14n_node(b, c, 0, comments) != 0) return -1;   /* children are not the apex */
+            if (mkr_c14n_node(b, c, 0, comments, depth + 1) != 0) return -1;   /* children are not the apex */
         }
         return 0;
     default:
@@ -1104,17 +1117,17 @@ mkr_xml_node_canonicalize(int argc, VALUE *argv, VALUE self)
         int seen_root = 0;
         for (mkr_xml_node_t *c = n->first_child; rc == 0 && c != NULL; c = c->next) {
             if (c->type == MKR_XML_NODE_TYPE_ELEMENT) {
-                rc = mkr_c14n_node(&buf, c, 1, comments);   /* the root element is the apex */
+                rc = mkr_c14n_node(&buf, c, 1, comments, 0);   /* the root element is the apex */
                 seen_root = 1;
             } else if (c->type == MKR_XML_NODE_TYPE_PI ||
                        (c->type == MKR_XML_NODE_TYPE_COMMENT && comments)) {
                 if (seen_root && rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;
-                if (rc == 0) rc = mkr_c14n_node(&buf, c, 0, comments);
+                if (rc == 0) rc = mkr_c14n_node(&buf, c, 0, comments, 0);
                 if (!seen_root && rc == 0) rc = (mkr_buf_append(&buf, "\n", 1) == MKR_OK) ? 0 : -1;
             }
         }
     } else {
-        rc = mkr_c14n_node(&buf, n, 1, comments);  /* the node is the apex (inherits ancestors' ns) */
+        rc = mkr_c14n_node(&buf, n, 1, comments, 0);  /* the node is the apex (inherits ancestors' ns) */
     }
 
     if (rc != 0) {
