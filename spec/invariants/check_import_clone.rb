@@ -30,21 +30,11 @@
 # once and does not change - which is what Makiri now implements and what
 # browsers do.
 
-require "makiri"
+require_relative "support"
 
 NS_URIS = ["urn:a", "urn:b", "urn:c"].freeze
 PREFIXES = %w[p q].freeze
 LOCALS = %w[a b c entry title item].freeze
-
-class Rng
-  def initialize(seed) = @s = seed
-  def next_int(n)
-    @s = (@s * 1_103_515_245 + 12_345) % 2_147_483_648
-    n.zero? ? 0 : (@s / 65_536) % n
-  end
-  def pick(list) = list[next_int(list.length)]
-  def chance(num, den) = next_int(den) < num
-end
 
 # Bind every prefix at the root. `shift` rotates what they are bound to, so the
 # same prefix means different things in the source and the destination - which
@@ -70,42 +60,6 @@ def build_elem(rng, depth)
   kids = Array.new(1 + rng.next_int(2)) { build_elem(rng, depth - 1) }.join
   kids += "t" if rng.chance(3, 10)
   "<#{name}#{attrs}>#{kids}</#{name}>"
-end
-
-def elements(node, acc = [])
-  node.children.each do |c|
-    next unless c.node_type == 1
-
-    acc << c
-    elements(c, acc)
-  end
-  acc
-end
-
-# Carries the resolved URI, which serialization does not show. Compares LOCAL
-# names: the serializer chooses the prefixes and may invent one, so what has to
-# round-trip is the namespace, not the spelling.
-def fingerprint(node, out = [])
-  node.children.each do |c|
-    case c.node_type
-    when 1
-      out << [1, c.local_name, c.namespace_uri,
-              c.attribute_nodes.reject { |a| a.name.start_with?("xmlns") }
-                               .map { |a| [a.local_name, a.value, a.namespace_uri] }.sort]
-      fingerprint(c, out)
-    when 3, 4 then out << [c.node_type, c.content]
-    when 8 then out << [8, c.content]
-    when 7 then out << [7, c.name, c.content]
-    end
-  end
-  out
-end
-
-# The subtree's own fingerprint, the node included.
-def subtree_fp(node)
-  [[1, node.local_name, node.namespace_uri,
-    node.attribute_nodes.reject { |a| a.name.start_with?("xmlns") }
-        .map { |a| [a.local_name, a.value, a.namespace_uri] }.sort]] + fingerprint(node)
 end
 
 count = (ARGV[0] || 2000).to_i
@@ -134,22 +88,22 @@ count.times do |i|
 
   # --- P1 / P2: clone -------------------------------------------------
   begin
-    before = subtree_fp(node)
+    before = subtree_fingerprint(node)
     cl = node.clone_node(true)
-    if subtree_fp(cl) == before
+    if subtree_fingerprint(cl) == before
       stats[:p1_ok] += 1
     else
       stats[:p1_ng] += 1
-      record(diffs, :p1, src_xml, before, subtree_fp(cl))
+      record(diffs, :p1, src_xml, before, subtree_fingerprint(cl))
     end
 
     cl["cloned"] = "1"
     cl.children.first&.remove
-    if subtree_fp(node) == before
+    if subtree_fingerprint(node) == before
       stats[:p2_ok] += 1
     else
       stats[:p2_ng] += 1
-      record(diffs, :p2, src_xml, before, subtree_fp(node))
+      record(diffs, :p2, src_xml, before, subtree_fingerprint(node))
     end
   rescue StandardError => e
     stats[:clone_error] += 1

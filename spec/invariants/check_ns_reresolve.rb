@@ -29,21 +29,11 @@
 # one would otherwise have to mean two things. What must round-trip is the
 # namespace a node is in, not the spelling it arrives under.
 
-require "makiri"
+require_relative "support"
 
 NS_URIS = ["urn:a", "urn:b", "urn:c"].freeze
 PREFIXES = %w[p q].freeze
 LOCALS = %w[a b c entry title item].freeze
-
-class Rng
-  def initialize(seed) = @s = seed
-  def next_int(n)
-    @s = (@s * 1_103_515_245 + 12_345) % 2_147_483_648
-    n.zero? ? 0 : (@s / 65_536) % n
-  end
-  def pick(list) = list[next_int(list.length)]
-  def chance(num, den) = next_int(den) < num
-end
 
 # A document with namespaces scattered through it: elements that declare and
 # elements that do not, a default namespace, prefixed elements and attributes.
@@ -77,16 +67,6 @@ def build_elem(rng, depth)
   kids = (0...(1 + rng.next_int(2))).map { build_elem(rng, depth - 1) }.join
   kids += "text" if rng.chance(3, 10)
   "<#{name}#{attrs}>#{kids}</#{name}>"
-end
-
-def elements(node, acc = [])
-  node.children.each do |c|
-    next unless c.node_type == 1
-
-    acc << c
-    elements(c, acc)
-  end
-  acc
 end
 
 # Edits chosen to disturb namespace state.
@@ -152,24 +132,6 @@ def ancestor?(node, maybe_desc)
     n = n.parent
   end
   false
-end
-
-# The comparison key. Carrying the resolved URI is the whole point; it is the
-# part serialization does not show.
-def fingerprint(node, out = [])
-  node.children.each do |c|
-    case c.node_type
-    when 1
-      attrs = c.attribute_nodes.reject { |a| a.name.start_with?("xmlns") }
-                              .map { |a| [a.local_name, a.value, a.namespace_uri] }.sort
-      out << [1, c.local_name, c.namespace_uri, attrs]
-      fingerprint(c, out)
-    when 3, 4 then out << [c.node_type, c.content]
-    when 8 then out << [8, c.content]
-    when 7 then out << [7, c.name, c.content]
-    end
-  end
-  out
 end
 
 count = (ARGV[0] || 2000).to_i

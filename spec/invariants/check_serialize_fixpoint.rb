@@ -18,7 +18,7 @@
 #   t1 = parse(s1)
 #   s2 = serialize(t1)
 #
-#   A (faithful)  fingerprint(t) == fingerprint(t1) - nothing added or lost
+#   A (faithful)  content_fingerprint(t) == content_fingerprint(t1) - nothing added or lost
 #   F (fixpoint)  s1 == s2                          - the shape does not drift
 #
 # F alone cannot catch the injection. With the escape broken, s1 says
@@ -54,7 +54,7 @@
 # at the end rather than asserted as round trips - if the pinned value ever
 # moves, that is worth knowing, but it is not a fixpoint failure.
 
-require "makiri"
+require_relative "support"
 
 # Elements that nest freely; p / ul / li would be re-shaped by HTML5's
 # auto-closing rules and are not a fair target for A.
@@ -83,16 +83,6 @@ PAYLOADS = [
 # stays out of them.
 SPEC_RAW_TEXT = %w[style script xmp iframe noembed noframes plaintext].freeze
 
-class Rng
-  def initialize(seed) = @s = seed
-  def next_int(n)
-    @s = (@s * 1_103_515_245 + 12_345) % 2_147_483_648
-    n.zero? ? 0 : (@s / 65_536) % n
-  end
-  def pick(list) = list[next_int(list.length)]
-  def chance(num, den) = next_int(den) < num
-end
-
 def build_el(rng, depth)
   tag = rng.pick(TAGS)
   attrs = rng.chance(6, 10) ? %( id="i#{rng.next_int(100)}") : ""
@@ -113,27 +103,19 @@ def build_xml(rng)
   "<root>#{Array.new(2 + rng.next_int(3)) { build_el(rng, 2) }.join}</root>"
 end
 
-def container_of(doc) = doc.at_css("body") || doc.root
-
-def elements(node, acc = [])
-  node.children.each do |c|
-    next unless c.node_type == 1
-
-    acc << c
-    elements(c, acc)
-  end
-  acc
-end
-
+# This check needs a DIFFERENT key from support.rb's `fingerprint`: it asks
+# whether serialization lost or added anything, not which namespace a node is
+# in, so it compares qualified names and ignores namespaces entirely.
+#
 # Attributes by name and value, order-insensitive. Adjacent text is joined:
 # the DOM can hold the boundary, serialization cannot write it, and nothing
 # requires it to survive - so counting it as a divergence would be wrong.
-def fingerprint(node, out = [])
+def content_fingerprint(node, out = [])
   node.children.each do |c|
     case c.node_type
     when 1
       out << [1, c.name, c.attribute_nodes.map { |a| [a.name, a.value] }.sort]
-      fingerprint(c, out)
+      content_fingerprint(c, out)
     when 3, 4
       if out.last && out.last[0] == 3
         out[-1] = [3, out.last[1] + c.content]
@@ -199,8 +181,8 @@ count.times do |i|
     s2 = ser.call(t1)
     s3 = ser.call(parse.call(s2))
 
-    f0 = fingerprint(doc.root)
-    f1 = fingerprint(t1.root)
+    f0 = content_fingerprint(doc.root)
+    f1 = content_fingerprint(t1.root)
 
     if f0 != f1
       stats[:tree_differ] += 1
@@ -266,9 +248,9 @@ probe.at_css("x")["data-p"] = %(a" onerror="evil())
 good = probe.to_html
 broken = good.gsub("&quot;", '"')
 
-good_fp = fingerprint(Makiri::HTML(good).root)
-broken_fp = fingerprint(Makiri::HTML(broken).root)
-orig_fp = fingerprint(probe.root)
+good_fp = content_fingerprint(Makiri::HTML(good).root)
+broken_fp = content_fingerprint(Makiri::HTML(broken).root)
+orig_fp = content_fingerprint(probe.root)
 
 def attrs_of(fp) = fp.find { |e| e[0] == 1 && e[1] == "x" }&.last
 
