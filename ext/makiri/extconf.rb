@@ -300,7 +300,22 @@ if rust_xml || rust_xpath || rust_glue_serialize
          "--manifest-path", File.join(EXT_DIR, "rust", "Cargo.toml"),
          "--features", features.join(","),
          "--target-dir", rust_target) or abort "cargo build failed for the Rust engine."
-  $LDFLAGS << " #{File.join(rust_target, 'release', 'libmakiri_rs.a').shellescape}"
+  rust_archive = File.join(rust_target, "release", "libmakiri_rs.a")
+  if RbConfig::CONFIG["target_os"] =~ /linux/
+    # GNU ld resolves static archives left-to-right and never looks back, and
+    # the Lexbor archive is already on the line (above) - ahead of this one. The
+    # engine features only ever referenced our own objects, so that was fine;
+    # the moment Rust calls a Lexbor function (the serialization glue calls
+    # lxb_html_serialize_*), the reference comes too late and the link leaves it
+    # undefined. A shared object tolerates that, so it is not a link error: the
+    # .so loads and dies with "undefined symbol: lxb_html_serialize_tree_cb".
+    # A group makes ld re-scan until nothing is pending, in either direction.
+    # macOS's linker re-scans archives on its own, hence no group there.
+    $LDFLAGS << " -Wl,--start-group #{rust_archive.shellescape} " \
+                "#{lexbor_archive.shellescape} -Wl,--end-group"
+  else
+    $LDFLAGS << " #{rust_archive.shellescape}"
+  end
   # Lets the layout cross-check in xpath/mkr_xpath_rs_check.c compile itself in.
   $defs << "-DMAKIRI_RUST_XPATH=1" if rust_xpath
   # Compiles in the Lexbor shims + the layout cross-check the HTML backend needs.
