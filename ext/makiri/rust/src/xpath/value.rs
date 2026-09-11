@@ -10,6 +10,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::number;
+use super::own::Text;
 use crate::err_setf;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
@@ -290,16 +291,8 @@ pub unsafe fn val_to_number_unchecked<D: Dom>(v: *const Val) -> f64 {
                 return f64::NAN;
             }
             /* string-value of the first node in document order */
-            let mut text = OwnedText { ptr: ptr::null_mut(), len: 0 };
-            node_to_owned_text::<D>(
-                nodeset_at::<D>(&(*v).u.nodeset, 0),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                &mut text,
-            );
-            let d = bytes_to_number(owned_bytes(text));
-            mkr_owned_text_clear(&mut text);
-            d
+            let text = node_text_best_effort::<D>(nodeset_at::<D>(&(*v).u.nodeset, 0));
+            bytes_to_number(text.as_slice())
         }
         _ => f64::NAN,
     }
@@ -317,61 +310,89 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
     }
 }
 
-/// Format a number as XPath does (§4.2 / the `string()` rules).
-fn number_to_text(d: f64, out: &mut [u8; 64]) -> usize {
-    use core::fmt::Write;
-    struct W<'a>(&'a mut [u8; 64], usize);
-    impl core::fmt::Write for W<'_> {
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            let n = s.len().min(self.0.len() - self.1);
-            self.0[self.1..self.1 + n].copy_from_slice(&s.as_bytes()[..n]);
-            self.1 += n;
-            Ok(())
-        }
-    }
-    let mut w = W(out, 0);
-    if d == d.trunc() && d.abs() < 1e15 {
-        let _ = write!(w, "{}", d as i64);
-    } else {
-        /* %.15g: 15 significant digits, shortest of fixed/exponential. */
-        let _ = write!(w, "{}", G15(d));
-    }
-    w.1
+/// A bounded `core::fmt::Write` sink. An overflow is an error rather than a
+/// truncation: a cut-short number string is a wrong answer, and the C checked
+/// its `snprintf` return for exactly that reason.
+struct Fixed<'a> {
+    buf: &'a mut [u8],
+    len: usize,
 }
 
-/// `%.15g`. Rust has no `{:g}`, so pick between fixed and exponential the way C
-/// does: exponential when the decimal exponent is below -4 or at least the
-/// precision, and strip the trailing zeros either way.
-struct G15(f64);
-
-impl core::fmt::Display for G15 {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        const P: i32 = 15;
-        let d = self.0;
-        let exp = if d == 0.0 { 0 } else { d.abs().log10().floor() as i32 };
-        let mut s = if !(-4..P).contains(&exp) {
-            let t = format!("{:.*e}", (P - 1) as usize, d);
-            /* Rust writes "1.5e20"; C writes "1.5e+20". */
-            let (m, e) = t.split_once('e').unwrap_or((t.as_str(), "0"));
-            let m = strip_zeros(m);
-            let ev: i32 = e.parse().unwrap_or(0);
-            return write!(f, "{}e{}{:02}", m, if ev < 0 { '-' } else { '+' }, ev.abs());
-        } else {
-            format!("{:.*}", (P - 1 - exp).max(0) as usize, d)
-        };
-        if s.contains('.') {
-            s = strip_zeros(&s).to_string();
+impl core::fmt::Write for Fixed<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        if s.len() > self.buf.len() - self.len {
+            return Err(core::fmt::Error);
         }
-        write!(f, "{}", s)
+        self.buf[self.len..self.len + s.len()].copy_from_slice(s.as_bytes());
+        self.len += s.len();
+        Ok(())
     }
 }
 
-fn strip_zeros(s: &str) -> &str {
-    if !s.contains('.') {
+impl<'a> Fixed<'a> {
+    fn new(buf: &'a mut [u8]) -> Fixed<'a> {
+        Fixed { buf, len: 0 }
+    }
+    fn written(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+/// Trailing zeros (and a bare trailing '.') dropped from a decimal run, which is
+/// what `%g` does. A run with no '.' is returned unchanged.
+fn strip_zeros(s: &[u8]) -> &[u8] {
+    if !s.contains(&b'.') {
         return s;
     }
-    let s = s.trim_end_matches('0');
-    s.strip_suffix('.').unwrap_or(s)
+    let s = &s[..s.len() - s.iter().rev().take_while(|&&b| b == b'0').count()];
+    s.strip_suffix(b".").unwrap_or(s)
+}
+
+/// Format a number the way XPath's `string()` does (§4.2): an integral value in
+/// range prints as an integer, everything else as C's `%.15g`.
+///
+/// Returns the byte length, or None if `out` was too small - which the caller
+/// turns into an INTERNAL error rather than emitting a truncated number.
+/// Allocation-free: this is on the value path of an engine that reports OOM as a
+/// status, so it must not be able to abort on a failed allocation instead.
+fn number_to_text(d: f64, out: &mut [u8]) -> Option<usize> {
+    use core::fmt::Write;
+    const P: i32 = 15;
+
+    if d == d.trunc() && d.abs() < 1e15 {
+        let mut w = Fixed::new(out);
+        write!(w, "{}", d as i64).ok()?;
+        return Some(w.len);
+    }
+
+    /* %.15g picks exponential when the decimal exponent is below -4 or at least
+     * the precision, and strips trailing zeros either way. */
+    let exp = if d == 0.0 { 0 } else { d.abs().log10().floor() as i32 };
+    let mut scratch = [0u8; 64];
+
+    if (-4..P).contains(&exp) {
+        let mut w = Fixed::new(&mut scratch);
+        write!(w, "{:.*}", (P - 1 - exp).max(0) as usize, d).ok()?;
+        let text = strip_zeros(w.written());
+        if text.len() > out.len() {
+            return None;
+        }
+        out[..text.len()].copy_from_slice(text);
+        return Some(text.len());
+    }
+
+    let mut w = Fixed::new(&mut scratch);
+    write!(w, "{:.*e}", (P - 1) as usize, d).ok()?;
+    /* Rust writes "1.5e20"; C writes "1.5e+20". */
+    let written = w.written();
+    let at = written.iter().position(|&b| b == b'e')?;
+    let mantissa = strip_zeros(&written[..at]);
+    let ev: i32 = core::str::from_utf8(&written[at + 1..]).ok()?.parse().ok()?;
+
+    let mut o = Fixed::new(out);
+    o.write_str(core::str::from_utf8(mantissa).ok()?).ok()?;
+    write!(o, "e{}{:02}", if ev < 0 { '-' } else { '+' }, ev.abs()).ok()?;
+    Some(o.len)
 }
 
 /// value -> string (§4.2), bounded by `limits` when it is non-null.
@@ -414,8 +435,13 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
                 return owned_copy(out, b"0", err, what);
             }
             let mut buf = [0u8; 64];
-            let n = number_to_text(d, &mut buf);
-            owned_copy(out, &buf[..n], err, what)
+            match number_to_text(d, &mut buf) {
+                Some(n) => owned_copy(out, &buf[..n], err, what),
+                None => {
+                    err_setf!(err, XP_ERR_INTERNAL, "number string conversion overflow");
+                    false
+                }
+            }
         }
         T_NODESET => {
             if (*v).u.nodeset.count == 0 {
@@ -448,12 +474,12 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
             *out = f64::NAN;
             return true;
         }
-        let mut text = OwnedText { ptr: ptr::null_mut(), len: 0 };
-        if !node_to_owned_text::<D>(nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, &mut text) {
+        let mut text = Text::new();
+        if !node_to_owned_text::<D>(nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, text.as_mut())
+        {
             return false;
         }
-        *out = bytes_to_number(owned_bytes(text));
-        mkr_owned_text_clear(&mut text);
+        *out = bytes_to_number(text.as_slice());
         return true;
     }
     *out = val_to_number_unchecked::<D>(v);
@@ -484,6 +510,16 @@ unsafe fn nodeset_items<'a>(ns: *mut NodeSet) -> &'a mut [*mut c_void] {
     } else {
         core::slice::from_raw_parts_mut((*ns).items, (*ns).count)
     }
+}
+
+/// Build `node`'s string-value with no limit and no error reporting - the
+/// best-effort form the NUMBER coercion wants, where an overrun yields "" and
+/// "" coerces to NaN, which is the right answer anyway.
+#[inline]
+unsafe fn node_text_best_effort<D: Dom>(node: D::Node) -> Text {
+    let mut t = Text::new();
+    node_to_owned_text::<D>(node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
+    t
 }
 
 /* ---------- document order ---------- */

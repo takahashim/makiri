@@ -1,21 +1,26 @@
 //! The built-in XPath 1.0 function library (mkr_xpath_funcs_body.h), plus the
 //! two Nokogiri-compatible builtins and the CSS lowering's internal hooks.
 //!
-//! The C dispatches through a table of function pointers; here it is a match on
-//! the name, which the compiler turns into the same thing per backend. The
-//! host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
+//! One function per builtin behind one signature, and `lookup` is the only place
+//! that knows which names exist - the shape the C has as `fn_table` plus
+//! `mkr_lookup_function`. Keeping "does it exist" and "what does it do" as one
+//! question matters here: the evaluator asks before deciding whether to route a
+//! call to a Ruby handler, so a second list of names maintained separately could
+//! disagree with this one and turn an unknown function into a bare failure.
+//!
+//! The host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
 
 use super::abi::*;
 use super::dom::*;
+use super::own::Text;
 use super::value::*;
 use crate::err_setf;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
-/// Namespace URIs registered from Nokogiri's XPath context, so prefixed names
+/// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
-pub const NS_NOKOGIRI_BUILTIN_URI: &[u8] =
-    b"https://www.nokogiri.org/default_ns/ruby/builtins";
+pub const NS_NOKOGIRI_BUILTIN_URI: &[u8] = b"https://www.nokogiri.org/default_ns/ruby/builtins";
 
 /// Names the CSS lowering emits for an untyped `:*-of-type`, where the "type" is
 /// the element's own expanded name - a self-reference XPath 1.0 cannot express
@@ -33,7 +38,68 @@ pub struct Focus<D: Dom> {
     pub size: usize,
 }
 
-/* ---------- small helpers ---------- */
+/// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
+/// `args` and clears them after the call; `out` starts zeroed, and a false
+/// return leaves it for the caller to clear.
+pub type FnImpl<D> = unsafe fn(*mut Context, &Focus<D>, &[Val], *mut Val, *mut Error) -> bool;
+
+/// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
+/// routes the call to the registered resolver.
+pub fn lookup<D: Dom>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnImpl<D>> {
+    if let Some(uri) = ns_uri {
+        /* The Nokogiri-compatible builtins live in one namespace; any other
+         * registered namespace means a user-defined function, so it goes to the
+         * resolver. */
+        if uri != NS_NOKOGIRI_BUILTIN_URI {
+            return None;
+        }
+        return Some(match local {
+            b"css-class" => fn_css_class::<D>,
+            b"local-name-is" => fn_local_name_is::<D>,
+            _ => return None,
+        });
+    }
+    /* The default namespace: the XPath 1.0 standard library. */
+    Some(match local {
+        /* node-set */
+        b"last" => fn_last::<D>,
+        b"position" => fn_position::<D>,
+        b"count" => fn_count::<D>,
+        b"id" => fn_id::<D>,
+        b"local-name" => fn_local_name::<D>,
+        b"namespace-uri" => fn_namespace_uri::<D>,
+        b"name" => fn_name::<D>,
+        /* string */
+        b"string" => fn_string::<D>,
+        b"concat" => fn_concat::<D>,
+        b"starts-with" => fn_starts_with::<D>,
+        b"contains" => fn_contains::<D>,
+        b"substring-before" => fn_substring_before::<D>,
+        b"substring-after" => fn_substring_after::<D>,
+        b"substring" => fn_substring::<D>,
+        b"string-length" => fn_string_length::<D>,
+        b"normalize-space" => fn_normalize_space::<D>,
+        b"translate" => fn_translate::<D>,
+        /* boolean */
+        b"not" => fn_not::<D>,
+        b"true" => fn_true::<D>,
+        b"false" => fn_false::<D>,
+        b"boolean" => fn_boolean::<D>,
+        b"lang" => fn_lang::<D>,
+        /* number */
+        b"number" => fn_number::<D>,
+        b"sum" => fn_sum::<D>,
+        b"floor" => fn_floor::<D>,
+        b"ceiling" => fn_ceiling::<D>,
+        b"round" => fn_round::<D>,
+        /* the CSS lowering's internal hooks */
+        _ if D::IS_XML && local == FN_OF_TYPE_POS => fn_of_type_pos::<D>,
+        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => fn_of_type_pos_last::<D>,
+        _ => return None,
+    })
+}
+
+/* ---------- shared helpers ---------- */
 
 unsafe fn arity(got: usize, min: usize, max: usize, err: *mut Error, name: &str) -> bool {
     if got < min || got > max {
@@ -89,26 +155,14 @@ unsafe fn set_string(out: *mut Val, s: &[u8], err: *mut Error, what: &str) -> bo
     }
 }
 
-/// An owned text guard: clears the C allocation when it goes out of scope, so
-/// the many early returns below need no per-site cleanup.
-struct Text(OwnedText);
-
-impl Text {
-    fn new() -> Text {
-        Text(OwnedText { ptr: ptr::null_mut(), len: 0 })
-    }
-    fn as_slice(&self) -> &[u8] {
-        unsafe { owned_bytes(self.0) }
-    }
-    fn as_mut(&mut self) -> *mut OwnedText {
-        &mut self.0
-    }
+unsafe fn set_num(out: *mut Val, d: f64) -> bool {
+    *out = val_number(d);
+    true
 }
 
-impl Drop for Text {
-    fn drop(&mut self) {
-        unsafe { mkr_owned_text_clear(&mut self.0) }
-    }
+unsafe fn set_bool(out: *mut Val, b: bool) -> bool {
+    *out = val_boolean(b);
+    true
 }
 
 unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<Text> {
@@ -137,16 +191,33 @@ unsafe fn arg_or_self_text<D: Dom>(
     ctx: *mut Context,
     err: *mut Error,
 ) -> Option<Text> {
-    if args.is_empty() {
-        let mut t = Text::new();
-        if node_to_owned_text::<D>(focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
-            Some(t)
-        } else {
-            None
+    match args.first() {
+        Some(a) => to_text::<D>(a, ctx, err),
+        None => {
+            let mut t = Text::new();
+            if node_to_owned_text::<D>(focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
+                Some(t)
+            } else {
+                None
+            }
         }
-    } else {
-        to_text::<D>(&args[0], ctx, err)
     }
+}
+
+/// Pull both string operands, then run `f`. The guards free them on every path.
+unsafe fn two<D: Dom, F>(ctx: *mut Context, args: &[Val], err: *mut Error, f: F) -> bool
+where
+    F: FnOnce(&[u8], &[u8]) -> bool,
+{
+    let a = match to_text::<D>(&args[0], ctx, err) {
+        Some(t) => t,
+        None => return false,
+    };
+    let b = match to_text::<D>(&args[1], ctx, err) {
+        Some(t) => t,
+        None => return false,
+    };
+    f(a.as_slice(), b.as_slice())
 }
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -159,7 +230,74 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/* ---------- id() ---------- */
+/// The number of characters in valid UTF-8; a stray continuation byte counts as
+/// its own character, matching the C primitive's byte-lead counting.
+fn count_chars(s: &[u8]) -> usize {
+    s.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
+}
+
+/// The byte offset `n` characters into `s`, clipped to its length.
+fn advance_chars(s: &[u8], n: usize) -> usize {
+    let mut i = 0;
+    let mut seen = 0;
+    while i < s.len() && seen < n {
+        i += 1;
+        while i < s.len() && (s[i] & 0xC0) == 0x80 {
+            i += 1;
+        }
+        seen += 1;
+    }
+    i
+}
+
+/// A `Vec` sized up front, so a failed allocation is an XPath OOM rather than
+/// the abort a plain `Vec` growth would give under `panic = "abort"`.
+fn try_vec<T>(n: usize, err: *mut Error, what: &str) -> Option<Vec<T>> {
+    let mut v: Vec<T> = Vec::new();
+    if v.try_reserve_exact(n).is_err() {
+        err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what);
+        return None;
+    }
+    Some(v)
+}
+
+/* ---------- node-set functions ---------- */
+
+unsafe fn fn_last<D: Dom>(
+    _ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 0, 0, err, "last") && set_num(out, focus.size as f64)
+}
+
+unsafe fn fn_position<D: Dom>(
+    _ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 0, 0, err, "position") && set_num(out, focus.pos as f64)
+}
+
+unsafe fn fn_count<D: Dom>(
+    _ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 1, 1, err, "count") {
+        return false;
+    }
+    match require_nodeset(&args[0], "count", err) {
+        Some(ns) => set_num(out, (*ns).count as f64),
+        None => false,
+    }
+}
 
 /// Walk the tree for an element whose `id` attribute is `id`.
 ///
@@ -224,10 +362,14 @@ unsafe fn id_collect<D: Dom>(
 
 unsafe fn fn_id<D: Dom>(
     ctx: *mut Context,
+    _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    if !arity(args.len(), 1, 1, err, "id") {
+        return false;
+    }
     (*out).type_ = T_NODESET;
     mkr_nodeset_init(&raw mut (*out).u.nodeset);
 
@@ -247,15 +389,12 @@ unsafe fn fn_id<D: Dom>(
 
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
      * anything else is converted to a string and split the same way. */
-    let ok = if (*args.as_ptr()).type_ == T_NODESET {
-        let set = &raw const (*args.as_ptr()).u.nodeset;
+    let ok = if args[0].type_ == T_NODESET {
+        let set = &raw const args[0].u.nodeset;
         (0..(*set).count).all(|i| {
             let mut t = Text::new();
-            if !node_to_owned_text::<D>(nodeset_at::<D>(set, i), mkr_ctx_limits(ctx), err, t.as_mut())
-            {
-                return false;
-            }
-            id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
+            node_to_owned_text::<D>(nodeset_at::<D>(set, i), mkr_ctx_limits(ctx), err, t.as_mut())
+                && id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
         })
     } else {
         match to_text::<D>(&args[0], ctx, err) {
@@ -269,282 +408,6 @@ unsafe fn fn_id<D: Dom>(
     }
     /* §4.1: the result is in document order with duplicates removed. */
     nodeset_unique_sorted::<D>(ctx, ns_out);
-    true
-}
-
-/* ---------- the Nokogiri builtins ---------- */
-
-/// css-class(haystack, needle): true iff `needle` is a whitespace-separated
-/// token of `haystack`. Kept behaviour-identical to libxml2's builtin_css_class,
-/// including the NULL ordering - a NULL haystack is a non-match even for an
-/// empty needle.
-fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
-    let (hay, val) = match (hay, val) {
-        (Some(h), Some(v)) => (h, v),
-        _ => return false,
-    };
-    if val.is_empty() {
-        return true; /* libxml2 returns non-NULL for an empty val */
-    }
-    hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
-}
-
-/* ---------- the CSS-lowered of-type hooks (XML only) ---------- */
-
-/// Two elements are the same "type" iff they share an expanded name: local name
-/// plus namespace URI.
-unsafe fn same_type<D: Dom>(a: D::Node, b: D::Node, doc: D::Doc) -> bool {
-    D::local_name(a) == D::local_name(b) && D::ns_uri(a, doc) == D::ns_uri(b, doc)
-}
-
-/// The 1-based position of `self` among its same-type element siblings: forward
-/// counts the preceding siblings, otherwise the following ones (from the end).
-unsafe fn of_type_pos<D: Dom>(node: D::Node, forward: bool, doc: D::Doc) -> f64 {
-    if D::is_null(node) || D::node_type(node) != NTYPE_ELEMENT {
-        return 0.0;
-    }
-    let step = |n: D::Node| if forward { D::prev(n) } else { D::next(n) };
-    let mut pos = 1i64;
-    let mut s = step(node);
-    while !D::is_null(s) {
-        if D::node_type(s) == NTYPE_ELEMENT && same_type::<D>(node, s, doc) {
-            pos += 1;
-        }
-        s = step(s);
-    }
-    pos as f64
-}
-
-/* ---------- string functions ---------- */
-
-unsafe fn fn_concat<D: Dom>(
-    ctx: *mut Context,
-    args: &[Val],
-    out: *mut Val,
-    err: *mut Error,
-) -> bool {
-    let limits = mkr_ctx_limits(ctx);
-    let mut parts: Vec<Text> = Vec::new();
-    if parts.try_reserve(args.len()).is_err() {
-        err_setf!(err, XP_ERR_OOM, "out of memory in concat()");
-        return false;
-    }
-    let mut total = 0usize;
-    for a in args {
-        let t = match to_text::<D>(a, ctx, err) {
-            Some(t) => t,
-            None => return false,
-        };
-        total = match total.checked_add(t.0.len) {
-            Some(n) => n,
-            None => {
-                err_setf!(err, XP_ERR_OOM, "concat() size overflow");
-                return false;
-            }
-        };
-        if mkr_limit_check_string_bytes(limits, total, err) != 0 {
-            return false;
-        }
-        parts.push(t);
-    }
-    let buf = mkr_str_alloc(total);
-    if buf.is_null() {
-        err_setf!(err, XP_ERR_OOM, "out of memory in concat()");
-        return false;
-    }
-    let mut off = 0usize;
-    for p in &parts {
-        let s = p.as_slice();
-        ptr::copy_nonoverlapping(s.as_ptr(), (buf as *mut u8).add(off), s.len());
-        off += s.len();
-    }
-    *buf.add(total) = 0;
-    mkr_val_set_owned_text(out, OwnedText { ptr: buf, len: total });
-    true
-}
-
-/// substring(s, start[, length]). Positions are 1-based character offsets that
-/// round to nearest, and out-of-range positions clip silently.
-unsafe fn fn_substring<D: Dom>(
-    ctx: *mut Context,
-    args: &[Val],
-    out: *mut Val,
-    err: *mut Error,
-) -> bool {
-    let s = match to_text::<D>(&args[0], ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-    let start_d = match to_number::<D>(&args[1], ctx, err) {
-        Some(d) => d,
-        None => return false,
-    };
-    let bytes = s.as_slice();
-    let nchars = count_chars(bytes);
-    let end_d = if args.len() == 3 {
-        match to_number::<D>(&args[2], ctx, err) {
-            Some(d) => start_d + d,
-            None => return false,
-        }
-    } else {
-        nchars as f64 + 1.0
-    };
-
-    if start_d.is_nan() || end_d.is_nan() {
-        return set_string(out, b"", err, "substring");
-    }
-    /* Round, then clamp AS DOUBLES before any cast: start/end can be infinite
-     * or beyond i64 (`substring(s, 1 div 0)`), where casting first would be
-     * undefined in C and saturating here - either way not the spec's clip. */
-    let imax = nchars as f64 + 1.0;
-    let rstart = (start_d + 0.5).floor().clamp(1.0, imax);
-    let rend = (end_d + 0.5).floor().clamp(1.0, imax);
-    if rend <= rstart {
-        return set_string(out, b"", err, "substring");
-    }
-    let from = advance_chars(bytes, (rstart as i64 - 1) as usize);
-    let to = from + advance_chars(&bytes[from..], (rend as i64 - rstart as i64) as usize);
-    set_string(out, &bytes[from..to], err, "substring")
-}
-
-/// The number of characters in valid UTF-8; a stray continuation byte counts as
-/// its own character, matching the C primitive's byte-lead counting.
-fn count_chars(s: &[u8]) -> usize {
-    s.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
-}
-
-/// The byte offset `n` characters into `s`, clipped to its length.
-fn advance_chars(s: &[u8], n: usize) -> usize {
-    let mut i = 0;
-    let mut seen = 0;
-    while i < s.len() && seen < n {
-        i += 1;
-        while i < s.len() && (s[i] & 0xC0) == 0x80 {
-            i += 1;
-        }
-        seen += 1;
-    }
-    i
-}
-
-/// normalize-space: collapse runs of whitespace and trim the ends.
-unsafe fn fn_normalize_space<D: Dom>(
-    ctx: *mut Context,
-    focus: &Focus<D>,
-    args: &[Val],
-    out: *mut Val,
-    err: *mut Error,
-) -> bool {
-    let s = match arg_or_self_text::<D>(focus, args, ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-    let src = s.as_slice();
-    let buf = mkr_str_alloc(src.len());
-    if buf.is_null() {
-        err_setf!(err, XP_ERR_OOM, "out of memory in normalize-space()");
-        return false;
-    }
-    let dst = core::slice::from_raw_parts_mut(buf as *mut u8, src.len() + 1);
-    let mut w = 0usize;
-    let mut in_space = true;
-    for &c in src {
-        if super::lex::is_ws(c) {
-            if !in_space && w > 0 {
-                dst[w] = b' ';
-                w += 1;
-            }
-            in_space = true;
-        } else {
-            dst[w] = c;
-            w += 1;
-            in_space = false;
-        }
-    }
-    if w > 0 && dst[w - 1] == b' ' {
-        w -= 1;
-    }
-    dst[w] = 0;
-    mkr_val_set_owned_text(out, OwnedText { ptr: buf, len: w });
-    true
-}
-
-/// translate(s, from, to) works on CHARACTERS, not bytes: each code point of `s`
-/// that appears in `from` becomes the code point at the same position in `to`,
-/// or is dropped when `from` is longer.
-///
-/// The input is valid UTF-8 (the literal lexer validates, and DOM string-values
-/// are valid), but a decode failure fails closed rather than truncating.
-unsafe fn fn_translate<D: Dom>(
-    ctx: *mut Context,
-    args: &[Val],
-    out: *mut Val,
-    err: *mut Error,
-) -> bool {
-    let limits = mkr_ctx_limits(ctx);
-    let s = match to_text::<D>(&args[0], ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-    let from = match to_text::<D>(&args[1], ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-    let to = match to_text::<D>(&args[2], ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-
-    let (sv, fv, tv) = match (
-        core::str::from_utf8(s.as_slice()),
-        core::str::from_utf8(from.as_slice()),
-        core::str::from_utf8(to.as_slice()),
-    ) {
-        (Ok(a), Ok(b), Ok(c)) => (a, b, c),
-        _ => {
-            err_setf!(err, XP_ERR_RUNTIME, "invalid UTF-8 in translate() argument");
-            return false;
-        }
-    };
-    let from_cp: Vec<char> = fv.chars().collect();
-    let to_cp: Vec<char> = tv.chars().collect();
-
-    /* Capped: a multibyte replacement can push the result past the limit even
-     * when the input is inside it ("a" -> an emoji), so the append fails closed
-     * with LIMIT or OOM. */
-    let mut buf = Buf::new((*limits).max_string_bytes);
-    let mut enc = [0u8; 4];
-    for c in sv.chars() {
-        let emit: Option<&str> = match from_cp.iter().position(|&f| f == c) {
-            None => Some(c.encode_utf8(&mut enc)),          /* not in `from`: keep it */
-            Some(k) if k < to_cp.len() => Some(to_cp[k].encode_utf8(&mut enc)),
-            Some(_) => None,                                 /* past `to`: drop it */
-        };
-        if let Some(e) = emit {
-            let st = mkr_buf_append(&mut buf, e.as_ptr() as *const c_void, e.len());
-            if st != ST_OK {
-                buf.free();
-                if st == ST_ERR_LIMIT {
-                    err_setf!(
-                        err,
-                        XP_ERR_LIMIT,
-                        "string size limit exceeded ({} bytes) in translate()",
-                        (*limits).max_string_bytes
-                    );
-                } else {
-                    err_setf!(err, XP_ERR_OOM, "out of memory in translate()");
-                }
-                return false;
-            }
-        }
-    }
-    let mut len = 0usize;
-    let p = mkr_buf_steal(&mut buf, &mut len);
-    if p.is_null() {
-        err_setf!(err, XP_ERR_OOM, "out of memory in translate()");
-        return false;
-    }
-    mkr_val_set_owned_text(out, OwnedText { ptr: p, len });
     true
 }
 
@@ -605,7 +468,432 @@ unsafe fn name_emit<D: Dom>(
     set_string(out, name, err, fname)
 }
 
-/* ---------- lang() ---------- */
+unsafe fn fn_local_name<D: Dom>(
+    _ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 0, 1, err, "local-name") {
+        return false;
+    }
+    match name_target::<D>(args, focus, err, "local-name") {
+        Some(t) => name_emit::<D>(t, false, out, err, "local-name"),
+        None => false,
+    }
+}
+
+unsafe fn fn_name<D: Dom>(
+    _ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 0, 1, err, "name") {
+        return false;
+    }
+    match name_target::<D>(args, focus, err, "name") {
+        Some(t) => name_emit::<D>(t, true, out, err, "name"),
+        None => false,
+    }
+}
+
+unsafe fn fn_namespace_uri<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 0, 1, err, "namespace-uri") {
+        return false;
+    }
+    let t = match name_target::<D>(args, focus, err, "namespace-uri") {
+        Some(t) => t,
+        None => return false,
+    };
+    if D::is_null(t)
+        || (D::node_type(t) != NTYPE_ELEMENT && D::node_type(t) != NTYPE_ATTRIBUTE)
+        || !D::has_ns(t)
+    {
+        return set_string(out, b"", err, "namespace-uri");
+    }
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    set_string(out, D::ns_uri(t, doc), err, "namespace-uri")
+}
+
+/* ---------- string functions ---------- */
+
+unsafe fn fn_string<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 0, 1, err, "string") {
+        return false;
+    }
+    match arg_or_self_text::<D>(focus, args, ctx, err) {
+        Some(mut t) => {
+            (*out).type_ = T_STRING;
+            mkr_val_set_owned_text(out, t.take());
+            true
+        }
+        None => false,
+    }
+}
+
+unsafe fn fn_concat<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if args.len() < 2 {
+        err_setf!(err, XP_ERR_RUNTIME, "concat(): expected at least 2 arguments");
+        return false;
+    }
+    let limits = mkr_ctx_limits(ctx);
+    let mut parts = match try_vec::<Text>(args.len(), err, "concat") {
+        Some(v) => v,
+        None => return false,
+    };
+    let mut total = 0usize;
+    for a in args {
+        let t = match to_text::<D>(a, ctx, err) {
+            Some(t) => t,
+            None => return false,
+        };
+        total = match total.checked_add(t.as_slice().len()) {
+            Some(n) => n,
+            None => {
+                err_setf!(err, XP_ERR_OOM, "concat() size overflow");
+                return false;
+            }
+        };
+        if mkr_limit_check_string_bytes(limits, total, err) != 0 {
+            return false;
+        }
+        parts.push(t);
+    }
+    let buf = mkr_str_alloc(total);
+    if buf.is_null() {
+        err_setf!(err, XP_ERR_OOM, "out of memory in concat()");
+        return false;
+    }
+    let mut off = 0usize;
+    for p in &parts {
+        let s = p.as_slice();
+        ptr::copy_nonoverlapping(s.as_ptr(), (buf as *mut u8).add(off), s.len());
+        off += s.len();
+    }
+    *buf.add(total) = 0;
+    mkr_val_set_owned_text(out, OwnedText { ptr: buf, len: total });
+    true
+}
+
+unsafe fn fn_starts_with<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 2, 2, err, "starts-with")
+        && two::<D, _>(ctx, args, err, |s, t| set_bool(out, s.starts_with(t)))
+}
+
+unsafe fn fn_contains<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 2, 2, err, "contains")
+        && two::<D, _>(ctx, args, err, |s, t| set_bool(out, find_bytes(s, t).is_some()))
+}
+
+unsafe fn fn_substring_before<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 2, 2, err, "substring-before")
+        && two::<D, _>(ctx, args, err, |s, t| {
+            /* the bytes of s before the first t, or "" when t is empty or absent */
+            let end = if t.is_empty() { 0 } else { find_bytes(s, t).unwrap_or(0) };
+            set_string(out, &s[..end], err, "substring-before")
+        })
+}
+
+unsafe fn fn_substring_after<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 2, 2, err, "substring-after")
+        && two::<D, _>(ctx, args, err, |s, t| {
+            let rest: &[u8] = if t.is_empty() {
+                s
+            } else {
+                match find_bytes(s, t) {
+                    Some(i) => &s[i + t.len()..],
+                    None => b"",
+                }
+            };
+            set_string(out, rest, err, "substring-after")
+        })
+}
+
+/// substring(s, start[, length]). Positions are 1-based character offsets that
+/// round to nearest, and out-of-range positions clip silently.
+unsafe fn fn_substring<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 2, 3, err, "substring") {
+        return false;
+    }
+    let s = match to_text::<D>(&args[0], ctx, err) {
+        Some(t) => t,
+        None => return false,
+    };
+    let start_d = match to_number::<D>(&args[1], ctx, err) {
+        Some(d) => d,
+        None => return false,
+    };
+    let bytes = s.as_slice();
+    let nchars = count_chars(bytes);
+    let end_d = match args.get(2) {
+        Some(a) => match to_number::<D>(a, ctx, err) {
+            Some(d) => start_d + d,
+            None => return false,
+        },
+        None => nchars as f64 + 1.0,
+    };
+
+    if start_d.is_nan() || end_d.is_nan() {
+        return set_string(out, b"", err, "substring");
+    }
+    /* Round, then clamp AS DOUBLES before any cast: start/end can be infinite
+     * or beyond i64 (`substring(s, 1 div 0)`), where casting first would be
+     * undefined in C and saturating here - either way not the spec's clip. */
+    let imax = nchars as f64 + 1.0;
+    let rstart = (start_d + 0.5).floor().clamp(1.0, imax);
+    let rend = (end_d + 0.5).floor().clamp(1.0, imax);
+    if rend <= rstart {
+        return set_string(out, b"", err, "substring");
+    }
+    let from = advance_chars(bytes, (rstart as i64 - 1) as usize);
+    let to = from + advance_chars(&bytes[from..], (rend as i64 - rstart as i64) as usize);
+    set_string(out, &bytes[from..to], err, "substring")
+}
+
+unsafe fn fn_string_length<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 0, 1, err, "string-length") {
+        return false;
+    }
+    match arg_or_self_text::<D>(focus, args, ctx, err) {
+        Some(t) => set_num(out, count_chars(t.as_slice()) as f64),
+        None => false,
+    }
+}
+
+/// normalize-space: collapse runs of whitespace and trim the ends.
+unsafe fn fn_normalize_space<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 0, 1, err, "normalize-space") {
+        return false;
+    }
+    let s = match arg_or_self_text::<D>(focus, args, ctx, err) {
+        Some(t) => t,
+        None => return false,
+    };
+    let src = s.as_slice();
+    let buf = mkr_str_alloc(src.len());
+    if buf.is_null() {
+        err_setf!(err, XP_ERR_OOM, "out of memory in normalize-space()");
+        return false;
+    }
+    let dst = core::slice::from_raw_parts_mut(buf as *mut u8, src.len() + 1);
+    let mut w = 0usize;
+    let mut in_space = true;
+    for &c in src {
+        if super::lex::is_ws(c) {
+            if !in_space && w > 0 {
+                dst[w] = b' ';
+                w += 1;
+            }
+            in_space = true;
+        } else {
+            dst[w] = c;
+            w += 1;
+            in_space = false;
+        }
+    }
+    if w > 0 && dst[w - 1] == b' ' {
+        w -= 1;
+    }
+    dst[w] = 0;
+    mkr_val_set_owned_text(out, OwnedText { ptr: buf, len: w });
+    true
+}
+
+/// translate(s, from, to) works on CHARACTERS, not bytes: each code point of `s`
+/// that appears in `from` becomes the code point at the same position in `to`,
+/// or is dropped when `from` is longer.
+///
+/// The input is valid UTF-8 (the literal lexer validates, and DOM string-values
+/// are valid), but a decode failure fails closed rather than truncating.
+unsafe fn fn_translate<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 3, 3, err, "translate") {
+        return false;
+    }
+    let limits = mkr_ctx_limits(ctx);
+    let mut texts = match try_vec::<Text>(3, err, "translate") {
+        Some(v) => v,
+        None => return false,
+    };
+    for a in args {
+        match to_text::<D>(a, ctx, err) {
+            Some(t) => texts.push(t),
+            None => return false,
+        }
+    }
+    let (sv, fv, tv) = match (
+        core::str::from_utf8(texts[0].as_slice()),
+        core::str::from_utf8(texts[1].as_slice()),
+        core::str::from_utf8(texts[2].as_slice()),
+    ) {
+        (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+        _ => {
+            err_setf!(err, XP_ERR_RUNTIME, "invalid UTF-8 in translate() argument");
+            return false;
+        }
+    };
+    /* A character is never shorter than a byte, so the byte length bounds the
+     * count - reserving up front keeps a failed allocation an XPath OOM rather
+     * than the abort a growing Vec would give under `panic = "abort"`. */
+    let mut from_cp = match try_vec::<char>(fv.len(), err, "translate") {
+        Some(v) => v,
+        None => return false,
+    };
+    from_cp.extend(fv.chars());
+    let mut to_cp = match try_vec::<char>(tv.len(), err, "translate") {
+        Some(v) => v,
+        None => return false,
+    };
+    to_cp.extend(tv.chars());
+
+    /* Capped: a multibyte replacement can push the result past the limit even
+     * when the input is inside it ("a" -> an emoji), so the append fails closed
+     * with LIMIT or OOM. */
+    let mut buf = Buf::new((*limits).max_string_bytes);
+    let mut enc = [0u8; 4];
+    for c in sv.chars() {
+        let emit: Option<&str> = match from_cp.iter().position(|&f| f == c) {
+            None => Some(c.encode_utf8(&mut enc)), /* not in `from`: keep it */
+            Some(k) if k < to_cp.len() => Some(to_cp[k].encode_utf8(&mut enc)),
+            Some(_) => None, /* past `to`: drop it */
+        };
+        if let Some(e) = emit {
+            let st = mkr_buf_append(&mut buf, e.as_ptr() as *const c_void, e.len());
+            if st != ST_OK {
+                buf.free();
+                if st == ST_ERR_LIMIT {
+                    err_setf!(
+                        err,
+                        XP_ERR_LIMIT,
+                        "string size limit exceeded ({} bytes) in translate()",
+                        (*limits).max_string_bytes
+                    );
+                } else {
+                    err_setf!(err, XP_ERR_OOM, "out of memory in translate()");
+                }
+                return false;
+            }
+        }
+    }
+    let mut len = 0usize;
+    let p = mkr_buf_steal(&mut buf, &mut len);
+    if p.is_null() {
+        err_setf!(err, XP_ERR_OOM, "out of memory in translate()");
+        return false;
+    }
+    mkr_val_set_owned_text(out, OwnedText { ptr: p, len });
+    true
+}
+
+/* ---------- boolean functions ---------- */
+
+unsafe fn fn_not<D: Dom>(
+    _ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 1, 1, err, "not") && set_bool(out, !val_to_boolean(&args[0]))
+}
+
+unsafe fn fn_true<D: Dom>(
+    _ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 0, 0, err, "true") && set_bool(out, true)
+}
+
+unsafe fn fn_false<D: Dom>(
+    _ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 0, 0, err, "false") && set_bool(out, false)
+}
+
+unsafe fn fn_boolean<D: Dom>(
+    _ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 1, 1, err, "boolean") && set_bool(out, val_to_boolean(&args[0]))
+}
 
 unsafe fn fn_lang<D: Dom>(
     ctx: *mut Context,
@@ -614,6 +902,9 @@ unsafe fn fn_lang<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    if !arity(args.len(), 1, 1, err, "lang") {
+        return false;
+    }
     let want = match to_text::<D>(&args[0], ctx, err) {
         Some(t) => t,
         None => return false,
@@ -647,351 +938,66 @@ unsafe fn fn_lang<D: Dom>(
     true
 }
 
-/* ---------- dispatch ---------- */
+/* ---------- number functions ---------- */
 
-/// Is `(ns_uri, local)` a built-in? The evaluator asks before routing a call to
-/// a Ruby handler.
-pub fn is_builtin<D: Dom>(ns_uri: Option<&[u8]>, local: &[u8]) -> bool {
-    match ns_uri {
-        Some(uri) => {
-            uri == NS_NOKOGIRI_BUILTIN_URI && matches!(local, b"css-class" | b"local-name-is")
-        }
-        None => matches!(
-            local,
-            b"last"
-                | b"position"
-                | b"count"
-                | b"id"
-                | b"local-name"
-                | b"namespace-uri"
-                | b"name"
-                | b"string"
-                | b"concat"
-                | b"starts-with"
-                | b"contains"
-                | b"substring-before"
-                | b"substring-after"
-                | b"substring"
-                | b"string-length"
-                | b"normalize-space"
-                | b"translate"
-                | b"not"
-                | b"true"
-                | b"false"
-                | b"boolean"
-                | b"lang"
-                | b"number"
-                | b"sum"
-                | b"floor"
-                | b"ceiling"
-                | b"round"
-        ) || (D::IS_XML && (local == FN_OF_TYPE_POS || local == FN_OF_TYPE_POS_LAST)),
-    }
-}
-
-/// Call the built-in named `(ns_uri, local)`. The caller has already confirmed
-/// it exists with `is_builtin`; `out` starts zeroed and the caller clears it on
-/// a false return.
-///
-/// # Safety
-/// `ctx`, `args` and `out` must be valid, and the focus node live.
-pub unsafe fn call<D: Dom>(
+unsafe fn fn_number<D: Dom>(
     ctx: *mut Context,
     focus: &Focus<D>,
-    ns_uri: Option<&[u8]>,
-    local: &[u8],
     args: &[Val],
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
-    let n = args.len();
-    let limits = mkr_ctx_limits(ctx);
+    if !arity(args.len(), 0, 1, err, "number") {
+        return false;
+    }
+    match args.first() {
+        Some(a) => match to_number::<D>(a, ctx, err) {
+            Some(d) => set_num(out, d),
+            None => false,
+        },
+        None => {
+            /* number() with no argument is number(string(self)). */
+            let mut t = Text::new();
+            if !node_to_owned_text::<D>(focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
+                return false;
+            }
+            set_num(out, bytes_to_number(t.as_slice()))
+        }
+    }
+}
 
-    if let Some(uri) = ns_uri {
-        if uri != NS_NOKOGIRI_BUILTIN_URI {
+unsafe fn fn_sum<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 1, 1, err, "sum") {
+        return false;
+    }
+    let ns = match require_nodeset(&args[0], "sum", err) {
+        Some(ns) => ns,
+        None => return false,
+    };
+    let limits = mkr_ctx_limits(ctx);
+    let mut total = 0.0;
+    for i in 0..(*ns).count {
+        if mkr_limit_eval_op(limits, err) != 0 {
             return false;
         }
-        return match local {
-            b"css-class" => {
-                if !arity(n, 2, 2, err, "nokogiri-builtin:css-class") {
-                    return false;
-                }
-                let hay = match to_text::<D>(&args[0], ctx, err) {
-                    Some(t) => t,
-                    None => return false,
-                };
-                let needle = match to_text::<D>(&args[1], ctx, err) {
-                    Some(t) => t,
-                    None => return false,
-                };
-                *out = val_boolean(ws_token_match(Some(hay.as_slice()), Some(needle.as_slice())));
-                true
-            }
-            b"local-name-is" => {
-                if !arity(n, 1, 1, err, "nokogiri-builtin:local-name-is") {
-                    return false;
-                }
-                let want = match to_text::<D>(&args[0], ctx, err) {
-                    Some(t) => t,
-                    None => return false,
-                };
-                let hit = !D::is_null(focus.node) && D::qualified_name(focus.node) == want.as_slice();
-                *out = val_boolean(hit);
-                true
-            }
-            _ => false,
-        };
+        match cached_node_text::<D>(ctx, nodeset_at::<D>(ns, i), err) {
+            Some(s) => total += bytes_to_number(s),
+            None => return false,
+        }
     }
-
-    match local {
-        /* --- node-set --- */
-        b"last" => arity(n, 0, 0, err, "last") && set_num(out, focus.size as f64),
-        b"position" => arity(n, 0, 0, err, "position") && set_num(out, focus.pos as f64),
-        b"count" => {
-            if !arity(n, 1, 1, err, "count") {
-                return false;
-            }
-            match require_nodeset(&args[0], "count", err) {
-                Some(ns) => set_num(out, (*ns).count as f64),
-                None => false,
-            }
-        }
-        b"id" => arity(n, 1, 1, err, "id") && fn_id::<D>(ctx, args, out, err),
-        b"local-name" => {
-            if !arity(n, 0, 1, err, "local-name") {
-                return false;
-            }
-            match name_target::<D>(args, focus, err, "local-name") {
-                Some(t) => name_emit::<D>(t, false, out, err, "local-name"),
-                None => false,
-            }
-        }
-        b"name" => {
-            if !arity(n, 0, 1, err, "name") {
-                return false;
-            }
-            match name_target::<D>(args, focus, err, "name") {
-                Some(t) => name_emit::<D>(t, true, out, err, "name"),
-                None => false,
-            }
-        }
-        b"namespace-uri" => {
-            if !arity(n, 0, 1, err, "namespace-uri") {
-                return false;
-            }
-            let t = match name_target::<D>(args, focus, err, "namespace-uri") {
-                Some(t) => t,
-                None => return false,
-            };
-            if D::is_null(t)
-                || (D::node_type(t) != NTYPE_ELEMENT && D::node_type(t) != NTYPE_ATTRIBUTE)
-                || !D::has_ns(t)
-            {
-                return set_string(out, b"", err, "namespace-uri");
-            }
-            let doc = D::doc_from_void(mkr_ctx_document(ctx));
-            set_string(out, D::ns_uri(t, doc), err, "namespace-uri")
-        }
-
-        /* --- string --- */
-        b"string" => {
-            if !arity(n, 0, 1, err, "string") {
-                return false;
-            }
-            match arg_or_self_text::<D>(focus, args, ctx, err) {
-                Some(mut t) => {
-                    /* transfer ownership: the value takes the allocation */
-                    let owned = t.0;
-                    t.0 = OwnedText { ptr: ptr::null_mut(), len: 0 };
-                    (*out).type_ = T_STRING;
-                    mkr_val_set_owned_text(out, owned);
-                    true
-                }
-                None => false,
-            }
-        }
-        b"concat" => {
-            if n < 2 {
-                err_setf!(err, XP_ERR_RUNTIME, "concat(): expected at least 2 arguments");
-                return false;
-            }
-            fn_concat::<D>(ctx, args, out, err)
-        }
-        b"starts-with" => {
-            if !arity(n, 2, 2, err, "starts-with") {
-                return false;
-            }
-            two::<D, _>(ctx, args, err, |s, t| {
-                *out = val_boolean(s.starts_with(t));
-                true
-            })
-        }
-        b"contains" => {
-            if !arity(n, 2, 2, err, "contains") {
-                return false;
-            }
-            two::<D, _>(ctx, args, err, |s, t| {
-                *out = val_boolean(find_bytes(s, t).is_some());
-                true
-            })
-        }
-        b"substring-before" => {
-            if !arity(n, 2, 2, err, "substring-before") {
-                return false;
-            }
-            two::<D, _>(ctx, args, err, |s, t| {
-                /* the bytes of s before the first t, or "" when t is empty or absent */
-                let end = if t.is_empty() { 0 } else { find_bytes(s, t).unwrap_or(0) };
-                set_string(out, &s[..end], err, "substring-before")
-            })
-        }
-        b"substring-after" => {
-            if !arity(n, 2, 2, err, "substring-after") {
-                return false;
-            }
-            two::<D, _>(ctx, args, err, |s, t| {
-                let rest: &[u8] = if t.is_empty() {
-                    s
-                } else {
-                    match find_bytes(s, t) {
-                        Some(i) => &s[i + t.len()..],
-                        None => b"",
-                    }
-                };
-                set_string(out, rest, err, "substring-after")
-            })
-        }
-        b"substring" => arity(n, 2, 3, err, "substring") && fn_substring::<D>(ctx, args, out, err),
-        b"string-length" => {
-            if !arity(n, 0, 1, err, "string-length") {
-                return false;
-            }
-            match arg_or_self_text::<D>(focus, args, ctx, err) {
-                Some(t) => set_num(out, count_chars(t.as_slice()) as f64),
-                None => false,
-            }
-        }
-        b"normalize-space" => {
-            arity(n, 0, 1, err, "normalize-space")
-                && fn_normalize_space::<D>(ctx, focus, args, out, err)
-        }
-        b"translate" => arity(n, 3, 3, err, "translate") && fn_translate::<D>(ctx, args, out, err),
-
-        /* --- boolean --- */
-        b"not" => {
-            arity(n, 1, 1, err, "not") && {
-                *out = val_boolean(!val_to_boolean(&args[0]));
-                true
-            }
-        }
-        b"true" => {
-            arity(n, 0, 0, err, "true") && {
-                *out = val_boolean(true);
-                true
-            }
-        }
-        b"false" => {
-            arity(n, 0, 0, err, "false") && {
-                *out = val_boolean(false);
-                true
-            }
-        }
-        b"boolean" => {
-            arity(n, 1, 1, err, "boolean") && {
-                *out = val_boolean(val_to_boolean(&args[0]));
-                true
-            }
-        }
-        b"lang" => arity(n, 1, 1, err, "lang") && fn_lang::<D>(ctx, focus, args, out, err),
-
-        /* --- number --- */
-        b"number" => {
-            if !arity(n, 0, 1, err, "number") {
-                return false;
-            }
-            if n == 0 {
-                /* number() with no argument is number(string(self)) */
-                let mut t = Text::new();
-                if !node_to_owned_text::<D>(focus.node, limits, err, t.as_mut()) {
-                    return false;
-                }
-                return set_num(out, bytes_to_number(t.as_slice()));
-            }
-            match to_number::<D>(&args[0], ctx, err) {
-                Some(d) => set_num(out, d),
-                None => false,
-            }
-        }
-        b"sum" => {
-            if !arity(n, 1, 1, err, "sum") {
-                return false;
-            }
-            let ns = match require_nodeset(&args[0], "sum", err) {
-                Some(ns) => ns,
-                None => return false,
-            };
-            let mut total = 0.0;
-            for i in 0..(*ns).count {
-                if mkr_limit_eval_op(limits, err) != 0 {
-                    return false;
-                }
-                match cached_node_text::<D>(ctx, nodeset_at::<D>(ns, i), err) {
-                    Some(s) => total += bytes_to_number(s),
-                    None => return false,
-                }
-            }
-            set_num(out, total)
-        }
-        b"floor" => num1::<D, _>(ctx, args, err, n, "floor", out, f64::floor),
-        b"ceiling" => num1::<D, _>(ctx, args, err, n, "ceiling", out, f64::ceil),
-        /* XPath round(): to the nearest integer, with .5 going toward +inf. */
-        b"round" => num1::<D, _>(ctx, args, err, n, "round", out, |d| {
-            if d.is_nan() {
-                d
-            } else {
-                (d + 0.5).floor()
-            }
-        }),
-
-        /* --- the CSS-lowered of-type hooks (XML only) --- */
-        _ if D::IS_XML && local == FN_OF_TYPE_POS => {
-            let doc = D::doc_from_void(mkr_ctx_document(ctx));
-            set_num(out, of_type_pos::<D>(focus.node, true, doc))
-        }
-        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => {
-            let doc = D::doc_from_void(mkr_ctx_document(ctx));
-            set_num(out, of_type_pos::<D>(focus.node, false, doc))
-        }
-        _ => false,
-    }
-}
-
-unsafe fn set_num(out: *mut Val, d: f64) -> bool {
-    *out = val_number(d);
-    true
-}
-
-/// Pull both string operands, then run `f`. The guards free them on every path.
-unsafe fn two<D: Dom, F>(ctx: *mut Context, args: &[Val], err: *mut Error, f: F) -> bool
-where
-    F: FnOnce(&[u8], &[u8]) -> bool,
-{
-    let a = match to_text::<D>(&args[0], ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-    let b = match to_text::<D>(&args[1], ctx, err) {
-        Some(t) => t,
-        None => return false,
-    };
-    f(a.as_slice(), b.as_slice())
+    set_num(out, total)
 }
 
 unsafe fn num1<D: Dom, F>(
     ctx: *mut Context,
     args: &[Val],
     err: *mut Error,
-    n: usize,
     name: &str,
     out: *mut Val,
     f: F,
@@ -999,13 +1005,148 @@ unsafe fn num1<D: Dom, F>(
 where
     F: FnOnce(f64) -> f64,
 {
-    if !arity(n, 1, 1, err, name) {
+    if !arity(args.len(), 1, 1, err, name) {
         return false;
     }
     match to_number::<D>(&args[0], ctx, err) {
         Some(d) => set_num(out, f(d)),
         None => false,
     }
+}
+
+unsafe fn fn_floor<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    num1::<D, _>(ctx, args, err, "floor", out, f64::floor)
+}
+
+unsafe fn fn_ceiling<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    num1::<D, _>(ctx, args, err, "ceiling", out, f64::ceil)
+}
+
+/// XPath round(): to the nearest integer, with .5 going toward +inf.
+unsafe fn fn_round<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    num1::<D, _>(ctx, args, err, "round", out, |d| {
+        if d.is_nan() {
+            d
+        } else {
+            (d + 0.5).floor()
+        }
+    })
+}
+
+/* ---------- the Nokogiri builtins ---------- */
+
+/// css-class(haystack, needle): true iff `needle` is a whitespace-separated
+/// token of `haystack`. Kept behaviour-identical to libxml2's builtin_css_class,
+/// including the NULL ordering - a NULL haystack is a non-match even for an
+/// empty needle.
+fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
+    let (hay, val) = match (hay, val) {
+        (Some(h), Some(v)) => (h, v),
+        _ => return false,
+    };
+    if val.is_empty() {
+        return true; /* libxml2 returns non-NULL for an empty val */
+    }
+    hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
+}
+
+unsafe fn fn_css_class<D: Dom>(
+    ctx: *mut Context,
+    _focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    arity(args.len(), 2, 2, err, "nokogiri-builtin:css-class")
+        && two::<D, _>(ctx, args, err, |hay, needle| {
+            set_bool(out, ws_token_match(Some(hay), Some(needle)))
+        })
+}
+
+/// local-name-is(name): true iff the context node's qualified name (for HTML the
+/// lowercase local name) equals the argument.
+unsafe fn fn_local_name_is<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    args: &[Val],
+    out: *mut Val,
+    err: *mut Error,
+) -> bool {
+    if !arity(args.len(), 1, 1, err, "nokogiri-builtin:local-name-is") {
+        return false;
+    }
+    let want = match to_text::<D>(&args[0], ctx, err) {
+        Some(t) => t,
+        None => return false,
+    };
+    let hit = !D::is_null(focus.node) && D::qualified_name(focus.node) == want.as_slice();
+    set_bool(out, hit)
+}
+
+/* ---------- the CSS-lowered of-type hooks (XML only) ---------- */
+
+/// Two elements are the same "type" iff they share an expanded name: local name
+/// plus namespace URI.
+unsafe fn same_type<D: Dom>(a: D::Node, b: D::Node, doc: D::Doc) -> bool {
+    D::local_name(a) == D::local_name(b) && D::ns_uri(a, doc) == D::ns_uri(b, doc)
+}
+
+/// The 1-based position of `node` among its same-type element siblings: forward
+/// counts the preceding siblings, otherwise the following ones (from the end).
+unsafe fn of_type_pos<D: Dom>(node: D::Node, forward: bool, doc: D::Doc) -> f64 {
+    if D::is_null(node) || D::node_type(node) != NTYPE_ELEMENT {
+        return 0.0;
+    }
+    let step = |n: D::Node| if forward { D::prev(n) } else { D::next(n) };
+    let mut pos = 1i64;
+    let mut s = step(node);
+    while !D::is_null(s) {
+        if D::node_type(s) == NTYPE_ELEMENT && same_type::<D>(node, s, doc) {
+            pos += 1;
+        }
+        s = step(s);
+    }
+    pos as f64
+}
+
+unsafe fn fn_of_type_pos<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    _args: &[Val],
+    out: *mut Val,
+    _err: *mut Error,
+) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    set_num(out, of_type_pos::<D>(focus.node, true, doc))
+}
+
+unsafe fn fn_of_type_pos_last<D: Dom>(
+    ctx: *mut Context,
+    focus: &Focus<D>,
+    _args: &[Val],
+    out: *mut Val,
+    _err: *mut Error,
+) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    set_num(out, of_type_pos::<D>(focus.node, false, doc))
 }
 
 extern "C" {

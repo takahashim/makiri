@@ -6,6 +6,7 @@
 //!   parse.rs   recursive descent, building the C AST            (unsafe: writes C nodes)
 //!   abi.rs     the C types and the C functions we call back into
 //!   dom.rs     the node-access contract as a trait, and its backends
+//!   own.rs     guards over the C allocations the engine passes around
 //!   value.rs   string-values, coercions, document order         (generic over Dom)
 //!   funcs.rs   the built-in function library                    (generic over Dom)
 //!   eval.rs    axes, node tests, predicates, operators          (generic over Dom)
@@ -35,5 +36,7 @@ pub mod eval;
 pub mod ffi_xml;
 #[cfg(feature = "xpath-xml")]
 pub mod funcs;
+#[cfg(feature = "xpath-xml")]
+pub mod own;
 #[cfg(feature = "xpath-xml")]
 pub mod value;

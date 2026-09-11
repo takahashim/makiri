@@ -11,6 +11,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::funcs::{self, Focus};
+use super::own::{OwnedVal, Set, Text};
 use super::value::*;
 use crate::err_setf;
 use core::ffi::{c_char, c_void};
@@ -23,72 +24,6 @@ use super::abi::{
     AXIS_PRECEDING, AXIS_PRECEDING_SIBLING, AXIS_SELF,
 };
 
-/// A node-set the evaluator owns, cleared on drop so the many error paths need
-/// no cleanup of their own. The C hand-rolls that with a `mkr_nodeset_clear` per
-/// bail.
-struct Set(NodeSet);
-
-impl Set {
-    fn new() -> Set {
-        let mut ns = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
-        unsafe { mkr_nodeset_init(&mut ns) };
-        Set(ns)
-    }
-    fn as_mut(&mut self) -> *mut NodeSet {
-        &mut self.0
-    }
-    fn as_ptr(&self) -> *const NodeSet {
-        &self.0
-    }
-    fn count(&self) -> usize {
-        self.0.count
-    }
-    /// Hand the allocation to the caller; the guard is left empty.
-    fn take(&mut self) -> NodeSet {
-        let ns = self.0;
-        self.0 = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
-        ns
-    }
-    unsafe fn push<D: Dom>(&mut self, n: D::Node, limits: *mut Limits, err: *mut Error) -> bool {
-        mkr_nodeset_push(self.as_mut(), node_void::<D>(n), limits, err) == 0
-    }
-    unsafe fn get<D: Dom>(&self, i: usize) -> D::Node {
-        nodeset_at::<D>(self.as_ptr(), i)
-    }
-}
-
-impl Drop for Set {
-    fn drop(&mut self) {
-        unsafe { mkr_nodeset_clear(&mut self.0) }
-    }
-}
-
-/// A value the evaluator owns, cleared on drop.
-struct OwnedVal(Val);
-
-impl OwnedVal {
-    fn new() -> OwnedVal {
-        OwnedVal(val_zero(T_NODESET))
-    }
-    fn as_mut(&mut self) -> *mut Val {
-        &mut self.0
-    }
-    fn as_ptr(&self) -> *const Val {
-        &self.0
-    }
-    fn take(&mut self) -> Val {
-        let v = self.0;
-        self.0 = val_zero(T_NODESET);
-        v
-    }
-}
-
-impl Drop for OwnedVal {
-    fn drop(&mut self) {
-        unsafe { mkr_val_clear(&mut self.0) }
-    }
-}
-
 #[inline]
 fn node_void<D: Dom>(n: D::Node) -> *mut c_void {
     D::to_void(n)
@@ -100,6 +35,38 @@ unsafe fn void_node<D: Dom>(p: *mut c_void) -> D::Node {
 }
 
 /* ---------- node tests ---------- */
+
+/// What a name test needs from the context, resolved ONCE per step rather than
+/// per visited node.
+///
+/// The C reads all three through the context on every node. It gets away with
+/// two of them for free: `MKR_NODE_NS_URI`'s `doc` argument does not appear in
+/// the XML expansion, so the macro never evaluates it, and the lax flag is only
+/// consulted for a node that has a namespace. Neither shortcut survives a real
+/// function call, so they are hoisted here instead - a name-test walk is the
+/// hottest loop in the engine.
+#[derive(Clone, Copy)]
+pub struct Bindings<'a, D: Dom> {
+    pub ctx: *mut Context,
+    pub doc: D::Doc,
+    /// namespace_matching: :lax - the unprefixed element rule is relaxed.
+    pub lax: bool,
+    /// The name test's prefix, already resolved to a URI.
+    pub pre: Option<&'a [u8]>,
+}
+
+impl<'a, D: Dom> Bindings<'a, D> {
+    /// # Safety
+    /// `ctx` must be the evaluating context.
+    pub unsafe fn new(ctx: *mut Context, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
+        Bindings {
+            ctx,
+            doc: D::doc_from_void(mkr_ctx_document(ctx)),
+            lax: mkr_ctx_unprefixed_lax(ctx) != 0,
+            pre,
+        }
+    }
+}
 
 /// The host-specific element / attribute name match. The principal-node-type
 /// filter has already passed; this decides name and namespace.
@@ -117,8 +84,7 @@ unsafe fn name_test_match<D: Dom>(
     test: *const NodeTest,
     node: D::Node,
     axis: u32,
-    ctx: *mut Context,
-    pre: Option<&[u8]>,
+    b: &Bindings<D>,
 ) -> bool {
     let want_local = owned_bytes((*test).local);
     if (*test).local.ptr.is_null() {
@@ -143,20 +109,18 @@ unsafe fn name_test_match<D: Dom>(
     }
 
     if prefixed {
-        let want_uri = match resolved_prefix(ctx, test, pre) {
+        let want_uri = match resolved_prefix(b, test) {
             Some(u) => u,
             None => return false, /* unknown prefix -> non-match; the step driver reports it */
         };
-        let doc = ctx_doc::<D>(ctx);
-        return want_uri == D::ns_uri(node, doc);
+        return want_uri == D::ns_uri(node, b.doc);
     }
-    if mkr_ctx_unprefixed_lax(ctx) != 0 {
+    if b.lax {
         return true;
     }
     if D::IS_XML {
         /* strict unprefixed: the node must be in no namespace */
-        let doc = ctx_doc::<D>(ctx);
-        D::ns_uri(node, doc).is_empty()
+        D::ns_uri(node, b.doc).is_empty()
     } else {
         /* strict: unprefixed ELEMENT tests resolve in the HTML namespace, so a
          * foreign (SVG / MathML) element needs a prefix. Attributes are exempt -
@@ -167,18 +131,14 @@ unsafe fn name_test_match<D: Dom>(
     }
 }
 
-unsafe fn resolved_prefix<'a>(
-    ctx: *mut Context,
+unsafe fn resolved_prefix<'a, D: Dom>(
+    b: &Bindings<'a, D>,
     test: *const NodeTest,
-    pre: Option<&'a [u8]>,
-) -> Option<&'a [u8]>
-where
-    'a: 'a,
-{
-    if let Some(u) = pre {
-        return Some(u);
+) -> Option<&'a [u8]> {
+    match b.pre {
+        Some(u) => Some(u),
+        None => lookup_ns(b.ctx, owned_bytes((*test).prefix)),
     }
-    lookup_ns(ctx, owned_bytes((*test).prefix))
 }
 
 unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
@@ -193,17 +153,11 @@ unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
     }
 }
 
-#[inline]
-unsafe fn ctx_doc<D: Dom>(ctx: *mut Context) -> D::Doc {
-    D::doc_from_void(mkr_ctx_document(ctx))
-}
-
 unsafe fn node_principal_match<D: Dom>(
     test: *const NodeTest,
     node: D::Node,
     axis: u32,
-    ctx: *mut Context,
-    pre: Option<&[u8]>,
+    b: &Bindings<D>,
 ) -> bool {
     match (*test).kind {
         NT_NODE => {
@@ -247,8 +201,8 @@ unsafe fn node_principal_match<D: Dom>(
             if (*test).prefix.ptr.is_null() {
                 return true;
             }
-            match resolved_prefix(ctx, test, pre) {
-                Some(want) => want == D::ns_uri(node, ctx_doc::<D>(ctx)),
+            match resolved_prefix(b, test) {
+                Some(want) => want == D::ns_uri(node, b.doc),
                 None => false,
             }
         }
@@ -260,7 +214,7 @@ unsafe fn node_principal_match<D: Dom>(
             } else if D::node_type(node) != NTYPE_ELEMENT {
                 return false;
             }
-            name_test_match::<D>(test, node, axis, ctx, pre)
+            name_test_match::<D>(test, node, axis, b)
         }
         _ => false,
     }
@@ -556,18 +510,35 @@ unsafe fn attr_pred_matches<D: Dom>(ap: &AttrPred, n: D::Node) -> bool {
     }
 }
 
+/// A path's step list, empty when there are none.
+unsafe fn path_steps<'a>(steps: *mut Step, n: usize) -> &'a [Step] {
+    if n == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(steps, n)
+    }
+}
+
+/// A step's predicate list. Empty when there are none, so the pointer is never
+/// read for a count of zero.
+unsafe fn step_preds<'a>(step: *const Step) -> &'a [*mut Node] {
+    if (*step).npredicates == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts((*step).predicates, (*step).npredicates)
+    }
+}
+
 /* ---------- predicates ---------- */
 
 unsafe fn apply_predicates<D: Dom>(
     ctx: *mut Context,
-    preds: *mut *mut Node,
-    npreds: usize,
+    preds: &[*mut Node],
     inout: &mut Set,
     err: *mut Error,
 ) -> bool {
     let limits = mkr_ctx_limits(ctx);
-    for p in 0..npreds {
-        let pred = *preds.add(p);
+    for &pred in preds {
         let mut kept = Set::new();
 
         /* Specialise [@name] / [@name='lit'] - position-independent, so applying
@@ -585,10 +556,7 @@ unsafe fn apply_predicates<D: Dom>(
                     return false;
                 }
             }
-            inout.0 = {
-                mkr_nodeset_clear(inout.as_mut());
-                kept.take()
-            };
+            inout.replace(kept.take());
             continue;
         }
 
@@ -610,10 +578,7 @@ unsafe fn apply_predicates<D: Dom>(
                 return false;
             }
         }
-        inout.0 = {
-            mkr_nodeset_clear(inout.as_mut());
-            kept.take()
-        };
+        inout.replace(kept.take());
     }
     true
 }
@@ -667,37 +632,35 @@ unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
 /// filled `result`, Ok(false) when the shape does not qualify.
 unsafe fn try_descendant_index<D: Dom>(
-    ctx: *mut Context,
     step: *const Step,
     context_set: &Set,
     result: &mut Set,
-    pre: Option<&[u8]>,
+    b: &Bindings<D>,
     err: *mut Error,
 ) -> Result<bool, ()> {
     let test = &raw const (*step).test;
     if (*step).axis != AXIS_DESCENDANT
         || (*test).kind != NT_NAME
         || (*test).local.ptr.is_null()
-        || !context_is_document::<D>(ctx, context_set)
+        || !context_is_document::<D>(b.ctx, context_set)
     {
         return Ok(false);
     }
-    let ns_uri = if (*test).prefix.ptr.is_null() { None } else { pre };
+    let ns_uri = if (*test).prefix.ptr.is_null() { None } else { b.pre };
     if !(*test).prefix.ptr.is_null() && ns_uri.is_none() {
         return Ok(false); /* eval_step pre-resolves, so this should not happen */
     }
-    let lax = mkr_ctx_unprefixed_lax(ctx) != 0;
-    let bucket = match D::name_bucket(ctx, owned_bytes((*test).local), ns_uri, lax) {
-        Some(b) => b,
+    let bucket = match D::name_bucket(b.ctx, owned_bytes((*test).local), ns_uri, b.lax) {
+        Some(bk) => bk,
         None => return Ok(false),
     };
-    let limits = mkr_ctx_limits(ctx);
+    let limits = mkr_ctx_limits(b.ctx);
     for &p in bucket.nodes {
         if mkr_limit_eval_op(limits, err) != 0 {
             return Err(());
         }
         let n = void_node::<D>(p);
-        if bucket.recheck && !node_principal_match::<D>(test, n, (*step).axis, ctx, pre) {
+        if bucket.recheck && !node_principal_match::<D>(test, n, (*step).axis, b) {
             continue;
         }
         if !result.push::<D>(n, limits, err) {
@@ -753,6 +716,8 @@ unsafe fn eval_step<D: Dom>(
         }
     };
 
+    let b = Bindings::<D>::new(ctx, pre);
+
     /* A post-pass (sort to document order, then optional adjacent dedup) is
      * needed when the axis emits in reverse order per context, when it aliases
      * across contexts, or when several contexts produce results that interleave.
@@ -766,8 +731,9 @@ unsafe fn eval_step<D: Dom>(
 
     let mut result = Set::new();
 
-    if (*step).npredicates == 0 {
-        match try_descendant_index::<D>(ctx, step, context_set, &mut result, pre, err) {
+    let preds = step_preds(step);
+    if preds.is_empty() {
+        match try_descendant_index::<D>(step, context_set, &mut result, &b, err) {
             Err(()) => return false,
             Ok(true) => {}
             Ok(false) => {
@@ -788,7 +754,7 @@ unsafe fn eval_step<D: Dom>(
                             aborted = true;
                             return true;
                         }
-                        if node_principal_match::<D>(test, n, axis, ctx, pre)
+                        if node_principal_match::<D>(test, n, axis, &b)
                             && !result.push::<D>(n, limits, err)
                         {
                             aborted = true;
@@ -819,7 +785,7 @@ unsafe fn eval_step<D: Dom>(
                         aborted = true;
                         return true;
                     }
-                    if node_principal_match::<D>(test, n, axis, ctx, pre)
+                    if node_principal_match::<D>(test, n, axis, &b)
                         && !frag.push::<D>(n, limits, err)
                     {
                         aborted = true;
@@ -837,8 +803,7 @@ unsafe fn eval_step<D: Dom>(
              * (§2.4). For a reverse axis the fragment is in reverse-document
              * order, so [1] is the closest to the context - the intended
              * meaning. */
-            if !apply_predicates::<D>(ctx, (*step).predicates, (*step).npredicates, &mut fragment, err)
-            {
+            if !apply_predicates::<D>(ctx, preds, &mut fragment, err) {
                 return false;
             }
             for i in 0..fragment.count() {
@@ -852,8 +817,7 @@ unsafe fn eval_step<D: Dom>(
     if need_post_pass && result.count() > 1 {
         nodeset_unique_sorted::<D>(ctx, result.as_mut());
     }
-    mkr_nodeset_clear(out.as_mut());
-    out.0 = result.take();
+    out.replace(result.take());
     true
 }
 
@@ -890,7 +854,7 @@ unsafe fn nth_shape<D: Dom>(
     /* The sole predicate must be a bare positive-integer literal, which is
      * position() == N. `[position()=N]` and `[last()]` are binops or calls and
      * fall back. */
-    let pred = *(*s1).predicates;
+    let pred = step_preds(s1)[0];
     if pred.is_null() || (*pred).kind != NK_LITERAL_NUM {
         return None;
     }
@@ -935,9 +899,9 @@ unsafe fn try_descendant_index_nth<D: Dom>(
             }
         }
     };
-    let lax = mkr_ctx_unprefixed_lax(ctx) != 0;
-    let bucket = match D::name_bucket(ctx, owned_bytes((*test).local), ns_uri, lax) {
-        Some(b) => b,
+    let b = Bindings::<D>::new(ctx, ns_uri);
+    let bucket = match D::name_bucket(ctx, owned_bytes((*test).local), ns_uri, b.lax) {
+        Some(bk) => bk,
         None => return Ok(false),
     };
     if bucket.nodes.is_empty() {
@@ -963,7 +927,7 @@ unsafe fn try_descendant_index_nth<D: Dom>(
             return Err(());
         }
         let e = void_node::<D>(p);
-        if bucket.recheck && !node_principal_match::<D>(test, e, (*s1).axis, ctx, ns_uri) {
+        if bucket.recheck && !node_principal_match::<D>(test, e, (*s1).axis, &b) {
             continue;
         }
         let par = node_void::<D>(D::parent(e)) as *const c_void;
@@ -982,32 +946,31 @@ unsafe fn try_descendant_index_nth<D: Dom>(
 
 unsafe fn eval_steps<D: Dom>(
     ctx: *mut Context,
-    steps: *mut Step,
-    nsteps: usize,
+    steps: &[Step],
     seed: &mut Set,
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
-    let mut current = Set(seed.take());
-    let mut s_start = 0usize;
+    let mut current = Set::adopt(seed.take());
+    let mut rest = steps;
 
-    if nsteps >= 2 {
+    if let [s0, s1, ..] = steps {
         let mut nth = Set::new();
-        match try_descendant_index_nth::<D>(ctx, steps, steps.add(1), &current, &mut nth, err) {
+        match try_descendant_index_nth::<D>(ctx, s0, s1, &current, &mut nth, err) {
             Err(()) => return false,
             Ok(true) => {
-                current = Set(nth.take());
-                s_start = 2;
+                current = Set::adopt(nth.take());
+                rest = &steps[2..];
             }
             Ok(false) => {}
         }
     }
-    for s in s_start..nsteps {
+    for step in rest {
         let mut next = Set::new();
-        if !eval_step::<D>(ctx, steps.add(s), &current, &mut next, err) {
+        if !eval_step::<D>(ctx, step, &current, &mut next, err) {
             return false;
         }
-        current = Set(next.take());
+        current = Set::adopt(next.take());
     }
     (*out).type_ = T_NODESET;
     (*out).u.nodeset = current.take();
@@ -1071,32 +1034,21 @@ unsafe fn compare_eq<D: Dom>(
                 Some(if want_eq { eq } else { !eq })
             }
             _ => {
-                let mut target = OwnedText { ptr: ptr::null_mut(), len: 0 };
-                if !val_to_owned_text_or_fail::<D>(sc, limits, err, &mut target) {
+                let mut target = Text::new();
+                if !val_to_owned_text_or_fail::<D>(sc, limits, err, target.as_mut()) {
                     return None;
                 }
-                let want = owned_bytes(target);
-                let mut hit = false;
+                let want = target.as_slice();
                 for i in 0..(*set).count {
                     if mkr_limit_eval_op(limits, err) != 0 {
-                        mkr_owned_text_clear(&mut target);
                         return None;
                     }
-                    match cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err) {
-                        Some(s) => {
-                            if (s == want) == want_eq {
-                                hit = true;
-                                break;
-                            }
-                        }
-                        None => {
-                            mkr_owned_text_clear(&mut target);
-                            return None;
-                        }
+                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
+                    if (s == want) == want_eq {
+                        return Some(true);
                     }
                 }
-                mkr_owned_text_clear(&mut target);
-                Some(hit)
+                Some(false)
             }
         }
     } else if lt == T_BOOLEAN || rt == T_BOOLEAN {
@@ -1108,18 +1060,14 @@ unsafe fn compare_eq<D: Dom>(
         let eq = val_to_number_unchecked::<D>(l) == val_to_number_unchecked::<D>(r);
         Some(if want_eq { eq } else { !eq })
     } else {
-        let mut ls = OwnedText { ptr: ptr::null_mut(), len: 0 };
-        let mut rs = OwnedText { ptr: ptr::null_mut(), len: 0 };
-        if !val_to_owned_text_or_fail::<D>(l, limits, err, &mut ls) {
+        let mut ls = Text::new();
+        let mut rs = Text::new();
+        if !val_to_owned_text_or_fail::<D>(l, limits, err, ls.as_mut())
+            || !val_to_owned_text_or_fail::<D>(r, limits, err, rs.as_mut())
+        {
             return None;
         }
-        if !val_to_owned_text_or_fail::<D>(r, limits, err, &mut rs) {
-            mkr_owned_text_clear(&mut ls);
-            return None;
-        }
-        let eq = owned_bytes(ls) == owned_bytes(rs);
-        mkr_owned_text_clear(&mut ls);
-        mkr_owned_text_clear(&mut rs);
+        let eq = ls.as_slice() == rs.as_slice();
         Some(if want_eq { eq } else { !eq })
     }
 }
@@ -1266,17 +1214,17 @@ unsafe fn first_recognise(ast: *const Node) -> Option<*const Step> {
      * "unknown prefix is a RUNTIME error" first, and the name match resolves the
      * prefix exactly as the full evaluator does. A prefixed ATTRIBUTE predicate
      * still falls back: match_attr_step requires an unprefixed @name. */
-    for p in 0..(*nt).npredicates {
-        match_attr_pred(*(*nt).predicates.add(p))?;
+    for &p in step_preds(nt) {
+        match_attr_pred(p)?;
     }
     Some(nt)
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
 unsafe fn first_node_ok<D: Dom>(step: *const Step, n: D::Node) -> bool {
-    for p in 0..(*step).npredicates {
+    for &p in step_preds(step) {
         /* The recogniser already confirmed the shape. */
-        let ap = match match_attr_pred(*(*step).predicates.add(p)) {
+        let ap = match match_attr_pred(p) {
             Some(ap) => ap,
             None => return false,
         };
@@ -1329,12 +1277,13 @@ pub unsafe fn try_first_match<D: Dom>(
     }
 
     let limits = mkr_ctx_limits(ctx);
+    let b = Bindings::<D>::new(ctx, None);
     let mut n = D::first_child(start);
     while !D::is_null(n) {
         if mkr_limit_eval_op(limits, err) != 0 {
             return Err(());
         }
-        if node_principal_match::<D>(test, n, (*step).axis, ctx, None) && first_node_ok::<D>(step, n)
+        if node_principal_match::<D>(test, n, (*step).axis, &b) && first_node_ok::<D>(step, n)
         {
             return Ok(Some(n));
         }
@@ -1376,7 +1325,7 @@ unsafe fn eval_path<D: Dom>(
     } else if !seed.push::<D>(self_node, limits, err) {
         return false;
     }
-    eval_steps::<D>(ctx, (*n).u.path.steps, (*n).u.path.nsteps, &mut seed, out, err)
+    eval_steps::<D>(ctx, path_steps((*n).u.path.steps, (*n).u.path.nsteps), &mut seed, out, err)
 }
 
 unsafe fn eval_filter<D: Dom>(
@@ -1396,9 +1345,10 @@ unsafe fn eval_filter<D: Dom>(
             err_setf!(err, XP_ERR_TYPE, "predicate applied to non-node-set");
             return false;
         }
-        let mut set = Set((*primary.as_ptr()).u.nodeset);
+        let mut set = Set::adopt((*primary.as_ptr()).u.nodeset);
         (*primary.as_mut()).u.nodeset = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
-        if !apply_predicates::<D>(ctx, (*f).preds, (*f).npreds, &mut set, err) {
+        let preds = core::slice::from_raw_parts((*f).preds, (*f).npreds);
+        if !apply_predicates::<D>(ctx, preds, &mut set, err) {
             return false;
         }
         (*primary.as_mut()).u.nodeset = set.take();
@@ -1408,9 +1358,9 @@ unsafe fn eval_filter<D: Dom>(
             err_setf!(err, XP_ERR_TYPE, "path applied to non-node-set");
             return false;
         }
-        let mut seed = Set((*primary.as_ptr()).u.nodeset);
+        let mut seed = Set::adopt((*primary.as_ptr()).u.nodeset);
         (*primary.as_mut()).u.nodeset = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
-        return eval_steps::<D>(ctx, (*f).path_steps, (*f).npath, &mut seed, out, err);
+        return eval_steps::<D>(ctx, path_steps((*f).path_steps, (*f).npath), &mut seed, out, err);
     }
     *out = primary.take();
     true
@@ -1438,7 +1388,7 @@ unsafe fn eval_fncall<D: Dom>(
             }
         }
     };
-    let builtin = funcs::is_builtin::<D>(ns_uri, name);
+    let builtin = funcs::lookup::<D>(ns_uri, name);
 
     /* The arguments are evaluated once and reused by either path. Their values
      * are owned here and cleared on the way out. */
@@ -1460,8 +1410,8 @@ unsafe fn eval_fncall<D: Dom>(
         }
     }
 
-    let ok = if builtin {
-        funcs::call::<D>(ctx, focus, ns_uri, name, &args, out, err)
+    let ok = if let Some(f) = builtin {
+        f(ctx, focus, &args, out, err)
     } else {
         /* No built-in. Delegate to the per-call resolver, which the Ruby handler
          * bridge installs for the duration of evaluate(). */
