@@ -143,6 +143,30 @@ fn main() {
         .allowlist_function("lxb_dom_document_destroy_text")
         .allowlist_function("lxb_ns_by_id")
         .allowlist_function("lxb_dom_document_root")
+        .allowlist_type("lxb_html_token_t")
+        .allowlist_type("lxb_html_token_type_t")
+        // The token-type FLAGS are in `enum lxb_html_token_type` - no trailing
+        // `_t`, because `lxb_html_token_type_t` is a separate `typedef int`.
+        // Allowlisting the `_t` spelling matched the typedef and produced no
+        // constants at all; the enum's own name is what carries them.
+        .allowlist_type("lxb_html_token_type")
+        // The memory pools, walked to report a document's live bytes.
+        .allowlist_type("lexbor_mem_t")
+        .allowlist_type("lexbor_mem_chunk_t")
+        .allowlist_type("lexbor_mraw_t")
+        .allowlist_type("lxb_html_document_t")
+        .allowlist_type("lxb_html_tokenizer_t")
+        .allowlist_type("lxb_html_tokenizer_token_f")
+        .allowlist_type("lxb_html_parser_t")
+        .allowlist_function("lxb_html_parser_create")
+        .allowlist_function("lxb_html_parser_init")
+        .allowlist_function("lxb_html_parser_destroy")
+        .allowlist_function("lxb_html_parse_chunk_begin")
+        .allowlist_function("lxb_html_parse_chunk_process")
+        .allowlist_function("lxb_html_parse_chunk_end")
+        // NOT lxb_html_parser_tokenizer / the two token-done accessors: all
+        // three are lxb_inline, so bindgen emits nothing and they are declared
+        // as `_noi` twins in lexbor_abi.rs. Left here as a record of the check.
         // The mutators and factories glue/html_node/mutate uses. Same rule, and
         // this time every one of them is a real exported function - the three
         // Lexbor exports this file needs that bindgen CANNOT see

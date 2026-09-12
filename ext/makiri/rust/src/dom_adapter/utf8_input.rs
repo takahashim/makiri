@@ -24,6 +24,15 @@
 //! byte-identical output from both. `spec/utf8_sanitize_spec.rb` keeps the
 //! enumerated half as a standing check.
 //!
+//! # One spelling of the signature
+//!
+//! `out` is `*mut *mut u8`, matching the C's `lxb_char_t **`. Two callers
+//! declare this function - `glue::fragment` and `dom_adapter::post_parse` - and
+//! they had drifted to two spellings (`u8` and `c_char`, which differ in
+//! signedness on every platform here). rustc reports that as "redeclared with a
+//! different signature" and CI compiles with `-D warnings`, so the three sites
+//! cannot drift again without the build saying so.
+//!
 //! # The allocation stays C's
 //!
 //! The result is handed to a C caller that `free()`s it, so it is built in an
@@ -47,7 +56,7 @@ extern "C" {
 
 /// UTF-8 -> UTF-8 with every invalid sequence replaced by U+FFFD, into a freshly
 /// `malloc`'d, NUL-terminated buffer. NULL on OOM.
-unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut core::ffi::c_char {
+unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut u8 {
     /* The output is at most 3x the input: each invalid byte becomes U+FFFD
      * (3 bytes) and valid bytes pass through 1:1. Cap at exactly that bound -
      * tight and tied to the actual input, so a large document still parses but
@@ -92,7 +101,7 @@ unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut core::ffi::c_
         }
     }
 
-    mkr_buf_steal(&mut buf, out_len)
+    mkr_buf_steal(&mut buf, out_len) as *mut u8
 }
 
 /// Append, freeing the buffer on failure so the error path leaks nothing.
@@ -118,7 +127,7 @@ unsafe fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
 pub unsafe extern "C" fn mkr_utf8_sanitize(
     src: *const u8,
     len: usize,
-    out: *mut *mut core::ffi::c_char,
+    out: *mut *mut u8,
     out_len: *mut usize,
 ) -> c_int {
     *out = core::ptr::null_mut();

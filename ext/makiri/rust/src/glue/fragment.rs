@@ -39,9 +39,6 @@ extern "C" {
     fn mkr_reallocarray(p: *mut c_void, count: usize, elem: usize) -> *mut c_void;
 
 
-    fn lxb_html_parser_create() -> *mut c_void;
-    fn lxb_html_parser_init(parser: *mut c_void) -> u32;
-    fn lxb_html_parser_destroy(parser: *mut c_void) -> *mut c_void;
     fn lxb_html_parse_fragment_by_tag_id(
         parser: *mut c_void,
         doc: *mut c_void,
@@ -60,6 +57,13 @@ extern "C" {
     #[link_name = "lxb_tag_id_by_name_noi"]
     fn lxb_tag_id_by_name(hash: *mut c_void, name: *const u8, len: usize) -> usize;
 }
+
+/* The HTML parser's lifecycle, from the generated bindings. Declared here first
+ * over an opaque parser, which was fine until the source-location port needed
+ * the tokenizer inside it and build.rs started generating them - two Rust types
+ * for one symbol again. */
+use crate::glue::abi::LXB_STATUS_OK;
+use crate::lexbor_abi::{lxb_html_parser_create, lxb_html_parser_destroy, lxb_html_parser_init};
 
 /// The shared pre-order walk. Defined once in `lexbor_abi` - it was written out
 /// here first, and the text-index port would have been a second copy of an
@@ -284,7 +288,7 @@ pub unsafe extern "C" fn mkr_run_fragment_parser(
     ctx: *mut c_void,
 ) -> *mut LxbNode {
     let parser = lxb_html_parser_create();
-    if parser.is_null() || lxb_html_parser_init(parser) != 0 {
+    if parser.is_null() || lxb_html_parser_init(parser) != LXB_STATUS_OK {
         if !parser.is_null() {
             lxb_html_parser_destroy(parser);
         }
@@ -299,7 +303,10 @@ pub unsafe extern "C" fn mkr_run_fragment_parser(
         );
     };
 
-    let root = parse(parser, src.ptr, src.len, ctx);
+    /* The callback contract is representation-opaque (it is a C function
+     * pointer handed across the boundary), so the typed parser is cast here
+     * rather than declared a second time. */
+    let root = parse(parser as *mut c_void, src.ptr, src.len, ctx);
     drop(src); /* the parse consumed it; the buffer goes on every path */
     lxb_html_parser_destroy(parser);
     if root.is_null() {

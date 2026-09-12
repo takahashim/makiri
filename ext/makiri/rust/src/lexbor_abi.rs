@@ -72,6 +72,21 @@ extern "C" {
         len: *mut usize,
     ) -> *const u8;
     pub fn lxb_dom_document_destroy_text_noi(doc: *mut LxbDoc, text: *mut u8);
+
+    /* The tokenizer accessors the source-location recorder needs. Lexbor has a
+     * setter and a ctx getter for the token-done callback but NO getter for the
+     * callback function itself, so that one field is read directly from the
+     * generated struct - see `dom_adapter::source_loc`. */
+    pub fn lxb_html_parser_tokenizer_noi(parser: *mut lxb_html_parser_t)
+        -> *mut lxb_html_tokenizer_t;
+    pub fn lxb_html_tokenizer_callback_token_done_set_noi(
+        tkz: *mut lxb_html_tokenizer_t,
+        cb: lxb_html_tokenizer_token_f,
+        ctx: *mut core::ffi::c_void,
+    );
+    pub fn lxb_html_tokenizer_callback_token_done_ctx_noi(
+        tkz: *mut lxb_html_tokenizer_t,
+    ) -> *mut core::ffi::c_void;
 }
 
 /* Exported by Lexbor but left out of its public headers, so bindgen cannot see

@@ -125,6 +125,12 @@ dom-index = ["dom-adapter", "lexbor-abi"]
 # through their C ABI, so it depends on `xml`: declaring them here would give
 # each symbol a second Rust declaration whenever `xml` is also on.
 dom-cross-import = ["dom-adapter", "lexbor-abi", "xml"]
+# dom_adapter/source_loc.c - the line table, the token-position recorder that
+# chains Lexbor's token-done callback, and the DOM assignment pass.
+dom-source-loc = ["dom-adapter", "lexbor-abi"]
+# dom_adapter/post_parse.c - the parse pipeline (with the chained tokenizer
+# callback) and the parsed-document lifecycle.
+dom-post-parse = ["dom-adapter", "lexbor-abi"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

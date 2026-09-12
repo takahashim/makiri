@@ -8,6 +8,10 @@
 pub mod cross_import;
 #[cfg(feature = "dom-index")]
 pub mod dom_index;
+#[cfg(feature = "dom-post-parse")]
+pub mod post_parse;
+#[cfg(feature = "dom-source-loc")]
+pub mod source_loc;
 #[cfg(feature = "dom-text-index")]
 pub mod text_index;
 #[cfg(feature = "dom-utf8-input")]
