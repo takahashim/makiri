@@ -40,3 +40,6 @@ pub use qname::qname_from;
 pub mod selftest;
 #[cfg(feature = "xml")]
 pub mod tree;
+
+#[cfg(kani)]
+mod verify;

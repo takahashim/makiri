@@ -47,6 +47,9 @@ pub mod msg;
 pub mod ast;
 pub mod lex;
 pub mod number;
+
+#[cfg(kani)]
+mod verify;
 pub mod parse;
 
 /* The generic engine (the `xpath-engine` feature). A cargo feature is what

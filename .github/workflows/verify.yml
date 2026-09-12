@@ -35,3 +35,36 @@ jobs:
 
       - name: Run verification suite
         run: bundle exec rake verify
+
+  # Kani is to the Rust half what CBMC is to the C half above. Separate job, and
+  # deliberately not folded into `rake verify`: the two prove different code.
+  # The CBMC harnesses compile ext/makiri/{core,xml,xpath}/*.c directly, which a
+  # MAKIRI_RUST_* build does not execute - so `rake verify` staying green said
+  # nothing about the Rust engine, and still does not. Which proof replaces
+  # which is written down in notes/rust_port_remaining.ja.md.
+  kani:
+    name: Kani proofs (rust)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # Kani pins its own Rust toolchain, so no rust-toolchain step here.
+      - name: Install Kani
+        run: |
+          cargo install --locked kani-verifier
+          cargo kani setup
+          cargo kani --version
+
+      # No `rake compile` first: these proofs are over the Ruby- and
+      # Lexbor-free features, which is the whole reason Kani can build them.
+      - name: Run the Kani proofs
+        run: bundle exec rake kani

@@ -11,6 +11,12 @@ description = "Makiri subsystems ported from C behind the same C ABI (see src/li
 crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
+# `kani` is set by cargo-kani, not by cargo, so declare it or every build warns
+# about an unexpected cfg name (and CI's `clippy -D warnings` turns that into an
+# error). The proof modules are compiled only under it.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [features]
 default = []
 # Allocation-failure injection, the Rust half of `rake oom`. extconf turns this

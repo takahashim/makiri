@@ -124,16 +124,7 @@ impl NodeVec {
     /// itself not fitting, which the caller has already bounded by
     /// `MKR_NODE_SET_MAX`.
     fn grow_capacity(cap: usize, need: usize) -> Option<usize> {
-        let elem = core::mem::size_of::<*mut c_void>();
-        need.checked_mul(elem)?;
-        let mut nc = if cap != 0 { cap } else { 8 };
-        while nc < need {
-            match nc.checked_mul(2) {
-                Some(next) if next.checked_mul(elem).is_some() => nc = next,
-                _ => return Some(need),
-            }
-        }
-        Some(nc)
+        crate::falloc::grow_capacity(cap, need, core::mem::size_of::<*mut c_void>())
     }
 
     /// Append one node. `Err` only for the size cap or a capacity overflow -

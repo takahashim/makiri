@@ -431,6 +431,21 @@ task :verify do
   sh "make", "-C", "verify", "-j#{jobs}", "smoke", "selftest", "cbmc"
 end
 
+# Kani is to the Rust half what CBMC is to the C half. It is a separate task
+# rather than part of `verify` because it needs a different tool, and because
+# the two do NOT cover the same code: a proof over ext/makiri/xml/*.c says
+# nothing about a build where those files are replaced. Which proof replaces
+# which, and what changed in the translation, is written down in
+# notes/rust_port_remaining.ja.md - the answers are not all "the same property".
+desc "Kani proofs over the Rust engine (needs cargo-kani; see notes/rust_port_remaining.ja.md)"
+task :kani do
+  # Only the Ruby-free features: anything under glue needs magnus -> rb-sys ->
+  # a live Ruby, which Kani cannot build.
+  Dir.chdir("ext/makiri/rust") do
+    sh "cargo", "kani", "--features", "xml,xpath"
+  end
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)

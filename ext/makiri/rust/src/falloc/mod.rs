@@ -248,3 +248,40 @@ pub fn try_map_insert<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher>(
     m.insert(key, value);
     true
 }
+
+/// Geometric growth for a hand-managed array, restated from the C
+/// `mkr_grow_capacity`: double from 8 until it covers `need`, falling back to
+/// exactly `need` when doubling would overshoot what `elem` allows. `None` only
+/// when `need` itself does not fit.
+///
+/// This lives here rather than beside its one caller (`glue::node_set`) for a
+/// reason worth keeping: that module needs magnus, hence a live Ruby, so
+/// nothing in it can be built under Kani. The arithmetic is pure, and putting
+/// it where it can be proved is the difference between a property that is
+/// checked and one that is merely commented.
+pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
+    need.checked_mul(elem)?;
+    // A `cap` whose byte size does not fit cannot describe a live allocation,
+    // so start over rather than hand it back. Kani found this: with a huge
+    // `cap` and a small `need` the loop below never runs, and the function
+    // returned a capacity that overflows on the next multiply. The one caller
+    // only ever passes a real allocation size, so it was an unstated
+    // precondition rather than a live bug - but this is a public helper now,
+    // and an unstated precondition is the kind of thing that becomes a bug
+    // when the second caller arrives.
+    let start = match cap.checked_mul(elem) {
+        Some(_) if cap != 0 => cap,
+        _ => 8,
+    };
+    let mut nc = start;
+    while nc < need {
+        match nc.checked_mul(2) {
+            Some(next) if next.checked_mul(elem).is_some() => nc = next,
+            _ => return Some(need),
+        }
+    }
+    Some(nc)
+}
+
+#[cfg(kani)]
+mod verify;
