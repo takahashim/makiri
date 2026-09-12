@@ -61,25 +61,10 @@ extern "C" {
     fn lxb_tag_id_by_name(hash: *mut c_void, name: *const u8, len: usize) -> usize;
 }
 
-/// The shared pre-order walk (`mkr_dom_preorder_next`), which is `static
-/// inline` in C and therefore has no symbol to call.
-///
-/// Restating it rather than exporting the C one keeps the DoS-avoiding
-/// invariant it carries - a parent-pointer walk, never recursion - visible at
-/// the one place this file relies on it.
-#[inline]
-unsafe fn preorder_next(mut node: *mut LxbNode, root: *mut LxbNode) -> *mut LxbNode {
-    if !(*node).first_child.is_null() {
-        return (*node).first_child;
-    }
-    while node != root && (*node).next.is_null() {
-        node = (*node).parent;
-    }
-    if node == root {
-        return core::ptr::null_mut();
-    }
-    (*node).next
-}
+/// The shared pre-order walk. Defined once in `lexbor_abi` - it was written out
+/// here first, and the text-index port would have been a second copy of an
+/// invariant that must not drift.
+use crate::lexbor_abi::preorder_next;
 
 
 /// Lexbor node types and the tag/namespace ids this file compares against.

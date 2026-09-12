@@ -114,6 +114,9 @@ dom-adapter = []
 # no Ruby and no Lexbor (see the module docs for why the encoder dependency went
 # away), so it is the one dom_adapter file with no `glue` in its feature set.
 dom-utf8-input = ["dom-adapter"]
+# dom_adapter/text_index.c - the per-document text-extraction index. Reads
+# Lexbor's node and character-data layout, so it needs the generated ABI.
+dom-text-index = ["dom-adapter", "lexbor-abi"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

@@ -205,7 +205,7 @@ fn main() {
     generate_makiri_enums(&ext_dir, &include, &out);
 }
 
-/// Makiri's OWN C enums, generated for the same reason Lexbor's are.
+/// Makiri's OWN C types and enums, generated for the same reason Lexbor's are.
 ///
 /// This was added after a transcribed `MKR_NODE_KIND_XML = 1` (it is 2) made
 /// `Document#import_node` treat every HTML node as an XML one - the identical
@@ -235,6 +235,11 @@ fn generate_makiri_enums(ext: &std::path::Path, lexbor_include: &std::path::Path
         .clang_arg(format!("-I{}", rb("rubyarchhdrdir")))
         .allowlist_type("mkr_node_kind_t")
         .allowlist_type("mkr_doc_kind_t")
+        // The parse handle. dom_adapter reads two of its fields (`doc` and the
+        // lazily-built index slot), so the layout is generated rather than
+        // restated - a field added ahead of `doc` would otherwise be a silent
+        // wrong read, which is the class this whole file exists to remove.
+        .allowlist_type("mkr_parsed_t")
         .default_enum_style(bindgen::EnumVariation::Consts)
         .layout_tests(false)
         .generate_comments(false)

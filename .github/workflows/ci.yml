@@ -164,6 +164,9 @@ jobs:
           - label: "dom_adapter: UTF-8 input"
             flags: "MAKIRI_RUST_DOM_UTF8_INPUT=1"
             features: "dom-utf8-input"
+          - label: "dom_adapter: text index"
+            flags: "MAKIRI_RUST_DOM_TEXT_INDEX=1"
+            features: "dom-text-index"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.
