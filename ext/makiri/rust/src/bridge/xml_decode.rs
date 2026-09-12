@@ -276,7 +276,9 @@ pub unsafe extern "C" fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> V
         if state != 0 {
             let exc = rb_sys::rb_errinfo();
             rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
-            let mut msg = [0i8; 256];
+            // c_char, not i8 - signed on aarch64-darwin, unsigned on
+            // aarch64-linux (see the same fix in glue/xpath.rs).
+            let mut msg = [0 as c_char; 256];
             mkr_ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
             rb_raise(
                 mkr_eXmlSyntaxError,

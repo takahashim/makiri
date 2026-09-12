@@ -89,7 +89,7 @@ jobs:
   # once, but a regression is only bisectable if each can be replaced alone.
   rust:
     name: Rust port (${{ matrix.label }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -143,6 +143,17 @@ jobs:
             flags: "MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
             features: "glue-xml-node-serialize"
           - label: "everything"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1 MAKIRI_RUST_GLUE_CSS=1 MAKIRI_RUST_BRIDGE_XML_DECODE=1 MAKIRI_RUST_GLUE_XML=1 MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 MAKIRI_RUST_GLUE_XPATH=1 MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
+            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set,glue-css,bridge-xml-decode,glue-xml,glue-xml-node-read,glue-xml-node-mutate,glue-xpath,glue-xml-node-serialize"
+          # aarch64-linux, on a platform where `char` is UNSIGNED. Every other
+          # box in this project has a signed one - x86_64-linux (the rest of
+          # this matrix) and aarch64-darwin (where it is developed) - so a
+          # `[0i8; N]` written for a C char buffer builds fine on both and fails
+          # only here. That is not hypothetical: two such buffers shipped and
+          # were found on 2026-09-12 by hand, in a container, because nothing
+          # routine built this platform. It is a release target; build it.
+          - label: "everything, aarch64-linux"
+            runner: ubuntu-24.04-arm
             flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1 MAKIRI_RUST_GLUE_CSS=1 MAKIRI_RUST_BRIDGE_XML_DECODE=1 MAKIRI_RUST_GLUE_XML=1 MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 MAKIRI_RUST_GLUE_XPATH=1 MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
             features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set,glue-css,bridge-xml-decode,glue-xml,glue-xml-node-read,glue-xml-node-mutate,glue-xpath,glue-xml-node-serialize"
     steps:
