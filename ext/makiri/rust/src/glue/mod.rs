@@ -40,5 +40,8 @@ pub mod serialize;
 #[cfg(feature = "glue-xml")]
 pub mod xml;
 
+#[cfg(feature = "glue-xpath")]
+pub mod xpath;
+
 #[cfg(feature = "glue-xml-node-read")]
 pub mod xml_node;

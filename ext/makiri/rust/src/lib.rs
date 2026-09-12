@@ -38,7 +38,8 @@ pub mod glue;
     feature = "xpath",
     feature = "glue-node",
     feature = "glue-xml",
-    feature = "glue-xml-node-read"
+    feature = "glue-xml-node-read",
+    feature = "glue-xpath"
 ))]
 pub mod xml;
 

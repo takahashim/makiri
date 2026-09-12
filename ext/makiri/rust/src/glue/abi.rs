@@ -8,7 +8,7 @@
 
 use core::ffi::{c_char, c_void};
 
-use magnus::rb_sys::FromRawValue;
+use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{ExceptionClass, RModule, Value};
 use rb_sys::VALUE;
 
@@ -115,6 +115,14 @@ extern "C" {
 pub unsafe fn html_node_methods() -> RModule {
     RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
         .expect("Makiri::HTML::NodeMethods is a Module")
+}
+
+/// Is `v` an instance of the class held in `klass`?
+///
+/// # Safety
+/// `klass` must hold a live Class (one of the statics above).
+pub unsafe fn is_kind_of(v: Value, klass: VALUE) -> bool {
+    rb_sys::rb_obj_is_kind_of(v.as_raw(), klass) == rb_sys::Qtrue as VALUE
 }
 
 /// The wrapped Rust value behind a TypedData object, without magnus's

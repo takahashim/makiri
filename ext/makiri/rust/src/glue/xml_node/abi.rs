@@ -6,7 +6,7 @@
 
 use core::ffi::{c_char, c_void};
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::FromRawValue;
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 use rb_sys::VALUE;
 
@@ -115,10 +115,6 @@ pub unsafe fn xml_syntax_error_class() -> ExceptionClass {
         .expect("Makiri::XML::SyntaxError")
 }
 
-/// Is `v` an instance of the class in `klass`?
-///
-/// # Safety
-/// `klass` must hold a live Class.
-pub unsafe fn is_a(v: Value, klass: VALUE) -> bool {
-    rb_sys::rb_obj_is_kind_of(v.as_raw(), klass) == rb_sys::Qtrue as VALUE
-}
+/// Is `v` an instance of the class in `klass`? The shared one, renamed for the
+/// reading it gets here.
+pub use super::super::abi::is_kind_of as is_a;

@@ -60,6 +60,9 @@ bridge-xml-decode = ["glue", "bridge-string"]
 # glue/ruby_xml.c - the Ruby boundary for our own XML reader and its XPath/CSS
 # queries. Zero Lexbor, and the engine on the other side is already Rust.
 glue-xml = ["glue"]
+# glue/ruby_xpath.c - XPathContext, Node#xpath / #at_xpath, and the custom
+# function handler bridge. The engine underneath is already Rust.
+glue-xpath = ["glue"]
 # glue/ruby_xml_node_read.c - the XML node's reading half. The writing half
 # (serialization, canonicalization, mutation, factories) is still C; the two were
 # split so each could move on its own.
