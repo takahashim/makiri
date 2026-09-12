@@ -8,15 +8,21 @@
 //! declarations ride along as ordinary attribute nodes, so namespaces
 //! round-trip.
 //!
-//! # Pointers, not lifetimes, in the scope chain
+//! # The scope chain owns its prefixes
 //!
-//! The namespace planner below threads a chain of borrowed slices through a
-//! recursion, and one of its links owns storage that a *descendant* reads. Rust
-//! cannot express "a slice of my own buffer" inside a struct, so the chain keeps
-//! the C's raw pointers, and the rule that made them sound is written out at
-//! each site instead: an invented ELEMENT prefix is copied into the link (which
-//! outlives the whole subtree), and an invented ATTRIBUTE prefix is never
-//! chained, so the generator's scratch only has to outlive one iteration.
+//! The namespace planner threads a chain of bindings down a recursion, and a
+//! link can hold a prefix the serializer INVENTED - which a descendant then
+//! reads. The C kept that as a pointer into the link's own buffer, and had to
+//! argue at each site about which buffer outlived which use.
+//!
+//! Here a prefix is a [`Prefix`], which owns its bytes inline when they were
+//! invented and borrows the arena when they were not. That removes the question
+//! rather than answering it: a link's prefix is valid exactly as long as the
+//! link, which is what `&self` already says, and no site has to reason about
+//! storage lifetimes at all.
+//!
+//! What remains unsafe is reading the C tree - the node pointers and their
+//! arena slices - which no rearrangement here can change.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -127,24 +133,38 @@ unsafe fn escaped(b: *mut Buf, s: &[u8], attr: bool) -> W {
 /// them with room to spare.
 const PREFIX_CAP: usize = 8;
 
+/// A prefix the output will use.
+///
+/// It owns its bytes when they were invented, so a value of this type is valid
+/// wherever the value itself is - no buffer to keep alive, and nothing for a
+/// caller to copy "somewhere that lives long enough".
+#[derive(Clone)]
+enum Prefix {
+    /// The node's own, an arena slice stable for the document's life.
+    Own(&'static [u8]),
+    /// Invented by [`gen_prefix`]; `ns` plus at most five digits.
+    Invented([u8; PREFIX_CAP], usize),
+}
+
+impl Prefix {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Prefix::Own(s) => s,
+            Prefix::Invented(b, n) => &b[..*n],
+        }
+    }
+    fn is_invented(&self) -> bool {
+        matches!(self, Prefix::Invented(..))
+    }
+}
+
 struct Scope<'a> {
     up: Option<&'a Scope<'a>>,
     /// Its xmlns attributes bind at this level.
     el: *const Node,
-    /// The synthesized declaration, if any: how many bytes of `syn_buf` the
-    /// prefix uses, and the URI it binds (an arena slice, stable for the
-    /// document's life).
-    syn: Option<(usize, *const c_char, u32)>,
-    /// Storage for an invented prefix. It lives HERE, in the link descendants
-    /// read, rather than in a buffer the element's own later work could
-    /// overwrite.
-    syn_buf: [u8; PREFIX_CAP],
-}
-
-impl Scope<'_> {
-    fn syn_prefix(&self) -> Option<&[u8]> {
-        self.syn.map(|(n, _, _)| &self.syn_buf[..n])
-    }
+    /// The declaration synthesized for this element's own name, if any: the
+    /// prefix (owned) and the URI it binds (an arena slice).
+    syn: Option<(Prefix, &'static [u8])>,
 }
 
 /// The declaration for `prefix` on `el` itself, or None.
@@ -172,9 +192,10 @@ unsafe fn lookup<'a>(scope: Option<&'a Scope<'a>>, prefix: &[u8]) -> Option<&'a 
         if let Some(d) = own_decl(cur.el, prefix) {
             return Some(field((*d).value, (*d).value_len));
         }
-        if cur.syn_prefix() == Some(prefix) {
-            let (_, uri, ulen) = cur.syn.expect("syn_prefix implies syn");
-            return Some(field(uri, ulen));
+        if let Some((p, uri)) = cur.syn.as_ref() {
+            if p.bytes() == prefix {
+                return Some(uri);
+            }
         }
         s = cur.up;
     }
@@ -224,14 +245,13 @@ struct Gen {
     seq: u32,
 }
 
-/// `ns` plus the smallest free number. Returned BY VALUE, so no caller has to
-/// reason about how long the generator's scratch lives.
+/// `ns` plus the smallest free number, owned.
 ///
 /// This is the one case where the output cannot reuse a name as written: the
 /// name's own prefix already means something else here. Browsers invent too
 /// (`ns1`, `ns2`, ...); without it the name would serialize under a prefix bound
 /// to the wrong URI and stop round-tripping.
-unsafe fn gen_prefix(scope: Option<&Scope>, gen: &mut Gen) -> Option<([u8; PREFIX_CAP], usize)> {
+unsafe fn gen_prefix(scope: Option<&Scope>, gen: &mut Gen) -> Option<Prefix> {
     const GEN_MAX: u32 = 100_000;
     while gen.seq < GEN_MAX {
         let mut buf = [0u8; PREFIX_CAP];
@@ -252,7 +272,7 @@ unsafe fn gen_prefix(scope: Option<&Scope>, gen: &mut Gen) -> Option<([u8; PREFI
         }
         gen.seq += 1;
         if !is_bound(scope, &buf[..i]) {
-            return Some((buf, i));
+            return Some(Prefix::Invented(buf, i));
         }
     }
     None
@@ -285,22 +305,20 @@ unsafe fn prefix_seen(el: *const Node, stop: *const Node, prefix: &[u8]) -> Opti
 /// How a name is going to be written.
 struct Plan {
     /// The prefix the output uses - the node's own unless one had to be
-    /// invented. See the module docs for what each variant's bytes borrow from.
-    prefix: *const u8,
-    plen: usize,
-    /// The prefix was invented, so the local name must be re-joined.
-    renamed: bool,
+    /// invented, in which case the plan owns the bytes.
+    prefix: Prefix,
     /// A declaration for it must be emitted.
     declare: bool,
 }
 
 impl Plan {
-    unsafe fn prefix(&self) -> &[u8] {
-        if self.plen == 0 {
-            &[]
-        } else {
-            core::slice::from_raw_parts(self.prefix, self.plen)
-        }
+    fn bytes(&self) -> &[u8] {
+        self.prefix.bytes()
+    }
+    /// The prefix was invented, so the local name must be re-joined rather than
+    /// the qualified name written verbatim.
+    fn renamed(&self) -> bool {
+        self.prefix.is_invented()
     }
 }
 
@@ -313,34 +331,16 @@ impl Plan {
 /// itself as something else - a second, contradictory xmlns would be a duplicate
 /// attribute - and a prefix is invented instead.
 ///
-/// An invented prefix is copied into `keep`, the link's own storage, because a
-/// descendant reads it long after any scratch would have been reused.
-///
 /// See [`plan_attr`] for why an ATTRIBUTE may not do the same thing.
-unsafe fn plan_element(
-    here: &Scope,
-    n: *const Node,
-    gen: &mut Gen,
-    keep: &mut [u8; PREFIX_CAP],
-) -> Option<Plan> {
+unsafe fn plan_element(here: &Scope, n: *const Node, gen: &mut Gen) -> Option<Plan> {
     let own_prefix = field((*n).prefix, (*n).prefix_len);
     let mut plan = Plan {
-        prefix: own_prefix.as_ptr(),
-        plen: own_prefix.len(),
-        renamed: false,
+        prefix: Prefix::Own(own_prefix),
         declare: (*n).flags & FLAG_DOM_LOOSE_NAME == 0
-            && !bound_to(
-                Some(here),
-                own_prefix,
-                field((*n).ns_uri, (*n).ns_uri_len),
-            ),
+            && !bound_to(Some(here), own_prefix, field((*n).ns_uri, (*n).ns_uri_len)),
     };
     if plan.declare && own_decl(n, own_prefix).is_some() {
-        let (buf, len) = gen_prefix(Some(here), gen)?;
-        keep[..len].copy_from_slice(&buf[..len]);
-        plan.prefix = keep.as_ptr();
-        plan.plen = len;
-        plan.renamed = true;
+        plan.prefix = gen_prefix(Some(here), gen)?;
     }
     Some(plan)
 }
@@ -360,23 +360,14 @@ unsafe fn plan_element(
 ///   bound to something else, or an
 ///     earlier attribute claimed it      -> invent a prefix, declare that
 ///   bound to nothing                    -> as-is, declare it
-///
-/// `scratch` holds an invented prefix. An attribute's is never chained, so it
-/// only has to outlive this one attribute.
 unsafe fn plan_attr(
     here: &Scope,
     el: *const Node,
     a: *const Node,
     gen: &mut Gen,
-    scratch: &mut [u8; PREFIX_CAP],
 ) -> Option<Plan> {
     let own_prefix = field((*a).prefix, (*a).prefix_len);
-    let mut plan = Plan {
-        prefix: own_prefix.as_ptr(),
-        plen: own_prefix.len(),
-        renamed: false,
-        declare: false,
-    };
+    let mut plan = Plan { prefix: Prefix::Own(own_prefix), declare: false };
 
     /* An unprefixed attribute is in no namespace - the default never applies to
      * one - and a declaration declares itself. */
@@ -386,7 +377,7 @@ unsafe fn plan_attr(
         core::ptr::null_mut(),
         core::ptr::null_mut(),
     ) != 0;
-    if plan.plen == 0 || is_decl {
+    if own_prefix.is_empty() || is_decl {
         return Some(plan);
     }
     let uri = field((*a).ns_uri, (*a).ns_uri_len);
@@ -404,11 +395,7 @@ unsafe fn plan_attr(
         }
     }
     if taken || prior.is_some() {
-        let (buf, len) = gen_prefix(Some(here), gen)?;
-        scratch[..len].copy_from_slice(&buf[..len]);
-        plan.prefix = scratch.as_ptr();
-        plan.plen = len;
-        plan.renamed = true;
+        plan.prefix = gen_prefix(Some(here), gen)?;
     }
     plan.declare = true;
     Some(plan)
@@ -417,10 +404,10 @@ unsafe fn plan_attr(
 /// Write `n`'s name: its qualified name verbatim, or - when a prefix had to be
 /// invented - that prefix with its local name.
 unsafe fn write_name(b: *mut Buf, n: *const Node, plan: &Plan) -> W {
-    if !plan.renamed {
+    if !plan.renamed() {
         return put(b, field((*n).qname, (*n).qname_len));
     }
-    put(b, plan.prefix())?;
+    put(b, plan.bytes())?;
     put(b, b":")?;
     put(b, field((*n).local, (*n).local_len))
 }
@@ -509,43 +496,30 @@ unsafe fn write_node(
              * most one declaration synthesized for its own name. The link owns
              * the storage for an invented prefix, so nothing the element does
              * afterwards can move it out from under a descendant. */
-            let mut here = Scope { up: scope, el: n, syn: None, syn_buf: [0; PREFIX_CAP] };
+            let mut here = Scope { up: scope, el: n, syn: None };
             let mut gen = Gen { seq: 1 }; /* shared by the names on this element */
 
             /* Decide the name before writing anything: the name comes first in
              * the output, but an invented prefix is only known once a
              * declaration is. */
-            let mut keep = [0u8; PREFIX_CAP];
-            let el = plan_element(&here, n, &mut gen, &mut keep).ok_or(())?;
-            if el.renamed {
-                here.syn_buf[..el.plen].copy_from_slice(&keep[..el.plen]);
-            }
-            /* Re-point at the link's copy now that it holds the bytes. */
-            let el = Plan {
-                prefix: if el.renamed { here.syn_buf.as_ptr() } else { el.prefix },
-                ..el
-            };
+            let el = plan_element(&here, n, &mut gen).ok_or(())?;
 
             put(b, b"<")?;
             write_name(b, n, &el)?;
             if el.declare {
-                declare(b, el.prefix(), field((*n).ns_uri, (*n).ns_uri_len))?;
-                here.syn = Some((el.plen, (*n).ns_uri, (*n).ns_uri_len));
-                if !el.renamed {
-                    /* The prefix was the node's own; copy it in so the link owns
-                     * every prefix a descendant may read. */
-                    here.syn_buf[..el.plen].copy_from_slice(el.prefix());
-                }
+                declare(b, el.bytes(), field((*n).ns_uri, (*n).ns_uri_len))?;
+                /* The link takes its own copy of the prefix, so it is valid for
+                 * exactly as long as the link - which is the whole subtree. */
+                here.syn = Some((el.prefix.clone(), field((*n).ns_uri, (*n).ns_uri_len)));
             }
 
             /* Each attribute, preceded by the declaration it needs - the order a
              * browser emits. */
             let mut a = (*n).attrs;
-            let mut scratch = [0u8; PREFIX_CAP];
             while !a.is_null() {
-                let at = plan_attr(&here, n, a, &mut gen, &mut scratch).ok_or(())?;
+                let at = plan_attr(&here, n, a, &mut gen).ok_or(())?;
                 if at.declare {
-                    declare(b, at.prefix(), field((*a).ns_uri, (*a).ns_uri_len))?;
+                    declare(b, at.bytes(), field((*a).ns_uri, (*a).ns_uri_len))?;
                 }
                 put(b, b" ")?;
                 write_name(b, a, &at)?;
