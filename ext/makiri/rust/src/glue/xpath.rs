@@ -31,6 +31,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::cell::{Cell, RefCell};
+use crate::falloc::Reserve;
 use core::ffi::{c_char, c_int, c_void};
 use std::collections::HashMap;
 
@@ -818,7 +819,7 @@ unsafe fn cached_ast(
     if ast.is_null() {
         return None;
     }
-    if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.try_reserve(1).is_err() {
+    if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         return Some((ast, true));
     }
     d.cache.0.insert(key.to_vec().into_boxed_slice(), ast);

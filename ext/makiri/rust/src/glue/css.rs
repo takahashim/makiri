@@ -38,6 +38,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::cell::UnsafeCell;
+use crate::falloc::Reserve;
 use core::ffi::{c_int, c_void};
 use std::collections::HashMap;
 
@@ -255,7 +256,7 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
     /* `try_reserve` rather than relying on `push`: the global allocator aborts
      * on OOM, and this path fails closed by reporting instead (`rake oom`
      * sweeps it). */
-    if c.nodes.len() == c.nodes.capacity() && c.nodes.try_reserve(1).is_err() {
+    if c.nodes.len() == c.nodes.capacity() && c.nodes.mkr_reserve(1).is_err() {
         c.oom = true;
         return LXB_STATUS_STOP;
     }

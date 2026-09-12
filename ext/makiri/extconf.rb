@@ -129,7 +129,8 @@ coverage = !ENV["MAKIRI_COVERAGE"].to_s.strip.empty?
 # allocation fails" over representative workloads and assert every OOM branch
 # fails closed. Debug/test builds only - a normal build carries no hook.
 # Composes with the sanitize/coverage modes below.
-if ENV["MAKIRI_ALLOC_INJECT"].to_s.strip == "1"
+alloc_inject = ENV["MAKIRI_ALLOC_INJECT"].to_s.strip == "1"
+if alloc_inject
   $CFLAGS << " -DMKR_ALLOC_INJECT=1"
   warn "makiri: building with allocation-failure injection (MKR_ALLOC_INJECT)"
 end
@@ -354,6 +355,12 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
   features << "glue-xml-node-read" if rust_glue_xml_node_read
   features << "glue-xml-node-mutate" if rust_glue_xml_node_mutate
   features << "glue-xml-node-serialize" if rust_glue_xml_node_serialize
+  # The Rust half of `rake oom`. Gated by the SAME env var that defines
+  # -DMKR_ALLOC_INJECT above, so the two halves can never disagree about whether
+  # this is a sweep build - and because the hook they share
+  # (mkr_alloc_inject_should_fail) only exists under that define, turning one on
+  # without the other would not link.
+  features << "alloc-inject" if alloc_inject
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
 

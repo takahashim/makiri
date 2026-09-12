@@ -27,6 +27,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_void};
+use crate::falloc::Reserve;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
@@ -832,7 +833,7 @@ unsafe fn c14n_namespaces(n: *const Node, is_apex: bool) -> Result<Vec<C14nNs>, 
                             }
                         };
                         if keep {
-                            out.try_reserve(1).map_err(|_| ())?;
+                            out.mkr_reserve(1)?;
                             out.push(C14nNs { prefix: p, uri: u });
                         }
                     }
@@ -876,7 +877,7 @@ unsafe fn c14n_node(b: *mut Buf, n: *const Node, is_apex: bool, comments: bool, 
             let mut a = (*n).attrs;
             while !a.is_null() {
                 if xmlns_decl(a).is_none() {
-                    attrs.try_reserve(1).map_err(|_| ())?;
+                    attrs.mkr_reserve(1)?;
                     attrs.push(a);
                 }
                 a = (*a).next;

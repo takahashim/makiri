@@ -9,6 +9,8 @@
 
 #![forbid(unsafe_code)]
 
+use crate::falloc::Reserve;
+
 /// XML 1.0 §2.2 Char.
 #[inline]
 pub fn is_char(c: u32) -> bool {
@@ -290,7 +292,7 @@ pub fn normalize_newlines(src: &[u8]) -> Result<Option<Vec<u8>>, ()> {
         return Ok(None);
     }
     let mut out: Vec<u8> = Vec::new();
-    out.try_reserve_exact(src.len()).map_err(|_| ())?;
+    out.mkr_reserve_exact(src.len())?;
     let mut i = 0;
     while i < src.len() {
         let ch = src[i];

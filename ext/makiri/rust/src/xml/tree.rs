@@ -3,6 +3,7 @@
 //! linking / reading the C-layout nodes.
 
 use crate::xml::arena::{append_child, arena_bytes, arena_cut, arena_node, doc_destroy, doc_new, qname_assign};
+use crate::falloc::Reserve;
 use crate::xml::chars::{
     decode1, expand_into, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
     validate_chars, ExpandErr, ExpandMode,
@@ -306,7 +307,7 @@ impl<'a> Parser<'a> {
             return self.limit();
         }
         let mut v: Vec<u8> = Vec::new();
-        if v.try_reserve_exact(pfx.len()).is_err() || self.binds.try_reserve(1).is_err() {
+        if v.mkr_reserve_exact(pfx.len()).is_err() || self.binds.mkr_reserve(1).is_err() {
             self.status = ERR_OOM;
             return Err(());
         }
@@ -377,7 +378,7 @@ impl<'a> Parser<'a> {
             if self.ratt.len() + 1 > MAX_ATTRS {
                 return self.limit();
             }
-            if self.ratt.try_reserve(1).is_err() {
+            if self.ratt.mkr_reserve(1).is_err() {
                 self.status = ERR_OOM;
                 return Err(());
             }
@@ -910,7 +911,7 @@ impl<'a> Parser<'a> {
             if self.stack.len() + 1 > MAX_DEPTH {
                 return self.limit();
             }
-            if self.stack.try_reserve(1).is_err() || self.frame.try_reserve(1).is_err() {
+            if self.stack.mkr_reserve(1).is_err() || self.frame.mkr_reserve(1).is_err() {
                 self.status = ERR_OOM;
                 return Err(());
             }

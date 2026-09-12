@@ -11,6 +11,7 @@
 //! The host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
 
 use super::abi::*;
+use crate::falloc::Reserve;
 use super::dom::*;
 use super::order::nodeset_unique_sorted;
 use super::own::Text;
@@ -247,7 +248,7 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 /// the abort a plain `Vec` growth would give under `panic = "abort"`.
 fn try_vec<T>(n: usize, err: *mut Error, what: &str) -> Option<Vec<T>> {
     let mut v: Vec<T> = Vec::new();
-    if v.try_reserve_exact(n).is_err() {
+    if v.mkr_reserve_exact(n).is_err() {
         err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what);
         return None;
     }

@@ -11,6 +11,11 @@ path = "src/lib.rs"
 
 [features]
 default = []
+# Allocation-failure injection, the Rust half of `rake oom`. extconf turns this
+# on for the same MAKIRI_ALLOC_INJECT=1 that defines -DMKR_ALLOC_INJECT for the
+# C sources, so both halves consult one counter. Off, `falloc::should_fail` is a
+# const false and the branch disappears.
+alloc-inject = []
 # Each feature replaces a set of C sources; extconf turns one on at the same
 # time as it drops the sources it replaces.
 xml = []

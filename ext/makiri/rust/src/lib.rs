@@ -17,6 +17,11 @@
 //! and the HTML backend is the remaining step
 //! (notes/rust_rewrite_plan.ja.md §7).
 
+/// Fallible allocation. Every heap allocation in Rust code that does not
+/// already go through the C allocator goes through here, so that `rake oom` can
+/// fail it and so that failure raises instead of aborting the host process.
+pub mod falloc;
+
 /// `mkr_buf_t`, which more than one subsystem writes into.
 pub mod cbuf;
 

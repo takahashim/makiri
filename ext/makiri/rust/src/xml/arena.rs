@@ -33,7 +33,9 @@ fn align_up(n: usize) -> Option<usize> {
 }
 
 pub unsafe fn doc_new() -> *mut Doc {
-    Box::into_raw(Box::new(Doc {
+    // Null on failure: every caller already treats a null document as the OOM
+    // answer, because the chunk allocator below can return one too.
+    crate::falloc::try_box_raw(Doc {
         chunks: ptr::null_mut(),
         arena_bytes: 0,
         max_bytes: MAX_BYTES,
@@ -45,7 +47,7 @@ pub unsafe fn doc_new() -> *mut Doc {
         doctype: ptr::null_mut(),
         name_index: ptr::null_mut(),
         has_encoding_decl: 0,
-    }))
+    })
 }
 
 /// Whole-arena free: no individual node / byte free anywhere.
@@ -124,7 +126,14 @@ pub unsafe fn arena_alloc(doc: *mut Doc, size: usize) -> *mut u8 {
                 return ptr::null_mut();
             }
         };
-        let nc = alloc(layout) as *mut Chunk;
+        // The arena's one libc allocation, so the sweep's consult belongs
+        // here. The branch below already handles a null, which is what makes
+        // this the cheapest place in the crate to be injectable.
+        let nc = if crate::falloc::should_fail() {
+            ptr::null_mut()
+        } else {
+            alloc(layout) as *mut Chunk
+        };
         if nc.is_null() {
             (*doc).oom = ERR_OOM;
             return ptr::null_mut();

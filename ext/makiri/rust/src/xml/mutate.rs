@@ -8,6 +8,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::xml::arena::{arena_bytes, arena_node, preorder_next, qname_assign};
+use crate::falloc::Reserve;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix};
 use crate::xml::{
@@ -738,7 +739,7 @@ unsafe fn deep_copy(doc: *mut Doc, src: *const Node) -> Result<*mut Node, i32> {
         return Err(MUT_OOM);
     }
     let mut stack: Vec<(*const Node, *mut Node)> = Vec::new();
-    if stack.try_reserve(1).is_err() {
+    if stack.mkr_reserve(1).is_err() {
         return Err(MUT_OOM);
     }
     stack.push((src, root));
@@ -760,7 +761,7 @@ unsafe fn deep_copy(doc: *mut Doc, src: *const Node) -> Result<*mut Node, i32> {
             (*d).last_child = dc;
             dtail = dc;
             if !(*sc).first_child.is_null() {
-                if stack.try_reserve(1).is_err() {
+                if stack.mkr_reserve(1).is_err() {
                     return Err(MUT_OOM);
                 }
                 stack.push((sc, dc));

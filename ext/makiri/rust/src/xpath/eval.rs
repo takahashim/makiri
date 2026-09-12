@@ -9,6 +9,7 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
+use crate::falloc::Reserve;
 use super::ast::{path_steps, step_preds};
 use super::msg::Bytes;
 use super::attr_pred::{attr_pred_matches, match_attr_pred};
@@ -691,7 +692,7 @@ unsafe fn eval_fncall<D: Dom>(
     let nargs = (*call).nargs;
     let mut args: Vec<Val> = Vec::new();
     if nargs > 0 {
-        if args.try_reserve_exact(nargs).is_err() {
+        if args.mkr_reserve_exact(nargs).is_err() {
             err_setf!(err, XP_ERR_OOM, "out of memory allocating function arguments");
             return false;
         }

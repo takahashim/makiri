@@ -13,6 +13,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::Context as Opaque;
+use crate::falloc::Reserve;
 use super::abi::*;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
@@ -174,7 +175,11 @@ pub unsafe extern "C" fn mkr_xpath_context_new(
     doc: *mut c_void,
     node: *mut c_void,
 ) -> *mut Context {
-    let mut ctx = Box::new(Context {
+    // Null on failure: `mkr_xpath_context_new` already documents null as its
+    // OOM answer (the C version returned it from mkr_callocarray), and every
+    // caller checks. Aborting here would take the host process down for a
+    // failure the API can already express.
+    let Ok(mut ctx) = crate::falloc::try_box(Context {
         doc,
         node,
         ns: Vec::new(),
@@ -193,7 +198,9 @@ pub unsafe extern "C" fn mkr_xpath_context_new(
         unprefixed_lax: 0,
         engine_kind: 0,
         evaluating: 0,
-    });
+    }) else {
+        return ptr::null_mut();
+    };
     super::limits::mkr_xpath_limits_init_defaults(&mut ctx.limits);
     mkr_str_cache_init(&mut ctx.str_cache);
     mkr_doc_order_index_init(&mut ctx.order_index);
@@ -238,7 +245,7 @@ pub unsafe extern "C" fn mkr_xpath_register_ns(
             return set_slot(&mut e.uri, uri);
         }
     }
-    if ctx.ns.len() >= MAX_NAMESPACES || ctx.ns.try_reserve(1).is_err() {
+    if ctx.ns.len() >= MAX_NAMESPACES || ctx.ns.mkr_reserve(1).is_err() {
         return -1;
     }
     let (p, u) = match (copy_text(prefix), copy_text(uri)) {
@@ -275,7 +282,7 @@ pub unsafe extern "C" fn mkr_xpath_register_variable_string(
             return set_slot(&mut e.value, value);
         }
     }
-    if ctx.vars.len() >= MAX_VARIABLES || ctx.vars.try_reserve(1).is_err() {
+    if ctx.vars.len() >= MAX_VARIABLES || ctx.vars.mkr_reserve(1).is_err() {
         return -1;
     }
     let (n, v) = match (copy_text(name), copy_text(value)) {

@@ -25,6 +25,7 @@
 //! into a dead process, and this codebase fails closed by raising.
 
 use core::ffi::{c_long, c_void};
+use crate::falloc::Reserve;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -519,7 +520,7 @@ impl Index {
             return Index::Linear;
         }
         let mut set = PtrSet::default();
-        if set.try_reserve(nodes.len()).is_err() {
+        if set.mkr_reserve(nodes.len()).is_err() {
             return Index::Linear;
         }
         set.extend(nodes.iter().copied());
@@ -532,7 +533,7 @@ impl Index {
             return Index::Linear;
         }
         let mut set = PtrSet::default();
-        if set.try_reserve(expected).is_err() {
+        if set.mkr_reserve(expected).is_err() {
             return Index::Linear;
         }
         Index::Hashed(set)

@@ -11,6 +11,7 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
+use crate::falloc::Reserve;
 use super::msg::Bytes;
 use super::dom::*;
 use super::ast::step_preds;
@@ -167,7 +168,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     let want = bucket.nodes.len() + (bucket.nodes.len() >> 1) + 1;
     let cap = want.checked_next_power_of_two().ok_or(())?;
     let mut tab: Vec<(*const c_void, usize)> = Vec::new();
-    if tab.try_reserve_exact(cap).is_err() {
+    if tab.mkr_reserve_exact(cap).is_err() {
         err_setf!(err, XP_ERR_OOM, "out of memory (//name[N])");
         return Err(());
     }
