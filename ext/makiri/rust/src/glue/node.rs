@@ -47,18 +47,11 @@ use rb_sys::{
 
 use crate::xml::abi::Doc as XmlDoc;
 
-/// `mkr_node_data_t` - the node pointer plus the keepalive Document reference.
-///
-/// The node itself is owned by the document's arena (Lexbor's or the XML one),
-/// so the wrapper holds only a pointer; the `document` VALUE is what keeps that
-/// arena alive, and marking it is this file's whole GC job.
-#[repr(C)]
-struct NodeData {
-    /// `mkr_raw_node_t *` - representation-opaque. Read it only through a
-    /// kind-checked accessor.
-    node: *mut c_void,
-    document: VALUE,
-}
+/* `mkr_node_data_t` lives in `super::abi`: the node wrapper holds a node pointer
+ * plus the keepalive Document, and the XML wrap path writes the same struct.
+ * The arena owns the node, so the Document reference is what keeps it alive and
+ * marking it is this file's whole GC job. */
+use super::abi::NodeData;
 
 /* ------------------------------------------------------------------ */
 /* GC + TypedData types                                               */

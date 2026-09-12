@@ -12,6 +12,17 @@ use magnus::rb_sys::FromRawValue;
 use magnus::{ExceptionClass, RModule, Value};
 use rb_sys::VALUE;
 
+/// `mkr_node_data_t` - what a node wrapper holds: the node pointer plus the
+/// keepalive Document. Declared here because both `glue::node` (which owns the
+/// TypedData) and `glue::xml_node` (which mints XML wrappers) write it.
+#[repr(C)]
+pub struct NodeData {
+    /// `mkr_raw_node_t *` - representation-opaque; read it only through a
+    /// kind-checked accessor.
+    pub node: *mut c_void,
+    pub document: VALUE,
+}
+
 /// An `lxb_dom_node_t`, opaque.
 ///
 /// The glue never reads Lexbor's layout: every field it needs has an exported
