@@ -17,6 +17,11 @@
 //! and the HTML backend is the remaining step
 //! (notes/rust_rewrite_plan.ja.md §7).
 
+/// Lexbor's layout and constants, generated from its own headers by build.rs
+/// and checked against the hand-written view the engine's hot paths use.
+#[cfg(feature = "lexbor-abi")]
+pub mod lexbor_abi;
+
 /// Fallible allocation. Every heap allocation in Rust code that does not
 /// already go through the C allocator goes through here, so that `rake oom` can
 /// fail it and so that failure raises instead of aborting the host process.

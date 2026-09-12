@@ -19,6 +19,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [features]
 default = []
+# Generate Lexbor's layout and constants from its own headers (build.rs).
+# Enabled by every feature that reads them; kept off for the Ruby-free engine
+# features so `rake kani` needs no vendored Lexbor build.
+lexbor-abi = []
 # Allocation-failure injection, the Rust half of `rake oom`. extconf turns this
 # on for the same MAKIRI_ALLOC_INJECT=1 that defines -DMKR_ALLOC_INJECT for the
 # C sources, so both halves consult one counter. Off, `falloc::should_fail` is a
@@ -37,7 +41,7 @@ xpath-engine = ["xpath"]
 # dispatches on. Independent of each other, so either C instance can be
 # replaced alone - which is what makes a regression bisectable.
 xpath-xml = ["xpath-engine"]
-xpath-html = ["xpath-engine"]
+xpath-html = ["xpath-engine", "lexbor-abi"]
 # The driver: the context, the budgets, the evaluate entries. Independent of
 # both instances - it dispatches to whichever language provides each.
 xpath-driver = []
@@ -49,7 +53,7 @@ xpath-shared = []
 # The Ruby boundary (ext/makiri/glue/), ported onto magnus. Unlike the engine
 # features these pull in a dependency, so `glue` gates it and each feature below
 # replaces one glue/*.c - Init_makiri keeps calling the same mkr_init_*().
-glue = ["dep:magnus", "dep:rb-sys"]
+glue = ["dep:magnus", "dep:rb-sys", "lexbor-abi"]
 glue-serialize = ["glue"]
 # The shared node core: the TypedData types both representations' wrappers use,
 # their GC functions, and the kind-agnostic accessors. It defines no Ruby
@@ -111,3 +115,8 @@ debug = false
 
 [profile.dev]
 panic = "abort"
+
+[build-dependencies]
+# Reads the vendored Lexbor headers so the layout is not transcribed by hand.
+# libclang is already required by rb-sys, so this adds no new system dependency.
+bindgen = "0.72"
