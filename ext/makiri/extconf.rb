@@ -293,84 +293,81 @@ end
 # it is linked like the Lexbor archive; the replaced C sources are dropped from
 # the object list. A feature is what keeps the archive free of the symbols its
 # C counterpart still defines, so the two can never both be linked in.
-rust_xml = ENV["MAKIRI_RUST_XML"].to_s.strip == "1"
-rust_xpath_html = ENV["MAKIRI_RUST_XPATH_HTML"].to_s.strip == "1"
-rust_xpath_driver = ENV["MAKIRI_RUST_XPATH_DRIVER"].to_s.strip == "1"
-rust_xpath_shared = ENV["MAKIRI_RUST_XPATH_SHARED"].to_s.strip == "1"
-rust_xpath_xml = ENV["MAKIRI_RUST_XPATH_XML"].to_s.strip == "1"
-rust_glue_serialize = ENV["MAKIRI_RUST_GLUE_SERIALIZE"].to_s.strip == "1"
-rust_glue_node = ENV["MAKIRI_RUST_GLUE_NODE"].to_s.strip == "1"
-rust_bridge_string = ENV["MAKIRI_RUST_BRIDGE_STRING"].to_s.strip == "1"
-rust_glue_node_set = ENV["MAKIRI_RUST_GLUE_NODE_SET"].to_s.strip == "1"
-rust_glue_css = ENV["MAKIRI_RUST_GLUE_CSS"].to_s.strip == "1"
-rust_glue_lexbor_css = ENV["MAKIRI_RUST_GLUE_LEXBOR_CSS"].to_s.strip == "1"
-rust_glue_doc = ENV["MAKIRI_RUST_GLUE_DOC"].to_s.strip == "1"
-rust_bridge_xml_decode = ENV["MAKIRI_RUST_BRIDGE_XML_DECODE"].to_s.strip == "1"
-rust_glue_xml = ENV["MAKIRI_RUST_GLUE_XML"].to_s.strip == "1"
-rust_glue_xpath = ENV["MAKIRI_RUST_GLUE_XPATH"].to_s.strip == "1"
-rust_glue_xml_node_mutate = ENV["MAKIRI_RUST_GLUE_XML_NODE_MUTATE"].to_s.strip == "1"
-rust_glue_xml_node_serialize = ENV["MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE"].to_s.strip == "1"
-rust_glue_xml_node_read = ENV["MAKIRI_RUST_GLUE_XML_NODE_READ"].to_s.strip == "1" ||
-                          rust_glue_xml_node_mutate || rust_glue_xml_node_serialize || rust_glue_xpath || rust_glue_xml_node_serialize
-# The decode shares ruby_string.c's strict-text core, so the Rust one comes with
-# it; otherwise both languages would define mkr_text_check.
-rust_bridge_string ||= rust_bridge_xml_decode
-rust_xpath = rust_xpath_xml || rust_xpath_html || rust_xpath_driver ||
-             rust_xpath_shared || ENV["MAKIRI_RUST_XPATH"].to_s.strip == "1"
-RUST_XPATH_SRCS = %w[mkr_xpath_lex.c mkr_xpath_number.c mkr_xpath_parse.c]
-                    .map { |f| File.join(EXT_DIR, "xpath", f) }.freeze
-RUST_XPATH_XML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_xml.c")].freeze
-RUST_XPATH_HTML_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_engine_html.c")].freeze
-RUST_XPATH_DRIVER_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath.c")].freeze
-RUST_XPATH_SHARED_SRCS = [File.join(EXT_DIR, "xpath", "mkr_xpath_shared.c")].freeze
-RUST_GLUE_SERIALIZE_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_serialize.c")].freeze
-RUST_GLUE_NODE_SRCS = [File.join(EXT_DIR, "glue", "ruby_node.c")].freeze
-RUST_BRIDGE_STRING_SRCS = [File.join(EXT_DIR, "bridge", "ruby_string.c")].freeze
-RUST_GLUE_NODE_SET_SRCS = [File.join(EXT_DIR, "glue", "ruby_node_set.c")].freeze
-RUST_GLUE_CSS_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_css.c")].freeze
-RUST_GLUE_LEXBOR_CSS_SRCS = [File.join(EXT_DIR, "glue", "ruby_lexbor_css.c")].freeze
-RUST_GLUE_DOC_SRCS = [File.join(EXT_DIR, "glue", "ruby_doc.c")].freeze
-RUST_BRIDGE_XML_DECODE_SRCS = [File.join(EXT_DIR, "bridge", "xml_decode.c")].freeze
-RUST_GLUE_XML_SRCS = [File.join(EXT_DIR, "glue", "ruby_xml.c")].freeze
-RUST_GLUE_XPATH_SRCS = [File.join(EXT_DIR, "glue", "ruby_xpath.c")].freeze
-RUST_GLUE_XML_NODE_READ_SRCS =
-  [File.join(EXT_DIR, "glue", "ruby_xml_node_read.c")].freeze
-RUST_GLUE_XML_NODE_MUTATE_SRCS =
-  [File.join(EXT_DIR, "glue", "ruby_xml_node.c")].freeze
-RUST_GLUE_XML_NODE_SERIALIZE_SRCS =
-  [File.join(EXT_DIR, "glue", "ruby_xml_node_serialize.c")].freeze
-if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
-   rust_bridge_string || rust_glue_node_set || rust_glue_css ||
-   rust_bridge_xml_decode || rust_glue_xml || rust_glue_xml_node_read ||
-   rust_glue_xml_node_mutate || rust_glue_xpath || rust_glue_xml_node_serialize ||
-   rust_glue_lexbor_css || rust_glue_doc
-  features = []
-  features << "xml" if rust_xml
-  if rust_xpath
-    features << "xpath"
-    features << "xpath-xml" if rust_xpath_xml
-    features << "xpath-html" if rust_xpath_html
-  end
-  features << "xpath-driver" if rust_xpath_driver
-  features << "xpath-shared" if rust_xpath_shared
-  features << "glue-serialize" if rust_glue_serialize
-  features << "glue-node" if rust_glue_node
-  features << "bridge-string" if rust_bridge_string
-  features << "glue-node-set" if rust_glue_node_set
-  features << "glue-css" if rust_glue_css
-  features << "glue-lexbor-css" if rust_glue_lexbor_css
-  features << "glue-doc" if rust_glue_doc
-  features << "bridge-xml-decode" if rust_bridge_xml_decode
-  features << "glue-xml" if rust_glue_xml
-  features << "glue-xpath" if rust_glue_xpath
-  features << "glue-xml-node-read" if rust_glue_xml_node_read
-  features << "glue-xml-node-mutate" if rust_glue_xml_node_mutate
-  features << "glue-xml-node-serialize" if rust_glue_xml_node_serialize
-  # The Rust half of `rake oom`. Gated by the SAME env var that defines
-  # -DMKR_ALLOC_INJECT above, so the two halves can never disagree about whether
-  # this is a sweep build - and because the hook they share
-  # (mkr_alloc_inject_should_fail) only exists under that define, turning one on
-  # without the other would not link.
+# One row per ported C file: the flag that replaces it, the cargo feature that
+# flag turns on, and the sources it drops. This used to be three lists - a
+# constant, a term in a fifteen-way boolean, and a `features <<` line - so
+# adding a port meant touching three places and the sets could disagree.
+# script/rust_flags.rb reads the `feature:` column back out of this file, which
+# is how CI and the container scripts learn the full configuration.
+RUST_PORTS = [
+  { env: "MAKIRI_RUST_XPATH_XML",           feature: "xpath-xml",
+    srcs: %w[xpath/mkr_xpath_engine_xml.c] },
+  { env: "MAKIRI_RUST_XPATH_HTML",          feature: "xpath-html",
+    srcs: %w[xpath/mkr_xpath_engine_html.c] },
+  { env: "MAKIRI_RUST_XPATH_DRIVER",        feature: "xpath-driver",
+    srcs: %w[xpath/mkr_xpath.c] },
+  { env: "MAKIRI_RUST_XPATH_SHARED",        feature: "xpath-shared",
+    srcs: %w[xpath/mkr_xpath_shared.c] },
+  { env: "MAKIRI_RUST_GLUE_SERIALIZE",      feature: "glue-serialize",
+    srcs: %w[glue/ruby_html_serialize.c] },
+  { env: "MAKIRI_RUST_GLUE_NODE",           feature: "glue-node",
+    srcs: %w[glue/ruby_node.c] },
+  { env: "MAKIRI_RUST_BRIDGE_STRING",       feature: "bridge-string",
+    srcs: %w[bridge/ruby_string.c] },
+  { env: "MAKIRI_RUST_GLUE_NODE_SET",       feature: "glue-node-set",
+    srcs: %w[glue/ruby_node_set.c] },
+  { env: "MAKIRI_RUST_GLUE_CSS",            feature: "glue-css",
+    srcs: %w[glue/ruby_html_css.c] },
+  { env: "MAKIRI_RUST_GLUE_LEXBOR_CSS",     feature: "glue-lexbor-css",
+    srcs: %w[glue/ruby_lexbor_css.c] },
+  { env: "MAKIRI_RUST_GLUE_DOC",            feature: "glue-doc",
+    srcs: %w[glue/ruby_doc.c] },
+  { env: "MAKIRI_RUST_BRIDGE_XML_DECODE",   feature: "bridge-xml-decode",
+    srcs: %w[bridge/xml_decode.c] },
+  { env: "MAKIRI_RUST_GLUE_XML",            feature: "glue-xml",
+    srcs: %w[glue/ruby_xml.c] },
+  { env: "MAKIRI_RUST_GLUE_XPATH",          feature: "glue-xpath",
+    srcs: %w[glue/ruby_xpath.c] },
+  { env: "MAKIRI_RUST_GLUE_XML_NODE_READ",  feature: "glue-xml-node-read",
+    srcs: %w[glue/ruby_xml_node_read.c] },
+  { env: "MAKIRI_RUST_GLUE_XML_NODE_MUTATE", feature: "glue-xml-node-mutate",
+    srcs: %w[glue/ruby_xml_node.c] },
+  { env: "MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE", feature: "glue-xml-node-serialize",
+    srcs: %w[glue/ruby_xml_node_serialize.c] },
+  # The XPath FRONT END is one feature over three files, and it is also implied
+  # by every xpath-* row above (see rust_xpath below).
+  { env: "MAKIRI_RUST_XPATH",               feature: "xpath",
+    srcs: %w[xpath/mkr_xpath_lex.c xpath/mkr_xpath_number.c xpath/mkr_xpath_parse.c] },
+  # The XML reader replaces a whole directory rather than named files.
+  { env: "MAKIRI_RUST_XML",                 feature: "xml", srcs: :xml_dir },
+].freeze
+
+# The implications, which are NOT in the table because they are about how the
+# flags relate rather than what each replaces:
+#   - any xpath-* instance needs the front end;
+#   - the XML node readers come with its mutators/serializers/queries (they
+#     share a module);
+#   - the XML decode shares ruby_string.c's strict-text core, so the Rust one
+#     comes with it - otherwise both languages would define mkr_text_check.
+rust_on = ->(env) { ENV[env].to_s.strip == "1" }
+enabled = RUST_PORTS.map { |r| r[:env] }.select { |e| rust_on.call(e) }
+enabled |= ["MAKIRI_RUST_XPATH"] if enabled.any? { |e| e.start_with?("MAKIRI_RUST_XPATH_") }
+enabled |= ["MAKIRI_RUST_GLUE_XML_NODE_READ"] if enabled.any? do |e|
+  %w[MAKIRI_RUST_GLUE_XML_NODE_MUTATE MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE
+     MAKIRI_RUST_GLUE_XPATH].include?(e)
+end
+enabled |= ["MAKIRI_RUST_BRIDGE_STRING"] if enabled.include?("MAKIRI_RUST_BRIDGE_XML_DECODE")
+
+rust_xpath_html = enabled.include?("MAKIRI_RUST_XPATH_HTML")
+rust_xpath      = enabled.include?("MAKIRI_RUST_XPATH")
+
+if enabled.any?
+  features = RUST_PORTS.select { |r| enabled.include?(r[:env]) }.map { |r| r[:feature] }
+  # The Rust half of `rake oom`, gated by the SAME env var that defines
+  # -DMKR_ALLOC_INJECT for the C sources. Not a RUST_PORTS row: it replaces no
+  # C file, it arms a hook in one. (It was lost once, when the table replaced
+  # the per-flag `features <<` lines - and the sweep then reported
+  # `css_stylesheet allocations=0`, which is the guard that caught it.)
   features << "alloc-inject" if alloc_inject
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
@@ -460,6 +457,13 @@ end
 # Recursively pick up C sources under ext/makiri/, excluding standalone
 # libFuzzer harnesses. Those define LLVMFuzzerTestOneInput and are linked by
 # ext/makiri/fuzz/Makefile, never into the Ruby extension.
+# The C files this configuration replaces, from RUST_PORTS.
+rust_dropped = RUST_PORTS.select { |r| enabled.include?(r[:env]) }.flat_map { |r|
+  r[:srcs] == :xml_dir ? Dir.glob(File.join(EXT_DIR, "xml", "*.c"))
+                       : r[:srcs].map { |rel| File.join(EXT_DIR, rel) }
+}.to_set rescue nil
+rust_dropped ||= []
+
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
            # Nothing under the Rust crate is a source of this extension. It holds
@@ -467,25 +471,8 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            # the HTML engine entries) would otherwise be globbed in and collide
            # with the real definitions at link time.
            .reject { |f| f.start_with?(File.join(EXT_DIR, "rust") + File::SEPARATOR) }
-           .reject { |f| rust_xml && f.start_with?(File.join(EXT_DIR, "xml") + File::SEPARATOR) }
-           .reject { |f| rust_xpath && RUST_XPATH_SRCS.include?(f) }
-           .reject { |f| rust_xpath_xml && RUST_XPATH_XML_SRCS.include?(f) }
-           .reject { |f| rust_xpath_html && RUST_XPATH_HTML_SRCS.include?(f) }
-           .reject { |f| rust_xpath_driver && RUST_XPATH_DRIVER_SRCS.include?(f) }
-           .reject { |f| rust_xpath_shared && RUST_XPATH_SHARED_SRCS.include?(f) }
-           .reject { |f| rust_glue_serialize && RUST_GLUE_SERIALIZE_SRCS.include?(f) }
-           .reject { |f| rust_glue_node && RUST_GLUE_NODE_SRCS.include?(f) }
-           .reject { |f| rust_bridge_string && RUST_BRIDGE_STRING_SRCS.include?(f) }
-           .reject { |f| rust_glue_node_set && RUST_GLUE_NODE_SET_SRCS.include?(f) }
-           .reject { |f| rust_glue_css && RUST_GLUE_CSS_SRCS.include?(f) }
-           .reject { |f| rust_glue_lexbor_css && RUST_GLUE_LEXBOR_CSS_SRCS.include?(f) }
-           .reject { |f| rust_glue_doc && RUST_GLUE_DOC_SRCS.include?(f) }
-           .reject { |f| rust_bridge_xml_decode && RUST_BRIDGE_XML_DECODE_SRCS.include?(f) }
-           .reject { |f| rust_glue_xml && RUST_GLUE_XML_SRCS.include?(f) }
-           .reject { |f| rust_glue_xpath && RUST_GLUE_XPATH_SRCS.include?(f) }
-           .reject { |f| rust_glue_xml_node_read && RUST_GLUE_XML_NODE_READ_SRCS.include?(f) }
-           .reject { |f| rust_glue_xml_node_mutate && RUST_GLUE_XML_NODE_MUTATE_SRCS.include?(f) }
-           .reject { |f| rust_glue_xml_node_serialize && RUST_GLUE_XML_NODE_SERIALIZE_SRCS.include?(f) }
+           # One rule, from the same table the features come from.
+           .reject { |f| rust_dropped.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,

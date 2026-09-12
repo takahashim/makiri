@@ -260,35 +260,29 @@ jobs:
       # The XML parser's conformance, against the same corpus and the same
       # scoring the C build is held to.
       - name: XML conformance (W3C xmlts)
-        env:
-          MAKIRI_RUST_XML: "1"
-          MAKIRI_RUST_XPATH_SHARED: "1"
-          MAKIRI_RUST_XPATH_DRIVER: "1"
-          MAKIRI_RUST_XPATH_HTML: "1"
-          MAKIRI_RUST_XPATH_XML: "1"
-        run: bundle exec rake conformance:xmlconf
+        run: |
+          eval "$(bundle exec rake -s rust:env)"
+          bundle exec rake conformance:xmlconf
 
       # Under ASan + UBSan: any heap error or UB in the Rust engine aborts the
       # run. The targets are the ones that drive it - xpath over HTML, css
       # (whose lowering builds the same AST), and xmlcss (the XML instance plus
       # the of-type hooks).
+      # The FULL port configuration, from rust:env. This job used to name four
+      # flags of nineteen, so the gate that exists to cover the port was running
+      # a build that was mostly still C - and nothing in the file showed it.
       - name: Fuzz under sanitizers
-        env:
-          MAKIRI_RUST_XPATH_SHARED: "1"
-          MAKIRI_RUST_XPATH_DRIVER: "1"
-          MAKIRI_RUST_XPATH_HTML: "1"
-          MAKIRI_RUST_XPATH_XML: "1"
         run: |
+          eval "$(bundle exec rake -s rust:env)"
           bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xpath --time 300"
           bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target css --time 180"
           bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xmlcss --time 180"
 
       # Every OOM branch must fail closed - a clean raise or a result identical
       # to the un-injected one, never a truncated answer.
+      # Likewise: falloc - the Rust allocation chokepoint the whole sweep exists
+      # to exercise - is only reached with the glue and bridge flags on.
       - name: OOM injection sweep
-        env:
-          MAKIRI_RUST_XPATH_SHARED: "1"
-          MAKIRI_RUST_XPATH_DRIVER: "1"
-          MAKIRI_RUST_XPATH_HTML: "1"
-          MAKIRI_RUST_XPATH_XML: "1"
-        run: bundle exec rake oom
+        run: |
+          eval "$(bundle exec rake -s rust:env)"
+          bundle exec rake oom

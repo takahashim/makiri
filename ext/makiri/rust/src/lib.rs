@@ -22,6 +22,29 @@
 #[cfg(feature = "lexbor-abi")]
 pub mod lexbor_abi;
 
+/// Shared by the `verify` modules: the input bound each set of proofs quantifies
+/// over is an `option_env!` override, and a const context cannot call `parse`.
+///
+/// Raising a bound also means raising that harness's `#[kani::unwind]`, which
+/// cannot be computed - Kani wants a literal. Getting it wrong fails loudly
+/// (`unwinding assertion`), not silently, so the override is safe to use for an
+/// experiment without editing the default.
+#[cfg(kani)]
+pub mod kani_bounds {
+    /// Decimal only; a non-digit is a compile error naming the bound.
+    pub const fn parse_usize(s: &str) -> usize {
+        let b = s.as_bytes();
+        let mut i = 0;
+        let mut n = 0usize;
+        while i < b.len() {
+            assert!(b[i] >= b'0' && b[i] <= b'9', "the bound must be a decimal number");
+            n = n * 10 + (b[i] - b'0') as usize;
+            i += 1;
+        }
+        n
+    }
+}
+
 /// Fallible allocation. Every heap allocation in Rust code that does not
 /// already go through the C allocator goes through here, so that `rake oom` can
 /// fail it and so that failure raises instead of aborting the host process.

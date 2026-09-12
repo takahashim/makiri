@@ -8,10 +8,11 @@
 //!
 //! The HTML engine instance is the exception. The XPath dispatcher references
 //! both monomorphizations, but these targets pin the context's engine kind to
-//! XML, so the HTML entries are unreachable. They get abort() stubs rather than
-//! Lexbor, exactly as verify/stub.c does for the CBMC harnesses - abort, not a
-//! silent return, so a wrong engine-kind wiring fails loudly instead of
-//! fuzzing nothing.
+//! XML, so the HTML entries are unreachable. They get abort() stubs - abort, not
+//! a silent return, so a wrong engine-kind wiring fails loudly instead of
+//! fuzzing nothing. That is `verify/stub.c`, compiled from here rather than
+//! copied: the CBMC harnesses make the same call for the same reason, and two
+//! copies of one decision drift.
 
 use std::path::PathBuf;
 
@@ -22,6 +23,10 @@ fn main() {
         .expect("ext/makiri must exist relative to the fuzz crate");
 
     let srcs = [
+        // The HTML-side abort() stubs, shared with the CBMC harnesses rather
+        // than copied: both link only the XML engine instance and both pin the
+        // context's engine kind to XML, so it is one decision, not two.
+        ext.join("../../verify/stub.c"),
         ext.join("core/mkr_alloc.c"),
         ext.join("core/mkr_buf.c"),
         ext.join("core/mkr_utf8.c"),
@@ -32,7 +37,14 @@ fn main() {
     // <lexbor/dom/dom.h> for the DOM node typedefs; nothing here calls into
     // Lexbor, so the archive is not linked - but the headers have to be there,
     // which means the vendored build must have run at least once.
-    let lexbor_include = ext.join("../../vendor/lexbor/dist/include");
+    // The same place the main crate's build.rs looks, and the same override -
+    // two build scripts deriving one path from two different base points is how
+    // a move breaks only one of them.
+    let lexbor_include = match std::env::var_os("MAKIRI_LEXBOR_INCLUDE") {
+        Some(p) => PathBuf::from(p),
+        None => ext.join("../../vendor/lexbor/dist/include"),
+    };
+    println!("cargo:rerun-if-env-changed=MAKIRI_LEXBOR_INCLUDE");
     if !lexbor_include.join("lexbor/dom/dom.h").exists() {
         panic!(
             "vendored Lexbor headers not found at {} - run `bundle exec rake compile` \
@@ -48,7 +60,6 @@ fn main() {
         .include(ext.join("xml"))
         .include(ext.join("xpath"))
         .include(&lexbor_include)
-        .file(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("csupport/stub.c"))
         .flag_if_supported("-fno-omit-frame-pointer");
 
     // The C support files are NOT instrumented by default, and that is a
@@ -80,7 +91,6 @@ fn main() {
         println!("cargo:rerun-if-changed={}", s.display());
         build.file(s);
     }
-    println!("cargo:rerun-if-changed=csupport/stub.c");
     println!("cargo:rerun-if-env-changed=MAKIRI_FUZZ_SANITIZE");
 
     // Emit the link directive by hand, as a trailing link ARG rather than cc's

@@ -148,9 +148,11 @@ jobs:
           - label: "glue: Document"
             flags: "MAKIRI_RUST_GLUE_DOC=1"
             features: "glue-doc"
+          # No literal here: the full configuration comes from rust:env, which
+          # derives it from extconf. A literal is what drifted last time.
           - label: "everything"
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1 MAKIRI_RUST_GLUE_CSS=1 MAKIRI_RUST_GLUE_LEXBOR_CSS=1 MAKIRI_RUST_GLUE_DOC=1 MAKIRI_RUST_BRIDGE_XML_DECODE=1 MAKIRI_RUST_GLUE_XML=1 MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 MAKIRI_RUST_GLUE_XPATH=1 MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
-            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set,glue-css,glue-lexbor-css,glue-doc,bridge-xml-decode,glue-xml,glue-xml-node-read,glue-xml-node-mutate,glue-xpath,glue-xml-node-serialize"
+            flags: ""
+            features: ""
           # aarch64-linux, on a platform where `char` is UNSIGNED. Every other
           # box in this project has a signed one - x86_64-linux (the rest of
           # this matrix) and aarch64-darwin (where it is developed) - so a
@@ -160,8 +162,8 @@ jobs:
           # routine built this platform. It is a release target; build it.
           - label: "everything, aarch64-linux"
             runner: ubuntu-24.04-arm
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1 MAKIRI_RUST_GLUE_CSS=1 MAKIRI_RUST_GLUE_LEXBOR_CSS=1 MAKIRI_RUST_GLUE_DOC=1 MAKIRI_RUST_BRIDGE_XML_DECODE=1 MAKIRI_RUST_GLUE_XML=1 MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 MAKIRI_RUST_GLUE_XPATH=1 MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
-            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set,glue-css,glue-lexbor-css,glue-doc,bridge-xml-decode,glue-xml,glue-xml-node-read,glue-xml-node-mutate,glue-xpath,glue-xml-node-serialize"
+            flags: ""
+            features: ""
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6
@@ -193,19 +195,30 @@ jobs:
       # contract, a raw-pointer compare that should be ptr::eq) are the ones
       # worth not letting through.
       - name: Clippy
-        working-directory: ext/makiri/rust
-        run: cargo clippy --features "${{ matrix.features }}" -- -D warnings
+        run: |
+          feats=$(bundle exec rake -s rust:features FEATURES='${{ matrix.features }}')
+          cd ext/makiri/rust && cargo clippy --features "$feats" -- -D warnings
 
       # `env A=1 B=1 cmd` relies on the shell splitting the expansion into
       # separate assignments, which bash (the runner's shell) does. Don't quote
       # it, and don't copy this line into a zsh script: zsh does not word-split
       # an unquoted expansion, so it would set only the first variable, to the
       # whole mangled string.
-      - name: Compile with ${{ matrix.flags }}
-        run: env ${{ matrix.flags }} bundle exec rake compile
+      - name: Compile with ${{ matrix.flags || 'the full port configuration' }}
+        run: |
+          eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
+          bundle exec rake compile
+
+      # The flag set and the feature set must stay in step with extconf.
+      - name: Check the port configuration is complete
+        run: bundle exec rake rust:check
 
       - name: Run the test suite
-        run: bundle exec rake spec
+        run: |
+          eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
+          bundle exec rake spec
 
       - name: Invariants
-        run: bundle exec rake invariants
+        run: |
+          eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
+          bundle exec rake invariants

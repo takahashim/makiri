@@ -67,6 +67,12 @@ impl Expr {
     pub fn new(bytes: &[u8]) -> Option<Expr> {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         let mut buf = Vec::new();
+        // The crate's clippy.toml routes allocations through `falloc` so the
+        // OOM sweep can fail them. The HARNESS must not be on that path: an
+        // injected failure has to land in the code under test, not in the
+        // scaffolding that feeds it. std's fallible reserve is the right call
+        // here, and saying so is the point of the allow.
+        #[allow(clippy::disallowed_methods)]
         buf.try_reserve_exact(len + 1).ok()?;
         buf.extend_from_slice(&bytes[..len]);
         buf.push(0);

@@ -129,6 +129,12 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
 
+      # The fuzz crate inherits the allocation lint from ../clippy.toml, and it
+      # was firing there unseen: nothing built this crate with -D warnings.
+      - name: Clippy the fuzz crate
+        working-directory: ext/makiri/rust/fuzz
+        run: cargo clippy --all-targets -- -D warnings
+
       - name: Build the fuzz targets
         working-directory: ext/makiri/rust/fuzz
         run: cargo fuzz build ${{ matrix.target }}

@@ -9,15 +9,23 @@
 
 #![cfg(kani)]
 
+use crate::kani_bounds::parse_usize;
+
 use super::chars::{decode1, is_char, is_name_char, is_name_start, validate_chars};
 
 /// The longest input these proofs quantify over.
 ///
-/// The cost is the chained multibyte decode space, and it grows fast: measured
-/// 11s at 4 bytes, 26s at 6, 57s at 8. Eight matches the bound the CBMC harness
-/// used (`VERIFY_XML_CHARS_MAX`), and a minute is a price a verification job can
-/// pay - so the bound did not have to shrink to move languages.
-const N: usize = 8;
+/// Eight matches the bound the retired CBMC harness used
+/// (`VERIFY_XML_CHARS_MAX`), so the guarantee did not shrink when it changed
+/// languages. The cost grows fast - measured 11s at 4 bytes, 26s at 6, 57s at
+/// 8 - and a minute is what a verification job can pay.
+///
+/// Raise it with `KANI_XML_CHARS_MAX` when a deeper run is worth the wait:
+/// `KANI_XML_CHARS_MAX=10 bundle exec rake kani`.
+const N: usize = match option_env!("KANI_XML_CHARS_MAX") {
+    Some(s) => parse_usize(s),
+    None => 8,
+};
 
 /// The predicate inclusions, over EVERY u32 - not sampled.
 ///

@@ -19,9 +19,24 @@
 
 #![cfg(kani)]
 
+use crate::kani_bounds::parse_usize;
+
 use super::number::extent;
 
-const N: usize = 6;
+
+/// The longest input these proofs quantify over.
+///
+/// Six, not eight: the Number production is a flat scan, so the interesting
+/// shapes (digits, one point, a bare point, a trailing non-digit) all fit, and
+/// nothing about the grammar becomes reachable only at greater length. The
+/// cross-implementation UTF-8 proof next door needs eight because a chained
+/// multibyte decode does.
+///
+/// Raise it with `KANI_XPATH_NUMBER_MAX`.
+const N: usize = match option_env!("KANI_XPATH_NUMBER_MAX") {
+    Some(s) => parse_usize(s),
+    None => 6,
+};
 
 /// `extent` returns the longest prefix matching `Digits ('.' Digits?)? | '.' Digits`.
 ///
