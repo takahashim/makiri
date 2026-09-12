@@ -185,6 +185,9 @@ jobs:
           - label: "core: buffer"
             flags: "MAKIRI_RUST_CORE_BUF=1"
             features: "core-buf"
+          - label: "core: allocator"
+            flags: "MAKIRI_RUST_CORE_ALLOC=1"
+            features: "core-alloc"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

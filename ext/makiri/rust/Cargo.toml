@@ -140,6 +140,11 @@ core-utf8 = []
 # two `static inline` helpers stay in the C header (C code still declares
 # buffers by value); this replaces the three exported functions.
 core-buf = []
+# core/mkr_alloc.c - the overflow-checked, fail-closed allocator wrappers, and
+# (under alloc-inject) the OOM sweep's counter. Implies core-buf: the buffer
+# calls grow_capacity and the two share the counter, so splitting them would put
+# one side's allocations outside the sweep.
+core-alloc = ["core-buf"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

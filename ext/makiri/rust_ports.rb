@@ -72,6 +72,8 @@ module RustPorts
     srcs: %w[core/mkr_utf8.c] },
   { env: "MAKIRI_RUST_CORE_BUF",            feature: "core-buf",
     srcs: %w[core/mkr_buf.c] },
+  { env: "MAKIRI_RUST_CORE_ALLOC",          feature: "core-alloc",
+    srcs: %w[core/mkr_alloc.c] },
   # The XPath FRONT END is one feature over three files, and it is also implied
   # by every xpath-* row above (see rust_xpath below).
   { env: "MAKIRI_RUST_XPATH",               feature: "xpath",
@@ -101,6 +103,9 @@ module RustPorts
     # cross_import calls the XML arena's factories directly, not through their
     # C ABI, so the Rust arena has to be the one in the build.
     "MAKIRI_RUST_XML" => ->(on) { on.include?("MAKIRI_RUST_DOM_CROSS_IMPORT") },
+    # The buffer and the allocator share the injection counter, so the OOM
+    # sweep only means anything if they come from the same side.
+    "MAKIRI_RUST_CORE_BUF" => ->(on) { on.include?("MAKIRI_RUST_CORE_ALLOC") },
   }.freeze
 
   class << self

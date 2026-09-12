@@ -586,7 +586,7 @@ task :kani do
   # core-utf8 is in the set because it is Ruby-free and its C-ABI proof is
   # gated on it: without the feature that harness silently does not run, which
   # is the failure mode this project keeps finding rather than a saving.
-  argv = ["cargo", "kani", "--features", "xml,xpath,core-utf8,core-buf"]
+  argv = ["cargo", "kani", "--features", "xml,xpath,core-utf8,core-buf,core-alloc"]
   harness = ENV["HARNESS"].to_s.strip
   argv += ["--harness", harness] unless harness.empty?
   Dir.chdir("ext/makiri/rust") { sh(*argv) }

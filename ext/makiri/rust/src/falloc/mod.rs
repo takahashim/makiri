@@ -60,12 +60,27 @@
 
 use std::collections::{HashMap, HashSet};
 
-#[cfg(feature = "alloc-inject")]
+/// The C allocator surface (core/mkr_alloc.c), when this build provides it.
+pub mod calloc;
+/// Its Kani proofs - the ownership contract at the boundary, which is what is
+/// left after the size arithmetic went to `checked_*` and the OOM branches to
+/// `rake oom`.
+pub mod calloc_verify;
+
+/* The injection counter has ONE home, and which side that is depends on who
+ * provides core/mkr_alloc.c. With `core-alloc` it is `calloc::inject`, and the
+ * C reaches it through MKR_ALLOC_INJECT_FAIL(); without, it is still the C's
+ * and this declaration reaches it. Either way `should_fail` below is the only
+ * Rust entry, so there is no configuration in which two counters exist. */
+#[cfg(all(feature = "alloc-inject", not(feature = "core-alloc")))]
 extern "C" {
     /// `core/mkr_alloc.c`. Counts every attempt (armed or not) so the harness
     /// can size its sweep from a disarmed run, and fails exactly one.
     fn mkr_alloc_inject_should_fail() -> core::ffi::c_int;
 }
+
+#[cfg(all(feature = "alloc-inject", feature = "core-alloc"))]
+use calloc::mkr_alloc_inject_should_fail;
 
 /// Should this allocation be failed? Always false outside a sweep build.
 #[cfg(feature = "alloc-inject")]
