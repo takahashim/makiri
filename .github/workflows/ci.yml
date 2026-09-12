@@ -51,6 +51,12 @@ jobs:
       # The :threading suite is heavy (GC.stress across threads) and checks a
       # structural property that does not vary by OS/Ruby, so run it on a single
       # representative job; the rest of the matrix skips it for a fast run.
+      # The recorded C-build differential. On this job it is a tautology today
+      # and a real check the moment the C is retired, which is the point of
+      # recording it while the C can still produce it.
+      - name: Differential
+        run: bundle exec rake diff
+
       - name: Run the test suite
         run: bundle exec rake spec
         env:
@@ -271,6 +277,12 @@ jobs:
       # segfault rather than a link error. Cheap, and it names the symbol.
       - name: Symbol gate
         run: env ${{ matrix.flags }} bundle exec rake symbols
+
+      # Every port configuration must answer exactly what the C build answered.
+      # This is the check that caught an ASCII-8BIT string, a quoted error
+      # message and a lost NUL terminator that `rake spec` passed over.
+      - name: Differential
+        run: env ${{ matrix.flags }} bundle exec rake diff
 
       - name: Run the test suite
         run: env ${{ matrix.flags }} bundle exec rake spec

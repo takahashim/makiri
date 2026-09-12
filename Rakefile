@@ -134,6 +134,28 @@ rescue LoadError
   # ruby_memcheck not installed (optional :valgrind group absent) - skip the task.
 end
 
+# The differential against the C build, recorded so it survives the C's removal.
+# See spec/differential/run.rb for why this is worth keeping as a fixture.
+desc "Compare this build's answers against the recorded C-build baseline"
+task diff: :compile do
+  sh FileUtils::RUBY, "spec/differential/run.rb"
+end
+
+namespace :diff do
+  desc "Rebuild C-only and re-record the differential baselines"
+  task :record do
+    # The baseline means nothing unless it comes from the C build, so this
+    # builds one rather than trusting whatever is installed - and it clears
+    # EVERY port flag, not just MAKIRI_RUST. Clearing only that one would let a
+    # MAKIRI_RUST_GLUE_CSS=1 left over in the shell record a baseline from a
+    # half-Rust build, which is precisely the thing this file exists to detect.
+    require_relative "ext/makiri/rust_ports"
+    clear = RustPorts::ALL.to_h { |r| [r[:env], nil] }.merge("MAKIRI_RUST" => nil)
+    sh(clear, "#{FileUtils::RUBY} -S rake clean compile")
+    sh FileUtils::RUBY, "spec/differential/run.rb", "record"
+  end
+end
+
 desc "Check that the port configuration agrees with itself (table, features, CI legs)"
 task :ports do
   sh FileUtils::RUBY, "script/check_port_table.rb"
