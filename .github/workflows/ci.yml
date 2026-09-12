@@ -182,6 +182,9 @@ jobs:
           - label: "core: UTF-8"
             flags: "MAKIRI_RUST_CORE_UTF8=1"
             features: "core-utf8"
+          - label: "core: buffer"
+            flags: "MAKIRI_RUST_CORE_BUF=1"
+            features: "core-buf"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

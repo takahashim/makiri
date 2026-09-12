@@ -36,6 +36,8 @@
 //!   [`verify::decode1_agrees_with_from_utf8`] and
 //!   [`verify::chain_consumes_exactly_valid_input`].
 
+/* Only the gated C entries below use it. */
+#[cfg(feature = "core-utf8")]
 use core::ffi::c_int;
 
 pub mod verify;

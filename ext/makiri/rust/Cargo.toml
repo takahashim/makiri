@@ -136,6 +136,10 @@ dom-post-parse = ["dom-adapter", "lexbor-abi"]
 # core/mkr_utf8.c - the shared validator and strict decoder. The module itself
 # is unconditional (see src/cutf8.rs); this gates only the C entry points.
 core-utf8 = []
+# core/mkr_buf.c - the owned, capped, growable byte buffer. The struct and the
+# two `static inline` helpers stay in the C header (C code still declares
+# buffers by value); this replaces the three exported functions.
+core-buf = []
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build
