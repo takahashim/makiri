@@ -77,7 +77,13 @@ macro_rules! opaque {
         }
     )*};
 }
-opaque!(CssMemory, CssParser, CssSelectors, Selectors, SelectorList);
+opaque!(CssMemory, CssSelectors, Selectors, SelectorList);
+
+/// The parser is declared in `glue::abi` - see the note there.
+use super::abi::{
+    lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
+    CssParser,
+};
 
 type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
 
@@ -87,10 +93,6 @@ extern "C" {
     fn lxb_css_memory_clean(mem: *mut CssMemory);
     fn lxb_css_memory_destroy(mem: *mut CssMemory, self_destroy: bool) -> *mut CssMemory;
 
-    fn lxb_css_parser_create() -> *mut CssParser;
-    fn lxb_css_parser_init(parser: *mut CssParser, tkz: *mut c_void) -> u32;
-    fn lxb_css_parser_clean(parser: *mut CssParser);
-    fn lxb_css_parser_destroy(parser: *mut CssParser, self_destroy: bool) -> *mut CssParser;
     /// The `_noi` twins of Lexbor's `lxb_inline` accessors.
     fn lxb_css_parser_status_noi(parser: *mut CssParser) -> u32;
     fn lxb_css_parser_memory_set_noi(parser: *mut CssParser, mem: *mut CssMemory);

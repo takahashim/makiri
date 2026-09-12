@@ -10,6 +10,32 @@
 include!(concat!(env!("OUT_DIR"), "/lexbor_sys.rs"));
 
 /* ------------------------------------------------------------------ *
+ * Names                                                              *
+ * ------------------------------------------------------------------ */
+
+/// bindgen names an enum's constants by whether the enum is NAMED: a typedef'd
+/// one gets its type as a prefix (`lxb_ns_id_enum_t_LXB_NS_HTML`), a truly
+/// anonymous one keeps the bare name (`LXB_CSS_AT_RULE_MEDIA`). That is an
+/// artefact of the headers, not something callers should have to know, so the
+/// aliases below give every constant the name it has in C.
+pub mod consts {
+    /// Rule kinds (`lxb_css_rule_type_t`).
+    pub const CSS_RULE_STYLE: usize = super::lxb_css_rule_type_t_LXB_CSS_RULE_STYLE as usize;
+    pub const CSS_RULE_AT_RULE: usize = super::lxb_css_rule_type_t_LXB_CSS_RULE_AT_RULE as usize;
+    pub const CSS_RULE_BAD_STYLE: usize =
+        super::lxb_css_rule_type_t_LXB_CSS_RULE_BAD_STYLE as usize;
+    pub const CSS_RULE_DECLARATION: usize =
+        super::lxb_css_rule_type_t_LXB_CSS_RULE_DECLARATION as usize;
+
+    /// At-rule kinds (an anonymous enum, hence the bare generated names).
+    pub const AT_RULE_UNDEF: usize = super::LXB_CSS_AT_RULE__UNDEF as usize;
+    pub const AT_RULE_CUSTOM: usize = super::LXB_CSS_AT_RULE__CUSTOM as usize;
+    pub const AT_RULE_FONT_FACE: usize = super::LXB_CSS_AT_RULE_FONT_FACE as usize;
+    pub const AT_RULE_MEDIA: usize = super::LXB_CSS_AT_RULE_MEDIA as usize;
+    pub const AT_RULE_NAMESPACE: usize = super::LXB_CSS_AT_RULE_NAMESPACE as usize;
+}
+
+/* ------------------------------------------------------------------ *
  * Agreement with the hand-written view                               *
  * ------------------------------------------------------------------ */
 
@@ -84,11 +110,11 @@ mod agree_consts {
     use crate::xpath::html_abi::{NS_HTML, NS_UNDEF};
 
     const _: () = assert!(
-        NS_HTML as u64 == super::lxb_ns_id_enum_t::LXB_NS_HTML as u64,
+        NS_HTML as u64 == super::lxb_ns_id_enum_t_LXB_NS_HTML as u64,
         "LXB_NS_HTML disagrees with the header"
     );
     const _: () = assert!(
-        NS_UNDEF as u64 == super::lxb_ns_id_enum_t::LXB_NS__UNDEF as u64,
+        NS_UNDEF as u64 == super::lxb_ns_id_enum_t_LXB_NS__UNDEF as u64,
         "LXB_NS__UNDEF disagrees with the header"
     );
 }

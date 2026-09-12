@@ -51,7 +51,8 @@ fn main() {
     let header = "#include <lexbor/dom/dom.h>\n\
                   #include <lexbor/html/html.h>\n\
                   #include <lexbor/ns/ns.h>\n\
-                  #include <lexbor/tag/tag.h>\n";
+                  #include <lexbor/tag/tag.h>\n\
+                  #include <lexbor/css/css.h>\n";
 
     let bindings = bindgen::Builder::default()
         .header_contents("makiri_lexbor.h", header)
@@ -70,7 +71,47 @@ fn main() {
         // The constants. By ENUM TYPE - see the note above.
         .allowlist_type("lxb_ns_id_enum_t")
         .allowlist_type("lxb_dom_node_type_t")
-        .default_enum_style(bindgen::EnumVariation::ModuleConsts)
+        // The CSS stylesheet surface (Makiri::Lexbor::CSS.parse_stylesheet).
+        // Lexbor exposes the rule downcasts as macros - plain pointer casts
+        // over a shared header - so there is nothing to link, only layout to
+        // get right, which is exactly what generating it is for.
+        .allowlist_type("lxb_css_stylesheet_t")
+        .allowlist_type("lxb_css_rule_t")
+        .allowlist_type("lxb_css_rule_list_t")
+        .allowlist_type("lxb_css_rule_at_t")
+        .allowlist_type("lxb_css_rule_style_t")
+        .allowlist_type("lxb_css_rule_bad_style_t")
+        .allowlist_type("lxb_css_rule_declaration_t")
+        .allowlist_type("lxb_css_rule_declaration_list_t")
+        .allowlist_type("lxb_css_selector_list_t")
+        .allowlist_type("lxb_css_at_rule__custom_t")
+        .allowlist_type("lxb_css_at_rule__undef_t")
+        .allowlist_type("lxb_css_at_rule_media_t")
+        .allowlist_type("lxb_css_at_rule_font_face_t")
+        .allowlist_type("lxb_css_rule_type_t")
+        // The at-rule types live in a TRULY anonymous enum (no typedef name),
+        // so there is no type to allowlist - only the items. That also rules
+        // out ModuleConsts for them: bindgen would name the module
+        // `_bindgen_ty_3`, and the number shifts when any other anonymous type
+        // is added. Hence Consts below, which puts every constant at the top
+        // level under the name it has in C.
+        .allowlist_item("LXB_CSS_AT_RULE_.*")
+        // NOT lxb_css_parser_create/init/destroy: glue/css.rs already
+        // declares those over an OPAQUE parser, which is the right shape (the
+        // selector engine reads no field of it). Generating them here as well
+        // gave the same C symbol two Rust types, and only the "everything"
+        // feature combination caught it - the same way the mkr_wrap_xml_node
+        // duplicate was caught. One declaration per symbol.
+        .allowlist_function("lxb_css_stylesheet_create")
+        .allowlist_function("lxb_css_stylesheet_parse")
+        .allowlist_function("lxb_css_stylesheet_destroy")
+        .allowlist_function("lxb_css_property_serialize")
+        .allowlist_function("lxb_css_property_serialize_name")
+        .allowlist_function("lxb_css_selector_serialize_chain")
+                // Top-level consts, not modules: the names then match the headers
+        // exactly and do not depend on bindgen's numbering of anonymous types.
+        // Lexbor's constants are uniquely prefixed, so nothing collides.
+        .default_enum_style(bindgen::EnumVariation::Consts)
         // Layout tests are `#[test]` functions; this crate is a staticlib that
         // is never `cargo test`ed, so they would be dead weight. The compile
         // time asserts in lexbor_abi.rs are what actually run.

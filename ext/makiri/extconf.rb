@@ -258,6 +258,8 @@ end
 #   MAKIRI_RUST_GLUE_NODE_SET=1 Makiri::NodeSet               -> `glue-node-set`
 #                            (glue/ruby_node_set.c)
 #   MAKIRI_RUST_GLUE_CSS=1   CSS selector queries             -> `glue-css`
+#
+#   MAKIRI_RUST_GLUE_LEXBOR_CSS=1 the stylesheet binding       -> `glue-lexbor-css`
 #                            (glue/ruby_html_css.c)
 #   MAKIRI_RUST_BRIDGE_XML_DECODE=1 the XML input decode      -> `bridge-xml-decode`
 #                            (bridge/xml_decode.c; implies bridge-string)
@@ -299,6 +301,7 @@ rust_glue_node = ENV["MAKIRI_RUST_GLUE_NODE"].to_s.strip == "1"
 rust_bridge_string = ENV["MAKIRI_RUST_BRIDGE_STRING"].to_s.strip == "1"
 rust_glue_node_set = ENV["MAKIRI_RUST_GLUE_NODE_SET"].to_s.strip == "1"
 rust_glue_css = ENV["MAKIRI_RUST_GLUE_CSS"].to_s.strip == "1"
+rust_glue_lexbor_css = ENV["MAKIRI_RUST_GLUE_LEXBOR_CSS"].to_s.strip == "1"
 rust_bridge_xml_decode = ENV["MAKIRI_RUST_BRIDGE_XML_DECODE"].to_s.strip == "1"
 rust_glue_xml = ENV["MAKIRI_RUST_GLUE_XML"].to_s.strip == "1"
 rust_glue_xpath = ENV["MAKIRI_RUST_GLUE_XPATH"].to_s.strip == "1"
@@ -322,6 +325,7 @@ RUST_GLUE_NODE_SRCS = [File.join(EXT_DIR, "glue", "ruby_node.c")].freeze
 RUST_BRIDGE_STRING_SRCS = [File.join(EXT_DIR, "bridge", "ruby_string.c")].freeze
 RUST_GLUE_NODE_SET_SRCS = [File.join(EXT_DIR, "glue", "ruby_node_set.c")].freeze
 RUST_GLUE_CSS_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_css.c")].freeze
+RUST_GLUE_LEXBOR_CSS_SRCS = [File.join(EXT_DIR, "glue", "ruby_lexbor_css.c")].freeze
 RUST_BRIDGE_XML_DECODE_SRCS = [File.join(EXT_DIR, "bridge", "xml_decode.c")].freeze
 RUST_GLUE_XML_SRCS = [File.join(EXT_DIR, "glue", "ruby_xml.c")].freeze
 RUST_GLUE_XPATH_SRCS = [File.join(EXT_DIR, "glue", "ruby_xpath.c")].freeze
@@ -334,7 +338,8 @@ RUST_GLUE_XML_NODE_SERIALIZE_SRCS =
 if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
    rust_bridge_string || rust_glue_node_set || rust_glue_css ||
    rust_bridge_xml_decode || rust_glue_xml || rust_glue_xml_node_read ||
-   rust_glue_xml_node_mutate || rust_glue_xpath || rust_glue_xml_node_serialize
+   rust_glue_xml_node_mutate || rust_glue_xpath || rust_glue_xml_node_serialize ||
+   rust_glue_lexbor_css
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -349,6 +354,7 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
   features << "bridge-string" if rust_bridge_string
   features << "glue-node-set" if rust_glue_node_set
   features << "glue-css" if rust_glue_css
+  features << "glue-lexbor-css" if rust_glue_lexbor_css
   features << "bridge-xml-decode" if rust_bridge_xml_decode
   features << "glue-xml" if rust_glue_xml
   features << "glue-xpath" if rust_glue_xpath
@@ -467,6 +473,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_bridge_string && RUST_BRIDGE_STRING_SRCS.include?(f) }
            .reject { |f| rust_glue_node_set && RUST_GLUE_NODE_SET_SRCS.include?(f) }
            .reject { |f| rust_glue_css && RUST_GLUE_CSS_SRCS.include?(f) }
+           .reject { |f| rust_glue_lexbor_css && RUST_GLUE_LEXBOR_CSS_SRCS.include?(f) }
            .reject { |f| rust_bridge_xml_decode && RUST_BRIDGE_XML_DECODE_SRCS.include?(f) }
            .reject { |f| rust_glue_xml && RUST_GLUE_XML_SRCS.include?(f) }
            .reject { |f| rust_glue_xpath && RUST_GLUE_XPATH_SRCS.include?(f) }

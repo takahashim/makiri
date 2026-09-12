@@ -182,6 +182,22 @@ SCENARIOS = {
       doc.at_css("#x")&.name.to_s
   end,
 
+  # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). Its own
+  # layer allocates for every selector, declaration and at-rule name, and it
+  # walks Lexbor's parsed tree into owned values BEFORE building any Ruby - so
+  # a failure in the middle has a half-built intermediate to abandon, which is
+  # exactly the shape this sweep exists to check.
+  "css_stylesheet" => lambda do
+    css = <<~CSS
+      div.a, p#b > span { color: red; margin: 0 !important }
+      p::before { content: "x" }
+      @media (min-width: 600px) { .x { color: blue } }
+      @font-face { font-family: F; src: url(f.woff) }
+      @namespace svg url(http://www.w3.org/2000/svg);
+    CSS
+    Makiri::Lexbor::CSS.parse_stylesheet(css).inspect
+  end,
+
   # The Builder DSL (pure Ruby over create_*/add_child, so this sweeps the
   # construction factories).
   "xml_builder" => lambda do
