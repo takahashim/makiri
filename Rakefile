@@ -216,13 +216,14 @@ end
 # the form verify/Makefile spells them in. Read from the one table that decides
 # it (extconf's RUST_PORTS) rather than restated.
 def rust_replaced_sources
-  require_relative "script/rust_flags"
-  RustFlags.replaced_sources
+  require_relative "ext/makiri/rust_ports"
+  RustPorts.replaced_sources
 end
 
 # Is this build supposed to contain Rust at all?
 def rust_build?
-  ENV.keys.any? { |k| k.start_with?("MAKIRI_RUST_") }
+  ENV["MAKIRI_RUST"].to_s.strip == "all" ||
+    ENV.keys.any? { |k| k.start_with?("MAKIRI_RUST_") }
 end
 
 # Is the Rust crate ASan-instrumented? Raises rather than guessing when it
@@ -239,7 +240,7 @@ def rust_asan_instrumented?
   if archives.empty?
     return nil unless rust_build?
 
-    abort "sanitize: MAKIRI_RUST_* is set but no libmakiri_rs.a was found under " \
+    abort "sanitize: a Rust build was asked for but no libmakiri_rs.a was found under " \
           "tmp/ - the Rust half cannot be checked, so this run would cover " \
           "less than it claims. (Looked for tmp/**/rust-target/**/libmakiri_rs.a.)"
   end
@@ -502,57 +503,36 @@ task :verify do
   ORPHANED
 end
 
-# The Rust-port configuration, for anything that has to spell it out: CI steps
-# and the container scripts. Both take it from here rather than from a literal,
-# because five literals is what the last drift looked like - the nightly gates
-# were running 4 of 19 flags and nobody could see it from the workflow file.
-#
-#   eval "$(bundle exec rake -s rust:env)"            # the full set
-#   eval "$(bundle exec rake -s rust:env FLAGS=X=1)"  # exactly X
-#   bundle exec rake -s rust:features                 # the matching cargo features
+# The Rust-port configuration. `MAKIRI_RUST=all` is what CI and the container
+# scripts set - extconf expands it from ext/makiri/rust_ports.rb, so nothing
+# outside that file enumerates the flags. The only thing still needing a list is
+# `cargo clippy --features`, which is what rust:features is for.
 namespace :rust do
-  desc "Print `export MAKIRI_RUST_...=1 ...` for the full port configuration " \
-       "(or for FLAGS, passed through)"
-  task env: :check do
-    require_relative "script/rust_flags"
-    given = ENV["FLAGS"].to_s.strip
-    puts given.empty? ? RustFlags.export_line : "export #{given}"
-  end
-
-  desc "Print the cargo feature list matching rust:env (or FEATURES, passed through)"
+  desc "Print the cargo feature list for MAKIRI_RUST=all (or FEATURES, passed through)"
   task :features do
-    require_relative "script/rust_flags"
+    require_relative "ext/makiri/rust_ports"
     given = ENV["FEATURES"].to_s.strip
-    puts given.empty? ? RustFlags.features_csv : given
+    puts given.empty? ? RustPorts.features(RustPorts.enabled("MAKIRI_RUST" => "all")).join(",") : given
   end
 
-  # A gate can only be trusted if it covers what it claims to. This fails when a
-  # MAKIRI_RUST_* flag exists in extconf but no cargo feature answers to it, or
-  # vice versa - the shape a half-applied port takes.
-  desc "Check that every port flag has a cargo feature and vice versa"
+  # A gate can only be trusted if it covers what it claims to. This fails when
+  # the table names a cargo feature Cargo.toml does not declare, or a C source
+  # that does not exist - the two ways the table can describe something that is
+  # not there.
+  desc "Check the port table against Cargo.toml and the tree"
   task :check do
-    require_relative "script/rust_flags"
+    require_relative "ext/makiri/rust_ports"
+    RustPorts.check_paths!("ext/makiri")
+
     manifest = File.read("ext/makiri/rust/Cargo.toml")
     block = manifest[/^\[features\]\n(.*?)(?=^\[)/m, 1].to_s
     declared = block.scan(/^([a-z][a-z0-9-]*) *=/).flatten
-    missing = RustFlags.features - declared
-    abort "rust:check: extconf enables cargo features that Cargo.toml does not " \
-          "declare: #{missing.join(", ")}" unless missing.empty?
+    all = RustPorts.features(RustPorts.enabled("MAKIRI_RUST" => "all"))
+    missing = all - declared
+    abort "rust:check: the port table enables cargo features that Cargo.toml " \
+          "does not declare: #{missing.join(", ")}" unless missing.empty?
 
-    # The parse must see the WHOLE table, not most of it: a format change that
-    # dropped half the rows would leave every gate running a partial
-    # configuration, which is the failure this whole mechanism exists to stop.
-    rows = File.read("ext/makiri/extconf.rb").scan(/^  \{ env: "MAKIRI_RUST_/).size
-    unless rows == RustFlags.flags.size
-      abort "rust:check: RUST_PORTS has #{rows} rows but the parse found " \
-            "#{RustFlags.flags.size} flags - script/rust_flags.rb is reading " \
-            "the table wrongly and every gate below would run a partial set."
-    end
-    # stderr, not stdout: `rust:env` depends on this task and its output is
-    # `eval`ed by CI and the container scripts. A diagnostic line on stdout
-    # becomes a command they try to run.
-    warn "rust:check: #{RustFlags.flags.size} flags -> " \
-         "#{RustFlags.features.size} features, all declared"
+    warn "rust:check: #{RustPorts::ALL.size} ports -> #{all.size} features, all declared"
   end
 end
 

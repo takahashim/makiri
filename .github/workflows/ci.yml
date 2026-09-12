@@ -148,10 +148,11 @@ jobs:
           - label: "glue: Document"
             flags: "MAKIRI_RUST_GLUE_DOC=1"
             features: "glue-doc"
-          # No literal here: the full configuration comes from rust:env, which
-          # derives it from extconf. A literal is what drifted last time.
+          # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
+          # port table, so this file never enumerates the flags. A literal here
+          # is what drifted last time.
           - label: "everything"
-            flags: ""
+            flags: "MAKIRI_RUST=all"
             features: ""
           # aarch64-linux, on a platform where `char` is UNSIGNED. Every other
           # box in this project has a signed one - x86_64-linux (the rest of
@@ -162,7 +163,7 @@ jobs:
           # routine built this platform. It is a release target; build it.
           - label: "everything, aarch64-linux"
             runner: ubuntu-24.04-arm
-            flags: ""
+            flags: "MAKIRI_RUST=all"
             features: ""
     steps:
       - name: Checkout (with vendored Lexbor submodule)
@@ -204,18 +205,12 @@ jobs:
       # it, and don't copy this line into a zsh script: zsh does not word-split
       # an unquoted expansion, so it would set only the first variable, to the
       # whole mangled string.
-      - name: Compile with ${{ matrix.flags || 'the full port configuration' }}
-        run: |
-          eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
-          bundle exec rake compile
+      - name: Compile with ${{ matrix.flags }}
+        run: env ${{ matrix.flags }} bundle exec rake compile
 
 
       - name: Run the test suite
-        run: |
-          eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
-          bundle exec rake spec
+        run: env ${{ matrix.flags }} bundle exec rake spec
 
       - name: Invariants
-        run: |
-          eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
-          bundle exec rake invariants
+        run: env ${{ matrix.flags }} bundle exec rake invariants

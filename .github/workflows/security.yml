@@ -260,20 +260,21 @@ jobs:
       # The XML parser's conformance, against the same corpus and the same
       # scoring the C build is held to.
       - name: XML conformance (W3C xmlts)
-        run: |
-          eval "$(bundle exec rake -s rust:env)"
-          bundle exec rake conformance:xmlconf
+        env:
+          MAKIRI_RUST: "all"
+        run: bundle exec rake conformance:xmlconf
 
       # Under ASan + UBSan: any heap error or UB in the Rust engine aborts the
       # run. The targets are the ones that drive it - xpath over HTML, css
       # (whose lowering builds the same AST), and xmlcss (the XML instance plus
       # the of-type hooks).
-      # The FULL port configuration, from rust:env. This job used to name four
+      # The FULL port configuration. This job used to name four
       # flags of nineteen, so the gate that exists to cover the port was running
       # a build that was mostly still C - and nothing in the file showed it.
       - name: Fuzz under sanitizers
+        env:
+          MAKIRI_RUST: "all"
         run: |
-          eval "$(bundle exec rake -s rust:env)"
           bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xpath --time 300"
           bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target css --time 180"
           bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xmlcss --time 180"
@@ -283,6 +284,6 @@ jobs:
       # Likewise: falloc - the Rust allocation chokepoint the whole sweep exists
       # to exercise - is only reached with the glue and bridge flags on.
       - name: OOM injection sweep
-        run: |
-          eval "$(bundle exec rake -s rust:env)"
-          bundle exec rake oom
+        env:
+          MAKIRI_RUST: "all"
+        run: bundle exec rake oom

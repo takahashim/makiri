@@ -294,100 +294,20 @@ end
 # it is linked like the Lexbor archive; the replaced C sources are dropped from
 # the object list. A feature is what keeps the archive free of the symbols its
 # C counterpart still defines, so the two can never both be linked in.
-# One row per ported C file: the flag that replaces it, the cargo feature that
-# flag turns on, and the sources it drops. This used to be three lists - a
-# constant, a term in a fifteen-way boolean, and a `features <<` line - so
-# adding a port meant touching three places and the sets could disagree.
-# script/rust_flags.rb reads the `feature:` column back out of this file, which
-# is how CI and the container scripts learn the full configuration.
-RUST_PORTS = [
-  { env: "MAKIRI_RUST_XPATH_XML",           feature: "xpath-xml",
-    srcs: %w[xpath/mkr_xpath_engine_xml.c] },
-  { env: "MAKIRI_RUST_XPATH_HTML",          feature: "xpath-html",
-    srcs: %w[xpath/mkr_xpath_engine_html.c] },
-  { env: "MAKIRI_RUST_XPATH_DRIVER",        feature: "xpath-driver",
-    srcs: %w[xpath/mkr_xpath.c] },
-  { env: "MAKIRI_RUST_XPATH_SHARED",        feature: "xpath-shared",
-    srcs: %w[xpath/mkr_xpath_shared.c] },
-  { env: "MAKIRI_RUST_GLUE_SERIALIZE",      feature: "glue-serialize",
-    srcs: %w[glue/ruby_html_serialize.c] },
-  { env: "MAKIRI_RUST_GLUE_NODE",           feature: "glue-node",
-    srcs: %w[glue/ruby_node.c] },
-  { env: "MAKIRI_RUST_BRIDGE_STRING",       feature: "bridge-string",
-    srcs: %w[bridge/ruby_string.c] },
-  { env: "MAKIRI_RUST_GLUE_NODE_SET",       feature: "glue-node-set",
-    srcs: %w[glue/ruby_node_set.c] },
-  { env: "MAKIRI_RUST_GLUE_CSS",            feature: "glue-css",
-    srcs: %w[glue/ruby_html_css.c] },
-  { env: "MAKIRI_RUST_GLUE_LEXBOR_CSS",     feature: "glue-lexbor-css",
-    srcs: %w[glue/ruby_lexbor_css.c] },
-  { env: "MAKIRI_RUST_GLUE_DOC",            feature: "glue-doc",
-    srcs: %w[glue/ruby_doc.c] },
-  { env: "MAKIRI_RUST_BRIDGE_XML_DECODE",   feature: "bridge-xml-decode",
-    srcs: %w[bridge/xml_decode.c] },
-  { env: "MAKIRI_RUST_GLUE_XML",            feature: "glue-xml",
-    srcs: %w[glue/ruby_xml.c] },
-  { env: "MAKIRI_RUST_GLUE_XPATH",          feature: "glue-xpath",
-    srcs: %w[glue/ruby_xpath.c] },
-  { env: "MAKIRI_RUST_GLUE_XML_NODE_READ",  feature: "glue-xml-node-read",
-    srcs: %w[glue/ruby_xml_node_read.c] },
-  { env: "MAKIRI_RUST_GLUE_XML_NODE_MUTATE", feature: "glue-xml-node-mutate",
-    srcs: %w[glue/ruby_xml_node.c] },
-  { env: "MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE", feature: "glue-xml-node-serialize",
-    srcs: %w[glue/ruby_xml_node_serialize.c] },
-  # The XPath FRONT END is one feature over three files, and it is also implied
-  # by every xpath-* row above (see rust_xpath below).
-  { env: "MAKIRI_RUST_XPATH",               feature: "xpath",
-    srcs: %w[xpath/mkr_xpath_lex.c xpath/mkr_xpath_number.c xpath/mkr_xpath_parse.c] },
-  # The XML reader replaces a whole directory rather than named files.
-  { env: "MAKIRI_RUST_XML",                 feature: "xml", srcs: :xml_dir },
-].freeze
+# The port table, shared with the Rakefile (which tells CI and the container
+# scripts the full configuration). See ext/makiri/rust_ports.rb.
+require_relative "rust_ports"
 
-# The implications, which are NOT in the table because they are about how the
-# flags relate rather than what each replaces:
-#   - any xpath-* instance needs the front end;
-#   - the XML node readers come with its mutators/serializers/queries (they
-#     share a module);
-#   - the XML decode shares ruby_string.c's strict-text core, so the Rust one
-#     comes with it - otherwise both languages would define mkr_text_check.
-# Every path in the table must name a file that exists.
-#
-# A typo here does NOT fail: the file simply is not dropped, so the C and the
-# Rust both define the symbol, `-fvisibility=hidden` makes both local, the
-# linker keeps one, and the build is green with the Rust half dead. Verified -
-# `glue/ruby_doc_TYPO.c` compiled, linked, and passed 992 examples while the
-# port it was meant to enable did nothing. The check is three lines and the
-# failure it prevents is invisible, so it runs at configure time, for every
-# build, not only when a flag is set.
-RUST_PORTS.each do |row|
-  next if row[:srcs] == :xml_dir
-
-  row[:srcs].each do |rel|
-    path = File.join(EXT_DIR, rel)
-    next if File.exist?(path)
-
-    abort "extconf: RUST_PORTS row #{row[:env]} names #{rel}, which does not " \
-          "exist. A wrong path here does not fail the build - it silently " \
-          "leaves the C file in and the Rust replacement unused."
-  end
-end
-
-rust_on = ->(env) { ENV[env].to_s.strip == "1" }
-enabled = RUST_PORTS.map { |r| r[:env] }.select { |e| rust_on.call(e) }
-enabled |= ["MAKIRI_RUST_XPATH"] if enabled.any? { |e| e.start_with?("MAKIRI_RUST_XPATH_") }
-enabled |= ["MAKIRI_RUST_GLUE_XML_NODE_READ"] if enabled.any? do |e|
-  %w[MAKIRI_RUST_GLUE_XML_NODE_MUTATE MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE
-     MAKIRI_RUST_GLUE_XPATH].include?(e)
-end
-enabled |= ["MAKIRI_RUST_BRIDGE_STRING"] if enabled.include?("MAKIRI_RUST_BRIDGE_XML_DECODE")
+RustPorts.check_paths!(EXT_DIR)
+enabled = RustPorts.enabled(ENV)
 
 rust_xpath_html = enabled.include?("MAKIRI_RUST_XPATH_HTML")
 rust_xpath      = enabled.include?("MAKIRI_RUST_XPATH")
 
 if enabled.any?
-  features = RUST_PORTS.select { |r| enabled.include?(r[:env]) }.map { |r| r[:feature] }
+  features = RustPorts.features(enabled)
   # The Rust half of `rake oom`, gated by the SAME env var that defines
-  # -DMKR_ALLOC_INJECT for the C sources. Not a RUST_PORTS row: it replaces no
+  # -DMKR_ALLOC_INJECT for the C sources. Not a RustPorts row: it replaces no
   # C file, it arms a hook in one. (It was lost once, when the table replaced
   # the per-flag `features <<` lines - and the sweep then reported
   # `css_stylesheet allocations=0`, which is the guard that caught it.)
@@ -480,15 +400,14 @@ end
 # Recursively pick up C sources under ext/makiri/, excluding standalone
 # libFuzzer harnesses. Those define LLVMFuzzerTestOneInput and are linked by
 # ext/makiri/fuzz/Makefile, never into the Ruby extension.
-# The C files this configuration replaces, from RUST_PORTS.
+# The C files this configuration replaces, as absolute paths.
 #
 # No `rescue` here, deliberately. This was written as `... .to_set rescue nil`
 # with an `||= []` behind it, which means any exception - a missing require, a
 # typo in the block - degrades to "drop nothing": the C stays in and the Rust is
 # dead, silently. The safe direction for this expression is to STOP.
-rust_dropped = RUST_PORTS.select { |r| enabled.include?(r[:env]) }.flat_map { |r|
-  r[:srcs] == :xml_dir ? Dir.glob(File.join(EXT_DIR, "xml", "*.c"))
-                       : r[:srcs].map { |rel| File.join(EXT_DIR, rel) }
+rust_dropped = RustPorts.replaced_sources(enabled).flat_map { |rel|
+  rel == "xml/" ? Dir.glob(File.join(EXT_DIR, "xml", "*.c")) : [File.join(EXT_DIR, rel)]
 }.to_set
 
 if enabled.any? && rust_dropped.empty?
