@@ -100,6 +100,13 @@ fn callocarray_zeroes_and_rejects_zero_dimensions() {
 ///
 /// The terminator is the whole point of these two over a bare `malloc`: every
 /// caller hands the result to something that reads it as a C string.
+///
+/// This proof is the ONLY net for that property, which was checked rather than
+/// assumed: deleting `mkr_str_alloc`'s terminator write leaves the C core
+/// selftest green and all 1001 specs green - the callers each write `n` bytes
+/// and the uninitialised byte at `n` happened to read as zero - and fails here.
+/// The same was true before the port; the gap is in the runtime gates, not in
+/// the move to Rust.
 #[kani::proof]
 #[kani::unwind(8)]
 fn str_alloc_and_strndup_terminate() {
