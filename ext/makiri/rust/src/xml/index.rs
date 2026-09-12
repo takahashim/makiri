@@ -2,6 +2,8 @@
 //! document-ordered elements bearing it. Lazily built, cached on the document,
 //! dropped by `invalidate` from the single mutation hook.
 
+use crate::falloc;
+use crate::falloc::Reserve;
 use crate::xml::arena::preorder_next;
 use crate::xml::{node_local, node_ns, Doc, Node, T_ELEMENT};
 use core::ffi::{c_char, c_void};
@@ -33,14 +35,38 @@ impl Hasher for Fnv {
 /// the join is unambiguous ("ab"+"" != "a"+"b").
 pub struct NameIndex {
     map: HashMap<Box<[u8]>, Vec<*mut Node>, BuildHasherDefault<Fnv>>,
+    /// Scratch for `lookup`'s key, grown once at build time to the longest key
+    /// the map holds, so a lookup NEVER allocates.
+    ///
+    /// This is not an optimisation, it is the correctness argument. `lookup`
+    /// has no way to say "I could not answer": its caller reads a null return
+    /// as the authoritative "no element bears this name" and stops, so an
+    /// allocation failure here would become a silently empty node-set - a
+    /// wrong answer, which is the one outcome the engine must never produce.
+    /// (Measured: injecting that allocation made `count(//a)` return 0 and
+    /// `normalize-space(//b)` return "".) An allocation that cannot happen
+    /// cannot fail, so the branch is removed rather than handled.
+    ///
+    /// The bound is exact, not a guess: a requested key longer than every key
+    /// in the map cannot match any of them, so `lookup` answers "no match"
+    /// without needing the buffer at all.
+    scratch: core::cell::UnsafeCell<Vec<u8>>,
+    max_key: usize,
 }
 
 #[inline]
-fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) {
+#[must_use]
+fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) -> bool {
     buf.clear();
+    // The reserve is the only part that can fail, and one call covers the whole
+    // key; after it the three writes cannot allocate.
+    if buf.mkr_reserve(local.len() + 1 + ns.len()).is_err() {
+        return false;
+    }
     buf.extend_from_slice(local);
     buf.push(0xFF);
     buf.extend_from_slice(ns);
+    true
 }
 
 unsafe fn build(doc: *mut Doc) -> *mut NameIndex {
@@ -51,20 +77,54 @@ unsafe fn build(doc: *mut Doc) -> *mut NameIndex {
     let mut map: HashMap<Box<[u8]>, Vec<*mut Node>, BuildHasherDefault<Fnv>> =
         HashMap::default();
     let mut key: Vec<u8> = Vec::new();
+    let mut max_key = 0usize;
     let mut cur = root;
     while !cur.is_null() {
         if (*cur).type_ == T_ELEMENT {
-            key_into(&mut key, node_local(cur), node_ns(cur));
+            // Out of memory anywhere in the build abandons the whole index and
+            // returns null. That is the fail-closed answer, not a degraded one:
+            // `get` caches null as "not built" and every caller falls back to
+            // walking the tree, which is the same answer this index exists to
+            // make faster. A partially built index would be a WRONG answer -
+            // `//tag` would miss the elements that did not get recorded.
+            if !key_into(&mut key, node_local(cur), node_ns(cur)) {
+                return ptr::null_mut();
+            }
+            if key.len() > max_key {
+                max_key = key.len();
+            }
             match map.get_mut(&key[..]) {
-                Some(v) => v.push(cur),
+                Some(v) => {
+                    if !falloc::try_push(v, cur) {
+                        return ptr::null_mut();
+                    }
+                }
                 None => {
-                    map.insert(key.clone().into_boxed_slice(), vec![cur]);
+                    let Some(k) = falloc::try_to_boxed_slice(&key) else {
+                        return ptr::null_mut();
+                    };
+                    let Some(mut first) = falloc::try_vec_with_capacity(1) else {
+                        return ptr::null_mut();
+                    };
+                    first.push(cur);
+                    if !falloc::try_map_insert(&mut map, k, first) {
+                        return ptr::null_mut();
+                    }
                 }
             }
         }
         cur = preorder_next(root, cur);
     }
-    Box::into_raw(Box::new(NameIndex { map }))
+    // One allocation for the lookup scratch, here where failure is already the
+    // fail-closed "no index, walk instead" answer.
+    let Some(scratch) = falloc::try_vec_with_capacity::<u8>(max_key) else {
+        return ptr::null_mut();
+    };
+    falloc::try_box_raw(NameIndex {
+        map,
+        scratch: core::cell::UnsafeCell::new(scratch),
+        max_key,
+    })
 }
 
 /// The document's index, built and cached on first call (null on an empty
@@ -129,8 +189,21 @@ pub unsafe fn lookup(
     } else {
         core::slice::from_raw_parts(ns_uri as *const u8, ns_uri_len)
     };
-    let mut key = Vec::with_capacity(local.len() + 1 + ns.len());
-    key_into(&mut key, local, ns);
+    // A key longer than any key in the map cannot match one, so answer the miss
+    // directly - and, more to the point, without touching the scratch, whose
+    // capacity is exactly `max_key`.
+    if local.len() + 1 + ns.len() > (*idx).max_key {
+        return ptr::null();
+    }
+    // SAFETY: the index is not shared across threads - every caller holds the
+    // GVL - and the borrow ends inside this function, before returning. The
+    // scratch was reserved for `max_key` bytes at build time and the write
+    // above is bounded by it, so none of these three writes can allocate.
+    let key = &mut *(*idx).scratch.get();
+    key.clear();
+    key.extend_from_slice(local);
+    key.push(0xFF);
+    key.extend_from_slice(ns);
     match (*idx).map.get(&key[..]) {
         Some(v) => {
             if !out_count.is_null() {
