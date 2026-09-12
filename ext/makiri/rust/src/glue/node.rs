@@ -124,7 +124,6 @@ use super::abi::{DataType, mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_
 
 extern "C" {
     fn mkr_parsed_kind(p: *const c_void) -> c_int;
-    fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut c_void;
 }
 
 #[inline]
@@ -152,7 +151,7 @@ pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
                 (*xdoc).doc_node as *mut c_void
             };
         }
-        return mkr_html_doc_unwrap(rb_node);
+        return super::abi::mkr_html_doc_unwrap(rb_node) as *mut c_void;
     }
     /* Raises TypeError for a non-node, as TypedData_Get_Struct did. Nothing in
      * this frame needs dropping, so the longjmp is safe here (glue/mod.rs). */

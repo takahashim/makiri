@@ -54,6 +54,8 @@ module RustPorts
     srcs: %w[glue/ruby_xml_node_serialize.c] },
   { env: "MAKIRI_RUST_GLUE_HTML_NODE",      feature: "glue-html-node",
     srcs: %w[glue/ruby_html_node.c] },
+  { env: "MAKIRI_RUST_GLUE_HTML_MUTATE",    feature: "glue-html-mutate",
+    srcs: %w[glue/ruby_html_mutate.c] },
   # The XPath FRONT END is one feature over three files, and it is also implied
   # by every xpath-* row above (see rust_xpath below).
   { env: "MAKIRI_RUST_XPATH",               feature: "xpath",
@@ -78,6 +80,8 @@ module RustPorts
       end
     },
     "MAKIRI_RUST_BRIDGE_STRING" => ->(on) { on.include?("MAKIRI_RUST_BRIDGE_XML_DECODE") },
+    # The HTML mutators share the readers' wrap/unwrap and node-type constants.
+    "MAKIRI_RUST_GLUE_HTML_NODE" => ->(on) { on.include?("MAKIRI_RUST_GLUE_HTML_MUTATE") },
   }.freeze
 
   class << self

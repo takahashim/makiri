@@ -105,7 +105,6 @@ extern "C" {
     fn mkr_parsed_element_index(p: *mut c_void) -> *mut c_void;
     static mkr_element_index_tag: c_void;
     static mkr_element_index_has_foreign: c_void;
-    fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut c_void;
 
     fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut XPathError) -> *mut Ast;
     fn mkr_node_free(ast: *mut Ast);
@@ -376,7 +375,7 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
     }
 
     let node = mkr_html_node_unwrap(rb_node.as_raw());
-    let doc = mkr_html_doc_unwrap(document.as_raw());
+    let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw()) as *mut c_void;
     if mkr_parsed_dom_index_build(parsed) != 0 {
         return Err(Error::new(
             error_class(),

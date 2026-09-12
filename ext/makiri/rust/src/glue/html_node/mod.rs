@@ -26,6 +26,9 @@
 
 pub mod read;
 
+#[cfg(feature = "glue-html-mutate")]
+pub mod mutate;
+
 use core::ffi::c_void;
 
 use magnus::rb_sys::FromRawValue;
@@ -33,8 +36,12 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use super::abi::{
-    html_node_methods, is_kind_of, mkr_cDocument, mkr_cXmlDocument, LxbNode, NodeData,
+    html_node_methods, is_kind_of, mkr_cDocument, mkr_cXmlDocument, mkr_html_doc_unwrap, LxbNode,
+    NodeData,
 };
+/* Only the mutation half registers on the Document class. */
+#[cfg(feature = "glue-html-mutate")]
+use super::abi::mkr_cHtmlDocument;
 
 /* ------------------------------------------------------------------ *
  * the DOM node types                                                 *
@@ -68,10 +75,6 @@ extern "C" {
     static mkr_cHtmlProcessingInstruction: VALUE;
     static mkr_cHtmlDocumentType: VALUE;
     static mkr_cHtmlDocumentFragment: VALUE;
-
-    /// The HTML Document's own arena. Declared rather than reached through
-    /// `mkr_node_raw`, because an HTML Document is not wrapped as a node.
-    fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut c_void;
 
     /* Representation-neutral identity, from glue::node (or its C original):
      * it depends only on the node pointer, so HTML and XML must run the SAME
@@ -283,3 +286,58 @@ pub unsafe extern "C" fn mkr_init_node() {
 }
 
 use magnus::rb_sys::AsRawValue;
+
+/// `mkr_init_mutate` - the HTML node's mutators and the Document factories.
+///
+/// # Safety
+/// From `Init_makiri`, after the classes exist.
+#[cfg(feature = "glue-html-mutate")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_init_mutate() {
+    let m = html_node_methods();
+    let doc = RClass::from_value(Value::from_raw(mkr_cHtmlDocument)).expect("HTML::Document");
+
+    m.define_method("add_child", method!(mutate::add_child, 1)).expect("#add_child");
+    m.define_method("<<", method!(mutate::lshift, 1)).expect("#<<");
+    for name in ["add_previous_sibling", "before"] {
+        m.define_method(name, method!(mutate::before, 1)).expect("#before");
+    }
+    for name in ["add_next_sibling", "after"] {
+        m.define_method(name, method!(mutate::after, 1)).expect("#after");
+    }
+    for name in ["remove", "unlink"] {
+        m.define_method(name, method!(mutate::remove, 0)).expect("#remove");
+    }
+    m.define_method("replace", method!(mutate::replace, 1)).expect("#replace");
+
+    m.define_method("inner_html=", method!(mutate::set_inner_html, 1)).expect("#inner_html=");
+    m.define_method("outer_html=", method!(mutate::set_outer_html, 1)).expect("#outer_html=");
+
+    m.define_method("[]=", method!(mutate::aset, 2)).expect("#[]=");
+    m.define_method("set_attribute_ns", method!(mutate::set_attribute_ns, 3))
+        .expect("#set_attribute_ns");
+    m.define_method("remove_attribute_ns", method!(mutate::remove_attribute_ns, 2))
+        .expect("#remove_attribute_ns");
+    for name in ["delete", "remove_attribute"] {
+        m.define_method(name, method!(mutate::delete, 1)).expect("#delete");
+    }
+    m.define_method("content=", method!(mutate::set_content, 1)).expect("#content=");
+    m.define_method("name=", method!(mutate::set_name, 1)).expect("#name=");
+
+    doc.define_method("create_element", method!(mutate::create_element, 1))
+        .expect("#create_element");
+    doc.define_method("create_document_type", method!(mutate::create_document_type, -1))
+        .expect("#create_document_type");
+    doc.define_method("create_text_node", method!(mutate::create_text_node, 1))
+        .expect("#create_text_node");
+    doc.define_method("create_comment", method!(mutate::create_comment, 1))
+        .expect("#create_comment");
+    doc.define_method("create_processing_instruction", method!(mutate::create_pi, 2))
+        .expect("#create_processing_instruction");
+    doc.define_method(
+        "create_document_fragment",
+        method!(mutate::create_document_fragment, 0),
+    )
+    .expect("#create_document_fragment");
+
+}

@@ -210,6 +210,42 @@ SCENARIOS = {
     out.join("\n")
   end,
 
+  # The HTML mutation surface: the factories, insertion on every side, the
+  # fragment splice, cross-document adopt, rename, content, the namespaced
+  # attribute setters and inner_html=. Its XML twin (xml_mutate) covers the
+  # other backend; this one reaches the Lexbor arena, the <template> fixup and
+  # the transient-document free that a raise must not skip.
+  "html_mutate" => lambda do
+    d = Makiri::HTML::Document.parse("<html><body><div id='a'><p>one</p></div></body></html>")
+    a = d.at_css("#a")
+    a.add_child(d.create_element("made"))
+    a.add_child(d.create_text_node("inner"))
+    a.add_child(d.create_comment(" note "))
+    a.add_child(d.create_processing_instruction("tgt", "pd"))
+    a.add_child(d.fragment("<i>i</i><u>u</u>"))
+    p1 = d.at_css("p")
+    p1.add_previous_sibling(d.create_element("prev"))
+    p1.add_next_sibling(d.create_element("next"))
+    p1.name = "h1"
+    p1.content = "renamed"
+    p1["data-n"] = "1"
+    p1.set_attribute_ns("http://www.w3.org/1999/xlink", "xlink:href", "#x")
+    p1.set_attribute_ns(nil, "plain", "v")
+    p1.remove_attribute_ns("http://www.w3.org/1999/xlink", "href")
+    p1.delete("data-n")
+    a.inner_html = "<b>B</b><template><i>f</i></template>"
+
+    src = Makiri::HTML::Document.parse("<html><body><section id='s'><em>e</em></section></body></html>")
+    a.add_child(src.at_css("#s"))
+    d.at_css("b").outer_html = "<strong>S</strong>"
+    d.at_css("strong").replace(d.create_element("r"))
+    d.at_css("r").remove
+
+    dt = d.create_document_type("html", "-//X//EN", "urn:s")
+    d.root.add_previous_sibling(dt)
+    d.to_html + "|" + src.to_html
+  end,
+
   # CSS: a comma list with combinators through the reused engine, plus the
   # at_css first-match path.
   "css" => lambda do

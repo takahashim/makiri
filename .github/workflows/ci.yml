@@ -158,6 +158,9 @@ jobs:
           - label: "glue: HTML node readers"
             flags: "MAKIRI_RUST_GLUE_HTML_NODE=1"
             features: "glue-html-node"
+          - label: "glue: HTML mutation"
+            flags: "MAKIRI_RUST_GLUE_HTML_MUTATE=1"
+            features: "glue-html-mutate"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

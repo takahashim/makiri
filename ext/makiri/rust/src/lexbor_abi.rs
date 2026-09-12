@@ -74,6 +74,46 @@ extern "C" {
     pub fn lxb_dom_document_destroy_text_noi(doc: *mut LxbDoc, text: *mut u8);
 }
 
+/* Exported by Lexbor but left out of its public headers, so bindgen cannot see
+ * them either - the same hand-declared status as the `_noi` twins above, for a
+ * different reason. Lexbor's own document_type.c forward-declares
+ * `lxb_dom_attr_qualified_name_append` exactly this way.
+ *
+ * `lxb_ns_append` interns a namespace URI in the document's table.
+ * `lxb_dom_attr_set_name_ns` names an attribute from (namespace, qualified
+ * name), splitting prefix/local and interning the namespace.
+ * `lxb_dom_attr_qualified_name_append` interns a name CASE-PRESERVING, which is
+ * what lets createDocumentType keep its case where Lexbor's own create()
+ * lowercases. */
+extern "C" {
+    pub fn lxb_ns_append(
+        hash: *mut core::ffi::c_void,
+        link: *const u8,
+        length: usize,
+    ) -> *const LxbNsData;
+    pub fn lxb_dom_attr_set_name_ns(
+        attr: *mut LxbAttr,
+        link: *const u8,
+        link_length: usize,
+        name: *const u8,
+        name_length: usize,
+        to_lowercase: bool,
+    ) -> u32;
+    pub fn lxb_dom_attr_qualified_name_append(
+        hash: *mut core::ffi::c_void,
+        name: *const u8,
+        length: usize,
+    ) -> *mut LxbAttrData;
+}
+
+/// `lxb_ns_data_t`, of which only `ns_id` is read. It is `lexbor_hash_entry_t
+/// entry; lxb_ns_id_t ns_id; ...`, and the entry's layout is Lexbor's business -
+/// so the id is reached through the generated struct rather than guessed at.
+pub type LxbNsData = lxb_ns_data_t;
+
+/// `lxb_dom_attr_data_t`, likewise read only for `attr_id`.
+pub type LxbAttrData = lxb_dom_attr_data_t;
+
 /// bindgen names an enum's constants by whether the enum is NAMED: a typedef'd
 /// one gets its type as a prefix (`lxb_ns_id_enum_t_LXB_NS_HTML`), a truly
 /// anonymous one keeps the bare name (`LXB_CSS_AT_RULE_MEDIA`). That is an

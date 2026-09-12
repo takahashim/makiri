@@ -210,6 +210,14 @@ extern "C" {
 
     /// The parsed-document handle behind a Document, and its XML arena.
     pub fn mkr_doc_parsed(rb_doc: VALUE) -> *mut c_void;
+
+    /// The `lxb_dom_document_t` behind an HTML Document. Raises TypeError for
+    /// an XML one - the TypedData check is Ruby's own type machinery.
+    ///
+    /// Declared here because four files wanted it and three wrote their own
+    /// declaration, two as `*mut c_void` and one as `*mut LxbDoc`; rustc calls
+    /// that "redeclared with a different signature", which is how it was found.
+    pub fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut LxbDoc;
     pub fn mkr_parsed_xml_doc(p: *const c_void) -> *mut c_void;
 
     /// Enforce the strict text contract, naming `what`. **Raises.**
@@ -426,6 +434,12 @@ mod agree {
         mkr_doc_parsed,
         crate::glue::doc::mkr_doc_parsed,
         unsafe extern "C" fn(VALUE) -> *mut c_void
+    );
+    #[cfg(feature = "glue-doc")]
+    same_signature!(
+        mkr_html_doc_unwrap,
+        crate::glue::doc::mkr_html_doc_unwrap,
+        unsafe extern "C" fn(VALUE) -> *mut crate::lexbor_abi::LxbDoc
     );
     #[cfg(feature = "glue-doc")]
     same_signature!(

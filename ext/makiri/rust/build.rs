@@ -67,6 +67,11 @@ fn main() {
         .allowlist_type("lxb_dom_character_data_t")
         .allowlist_type("lxb_dom_document_type_t")
         .allowlist_type("lxb_dom_processing_instruction_t")
+        // Read only for their id fields, by the three header-less
+        // Lexbor exports declared in lexbor_abi.rs.
+        .allowlist_type("lxb_ns_data_t")
+        .allowlist_type("lxb_dom_attr_data_t")
+        .allowlist_type("lxb_dom_exception_code_t")
         .allowlist_type("lexbor_str_t")
         // <template>'s content fragment. Lexbor's accessor is a cast macro, so
         // the field read is the whole interface.
@@ -138,6 +143,37 @@ fn main() {
         .allowlist_function("lxb_dom_document_destroy_text")
         .allowlist_function("lxb_ns_by_id")
         .allowlist_function("lxb_dom_document_root")
+        // The mutators and factories glue/html_node/mutate uses. Same rule, and
+        // this time every one of them is a real exported function - the three
+        // Lexbor exports this file needs that bindgen CANNOT see
+        // (lxb_ns_append, lxb_dom_attr_set_name_ns,
+        // lxb_dom_attr_qualified_name_append) are absent from the public
+        // headers entirely, not inline, so they are hand-declared next to the
+        // `_noi` twins in lexbor_abi.rs.
+        .allowlist_function("lxb_dom_node_remove")
+        .allowlist_function("lxb_dom_node_insert_child")
+        .allowlist_function("lxb_dom_node_insert_before")
+        .allowlist_function("lxb_dom_node_insert_after")
+        .allowlist_function("lxb_dom_node_destroy")
+        .allowlist_function("lxb_dom_node_text_content_set")
+        .allowlist_function("lxb_dom_element_set_attribute")
+        .allowlist_function("lxb_dom_element_remove_attribute")
+        .allowlist_function("lxb_dom_element_attr_append")
+        .allowlist_function("lxb_dom_element_attr_remove")
+        .allowlist_function("lxb_dom_attr_interface_create")
+        .allowlist_function("lxb_dom_attr_set_value")
+        .allowlist_function("lxb_dom_attr_set_name")
+        .allowlist_function("lxb_dom_document_create_element")
+        .allowlist_function("lxb_dom_document_create_text_node")
+        .allowlist_function("lxb_dom_document_create_comment")
+        .allowlist_function("lxb_dom_document_create_processing_instruction")
+        .allowlist_function("lxb_dom_document_create_document_fragment")
+        .allowlist_function("lxb_dom_document_type_create")
+        .allowlist_function("lxb_dom_document_type_valid_name")
+        .allowlist_function("lxb_dom_document_import_node")
+        .allowlist_function("lexbor_str_init")
+        .allowlist_function("lxb_html_parse_fragment")
+        .allowlist_function("lxb_html_document_destroy")
         .allowlist_function("lxb_css_stylesheet_create")
         .allowlist_function("lxb_css_stylesheet_parse")
         .allowlist_function("lxb_css_stylesheet_destroy")
