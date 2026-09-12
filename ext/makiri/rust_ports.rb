@@ -30,8 +30,10 @@ module RustPorts
     srcs: %w[glue/ruby_html_serialize.c] },
   { env: "MAKIRI_RUST_GLUE_NODE",           feature: "glue-node",
     srcs: %w[glue/ruby_node.c] },
+  # text_token.c is the one sanctioned mint of mkr_verified_text_t and nothing
+  # else; it moves with the string bridge rather than earning a flag of its own.
   { env: "MAKIRI_RUST_BRIDGE_STRING",       feature: "bridge-string",
-    srcs: %w[bridge/ruby_string.c] },
+    srcs: %w[bridge/ruby_string.c bridge/text_token.c] },
   { env: "MAKIRI_RUST_GLUE_NODE_SET",       feature: "glue-node-set",
     srcs: %w[glue/ruby_node_set.c] },
   { env: "MAKIRI_RUST_GLUE_CSS",            feature: "glue-css",

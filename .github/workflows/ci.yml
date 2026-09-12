@@ -32,6 +32,12 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
+      # Cheap, and it does not need a build: the four files that describe the
+      # port configuration have to agree with each other, and nothing was
+      # checking that until one row turned out to have no CI leg at all.
+      - name: Port table
+        run: bundle exec rake ports
+
       - name: Compile the extension (builds vendored Lexbor, then the ext)
         run: bundle exec rake compile
 
@@ -191,6 +197,13 @@ jobs:
           - label: "CSS lowering"
             flags: "MAKIRI_RUST_CSS_LOWER=1"
             features: "css-lower"
+          # The XML reader replaces a whole directory rather than named files,
+          # and had no leg of its own until script/check_port_table.rb looked -
+          # it was only ever built by the `everything` job, where a failure
+          # would have been attributed to whichever flag was suspected first.
+          - label: "XML reader"
+            flags: "MAKIRI_RUST_XML=1"
+            features: "xml"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

@@ -145,6 +145,23 @@ pub unsafe extern "C" fn mkr_ruby_str_from_slices(
     str
 }
 
+/// The ONE sanctioned mint of `mkr_verified_text_t` (bridge/text_token.c).
+///
+/// Dropping the Ruby anchor from a view that has already passed the strict text
+/// contract. It is a function rather than a cast at each call site precisely so
+/// that "where does a verified text come from" has one answer: `grep` finds
+/// every place an unanchored verified slice enters the engine.
+///
+/// The caller keeps the String alive across the call - that is what the anchor
+/// was for, and dropping it here does not drop the reference the caller holds.
+///
+/// # Safety
+/// `v` must have come from `mkr_ruby_verified_text` or its try-variant.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_verified_text_from_view(v: RubyBorrowedText) -> BorrowedText {
+    BorrowedText { ptr: v.ptr, len: v.len }
+}
+
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
 /// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
 #[no_mangle]

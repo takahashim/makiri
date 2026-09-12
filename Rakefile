@@ -134,6 +134,11 @@ rescue LoadError
   # ruby_memcheck not installed (optional :valgrind group absent) - skip the task.
 end
 
+desc "Check that the port configuration agrees with itself (table, features, CI legs)"
+task :ports do
+  sh FileUtils::RUBY, "script/check_port_table.rb"
+end
+
 namespace :security do
   desc "Run mechanical C safety lint over ext/makiri"
   task :clint do
