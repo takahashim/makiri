@@ -57,6 +57,9 @@ glue-css = ["glue"]
 # Needs `bridge-string` because it shares that module's allocation-free
 # strict-text check rather than declaring a second one.
 bridge-xml-decode = ["glue", "bridge-string"]
+# glue/ruby_xml.c - the Ruby boundary for our own XML reader and its XPath/CSS
+# queries. Zero Lexbor, and the engine on the other side is already Rust.
+glue-xml = ["glue"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

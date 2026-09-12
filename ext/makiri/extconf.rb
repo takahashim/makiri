@@ -260,6 +260,8 @@ end
 #                            (glue/ruby_html_css.c)
 #   MAKIRI_RUST_BRIDGE_XML_DECODE=1 the XML input decode      -> `bridge-xml-decode`
 #                            (bridge/xml_decode.c; implies bridge-string)
+#   MAKIRI_RUST_GLUE_XML=1   the XML reader's Ruby boundary    -> `glue-xml`
+#                            (glue/ruby_xml.c)
 #
 # The glue flags differ from the engine ones in what they preserve. An engine
 # flag swaps one C ABI for an identical one; a glue flag swaps C that calls Ruby
@@ -288,6 +290,7 @@ rust_bridge_string = ENV["MAKIRI_RUST_BRIDGE_STRING"].to_s.strip == "1"
 rust_glue_node_set = ENV["MAKIRI_RUST_GLUE_NODE_SET"].to_s.strip == "1"
 rust_glue_css = ENV["MAKIRI_RUST_GLUE_CSS"].to_s.strip == "1"
 rust_bridge_xml_decode = ENV["MAKIRI_RUST_BRIDGE_XML_DECODE"].to_s.strip == "1"
+rust_glue_xml = ENV["MAKIRI_RUST_GLUE_XML"].to_s.strip == "1"
 # The decode shares ruby_string.c's strict-text core, so the Rust one comes with
 # it; otherwise both languages would define mkr_text_check.
 rust_bridge_string ||= rust_bridge_xml_decode
@@ -305,8 +308,10 @@ RUST_BRIDGE_STRING_SRCS = [File.join(EXT_DIR, "bridge", "ruby_string.c")].freeze
 RUST_GLUE_NODE_SET_SRCS = [File.join(EXT_DIR, "glue", "ruby_node_set.c")].freeze
 RUST_GLUE_CSS_SRCS = [File.join(EXT_DIR, "glue", "ruby_html_css.c")].freeze
 RUST_BRIDGE_XML_DECODE_SRCS = [File.join(EXT_DIR, "bridge", "xml_decode.c")].freeze
+RUST_GLUE_XML_SRCS = [File.join(EXT_DIR, "glue", "ruby_xml.c")].freeze
 if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
-   rust_bridge_string || rust_glue_node_set || rust_glue_css || rust_bridge_xml_decode
+   rust_bridge_string || rust_glue_node_set || rust_glue_css ||
+   rust_bridge_xml_decode || rust_glue_xml
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -322,6 +327,7 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
   features << "glue-node-set" if rust_glue_node_set
   features << "glue-css" if rust_glue_css
   features << "bridge-xml-decode" if rust_bridge_xml_decode
+  features << "glue-xml" if rust_glue_xml
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -368,6 +374,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_glue_node_set && RUST_GLUE_NODE_SET_SRCS.include?(f) }
            .reject { |f| rust_glue_css && RUST_GLUE_CSS_SRCS.include?(f) }
            .reject { |f| rust_bridge_xml_decode && RUST_BRIDGE_XML_DECODE_SRCS.include?(f) }
+           .reject { |f| rust_glue_xml && RUST_GLUE_XML_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,

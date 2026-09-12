@@ -20,6 +20,10 @@
 /// `mkr_buf_t`, which more than one subsystem writes into.
 pub mod cbuf;
 
+/// The XPath engine's C types. Shared with the glue, which holds an error, a
+/// value and a limits pointer at the XML query entry points.
+pub mod xpath_abi;
+
 /// The Ruby boundary. Present only when a glue feature is on, because it is the
 /// one part of the crate that depends on magnus.
 #[cfg(feature = "glue")]
@@ -29,7 +33,12 @@ pub mod glue;
 
 /// The XML node layouts (`xml::abi`) come in with either feature: the XPath
 /// port's XML backend walks those nodes without needing the reader.
-#[cfg(any(feature = "xml", feature = "xpath", feature = "glue-node"))]
+#[cfg(any(
+    feature = "xml",
+    feature = "xpath",
+    feature = "glue-node",
+    feature = "glue-xml"
+))]
 pub mod xml;
 
 #[cfg(feature = "xpath")]

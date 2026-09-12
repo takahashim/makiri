@@ -36,3 +36,6 @@ pub mod node_set;
 
 #[cfg(feature = "glue-serialize")]
 pub mod serialize;
+
+#[cfg(feature = "glue-xml")]
+pub mod xml;
