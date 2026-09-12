@@ -53,6 +53,10 @@ glue-node-set = ["glue"]
 # Node#css / #at_css / #matches? - the shared Lexbor selector engine, the
 # adaptive compiled-selector cache, and the traversal callbacks.
 glue-css = ["glue"]
+# bridge/xml_decode.c - XML 1.0 Appendix F autodetection + the strict decode.
+# Needs `bridge-string` because it shares that module's allocation-free
+# strict-text check rather than declaring a second one.
+bridge-xml-decode = ["glue", "bridge-string"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

@@ -14,3 +14,6 @@
 
 #[cfg(feature = "bridge-string")]
 pub mod string;
+
+#[cfg(feature = "bridge-xml-decode")]
+pub mod xml_decode;
