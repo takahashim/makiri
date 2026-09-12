@@ -132,6 +132,11 @@ dom-source-loc = ["dom-adapter", "lexbor-abi"]
 # callback) and the parsed-document lifecycle.
 dom-post-parse = ["dom-adapter", "lexbor-abi"]
 
+# ext/makiri/core/ - the Ruby-free, Lexbor-free safety primitives.
+# core/mkr_utf8.c - the shared validator and strict decoder. The module itself
+# is unconditional (see src/cutf8.rs); this gates only the C entry points.
+core-utf8 = []
+
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build
 # that enables none of the glue features compiles exactly what it did before.

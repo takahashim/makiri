@@ -56,36 +56,14 @@ pub fn is_name_char(c: u32) -> bool {
 }
 
 /// Decode ONE code point strictly (mkr_utf8_decode1): truncation, bad
-/// continuation bytes, overlong forms, surrogates and values above U+10FFFF
-/// all yield None. Never reads past the slice.
-#[inline]
-pub fn decode1(p: &[u8]) -> Option<(u32, usize)> {
-    let b0 = *p.first()? as u32;
-    if b0 < 0x80 {
-        return Some((b0, 1));
-    }
-    let (len, min, init) = if b0 & 0xE0 == 0xC0 {
-        (2usize, 0x80u32, b0 & 0x1F)
-    } else if b0 & 0xF0 == 0xE0 {
-        (3, 0x800, b0 & 0x0F)
-    } else if b0 & 0xF8 == 0xF0 {
-        (4, 0x10000, b0 & 0x07)
-    } else {
-        return None;
-    };
-    let tail = p.get(1..len)?;
-    let mut cp = init;
-    for &b in tail {
-        if b & 0xC0 != 0x80 {
-            return None;
-        }
-        cp = (cp << 6) | (b as u32 & 0x3F);
-    }
-    if cp < min || cp > 0x10FFFF || (0xD800..=0xDFFF).contains(&cp) {
-        return None;
-    }
-    Some((cp, len))
-}
+/// continuation bytes, overlong forms, surrogates and values above U+10FFFF are
+/// all rejected.
+///
+/// Re-exported from `crate::cutf8` rather than written again here. It was
+/// written here first, before `core/mkr_utf8.c` moved; keeping both would be two
+/// strict decoders, and `verify::accepted_is_utf8` cross-checks this one against
+/// `core::str::from_utf8` precisely because there should be exactly one of ours.
+pub use crate::cutf8::decode1;
 
 /// All of `s` is XML Char (no reference recognition). mkr_xml_validate_chars.
 pub fn validate_chars(s: &[u8]) -> bool {

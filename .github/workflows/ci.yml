@@ -179,6 +179,9 @@ jobs:
           - label: "dom_adapter: parse pipeline"
             flags: "MAKIRI_RUST_DOM_POST_PARSE=1"
             features: "dom-post-parse"
+          - label: "core: UTF-8"
+            flags: "MAKIRI_RUST_CORE_UTF8=1"
+            features: "core-utf8"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

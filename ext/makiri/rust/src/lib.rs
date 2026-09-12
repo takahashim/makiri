@@ -53,6 +53,11 @@ pub mod falloc;
 /// `mkr_buf_t`, which more than one subsystem writes into.
 pub mod cbuf;
 
+/// The shared UTF-8 primitives (core/mkr_utf8.c). Unconditional, like `falloc`
+/// and `cbuf`: the XML and XPath layers use the strict decoder whatever the
+/// feature set, and only the `#[no_mangle]` C entries are gated.
+pub mod cutf8;
+
 /// The XPath engine's C types. Shared with the glue, which holds an error, a
 /// value and a limits pointer at the XML query entry points.
 pub mod xpath_abi;
