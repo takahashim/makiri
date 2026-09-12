@@ -210,6 +210,36 @@ SCENARIOS = {
     out.join("\n")
   end,
 
+  # Cross-representation import, which no other scenario reaches: it allocates
+  # in BOTH arenas at once and synthesizes xmlns declarations, and its
+  # fail-closed model is "abandon the partial subtree in the destination arena".
+  # A partial import that still returned a node would be a silently truncated
+  # tree - the shape this whole sweep is looking for.
+  "cross_import" => lambda do
+    hdoc = Makiri::HTML::Document.parse(<<~HTML)
+      <html><body><div id="a" class="c">text<b>bold</b>
+        <svg viewBox="0 0 1 1"><a xlink:href="#z"><path d="M0 0"/></a></svg>
+        <template><i>inside</i></template>
+        <p>a &amp; b</p>
+      </div></body></html>
+    HTML
+    xdoc = Makiri::XML::Document.parse("<root xmlns='urn:d'><keep/></root>")
+
+    # HTML -> XML, then LINKED: the synthesized declarations only resolve at
+    # link time, so a half-built one shows up here rather than in the copy.
+    imported = xdoc.import_node(hdoc.at_css("#a"), true)
+    xdoc.root.add_child(imported)
+
+    # XML -> HTML, both directions in one scenario.
+    src = Makiri::XML::Document.parse(
+      "<r xmlns='urn:d' xmlns:p='urn:p'><p:a p:k='v'>t</p:a><b>u</b></r>"
+    )
+    back = hdoc.import_node(src.root, true)
+    hdoc.at_css("body").add_child(back)
+
+    xdoc.to_xml + "|" + hdoc.to_html
+  end,
+
   # Invalid UTF-8 input, which is the ONLY path that reaches the sanitiser's
   # buffer: every other scenario feeds valid UTF-8, where mkr_utf8_sanitize
   # short-circuits and allocates nothing. The 3x growth and the steal are what

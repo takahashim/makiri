@@ -170,6 +170,9 @@ jobs:
           - label: "dom_adapter: DOM index"
             flags: "MAKIRI_RUST_DOM_INDEX=1"
             features: "dom-index"
+          - label: "dom_adapter: cross import"
+            flags: "MAKIRI_RUST_DOM_CROSS_IMPORT=1"
+            features: "dom-cross-import"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.
