@@ -81,3 +81,99 @@ jobs:
           name: libfuzzer-corpus-${{ matrix.target }}
           path: ext/makiri/fuzz/corpus/${{ matrix.target }}
           retention-days: 7
+
+  # The same three surfaces, against the RUST engine (cargo-fuzz). This is an
+  # ADDITION, not a replacement: the job above fuzzes the C build, which is
+  # still what a default `gem install` gets, and this one fuzzes the build the
+  # MAKIRI_RUST_* flags produce. Until the port lands, both are shipped code.
+  #
+  # Corpora are kept apart. The two builds are meant to be behaviourally
+  # identical, so sharing would mostly work - but a corpus is a record of what
+  # reached new coverage in one binary, and silently crediting it to the other
+  # would hide a divergence rather than expose it.
+  cargo-fuzz-nightly:
+    name: cargo-fuzz ${{ matrix.target }} (rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [xml, xpath, xml_xpath]
+
+    steps:
+      - name: Checkout (with vendored Lexbor submodule)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Ensure cmake is available
+        uses: lukka/get-cmake@latest
+
+      # -Zsanitizer is unstable, and cargo-fuzz needs it.
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # The targets need the vendored Lexbor HEADERS - mkr_xpath.h includes
+      # <lexbor/dom/dom.h> - even though they never link the library.
+      - name: Compile the extension (builds Lexbor)
+        run: bundle exec rake compile
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Build the fuzz targets
+        working-directory: ext/makiri/rust/fuzz
+        run: cargo fuzz build ${{ matrix.target }}
+
+      # A green fuzz run proves nothing if the sanitizer is inert, and the
+      # obvious check for that (nm -u | grep __asan_report) reads 0 on Linux
+      # whether or not the binary is instrumented, because the runtime is
+      # linked statically. Assert on the full symbol table instead.
+      - name: Assert the target is instrumented
+        working-directory: ext/makiri/rust/fuzz
+        run: |
+          bin=$(ls target/*/release/${{ matrix.target }})
+          reports=$(nm "$bin" | grep -c '__asan_report')
+          echo "$bin: __asan_report symbols = $reports"
+          test "$reports" -gt 0 || { echo "not ASan-instrumented"; exit 1; }
+
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
+          key: cargo-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            cargo-fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run cargo-fuzz ${{ matrix.target }} (300s)
+        working-directory: ext/makiri/rust/fuzz
+        run: |
+          mkdir -p corpus/${{ matrix.target }}
+          cargo fuzz run ${{ matrix.target }} -- \
+            -max_total_time=300 \
+            -max_len=4096 \
+            -print_final_stats=1
+
+      - name: Upload corpus artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-fuzz-corpus-${{ matrix.target }}
+          path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
+          retention-days: 7
+
+      # Anything cargo-fuzz saved under artifacts/ is a reproducer.
+      - name: Upload reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-fuzz-artifacts-${{ matrix.target }}
+          path: ext/makiri/rust/fuzz/artifacts/${{ matrix.target }}
+          retention-days: 30

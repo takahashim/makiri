@@ -6,7 +6,9 @@ publish = false
 description = "Makiri subsystems ported from C behind the same C ABI (see src/lib.rs)"
 
 [lib]
-crate-type = ["staticlib"]
+# staticlib for the extension link; rlib so the cargo-fuzz crate under fuzz/
+# can depend on this one and call its exported entry points.
+crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [features]

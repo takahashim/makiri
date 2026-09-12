@@ -451,6 +451,11 @@ end
 # ext/makiri/fuzz/Makefile, never into the Ruby extension.
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+           # Nothing under the Rust crate is a source of this extension. It holds
+           # its own cargo-fuzz crate, whose C support files (an abort() stub for
+           # the HTML engine entries) would otherwise be globbed in and collide
+           # with the real definitions at link time.
+           .reject { |f| f.start_with?(File.join(EXT_DIR, "rust") + File::SEPARATOR) }
            .reject { |f| rust_xml && f.start_with?(File.join(EXT_DIR, "xml") + File::SEPARATOR) }
            .reject { |f| rust_xpath && RUST_XPATH_SRCS.include?(f) }
            .reject { |f| rust_xpath_xml && RUST_XPATH_XML_SRCS.include?(f) }
@@ -477,6 +482,7 @@ $VPATH ||= []
 # silently mixing differently-flagged objects).
 $VPATH += Dir.glob(File.join(EXT_DIR, "**/"))
              .reject { |d| d.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+             .reject { |d| d.start_with?(File.join(EXT_DIR, "rust") + File::SEPARATOR) }
              .map { |d| "$(srcdir)/#{d.sub("#{EXT_DIR}/", "")}".chomp("/") }
 
 create_makefile("makiri/makiri")
@@ -494,6 +500,7 @@ create_makefile("makiri/makiri")
 # change already requires `rake clean:lexbor` (see CLAUDE.md).
 project_headers = Dir.glob(File.join(EXT_DIR, "**", "*.h"))
                      .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }
+                     .reject { |f| f.start_with?(File.join(EXT_DIR, "rust") + File::SEPARATOR) }
                      .map { |f| "$(srcdir)/#{f.sub("#{EXT_DIR}/", "")}" }
                      .sort
 File.open("Makefile", "a") do |mk|

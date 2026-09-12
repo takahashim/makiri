@@ -1,0 +1,45 @@
+[package]
+name = "makiri-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cc = "1"
+
+# Only the Ruby-free features. The glue needs magnus -> rb-sys -> a live Ruby,
+# which a standalone fuzz binary has no business linking, and the surfaces these
+# targets drive (the XML reader, the XPath front end and the XML engine
+# instance) are exactly the ones the retired C harnesses drove.
+[dependencies.makiri_rs]
+path = ".."
+default-features = false
+features = ["xml", "xpath", "xpath-xml", "xpath-driver", "xpath-shared"]
+
+[build-dependencies]
+cc = "1"
+
+[[bin]]
+name = "xml"
+path = "fuzz_targets/xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xpath"
+path = "fuzz_targets/xpath.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xml_xpath"
+path = "fuzz_targets/xml_xpath.rs"
+test = false
+doc = false
+bench = false
