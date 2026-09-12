@@ -161,6 +161,9 @@ jobs:
           - label: "glue: HTML mutation"
             flags: "MAKIRI_RUST_GLUE_HTML_MUTATE=1"
             features: "glue-html-mutate"
+          - label: "dom_adapter: UTF-8 input"
+            flags: "MAKIRI_RUST_DOM_UTF8_INPUT=1"
+            features: "dom-utf8-input"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

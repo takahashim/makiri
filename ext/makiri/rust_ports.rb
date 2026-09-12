@@ -56,6 +56,8 @@ module RustPorts
     srcs: %w[glue/ruby_html_node.c] },
   { env: "MAKIRI_RUST_GLUE_HTML_MUTATE",    feature: "glue-html-mutate",
     srcs: %w[glue/ruby_html_mutate.c] },
+  { env: "MAKIRI_RUST_DOM_UTF8_INPUT",      feature: "dom-utf8-input",
+    srcs: %w[dom_adapter/utf8_input.c] },
   # The XPath FRONT END is one feature over three files, and it is also implied
   # by every xpath-* row above (see rust_xpath below).
   { env: "MAKIRI_RUST_XPATH",               feature: "xpath",

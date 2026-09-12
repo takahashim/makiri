@@ -210,6 +210,18 @@ SCENARIOS = {
     out.join("\n")
   end,
 
+  # Invalid UTF-8 input, which is the ONLY path that reaches the sanitiser's
+  # buffer: every other scenario feeds valid UTF-8, where mkr_utf8_sanitize
+  # short-circuits and allocates nothing. The 3x growth and the steal are what
+  # is being swept here, and a truncated document is exactly the failure the
+  # property forbids.
+  "html_invalid_utf8" => lambda do
+    bad = (1..200).map { |i| "<p id='p#{i}'>a\xC3(b \xE0\x80\x80 \xF4\x90\x80\x80 \xED\xA0\x80</p>" }.join
+    doc = Makiri::HTML::Document.parse("<html><body>#{bad}</body></html>".dup.force_encoding("BINARY"))
+    frag = doc.fragment("<i>\xC3\x28</i><b>\xF1\x80</b>".dup.force_encoding("BINARY"))
+    doc.text + "|" + frag.to_html
+  end,
+
   # The HTML mutation surface: the factories, insertion on every side, the
   # fragment splice, cross-document adopt, rename, content, the namespaced
   # attribute setters and inner_html=. Its XML twin (xml_mutate) covers the

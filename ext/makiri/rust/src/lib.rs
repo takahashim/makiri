@@ -64,6 +64,10 @@ pub mod bridge;
 #[cfg(feature = "glue")]
 pub mod glue;
 
+/// The Lexbor gap-fillers (ext/makiri/dom_adapter/).
+#[cfg(feature = "dom-adapter")]
+pub mod dom_adapter;
+
 /// The XML node layouts (`xml::abi`) come in with either feature: the XPath
 /// port's XML backend walks those nodes without needing the reader.
 #[cfg(any(

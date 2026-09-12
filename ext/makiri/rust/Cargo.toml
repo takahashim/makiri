@@ -107,6 +107,14 @@ glue-html-node = ["glue"]
 # reader half rather than restating them.
 glue-html-mutate = ["glue", "glue-html-node"]
 
+# ext/makiri/dom_adapter/ - what Lexbor does not provide and we will not patch it
+# to. `dom-adapter` gates the module; each file below replaces one .c.
+dom-adapter = []
+# dom_adapter/utf8_input.c - WHATWG lossy UTF-8 decoding for HTML input. Needs
+# no Ruby and no Lexbor (see the module docs for why the encoder dependency went
+# away), so it is the one dom_adapter file with no `glue` in its feature set.
+dom-utf8-input = ["dom-adapter"]
+
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build
 # that enables none of the glue features compiles exactly what it did before.
