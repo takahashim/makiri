@@ -5,6 +5,7 @@ require "rbconfig"
 require "fileutils"
 require "shellwords"
 require "etc"
+require "set"
 
 # extconf for the Makiri C extension.
 #
@@ -349,6 +350,28 @@ RUST_PORTS = [
 #     share a module);
 #   - the XML decode shares ruby_string.c's strict-text core, so the Rust one
 #     comes with it - otherwise both languages would define mkr_text_check.
+# Every path in the table must name a file that exists.
+#
+# A typo here does NOT fail: the file simply is not dropped, so the C and the
+# Rust both define the symbol, `-fvisibility=hidden` makes both local, the
+# linker keeps one, and the build is green with the Rust half dead. Verified -
+# `glue/ruby_doc_TYPO.c` compiled, linked, and passed 992 examples while the
+# port it was meant to enable did nothing. The check is three lines and the
+# failure it prevents is invisible, so it runs at configure time, for every
+# build, not only when a flag is set.
+RUST_PORTS.each do |row|
+  next if row[:srcs] == :xml_dir
+
+  row[:srcs].each do |rel|
+    path = File.join(EXT_DIR, rel)
+    next if File.exist?(path)
+
+    abort "extconf: RUST_PORTS row #{row[:env]} names #{rel}, which does not " \
+          "exist. A wrong path here does not fail the build - it silently " \
+          "leaves the C file in and the Rust replacement unused."
+  end
+end
+
 rust_on = ->(env) { ENV[env].to_s.strip == "1" }
 enabled = RUST_PORTS.map { |r| r[:env] }.select { |e| rust_on.call(e) }
 enabled |= ["MAKIRI_RUST_XPATH"] if enabled.any? { |e| e.start_with?("MAKIRI_RUST_XPATH_") }
@@ -458,11 +481,20 @@ end
 # libFuzzer harnesses. Those define LLVMFuzzerTestOneInput and are linked by
 # ext/makiri/fuzz/Makefile, never into the Ruby extension.
 # The C files this configuration replaces, from RUST_PORTS.
+#
+# No `rescue` here, deliberately. This was written as `... .to_set rescue nil`
+# with an `||= []` behind it, which means any exception - a missing require, a
+# typo in the block - degrades to "drop nothing": the C stays in and the Rust is
+# dead, silently. The safe direction for this expression is to STOP.
 rust_dropped = RUST_PORTS.select { |r| enabled.include?(r[:env]) }.flat_map { |r|
   r[:srcs] == :xml_dir ? Dir.glob(File.join(EXT_DIR, "xml", "*.c"))
                        : r[:srcs].map { |rel| File.join(EXT_DIR, rel) }
-}.to_set rescue nil
-rust_dropped ||= []
+}.to_set
+
+if enabled.any? && rust_dropped.empty?
+  abort "extconf: #{enabled.size} port flag(s) are set but no C source was " \
+        "selected for replacement - the build would compile both halves."
+end
 
 $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| f.start_with?(File.join(EXT_DIR, "fuzz") + File::SEPARATOR) }

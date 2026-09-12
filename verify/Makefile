@@ -41,8 +41,15 @@ XML_SRC   := $(EXT)/xml/mkr_xml_chars.c $(EXT)/xml/mkr_xml_index.c \
              $(EXT)/xml/mkr_xml_mutate.c $(EXT)/xml/mkr_xml_node.c \
              $(EXT)/xml/mkr_xml_tree.c
 # Lexer/parser/number + shared support: what mkr_parse reaches.
+#
+# mkr_xpath_err.c holds the error setters the lexer and parser call. It was
+# split out of mkr_xpath.c and not added here, which left every harness that
+# links the front end undefined on mkr_err_set - and nothing noticed, because
+# verify/build/ kept objects from before the split and make had no reason to
+# relink. verify.yml runs on main/master, so this branch never built it clean.
 XPATH_FRONT_SRC := $(EXT)/xpath/mkr_xpath_lex.c $(EXT)/xpath/mkr_xpath_parse.c \
-                   $(EXT)/xpath/mkr_xpath_shared.c $(EXT)/xpath/mkr_xpath_number.c
+                   $(EXT)/xpath/mkr_xpath_shared.c $(EXT)/xpath/mkr_xpath_number.c \
+                   $(EXT)/xpath/mkr_xpath_err.c
 # The full engine: dispatcher + the XML monomorphization (HTML side is stub.c).
 XPATH_FULL_SRC  := $(XPATH_FRONT_SRC) $(EXT)/xpath/mkr_xpath.c \
                    $(EXT)/xpath/mkr_xpath_engine_xml.c

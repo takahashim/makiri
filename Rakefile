@@ -212,6 +212,14 @@ end
 # run since the first glue port covered less than it appeared to, silently.
 # Instrumented code calls __asan_report_* on a failing access; uninstrumented
 # code has no such reference. Look inside the crate's own archive.
+# The C sources this configuration replaces, as paths relative to ext/makiri -
+# the form verify/Makefile spells them in. Read from the one table that decides
+# it (extconf's RUST_PORTS) rather than restated.
+def rust_replaced_sources
+  require_relative "script/rust_flags"
+  RustFlags.replaced_sources
+end
+
 # Is this build supposed to contain Rust at all?
 def rust_build?
   ENV.keys.any? { |k| k.start_with?("MAKIRI_RUST_") }
@@ -240,8 +248,22 @@ def rust_asan_instrumented?
   archives.all? { |a| `nm -u "#{a}" 2>/dev/null` =~ /__asan_report/ }
 end
 
-# Abort unless the Rust half is instrumented too. Called by the sanitizer tasks
-# after the build, so a green run always means what it looks like it means.
+# Abort unless BOTH halves are instrumented. Called by the sanitizer tasks after
+# the build, so a green run always means what it looks like it means.
+#
+# One entry point rather than two: `ext_sanitized?` answers for the C and
+# `rust_asan_instrumented?` for the Rust, and a caller that remembers one and
+# forgets the other gets exactly the half-covered run this is here to prevent.
+def assert_sanitized!(task, sanitize)
+  return unless sanitize.include?("address")
+
+  unless ext_sanitized?
+    abort "#{task}: lib/makiri is not a sanitizer build."
+  end
+  assert_rust_asan!(task)
+end
+
+# The Rust half. Prefer `assert_sanitized!`.
 def assert_rust_asan!(task)
   case rust_asan_instrumented?
   when nil then nil # a C-only build; there is no Rust half to instrument
@@ -270,7 +292,7 @@ task :sanitize do
   # address/cfi/dataflow/hwaddress/kcfi/kernel-address/leak/memory/memtag/
   # safestack/shadow-call-stack/thread/realtime, and `undefined` is not one of
   # them. That is permanent, not a gap waiting to be closed.
-  assert_rust_asan!("sanitize") if sanitize.include?("address")
+  assert_sanitized!("sanitize", sanitize)
 
   env = {
     # LeakSanitizer would flag Ruby's intentional caches; the interpreter is not
@@ -460,13 +482,23 @@ task :verify do
   # kani` is what covers the Rust engine (notes/rust_port_remaining.ja.md §4).
   next unless rust_build?
 
+  # Which proofs are orphaned is derived, not named: each CBMC target lists the
+  # C sources it compiles, and this configuration lists the ones it replaces.
+  # Naming them in prose was a second copy of that knowledge, and it would have
+  # gone quietly stale the next time a file was ported.
+  makefile = File.read("verify/Makefile")
+  replaced = rust_replaced_sources
+  orphaned = makefile.scan(/^cbmc-([a-z0-9-]+):\n((?:\t.*\n)+)/).filter_map do |name, body|
+    name if replaced.any? { |src| body.include?(src) }
+  end
+  next if orphaned.empty?
+
   warn <<~ORPHANED
 
-    verify: NOTE - cbmc-xml-chars and cbmc-xpath-number proved
-      ext/makiri/xml/mkr_xml_chars.c and ext/makiri/xpath/mkr_xpath_number.c,
-      which THIS configuration replaces with Rust. For the build you just
-      asked for, those two results are legacy-c-proof: true of the C, silent
-      about the Rust. Run `bundle exec rake kani` for that half.
+    verify: NOTE - #{orphaned.map { |n| "cbmc-#{n}" }.join(", ")} proved C sources
+      that THIS configuration replaces with Rust. For the build you just asked
+      for they are legacy-c-proof: true of the C, silent about the Rust. Run
+      `bundle exec rake kani` for that half.
   ORPHANED
 end
 
@@ -481,7 +513,7 @@ end
 namespace :rust do
   desc "Print `export MAKIRI_RUST_...=1 ...` for the full port configuration " \
        "(or for FLAGS, passed through)"
-  task :env do
+  task env: :check do
     require_relative "script/rust_flags"
     given = ENV["FLAGS"].to_s.strip
     puts given.empty? ? RustFlags.export_line : "export #{given}"
@@ -506,7 +538,20 @@ namespace :rust do
     missing = RustFlags.features - declared
     abort "rust:check: extconf enables cargo features that Cargo.toml does not " \
           "declare: #{missing.join(", ")}" unless missing.empty?
-    puts "rust:check: #{RustFlags.flags.size} flags -> " \
+
+    # The parse must see the WHOLE table, not most of it: a format change that
+    # dropped half the rows would leave every gate running a partial
+    # configuration, which is the failure this whole mechanism exists to stop.
+    rows = File.read("ext/makiri/extconf.rb").scan(/^  \{ env: "MAKIRI_RUST_/).size
+    unless rows == RustFlags.flags.size
+      abort "rust:check: RUST_PORTS has #{rows} rows but the parse found " \
+            "#{RustFlags.flags.size} flags - script/rust_flags.rb is reading " \
+            "the table wrongly and every gate below would run a partial set."
+    end
+    # stderr, not stdout: `rust:env` depends on this task and its output is
+    # `eval`ed by CI and the container scripts. A diagnostic line on stdout
+    # becomes a command they try to run.
+    warn "rust:check: #{RustFlags.flags.size} flags -> " \
          "#{RustFlags.features.size} features, all declared"
   end
 end
@@ -521,9 +566,18 @@ desc "Kani proofs over the Rust engine (needs cargo-kani; see notes/rust_port_re
 task :kani do
   # Only the Ruby-free features: anything under glue needs magnus -> rb-sys ->
   # a live Ruby, which Kani cannot build.
-  Dir.chdir("ext/makiri/rust") do
-    sh "cargo", "kani", "--features", "xml,xpath"
-  end
+  #
+  #   rake kani                                   # all six
+  #   rake kani HARNESS=accepted_is_utf8          # one
+  #   KANI_XML_CHARS_MAX=10 rake kani             # a deeper bound
+  #
+  # The KANI_*_MAX overrides reach the build through the environment, which `sh`
+  # passes on - but they change a `const`, so cargo must see them as a rebuild
+  # reason; they are listed here so that is visible rather than folklore.
+  argv = ["cargo", "kani", "--features", "xml,xpath"]
+  harness = ENV["HARNESS"].to_s.strip
+  argv += ["--harness", harness] unless harness.empty?
+  Dir.chdir("ext/makiri/rust") { sh(*argv) }
 end
 
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
@@ -621,16 +675,13 @@ namespace :fuzz do
   task :sanitize do
     sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
     if %w[1 true yes].include?(ENV["SKIP_BUILD"].to_s.downcase)
-      ext_sanitized? or
-        abort "fuzz:sanitize: SKIP_BUILD set but lib/makiri is not a sanitizer build; " \
-              "drop SKIP_BUILD to rebuild with MAKIRI_SANITIZE"
       puts "fuzz:sanitize: reusing the existing sanitizer build (SKIP_BUILD)"
     else
       sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
     end
     # SKIP_BUILD reuses whatever is on disk, so this is the path most likely to
     # fuzz a half-instrumented build (see rust_asan_instrumented?).
-    assert_rust_asan!("fuzz:sanitize") if sanitize.include?("address")
+    assert_sanitized!("fuzz:sanitize", sanitize)
 
     env = {
       "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \

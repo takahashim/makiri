@@ -133,11 +133,13 @@ unsafe fn is_html_template(n: *const LxbNode) -> bool {
 /// be able to overflow the stack. Best-effort on allocation failure, as the C
 /// was - a template whose content could not be copied is left empty rather than
 /// the whole import failing.
-unsafe fn fixup_template_content(doc: *mut LxbDoc, root_src: *mut LxbNode, root_clone: *mut LxbNode) {
+unsafe fn fixup_template_content(
+    doc: *mut LxbDoc,
+    root_src: *mut LxbNode,
+    root_clone: *mut LxbNode,
+) -> Result<(), ()> {
     let mut stack: Vec<(*mut LxbNode, *mut LxbNode)> = Vec::new();
-    if stack.mkr_push((root_src, root_clone)).is_err() {
-        return;
-    }
+    stack.mkr_push((root_src, root_clone))?;
 
     while let Some((src_root, clone_root)) = stack.pop() {
         let mut sn = src_root;
@@ -152,20 +154,23 @@ unsafe fn fixup_template_content(doc: *mut LxbDoc, root_src: *mut LxbNode, root_
                     let mut x = (*sc).first_child;
                     while !x.is_null() {
                         let imp = lxb_dom_document_import_node(doc, x, true);
-                        if !imp.is_null() {
-                            lxb_dom_node_insert_child(cc, imp);
+                        if imp.is_null() {
+                            // Lexbor could not copy a content child. Giving up
+                            // here leaves the clone's template SHORT, which is
+                            // the truncated answer the contract forbids.
+                            return Err(());
                         }
+                        lxb_dom_node_insert_child(cc, imp);
                         x = (*x).next;
                     }
-                    if stack.mkr_push((sc, cc)).is_err() {
-                        return;
-                    }
+                    stack.mkr_push((sc, cc))?;
                 }
             }
             sn = preorder_next(sn, src_root);
             cn = preorder_next(cn, clone_root);
         }
     }
+    Ok(())
 }
 
 /// What `sanitize_html_input` decided about the input bytes.
@@ -281,8 +286,15 @@ pub unsafe extern "C" fn mkr_import_fragment_children(
     let mut f = (*root).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
-        if let Some(imp) = import_with_fixup(doc, f, true) {
-            emit(imp, u);
+        match import_with_fixup(doc, f, true) {
+            Some(imp) => emit(imp, u),
+            // Raise rather than splice a fragment that is missing a template's
+            // contents. Nothing is live across this call - the helper's own
+            // buffer is gone - so the longjmp drops nothing.
+            None => super::abi::rb_raise(
+                super::abi::mkr_eError,
+                c"failed to import a fragment child".as_ptr(),
+            ),
         }
         f = next;
     }
@@ -344,8 +356,13 @@ pub unsafe fn import_with_fixup(
     if imp.is_null() {
         return None;
     }
-    if deep {
-        fixup_template_content(doc, src, imp);
+    if deep && fixup_template_content(doc, src, imp).is_err() {
+        // A copy whose <template> lost its contents is a wrong answer, not a
+        // degraded one: `<template><i>x</i></template>` comes back as
+        // `<template></template>` and nothing says so. The C was best-effort
+        // here and the port carried that over; the OOM sweep called it, which
+        // is what the sweep is for.
+        return None;
     }
     Some(imp)
 }

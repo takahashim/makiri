@@ -182,6 +182,36 @@ SCENARIOS = {
       doc.at_css("#x")&.name.to_s
   end,
 
+  # The HTML fragment pipeline: parsing in a context, importing the result into
+  # a document, and the <template>-content fixup that import_node omits.
+  #
+  # Nothing else here reaches it. `xml_fragment` and `xml_mutate` call
+  # `doc.fragment`, but on an XML document, which is a different code path
+  # entirely - so the whole of glue/fragment.rs, including the worklist its
+  # template fixup allocates, had no scenario. The nesting is deliberate: a
+  # template inside a template makes the fixup queue a second subtree, which is
+  # the allocation worth failing.
+  "html_fragment" => lambda do
+    doc = Makiri::HTML::Document.parse(<<~HTML)
+      <html><body>
+        <div id=d><p>a</p></div>
+        <template><i>x</i><template><b>deep</b></template></template>
+      </body></html>
+    HTML
+    parts = []
+    parts << doc.fragment("<template><i>f</i></template>").to_html
+    parts << doc.fragment("<td>cell</td>", context: "tr").to_html
+    parts << doc.at_css("div").parse("<span>s</span>").map(&:name).join(",")
+    parts << Makiri::DocumentFragment.parse("<p>standalone</p>").to_html
+
+    other = Makiri::HTML::Document.parse("<html><body></body></html>")
+    parts << other.import_node(doc.at_css("div"), true).to_html
+    # A template nested in a template: the fixup queues the inner subtree, which
+    # is the allocation this scenario exists to fail.
+    parts << doc.at_css("template").clone_node(true).to_html
+    parts.join("|")
+  end,
+
   # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). Its own
   # layer allocates for every selector, declaration and at-rule name, and it
   # walks Lexbor's parsed tree into owned values BEFORE building any Ruby - so

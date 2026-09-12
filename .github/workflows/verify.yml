@@ -2,7 +2,10 @@ name: Verify
 
 on:
   push:
-    branches: [main, master]
+    # `rust` too: the branch carries the port, and a source split that left
+    # verify/Makefile behind went unnoticed for exactly this reason - the
+    # workflow never ran here, and a stale verify/build/ hid it locally.
+    branches: [main, master, rust]
   pull_request:
   workflow_dispatch:
 

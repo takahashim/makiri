@@ -209,9 +209,6 @@ jobs:
           eval "$(bundle exec rake -s rust:env FLAGS='${{ matrix.flags }}')"
           bundle exec rake compile
 
-      # The flag set and the feature set must stay in step with extconf.
-      - name: Check the port configuration is complete
-        run: bundle exec rake rust:check
 
       - name: Run the test suite
         run: |

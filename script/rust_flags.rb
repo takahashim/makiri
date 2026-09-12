@@ -43,6 +43,18 @@ module RustFlags
       end
     end
 
+    # The C sources the enabled flags replace, relative to ext/makiri. Used by
+    # `rake verify` to work out which CBMC proofs this configuration orphans.
+    def replaced_sources
+      rows = source.scan(/env: "(MAKIRI_RUST_[A-Z_0-9]+)",\s*\n?\s*feature: "[a-z0-9-]+",\s*\n?\s*srcs: (%w\[[^\]]*\]|:xml_dir)/m)
+      on = ENV.keys.select { |k| k.start_with?("MAKIRI_RUST_") && ENV[k].to_s.strip == "1" }
+      rows.filter_map do |env, srcs|
+        next unless on.include?(env)
+
+        srcs == ":xml_dir" ? "xml/" : srcs[3..-2].split
+      end.flatten
+    end
+
     # `KEY=1 KEY=1 ...`, for `env $(...)` and for `eval "$(...)"` with `export`.
     def env_assignments
       flags.map { |f| "#{f}=1" }.join(" ")
