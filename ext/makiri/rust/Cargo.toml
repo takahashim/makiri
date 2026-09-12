@@ -73,6 +73,10 @@ glue-css = ["glue"]
 # glue/ruby_lexbor_css.c - Makiri::Lexbor::CSS.parse_stylesheet. Reads Lexbor's
 # CSS rule layout (generated, see build.rs) and crosses its serializer callback.
 glue-lexbor-css = ["glue"]
+# glue/ruby_doc.c - the Document wrapper, its rb_data_type_t chain, the parse
+# entry (GVL-released) and the whole fragment pipeline. Eleven of its symbols
+# are called by C files that are not ported yet, so the C ABI is load-bearing.
+glue-doc = ["glue"]
 # bridge/xml_decode.c - XML 1.0 Appendix F autodetection + the strict decode.
 # Needs `bridge-string` because it shares that module's allocation-free
 # strict-text check rather than declaring a second one.

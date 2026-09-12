@@ -27,6 +27,9 @@ pub mod abi;
 
 #[cfg(feature = "glue-css")]
 pub mod css;
+/// Makiri::HTML::Document and the fragment pipeline.
+#[cfg(feature = "glue-doc")]
+pub mod doc;
 /// Makiri::Lexbor::CSS.parse_stylesheet - the thin stylesheet binding.
 #[cfg(feature = "glue-lexbor-css")]
 pub mod lexbor_css;

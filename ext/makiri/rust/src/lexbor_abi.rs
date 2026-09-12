@@ -9,6 +9,13 @@
 
 include!(concat!(env!("OUT_DIR"), "/lexbor_sys.rs"));
 
+/// Makiri's own C enums, generated for the same reason Lexbor's are - see
+/// `generate_makiri_enums` in build.rs.
+pub mod mkr {
+    #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
+    include!(concat!(env!("OUT_DIR"), "/makiri_enums.rs"));
+}
+
 /* ------------------------------------------------------------------ *
  * Names                                                              *
  * ------------------------------------------------------------------ */

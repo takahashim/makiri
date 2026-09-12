@@ -68,6 +68,11 @@ fn main() {
         .allowlist_type("lxb_dom_document_type_t")
         .allowlist_type("lxb_dom_processing_instruction_t")
         .allowlist_type("lexbor_str_t")
+        // <template>'s content fragment. Lexbor's accessor is a cast macro, so
+        // the field read is the whole interface.
+        .allowlist_type("lxb_html_template_element_t")
+        .allowlist_type("lxb_dom_document_fragment_t")
+        .allowlist_type("lxb_tag_id_enum_t")
         // The constants. By ENUM TYPE - see the note above.
         .allowlist_type("lxb_ns_id_enum_t")
         .allowlist_type("lxb_dom_node_type_t")
@@ -125,6 +130,52 @@ fn main() {
     bindings
         .write_to_file(out.join("lexbor_sys.rs"))
         .expect("could not write the generated Lexbor bindings");
+
+    let ext_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .canonicalize()
+        .expect("ext/makiri must exist");
+    generate_makiri_enums(&ext_dir, &include, &out);
+}
+
+/// Makiri's OWN C enums, generated for the same reason Lexbor's are.
+///
+/// This was added after a transcribed `MKR_NODE_KIND_XML = 1` (it is 2) made
+/// `Document#import_node` treat every HTML node as an XML one - the identical
+/// failure to the `LXB_NS_HTML` incident, in our own constants, and made while
+/// building the machinery that prevents it for Lexbor's. The lesson generalised:
+/// a constant that is read rather than derived can be read wrongly, whoever owns
+/// the header.
+fn generate_makiri_enums(ext: &std::path::Path, lexbor_include: &std::path::Path, out: &std::path::Path) {
+    let header = "#include \"glue/cross_import.h\"\n\
+                  #include \"dom_adapter/compat.h\"\n";
+    println!("cargo:rerun-if-changed={}", ext.join("glue/cross_import.h").display());
+    println!("cargo:rerun-if-changed={}", ext.join("dom_adapter/compat.h").display());
+
+    let rb = |k: &str| -> String {
+        let out = std::process::Command::new("ruby")
+            .args(["-e", &format!("require 'rbconfig'; print RbConfig::CONFIG['{k}']")])
+            .output()
+            .expect("ruby must be on PATH to locate its headers");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    let bindings = bindgen::Builder::default()
+        .header_contents("makiri_enums.h", header)
+        .clang_arg(format!("-I{}", ext.display()))
+        .clang_arg(format!("-I{}", lexbor_include.display()))
+        .clang_arg(format!("-I{}", rb("rubyhdrdir")))
+        .clang_arg(format!("-I{}", rb("rubyarchhdrdir")))
+        .allowlist_type("mkr_node_kind_t")
+        .allowlist_type("mkr_doc_kind_t")
+        .default_enum_style(bindgen::EnumVariation::Consts)
+        .layout_tests(false)
+        .generate_comments(false)
+        .generate()
+        .expect("bindgen failed over Makiri's own headers");
+    bindings
+        .write_to_file(out.join("makiri_enums.rs"))
+        .expect("could not write the generated Makiri enums");
 }
 
 /// Where the vendored Lexbor headers are. extconf builds them into

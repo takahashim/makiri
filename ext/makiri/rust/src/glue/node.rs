@@ -76,55 +76,36 @@ unsafe extern "C" fn node_memsize(_ptr: *const c_void) -> rb_sys::size_t {
     core::mem::size_of::<NodeData>() as rb_sys::size_t
 }
 
-/// A `rb_data_type_t` that can live in a `static`.
-///
-/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; the C original is
-/// a `const` at file scope and is equally shared. `repr(transparent)` keeps the
-/// exported symbol's layout exactly `rb_data_type_t`, which is what the C
-/// `extern` declarations in glue.h expect.
-#[repr(transparent)]
-pub struct DataType(rb_data_type_t);
-
-// SAFETY: the contents are set once at compile time and never mutated. Ruby
-// reads them from whichever thread holds the GVL.
-unsafe impl Sync for DataType {}
-
-/// Build one of the three types. `parent` is NULL for the base.
-const fn data_type(name: *const c_char, parent: *const rb_data_type_t) -> DataType {
-    DataType(rb_data_type_t {
-        wrap_struct_name: name,
-        function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
-            dmark: Some(node_gc_mark),
-            dfree: Some(node_gc_free),
-            dsize: Some(node_memsize),
-            dcompact: None,
-            reserved: [core::ptr::null_mut(); 1],
-        },
+/// The three node types, which share their GC functions.
+const fn node_type(name: *const c_char, parent: *const rb_data_type_t) -> DataType {
+    DataType::new(
+        name,
         parent,
-        data: core::ptr::null_mut(),
-        flags: rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE,
-    })
+        Some(node_gc_mark),
+        Some(node_gc_free),
+        Some(node_memsize),
+    )
 }
 
 #[no_mangle]
-pub static mkr_node_type: DataType = data_type(c"Makiri::Node".as_ptr(), core::ptr::null());
+pub static mkr_node_type: DataType = node_type(c"Makiri::Node".as_ptr(), core::ptr::null());
 
 #[no_mangle]
-pub static mkr_html_node_type: DataType = data_type(
+pub static mkr_html_node_type: DataType = node_type(
     c"Makiri::HTML::Node".as_ptr(),
-    &mkr_node_type as *const DataType as *const rb_data_type_t,
+    mkr_node_type.as_ptr(),
 );
 
 #[no_mangle]
-pub static mkr_xml_node_type: DataType = data_type(
+pub static mkr_xml_node_type: DataType = node_type(
     c"Makiri::XML::Node".as_ptr(),
-    &mkr_node_type as *const DataType as *const rb_data_type_t,
+    mkr_node_type.as_ptr(),
 );
 
 /// The base type as the raw pointer the Ruby API wants.
 #[inline]
 fn base_type() -> *const rb_data_type_t {
-    &mkr_node_type as *const DataType as *const rb_data_type_t
+    mkr_node_type.as_ptr()
 }
 
 /* ------------------------------------------------------------------ */
@@ -139,7 +120,7 @@ const MKR_NODE_KIND_OTHER: c_int = 0;
 const MKR_NODE_KIND_HTML: c_int = 1;
 const MKR_NODE_KIND_XML: c_int = 2;
 
-use super::abi::{mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc};
+use super::abi::{DataType, mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc};
 
 extern "C" {
     fn mkr_parsed_kind(p: *const c_void) -> c_int;

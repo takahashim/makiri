@@ -29,15 +29,23 @@ pub struct NodeData {
 /// accessor (`lxb_dom_node_type_noi` and the rest). That keeps this layer out of
 /// the pinned-dependency layout problem that the XPath HTML backend has to
 /// cross-check at load - there is nothing here to get wrong.
-#[repr(C)]
-pub struct LxbNode {
-    _private: [u8; 0],
-}
+/// Now that `build.rs` generates Lexbor's layout, this IS that layout rather
+/// than a second, opaque view of it. Modules that only pass the pointer along
+/// are unaffected; the ones that read a field (glue::doc) get the real one, and
+/// there is only one definition to be wrong.
+pub type LxbNode = crate::lexbor_abi::lxb_dom_node_t;
 
 pub const LXB_STATUS_OK: u32 = 0x0000;
 pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 = 0x0002;
 
-pub const LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT: u32 = 0x0B;
+/// From the generated enum, not transcribed. `lexbor_abi::consts` carries the
+/// rest; these three keep their historical names because call sites use them.
+pub const LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT: u32 =
+    crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
+    crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
+pub const LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: u32 =
+    crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
 /// `LXB_HTML_SERIALIZE_OPT_UNDEF`.
 pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 = 0x00;
@@ -66,6 +74,8 @@ extern "C" {
     pub static mkr_cNodeSet: VALUE;
     pub static mkr_cXmlDocument: VALUE;
     pub static mkr_cXmlDocumentFragment: VALUE;
+    pub static mkr_cHtmlDocument: VALUE;
+    pub static mkr_cDocumentFragment: VALUE;
     pub static mkr_eError: VALUE;
     pub static mkr_eCSSSyntaxError: VALUE;
     pub static mkr_eXmlSyntaxError: VALUE;
@@ -182,4 +192,113 @@ extern "C" {
     pub fn lxb_css_parser_init(parser: *mut CssParser, tkz: *mut core::ffi::c_void) -> u32;
     pub fn lxb_css_parser_clean(parser: *mut CssParser);
     pub fn lxb_css_parser_destroy(parser: *mut CssParser, self_destroy: bool) -> *mut CssParser;
+}
+
+/* ------------------------------------------------------------------ *
+ * rb_data_type_t in a static                                         *
+ * ------------------------------------------------------------------ */
+
+/// A `rb_data_type_t` that can live in a `static`.
+///
+/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; the C originals are
+/// `const` at file scope and are equally shared. `repr(transparent)` keeps the
+/// exported symbol's layout exactly `rb_data_type_t`, which is what the C
+/// `extern` declarations in glue.h expect.
+#[repr(transparent)]
+pub struct DataType(rb_sys::rb_data_type_t);
+
+// SAFETY: the contents are set once at compile time and never mutated. Ruby
+// reads them from whichever thread holds the GVL.
+unsafe impl Sync for DataType {}
+
+impl DataType {
+    /// `parent` is null for a base type.
+    pub const fn new(
+        name: *const core::ffi::c_char,
+        parent: *const rb_sys::rb_data_type_t,
+        dmark: rb_sys::RUBY_DATA_FUNC,
+        dfree: rb_sys::RUBY_DATA_FUNC,
+        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
+    ) -> DataType {
+        DataType(rb_sys::rb_data_type_t {
+            wrap_struct_name: name,
+            function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
+                dmark,
+                dfree,
+                dsize,
+                dcompact: None,
+                reserved: [core::ptr::null_mut(); 1],
+            },
+            parent,
+            data: core::ptr::null_mut(),
+            flags: rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE,
+        })
+    }
+
+    /// The raw pointer the Ruby API wants.
+    #[inline]
+    pub const fn as_ptr(&self) -> *const rb_sys::rb_data_type_t {
+        self as *const DataType as *const rb_sys::rb_data_type_t
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * declaration/definition agreement                                   *
+ * ------------------------------------------------------------------ */
+
+/// Some symbols declared above are DEFINED by this crate when the feature that
+/// ports their C file is on. rustc does not check a `#[no_mangle]` definition
+/// against an `extern` block - the two are separate items - so one symbol could
+/// get two types again, silently, which is the exact failure this file exists to
+/// prevent.
+///
+/// Coercing each definition to the declared function type closes that: a
+/// mismatch is a build error naming the symbol. It costs nothing at runtime.
+mod agree {
+    #![allow(unused_imports)]
+    use super::*;
+
+    macro_rules! same_signature {
+        ($ty:ty, $def:path, $what:literal) => {
+            const _: $ty = $def;
+        };
+    }
+
+    #[cfg(feature = "glue-doc")]
+    same_signature!(
+        unsafe extern "C" fn(VALUE) -> *mut c_void,
+        crate::glue::doc::mkr_doc_parsed,
+        "mkr_doc_parsed"
+    );
+
+    #[cfg(feature = "glue-node")]
+    same_signature!(
+        unsafe extern "C" fn(VALUE) -> VALUE,
+        crate::glue::node::mkr_node_document,
+        "mkr_node_document"
+    );
+    #[cfg(feature = "glue-node")]
+    same_signature!(
+        unsafe extern "C" fn(VALUE) -> *mut c_void,
+        crate::glue::node::mkr_node_raw,
+        "mkr_node_raw"
+    );
+    #[cfg(feature = "glue-node-set")]
+    same_signature!(
+        unsafe extern "C" fn(VALUE) -> VALUE,
+        crate::glue::node_set::mkr_node_set_new,
+        "mkr_node_set_new"
+    );
+    #[cfg(feature = "glue-node-set")]
+    same_signature!(
+        unsafe extern "C" fn(VALUE, *mut c_void),
+        crate::glue::node_set::mkr_node_set_push,
+        "mkr_node_set_push"
+    );
+    #[cfg(feature = "bridge-string")]
+    same_signature!(
+        unsafe extern "C" fn(VALUE, *const c_char),
+        crate::bridge::string::mkr_verify_text,
+        "mkr_verify_text"
+    );
 }
