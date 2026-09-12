@@ -113,6 +113,31 @@ fn main() {
         // gave the same C symbol two Rust types, and only the "everything"
         // feature combination caught it - the same way the mkr_wrap_xml_node
         // duplicate was caught. One declaration per symbol.
+        // The DOM readers glue/html_node uses. Generating them rather than
+        // hand-declaring them is also the inline-only CHECK: bindgen does not
+        // emit a `static inline`, so a name that is only inline in the headers
+        // simply does not appear here and the use fails to compile, instead of
+        // linking to nothing and becoming a NULL jump at runtime under macOS's
+        // `-undefined dynamic_lookup`. Three such functions already cost this
+        // project a segfault; the list below is what survived the check.
+        .allowlist_function("lxb_dom_element_qualified_name")
+        .allowlist_function("lxb_dom_element_local_name")
+        .allowlist_function("lxb_dom_element_tag_name")
+        .allowlist_function("lxb_dom_element_has_attribute")
+        .allowlist_function("lxb_dom_element_get_attribute")
+        .allowlist_function("lxb_dom_element_first_attribute")
+        .allowlist_function("lxb_dom_element_next_attribute")
+        .allowlist_function("lxb_dom_attr_qualified_name")
+        .allowlist_function("lxb_dom_attr_local_name")
+        .allowlist_function("lxb_dom_attr_value")
+        .allowlist_function("lxb_dom_node_name")
+        .allowlist_function("lxb_dom_node_text_content")
+        .allowlist_function("lxb_dom_document_type_public_id")
+        .allowlist_function("lxb_dom_document_type_system_id")
+        .allowlist_function("lxb_dom_processing_instruction_target")
+        .allowlist_function("lxb_dom_document_destroy_text")
+        .allowlist_function("lxb_ns_by_id")
+        .allowlist_function("lxb_dom_document_root")
         .allowlist_function("lxb_css_stylesheet_create")
         .allowlist_function("lxb_css_stylesheet_parse")
         .allowlist_function("lxb_css_stylesheet_destroy")

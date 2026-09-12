@@ -223,6 +223,18 @@ extern "C" {
     pub fn mkr_ruby_to_utf8(v: VALUE) -> VALUE;
     pub fn mkr_ruby_str_known_valid_utf8(v: VALUE) -> bool;
     pub fn mkr_ruby_bytes_view(v: VALUE) -> RubyBytes;
+
+    /// A UTF-8 String copied from an unanchored slice; NULL means absent and
+    /// yields `""`. The readers hand it Lexbor's interned bytes, which live in
+    /// the document arena and so need no anchor.
+    pub fn mkr_ruby_str_from_borrowed(text: crate::xpath_abi::VerifiedText) -> VALUE;
+
+    /// The text index's output path: one pre-sized String, one memcpy run.
+    pub fn mkr_ruby_str_from_slices(
+        slices: *const crate::xpath_abi::VerifiedText,
+        n: usize,
+        total: usize,
+    ) -> VALUE;
     pub fn mkr_ruby_copy_bytes(v: VALUE, out: *mut OwnedBytes) -> c_int;
 
     /// Variadic, so callable but not definable from Rust. It longjmps, so no
@@ -233,8 +245,27 @@ extern "C" {
     /// the serializers size their buffer from.
     pub fn mkr_lxb_document_bytes(node: *mut LxbNode) -> usize;
 
-    pub fn lxb_dom_node_type_noi(node: *mut LxbNode) -> u32;
 }
+
+/// Lexbor's `lxb_inline` accessors, through the `_noi` twins it exports. They
+/// live in `lexbor_abi` - the one place in the crate that hand-declares a Lexbor
+/// function, because bindgen cannot generate an inline one - and are re-exported
+/// here so this module stays the single import for the glue layer.
+pub use crate::lexbor_abi::{
+    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi,
+    lxb_dom_document_type_public_id_noi, lxb_dom_document_type_system_id_noi,
+    lxb_dom_element_first_attribute_noi, lxb_dom_element_next_attribute_noi,
+    lxb_dom_node_type_noi, lxb_dom_processing_instruction_target_noi,
+};
+
+/// The generated Lexbor readers the glue calls, likewise re-exported so a glue
+/// file imports one module.
+pub use crate::lexbor_abi::{
+    lxb_dom_attr_local_name, lxb_dom_attr_qualified_name, lxb_dom_document_root,
+    lxb_dom_element_get_attribute, lxb_dom_element_has_attribute, lxb_dom_element_local_name,
+    lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
+    lxb_dom_node_text_content, lxb_ns_by_id, LxbAttr, LxbElement,
+};
 
 /// The `Makiri::HTML::NodeMethods` module every HTML node leaf includes.
 ///
@@ -447,5 +478,18 @@ mod agree {
         mkr_xml_node_unwrap,
         crate::glue::xml_node::mkr_xml_node_unwrap,
         unsafe extern "C" fn(VALUE) -> *mut c_void
+    );
+
+    #[cfg(feature = "glue-html-node")]
+    same_signature!(
+        mkr_wrap_html_node,
+        crate::glue::html_node::mkr_wrap_html_node,
+        unsafe extern "C" fn(*mut LxbNode, VALUE) -> VALUE
+    );
+    #[cfg(feature = "glue-html-node")]
+    same_signature!(
+        mkr_html_node_unwrap,
+        crate::glue::html_node::mkr_html_node_unwrap,
+        unsafe extern "C" fn(VALUE) -> *mut LxbNode
     );
 }

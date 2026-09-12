@@ -28,6 +28,52 @@ pub mod mkr {
  * Names                                                              *
  * ------------------------------------------------------------------ */
 
+/* The DOM handle types, under the short names the rest of the crate uses. The
+ * generated `lxb_dom_*_t` spellings stay available; these exist so a cast at a
+ * call site reads as a cast to a Lexbor node rather than to a bindgen name. */
+pub type LxbNode = lxb_dom_node_t;
+pub type LxbElement = lxb_dom_element_t;
+pub type LxbAttr = lxb_dom_attr_t;
+pub type LxbDoc = lxb_dom_document_t;
+
+/* ------------------------------------------------------------------ *
+ * The `_noi` twins                                                   *
+ * ------------------------------------------------------------------ */
+
+/* The accessors Lexbor publishes only as `lxb_inline`, reached through the
+ * `_noi` twin it exports for exactly this case.
+ *
+ * These are the one part of Lexbor's surface bindgen cannot supply: it does not
+ * emit a `static inline`, so allowlisting the plain name yields nothing. That
+ * absence is also how this list was *found* - each name below was allowlisted
+ * in build.rs first, produced no binding, and only then was hand-declared here.
+ * Guessing which ones are inline is what cost this project a segfault once
+ * already: macOS links the extension with `-undefined dynamic_lookup`, so a
+ * declaration that matches no symbol is not a link error, it is a NULL call at
+ * run time. `rake symbols` is the standing check that none of these is missing.
+ *
+ * One declaration per symbol: everything in the crate reaches an `_noi` through
+ * this module, never through its own extern block. */
+extern "C" {
+    pub fn lxb_dom_node_type_noi(node: *mut LxbNode) -> u32;
+    pub fn lxb_dom_attr_value_noi(attr: *mut LxbAttr, len: *mut usize) -> *const u8;
+    pub fn lxb_dom_element_first_attribute_noi(element: *mut LxbElement) -> *mut LxbAttr;
+    pub fn lxb_dom_element_next_attribute_noi(attr: *mut LxbAttr) -> *mut LxbAttr;
+    pub fn lxb_dom_document_type_public_id_noi(
+        doctype: *mut lxb_dom_document_type_t,
+        len: *mut usize,
+    ) -> *const u8;
+    pub fn lxb_dom_document_type_system_id_noi(
+        doctype: *mut lxb_dom_document_type_t,
+        len: *mut usize,
+    ) -> *const u8;
+    pub fn lxb_dom_processing_instruction_target_noi(
+        pi: *mut lxb_dom_processing_instruction_t,
+        len: *mut usize,
+    ) -> *const u8;
+    pub fn lxb_dom_document_destroy_text_noi(doc: *mut LxbDoc, text: *mut u8);
+}
+
 /// bindgen names an enum's constants by whether the enum is NAMED: a typedef'd
 /// one gets its type as a prefix (`lxb_ns_id_enum_t_LXB_NS_HTML`), a truly
 /// anonymous one keeps the bare name (`LXB_CSS_AT_RULE_MEDIA`). That is an

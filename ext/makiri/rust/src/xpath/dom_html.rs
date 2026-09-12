@@ -114,13 +114,13 @@ unsafe impl Dom for Html {
     }
     #[inline]
     unsafe fn attr_value<'a>(a: Self::Node) -> &'a [u8] {
-        named_mut(a as *mut lxb::Attr, lxb::lxb_dom_attr_value_noi)
+        named_mut(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_value_noi)
     }
 
     unsafe fn get_attribute<'a>(el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
         let mut len = 0usize;
         let v = lxb::lxb_dom_element_get_attribute(
-            el as *mut lxb::Element,
+            el as *mut lxb::LxbElement,
             name.as_ptr(),
             name.len(),
             &mut len,
@@ -134,11 +134,11 @@ unsafe impl Dom for Html {
 
     #[inline]
     unsafe fn local_name<'a>(n: Self::Node) -> &'a [u8] {
-        named(n as *mut lxb::Element, lxb::lxb_dom_element_local_name)
+        named_mut(n as *mut lxb::LxbElement, lxb::lxb_dom_element_local_name)
     }
     #[inline]
     unsafe fn attr_local_name<'a>(a: Self::Node) -> &'a [u8] {
-        named(a as *mut lxb::Attr, lxb::lxb_dom_attr_local_name)
+        named(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_local_name)
     }
 
     /// An HTML element reports its lowercase local name, which is the data
@@ -146,18 +146,18 @@ unsafe impl Dom for Html {
     /// defers to Lexbor's node name.
     unsafe fn qualified_name<'a>(n: Self::Node) -> &'a [u8] {
         if (*n).type_ == NTYPE_ELEMENT {
-            named(n as *mut lxb::Element, lxb::lxb_dom_element_qualified_name)
+            named(n as *mut lxb::LxbElement, lxb::lxb_dom_element_qualified_name)
         } else {
-            named_mut(n, lxb::lxb_dom_node_name)
+            named_mut(n as *mut lxb::LxbNode, lxb::lxb_dom_node_name)
         }
     }
     #[inline]
     unsafe fn attr_qualified_name<'a>(a: Self::Node) -> &'a [u8] {
-        named(a as *mut lxb::Attr, lxb::lxb_dom_attr_qualified_name)
+        named(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_qualified_name)
     }
     #[inline]
     unsafe fn pi_name<'a>(n: Self::Node) -> &'a [u8] {
-        named_mut(n, lxb::lxb_dom_node_name)
+        named_mut(n as *mut lxb::LxbNode, lxb::lxb_dom_node_name)
     }
 
     /// The node carries a namespace id, so the URI is a lookup in the

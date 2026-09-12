@@ -1,0 +1,285 @@
+//! The HTML (Lexbor) node representation (glue/ruby_html_node.c).
+//!
+//! Wrapping an `lxb_dom_node_t` into a `Makiri::HTML::*` leaf, the HTML
+//! node-pointer accessor, and the reader methods that hang off
+//! `Makiri::HTML::NodeMethods`. The XML counterpart is `glue::xml_node`; the
+//! representation-neutral node core - the `rb_data_type_t` chain and the
+//! kind-agnostic accessors - is `glue::node`.
+//!
+//! # Two symbols here are load-bearing for C
+//!
+//! [`mkr_wrap_html_node`] and [`mkr_html_node_unwrap`] are called by four and
+//! eight other translation units, several still C, so their signatures are
+//! fixed. `glue::abi`'s `agree` module checks the definitions here against the
+//! declarations there.
+//!
+//! # Nothing here is declared twice
+//!
+//! Every Lexbor accessor comes from `glue::abi`, which re-exports the generated
+//! bindings and the hand-declared `_noi` twins. Allowlisting a name in build.rs
+//! and finding no binding is what identifies an `lxb_inline` function; eight of
+//! the eighteen readers this file needs turned out to be inline-only, and on
+//! macOS a hand-written declaration of one of those links to nothing and becomes
+//! a NULL call at run time rather than a link error.
+
+#![allow(clippy::missing_safety_doc)]
+
+pub mod read;
+
+use core::ffi::c_void;
+
+use magnus::rb_sys::FromRawValue;
+use magnus::{method, prelude::*, RClass, Ruby, Value};
+use rb_sys::VALUE;
+
+use super::abi::{
+    html_node_methods, is_kind_of, mkr_cDocument, mkr_cXmlDocument, LxbNode, NodeData,
+};
+
+/* ------------------------------------------------------------------ *
+ * the DOM node types                                                 *
+ * ------------------------------------------------------------------ */
+
+/// Generated, never transcribed - the reason is in `build.rs`.
+pub mod ty {
+    use crate::lexbor_abi as lxb;
+    pub const ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
+    pub const ATTRIBUTE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE;
+    pub const TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
+    pub const CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
+    pub const PI: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION;
+    pub const COMMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT;
+    pub const DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
+    pub const DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+    pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+}
+
+extern "C" {
+    /// The HTML node TypedData type, owned by `glue::node` (or its C original).
+    /// Declared rather than imported so this feature does not require that one.
+    static mkr_html_node_type: c_void;
+
+    static mkr_cHtmlNode: VALUE;
+    static mkr_cHtmlElement: VALUE;
+    static mkr_cHtmlAttr: VALUE;
+    static mkr_cHtmlText: VALUE;
+    static mkr_cHtmlComment: VALUE;
+    static mkr_cHtmlCDATASection: VALUE;
+    static mkr_cHtmlProcessingInstruction: VALUE;
+    static mkr_cHtmlDocumentType: VALUE;
+    static mkr_cHtmlDocumentFragment: VALUE;
+
+    /// The HTML Document's own arena. Declared rather than reached through
+    /// `mkr_node_raw`, because an HTML Document is not wrapped as a node.
+    fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut c_void;
+
+    /* Representation-neutral identity, from glue::node (or its C original):
+     * it depends only on the node pointer, so HTML and XML must run the SAME
+     * code - two implementations would be two answers. */
+    fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE;
+    fn mkr_node_hash(self_: VALUE) -> VALUE;
+    fn mkr_node_pointer_id(self_: VALUE) -> VALUE;
+
+    /// `#clone_node`, which belongs to the mutation half (ruby_html_mutate.c).
+    fn mkr_node_clone_node(argc: core::ffi::c_int, argv: *const VALUE, self_: VALUE) -> VALUE;
+}
+
+/* ------------------------------------------------------------------ *
+ * wrap / unwrap                                                      *
+ * ------------------------------------------------------------------ */
+
+/// Wrap an `lxb_dom_node_t` into its `Makiri::HTML::*` leaf.
+///
+/// NULL becomes nil, and the DOCUMENT node maps back onto the Ruby Document
+/// rather than getting a second wrapper. A DOM node type with no specific leaf
+/// (entity/notation - Lexbor's HTML parser does not produce these) falls back to
+/// the generic `Makiri::HTML::Node` rather than being misclassified as an
+/// Element.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE {
+    if node.is_null() {
+        return rb_sys::Qnil as VALUE;
+    }
+    if (*node).type_ == ty::DOCUMENT {
+        return document;
+    }
+
+    let klass = match (*node).type_ {
+        ty::ELEMENT => mkr_cHtmlElement,
+        ty::ATTRIBUTE => mkr_cHtmlAttr,
+        ty::TEXT => mkr_cHtmlText,
+        ty::COMMENT => mkr_cHtmlComment,
+        ty::CDATA => mkr_cHtmlCDATASection,
+        ty::PI => mkr_cHtmlProcessingInstruction,
+        ty::DOCTYPE => mkr_cHtmlDocumentType,
+        ty::FRAGMENT => mkr_cHtmlDocumentFragment,
+        _ => mkr_cHtmlNode,
+    };
+
+    /* Fill the struct BEFORE handing it to Ruby: once wrapped, the object is
+     * reachable and a GC would run the type's mark over whatever is there. */
+    let nd = rb_sys::ruby_xmalloc(core::mem::size_of::<NodeData>() as rb_sys::size_t)
+        as *mut NodeData;
+    (*nd).node = node as *mut c_void;
+    (*nd).document = document;
+    rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, &mkr_html_node_type as *const c_void as *const rb_sys::rb_data_type_t)
+}
+
+/// The `lxb_dom_node_t` behind an HTML node or HTML Document.
+///
+/// **Raises** TypeError for an XML node or Document: the typed-data check is
+/// against `mkr_html_node_type`, which an XML node - wrapped under
+/// `mkr_xml_node_type` - does not satisfy. Every HTML-glue site that
+/// dereferences a node or hands its pointer to Lexbor goes through here, for
+/// `self` and arguments alike.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_html_node_unwrap(rb_node: VALUE) -> *mut LxbNode {
+    if is_kind_of(Value::from_raw(rb_node), mkr_cDocument) {
+        if is_kind_of(Value::from_raw(rb_node), mkr_cXmlDocument) {
+            rb_sys::rb_raise(
+                rb_sys::rb_eTypeError,
+                c"expected an HTML node, got a Makiri::XML::Document".as_ptr(),
+            );
+        }
+        return mkr_html_doc_unwrap(rb_node) as *mut LxbNode;
+    }
+    let nd = rb_sys::rb_check_typeddata(rb_node, &mkr_html_node_type as *const c_void as *const rb_sys::rb_data_type_t) as *mut NodeData;
+    (*nd).node as *mut LxbNode
+}
+
+/* ---- the Rust-side conveniences the reader module uses ---- */
+
+/// [`mkr_html_node_unwrap`] in Rust terms.
+///
+/// It raises, so it is called where nothing needs dropping - which in these
+/// readers means first, before any Ruby object or buffer exists.
+pub unsafe fn unwrap(rb_self: Value) -> *mut LxbNode {
+    use magnus::rb_sys::AsRawValue;
+    mkr_html_node_unwrap(rb_self.as_raw())
+}
+
+pub unsafe fn wrap(node: *mut LxbNode, document: Value) -> Value {
+    use magnus::rb_sys::AsRawValue;
+    Value::from_raw(mkr_wrap_html_node(node, document.as_raw()))
+}
+
+/// The keepalive Document of a node, from the kind-agnostic accessor.
+pub unsafe fn node_document(rb_self: Value) -> Value {
+    use magnus::rb_sys::AsRawValue;
+    Value::from_raw(super::abi::mkr_node_document(rb_self.as_raw()))
+}
+
+/* ------------------------------------------------------------------ *
+ * registration                                                       *
+ * ------------------------------------------------------------------ */
+
+/// The shape `rb_define_method` wants. Ruby dispatches on the declared arity,
+/// so every arity is reached through this one type.
+type RbMethod = unsafe extern "C" fn() -> VALUE;
+
+/// Bind a method implemented by a C-ABI function, for the four that must stay
+/// shared with the XML side or live in the still-C mutation half.
+unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, arity: i32) {
+    rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
+}
+
+/// `mkr_init_node` - the HTML node surface.
+///
+/// # Safety
+/// From `Init_makiri`, after the classes exist.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_init_node() {
+    let _ = Ruby::get_unchecked();
+    let m = html_node_methods();
+
+    m.define_method("name", method!(read::name, 0)).expect("#name");
+    m.define_method("namespace_uri", method!(read::namespace_uri, 0))
+        .expect("#namespace_uri");
+    m.define_method("prefix", method!(read::prefix, 0)).expect("#prefix");
+    m.define_method("local_name", method!(read::local_name, 0)).expect("#local_name");
+    m.define_method("tag_name", method!(read::tag_name, 0)).expect("#tag_name");
+    m.define_method("target", method!(read::pi_target, 0)).expect("#target");
+    m.define_method("node_type", method!(read::node_type, 0)).expect("#node_type");
+    for name in ["content", "text", "inner_text"] {
+        m.define_method(name, method!(read::content, 0)).expect("#content");
+    }
+
+    m.define_method("document", method!(read::get_document, 0)).expect("#document");
+    m.define_method("parent", method!(read::parent, 0)).expect("#parent");
+    for name in ["next", "next_sibling"] {
+        m.define_method(name, method!(read::next, 0)).expect("#next");
+    }
+    for name in ["previous", "previous_sibling"] {
+        m.define_method(name, method!(read::previous, 0)).expect("#previous");
+    }
+    m.define_method("next_element", method!(read::next_element, 0)).expect("#next_element");
+    m.define_method("previous_element", method!(read::previous_element, 0))
+        .expect("#previous_element");
+
+    m.define_method("child", method!(read::child, 0)).expect("#child");
+    m.define_method("children", method!(read::children, 0)).expect("#children");
+    for name in ["element_children", "elements"] {
+        m.define_method(name, method!(read::element_children, 0))
+            .expect("#element_children");
+    }
+    m.define_method("first_element_child", method!(read::first_element_child, 0))
+        .expect("#first_element_child");
+    m.define_method("last_element_child", method!(read::last_element_child, 0))
+        .expect("#last_element_child");
+    m.define_method("ancestors", method!(read::ancestors, 0)).expect("#ancestors");
+
+    m.define_method("[]", method!(read::aref, 1)).expect("#[]");
+    m.define_method("key?", method!(read::has_key, 1)).expect("#key?");
+    m.define_method("keys", method!(read::keys, 0)).expect("#keys");
+    m.define_method("values", method!(read::values, 0)).expect("#values");
+    m.define_method("attribute_nodes", method!(read::attribute_nodes, 0))
+        .expect("#attribute_nodes");
+    m.define_method(
+        "attribute_by_qualified_name",
+        method!(read::attribute_by_qualified_name, 1),
+    )
+    .expect("#attribute_by_qualified_name");
+    m.define_method(
+        "attribute_value_by_qualified_name",
+        method!(read::attribute_value_by_qualified_name, 1),
+    )
+    .expect("#attribute_value_by_qualified_name");
+    m.define_method("value", method!(read::value, 0)).expect("#value");
+    m.define_method("line", method!(read::line, 0)).expect("#line");
+
+    /* Identity is by the node pointer and shared with the XML side; document
+     * order is HTML-only and lives in read.rs. */
+    let methods = m.as_raw();
+    let equals: RbMethod =
+        core::mem::transmute(mkr_node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
+    let hash: RbMethod = core::mem::transmute(mkr_node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
+    let ptr_id: RbMethod =
+        core::mem::transmute(mkr_node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
+    let clone: RbMethod = core::mem::transmute(
+        mkr_node_clone_node
+            as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
+    );
+    define_c_method(methods, c"==", equals, 1);
+    define_c_method(methods, c"eql?", equals, 1);
+    define_c_method(methods, c"hash", hash, 0);
+    define_c_method(methods, c"pointer_id", ptr_id, 0);
+    define_c_method(methods, c"clone_node", clone, -1);
+
+    m.define_method("<=>", method!(read::spaceship, 1)).expect("#<=>");
+
+    /* DocumentType identifiers (WHATWG DOM names; external_id is the
+     * Nokogiri-compatible alias for public_id). */
+    let dt = RClass::from_value(Value::from_raw(mkr_cHtmlDocumentType))
+        .expect("Makiri::HTML::DocumentType");
+    for name in ["public_id", "external_id"] {
+        dt.define_method(name, method!(read::doctype_public_id, 0)).expect("#public_id");
+    }
+    dt.define_method("system_id", method!(read::doctype_system_id, 0)).expect("#system_id");
+
+    /* <template> contents (WHATWG DOM HTMLTemplateElement.content). */
+    let el = RClass::from_value(Value::from_raw(mkr_cHtmlElement)).expect("Makiri::HTML::Element");
+    el.define_method("content_fragment", method!(read::content_fragment, 0))
+        .expect("#content_fragment");
+}
+
+use magnus::rb_sys::AsRawValue;

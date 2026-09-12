@@ -176,21 +176,29 @@ mkr_is_html_template(const lxb_dom_node_t *n)
  * Iterative (explicit worklist of subtree-root pairs + the shared parent-pointer
  * pre-order walk) rather than recursing on DOM depth, so an adversarially deep
  * fragment cannot overflow the C stack. The worklist holds one entry per
- * template-with-content (bounded by the input), heap-allocated; on OOM it bails
- * (best-effort, as the recursive version did under import failure). */
+ * template-with-content (bounded by the input), heap-allocated.
+ *
+ * Returns 0, or -1 when an allocation failed - the worklist could not grow, or
+ * a content child could not be imported. It used to bail silently on both
+ * ("best-effort, as the recursive version did"), which turned
+ * `<template><i>f</i></template>` into `<template></template>`: a well-formed
+ * answer with the content missing, indistinguishable from an empty template.
+ * The OOM sweep's html_fragment scenario is what surfaced it; every caller now
+ * raises, after its own cleanup. */
 typedef struct { lxb_dom_node_t *src; lxb_dom_node_t *clone; } mkr_fixup_pair_t;
 
-static void
+static int
 mkr_fixup_template_content(lxb_dom_document_t *doc,
                            lxb_dom_node_t *root_src, lxb_dom_node_t *root_clone)
 {
+    int rc = 0;
     mkr_fixup_pair_t *stack = NULL;
     size_t cap = 0, top = 0;
 
 #define MKR_FIXUP_PUSH(S, C)                                                   \
     do {                                                                       \
         if (mkr_grow_reserve((void **)&stack, &cap, top + 1,                   \
-                             sizeof(*stack)) != MKR_OK) goto done;             \
+                             sizeof(*stack)) != MKR_OK) { rc = -1; goto done; }\
         stack[top].src = (S); stack[top].clone = (C); top++;                   \
     } while (0)
 
@@ -210,9 +218,11 @@ mkr_fixup_template_content(lxb_dom_document_t *doc,
                     lxb_dom_node_t *cc_node = lxb_dom_interface_node(cc);
                     for (lxb_dom_node_t *x = sc_node->first_child; x != NULL; x = x->next) {
                         lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, x, true);
-                        if (imp != NULL) {
-                            lxb_dom_node_insert_child(cc_node, imp);
+                        if (imp == NULL) {
+                            rc = -1;
+                            goto done;
                         }
+                        lxb_dom_node_insert_child(cc_node, imp);
                     }
                     MKR_FIXUP_PUSH(sc_node, cc_node); /* scan imported content */
                 }
@@ -225,6 +235,7 @@ mkr_fixup_template_content(lxb_dom_document_t *doc,
 done:
 #undef MKR_FIXUP_PUSH
     free(stack);
+    return rc;
 }
 
 /* Shared fragment-parse helpers (used by mkr_build_fragment_ctx here and by
@@ -304,7 +315,9 @@ mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
             return -1;
         }
         emit(imp, u);
-        mkr_fixup_template_content(doc, f, imp);
+        if (mkr_fixup_template_content(doc, f, imp) != 0) {
+            return -1;
+        }
         f = next;
     }
     return 0;
@@ -351,7 +364,9 @@ mkr_html_import_deep(lxb_dom_document_t *doc, lxb_dom_node_t *src)
     if (imp == NULL) {
         rb_raise(mkr_eError, "failed to import node");
     }
-    mkr_fixup_template_content(doc, src, imp);
+    if (mkr_fixup_template_content(doc, src, imp) != 0) {
+        rb_raise(mkr_eError, "failed to import a <template>'s contents");
+    }
     return imp;
 }
 
@@ -376,8 +391,8 @@ mkr_node_clone_node(int argc, VALUE *argv, VALUE self)
     if (clone == NULL) {
         rb_raise(mkr_eError, "failed to clone node");
     }
-    if (deep) {
-        mkr_fixup_template_content(doc, node, clone);
+    if (deep && mkr_fixup_template_content(doc, node, clone) != 0) {
+        rb_raise(mkr_eError, "failed to clone a <template>'s contents");
     }
     return mkr_wrap_html_node(clone, mkr_node_document(self));
 }
@@ -411,8 +426,8 @@ mkr_doc_import_node(int argc, VALUE *argv, VALUE self)
     if (imp == NULL) {
         rb_raise(mkr_eError, "failed to import node");
     }
-    if (deep) {
-        mkr_fixup_template_content(doc, src, imp);
+    if (deep && mkr_fixup_template_content(doc, src, imp) != 0) {
+        rb_raise(mkr_eError, "failed to import a <template>'s contents");
     }
     return mkr_wrap_html_node(imp, self);
 }

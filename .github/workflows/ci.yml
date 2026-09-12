@@ -35,6 +35,13 @@ jobs:
       - name: Compile the extension (builds vendored Lexbor, then the ext)
         run: bundle exec rake compile
 
+      # Only Init_makiri may be exported (or another Lexbor-based gem in the
+      # same process binds to our Lexbor and segfaults - CLAUDE.md), and no
+      # Lexbor/Makiri symbol may be left undefined (it would be a NULL call).
+      # Both were checked by hand until now.
+      - name: Symbol gate
+        run: bundle exec rake symbols
+
       # The :threading suite is heavy (GC.stress across threads) and checks a
       # structural property that does not vary by OS/Ruby, so run it on a single
       # representative job; the rest of the matrix skips it for a fast run.
@@ -148,6 +155,9 @@ jobs:
           - label: "glue: Document"
             flags: "MAKIRI_RUST_GLUE_DOC=1"
             features: "glue-doc"
+          - label: "glue: HTML node readers"
+            flags: "MAKIRI_RUST_GLUE_HTML_NODE=1"
+            features: "glue-html-node"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.
@@ -208,6 +218,13 @@ jobs:
       - name: Compile with ${{ matrix.flags }}
         run: env ${{ matrix.flags }} bundle exec rake compile
 
+
+      # Before the suite, because a symbol that resolves to nothing is a NULL
+      # call the first time that code path runs - which the suite might not
+      # reach, and which macOS's -undefined dynamic_lookup turns into a
+      # segfault rather than a link error. Cheap, and it names the symbol.
+      - name: Symbol gate
+        run: env ${{ matrix.flags }} bundle exec rake symbols
 
       - name: Run the test suite
         run: env ${{ matrix.flags }} bundle exec rake spec

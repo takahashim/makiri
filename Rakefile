@@ -451,6 +451,46 @@ task leaks: :compile do
   sh "#{FileUtils::RUBY} script/check_leaks.rb"
 end
 
+desc "Symbol gate: the built extension must export only Init_makiri and leave no " \
+     "Lexbor/Makiri symbol undefined"
+task symbols: :compile do
+  lib = Dir["lib/makiri/makiri.{bundle,so}"].first or abort "no built extension"
+  macos = RbConfig::CONFIG["target_os"] =~ /darwin/
+  # macOS decorates C symbols with a leading underscore; Linux does not.
+  u = macos ? "_" : ""
+
+  # 1. Nothing of ours or Lexbor's may be UNDEFINED. Everything both define is
+  #    statically linked in, so an undefined one means the declaration matched
+  #    no definition - which macOS does not treat as a link error, because the
+  #    extension is linked with -undefined dynamic_lookup. It becomes a NULL
+  #    call the first time that function runs. Three inline-only Lexbor
+  #    functions reached a shipped build this way once; eight more were
+  #    identified while porting glue/ruby_html_node.c, and this is what stops
+  #    the next one from getting that far.
+  undef_list = `nm -u #{lib.shellescape}`.lines.map(&:strip)
+  # `nm -u` prints bare names on macOS and "U <name>" entries on Linux.
+  bad = undef_list.map { |l| l.split.last.to_s }
+                  .grep(/\A#{u}(lxb_|lexbor_|mkr_)/)
+  unless bad.empty?
+    abort "undefined Lexbor/Makiri symbols in #{lib} (they will NULL-call at " \
+          "run time):\n  #{bad.uniq.sort.join("\n  ")}"
+  end
+
+  # 2. Nothing of Lexbor's may be EXPORTED either - see CLAUDE.md: another
+  #    Lexbor-based gem in the same process would bind to our different version.
+  exported = if macos
+               `nm -gU #{lib.shellescape}`.lines.grep(/ T _lxb_/)
+             else
+               `nm -D --defined-only #{lib.shellescape}`.lines.grep(/ T lxb_/)
+             end
+  unless exported.empty?
+    abort "#{lib} re-exports #{exported.size} Lexbor symbols; check the " \
+          "-exported_symbol / --exclude-libs link flags in extconf.rb"
+  end
+
+  puts "symbols: 0 undefined Lexbor/Makiri, 0 exported Lexbor (#{lib})"
+end
+
 desc "OOM-injection gate: rebuild with MAKIRI_ALLOC_INJECT=1 and sweep every core " \
      "allocation site, verifying each failure fails closed (clean raise or " \
      "baseline-identical result, never truncated output)"

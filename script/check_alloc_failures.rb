@@ -168,6 +168,48 @@ SCENARIOS = {
     doc.text
   end,
 
+  # The HTML node readers, which reach three lazily-built C structures the other
+  # scenarios do not: the attr->owner index (Attribute#parent), the line table
+  # (#line) and the NodeSet builder (#children / #ancestors / #attribute_nodes).
+  # Each has its own OOM branch, and each must fail closed - a NodeSet that
+  # silently loses a member reads exactly like a correct shorter one.
+  "html_node_read" => lambda do
+    doc = Makiri::HTML::Document.parse(<<~HTML)
+      <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+      <html><body>
+        <div id="a" class="x y" data-n="1">A<span>B<i>C</i></span>D</div>
+        <div id="b">café<p>déép<b>!</b></p></div>
+        <svg viewBox="0 0 1 1"><a xlink:href="#z" xml:lang="en">t</a></svg>
+        <template><i>inside</i></template>
+      </body></html>
+    HTML
+    out = []
+    stack = doc.children.to_a
+    until stack.empty?
+      n = stack.pop
+      stack.concat(n.children.to_a)
+      # #line is deliberately absent here. Its line table is built once at parse
+      # time and is ALLOWED to fail: dom_adapter/post_parse.c documents the
+      # degradation, and Node#line's own contract is "an Integer, or nil when no
+      # line is available", so answering nil after an allocation failure is
+      # within the contract rather than a wrong result. Attribute#parent is the
+      # opposite case - nil there means "no parent", a navigation answer with no
+      # such allowance - so it IS swept, and now raises instead of degrading.
+      out << [n.name, n.local_name, n.prefix, n.namespace_uri, n.node_type,
+              n.text].inspect
+      next unless n.is_a?(Makiri::HTML::Element)
+      out << n.keys.inspect << n.values.inspect
+      out << n.attribute_nodes.map { |a| [a.name, a.value, a.parent&.name] }.inspect
+      out << n.ancestors.map(&:name).inspect
+      out << n.attribute_by_qualified_name("xlink:href")&.value.inspect
+      out << n.attribute_value_by_qualified_name("data-n").inspect
+      out << n.content_fragment&.text.inspect
+    end
+    dt = doc.children.find { |c| c.is_a?(Makiri::HTML::DocumentType) }
+    out << [dt&.public_id, dt&.system_id].inspect
+    out.join("\n")
+  end,
+
   # CSS: a comma list with combinators through the reused engine, plus the
   # at_css first-match path.
   "css" => lambda do

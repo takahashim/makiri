@@ -304,6 +304,12 @@ enabled = RustPorts.enabled(ENV)
 rust_xpath_html = enabled.include?("MAKIRI_RUST_XPATH_HTML")
 rust_xpath      = enabled.include?("MAKIRI_RUST_XPATH")
 
+# Set inside the block below and read again after create_makefile, to make the
+# archive a build-time prerequisite rather than a configure-time artefact.
+rust_archive = nil
+rust_cargo_argv = nil
+rust_cargo_env = nil
+
 if enabled.any?
   features = RustPorts.features(enabled)
   # The Rust half of `rake oom`, gated by the SAME env var that defines
@@ -375,6 +381,8 @@ if enabled.any?
   cargo_argv += ["--target", rust_triple] if rust_triple
   cargo_argv += ["--target-dir", rust_target]
   system(rust_env, *cargo_argv) or abort "cargo build failed for the Rust engine."
+  rust_cargo_argv = cargo_argv
+  rust_cargo_env = rust_env
   rust_out_dir = rust_triple ? File.join(rust_target, rust_triple, "release")
                              : File.join(rust_target, "release")
   rust_archive = File.join(rust_out_dir, "libmakiri_rs.a")
@@ -460,4 +468,29 @@ File.open("Makefile", "a") do |mk|
   mk.puts
   mk.puts "# Project-header dependencies appended by extconf.rb (mkmf emits none)."
   mk.puts "$(OBJS): #{project_headers.join(" ")}"
+
+  # The Rust archive is built HERE, at configure time, and linked by a $(LDFLAGS)
+  # that names its path - so make knows nothing about it. Editing a .rs and
+  # running `rake compile` then relinked the previous archive and shipped it
+  # silently: no error, no rebuild, the old code. (Found by a spec that kept
+  # failing on a fix already applied.) The rule below makes the archive a real
+  # prerequisite of the bundle and re-runs cargo to produce it. cargo does its
+  # own dependency tracking, hence the FORCE prerequisite: make cannot know what
+  # the crate depends on, and asking cargo is cheap when nothing changed.
+  #
+  # This is the Rust counterpart of the header rule above, and of the
+  # `rake clean compile` note in CLAUDE.md - except that note is about ADDING a
+  # file, while this was about editing any of them.
+  if rust_archive
+    cmd = rust_cargo_env.map { |k, v| "#{k}=#{v.shellescape}" }
+                        .concat(rust_cargo_argv.map(&:shellescape))
+                        .join(" ")
+    mk.puts
+    mk.puts "# The Rust staticlib, rebuilt by cargo whenever make runs."
+    mk.puts ".PHONY: makiri-rust-FORCE"
+    mk.puts "makiri-rust-FORCE:"
+    mk.puts "#{rust_archive}: makiri-rust-FORCE"
+    mk.puts "\t#{cmd}"
+    mk.puts "$(DLLIB): #{rust_archive}"
+  end
 end

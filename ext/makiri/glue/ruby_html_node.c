@@ -500,11 +500,22 @@ mkr_node_parent(VALUE self)
     VALUE document = mkr_node_document(self);
 
     /* Lexbor never links an attribute back to its element, so node->parent is
-     * NULL for attributes. Resolve via the compat attr->owner index. */
+     * NULL for attributes. Resolve via the compat attr->owner index.
+     *
+     * The index is built explicitly first, because mkr_parsed_attr_owner
+     * answers NULL for BOTH "this attribute is not in the document" and "the
+     * index could not be allocated". Reporting the second as the first makes an
+     * owned attribute claim it has no parent - a navigation answer that reads
+     * exactly like the truthful one - so an allocation failure raises instead.
+     * (Found by the html_node_read OOM scenario: Attr#parent degraded from the
+     * owner element to nil under injection.) */
     if (node->type == LXB_DOM_NODE_TYPE_ATTRIBUTE) {
+        mkr_parsed_t *parsed = mkr_doc_parsed(document);
+        if (parsed == NULL || mkr_parsed_dom_index_build(parsed) != 0) {
+            rb_raise(mkr_eError, "could not build the attribute index (out of memory)");
+        }
         lxb_dom_node_t *owner =
-            mkr_parsed_attr_owner(mkr_doc_parsed(document),
-                                  lxb_dom_interface_attr(node));
+            mkr_parsed_attr_owner(parsed, lxb_dom_interface_attr(node));
         return mkr_wrap_html_node(owner, document);
     }
 

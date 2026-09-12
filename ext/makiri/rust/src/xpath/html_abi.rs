@@ -93,23 +93,29 @@ pub const NS_HTML: usize = crate::lexbor_abi::lxb_ns_id_enum_t_LXB_NS_HTML as us
 /// `TAG_LAST_ENTRY` rather than this.
 pub const TAG_UNDEF: usize = crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize;
 
-extern "C" {
-    /* Lexbor's exported accessors. */
-    pub fn lxb_dom_element_local_name(el: *const Element, len: *mut usize) -> *const u8;
-    pub fn lxb_dom_element_qualified_name(el: *const Element, len: *mut usize) -> *const u8;
-    pub fn lxb_dom_attr_local_name(a: *const Attr, len: *mut usize) -> *const u8;
-    pub fn lxb_dom_attr_qualified_name(a: *const Attr, len: *mut usize) -> *const u8;
-    pub fn lxb_dom_node_name(n: *mut Node, len: *mut usize) -> *const u8;
-    pub fn lxb_dom_element_get_attribute(
-        el: *mut Element,
-        qualified_name: *const u8,
-        qn_len: usize,
-        value_len: *mut usize,
-    ) -> *const u8;
-    /// The `_noi` twin Lexbor publishes so a non-C caller can reach an
-    /// `lxb_inline` function.
-    pub fn lxb_dom_attr_value_noi(a: *mut Attr, len: *mut usize) -> *const u8;
+/* Lexbor's exported accessors, re-exported from the generated bindings rather
+ * than declared again here.
+ *
+ * They WERE declared here, over the hand-written structs above, until
+ * `glue/html_node` needed the same six and bindgen started emitting them: the
+ * same C symbol then had two Rust types, which rustc reports as
+ * "redeclared with a different signature". The structs stay hand-written for
+ * the reason in `lexbor_abi::agree` - the engine reads their fields per node -
+ * but a FUNCTION has no hot path to shape, so there is no reason for a second
+ * declaration of one. The handles are cast at the call site, which is what
+ * those call sites already did. */
+pub use crate::lexbor_abi::{
+    lxb_dom_attr_local_name, lxb_dom_attr_qualified_name, lxb_dom_element_get_attribute,
+    lxb_dom_element_local_name, lxb_dom_element_qualified_name, lxb_dom_node_name, LxbAttr,
+    LxbElement, LxbNode,
+};
 
+/// The `_noi` twin Lexbor publishes so a non-C caller can reach an
+/// `lxb_inline` function. Declared once, in `lexbor_abi` - see the note there
+/// for why that one is hand-written where the rest are generated.
+pub use crate::lexbor_abi::lxb_dom_attr_value_noi;
+
+extern "C" {
     /* Our shims (mkr_xpath_html_shim.c). */
     pub fn mkr_html_ns_uri(
         node: *const Node,

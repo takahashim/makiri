@@ -98,6 +98,10 @@ glue-xml-node-mutate = ["glue", "glue-xml-node-read"]
 # glue/ruby_xml_node_serialize.c - #to_xml (with the namespace-declaration
 # synthesis) and Canonical XML 1.0.
 glue-xml-node-serialize = ["glue", "glue-xml-node-read"]
+# glue/ruby_html_node.c - the HTML node representation: wrap/unwrap plus every
+# reader on Makiri::HTML::NodeMethods. The mutation half (ruby_html_mutate.c) is
+# still C and supplies #clone_node, which this one binds by pointer.
+glue-html-node = ["glue"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

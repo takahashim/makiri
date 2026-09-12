@@ -54,3 +54,6 @@ pub mod xpath;
 
 #[cfg(feature = "glue-xml-node-read")]
 pub mod xml_node;
+
+#[cfg(feature = "glue-html-node")]
+pub mod html_node;
