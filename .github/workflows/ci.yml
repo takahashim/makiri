@@ -188,6 +188,9 @@ jobs:
           - label: "core: allocator"
             flags: "MAKIRI_RUST_CORE_ALLOC=1"
             features: "core-alloc"
+          - label: "CSS lowering"
+            flags: "MAKIRI_RUST_CSS_LOWER=1"
+            features: "css-lower"
           # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
           # port table, so this file never enumerates the flags. A literal here
           # is what drifted last time.

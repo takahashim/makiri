@@ -77,7 +77,22 @@ macro_rules! opaque {
         }
     )*};
 }
-opaque!(CssMemory, CssSelectors, Selectors, SelectorList);
+opaque!(Selectors);
+
+/// The parsed selector list. Aliased to the generated type rather than kept
+/// opaque here: `lxb_css_selectors_parse` is declared once, in `lexbor_abi`, and
+/// a second opaque spelling gave that symbol two Rust types. The engine still
+/// only passes the pointer along - it reads no field.
+pub type SelectorList = crate::lexbor_abi::lxb_css_selector_list_t;
+
+/* The CSS memory arena and selector table are declared in `lexbor_abi` along
+ * with the parser, so the Ruby-free lowering can reach the same ones. */
+pub use crate::lexbor_abi::{
+    lxb_css_memory_clean, lxb_css_memory_create, lxb_css_memory_destroy, lxb_css_memory_init,
+    lxb_css_parser_memory_set_noi, lxb_css_parser_selectors_set_noi, lxb_css_parser_status_noi,
+    lxb_css_selectors_create, lxb_css_selectors_destroy, lxb_css_selectors_init,
+    lxb_css_selectors_parse, CssMemory, CssSelectors,
+};
 
 /// The parser is declared in `glue::abi` - see the note there.
 use super::abi::{
@@ -88,24 +103,8 @@ use super::abi::{
 type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
 
 extern "C" {
-    fn lxb_css_memory_create() -> *mut CssMemory;
-    fn lxb_css_memory_init(mem: *mut CssMemory, prepare_count: usize) -> u32;
-    fn lxb_css_memory_clean(mem: *mut CssMemory);
-    fn lxb_css_memory_destroy(mem: *mut CssMemory, self_destroy: bool) -> *mut CssMemory;
 
     /// The `_noi` twins of Lexbor's `lxb_inline` accessors.
-    fn lxb_css_parser_status_noi(parser: *mut CssParser) -> u32;
-    fn lxb_css_parser_memory_set_noi(parser: *mut CssParser, mem: *mut CssMemory);
-    fn lxb_css_parser_selectors_set_noi(parser: *mut CssParser, sel: *mut CssSelectors);
-
-    fn lxb_css_selectors_create() -> *mut CssSelectors;
-    fn lxb_css_selectors_init(sel: *mut CssSelectors) -> u32;
-    fn lxb_css_selectors_destroy(sel: *mut CssSelectors, self_destroy: bool) -> *mut CssSelectors;
-    fn lxb_css_selectors_parse(
-        parser: *mut CssParser,
-        data: *const u8,
-        length: usize,
-    ) -> *mut SelectorList;
 
     fn lxb_selectors_create() -> *mut Selectors;
     fn lxb_selectors_init(s: *mut Selectors) -> u32;
@@ -416,10 +415,18 @@ unsafe fn str_bytes(v: Value) -> (*const u8, usize) {
     (ptr, len)
 }
 
+/// The C's message, exactly.
+///
+/// `%" PRIsVALUE` interpolates a String with `to_s`, not `inspect`, so the C
+/// wrote the selector bare where `inspect` adds quotes and escapes. This used
+/// `inspect` and produced `invalid CSS selector: "p:hover"` where every prior
+/// release said `invalid CSS selector: p:hover` - a user-visible change that no
+/// spec asserted, found by the CSS differential when the lowering was ported.
 fn syntax_error(selector: Value) -> Error {
     let class = magnus::ExceptionClass::from_value(unsafe { Value::from_raw(mkr_eCSSSyntaxError) })
         .expect("Makiri::CSS::SyntaxError");
-    Error::new(class, format!("invalid CSS selector: {}", selector.inspect()))
+    let shown = selector.to_string();
+    Error::new(class, format!("invalid CSS selector: {shown}"))
 }
 
 /* ------------------------------------------------------------------ */

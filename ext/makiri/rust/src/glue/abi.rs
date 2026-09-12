@@ -347,23 +347,16 @@ pub unsafe fn error_class() -> ExceptionClass {
 /// Opaque: neither user reads a field of it.
 ///
 /// Two independent features need this parser - `glue-css` for the selector
-/// engine and `glue-lexbor-css` for the stylesheet binding - and they are not
-/// feature-dependent on each other, so the declaration lives here rather than
-/// in either. Giving one C symbol two Rust types is the failure this file
-/// exists to prevent; it has happened before (mkr_wrap_xml_node) and happened
-/// again while the stylesheet binding was being written, caught only by the
-/// "everything" feature combination.
-#[repr(C)]
-pub struct CssParser {
-    _private: [u8; 0],
-}
-
-extern "C" {
-    pub fn lxb_css_parser_create() -> *mut CssParser;
-    pub fn lxb_css_parser_init(parser: *mut CssParser, tkz: *mut core::ffi::c_void) -> u32;
-    pub fn lxb_css_parser_clean(parser: *mut CssParser);
-    pub fn lxb_css_parser_destroy(parser: *mut CssParser, self_destroy: bool) -> *mut CssParser;
-}
+/// engine and `glue-lexbor-css` for the stylesheet binding - and a third, the
+/// Ruby-free CSS lowering, needs it without magnus. So the declaration lives in
+/// `lexbor_abi` and all three re-export it from there. Giving one C symbol two
+/// Rust types is the failure this file exists to prevent; it has happened twice
+/// (mkr_wrap_xml_node, and again while the stylesheet binding was written),
+/// both times caught only by the "everything" feature combination.
+pub use crate::lexbor_abi::{
+    lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
+    CssParser,
+};
 
 /* ------------------------------------------------------------------ *
  * rb_data_type_t in a static                                         *

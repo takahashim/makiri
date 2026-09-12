@@ -94,6 +94,25 @@ fn main() {
         .allowlist_type("lxb_css_rule_declaration_t")
         .allowlist_type("lxb_css_rule_declaration_list_t")
         .allowlist_type("lxb_css_selector_list_t")
+        // The selector tree mkr_css.c lowers into XPath. A union-carrying
+        // layout from a pinned dependency: exactly what generating is for.
+        .allowlist_type("lxb_css_selector_t")
+        .allowlist_type("lxb_css_selector_attribute_t")
+        .allowlist_type("lxb_css_selector_anb_of_t")
+        .allowlist_type("lxb_css_selector_contains_t")
+        .allowlist_type("lxb_css_selector_type_t")
+        .allowlist_type("lxb_css_selector_combinator_t")
+        .allowlist_type("lxb_css_selector_match_t")
+        .allowlist_type("lxb_css_selector_modifier_t")
+        // The pseudo enums are `*_id_t`, not `*_t`: allowlisting the `_t`
+        // spelling matched nothing and produced no constants at all - the same
+        // trap as lxb_html_token_type, and the second time this exact shape has
+        // cost a round.
+        .allowlist_type("lxb_css_selector_pseudo_class_id_t")
+        .allowlist_type("lxb_css_selector_pseudo_class_function_id_t")
+        .allowlist_type("lxb_css_selector_pseudo_element_id_t")
+        .allowlist_type("lxb_css_selectors_t")
+        .allowlist_type("lxb_css_memory_t")
         .allowlist_type("lxb_css_at_rule__custom_t")
         .allowlist_type("lxb_css_at_rule__undef_t")
         .allowlist_type("lxb_css_at_rule_media_t")

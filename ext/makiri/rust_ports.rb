@@ -74,6 +74,8 @@ module RustPorts
     srcs: %w[core/mkr_buf.c] },
   { env: "MAKIRI_RUST_CORE_ALLOC",          feature: "core-alloc",
     srcs: %w[core/mkr_alloc.c] },
+  { env: "MAKIRI_RUST_CSS_LOWER",           feature: "css-lower",
+    srcs: %w[xpath/mkr_css.c] },
   # The XPath FRONT END is one feature over three files, and it is also implied
   # by every xpath-* row above (see rust_xpath below).
   { env: "MAKIRI_RUST_XPATH",               feature: "xpath",

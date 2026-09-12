@@ -53,6 +53,11 @@ pub mod falloc;
 /// `mkr_buf_t`, which more than one subsystem writes into.
 pub mod cbuf;
 
+/// The CSS selector front end (xpath/mkr_css.c): lowers a Lexbor-parsed
+/// selector list into the XPath AST. Ruby-free, like the engine it feeds.
+#[cfg(feature = "css-lower")]
+pub mod css;
+
 /// The shared UTF-8 primitives (core/mkr_utf8.c). Unconditional, like `falloc`
 /// and `cbuf`: the XML and XPath layers use the strict decoder whatever the
 /// feature set, and only the `#[no_mangle]` C entries are gated.

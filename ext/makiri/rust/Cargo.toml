@@ -146,6 +146,11 @@ core-buf = []
 # one side's allocations outside the sweep.
 core-alloc = ["core-buf"]
 
+# xpath/mkr_css.c - the CSS selector front end. Lowering only: Lexbor keeps the
+# parser (design_doc.ja.md lists re-implementing selectors among the things
+# deliberately avoided). Needs the XPath AST builders and Lexbor's layout.
+css-lower = ["xpath-shared", "lexbor-abi"]
+
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build
 # that enables none of the glue features compiles exactly what it did before.

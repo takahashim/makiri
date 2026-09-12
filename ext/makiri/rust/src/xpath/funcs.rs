@@ -25,12 +25,10 @@ use core::ptr;
 /// like "nokogiri-builtin:css-class" resolve.
 pub const NS_NOKOGIRI_BUILTIN_URI: &[u8] = b"https://www.nokogiri.org/default_ns/ruby/builtins";
 
-/// Names the CSS lowering emits for an untyped `:*-of-type`, where the "type" is
-/// the element's own expanded name - a self-reference XPath 1.0 cannot express
-/// (there is no current()). The leading \x01 cannot come out of the lexer, so
-/// these are unreachable from a user expression. XML host only.
-pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
-pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
+/// The internal of-type position names, declared in `xpath_abi` so the CSS
+/// lowering that EMITS them and this evaluator that RESOLVES them cannot drift -
+/// they sit in different feature trees.
+pub use crate::xpath_abi::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call; `out` starts zeroed, and a false

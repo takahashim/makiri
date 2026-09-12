@@ -178,6 +178,61 @@ pub mod consts {
 }
 
 /* ------------------------------------------------------------------ *
+ * The CSS selector parser                                            *
+ * ------------------------------------------------------------------ *
+ *
+ * Opaque, because neither caller reads a field - they hold pointers and call
+ * accessors. Declared HERE rather than in `glue::abi`, where they started, so
+ * the Ruby-free CSS lowering (`crate::css`) can reach them: that module is
+ * compiled once for both engine instances and must not pull in magnus. */
+
+/// `lxb_css_parser_t`.
+#[repr(C)]
+pub struct CssParser {
+    _private: [u8; 0],
+}
+
+/// `lxb_css_memory_t`.
+#[repr(C)]
+pub struct CssMemory {
+    _private: [u8; 0],
+}
+
+/// `lxb_css_selectors_t`.
+#[repr(C)]
+pub struct CssSelectors {
+    _private: [u8; 0],
+}
+
+extern "C" {
+    pub fn lxb_css_parser_create() -> *mut CssParser;
+    pub fn lxb_css_parser_init(parser: *mut CssParser, tkz: *mut core::ffi::c_void) -> u32;
+    pub fn lxb_css_parser_clean(parser: *mut CssParser);
+    pub fn lxb_css_parser_destroy(parser: *mut CssParser, self_destroy: bool) -> *mut CssParser;
+
+    pub fn lxb_css_memory_create() -> *mut CssMemory;
+    pub fn lxb_css_memory_init(mem: *mut CssMemory, prepare_count: usize) -> u32;
+    pub fn lxb_css_memory_clean(mem: *mut CssMemory);
+    pub fn lxb_css_memory_destroy(mem: *mut CssMemory, self_destroy: bool) -> *mut CssMemory;
+
+    pub fn lxb_css_selectors_create() -> *mut CssSelectors;
+    pub fn lxb_css_selectors_init(sel: *mut CssSelectors) -> u32;
+    pub fn lxb_css_selectors_destroy(sel: *mut CssSelectors, self_destroy: bool)
+        -> *mut CssSelectors;
+
+    pub fn lxb_css_selectors_parse(
+        parser: *mut CssParser,
+        data: *const u8,
+        length: usize,
+    ) -> *mut lxb_css_selector_list_t;
+
+    /* The `lxb_inline` accessors, through their `_noi` twins. */
+    pub fn lxb_css_parser_status_noi(parser: *mut CssParser) -> u32;
+    pub fn lxb_css_parser_memory_set_noi(parser: *mut CssParser, mem: *mut CssMemory);
+    pub fn lxb_css_parser_selectors_set_noi(parser: *mut CssParser, sel: *mut CssSelectors);
+}
+
+/* ------------------------------------------------------------------ *
  * Agreement with the hand-written view                               *
  * ------------------------------------------------------------------ */
 

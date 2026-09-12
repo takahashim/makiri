@@ -15,6 +15,18 @@ use core::ffi::{c_char, c_int, c_void};
 /* ---- status / kind enums (C enums, so plain i32 / u32 values) ---- */
 
 pub const XP_OK: c_int = 0;
+/// Names the CSS lowering EMITS and the evaluator RESOLVES for an untyped
+/// `:*-of-type`, where the "type" is the element's own expanded name - a
+/// self-reference XPath 1.0 cannot express (there is no `current()`). The
+/// leading \x01 cannot come out of the lexer, so these are unreachable from a
+/// user expression. XML host only.
+///
+/// They live here, not beside the evaluator: the two ends are in different
+/// feature trees (`css-lower` and `xpath`), and a name that only one of them
+/// knows is a call that resolves to nothing.
+pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
+pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
+
 pub const XP_ERR_SYNTAX: c_int = 2;
 pub const XP_ERR_INTERNAL: c_int = 5;
 pub const XP_ERR_OOM: c_int = 6;
