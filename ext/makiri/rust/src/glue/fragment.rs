@@ -24,34 +24,20 @@ use rb_sys::VALUE;
 use crate::falloc::VecPush;
 use crate::lexbor_abi as lxb;
 
-use super::doc::mkr_html_doc_unwrap;
-use super::abi::{mkr_ruby_bytes_view, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
+use super::abi::{LxbDoc, NODE_TYPE_ELEMENT, mkr_ruby_bytes_view, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
     error_class, is_kind_of, libc_free, mkr_cNode, mkr_html_node_unwrap,
     mkr_ruby_verified_text, mkr_wrap_html_node, LxbNode,
 };
 
-/// `lxb_dom_document_t`, which the pipeline passes around and reads two fields
-/// of (`tags` for the context lookup).
-pub 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
  * ------------------------------------------------------------------ */
-
-type LxbDoc = lxb::lxb_dom_document_t;
 
 extern "C" {
     fn mkr_utf8_sanitize(src: *const u8, len: usize, out: *mut *mut u8, out_len: *mut usize)
         -> c_int;
     fn mkr_reallocarray(p: *mut c_void, count: usize, elem: usize) -> *mut c_void;
 
-    pub fn mkr_node_kind(v: VALUE) -> c_int;
-    pub fn mkr_cross_xml_to_html(
-        doc: *mut LxbDoc,
-        src: *mut c_void,
-        deep: bool,
-        out: *mut *mut LxbNode,
-    ) -> c_int;
-    pub fn mkr_xml_mut_check(status: c_int);
 
     fn lxb_html_parser_create() -> *mut c_void;
     fn lxb_html_parser_init(parser: *mut c_void) -> u32;
@@ -95,14 +81,10 @@ unsafe fn preorder_next(mut node: *mut LxbNode, root: *mut LxbNode) -> *mut LxbN
     (*node).next
 }
 
-/// Generated, not transcribed. A hand-written 1 here (it is 2) made
-/// `import_node` treat every HTML node as an XML one.
-pub const MKR_NODE_KIND_XML: c_int = lxb::mkr::mkr_node_kind_t_MKR_NODE_KIND_XML as c_int;
 
 /// Lexbor node types and the tag/namespace ids this file compares against.
 /// Generated, so a pin that renumbers them is a build-time change, not a
 /// silently different answer (see lexbor_abi).
-pub const NODE_TYPE_ELEMENT: u32 = super::abi::LXB_DOM_NODE_TYPE_ELEMENT;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const NS_SVG: usize = lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize;
 const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
@@ -276,28 +258,29 @@ pub unsafe extern "C" fn mkr_emit_before(imported: *mut LxbNode, u: *mut c_void)
     lxb_dom_node_insert_before(u as *mut LxbNode, imported);
 }
 
+/// Deep-import each child of `root` into `doc` and hand it to `emit`.
+///
+/// `-1` when a child could not be copied whole. It RETURNS rather than raising:
+/// `ruby_html_mutate.c` destroys a transient fragment document after this call,
+/// and a longjmp past that free leaks one Lexbor document per failure - the leak
+/// that free was added to fix. The caller raises once its own cleanup has run.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_import_fragment_children(
     doc: *mut LxbDoc,
     root: *mut LxbNode,
     emit: unsafe extern "C" fn(*mut LxbNode, *mut c_void),
     u: *mut c_void,
-) {
+) -> c_int {
     let mut f = (*root).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
         match import_with_fixup(doc, f, true) {
             Some(imp) => emit(imp, u),
-            // Raise rather than splice a fragment that is missing a template's
-            // contents. Nothing is live across this call - the helper's own
-            // buffer is gone - so the longjmp drops nothing.
-            None => super::abi::rb_raise(
-                super::abi::mkr_eError,
-                c"failed to import a fragment child".as_ptr(),
-            ),
+            None => return -1,
         }
         f = next;
     }
+    0
 }
 
 /// `mkr_fragment_parse_fn`.
@@ -467,15 +450,21 @@ unsafe extern "C" fn parse_fragment_by_tag(
 
 /// Parse `html` in the given context and build a DOCUMENT_FRAGMENT owned by
 /// `document`, so its nodes can be spliced into it.
+/// `document` is the wrapper the fragment is bound to (its keepalive), `doc` the
+/// Lexbor document already unwrapped from it.
+///
+/// Taking both, rather than unwrapping here, is what keeps this module from
+/// depending on `glue::doc` - unwrapping a Document is that module's job, and
+/// the import back the other way made the two mutually dependent.
 pub unsafe fn build_fragment_ctx(
     ruby: &Ruby,
     document: Value,
+    doc: *mut LxbDoc,
     rb_html: Value,
     tag: usize,
     ns: usize,
 ) -> Result<Value, Error> {
     let html = ruby.into_value(rb_html.to_r_string()?);
-    let doc = mkr_html_doc_unwrap(document.as_raw());
 
     let frag = lxb_dom_document_fragment_interface_create(doc);
     if frag.is_null() {
@@ -489,7 +478,9 @@ pub unsafe fn build_fragment_ctx(
         parse_fragment_by_tag,
         &pctx as *const FragTagCtx as *mut c_void,
     );
-    mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node as *mut c_void);
+    if mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node as *mut c_void) != 0 {
+        return Err(Error::new(error_class(), "failed to import a fragment child"));
+    }
     let out = mkr_wrap_html_node(frag_node, document.as_raw());
     Ok(Value::from_raw(out))
 }

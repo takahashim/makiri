@@ -34,6 +34,9 @@ pub struct NodeData {
 /// are unaffected; the ones that read a field (glue::doc) get the real one, and
 /// there is only one definition to be wrong.
 pub type LxbNode = crate::lexbor_abi::lxb_dom_node_t;
+/// `lxb_dom_document_t`. Shared vocabulary: both the Document wrapper and the
+/// fragment pipeline pass it around.
+pub type LxbDoc = crate::lexbor_abi::lxb_dom_document_t;
 
 /* Every Lexbor constant below comes from the generated bindings, none is
  * transcribed. The names are re-exported here rather than used through
@@ -45,6 +48,8 @@ pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 =
 
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+/// The node type both of them compare against, under the name they use.
+pub const NODE_TYPE_ELEMENT: u32 = LXB_DOM_NODE_TYPE_ELEMENT;
 pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: u32 =

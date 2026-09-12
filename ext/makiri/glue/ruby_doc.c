@@ -293,19 +293,21 @@ mkr_emit_before(lxb_dom_node_t *imported, void *u)
     lxb_dom_node_insert_before((lxb_dom_node_t *)u, imported);
 }
 
-void
+int
 mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
                              void (*emit)(lxb_dom_node_t *, void *), void *u)
 {
     for (lxb_dom_node_t *f = root->first_child; f != NULL;) {
         lxb_dom_node_t *next = f->next; /* import does not unlink f, but be safe */
         lxb_dom_node_t *imp = lxb_dom_document_import_node(doc, f, true);
-        if (imp != NULL) {
-            emit(imp, u);
-            mkr_fixup_template_content(doc, f, imp);
+        if (imp == NULL) {
+            return -1;
         }
+        emit(imp, u);
+        mkr_fixup_template_content(doc, f, imp);
         f = next;
     }
+    return 0;
 }
 
 lxb_dom_node_t *
@@ -454,7 +456,9 @@ mkr_build_fragment_ctx(VALUE document, VALUE rb_html,
 
     mkr_frag_tag_ctx_t pctx = { doc, ctx_tag, ctx_ns };
     lxb_dom_node_t *root = mkr_run_fragment_parser(html, mkr_parse_fragment_by_tag, &pctx);
-    mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node);
+    if (mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node) != 0) {
+        rb_raise(mkr_eError, "failed to import a fragment child");
+    }
     RB_GC_GUARD(html);
     return mkr_wrap_html_node(frag_node, document);
 }

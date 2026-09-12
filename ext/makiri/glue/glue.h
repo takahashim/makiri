@@ -95,12 +95,17 @@ VALUE               mkr_wrap_document(mkr_parsed_t *parsed); /* GC takes ownersh
  *
  * mkr_import_fragment_children: deep-import each child of `root` into `doc`, hand
  * it to `emit`, and fix up any <template> contents (which import_node omits).
+ * Returns 0, or -1 when a child could not be copied whole - a <template> whose
+ * contents were lost is a WRONG answer, not a degraded one, so the caller must
+ * not splice it. It returns rather than raising because its callers have
+ * cleanup to run first (the transient fragment document); raising from here
+ * would longjmp past a free that was measured and fixed once already.
  *
  * mkr_emit_append / mkr_emit_before: emit callbacks - append as last child of
  * `u`, or insert before the reference node `u`. */
 int  mkr_sanitize_html_input(VALUE html, const lxb_char_t **out, size_t *out_len,
                              lxb_char_t **owned);
-void mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
+int  mkr_import_fragment_children(lxb_dom_document_t *doc, lxb_dom_node_t *root,
                                   void (*emit)(lxb_dom_node_t *, void *), void *u);
 void mkr_emit_append(lxb_dom_node_t *imported, void *u);
 void mkr_emit_before(lxb_dom_node_t *imported, void *u);

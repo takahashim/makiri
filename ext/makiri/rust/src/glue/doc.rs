@@ -34,11 +34,8 @@ use rb_sys::{rb_data_type_t, VALUE};
 
 use crate::lexbor_abi as lxb;
 
-use super::fragment::{
-    build_fragment_ctx, context_kwarg, import_with_fixup, mkr_cross_xml_to_html, mkr_node_kind,
-    mkr_xml_mut_check, resolve_fragment_context, LxbDoc, MKR_NODE_KIND_XML, NODE_TYPE_ELEMENT,
-};
-use super::abi::{mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
+use super::fragment::{build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context};
+use super::abi::{LxbDoc, NODE_TYPE_ELEMENT, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
     error_class, mkr_cDocumentFragment, mkr_cHtmlDocument, mkr_cXmlDocument, mkr_html_node_unwrap,
     mkr_mHtmlNodeMethods, mkr_node_document, mkr_wrap_html_node, mkr_xml_node_unwrap, DataType,
     LxbNode, OwnedBytes,
@@ -56,7 +53,24 @@ struct DocData {
     errors: VALUE,
 }
 
+/// Generated, not transcribed. A hand-written 1 here (it is 2) made
+/// `import_node` treat every HTML node as an XML one.
+const MKR_NODE_KIND_XML: c_int = lxb::mkr::mkr_node_kind_t_MKR_NODE_KIND_XML as c_int;
+
 extern "C" {
+    /* Cross-representation import: an XML node TRANSLATED into a detached lxb
+     * subtree owned by an HTML document. Declared here because
+     * `Document#import_node` is its only caller - it sat in the fragment module
+     * only because that is where the block landed when the file was split. */
+    fn mkr_node_kind(v: VALUE) -> c_int;
+    fn mkr_cross_xml_to_html(
+        doc: *mut LxbDoc,
+        src: *mut c_void,
+        deep: bool,
+        out: *mut *mut LxbNode,
+    ) -> c_int;
+    fn mkr_xml_mut_check(status: c_int);
+
     fn mkr_parsed_kind(p: *const c_void) -> c_int;
 
     fn lxb_dom_document_root(doc: *mut LxbDoc) -> *mut LxbNode;
@@ -316,8 +330,9 @@ fn fragment_in(
     let context = context_kwarg(ruby, Some(a.keywords));
     let document = document(ruby)?;
     unsafe {
-        let (tag, ns) = resolve_fragment_context(mkr_html_doc_unwrap(document.as_raw()), context);
-        build_fragment_ctx(ruby, document, html, tag, ns)
+        let doc = mkr_html_doc_unwrap(document.as_raw());
+        let (tag, ns) = resolve_fragment_context(doc, context);
+        build_fragment_ctx(ruby, document, doc, html, tag, ns)
     }
 }
 
@@ -334,7 +349,9 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
             ));
         }
         let document = Value::from_raw(mkr_node_document(self_.as_raw()));
-        let frag = build_fragment_ctx(ruby, document, rb_html, (*node).local_name, (*node).ns)?;
+        let doc = mkr_html_doc_unwrap(document.as_raw());
+        let frag =
+            build_fragment_ctx(ruby, document, doc, rb_html, (*node).local_name, (*node).ns)?;
         frag.funcall("children", ())
     }
 }

@@ -35,6 +35,15 @@
 //! `core/` is ported (step 8 of notes/rust_port_remaining.ja.md) the counter
 //! moves here and the direction of the call reverses; nothing else changes.
 //!
+//! # Two shapes, and why
+//!
+//! Growth is on traits (`Reserve`, `VecPush`, `MapInsert`) because it has a
+//! receiver: `v.mkr_push(x)` reads like the `v.push(x)` it replaces, which is
+//! what kept the conversion of nineteen call sites reviewable. Construction is
+//! free functions (`try_box`, `try_vec_with_capacity`, `try_to_vec`, ...)
+//! because there is nothing to hang a method on. Each names one shape and each
+//! has callers; the split is by whether a receiver exists, not by accident.
+//!
 //! # Cost when not sweeping
 //!
 //! None. Without the `alloc-inject` feature `should_fail` is a `const false`

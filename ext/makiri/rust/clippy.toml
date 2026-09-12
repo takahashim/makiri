@@ -9,10 +9,14 @@
 # Scope is deliberate. Banned here are the ways a NEW owning container comes
 # into existence or grows its capacity, because those are unambiguous. `push`,
 # `insert` and `extend` are NOT banned: after a successful reserve they cannot
-# allocate, and that is the normal shape of the code. The residual risk - a
-# `push` with no reserve in front of it - is left to review and recorded in
-# notes/rust_port_remaining.ja.md rather than papered over with a lint that
-# would need an allow on every second line.
+# allocate, and that is the normal shape of the code.
+#
+# So one residual risk is left uncovered on purpose, and it is stated here
+# rather than deferred to a document: a `push`, `insert` or `extend` with no
+# reserve in front of it allocates infallibly and the sweep cannot fail it.
+# Banning them would need an allow on every second line, which buys nothing -
+# `falloc`'s VecPush / MapInsert exist so the reserve and the write are one
+# call, and review is what catches a site that skipped them.
 disallowed-methods = [
   { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box / try_box_raw" },
   { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },

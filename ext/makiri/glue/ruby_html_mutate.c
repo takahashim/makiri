@@ -622,7 +622,7 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
     lxb_dom_node_t *frag =
         mkr_run_fragment_parser(html, mkr_parse_fragment_by_context, context_el);
 
-    mkr_import_fragment_children(doc, frag, emit, u);
+    int imported = mkr_import_fragment_children(doc, frag, emit, u);
 
     /* lxb_html_parse_fragment built the fragment in a TRANSIENT document that the
      * parser's destruction (inside mkr_run_fragment_parser) does NOT free
@@ -631,6 +631,13 @@ mkr_parse_fragment_into(lxb_dom_node_t *context_el, VALUE rb_html,
      * explicitly here - frag->owner_document is valid after the parser is gone. */
     lxb_html_document_destroy(lxb_html_interface_document(frag->owner_document));
     RB_GC_GUARD(html);
+
+    /* AFTER the destroy: raising before it would longjmp past the free above,
+     * leaking one Lexbor document per failure - the very leak that free exists
+     * to fix. */
+    if (imported != 0) {
+        rb_raise(mkr_eError, "failed to import a fragment child");
+    }
 }
 
 /* element.inner_html = html -> html. Replaces the element's children. */
