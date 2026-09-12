@@ -146,13 +146,10 @@ const MKR_NODE_KIND_OTHER: c_int = 0;
 const MKR_NODE_KIND_HTML: c_int = 1;
 const MKR_NODE_KIND_XML: c_int = 2;
 
-extern "C" {
-    static mkr_cNode: VALUE;
-    static mkr_cDocument: VALUE;
+use super::abi::{mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc};
 
-    fn mkr_doc_parsed(rb_doc: VALUE) -> *mut c_void;
+extern "C" {
     fn mkr_parsed_kind(p: *const c_void) -> c_int;
-    fn mkr_parsed_xml_doc(p: *const c_void) -> *mut XmlDoc;
     fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut c_void;
 }
 
@@ -174,7 +171,7 @@ pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
     if is_kind_of(rb_node, mkr_cDocument) {
         let parsed = mkr_doc_parsed(rb_node);
         if mkr_parsed_kind(parsed) == MKR_DOC_XML {
-            let xdoc = mkr_parsed_xml_doc(parsed);
+            let xdoc = mkr_parsed_xml_doc(parsed) as *mut XmlDoc;
             return if xdoc.is_null() {
                 core::ptr::null_mut()
             } else {

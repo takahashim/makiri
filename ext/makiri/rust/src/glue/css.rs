@@ -38,14 +38,18 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::cell::UnsafeCell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use std::collections::HashMap;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, Exception, Ruby, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
-use super::abi::{error_class, LxbNode, LXB_STATUS_OK};
+use super::abi::{
+    error_class, mkr_eCSSSyntaxError, mkr_html_node_unwrap, mkr_mHtmlNodeMethods,
+    mkr_node_document, mkr_node_set_new, mkr_node_set_push, mkr_verify_text, mkr_wrap_html_node,
+    LxbNode, LXB_STATUS_OK,
+};
 
 /// Mirrors `MKR_NODE_SET_MAX`: every node-collecting path fails closed at the
 /// same bound.
@@ -77,17 +81,6 @@ opaque!(CssMemory, CssParser, CssSelectors, Selectors, SelectorList);
 type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
 
 extern "C" {
-    static mkr_mHtmlNodeMethods: VALUE;
-    static mkr_eCSSSyntaxError: VALUE;
-
-    fn mkr_html_node_unwrap(v: VALUE) -> *mut LxbNode;
-    fn mkr_node_document(v: VALUE) -> VALUE;
-    fn mkr_node_set_new(document: VALUE) -> VALUE;
-    fn mkr_node_set_push(set: VALUE, node: *mut c_void);
-    fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE;
-    /// Raises on a NUL byte or invalid UTF-8, naming `what`.
-    fn mkr_verify_text(str: VALUE, what: *const c_char);
-
     fn lxb_css_memory_create() -> *mut CssMemory;
     fn lxb_css_memory_init(mem: *mut CssMemory, prepare_count: usize) -> u32;
     fn lxb_css_memory_clean(mem: *mut CssMemory);

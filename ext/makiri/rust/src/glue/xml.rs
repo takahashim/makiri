@@ -99,23 +99,32 @@ struct CssNs {
     default_prefix: *const c_char,
 }
 
-extern "C" {
-    static mkr_mXML: VALUE;
-    static mkr_mXmlNodeMethods: VALUE;
-    static mkr_cDocument: VALUE;
-    static mkr_cXmlDocument: VALUE;
-    static mkr_cXmlDocumentFragment: VALUE;
-    static mkr_cNodeSet: VALUE;
-    static mkr_eError: VALUE;
-    static mkr_eXmlSyntaxError: VALUE;
-    static mkr_eXmlLimitExceeded: VALUE;
-    static mkr_eCSSSyntaxError: VALUE;
+use super::abi::{
+    mkr_cDocument, mkr_cNodeSet, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed,
+    mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
+    mkr_mXmlNodeMethods, mkr_node_document, mkr_node_set_new, mkr_parsed_xml_doc as parsed_xml_doc,
+    mkr_verify_text, mkr_wrap_xml_node as wrap_xml_node, mkr_xml_node_unwrap as xml_node_unwrap,
+};
 
+/// The XML arena behind a document handle, typed.
+unsafe fn mkr_parsed_xml_doc(p: *const c_void) -> *mut XmlDoc {
+    parsed_xml_doc(p) as *mut XmlDoc
+}
+
+/// Wrap an XML node, typed.
+unsafe fn mkr_wrap_xml_node(node: *mut XmlNode, document: VALUE) -> VALUE {
+    wrap_xml_node(node as *mut c_void, document)
+}
+
+/// The XML node behind a wrapper, typed. Raises for an HTML node.
+unsafe fn mkr_xml_node_unwrap(rb_node: VALUE) -> *mut XmlNode {
+    xml_node_unwrap(rb_node) as *mut XmlNode
+}
+
+extern "C" {
     /* the document handle (dom_adapter/compat.h) */
     fn mkr_parsed_new_xml(doc: *mut XmlDoc) -> *mut c_void;
     fn mkr_parsed_set_xml_doc(p: *mut c_void, doc: *mut XmlDoc);
-    fn mkr_parsed_xml_doc(p: *const c_void) -> *mut XmlDoc;
-    fn mkr_doc_parsed(rb_doc: VALUE) -> *mut c_void;
     fn mkr_wrap_document(parsed: *mut c_void) -> VALUE;
 
     /* the XML engine */
@@ -196,13 +205,8 @@ extern "C" {
     fn mkr_xpath_raise(err: *mut XPathError) -> !;
 
     /* the node / string bridges */
-    fn mkr_xml_node_unwrap(rb_node: VALUE) -> *mut XmlNode;
-    fn mkr_wrap_xml_node(node: *mut XmlNode, document: VALUE) -> VALUE;
-    fn mkr_node_document(rb_node: VALUE) -> VALUE;
-    fn mkr_node_set_new(document: VALUE) -> VALUE;
     fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE;
     fn mkr_ruby_copy_bytes(input: VALUE, out: *mut OwnedBytes) -> c_int;
-    fn mkr_verify_text(str: VALUE, what: *const c_char);
     fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> BorrowedText;
     fn mkr_ruby_try_verified_text(
         sv: VALUE,

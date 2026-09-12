@@ -36,7 +36,10 @@ use magnus::{
 };
 use rb_sys::VALUE;
 
-use super::abi::{error_class, typed_data_unprotected, LxbNode};
+use super::abi::{
+    error_class, mkr_cDocument, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_node_document,
+    mkr_node_raw, mkr_wrap_html_node, mkr_wrap_xml_node, typed_data_unprotected, LxbNode,
+};
 
 /// The per-set node cap, shared with the CSS and XPath glue: every
 /// node-collecting path fails closed at the same bound instead of growing
@@ -45,18 +48,6 @@ const MKR_NODE_SET_MAX: usize = 10 * 1000 * 1000;
 
 /// Below this operand size a linear scan beats building a hash set.
 const HASH_MIN: usize = 64;
-
-extern "C" {
-    static mkr_cNodeSet: VALUE;
-    static mkr_cNode: VALUE;
-    static mkr_cDocument: VALUE;
-    static mkr_cXmlDocument: VALUE;
-
-    fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE;
-    fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE;
-    fn mkr_node_document(rb_node: VALUE) -> VALUE;
-    fn mkr_node_raw(rb_node: VALUE) -> *mut c_void;
-}
 
 /* ------------------------------------------------------------------ */
 /* storage                                                            */

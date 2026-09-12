@@ -28,6 +28,8 @@ use magnus::encoding::Coderange;
 use magnus::{RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
+use crate::glue::abi::{mkr_eError, rb_raise};
+
 /* ---- the C layouts (core/mkr_text.h, bridge/bridge.h) ---- */
 
 /// `mkr_borrowed_text_t` / `mkr_verified_text_t` - an unanchored slice.
@@ -80,7 +82,6 @@ pub const MKR_TEXT_HAS_NUL: c_int = 1;
 pub const MKR_TEXT_INVALID_UTF8: c_int = 2;
 
 extern "C" {
-    static mkr_eError: VALUE;
 
     /// The ONE UTF-8 validator (core/mkr_utf8.h), Ruby-free and
     /// allocation-free, and the subject of the CBMC proofs. Not reimplemented
@@ -88,10 +89,6 @@ extern "C" {
     fn mkr_utf8_valid(src: *const u8, len: usize) -> bool;
     fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;
 
-    /// Variadic, so it can be called but not defined from Rust. It longjmps -
-    /// see the borrow rule above and glue/mod.rs: no Rust destructor may be
-    /// live at the call.
-    fn rb_raise(exc: VALUE, fmt: *const c_char, ...) -> !;
 }
 
 /// The `value` + `(ptr, len)` of a String, taken together so the borrow and its

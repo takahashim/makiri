@@ -30,12 +30,10 @@ use magnus::{RString, Value};
 use rb_sys::{rb_encoding, VALUE};
 
 use super::string::{mkr_text_check, MKR_TEXT_HAS_NUL, MKR_TEXT_INVALID_UTF8};
+use crate::glue::abi::{mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, rb_raise};
 
 extern "C" {
-    static mkr_eXmlSyntaxError: VALUE;
-    static mkr_eXmlLimitExceeded: VALUE;
 
-    fn rb_raise(exc: VALUE, fmt: *const c_char, ...) -> !;
     /// Writes `exc`'s message as a C string, falling back to "error". Never
     /// raises - it runs on an error path.
     fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize);
