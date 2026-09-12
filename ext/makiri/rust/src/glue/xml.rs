@@ -62,36 +62,6 @@ struct XPathContext {
     _private: [u8; 0],
 }
 
-/// `mkr_owned_bytes_t`.
-#[repr(C)]
-struct OwnedBytes {
-    ptr: *mut c_char,
-    len: usize,
-}
-
-/// `mkr_ruby_borrowed_text_t`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct BorrowedText {
-    value: VALUE,
-    ptr: *const c_char,
-    len: usize,
-}
-
-/// `mkr_verified_text_t` - the same bytes without the Ruby anchor, which is the
-/// form the engine takes.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct VerifiedText {
-    ptr: *const c_char,
-    len: usize,
-}
-
-impl From<BorrowedText> for VerifiedText {
-    fn from(b: BorrowedText) -> Self {
-        VerifiedText { ptr: b.ptr, len: b.len }
-    }
-}
 
 /// `mkr_css_ns_t` - the default-namespace prefix, or NULL.
 #[repr(C)]
@@ -99,7 +69,8 @@ struct CssNs {
     default_prefix: *const c_char,
 }
 
-use super::abi::{
+use crate::xpath_abi::VerifiedText;
+use super::abi::{mkr_ruby_verified_text, OwnedBytes, RubyText, 
     mkr_cDocument, mkr_cNodeSet, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed,
     mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
     mkr_mXmlNodeMethods, mkr_node_document, mkr_node_set_new, mkr_parsed_xml_doc as parsed_xml_doc,
@@ -112,12 +83,12 @@ unsafe fn mkr_parsed_xml_doc(p: *const c_void) -> *mut XmlDoc {
 }
 
 /// Wrap an XML node, typed.
-unsafe fn mkr_wrap_xml_node(node: *mut XmlNode, document: VALUE) -> VALUE {
+unsafe fn wrap_typed_xml_node(node: *mut XmlNode, document: VALUE) -> VALUE {
     wrap_xml_node(node as *mut c_void, document)
 }
 
 /// The XML node behind a wrapper, typed. Raises for an HTML node.
-unsafe fn mkr_xml_node_unwrap(rb_node: VALUE) -> *mut XmlNode {
+unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> *mut XmlNode {
     xml_node_unwrap(rb_node) as *mut XmlNode
 }
 
@@ -207,11 +178,10 @@ extern "C" {
     /* the node / string bridges */
     fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE;
     fn mkr_ruby_copy_bytes(input: VALUE, out: *mut OwnedBytes) -> c_int;
-    fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> BorrowedText;
     fn mkr_ruby_try_verified_text(
         sv: VALUE,
         max_bytes: usize,
-        out: *mut BorrowedText,
+        out: *mut RubyText,
     ) -> *const c_char;
 
     fn rb_thread_call_without_gvl(
@@ -440,7 +410,7 @@ unsafe fn query_context(rb_self: Value) -> (Value, *mut XmlNode) {
     /* `mkr_xml_node_unwrap` is kind-checked - it raises on a non-XML node - and
      * resolves an XML Document to its document node. */
     let document = Value::from_raw(mkr_node_document(rb_self.as_raw()));
-    (document, mkr_xml_node_unwrap(rb_self.as_raw()))
+    (document, typed_xml_node_unwrap(rb_self.as_raw()))
 }
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.
@@ -471,8 +441,8 @@ unsafe fn register_namespaces(
         let v = h.get(k).unwrap_or_else(|| ruby.qnil().as_value());
         let vs: RString = v.funcall("to_s", ())?;
 
-        let mut pv = BorrowedText { value: 0, ptr: core::ptr::null(), len: 0 };
-        let mut uv = BorrowedText { value: 0, ptr: core::ptr::null(), len: 0 };
+        let mut pv = RubyText { value: 0, ptr: core::ptr::null(), len: 0 };
+        let mut uv = RubyText { value: 0, ptr: core::ptr::null(), len: 0 };
         let mut bad = mkr_ruby_try_verified_text(ks.as_raw(), cap, &mut pv);
         if bad.is_null() {
             bad = mkr_ruby_try_verified_text(vs.as_raw(), cap, &mut uv);
@@ -767,7 +737,7 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() {
             return ruby.qnil().as_value();
         }
-        Value::from_raw(mkr_wrap_xml_node((*xdoc).root, rb_self.as_raw()))
+        Value::from_raw(wrap_typed_xml_node((*xdoc).root, rb_self.as_raw()))
     }
 }
 
@@ -783,7 +753,7 @@ fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() || (*xdoc).doctype.is_null() {
             return ruby.qnil().as_value();
         }
-        Value::from_raw(mkr_wrap_xml_node((*xdoc).doctype, rb_self.as_raw()))
+        Value::from_raw(wrap_typed_xml_node((*xdoc).doctype, rb_self.as_raw()))
     }
 }
 
@@ -851,7 +821,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
         let doc_obj = new_empty_document()?;
         let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(doc_obj.as_raw()));
         let frag = fragment_into(xdoc, source, false)?;
-        Ok(Value::from_raw(mkr_wrap_xml_node(frag, doc_obj.as_raw())))
+        Ok(Value::from_raw(wrap_typed_xml_node(frag, doc_obj.as_raw())))
     }
 }
 
@@ -864,7 +834,7 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
             return Err(Error::new(error_class(), "the document has no arena"));
         }
         let frag = fragment_into(xdoc, source, true)?;
-        Ok(Value::from_raw(mkr_wrap_xml_node(frag, rb_self.as_raw())))
+        Ok(Value::from_raw(wrap_typed_xml_node(frag, rb_self.as_raw())))
     }
 }
 

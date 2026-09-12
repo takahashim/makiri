@@ -3,7 +3,7 @@
 //! dropped by `invalidate` from the single mutation hook.
 
 use crate::falloc;
-use crate::falloc::Reserve;
+use crate::falloc::{MapInsert, Reserve, VecPush};
 use crate::xml::arena::preorder_next;
 use crate::xml::{node_local, node_ns, Doc, Node, T_ELEMENT};
 use core::ffi::{c_char, c_void};
@@ -95,7 +95,7 @@ unsafe fn build(doc: *mut Doc) -> *mut NameIndex {
             }
             match map.get_mut(&key[..]) {
                 Some(v) => {
-                    if !falloc::try_push(v, cur) {
+                    if v.mkr_push(cur).is_err() {
                         return ptr::null_mut();
                     }
                 }
@@ -107,7 +107,7 @@ unsafe fn build(doc: *mut Doc) -> *mut NameIndex {
                         return ptr::null_mut();
                     };
                     first.push(cur);
-                    if !falloc::try_map_insert(&mut map, k, first) {
+                    if map.mkr_insert(k, first).is_err() {
                         return ptr::null_mut();
                     }
                 }

@@ -116,14 +116,20 @@ pub fn try_box_raw<T>(value: T) -> *mut T {
     }
 }
 
-/// The reserve family, as an extension trait.
+/// The fallible container operations, as one extension trait.
 ///
 /// A trait rather than free functions because the call sites already read
-/// `x.try_reserve(n).is_err()`; `x.mkr_reserve(n).is_err()` keeps that shape, so
-/// the diff that made the crate injectable is a one-word change per site and
-/// stays reviewable. The `mkr_` prefix is deliberate: a method named
-/// `try_reserve` would be shadowed by the inherent one silently, which is
-/// exactly the bug this module exists to prevent.
+/// `x.try_reserve(n).is_err()`; `x.mkr_reserve(n).is_err()` keeps that shape.
+/// The `mkr_` prefix is deliberate: a method named `try_reserve` would be
+/// shadowed by the inherent one silently, which is exactly the bug this module
+/// exists to prevent.
+///
+/// Everything that grows a container is here, in one place. There was briefly a
+/// second API - free `try_push` / `try_extend_from_slice` beside these methods -
+/// which left a new call site with two equally-correct ways to spell the same
+/// thing and no reason to pick either. The free functions that remain
+/// (`try_box`, `try_vec_with_capacity`, `try_to_vec`) are constructors, which
+/// have no receiver to hang a method on.
 ///
 /// `clippy.toml` disallows the std methods these wrap, so a new site cannot
 /// quietly go back to allocating outside the sweep.
@@ -133,6 +139,34 @@ pub trait Reserve {
     fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()>;
     /// As `mkr_reserve`, without the growth slack.
     fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()>;
+}
+
+/// Growing a `Vec`, beyond the reserve itself.
+pub trait VecPush<T> {
+    /// Push one element. `Err(())` leaves the vector unchanged.
+    fn mkr_push(&mut self, item: T) -> Result<(), ()>;
+    /// Append a slice. `Err(())` leaves the vector unchanged.
+    fn mkr_extend(&mut self, s: &[T]) -> Result<(), ()>
+    where
+        T: Clone;
+}
+
+impl<T> VecPush<T> for Vec<T> {
+    #[inline]
+    fn mkr_push(&mut self, item: T) -> Result<(), ()> {
+        self.mkr_reserve(1)?;
+        self.push(item);
+        Ok(())
+    }
+    #[inline]
+    fn mkr_extend(&mut self, s: &[T]) -> Result<(), ()>
+    where
+        T: Clone,
+    {
+        self.mkr_reserve(s.len())?;
+        self.extend_from_slice(s);
+        Ok(())
+    }
 }
 
 impl<T> Reserve for Vec<T> {
@@ -184,26 +218,6 @@ impl<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> Reserve for HashSet<T
     }
 }
 
-/// Push one element. False means the allocation failed and `v` is unchanged.
-#[inline]
-pub fn try_push<T>(v: &mut Vec<T>, item: T) -> bool {
-    if v.mkr_reserve(1).is_err() {
-        return false;
-    }
-    v.push(item);
-    true
-}
-
-/// Append a slice. False means the allocation failed and `v` is unchanged.
-#[inline]
-pub fn try_extend_from_slice<T: Clone>(v: &mut Vec<T>, s: &[T]) -> bool {
-    if v.mkr_reserve(s.len()).is_err() {
-        return false;
-    }
-    v.extend_from_slice(s);
-    true
-}
-
 /// A `Vec<T>` with room for `cap` elements, or failure.
 #[inline]
 pub fn try_vec_with_capacity<T>(cap: usize) -> Option<Vec<T>> {
@@ -230,23 +244,20 @@ pub fn try_to_boxed_slice<T: Clone>(s: &[T]) -> Option<Box<[T]>> {
     Some(try_to_vec(s)?.into_boxed_slice())
 }
 
-/// Insert one entry. False means the allocation failed and `m` is unchanged.
-///
-/// The reserve is what can fail; the insert that follows cannot, because the
-/// room is already there. A key that is already present replaces in place and
-/// the spare capacity stays for the next insert, which is harmless.
-#[inline]
-#[allow(clippy::disallowed_methods)]
-pub fn try_map_insert<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher>(
-    m: &mut HashMap<K, V, S>,
-    key: K,
-    value: V,
-) -> bool {
-    if m.mkr_reserve(1).is_err() {
-        return false;
+/// Inserting into a map, beyond the reserve itself.
+pub trait MapInsert<K, V> {
+    /// `Err(())` means the allocation failed and the map is unchanged.
+    fn mkr_insert(&mut self, key: K, value: V) -> Result<(), ()>;
+}
+
+impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> for HashMap<K, V, S> {
+    #[inline]
+    #[allow(clippy::disallowed_methods)]
+    fn mkr_insert(&mut self, key: K, value: V) -> Result<(), ()> {
+        self.mkr_reserve(1)?;
+        self.insert(key, value);
+        Ok(())
     }
-    m.insert(key, value);
-    true
 }
 
 /// Geometric growth for a hand-managed array, restated from the C

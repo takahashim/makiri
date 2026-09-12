@@ -20,29 +20,10 @@ pub use crate::xml::abi::{
     T_FRAGMENT, T_PI, T_TEXT,
 };
 
-/// `mkr_ruby_borrowed_text_t` / `_data_t` - a validated view anchored to the
-/// Ruby String it came from. One layout, and the contract is the difference:
-/// `text` has been checked for valid UTF-8 AND no NUL, `data` for UTF-8 only.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct BorrowedText {
-    pub value: VALUE,
-    pub ptr: *const c_char,
-    pub len: usize,
-}
-
-impl BorrowedText {
-    /// The bytes, or an empty slice when absent.
-    ///
-    /// # Safety
-    /// Valid only while the anchoring String is live and Ruby has not run.
-    pub unsafe fn bytes(&self) -> &[u8] {
-        if self.ptr.is_null() || self.len == 0 {
-            return &[];
-        }
-        core::slice::from_raw_parts(self.ptr as *const u8, self.len)
-    }
-}
+/// The anchored Ruby-String view, from `glue::abi` - one definition for the
+/// whole crate. Aliased rather than re-imported at every use site so the
+/// existing `BorrowedText` spellings in this subtree keep working.
+pub use crate::glue::abi::{mkr_ruby_verified_text, RubyText as BorrowedText};
 
 extern "C" {
     pub static mkr_cXmlNode: VALUE;
@@ -56,8 +37,6 @@ extern "C" {
 
     /// The XML node TypedData type, owned by `glue::node`.
     pub static mkr_xml_node_type: c_void;
-
-    pub fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> BorrowedText;
 
     /// The one byte-level xmlns detector, shared by the parser, the namespace
     /// resolver and this glue - so "is this an xmlns declaration" has a single

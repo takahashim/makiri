@@ -28,40 +28,33 @@ use magnus::encoding::Coderange;
 use magnus::{RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
+/// `mkr_borrowed_text_t` / `mkr_verified_text_t` - the UNANCHORED slice, which
+/// is a different C type from the Ruby-anchored `glue::abi::RubyText` despite
+/// the family resemblance. It had three definitions across the crate; this is
+/// the one name for it.
+pub use crate::xpath_abi::VerifiedText as BorrowedText;
+/// The shared owned buffer.
+pub use crate::glue::abi::OwnedBytes;
+/// The anchored view, from `glue::abi` - one definition for the whole crate.
+/// Its sibling `RubyBorrowedData` below deliberately stays a SEPARATE type: the
+/// lattice's whole job is to make a data-family value reaching an engine input
+/// a type error, and that only works if they are different types.
+pub use crate::glue::abi::RubyText as RubyBorrowedText;
+
 use crate::glue::abi::{mkr_eError, rb_raise};
 
-/* ---- the C layouts (core/mkr_text.h, bridge/bridge.h) ---- */
+/* ---- the C layouts (core/mkr_text.h, bridge/bridge.h) ----
+ *
+ * `mkr_ruby_borrowed_text_t` / `_data_t` / `_bytes_t` share ONE layout and are
+ * three C types. The distinction is the contract, not the shape: `text` has
+ * been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only (the HTML
+ * data family may hold U+0000, like browsers), and `bytes` for nothing at all
+ * (HTML parsing decodes leniently). Keeping them apart is what makes a name or
+ * engine string that took the data path a type error rather than a silent one,
+ * so they stay three types here too - `text` and `bytes` now as the crate-wide
+ * `glue::abi::RubyText` / `RubyBytes`, `data` below. */
 
-/// `mkr_borrowed_text_t` / `mkr_verified_text_t` - an unanchored slice.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct BorrowedText {
-    pub ptr: *const c_char,
-    pub len: usize,
-}
-
-/// `mkr_owned_bytes_t`.
-#[repr(C)]
-pub struct OwnedBytes {
-    pub ptr: *mut c_char,
-    pub len: usize,
-}
-
-/// `mkr_ruby_borrowed_text_t` / `_data_t` / `_bytes_t`.
-///
-/// One layout, three C types. The distinction is the contract, not the shape:
-/// `text` has been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only
-/// (the HTML data family may hold U+0000, like browsers), and `bytes` for
-/// nothing at all (HTML parsing decodes leniently). Keeping them apart is what
-/// makes a name or engine string that took the data path a type error rather
-/// than a silent one, so they stay three types here too.
-#[repr(C)]
-pub struct RubyBorrowedText {
-    pub value: VALUE,
-    pub ptr: *const c_char,
-    pub len: usize,
-}
-
+/// `mkr_ruby_borrowed_data_t`: UTF-8 checked, NUL permitted.
 #[repr(C)]
 pub struct RubyBorrowedData {
     pub value: VALUE,

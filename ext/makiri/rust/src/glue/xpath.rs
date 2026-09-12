@@ -46,7 +46,7 @@ use crate::xpath_abi::{
     XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
 
-use super::abi::{
+use super::abi::{mkr_ruby_verified_text, mkr_xml_node_unwrap, RubyText, 
     error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed, mkr_html_node_unwrap,
     mkr_mHtmlNodeMethods, mkr_node_document, mkr_node_raw, mkr_node_set_new, mkr_node_set_push,
     mkr_parsed_xml_doc,
@@ -106,7 +106,6 @@ extern "C" {
     static mkr_element_index_tag: c_void;
     static mkr_element_index_has_foreign: c_void;
     fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut c_void;
-    fn mkr_xml_node_unwrap(v: VALUE) -> *mut c_void;
 
     fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut XPathError) -> *mut Ast;
     fn mkr_node_free(ast: *mut Ast);
@@ -147,8 +146,6 @@ extern "C" {
         err: *mut XPathError,
         what: *const c_char,
     ) -> c_int;
-
-    fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> RubyText;
     fn mkr_ruby_try_verified_text(
         sv: VALUE,
         max_bytes: usize,
@@ -157,20 +154,6 @@ extern "C" {
     fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize);
 }
 
-/// `mkr_ruby_borrowed_text_t`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct RubyText {
-    value: VALUE,
-    ptr: *const c_char,
-    len: usize,
-}
-
-impl From<RubyText> for VerifiedText {
-    fn from(t: RubyText) -> Self {
-        VerifiedText { ptr: t.ptr, len: t.len }
-    }
-}
 
 /* ------------------------------------------------------------------ */
 /* result + error mapping                                             */

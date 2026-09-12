@@ -5,9 +5,17 @@
 //! notes/rust_port_remaining.ja.md step 5 for why generated rather than
 //! hand-written, and for what this does not remove.
 
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+/// The generated bindings, with the blanket allows scoped to THEM.
+///
+/// They were on the whole module, which meant the hand-written parts below -
+/// `consts`, the agreement checks - were also exempt from dead-code and naming
+/// lints they should not be.
+mod sys {
+    #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+    include!(concat!(env!("OUT_DIR"), "/lexbor_sys.rs"));
+}
 
-include!(concat!(env!("OUT_DIR"), "/lexbor_sys.rs"));
+pub use sys::*;
 
 /// Makiri's own C enums, generated for the same reason Lexbor's are - see
 /// `generate_makiri_enums` in build.rs.
@@ -107,21 +115,8 @@ mod agree {
     same_offset!(Attr, lxb_dom_attr_t, prev, "attr");
 }
 
-/// The constants the engine compares against, checked the same way.
-///
-/// This is not hypothetical care: `LXB_NS_HTML` is 2, and a hand-written 1 made
-/// every HTML element foreign, so every unprefixed name test matched nothing.
-/// Nothing about that fails to compile or crashes - it just answers wrongly.
-#[cfg(feature = "xpath-html")]
-mod agree_consts {
-    use crate::xpath::html_abi::{NS_HTML, NS_UNDEF};
-
-    const _: () = assert!(
-        NS_HTML as u64 == super::lxb_ns_id_enum_t_LXB_NS_HTML as u64,
-        "LXB_NS_HTML disagrees with the header"
-    );
-    const _: () = assert!(
-        NS_UNDEF as u64 == super::lxb_ns_id_enum_t_LXB_NS__UNDEF as u64,
-        "LXB_NS__UNDEF disagrees with the header"
-    );
-}
+/* The namespace constants used to be hand-written in `xpath/html_abi.rs` and
+ * checked here. They are now derived from the generated enum directly, so there
+ * is nothing left to disagree - the check was removed rather than kept as
+ * decoration. The layout checks above remain, because a hand-written struct
+ * view is still what the engine's hot paths read. */

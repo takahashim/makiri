@@ -76,18 +76,22 @@ pub struct Document {
 
 /* ---- the Lexbor constants the engine compares against ----
  *
- * Restated here rather than read from C so the hot comparisons stay immediate
- * values, and checked below for the same reason the offsets are: a generated
- * constant that moves with the pin would otherwise change the answer silently.
- * (It already did once - LXB_NS_HTML is 2, and guessing 1 made every HTML
- * element foreign, so every unprefixed name test matched nothing.) */
-pub const NS_UNDEF: usize = 0x00;
-pub const NS_HTML: usize = 0x02;
+ * Generated, not restated. These were hand-written with a const-assert against
+ * the header, on the reasoning that the hot comparisons should stay immediate
+ * values - which a generated `pub const` also is, so the reasoning was simply
+ * wrong and the assert was guarding a copy that need not have existed.
+ *
+ * The incident it was guarding against is real and worth remembering:
+ * LXB_NS_HTML is 2, and a hand-written 1 made every HTML element foreign, so
+ * every unprefixed name test matched nothing - silently. Deriving the value
+ * removes the class rather than checking for it. */
+pub const NS_UNDEF: usize = crate::lexbor_abi::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
+pub const NS_HTML: usize = crate::lexbor_abi::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 
 /// `LXB_TAG__UNDEF`. A custom element's tag id is a pointer value, far above
 /// the static range the index buckets, so it is compared against
 /// `TAG_LAST_ENTRY` rather than this.
-pub const TAG_UNDEF: usize = 0;
+pub const TAG_UNDEF: usize = crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize;
 
 extern "C" {
     /* Lexbor's exported accessors. */

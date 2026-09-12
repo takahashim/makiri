@@ -101,6 +101,12 @@ fn main() {
         // is added. Hence Consts below, which puts every constant at the top
         // level under the name it has in C.
         .allowlist_item("LXB_CSS_AT_RULE_.*")
+        // The status codes: the enum is typedef'd `lexbor_status_t`, so the
+        // TYPE is what allowlists it - allowlisting the constant names matches
+        // nothing (the same trap as lxb_ns_id_enum_t).
+        .allowlist_type("lexbor_status_t")
+        .allowlist_type("lxb_html_serialize_opt")
+        .allowlist_type("lxb_tag_id_enum_t")
         // NOT lxb_css_parser_create/init/destroy: glue/css.rs already
         // declares those over an OPAQUE parser, which is the right shape (the
         // selector engine reads no field of it). Generating them here as well

@@ -35,17 +35,16 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Symbol, Value};
-use rb_sys::VALUE;
 
-use crate::falloc;
+use crate::falloc::{self, VecPush};
 use crate::lexbor_abi::consts as k;
 use crate::lexbor_abi as lxb;
 
-use super::abi::{
+use super::abi::{mkr_ruby_verified_text, 
     error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, mkr_mLexbor,
     CssParser,
 };
@@ -84,7 +83,10 @@ enum Rule {
 enum Fail {
     Oom,
     TooDeep,
-    Parser,
+    /// A Lexbor serializer returned non-OK. Named for what it is: the parser
+    /// itself never fails this way - Lexbor recovers from CSS syntax errors and
+    /// still returns OK, which is why there is no syntax variant.
+    Serialize,
 }
 
 /* ---- serialization ---- */
@@ -100,7 +102,7 @@ unsafe extern "C" fn ser_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u3
     let s = &mut *(ctx as *mut Ser);
     if len != 0 && !data.is_null() {
         let bytes = core::slice::from_raw_parts(data, len);
-        if !falloc::try_extend_from_slice(&mut s.buf, bytes) {
+        if s.buf.mkr_extend(bytes).is_err() {
             s.oom = true;
             return 1; /* any non-OK status stops the serializer */
         }
@@ -125,7 +127,7 @@ unsafe fn serialize_with(
     }
     if st != 0 {
         *scratch = s.buf;
-        return Err(Fail::Parser);
+        return Err(Fail::Serialize);
     }
     let out = match falloc::try_to_vec(&s.buf) {
         Some(v) => v,
@@ -190,7 +192,7 @@ unsafe fn declarations(
                 )
             })?;
 
-            if !falloc::try_push(&mut out, Decl { name, value, important: (*decl).important }) {
+            if out.mkr_push(Decl { name, value, important: (*decl).important }).is_err() {
                 return Err(Fail::Oom);
             }
         }
@@ -217,7 +219,7 @@ unsafe fn selectors(
             )
         })?;
         let sp = specificity((*l).specificity);
-        if !falloc::try_push(&mut out, Selector { text, specificity: sp }) {
+        if out.mkr_push(Selector { text, specificity: sp }).is_err() {
             return Err(Fail::Oom);
         }
         l = (*l).next;
@@ -353,7 +355,7 @@ unsafe fn rules(
             _ => None,
         };
         if let Some(e) = entry {
-            if !falloc::try_push(&mut out, e) {
+            if out.mkr_push(e).is_err() {
                 return Err(Fail::Oom);
             }
         }
@@ -473,20 +475,6 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
  * entry point                                                        *
  * ------------------------------------------------------------------ */
 
-extern "C" {
-    /// The strict text contract (bridge/ruby_string.c): raises on invalid UTF-8
-    /// or an embedded NUL, and returns a borrowed view.
-    fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> BorrowedText;
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct BorrowedText {
-    value: VALUE,
-    ptr: *const c_char,
-    len: usize,
-}
-
 /// Owns the parser and stylesheet for the length of phase one.
 ///
 /// A `Drop` guard is sound HERE, unlike in the C's arrangement, precisely
@@ -568,7 +556,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
                         format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
                     ))
                 }
-                Err(Fail::Parser) => return Err(err("failed to serialize CSS")),
+                Err(Fail::Serialize) => return Err(err("failed to serialize CSS")),
             }
         }
     };

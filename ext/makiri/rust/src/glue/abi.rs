@@ -6,7 +6,7 @@
 //! types, so a ported feature reads both from C. As more of the glue moves,
 //! entries leave this file rather than accumulate in it.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_int, c_char, c_void};
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{ExceptionClass, RModule, Value};
@@ -35,11 +35,14 @@ pub struct NodeData {
 /// there is only one definition to be wrong.
 pub type LxbNode = crate::lexbor_abi::lxb_dom_node_t;
 
-pub const LXB_STATUS_OK: u32 = 0x0000;
-pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 = 0x0002;
+/* Every Lexbor constant below comes from the generated bindings, none is
+ * transcribed. The names are re-exported here rather than used through
+ * `lexbor_abi` at the call sites only because these particular ones are spelled
+ * this way throughout the glue; `lexbor_abi::consts` is where a NEW one goes. */
+pub const LXB_STATUS_OK: u32 = crate::lexbor_abi::lexbor_status_t_LXB_STATUS_OK;
+pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 =
+    crate::lexbor_abi::lexbor_status_t_LXB_STATUS_ERROR_MEMORY_ALLOCATION;
 
-/// From the generated enum, not transcribed. `lexbor_abi::consts` carries the
-/// rest; these three keep their historical names because call sites use them.
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
@@ -47,8 +50,104 @@ pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
-/// `LXB_HTML_SERIALIZE_OPT_UNDEF`.
-pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 = 0x00;
+pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 = crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;
+
+/* ------------------------------------------------------------------ *
+ * The Ruby-string views, declared HERE, once                         *
+ * ------------------------------------------------------------------ */
+
+/* These were defined five times between them, and not always as the same C
+ * type: `BorrowedText` meant the ANCHORED three-field `mkr_ruby_borrowed_text_t`
+ * in four files and the unanchored two-field `mkr_verified_text_t` in a fifth.
+ * Two distinct C types under one Rust name is worse than a duplicate - it is how
+ * a caller reaches for the wrong one and gets a layout that happens to compile.
+ * So the names below say which C type they are, and the unanchored one keeps its
+ * existing home in `crate::xpath_abi::VerifiedText` rather than gaining a
+ * fourth alias. */
+
+/// `mkr_ruby_borrowed_text_t`: bytes borrowed from a Ruby String, with the
+/// String itself so it stays alive while the view is on the stack.
+///
+/// The contract is "valid UTF-8, no NUL" and `ptr` is NUL-terminated, so it also
+/// works as a C string. Layout-identical to [`RubyBytes`]; they are separate
+/// types because the CONTRACT differs, which is the only thing that stops a
+/// data-family value from reaching an engine input.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RubyText {
+    pub value: VALUE,
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+impl RubyText {
+    /// The bytes, or an empty slice when absent.
+    ///
+    /// # Safety
+    /// Valid only while the anchoring String is live and Ruby has not run.
+    pub unsafe fn bytes(&self) -> &[u8] {
+        if self.ptr.is_null() || self.len == 0 {
+            return &[];
+        }
+        core::slice::from_raw_parts(self.ptr as *const u8, self.len)
+    }
+}
+
+
+/// Dropping the Ruby anchor: the engine takes the unanchored form, and the
+/// caller is responsible for keeping the String alive across the call.
+impl From<RubyText> for crate::xpath_abi::VerifiedText {
+    fn from(b: RubyText) -> Self {
+        crate::xpath_abi::VerifiedText { ptr: b.ptr, len: b.len }
+    }
+}
+
+/// `mkr_ruby_borrowed_bytes_t`: the same shape as [`RubyText`] with a weaker
+/// contract - any bytes, not necessarily UTF-8 or NUL-free.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct RubyBytes {
+    pub value: VALUE,
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+impl RubyBytes {
+    /// # Safety
+    /// Valid only while the anchoring String is live and Ruby has not run.
+    pub unsafe fn bytes(&self) -> &[u8] {
+        if self.ptr.is_null() || self.len == 0 {
+            return &[];
+        }
+        core::slice::from_raw_parts(self.ptr as *const u8, self.len)
+    }
+}
+
+/// `mkr_owned_bytes_t`: a heap buffer this side owns.
+#[repr(C)]
+pub struct OwnedBytes {
+    pub ptr: *mut c_char,
+    pub len: usize,
+}
+
+impl OwnedBytes {
+    pub const fn empty() -> OwnedBytes {
+        OwnedBytes { ptr: core::ptr::null_mut(), len: 0 }
+    }
+
+    /// `mkr_owned_bytes_clear`, which is `static inline` in C and therefore has
+    /// no symbol to call.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live `malloc` allocation.
+    pub unsafe fn clear(&mut self) {
+        if !self.ptr.is_null() {
+            crate::glue::abi::libc_free(self.ptr as *mut c_void);
+        }
+        self.ptr = core::ptr::null_mut();
+        self.len = 0;
+    }
+}
 
 /* Every symbol the glue shares with C is declared HERE, once.
  *
@@ -63,6 +162,10 @@ pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 = 0x00;
  * representation-opaque (the C calls it `mkr_raw_node_t`), and each caller casts
  * to the representation it has already established. */
 extern "C" {
+    /// libc `free`, for buffers C handed us that C's own allocator owns.
+    #[link_name = "free"]
+    pub fn libc_free(p: *mut c_void);
+
     /* The class, module and exception `VALUE`s Init_makiri defines (makiri.c). */
     pub static mkr_mHtmlNodeMethods: VALUE;
     pub static mkr_mXmlNodeMethods: VALUE;
@@ -108,6 +211,16 @@ extern "C" {
 
     /// Enforce the strict text contract, naming `what`. **Raises.**
     pub fn mkr_verify_text(str: VALUE, what: *const c_char);
+    /// The same contract, returning the anchored view. **Raises.**
+    pub fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> RubyText;
+
+    /* The text-input contract's other half (bridge/ruby_string.c): honour the
+     * String's encoding, and read its cached coderange without forcing a scan.
+     * Both the document parse and the fragment decode need them. */
+    pub fn mkr_ruby_to_utf8(v: VALUE) -> VALUE;
+    pub fn mkr_ruby_str_known_valid_utf8(v: VALUE) -> bool;
+    pub fn mkr_ruby_bytes_view(v: VALUE) -> RubyBytes;
+    pub fn mkr_ruby_copy_bytes(v: VALUE, out: *mut OwnedBytes) -> c_int;
 
     /// Variadic, so callable but not definable from Rust. It longjmps, so no
     /// Rust destructor may be live at the call (see the module docs).
@@ -258,47 +371,78 @@ mod agree {
     #![allow(unused_imports)]
     use super::*;
 
+    /// The constant is NAMED after the symbol, so a mismatch reads
+    /// `const mkr_doc_parsed: unsafe extern "C" fn(...)` and says which one.
+    /// The first version took the name and never used it: the check was real,
+    /// the message was a line number, and the commit that added it claimed the
+    /// symbol was named. Naming it is the whole point of having the check say
+    /// anything at all.
     macro_rules! same_signature {
-        ($ty:ty, $def:path, $what:literal) => {
-            const _: $ty = $def;
+        ($sym:ident, $path:path, $ty:ty) => {
+            #[allow(non_upper_case_globals, dead_code)]
+            const $sym: $ty = {
+                let f: $ty = $path;
+                f
+            };
         };
     }
 
     #[cfg(feature = "glue-doc")]
     same_signature!(
-        unsafe extern "C" fn(VALUE) -> *mut c_void,
+        mkr_doc_parsed,
         crate::glue::doc::mkr_doc_parsed,
-        "mkr_doc_parsed"
+        unsafe extern "C" fn(VALUE) -> *mut c_void
+    );
+    #[cfg(feature = "glue-doc")]
+    same_signature!(
+        mkr_wrap_document,
+        crate::glue::doc::mkr_wrap_document,
+        unsafe extern "C" fn(*mut c_void) -> VALUE
     );
 
     #[cfg(feature = "glue-node")]
     same_signature!(
-        unsafe extern "C" fn(VALUE) -> VALUE,
+        mkr_node_document,
         crate::glue::node::mkr_node_document,
-        "mkr_node_document"
+        unsafe extern "C" fn(VALUE) -> VALUE
     );
     #[cfg(feature = "glue-node")]
     same_signature!(
-        unsafe extern "C" fn(VALUE) -> *mut c_void,
+        mkr_node_raw,
         crate::glue::node::mkr_node_raw,
-        "mkr_node_raw"
+        unsafe extern "C" fn(VALUE) -> *mut c_void
     );
+
     #[cfg(feature = "glue-node-set")]
     same_signature!(
-        unsafe extern "C" fn(VALUE) -> VALUE,
+        mkr_node_set_new,
         crate::glue::node_set::mkr_node_set_new,
-        "mkr_node_set_new"
+        unsafe extern "C" fn(VALUE) -> VALUE
     );
     #[cfg(feature = "glue-node-set")]
     same_signature!(
-        unsafe extern "C" fn(VALUE, *mut c_void),
+        mkr_node_set_push,
         crate::glue::node_set::mkr_node_set_push,
-        "mkr_node_set_push"
+        unsafe extern "C" fn(VALUE, *mut c_void)
+    );
+
+    #[cfg(feature = "bridge-string")]
+    same_signature!(
+        mkr_verify_text,
+        crate::bridge::string::mkr_verify_text,
+        unsafe extern "C" fn(VALUE, *const c_char)
     );
     #[cfg(feature = "bridge-string")]
     same_signature!(
-        unsafe extern "C" fn(VALUE, *const c_char),
-        crate::bridge::string::mkr_verify_text,
-        "mkr_verify_text"
+        mkr_ruby_verified_text,
+        crate::bridge::string::mkr_ruby_verified_text,
+        unsafe extern "C" fn(VALUE, *const c_char) -> RubyText
+    );
+
+    #[cfg(feature = "glue-xml-node-read")]
+    same_signature!(
+        mkr_xml_node_unwrap,
+        crate::glue::xml_node::mkr_xml_node_unwrap,
+        unsafe extern "C" fn(VALUE) -> *mut c_void
     );
 }
