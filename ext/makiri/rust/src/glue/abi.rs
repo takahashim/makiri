@@ -211,6 +211,22 @@ extern "C" {
     /// The parsed-document handle behind a Document, and its XML arena.
     pub fn mkr_doc_parsed(rb_doc: VALUE) -> *mut c_void;
 
+    /* The element index's two hooks (dom_adapter/dom_index.c, or its Rust
+     * port). The XPath context takes them as FUNCTION POINTERS, so what the
+     * caller needs is their address - which an `extern static c_void` also
+     * provides, and glue::xpath used to get them that way. That worked only
+     * while the definition was C: once `dom_index.rs` defined them with
+     * `#[no_mangle]`, the crate had one symbol as both a static and a function
+     * and rustc renamed one to `mkr_element_index_tag.1`, leaving an undefined
+     * symbol in the extension. `rake symbols` is what caught it. Declared once,
+     * with the real signature, and checked against the definition below. */
+    pub fn mkr_element_index_tag(
+        idx: *const c_void,
+        tag_id: usize,
+        count: *mut usize,
+    ) -> *const *mut LxbNode;
+    pub fn mkr_element_index_has_foreign(idx: *const c_void) -> c_int;
+
     /// The `lxb_dom_document_t` behind an HTML Document. Raises TypeError for
     /// an XML one - the TypedData check is Ruby's own type machinery.
     ///
@@ -492,6 +508,19 @@ mod agree {
         mkr_xml_node_unwrap,
         crate::glue::xml_node::mkr_xml_node_unwrap,
         unsafe extern "C" fn(VALUE) -> *mut c_void
+    );
+
+    #[cfg(feature = "dom-index")]
+    same_signature!(
+        mkr_element_index_tag,
+        crate::dom_adapter::dom_index::mkr_element_index_tag,
+        unsafe extern "C" fn(*const c_void, usize, *mut usize) -> *const *mut LxbNode
+    );
+    #[cfg(feature = "dom-index")]
+    same_signature!(
+        mkr_element_index_has_foreign,
+        crate::dom_adapter::dom_index::mkr_element_index_has_foreign,
+        unsafe extern "C" fn(*const c_void) -> c_int
     );
 
     #[cfg(feature = "glue-html-node")]

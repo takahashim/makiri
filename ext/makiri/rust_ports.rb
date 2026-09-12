@@ -60,6 +60,8 @@ module RustPorts
     srcs: %w[dom_adapter/utf8_input.c] },
   { env: "MAKIRI_RUST_DOM_TEXT_INDEX",      feature: "dom-text-index",
     srcs: %w[dom_adapter/text_index.c] },
+  { env: "MAKIRI_RUST_DOM_INDEX",           feature: "dom-index",
+    srcs: %w[dom_adapter/dom_index.c] },
   # The XPath FRONT END is one feature over three files, and it is also implied
   # by every xpath-* row above (see rust_xpath below).
   { env: "MAKIRI_RUST_XPATH",               feature: "xpath",

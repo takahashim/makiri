@@ -4,6 +4,8 @@
 //! attribute->owner index, source locations, the text index, cross-import, and
 //! the input sanitiser. Each file moves behind its own `MAKIRI_RUST_DOM_*` flag.
 
+#[cfg(feature = "dom-index")]
+pub mod dom_index;
 #[cfg(feature = "dom-text-index")]
 pub mod text_index;
 #[cfg(feature = "dom-utf8-input")]

@@ -117,6 +117,9 @@ dom-utf8-input = ["dom-adapter"]
 # dom_adapter/text_index.c - the per-document text-extraction index. Reads
 # Lexbor's node and character-data layout, so it needs the generated ABI.
 dom-text-index = ["dom-adapter", "lexbor-abi"]
+# dom_adapter/dom_index.c - the attr->owner hash and the tag->elements CSR, one
+# object because they share a walk.
+dom-index = ["dom-adapter", "lexbor-abi"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

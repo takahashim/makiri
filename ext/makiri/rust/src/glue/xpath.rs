@@ -103,8 +103,6 @@ extern "C" {
     fn mkr_parsed_kind(p: *const c_void) -> c_int;
     fn mkr_parsed_dom_index_build(p: *mut c_void) -> c_int;
     fn mkr_parsed_element_index(p: *mut c_void) -> *mut c_void;
-    static mkr_element_index_tag: c_void;
-    static mkr_element_index_has_foreign: c_void;
 
     fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut XPathError) -> *mut Ast;
     fn mkr_node_free(ast: *mut Ast);
@@ -391,8 +389,8 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
     mkr_xpath_context_set_element_index(
         ctx,
         mkr_parsed_element_index(parsed),
-        &mkr_element_index_tag as *const c_void,
-        &mkr_element_index_has_foreign as *const c_void,
+        crate::glue::abi::mkr_element_index_tag as *const c_void,
+        crate::glue::abi::mkr_element_index_has_foreign as *const c_void,
     );
     Ok(ctx)
 }
