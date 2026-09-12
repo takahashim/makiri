@@ -1,9 +1,9 @@
 /* ruby_xml_node_internal.h - shared between the two halves of the XML node glue.
  *
- * ruby_xml_node.c was 2,002 lines holding two separable concerns: reading the
- * tree, and writing to it (serialization, canonicalization, mutation,
- * factories). They are split so each can be replaced by its Rust port on its
- * own - a regression is only bisectable if each half can be swapped alone.
+ * ruby_xml_node.c was 2,002 lines holding three separable concerns: reading the
+ * tree, turning it back into text, and changing it. They are split so each can
+ * be replaced by its Rust port on its own - a regression is only bisectable if
+ * each part can be swapped alone.
  *
  * The boundary is one-directional: the readers use nothing from the writers.
  * Exactly two functions cross the other way and so are no longer static; the
@@ -24,8 +24,9 @@ VALUE mkr_xml_node_document(VALUE self);
 /* Wrap a node reached from +self+, under +self+'s Document. */
 VALUE mkr_xml_wrap_rel(VALUE self, mkr_xml_node_t *rel);
 
-/* The reader half's registrations; called by mkr_init_xml_node. */
+/* Each half's registrations; called by mkr_init_xml_node. */
 void mkr_init_xml_node_read(void);
+void mkr_init_xml_node_serialize(void);
 
 #ifdef __cplusplus
 }
