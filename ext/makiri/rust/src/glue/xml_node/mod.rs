@@ -16,6 +16,8 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod abi;
+#[cfg(feature = "glue-xml-node-mutate")]
+pub mod mutate;
 pub mod ns;
 pub mod read;
 
@@ -109,10 +111,15 @@ pub unsafe extern "C" fn mkr_xml_node_document(rb_self: VALUE) -> VALUE {
 }
 
 /// Wrap a node reached from `rb_self`, under `rb_self`'s Document. One of the
-/// two functions the writing half still calls.
+/// two functions the still-C serialization half calls.
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xml_wrap_rel(rb_self: VALUE, rel: *mut Node) -> VALUE {
     mkr_wrap_xml_node(rel as *mut c_void, mkr_xml_node_document(rb_self))
+}
+
+/// The same, in Rust terms.
+pub unsafe fn mkr_xml_wrap_rel_value(rb_self: Value, rel: *mut Node) -> Value {
+    Value::from_raw(mkr_xml_wrap_rel(rb_self.as_raw(), rel))
 }
 
 /* ---- the Rust-side conveniences the submodules use ---- */
@@ -244,4 +251,85 @@ pub unsafe extern "C" fn mkr_init_xml_node_read() {
     dt.define_method("system_id", method!(read::dtd_system_id, 0)).expect("#system_id");
 
     let _ = (mkr_cDocument, mkr_cNodeSet);
+}
+
+/// `mkr_init_xml_node` - the whole XML node surface, once the mutation half is
+/// Rust too. Until then `glue/ruby_xml_node.c` provides it and calls the reader
+/// half's entry point above.
+///
+/// # Safety
+/// From `Init_makiri`.
+#[cfg(feature = "glue-xml-node-mutate")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_init_xml_node() {
+    /* Serialization (#to_xml / #canonicalize, and the refused HTML ones) is
+     * still C: ruby_xml_node_serialize.c. */
+    mkr_init_xml_node_serialize();
+    mkr_init_xml_node_read();
+
+    let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
+        .expect("Makiri::XML::NodeMethods");
+    let doc = RClass::from_value(Value::from_raw(mkr_cXmlDocument)).expect("XML::Document");
+
+    /* In-place edits. Detach-never-destroy; the primitives live in
+     * xml/mkr_xml_mutate.c. */
+    for name in ["remove", "unlink"] {
+        m.define_method(name, method!(mutate::remove, 0)).expect("#remove");
+    }
+    m.define_method("[]=", method!(mutate::aset, 2)).expect("#[]=");
+    for name in ["delete", "remove_attribute"] {
+        m.define_method(name, method!(mutate::delete, 1)).expect("#delete");
+    }
+    m.define_method("set_attribute_ns", method!(mutate::set_attribute_ns, 3))
+        .expect("#set_attribute_ns");
+    m.define_method("remove_attribute_ns", method!(mutate::remove_attribute_ns, 2))
+        .expect("#remove_attribute_ns");
+    m.define_method("content=", method!(mutate::set_content, 1)).expect("#content=");
+    m.define_method("name=", method!(mutate::set_name, 1)).expect("#name=");
+
+    /* Building. Insertion accepts a single Makiri::XML node; one from another
+     * document is deep-copied into this one. */
+    m.define_method("add_child", method!(mutate::add_child, 1)).expect("#add_child");
+    m.define_method("<<", method!(mutate::lshift, 1)).expect("#<<");
+    for name in ["add_previous_sibling", "before"] {
+        m.define_method(name, method!(mutate::before, 1)).expect("#before");
+    }
+    for name in ["add_next_sibling", "after"] {
+        m.define_method(name, method!(mutate::after, 1)).expect("#after");
+    }
+    m.define_method("replace", method!(mutate::replace, 1)).expect("#replace");
+
+    /* Document factories. The node-class .new constructors and Document#root=
+     * are pure delegations to these, defined once in the Ruby layer. */
+    doc.define_method("create_element", method!(mutate::create_element, -1))
+        .expect("#create_element");
+    doc.define_method(
+        "create_loose_dom_element",
+        method!(mutate::create_loose_dom_element, 4),
+    )
+    .expect("#create_loose_dom_element");
+    doc.define_method("create_document_type", method!(mutate::create_document_type, -1))
+        .expect("#create_document_type");
+    doc.define_method("create_text_node", method!(mutate::create_text_node, 1))
+        .expect("#create_text_node");
+    doc.define_method("create_comment", method!(mutate::create_comment, 1))
+        .expect("#create_comment");
+    for name in ["create_cdata", "create_cdata_node"] {
+        doc.define_method(name, method!(mutate::create_cdata, 1)).expect("#create_cdata");
+    }
+    doc.define_method(
+        "create_processing_instruction",
+        method!(mutate::create_pi, 2),
+    )
+    .expect("#create_processing_instruction");
+    doc.define_method("import_node", method!(mutate::import_node, -1))
+        .expect("#import_node");
+
+    m.define_method("clone_node", method!(mutate::clone_node, -1)).expect("#clone_node");
+}
+
+#[cfg(feature = "glue-xml-node-mutate")]
+extern "C" {
+    /// Still C (glue/ruby_xml_node_serialize.c).
+    fn mkr_init_xml_node_serialize();
 }

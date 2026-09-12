@@ -64,6 +64,10 @@ glue-xml = ["glue"]
 # (serialization, canonicalization, mutation, factories) is still C; the two were
 # split so each could move on its own.
 glue-xml-node-read = ["glue"]
+# glue/ruby_xml_node.c - the mutation and factory half. It provides
+# mkr_init_xml_node, so it implies the reader half (whose entry point that
+# function calls).
+glue-xml-node-mutate = ["glue", "glue-xml-node-read"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

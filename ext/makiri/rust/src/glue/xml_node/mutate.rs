@@ -1,0 +1,849 @@
+//! Changing an XML tree: the in-place edits, the insertion verbs, and the
+//! document factories (glue/ruby_xml_node.c).
+//!
+//! This is only the Ruby boundary. The rules - name well-formedness, the XML
+//! character class, namespace resolution, what may be a child of what - live in
+//! the Ruby-free primitives of `xml/mkr_xml_mutate.c`; this layer coerces and
+//! verifies arguments through the bridge and maps the resulting status to a Ruby
+//! exception.
+//!
+//! **Detach, never destroy.** A removed node is unlinked, not freed, so a live
+//! Ruby wrapper for it stays valid. The arena owns the memory and outlives every
+//! wrapper through the Document.
+//!
+//! Unlike the HTML side there is no attr or text index to invalidate, but there
+//! is an element-name index, and [`unwrap_mutable`] is the single choke point
+//! every mutator goes through - so dropping it cannot be forgotten in one path.
+
+use magnus::rb_sys::AsRawValue;
+use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
+use rb_sys::VALUE;
+
+use super::abi::*;
+use super::{node_document, unwrap, wrap};
+use crate::glue::abi::{mkr_cNode, mkr_doc_parsed, mkr_html_node_unwrap, mkr_parsed_xml_doc};
+
+/// `mkr_xml_mut_status_t`.
+type MutStatus = core::ffi::c_int;
+
+/// `mkr_xml_qname_t` - a qualified name already split into its parts.
+#[repr(C)]
+struct QName {
+    qname: *const core::ffi::c_char,
+    qname_len: u32,
+    prefix: *const core::ffi::c_char,
+    prefix_len: u32,
+    local: *const core::ffi::c_char,
+    local_len: u32,
+}
+
+/// `mkr_node_kind_t`.
+const KIND_HTML: core::ffi::c_int = 1;
+const KIND_XML: core::ffi::c_int = 2;
+
+/* `mkr_xml_mut_status_t`, in the header's order. Restating an enum is how two
+ * constants went wrong in glue/xml.rs, so these are checked against
+ * xml/mkr_xml_mutate.h rather than inferred, and there is exactly one arm per
+ * value below - a new status added to the header makes `status_message` fall
+ * through to "unknown", which raises rather than silently succeeding. */
+const MUT_OK: MutStatus = 0;
+const MUT_OOM: MutStatus = 1;
+const MUT_BAD_NAME: MutStatus = 2;
+const MUT_BAD_CHARS: MutStatus = 3;
+const MUT_UNBOUND_NS: MutStatus = 4;
+const MUT_TYPE: MutStatus = 5;
+const MUT_CYCLE: MutStatus = 6;
+const MUT_HIERARCHY: MutStatus = 7;
+const MUT_BAD_NS_DECL: MutStatus = 8;
+
+extern "C" {
+    static rb_eArgError: VALUE;
+    fn mkr_xml_name_index_invalidate(doc: *mut XmlDoc);
+
+    fn mkr_xml_remove(doc: *mut XmlDoc, node: *mut Node);
+    fn mkr_xml_set_attribute(
+        doc: *mut XmlDoc,
+        el: *mut Node,
+        name: *const core::ffi::c_char,
+        nlen: u32,
+        val: *const core::ffi::c_char,
+        vlen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_set_attribute_ns(
+        doc: *mut XmlDoc,
+        el: *mut Node,
+        ns: *const core::ffi::c_char,
+        nslen: u32,
+        name: *const core::ffi::c_char,
+        nlen: u32,
+        val: *const core::ffi::c_char,
+        vlen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_remove_attribute(el: *mut Node, name: *const core::ffi::c_char, nlen: u32) -> i32;
+    fn mkr_xml_remove_attribute_ns(
+        el: *mut Node,
+        ns: *const core::ffi::c_char,
+        nslen: u32,
+        local: *const core::ffi::c_char,
+        llen: u32,
+    ) -> i32;
+    fn mkr_xml_set_content(
+        doc: *mut XmlDoc,
+        node: *mut Node,
+        text: *const core::ffi::c_char,
+        tlen: u32,
+    ) -> MutStatus;
+    fn mkr_xml_rename(
+        doc: *mut XmlDoc,
+        node: *mut Node,
+        name: *const core::ffi::c_char,
+        nlen: u32,
+    ) -> MutStatus;
+
+    fn mkr_xml_import_subtree(
+        doc: *mut XmlDoc,
+        src: *const Node,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_copy_node(
+        doc: *mut XmlDoc,
+        src: *const Node,
+        deep: i32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_clone_node(
+        doc: *mut XmlDoc,
+        src: *const Node,
+        deep: i32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+
+    fn mkr_xml_insert_child(doc: *mut XmlDoc, parent: *mut Node, node: *mut Node) -> MutStatus;
+    fn mkr_xml_insert_before(doc: *mut XmlDoc, r: *mut Node, node: *mut Node) -> MutStatus;
+    fn mkr_xml_insert_after(doc: *mut XmlDoc, r: *mut Node, node: *mut Node) -> MutStatus;
+    fn mkr_xml_replace_node(doc: *mut XmlDoc, r: *mut Node, node: *mut Node) -> MutStatus;
+    fn mkr_xml_replace_with_fragment(
+        doc: *mut XmlDoc,
+        target: *mut Node,
+        frag: *mut Node,
+    ) -> MutStatus;
+
+    fn mkr_xml_new_element(
+        doc: *mut XmlDoc,
+        name: *const core::ffi::c_char,
+        nlen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_new_loose_dom_element(
+        doc: *mut XmlDoc,
+        qn: *const QName,
+        ns: *const core::ffi::c_char,
+        nslen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_new_document_type(
+        doc: *mut XmlDoc,
+        name: *const core::ffi::c_char,
+        nlen: u32,
+        pub_: *const core::ffi::c_char,
+        plen: u32,
+        sys: *const core::ffi::c_char,
+        slen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_new_chardata(
+        doc: *mut XmlDoc,
+        type_: u8,
+        text: *const core::ffi::c_char,
+        tlen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+    fn mkr_xml_new_pi(
+        doc: *mut XmlDoc,
+        target: *const core::ffi::c_char,
+        tlen: u32,
+        data: *const core::ffi::c_char,
+        dlen: u32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+
+    /// Which representation a wrapped node is, by its TypedData type.
+    fn mkr_node_kind(v: VALUE) -> core::ffi::c_int;
+    fn mkr_cross_html_to_xml(
+        xdoc: *mut XmlDoc,
+        src: *mut core::ffi::c_void,
+        deep: i32,
+        out: *mut *mut Node,
+    ) -> MutStatus;
+}
+
+/// Raise for a non-OK mutation status; `MKR_XML_MUT_OK` returns.
+///
+/// Exported because it is NOT only ours: `ruby_doc.c` and
+/// `dom_adapter/cross_import.c` call it, so this is the one place a mutation
+/// failure becomes an exception, whichever entry point produced it. (Dropping
+/// the C file that used to define it without providing this is what turned the
+/// first build of this port into a crash rather than a link error - on macOS an
+/// unresolved symbol becomes a NULL jump at runtime.)
+///
+/// # Safety
+/// Raises, so no Rust destructor may be live at the call. Every caller here
+/// passes only `Copy` locals.
+#[no_mangle]
+pub unsafe extern "C" fn mkr_xml_mut_check(st: MutStatus) {
+    if st == MUT_OK {
+        return;
+    }
+    let (exc, msg) = match st {
+        MUT_OOM => (error_class().as_raw(), c"out of memory mutating XML"),
+        MUT_BAD_NAME => (rb_eArgError, c"not a well-formed XML name"),
+        MUT_BAD_CHARS => (
+            error_class().as_raw(),
+            c"value contains a character or sequence not permitted in XML",
+        ),
+        MUT_UNBOUND_NS => (
+            error_class().as_raw(),
+            c"namespace prefix is not bound in this scope",
+        ),
+        MUT_TYPE => (
+            error_class().as_raw(),
+            c"operation unsupported for this node type",
+        ),
+        MUT_CYCLE => (
+            error_class().as_raw(),
+            c"cannot insert a node into its own subtree",
+        ),
+        MUT_HIERARCHY => (
+            error_class().as_raw(),
+            c"invalid placement (an attribute/document node cannot be a tree child, a document \
+allows a single root element, and a sibling target must have a parent)",
+        ),
+        MUT_BAD_NS_DECL => (
+            error_class().as_raw(),
+            c"cannot bind a namespace prefix to the empty namespace",
+        ),
+        _ => (error_class().as_raw(), c"unknown XML mutation error"),
+    };
+    crate::glue::abi::rb_raise(exc, c"%s".as_ptr(), msg.as_ptr())
+}
+
+/* ------------------------------------------------------------------ */
+/* helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+/// The arena behind a node's document.
+unsafe fn xdoc(rb_self: Value) -> *mut XmlDoc {
+    mkr_parsed_xml_doc(mkr_doc_parsed(node_document(rb_self).as_raw())) as *mut XmlDoc
+}
+
+/// A byte length as the arena's `uint32`, or an error.
+fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
+    u32::try_from(len).map_err(|_| {
+        let _ = ruby;
+        Error::new(unsafe { error_class() }, "string too long for an XML node (max 4 GiB)")
+    })
+}
+
+/// Unwrap for mutation.
+///
+/// A frozen node is immutable, so this raises FrozenError rather than editing
+/// it, the same contract HTML nodes have. It is also the single mutation choke
+/// point: every mutator comes through here, and here is where the cached
+/// element-name index is dropped so the next query rebuilds it.
+unsafe fn unwrap_mutable(rb_self: Value) -> *mut Node {
+    rb_sys::rb_check_frozen(rb_self.as_raw());
+    mkr_xml_name_index_invalidate(xdoc(rb_self));
+    unwrap(rb_self)
+}
+
+/// Verify a String argument and hand back its bytes plus the length the arena
+/// wants. The `Value` is returned so the caller keeps it rooted: the pointer
+/// borrows it.
+unsafe fn verified(
+    ruby: &Ruby,
+    v: Value,
+    what: &core::ffi::CStr,
+) -> Result<(BorrowedText, u32), Error> {
+    let t = mkr_ruby_verified_text(v.as_raw(), what.as_ptr());
+    let n = u32_len(ruby, t.len)?;
+    Ok((t, n))
+}
+
+/// The same for an optional argument: nil is (NULL, 0), which every primitive
+/// reads as "absent".
+unsafe fn verified_opt(
+    ruby: &Ruby,
+    v: Value,
+    what: &core::ffi::CStr,
+) -> Result<(BorrowedText, u32), Error> {
+    if v.is_nil() {
+        return Ok((BorrowedText { value: 0, ptr: core::ptr::null(), len: 0 }, 0));
+    }
+    verified(ruby, v, what)
+}
+
+/* ------------------------------------------------------------------ */
+/* in-place edits                                                     */
+/* ------------------------------------------------------------------ */
+
+/// `#remove` / `#unlink` -> self. Detaches from the tree (or, for an attribute,
+/// from its owner); the node stays usable.
+pub fn remove(rb_self: Value) -> Result<Value, Error> {
+    unsafe {
+        if is_a(rb_self, mkr_cXmlDocument) {
+            return Err(Error::new(error_class(), "cannot remove the document node"));
+        }
+        let n = unwrap_mutable(rb_self);
+        mkr_xml_remove(xdoc(rb_self), n); /* detach + refresh the root/doctype cache */
+        Ok(rb_self)
+    }
+}
+
+/// The element behind `rb_self`, or an error naming what was attempted.
+unsafe fn element_for(rb_self: Value) -> Result<*mut Node, Error> {
+    let n = unwrap_mutable(rb_self);
+    if (*n).type_ != T_ELEMENT {
+        return Err(Error::new(
+            error_class(),
+            "cannot set an attribute on a non-element node",
+        ));
+    }
+    Ok(n)
+}
+
+/// `element[name] = value` -> value. Adds or replaces the attribute.
+pub fn aset(ruby: &Ruby, rb_self: Value, name: Value, val: Value) -> Result<Value, Error> {
+    unsafe {
+        let n = element_for(rb_self)?;
+        let (nv, nl) = verified(ruby, name, c"attribute name")?;
+        let (vv, vl) = verified(ruby, val, c"attribute value")?;
+        let st = mkr_xml_set_attribute(
+            xdoc(rb_self),
+            n,
+            nv.ptr,
+            nl,
+            vv.ptr,
+            vl,
+            core::ptr::null_mut(),
+        );
+        /* Keep both Strings reachable until the arena has copied their bytes. */
+        core::hint::black_box((name, val));
+        mkr_xml_mut_check(st);
+        Ok(val)
+    }
+}
+
+/// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
+///
+/// Stores the attribute keyed on (explicit namespace, local name) - the DOM key -
+/// with its qualified name case-preserved. A null or empty namespace is the null
+/// namespace, and xmlns declarations pass through as ordinary attributes in the
+/// xmlns namespace.
+pub fn set_attribute_ns(
+    ruby: &Ruby,
+    rb_self: Value,
+    ns: Value,
+    qname: Value,
+    val: Value,
+) -> Result<Value, Error> {
+    unsafe {
+        let n = element_for(rb_self)?;
+        let (qv, ql) = verified(ruby, qname, c"attribute qualified name")?;
+        let (vv, vl) = verified(ruby, val, c"attribute value")?;
+        let (nv, nl) = verified_opt(ruby, ns, c"namespace")?;
+        let st = mkr_xml_set_attribute_ns(
+            xdoc(rb_self),
+            n,
+            nv.ptr,
+            nl,
+            qv.ptr,
+            ql,
+            vv.ptr,
+            vl,
+            core::ptr::null_mut(),
+        );
+        core::hint::black_box((qname, val, ns));
+        mkr_xml_mut_check(st);
+        Ok(val)
+    }
+}
+
+/// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
+pub fn remove_attribute_ns(
+    ruby: &Ruby,
+    rb_self: Value,
+    ns: Value,
+    local: Value,
+) -> Result<Value, Error> {
+    unsafe {
+        let n = unwrap_mutable(rb_self);
+        if (*n).type_ != T_ELEMENT {
+            return Ok(rb_self);
+        }
+        let (lv, ll) = verified(ruby, local, c"attribute local name")?;
+        let (nv, nl) = verified_opt(ruby, ns, c"namespace")?;
+        mkr_xml_remove_attribute_ns(n, nv.ptr, nl, lv.ptr, ll);
+        core::hint::black_box((local, ns));
+        Ok(rb_self)
+    }
+}
+
+/// `element.delete(name)` / `#remove_attribute` -> self. A no-op when absent.
+pub fn delete(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> {
+    unsafe {
+        let n = unwrap_mutable(rb_self);
+        if (*n).type_ != T_ELEMENT {
+            return Ok(rb_self);
+        }
+        let (nv, nl) = verified(ruby, name, c"attribute name")?;
+        mkr_xml_remove_attribute(n, nv.ptr, nl);
+        core::hint::black_box(name);
+        Ok(rb_self)
+    }
+}
+
+/// `node.content = text` -> text. For an element, replaces its children with one
+/// text node (stored verbatim, escaped on serialization); for a text, CDATA,
+/// comment or PI leaf, sets its data.
+pub fn set_content(ruby: &Ruby, rb_self: Value, text: Value) -> Result<Value, Error> {
+    unsafe {
+        let n = unwrap_mutable(rb_self);
+        let (tv, tl) = verified(ruby, text, c"node content")?;
+        let st = mkr_xml_set_content(xdoc(rb_self), n, tv.ptr, tl);
+        core::hint::black_box(text);
+        mkr_xml_mut_check(st);
+        Ok(text)
+    }
+}
+
+/// `node.name = new_name` -> new_name. Renames an element or attribute in place,
+/// preserving identity and tree position; the namespace is re-resolved against
+/// the node's in-scope declarations.
+pub fn set_name(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> {
+    unsafe {
+        let n = unwrap_mutable(rb_self);
+        let (nv, nl) = verified(ruby, name, c"node name")?;
+        let st = mkr_xml_rename(xdoc(rb_self), n, nv.ptr, nl);
+        core::hint::black_box(name);
+        mkr_xml_mut_check(st);
+        Ok(name)
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* building: insertion                                                */
+/* ------------------------------------------------------------------ */
+
+#[derive(Clone, Copy, PartialEq)]
+enum Op {
+    Child,
+    Before,
+    After,
+    Replace,
+}
+
+/// Coerce `arg` to a node living in (or imported into) `target`'s arena.
+///
+/// A same-document node is returned as-is, which makes the insert a move. A node
+/// from another document cannot be relinked - the arenas own their own nodes -
+/// so it is copied here, and taken out of the document it came from only once
+/// the insert has actually succeeded, so the operation reads as the move the DOM
+/// says it is. The second return value is that source node, or nil.
+unsafe fn incoming_node(
+    ruby: &Ruby,
+    xd: *mut XmlDoc,
+    target_doc: Value,
+    arg: Value,
+) -> Result<(*mut Node, Value), Error> {
+    if !is_a(arg, mkr_cNode) || !is_a(node_document(arg), mkr_cXmlDocument) {
+        return Err(Error::new(
+            ruby.exception_type_error(),
+            "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
+        ));
+    }
+    let src = unwrap(arg);
+    if node_document(arg).as_raw() == target_doc.as_raw() {
+        return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
+    }
+    let mut copy: *mut Node = core::ptr::null_mut();
+    mkr_xml_mut_check(mkr_xml_import_subtree(xd, src, &mut copy));
+    Ok((copy, arg))
+}
+
+/// Finish the adoption by emptying the node out of its old document.
+///
+/// Only called after the insert succeeded, so a rejected one leaves the source
+/// document alone. A fragment is emptied rather than detached: it contributed
+/// its children, and the DOM leaves a spliced fragment empty.
+unsafe fn adopt_finish(arg: Value) {
+    if arg.is_nil() {
+        return;
+    }
+    let src = unwrap(arg);
+    let sdoc = xdoc(arg);
+    if (*src).type_ == T_FRAGMENT {
+        while !(*src).first_child.is_null() {
+            mkr_xml_remove(sdoc, (*src).first_child);
+        }
+    } else {
+        mkr_xml_remove(sdoc, src);
+    }
+    mkr_xml_name_index_invalidate(sdoc);
+}
+
+/// A DOCUMENT_FRAGMENT contributes its CHILDREN, not itself, like Nokogiri and
+/// the DOM: they are spliced in place of the fragment, in order, leaving it
+/// empty. Each child is inserted relative to `target` per `op`, resolving its
+/// namespaces against the new context as a single node would; for AFTER the
+/// insertion point advances so the children keep their order.
+unsafe fn splice_fragment(
+    xd: *mut XmlDoc,
+    target: *mut Node,
+    frag: *mut Node,
+    doc_v: Value,
+    op: Op,
+) -> Value {
+    if op == Op::Replace {
+        /* Whole-fragment replace is an engine primitive: it validates the
+         * fragment before touching a link and keeps `target` until every child
+         * is spliced in, so a rejected replace never destroys what it replaced. */
+        mkr_xml_mut_check(mkr_xml_replace_with_fragment(xd, target, frag));
+        return wrap(frag, doc_v);
+    }
+    let mut r = target; /* the moving insertion point, for AFTER */
+    while !(*frag).first_child.is_null() {
+        let c = (*frag).first_child; /* each insert detaches c from frag */
+        let st = match op {
+            Op::Child => mkr_xml_insert_child(xd, target, c),
+            Op::After => {
+                let s = mkr_xml_insert_after(xd, r, c);
+                r = c;
+                s
+            }
+            _ => mkr_xml_insert_before(xd, target, c),
+        };
+        mkr_xml_mut_check(st);
+    }
+    wrap(frag, doc_v)
+}
+
+fn insert(ruby: &Ruby, rb_self: Value, arg: Value, op: Op) -> Result<Value, Error> {
+    unsafe {
+        let target = unwrap_mutable(rb_self);
+        let doc_v = node_document(rb_self);
+        let xd = xdoc(rb_self);
+        let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;
+
+        if (*node).type_ == T_FRAGMENT {
+            let out = splice_fragment(xd, target, node, doc_v, op);
+            adopt_finish(adopt_from);
+            return Ok(out);
+        }
+
+        let st = match op {
+            Op::Child => mkr_xml_insert_child(xd, target, node),
+            Op::Before => mkr_xml_insert_before(xd, target, node),
+            Op::After => mkr_xml_insert_after(xd, target, node),
+            Op::Replace => mkr_xml_replace_node(xd, target, node),
+        };
+        mkr_xml_mut_check(st);
+        adopt_finish(adopt_from);
+        Ok(wrap(node, doc_v))
+    }
+}
+
+pub fn add_child(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
+    insert(ruby, rb_self, arg, Op::Child)
+}
+pub fn before(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
+    insert(ruby, rb_self, arg, Op::Before)
+}
+pub fn after(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
+    insert(ruby, rb_self, arg, Op::After)
+}
+pub fn replace(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
+    insert(ruby, rb_self, arg, Op::Replace)
+}
+
+/// `element << node` -> self. Nokogiri's `<<` appends and returns the receiver.
+pub fn lshift(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
+    insert(ruby, rb_self, arg, Op::Child)?;
+    Ok(rb_self)
+}
+
+/// `clone_node(deep = false)` -> a detached copy in the same document, with the
+/// element/attribute name case, the namespaces and the CDATA node type
+/// preserved. Backs `#dup` / `#clone` and the DOM's cloneNode.
+pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
+    let deep = a.optional.0.is_some_and(|v| v.to_bool());
+    unsafe {
+        let mut out: *mut Node = core::ptr::null_mut();
+        mkr_xml_mut_check(mkr_xml_clone_node(
+            xdoc(rb_self),
+            unwrap(rb_self),
+            i32::from(deep),
+            &mut out,
+        ));
+        Ok(super::mkr_xml_wrap_rel_value(rb_self, out))
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* document factories                                                 */
+/* ------------------------------------------------------------------ */
+
+/* WHATWG DOM element-name rules, for the loose escape hatch below. They are
+ * deliberately laxer than XML's QName production: the DOM only forbids the bytes
+ * that would break parsing back out. */
+
+fn dom_name_forbidden(c: u8) -> bool {
+    matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'/' | b'>')
+}
+
+fn dom_prefix_ok(p: &[u8]) -> bool {
+    !p.is_empty() && !p.iter().copied().any(dom_name_forbidden)
+}
+
+fn dom_local_ok(p: &[u8]) -> bool {
+    let Some(&first) = p.first() else { return false };
+    if first < 0x80 && !(first.is_ascii_alphabetic() || first == b':' || first == b'_') {
+        return false;
+    }
+    !p.iter().copied().any(dom_name_forbidden)
+}
+
+/// Check that the three name pieces describe the same name, and build the split
+/// form the engine takes. Fails closed rather than storing a name whose parts
+/// disagree.
+unsafe fn dom_name_consistency(
+    ruby: &Ruby,
+    qv: BorrowedText,
+    pv: BorrowedText,
+    has_prefix: bool,
+    lv: BorrowedText,
+) -> Result<QName, Error> {
+    let (q, p, l) = (qv.bytes(), pv.bytes(), lv.bytes());
+    let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());
+
+    if !dom_local_ok(l) {
+        return Err(arg_err("invalid DOM element local name"));
+    }
+    if !has_prefix {
+        if q != l {
+            return Err(arg_err("qualified name must equal local name when prefix is nil"));
+        }
+        return Ok(QName {
+            qname: qv.ptr,
+            qname_len: q.len() as u32,
+            prefix: qv.ptr,
+            prefix_len: 0,
+            local: qv.ptr,
+            local_len: q.len() as u32,
+        });
+    }
+
+    if !dom_prefix_ok(p) {
+        return Err(arg_err("invalid DOM element prefix"));
+    }
+    if q.len() != p.len() + 1 + l.len()
+        || &q[..p.len()] != p
+        || q[p.len()] != b':'
+        || &q[p.len() + 1..] != l
+    {
+        return Err(arg_err("qualified name must be prefix + ':' + local name"));
+    }
+    Ok(QName {
+        qname: qv.ptr,
+        qname_len: q.len() as u32,
+        prefix: qv.ptr,
+        prefix_len: p.len() as u32,
+        local: qv.ptr.add(p.len() + 1),
+        local_len: l.len() as u32,
+    })
+}
+
+/// `create_element(name, content = nil, attributes = {})` -> Element.
+///
+/// Nokogiri-style trailing arguments: a Hash sets attributes, any other non-nil
+/// argument is the element's text content.
+pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = magnus::scan_args::scan_args::<(Value,), (), magnus::RArray, (), (), ()>(args)?;
+    let (name,) = a.required;
+    let mut content = ruby.qnil().as_value();
+    let mut attrs: Option<RHash> = None;
+    for v in a.splat.into_iter() {
+        if let Some(h) = RHash::from_value(v) {
+            attrs = Some(h);
+        } else if !v.is_nil() {
+            content = v;
+        }
+    }
+
+    unsafe {
+        let xd = xdoc(rb_self);
+        let (nv, nl) = verified(ruby, name, c"element name")?;
+        let mut el: *mut Node = core::ptr::null_mut();
+        let st = mkr_xml_new_element(xd, nv.ptr, nl, &mut el);
+        core::hint::black_box(name);
+        mkr_xml_mut_check(st);
+
+        if !content.is_nil() {
+            let (tv, tl) = verified(ruby, content, c"element content")?;
+            let st = mkr_xml_set_content(xd, el, tv.ptr, tl);
+            core::hint::black_box(content);
+            mkr_xml_mut_check(st);
+        }
+        let rb_el = wrap(el, rb_self);
+        if let Some(h) = attrs {
+            /* Keys and values are stringified - Nokogiri accepts symbol keys and
+             * non-string values - then go through the normal validated setter. */
+            let pairs: RArray = h.funcall("to_a", ())?;
+            for pair in pairs.into_iter() {
+                let entry = RArray::from_value(pair).expect("Hash#to_a yields pairs");
+                let k: Value = entry.entry(0)?;
+                let v: Value = entry.entry(1)?;
+                aset(ruby, rb_el, k.funcall("to_s", ())?, v.funcall("to_s", ())?)?;
+            }
+        }
+        Ok(rb_el)
+    }
+}
+
+/// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
+/// -> Element.
+///
+/// An internal browser-DOM interop escape hatch: an XML-backed element whose name
+/// follows WHATWG DOM rules rather than XML QName rules. The result is
+/// deliberately not XML-serializable.
+pub fn create_loose_dom_element(
+    ruby: &Ruby,
+    rb_self: Value,
+    qname: Value,
+    prefix: Value,
+    local: Value,
+    ns: Value,
+) -> Result<Value, Error> {
+    unsafe {
+        let xd = xdoc(rb_self);
+        let (qv, _) = verified(ruby, qname, c"qualified name")?;
+        let (lv, _) = verified(ruby, local, c"local name")?;
+        let has_prefix = !prefix.is_nil();
+        let (pv, _) = verified_opt(ruby, prefix, c"prefix")?;
+        let (nv, nl) = verified_opt(ruby, ns, c"namespace URI")?;
+
+        let qn = dom_name_consistency(ruby, qv, pv, has_prefix, lv)?;
+        let mut el: *mut Node = core::ptr::null_mut();
+        let st = mkr_xml_new_loose_dom_element(xd, &qn, nv.ptr, nl, &mut el);
+        core::hint::black_box((qname, local, prefix, ns));
+        mkr_xml_mut_check(st);
+        Ok(wrap(el, rb_self))
+    }
+}
+
+/// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
+///
+/// The DOM's createDocumentType: a detached DocumentType owned by this document,
+/// to be placed before the root with `add_child` / `add_previous_sibling` (the
+/// placement guards keep it document-level, pre-root and single). An omitted or
+/// empty identifier is absent; an invalid name fails closed.
+pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
+        args,
+    )?;
+    let name = a.required.0;
+    let nil = ruby.qnil().as_value();
+    let pub_v = a.optional.0.unwrap_or(nil);
+    let sys_v = a.optional.1.unwrap_or(nil);
+
+    unsafe {
+        let xd = xdoc(rb_self);
+        let (nv, nl) = verified(ruby, name, c"doctype name")?;
+        let (pv, pl) = verified_opt(ruby, pub_v, c"doctype public id")?;
+        let (sv, sl) = verified_opt(ruby, sys_v, c"doctype system id")?;
+        /* An empty id is absent (NULL), matching the HTML factory and Nokogiri. */
+        let pub_ptr = if pl != 0 { pv.ptr } else { core::ptr::null() };
+        let sys_ptr = if sl != 0 { sv.ptr } else { core::ptr::null() };
+
+        let mut dt: *mut Node = core::ptr::null_mut();
+        let st = mkr_xml_new_document_type(xd, nv.ptr, nl, pub_ptr, pl, sys_ptr, sl, &mut dt);
+        core::hint::black_box((name, pub_v, sys_v));
+        mkr_xml_mut_check(st);
+        Ok(wrap(dt, rb_self))
+    }
+}
+
+/// The shared body of the leaf-data factories.
+unsafe fn create_chardata(
+    ruby: &Ruby,
+    rb_self: Value,
+    text: Value,
+    type_: u32,
+    what: &core::ffi::CStr,
+) -> Result<Value, Error> {
+    let xd = xdoc(rb_self);
+    let (tv, tl) = verified(ruby, text, what)?;
+    let mut n: *mut Node = core::ptr::null_mut();
+    let st = mkr_xml_new_chardata(xd, type_ as u8, tv.ptr, tl, &mut n);
+    core::hint::black_box(text);
+    mkr_xml_mut_check(st);
+    Ok(wrap(n, rb_self))
+}
+
+pub fn create_text_node(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
+    unsafe { create_chardata(ruby, rb_self, t, T_TEXT, c"text content") }
+}
+pub fn create_comment(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
+    unsafe { create_chardata(ruby, rb_self, t, T_COMMENT, c"comment content") }
+}
+pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
+    unsafe { create_chardata(ruby, rb_self, t, T_CDATA, c"CDATA content") }
+}
+
+pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
+    unsafe {
+        let xd = xdoc(rb_self);
+        let (tg, tl) = verified(ruby, target, c"PI target")?;
+        let (dt, dl) = verified(ruby, data, c"PI data")?;
+        let mut pi: *mut Node = core::ptr::null_mut();
+        let st = mkr_xml_new_pi(xd, tg.ptr, tl, dt.ptr, dl, &mut pi);
+        core::hint::black_box((target, data));
+        mkr_xml_mut_check(st);
+        Ok(wrap(pi, rb_self))
+    }
+}
+
+/// `Document#import_node(node, deep = false)` - the DOM's importNode.
+///
+/// An XML node is copied into this document's arena (namespaces re-resolved when
+/// it is later linked); an HTML node is TRANSLATED across representations. The
+/// result is detached and owned by this document, the source is untouched, and a
+/// failure returns no partial node.
+pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+    let node_v = a.required.0;
+    let deep = i32::from(a.optional.0.is_some_and(|v| v.to_bool()));
+
+    unsafe {
+        let xd = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())) as *mut XmlDoc;
+        let mut copy: *mut Node = core::ptr::null_mut();
+        match mkr_node_kind(node_v.as_raw()) {
+            KIND_XML => mkr_xml_mut_check(mkr_xml_copy_node(xd, unwrap(node_v), deep, &mut copy)),
+            KIND_HTML => mkr_xml_mut_check(mkr_cross_html_to_xml(
+                xd,
+                mkr_html_node_unwrap(node_v.as_raw()) as *mut core::ffi::c_void,
+                deep,
+                &mut copy,
+            )),
+            _ => {
+                return Err(Error::new(
+                    ruby.exception_type_error(),
+                    "import_node expects a Makiri node",
+                ))
+            }
+        }
+        Ok(wrap(copy, rb_self))
+    }
+}
