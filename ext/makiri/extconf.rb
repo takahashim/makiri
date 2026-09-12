@@ -356,12 +356,68 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
   features << "glue-xml-node-serialize" if rust_glue_xml_node_serialize
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
+
+  # The sanitizer has to be asked for on the Rust side too: MAKIRI_SANITIZE only
+  # ever reached $CFLAGS/$LDFLAGS, so the crate was built plain --release and the
+  # whole ported half of the extension sat outside the net. ASan instruments
+  # loads and stores at compile time; an uninstrumented Rust frame reading past a
+  # red-zoned allocation has no check to trip (only the memcpy-family
+  # interceptors would catch it). Four constraints shape what follows:
+  #
+  #  - UBSan does NOT exist for Rust. rustc's -Zsanitizer takes one of
+  #    address/cfi/dataflow/hwaddress/kcfi/kernel-address/leak/memory/memtag/
+  #    safestack/shadow-call-stack/thread/realtime - no `undefined`. So
+  #    MAKIRI_SANITIZE=undefined stays a C-only mode, and that is permanent, not
+  #    a gap we intend to close.
+  #  - -Zsanitizer is unstable, hence the nightly toolchain. Release builds stay
+  #    on stable; only this sanitizer mode needs nightly.
+  #  - asan-stack=0 must hold on BOTH sides. The C side turns stack red zones off
+  #    because CRuby's rb_raise unwinds via __builtin_longjmp, which ASan cannot
+  #    intercept, leaving stale stack poison behind (see the comment on the
+  #    $CFLAGS above, and docs/ci-crash/INVESTIGATION.md). The Rust glue raises
+  #    the same way, so instrumenting its stack would reintroduce exactly that
+  #    spurious report.
+  #  - Only one ASan runtime may be linked. The .bundle already pulls clang's in
+  #    via -fsanitize=address on $DLDFLAGS; -Zexternal-clangrt tells rustc to
+  #    reference it instead of linking Rust's own copy.
+  #
+  # --target is passed so build scripts and proc macros (rb-sys runs bindgen)
+  # build for the host uninstrumented; it also moves the archive under the
+  # triple, hence rust_out_dir below.
+  rust_env = {}
+  rust_flags = []
+  rust_triple = nil
+  if sanitize.include?("address")
+    rust_triple = `rustc -vV`[/^host:\s*(\S+)/, 1] rescue nil
+    rust_triple or abort "MAKIRI_SANITIZE with a Rust build needs `rustc -vV` to report a host triple."
+    unless system("rustup", "run", "nightly", "rustc", "--version",
+                  out: File::NULL, err: File::NULL)
+      abort "MAKIRI_SANITIZE=#{sanitize} with MAKIRI_RUST_* needs the nightly " \
+            "toolchain (-Zsanitizer is unstable): rustup toolchain install nightly. " \
+            "Refusing to build the crate uninstrumented - a green sanitizer run " \
+            "that silently skips the Rust half is worse than no run."
+    end
+    rust_env["RUSTUP_TOOLCHAIN"] = "nightly"
+    rust_flags << "-Zsanitizer=address" << "-Zexternal-clangrt" <<
+                  "-Cllvm-args=-asan-stack=0"
+    warn "makiri: building the Rust crate with -Zsanitizer=address (nightly, #{rust_triple})"
+  end
+  if sanitize.include?("undefined") && !sanitize.include?("address")
+    warn "makiri: NOTE -fsanitize=undefined covers the C sources only. Rust has " \
+         "no UBSan (-Zsanitizer has no `undefined`); the crate is built plain."
+  end
+  rust_env["RUSTFLAGS"] = rust_flags.join(" ") unless rust_flags.empty?
+
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
-  system(cargo, "build", "--release", "--quiet",
-         "--manifest-path", File.join(EXT_DIR, "rust", "Cargo.toml"),
-         "--features", features.join(","),
-         "--target-dir", rust_target) or abort "cargo build failed for the Rust engine."
-  rust_archive = File.join(rust_target, "release", "libmakiri_rs.a")
+  cargo_argv = [cargo, "build", "--release", "--quiet",
+                "--manifest-path", File.join(EXT_DIR, "rust", "Cargo.toml"),
+                "--features", features.join(",")]
+  cargo_argv += ["--target", rust_triple] if rust_triple
+  cargo_argv += ["--target-dir", rust_target]
+  system(rust_env, *cargo_argv) or abort "cargo build failed for the Rust engine."
+  rust_out_dir = rust_triple ? File.join(rust_target, rust_triple, "release")
+                             : File.join(rust_target, "release")
+  rust_archive = File.join(rust_out_dir, "libmakiri_rs.a")
   if RbConfig::CONFIG["target_os"] =~ /linux/
     # GNU ld resolves static archives left-to-right and never looks back, and
     # the Lexbor archive is already on the line (above) - ahead of this one. The

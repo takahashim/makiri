@@ -202,11 +202,52 @@ def ext_sanitized?
   !(`nm "#{bundle}" 2>/dev/null` =~ /asan|ubsan/i).nil?
 end
 
+# Is the Rust crate itself ASan-instrumented? nil when this build has no Rust.
+#
+# ext_sanitized? cannot answer this: the bundle references __asan_* as soon as
+# ANY translation unit is instrumented, and the C sources always are - so it
+# reports "sanitized" for a build whose entire Rust half is plain. That is the
+# exact failure this check exists to prevent, and it is not hypothetical: until
+# 2026-09-12 extconf passed the sanitizer to $CFLAGS only, so every sanitizer
+# run since the first glue port covered less than it appeared to, silently.
+# Instrumented code calls __asan_report_* on a failing access; uninstrumented
+# code has no such reference. Look inside the crate's own archive.
+def rust_asan_instrumented?
+  archive = Dir.glob("tmp/**/rust-target/**/libmakiri_rs.a").first or return nil
+  !(`nm -u "#{archive}" 2>/dev/null` =~ /__asan_report/).nil?
+end
+
+# Abort unless the Rust half is instrumented too. Called by the sanitizer tasks
+# after the build, so a green run always means what it looks like it means.
+def assert_rust_asan!(task)
+  case rust_asan_instrumented?
+  when nil then nil # no Rust in this build
+  when true
+    puts "#{task}: ASan covers C and Rust; " \
+         "UBSan covers the C sources only (Rust has no UBSan)"
+  else
+    abort "#{task}: the Rust crate is NOT ASan-instrumented, so this run would " \
+          "cover only the C half and still come out green. Rebuild without " \
+          "SKIP_BUILD (extconf passes -Zsanitizer=address when ASan is on)."
+  end
+end
+
 desc "Build the extension with sanitizers (MAKIRI_SANITIZE, default " \
-     "address,undefined) and run the spec suite under them"
+     "address,undefined) and run the spec suite under them. With MAKIRI_RUST_* " \
+     "set, ASan also covers the Rust crate (needs nightly); UBSan never does"
 task :sanitize do
   sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
   sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
+
+  # What this run does and does not cover, stated up front: a sanitizer run that
+  # quietly skips half the extension is worse than no run, and with the port in
+  # progress "half" is literal. extconf builds the crate with -Zsanitizer=address
+  # when ASan is on (it aborts if nightly is missing rather than silently
+  # building it plain), but Rust has no UBSan at all - rustc's -Zsanitizer takes
+  # address/cfi/dataflow/hwaddress/kcfi/kernel-address/leak/memory/memtag/
+  # safestack/shadow-call-stack/thread/realtime, and `undefined` is not one of
+  # them. That is permanent, not a gap waiting to be closed.
+  assert_rust_asan!("sanitize") if sanitize.include?("address")
 
   env = {
     # LeakSanitizer would flag Ruby's intentional caches; the interpreter is not
@@ -492,6 +533,9 @@ namespace :fuzz do
     else
       sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
     end
+    # SKIP_BUILD reuses whatever is on disk, so this is the path most likely to
+    # fuzz a half-instrumented build (see rust_asan_instrumented?).
+    assert_rust_asan!("fuzz:sanitize") if sanitize.include?("address")
 
     env = {
       "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
