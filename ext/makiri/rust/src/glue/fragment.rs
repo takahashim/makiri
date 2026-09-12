@@ -24,7 +24,7 @@ use rb_sys::VALUE;
 use crate::falloc::VecPush;
 use crate::lexbor_abi as lxb;
 
-use super::abi::{LxbDoc, NODE_TYPE_ELEMENT, mkr_ruby_bytes_view, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
+use super::abi::{LxbDoc, LXB_DOM_NODE_TYPE_ELEMENT, mkr_ruby_bytes_view, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
     error_class, is_kind_of, libc_free, mkr_cNode, mkr_html_node_unwrap,
     mkr_ruby_verified_text, mkr_wrap_html_node, LxbNode,
 };
@@ -101,7 +101,7 @@ unsafe fn template_content(n: *mut LxbNode) -> *mut LxbNode {
 }
 
 unsafe fn is_html_template(n: *const LxbNode) -> bool {
-    (*n).type_ == NODE_TYPE_ELEMENT
+    (*n).type_ == LXB_DOM_NODE_TYPE_ELEMENT
         && (*n).local_name == lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize
         && (*n).ns == NS_HTML
 }
@@ -388,7 +388,7 @@ pub unsafe fn resolve_fragment_context(doc: *mut LxbDoc, context: Option<Value>)
     if is_kind_of(context, mkr_cNode) {
         /* Reject an XML node before any Lexbor use. */
         let cn = mkr_html_node_unwrap(context.as_raw());
-        if (*cn).type_ != NODE_TYPE_ELEMENT {
+        if (*cn).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
             rb_sys::rb_raise(
                 rb_sys::rb_eArgError,
                 c"fragment context node must be an element".as_ptr(),

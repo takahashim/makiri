@@ -35,7 +35,7 @@ use rb_sys::{rb_data_type_t, VALUE};
 use crate::lexbor_abi as lxb;
 
 use super::fragment::{build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context};
-use super::abi::{LxbDoc, NODE_TYPE_ELEMENT, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
+use super::abi::{LxbDoc, LXB_DOM_NODE_TYPE_ELEMENT, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
     error_class, mkr_cDocumentFragment, mkr_cHtmlDocument, mkr_cXmlDocument, mkr_html_node_unwrap,
     mkr_mHtmlNodeMethods, mkr_node_document, mkr_wrap_html_node, mkr_xml_node_unwrap, DataType,
     LxbNode, OwnedBytes,
@@ -342,7 +342,7 @@ fn fragment_in(
 fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error> {
     unsafe {
         let node = mkr_html_node_unwrap(self_.as_raw());
-        if (*node).type_ != NODE_TYPE_ELEMENT {
+        if (*node).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "Node#parse requires an element context",

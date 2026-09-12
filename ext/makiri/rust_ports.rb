@@ -4,11 +4,11 @@
 #
 # One table, required by both sides that need it - `ext/makiri/extconf.rb` (which
 # decides what to compile) and the `Rakefile` (which tells CI and the container
-# scripts what the full configuration is). It briefly lived only in extconf,
-# with script/rust_flags.rb reading it back out by regular expression; that meant
-# four separate parses of one table's formatting, and a rubocop-shaped change to
-# the layout would have broken one of them silently. A file both sides `require`
-# has no formatting to agree about.
+# scripts what the full configuration is). It briefly lived only in extconf, with
+# a second script reading it back out by regular expression; that meant four
+# separate parses of one table's formatting, and a rubocop-shaped change to the
+# layout would have broken one of them silently. A file both sides `require` has
+# no formatting to agree about.
 #
 # This ships in the gem: extconf sits beside it and the gemspec takes
 # `ext/makiri/*`.

@@ -505,34 +505,23 @@ end
 
 # The Rust-port configuration. `MAKIRI_RUST=all` is what CI and the container
 # scripts set - extconf expands it from ext/makiri/rust_ports.rb, so nothing
-# outside that file enumerates the flags. The only thing still needing a list is
-# `cargo clippy --features`, which is what rust:features is for.
+# outside that file enumerates the flags. The one thing still needing a list is
+# `cargo clippy --features`, which is what this is for.
+#
+# There was a `rust:check` beside it that validated the table. It is gone, and
+# deliberately: both halves of what it checked are enforced by something that
+# runs on every build. A srcs path that does not exist aborts in extconf
+# (RustPorts.check_paths!, called before anything else, so even a plain C build
+# fails), and a cargo feature Cargo.toml does not declare fails the cargo
+# invocation itself ("the package 'makiri_rs' does not contain this feature").
+# Both verified by probe. A task that looks like a guard but guards nothing is
+# worse than no task - it invites the next person to trust it.
 namespace :rust do
   desc "Print the cargo feature list for MAKIRI_RUST=all (or FEATURES, passed through)"
   task :features do
     require_relative "ext/makiri/rust_ports"
     given = ENV["FEATURES"].to_s.strip
     puts given.empty? ? RustPorts.features(RustPorts.enabled("MAKIRI_RUST" => "all")).join(",") : given
-  end
-
-  # A gate can only be trusted if it covers what it claims to. This fails when
-  # the table names a cargo feature Cargo.toml does not declare, or a C source
-  # that does not exist - the two ways the table can describe something that is
-  # not there.
-  desc "Check the port table against Cargo.toml and the tree"
-  task :check do
-    require_relative "ext/makiri/rust_ports"
-    RustPorts.check_paths!("ext/makiri")
-
-    manifest = File.read("ext/makiri/rust/Cargo.toml")
-    block = manifest[/^\[features\]\n(.*?)(?=^\[)/m, 1].to_s
-    declared = block.scan(/^([a-z][a-z0-9-]*) *=/).flatten
-    all = RustPorts.features(RustPorts.enabled("MAKIRI_RUST" => "all"))
-    missing = all - declared
-    abort "rust:check: the port table enables cargo features that Cargo.toml " \
-          "does not declare: #{missing.join(", ")}" unless missing.empty?
-
-    warn "rust:check: #{RustPorts::ALL.size} ports -> #{all.size} features, all declared"
   end
 end
 

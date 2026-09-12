@@ -48,8 +48,6 @@ pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 =
 
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
-/// The node type both of them compare against, under the name they use.
-pub const NODE_TYPE_ELEMENT: u32 = LXB_DOM_NODE_TYPE_ELEMENT;
 pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: u32 =

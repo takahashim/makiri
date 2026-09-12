@@ -343,7 +343,9 @@ if enabled.any?
   # build for the host uninstrumented; it also moves the archive under the
   # triple, hence rust_out_dir below.
   rust_env = {}
-  rust_flags = []
+  # rustc flags, not port flags - the two were both called `rust_flags` while
+  # a `RustFlags` module meant the latter.
+  rustc_flags = []
   rust_triple = nil
   if sanitize.include?("address")
     rust_triple = `rustc -vV`[/^host:\s*(\S+)/, 1] rescue nil
@@ -356,7 +358,7 @@ if enabled.any?
             "that silently skips the Rust half is worse than no run."
     end
     rust_env["RUSTUP_TOOLCHAIN"] = "nightly"
-    rust_flags << "-Zsanitizer=address" << "-Zexternal-clangrt" <<
+    rustc_flags << "-Zsanitizer=address" << "-Zexternal-clangrt" <<
                   "-Cllvm-args=-asan-stack=0"
     warn "makiri: building the Rust crate with -Zsanitizer=address (nightly, #{rust_triple})"
   end
@@ -364,7 +366,7 @@ if enabled.any?
     warn "makiri: NOTE -fsanitize=undefined covers the C sources only. Rust has " \
          "no UBSan (-Zsanitizer has no `undefined`); the crate is built plain."
   end
-  rust_env["RUSTFLAGS"] = rust_flags.join(" ") unless rust_flags.empty?
+  rust_env["RUSTFLAGS"] = rustc_flags.join(" ") unless rustc_flags.empty?
 
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
   cargo_argv = [cargo, "build", "--release", "--quiet",
