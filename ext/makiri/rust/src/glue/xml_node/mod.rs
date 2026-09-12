@@ -20,6 +20,8 @@ pub mod abi;
 pub mod mutate;
 pub mod ns;
 pub mod read;
+#[cfg(feature = "glue-xml-node-serialize")]
+pub mod serialize;
 
 use core::ffi::c_void;
 
@@ -328,8 +330,11 @@ pub unsafe extern "C" fn mkr_init_xml_node() {
     m.define_method("clone_node", method!(mutate::clone_node, -1)).expect("#clone_node");
 }
 
-#[cfg(feature = "glue-xml-node-mutate")]
+#[cfg(all(feature = "glue-xml-node-mutate", not(feature = "glue-xml-node-serialize")))]
 extern "C" {
     /// Still C (glue/ruby_xml_node_serialize.c).
     fn mkr_init_xml_node_serialize();
 }
+
+#[cfg(all(feature = "glue-xml-node-mutate", feature = "glue-xml-node-serialize"))]
+use self::serialize::mkr_init_xml_node_serialize;

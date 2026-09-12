@@ -266,6 +266,8 @@ end
 #                            (glue/ruby_xpath.c)
 #   MAKIRI_RUST_GLUE_XML_NODE_READ=1 the XML node's readers    -> `glue-xml-node-read`
 #                            (glue/ruby_xml_node_read.c)
+#   MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1 its serializers     -> `glue-xml-node-serialize`
+#                            (glue/ruby_xml_node_serialize.c)
 #   MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 its mutation + factories -> `glue-xml-node-mutate`
 #                            (glue/ruby_xml_node.c; implies the readers, since it
 #                             owns mkr_init_xml_node)
@@ -300,8 +302,9 @@ rust_bridge_xml_decode = ENV["MAKIRI_RUST_BRIDGE_XML_DECODE"].to_s.strip == "1"
 rust_glue_xml = ENV["MAKIRI_RUST_GLUE_XML"].to_s.strip == "1"
 rust_glue_xpath = ENV["MAKIRI_RUST_GLUE_XPATH"].to_s.strip == "1"
 rust_glue_xml_node_mutate = ENV["MAKIRI_RUST_GLUE_XML_NODE_MUTATE"].to_s.strip == "1"
+rust_glue_xml_node_serialize = ENV["MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE"].to_s.strip == "1"
 rust_glue_xml_node_read = ENV["MAKIRI_RUST_GLUE_XML_NODE_READ"].to_s.strip == "1" ||
-                          rust_glue_xml_node_mutate || rust_glue_xpath
+                          rust_glue_xml_node_mutate || rust_glue_xml_node_serialize || rust_glue_xpath || rust_glue_xml_node_serialize
 # The decode shares ruby_string.c's strict-text core, so the Rust one comes with
 # it; otherwise both languages would define mkr_text_check.
 rust_bridge_string ||= rust_bridge_xml_decode
@@ -325,10 +328,12 @@ RUST_GLUE_XML_NODE_READ_SRCS =
   [File.join(EXT_DIR, "glue", "ruby_xml_node_read.c")].freeze
 RUST_GLUE_XML_NODE_MUTATE_SRCS =
   [File.join(EXT_DIR, "glue", "ruby_xml_node.c")].freeze
+RUST_GLUE_XML_NODE_SERIALIZE_SRCS =
+  [File.join(EXT_DIR, "glue", "ruby_xml_node_serialize.c")].freeze
 if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
    rust_bridge_string || rust_glue_node_set || rust_glue_css ||
    rust_bridge_xml_decode || rust_glue_xml || rust_glue_xml_node_read ||
-   rust_glue_xml_node_mutate || rust_glue_xpath
+   rust_glue_xml_node_mutate || rust_glue_xpath || rust_glue_xml_node_serialize
   features = []
   features << "xml" if rust_xml
   if rust_xpath
@@ -348,6 +353,7 @@ if rust_xml || rust_xpath || rust_glue_serialize || rust_glue_node ||
   features << "glue-xpath" if rust_glue_xpath
   features << "glue-xml-node-read" if rust_glue_xml_node_read
   features << "glue-xml-node-mutate" if rust_glue_xml_node_mutate
+  features << "glue-xml-node-serialize" if rust_glue_xml_node_serialize
   cargo = find_executable("cargo") or abort "MAKIRI_RUST_* needs cargo on PATH."
   rust_target = File.join(Dir.pwd, "rust-target")
   warn "makiri: building the Rust engine (spike) via cargo: #{features.join(", ")}"
@@ -398,6 +404,7 @@ $srcs = Dir.glob(File.join(EXT_DIR, "**", "*.c"))
            .reject { |f| rust_glue_xpath && RUST_GLUE_XPATH_SRCS.include?(f) }
            .reject { |f| rust_glue_xml_node_read && RUST_GLUE_XML_NODE_READ_SRCS.include?(f) }
            .reject { |f| rust_glue_xml_node_mutate && RUST_GLUE_XML_NODE_MUTATE_SRCS.include?(f) }
+           .reject { |f| rust_glue_xml_node_serialize && RUST_GLUE_XML_NODE_SERIALIZE_SRCS.include?(f) }
            .map { |f| f.sub("#{EXT_DIR}/", "") }
 $VPATH ||= []
 # fuzz/ must be excluded here too: after a `rake fuzz:libfuzzer_build`,

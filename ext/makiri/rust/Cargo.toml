@@ -71,6 +71,9 @@ glue-xml-node-read = ["glue"]
 # mkr_init_xml_node, so it implies the reader half (whose entry point that
 # function calls).
 glue-xml-node-mutate = ["glue", "glue-xml-node-read"]
+# glue/ruby_xml_node_serialize.c - #to_xml (with the namespace-declaration
+# synthesis) and Canonical XML 1.0.
+glue-xml-node-serialize = ["glue", "glue-xml-node-read"]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

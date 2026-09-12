@@ -139,9 +139,12 @@ jobs:
           - label: "glue: XML node mutation"
             flags: "MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1"
             features: "glue-xml-node-mutate"
+          - label: "glue: XML serializers"
+            flags: "MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
+            features: "glue-xml-node-serialize"
           - label: "everything"
-            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1 MAKIRI_RUST_GLUE_CSS=1 MAKIRI_RUST_BRIDGE_XML_DECODE=1 MAKIRI_RUST_GLUE_XML=1 MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 MAKIRI_RUST_GLUE_XPATH=1"
-            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set,glue-css,bridge-xml-decode,glue-xml,glue-xml-node-read,glue-xml-node-mutate,glue-xpath"
+            flags: "MAKIRI_RUST_XML=1 MAKIRI_RUST_XPATH_SHARED=1 MAKIRI_RUST_XPATH_DRIVER=1 MAKIRI_RUST_XPATH_XML=1 MAKIRI_RUST_XPATH_HTML=1 MAKIRI_RUST_GLUE_SERIALIZE=1 MAKIRI_RUST_GLUE_NODE=1 MAKIRI_RUST_BRIDGE_STRING=1 MAKIRI_RUST_GLUE_NODE_SET=1 MAKIRI_RUST_GLUE_CSS=1 MAKIRI_RUST_BRIDGE_XML_DECODE=1 MAKIRI_RUST_GLUE_XML=1 MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1 MAKIRI_RUST_GLUE_XPATH=1 MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
+            features: "xml,xpath-shared,xpath-driver,xpath-xml,xpath-html,glue-serialize,glue-node,bridge-string,glue-node-set,glue-css,bridge-xml-decode,glue-xml,glue-xml-node-read,glue-xml-node-mutate,glue-xpath,glue-xml-node-serialize"
     steps:
       - name: Checkout (with vendored Lexbor submodule)
         uses: actions/checkout@v6
