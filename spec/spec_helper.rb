@@ -71,12 +71,13 @@ RSpec.configure do |config|
   #
   # The sanitizer arm was added on the reasoning above, NOT on evidence that it
   # was costing anything: it went in while an ASan run appeared to hang, and the
-  # hang turned out to be something else entirely (the extension segfaults at
-  # load under ASan, and the hour was Ruby printing a crash report whose memory
-  # map is enormous because ASan reserves terabytes of shadow). So this arm is
-  # untested against a working ASan build. It is kept because the Valgrind
-  # argument applies unchanged - volume tests, multiplied by instrumentation -
-  # but it has not yet been shown to matter here.
+  # hang turned out to be something else entirely (the extension segfaulted at
+  # load under ASan - since fixed, see CLAUDE.md - and the hour was Ruby printing
+  # a crash report whose memory map is enormous because ASan reserves terabytes
+  # of shadow). Against a working ASan build the whole suite now takes ~8s, so
+  # this arm has still not been shown to matter here. It is kept because the
+  # Valgrind argument applies unchanged: volume tests, multiplied by
+  # instrumentation.
   instrumented = [ENV["VALGRIND"], ENV["MAKIRI_SANITIZE"]].any? { |v| !v.to_s.empty? }
   if instrumented
     config.filter_run_excluding :slow
