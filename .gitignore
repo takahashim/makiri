@@ -51,5 +51,3 @@ ext/makiri/rust/fuzz/target/
 ext/makiri/rust/fuzz/corpus/
 ext/makiri/rust/fuzz/artifacts/
 
-# Scratch measurement harnesses under the crate (not shipped).
-ext/makiri/rust/examples/
