@@ -617,6 +617,13 @@ task :kani do
   Dir.chdir("ext/makiri/rust") { sh(*argv) }
 end
 
+namespace :rust do
+  desc "Run Rust's Ruby- and Lexbor-free core tests"
+  task :test do
+    Dir.chdir("ext/makiri/rust") { sh "cargo test --no-default-features" }
+  end
+end
+
 desc "Run the performance benchmark (Makiri vs Nokogiri reference)"
 task bench: :compile do
   # Run outside the bundle so the bench-only gems (nokogiri, benchmark-ips)

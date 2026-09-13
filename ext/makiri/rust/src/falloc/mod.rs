@@ -287,6 +287,14 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
 /// checked and one that is merely commented.
 pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     need.checked_mul(elem)?;
+    // No allocation is required for an empty request. More importantly, do
+    // not manufacture the usual initial capacity (8) here: for an arbitrary
+    // element size that capacity may itself be unallocatable even though zero
+    // elements fit. The public helper's contract is about every `elem`, not
+    // only its current pointer-sized caller.
+    if need == 0 {
+        return Some(0);
+    }
     // A `cap` whose byte size does not fit cannot describe a live allocation,
     // so start over rather than hand it back. Kani found this: with a huge
     // `cap` and a small `need` the loop below never runs, and the function
@@ -297,7 +305,11 @@ pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     // when the second caller arrives.
     let start = match cap.checked_mul(elem) {
         Some(_) if cap != 0 => cap,
-        _ => 8,
+        // The usual initial capacity is an optimisation, never a contract.
+        // If eight elements do not fit, `need` is already known to fit and is
+        // the only valid starting point.
+        _ if 8usize.checked_mul(elem).is_some() => 8,
+        _ => need,
     };
     let mut nc = start;
     while nc < need {

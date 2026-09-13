@@ -97,3 +97,10 @@ pub mod xpath;
 /// time, and the one export the extension publishes.
 #[cfg(feature = "ruby")]
 pub mod init;
+
+// These tests deliberately use the Ruby- and Lexbor-free feature set.  Kani
+// proves bounded symbolic properties in a separate job; this module gives the
+// normal Rust test runner exhaustive small-domain and boundary-value coverage
+// on every representative CI build.
+#[cfg(test)]
+mod rust_tests;

@@ -75,6 +75,18 @@ jobs:
         working-directory: ext/makiri/rust
         run: cargo clippy --all-features -- -D warnings
 
+      - name: Rust formatting
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust
+        run: cargo fmt --all -- --check
+
+      # Fast, Ruby- and Lexbor-free checks for the Rust core. Kani proves the
+      # bounded symbolic contracts in verify.yml; this executes exhaustive
+      # small-domain and regression properties on every ordinary CI run.
+      - name: Rust core tests
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake rust:test
+
       # The Rust port has a small, explicitly audited unsafe perimeter.  This
       # catches a raw operation added to a parsing primitive, or a new mutable
       # global added without a GVL/ownership proof.
