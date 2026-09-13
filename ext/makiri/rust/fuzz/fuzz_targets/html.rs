@@ -1,17 +1,16 @@
 //! The HTML parser + compat index build, on raw bytes.
 //!
 //! This is the cargo-fuzz counterpart to the XML reader target: it drives
-//! `mkr_parse_html` and the lazy `dom_index` build through the C ABI, reaching
-//! the Lexbor pipeline, the UTF-8 sanitizer, the attr->owner / tag->element
-//! index, and the source-location recorder. Arbitrary bytes are valid input:
-//! invalid UTF-8 is replaced and NUL is left for the tokenizer, so there is no
+//! `mkr_parse_html` and the lazy `dom_index` build, reaching the Lexbor
+//! pipeline, the UTF-8 sanitizer, the attr->owner / tag->element index, and
+//! the source-location recorder. Arbitrary bytes are valid input: invalid
+//! UTF-8 is replaced and NUL is left for the tokenizer, so there is no
 //! in-contract filter.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-
-mod common;
-use common::*;
+use makiri::dom_adapter::dom_index::mkr_parsed_dom_index_build;
+use makiri::dom_adapter::post_parse::{mkr_parse_html, mkr_parsed_destroy};
 
 fuzz_target!(|data: &[u8]| {
     unsafe {

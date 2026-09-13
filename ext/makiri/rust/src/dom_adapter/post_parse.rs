@@ -180,7 +180,6 @@ unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc
 /// `assume_valid` skips the UTF-8 validation scan entirely - the caller has
 /// already proved the bytes valid, typically from a Ruby String's cached
 /// coderange. NULL on failure.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parse_html(
     src: *const u8,
     len: usize,
@@ -237,7 +236,6 @@ pub unsafe extern "C" fn mkr_parse_html(
 }
 
 /// Free a parse handle and everything it owns.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_destroy(p: *mut Parsed) {
     if p.is_null() {
         return;

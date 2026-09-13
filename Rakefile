@@ -46,11 +46,12 @@ end
 # `source_pattern` is what makes `rake compile` notice an edited .rs. The
 # Makefile that extconf writes re-runs cargo on every build anyway (cargo does
 # its own dependency tracking), but rake-compiler decides whether to invoke make
-# at all, and its default pattern is for C.
+# at all, and its default pattern is for C. Limit it to the crate's own sources
+# so the cargo-fuzz crate and examples are not staged as extension sources.
 Rake::ExtensionTask.new("makiri", GEMSPEC) do |ext|
   ext.lib_dir        = "lib/makiri"
   ext.ext_dir        = "ext/makiri/rust"
-  ext.source_pattern = "**/*.{rs,toml}"
+  ext.source_pattern = "src/**/*.{rs,toml}"
 end
 
 RSpec::Core::RakeTask.new(:spec)
