@@ -61,7 +61,10 @@ pub unsafe fn match_attr_pred<'a>(p: *const Node) -> Option<AttrPred<'a>> {
         return None;
     };
     let name = match_attr_step(attr)?;
-    Some(AttrPred { name, value: Some(owned_bytes((*lit).u.literal)) })
+    Some(AttrPred {
+        name,
+        value: Some(owned_bytes((*lit).u.literal)),
+    })
 }
 
 /// The attribute whose QUALIFIED name is exactly `name`, case-sensitively.

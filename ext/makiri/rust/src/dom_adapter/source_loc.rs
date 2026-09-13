@@ -41,7 +41,7 @@ extern "C" {
     fn libc_memchr(s: *const c_void, c: core::ffi::c_int, n: usize) -> *const c_void;
 }
 
-type Parsed = lxb::mkr::mkr_parsed_t;
+pub type Parsed = lxb::mkr::mkr_parsed_t;
 type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
@@ -97,10 +97,12 @@ unsafe fn next_newline(bytes: &[u8], from: usize) -> Option<usize> {
 
 /// Build the line table over the input. NULL on allocation failure, which the
 /// caller treats as "no line information" rather than as a parse failure.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_lines_build(src: *const u8, len: usize) -> *mut c_void {
-    let bytes: &[u8] =
-        if src.is_null() || len == 0 { &[] } else { core::slice::from_raw_parts(src, len) };
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src, len)
+    };
 
     /* Count first, so the array is sized exactly once. Both passes go through
      * `next_newline`, so they cannot disagree about which bytes start a line. */
@@ -129,7 +131,6 @@ pub unsafe extern "C" fn mkr_lines_build(src: *const u8, len: usize) -> *mut c_v
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_lines_free(lines: *mut c_void) {
     if !lines.is_null() {
         drop(Box::from_raw(lines as *mut Lines));
@@ -168,7 +169,6 @@ pub struct Recorder {
     orig_ctx: *mut c_void,
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_pos_recorder_create(src: *const u8) -> *mut Recorder {
     try_box_raw(Recorder {
         items: Vec::new(),
@@ -179,14 +179,12 @@ pub unsafe extern "C" fn mkr_pos_recorder_create(src: *const u8) -> *mut Recorde
     })
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_pos_recorder_destroy(rec: *mut Recorder) {
     if !rec.is_null() {
         drop(Box::from_raw(rec));
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_pos_recorder_set_delegate(
     rec: *mut Recorder,
     orig: TokenFn,
@@ -246,7 +244,6 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
 ///
 /// Always delegates, so the parser still builds the tree; a recording failure
 /// only sets the overflow flag, which later suppresses assignment.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_pos_token_cb(
     tkz: *mut Tokenizer,
     token: *mut Token,
@@ -275,7 +272,6 @@ pub unsafe extern "C" fn mkr_pos_token_cb(
 /// tag id within a bounded lookahead. An element with no match in that window is
 /// left unstamped; `#line` then answers nil, which is the whole point - never a
 /// wrong line.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_pos_assign_to_dom(rec: *mut Recorder, root: *mut LxbNode) {
     if rec.is_null() || (*rec).overflow || root.is_null() {
         return;
@@ -315,7 +311,6 @@ pub unsafe extern "C" fn mkr_pos_assign_to_dom(rec: *mut Recorder, root: *mut Lx
 /// Ruby contract for `#line` is an Integer or nil, and post_parse documents the
 /// table's allocation as an allowed degradation - see the note in the
 /// html_node_read OOM scenario.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_node_line(p: *mut Parsed, node: *const LxbNode) -> usize {
     if p.is_null() || node.is_null() || (*node).user.is_null() || (*p).newline_idx.is_null() {
         return 0;

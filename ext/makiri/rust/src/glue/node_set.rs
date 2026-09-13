@@ -24,8 +24,8 @@
 //! error rather than a panic: `panic = "abort"` would turn an aliasing mistake
 //! into a dead process, and this codebase fails closed by raising.
 
-use core::ffi::{c_long, c_void};
 use crate::falloc::Reserve;
+use core::ffi::{c_long, c_void};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -103,7 +103,11 @@ unsafe impl Send for NodeVec {}
 
 impl NodeVec {
     const fn new() -> Self {
-        NodeVec { ptr: core::ptr::null_mut(), len: 0, cap: 0 }
+        NodeVec {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        }
     }
 
     fn len(&self) -> usize {
@@ -197,9 +201,11 @@ impl DataTypeFunctions for NodeSet {
         let base = core::mem::size_of::<Self>();
         /* Advisory only, so a busy cell just reports the header. */
         match self.nodes.try_borrow() {
-            Ok(nodes) => {
-                base.saturating_add(nodes.cap.saturating_mul(core::mem::size_of::<*mut c_void>()))
-            }
+            Ok(nodes) => base.saturating_add(
+                nodes
+                    .cap
+                    .saturating_mul(core::mem::size_of::<*mut c_void>()),
+            ),
             Err(_) => base,
         }
     }
@@ -248,7 +254,8 @@ unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
 /// `Makiri::NodeSet`, as created by Init_makiri.
 fn node_set_class() -> RClass {
     // SAFETY: defined before any of this runs.
-    RClass::from_value(unsafe { Value::from_raw(mkr_cNodeSet) }).expect("Makiri::NodeSet is a Class")
+    RClass::from_value(unsafe { Value::from_raw(mkr_cNodeSet) })
+        .expect("Makiri::NodeSet is a Class")
 }
 
 /* ------------------------------------------------------------------ */
@@ -257,11 +264,11 @@ fn node_set_class() -> RClass {
 
 /// # Safety
 /// `document` must be a live `Makiri::Document`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
     let ruby = Ruby::get_unchecked();
     let doc = Value::from_raw(document);
-    let doc_is_xml = rb_sys::rb_obj_is_kind_of(document, mkr_cXmlDocument) == rb_sys::Qtrue as VALUE;
+    let doc_is_xml =
+        rb_sys::rb_obj_is_kind_of(document, mkr_cXmlDocument) == rb_sys::Qtrue as VALUE;
     ruby.wrap(NodeSet {
         document: doc.into(),
         doc_is_xml,
@@ -272,7 +279,6 @@ pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
 
 /// # Safety
 /// `rb_set` must be a `Makiri::NodeSet`; `node` a node of its document.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_set_push(rb_set: VALUE, node: *mut c_void) {
     /* The hot path: one call per node of every CSS and XPath result. It uses
      * the unprotected accessor deliberately - magnus's `try_convert` costs an
@@ -335,7 +341,12 @@ fn length(rb_self: &NodeSet) -> Result<usize, Error> {
 }
 
 /// A new NodeSet over `[beg, beg+len)` of `nodes` (already clamped).
-fn slice_of(nodes: &[*mut c_void], document: Value, beg: usize, len: usize) -> Result<Value, Error> {
+fn slice_of(
+    nodes: &[*mut c_void],
+    document: Value,
+    beg: usize,
+    len: usize,
+) -> Result<Value, Error> {
     let (result, r) = new_result(document)?;
     {
         let mut w = r.write()?;
@@ -389,7 +400,10 @@ fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> 
     if args.len() != 1 {
         return Err(Error::new(
             ruby.exception_arg_error(),
-            format!("wrong number of arguments (given {}, expected 1..2)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 1..2)",
+                args.len()
+            ),
         ));
     }
 
@@ -397,7 +411,8 @@ fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> 
         let (mut beg, mut len): (c_long, c_long) = (0, 0);
         // SAFETY: a Range, and count is its bound. err=0 means "return nil when
         // the start is out of range" rather than raising.
-        let ok = unsafe { rb_sys::rb_range_beg_len(args[0].as_raw(), &mut beg, &mut len, count, 0) };
+        let ok =
+            unsafe { rb_sys::rb_range_beg_len(args[0].as_raw(), &mut beg, &mut len, count, 0) };
         if ok != rb_sys::Qtrue as VALUE {
             return Ok(ruby.qnil().as_value());
         }
@@ -407,7 +422,10 @@ fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> 
     /* Only a Range can reach here: the single-index form returned above. */
     Err(Error::new(
         ruby.exception_arg_error(),
-        format!("wrong number of arguments (given {}, expected 1..2)", args.len()),
+        format!(
+            "wrong number of arguments (given {}, expected 1..2)",
+            args.len()
+        ),
     ))
 }
 
@@ -556,7 +574,10 @@ impl Index {
 /// produce a corrupt set.
 fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSet, Error> {
     if !other.is_kind_of(node_set_class()) {
-        return Err(Error::new(ruby.exception_type_error(), "expected a Makiri::NodeSet"));
+        return Err(Error::new(
+            ruby.exception_type_error(),
+            "expected a Makiri::NodeSet",
+        ));
     }
     let o = <&NodeSet>::try_convert(other)?;
     if o.document(ruby).as_raw() != document.as_raw() {
@@ -577,7 +598,9 @@ fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
     let raw = unsafe { mkr_node_set_new(document.as_raw()) };
     /* Just built by the line above, so the type is known - no need to pay for
      * the checked conversion. */
-    Ok((unsafe { Value::from_raw(raw) }, unsafe { typed_data_unprotected(raw) }))
+    Ok((unsafe { Value::from_raw(raw) }, unsafe {
+        typed_data_unprotected(raw)
+    }))
 }
 
 /// `self | other` -> union, deduped, self first.
@@ -711,7 +734,6 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`, with the classes already defined.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_node_set() {
     let klass = node_set_class();
 
@@ -721,14 +743,30 @@ pub unsafe extern "C" fn mkr_init_node_set() {
         .define_singleton_method("new", magnus::function!(s_new, -1))
         .expect("NodeSet.new");
 
-    klass.define_method("|", method!(op_or, 1)).expect("NodeSet#|");
-    klass.define_method("+", method!(op_plus, 1)).expect("NodeSet#+");
-    klass.define_method("&", method!(op_and, 1)).expect("NodeSet#&");
-    klass.define_method("-", method!(op_minus, 1)).expect("NodeSet#-");
+    klass
+        .define_method("|", method!(op_or, 1))
+        .expect("NodeSet#|");
+    klass
+        .define_method("+", method!(op_plus, 1))
+        .expect("NodeSet#+");
+    klass
+        .define_method("&", method!(op_and, 1))
+        .expect("NodeSet#&");
+    klass
+        .define_method("-", method!(op_minus, 1))
+        .expect("NodeSet#-");
 
-    klass.define_method("length", method!(length, 0)).expect("NodeSet#length");
-    klass.define_method("[]", method!(aref, -1)).expect("NodeSet#[]");
-    klass.define_method("each", method!(each, 0)).expect("NodeSet#each");
-    klass.define_method("dup", method!(dup, -1)).expect("NodeSet#dup");
+    klass
+        .define_method("length", method!(length, 0))
+        .expect("NodeSet#length");
+    klass
+        .define_method("[]", method!(aref, -1))
+        .expect("NodeSet#[]");
+    klass
+        .define_method("each", method!(each, 0))
+        .expect("NodeSet#each");
+    klass
+        .define_method("dup", method!(dup, -1))
+        .expect("NodeSet#dup");
     /* #clone is defined in Ruby (node_set.rb) so it can honour `freeze:`. */
 }

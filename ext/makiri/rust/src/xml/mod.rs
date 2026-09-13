@@ -22,23 +22,14 @@ pub use abi::*;
 
 /* The engine itself. The layouts above stand alone, so a build that only
  * enables `xpath` still has the XML node the XPath backend walks. */
-#[cfg(feature = "xml")]
 pub mod arena;
-#[cfg(feature = "xml")]
 pub mod chars;
-#[cfg(feature = "xml")]
 pub mod ffi;
-#[cfg(feature = "xml")]
 pub mod index;
-#[cfg(feature = "xml")]
 pub mod mutate;
-#[cfg(feature = "xml")]
 pub mod qname;
-#[cfg(feature = "xml")]
 pub use qname::qname_from;
-#[cfg(feature = "xml")]
 pub mod selftest;
-#[cfg(feature = "xml")]
 pub mod tree;
 
 #[cfg(kani)]

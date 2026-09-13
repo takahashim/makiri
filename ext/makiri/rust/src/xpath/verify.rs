@@ -23,7 +23,6 @@ use crate::kani_bounds::parse_usize;
 
 use super::number::extent;
 
-
 /// The longest input these proofs quantify over.
 ///
 /// Six, not eight: the Number production is a flat scan, so the interesting
@@ -76,7 +75,10 @@ fn extent_matches_the_grammar() {
     // Maximal munch: the byte after the extent could not have extended it.
     if n < s.len() {
         let next = s[n];
-        assert!(!next.is_ascii_digit(), "stopping before a digit is not maximal");
+        assert!(
+            !next.is_ascii_digit(),
+            "stopping before a digit is not maximal"
+        );
         if next == b'.' {
             assert!(dots == 1, "stopping before the FIRST '.' is not maximal");
         }

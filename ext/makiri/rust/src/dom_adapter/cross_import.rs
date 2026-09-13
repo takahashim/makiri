@@ -152,10 +152,7 @@ struct Frame<S, D> {
 
 /// Push, growing only when the stack is actually full.
 #[inline]
-fn push<S, D>(
-    stack: &mut Vec<Frame<S, D>>,
-    frame: Frame<S, D>,
-) -> Result<(), ()> {
+fn push<S, D>(stack: &mut Vec<Frame<S, D>>, frame: Frame<S, D>) -> Result<(), ()> {
     if stack.len() == stack.capacity() {
         let want = crate::falloc::grow_capacity(
             stack.capacity(),
@@ -185,12 +182,7 @@ unsafe fn template_content(n: *const LxbNode) -> Option<*mut c_void> {
 /// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
 /// element, as an ordinary attribute, so the subtree's prefix-based namespace
 /// resolution at link time reproduces `uri`.
-unsafe fn declare_ns(
-    xdoc: *mut XmlDoc,
-    el: *mut XmlNode,
-    prefix: &[u8],
-    uri: &[u8],
-) -> c_int {
+unsafe fn declare_ns(xdoc: *mut XmlDoc, el: *mut XmlNode, prefix: &[u8], uri: &[u8]) -> c_int {
     if prefix.is_empty() {
         return mutate::set_attribute(xdoc, el, b"xmlns", uri, core::ptr::null_mut());
     }
@@ -222,7 +214,11 @@ unsafe fn h2x_copy_attrs(xdoc: *mut XmlDoc, s: *mut LxbNode, el: *mut XmlNode) -
             return MUT_OOM;
         }
         let name = core::slice::from_raw_parts(an, anl);
-        let value = if av.is_null() { &[][..] } else { core::slice::from_raw_parts(av, avl) };
+        let value = if av.is_null() {
+            &[][..]
+        } else {
+            core::slice::from_raw_parts(av, avl)
+        };
 
         let ans = (*a).node.ns;
         if ans != NS_UNDEF && ans != NS_HTML && ans != NS_XML {
@@ -263,7 +259,12 @@ unsafe fn h2x_make<'a>(
     parent_default: Option<&'a [u8]>,
 ) -> Result<Made<'a>, c_int> {
     /* A non-element does not change the default-namespace scope. */
-    let unchanged = |node| Ok(Made { node, child_default: parent_default });
+    let unchanged = |node| {
+        Ok(Made {
+            node,
+            child_default: parent_default,
+        })
+    };
 
     match (*s).type_ {
         h::ELEMENT => {
@@ -296,12 +297,7 @@ unsafe fn h2x_make<'a>(
                     local: nm as *const c_char,
                     local_len: nl as u32,
                 };
-                st = mutate::new_loose_dom_element(
-                    xdoc,
-                    &qn,
-                    euri.unwrap_or(&[]),
-                    &mut el,
-                );
+                st = mutate::new_loose_dom_element(xdoc, &qn, euri.unwrap_or(&[]), &mut el);
             }
             if st != MUT_OK {
                 return Err(st);
@@ -325,7 +321,10 @@ unsafe fn h2x_make<'a>(
             if st != MUT_OK {
                 return Err(st);
             }
-            Ok(Made { node: el, child_default })
+            Ok(Made {
+                node: el,
+                child_default,
+            })
         }
 
         h::TEXT | h::CDATA | h::COMMENT => {
@@ -402,7 +401,6 @@ unsafe fn h2x_children_of(s: *mut LxbNode) -> *mut LxbNode {
 }
 
 /// Deep- or shallow-copy an HTML subtree into the XML arena, detached.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_cross_html_to_xml(
     xdoc: *mut XmlDoc,
     src: *mut LxbNode,
@@ -429,7 +427,16 @@ pub unsafe extern "C" fn mkr_cross_html_to_xml(
          * 'static because there is no lifetime here to tie it to; the arena
          * outliving the walk is the real guarantee. */
         let rdef: Option<&'static [u8]> = core::mem::transmute(root.child_default);
-        if push(&mut stack, Frame { s: src, d: root.node, def: rdef }).is_err() {
+        if push(
+            &mut stack,
+            Frame {
+                s: src,
+                d: root.node,
+                def: rdef,
+            },
+        )
+        .is_err()
+        {
             return MUT_OOM;
         }
 
@@ -448,9 +455,17 @@ pub unsafe extern "C" fn mkr_cross_html_to_xml(
                         return st;
                     }
                     if !h2x_children_of(c).is_null() {
-                        let cdef: Option<&'static [u8]> =
-                            core::mem::transmute(made.child_default);
-                        if push(&mut stack, Frame { s: c, d: made.node, def: cdef }).is_err() {
+                        let cdef: Option<&'static [u8]> = core::mem::transmute(made.child_default);
+                        if push(
+                            &mut stack,
+                            Frame {
+                                s: c,
+                                d: made.node,
+                                def: cdef,
+                            },
+                        )
+                        .is_err()
+                        {
                             return MUT_OOM;
                         }
                     }
@@ -470,11 +485,7 @@ pub unsafe extern "C" fn mkr_cross_html_to_xml(
 /// preserving each attribute's namespace: a null-namespace one through
 /// `set_attribute`, a namespaced one through an explicit
 /// `lxb_dom_attr_set_name_ns`.
-unsafe fn x2h_copy_attrs(
-    hdoc: *mut LxbDoc,
-    s: *const XmlNode,
-    el: *mut LxbElement,
-) -> c_int {
+unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, s: *const XmlNode, el: *mut LxbElement) -> c_int {
     let mut a = (*s).attrs;
     while !a.is_null() {
         let val = if (*a).value.is_null() {
@@ -482,8 +493,7 @@ unsafe fn x2h_copy_attrs(
         } else {
             core::slice::from_raw_parts((*a).value as *const u8, (*a).value_len as usize)
         };
-        let qname =
-            core::slice::from_raw_parts((*a).qname as *const u8, (*a).qname_len as usize);
+        let qname = core::slice::from_raw_parts((*a).qname as *const u8, (*a).qname_len as usize);
 
         if (*a).ns_uri_len == 0 {
             if lxb_dom_element_set_attribute(
@@ -502,10 +512,8 @@ unsafe fn x2h_copy_attrs(
             if at.is_null() {
                 return MUT_OOM;
             }
-            let ns = core::slice::from_raw_parts(
-                (*a).ns_uri as *const u8,
-                (*a).ns_uri_len as usize,
-            );
+            let ns =
+                core::slice::from_raw_parts((*a).ns_uri as *const u8, (*a).ns_uri_len as usize);
             if lxb::lxb_dom_attr_set_name_ns(
                 at,
                 ns.as_ptr(),
@@ -632,7 +640,6 @@ unsafe fn x2h_link_target(el: *mut LxbNode) -> *mut LxbNode {
 }
 
 /// Deep- or shallow-copy an XML subtree into the Lexbor arena, detached.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_cross_xml_to_html(
     hdoc: *mut LxbDoc,
     src: *const XmlNode,
@@ -650,14 +657,22 @@ pub unsafe extern "C" fn mkr_cross_xml_to_html(
     }
 
     if deep != 0 {
-        let mut stack: Vec<Frame<*const XmlNode, *mut LxbNode>> = match try_vec_with_capacity(1)
-        {
+        let mut stack: Vec<Frame<*const XmlNode, *mut LxbNode>> = match try_vec_with_capacity(1) {
             Some(v) => v,
             None => return MUT_OOM,
         };
         /* The frame's `d` is the LINK TARGET for the source node's children: a
          * template element's content fragment, else the element itself. */
-        if push(&mut stack, Frame { s: src, d: x2h_link_target(root), def: None }).is_err() {
+        if push(
+            &mut stack,
+            Frame {
+                s: src,
+                d: x2h_link_target(root),
+                def: None,
+            },
+        )
+        .is_err()
+        {
             return MUT_OOM;
         }
 
@@ -673,7 +688,11 @@ pub unsafe extern "C" fn mkr_cross_xml_to_html(
                     if !(*c).first_child.is_null()
                         && push(
                             &mut stack,
-                            Frame { s: c, d: x2h_link_target(dc), def: None },
+                            Frame {
+                                s: c,
+                                d: x2h_link_target(dc),
+                                def: None,
+                            },
                         )
                         .is_err()
                     {

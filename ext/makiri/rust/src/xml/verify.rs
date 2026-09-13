@@ -7,7 +7,7 @@
 //! written down rather than assumed: a proof is only evidence about the code
 //! that actually runs.
 //!
-//! Run with `rake kani` (or `cargo kani --features xml,xpath`).
+//! Run with `rake kani` (or `cargo kani --no-default-features`).
 
 #![cfg(kani)]
 
@@ -66,7 +66,10 @@ fn accepted_is_utf8() {
     kani::assume(len <= N);
     let s = &buf[..len];
     if validate_chars(s) {
-        assert!(core::str::from_utf8(s).is_ok(), "accepted bytes must be UTF-8");
+        assert!(
+            core::str::from_utf8(s).is_ok(),
+            "accepted bytes must be UTF-8"
+        );
     }
 }
 
@@ -84,9 +87,21 @@ fn decode1_length_and_range() {
     kani::assume(len <= N);
     let s = &buf[..len];
     if let Some((cp, bl)) = decode1(s) {
-        assert!(bl >= 1, "a zero-length decode would make validate_chars loop");
-        assert!(bl <= s.len(), "the consumed length must stay inside the slice");
-        assert!(cp <= 0x10FFFF, "a decoded value must be a Unicode code point");
-        assert!(!(0xD800..=0xDFFF).contains(&cp), "surrogates must be rejected");
+        assert!(
+            bl >= 1,
+            "a zero-length decode would make validate_chars loop"
+        );
+        assert!(
+            bl <= s.len(),
+            "the consumed length must stay inside the slice"
+        );
+        assert!(
+            cp <= 0x10FFFF,
+            "a decoded value must be a Unicode code point"
+        );
+        assert!(
+            !(0xD800..=0xDFFF).contains(&cp),
+            "surrogates must be rejected"
+        );
     }
 }

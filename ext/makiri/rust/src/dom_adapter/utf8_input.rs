@@ -46,13 +46,7 @@ use core::ffi::c_int;
 
 use crate::cbuf::{mkr_buf_append, mkr_buf_reserve, mkr_buf_steal, Buf, MKR_OK};
 
-extern "C" {
-    /// The one UTF-8 validator (core/mkr_utf8.c), shared with the Ruby bridge's
-    /// strict input gate so both answer the same question. Its contract is that
-    /// `true` means the replacement below would be a no-op, which is what makes
-    /// the short-circuit sound.
-    fn mkr_utf8_valid(src: *const u8, len: usize) -> bool;
-}
+pub use crate::cutf8::mkr_utf8_valid;
 
 /// UTF-8 -> UTF-8 with every invalid sequence replaced by U+FFFD, into a freshly
 /// `malloc`'d, NUL-terminated buffer. NULL on OOM.
@@ -123,7 +117,6 @@ unsafe fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
 /// common case), which tells the caller to use `src` as-is with no copy.
 /// Otherwise `*out` receives a freshly `malloc`'d, NUL-terminated replacement
 /// the caller owns and `free()`s, with `*out_len` its length. Returns -1 on OOM.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_utf8_sanitize(
     src: *const u8,
     len: usize,

@@ -10,6 +10,8 @@
 //! an index, so every read is checked by the language and the discipline needs
 //! no enforcing.
 
+#![forbid(unsafe_code)]
+
 use super::number;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -138,7 +140,15 @@ fn decode1(s: &[u8]) -> Option<(usize, u32)> {
 /// NameStartChar over NameChar.
 fn ncname_char(s: &[u8], start: bool) -> usize {
     match decode1(s) {
-        Some((n, cp)) if (if start { is_ncname_start_cp(cp) } else { is_ncname_cont_cp(cp) }) => n,
+        Some((n, cp))
+            if (if start {
+                is_ncname_start_cp(cp)
+            } else {
+                is_ncname_cont_cp(cp)
+            }) =>
+        {
+            n
+        }
         _ => 0,
     }
 }
@@ -164,7 +174,12 @@ impl<'a> Lexer<'a> {
         let mut l = Lexer {
             src,
             pos: 0,
-            tok: Token { kind: Tok::Eof, off: 0, len: 0, num: 0.0 },
+            tok: Token {
+                kind: Tok::Eof,
+                off: 0,
+                len: 0,
+                num: 0.0,
+            },
         };
         l.tok = l.next_token()?;
         Ok(l)
@@ -200,7 +215,12 @@ impl<'a> Lexer<'a> {
     }
 
     fn punct(&mut self, kind: Tok, len: usize) -> Token {
-        let t = Token { kind, off: self.pos, len, num: 0.0 };
+        let t = Token {
+            kind,
+            off: self.pos,
+            len,
+            num: 0.0,
+        };
         self.pos += len;
         t
     }
@@ -210,7 +230,14 @@ impl<'a> Lexer<'a> {
             self.pos += 1;
         }
         let c = match self.at(0) {
-            None => return Ok(Token { kind: Tok::Eof, off: self.pos, len: 0, num: 0.0 }),
+            None => {
+                return Ok(Token {
+                    kind: Tok::Eof,
+                    off: self.pos,
+                    len: 0,
+                    num: 0.0,
+                })
+            }
             Some(c) => c,
         };
         let c1 = self.at(1);
@@ -273,7 +300,12 @@ impl<'a> Lexer<'a> {
             return Err(LexErr::ExpectedNumber);
         }
         let num = number::from_extent(&self.rest()[..extent]);
-        let t = Token { kind: Tok::Number, off: self.pos, len: extent, num };
+        let t = Token {
+            kind: Tok::Number,
+            off: self.pos,
+            len: extent,
+            num,
+        };
         self.pos += extent;
         Ok(t)
     }
@@ -291,7 +323,12 @@ impl<'a> Lexer<'a> {
             return Err(LexErr::InvalidUtf8Literal);
         }
         self.pos = start + len + 1; /* content + closing quote */
-        Ok(Token { kind: Tok::Literal, off: start, len, num: 0.0 })
+        Ok(Token {
+            kind: Tok::Literal,
+            off: start,
+            len,
+            num: 0.0,
+        })
     }
 
     fn lex_name(&mut self) -> Token {
@@ -325,6 +362,11 @@ impl<'a> Lexer<'a> {
         } else {
             Tok::Name
         };
-        Token { kind, off: start, len: self.pos - start, num: 0.0 }
+        Token {
+            kind,
+            off: start,
+            len: self.pos - start,
+            num: 0.0,
+        }
     }
 }

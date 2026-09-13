@@ -118,7 +118,8 @@ lexbor_archive = File.join(LEXBOR_DST, "lib", "liblexbor_static.a")
 # What the crate is built with
 # ---------------------------------------------------------------------------
 
-features = ["standalone"]
+# The default feature set is the extension: `ruby` (which implies `lexbor`).
+features = []
 
 # OOM-injection build (opt-in): MAKIRI_ALLOC_INJECT=1 compiles the allocation
 # failure hook so `rake oom` can sweep "the nth core allocation fails" over
@@ -138,6 +139,22 @@ rustc_args = []
 # Hard-link the static archive rather than pass -L/-llexbor_static, to avoid
 # accidentally linking a system-installed Lexbor.
 rustc_args += ["-C", "link-arg=#{lexbor_archive}"]
+
+# Windows: the vendored Lexbor calls CRT functions (strncmp in the HTML initial
+# insertion mode, &c.), but rustc's windows-gnu cdylib link runs gcc with
+# `-nodefaultlibs` and a hardcoded CRT list (-lmsvcrt -lmingwex -lgcc ...).
+# RubyInstaller's Ruby is a UCRT build and its toolchain's CRT is libucrt.a,
+# which is NOT in that list, and our archive sits at the END of the link line -
+# so anything Lexbor references has to be resolved by a library that appears
+# AFTER it. References the Rust std already pulled from an earlier archive are
+# incidentally satisfied; the rest fail with "undefined reference" (observed:
+# strncmp, the only CRT symbol nothing before Lexbor needed). Re-pass the CRT
+# import after the archive so ld's single pass sees it. (The gnullvm target for
+# aarch64 Ruby already links libucrt through clang's own specs; the -lucrt there
+# is a harmless duplicate.)
+if windows
+  rustc_args += ["-C", "link-arg=#{RUBY_PLATFORM =~ /mingw32/ ? "-lmsvcrt" : "-lucrt"}"]
+end
 
 # Nothing is added here for macOS's `-undefined dynamic_lookup`: rb_sys already
 # passes it, so Ruby C API symbols are resolved from the loading process and one
@@ -220,6 +237,40 @@ unless ENV["MAKIRI_COVERAGE"].to_s.strip.empty?
   warn "makiri: building with LLVM source-based coverage"
 end
 
+# Windows: match Ruby's ABI, or rb-sys refuses to generate bindings.
+#
+# RubyInstaller's Ruby is built for target_os="mingw32"/"ucrt", while a default
+# `rustup` on Windows installs the MSVC host toolchain - and rb-sys will not
+# generate bindings from Ruby's headers for a different operating-system ABI
+# ("Ruby was built for target_os=\"mingw32\", but Cargo is compiling for
+# x86_64-pc-windows-msvc"). So name the GNU target explicitly.
+#
+# The triple is asked of rb_sys rather than written here: it already maps every
+# gem platform to its Rust target (x64-mingw-ucrt -> x86_64-pc-windows-gnu,
+# aarch64-mingw-ucrt -> aarch64-pc-windows-gnullvm, x86-mingw32 -> i686-...),
+# and hand-rolling that table is how the aarch64 and 32-bit cases get missed.
+#
+# The toolchain must actually HAVE that target (`rustup target add`); CI installs
+# it, and a source install on Windows needs it too.
+if windows && cargo_target.nil?
+  begin
+    # `rb_sys/mkmf` alone is NOT enough: ToolchainInfo#initialize reads
+    # RbSys::VERSION, which only `rb_sys` pulls in. Getting this wrong is silent
+    # - the rescue fires, no target is set, and the build dies later with the
+    # ABI message this block exists to prevent.
+    require "rb_sys"
+    require "rb_sys/toolchain_info"
+    cargo_target = RbSys::ToolchainInfo.local.rust_target
+    warn "makiri: Ruby is a MinGW build; targeting #{cargo_target}"
+  rescue StandardError, LoadError => e
+    # Fail closed: proceeding would hit rb-sys's ABI error instead, which says
+    # nothing about how this build chose its target.
+    abort "makiri: cannot resolve the Rust target for #{RUBY_PLATFORM} " \
+          "(#{e.class}: #{e.message}). Ruby here is a MinGW build, so cargo must " \
+          "be told a *-pc-windows-gnu target; set RUST_TARGET and retry."
+  end
+end
+
 create_rust_makefile("makiri/makiri") do |r|
   r.features = features
   r.extra_rustc_args = rustc_args
@@ -252,11 +303,14 @@ end
 # extension was built for this ABI. Dropping it does not fail loudly - it
 # removes a check - so it is listed explicitly rather than left to luck.
 #
-# macOS note: `strip -u -r -s` prints "removing global symbols from a final
-# linked no longer supported". It works today and the result loads; if a future
-# Xcode makes it stop working, the fallback is to stop `#[no_mangle]`-exporting
-# the `mkr_*` names under `standalone` (nothing outside the crate calls them any
-# more), not to relax the restriction. `rake symbols` asserts the outcome, so
+# What actually enforces the restriction is the SOURCE: only `Init_makiri` is
+# `#[no_mangle]`, so no other name is emitted to export. This file's trim used to
+# be the mechanism, and that was wrong on Linux - `objcopy --keep-global-symbol`
+# cannot remove an entry from a linked shared object's `.dynsym`, so 222 `mkr_*`
+# names shipped exported there while macOS looked clean. The trim stays as a
+# second line on macOS, where `strip -u -r -s` does work (it prints "removing
+# global symbols from a final linked no longer supported" and works anyway).
+# `rake symbols` asserts the outcome, so
 # that day arrives as a failing gate rather than as a silent re-export.
 keep = File.join(Dir.pwd, "makiri-exported.sym")
 

@@ -34,17 +34,22 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   claim (nothing of ours or Lexbor's left undefined, and nothing but those two
   names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
   happily while ~220 `mkr_*` names leaked into the dynamic table.
-  Every change must stay clean under ASan and keep the fuzzers green - except
-  that **ASan does not currently run at all**, which is an open defect, not a
-  relaxation of the rule. See "Known defect: `rake sanitize`" below.
+  Every change must stay clean under ASan and keep the fuzzers green. The ASan
+  runtime preload is PLATFORM-SPLIT (required on Linux, harmful on macOS) - see
+  "AddressSanitizer: the preload is platform-split" below before changing how a
+  sanitized run is launched.
 
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:
   they hardened C sources, and there are none. `-fvisibility=hidden`'s job is
-  the one that survives, now done by the export trim in `extconf.rb` - rustc
-  performs the cdylib link and passes its own export list, so a linker flag
-  cannot narrow it (`ld: -unexported_symbol cannot be used with
-  -exported_symbol*`); the restriction is a post-link `strip`/`objcopy` step.
+  the one that survives, and it is enforced AT THE SOURCE: nothing but
+  `Init_makiri` is `#[no_mangle]`, so rustc emits no other exported name. That
+  is not a stylistic choice - on ELF it is the only thing that works. rustc owns
+  the cdylib link and passes its own export list, a second `--version-script` is
+  MERGED rather than applied (so it cannot narrow), and `objcopy`/`strip` cannot
+  remove an entry from a linked `.so`'s `.dynsym` at all. The post-link trim in
+  `extconf.rb` survives as belt-and-braces on macOS, where `strip -u -r -s` does
+  work; do not mistake it for the mechanism.
   UBSan is gone for the same reason: rustc's `-Zsanitizer` has no `undefined`,
   and there is no C left for `-fsanitize=undefined` to instrument.
 
@@ -78,7 +83,6 @@ bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbo
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
 bundle exec rake symbols           # THE export/undefined gate - see Hard constraints
-                                   # NOTE: `rake sanitize` is BROKEN - see below
 bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
@@ -117,57 +121,77 @@ commit as the behaviour change, so it reviews as a behaviour change rather than
 as a regenerated blob. It is the check that caught an ASCII-8BIT string, a quoted
 error message and a lost NUL terminator that the 1001-example suite passed over.
 
-### Known defect: `rake sanitize` segfaults at load (open)
+### AddressSanitizer: the preload is platform-split
 
-**The ASan build crashes while `Init_makiri` runs**, so the sanitizer gate
-currently covers nothing. The normal build is unaffected - spec (1001/0),
-`diff`, `oom`, `leaks`, `kani`, `fuzz` and `symbols` all pass on it - but do not
-read a green CI as meaning ASan ran.
+`rake sanitize` works. It did not for a long while - the extension segfaulted at
+address 0 during `require` - and the cause is worth keeping, because the fix is
+the *absence* of something the task used to do.
 
-What is established:
+rustc links its own ASan runtime into the cdylib as an `@rpath` dependency, so
+dyld loads it together with the extension. The task used to ALSO preload a
+runtime, and every way of doing that is broken on macOS:
 
-- `lib/makiri/makiri.bundle: [BUG] Segmentation fault at 0x0` during
-  `require` from `lib/makiri.rb:9`, i.e. inside `Init_makiri`.
-- Every undefined symbol in the bundle is legitimate (`__asan_*`, libSystem,
-  the unwinder). **No `mkr_` or `lxb_` is undefined**, so the usual
-  `-undefined dynamic_lookup` NULL-call explanation is NOT supported by the
-  evidence.
-- **`lr = 0x128e18654` is not in the bundle's text.** The crash report's own
-  memory map puts the executable range at `1061e8000-10635c000`; `0x128e…`
-  falls in an `rw-` (non-executable) mapping. So this is not "a call landed on
-  a null stub" either - control went somewhere that cannot be code, or `lr` was
-  already clobbered. Start from that, not from the null-pointer reading: two
-  earlier hypotheses (undefined symbol, then null call) both died on evidence.
-- **The export trim is NOT the cause.** Built with `MAKIRI_NO_EXPORT_TRIM=1`
-  (224 symbols exported, trim demonstrably off) it crashes identically.
-- **The likely cause is the preloaded runtime.** Instrumentation is rustc's
-  (`-Zsanitizer=address`), but `asan_runtime_path` in the Rakefile finds
-  *clang's* runtime via `cc -print-file-name` - correct while the C was what
-  got instrumented, wrong since. ASan itself says so: preloading clang's gives
-  "Interceptors are not working ... launch with
-  DYLD_INSERT_LIBRARIES=<rustup>/lib/rustlib/<triple>/lib/librustc-*_rt.asan.dylib".
-  Preloading THAT one clears the interceptor error and the segfault (stderr
-  becomes empty), but a bare `require` had not finished in 60s, so whether it
-  then works or merely hangs is UNVERIFIED. Resume there, and fix
-  `asan_runtime_path` to look in the toolchain that did the instrumenting.
-- Symbolication needs the unstripped artefact, and it is PERISHABLE: it lives
-  under `tmp/<platform>/makiri/<ruby>/target/...`, which `rake clean` wipes -
-  and `sanitize`, `oom` and `coverage` all run `rake clean compile` first. Copy
-  it out before running anything else. Note the ASan build alone passes
-  `--target <triple>`, so its path has an extra triple component that a plain
-  build's does not; looking in the wrong one reads as "the evidence is gone".
+- Preloading Apple's clang runtime (what `asan_runtime_path` found, via `cc
+  -print-file-name`) hands the process a runtime that does not export
+  `__asan_version_mismatch_check_v8` - which rustc's instrumentation calls from
+  every image's `asan.module_ctor`. Under `-undefined dynamic_lookup` a missing
+  symbol is not a link error but a NULL pointer, so that constructor jumped to 0
+  while dyld ran the image's initialisers, **before `Init_makiri`**. That was the
+  load segfault - the same `dynamic_lookup` hazard recorded two bullets above,
+  in a symbol nobody was auditing.
+- Preloading rustc's runtime instead deadlocks inside dyld: its init takes a
+  non-recursive spin lock, maps shadow memory, and the dyld call that does so
+  allocates - re-entering that same init through ASan's own malloc interceptor,
+  which then spins in `sched_yield` forever. No output, 100% CPU, before Ruby
+  executes a line.
+- Preloading clang's alongside rustc's linked one is simply two runtimes.
 
-Three hypotheses died on evidence - do not re-run them: an undefined symbol
-(none are ours), a null call (`lr` was in an `rw-` mapping, not a null stub),
-and the export trim (crashes with it off). Two things also misled the
-investigation: the hour-long "hang" was Ruby printing a crash report (ASan's
-shadow makes the memory map enormous), and macOS writes no `.ips` for it -
-Ruby's own `[BUG]` dump on stderr is the report.
+So on macOS the task preloads nothing, and passes `verify_interceptors=0` (with
+`verify_asan_link_order=0`, the same assertion under another name). That check
+asserts the runtime loaded ahead of libSystem, which is false for a library dyld
+brings in with the extension; the interceptors themselves install fine - a
+`verbosity=1` run reports "libc interceptors initialized" with the shadow
+mapped, `redzone=16` and a 256M quarantine - so heap red-zoning is live. Do not
+"fix" that flag away. Dropping the macOS preload also closed a coverage hole:
+three `spec/xml_html_boundary_spec.rb` examples used to skip under ASan because
+a subprocess cannot inherit `DYLD_*`. `ASAN_OPTIONS` is an ordinary variable, so
+they run now.
 
-None of this is fixed by the Rust-shape cleanup. The runtime mismatch is one
-function in the Rakefile; the cleanup does not touch it.
+**Linux is the mirror image, and generalising from macOS is the trap.** rustc
+links the sanitizer runtime into executables but NOT into a cdylib, so the `.so`
+carries `__asan_*` undefined and expects the host to supply them. With no
+preload `dlopen` fails outright - `undefined symbol: __asan_handle_no_return` -
+and no `ASAN_OPTIONS` value helps, because the flags govern checks, not symbol
+resolution. So Linux keeps `LD_PRELOAD` of GCC's `libasan`, which exports the
+same `_v8` ABI rustc asks for (Apple's runtime is the odd one out, not
+`libasan`). `Rakefile`'s `asan_preload_env` is the single place that decides,
+and it returns `{}` on macOS by construction.
+
+Verified on macOS (arm64): `rake sanitize` builds and completes the suite, 1000
+examples, 0 failures. The Linux half was verified in a linux/amd64 container on
+the mechanism rather than on Makiri: an ASan-instrumented cdylib `dlopen`'d by an
+uninstrumented host fails to load without the preload, loads with it, and with it
+reports a real heap-buffer-overflow. CI is what exercises it on Makiri itself.
+
+Two things the earlier investigation recorded as ESTABLISHED were wrong. They are
+corrected here so nobody re-derives them: `lr` **is** inside the bundle's `r-x`
+text (the dump's memory map has ~7900 entries, dozens of them `rw-` ranges named
+`makiri.bundle`, which is what misled the reading), and the null-call hypothesis
+was right rather than dead - the NULL symbol was an `__asan_*` one, waved through
+by the check that concluded "every undefined symbol is legitimate".
 
 ### Build / runtime gotchas (read before debugging weirdness)
+
+- **A plain `rake compile` after a sanitizer run keeps building with ASan.**
+  extconf writes `tmp/<platform>/makiri/<ruby>/Makefile` with
+  `RB_SYS_EXTRA_RUSTFLAGS ?= -Zsanitizer=address ...`, and rake-compiler re-runs
+  extconf only when that Makefile is ABSENT - so every later `rake compile`
+  silently reuses the sanitized flags. Nothing says so: the build is quiet, and
+  the first symptom is `rake spec`/`rake diff` dying with "Interceptors are not
+  working" (or, before the preload fix, something stranger). `rake clean compile`
+  is the cure, and `nm -u lib/makiri/makiri.bundle | grep -c __asan` (0 on a
+  plain build) is the check. This is worth knowing because it invalidates
+  measurements taken in between without failing anything.
 
 - **Adding a source file needs no special step.** cargo discovers modules from
   `mod` declarations and does its own dependency tracking, and the Makefile
@@ -180,11 +204,10 @@ function in the Rakefile; the cleanup does not touch it.
 - **Sanitizer must be run via the rake task, not `bundle exec rspec`.**
   `MAKIRI_SANITIZE=address` makes extconf build the crate with
   `-Zsanitizer=address` on the **nightly** toolchain (it aborts if nightly is
-  missing rather than silently building it plain); the task then preloads the
-  ASan runtime (`DYLD_INSERT_LIBRARIES` on macOS, `LD_PRELOAD` on Linux).
-  Without the preload a late-`dlopen`'d sanitized ext aborts with "interceptors
-  are not working", and `bundle exec` drops `DYLD_*` on macOS. Only one ASan
-  runtime may be linked, hence `-Zexternal-clangrt`. `ASAN_OPTIONS` disables
+  missing rather than silently building it plain). It preloads the ASan runtime
+  on Linux and NOT on macOS - see "AddressSanitizer: the preload is
+  platform-split", and do not "simplify" the two into one - plus
+  `verify_interceptors=0`/`verify_asan_link_order=0`. `ASAN_OPTIONS` also disables
   LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap errors in our
   code still fire. CI runs a separate `sanitize` job on Linux. There is no
   `undefined` mode any more - see Hard constraints.
@@ -276,10 +299,14 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Feature flags worth knowing: `standalone` is what the extension builds with (it
-implies everything). `no-c` is the narrower claim "there is no C tree here" and
-exists because the fuzz crate needs it without pulling in the Ruby boundary -
-conflating the two is what once made that crate compile four C files of its own.
+Three features, one per layer, and the default is the extension: **`ruby`** (the
+magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
+that read Lexbor's DOM: the generated ABI, `css`, `dom_adapter`, the XPath HTML
+instance) and **`alloc-inject`** (the `rake oom` hook, off in any normal build).
+The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
+all. So the fuzz crate builds `--no-default-features --features lexbor` and Kani
+builds `--no-default-features`. The ~30 features that used to stand here were
+migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
 

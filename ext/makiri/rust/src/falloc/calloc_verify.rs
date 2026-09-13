@@ -18,7 +18,6 @@
 //! Run with `rake kani`.
 
 #![cfg(kani)]
-#![cfg(feature = "core-alloc")]
 
 use core::ffi::c_void;
 
@@ -68,7 +67,10 @@ fn reallocarray_ownership() {
          * exists to let callers avoid. */
         let z = mkr_callocarray(4, 1);
         if !z.is_null() {
-            assert!(mkr_reallocarray(z, 0, 1).is_null(), "count == 0 answers NULL");
+            assert!(
+                mkr_reallocarray(z, 0, 1).is_null(),
+                "count == 0 answers NULL"
+            );
         }
     }
 }
@@ -81,8 +83,14 @@ fn callocarray_zeroes_and_rejects_zero_dimensions() {
     unsafe {
         let n: usize = kani::any();
         kani::assume(n <= 4);
-        assert!(mkr_callocarray(n, 0).is_null(), "elem == 0 allocates nothing");
-        assert!(mkr_callocarray(0, n).is_null(), "count == 0 allocates nothing");
+        assert!(
+            mkr_callocarray(n, 0).is_null(),
+            "elem == 0 allocates nothing"
+        );
+        assert!(
+            mkr_callocarray(0, n).is_null(),
+            "count == 0 allocates nothing"
+        );
 
         kani::assume(n > 0);
         let p = mkr_callocarray(n, 1) as *mut u8;

@@ -11,14 +11,14 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
-use crate::falloc::Reserve;
-use super::msg::Bytes;
-use super::dom::*;
 use super::ast::step_preds;
+use super::dom::*;
+use super::msg::Bytes;
 use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::own::Set;
 use super::value::owned_bytes;
 use crate::err_setf;
+use crate::falloc::Reserve;
 use core::ffi::c_void;
 use core::ptr;
 
@@ -50,7 +50,11 @@ pub unsafe fn try_descendant_index<D: Dom>(
     {
         return Ok(false);
     }
-    let ns_uri = if (*test).prefix.ptr.is_null() { None } else { b.pre };
+    let ns_uri = if (*test).prefix.ptr.is_null() {
+        None
+    } else {
+        b.pre
+    };
     if !(*test).prefix.ptr.is_null() && ns_uri.is_none() {
         return Ok(false); /* eval_step pre-resolves, so this should not happen */
     }

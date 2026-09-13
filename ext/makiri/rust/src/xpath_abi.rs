@@ -26,9 +26,9 @@ pub const XP_OK: c_int = 0;
 /// leading \x01 cannot come out of the lexer, so these are unreachable from a
 /// user expression. XML host only.
 ///
-/// They live here, not beside the evaluator: the two ends are in different
-/// feature trees (`css-lower` and `xpath`), and a name that only one of them
-/// knows is a call that resolves to nothing.
+/// They live here, not beside the evaluator: one end emits them and the other
+/// resolves them, and a name that only one end knows is a call that resolves to
+/// nothing.
 pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
 pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
 
@@ -277,72 +277,27 @@ pub struct Node {
 
 /* ---- the C functions the front end calls back into ---- */
 
-extern "C" {
-    /// Charges max_ast_nodes, then returns a zeroed node with its kind set, or
-    /// NULL with *err set. The one AST factory, shared with the CSS lowering.
-    pub fn mkr_node_alloc(limits: *mut Limits, err: *mut Error, kind: u32) -> *mut Node;
-    pub fn mkr_node_free(n: *mut Node);
-    pub fn mkr_step_clear(s: *mut Step);
-
-    pub fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> c_int;
-    pub fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> c_int;
-    pub fn mkr_limit_recurse_leave(l: *mut Limits);
-    pub fn mkr_limit_check_steps(l: *mut Limits, nsteps: usize, err: *mut Error) -> c_int;
-    pub fn mkr_limit_check_predicates(l: *mut Limits, npreds: usize, err: *mut Error) -> c_int;
-    pub fn mkr_limit_check_func_args(l: *mut Limits, nargs: usize, err: *mut Error) -> c_int;
-    pub fn mkr_limit_check_expr_bytes(l: *mut Limits, bytes: usize, err: *mut Error) -> c_int;
-
-    pub fn mkr_apply_peephole(n: *mut Node);
-    pub fn mkr_mark_context_independent(n: *mut Node);
-
-    pub fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char;
-    pub fn mkr_grow_reserve(
-        ptr: *mut *mut c_void,
-        cap: *mut usize,
-        need: usize,
-        elem: usize,
-    ) -> c_int;
-}
-
-/// The sizes C checks its own `sizeof` against, so a field added on one side
-/// without the other is a build-time failure rather than silent corruption.
-///
-/// Not compiled standing alone: the only caller is `mkr_xpath_rs_check.c`, and
-/// with no C declaration of these structs there is nothing for it to compare
-/// against. See the module header.
-///
-/// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
-#[cfg(all(feature = "xpath", not(feature = "no-c")))]
-#[no_mangle]
-pub unsafe extern "C" fn mkr_xpath_rs_sizes(out: *mut usize, cap: usize) -> usize {
-    let sizes = [
-        core::mem::size_of::<Node>(),
-        core::mem::size_of::<Step>(),
-        core::mem::size_of::<NodeTest>(),
-        core::mem::size_of::<Val>(),
-        core::mem::size_of::<NodeU>(),
-        core::mem::size_of::<Limits>(),
-        core::mem::size_of::<Error>(),
-        core::mem::size_of::<VerifiedText>(),
-    ];
-    if !out.is_null() {
-        for (i, s) in sizes.iter().enumerate().take(cap) {
-            *out.add(i) = *s;
-        }
-    }
-    sizes.len()
-}
+pub use crate::falloc::calloc::mkr_grow_reserve;
+pub use crate::falloc::calloc::mkr_strndup;
+pub use crate::xpath::ast_ops::mkr_apply_peephole;
+pub use crate::xpath::ast_ops::mkr_mark_context_independent;
+pub use crate::xpath::ast_ops::mkr_node_alloc;
+pub use crate::xpath::ast_ops::mkr_node_free;
+pub use crate::xpath::ast_ops::mkr_step_clear;
+pub use crate::xpath::limits::mkr_limit_ast_node;
+pub use crate::xpath::limits::mkr_limit_check_expr_bytes;
+pub use crate::xpath::limits::mkr_limit_check_func_args;
+pub use crate::xpath::limits::mkr_limit_check_predicates;
+pub use crate::xpath::limits::mkr_limit_check_steps;
+pub use crate::xpath::limits::mkr_limit_recurse_enter;
+pub use crate::xpath::limits::mkr_limit_recurse_leave;
 
 /* ---- the engine's runtime structures (mkr_xpath_internal.h, core/mkr_buf.h) ---- */
 
-/// `mkr_xpath_context_s`, opaque: the engine reaches it only through the
-/// `mkr_ctx_*` accessors, exactly as the C bodies do.
-#[repr(C)]
-pub struct Context {
-    _private: [u8; 0],
-}
+/// The engine's context. It used to be an opaque `_private: [u8; 0]` here and a
+/// real struct in `xpath::ctx`, reconciled only by the linker seeing one C name;
+/// with no C ABI between them that is two types, so this IS the one type.
+pub use crate::xpath::ctx::Context;
 
 /// `mkr_buf_t` - a growable byte buffer with a byte ceiling. Declared in
 /// `crate::cbuf`, which is where the C layout lives now that the glue writes
@@ -405,7 +360,11 @@ pub type FuncResolver = Option<
 /// Tag-index hooks (HTML only): `lookup` returns the document-ordered bucket of
 /// elements whose tag id matches.
 pub type TagIndexLookup = Option<
-    unsafe extern "C" fn(index: *const c_void, tag_id: usize, count: *mut usize) -> *const *mut c_void,
+    unsafe extern "C" fn(
+        index: *const c_void,
+        tag_id: usize,
+        count: *mut usize,
+    ) -> *const *mut c_void,
 >;
 pub type TagIndexForeign = Option<unsafe extern "C" fn(index: *const c_void) -> c_int>;
 
@@ -423,85 +382,39 @@ pub type NameIndexLookup = Option<
     ) -> *const *mut c_void,
 >;
 
-extern "C" {
-    /* buffers */
+pub use crate::falloc::calloc::mkr_callocarray;
+pub use crate::falloc::calloc::mkr_reallocarray;
+pub use crate::xpath::ctx::mkr_ctx_document;
+pub use crate::xpath::ctx::mkr_ctx_element_index;
+pub use crate::xpath::ctx::mkr_ctx_func_resolver;
+pub use crate::xpath::ctx::mkr_ctx_limits;
+pub use crate::xpath::ctx::mkr_ctx_lookup_ns;
+pub use crate::xpath::ctx::mkr_ctx_lookup_variable_text;
+pub use crate::xpath::ctx::mkr_ctx_name_index_get;
+pub use crate::xpath::ctx::mkr_ctx_name_index_lookup;
+pub use crate::xpath::ctx::mkr_ctx_name_index_owner;
+pub use crate::xpath::ctx::mkr_ctx_node;
+pub use crate::xpath::ctx::mkr_ctx_order_index;
+pub use crate::xpath::ctx::mkr_ctx_str_cache;
+pub use crate::xpath::ctx::mkr_ctx_tag_has_foreign;
+pub use crate::xpath::ctx::mkr_ctx_tag_lookup;
+pub use crate::xpath::ctx::mkr_ctx_unprefixed_lax;
+pub use crate::xpath::ctx::mkr_xpath_get_user_data;
+pub use crate::xpath::limits::mkr_limit_check_nodeset_size;
+pub use crate::xpath::limits::mkr_limit_check_string_bytes;
+pub use crate::xpath::limits::mkr_limit_eval_op;
+pub use crate::xpath::shared::mkr_doc_order_index_clear;
+pub use crate::xpath::shared::mkr_nodeset_clear;
+pub use crate::xpath::shared::mkr_nodeset_init;
+pub use crate::xpath::shared::mkr_nodeset_push;
+pub use crate::xpath::shared::mkr_owned_text_clear;
+pub use crate::xpath::shared::mkr_owned_text_from_borrowed_copy;
+pub use crate::xpath::shared::mkr_str_cache_index_put;
+pub use crate::xpath::shared::mkr_str_cache_reindex;
+pub use crate::xpath::shared::mkr_val_clear;
+pub use crate::xpath::shared::mkr_val_set_owned_text;
 
-    /* owned text */
-    pub fn mkr_owned_text_clear(t: *mut OwnedText);
-    pub fn mkr_owned_text_from_borrowed_copy(
-        out: *mut OwnedText,
-        t: VerifiedText,
-        err: *mut Error,
-        what: *const c_char,
-    ) -> c_int;
-
-    /* values and node-sets */
-    pub fn mkr_val_clear(v: *mut Val);
-    pub fn mkr_val_set_owned_text(v: *mut Val, text: OwnedText);
-    pub fn mkr_nodeset_init(ns: *mut NodeSet);
-    pub fn mkr_nodeset_push(
-        ns: *mut NodeSet,
-        node: *mut c_void,
-        limits: *mut Limits,
-        err: *mut Error,
-    ) -> c_int;
-    pub fn mkr_nodeset_clear(ns: *mut NodeSet);
-
-    /* limits not already declared above */
-    pub fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> c_int;
-    pub fn mkr_limit_check_nodeset_size(l: *mut Limits, n: usize, err: *mut Error) -> c_int;
-    pub fn mkr_limit_check_string_bytes(l: *mut Limits, bytes: usize, err: *mut Error) -> c_int;
-
-    /* errors (the three of mkr_xpath_err.c are below, where either side may
-     * provide them) */
-    pub fn mkr_err_setf(err: *mut Error, status: c_int, fmt: *const c_char, ...);
-    pub fn mkr_doc_order_index_clear(idx: *mut OrderIndex);
-
-    /* context accessors */
-    pub fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits;
-    pub fn mkr_ctx_document(ctx: *mut Context) -> *mut c_void;
-    pub fn mkr_ctx_node(ctx: *mut Context) -> *mut c_void;
-    pub fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache;
-    pub fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderIndex;
-    pub fn mkr_ctx_unprefixed_lax(ctx: *mut Context) -> c_int;
-    pub fn mkr_ctx_func_resolver(ctx: *mut Context) -> FuncResolver;
-    pub fn mkr_xpath_get_user_data(ctx: *mut Context) -> *mut c_void;
-    pub fn mkr_ctx_lookup_ns(
-        ctx: *mut Context,
-        prefix: *const c_char,
-        prefix_len: usize,
-        out_uri_len: *mut usize,
-    ) -> *const c_char;
-    pub fn mkr_ctx_lookup_variable_text(
-        ctx: *mut Context,
-        prefix: *const c_char,
-        prefix_len: usize,
-        name: *const c_char,
-        name_len: usize,
-        out: *mut VerifiedText,
-    ) -> c_int;
-
-    /* element index (HTML): a tag-id-keyed bucket of elements in document
-     * order, plus whether the document holds any foreign-namespace element -
-     * the //tag fast path is sound only for pure HTML. */
-    pub fn mkr_ctx_element_index(ctx: *mut Context) -> *mut c_void;
-    pub fn mkr_ctx_tag_lookup(ctx: *mut Context) -> TagIndexLookup;
-    pub fn mkr_ctx_tag_has_foreign(ctx: *mut Context) -> TagIndexForeign;
-
-    /* element-name index (XML) */
-    pub fn mkr_ctx_name_index_owner(ctx: *mut Context) -> *mut c_void;
-    pub fn mkr_ctx_name_index_get(ctx: *mut Context) -> NameIndexGet;
-    pub fn mkr_ctx_name_index_lookup(ctx: *mut Context) -> NameIndexLookup;
-
-    /* the string-value cache's index bookkeeping stays in C, so both sides
-     * drive one open-addressing table */
-    pub fn mkr_str_cache_index_put(c: *mut StrCache, idx: usize);
-    pub fn mkr_str_cache_reindex(c: *mut StrCache, bucket_cap: usize) -> c_int;
-
-    /* allocation */
-    pub fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;
-    pub fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void;
-}
+extern "C" {}
 
 /* ------------------------------------------------------------------ *
  * mkr_xpath_err.c - clearing an error and a result                   *
@@ -513,25 +426,16 @@ extern "C" {
  * one file, so a reader never has to find the other half to know which side
  * owns it.
  *
- * `mkr_err_setf` stays declared above in both configurations - it is variadic,
- * which Rust cannot define on stable. Nothing in the crate calls it, so it has
+ * `mkr_err_setf` is gone: it was a declaration of a variadic C function that no
+ * longer exists, and the Rust side formats through `xpath::msg`'s `err_setf!`
+ * macro instead. Nothing called it.
  * no provider to lose; if one ever does, it needs a non-variadic form first. */
 
 /// `mkr_xpath_type_t`. Only the two arms that own memory are named - the number
 /// and boolean arms have nothing to clear.
-#[cfg(feature = "no-c")]
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
-#[cfg(feature = "no-c")]
 const MKR_XPATH_TYPE_STRING: u32 = 1;
 
-#[cfg(not(feature = "no-c"))]
-extern "C" {
-    pub fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char);
-    pub fn mkr_xpath_error_clear(e: *mut Error);
-    pub fn mkr_xpath_value_clear(v: *mut XPathValue);
-}
-
-#[cfg(feature = "no-c")]
 extern "C" {
     #[link_name = "free"]
     fn libc_free(p: *mut c_void);
@@ -545,8 +449,6 @@ extern "C" {
 ///
 /// # Safety
 /// `err` is NULL or a live error; `msg` is NULL or NUL-terminated.
-#[cfg(feature = "no-c")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char) {
     if err.is_null() {
         return;
@@ -565,8 +467,6 @@ pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const
 ///
 /// # Safety
 /// `e` is NULL or a live error.
-#[cfg(feature = "no-c")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
     if e.is_null() {
         return;
@@ -583,8 +483,6 @@ pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
 ///
 /// # Safety
 /// `v` is NULL or a live value whose `type_` describes its active arm.
-#[cfg(feature = "no-c")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_value_clear(v: *mut XPathValue) {
     if v.is_null() {
         return;

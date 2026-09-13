@@ -5,10 +5,10 @@
 //! Lexbor is a vendored dependency whose pin moves (CLAUDE.md). A hand-written
 //! `#[repr(C)]` view of one of its structs does not fail to build when a field
 //! is added or reordered - it reads the wrong offset, which is a silent wrong
-//! answer. `xpath/html_abi.rs` handles that today by declaring the three node
-//! structs by hand and having `mkr_xpath_html_shim.c` compare every offset
-//! against the real `offsetof` at load time. That works, and it caught nothing
-//! only because nobody has moved the pin since.
+//! answer. `xpath/html_abi.rs` still declares the three node structs by hand;
+//! what checks them is `lexbor_abi::agree`, which compares every offset against
+//! the generated view at COMPILE time. That replaced a C translation unit doing
+//! the same comparison with `offsetof` at load time.
 //!
 //! Transcription by hand has already been wrong once, though, and not about an
 //! offset: `LXB_NS_HTML` is 2, and guessing 1 made every HTML element foreign,
@@ -18,13 +18,12 @@
 //!
 //! # What this does NOT remove
 //!
-//! bindgen reads the headers with libclang; the extension's C is compiled with
-//! whatever `cc` the Ruby build uses. They agree in every ordinary case, but
-//! nothing here proves it. That residual is what keeps a small C translation
-//! unit reporting real `sizeof`/`offsetof` worth having - see
-//! notes/rust_port_remaining.ja.md §2. The difference is that the C side now
-//! checks a generated view instead of being the only source of truth for a
-//! hand-written one.
+//! bindgen reads the headers with libclang; the vendored Lexbor archive is
+//! compiled by whatever `cc` cmake picks. They agree in every ordinary case,
+//! but nothing here proves it - and with no C of our own left, there is no
+//! translation unit that could report the real `sizeof`/`offsetof` back. What
+//! survives is the narrower guarantee: the hand-written views are checked
+//! against a GENERATED view rather than being their own source of truth.
 //!
 //! # Scope
 //!
@@ -38,10 +37,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=MAKIRI_LEXBOR_INCLUDE");
 
-    // Only the features that actually read Lexbor's layout pay for this. Kani
-    // builds `xml,xpath` and has no Lexbor headers to point at, which is the
-    // whole reason `rake kani` needs no `rake compile` first.
-    if std::env::var_os("CARGO_FEATURE_LEXBOR_ABI").is_none() {
+    // Only a build that reads Lexbor's layout pays for this. Kani builds with
+    // `--no-default-features` and has no Lexbor headers to point at, which is
+    // the whole reason `rake kani` needs no `rake compile` first.
+    if std::env::var_os("CARGO_FEATURE_LEXBOR").is_none() {
         return;
     }
 
@@ -134,9 +133,9 @@ fn main() {
         // NOT lxb_css_parser_create/init/destroy: glue/css.rs already
         // declares those over an OPAQUE parser, which is the right shape (the
         // selector engine reads no field of it). Generating them here as well
-        // gave the same C symbol two Rust types, and only the "everything"
-        // feature combination caught it - the same way the mkr_wrap_xml_node
-        // duplicate was caught. One declaration per symbol.
+        // gave the same C symbol two Rust types - a duplicate that escaped
+        // until a build compiled both definitions together, the same way the
+        // mkr_wrap_xml_node one did. One declaration per symbol.
         // The DOM readers glue/html_node uses. Generating them rather than
         // hand-declaring them is also the inline-only CHECK: bindgen does not
         // emit a `static inline`, so a name that is only inline in the headers
@@ -223,13 +222,13 @@ fn main() {
         .allowlist_function("lxb_css_property_serialize")
         .allowlist_function("lxb_css_property_serialize_name")
         .allowlist_function("lxb_css_selector_serialize_chain")
-                // Top-level consts, not modules: the names then match the headers
+        // Top-level consts, not modules: the names then match the headers
         // exactly and do not depend on bindgen's numbering of anonymous types.
         // Lexbor's constants are uniquely prefixed, so nothing collides.
         .default_enum_style(bindgen::EnumVariation::Consts)
-        // Layout tests are `#[test]` functions; this crate is a staticlib that
-        // is never `cargo test`ed, so they would be dead weight. The compile
-        // time asserts in lexbor_abi.rs are what actually run.
+        // Layout tests are `#[test]` functions, and this crate's are not run by
+        // `cargo test` (they need a live Ruby), so they would be dead weight.
+        // The compile-time asserts in lexbor_abi.rs are what actually run.
         .layout_tests(false)
         .generate_comments(false)
         .derive_default(false)
@@ -241,63 +240,12 @@ fn main() {
         .write_to_file(out.join("lexbor_sys.rs"))
         .expect("could not write the generated Lexbor bindings");
 
-    // Only while the C headers exist to be read. With `no-c` there is no
-    // ext/makiri/*.h at all, and nothing to keep in agreement: the definitions
-    // live in `lexbor_abi::mkr` instead. Generating from headers that are gone
-    // would simply fail the build, and generating from headers that are present
-    // is the whole point while they are.
-    if std::env::var_os("CARGO_FEATURE_NO_C").is_none() {
-        let ext_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .canonicalize()
-            .expect("ext/makiri must exist");
-        generate_makiri_enums(&ext_dir, &include, &out);
-    }
-}
-
-/// Makiri's OWN C types and enums, generated for the same reason Lexbor's are.
-///
-/// This was added after a transcribed `MKR_NODE_KIND_XML = 1` (it is 2) made
-/// `Document#import_node` treat every HTML node as an XML one - the identical
-/// failure to the `LXB_NS_HTML` incident, in our own constants, and made while
-/// building the machinery that prevents it for Lexbor's. The lesson generalised:
-/// a constant that is read rather than derived can be read wrongly, whoever owns
-/// the header.
-fn generate_makiri_enums(ext: &std::path::Path, lexbor_include: &std::path::Path, out: &std::path::Path) {
-    let header = "#include \"glue/cross_import.h\"\n\
-                  #include \"dom_adapter/compat.h\"\n";
-    println!("cargo:rerun-if-changed={}", ext.join("glue/cross_import.h").display());
-    println!("cargo:rerun-if-changed={}", ext.join("dom_adapter/compat.h").display());
-
-    let rb = |k: &str| -> String {
-        let out = std::process::Command::new("ruby")
-            .args(["-e", &format!("require 'rbconfig'; print RbConfig::CONFIG['{k}']")])
-            .output()
-            .expect("ruby must be on PATH to locate its headers");
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    };
-
-    let bindings = bindgen::Builder::default()
-        .header_contents("makiri_enums.h", header)
-        .clang_arg(format!("-I{}", ext.display()))
-        .clang_arg(format!("-I{}", lexbor_include.display()))
-        .clang_arg(format!("-I{}", rb("rubyhdrdir")))
-        .clang_arg(format!("-I{}", rb("rubyarchhdrdir")))
-        .allowlist_type("mkr_node_kind_t")
-        .allowlist_type("mkr_doc_kind_t")
-        // The parse handle. dom_adapter reads two of its fields (`doc` and the
-        // lazily-built index slot), so the layout is generated rather than
-        // restated - a field added ahead of `doc` would otherwise be a silent
-        // wrong read, which is the class this whole file exists to remove.
-        .allowlist_type("mkr_parsed_t")
-        .default_enum_style(bindgen::EnumVariation::Consts)
-        .layout_tests(false)
-        .generate_comments(false)
-        .generate()
-        .expect("bindgen failed over Makiri's own headers");
-    bindings
-        .write_to_file(out.join("makiri_enums.rs"))
-        .expect("could not write the generated Makiri enums");
+    // Makiri's OWN enums were generated here too, from ext/makiri/*.h, for the
+    // same reason Lexbor's are - a transcribed `MKR_NODE_KIND_XML = 1` (it is 2)
+    // had made `Document#import_node` treat every HTML node as an XML one. Those
+    // headers are gone with the rest of the C, and the definitions are now
+    // ordinary Rust consts in `lexbor_abi::mkr`, so there is no second reading
+    // of them left to keep in agreement.
 }
 
 /// Where the vendored Lexbor headers are. extconf builds them into

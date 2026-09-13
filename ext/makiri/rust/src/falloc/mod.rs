@@ -60,26 +60,17 @@
 
 use std::collections::{HashMap, HashSet};
 
-/// The C allocator surface (core/mkr_alloc.c), when this build provides it.
+/// The allocator surface that replaced core/mkr_alloc.c.
 pub mod calloc;
 /// Its Kani proofs - the ownership contract at the boundary, which is what is
 /// left after the size arithmetic went to `checked_*` and the OOM branches to
 /// `rake oom`.
 pub mod calloc_verify;
 
-/* The injection counter has ONE home, and which side that is depends on who
- * provides core/mkr_alloc.c. With `core-alloc` it is `calloc::inject`, and the
- * C reaches it through MKR_ALLOC_INJECT_FAIL(); without, it is still the C's
- * and this declaration reaches it. Either way `should_fail` below is the only
- * Rust entry, so there is no configuration in which two counters exist. */
-#[cfg(all(feature = "alloc-inject", not(feature = "core-alloc")))]
-extern "C" {
-    /// `core/mkr_alloc.c`. Counts every attempt (armed or not) so the harness
-    /// can size its sweep from a disarmed run, and fails exactly one.
-    fn mkr_alloc_inject_should_fail() -> core::ffi::c_int;
-}
+/* The injection counter has ONE home, `calloc::inject`, and `should_fail` below
+ * is the only way in - so a sweep cannot end up counting against two of them. */
 
-#[cfg(all(feature = "alloc-inject", feature = "core-alloc"))]
+#[cfg(feature = "alloc-inject")]
 use calloc::mkr_alloc_inject_should_fail;
 
 /// Should this allocation be failed? Always false outside a sweep build.

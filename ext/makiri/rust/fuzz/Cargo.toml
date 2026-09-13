@@ -10,37 +10,22 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-# Only the Ruby-free features. The glue needs magnus -> rb-sys -> a live Ruby,
-# which a fuzz binary has no business linking, and the surfaces these targets
-# drive (the XML reader, the XPath front end and the XML engine instance) are
-# exactly the ones the retired C harnesses drove.
+# No Ruby: the glue needs magnus -> rb-sys -> a live Ruby, which a fuzz binary
+# has no business linking. These targets drive the surfaces the retired C
+# harnesses drove - the XML reader, the XPath front end, the XML engine
+# instance.
 #
-# `no-c` is what lets this list be Ruby-free AND complete. This crate used to
-# compile four C files of its own (core/mkr_alloc.c, mkr_buf.c, mkr_utf8.c and
-# xpath/mkr_xpath_err.c) plus verify/stub.c, because those symbols had no Rust
-# provider outside the full extension build. They have one now, under a feature
-# that says only "there is no C tree here" - which is true of a fuzz binary and
-# does not drag in the Ruby boundary the way `standalone` would.
-#
-# `xpath-html` is here for the same reason and replaces verify/stub.c outright.
-# The dispatcher references both monomorphizations; these targets pin the
-# context's engine kind to XML, so the HTML entries were unreachable and got
-# abort() stubs. Building the real instance is simpler than stubbing it, costs
-# only compile time, and removes a file whose whole job was to be never called.
+# `lexbor` is on even though the targets pin the context's engine kind to XML:
+# the dispatcher references BOTH monomorphizations, so the HTML instance has to
+# exist. It used to be stubbed out with abort()s in a verify/stub.c; building
+# the real one costs only compile time and removes a file whose whole job was to
+# never be called. (This crate also used to compile four C files of its own -
+# core/mkr_alloc.c, mkr_buf.c, mkr_utf8.c, xpath/mkr_xpath_err.c - because those
+# symbols had no Rust provider outside the full extension build. They do now.)
 [dependencies.makiri_rs]
 path = ".."
 default-features = false
-features = [
-  "no-c",
-  "xml",
-  "xpath",
-  "xpath-xml",
-  "xpath-html",
-  "xpath-driver",
-  "xpath-shared",
-  "core-alloc",
-  "core-utf8",
-]
+features = ["lexbor"]
 
 [[bin]]
 name = "xml"

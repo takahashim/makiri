@@ -29,7 +29,6 @@
 //! Run with `rake kani`.
 
 #![cfg(kani)]
-#![cfg(feature = "core-buf")]
 
 use super::{
     mkr_buf_append, mkr_buf_reserve, mkr_buf_steal, Buf, MKR_ERR_INVALID, MKR_ERR_LIMIT,
@@ -57,9 +56,9 @@ const NSRC: usize = 4;
 /// thought it had set, and "LIMIT only past the ceiling" was false.
 ///
 /// That was a general hazard, not a local slip: any Rust reading a C-defined
-/// constant is, under Kani, reading an arbitrary value. Under `no-c` - which is
-/// what ships, and what `rake kani` now proves - the two are ordinary consts, so
-/// the assumption is trivially true rather than necessary. It stays because the
+/// constant is, under Kani, reading an arbitrary value. Both are ordinary Rust
+/// consts now, so the assumption is trivially true rather than necessary. It
+/// stays because the
 /// proof should keep saying what it means ("for any hard maximum at least as
 /// large as the ceiling under test") and because the hazard returns the moment
 /// any constant crosses a language boundary again.
@@ -98,7 +97,10 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
         }
         shadow[slen..slen + n].copy_from_slice(&src[..n]);
         let slen = slen + n;
-        assert!(content_matches(b, &shadow[..slen]), "append: content matches the shadow");
+        assert!(
+            content_matches(b, &shadow[..slen]),
+            "append: content matches the shadow"
+        );
         slen
     } else {
         assert!(
@@ -109,7 +111,10 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
             st != MKR_ERR_LIMIT || len0 + n > maxlim,
             "append: LIMIT only past the ceiling"
         );
-        assert!(b.len == len0 && b.cap == cap0, "append: failure leaves the size intact");
+        assert!(
+            b.len == len0 && b.cap == cap0,
+            "append: failure leaves the size intact"
+        );
         assert!(
             content_matches(b, &shadow[..slen]),
             "append: failure leaves the content intact"
@@ -164,14 +169,23 @@ fn append_matches_a_shadow_model() {
         kani::assume(want <= 2 * NSRC);
         let st = mkr_buf_reserve(&mut b, want);
         assert!(b.len == len0, "reserve: len untouched");
-        assert!(b.cap <= maxlim + 1, "reserve: clamped to the buffer's ceiling");
+        assert!(
+            b.cap <= maxlim + 1,
+            "reserve: clamped to the buffer's ceiling"
+        );
         if st == MKR_OK {
             assert!(b.cap >= cap0, "reserve: success does not shrink cap");
         } else {
             assert!(st == MKR_ERR_OOM, "reserve: failure is OOM");
-            assert!(b.len == len0 && b.cap == cap0, "reserve: failure leaves len and cap");
+            assert!(
+                b.len == len0 && b.cap == cap0,
+                "reserve: failure leaves len and cap"
+            );
         }
-        assert!(content_matches(&b, &shadow[..slen]), "reserve: content intact");
+        assert!(
+            content_matches(&b, &shadow[..slen]),
+            "reserve: content intact"
+        );
 
         slen = step_append(&mut b, &mut shadow, slen, maxlim);
 
@@ -182,11 +196,17 @@ fn append_matches_a_shadow_model() {
         if !p.is_null() {
             assert!(out_len == slen, "steal: the length is what was appended");
             let got = core::slice::from_raw_parts(p as *const u8, out_len);
-            assert!(got == &shadow[..slen], "steal: the bytes are what was appended");
+            assert!(
+                got == &shadow[..slen],
+                "steal: the bytes are what was appended"
+            );
             assert!(*p.add(out_len) == 0, "steal: NUL-terminated");
             libc_free(p as *mut core::ffi::c_void);
         }
-        assert!(b.data.is_null() && b.len == 0 && b.cap == 0, "steal: buffer reset to empty");
+        assert!(
+            b.data.is_null() && b.len == 0 && b.cap == 0,
+            "steal: buffer reset to empty"
+        );
     }
 }
 
@@ -209,7 +229,10 @@ fn steal_of_an_empty_buffer_is_an_owned_empty_string() {
             assert!(*p == 0, "steal: the empty result is NUL-terminated");
             libc_free(p as *mut core::ffi::c_void);
         }
-        assert!(b.data.is_null() && b.len == 0 && b.cap == 0, "steal: still empty");
+        assert!(
+            b.data.is_null() && b.len == 0 && b.cap == 0,
+            "steal: still empty"
+        );
     }
 }
 

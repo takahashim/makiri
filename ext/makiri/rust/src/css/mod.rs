@@ -37,9 +37,7 @@ mod parser;
 
 use core::ffi::{c_char, c_int};
 
-use crate::xpath_abi::{
-    mkr_err_set, mkr_node_free, Error, Limits, Node, VerifiedText, OP_UNION,
-};
+use crate::xpath_abi::{mkr_err_set, mkr_node_free, Error, Limits, Node, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -102,7 +100,6 @@ impl Build {
 ///
 /// # Safety
 /// From the XPath/CSS glue, under the GVL.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_css_compile(
     selector: VerifiedText,
     ns: *const CssNs,
@@ -135,7 +132,11 @@ pub unsafe extern "C" fn mkr_css_compile(
             mkr_node_free(acc);
             return core::ptr::null_mut();
         }
-        acc = if acc.is_null() { path } else { build::binop(&b, OP_UNION, acc, path) };
+        acc = if acc.is_null() {
+            path
+        } else {
+            build::binop(&b, OP_UNION, acc, path)
+        };
         if acc.is_null() {
             /* binop freed both operands. */
             return core::ptr::null_mut();

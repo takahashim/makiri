@@ -3,7 +3,7 @@ name = "makiri_rs"
 version = "0.0.1"
 edition = "2021"
 publish = false
-description = "Makiri subsystems ported from C behind the same C ABI (see src/lib.rs)"
+description = "The Makiri gem's extension: HTML5 parsing, XPath 1.0 and an XML reader"
 
 [lib]
 # The Ruby extension is `makiri.bundle` / `makiri.so`, loaded by
@@ -13,12 +13,10 @@ description = "Makiri subsystems ported from C behind the same C ABI (see src/li
 # what `fuzz/Cargo.toml` depends on by name, and it distinguishes the crate from
 # the gem in cargo output.)
 name = "makiri"
-# cdylib is what Ruby loads under `standalone`, where this crate IS the
-# extension; staticlib is the transitional link into the C extension; rlib so
-# the cargo-fuzz crate under fuzz/ can depend on this one and call its exported
-# entry points. Cargo cannot select a crate-type per feature, so all three are
-# built and the build picks the artifact it needs.
-crate-type = ["cdylib", "staticlib", "rlib"]
+# cdylib is what Ruby loads; rlib is what the cargo-fuzz crate under fuzz/
+# depends on. The staticlib that used to be linked into the C extension is gone
+# with it - nothing consumed it any more, and building it cost every build.
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 # `kani` is set by cargo-kani, not by cargo, so declare it or every build warns
@@ -28,183 +26,36 @@ path = "src/lib.rs"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [features]
-default = []
-# Generate Lexbor's layout and constants from its own headers (build.rs).
-# Enabled by every feature that reads them; kept off for the Ruby-free engine
-# features so `rake kani` needs no vendored Lexbor build.
-lexbor-abi = []
-# Allocation-failure injection, the Rust half of `rake oom`. extconf turns this
-# on for the same MAKIRI_ALLOC_INJECT=1 that defines -DMKR_ALLOC_INJECT for the
-# C sources, so both halves consult one counter. Off, `falloc::should_fail` is a
-# const false and the branch disappears.
+# Three features, and each names a real optional dependency rather than a step
+# of the C port: a Ruby runtime, a vendored C library, and a test hook.
+#
+# The port's thirty-seven per-file flags are gone. They existed so one C file at
+# a time could be replaced behind an identical ABI; there is no C left to
+# replace, so a flag per former file only described history.
+default = ["ruby"]
+
+# The Ruby boundary: magnus, rb-sys, and everything under `bridge/`, `glue/`
+# and `init.rs`. Off, the crate is the engine alone - which is what Kani and
+# cargo-fuzz build, since neither can link a live Ruby.
+ruby = ["lexbor", "dep:magnus", "dep:rb-sys"]
+
+# The vendored Lexbor: build.rs runs bindgen over its headers, so this also
+# decides whether a build needs `vendor/lexbor/dist` to exist at all. `rake
+# kani` turns it OFF deliberately - the proofs are over the XML reader and the
+# XPath front end, and not needing a Lexbor build is what lets them run without
+# `rake compile` first.
+lexbor = []
+
+# Allocation-failure injection, the Rust half of `rake oom`. Off,
+# `falloc::should_fail` is a const false and the branch disappears.
 alloc-inject = []
-# Each feature replaces a set of C sources; extconf turns one on at the same
-# time as it drops the sources it replaces.
-xml = []
-# The XPath front end: lexer, Number, parser.
-xpath = []
-# The generic engine both instances instantiate. Not a replacement for any C
-# file on its own - it exports nothing, so it is named for what it is rather
-# than for one of the two things built on it.
-xpath-engine = ["xpath"]
-# An engine instance: the two `_xml` / `_html` entry points the driver
-# dispatches on. Independent of each other, so either C instance can be
-# replaced alone - which is what makes a regression bisectable.
-xpath-xml = ["xpath-engine"]
-xpath-html = ["xpath-engine", "lexbor-abi"]
-# The driver: the context, the budgets, the evaluate entries. Independent of
-# both instances - it dispatches to whichever language provides each.
-xpath-driver = []
-# The representation-independent primitives every layer calls: node-set, owned
-# text, the runtime value, the two per-evaluate caches, and the AST's build,
-# destroy and rewrite.
-xpath-shared = []
-
-# The Ruby boundary (ext/makiri/glue/), ported onto magnus. Unlike the engine
-# features these pull in a dependency, so `glue` gates it and each feature below
-# replaces one glue/*.c - Init_makiri keeps calling the same mkr_init_*().
-glue = ["dep:magnus", "dep:rb-sys", "lexbor-abi"]
-glue-serialize = ["glue"]
-# The shared node core: the TypedData types both representations' wrappers use,
-# their GC functions, and the kind-agnostic accessors. It defines no Ruby
-# method, so it keeps the C ABI exactly and the other glue files link to it
-# unchanged.
-glue-node = ["glue"]
-# bridge/ruby_string.c - the text-input contract. The only layer allowed raw
-# Ruby String access, so it is the one whose port has to preserve the
-# allocation-free borrow rule (see src/bridge/string.rs).
-bridge-string = ["glue"]
-# Makiri::NodeSet - the first wrapper type Rust owns outright (magnus TypedData,
-# private layout), rather than exporting an rb_data_type_t for C to use.
-glue-node-set = ["glue"]
-# Node#css / #at_css / #matches? - the shared Lexbor selector engine, the
-# adaptive compiled-selector cache, and the traversal callbacks.
-glue-css = ["glue"]
-# glue/ruby_lexbor_css.c - Makiri::Lexbor::CSS.parse_stylesheet. Reads Lexbor's
-# CSS rule layout (generated, see build.rs) and crosses its serializer callback.
-glue-lexbor-css = ["glue"]
-# glue/ruby_doc.c - the Document wrapper, its rb_data_type_t chain, the parse
-# entry (GVL-released) and the whole fragment pipeline. Eleven of its symbols
-# are called by C files that are not ported yet, so the C ABI is load-bearing.
-glue-doc = ["glue"]
-# bridge/xml_decode.c - XML 1.0 Appendix F autodetection + the strict decode.
-# Needs `bridge-string` because it shares that module's allocation-free
-# strict-text check rather than declaring a second one.
-bridge-xml-decode = ["glue", "bridge-string"]
-# glue/ruby_xml.c - the Ruby boundary for our own XML reader and its XPath/CSS
-# queries. Zero Lexbor, and the engine on the other side is already Rust.
-glue-xml = ["glue"]
-# glue/ruby_xpath.c - XPathContext, Node#xpath / #at_xpath, and the custom
-# function handler bridge. The engine underneath is already Rust.
-glue-xpath = ["glue"]
-# glue/ruby_xml_node_read.c - the XML node's reading half. The writing half
-# (serialization, canonicalization, mutation, factories) is still C; the two were
-# split so each could move on its own.
-glue-xml-node-read = ["glue"]
-# glue/ruby_xml_node.c - the mutation and factory half. It provides
-# mkr_init_xml_node, so it implies the reader half (whose entry point that
-# function calls).
-glue-xml-node-mutate = ["glue", "glue-xml-node-read"]
-# glue/ruby_xml_node_serialize.c - #to_xml (with the namespace-declaration
-# synthesis) and Canonical XML 1.0.
-glue-xml-node-serialize = ["glue", "glue-xml-node-read"]
-# glue/ruby_html_node.c - the HTML node representation: wrap/unwrap plus every
-# reader on Makiri::HTML::NodeMethods. The mutation half (ruby_html_mutate.c) is
-# still C and supplies #clone_node, which this one binds by pointer.
-glue-html-node = ["glue"]
-# glue/ruby_html_mutate.c - the HTML node's mutators and the Document factories.
-# It shares html_node's wrap/unwrap and node-type constants, so it implies the
-# reader half rather than restating them.
-glue-html-mutate = ["glue", "glue-html-node"]
-
-# ext/makiri/dom_adapter/ - what Lexbor does not provide and we will not patch it
-# to. `dom-adapter` gates the module; each file below replaces one .c.
-dom-adapter = []
-# dom_adapter/utf8_input.c - WHATWG lossy UTF-8 decoding for HTML input. Needs
-# no Ruby and no Lexbor (see the module docs for why the encoder dependency went
-# away), so it is the one dom_adapter file with no `glue` in its feature set.
-dom-utf8-input = ["dom-adapter"]
-# dom_adapter/text_index.c - the per-document text-extraction index. Reads
-# Lexbor's node and character-data layout, so it needs the generated ABI.
-dom-text-index = ["dom-adapter", "lexbor-abi"]
-# dom_adapter/dom_index.c - the attr->owner hash and the tag->elements CSR, one
-# object because they share a walk.
-dom-index = ["dom-adapter", "lexbor-abi"]
-# dom_adapter/cross_import.c - Document#import_node across the two
-# representations. It calls the XML arena's factories DIRECTLY rather than
-# through their C ABI, so it depends on `xml`: declaring them here would give
-# each symbol a second Rust declaration whenever `xml` is also on.
-dom-cross-import = ["dom-adapter", "lexbor-abi", "xml"]
-# dom_adapter/source_loc.c - the line table, the token-position recorder that
-# chains Lexbor's token-done callback, and the DOM assignment pass.
-dom-source-loc = ["dom-adapter", "lexbor-abi"]
-# dom_adapter/post_parse.c - the parse pipeline (with the chained tokenizer
-# callback) and the parsed-document lifecycle.
-dom-post-parse = ["dom-adapter", "lexbor-abi"]
-
-# ext/makiri/core/ - the Ruby-free, Lexbor-free safety primitives.
-# core/mkr_utf8.c - the shared validator and strict decoder. The module itself
-# is unconditional (see src/cutf8.rs); this gates only the C entry points.
-core-utf8 = []
-# core/mkr_buf.c - the owned, capped, growable byte buffer. The struct and the
-# two `static inline` helpers stay in the C header (C code still declares
-# buffers by value); this replaces the three exported functions.
-core-buf = []
-# core/mkr_alloc.c - the overflow-checked, fail-closed allocator wrappers, and
-# (under alloc-inject) the OOM sweep's counter. Implies core-buf: the buffer
-# calls grow_capacity and the two share the counter, so splitting them would put
-# one side's allocations outside the sweep.
-core-alloc = ["core-buf"]
-
-# xpath/mkr_css.c - the CSS selector front end. Lowering only: Lexbor keeps the
-# parser (design_doc.ja.md lists re-implementing selectors among the things
-# deliberately avoided). Needs the XPath AST builders and Lexbor's layout.
-css-lower = ["xpath-shared", "lexbor-abi"]
-
-# "There is no C tree in this build." A handful of symbols never had a
-# RustPorts row because no flag could replace them piecemeal - the buffer's
-# build-time limits (core/mkr_core_abi.c), the XPath error setters
-# (xpath/mkr_xpath_err.c) and the HTML shims (xpath/mkr_xpath_html_shim.c) - so
-# Rust provides them exactly when the C that did is absent.
-#
-# Separate from `standalone` because the two are different claims, and the fuzz
-# crate needs only this one: it links no Ruby, so it cannot enable `standalone`
-# (which pulls magnus through the glue), but it has no C either. Conflating them
-# is what made the fuzz build compile four C files of its own.
-#
-# Implies `core-alloc` because the fills need it: the XPath error setters this
-# feature provides copy their message with `mkr_strdup`, which lives behind
-# `core-alloc` (and which implies `core-buf`, whose ceilings this feature also
-# defines). Without the implication a build with `no-c` and without
-# `core-alloc` fails to compile - not a hazard for the shipped extension
-# (`standalone` has both) or the fuzz crate (which names both), but a trap for
-# any narrower set, and the port-table check that used to catch this class of
-# feature drift is gone with the C.
-no-c = ["core-alloc"]
-
-# The standalone extension: Rust owns Init_makiri and the whole class
-# hierarchy, and there is no C extension at all. Implies every replacement
-# feature, because with no C fallback there is nothing for a half-on
-# configuration to fall back TO.
-standalone = [
-  "no-c",
-  "glue-serialize", "glue-node", "glue-node-set", "glue-css", "glue-lexbor-css",
-  "glue-doc", "glue-xml", "glue-xpath", "glue-xml-node-read",
-  "glue-xml-node-mutate", "glue-xml-node-serialize", "glue-html-node",
-  "glue-html-mutate", "bridge-string", "bridge-xml-decode",
-  "dom-utf8-input", "dom-text-index", "dom-index", "dom-cross-import",
-  "dom-source-loc", "dom-post-parse",
-  "core-utf8", "core-buf", "core-alloc",
-  "css-lower", "xml", "xpath", "xpath-xml", "xpath-html", "xpath-driver",
-  "xpath-shared",
-]
 
 [dependencies]
-# Only the glue needs Ruby; the engine features stay dependency-free, so a build
-# that enables none of the glue features compiles exactly what it did before.
-# `rb-sys` is magnus's own binding layer - taken directly for the few raw VALUEs
-# that cross to the C glue, and deliberately WITHOUT `link-ruby`: this crate is a
-# staticlib linked into the C extension, which is what resolves the rb_* symbols.
+# Only the `ruby` feature needs these; the engine builds without them, which is
+# what lets Kani and cargo-fuzz compile it. `rb-sys` is magnus's own binding
+# layer, taken directly for the raw VALUEs the boundary passes around and
+# deliberately WITHOUT `link-ruby`: the extension is dlopen'd into a Ruby that
+# already provides the rb_* symbols.
 magnus = { version = "0.8", features = ["rb-sys"], optional = true }
 rb-sys = { version = "0.9", optional = true }
 
@@ -222,6 +73,21 @@ debug = false
 
 [profile.dev]
 panic = "abort"
+
+# Examples are Ruby-free benchmarks/probes over the vendored Lexbor. They use
+# modules gated behind the `lexbor` feature, so cargo should skip building them
+# when that feature is off (e.g. `cargo test --no-default-features`).
+[[example]]
+name = "probe"
+required-features = ["lexbor"]
+
+[[example]]
+name = "idxbench"
+required-features = ["lexbor"]
+
+[[example]]
+name = "idclass"
+required-features = ["lexbor"]
 
 [build-dependencies]
 # Reads the vendored Lexbor headers so the layout is not transcribed by hand.

@@ -11,27 +11,25 @@
 /// `consts`, the agreement checks - were also exempt from dead-code and naming
 /// lints they should not be.
 mod sys {
-    #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+    #![allow(
+        non_camel_case_types,
+        non_snake_case,
+        non_upper_case_globals,
+        dead_code
+    )]
     include!(concat!(env!("OUT_DIR"), "/lexbor_sys.rs"));
 }
 
 pub use sys::*;
 
-/// Makiri's own C enums and the parse handle, generated for the same reason
-/// Lexbor's are - see `generate_makiri_enums` in build.rs.
+/// Makiri's own constants, and the layout of the handle a parse returns.
 ///
-/// Generated only while the C declares them too. Generation exists to keep two
-/// declarations of one type in agreement; with the C gone there is no second
-/// declaration, so the definitions below ARE the type and there is nothing left
-/// to drift from. (Lexbor is the opposite case in the same file: it stays
-/// generated in every configuration, because its headers are never ours.)
-#[cfg(not(feature = "no-c"))]
-pub mod mkr {
-    #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/makiri_enums.rs"));
-}
-
-#[cfg(feature = "no-c")]
+/// Unlike everything above, these are NOT generated. They were, from
+/// `ext/makiri/*.h` - added after a transcribed `MKR_NODE_KIND_XML = 1` (it is
+/// 2) made `Document#import_node` treat every HTML node as an XML one. Those
+/// headers went with the rest of the C, so there is no second reading of them
+/// left to check against: this module is now the definition. That is why the
+/// field order below is spelled out rather than left to be noticed.
 pub mod mkr {
     #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
     use core::ffi::{c_uint, c_void};
@@ -131,8 +129,9 @@ extern "C" {
      * setter and a ctx getter for the token-done callback but NO getter for the
      * callback function itself, so that one field is read directly from the
      * generated struct - see `dom_adapter::source_loc`. */
-    pub fn lxb_html_parser_tokenizer_noi(parser: *mut lxb_html_parser_t)
-        -> *mut lxb_html_tokenizer_t;
+    pub fn lxb_html_parser_tokenizer_noi(
+        parser: *mut lxb_html_parser_t,
+    ) -> *mut lxb_html_tokenizer_t;
     pub fn lxb_html_tokenizer_callback_token_done_set_noi(
         tkz: *mut lxb_html_tokenizer_t,
         cb: lxb_html_tokenizer_token_f,
@@ -271,8 +270,10 @@ extern "C" {
 
     pub fn lxb_css_selectors_create() -> *mut CssSelectors;
     pub fn lxb_css_selectors_init(sel: *mut CssSelectors) -> u32;
-    pub fn lxb_css_selectors_destroy(sel: *mut CssSelectors, self_destroy: bool)
-        -> *mut CssSelectors;
+    pub fn lxb_css_selectors_destroy(
+        sel: *mut CssSelectors,
+        self_destroy: bool,
+    ) -> *mut CssSelectors;
 
     pub fn lxb_css_selectors_parse(
         parser: *mut CssParser,
@@ -300,7 +301,6 @@ extern "C" {
 /// load-time abort, and it names the field in the error. The C-side `offsetof`
 /// check in `mkr_xpath_html_shim.c` stays for the one thing neither of these
 /// covers - libclang and the build's `cc` disagreeing with each other.
-#[cfg(feature = "xpath-html")]
 mod agree {
     use super::{lxb_dom_attr_t, lxb_dom_element_t, lxb_dom_node_t};
     use crate::xpath::html_abi::{Attr, Element, Node};

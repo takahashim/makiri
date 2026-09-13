@@ -32,12 +32,7 @@ use rb_sys::{rb_encoding, VALUE};
 use super::string::{mkr_text_check, MKR_TEXT_HAS_NUL, MKR_TEXT_INVALID_UTF8};
 use crate::glue::abi::{mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, rb_raise};
 
-extern "C" {
-
-    /// Writes `exc`'s message as a C string, falling back to "error". Never
-    /// raises - it runs on an error path.
-    fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize);
-}
+pub use crate::bridge::string::mkr_ruby_exception_message;
 
 /// `rb_str_encode` with no replacement flags, so an undefined conversion or an
 /// invalid byte sequence RAISES rather than substituting U+FFFD. Run under
@@ -81,22 +76,42 @@ struct Geometry {
 /// that derivation needs `rb_enc_find`, and the scanner must stay
 /// allocation-free while it holds a borrow.
 unsafe fn bom_encoding(p: &[u8]) -> (*mut rb_encoding, Geometry) {
-    let mut g = Geometry { bom_len: 0, stride: 1, off: 0 };
+    let mut g = Geometry {
+        bom_len: 0,
+        stride: 1,
+        off: 0,
+    };
     let starts = |pat: &[u8]| p.starts_with(pat);
     if starts(b"\x00\x00\xFE\xFF") {
-        g = Geometry { bom_len: 4, stride: 4, off: 3 };
+        g = Geometry {
+            bom_len: 4,
+            stride: 4,
+            off: 3,
+        };
         return (rb_sys::rb_enc_find(c"UTF-32BE".as_ptr()), g);
     }
     if starts(b"\xFF\xFE\x00\x00") {
-        g = Geometry { bom_len: 4, stride: 4, off: 0 };
+        g = Geometry {
+            bom_len: 4,
+            stride: 4,
+            off: 0,
+        };
         return (rb_sys::rb_enc_find(c"UTF-32LE".as_ptr()), g);
     }
     if starts(b"\xFE\xFF") {
-        g = Geometry { bom_len: 2, stride: 2, off: 1 };
+        g = Geometry {
+            bom_len: 2,
+            stride: 2,
+            off: 1,
+        };
         return (rb_sys::rb_enc_find(c"UTF-16BE".as_ptr()), g);
     }
     if starts(b"\xFF\xFE") {
-        g = Geometry { bom_len: 2, stride: 2, off: 0 };
+        g = Geometry {
+            bom_len: 2,
+            stride: 2,
+            off: 0,
+        };
         return (rb_sys::rb_enc_find(c"UTF-16LE".as_ptr()), g);
     }
     if starts(b"\xEF\xBB\xBF") {
@@ -253,7 +268,6 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or raise.
 /// `max_bytes` of 0 disables the budget check (the `__decode` test hook).
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
     let eff = effective_encoding(str);
 
@@ -293,14 +307,21 @@ pub unsafe extern "C" fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> V
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
      * covers every input. */
-    let off = if bytes.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+    let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
+        3
+    } else {
+        0
+    };
     let len = bytes.len() - off;
 
     /* Fail closed on an over-budget input BEFORE the validation scan and the
      * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
      * arena budget can never parse. */
     if max_bytes != 0 && len > max_bytes {
-        rb_raise(mkr_eXmlLimitExceeded, c"XML input exceeds the byte budget".as_ptr());
+        rb_raise(
+            mkr_eXmlLimitExceeded,
+            c"XML input exceeds the byte budget".as_ptr(),
+        );
     }
 
     /* Strict validation through the shared, allocation-free core - no GC point
@@ -310,12 +331,14 @@ pub unsafe extern "C" fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> V
      * suffix too - the BOM is one complete UTF-8 character) while the bytes
      * validated are the suffix. */
     match mkr_text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
-        MKR_TEXT_HAS_NUL => {
-            rb_raise(mkr_eXmlSyntaxError, c"XML input must not contain a NUL byte".as_ptr())
-        }
-        MKR_TEXT_INVALID_UTF8 => {
-            rb_raise(mkr_eXmlSyntaxError, c"XML input must be valid UTF-8".as_ptr())
-        }
+        MKR_TEXT_HAS_NUL => rb_raise(
+            mkr_eXmlSyntaxError,
+            c"XML input must not contain a NUL byte".as_ptr(),
+        ),
+        MKR_TEXT_INVALID_UTF8 => rb_raise(
+            mkr_eXmlSyntaxError,
+            c"XML input must be valid UTF-8".as_ptr(),
+        ),
         _ => {}
     }
 

@@ -11,14 +11,14 @@
 //! The host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
 
 use super::abi::*;
-use crate::falloc::Reserve;
 use super::dom::*;
 use super::order::nodeset_unique_sorted;
 use super::own::Text;
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
-use core::ffi::{c_char, c_void};
+use crate::falloc::Reserve;
+use core::ffi::c_void;
 use core::ptr;
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
@@ -96,7 +96,14 @@ pub fn lookup<D: Dom>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnImpl<D>> 
 unsafe fn arity(got: usize, min: usize, max: usize, err: *mut Error, name: &str) -> bool {
     if got < min || got > max {
         if min == max {
-            err_setf!(err, XP_ERR_RUNTIME, "{}(): expected {} argument(s), got {}", name, min, got);
+            err_setf!(
+                err,
+                XP_ERR_RUNTIME,
+                "{}(): expected {} argument(s), got {}",
+                name,
+                min,
+                got
+            );
         } else {
             err_setf!(
                 err,
@@ -134,7 +141,10 @@ unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> Option<OwnedText> {
         ptr::copy_nonoverlapping(s.as_ptr(), p as *mut u8, s.len());
     }
     *p.add(s.len()) = 0;
-    Some(OwnedText { ptr: p, len: s.len() })
+    Some(OwnedText {
+        ptr: p,
+        len: s.len(),
+    })
 }
 
 unsafe fn set_string(out: *mut Val, s: &[u8], err: *mut Error, what: &str) -> bool {
@@ -385,8 +395,12 @@ unsafe fn fn_id<D: Dom>(
         let set = &raw const args[0].u.nodeset;
         (0..(*set).count).all(|i| {
             let mut t = Text::new();
-            node_to_owned_text::<D>(nodeset_at::<D>(set, i), mkr_ctx_limits(ctx), err, t.as_mut())
-                && id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
+            node_to_owned_text::<D>(
+                nodeset_at::<D>(set, i),
+                mkr_ctx_limits(ctx),
+                err,
+                t.as_mut(),
+            ) && id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
         })
     } else {
         match to_text::<D>(&args[0], ctx, err) {
@@ -546,7 +560,11 @@ unsafe fn fn_concat<D: Dom>(
     err: *mut Error,
 ) -> bool {
     if args.len() < 2 {
-        err_setf!(err, XP_ERR_RUNTIME, "concat(): expected at least 2 arguments");
+        err_setf!(
+            err,
+            XP_ERR_RUNTIME,
+            "concat(): expected at least 2 arguments"
+        );
         return false;
     }
     let limits = mkr_ctx_limits(ctx);
@@ -584,7 +602,13 @@ unsafe fn fn_concat<D: Dom>(
         off += s.len();
     }
     *buf.add(total) = 0;
-    mkr_val_set_owned_text(out, OwnedText { ptr: buf, len: total });
+    mkr_val_set_owned_text(
+        out,
+        OwnedText {
+            ptr: buf,
+            len: total,
+        },
+    );
     true
 }
 
@@ -607,7 +631,9 @@ unsafe fn fn_contains<D: Dom>(
     err: *mut Error,
 ) -> bool {
     arity(args.len(), 2, 2, err, "contains")
-        && two::<D, _>(ctx, args, err, |s, t| set_bool(out, find_bytes(s, t).is_some()))
+        && two::<D, _>(ctx, args, err, |s, t| {
+            set_bool(out, find_bytes(s, t).is_some())
+        })
 }
 
 unsafe fn fn_substring_before<D: Dom>(
@@ -620,7 +646,11 @@ unsafe fn fn_substring_before<D: Dom>(
     arity(args.len(), 2, 2, err, "substring-before")
         && two::<D, _>(ctx, args, err, |s, t| {
             /* the bytes of s before the first t, or "" when t is empty or absent */
-            let end = if t.is_empty() { 0 } else { find_bytes(s, t).unwrap_or(0) };
+            let end = if t.is_empty() {
+                0
+            } else {
+                find_bytes(s, t).unwrap_or(0)
+            };
             set_string(out, &s[..end], err, "substring-before")
         })
 }
@@ -1141,6 +1171,4 @@ unsafe fn fn_of_type_pos_last<D: Dom>(
     set_num(out, of_type_pos::<D>(focus.node, false, doc))
 }
 
-extern "C" {
-    fn mkr_str_alloc(n: usize) -> *mut c_char;
-}
+pub use crate::falloc::calloc::mkr_str_alloc;

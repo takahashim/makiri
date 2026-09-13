@@ -12,8 +12,8 @@
 //! advancing and keeping the token that was there.
 
 use super::abi::*;
-use super::msg::Bytes;
 use super::lex::{LexErr, Lexer, Tok, Token};
+use super::msg::Bytes;
 use crate::err_setf;
 use core::ffi::{c_char, c_void};
 use core::ptr;
@@ -52,9 +52,18 @@ fn zero_step() -> Step {
         axis: AXIS_CHILD,
         test: NodeTest {
             kind: NT_NAME,
-            prefix: OwnedText { ptr: ptr::null_mut(), len: 0 },
-            local: OwnedText { ptr: ptr::null_mut(), len: 0 },
-            pi_target: OwnedText { ptr: ptr::null_mut(), len: 0 },
+            prefix: OwnedText {
+                ptr: ptr::null_mut(),
+                len: 0,
+            },
+            local: OwnedText {
+                ptr: ptr::null_mut(),
+                len: 0,
+            },
+            pi_target: OwnedText {
+                ptr: ptr::null_mut(),
+                len: 0,
+            },
         },
         predicates: ptr::null_mut(),
         npredicates: 0,
@@ -97,7 +106,10 @@ fn split_qname(s: &[u8]) -> (&[u8], &[u8]) {
 }
 
 fn is_nodetype_name(s: &[u8]) -> bool {
-    matches!(s, b"node" | b"text" | b"comment" | b"processing-instruction")
+    matches!(
+        s,
+        b"node" | b"text" | b"comment" | b"processing-instruction"
+    )
 }
 
 /// A growable array living in an AST node's (pointer, count) slots.
@@ -207,7 +219,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Split a QNAME token into prefix and local, and copy both.
-    fn fill_qname_split(&mut self, t: &Token, prefix: *mut OwnedText, local: *mut OwnedText) -> bool {
+    fn fill_qname_split(
+        &mut self,
+        t: &Token,
+        prefix: *mut OwnedText,
+        local: *mut OwnedText,
+    ) -> bool {
         let (p, l) = split_qname(self.text(t));
         self.fill_owned(p, prefix) && self.fill_owned(l, local)
     }
@@ -408,12 +425,7 @@ impl<'a> Parser<'a> {
                 match axis_by_name(name) {
                     Some(ax) => unsafe { (*out).axis = ax },
                     None => {
-                        err_setf!(
-                            self.err,
-                            XP_ERR_SYNTAX,
-                            "unknown axis '{}'",
-                            Bytes(name)
-                        );
+                        err_setf!(self.err, XP_ERR_SYNTAX, "unknown axis '{}'", Bytes(name));
                         return false;
                     }
                 }
@@ -670,8 +682,9 @@ impl<'a> Parser<'a> {
         }
         let fl = unsafe { &raw mut (*f).u.filter };
         unsafe { (*fl).expr = primary };
-        if !self.parse_predicates(&mut unsafe { Slots::at(&raw mut (*fl).preds, &raw mut (*fl).npreds) })
-        {
+        if !self.parse_predicates(&mut unsafe {
+            Slots::at(&raw mut (*fl).preds, &raw mut (*fl).npreds)
+        }) {
             unsafe { mkr_node_free(f) };
             return ptr::null_mut();
         }
@@ -841,17 +854,30 @@ struct BinMatch {
 }
 
 const fn w(word: &'static [u8], op: u32) -> BinMatch {
-    BinMatch { word: Some(word), kind: Tok::Eof, op }
+    BinMatch {
+        word: Some(word),
+        kind: Tok::Eof,
+        op,
+    }
 }
 const fn k(kind: Tok, op: u32) -> BinMatch {
-    BinMatch { word: None, kind, op }
+    BinMatch {
+        word: None,
+        kind,
+        op,
+    }
 }
 
 /// Tightest-binding level first.
 static BINOP_LEVELS: &[&[BinMatch]] = &[
     &[k(Tok::Star, OP_MUL), w(b"div", OP_DIV), w(b"mod", OP_MOD)],
     &[k(Tok::Plus, OP_ADD), k(Tok::Minus, OP_SUB)],
-    &[k(Tok::Lt, OP_LT), k(Tok::Gt, OP_GT), k(Tok::Le, OP_LE), k(Tok::Ge, OP_GE)],
+    &[
+        k(Tok::Lt, OP_LT),
+        k(Tok::Gt, OP_GT),
+        k(Tok::Le, OP_LE),
+        k(Tok::Ge, OP_GE),
+    ],
     &[k(Tok::Eq, OP_EQ), k(Tok::Ne, OP_NE)],
     &[w(b"and", OP_AND)],
     &[w(b"or", OP_OR)],
@@ -865,7 +891,6 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parse(
     expr: VerifiedText,
     limits: *mut Limits,
@@ -900,7 +925,12 @@ pub unsafe extern "C" fn mkr_parse(
     }
     if p.kind() != Tok::Eof {
         let t = p.tok();
-        err_setf!(err, XP_ERR_SYNTAX, "trailing input at '{}'", Bytes(p.text(&t)));
+        err_setf!(
+            err,
+            XP_ERR_SYNTAX,
+            "trailing input at '{}'",
+            Bytes(p.text(&t))
+        );
         mkr_node_free(root);
         return ptr::null_mut();
     }

@@ -197,7 +197,11 @@ pub unsafe fn parse_selftest() -> i32 {
     }
     i += 1; /* 2 */
     let root = (*d).root;
-    if !name_is(root, b"Feed") || (*root).type_ != T_ELEMENT || (*root).line != 1 || (*root).col != 1 {
+    if !name_is(root, b"Feed")
+        || (*root).type_ != T_ELEMENT
+        || (*root).line != 1
+        || (*root).col != 1
+    {
         doc_destroy(d);
         return i;
     }
@@ -308,7 +312,10 @@ pub unsafe fn parse_selftest() -> i32 {
     }
 
     i += 1; /* 10: namespaces */
-    let d = parse_lit(b"<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>", &mut st);
+    let d = parse_lit(
+        b"<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>",
+        &mut st,
+    );
     if d.is_null() || st != OK {
         if !d.is_null() {
             doc_destroy(d);
@@ -337,12 +344,22 @@ pub unsafe fn parse_selftest() -> i32 {
             return i;
         }
         let a = next(a);
-        if a.is_null() || !name_is(a, b"x") || !pfx_is(a, b"a") || !ns_is(a, b"urn:a") || !val_is(a, b"1") {
+        if a.is_null()
+            || !name_is(a, b"x")
+            || !pfx_is(a, b"a")
+            || !ns_is(a, b"urn:a")
+            || !val_is(a, b"1")
+        {
             doc_destroy(d);
             return i;
         }
         let a = next(a);
-        if a.is_null() || !name_is(a, b"y") || (*a).prefix_len != 0 || !ns_none(a) || !val_is(a, b"2") {
+        if a.is_null()
+            || !name_is(a, b"y")
+            || (*a).prefix_len != 0
+            || !ns_none(a)
+            || !val_is(a, b"2")
+        {
             doc_destroy(d);
             return i;
         }
@@ -500,7 +517,8 @@ pub unsafe fn parse_selftest() -> i32 {
         let r = (*d).root;
         let ax = (*r).attrs;
         let tx = (*r).first_child;
-        if !val_is(ax, b"p q ") || tx.is_null() || (*tx).type_ != T_TEXT || !val_is(tx, b"m\nn\no") {
+        if !val_is(ax, b"p q ") || tx.is_null() || (*tx).type_ != T_TEXT || !val_is(tx, b"m\nn\no")
+        {
             doc_destroy(d);
             return i;
         }
@@ -530,7 +548,10 @@ pub unsafe fn parse_selftest() -> i32 {
 
     i += 1; /* 17: XML declaration grammar + reserved / colon PI targets */
     {
-        let d = parse_lit(b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>", &mut st);
+        let d = parse_lit(
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>",
+            &mut st,
+        );
         if d.is_null() || st != OK {
             if !d.is_null() {
                 doc_destroy(d);
@@ -693,7 +714,8 @@ pub unsafe fn parse_selftest() -> i32 {
             }
             return i;
         }
-        let frag = parse_fragment_raw(fd, fsrc.as_ptr() as *const c_char, fsrc.len(), true).unwrap_or(ptr::null_mut());
+        let frag = parse_fragment_raw(fd, fsrc.as_ptr() as *const c_char, fsrc.len(), true)
+            .unwrap_or(ptr::null_mut());
         let a = first(frag);
         let plain = next(a);
         if frag.is_null() || !ns_is(a, b"urn:p") || !ns_is(plain, b"urn:d") {
@@ -812,12 +834,16 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     }
 
     /* 4. the predefined xml: prefix */
-    if mutate::set_attribute(doc, r, b"xml:lang", b"en", &mut at) != MUT_OK || node_ns(at) != XML_NS_URI {
+    if mutate::set_attribute(doc, r, b"xml:lang", b"en", &mut at) != MUT_OK
+        || node_ns(at) != XML_NS_URI
+    {
         return 13;
     }
 
     /* 5. xmlns:* declaration then a bound prefix */
-    if mutate::set_attribute(doc, r, b"xmlns:p", b"urn:p", &mut at) != MUT_OK || node_ns(at) != XMLNS_NS_URI {
+    if mutate::set_attribute(doc, r, b"xmlns:p", b"urn:p", &mut at) != MUT_OK
+        || node_ns(at) != XMLNS_NS_URI
+    {
         return 14;
     }
     if mutate::set_attribute(doc, r, b"p:k", b"v", &mut at) != MUT_OK || node_ns(at) != b"urn:p" {
@@ -833,7 +859,11 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     }
 
     /* 7. rename */
-    if mutate::rename(doc, r, b"q") != MUT_OK || (*r).qname_len != 1 || node_local(r) != b"q" || (*r).ns_uri_len != 0 {
+    if mutate::rename(doc, r, b"q") != MUT_OK
+        || (*r).qname_len != 1
+        || node_local(r) != b"q"
+        || (*r).ns_uri_len != 0
+    {
         return 18;
     }
 
@@ -856,7 +886,10 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     {
         return 21;
     }
-    if mutate::set_content(doc, r, b"") != MUT_OK || !(*r).first_child.is_null() || !(*r).last_child.is_null() {
+    if mutate::set_content(doc, r, b"") != MUT_OK
+        || !(*r).first_child.is_null()
+        || !(*r).last_child.is_null()
+    {
         return 22;
     }
 
@@ -887,8 +920,13 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
         return 26;
     }
     (*doc).doc_node = docn;
-    let (mut pr, mut ne, mut tx): (*mut Node, *mut Node, *mut Node) = (ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
-    if mutate::new_element(doc, b"pr", &mut pr) != MUT_OK || pr.is_null() || !(*pr).parent.is_null() || (*pr).ns_uri_len != 0 {
+    let (mut pr, mut ne, mut tx): (*mut Node, *mut Node, *mut Node) =
+        (ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
+    if mutate::new_element(doc, b"pr", &mut pr) != MUT_OK
+        || pr.is_null()
+        || !(*pr).parent.is_null()
+        || (*pr).ns_uri_len != 0
+    {
         return 27;
     }
     if mutate::set_attribute(doc, pr, b"xmlns:p", b"urn:p", ptr::null_mut()) != MUT_OK {
@@ -905,7 +943,11 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     if mutate::new_element(doc, b"p:c", &mut ne) != MUT_OK {
         return 31;
     }
-    if mutate::insert_child(doc, pr, ne) != MUT_OK || (*pr).first_child != ne || (*ne).parent != pr || node_ns(ne) != b"urn:p" {
+    if mutate::insert_child(doc, pr, ne) != MUT_OK
+        || (*pr).first_child != ne
+        || (*ne).parent != pr
+        || node_ns(ne) != b"urn:p"
+    {
         return 32;
     }
     if mutate::insert_child(doc, ne, tx) != MUT_OK || (*ne).first_child != tx {
@@ -917,19 +959,27 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     if mutate::new_element(doc, b"z:c", &mut ub) != MUT_OK {
         return 34;
     }
-    if mutate::insert_child(doc, pr, ub) != MUT_UNBOUND_NS || !(*ub).parent.is_null() || (*pr).last_child != ne {
+    if mutate::insert_child(doc, pr, ub) != MUT_UNBOUND_NS
+        || !(*ub).parent.is_null()
+        || (*pr).last_child != ne
+    {
         return 35;
     }
 
     /* 13. deferred resolution */
     let (mut wrap, mut inner): (*mut Node, *mut Node) = (ptr::null_mut(), ptr::null_mut());
-    if mutate::new_element(doc, b"p:wrap", &mut wrap) != MUT_OK || mutate::new_element(doc, b"p:inner", &mut inner) != MUT_OK {
+    if mutate::new_element(doc, b"p:wrap", &mut wrap) != MUT_OK
+        || mutate::new_element(doc, b"p:inner", &mut inner) != MUT_OK
+    {
         return 36;
     }
     if mutate::insert_child(doc, wrap, inner) != MUT_OK || (*inner).ns_uri_len != 0 {
         return 37;
     }
-    if mutate::insert_child(doc, pr, wrap) != MUT_OK || node_ns(wrap) != b"urn:p" || node_ns(inner) != b"urn:p" {
+    if mutate::insert_child(doc, pr, wrap) != MUT_OK
+        || node_ns(wrap) != b"urn:p"
+        || node_ns(inner) != b"urn:p"
+    {
         return 38;
     }
 
@@ -940,7 +990,9 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
 
     /* 15. sibling order */
     let (mut b1, mut b2): (*mut Node, *mut Node) = (ptr::null_mut(), ptr::null_mut());
-    if mutate::new_element(doc, b"b1", &mut b1) != MUT_OK || mutate::new_element(doc, b"b2", &mut b2) != MUT_OK {
+    if mutate::new_element(doc, b"b1", &mut b1) != MUT_OK
+        || mutate::new_element(doc, b"b2", &mut b2) != MUT_OK
+    {
         return 40;
     }
     if mutate::insert_before(doc, ne, b1) != MUT_OK || (*pr).first_child != b1 || (*b1).next != ne {
@@ -963,7 +1015,11 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     if mutate::new_element(doc, b"rep", &mut rep) != MUT_OK {
         return 43;
     }
-    if mutate::replace_node(doc, ne, rep) != MUT_OK || !(*ne).parent.is_null() || (*rep).parent != pr || (*b1).next != rep {
+    if mutate::replace_node(doc, ne, rep) != MUT_OK
+        || !(*ne).parent.is_null()
+        || (*rep).parent != pr
+        || (*b1).next != rep
+    {
         return 44;
     }
 

@@ -4,11 +4,10 @@
 //! The node layout comes from `crate::xml::abi` - the XML engine's own
 //! declaration - so nothing here restates a field offset or a type constant.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 
 use magnus::rb_sys::FromRawValue;
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
-use rb_sys::VALUE;
 
 pub use super::super::abi::{
     error_class, mkr_cDocument, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed,
@@ -25,32 +24,16 @@ pub use crate::xml::abi::{
 /// existing `BorrowedText` spellings in this subtree keep working.
 pub use crate::glue::abi::{mkr_ruby_verified_text, RubyText as BorrowedText};
 
-extern "C" {
-    pub static mkr_cXmlNode: VALUE;
-    pub static mkr_cXmlElement: VALUE;
-    pub static mkr_cXmlAttr: VALUE;
-    pub static mkr_cXmlText: VALUE;
-    pub static mkr_cXmlComment: VALUE;
-    pub static mkr_cXmlCDATASection: VALUE;
-    pub static mkr_cXmlProcessingInstruction: VALUE;
-    pub static mkr_cXmlDocumentType: VALUE;
-
-    /// The XML node TypedData type, owned by `glue::node`.
-    pub static mkr_xml_node_type: c_void;
-
-    /// The one byte-level xmlns detector, shared by the parser, the namespace
-    /// resolver and this glue - so "is this an xmlns declaration" has a single
-    /// answer. Reads the declared prefix ("" for the default xmlns) and the URI.
-    pub fn mkr_xml_node_xmlns_decl(
-        a: *const Node,
-        prefix: *mut *const c_char,
-        plen: *mut u32,
-        uri: *mut *const c_char,
-        ulen: *mut u32,
-    ) -> c_int;
-}
-
-use core::ffi::c_int;
+pub use crate::glue::node::mkr_xml_node_type;
+pub use crate::init::mkr_cXmlAttr;
+pub use crate::init::mkr_cXmlCDATASection;
+pub use crate::init::mkr_cXmlComment;
+pub use crate::init::mkr_cXmlDocumentType;
+pub use crate::init::mkr_cXmlElement;
+pub use crate::init::mkr_cXmlNode;
+pub use crate::init::mkr_cXmlProcessingInstruction;
+pub use crate::init::mkr_cXmlText;
+pub use crate::xml::ffi::mkr_xml_node_xmlns_decl;
 
 /// A node's field as a UTF-8 Ruby String. A NULL pointer is the empty string,
 /// which is how the engine spells "no value".

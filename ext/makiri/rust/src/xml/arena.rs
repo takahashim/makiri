@@ -12,9 +12,8 @@
 
 use crate::xml::{
     bytes, empty, index, Chunk, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM,
-    MAX_BYTES,
-    MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT,
-    T_PI, T_TEXT,
+    MAX_BYTES, MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
+    T_FRAGMENT, T_PI, T_TEXT,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -154,7 +153,14 @@ pub unsafe fn arena_alloc(doc: *mut Doc, size: usize) -> *mut u8 {
 fn valid_type(t: u32) -> bool {
     matches!(
         t,
-        T_ELEMENT | T_ATTRIBUTE | T_TEXT | T_CDATA | T_PI | T_COMMENT | T_DOCUMENT | T_DOCTYPE
+        T_ELEMENT
+            | T_ATTRIBUTE
+            | T_TEXT
+            | T_CDATA
+            | T_PI
+            | T_COMMENT
+            | T_DOCUMENT
+            | T_DOCTYPE
             | T_FRAGMENT
     )
 }

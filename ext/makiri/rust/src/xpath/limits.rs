@@ -31,14 +31,24 @@ use core::ffi::c_int;
 #[cold]
 #[inline(never)]
 unsafe fn over_ast_nodes(l: *mut Limits, err: *mut Error) -> c_int {
-    err_setf!(err, XP_ERR_LIMIT, "AST node limit exceeded ({})", (*l).max_ast_nodes);
+    err_setf!(
+        err,
+        XP_ERR_LIMIT,
+        "AST node limit exceeded ({})",
+        (*l).max_ast_nodes
+    );
     -1
 }
 
 #[cold]
 #[inline(never)]
 unsafe fn over_eval_ops(l: *mut Limits, err: *mut Error) -> c_int {
-    err_setf!(err, XP_ERR_LIMIT, "evaluation budget exceeded ({} ops)", (*l).max_eval_ops);
+    err_setf!(
+        err,
+        XP_ERR_LIMIT,
+        "evaluation budget exceeded ({} ops)",
+        (*l).max_eval_ops
+    );
     -1
 }
 
@@ -64,14 +74,25 @@ unsafe fn over_check(max: usize, noun: &str, err: *mut Error) -> c_int {
 #[cold]
 #[inline(never)]
 unsafe fn over_string_bytes(max: usize, err: *mut Error) -> c_int {
-    err_setf!(err, XP_ERR_LIMIT, "string size limit exceeded ({} bytes)", max);
+    err_setf!(
+        err,
+        XP_ERR_LIMIT,
+        "string size limit exceeded ({} bytes)",
+        max
+    );
     -1
 }
 
 #[cold]
 #[inline(never)]
 unsafe fn over_expr_bytes(bytes: usize, max: usize, err: *mut Error) -> c_int {
-    err_setf!(err, XP_ERR_LIMIT, "expression too long ({} bytes, max {})", bytes, max);
+    err_setf!(
+        err,
+        XP_ERR_LIMIT,
+        "expression too long ({} bytes, max {})",
+        bytes,
+        max
+    );
     -1
 }
 
@@ -79,17 +100,16 @@ unsafe fn over_expr_bytes(bytes: usize, max: usize, err: *mut Error) -> c_int {
 ///
 /// # Safety
 /// `l` must point to a writable `mkr_xpath_limits_t`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
     *l = Limits {
-        max_expr_bytes: 64 * 1024,            /* 64 KB XPath string */
+        max_expr_bytes: 64 * 1024, /* 64 KB XPath string */
         max_ast_nodes: 100_000,
-        max_steps: 256,                       /* path step count */
-        max_predicates: 64,                   /* per-step predicates */
+        max_steps: 256,     /* path step count */
+        max_predicates: 64, /* per-step predicates */
         max_function_args: 64,
-        max_nodeset_size: 10 * 1000 * 1000,   /* 10M nodes - large but bounded */
-        max_eval_ops: 50 * 1000 * 1000,       /* 50M evaluator steps */
-        max_string_bytes: 64 * 1024 * 1024,   /* 64 MB string-value */
+        max_nodeset_size: 10 * 1000 * 1000, /* 10M nodes - large but bounded */
+        max_eval_ops: 50 * 1000 * 1000,     /* 50M evaluator steps */
+        max_string_bytes: 64 * 1024 * 1024, /* 64 MB string-value */
         max_recursion_depth: 256,
         ast_nodes: 0,
         eval_ops: 0,
@@ -97,7 +117,6 @@ pub unsafe extern "C" fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
     };
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> c_int {
     if (*l).ast_nodes >= (*l).max_ast_nodes {
         return over_ast_nodes(l, err);
@@ -117,7 +136,6 @@ pub unsafe extern "C" fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> 
 /// Kept deliberately uniform, with no bulk variant: a bulk charge would only
 /// suit run-to-completion loops and would wrongly reject an early-exiting query
 /// if misapplied, trading one foot-gun-free rule for a conditional one.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> c_int {
     if (*l).eval_ops >= (*l).max_eval_ops {
         return over_eval_ops(l, err);
@@ -126,7 +144,6 @@ pub unsafe extern "C" fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> c
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> c_int {
     if (*l).recursion_depth >= (*l).max_recursion_depth {
         /* The C increments, reports, then backs the failed entry out; comparing
@@ -137,7 +154,6 @@ pub unsafe extern "C" fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_recurse_leave(l: *mut Limits) {
     if (*l).recursion_depth > 0 {
         (*l).recursion_depth -= 1;
@@ -153,7 +169,6 @@ unsafe fn check(value: usize, max: usize, noun: &str, err: *mut Error) -> c_int 
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_check_nodeset_size(
     l: *mut Limits,
     new_count: usize,
@@ -162,7 +177,6 @@ pub unsafe extern "C" fn mkr_limit_check_nodeset_size(
     check(new_count, (*l).max_nodeset_size, "nodeset size", err)
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_check_string_bytes(
     l: *mut Limits,
     bytes: usize,
@@ -174,7 +188,6 @@ pub unsafe extern "C" fn mkr_limit_check_string_bytes(
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_check_steps(
     l: *mut Limits,
     nsteps: usize,
@@ -183,7 +196,6 @@ pub unsafe extern "C" fn mkr_limit_check_steps(
     check(nsteps, (*l).max_steps, "path step count", err)
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_check_predicates(
     l: *mut Limits,
     npreds: usize,
@@ -192,16 +204,19 @@ pub unsafe extern "C" fn mkr_limit_check_predicates(
     check(npreds, (*l).max_predicates, "predicate count", err)
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_check_func_args(
     l: *mut Limits,
     nargs: usize,
     err: *mut Error,
 ) -> c_int {
-    check(nargs, (*l).max_function_args, "function argument count", err)
+    check(
+        nargs,
+        (*l).max_function_args,
+        "function argument count",
+        err,
+    )
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_limit_check_expr_bytes(
     l: *mut Limits,
     bytes: usize,

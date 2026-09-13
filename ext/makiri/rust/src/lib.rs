@@ -1,25 +1,24 @@
-//! makiri_rs - Makiri subsystems ported from C, each behind the SAME C ABI as
-//! the sources it replaces (symbol names, struct layouts, status codes), so the
-//! rest of the extension links against either one unchanged.
+//! makiri - the HTML5 parser, XPath 1.0 engine and XML reader behind the
+//! `makiri` gem, as one crate.
 //!
-//! Each subsystem is a cargo feature, and extconf turns a feature on at the same
-//! time as it drops the C sources that feature replaces. Nothing is shared
-//! between them yet, so a build may enable either, both, or neither:
+//! Three layers, and the feature flags name the two optional dependencies
+//! rather than any step of the C port that produced this code:
 //!
-//!   xml        ext/makiri/xml/*.c                  reader, arena, mutators
-//!   xpath      xpath/mkr_xpath_{lex,number,parse}.c lexer, Number, parser
-//!   xpath-xml  xpath/mkr_xpath_engine_xml.c         the XML engine instance
+//!   engine   `xml`, `xpath`, `cbuf`, `cutf8`, `falloc` - no Ruby, no Lexbor.
+//!            This is what Kani proves and what cargo-fuzz drives.
+//!   lexbor   `lexbor_abi`, `css`, `dom_adapter`, and the XPath HTML instance -
+//!            everything that reads the vendored Lexbor DOM (`lexbor`).
+//!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
+//!            (`ruby`, on by default; it implies `lexbor`).
 //!
-//! The front end builds the C AST through the C allocator, so either evaluator
-//! runs what it parses. The engine is generic over a `Dom` trait, which is the
-//! type-checked form of the monomorphization the C does by including the same
-//! bodies once per representation; `xpath-xml` instantiates it for the XML node,
-//! and the HTML backend is the remaining step
-//! (notes/rust_rewrite_plan.ja.md §7).
+//! The `mkr_` prefix on exported symbols is what the C ABI published and is kept
+//! where an entry point is still reached from outside Rust: `Init_makiri`, the
+//! callbacks Lexbor invokes, and the test hooks. It is not a naming rule for
+//! Rust-internal items.
 
 /// Lexbor's layout and constants, generated from its own headers by build.rs
 /// and checked against the hand-written view the engine's hot paths use.
-#[cfg(feature = "lexbor-abi")]
+#[cfg(feature = "lexbor")]
 pub mod lexbor_abi;
 
 /// Compile-time decimal parsing, for the settings that arrive as `option_env!`
@@ -42,7 +41,10 @@ pub mod kani_bounds {
         let mut i = 0;
         let mut n = 0usize;
         while i < b.len() {
-            assert!(b[i] >= b'0' && b[i] <= b'9', "the bound must be a decimal number");
+            assert!(
+                b[i] >= b'0' && b[i] <= b'9',
+                "the bound must be a decimal number"
+            );
             n = n * 10 + (b[i] - b'0') as usize;
             i += 1;
         }
@@ -58,9 +60,9 @@ pub mod falloc;
 /// `mkr_buf_t`, which more than one subsystem writes into.
 pub mod cbuf;
 
-/// The CSS selector front end (xpath/mkr_css.c): lowers a Lexbor-parsed
-/// selector list into the XPath AST. Ruby-free, like the engine it feeds.
-#[cfg(feature = "css-lower")]
+/// The CSS selector front end: lowers a Lexbor-parsed selector list into the
+/// XPath AST. Ruby-free, like the engine it feeds; Lexbor keeps the parser.
+#[cfg(feature = "lexbor")]
 pub mod css;
 
 /// The shared UTF-8 primitives (core/mkr_utf8.c). Unconditional, like `falloc`
@@ -72,35 +74,26 @@ pub mod cutf8;
 /// value and a limits pointer at the XML query entry points.
 pub mod xpath_abi;
 
-/// The Ruby boundary. Present only when a glue feature is on, because it is the
-/// one part of the crate that depends on magnus.
-#[cfg(feature = "glue")]
+/// The Ruby boundary - the only part of the crate that depends on magnus.
+#[cfg(feature = "ruby")]
 pub mod bridge;
-#[cfg(feature = "glue")]
+#[cfg(feature = "ruby")]
 pub mod glue;
 
-/// The Lexbor gap-fillers (ext/makiri/dom_adapter/).
-#[cfg(feature = "dom-adapter")]
+/// What Lexbor does not provide and we will not patch it to: the attr->owner
+/// and element indices, the text index, source locations, cross-import, and the
+/// input sanitiser.
+#[cfg(feature = "lexbor")]
 pub mod dom_adapter;
 
-/// The XML node layouts (`xml::abi`) come in with either feature: the XPath
-/// port's XML backend walks those nodes without needing the reader.
-#[cfg(any(
-    feature = "xml",
-    feature = "xpath",
-    feature = "glue-node",
-    feature = "glue-xml",
-    feature = "glue-xml-node-read",
-    feature = "glue-xpath"
-))]
+/// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;
 
-#[cfg(feature = "xpath")]
+/// The XPath 1.0 engine, generic over a `Dom` trait. The XML instance needs
+/// nothing else; the HTML instance is gated on `lexbor` inside the module.
 pub mod xpath;
 
-/// `Init_makiri` and the class hierarchy (makiri.c). Only under `standalone`,
-/// where there is no C extension to own them: with the C present this module
-/// would define a second `Init_makiri`, so the feature that turns it on is the
-/// same one that asserts the C is gone.
-#[cfg(feature = "standalone")]
+/// `Init_makiri` and the class hierarchy: the symbol Ruby looks up at require
+/// time, and the one export the extension publishes.
+#[cfg(feature = "ruby")]
 pub mod init;

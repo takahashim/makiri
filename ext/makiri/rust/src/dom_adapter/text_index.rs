@@ -64,7 +64,11 @@ struct Range {
     end: u32,
 }
 
-const EMPTY_RANGE: Range = Range { node: core::ptr::null(), start: 0, end: 0 };
+const EMPTY_RANGE: Range = Range {
+    node: core::ptr::null(),
+    start: 0,
+    end: 0,
+};
 
 struct TextIndex {
     /// Document-order TEXT/CDATA slices, borrowed from the arena.
@@ -97,7 +101,11 @@ impl TextIndex {
         while !self.ranges[i].node.is_null() {
             i = (i + 1) & (self.ranges_cap - 1);
         }
-        self.ranges[i] = Range { node, start, end: start };
+        self.ranges[i] = Range {
+            node,
+            start,
+            end: start,
+        };
         i
     }
 
@@ -210,7 +218,10 @@ impl TextIndex {
          * bounded by tree DEPTH, not node count), so it grows through falloc. */
         let mut stack: Vec<Frame> = try_vec_with_capacity(1)?;
         let r = t.range_insert(root, 0);
-        stack.push(Frame { child: (*root).first_child, range: r });
+        stack.push(Frame {
+            child: (*root).first_child,
+            range: r,
+        });
 
         while let Some(top) = stack.last_mut() {
             let child = top.child;
@@ -237,7 +248,10 @@ impl TextIndex {
                  * smaller than the bytes actually present, which is a short read
                  * into a pre-sized String. */
                 let total = t.prefix[t.slices.len()].checked_add(len)?;
-                t.slices.push(BorrowedText { ptr: ptr as *const core::ffi::c_char, len });
+                t.slices.push(BorrowedText {
+                    ptr: ptr as *const core::ffi::c_char,
+                    len,
+                });
                 t.prefix.push(total);
             } else if is_container(child) {
                 let start = t.slices.len() as u32;
@@ -256,7 +270,10 @@ impl TextIndex {
                     )?;
                     stack.mkr_reserve_exact(want - stack.len()).ok()?;
                 }
-                stack.push(Frame { child: (*child).first_child, range: r });
+                stack.push(Frame {
+                    child: (*child).first_child,
+                    range: r,
+                });
             }
             /* Other kinds (comment / PI / doctype) are childless leaves. */
         }
@@ -270,7 +287,6 @@ impl TextIndex {
  * ------------------------------------------------------------------ */
 
 /// Free an index. NULL-safe, so `mkr_parsed_destroy` can call it unconditionally.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_text_index_free(idx: *mut c_void) {
     if !idx.is_null() {
         drop(Box::from_raw(idx as *mut TextIndex));
@@ -281,7 +297,6 @@ pub unsafe extern "C" fn mkr_text_index_free(idx: *mut c_void) {
 ///
 /// This is the whole safety protocol for the borrowed slices: EVERY mutation
 /// reaches here, so no cached slice outlives the storage it points into.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
     if p.is_null() || (*p).text_index.is_null() {
         return;
@@ -295,7 +310,6 @@ pub unsafe extern "C" fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
 /// Returns 1 with `*out_slices` / `*out_n` / `*out_bytes` set, or 0 - meaning
 /// "walk instead", for a node outside the indexed tree (a fragment) or a build
 /// that could not allocate. Never a shorter run than the truth.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_text_slices(
     p: *mut Parsed,
     node: *const LxbNode,

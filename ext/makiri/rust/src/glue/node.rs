@@ -87,20 +87,16 @@ const fn node_type(name: *const c_char, parent: *const rb_data_type_t) -> DataTy
     )
 }
 
-#[no_mangle]
+#[allow(non_upper_case_globals)]
 pub static mkr_node_type: DataType = node_type(c"Makiri::Node".as_ptr(), core::ptr::null());
 
-#[no_mangle]
-pub static mkr_html_node_type: DataType = node_type(
-    c"Makiri::HTML::Node".as_ptr(),
-    mkr_node_type.as_ptr(),
-);
+#[allow(non_upper_case_globals)]
+pub static mkr_html_node_type: DataType =
+    node_type(c"Makiri::HTML::Node".as_ptr(), mkr_node_type.as_ptr());
 
-#[no_mangle]
-pub static mkr_xml_node_type: DataType = node_type(
-    c"Makiri::XML::Node".as_ptr(),
-    mkr_node_type.as_ptr(),
-);
+#[allow(non_upper_case_globals)]
+pub static mkr_xml_node_type: DataType =
+    node_type(c"Makiri::XML::Node".as_ptr(), mkr_node_type.as_ptr());
 
 /// The base type as the raw pointer the Ruby API wants.
 #[inline]
@@ -113,18 +109,16 @@ fn base_type() -> *const rb_data_type_t {
 /* ------------------------------------------------------------------ */
 
 /// `mkr_doc_kind_t`.
-const MKR_DOC_XML: c_int = 1;
+const MKR_DOC_XML: u32 = 1;
 
 /// `mkr_node_kind_t`.
 const MKR_NODE_KIND_OTHER: c_int = 0;
 const MKR_NODE_KIND_HTML: c_int = 1;
 const MKR_NODE_KIND_XML: c_int = 2;
 
-use super::abi::{DataType, mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc};
+use super::abi::{mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc, DataType};
 
-extern "C" {
-    fn mkr_parsed_kind(p: *const c_void) -> c_int;
-}
+pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
 
 #[inline]
 unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
@@ -139,7 +133,6 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
     if is_kind_of(rb_node, mkr_cDocument) {
         let parsed = mkr_doc_parsed(rb_node);
@@ -163,15 +156,18 @@ pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
 /// discriminator, not the Ruby class. A Document, a NodeSet or any non-node is
 /// `MKR_NODE_KIND_OTHER`. The cross-kind `Document#import_node` entries use this
 /// to route a node to the same-representation copy or the translator.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_kind(v: VALUE) -> c_int {
-    if rb_typeddata_is_kind_of(v, &mkr_html_node_type as *const DataType as *const rb_data_type_t)
-        != 0
+    if rb_typeddata_is_kind_of(
+        v,
+        &mkr_html_node_type as *const DataType as *const rb_data_type_t,
+    ) != 0
     {
         return MKR_NODE_KIND_HTML;
     }
-    if rb_typeddata_is_kind_of(v, &mkr_xml_node_type as *const DataType as *const rb_data_type_t)
-        != 0
+    if rb_typeddata_is_kind_of(
+        v,
+        &mkr_xml_node_type as *const DataType as *const rb_data_type_t,
+    ) != 0
     {
         return MKR_NODE_KIND_XML;
     }
@@ -180,12 +176,10 @@ pub unsafe extern "C" fn mkr_node_kind(v: VALUE) -> c_int {
 
 /// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
 /// kind-agnostic, and never dereferenced.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_id(rb_node: VALUE) -> usize {
     mkr_node_raw(rb_node) as usize
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_document(rb_node: VALUE) -> VALUE {
     if is_kind_of(rb_node, mkr_cDocument) {
         return rb_node;
@@ -204,7 +198,6 @@ pub unsafe extern "C" fn mkr_node_document(rb_node: VALUE) -> VALUE {
 
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE {
     if !is_kind_of(other, mkr_cNode) {
         return rb_sys::Qfalse as VALUE;
@@ -221,7 +214,6 @@ pub unsafe extern "C" fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE {
 /// freed-then-reallocated node may reuse an address (the same caveat as
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_pointer_id(self_: VALUE) -> VALUE {
     rb_ull2inum(mkr_node_id(self_) as core::ffi::c_ulonglong)
 }
@@ -229,7 +221,6 @@ pub unsafe extern "C" fn mkr_node_pointer_id(self_: VALUE) -> VALUE {
 /// A stable hash from the node pointer, so `a == b` implies `a.hash == b.hash`
 /// even across separately-created wrappers. Shares the pointer value with
 /// `#pointer_id`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_hash(self_: VALUE) -> VALUE {
     mkr_node_pointer_id(self_)
 }

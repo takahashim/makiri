@@ -45,7 +45,6 @@ use rb_sys::VALUE;
 macro_rules! exported {
     ($($name:ident),* $(,)?) => {
         $(
-            #[no_mangle]
             pub static mut $name: VALUE = 0;
         )*
     };
@@ -83,9 +82,15 @@ exported! {
 /// XML engine end to end, which the spec suite does through the public API.
 fn c_selftest(ruby: &Ruby) -> Result<bool, Error> {
     let checks: [(&str, i32); 3] = [
-        ("mkr_xml_node_selftest", unsafe { crate::xml::selftest::node_selftest() }),
-        ("mkr_xml_parse_selftest", unsafe { crate::xml::selftest::parse_selftest() }),
-        ("mkr_xml_mutate_selftest", unsafe { crate::xml::selftest::mutate_selftest() }),
+        ("mkr_xml_node_selftest", unsafe {
+            crate::xml::selftest::node_selftest()
+        }),
+        ("mkr_xml_parse_selftest", unsafe {
+            crate::xml::selftest::parse_selftest()
+        }),
+        ("mkr_xml_mutate_selftest", unsafe {
+            crate::xml::selftest::mutate_selftest()
+        }),
     ];
     for (name, rc) in checks {
         if rc != 0 {
@@ -290,18 +295,30 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         seal_leaves(
             mkr_mHtmlNodeMethods,
             &[
-                mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement, mkr_cHtmlAttr,
-                mkr_cHtmlText, mkr_cHtmlComment, mkr_cHtmlCDATASection,
-                mkr_cHtmlProcessingInstruction, mkr_cHtmlDocumentType,
+                mkr_cHtmlNode,
+                mkr_cHtmlDocument,
+                mkr_cHtmlElement,
+                mkr_cHtmlAttr,
+                mkr_cHtmlText,
+                mkr_cHtmlComment,
+                mkr_cHtmlCDATASection,
+                mkr_cHtmlProcessingInstruction,
+                mkr_cHtmlDocumentType,
                 mkr_cHtmlDocumentFragment,
             ],
         );
         seal_leaves(
             mkr_mXmlNodeMethods,
             &[
-                mkr_cXmlNode, mkr_cXmlElement, mkr_cXmlAttr, mkr_cXmlText,
-                mkr_cXmlComment, mkr_cXmlCDATASection, mkr_cXmlProcessingInstruction,
-                mkr_cXmlDocumentType, mkr_cXmlDocumentFragment,
+                mkr_cXmlNode,
+                mkr_cXmlElement,
+                mkr_cXmlAttr,
+                mkr_cXmlText,
+                mkr_cXmlComment,
+                mkr_cXmlCDATASection,
+                mkr_cXmlProcessingInstruction,
+                mkr_cXmlDocumentType,
+                mkr_cXmlDocumentFragment,
             ],
         );
 
@@ -310,9 +327,18 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
          * nothing. XPathContext.new exists, but it is defined by
          * mkr_init_xpath and wraps a native context. */
         for base in [
-            mkr_cNode, mkr_cDocument, element.as_raw(), attr.as_raw(), text.as_raw(),
-            comment.as_raw(), cdata.as_raw(), pi.as_raw(), doctype.as_raw(),
-            mkr_cDocumentFragment, mkr_cNodeSet, mkr_cXPathContext,
+            mkr_cNode,
+            mkr_cDocument,
+            element.as_raw(),
+            attr.as_raw(),
+            text.as_raw(),
+            comment.as_raw(),
+            cdata.as_raw(),
+            pi.as_raw(),
+            doctype.as_raw(),
+            mkr_cDocumentFragment,
+            mkr_cNodeSet,
+            mkr_cXPathContext,
         ] {
             rb_sys::rb_undef_alloc_func(base);
         }
@@ -334,8 +360,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     makiri.define_singleton_method("__c_selftest", function!(c_selftest, 0))?;
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
-    makiri
-        .define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;
+    makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;
     m_xml.define_singleton_method("__decode", function!(xml_decode, 1))?;
 
     Ok(())

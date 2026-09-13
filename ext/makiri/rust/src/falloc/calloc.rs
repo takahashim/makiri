@@ -19,23 +19,19 @@
 //! size itself from a disarmed baseline run. Arming fails exactly one allocation
 //! and then disarms, modelling a single transient OOM.
 //!
-//! Single-threaded by design, which holds because every caller is under the GVL
-//! and the sweep is sequential. That was true of the C's plain `static`
-//! variables too; the `static mut` here is the same object with the same
-//! contract.
+//! The sweep runs under the GVL, but atomics make the one-counter invariant
+//! explicit even if a diagnostic invokes it from another native thread.  This
+//! removes the old `static mut` exception from the allocator boundary.
 
 #![allow(clippy::missing_safety_doc)]
 
 /* Everything below the injection counter serves the ported allocators only.
  * Gated rather than `allow(dead_code)`, so an unused item stays an error in the
  * configurations that should be using it. */
-#[cfg(feature = "core-alloc")]
 use core::ffi::{c_char, c_int, c_void};
 
-#[cfg(feature = "core-alloc")]
 use crate::cbuf::{MKR_ERR_OOM, MKR_OK};
 
-#[cfg(feature = "core-alloc")]
 extern "C" {
     #[link_name = "malloc"]
     fn libc_malloc(n: usize) -> *mut c_void;
@@ -58,34 +54,38 @@ extern "C" {
  * read the same counter, and `inject` is private so that this re-export stays
  * the single way in. */
 #[cfg(feature = "alloc-inject")]
-pub use inject::{
-    mkr_alloc_inject_arm, mkr_alloc_inject_calls, mkr_alloc_inject_should_fail,
-};
+pub use inject::{mkr_alloc_inject_arm, mkr_alloc_inject_calls, mkr_alloc_inject_should_fail};
 
 #[cfg(feature = "alloc-inject")]
 mod inject {
+    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
     /// 0 = disarmed.
-    static mut COUNTDOWN: i64 = 0;
-    static mut ATTEMPTS: u64 = 0;
+    static COUNTDOWN: AtomicI64 = AtomicI64::new(0);
+    static ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
-    #[no_mangle]
     pub unsafe extern "C" fn mkr_alloc_inject_arm(nth: i64) {
-        COUNTDOWN = if nth > 0 { nth } else { 0 };
-        ATTEMPTS = 0;
+        COUNTDOWN.store(if nth > 0 { nth } else { 0 }, Ordering::Release);
+        ATTEMPTS.store(0, Ordering::Release);
     }
 
-    #[no_mangle]
     pub unsafe extern "C" fn mkr_alloc_inject_calls() -> u64 {
-        ATTEMPTS
+        ATTEMPTS.load(Ordering::Acquire)
     }
 
-    #[no_mangle]
     pub unsafe extern "C" fn mkr_alloc_inject_should_fail() -> core::ffi::c_int {
-        ATTEMPTS = ATTEMPTS.wrapping_add(1);
-        if COUNTDOWN > 0 {
-            COUNTDOWN -= 1;
-            if COUNTDOWN == 0 {
-                return 1; /* fail this one allocation; now disarmed */
+        ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        let mut left = COUNTDOWN.load(Ordering::Acquire);
+        while left > 0 {
+            match COUNTDOWN.compare_exchange_weak(
+                left,
+                left - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) if left == 1 => return 1, /* one transient failure */
+                Ok(_) => return 0,
+                Err(actual) => left = actual,
             }
         }
         0
@@ -94,7 +94,6 @@ mod inject {
 
 /// Consult the injection counter. Always false outside a sweep build, where
 /// there is no counter and no branch.
-#[cfg(feature = "core-alloc")]
 #[inline(always)]
 fn inject_fail() -> bool {
     crate::falloc::should_fail()
@@ -110,8 +109,6 @@ fn inject_fail() -> bool {
 /// failure. `elem == 0` fails closed rather than falling through to a
 /// `realloc(ptr, 0)`, whose free-or-not is implementation-defined; the caller
 /// keeps ownership of `ptr`. An overflow leaves `ptr` unchanged.
-#[cfg(feature = "core-alloc")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_reallocarray(
     ptr: *mut c_void,
     count: usize,
@@ -139,8 +136,6 @@ pub unsafe extern "C" fn mkr_reallocarray(
 /// Two-argument `calloc` is itself overflow-safe, but the check is explicit so
 /// every core allocator fails the SAME way - a deterministic NULL - rather than
 /// leaving the overflow case to `calloc`'s implementation-defined behaviour.
-#[cfg(feature = "core-alloc")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void {
     if count == 0 || elem == 0 {
         return core::ptr::null_mut();
@@ -157,8 +152,6 @@ pub unsafe extern "C" fn mkr_callocarray(count: usize, elem: usize) -> *mut c_vo
 /// `n` bytes plus a NUL terminator, with the terminator already written.
 ///
 /// The bytes before it are uninitialised, as in the C: every caller fills them.
-#[cfg(feature = "core-alloc")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_alloc(n: usize) -> *mut c_char {
     let total = match n.checked_add(1) {
         Some(t) => t,
@@ -179,8 +172,6 @@ pub unsafe extern "C" fn mkr_str_alloc(n: usize) -> *mut c_char {
 ///
 /// `n > 0` with a NULL source fails closed: the alternative is returning
 /// uninitialised bytes.
-#[cfg(feature = "core-alloc")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char {
     if n > 0 && s.is_null() {
         return core::ptr::null_mut();
@@ -197,8 +188,6 @@ pub unsafe extern "C" fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char 
 }
 
 /// A NUL-terminated copy of the C string `s`. NULL in, NULL out.
-#[cfg(feature = "core-alloc")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_strdup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
         return core::ptr::null_mut();
@@ -211,8 +200,6 @@ pub unsafe extern "C" fn mkr_strdup(s: *const c_char) -> *mut c_char {
 /// On success `*ptr` and `*cap` are updated and `MKR_OK` is returned; on
 /// overflow or allocation failure `MKR_ERR_OOM` is returned with both left
 /// unchanged - so a failed grow never loses the caller's array.
-#[cfg(feature = "core-alloc")]
-#[no_mangle]
 pub unsafe extern "C" fn mkr_grow_reserve(
     ptr: *mut *mut c_void,
     cap: *mut usize,

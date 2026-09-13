@@ -41,12 +41,12 @@ use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Symbol, Value};
 
 use crate::falloc::{self, VecPush};
-use crate::lexbor_abi::consts as k;
 use crate::lexbor_abi as lxb;
+use crate::lexbor_abi::consts as k;
 
-use super::abi::{mkr_ruby_verified_text, 
+use super::abi::{
     error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, mkr_mLexbor,
-    CssParser,
+    mkr_ruby_verified_text, CssParser,
 };
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
@@ -72,9 +72,19 @@ struct Selector {
 }
 
 enum Rule {
-    Style { selectors: Vec<Selector>, declarations: Vec<Decl> },
-    BadStyle { selector_text: Vec<u8>, declarations: Vec<Decl> },
-    At { name: Vec<u8>, prelude: Vec<u8>, rules: Vec<Rule> },
+    Style {
+        selectors: Vec<Selector>,
+        declarations: Vec<Decl>,
+    },
+    BadStyle {
+        selector_text: Vec<u8>,
+        declarations: Vec<Decl>,
+    },
+    At {
+        name: Vec<u8>,
+        prelude: Vec<u8>,
+        rules: Vec<Rule>,
+    },
 }
 
 /// Anything that stops phase one. `Oom` and `TooDeep` become `Makiri::Error`;
@@ -118,7 +128,10 @@ unsafe fn serialize_with(
     scratch: &mut Vec<u8>,
     run: impl FnOnce(&mut Ser) -> u32,
 ) -> Result<Vec<u8>, Fail> {
-    let mut s = Ser { buf: core::mem::take(scratch), oom: false };
+    let mut s = Ser {
+        buf: core::mem::take(scratch),
+        oom: false,
+    };
     s.buf.clear();
     let st = run(&mut s);
     if s.oom {
@@ -147,7 +160,11 @@ unsafe fn serialize_with(
 const SP_COMPONENT: u32 = 0x1FF;
 
 fn specificity(sp: u32) -> [u32; 3] {
-    [(sp >> 18) & SP_COMPONENT, (sp >> 9) & SP_COMPONENT, sp & SP_COMPONENT]
+    [
+        (sp >> 18) & SP_COMPONENT,
+        (sp >> 9) & SP_COMPONENT,
+        sp & SP_COMPONENT,
+    ]
 }
 
 /* ---- the walk ---- */
@@ -192,7 +209,14 @@ unsafe fn declarations(
                 )
             })?;
 
-            if out.mkr_push(Decl { name, value, important: (*decl).important }).is_err() {
+            if out
+                .mkr_push(Decl {
+                    name,
+                    value,
+                    important: (*decl).important,
+                })
+                .is_err()
+            {
                 return Err(Fail::Oom);
             }
         }
@@ -212,14 +236,16 @@ unsafe fn selectors(
         // list->next, which would re-emit the whole comma list.
         let first = (*l).first;
         let text = serialize_with(&mut c.scratch, |s| {
-            lxb::lxb_css_selector_serialize_chain(
-                first,
-                Some(ser_cb),
-                s as *mut Ser as *mut c_void,
-            )
+            lxb::lxb_css_selector_serialize_chain(first, Some(ser_cb), s as *mut Ser as *mut c_void)
         })?;
         let sp = specificity((*l).specificity);
-        if out.mkr_push(Selector { text, specificity: sp }).is_err() {
+        if out
+            .mkr_push(Selector {
+                text,
+                specificity: sp,
+            })
+            .is_err()
+        {
             return Err(Fail::Oom);
         }
         l = (*l).next;
@@ -282,19 +308,35 @@ unsafe fn at_block(at: *mut lxb::lxb_css_rule_at_t) -> *mut lxb::lxb_css_rule_li
     match (*at).type_ {
         k::AT_RULE_MEDIA => {
             let m = (*at).u.media;
-            if m.is_null() { core::ptr::null_mut() } else { (*m).block }
+            if m.is_null() {
+                core::ptr::null_mut()
+            } else {
+                (*m).block
+            }
         }
         k::AT_RULE_FONT_FACE => {
             let f = (*at).u.font_face;
-            if f.is_null() { core::ptr::null_mut() } else { (*f).block }
+            if f.is_null() {
+                core::ptr::null_mut()
+            } else {
+                (*f).block
+            }
         }
         k::AT_RULE_CUSTOM => {
             let cu = (*at).u.custom;
-            if cu.is_null() { core::ptr::null_mut() } else { (*cu).block }
+            if cu.is_null() {
+                core::ptr::null_mut()
+            } else {
+                (*cu).block
+            }
         }
         k::AT_RULE_UNDEF => {
             let u = (*at).u.undef;
-            if u.is_null() { core::ptr::null_mut() } else { (*u).block }
+            if u.is_null() {
+                core::ptr::null_mut()
+            } else {
+                (*u).block
+            }
         }
         _ => core::ptr::null_mut(),
     }
@@ -329,7 +371,11 @@ unsafe fn rules(
                 };
                 let name = at_name(at)?;
                 let prelude = slice_trim(c.css, (*at).prelude_begin, (*at).prelude_end)?;
-                Some(Rule::At { name, prelude, rules: rules(c, block_first, depth + 1)? })
+                Some(Rule::At {
+                    name,
+                    prelude,
+                    rules: rules(c, block_first, depth + 1)?,
+                })
             }
             k::CSS_RULE_BAD_STYLE => {
                 // A selector Lexbor rejected - pseudo-elements most notably,
@@ -438,7 +484,10 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
     for r in rs {
         let h: RHash = ruby.hash_new();
         match r {
-            Rule::Style { selectors, declarations } => {
+            Rule::Style {
+                selectors,
+                declarations,
+            } => {
                 h.aset(k.type_, k.sym_style)?;
                 let sa = ruby.ary_new_capa(selectors.len());
                 for s in selectors {
@@ -454,12 +503,19 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 h.aset(k.selectors, sa)?;
                 h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
             }
-            Rule::BadStyle { selector_text, declarations } => {
+            Rule::BadStyle {
+                selector_text,
+                declarations,
+            } => {
                 h.aset(k.type_, k.sym_bad_style)?;
                 h.aset(k.selector_text, str_of(ruby, selector_text))?;
                 h.aset(k.declarations, decls_to_ruby(ruby, k, declarations)?)?;
             }
-            Rule::At { name, prelude, rules } => {
+            Rule::At {
+                name,
+                prelude,
+                rules,
+            } => {
                 h.aset(k.type_, k.sym_at_rule)?;
                 h.aset(k.name, str_of(ruby, name))?;
                 h.aset(k.prelude, str_of(ruby, prelude))?;
@@ -544,7 +600,10 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
         if root.is_null() {
             Vec::new() /* empty or whitespace-only stylesheet */
         } else {
-            let mut conv = Conv { css, scratch: Vec::new() };
+            let mut conv = Conv {
+                css,
+                scratch: Vec::new(),
+            };
             // The root IS a rule list; Lexbor's downcast is a pointer cast.
             let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;
             match rules(&mut conv, first, 0) {
@@ -572,7 +631,6 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 ///
 /// # Safety
 /// Runs once, from `Init_makiri`, on the Ruby thread.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_lexbor_css() {
     let ruby = Ruby::get().expect("mkr_init_lexbor_css runs on the Ruby thread");
     let lexbor = magnus::RModule::from_value(Value::from_raw(mkr_mLexbor))

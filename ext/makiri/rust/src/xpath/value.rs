@@ -42,7 +42,16 @@ pub const ST_ERR_LIMIT: c_int = 2;
 /// An empty `mkr_val_t` of the given type; the union starts zeroed, which is a
 /// valid empty node-set, a 0.0, a false, and a NULL string.
 pub fn val_zero(type_: u32) -> Val {
-    Val { type_, u: ValU { nodeset: NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 } } }
+    Val {
+        type_,
+        u: ValU {
+            nodeset: NodeSet {
+                items: ptr::null_mut(),
+                count: 0,
+                capacity: 0,
+            },
+        },
+    }
 }
 
 pub fn val_number(d: f64) -> Val {
@@ -74,7 +83,10 @@ pub unsafe fn owned_bytes<'a>(t: OwnedText) -> &'a [u8] {
 /// # Safety
 /// `out` must be a writable `mkr_owned_text_t`.
 pub unsafe fn owned_copy(out: *mut OwnedText, s: &[u8], err: *mut Error, what: &[u8]) -> bool {
-    let t = VerifiedText { ptr: s.as_ptr() as *const c_char, len: s.len() };
+    let t = VerifiedText {
+        ptr: s.as_ptr() as *const c_char,
+        len: s.len(),
+    };
     mkr_owned_text_from_borrowed_copy(out, t, err, what.as_ptr() as *const c_char) == 0
 }
 
@@ -90,8 +102,16 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> bool
     *dst = val_zero((*src).type_);
     match (*src).type_ {
         T_STRING => {
-            let mut text = OwnedText { ptr: ptr::null_mut(), len: 0 };
-            if !owned_copy(&mut text, owned_bytes((*src).u.string), err, b"out of memory cloning string value\0") {
+            let mut text = OwnedText {
+                ptr: ptr::null_mut(),
+                len: 0,
+            };
+            if !owned_copy(
+                &mut text,
+                owned_bytes((*src).u.string),
+                err,
+                b"out of memory cloning string value\0",
+            ) {
                 return false;
             }
             mkr_val_set_owned_text(dst, text);
@@ -204,8 +224,15 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     err: *mut Error,
     out: *mut OwnedText,
 ) -> bool {
-    *out = OwnedText { ptr: ptr::null_mut(), len: 0 };
-    let mut buf = Buf::new(if limits.is_null() { 0 } else { (*limits).max_string_bytes });
+    *out = OwnedText {
+        ptr: ptr::null_mut(),
+        len: 0,
+    };
+    let mut buf = Buf::new(if limits.is_null() {
+        0
+    } else {
+        (*limits).max_string_bytes
+    });
     let st = build_string_value::<D>(node, &mut buf);
     if st == ST_OK {
         let mut len = 0usize;
@@ -325,7 +352,10 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     err: *mut Error,
     out: *mut OwnedText,
 ) -> bool {
-    *out = OwnedText { ptr: ptr::null_mut(), len: 0 };
+    *out = OwnedText {
+        ptr: ptr::null_mut(),
+        len: 0,
+    };
     if v.is_null() {
         return owned_copy(out, b"", err, b"out of memory converting value to string\0");
     }
@@ -338,7 +368,11 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             owned_copy(out, text, err, b"out of memory copying string value\0")
         }
         T_BOOLEAN => {
-            let s: &[u8] = if (*v).u.boolean != 0 { b"true" } else { b"false" };
+            let s: &[u8] = if (*v).u.boolean != 0 {
+                b"true"
+            } else {
+                b"false"
+            };
             owned_copy(out, s, err, b"out of memory converting boolean to string\0")
         }
         T_NUMBER => {
@@ -395,8 +429,12 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
             return true;
         }
         let mut text = Text::new();
-        if !node_to_owned_text::<D>(nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, text.as_mut())
-        {
+        if !node_to_owned_text::<D>(
+            nodeset_at::<D>(&(*v).u.nodeset, 0),
+            limits,
+            err,
+            text.as_mut(),
+        ) {
             return false;
         }
         *out = bytes_to_number(text.as_slice());
@@ -445,7 +483,11 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
 ) -> Option<&'a [u8]> {
     let c = mkr_ctx_str_cache(ctx);
     if c.is_null() {
-        err_setf!(err, XP_ERR_INTERNAL, "cached_node_text called without a context");
+        err_setf!(
+            err,
+            XP_ERR_INTERNAL,
+            "cached_node_text called without a context"
+        );
         return None;
     }
     let key = D::to_void(node) as *const c_void;
@@ -464,7 +506,10 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     }
 
     let limits = mkr_ctx_limits(ctx);
-    let mut text = OwnedText { ptr: ptr::null_mut(), len: 0 };
+    let mut text = OwnedText {
+        ptr: ptr::null_mut(),
+        len: 0,
+    };
     if !node_to_owned_text::<D>(node, limits, err, &mut text) {
         return None;
     }
