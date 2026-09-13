@@ -79,6 +79,13 @@ jobs:
       # install - if it cannot build, the gem falls back to a source install and
       # every one of those users needs a toolchain of their own.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # RubyInstaller's Ruby is a MinGW build, but a default rustup on
+          # Windows installs the MSVC host - and rb-sys will not generate
+          # bindings from Ruby's headers across that ABI boundary. extconf.rb
+          # names the GNU triple; this installs the std that goes with it.
+          # Empty elsewhere, so the other runners are unaffected.
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
       - name: Install libclang (bindgen, via rb-sys)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev

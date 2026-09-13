@@ -38,6 +38,13 @@ jobs:
       # each flag replaced. There is no table, no flags and no C left for it to
       # check.)
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # RubyInstaller's Ruby is a MinGW build, but a default rustup on
+          # Windows installs the MSVC host - and rb-sys will not generate
+          # bindings from Ruby's headers across that ABI boundary. extconf.rb
+          # names the GNU triple; this installs the std that goes with it.
+          # Empty elsewhere, so the other runners are unaffected.
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
 
       # rb-sys runs bindgen at build time to generate bindings against the local
       # Ruby, and bindgen needs libclang. The runner image ships one; installing
@@ -71,9 +78,10 @@ jobs:
       # Only Init_makiri may be exported (or another Lexbor-based gem in the
       # same process binds to our Lexbor and segfaults - CLAUDE.md), and no
       # Lexbor/Makiri symbol may be left undefined (it would be a NULL call).
-      # The export half matters more now than it did: rustc links the cdylib and
-      # passes its own export list, so the restriction is a post-link trim that
-      # this gate is the only thing checking.
+      # The export half is enforced at the SOURCE - only Init_makiri is
+      # #[no_mangle] - because on ELF nothing else works: objcopy cannot remove
+      # an entry from a linked .so's .dynsym, and a second --version-script is
+      # merged rather than applied. This gate is what proves it held.
       - name: Symbol gate
         run: bundle exec rake symbols
 
