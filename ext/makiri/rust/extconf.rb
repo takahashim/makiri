@@ -140,6 +140,22 @@ rustc_args = []
 # accidentally linking a system-installed Lexbor.
 rustc_args += ["-C", "link-arg=#{lexbor_archive}"]
 
+# Windows: the vendored Lexbor calls CRT functions (strncmp in the HTML initial
+# insertion mode, &c.), but rustc's windows-gnu cdylib link runs gcc with
+# `-nodefaultlibs` and a hardcoded CRT list (-lmsvcrt -lmingwex -lgcc ...).
+# RubyInstaller's Ruby is a UCRT build and its toolchain's CRT is libucrt.a,
+# which is NOT in that list, and our archive sits at the END of the link line -
+# so anything Lexbor references has to be resolved by a library that appears
+# AFTER it. References the Rust std already pulled from an earlier archive are
+# incidentally satisfied; the rest fail with "undefined reference" (observed:
+# strncmp, the only CRT symbol nothing before Lexbor needed). Re-pass the CRT
+# import after the archive so ld's single pass sees it. (The gnullvm target for
+# aarch64 Ruby already links libucrt through clang's own specs; the -lucrt there
+# is a harmless duplicate.)
+if windows
+  rustc_args += ["-C", "link-arg=#{RUBY_PLATFORM =~ /mingw32/ ? "-lmsvcrt" : "-lucrt"}"]
+end
+
 # Nothing is added here for macOS's `-undefined dynamic_lookup`: rb_sys already
 # passes it, so Ruby C API symbols are resolved from the loading process and one
 # compiled binary works on any compatible Ruby of that ABI. (The crate takes
