@@ -3,19 +3,19 @@
 //! linking / reading the C-layout nodes.
 
 use crate::falloc::Reserve;
-use crate::xml::arena::{arena_cut, arena_node, doc_destroy, doc_new, ParserArena};
+use crate::xml::arena::{arena_node, doc_destroy, doc_new, ParserArena};
 use crate::xml::chars::{
-    decode1, expand_into, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
-    validate_chars, ExpandErr, ExpandMode,
+    decode1, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
+    validate_chars, ExpandMode,
 };
 use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    bytes, empty, node_local, node_prefix, node_qname, node_value, Doc, Node, ERR_INTERNAL,
-    ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, FLAG_NS_RESOLVED, MAX_ATTRS, MAX_DEPTH, MAX_NS,
-    OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI,
-    T_TEXT, XMLNS_NS_URI, XML_NS_URI,
+    bytes, empty, node_local, node_prefix, node_qname, Doc, Node, ERR_LIMIT, ERR_OOM, ERR_SYNTAX,
+    ERR_VERSION, FLAG_NS_RESOLVED, MAX_ATTRS, MAX_DEPTH, MAX_NS, OK, T_ATTRIBUTE, T_CDATA,
+    T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
+    XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr::{self, NonNull};
@@ -45,28 +45,6 @@ fn is_space(c: u8) -> bool {
 #[inline]
 fn find(h: &[u8], b: u8) -> Option<usize> {
     h.iter().position(|&x| x == b)
-}
-
-/// Expand references from `src` into a fresh arena cut (mkr_xml_expand's
-/// arena-backed form). Err carries the status to report.
-pub(crate) unsafe fn expand_arena(
-    doc: *mut Doc,
-    src: &[u8],
-    mode: ExpandMode,
-) -> Result<(*const c_char, u32), i32> {
-    if src.is_empty() {
-        return Ok((empty(), 0));
-    }
-    let out = match arena_cut(doc, src.len()) {
-        Some(o) => o,
-        None => return Err((*doc).oom),
-    };
-    let base = out.as_ptr() as *const c_char;
-    match expand_into(src, mode, out) {
-        Ok(n) => Ok((base, n as u32)),
-        Err(ExpandErr::Syntax) => Err(ERR_SYNTAX),
-        Err(ExpandErr::Overflow) => Err(ERR_INTERNAL),
-    }
 }
 
 pub struct Parser<'a> {
@@ -228,7 +206,7 @@ impl<'a> Parser<'a> {
     }
 
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<(*const c_char, u32)> {
-        match unsafe { expand_arena(self.arena.as_ptr(), s, mode) } {
+        match self.arena.expand(s, mode) {
             Ok(x) => Ok(x),
             Err(st) => {
                 self.status = st;
@@ -248,37 +226,11 @@ impl<'a> Parser<'a> {
     /// Append a TEXT / CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
     fn append_chardata(&mut self, parent: *mut Node, ty: u32, val: *const c_char, len: u32) -> R {
-        unsafe {
-            let last = (*parent).last_child;
-            if !last.is_null() && (*last).type_ == ty {
-                let total = (*last).value_len as usize + len as usize;
-                if total > u32::MAX as usize {
-                    return self.limit();
-                }
-                if total == 0 {
-                    (*last).value = empty();
-                    (*last).value_len = 0;
-                    return Ok(());
-                }
-                let buf = match arena_cut(self.arena.as_ptr(), total) {
-                    Some(b) => b,
-                    None => return self.oom(),
-                };
-                let old = node_value(last);
-                buf[..old.len()].copy_from_slice(old);
-                buf[old.len()..].copy_from_slice(bytes(val, len));
-                (*last).value = buf.as_ptr() as *const c_char;
-                (*last).value_len = total as u32;
-                return Ok(());
-            }
+        match self.arena.append_chardata(parent, ty, val, len) {
+            Ok(()) => Ok(()),
+            Err(ERR_LIMIT) => self.limit(),
+            Err(_) => self.oom(),
         }
-        let n = self.new_node(ty)?;
-        unsafe {
-            (*n).value = val;
-            (*n).value_len = len;
-            self.arena.append(parent, n);
-        }
-        Ok(())
     }
 
     /// Store `name` (prefix:local per `sp`) as one arena copy on `node`.

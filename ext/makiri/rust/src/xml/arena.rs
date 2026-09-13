@@ -10,10 +10,11 @@
  * boundary. */
 #![allow(clippy::missing_safety_doc)]
 
+use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::{
     bytes, empty, index, Chunk, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM,
-    MAX_BYTES, MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
-    T_FRAGMENT, T_PI, T_TEXT,
+    ERR_SYNTAX, MAX_BYTES, MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT,
+    T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
 };
 use core::ffi::c_char;
 use core::ptr::{self, NonNull};
@@ -101,6 +102,24 @@ impl ParserArena {
     pub(crate) fn append(self, parent: *mut Node, child: *mut Node) {
         // SAFETY: parser builds a tree from fresh nodes in one arena.
         unsafe { append_child(parent, child) }
+    }
+
+    #[inline]
+    pub(crate) fn expand(self, src: &[u8], mode: ExpandMode) -> Result<(*const c_char, u32), i32> {
+        // SAFETY: ParserArena guarantees a live document for the arena cut.
+        unsafe { expand_arena(self.as_ptr(), src, mode) }
+    }
+
+    #[inline]
+    pub(crate) fn append_chardata(
+        self,
+        parent: *mut Node,
+        type_: u32,
+        value: *const c_char,
+        len: u32,
+    ) -> Result<(), i32> {
+        // SAFETY: the parser passes a parent and value from this live arena.
+        unsafe { append_chardata(self.as_ptr(), parent, type_, value, len) }
     }
 }
 
@@ -280,6 +299,71 @@ pub unsafe fn arena_bytes(doc: *mut Doc, src: &[u8]) -> *const c_char {
     }
     ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
     p as *const c_char
+}
+
+/// Expand XML references into one arena cut. The raw document pointer stays
+/// inside the arena layer; parser code sees only the resulting byte slice.
+pub unsafe fn expand_arena(
+    doc: *mut Doc,
+    src: &[u8],
+    mode: ExpandMode,
+) -> Result<(*const c_char, u32), i32> {
+    if src.is_empty() {
+        return Ok((empty(), 0));
+    }
+    let out = match arena_cut(doc, src.len()) {
+        Some(out) => out,
+        None => return Err((*doc).oom),
+    };
+    let base = out.as_ptr() as *const c_char;
+    match expand_into(src, mode, out) {
+        Ok(n) => Ok((base, n as u32)),
+        Err(ExpandErr::Syntax) => Err(ERR_SYNTAX),
+        Err(ExpandErr::Overflow) => Err(ERR_INTERNAL),
+    }
+}
+
+/// Append character data, coalescing an adjacent node of the same type.
+/// Allocation and node-field mutation are kept together so a failed cut can
+/// never leave the linked tree half-updated.
+unsafe fn append_chardata(
+    doc: *mut Doc,
+    parent: *mut Node,
+    type_: u32,
+    value: *const c_char,
+    len: u32,
+) -> Result<(), i32> {
+    let last = (*parent).last_child;
+    if !last.is_null() && (*last).type_ == type_ {
+        let total = match ((*last).value_len as usize).checked_add(len as usize) {
+            Some(total) if total <= u32::MAX as usize => total,
+            _ => return Err(ERR_LIMIT),
+        };
+        if total == 0 {
+            (*last).value = empty();
+            (*last).value_len = 0;
+            return Ok(());
+        }
+        let buf = match arena_cut(doc, total) {
+            Some(buf) => buf,
+            None => return Err((*doc).oom),
+        };
+        let old = bytes((*last).value, (*last).value_len);
+        buf[..old.len()].copy_from_slice(old);
+        buf[old.len()..].copy_from_slice(bytes(value, len));
+        (*last).value = buf.as_ptr() as *const c_char;
+        (*last).value_len = total as u32;
+        return Ok(());
+    }
+
+    let node = arena_node(doc, type_);
+    if node.is_null() {
+        return Err((*doc).oom);
+    }
+    (*node).value = value;
+    (*node).value_len = len;
+    append_child(parent, node);
+    Ok(())
 }
 
 /// A raw arena cut of `len` bytes as a mutable slice for the caller to fill

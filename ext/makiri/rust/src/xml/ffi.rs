@@ -306,7 +306,7 @@ pub unsafe fn mkr_xml_expand(
     } else {
         ExpandMode::Attr
     };
-    match tree::expand_arena(doc, bytes(src, len), m) {
+    match arena::expand_arena(doc, bytes(src, len), m) {
         Ok((p, n)) => {
             *out_len = n;
             p
