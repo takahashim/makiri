@@ -190,7 +190,19 @@ unless sanitize.empty?
     rustflags += ["-Zsanitizer=address", "-Cllvm-args=-asan-stack=0"]
     # Only one ASan runtime may be linked; reference clang's rather than
     # linking Rust's own copy.
-    rustflags << "-Zexternal-clangrt"
+    # NOT -Zexternal-clangrt. That flag says "do not link a runtime, one is
+    # already here", and while the C was compiled that was true: `$DLDFLAGS`
+    # carried `-fsanitize=address`, so clang linked its runtime into the bundle
+    # and rustc had to be told not to add a second. There is no C link step any
+    # more, so the flag now means "link no runtime at all" - the bundle's
+    # `__asan_*` are all undefined and it depends entirely on the preload, which
+    # is a fragile shape for an image dlopen'd late into an uninstrumented host.
+    # Letting rustc link Rust's own runtime is what a normal sanitized Rust
+    # build does.
+    if !ENV["MAKIRI_EXTERNAL_CLANGRT"].to_s.empty?
+      rustflags << "-Zexternal-clangrt"
+      warn "makiri: -Zexternal-clangrt (no runtime linked; needs the preload)"
+    end
     warn "makiri: building with -Zsanitizer=address (nightly, #{cargo_target})"
   else
     abort "MAKIRI_SANITIZE=#{sanitize}: with the C retired, only `address` has " \
@@ -248,8 +260,15 @@ end
 # that day arrives as a failing gate rather than as a silent re-export.
 keep = File.join(Dir.pwd, "makiri-exported.sym")
 
+# MAKIRI_NO_EXPORT_TRIM=1 skips the trim entirely. It exists to answer one
+# question - whether the trim is what makes the ASan build segfault at load -
+# and a build made with it exports every `mkr_*` name, so `rake symbols` will
+# (correctly) fail on it. Diagnostic only; not a supported configuration.
 restrict =
-  if darwin
+  if !ENV["MAKIRI_NO_EXPORT_TRIM"].to_s.empty?
+    warn "makiri: SKIPPING the export trim (MAKIRI_NO_EXPORT_TRIM) - diagnostic build"
+    nil
+  elsif darwin
     File.write(keep, "_Init_makiri\n_ruby_abi_version\n")
     "strip -u -r -s #{keep.shellescape} $(DLLIB)"
   elsif linux

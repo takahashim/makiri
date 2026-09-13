@@ -128,22 +128,44 @@ What is established:
 
 - `lib/makiri/makiri.bundle: [BUG] Segmentation fault at 0x0` during
   `require` from `lib/makiri.rb:9`, i.e. inside `Init_makiri`.
-- Register context puts it at `lr = 0x128e18654`, twelve bytes past `x20`, so a
-  call through a null pointer rather than a stray read.
 - Every undefined symbol in the bundle is legitimate (`__asan_*`, libSystem,
   the unwinder). **No `mkr_` or `lxb_` is undefined**, so the usual
   `-undefined dynamic_lookup` NULL-call explanation is NOT supported by the
   evidence.
-- The prime suspect is the export trim: `strip -u -r -s` prints
-  "removing global symbols from a final linked no longer supported", and ASan
-  needs `__asan_register_image_globals` to find the image's globals. Unproven.
-- Symbolication is possible: the unstripped artefact survives under
-  `tmp/<platform>/makiri/<ruby>/target/<triple>/release/libmakiri.dylib`.
+- **`lr = 0x128e18654` is not in the bundle's text.** The crash report's own
+  memory map puts the executable range at `1061e8000-10635c000`; `0x128e…`
+  falls in an `rw-` (non-executable) mapping. So this is not "a call landed on
+  a null stub" either - control went somewhere that cannot be code, or `lr` was
+  already clobbered. Start from that, not from the null-pointer reading: two
+  earlier hypotheses (undefined symbol, then null call) both died on evidence.
+- **The export trim is NOT the cause.** Built with `MAKIRI_NO_EXPORT_TRIM=1`
+  (224 symbols exported, trim demonstrably off) it crashes identically.
+- **The likely cause is the preloaded runtime.** Instrumentation is rustc's
+  (`-Zsanitizer=address`), but `asan_runtime_path` in the Rakefile finds
+  *clang's* runtime via `cc -print-file-name` - correct while the C was what
+  got instrumented, wrong since. ASan itself says so: preloading clang's gives
+  "Interceptors are not working ... launch with
+  DYLD_INSERT_LIBRARIES=<rustup>/lib/rustlib/<triple>/lib/librustc-*_rt.asan.dylib".
+  Preloading THAT one clears the interceptor error and the segfault (stderr
+  becomes empty), but a bare `require` had not finished in 60s, so whether it
+  then works or merely hangs is UNVERIFIED. Resume there, and fix
+  `asan_runtime_path` to look in the toolchain that did the instrumenting.
+- Symbolication needs the unstripped artefact, and it is PERISHABLE: it lives
+  under `tmp/<platform>/makiri/<ruby>/target/...`, which `rake clean` wipes -
+  and `sanitize`, `oom` and `coverage` all run `rake clean compile` first. Copy
+  it out before running anything else. Note the ASan build alone passes
+  `--target <triple>`, so its path has an extra triple component that a plain
+  build's does not; looking in the wrong one reads as "the evidence is gone".
 
-Two things that misled the investigation, recorded so the next person skips them:
-the hour-long "hang" was Ruby printing a crash report (ASan's shadow makes the
-memory map enormous), and macOS writes no `.ips` for it - Ruby's own `[BUG]`
-dump on stderr is the report.
+Three hypotheses died on evidence - do not re-run them: an undefined symbol
+(none are ours), a null call (`lr` was in an `rw-` mapping, not a null stub),
+and the export trim (crashes with it off). Two things also misled the
+investigation: the hour-long "hang" was Ruby printing a crash report (ASan's
+shadow makes the memory map enormous), and macOS writes no `.ips` for it -
+Ruby's own `[BUG]` dump on stderr is the report.
+
+None of this is fixed by the Rust-shape cleanup. The runtime mismatch is one
+function in the Rakefile; the cleanup does not touch it.
 
 ### Build / runtime gotchas (read before debugging weirdness)
 
