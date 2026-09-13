@@ -272,6 +272,7 @@ pub unsafe extern "C" fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAtt
 }
 
 /// Build the index now (idempotent). 0 on success, -1 on allocation failure.
+#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
     if ensure(p).is_null() {
         -1

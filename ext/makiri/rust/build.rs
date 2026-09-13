@@ -240,6 +240,20 @@ fn main() {
         .write_to_file(out.join("lexbor_sys.rs"))
         .expect("could not write the generated Lexbor bindings");
 
+    // Link the vendored Lexbor static library. extconf.rb also passes this
+    // archive when building the Ruby extension, so the extension Makefile's
+    // link line and this build.rs line duplicate the same archive. That is
+    // harmless for a static archive (the linker pulls only the object files it
+    // needs), and having it here means cargo consumers that do not go through
+    // extconf - chiefly cargo-fuzz - still link Lexbor.
+    let lib_dir = lexbor_include().parent().unwrap().join("lib");
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    println!("cargo:rustc-link-lib=static=lexbor_static");
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("-linux-") || target.contains("-darwin-") {
+        println!("cargo:rustc-link-lib=pthread");
+    }
+
     // Makiri's OWN enums were generated here too, from ext/makiri/*.h, for the
     // same reason Lexbor's are - a transcribed `MKR_NODE_KIND_XML = 1` (it is 2)
     // had made `Document#import_node` treat every HTML node as an XML one. Those
