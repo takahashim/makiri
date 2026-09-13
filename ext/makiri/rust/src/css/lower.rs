@@ -337,8 +337,13 @@ unsafe fn nth(
     axis: u32,
     named: Option<&crate::xpath_abi::NodeTest>,
     oftype_untyped: bool,
-    a: i64,
-    bb: i64,
+    /* `c_long`, not i64: these come straight from Lexbor's
+     * `lxb_css_syntax_anb_t`, whose fields are C `long` - 64-bit on LP64 and
+     * 32-bit on Windows's LLP64. Matching the generated type keeps the call site
+     * cast-free on every platform, and the `as f64` uses below are a real
+     * conversion either way, so no lint fires on one platform or the other. */
+    a: core::ffi::c_long,
+    bb: core::ffi::c_long,
 ) -> *mut Node {
     if a == 0 {
         /* position = b */
