@@ -18,6 +18,7 @@ SAFE_FILES = %w[
   xml/chars.rs
   xml/index.rs
   xml/qname.rs
+  xml/tree.rs
 ].freeze
 
 # These are the remaining C/Ruby ABI globals.  Each entry is deliberately

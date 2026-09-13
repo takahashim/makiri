@@ -34,8 +34,10 @@ pub(crate) struct ParserArena {
 
 impl ParserArena {
     #[inline]
-    pub(crate) fn new(doc: NonNull<Doc>) -> Self {
-        Self { doc }
+    pub(crate) fn new(doc: *mut Doc) -> Self {
+        Self {
+            doc: NonNull::new(doc).expect("ParserArena requires a live document"),
+        }
     }
 
     #[inline]
@@ -87,9 +89,29 @@ impl ParserArena {
     }
 
     #[inline]
+    pub(crate) fn try_bytes(self, src: &[u8]) -> Result<*const c_char, i32> {
+        let p = self.bytes(src);
+        if p.is_null() {
+            Err(self.status())
+        } else {
+            Ok(p)
+        }
+    }
+
+    #[inline]
     pub(crate) fn node(self, type_: u32) -> *mut Node {
         // SAFETY: ParserArena guarantees a live arena for the allocation.
         unsafe { arena_node(self.as_ptr(), type_) }
+    }
+
+    #[inline]
+    pub(crate) fn try_node(self, type_: u32) -> Result<*mut Node, i32> {
+        let n = self.node(type_);
+        if n.is_null() {
+            Err(self.status())
+        } else {
+            Ok(n)
+        }
     }
 
     #[inline]
@@ -238,6 +260,63 @@ impl ParserArena {
         // SAFETY: the parser passes a parent and value from this live arena.
         unsafe { append_chardata(self.as_ptr(), parent, type_, value, len) }
     }
+
+    #[inline]
+    pub(crate) fn max_bytes(self) -> usize {
+        // SAFETY: ParserArena is created only for a live document.
+        unsafe { (*self.doc.as_ptr()).max_bytes }
+    }
+
+    /// View an arena `(ptr, len)` pair as a byte slice. NULL or len 0 yields an
+    /// empty slice.
+    #[inline]
+    pub(crate) fn bytes_slice<'a>(self, p: *const c_char, len: u32) -> &'a [u8] {
+        // SAFETY: the pointer names bytes owned by this live arena.
+        unsafe { bytes(p, len) }
+    }
+
+    /// Compare an arena `(ptr, len)` pair to a byte slice.
+    #[inline]
+    pub(crate) fn bytes_eq(self, p: *const c_char, len: u32, s: &[u8]) -> bool {
+        self.bytes_slice(p, len) == s
+    }
+
+    /// Iterate over `element`'s attribute list, yielding the raw qname and
+    /// value pairs. The element must belong to this arena.
+    #[inline]
+    pub(crate) fn attrs(self, element: *const Node) -> AttrIter {
+        // SAFETY: the element and its attribute chain are owned by this arena.
+        unsafe {
+            AttrIter {
+                cur: (*element).attrs,
+            }
+        }
+    }
+}
+
+/// Iterator over an element's attribute list. The yielded pointers name bytes
+/// owned by the same arena as the element.
+pub(crate) struct AttrIter {
+    cur: *const Node,
+}
+
+impl Iterator for AttrIter {
+    type Item = (*const c_char, u32, *const c_char, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cur.is_null() {
+            return None;
+        }
+        unsafe {
+            let a = self.cur;
+            let qn = (*a).qname;
+            let ql = (*a).qname_len;
+            let v = (*a).value;
+            let vl = (*a).value_len;
+            self.cur = (*a).next;
+            Some((qn, ql, v, vl))
+        }
+    }
 }
 
 /// Where a chunk's payload starts: the header size rounded up to ALIGN.
@@ -282,6 +361,38 @@ pub unsafe fn doc_destroy(doc: *mut Doc) {
         c = n;
     }
     drop(Box::from_raw(doc));
+}
+
+/// Create and initialize a fresh document, applying `limits` and checking that
+/// `src_len` fits under the budget before allocating the document node.
+pub(crate) fn create_doc(limits: Option<usize>, src_len: usize) -> Result<NonNull<Doc>, i32> {
+    unsafe {
+        let doc = doc_new();
+        if doc.is_null() {
+            return Err(ERR_OOM);
+        }
+        if let Some(mb) = limits {
+            if mb != 0 {
+                (*doc).max_bytes = mb;
+            }
+        }
+        if src_len > (*doc).max_bytes {
+            doc_destroy(doc);
+            return Err(ERR_LIMIT);
+        }
+        (*doc).doc_node = arena_node(doc, T_DOCUMENT);
+        if (*doc).doc_node.is_null() {
+            let st = (*doc).oom;
+            doc_destroy(doc);
+            return Err(st);
+        }
+        NonNull::new(doc).ok_or(ERR_OOM)
+    }
+}
+
+/// Free a document and all arena memory it owns.
+pub(crate) fn destroy_doc(doc: NonNull<Doc>) {
+    unsafe { doc_destroy(doc.as_ptr()) }
 }
 
 pub unsafe fn doc_memsize(doc: *const Doc) -> usize {

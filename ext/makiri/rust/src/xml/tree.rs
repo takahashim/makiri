@@ -1,9 +1,11 @@
 //! Tokenizer + tree builder (mkr_xml_tree.c). The scanning is safe slice code
-//! over the input; the unsafe blocks are confined to arena allocation and to
-//! linking / reading the C-layout nodes.
+//! over the input; all raw node operations go through `ParserArena`, so this
+//! module contains no `unsafe` code.
+
+#![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;
-use crate::xml::arena::{arena_node, doc_destroy, doc_new, ParserArena};
+use crate::xml::arena::{create_doc, destroy_doc, ParserArena};
 use crate::xml::chars::{
     decode1, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
     validate_chars, ExpandMode,
@@ -12,12 +14,12 @@ use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    bytes, empty, node_qname, Doc, Node, ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS,
-    MAX_DEPTH, MAX_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
-    T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
+    Doc, Node, ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS, MAX_DEPTH, MAX_NS, OK,
+    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
+    XML_NS_URI,
 };
 use core::ffi::c_char;
-use core::ptr::{self, NonNull};
+use core::ptr;
 
 /// A namespace binding in scope: prefix ("" = default) -> arena-owned URI.
 struct Binding {
@@ -62,7 +64,7 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a [u8], doc: NonNull<Doc>, fragment: *mut Node) -> Self {
+    fn new(input: &'a [u8], doc: *mut Doc, fragment: *mut Node) -> Self {
         Parser {
             input,
             pos: 0,
@@ -197,11 +199,10 @@ impl<'a> Parser<'a> {
 
     /// Copy a slice into the arena (fails closed on budget / OOM).
     fn own(&mut self, s: &[u8]) -> R<*const c_char> {
-        let p = self.arena.bytes(s);
-        if p.is_null() {
-            return self.oom();
+        match self.arena.try_bytes(s) {
+            Ok(p) => Ok(p),
+            Err(_) => self.oom(),
         }
-        Ok(p)
     }
 
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<(*const c_char, u32)> {
@@ -215,11 +216,10 @@ impl<'a> Parser<'a> {
     }
 
     fn new_node(&mut self, ty: u32) -> R<*mut Node> {
-        let n = self.arena.node(ty);
-        if n.is_null() {
-            return self.oom();
+        match self.arena.try_node(ty) {
+            Ok(n) => Ok(n),
+            Err(_) => self.oom(),
         }
-        Ok(n)
     }
 
     /// Append a TEXT / CDATA node, coalescing with a preceding sibling of the
@@ -362,12 +362,13 @@ impl<'a> Parser<'a> {
                 return self.syntax(); /* xmlns:xmlns reserved */
             }
             let (uri, ulen) = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
-            let u = unsafe { bytes(uri, ulen) };
             if bpfx == b"xml" {
-                if u != XML_NS_URI {
+                if !self.arena.bytes_eq(uri, ulen, XML_NS_URI) {
                     return self.syntax();
                 }
-            } else if u == XML_NS_URI || u == XMLNS_NS_URI {
+            } else if self.arena.bytes_eq(uri, ulen, XML_NS_URI)
+                || self.arena.bytes_eq(uri, ulen, XMLNS_NS_URI)
+            {
                 return self.syntax(); /* reserved URI bound to another prefix */
             }
             if !bpfx.is_empty() && ulen == 0 {
@@ -917,20 +918,10 @@ impl<'a> Parser<'a> {
         if root.is_null() {
             return Ok(());
         }
-        let mut a = unsafe { (*root).attrs };
-        while !a.is_null() {
-            let (qn, v, vl) = unsafe {
-                let v = if (*a).value.is_null() {
-                    empty()
-                } else {
-                    (*a).value
-                };
-                (node_qname(a), v, (*a).value_len)
-            };
-            if let Some(bpfx) = xmlns_prefix(qn) {
+        for (qn, ql, v, vl) in self.arena.attrs(root) {
+            if let Some(bpfx) = xmlns_prefix(self.arena.bytes_slice(qn, ql)) {
                 self.push_binding(bpfx, v, vl)?;
             }
-            a = unsafe { (*a).next };
         }
         Ok(())
     }
@@ -939,35 +930,11 @@ impl<'a> Parser<'a> {
 /// Parse already-bounded input into a fresh document. Raw input is converted
 /// to this slice at the FFI boundary, before reaching the tree builder.
 pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Doc, i32> {
-    // SAFETY: this function creates the document before handing its sole raw
-    // pointer to the builder; `src` is an ordinary Rust slice.
-    unsafe { parse_ex_in(src, limits) }
-}
-
-unsafe fn parse_ex_in(src: &[u8], limits: Option<usize>) -> Result<*mut Doc, i32> {
-    let doc = doc_new();
-    if doc.is_null() {
-        return Err(ERR_OOM);
-    }
-    if let Some(mb) = limits {
-        if mb != 0 {
-            (*doc).max_bytes = mb;
-        }
-    }
-    if src.len() > (*doc).max_bytes {
-        doc_destroy(doc);
-        return Err(ERR_LIMIT);
-    }
-    (*doc).doc_node = arena_node(doc, T_DOCUMENT);
-    if (*doc).doc_node.is_null() {
-        let st = (*doc).oom;
-        doc_destroy(doc);
-        return Err(st);
-    }
+    let doc = create_doc(limits, src.len())?;
     let norm = match normalize_newlines(src) {
         Ok(n) => n,
         Err(()) => {
-            doc_destroy(doc);
+            destroy_doc(doc);
             return Err(ERR_OOM);
         }
     };
@@ -975,90 +942,34 @@ unsafe fn parse_ex_in(src: &[u8], limits: Option<usize>) -> Result<*mut Doc, i32
         Some(v) => v,
         None => src,
     };
-    let mut p = Parser::new(body, NonNull::new_unchecked(doc), ptr::null_mut());
+    let mut p = Parser::new(body, doc.as_ptr(), ptr::null_mut());
     p.run();
-    if p.status == OK && (!p.stack.is_empty() || (*doc).root.is_null()) {
+    if p.status == OK && (!p.stack.is_empty() || p.arena.root().is_null()) {
         let _ = p.syntax::<()>(); /* unclosed element(s) / no root */
     }
     let st = p.status;
     drop(p);
     if st != OK {
-        doc_destroy(doc);
+        destroy_doc(doc);
         return Err(st);
     }
-    Ok(doc)
-}
-
-/// Compatibility shim for the raw self-test harness. Production callers use
-/// [`parse_ex`] through `ffi.rs`, where the pointer boundary belongs.
-///
-/// # Safety
-/// `src` must name `len` readable bytes unless `len` exceeds the requested
-/// limit. The length check deliberately precedes the slice conversion.
-pub unsafe fn parse_ex_raw(
-    src: *const c_char,
-    len: usize,
-    limits: Option<usize>,
-) -> Result<*mut Doc, i32> {
-    let max = limits.filter(|&n| n != 0).unwrap_or(crate::xml::MAX_BYTES);
-    if len > max {
-        return Err(ERR_LIMIT);
-    }
-    let src = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src as *const u8, len)
-    };
-    parse_ex(src, limits)
+    Ok(doc.as_ptr())
 }
 
 /// Parse a fragment into a live document's arena. The document reference and
 /// input slice make the ownership preconditions explicit to Rust callers.
 pub fn parse_fragment(doc: &mut Doc, src: &[u8], inherit_doc_ns: bool) -> Result<*mut Node, i32> {
-    let doc = doc as *mut Doc;
-    unsafe { parse_fragment_in(doc, src, inherit_doc_ns) }
-}
-
-/// Raw self-test compatibility shim; production FFI converts its arguments
-/// before entering the tree builder.
-///
-/// # Safety
-/// `doc` must be live and `src` must name `len` readable bytes.
-pub unsafe fn parse_fragment_raw(
-    doc: *mut Doc,
-    src: *const c_char,
-    len: usize,
-    inherit_doc_ns: bool,
-) -> Result<*mut Node, i32> {
-    if doc.is_null() || len > (*doc).max_bytes {
+    let arena = ParserArena::new(doc as *mut Doc);
+    if src.len() > arena.max_bytes() {
         return Err(ERR_LIMIT);
     }
-    let src = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src as *const u8, len)
-    };
-    parse_fragment_in(doc, src, inherit_doc_ns)
-}
-
-unsafe fn parse_fragment_in(
-    doc: *mut Doc,
-    src: &[u8],
-    inherit_doc_ns: bool,
-) -> Result<*mut Node, i32> {
-    if src.len() > (*doc).max_bytes {
-        return Err(ERR_LIMIT);
-    }
-    let frag = arena_node(doc, T_FRAGMENT);
-    if frag.is_null() {
-        return Err((*doc).oom);
-    }
-    let norm = normalize_newlines(src).map_err(|_| ERR_OOM)?;
+    let frag = arena.try_node(T_FRAGMENT)?;
+    let norm = normalize_newlines(src).map_err(|_| arena.status())?;
     let body: &[u8] = match &norm {
         Some(v) => v,
         None => src,
     };
-    let mut p = Parser::new(body, NonNull::new_unchecked(doc), frag);
+    let mut p = Parser::new(body, doc as *mut Doc, frag);
     if inherit_doc_ns && p.seed_doc_namespaces().is_err() {
         return Err(p.status);
     }

@@ -7,7 +7,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::xml::arena::{arena_alloc, arena_bytes, arena_node, doc_destroy, doc_new};
-use crate::xml::tree::{parse_ex_raw, parse_fragment_raw};
+use crate::xml::tree::{parse_ex, parse_fragment};
 use crate::xml::{
     mutate, node_local, node_ns, node_prefix, node_value, qname, Doc, Node, QName, ERR_LIMIT,
     ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, MUT_BAD_CHARS, MUT_BAD_NS_DECL, MUT_CYCLE,
@@ -58,6 +58,51 @@ unsafe fn parse_lit(s: &[u8], st: &mut i32) -> *mut Doc {
             ptr::null_mut()
         }
     }
+}
+
+/// Raw self-test compatibility shim; production FFI converts its arguments
+/// before entering the tree builder.
+///
+/// # Safety
+/// `src` must name `len` readable bytes unless `len` exceeds the requested
+/// limit. The length check deliberately precedes the slice conversion.
+unsafe fn parse_ex_raw(
+    src: *const c_char,
+    len: usize,
+    limits: Option<usize>,
+) -> Result<*mut Doc, i32> {
+    let max = limits.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
+    if len > max {
+        return Err(ERR_LIMIT);
+    }
+    let src = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src as *const u8, len)
+    };
+    parse_ex(src, limits)
+}
+
+/// Raw self-test compatibility shim; production FFI converts its arguments
+/// before entering the tree builder.
+///
+/// # Safety
+/// `doc` must be live and `src` must name `len` readable bytes.
+unsafe fn parse_fragment_raw(
+    doc: *mut Doc,
+    src: *const c_char,
+    len: usize,
+    inherit_doc_ns: bool,
+) -> Result<*mut Node, i32> {
+    if doc.is_null() || len > (*doc).max_bytes {
+        return Err(ERR_LIMIT);
+    }
+    let src = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src as *const u8, len)
+    };
+    parse_fragment(&mut *doc, src, inherit_doc_ns)
 }
 
 /// `s` must be rejected with status `want`.
