@@ -16,12 +16,93 @@ use crate::xml::{
     T_FRAGMENT, T_PI, T_TEXT,
 };
 use core::ffi::c_char;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use std::alloc::{alloc, dealloc, Layout};
 
 /// Alignment of every cut: the strictest fundamental alignment (max_align_t).
 const ALIGN: usize = 16;
 const CHUNK_MIN: usize = 64 * 1024;
+
+/// The parser's exclusive handle to one live XML arena.  It deliberately owns
+/// no memory: `Doc` continues to own the arena, while this type keeps parser
+/// code from repeatedly opening raw `Doc*` dereferences.
+#[derive(Clone, Copy)]
+pub(crate) struct ParserArena {
+    doc: NonNull<Doc>,
+}
+
+impl ParserArena {
+    #[inline]
+    pub(crate) fn new(doc: NonNull<Doc>) -> Self {
+        Self { doc }
+    }
+
+    #[inline]
+    pub(crate) fn as_ptr(self) -> *mut Doc {
+        self.doc.as_ptr()
+    }
+
+    #[inline]
+    pub(crate) fn status(self) -> i32 {
+        // SAFETY: ParserArena is created only for a live document and parsing
+        // has exclusive access under the Ruby GVL.
+        unsafe { self.doc.as_ref().oom }
+    }
+
+    #[inline]
+    pub(crate) fn document_node(self) -> *mut Node {
+        // SAFETY: see `status`.
+        unsafe { self.doc.as_ref().doc_node }
+    }
+
+    #[inline]
+    pub(crate) fn root(self) -> *mut Node {
+        // SAFETY: see `status`.
+        unsafe { self.doc.as_ref().root }
+    }
+
+    #[inline]
+    pub(crate) fn set_root(self, node: *mut Node) {
+        // SAFETY: parser-only initialization of this live document.
+        unsafe { (*self.doc.as_ptr()).root = node }
+    }
+
+    #[inline]
+    pub(crate) fn set_doctype(self, node: *mut Node) {
+        // SAFETY: parser-only initialization of this live document.
+        unsafe { (*self.doc.as_ptr()).doctype = node }
+    }
+
+    #[inline]
+    pub(crate) fn mark_encoding_decl(self) {
+        // SAFETY: parser-only initialization of this live document.
+        unsafe { (*self.doc.as_ptr()).has_encoding_decl = 1 }
+    }
+
+    #[inline]
+    pub(crate) fn bytes(self, src: &[u8]) -> *const c_char {
+        // SAFETY: ParserArena guarantees a live arena for the allocation.
+        unsafe { arena_bytes(self.as_ptr(), src) }
+    }
+
+    #[inline]
+    pub(crate) fn node(self, type_: u32) -> *mut Node {
+        // SAFETY: ParserArena guarantees a live arena for the allocation.
+        unsafe { arena_node(self.as_ptr(), type_) }
+    }
+
+    #[inline]
+    pub(crate) fn assign_qname(self, node: *mut Node, qn: &QName) -> i32 {
+        // SAFETY: `node` was allocated from this arena immediately before use.
+        unsafe { qname_assign(self.as_ptr(), node, qn) }
+    }
+
+    #[inline]
+    pub(crate) fn append(self, parent: *mut Node, child: *mut Node) {
+        // SAFETY: parser builds a tree from fresh nodes in one arena.
+        unsafe { append_child(parent, child) }
+    }
+}
 
 /// Where a chunk's payload starts: the header size rounded up to ALIGN.
 const HDR: usize = (core::mem::size_of::<Chunk>() + ALIGN - 1) & !(ALIGN - 1);
