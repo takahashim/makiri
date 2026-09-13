@@ -105,6 +105,123 @@ impl ParserArena {
     }
 
     #[inline]
+    pub(crate) fn set_value(self, node: *mut Node, value: *const c_char, len: u32) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe {
+            (*node).value = value;
+            (*node).value_len = len;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_local(self, node: *mut Node, value: *const c_char, len: u32) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe {
+            (*node).local = value;
+            (*node).local_len = len;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_qname_parts(self, node: *mut Node, value: *const c_char, len: u32) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe {
+            (*node).qname = value;
+            (*node).qname_len = len;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_prefix(self, node: *mut Node, value: *const c_char, len: u32) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe {
+            (*node).prefix = value;
+            (*node).prefix_len = len;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_position(self, node: *mut Node, line: u32, col: u32) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe {
+            (*node).line = line;
+            (*node).col = col;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set_namespace(self, node: *mut Node, uri: *const c_char, len: u32) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe {
+            (*node).ns_uri = uri;
+            (*node).ns_uri_len = len;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn mark_namespace_resolved(self, node: *mut Node) {
+        // SAFETY: `node` is a freshly allocated node in this arena.
+        unsafe { (*node).flags |= crate::xml::FLAG_NS_RESOLVED }
+    }
+
+    #[inline]
+    pub(crate) fn set_parent(self, node: *mut Node, parent: *mut Node) {
+        // SAFETY: both nodes belong to this arena's tree under construction.
+        unsafe { (*node).parent = parent }
+    }
+
+    #[inline]
+    pub(crate) fn set_attributes(self, element: *mut Node, attrs: *mut Node) {
+        // SAFETY: both nodes belong to this arena's tree under construction.
+        unsafe { (*element).attrs = attrs }
+    }
+
+    #[inline]
+    pub(crate) fn set_next(self, node: *mut Node, next: *mut Node) {
+        // SAFETY: both nodes belong to this arena's tree under construction.
+        unsafe { (*node).next = next }
+    }
+
+    #[inline]
+    pub(crate) fn prefix_len(self, node: *const Node) -> u32 {
+        unsafe { (*node).prefix_len }
+    }
+
+    #[inline]
+    pub(crate) fn prefix<'a>(self, node: *const Node) -> &'a [u8] {
+        unsafe { bytes((*node).prefix, (*node).prefix_len) }
+    }
+
+    #[inline]
+    pub(crate) fn local<'a>(self, node: *const Node) -> &'a [u8] {
+        unsafe { bytes((*node).local, (*node).local_len) }
+    }
+
+    #[inline]
+    pub(crate) fn has_duplicate_attributes(self, element: *const Node) -> bool {
+        // SAFETY: the element and its attribute chain are owned by this live
+        // arena and are immutable during the parser's duplicate check.
+        unsafe {
+            let mut first = (*element).attrs;
+            while !first.is_null() {
+                let mut second = (*first).next;
+                while !second.is_null() {
+                    if bytes((*first).local, (*first).local_len)
+                        == bytes((*second).local, (*second).local_len)
+                        && bytes((*first).ns_uri, (*first).ns_uri_len)
+                            == bytes((*second).ns_uri, (*second).ns_uri_len)
+                    {
+                        return true;
+                    }
+                    second = (*second).next;
+                }
+                first = (*first).next;
+            }
+            false
+        }
+    }
+
+    #[inline]
     pub(crate) fn expand(self, src: &[u8], mode: ExpandMode) -> Result<(*const c_char, u32), i32> {
         // SAFETY: ParserArena guarantees a live document for the arena cut.
         unsafe { expand_arena(self.as_ptr(), src, mode) }

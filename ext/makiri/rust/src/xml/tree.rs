@@ -12,10 +12,9 @@ use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    bytes, empty, node_local, node_prefix, node_qname, Doc, Node, ERR_LIMIT, ERR_OOM, ERR_SYNTAX,
-    ERR_VERSION, FLAG_NS_RESOLVED, MAX_ATTRS, MAX_DEPTH, MAX_NS, OK, T_ATTRIBUTE, T_CDATA,
-    T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
-    XML_NS_URI,
+    bytes, empty, node_qname, Doc, Node, ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS,
+    MAX_DEPTH, MAX_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
+    T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr::{self, NonNull};
@@ -381,31 +380,27 @@ impl<'a> Parser<'a> {
 
     /// Phase 3: the element's own namespace URI.
     fn resolve_element_ns(&mut self, el: *mut Node) -> R {
-        unsafe {
-            if (*el).prefix_len > 0 {
-                let pfx = node_prefix(el);
-                if pfx == b"xmlns" {
-                    return self.syntax();
-                }
-                match self.ns_lookup(pfx) {
-                    Some((u, l)) => {
-                        (*el).ns_uri = u;
-                        (*el).ns_uri_len = l;
-                    }
-                    None => return self.syntax(), /* unbound prefix */
-                }
-            } else if let Some((u, l)) = self.ns_lookup(b"") {
-                if l > 0 {
-                    (*el).ns_uri = u;
-                    (*el).ns_uri_len = l;
-                }
+        if self.arena.prefix_len(el) > 0 {
+            let pfx = self.arena.prefix(el);
+            if pfx == b"xmlns" {
+                return self.syntax();
             }
-            /* Decided: from here the URI is the node's identity (lib.rs). A
-             * parsed element in no namespace is resolved too - "no namespace" is
-             * a decision, not an absence, and moving it under a default
-             * namespace must not silently put it in one. */
-            (*el).flags |= FLAG_NS_RESOLVED;
+            match self.ns_lookup(pfx) {
+                Some((u, l)) => {
+                    self.arena.set_namespace(el, u, l);
+                }
+                None => return self.syntax(), /* unbound prefix */
+            }
+        } else if let Some((u, l)) = self.ns_lookup(b"") {
+            if l > 0 {
+                self.arena.set_namespace(el, u, l);
+            }
         }
+        /* Decided: from here the URI is the node's identity (lib.rs). A
+         * parsed element in no namespace is resolved too - "no namespace" is
+         * a decision, not an absence, and moving it under a default
+         * namespace must not silently put it in one. */
+        self.arena.mark_namespace_resolved(el);
         Ok(())
     }
 
@@ -422,46 +417,33 @@ impl<'a> Parser<'a> {
             };
             let attr = self.new_node(T_ATTRIBUTE)?;
             self.set_node_qname(attr, name, &sp)?;
-            unsafe {
-                if xmlns_prefix(name).is_some() {
-                    (*attr).ns_uri = XMLNS_NS_URI.as_ptr() as *const c_char;
-                    (*attr).ns_uri_len = XMLNS_NS_URI.len() as u32;
-                } else if sp.prefix_len > 0 {
-                    match self.ns_lookup(&name[..sp.prefix_len as usize]) {
-                        Some((u, l)) => {
-                            (*attr).ns_uri = u;
-                            (*attr).ns_uri_len = l;
-                        }
-                        None => return self.syntax(), /* unbound prefix */
+            if xmlns_prefix(name).is_some() {
+                self.arena.set_namespace(
+                    attr,
+                    XMLNS_NS_URI.as_ptr() as *const c_char,
+                    XMLNS_NS_URI.len() as u32,
+                );
+            } else if sp.prefix_len > 0 {
+                match self.ns_lookup(&name[..sp.prefix_len as usize]) {
+                    Some((u, l)) => {
+                        self.arena.set_namespace(attr, u, l);
                     }
+                    None => return self.syntax(), /* unbound prefix */
                 }
-                let (v, vl) = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
-                (*attr).value = v;
-                (*attr).value_len = vl;
-                (*attr).parent = el;
-                if tail.is_null() {
-                    (*el).attrs = attr;
-                } else {
-                    (*tail).next = attr;
-                }
-                tail = attr;
             }
+            let (v, vl) = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
+            self.arena.set_value(attr, v, vl);
+            self.arena.set_parent(attr, el);
+            if tail.is_null() {
+                self.arena.set_attributes(el, attr);
+            } else {
+                self.arena.set_next(tail, attr);
+            }
+            tail = attr;
         }
         /* §9.3: no two attributes share (namespace URI, local name) */
-        unsafe {
-            let mut a = (*el).attrs;
-            while !a.is_null() {
-                let mut b = (*a).next;
-                while !b.is_null() {
-                    if node_local(a) == node_local(b)
-                        && crate::xml::node_ns(a) == crate::xml::node_ns(b)
-                    {
-                        return self.syntax();
-                    }
-                    b = (*b).next;
-                }
-                a = (*a).next;
-            }
+        if self.arena.has_duplicate_attributes(el) {
+            return self.syntax();
         }
         Ok(())
     }
@@ -504,11 +486,8 @@ impl<'a> Parser<'a> {
         if !parent.is_null() {
             let c = self.new_node(T_COMMENT)?;
             let v = self.own(self.sl(cstart, craw))?;
-            unsafe {
-                (*c).value = v;
-                (*c).value_len = craw as u32;
-                self.arena.append(parent, c);
-            }
+            self.arena.set_value(c, v, craw as u32);
+            self.arena.append(parent, c);
         }
         self.advance_n(craw + 3);
         Ok(())
@@ -691,13 +670,9 @@ impl<'a> Parser<'a> {
             let pi = self.new_node(T_PI)?;
             let lp = self.own(tgt)?;
             let vp = self.own(self.sl(dstart, draw))?;
-            unsafe {
-                (*pi).local = lp;
-                (*pi).local_len = tl as u32;
-                (*pi).value = vp;
-                (*pi).value_len = draw as u32;
-                self.arena.append(parent, pi);
-            }
+            self.arena.set_local(pi, lp, tl as u32);
+            self.arena.set_value(pi, vp, draw as u32);
+            self.arena.append(parent, pi);
         }
         self.advance_n(draw + 2);
         Ok(())
@@ -717,17 +692,16 @@ impl<'a> Parser<'a> {
             None => return self.syntax(), /* end tag with no open element */
         };
         let name = self.sl(nm, nl);
-        let matched = unsafe {
-            if (*top).prefix_len > 0 {
-                let pl = (*top).prefix_len as usize;
-                let tql = pl + 1 + (*top).local_len as usize;
-                nl == tql
-                    && name.starts_with(node_prefix(top))
-                    && name[pl] == b':'
-                    && &name[pl + 1..] == node_local(top)
-            } else {
-                name == node_local(top)
-            }
+        let matched = if self.arena.prefix_len(top) > 0 {
+            let pfx = self.arena.prefix(top);
+            let local = self.arena.local(top);
+            let pl = pfx.len();
+            nl == pl + 1 + local.len()
+                && name.starts_with(pfx)
+                && name[pl] == b':'
+                && &name[pl + 1..] == local
+        } else {
+            name == self.arena.local(top)
         };
         if !matched {
             return self.syntax(); /* mismatched end tag */
@@ -799,25 +773,15 @@ impl<'a> Parser<'a> {
 
         let dt = self.new_node(T_DOCTYPE)?;
         let nm = self.own(self.sl(n, nl))?;
-        unsafe {
-            (*dt).local = nm;
-            (*dt).qname = nm;
-            (*dt).local_len = nl as u32;
-            (*dt).qname_len = nl as u32;
-        }
+        self.arena.set_local(dt, nm, nl as u32);
+        self.arena.set_qname_parts(dt, nm, nl as u32);
         if let Some((ps, pl)) = pub_id {
             let p = self.own(self.sl(ps, pl))?;
-            unsafe {
-                (*dt).prefix = p;
-                (*dt).prefix_len = pl as u32;
-            }
+            self.arena.set_prefix(dt, p, pl as u32);
         }
         if let Some((ss, sl)) = sys_id {
             let s = self.own(self.sl(ss, sl))?;
-            unsafe {
-                (*dt).value = s;
-                (*dt).value_len = sl as u32;
-            }
+            self.arena.set_value(dt, s, sl as u32);
         }
         self.arena.append(self.arena.document_node(), dt);
         self.arena.set_doctype(dt);
@@ -852,17 +816,14 @@ impl<'a> Parser<'a> {
         };
         let el = self.new_node(T_ELEMENT)?;
         self.set_node_qname(el, name, &sp)?;
-        unsafe {
-            (*el).line = tl;
-            (*el).col = tc;
-            if self.stack.is_empty() && self.fragment.is_null() {
-                if !self.arena.root().is_null() {
-                    return self.syntax(); /* multiple roots */
-                }
-                self.arena.set_root(el);
+        self.arena.set_position(el, tl, tc);
+        if self.stack.is_empty() && self.fragment.is_null() {
+            if !self.arena.root().is_null() {
+                return self.syntax(); /* multiple roots */
             }
-            self.arena.append(self.cur_parent(), el);
+            self.arena.set_root(el);
         }
+        self.arena.append(self.cur_parent(), el);
         let bind_base = self.binds.len();
         let pushed = self.parse_element_body(el)?;
         if pushed {
