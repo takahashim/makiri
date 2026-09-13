@@ -494,7 +494,8 @@ desc "Symbol gate: the built extension must export only Init_makiri and leave no
 task symbols: :compile do
   lib = Dir["lib/makiri/makiri.{bundle,so}"].first or abort "no built extension"
   macos = RbConfig::CONFIG["target_os"] =~ /darwin/
-  # macOS decorates C symbols with a leading underscore; Linux does not.
+  windows = RbConfig::CONFIG["target_os"] =~ /mingw|mswin/
+  # macOS decorates C symbols with a leading underscore; Linux/Windows do not.
   u = macos ? "_" : ""
 
   # 1. Nothing of ours or Lexbor's may be UNDEFINED. Everything both define is
@@ -505,10 +506,18 @@ task symbols: :compile do
   #    functions reached a shipped build this way once; eight more were
   #    identified while porting glue/ruby_html_node.c, and this is what stops
   #    the next one from getting that far.
-  undef_list = `nm -u #{lib.shellescape}`.lines.map(&:strip)
-  # `nm -u` prints bare names on macOS and "U <name>" entries on Linux.
-  bad = undef_list.map { |l| l.split.last.to_s }
-                  .grep(/\A#{u}(lxb_|lexbor_|mkr_)/)
+  #
+  #    On Windows the PE linker already refuses unresolved symbols in the final
+  #    DLL, and `nm -u` on a stripped PE image reports no symbols. Use the link
+  #    step as the guard there instead of trying to parse the import table.
+  bad = if windows
+          []
+        else
+          undef_list = `nm -u #{lib.shellescape}`.lines.map(&:strip)
+          # `nm -u` prints bare names on macOS and "U <name>" entries on Linux.
+          undef_list.map { |l| l.split.last.to_s }
+                    .grep(/\A#{u}(lxb_|lexbor_|mkr_)/)
+        end
   unless bad.empty?
     abort "undefined Lexbor/Makiri symbols in #{lib} (they will NULL-call at " \
           "run time):\n  #{bad.uniq.sort.join("\n  ")}"
@@ -527,6 +536,36 @@ task symbols: :compile do
   #    Assert the claim itself.
   exported = if macos
                `nm -gU #{lib.shellescape}`.lines.grep(/ T /)
+             elsif windows
+               # nm -D/--defined-only doesn't read PE export directories;
+               # objdump -p does. Export names appear in the
+               # "[Ordinal/Name Pointer/Address] table" section.
+               #
+               # The MSYS2/MinGW objdump that matches the devkit is not on PATH
+               # by default (Git-for-Windows ships nm but not objdump). Use
+               # RI_DEVKIT to find the right toolchain; fall back to PATH for
+               # non-RubyInstaller builds.
+               objdump = if ENV["RI_DEVKIT"]
+                           subdirs = RUBY_PLATFORM =~ /ucrt/ ? ["ucrt64"] : ["mingw64", "mingw32"]
+                           subdirs.map { |d| File.join(ENV["RI_DEVKIT"], d, "bin", "objdump.exe") }
+                                  .find { |p| File.file?(p) }
+                         end
+               objdump ||= "objdump"
+               out = IO.popen([objdump, "-p", lib], err: File::NULL, &:read)
+               in_table = false
+               out.lines.filter_map do |line|
+                  if line =~ /\[\s*Ordinal\/Name Pointer(?:\/Address)?\s*\]\s*Table/i
+                   in_table = true
+                   next
+                 end
+                 next unless in_table
+                 if line =~ /\[\s*\d+\]\s+(\S+)/
+                   "#{$1}\n"
+                 else
+                   in_table = false
+                   next
+                 end
+               end
              else
                `nm -D --defined-only #{lib.shellescape}`.lines.grep(/ T /)
              end
@@ -539,7 +578,12 @@ task symbols: :compile do
           "Do not relax this check - see the note there for the fallback."
   end
   unless exported.any? { |l| l.include?("#{u}Init_makiri") }
-    abort "#{lib} does not export Init_makiri - Ruby could not load it."
+    hint = if windows && defined?(out) && out
+             "\nobjdump -p output (first 40 lines):\n" + out.lines.first(40).join
+           else
+             ""
+           end
+    abort "#{lib} does not export Init_makiri - Ruby could not load it.#{hint}"
   end
 
   puts "symbols: 0 undefined Lexbor/Makiri, exports limited to " \
