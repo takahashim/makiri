@@ -18,7 +18,8 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree;
 use crate::xml::{
-    bytes, empty, node_qname, Doc, Limits, Node, QName, SpanBuf, ERR_INTERNAL, OK, T_ATTRIBUTE,
+    bytes, empty, node_qname, Doc, Limits, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT,
+    MAX_BYTES, OK, T_ATTRIBUTE,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -189,7 +190,19 @@ pub unsafe fn mkr_xml_parse_ex(
     } else {
         Some((*limits).max_bytes)
     };
-    match tree::parse_ex_raw(src, len, lim) {
+    let max = lim.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
+    if len > max {
+        put(status, ERR_LIMIT);
+        return ptr::null_mut();
+    }
+    // SAFETY: `len` was bounded before this conversion; the FFI caller owns
+    // the readable `(src, len)` range for this call.
+    let src = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src as *const u8, len)
+    };
+    match tree::parse_ex(src, lim) {
         Ok(doc) => {
             put(status, OK);
             doc
@@ -208,7 +221,22 @@ pub unsafe fn mkr_xml_parse_fragment(
     inherit_doc_ns: i32,
     status: *mut i32,
 ) -> *mut Node {
-    match tree::parse_fragment_raw(doc, src, len, inherit_doc_ns != 0) {
+    let Some(doc) = doc.as_mut() else {
+        put(status, ERR_INTERNAL);
+        return ptr::null_mut();
+    };
+    if len > doc.max_bytes {
+        put(status, ERR_LIMIT);
+        return ptr::null_mut();
+    }
+    // SAFETY: the live document remains exclusively borrowed for parsing, and
+    // the FFI caller owns the readable `(src, len)` range for this call.
+    let src = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src as *const u8, len)
+    };
+    match tree::parse_fragment(doc, src, inherit_doc_ns != 0) {
         Ok(frag) => {
             put(status, OK);
             frag

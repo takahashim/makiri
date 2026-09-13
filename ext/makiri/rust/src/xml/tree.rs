@@ -1029,17 +1029,15 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// mkr_xml_parse_ex. `len` is checked against the budget BEFORE the input is
-/// viewed (the self-test passes a bogus length to prove `src` is not read).
-///
-/// # Safety
-/// `src` must name `len` readable bytes, unless `len` is over the budget - the
-/// order of those two checks is the point of the note above.
-pub unsafe fn parse_ex_raw(
-    src: *const c_char,
-    len: usize,
-    limits: Option<usize>,
-) -> Result<*mut Doc, i32> {
+/// Parse already-bounded input into a fresh document. Raw input is converted
+/// to this slice at the FFI boundary, before reaching the tree builder.
+pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Doc, i32> {
+    // SAFETY: this function creates the document before handing its sole raw
+    // pointer to the builder; `src` is an ordinary Rust slice.
+    unsafe { parse_ex_in(src, limits) }
+}
+
+unsafe fn parse_ex_in(src: &[u8], limits: Option<usize>) -> Result<*mut Doc, i32> {
     let doc = doc_new();
     if doc.is_null() {
         return Err(ERR_OOM);
@@ -1049,7 +1047,7 @@ pub unsafe fn parse_ex_raw(
             (*doc).max_bytes = mb;
         }
     }
-    if len > (*doc).max_bytes {
+    if src.len() > (*doc).max_bytes {
         doc_destroy(doc);
         return Err(ERR_LIMIT);
     }
@@ -1059,11 +1057,6 @@ pub unsafe fn parse_ex_raw(
         doc_destroy(doc);
         return Err(st);
     }
-    let src: &[u8] = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src as *const u8, len)
-    };
     let norm = match normalize_newlines(src) {
         Ok(n) => n,
         Err(()) => {
@@ -1089,29 +1082,70 @@ pub unsafe fn parse_ex_raw(
     Ok(doc)
 }
 
-/// mkr_xml_parse_fragment.
+/// Compatibility shim for the raw self-test harness. Production callers use
+/// [`parse_ex`] through `ffi.rs`, where the pointer boundary belongs.
 ///
 /// # Safety
-/// `doc` must be a live document and `src` must name `len` readable bytes; the
-/// fragment's nodes are allocated in that document's arena.
+/// `src` must name `len` readable bytes unless `len` exceeds the requested
+/// limit. The length check deliberately precedes the slice conversion.
+pub unsafe fn parse_ex_raw(
+    src: *const c_char,
+    len: usize,
+    limits: Option<usize>,
+) -> Result<*mut Doc, i32> {
+    let max = limits.filter(|&n| n != 0).unwrap_or(crate::xml::MAX_BYTES);
+    if len > max {
+        return Err(ERR_LIMIT);
+    }
+    let src = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src as *const u8, len)
+    };
+    parse_ex(src, limits)
+}
+
+/// Parse a fragment into a live document's arena. The document reference and
+/// input slice make the ownership preconditions explicit to Rust callers.
+pub fn parse_fragment(doc: &mut Doc, src: &[u8], inherit_doc_ns: bool) -> Result<*mut Node, i32> {
+    let doc = doc as *mut Doc;
+    unsafe { parse_fragment_in(doc, src, inherit_doc_ns) }
+}
+
+/// Raw self-test compatibility shim; production FFI converts its arguments
+/// before entering the tree builder.
+///
+/// # Safety
+/// `doc` must be live and `src` must name `len` readable bytes.
 pub unsafe fn parse_fragment_raw(
     doc: *mut Doc,
     src: *const c_char,
     len: usize,
     inherit_doc_ns: bool,
 ) -> Result<*mut Node, i32> {
-    if len > (*doc).max_bytes {
+    if doc.is_null() || len > (*doc).max_bytes {
+        return Err(ERR_LIMIT);
+    }
+    let src = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src as *const u8, len)
+    };
+    parse_fragment_in(doc, src, inherit_doc_ns)
+}
+
+unsafe fn parse_fragment_in(
+    doc: *mut Doc,
+    src: &[u8],
+    inherit_doc_ns: bool,
+) -> Result<*mut Node, i32> {
+    if src.len() > (*doc).max_bytes {
         return Err(ERR_LIMIT);
     }
     let frag = arena_node(doc, T_FRAGMENT);
     if frag.is_null() {
         return Err((*doc).oom);
     }
-    let src: &[u8] = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src as *const u8, len)
-    };
     let norm = normalize_newlines(src).map_err(|_| ERR_OOM)?;
     let body: &[u8] = match &norm {
         Some(v) => v,

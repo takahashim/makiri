@@ -16,6 +16,7 @@ SAFE_FILES = %w[
   xpath/lex.rs
   xpath/number.rs
   xml/chars.rs
+  xml/index.rs
   xml/qname.rs
 ].freeze
 

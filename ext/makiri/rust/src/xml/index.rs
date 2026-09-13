@@ -37,7 +37,7 @@ impl Hasher for Fnv {
 
 /// The key is `local ++ 0xFF ++ ns_uri`: 0xFF is not valid UTF-8.
 pub struct NameIndex {
-    map: HashMap<Box<[u8]>, Vec<*mut Node>, BuildHasherDefault<Fnv>>,
+    map: HashMap<Box<[u8]>, Vec<NonNull<Node>>, BuildHasherDefault<Fnv>>,
     /// GVL serialises lookup, so this reusable key never races and avoids an
     /// allocation on the answer path.
     scratch: Vec<u8>,
@@ -58,7 +58,8 @@ fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) -> bool {
 
 fn build(doc: &Doc) -> Option<Box<NameIndex>> {
     let root = NonNull::new(doc.doc_node)?;
-    let mut map: HashMap<Box<[u8]>, Vec<*mut Node>, BuildHasherDefault<Fnv>> = HashMap::default();
+    let mut map: HashMap<Box<[u8]>, Vec<NonNull<Node>>, BuildHasherDefault<Fnv>> =
+        HashMap::default();
     let mut key = Vec::new();
     let mut max_key = 0usize;
     let mut cur = Some(root);
@@ -69,11 +70,11 @@ fn build(doc: &Doc) -> Option<Box<NameIndex>> {
             }
             max_key = max_key.max(key.len());
             match map.get_mut(&key[..]) {
-                Some(nodes) => nodes.mkr_push(node.as_ptr()).ok()?,
+                Some(nodes) => nodes.mkr_push(node).ok()?,
                 None => {
                     let key = falloc::try_to_boxed_slice(&key)?;
                     let mut nodes = falloc::try_vec_with_capacity(1)?;
-                    nodes.mkr_push(node.as_ptr()).ok()?;
+                    nodes.mkr_push(node).ok()?;
                     map.mkr_insert(key, nodes).ok()?;
                 }
             }
@@ -112,7 +113,9 @@ pub fn lookup(idx: &mut NameIndex, local: &[u8], ns: &[u8]) -> (*const *mut Node
     idx.scratch.push(0xFF);
     idx.scratch.extend_from_slice(ns);
     match idx.map.get(&idx.scratch[..]) {
-        Some(nodes) => (nodes.as_ptr(), nodes.len()),
+        // `NonNull<Node>` is transparent over `*mut Node`; only the FFI
+        // adapter consumes this borrowed pointer as raw storage.
+        Some(nodes) => (nodes.as_ptr().cast::<*mut Node>(), nodes.len()),
         None => (core::ptr::null(), 0),
     }
 }
