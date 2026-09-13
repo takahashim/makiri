@@ -115,7 +115,9 @@ module MakiriBuild
     def read_cstring(f, offset)
       f.seek(offset)
       name = +""
-      name << c while (c = f.read(1)) && c != "\0"
+      while (c = f.read(1)) && c != "\0"
+        name << c
+      end
       name.empty? ? nil : name
     end
   end
