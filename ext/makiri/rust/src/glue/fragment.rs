@@ -436,7 +436,6 @@ pub unsafe fn resolve_fragment_context(doc: *mut LxbDoc, context: Option<Value>)
 /// Parse callback for `mkr_run_fragment_parser`: Lexbor's by-tag-id parser,
 /// which implements the full algorithm for the context (tokenizer state for
 /// rawtext/rcdata, foreign-content adjustment, the form pointer).
-#[repr(C)]
 struct FragTagCtx {
     doc: *mut LxbDoc,
     tag: usize,

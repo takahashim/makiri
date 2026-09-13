@@ -15,7 +15,6 @@ use rb_sys::VALUE;
 /// `mkr_node_data_t` - what a node wrapper holds: the node pointer plus the
 /// keepalive Document. Declared here because both `glue::node` (which owns the
 /// TypedData) and `glue::xml_node` (which mints XML wrappers) write it.
-#[repr(C)]
 pub struct NodeData {
     /// `mkr_raw_node_t *` - representation-opaque; read it only through a
     /// kind-checked accessor.
@@ -76,7 +75,6 @@ pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
 /// works as a C string. Layout-identical to [`RubyBytes`]; they are separate
 /// types because the CONTRACT differs, which is the only thing that stops a
 /// data-family value from reaching an engine input.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RubyText {
     pub value: VALUE,
@@ -110,7 +108,6 @@ impl From<RubyText> for crate::xpath_abi::VerifiedText {
 
 /// `mkr_ruby_borrowed_bytes_t`: the same shape as [`RubyText`] with a weaker
 /// contract - any bytes, not necessarily UTF-8 or NUL-free.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RubyBytes {
     pub value: VALUE,
@@ -130,7 +127,6 @@ impl RubyBytes {
 }
 
 /// `mkr_owned_bytes_t`: a heap buffer this side owns.
-#[repr(C)]
 pub struct OwnedBytes {
     pub ptr: *mut c_char,
     pub len: usize,

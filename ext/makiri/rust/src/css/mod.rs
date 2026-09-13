@@ -43,7 +43,6 @@ use crate::xpath_abi::{mkr_err_set, mkr_node_free, Error, Limits, Node, Verified
 ///
 /// `default_prefix` is the synthetic prefix bound to the document's default
 /// namespace (Nokogiri's `"xmlns"` convention) when one is in scope, else NULL.
-#[repr(C)]
 pub struct CssNs {
     pub default_prefix: *const c_char,
 }
@@ -100,7 +99,7 @@ impl Build {
 ///
 /// # Safety
 /// From the XPath/CSS glue, under the GVL.
-pub unsafe extern "C" fn mkr_css_compile(
+pub unsafe fn mkr_css_compile(
     selector: VerifiedText,
     ns: *const CssNs,
     limits: *mut Limits,

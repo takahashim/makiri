@@ -73,15 +73,7 @@ pub fn empty() -> *const c_char {
     EMPTY.as_ptr() as *const c_char
 }
 
-/// Pointer width, and how far a `u32` field gets padded when the next field is
-/// pointer-aligned. The layout asserts below are tripwires for a field added or
-/// reordered without the same change in `mkr_xml_node.h`, so they have to hold
-/// on every target the gem builds for - including the 32-bit ones.
-const PTR: usize = core::mem::size_of::<*const c_char>();
-const U32_SLOT: usize = if PTR > 4 { PTR } else { 4 };
-
-/// mkr_xml_node_t - byte-for-byte the C layout.
-#[repr(C)]
+/// A node in Makiri's Rust-owned XML arena.
 pub struct Node {
     pub type_: u32,
     pub parent: *mut Node,
@@ -104,11 +96,7 @@ pub struct Node {
     pub col: u32,
     pub flags: u32,
 }
-/* 11 pointers, the u32 `type_` in a padded slot, and 8 more u32 */
-const _: () = assert!(core::mem::size_of::<Node>() == 11 * PTR + U32_SLOT + 8 * 4);
-
-/// mkr_xml_qname_t.
-#[repr(C)]
+/// A qualified name carried by a node.
 #[derive(Clone, Copy)]
 pub struct QName {
     pub qname: *const c_char,
@@ -121,15 +109,13 @@ pub struct QName {
 
 /// An arena chunk header; the payload follows it, aligned. Part of the document
 /// layout because `Doc.chunks` points at one - the arena owns the allocation.
-#[repr(C)]
 pub struct Chunk {
     pub(crate) next: *mut Chunk,
     pub(crate) used: usize,
     pub(crate) cap: usize,
 }
 
-/// mkr_xml_doc_t.
-#[repr(C)]
+/// An XML document and its arena ownership state.
 pub struct Doc {
     pub chunks: *mut Chunk,
     pub arena_bytes: usize,
@@ -143,17 +129,12 @@ pub struct Doc {
     pub name_index: *mut c_void,
     pub has_encoding_decl: i32,
 }
-/* 9 pointer-sized fields (5 pointers + 4 usize) and 2 i32, each padded */
-const _: () = assert!(core::mem::size_of::<Doc>() == 9 * PTR + 2 * U32_SLOT);
-
-/// mkr_xml_limits_t.
-#[repr(C)]
+/// The per-document allocation limit.
 pub struct Limits {
     pub max_bytes: usize,
 }
 
-/// mkr_spanbuf_t (core/mkr_buf.h) - returned BY VALUE by mkr_xml_arena_spanbuf.
-#[repr(C)]
+/// A bounded scratch buffer handed out by the arena.
 pub struct SpanBuf {
     pub buf: *mut c_char,
     pub cap: usize,

@@ -23,7 +23,6 @@ pub const MKR_ERR_LIMIT: c_int = 2;
 pub const MKR_ERR_INVALID: c_int = 3;
 
 /// `mkr_buf_t`.
-#[repr(C)]
 pub struct Buf {
     pub data: *mut c_char,
     pub len: usize,

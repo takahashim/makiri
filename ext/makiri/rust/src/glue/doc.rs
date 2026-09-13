@@ -50,7 +50,6 @@ use super::fragment::{
 
 /// `mkr_doc_data_t`: the parsed handle (owned - GC frees it) and the reserved
 /// errors Array.
-#[repr(C)]
 struct DocData {
     parsed: *mut crate::dom_adapter::post_parse::Parsed,
     errors: VALUE,
@@ -168,7 +167,6 @@ pub unsafe extern "C" fn mkr_wrap_document(
 /* ---- Document.parse ---- */
 
 /// Arguments for the GVL-released parse.
-#[repr(C)]
 struct ParseArgs {
     src: *const u8,
     len: usize,

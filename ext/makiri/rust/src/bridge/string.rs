@@ -55,14 +55,12 @@ use crate::glue::abi::{mkr_eError, rb_raise};
  * `glue::abi::RubyText` / `RubyBytes`, `data` below. */
 
 /// `mkr_ruby_borrowed_data_t`: UTF-8 checked, NUL permitted.
-#[repr(C)]
 pub struct RubyBorrowedData {
     pub value: VALUE,
     pub ptr: *const c_char,
     pub len: usize,
 }
 
-#[repr(C)]
 pub struct RubyBorrowedBytes {
     pub value: VALUE,
     pub ptr: *const c_char,

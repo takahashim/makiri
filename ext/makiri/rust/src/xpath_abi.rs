@@ -94,7 +94,6 @@ pub const OP_UNION: u32 = 13;
 /* ---- text views (core/mkr_text.h) ---- */
 
 /// mkr_owned_text_t - owned, NUL-terminated at ptr[len].
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct OwnedText {
     pub ptr: *mut c_char,
@@ -102,7 +101,6 @@ pub struct OwnedText {
 }
 
 /// mkr_verified_text_t / mkr_borrowed_text_t - same layout, different contract.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct VerifiedText {
     pub ptr: *const c_char,
@@ -111,13 +109,11 @@ pub struct VerifiedText {
 
 /* ---- error / limits (mkr_xpath.h) ---- */
 
-#[repr(C)]
 pub struct Error {
     pub status: c_int,
     pub message: *mut c_char,
 }
 
-#[repr(C)]
 pub struct Limits {
     pub max_expr_bytes: usize,
     pub max_ast_nodes: usize,
@@ -135,7 +131,6 @@ pub struct Limits {
 
 /* ---- the AST (mkr_xpath_internal.h) ---- */
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct NodeSet {
     pub items: *mut *mut c_void,
@@ -143,7 +138,6 @@ pub struct NodeSet {
     pub capacity: usize,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub union ValU {
     pub nodeset: NodeSet,
@@ -152,7 +146,6 @@ pub union ValU {
     pub boolean: c_int,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PublicNodeSet {
     /// The same array as `NodeSet.items`; the public type names it `nodes`.
@@ -160,7 +153,6 @@ pub struct PublicNodeSet {
     pub count: usize,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub union XPathValueU {
     pub nodeset: PublicNodeSet,
@@ -171,21 +163,18 @@ pub union XPathValueU {
 
 /// `mkr_xpath_value_t` - the result the glue receives. Distinct from `Val`: the
 /// node-set arm carries no capacity, because ownership of the array transfers.
-#[repr(C)]
 pub struct XPathValue {
     pub type_: u32,
     pub u: XPathValueU,
 }
 
 /// mkr_val_t - the engine's internal value, embedded in a node's memo slot.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Val {
     pub type_: u32,
     pub u: ValU,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct NodeTest {
     pub kind: u32,
@@ -194,7 +183,6 @@ pub struct NodeTest {
     pub pi_target: OwnedText,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Step {
     pub axis: u32,
@@ -203,14 +191,12 @@ pub struct Step {
     pub npredicates: usize,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct VarRef {
     pub prefix: OwnedText,
     pub name: OwnedText,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FnCall {
     pub prefix: OwnedText,
@@ -219,13 +205,11 @@ pub struct FnCall {
     pub nargs: usize,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Unary {
     pub expr: *mut Node,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BinOp {
     pub op: u32,
@@ -233,7 +217,6 @@ pub struct BinOp {
     pub rhs: *mut Node,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Path {
     pub absolute: c_int,
@@ -241,7 +224,6 @@ pub struct Path {
     pub nsteps: usize,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Filter {
     pub expr: *mut Node,
@@ -251,7 +233,6 @@ pub struct Filter {
     pub npath: usize,
 }
 
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub union NodeU {
     pub literal: OwnedText,
@@ -266,7 +247,6 @@ pub union NodeU {
 
 /// struct mkr_node_s - the compiled AST node. Allocated zeroed by
 /// `mkr_node_alloc` and freed by `mkr_node_free`, both on the C side.
-#[repr(C)]
 pub struct Node {
     pub kind: u32,
     pub is_context_independent: u8,
@@ -304,7 +284,6 @@ pub use crate::xpath::ctx::Context;
 /// into one too.
 pub use crate::cbuf::{mkr_buf_append, mkr_buf_steal, Buf};
 
-#[repr(C)]
 pub struct StrCacheEntry {
     pub node: *mut c_void,
     pub str_: *mut c_char,
@@ -313,7 +292,6 @@ pub struct StrCacheEntry {
 
 /// `mkr_str_cache_t` - the per-evaluate node string-value cache: an ordered
 /// store plus a pointer-keyed open-addressing index into it.
-#[repr(C)]
 pub struct StrCache {
     pub entries: *mut StrCacheEntry,
     pub count: usize,
@@ -324,7 +302,6 @@ pub struct StrCache {
     pub total_bytes: usize,
 }
 
-#[repr(C)]
 pub struct OrderBucket {
     /// NULL is an empty slot.
     pub node: *const c_void,
@@ -332,7 +309,6 @@ pub struct OrderBucket {
 }
 
 /// `mkr_doc_order_index_t` - the per-evaluate document-order index.
-#[repr(C)]
 pub struct OrderIndex {
     pub buckets: *mut OrderBucket,
     pub cap: usize,
