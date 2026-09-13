@@ -3,6 +3,9 @@ name = "makiri-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
+# Tells Cargo that this crate links Lexbor, so the link order places the
+# static archive after the Rust crate that depends on its symbols.
+links = "lexbor_static"
 
 [package.metadata]
 cargo-fuzz = true
@@ -44,6 +47,13 @@ bench = false
 [[bin]]
 name = "xml_xpath"
 path = "fuzz_targets/xml_xpath.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html"
+path = "fuzz_targets/html.rs"
 test = false
 doc = false
 bench = false

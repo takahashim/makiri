@@ -753,10 +753,10 @@ namespace :fuzz do
   #
   # Nothing here depends on the built extension: cargo-fuzz builds the crate
   # itself, with its own instrumentation. It does need the vendored Lexbor
-  # HEADERS (the crate's build.rs generates the layout from them), which
-  # `rake compile` produces - hence the dependency, which is about Lexbor rather
-  # than about the bundle.
-  FUZZ_TARGETS = %w[xml xpath xml_xpath].freeze
+  # library and headers (the crate's build.rs links the archive and generates
+  # the layout from the headers), which `rake compile` produces - hence the
+  # dependency, which is about Lexbor rather than about the bundle.
+  FUZZ_TARGETS = %w[xml xpath xml_xpath html].freeze
 
   desc "Build the cargo-fuzz harnesses (requires cargo-fuzz and a nightly toolchain)"
   task :libfuzzer_build => :compile do

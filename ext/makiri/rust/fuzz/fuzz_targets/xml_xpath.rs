@@ -20,7 +20,9 @@ mod common;
 use common::*;
 
 fuzz_target!(|data: &[u8]| {
-    let Some(sep) = data.iter().position(|&b| b == 0) else { return };
+    let Some(sep) = data.iter().position(|&b| b == 0) else {
+        return;
+    };
     let (xml, rest) = data.split_at(sep);
     let expr_bytes = &rest[1..];
 
@@ -61,8 +63,14 @@ fuzz_target!(|data: &[u8]| {
             let urn = b"urn:d\0";
             mkr_xpath_register_ns(
                 ctx,
-                VerifiedText { ptr: d.as_ptr() as *const _, len: 1 },
-                VerifiedText { ptr: urn.as_ptr() as *const _, len: 5 },
+                VerifiedText {
+                    ptr: d.as_ptr() as *const _,
+                    len: 1,
+                },
+                VerifiedText {
+                    ptr: urn.as_ptr() as *const _,
+                    len: 5,
+                },
             );
 
             if let Some(expr) = Expr::new(expr_bytes) {

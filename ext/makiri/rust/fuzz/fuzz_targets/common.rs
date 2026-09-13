@@ -11,6 +11,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
+pub use makiri::lexbor_abi::mkr::mkr_parsed_t as Parsed;
 pub use makiri::xml::abi::Doc;
 pub use makiri::xpath_abi::{Error as XPathError, Limits, Node as Ast, VerifiedText, XPathValue};
 
@@ -19,6 +20,10 @@ extern "C" {
     pub fn mkr_xml_doc_destroy(doc: *mut Doc);
     pub fn mkr_xml_validate_chars(src: *const c_char, len: u32) -> i32;
     pub fn mkr_utf8_valid(src: *const u8, len: usize) -> bool;
+
+    pub fn mkr_parse_html(src: *const u8, len: usize, assume_valid: bool) -> *mut Parsed;
+    pub fn mkr_parsed_destroy(p: *mut Parsed);
+    pub fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int;
 
     pub fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut c_void;
     pub fn mkr_xpath_context_free(ctx: *mut c_void);
@@ -80,6 +85,9 @@ impl Expr {
     }
 
     pub fn text(&self) -> VerifiedText {
-        VerifiedText { ptr: self.buf.as_ptr() as *const c_char, len: self.len }
+        VerifiedText {
+            ptr: self.buf.as_ptr() as *const c_char,
+            len: self.len,
+        }
     }
 }

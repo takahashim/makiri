@@ -25,11 +25,7 @@ const FIXED_XML: &[u8] = b"<?xml version='1.0'?>\
 fuzz_target!(|data: &[u8]| {
     unsafe {
         let mut status: i32 = 0;
-        let doc = mkr_xml_parse(
-            FIXED_XML.as_ptr() as *const _,
-            FIXED_XML.len(),
-            &mut status,
-        );
+        let doc = mkr_xml_parse(FIXED_XML.as_ptr() as *const _, FIXED_XML.len(), &mut status);
         if doc.is_null() || (*doc).doc_node.is_null() {
             if !doc.is_null() {
                 mkr_xml_doc_destroy(doc);
