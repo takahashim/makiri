@@ -34,9 +34,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   claim (nothing of ours or Lexbor's left undefined, and nothing but those two
   names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
   happily while ~220 `mkr_*` names leaked into the dynamic table.
-  Every change must stay clean under ASan and keep the fuzzers green. ASan is
-  wired with NO runtime preload, which is load-bearing rather than incidental -
-  see "AddressSanitizer: no preload, and why" below before changing how a
+  Every change must stay clean under ASan and keep the fuzzers green. The ASan
+  runtime preload is PLATFORM-SPLIT (required on Linux, harmful on macOS) - see
+  "AddressSanitizer: the preload is platform-split" below before changing how a
   sanitized run is launched.
 
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
@@ -117,7 +117,7 @@ commit as the behaviour change, so it reviews as a behaviour change rather than
 as a regenerated blob. It is the check that caught an ASCII-8BIT string, a quoted
 error message and a lost NUL terminator that the 1001-example suite passed over.
 
-### AddressSanitizer: no preload, and why
+### AddressSanitizer: the preload is platform-split
 
 `rake sanitize` works. It did not for a long while - the extension segfaulted at
 address 0 during `require` - and the cause is worth keeping, because the fix is
@@ -142,20 +142,32 @@ runtime, and every way of doing that is broken on macOS:
   executes a line.
 - Preloading clang's alongside rustc's linked one is simply two runtimes.
 
-So the task preloads nothing, and passes `verify_interceptors=0` (with
+So on macOS the task preloads nothing, and passes `verify_interceptors=0` (with
 `verify_asan_link_order=0`, the same assertion under another name). That check
 asserts the runtime loaded ahead of libSystem, which is false for a library dyld
 brings in with the extension; the interceptors themselves install fine - a
 `verbosity=1` run reports "libc interceptors initialized" with the shadow
 mapped, `redzone=16` and a 256M quarantine - so heap red-zoning is live. Do not
-"fix" that flag away. Dropping the preload also closed a coverage hole: three
-`spec/xml_html_boundary_spec.rb` examples used to skip under ASan because a
-subprocess cannot inherit `DYLD_*`. `ASAN_OPTIONS` is an ordinary variable, so
+"fix" that flag away. Dropping the macOS preload also closed a coverage hole:
+three `spec/xml_html_boundary_spec.rb` examples used to skip under ASan because
+a subprocess cannot inherit `DYLD_*`. `ASAN_OPTIONS` is an ordinary variable, so
 they run now.
 
+**Linux is the mirror image, and generalising from macOS is the trap.** rustc
+links the sanitizer runtime into executables but NOT into a cdylib, so the `.so`
+carries `__asan_*` undefined and expects the host to supply them. With no
+preload `dlopen` fails outright - `undefined symbol: __asan_handle_no_return` -
+and no `ASAN_OPTIONS` value helps, because the flags govern checks, not symbol
+resolution. So Linux keeps `LD_PRELOAD` of GCC's `libasan`, which exports the
+same `_v8` ABI rustc asks for (Apple's runtime is the odd one out, not
+`libasan`). `Rakefile`'s `asan_preload_env` is the single place that decides,
+and it returns `{}` on macOS by construction.
+
 Verified on macOS (arm64): `rake sanitize` builds and completes the suite, 1000
-examples, 0 failures. Linux takes the same no-preload path and relies on
-`verify_asan_link_order=0` for the late `dlopen`; that leg is CI's.
+examples, 0 failures. The Linux half was verified in a linux/amd64 container on
+the mechanism rather than on Makiri: an ASan-instrumented cdylib `dlopen`'d by an
+uninstrumented host fails to load without the preload, loads with it, and with it
+reports a real heap-buffer-overflow. CI is what exercises it on Makiri itself.
 
 Two things the earlier investigation recorded as ESTABLISHED were wrong. They are
 corrected here so nobody re-derives them: `lr` **is** inside the bundle's `r-x`
@@ -177,10 +189,10 @@ by the check that concluded "every undefined symbol is legitimate".
 - **Sanitizer must be run via the rake task, not `bundle exec rspec`.**
   `MAKIRI_SANITIZE=address` makes extconf build the crate with
   `-Zsanitizer=address` on the **nightly** toolchain (it aborts if nightly is
-  missing rather than silently building it plain). It preloads NOTHING - see
-  "AddressSanitizer: no preload, and why" - and instead passes
-  `verify_interceptors=0`/`verify_asan_link_order=0`, so the runtime rustc
-  linked is the only one in the process. `ASAN_OPTIONS` also disables
+  missing rather than silently building it plain). It preloads the ASan runtime
+  on Linux and NOT on macOS - see "AddressSanitizer: the preload is
+  platform-split", and do not "simplify" the two into one - plus
+  `verify_interceptors=0`/`verify_asan_link_order=0`. `ASAN_OPTIONS` also disables
   LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap errors in our
   code still fire. CI runs a separate `sanitize` job on Linux. There is no
   `undefined` mode any more - see Hard constraints.

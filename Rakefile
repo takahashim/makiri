@@ -195,12 +195,13 @@ namespace :clean do
   end
 end
 
-# AddressSanitizer options for every sanitized run.
+# AddressSanitizer options for every sanitized run, plus the preload that goes
+# with it - which is PLATFORM-SPLIT, because the two systems need opposite
+# things and treating them alike breaks one of them.
 #
-# There is NO runtime preload, and its absence is the fix rather than an
-# omission. rustc links its own ASan runtime into the cdylib (an @rpath
-# dependency), so dyld loads it together with the extension and nothing has to
-# come first. Preloading used to break the run three different ways on macOS:
+# macOS: NO preload. rustc links its own ASan runtime into the cdylib as an
+# @rpath dependency, so dyld loads it together with the extension and nothing
+# has to come first. Preloading on top of that breaks three ways:
 #
 #   * Apple's clang runtime does not export `__asan_version_mismatch_check_v8`,
 #     which rustc's instrumentation calls from every image's `asan.module_ctor`.
@@ -209,22 +210,61 @@ end
 #     image's initialisers - BEFORE `Init_makiri`. That was the load segfault.
 #   * Preloading rustc's runtime instead deadlocks inside dyld: its init takes a
 #     non-recursive spin lock, maps shadow memory, and the dyld call that does
-#     it allocates - which re-enters that same init through ASan's own malloc
-#     interceptor and spins in sched_yield forever.
+#     so allocates - re-entering that same init through ASan's own malloc
+#     interceptor, which then spins in sched_yield forever.
 #   * Preloading clang's alongside rustc's linked one is simply two runtimes.
 #
-# `verify_interceptors=0` is what the arrangement costs, and it costs nothing
-# real. That check asserts the runtime was loaded ahead of libSystem, which is
-# false for a library dyld brings in with the extension. The interceptors
-# themselves install: a verbosity=1 run reports "libc interceptors initialized"
-# with the shadow mapped, redzone=16 and a 256M quarantine, so heap red-zoning
-# is live. `verify_asan_link_order=0` is the same assertion under another name.
+# Linux: the preload is REQUIRED, for the mirror-image reason. rustc links the
+# sanitizer runtime into executables but NOT into a cdylib, so the .so carries
+# `__asan_*` undefined and expects the host to supply them. With no preload
+# `dlopen` fails outright - "undefined symbol: __asan_handle_no_return" - and no
+# ASAN_OPTIONS value helps, because the flags govern checks, not symbol
+# resolution. GCC's libasan supplies them and exports the same `_v8` ABI that
+# rustc's instrumentation asks for, so it is what gets preloaded. Verified on
+# linux/amd64: without it the load fails; with it a real heap-buffer-overflow is
+# reported with the Rust frame.
+#
+# `verify_interceptors=0` is what the macOS arrangement costs, and it costs
+# nothing real: that check asserts the runtime loaded ahead of libSystem, which
+# is false for a library dyld brings in with the extension. The interceptors
+# install anyway - a verbosity=1 run reports "libc interceptors initialized"
+# with the shadow mapped, redzone=16 and a 256M quarantine. On Linux it is
+# inert, the preload having already satisfied the ordering.
+# `verify_asan_link_order=0` is the same assertion under another name.
 #
 # LeakSanitizer stays off - it would flag Ruby's intentional caches, and the
 # interpreter is not instrumented. Real heap findings stay fatal.
 ASAN_ENV_OPTIONS = "detect_leaks=0:detect_container_overflow=0:" \
                    "detect_odr_violation=0:verify_interceptors=0:" \
                    "verify_asan_link_order=0:abort_on_error=1:halt_on_error=1"
+
+# The ASan runtime to preload. Linux only - on macOS preloading is the thing
+# that breaks the run, so this returns nil there by construction rather than by
+# a caller remembering to ask.
+def asan_runtime_path
+  return nil if RbConfig::CONFIG["target_os"] =~ /darwin/
+
+  cc = RbConfig::CONFIG["CC"] || "cc"
+  arch = RUBY_PLATFORM[/x86_64|aarch64|arm64/] || "x86_64"
+  ["libasan.so", "libclang_rt.asan-#{arch}.so", "libclang_rt.asan.so"].each do |name|
+    path = `#{cc} -print-file-name=#{name} 2>/dev/null`.strip
+    return path if path != name && !path.empty? && File.exist?(path)
+  end
+  nil
+end
+
+# The preload entry for a sanitized run's environment; empty where none is
+# wanted, so every task merges the same call and none repeats the condition.
+def asan_preload_env(sanitize)
+  return {} unless sanitize.include?("address")
+  return {} if RbConfig::CONFIG["target_os"] =~ /darwin/
+
+  runtime = asan_runtime_path or
+    abort "sanitize: no ASan runtime found for #{RbConfig::CONFIG['CC']} - a " \
+          "sanitized cdylib cannot be dlopen'd on Linux without one."
+  puts "sanitize: preloading #{runtime} via LD_PRELOAD"
+  { "LD_PRELOAD" => runtime }
+end
 
 # The coverage-guided harnesses are a cargo-fuzz crate now (they were C files
 # under ext/makiri/fuzz driven by a Makefile). cargo-fuzz supplies libFuzzer and
@@ -312,7 +352,7 @@ task :sanitize do
     # measured to dominate - never applied here. That is how a suite which takes
     # 18s plain reached an hour under ASan without anything being wrong.
     "MAKIRI_SANITIZE" => sanitize,
-  }
+  }.merge(asan_preload_env(sanitize))
   sh(env, "#{FileUtils::RUBY} -S rspec")
 end
 
@@ -360,7 +400,7 @@ task "invariants:sanitize" do
     # measured to dominate - never applied here. That is how a suite which takes
     # 18s plain reached an hour under ASan without anything being wrong.
     "MAKIRI_SANITIZE" => sanitize,
-  }
+  }.merge(asan_preload_env(sanitize))
   # Instrumented builds are slow; a smaller sweep still exercises every path.
   count = (ENV["INVARIANT_COUNT"] || 500).to_i
   invariant_runs(count).each do |script, argv|
@@ -419,7 +459,7 @@ task "sanitize:lexbor" do
     # measured to dominate - never applied here. That is how a suite which takes
     # 18s plain reached an hour under ASan without anything being wrong.
     "MAKIRI_SANITIZE" => sanitize,
-  }
+  }.merge(asan_preload_env(sanitize))
   if ENV["FUZZ_ARGS"]
     sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
   else
@@ -661,7 +701,7 @@ namespace :fuzz do
     env = {
       "ASAN_OPTIONS"  => ASAN_ENV_OPTIONS,
       "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
-    }
+    }.merge(asan_preload_env(sanitize))
     if ENV["FUZZ_ARGS"]
       sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
     else
