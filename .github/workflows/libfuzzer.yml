@@ -11,21 +11,21 @@ on:
   workflow_dispatch:
 
 jobs:
-      # The surfaces, coverage-guided, under cargo-fuzz.
-      #
-      # A second job stood beside this one and fuzzed the same three XML/XPath
-      # surfaces as C binaries built by ext/makiri/fuzz/Makefile under clang.
-      # Both were shipped code while the port was in progress; only one is now,
-      # and the C harnesses went with the sources they drove. The corpus cache
-      # key is unchanged, so the accumulated seeds carry over.
-      cargo-fuzz-nightly:
-        name: cargo-fuzz ${{ matrix.target }} (rust)
-        runs-on: ubuntu-latest
-        timeout-minutes: 360
-        strategy:
-          fail-fast: false
-          matrix:
-            target: [xml, xpath, xml_xpath, html]
+  # The surfaces, coverage-guided, under cargo-fuzz.
+  #
+  # A second job stood beside this one and fuzzed the same three XML/XPath
+  # surfaces as C binaries built by ext/makiri/fuzz/Makefile under clang.
+  # Both were shipped code while the port was in progress; only one is now,
+  # and the C harnesses went with the sources they drove. The corpus cache
+  # key is unchanged, so the accumulated seeds carry over.
+  cargo-fuzz-nightly:
+    name: cargo-fuzz ${{ matrix.target }} (rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [xml, xpath, xml_xpath, html]
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
