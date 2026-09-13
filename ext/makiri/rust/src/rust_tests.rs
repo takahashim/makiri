@@ -205,3 +205,43 @@ fn growth_policy_never_returns_an_unallocatable_or_insufficient_capacity() {
         }
     }
 }
+
+#[test]
+fn growth_policy_returns_zero_for_empty_request() {
+    // `need == 0` is a contract exception: no allocation is required, so the
+    // answer is always 0 regardless of the current capacity. This was the case
+    // Kani's "never shrink" assertion stumbled over.
+    for cap in [0, 1, 8, usize::MAX / 8, usize::MAX] {
+        for elem in [1, 8, usize::MAX] {
+            assert_eq!(
+                grow_capacity(cap, 0, elem),
+                Some(0),
+                "cap={cap} elem={elem}"
+            );
+        }
+    }
+}
+
+#[test]
+fn growth_policy_never_shrinks_a_live_allocation_for_non_empty_need() {
+    // A "live" cap has a non-zero byte size that fits. For any non-empty need
+    // not larger than that cap, the answer must stay at least as large as cap.
+    // (For need == 0 see the separate empty-request test.)
+    for cap in [1, 8, 64, usize::MAX / 8] {
+        for need in [1usize, cap, cap.saturating_mul(2)] {
+            if need == 0 {
+                continue;
+            }
+            for elem in [1, 8] {
+                let Some(next) = grow_capacity(cap, need, elem) else {
+                    // `need` itself did not fit; the function is allowed to fail.
+                    continue;
+                };
+                assert!(
+                    next >= cap,
+                    "cap={cap} need={need} elem={elem} next={next}"
+                );
+            }
+        }
+    }
+}
