@@ -72,11 +72,8 @@ extern "C" {
     fn libc_free(p: *mut c_void);
 }
 
-/* Everything below serves the ported implementation only: without `core-buf`
- * the C provides the three functions and nothing here reads a limit or
- * allocates. Gated rather than `allow(dead_code)`, so an unused item stays an
- * error in the configurations that should be using it. */
-#[cfg(feature = "core-buf")]
+/* Paired with `free` above: the buffer's memory is libc's, for the reason given
+ * at the ABI comment below. */
 extern "C" {
     #[link_name = "malloc"]
     fn libc_malloc(n: usize) -> *mut c_void;
@@ -99,13 +96,7 @@ extern "C" {
  *
  * The lower-case names are deliberate - they are what the C ABI published, and
  * `content_limit` below should not have to know which side defines them. */
-#[cfg(all(feature = "core-buf", not(feature = "no-c")))]
-extern "C" {
-    pub(crate) static mkr_buf_hard_max: usize;
-    pub(crate) static mkr_buf_default_limit: usize;
-}
 
-#[cfg(all(feature = "core-buf", feature = "no-c"))]
 #[allow(non_upper_case_globals)]
 mod limits {
     use crate::kani_bounds::parse_usize;
@@ -124,7 +115,6 @@ mod limits {
     };
 }
 
-#[cfg(all(feature = "core-buf", feature = "no-c"))]
 pub(crate) use limits::{mkr_buf_default_limit, mkr_buf_hard_max};
 
 /* ------------------------------------------------------------------ *
@@ -143,7 +133,6 @@ pub(crate) use limits::{mkr_buf_default_limit, mkr_buf_hard_max};
 /// One function, because the C computed it identically in `append` and
 /// `reserve` and the two must not drift - a `reserve` with a larger ceiling
 /// than `append` would pre-size past what any append will accept.
-#[cfg(feature = "core-buf")]
 #[inline]
 unsafe fn content_limit(b: &Buf) -> usize {
     let soft = if b.max != 0 { b.max } else { mkr_buf_default_limit };
@@ -156,7 +145,6 @@ unsafe fn content_limit(b: &Buf) -> usize {
 ///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
-#[cfg(feature = "core-buf")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_buf_append(
     b: *mut Buf,
@@ -227,7 +215,6 @@ pub unsafe extern "C" fn mkr_buf_append(
 ///
 /// # Safety
 /// `b` must be a live buffer.
-#[cfg(feature = "core-buf")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
     let b = &mut *b;
@@ -261,7 +248,6 @@ pub unsafe extern "C" fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
 ///
 /// # Safety
 /// `b` must be a live buffer; `out_len` must be NULL or writable.
-#[cfg(feature = "core-buf")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
     let b = &mut *b;
@@ -290,10 +276,3 @@ pub unsafe extern "C" fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut
     p
 }
 
-/* When the C still provides them, they are declared instead. */
-#[cfg(not(feature = "core-buf"))]
-extern "C" {
-    pub fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int;
-    pub fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int;
-    pub fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char;
-}

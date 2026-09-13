@@ -7,7 +7,7 @@
 //! written down rather than assumed: a proof is only evidence about the code
 //! that actually runs.
 //!
-//! Run with `rake kani` (or `cargo kani --features xml,xpath`).
+//! Run with `rake kani` (or `cargo kani --no-default-features`).
 
 #![cfg(kani)]
 

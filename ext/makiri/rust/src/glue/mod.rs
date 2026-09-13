@@ -27,35 +27,24 @@
 
 pub mod abi;
 
-#[cfg(feature = "glue-css")]
 pub mod css;
 /// Makiri::HTML::Document.
-#[cfg(feature = "glue-doc")]
 pub mod doc;
 /// The HTML fragment pipeline, which doc.rs and two C files both use.
-#[cfg(feature = "glue-doc")]
 pub mod fragment;
 /// Makiri::Lexbor::CSS.parse_stylesheet - the thin stylesheet binding.
-#[cfg(feature = "glue-lexbor-css")]
 pub mod lexbor_css;
 
-#[cfg(feature = "glue-node")]
 pub mod node;
 
-#[cfg(feature = "glue-node-set")]
 pub mod node_set;
 
-#[cfg(feature = "glue-serialize")]
 pub mod serialize;
 
-#[cfg(feature = "glue-xml")]
 pub mod xml;
 
-#[cfg(feature = "glue-xpath")]
 pub mod xpath;
 
-#[cfg(feature = "glue-xml-node-read")]
 pub mod xml_node;
 
-#[cfg(feature = "glue-html-node")]
 pub mod html_node;

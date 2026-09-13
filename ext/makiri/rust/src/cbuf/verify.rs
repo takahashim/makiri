@@ -29,7 +29,6 @@
 //! Run with `rake kani`.
 
 #![cfg(kani)]
-#![cfg(feature = "core-buf")]
 
 use super::{
     mkr_buf_append, mkr_buf_reserve, mkr_buf_steal, Buf, MKR_ERR_INVALID, MKR_ERR_LIMIT,
@@ -57,9 +56,9 @@ const NSRC: usize = 4;
 /// thought it had set, and "LIMIT only past the ceiling" was false.
 ///
 /// That was a general hazard, not a local slip: any Rust reading a C-defined
-/// constant is, under Kani, reading an arbitrary value. Under `no-c` - which is
-/// what ships, and what `rake kani` now proves - the two are ordinary consts, so
-/// the assumption is trivially true rather than necessary. It stays because the
+/// constant is, under Kani, reading an arbitrary value. Both are ordinary Rust
+/// consts now, so the assumption is trivially true rather than necessary. It
+/// stays because the
 /// proof should keep saying what it means ("for any hard maximum at least as
 /// large as the ceiling under test") and because the hazard returns the moment
 /// any constant crosses a language boundary again.

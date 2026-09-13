@@ -5,12 +5,11 @@
 //! subject was the C's word-at-a-time ASCII scan, which this module does not
 //! have - `core::str::from_utf8` brings its own, and it is not ours to prove.
 //!
-//! The CBMC harnesses covered `core/mkr_utf8.c` - what a build without the
-//! `core-utf8` feature linked - and these cover what a build with it links.
-//! Neither statement was the other, which is why both existed while both builds
-//! did. `core/mkr_utf8.c` is gone, and so are they.
+//! The CBMC harnesses covered `core/mkr_utf8.c`, and these cover the Rust that
+//! replaced it. Neither statement was the other, which is why both existed
+//! while both implementations did. `core/mkr_utf8.c` is gone, and so are they.
 //!
-//! Run with `rake kani` (or `cargo kani --features xml,xpath`).
+//! Run with `rake kani` (or `cargo kani --no-default-features`).
 
 #![cfg(kani)]
 
@@ -137,7 +136,6 @@ fn chain_consumes_exactly_valid_input() {
 ///
 /// `len == 0` must answer "valid" without touching `src` - the C's contract
 /// allows NULL there - and the decoder must answer 0 rather than reading.
-#[cfg(feature = "core-utf8")]
 #[kani::proof]
 #[kani::unwind(4)]
 fn c_abi_handles_empty_input() {

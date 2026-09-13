@@ -26,7 +26,6 @@
 
 pub mod read;
 
-#[cfg(feature = "glue-html-mutate")]
 pub mod mutate;
 
 use core::ffi::c_void;
@@ -40,7 +39,6 @@ use super::abi::{
     NodeData,
 };
 /* Only the mutation half registers on the Document class. */
-#[cfg(feature = "glue-html-mutate")]
 use super::abi::mkr_cHtmlDocument;
 
 /* ------------------------------------------------------------------ *
@@ -291,7 +289,6 @@ use magnus::rb_sys::AsRawValue;
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-#[cfg(feature = "glue-html-mutate")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_init_mutate() {
     let m = html_node_methods();

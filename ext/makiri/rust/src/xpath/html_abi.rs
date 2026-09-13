@@ -123,25 +123,7 @@ pub use crate::lexbor_abi::{
 /// for why that one is hand-written where the rest are generated.
 pub use crate::lexbor_abi::lxb_dom_attr_value_noi;
 
-#[cfg(not(feature = "no-c"))]
-extern "C" {
-    /* Our shims (mkr_xpath_html_shim.c). */
-    pub fn mkr_html_ns_uri(
-        node: *const Node,
-        doc: *const Document,
-        len: *mut usize,
-    ) -> *const c_char;
-    pub fn mkr_html_tag_id_by_name(doc: *const Document, p: *const c_char, len: usize) -> usize;
-    pub fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int;
-}
 
-#[cfg(not(feature = "no-c"))]
-extern "C" {
-    /// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range, read
-    /// from C so this file does not restate a generated constant.
-    #[link_name = "mkr_html_tag_last_entry"]
-    pub static TAG_LAST_ENTRY: usize;
-}
 
 /* ---- the shims, standing alone ----
  *
@@ -163,7 +145,6 @@ extern "C" {
 
 /// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range. Derived from
 /// the generated enum, so it moves with the Lexbor pin.
-#[cfg(feature = "no-c")]
 pub const TAG_LAST_ENTRY: usize =
     crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
 
@@ -172,7 +153,6 @@ pub const TAG_LAST_ENTRY: usize =
 ///
 /// # Safety
 /// `node` and `doc` are NULL or live; `len` is writable.
-#[cfg(feature = "no-c")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_html_ns_uri(
     node: *const Node,
@@ -195,7 +175,6 @@ pub unsafe extern "C" fn mkr_html_ns_uri(
 ///
 /// # Safety
 /// `doc` is NULL or live; `p` is NULL or names `len` readable bytes.
-#[cfg(feature = "no-c")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_html_tag_id_by_name(
     doc: *const Document,
@@ -220,7 +199,6 @@ pub unsafe extern "C" fn mkr_html_tag_id_by_name(
 ///
 /// # Safety
 /// `node` is a live node; `buf` is a live buffer.
-#[cfg(feature = "no-c")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int {
     let mut tlen: usize = 0;
@@ -239,42 +217,3 @@ pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf
     st
 }
 
-/// What this file believes Lexbor's layout is, reported to the C checker.
-///
-/// Not compiled standing alone: `mkr_xpath_html_shim.c` is its only caller, and
-/// the compile-time checks in `lexbor_abi::agree` cover the same facts without
-/// needing a round trip through C.
-///
-/// # Safety
-/// `out` must be NULL or name `cap` writable `size_t`.
-#[cfg(not(feature = "no-c"))]
-#[no_mangle]
-pub unsafe extern "C" fn mkr_xpath_rs_html_layout(out: *mut usize, cap: usize) -> usize {
-    use core::mem::{offset_of, size_of};
-    let facts = [
-        size_of::<Node>(),
-        offset_of!(Node, ns),
-        offset_of!(Node, owner_document),
-        offset_of!(Node, next),
-        offset_of!(Node, prev),
-        offset_of!(Node, parent),
-        offset_of!(Node, first_child),
-        offset_of!(Node, last_child),
-        offset_of!(Node, type_),
-        size_of::<Element>(),
-        offset_of!(Element, first_attr),
-        size_of::<Attr>(),
-        offset_of!(Attr, next),
-        offset_of!(Element, node),
-        offset_of!(Attr, node),
-        NS_UNDEF,
-        NS_HTML,
-        TAG_UNDEF,
-    ];
-    if !out.is_null() {
-        for (i, f) in facts.iter().enumerate().take(cap) {
-            *out.add(i) = *f;
-        }
-    }
-    facts.len()
-}

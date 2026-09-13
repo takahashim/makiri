@@ -58,15 +58,15 @@ jobs:
       #
       # After `rake compile`, because build.rs generates the Lexbor layout from
       # the vendored headers and those only exist once cmake has installed them.
-      # One cell, not twelve: there is a single feature set now (`standalone`),
-      # so the other matrix cells would re-run an identical check. This step was
+      # One cell, not twelve: `--all-features` is every configuration the crate
+      # has, so the other matrix cells would re-run it. This step was
       # lost when the per-flag port matrix was deleted - it used to run once per
       # leg with that leg's features - and nothing noticed, because the comment
       # claiming it ran was in a different file.
       - name: Clippy
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust
-        run: cargo clippy --features standalone -- -D warnings
+        run: cargo clippy --all-features -- -D warnings
 
       # Only Init_makiri may be exported (or another Lexbor-based gem in the
       # same process binds to our Lexbor and segfaults - CLAUDE.md), and no

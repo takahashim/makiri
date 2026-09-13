@@ -12,8 +12,6 @@
 //! function behind it (the cached coderange, the byte slice); rb-sys does the
 //! rest.
 
-#[cfg(feature = "bridge-string")]
 pub mod string;
 
-#[cfg(feature = "bridge-xml-decode")]
 pub mod xml_decode;

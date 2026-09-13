@@ -276,10 +276,14 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Feature flags worth knowing: `standalone` is what the extension builds with (it
-implies everything). `no-c` is the narrower claim "there is no C tree here" and
-exists because the fuzz crate needs it without pulling in the Ruby boundary -
-conflating the two is what once made that crate compile four C files of its own.
+Three features, one per layer, and the default is the extension: **`ruby`** (the
+magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
+that read Lexbor's DOM: the generated ABI, `css`, `dom_adapter`, the XPath HTML
+instance) and **`alloc-inject`** (the `rake oom` hook, off in any normal build).
+The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
+all. So the fuzz crate builds `--no-default-features --features lexbor` and Kani
+builds `--no-default-features`. The ~30 features that used to stand here were
+migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
 

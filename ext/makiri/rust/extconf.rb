@@ -118,7 +118,8 @@ lexbor_archive = File.join(LEXBOR_DST, "lib", "liblexbor_static.a")
 # What the crate is built with
 # ---------------------------------------------------------------------------
 
-features = ["standalone"]
+# The default feature set is the extension: `ruby` (which implies `lexbor`).
+features = []
 
 # OOM-injection build (opt-in): MAKIRI_ALLOC_INJECT=1 compiles the allocation
 # failure hook so `rake oom` can sweep "the nth core allocation fails" over
@@ -255,8 +256,8 @@ end
 # macOS note: `strip -u -r -s` prints "removing global symbols from a final
 # linked no longer supported". It works today and the result loads; if a future
 # Xcode makes it stop working, the fallback is to stop `#[no_mangle]`-exporting
-# the `mkr_*` names under `standalone` (nothing outside the crate calls them any
-# more), not to relax the restriction. `rake symbols` asserts the outcome, so
+# the `mkr_*` names at all (nothing outside the crate calls them any more), not
+# to relax the restriction. `rake symbols` asserts the outcome, so
 # that day arrives as a failing gate rather than as a silent re-export.
 keep = File.join(Dir.pwd, "makiri-exported.sym")
 

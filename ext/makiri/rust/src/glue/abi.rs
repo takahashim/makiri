@@ -346,13 +346,15 @@ pub unsafe fn error_class() -> ExceptionClass {
 
 /// Opaque: neither user reads a field of it.
 ///
-/// Two independent features need this parser - `glue-css` for the selector
-/// engine and `glue-lexbor-css` for the stylesheet binding - and a third, the
-/// Ruby-free CSS lowering, needs it without magnus. So the declaration lives in
-/// `lexbor_abi` and all three re-export it from there. Giving one C symbol two
-/// Rust types is the failure this file exists to prevent; it has happened twice
-/// (mkr_wrap_xml_node, and again while the stylesheet binding was written),
-/// both times caught only by the "everything" feature combination.
+/// Three users need this parser - the selector engine, the stylesheet binding,
+/// and the CSS lowering, which is Ruby-free and so needs it without magnus. The
+/// declaration lives in `lexbor_abi` and all three re-export it from there.
+/// Giving one C symbol two Rust types is the failure this file exists to
+/// prevent; it has happened twice (mkr_wrap_xml_node, and again while the
+/// stylesheet binding was written). Both escaped until an "everything" build
+/// compiled the two definitions together - which every build now is, so a
+/// second definition is a build error rather than something a feature
+/// combination has to go looking for.
 pub use crate::lexbor_abi::{
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
     CssParser,
@@ -438,91 +440,77 @@ mod agree {
         };
     }
 
-    #[cfg(feature = "glue-doc")]
     same_signature!(
         mkr_doc_parsed,
         crate::glue::doc::mkr_doc_parsed,
         unsafe extern "C" fn(VALUE) -> *mut c_void
     );
-    #[cfg(feature = "glue-doc")]
     same_signature!(
         mkr_html_doc_unwrap,
         crate::glue::doc::mkr_html_doc_unwrap,
         unsafe extern "C" fn(VALUE) -> *mut crate::lexbor_abi::LxbDoc
     );
-    #[cfg(feature = "glue-doc")]
     same_signature!(
         mkr_wrap_document,
         crate::glue::doc::mkr_wrap_document,
         unsafe extern "C" fn(*mut c_void) -> VALUE
     );
 
-    #[cfg(feature = "glue-node")]
     same_signature!(
         mkr_node_document,
         crate::glue::node::mkr_node_document,
         unsafe extern "C" fn(VALUE) -> VALUE
     );
-    #[cfg(feature = "glue-node")]
     same_signature!(
         mkr_node_raw,
         crate::glue::node::mkr_node_raw,
         unsafe extern "C" fn(VALUE) -> *mut c_void
     );
 
-    #[cfg(feature = "glue-node-set")]
     same_signature!(
         mkr_node_set_new,
         crate::glue::node_set::mkr_node_set_new,
         unsafe extern "C" fn(VALUE) -> VALUE
     );
-    #[cfg(feature = "glue-node-set")]
     same_signature!(
         mkr_node_set_push,
         crate::glue::node_set::mkr_node_set_push,
         unsafe extern "C" fn(VALUE, *mut c_void)
     );
 
-    #[cfg(feature = "bridge-string")]
     same_signature!(
         mkr_verify_text,
         crate::bridge::string::mkr_verify_text,
         unsafe extern "C" fn(VALUE, *const c_char)
     );
-    #[cfg(feature = "bridge-string")]
     same_signature!(
         mkr_ruby_verified_text,
         crate::bridge::string::mkr_ruby_verified_text,
         unsafe extern "C" fn(VALUE, *const c_char) -> RubyText
     );
 
-    #[cfg(feature = "glue-xml-node-read")]
     same_signature!(
         mkr_xml_node_unwrap,
         crate::glue::xml_node::mkr_xml_node_unwrap,
         unsafe extern "C" fn(VALUE) -> *mut c_void
     );
 
-    #[cfg(feature = "dom-index")]
     same_signature!(
         mkr_element_index_tag,
         crate::dom_adapter::dom_index::mkr_element_index_tag,
         unsafe extern "C" fn(*const c_void, usize, *mut usize) -> *const *mut LxbNode
     );
-    #[cfg(feature = "dom-index")]
     same_signature!(
         mkr_element_index_has_foreign,
         crate::dom_adapter::dom_index::mkr_element_index_has_foreign,
         unsafe extern "C" fn(*const c_void) -> c_int
     );
 
-    #[cfg(feature = "glue-html-node")]
     same_signature!(
         mkr_wrap_html_node,
         crate::glue::html_node::mkr_wrap_html_node,
         unsafe extern "C" fn(*mut LxbNode, VALUE) -> VALUE
     );
-    #[cfg(feature = "glue-html-node")]
     same_signature!(
         mkr_html_node_unwrap,
         crate::glue::html_node::mkr_html_node_unwrap,

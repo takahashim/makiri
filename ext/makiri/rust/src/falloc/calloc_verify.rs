@@ -18,7 +18,6 @@
 //! Run with `rake kani`.
 
 #![cfg(kani)]
-#![cfg(feature = "core-alloc")]
 
 use core::ffi::c_void;
 

@@ -84,7 +84,7 @@ extern "C" {
 /// The doctype node type, generated (see lexbor_abi).
 const NODE_TYPE_DOCUMENT_TYPE: u32 = super::abi::LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
-/// Generated, not transcribed (lexbor_abi::mkr).
+/// Stated once, in `lexbor_abi::mkr`, rather than restated here.
 const MKR_DOC_XML: c_int = lxb::mkr::mkr_doc_kind_t_MKR_DOC_XML as c_int;
 
 unsafe extern "C" fn doc_mark(ptr: *mut c_void) {

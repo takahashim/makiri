@@ -17,21 +17,14 @@ mod sys {
 
 pub use sys::*;
 
-/// Makiri's own C enums and the parse handle, generated for the same reason
-/// Lexbor's are - see `generate_makiri_enums` in build.rs.
+/// Makiri's own constants, and the layout of the handle a parse returns.
 ///
-/// Generated only while the C declares them too. Generation exists to keep two
-/// declarations of one type in agreement; with the C gone there is no second
-/// declaration, so the definitions below ARE the type and there is nothing left
-/// to drift from. (Lexbor is the opposite case in the same file: it stays
-/// generated in every configuration, because its headers are never ours.)
-#[cfg(not(feature = "no-c"))]
-pub mod mkr {
-    #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/makiri_enums.rs"));
-}
-
-#[cfg(feature = "no-c")]
+/// Unlike everything above, these are NOT generated. They were, from
+/// `ext/makiri/*.h` - added after a transcribed `MKR_NODE_KIND_XML = 1` (it is
+/// 2) made `Document#import_node` treat every HTML node as an XML one. Those
+/// headers went with the rest of the C, so there is no second reading of them
+/// left to check against: this module is now the definition. That is why the
+/// field order below is spelled out rather than left to be noticed.
 pub mod mkr {
     #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
     use core::ffi::{c_uint, c_void};
@@ -300,7 +293,6 @@ extern "C" {
 /// load-time abort, and it names the field in the error. The C-side `offsetof`
 /// check in `mkr_xpath_html_shim.c` stays for the one thing neither of these
 /// covers - libclang and the build's `cc` disagreeing with each other.
-#[cfg(feature = "xpath-html")]
 mod agree {
     use super::{lxb_dom_attr_t, lxb_dom_element_t, lxb_dom_node_t};
     use crate::xpath::html_abi::{Attr, Element, Node};

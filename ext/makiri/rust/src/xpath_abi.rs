@@ -26,9 +26,9 @@ pub const XP_OK: c_int = 0;
 /// leading \x01 cannot come out of the lexer, so these are unreachable from a
 /// user expression. XML host only.
 ///
-/// They live here, not beside the evaluator: the two ends are in different
-/// feature trees (`css-lower` and `xpath`), and a name that only one of them
-/// knows is a call that resolves to nothing.
+/// They live here, not beside the evaluator: one end emits them and the other
+/// resolves them, and a name that only one end knows is a call that resolves to
+/// nothing.
 pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
 pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
 
@@ -304,36 +304,6 @@ extern "C" {
     ) -> c_int;
 }
 
-/// The sizes C checks its own `sizeof` against, so a field added on one side
-/// without the other is a build-time failure rather than silent corruption.
-///
-/// Not compiled standing alone: the only caller is `mkr_xpath_rs_check.c`, and
-/// with no C declaration of these structs there is nothing for it to compare
-/// against. See the module header.
-///
-/// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
-#[cfg(all(feature = "xpath", not(feature = "no-c")))]
-#[no_mangle]
-pub unsafe extern "C" fn mkr_xpath_rs_sizes(out: *mut usize, cap: usize) -> usize {
-    let sizes = [
-        core::mem::size_of::<Node>(),
-        core::mem::size_of::<Step>(),
-        core::mem::size_of::<NodeTest>(),
-        core::mem::size_of::<Val>(),
-        core::mem::size_of::<NodeU>(),
-        core::mem::size_of::<Limits>(),
-        core::mem::size_of::<Error>(),
-        core::mem::size_of::<VerifiedText>(),
-    ];
-    if !out.is_null() {
-        for (i, s) in sizes.iter().enumerate().take(cap) {
-            *out.add(i) = *s;
-        }
-    }
-    sizes.len()
-}
 
 /* ---- the engine's runtime structures (mkr_xpath_internal.h, core/mkr_buf.h) ---- */
 
@@ -519,19 +489,10 @@ extern "C" {
 
 /// `mkr_xpath_type_t`. Only the two arms that own memory are named - the number
 /// and boolean arms have nothing to clear.
-#[cfg(feature = "no-c")]
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
-#[cfg(feature = "no-c")]
 const MKR_XPATH_TYPE_STRING: u32 = 1;
 
-#[cfg(not(feature = "no-c"))]
-extern "C" {
-    pub fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char);
-    pub fn mkr_xpath_error_clear(e: *mut Error);
-    pub fn mkr_xpath_value_clear(v: *mut XPathValue);
-}
 
-#[cfg(feature = "no-c")]
 extern "C" {
     #[link_name = "free"]
     fn libc_free(p: *mut c_void);
@@ -545,7 +506,6 @@ extern "C" {
 ///
 /// # Safety
 /// `err` is NULL or a live error; `msg` is NULL or NUL-terminated.
-#[cfg(feature = "no-c")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char) {
     if err.is_null() {
@@ -565,7 +525,6 @@ pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const
 ///
 /// # Safety
 /// `e` is NULL or a live error.
-#[cfg(feature = "no-c")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
     if e.is_null() {
@@ -583,7 +542,6 @@ pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
 ///
 /// # Safety
 /// `v` is NULL or a live value whose `type_` describes its active arm.
-#[cfg(feature = "no-c")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_value_clear(v: *mut XPathValue) {
     if v.is_null() {

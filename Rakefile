@@ -564,7 +564,7 @@ task :kani do
   # ceilings are `extern static`s that Kani, which does not link C, treats as
   # unconstrained values - so the proof would be about a configuration nobody
   # builds. With it they are the consts the extension actually uses.
-  argv = ["cargo", "kani", "--features", "no-c,xml,xpath,core-utf8,core-buf,core-alloc"]
+  argv = ["cargo", "kani", "--no-default-features"]
   harness = ENV["HARNESS"].to_s.strip
   argv += ["--harness", harness] unless harness.empty?
   Dir.chdir("ext/makiri/rust") { sh(*argv) }

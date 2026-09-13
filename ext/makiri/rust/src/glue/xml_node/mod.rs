@@ -16,11 +16,9 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod abi;
-#[cfg(feature = "glue-xml-node-mutate")]
 pub mod mutate;
 pub mod ns;
 pub mod read;
-#[cfg(feature = "glue-xml-node-serialize")]
 pub mod serialize;
 
 use core::ffi::c_void;
@@ -261,7 +259,6 @@ pub unsafe extern "C" fn mkr_init_xml_node_read() {
 ///
 /// # Safety
 /// From `Init_makiri`.
-#[cfg(feature = "glue-xml-node-mutate")]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_init_xml_node() {
     /* Serialization (#to_xml / #canonicalize, and the refused HTML ones) is
@@ -330,11 +327,5 @@ pub unsafe extern "C" fn mkr_init_xml_node() {
     m.define_method("clone_node", method!(mutate::clone_node, -1)).expect("#clone_node");
 }
 
-#[cfg(all(feature = "glue-xml-node-mutate", not(feature = "glue-xml-node-serialize")))]
-extern "C" {
-    /// Still C (glue/ruby_xml_node_serialize.c).
-    fn mkr_init_xml_node_serialize();
-}
 
-#[cfg(all(feature = "glue-xml-node-mutate", feature = "glue-xml-node-serialize"))]
 use self::serialize::mkr_init_xml_node_serialize;
