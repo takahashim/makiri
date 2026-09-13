@@ -477,15 +477,16 @@ pub unsafe fn mkr_xml_replace_node(doc: *mut Doc, r: *mut Node, node: *mut Node)
 /* ---- element-name index (mkr_xml_index.h) ---- */
 
 pub unsafe fn mkr_xml_name_index_get(doc: *mut Doc) -> *mut index::NameIndex {
-    index::get(doc)
+    match doc.as_mut().and_then(index::get) {
+        Some(idx) => idx as *mut index::NameIndex,
+        None => ptr::null_mut(),
+    }
 }
 
 pub unsafe fn mkr_xml_name_index_invalidate(doc: *mut Doc) {
-    index::invalidate(doc)
-}
-
-pub unsafe fn mkr_xml_name_index_free(idx: *mut index::NameIndex) {
-    index::free(idx)
+    if let Some(doc) = doc.as_mut() {
+        index::invalidate(doc);
+    }
 }
 
 pub unsafe fn mkr_xml_name_index_lookup(
@@ -496,7 +497,30 @@ pub unsafe fn mkr_xml_name_index_lookup(
     ns_uri_len: usize,
     out_count: *mut usize,
 ) -> *const *mut Node {
-    index::lookup(idx, local, local_len, ns_uri, ns_uri_len, out_count)
+    if !out_count.is_null() {
+        *out_count = 0;
+    }
+    let Some(idx) = idx.cast_mut().as_mut() else {
+        return ptr::null();
+    };
+    // SAFETY: this is the pointer-and-length FFI boundary.  Unlike `bytes`,
+    // these lengths are `usize`, so retain their full range rather than
+    // narrowing them to the XML layout's `u32` fields.
+    let local = if local.is_null() || local_len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(local as *const u8, local_len)
+    };
+    let ns_uri = if ns_uri.is_null() || ns_uri_len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(ns_uri as *const u8, ns_uri_len)
+    };
+    let (nodes, count) = index::lookup(idx, local, ns_uri);
+    if !out_count.is_null() {
+        *out_count = count;
+    }
+    nodes
 }
 
 /* keep the attribute-type constant referenced so the import list mirrors the

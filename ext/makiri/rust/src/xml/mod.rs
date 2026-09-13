@@ -13,7 +13,7 @@
 //!   tree.rs    tokenizer + tree builder                               (scanning is safe;
 //!                                                                     node linking unsafe)
 //!   mutate.rs  mutation primitives                                   (unsafe: walks raw nodes)
-//!   index.rs   element-name index                                    (unsafe: walks raw nodes)
+//!   index.rs   element-name index                                    (no unsafe)
 //!   ffi.rs     the exported `mkr_xml_*` symbols                       (unsafe boundary)
 //!   selftest.rs the three C self-tests, ported                       (test code)
 

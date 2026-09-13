@@ -44,7 +44,7 @@ pub unsafe fn doc_new() -> *mut Doc {
         root: ptr::null_mut(),
         doc_node: ptr::null_mut(),
         doctype: ptr::null_mut(),
-        name_index: ptr::null_mut(),
+        name_index: None,
         has_encoding_decl: 0,
     })
 }
@@ -54,7 +54,7 @@ pub unsafe fn doc_destroy(doc: *mut Doc) {
     if doc.is_null() {
         return;
     }
-    index::invalidate(doc);
+    index::invalidate(&mut *doc);
     let mut c = (*doc).chunks;
     while !c.is_null() {
         let n = (*c).next;
