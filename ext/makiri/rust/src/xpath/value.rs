@@ -162,38 +162,38 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> bool
 /// text, not a distinct node type). The walk is iterative through parent
 /// pointers rather than recursive, so an adversarially deep tree cannot
 /// overflow the stack; it descends only into elements.
-unsafe fn append_text_descendants<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
-    let mut cur = D::first_child(node);
+unsafe fn append_text_descendants<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) -> c_int {
+    let mut cur = D::first_child(doc, node);
     while !D::is_null(cur) {
-        let t = D::node_type(cur);
+        let t = D::node_type(doc, cur);
         if t == NTYPE_TEXT || t == NTYPE_CDATA_SECTION {
-            let st = D::append_own_text(cur, buf);
+            let st = D::append_own_text(doc, cur, buf);
             if st != ST_OK {
                 return st; /* LIMIT or OOM - the caller fails closed */
             }
         }
-        if t == NTYPE_ELEMENT && !D::is_null(D::first_child(cur)) {
-            cur = D::first_child(cur);
+        if t == NTYPE_ELEMENT && !D::is_null(D::first_child(doc, cur)) {
+            cur = D::first_child(doc, cur);
             continue;
         }
-        while cur != node && D::is_null(D::next(cur)) {
-            cur = D::parent(cur);
+        while cur != node && D::is_null(D::next(doc, cur)) {
+            cur = D::parent(doc, cur);
         }
         if cur == node {
             return ST_OK;
         }
-        cur = D::next(cur);
+        cur = D::next(doc, cur);
     }
     ST_OK
 }
 
-unsafe fn build_string_value<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
+unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) -> c_int {
     if D::is_null(node) {
         return ST_OK;
     }
-    match D::node_type(node) {
+    match D::node_type(doc, node) {
         NTYPE_ATTRIBUTE => {
-            let v = D::attr_value(node);
+            let v = D::attr_value(doc, node);
             if v.is_empty() {
                 ST_OK
             } else {
@@ -201,9 +201,9 @@ unsafe fn build_string_value<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
             }
         }
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
-            D::append_own_text(node, buf)
+            D::append_own_text(doc, node, buf)
         }
-        _ => append_text_descendants::<D>(node, buf),
+        _ => append_text_descendants::<D>(doc, node, buf),
     }
 }
 
@@ -219,6 +219,7 @@ unsafe fn build_string_value<D: Dom>(node: D::Node, buf: *mut Buf) -> c_int {
 /// # Safety
 /// `node` must be live; `out` writable.
 pub unsafe fn node_to_owned_text<D: Dom>(
+    doc: D::Doc,
     node: D::Node,
     limits: *mut Limits,
     err: *mut Error,
@@ -233,7 +234,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     } else {
         (*limits).max_string_bytes
     });
-    let st = build_string_value::<D>(node, &mut buf);
+    let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
         let mut len = 0usize;
         let p = mkr_buf_steal(&mut buf, &mut len);
@@ -307,7 +308,7 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
 ///
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
-pub unsafe fn val_to_number_unchecked<D: Dom>(v: *const Val) -> f64 {
+pub unsafe fn val_to_number_unchecked<D: Dom>(doc: D::Doc, v: *const Val) -> f64 {
     match (*v).type_ {
         T_NUMBER => (*v).u.number,
         T_BOOLEAN => {
@@ -323,7 +324,7 @@ pub unsafe fn val_to_number_unchecked<D: Dom>(v: *const Val) -> f64 {
                 return f64::NAN;
             }
             /* string-value of the first node in document order */
-            let text = node_text_best_effort::<D>(nodeset_at::<D>(&(*v).u.nodeset, 0));
+            let text = node_text_best_effort::<D>(doc, nodeset_at::<D>(&(*v).u.nodeset, 0));
             bytes_to_number(text.as_slice())
         }
         _ => f64::NAN,
@@ -347,6 +348,7 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
 /// # Safety
 /// `v` may be null (yields ""); `out` must be writable.
 pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
+    doc: D::Doc,
     v: *const Val,
     limits: *mut Limits,
     err: *mut Error,
@@ -403,7 +405,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, out)
+            node_to_owned_text::<D>(doc, nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, out)
         }
         _ => {
             err_setf!(err, XP_ERR_INTERNAL, "unknown value type");
@@ -418,6 +420,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
 /// # Safety
 /// `v` and `out` must be valid.
 pub unsafe fn val_to_number_or_fail<D: Dom>(
+    doc: D::Doc,
     v: *const Val,
     limits: *mut Limits,
     err: *mut Error,
@@ -430,6 +433,7 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
         }
         let mut text = Text::new();
         if !node_to_owned_text::<D>(
+            doc,
             nodeset_at::<D>(&(*v).u.nodeset, 0),
             limits,
             err,
@@ -440,7 +444,7 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
         *out = bytes_to_number(text.as_slice());
         return true;
     }
-    *out = val_to_number_unchecked::<D>(v);
+    *out = val_to_number_unchecked::<D>(doc, v);
     true
 }
 
@@ -461,9 +465,9 @@ pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
 /// best-effort form the NUMBER coercion wants, where an overrun yields "" and
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
-unsafe fn node_text_best_effort<D: Dom>(node: D::Node) -> Text {
+unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> Text {
     let mut t = Text::new();
-    node_to_owned_text::<D>(node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
+    node_to_owned_text::<D>(doc, node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
     t
 }
 
@@ -481,6 +485,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     node: D::Node,
     err: *mut Error,
 ) -> Option<&'a [u8]> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let c = mkr_ctx_str_cache(ctx);
     if c.is_null() {
         err_setf!(
@@ -510,7 +515,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         ptr: ptr::null_mut(),
         len: 0,
     };
-    if !node_to_owned_text::<D>(node, limits, err, &mut text) {
+    if !node_to_owned_text::<D>(doc, node, limits, err, &mut text) {
         return None;
     }
 

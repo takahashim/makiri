@@ -2,25 +2,18 @@
 //!
 //! `Makiri::XML::Namespace` is a small (prefix, href) value object. xmlns
 //! declarations are stored as ordinary attribute nodes - qname `xmlns` or
-//! `xmlns:PREFIX` - so all four queries below are just tree reads:
-//!
-//!   `#namespace`             the node's own resolved namespace, or nil
-//!   `#namespace_definitions` the xmlns declarations ON this element
-//!   `#namespaces`            every declaration IN SCOPE here, as a Hash
-//!   `#collect_namespaces`    every declaration in the document, as a Hash
+//! `xmlns:PREFIX` - so all four queries below are just tree reads.
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, RArray, RClass, RHash, RString, Ruby, Value};
 use std::sync::OnceLock;
 
 use super::abi::*;
-use super::unwrap;
+use super::{doc, unwrap};
 
-/// The `Makiri::XML::Namespace` class, stashed at init so the value object can
-/// be built without a constant lookup per call.
+/// The `Makiri::XML::Namespace` class, stashed at init.
 static NAMESPACE_CLASS: OnceLock<rb_sys::VALUE> = OnceLock::new();
 
-/// Called once from init, on the Ruby thread.
 pub fn set_namespace_class(klass: RClass) {
     NAMESPACE_CLASS
         .set(klass.as_raw())
@@ -36,13 +29,11 @@ unsafe fn namespace_class() -> RClass {
     .expect("Makiri::XML::Namespace")
 }
 
-/// The two ivar names, interned once. `rb_intern` on every call would be a
-/// hash lookup per namespace read.
 fn ivar_ids() -> (rb_sys::ID, rb_sys::ID) {
     static IDS: OnceLock<(rb_sys::ID, rb_sys::ID)> = OnceLock::new();
     *IDS.get_or_init(|| {
         // SAFETY: namespace methods run under the GVL; Ruby interns IDs for
-        // the VM lifetime, so caching their numeric handles is valid.
+        // the VM lifetime.
         unsafe {
             (
                 rb_sys::rb_intern(c"@prefix".as_ptr()),
@@ -52,10 +43,6 @@ fn ivar_ids() -> (rb_sys::ID, rb_sys::ID) {
     })
 }
 
-/// A (prefix, href) pair as a `Makiri::XML::Namespace`.
-///
-/// # Safety
-/// After init.
 pub unsafe fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
     let (p_id, h_id) = ivar_ids();
     let ns = rb_sys::rb_obj_alloc(namespace_class().as_raw());
@@ -89,7 +76,6 @@ pub fn ns_equal(rb_self: Value, other: Value) -> Result<bool, Error> {
     Ok(ns_prefix(rb_self)?.eql(ns_prefix(other)?)? && ns_href(rb_self)?.eql(ns_href(other)?)?)
 }
 
-/// The pair's hash, so two equal Namespaces hash alike.
 pub fn ns_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     let pair = ruby.ary_new_from_values(&[ns_prefix(rb_self)?, ns_href(rb_self)?]);
     pair.funcall("hash", ())
@@ -105,39 +91,25 @@ pub fn ns_inspect(ruby: &Ruby, rb_self: Value) -> Result<RString, Error> {
 
 /// Read an attribute node's xmlns declaration, if it is one: the declared
 /// prefix (empty for the default xmlns) and the URI.
-///
-/// # Safety
-/// `a` must be a live attribute node.
-unsafe fn xmlns_decl(a: *const Node) -> Option<(&'static [u8], &'static [u8])> {
-    let mut p: *const core::ffi::c_char = core::ptr::null();
-    let mut u: *const core::ffi::c_char = core::ptr::null();
-    let (mut pl, mut ul) = (0u32, 0u32);
-    if mkr_xml_node_xmlns_decl(a, &mut p, &mut pl, &mut u, &mut ul) == 0 {
-        return None;
-    }
-    let sl = |ptr: *const core::ffi::c_char, len: u32| -> &'static [u8] {
-        if ptr.is_null() || len == 0 {
-            &[]
-        } else {
-            core::slice::from_raw_parts(ptr as *const u8, len as usize)
-        }
-    };
-    Some((sl(p, pl), sl(u, ul)))
+fn xmlns_decl(d: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
+    let p = crate::xml::qname::xmlns_prefix(d.qname(a))?;
+    Some((p, d.value(a)))
 }
 
 /// `#namespace` - the node's own resolved namespace, or nil.
 pub fn namespace(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     unsafe {
-        let n = &*unwrap(rb_self);
-        if !matches!(n.type_, T_ELEMENT | T_ATTRIBUTE) || n.ns_uri_len == 0 {
+        let d = &*doc(rb_self);
+        let id = unwrap(rb_self);
+        if !matches!(d.type_(id), T_ELEMENT | T_ATTRIBUTE) || d.node(id).ns_uri.len == 0 {
             return Ok(ruby.qnil().as_value());
         }
-        let prefix = if n.prefix_len == 0 {
+        let prefix = if d.node(id).prefix.len == 0 {
             ruby.qnil().as_value()
         } else {
-            str_field(ruby, n.prefix, n.prefix_len)
+            str_span(ruby, d, d.node(id).prefix)
         };
-        new_ns(prefix, str_field(ruby, n.ns_uri, n.ns_uri_len))
+        new_ns(prefix, str_span(ruby, d, d.node(id).ns_uri))
     }
 }
 
@@ -145,11 +117,12 @@ pub fn namespace(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
 pub fn namespace_definitions(ruby: &Ruby, rb_self: Value) -> Result<RArray, Error> {
     let arr = ruby.ary_new();
     unsafe {
-        let n = &*unwrap(rb_self);
-        if n.type_ == T_ELEMENT {
-            let mut a = n.attrs;
-            while !a.is_null() {
-                if let Some((p, u)) = xmlns_decl(a) {
+        let d = &*doc(rb_self);
+        let id = unwrap(rb_self);
+        if d.type_(id) == T_ELEMENT {
+            let mut a = d.attrs(id);
+            while let Some(at) = a {
+                if let Some((p, u)) = xmlns_decl(d, at) {
                     let prefix = if p.is_empty() {
                         ruby.qnil().as_value()
                     } else {
@@ -157,7 +130,7 @@ pub fn namespace_definitions(ruby: &Ruby, rb_self: Value) -> Result<RArray, Erro
                     };
                     arr.push(new_ns(prefix, utf8(ruby, u).as_value())?)?;
                 }
-                a = (*a).next;
+                a = d.next(at);
             }
         }
     }
@@ -165,65 +138,80 @@ pub fn namespace_definitions(ruby: &Ruby, rb_self: Value) -> Result<RArray, Erro
 }
 
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
-/// attribute's name (`xmlns` or `xmlns:p`). Walks outward from this node, and
-/// the inner scope wins because the first binding seen for a key is kept.
+/// attribute's name. The inner scope wins because the first binding seen is kept.
 pub fn namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
     let h = ruby.hash_new();
     unsafe {
-        let mut e = unwrap(rb_self);
-        while !e.is_null() {
-            if (*e).type_ == T_ELEMENT {
-                let mut a = (*e).attrs;
-                while !a.is_null() {
-                    if let Some((_, u)) = xmlns_decl(a) {
-                        let key = str_field(ruby, (*a).qname, (*a).qname_len);
+        let d = &*doc(rb_self);
+        let mut e = Some(unwrap(rb_self));
+        while let Some(id) = e {
+            if d.type_(id) == T_ELEMENT {
+                let mut a = d.attrs(id);
+                while let Some(at) = a {
+                    if let Some((_, u)) = xmlns_decl(d, at) {
+                        let key = str_span(ruby, d, d.node(at).qname);
                         if h.get(key).is_none() {
                             h.aset(key, utf8(ruby, u))?;
                         }
                     }
-                    a = (*a).next;
+                    a = d.next(at);
                 }
             }
-            e = (*e).parent;
+            e = d.parent(id);
         }
     }
     Ok(h)
 }
 
-/// `#collect_namespaces` - every declaration anywhere in the document.
-///
-/// Pre-order over the whole tree through the parent pointers, so no recursion
-/// and no depth limit. A later declaration of the same name overwrites an
-/// earlier one, which is what Nokogiri does.
+/// `#collect_namespaces` - every declaration anywhere in the document, pre-order
+/// through the tree (no recursion).
 pub fn collect_namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
     let h = ruby.hash_new();
     unsafe {
+        let d = &*doc(rb_self);
         let mut root = unwrap(rb_self);
-        while !(*root).parent.is_null() {
-            root = (*root).parent; /* the DOCUMENT node */
+        while let Some(p) = d.parent(root) {
+            root = p;
         }
-        let mut cur = root;
-        while !cur.is_null() {
-            if (*cur).type_ == T_ELEMENT {
-                let mut a = (*cur).attrs;
-                while !a.is_null() {
-                    if let Some((_, u)) = xmlns_decl(a) {
-                        h.aset(str_field(ruby, (*a).qname, (*a).qname_len), utf8(ruby, u))?;
+        let mut cur = Some(root);
+        while let Some(id) = cur {
+            if d.type_(id) == T_ELEMENT {
+                let mut a = d.attrs(id);
+                while let Some(at) = a {
+                    if let Some((_, u)) = xmlns_decl(d, at) {
+                        h.aset(str_span(ruby, d, d.node(at).qname), utf8(ruby, u))?;
                     }
-                    a = (*a).next;
+                    a = d.next(at);
                 }
             }
-            if !(*cur).first_child.is_null() {
-                cur = (*cur).first_child;
+            if d.first_child(id).is_some() {
+                cur = d.first_child(id);
                 continue;
             }
-            while cur != root && (*cur).next.is_null() {
-                cur = (*cur).parent;
+            /* Climb until a non-root node with a next sibling is found. */
+            let mut climbed = None;
+            let mut n = id;
+            loop {
+                if n == root {
+                    climbed = Some(root);
+                    break;
+                }
+                match d.next(n) {
+                    Some(nx) => {
+                        climbed = Some(nx);
+                        break;
+                    }
+                    None => match d.parent(n) {
+                        Some(p) => n = p,
+                        None => break,
+                    },
+                }
             }
-            if cur == root {
-                break;
+            match climbed {
+                None => break,
+                Some(n) if n == root => break,
+                Some(nx) => cur = Some(nx),
             }
-            cur = (*cur).next;
         }
     }
     Ok(h)

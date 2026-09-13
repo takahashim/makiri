@@ -4,8 +4,6 @@
 //! The node layout comes from `crate::xml::abi` - the XML engine's own
 //! declaration - so nothing here restates a field offset or a type constant.
 
-use core::ffi::c_char;
-
 use magnus::rb_sys::FromRawValue;
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
@@ -15,7 +13,7 @@ pub use super::super::abi::{
     mkr_node_set_push, mkr_parsed_xml_doc,
 };
 pub use crate::xml::abi::{
-    Doc as XmlDoc, Node, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
+    Doc as XmlDoc, NodeId, Span, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
     T_FRAGMENT, T_PI, T_TEXT,
 };
 
@@ -35,32 +33,26 @@ pub use crate::init::mkr_cXmlProcessingInstruction;
 pub use crate::init::mkr_cXmlText;
 pub use crate::xml::ffi::mkr_xml_node_xmlns_decl;
 
-/// A node's field as a UTF-8 Ruby String. A NULL pointer is the empty string,
-/// which is how the engine spells "no value".
-///
-/// # Safety
-/// `ptr`/`len` must name `len` readable bytes, or be NULL.
-pub unsafe fn str_field(ruby: &Ruby, ptr: *const c_char, len: u32) -> Value {
-    if ptr.is_null() || len == 0 {
+/// A field's bytes as a UTF-8 Ruby String (empty bytes -> `""`).
+pub fn str_field(ruby: &Ruby, bytes: &[u8]) -> Value {
+    if bytes.is_empty() {
         return ruby.str_new("").as_value();
     }
-    ruby.enc_str_new(
-        core::slice::from_raw_parts(ptr as *const u8, len as usize),
-        ruby.utf8_encoding(),
-    )
-    .as_value()
+    ruby.enc_str_new(bytes, ruby.utf8_encoding()).as_value()
 }
 
-/// The same, but a NULL pointer means "absent" and becomes nil - the difference
-/// between a DTD identifier that was omitted and one written as `""`.
-///
-/// # Safety
-/// As [`str_field`].
-pub unsafe fn str_field_or_nil(ruby: &Ruby, ptr: *const c_char, len: u32) -> Value {
-    if ptr.is_null() {
+/// A document span as a Ruby String.
+pub fn str_span(ruby: &Ruby, doc: &XmlDoc, s: Span) -> Value {
+    str_field(ruby, doc.span(s))
+}
+
+/// As [`str_field`], but an ABSENT span becomes nil - the difference between a
+/// DTD identifier that was omitted and one written as `""`.
+pub fn str_span_or_nil(ruby: &Ruby, doc: &XmlDoc, s: Span) -> Value {
+    if s.is_absent() {
         return ruby.qnil().as_value();
     }
-    str_field(ruby, ptr, len)
+    str_field(ruby, doc.span(s))
 }
 
 /// A String from a Rust slice, tagged UTF-8.

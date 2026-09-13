@@ -15,24 +15,25 @@ use super::dom::*;
 /// `context` must be a live handle, and the tree must not be mutated during the
 /// walk - it navigates by following links it reads as it goes.
 pub unsafe fn walk_descendants<D: Dom, F: FnMut(D::Node) -> bool>(
+    doc: D::Doc,
     context: D::Node,
     visit: &mut F,
 ) -> bool {
-    let mut n = D::first_child(context);
+    let mut n = D::first_child(doc, context);
     while !D::is_null(n) && n != context {
         if visit(n) {
             return true;
         }
-        if !D::is_null(D::first_child(n)) {
-            n = D::first_child(n);
+        if !D::is_null(D::first_child(doc, n)) {
+            n = D::first_child(doc, n);
         } else {
-            while n != context && D::is_null(D::next(n)) {
-                n = D::parent(n);
+            while n != context && D::is_null(D::next(doc, n)) {
+                n = D::parent(doc, n);
             }
             if n == context {
                 break;
             }
-            n = D::next(n);
+            n = D::next(doc, n);
         }
     }
     false
@@ -50,9 +51,9 @@ pub unsafe fn walk_descendants<D: Dom, F: FnMut(D::Node) -> bool>(
 ///
 /// # Safety
 /// `context` must be a live handle.
-pub unsafe fn axis_base<D: Dom>(context: D::Node) -> D::Node {
-    if D::node_type(context) == NTYPE_ATTRIBUTE {
-        let owner = D::parent(context);
+pub unsafe fn axis_base<D: Dom>(doc: D::Doc, context: D::Node) -> D::Node {
+    if D::node_type(doc, context) == NTYPE_ATTRIBUTE {
+        let owner = D::parent(doc, context);
         if !D::is_null(owner) {
             return owner;
         }
@@ -64,6 +65,7 @@ pub unsafe fn axis_base<D: Dom>(context: D::Node) -> D::Node {
 /// # Safety
 /// Same as `walk_descendants`: a live context, and no mutation while it runs.
 pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
+    doc: D::Doc,
     axis: u32,
     context: D::Node,
     visit: &mut F,
@@ -71,41 +73,41 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
     match axis {
         AXIS_SELF => visit(context),
         AXIS_PARENT => {
-            let p = D::parent(context);
+            let p = D::parent(doc, context);
             !D::is_null(p) && visit(p)
         }
         AXIS_CHILD => {
-            let mut c = D::first_child(context);
+            let mut c = D::first_child(doc, context);
             while !D::is_null(c) {
                 if visit(c) {
                     return true;
                 }
-                c = D::next(c);
+                c = D::next(doc, c);
             }
             false
         }
         AXIS_ATTRIBUTE => {
-            if D::node_type(context) != NTYPE_ELEMENT {
+            if D::node_type(doc, context) != NTYPE_ELEMENT {
                 return false;
             }
-            let mut a = D::first_attr(context);
+            let mut a = D::first_attr(doc, context);
             while !D::is_null(a) {
                 if visit(a) {
                     return true;
                 }
-                a = D::attr_next(a);
+                a = D::attr_next(doc, a);
             }
             false
         }
-        AXIS_DESCENDANT_OR_SELF => visit(context) || walk_descendants::<D, F>(context, visit),
-        AXIS_DESCENDANT => walk_descendants::<D, F>(context, visit),
+        AXIS_DESCENDANT_OR_SELF => visit(context) || walk_descendants::<D, F>(doc, context, visit),
+        AXIS_DESCENDANT => walk_descendants::<D, F>(doc, context, visit),
         AXIS_ANCESTOR => {
-            let mut p = D::parent(context);
+            let mut p = D::parent(doc, context);
             while !D::is_null(p) {
                 if visit(p) {
                     return true;
                 }
-                p = D::parent(p);
+                p = D::parent(doc, p);
             }
             false
         }
@@ -115,60 +117,60 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
                 if visit(p) {
                     return true;
                 }
-                p = D::parent(p);
+                p = D::parent(doc, p);
             }
             false
         }
         /* §2.2: both sibling axes are empty for an attribute context node - an
          * attribute is not a sibling of anything. */
         AXIS_FOLLOWING_SIBLING => {
-            if D::node_type(context) == NTYPE_ATTRIBUTE {
+            if D::node_type(doc, context) == NTYPE_ATTRIBUTE {
                 return false;
             }
-            let mut s = D::next(context);
+            let mut s = D::next(doc, context);
             while !D::is_null(s) {
                 if visit(s) {
                     return true;
                 }
-                s = D::next(s);
+                s = D::next(doc, s);
             }
             false
         }
         AXIS_PRECEDING_SIBLING => {
-            if D::node_type(context) == NTYPE_ATTRIBUTE {
+            if D::node_type(doc, context) == NTYPE_ATTRIBUTE {
                 return false;
             }
-            let mut s = D::prev(context);
+            let mut s = D::prev(doc, context);
             while !D::is_null(s) {
                 if visit(s) {
                     return true;
                 }
-                s = D::prev(s);
+                s = D::prev(doc, s);
             }
             false
         }
         AXIS_FOLLOWING => {
             /* Start at the next node in document order after the base's subtree. */
-            let mut cur = axis_base::<D>(context);
-            while !D::is_null(cur) && D::is_null(D::next(cur)) {
-                cur = D::parent(cur);
+            let mut cur = axis_base::<D>(doc, context);
+            while !D::is_null(cur) && D::is_null(D::next(doc, cur)) {
+                cur = D::parent(doc, cur);
             }
             if D::is_null(cur) {
                 return false;
             }
-            cur = D::next(cur);
+            cur = D::next(doc, cur);
             while !D::is_null(cur) {
                 if visit(cur) {
                     return true;
                 }
-                if !D::is_null(D::first_child(cur)) {
-                    cur = D::first_child(cur);
+                if !D::is_null(D::first_child(doc, cur)) {
+                    cur = D::first_child(doc, cur);
                 } else {
-                    while !D::is_null(cur) && D::is_null(D::next(cur)) {
-                        cur = D::parent(cur);
+                    while !D::is_null(cur) && D::is_null(D::next(doc, cur)) {
+                        cur = D::parent(doc, cur);
                     }
                     if !D::is_null(cur) {
-                        cur = D::next(cur);
+                        cur = D::next(doc, cur);
                     }
                 }
             }
@@ -184,29 +186,29 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
              * anchored on `context`, not the base: for an attribute context node
              * the owner element IS an ancestor (§2.2), so starting the walk there
              * must not emit it. */
-            let mut cur = axis_base::<D>(context);
+            let mut cur = axis_base::<D>(doc, context);
             while !D::is_null(cur) {
-                if !D::is_null(D::prev(cur)) {
-                    cur = D::prev(cur);
-                    while !D::is_null(D::last_child(cur)) {
-                        cur = D::last_child(cur);
+                if !D::is_null(D::prev(doc, cur)) {
+                    cur = D::prev(doc, cur);
+                    while !D::is_null(D::last_child(doc, cur)) {
+                        cur = D::last_child(doc, cur);
                     }
                     if visit(cur) {
                         return true;
                     }
                 } else {
-                    cur = D::parent(cur);
+                    cur = D::parent(doc, cur);
                     if D::is_null(cur) {
                         return false;
                     }
                     let mut is_ancestor = false;
-                    let mut p = D::parent(context);
+                    let mut p = D::parent(doc, context);
                     while !D::is_null(p) {
                         if p == cur {
                             is_ancestor = true;
                             break;
                         }
-                        p = D::parent(p);
+                        p = D::parent(doc, p);
                     }
                     if !is_ancestor && visit(cur) {
                         return true;

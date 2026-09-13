@@ -76,28 +76,33 @@ unsafe impl Dom for Html {
     }
 
     #[inline]
-    unsafe fn node_type(n: Self::Node) -> u32 {
+    unsafe fn document_node(doc: Self::Doc) -> Self::Node {
+        doc as *mut lxb::Node
+    }
+
+    #[inline]
+    unsafe fn node_type(_doc: Self::Doc, n: Self::Node) -> u32 {
         (*n).type_
     }
 
     #[inline]
-    unsafe fn first_child(n: Self::Node) -> Self::Node {
+    unsafe fn first_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
         (*n).first_child
     }
     #[inline]
-    unsafe fn last_child(n: Self::Node) -> Self::Node {
+    unsafe fn last_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
         (*n).last_child
     }
     #[inline]
-    unsafe fn next(n: Self::Node) -> Self::Node {
+    unsafe fn next(_doc: Self::Doc, n: Self::Node) -> Self::Node {
         (*n).next
     }
     #[inline]
-    unsafe fn prev(n: Self::Node) -> Self::Node {
+    unsafe fn prev(_doc: Self::Doc, n: Self::Node) -> Self::Node {
         (*n).prev
     }
     #[inline]
-    unsafe fn parent(n: Self::Node) -> Self::Node {
+    unsafe fn parent(_doc: Self::Doc, n: Self::Node) -> Self::Node {
         (*n).parent
     }
 
@@ -105,19 +110,19 @@ unsafe impl Dom for Html {
      * same address either way - that is what the C's lxb_dom_interface_*
      * casts are, and the layout check asserts both offsets are 0. */
     #[inline]
-    unsafe fn first_attr(el: Self::Node) -> Self::Node {
+    unsafe fn first_attr(_doc: Self::Doc, el: Self::Node) -> Self::Node {
         (*(el as *mut lxb::Element)).first_attr as Self::Node
     }
     #[inline]
-    unsafe fn attr_next(a: Self::Node) -> Self::Node {
+    unsafe fn attr_next(_doc: Self::Doc, a: Self::Node) -> Self::Node {
         (*(a as *mut lxb::Attr)).next as Self::Node
     }
     #[inline]
-    unsafe fn attr_value<'a>(a: Self::Node) -> &'a [u8] {
+    unsafe fn attr_value<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
         named_mut(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_value_noi)
     }
 
-    unsafe fn get_attribute<'a>(el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
+    unsafe fn get_attribute<'a>(_doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
         let mut len = 0usize;
         let v = lxb::lxb_dom_element_get_attribute(
             el as *mut lxb::LxbElement,
@@ -133,18 +138,18 @@ unsafe impl Dom for Html {
     }
 
     #[inline]
-    unsafe fn local_name<'a>(n: Self::Node) -> &'a [u8] {
+    unsafe fn local_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
         named_mut(n as *mut lxb::LxbElement, lxb::lxb_dom_element_local_name)
     }
     #[inline]
-    unsafe fn attr_local_name<'a>(a: Self::Node) -> &'a [u8] {
+    unsafe fn attr_local_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
         named(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_local_name)
     }
 
     /// An HTML element reports its lowercase local name, which is the data
     /// model the rest of Makiri assumes (`Node#name`); every other kind
     /// defers to Lexbor's node name.
-    unsafe fn qualified_name<'a>(n: Self::Node) -> &'a [u8] {
+    unsafe fn qualified_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
         if (*n).type_ == NTYPE_ELEMENT {
             named(
                 n as *mut lxb::LxbElement,
@@ -155,11 +160,11 @@ unsafe impl Dom for Html {
         }
     }
     #[inline]
-    unsafe fn attr_qualified_name<'a>(a: Self::Node) -> &'a [u8] {
+    unsafe fn attr_qualified_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
         named(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_qualified_name)
     }
     #[inline]
-    unsafe fn pi_name<'a>(n: Self::Node) -> &'a [u8] {
+    unsafe fn pi_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
         named_mut(n as *mut lxb::LxbNode, lxb::lxb_dom_node_name)
     }
 
@@ -167,7 +172,7 @@ unsafe impl Dom for Html {
     /// document's table - hence the document argument the XML binding
     /// ignores.
     #[inline]
-    unsafe fn ns_uri<'a>(n: Self::Node, doc: Self::Doc) -> &'a [u8] {
+    unsafe fn ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
         let mut len = 0usize;
         seen(lxb::mkr_html_ns_uri(n, doc, &mut len) as *const u8, len)
     }
@@ -176,18 +181,18 @@ unsafe impl Dom for Html {
     /// only a genuinely foreign namespace (SVG, MathML) is a non-match -
     /// HTML and none both pass.
     #[inline]
-    unsafe fn is_foreign_ns(n: Self::Node) -> bool {
+    unsafe fn is_foreign_ns(_doc: Self::Doc, n: Self::Node) -> bool {
         (*n).ns != lxb::NS_HTML && (*n).ns != lxb::NS_UNDEF
     }
     #[inline]
-    unsafe fn has_ns(n: Self::Node) -> bool {
+    unsafe fn has_ns(_doc: Self::Doc, n: Self::Node) -> bool {
         (*n).ns != lxb::NS_UNDEF
     }
 
     /// Lexbor builds a node's text content on demand and hands back an
     /// allocation, so the append and the free stay together in C.
     #[inline]
-    unsafe fn append_own_text(n: Self::Node, buf: *mut Buf) -> c_int {
+    unsafe fn append_own_text(_doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
         lxb::mkr_html_append_own_text(n, buf)
     }
 

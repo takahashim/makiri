@@ -2,90 +2,28 @@
 //! (dom_adapter/cross_import.c).
 //!
 //! Makiri keeps HTML nodes (Lexbor `lxb_dom_node_t`) and XML nodes
-//! (`mkr_xml_node_t`) as distinct representations that cannot share a tree.
-//! `import_node` bridges them: a deep or shallow copy of a subtree from one
-//! representation into the other, owned by the target document, returned
+//! (index-arena `mkr_xml_node_t`) as distinct representations that cannot share
+//! a tree. `import_node` bridges them: a deep or shallow copy of a subtree from
+//! one representation into the other, owned by the target document, returned
 //! DETACHED for the caller to link.
 //!
 //! Ruby-free, and in `dom_adapter` rather than `glue` because it reads and
-//! writes BOTH Lexbor and the XML arena - exactly the bridge this layer is for.
-//! The glue entry points do the Ruby-side kind check, call one of these, and
-//! wrap or raise.
+//! writes BOTH Lexbor and the XML document - exactly the bridge this layer is
+//! for. The glue entry points do the Ruby-side kind check, call one of these,
+//! and wrap or raise.
 //!
-//! Both directions share three properties:
-//!
-//! - the destination subtree is built DETACHED and only then returned, never
-//!   linked into a live tree mid-build, so a failure abandons a self-contained
-//!   partial subtree in the destination arena - freed with the document, the
-//!   same fail-closed model the XML deep-copy uses;
-//! - the source is walked with an explicit heap stack, never C recursion, so a
-//!   deep tree cannot exhaust the stack;
-//! - failure is reported as an `mkr_xml_mut_status_t`, which the Ruby entry maps.
-//!
-//! # Namespaces
-//!
-//! **HTML -> XML.** An mkr node's namespace is resolved from `xmlns`
-//! declarations at INSERTION time, so a directly-set `ns_uri` would be
-//! overwritten when the imported subtree is later linked. Declarations are
-//! therefore synthesized: each element declares `xmlns="URI"` when its namespace
-//! differs from the one inherited from its translated parent, and a
-//! foreign-prefixed attribute (`xlink:*`) gets an `xmlns:PREFIX` on its element.
-//! The predefined `xml:` prefix needs none.
-//!
-//! **XML -> HTML.** Lexbor stores a namespace as an interned id, so the
-//! element's `node.ns` is set from the URI (interning any URI through
-//! `lxb_ns_append`) and a namespaced attribute is built with
-//! `lxb_dom_attr_set_name_ns`.
-//!
-//! # Why this one feature implies the XML reader
-//!
-//! It calls the XML arena's factories directly rather than through their C ABI.
-//! Declaring them here as `extern "C"` would give each symbol a second Rust
-//! declaration whenever the `xml` feature is also on - the "redeclared with a
-//! different signature" class that has now cost this port several rounds. The
-//! feature depends on `xml` instead, so there is one definition and no
-//! declaration at all.
+//! An XML node is addressed by [`NodeId`] and its bytes/links live in the
+//! [`Document`], so the XML half of this module threads a `&Document`; the
+//! Lexbor half keeps raw pointers.
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
-use crate::xml::abi::{
-    Doc as XmlDoc, Node as XmlNode, QName, MUT_BAD_NAME, MUT_OK, MUT_OOM, MUT_TYPE,
-};
-use crate::xml::arena::Arena;
+use crate::xml::abi::{Document as XmlDoc, NodeId, MUT_BAD_NAME, MUT_OK, MUT_OOM, MUT_TYPE};
 use crate::xml::mutate;
-use crate::xml::raw::NodeRef;
-
-/// Wrap the destination document as the mutation layer's arena handle.
-///
-/// # Safety
-/// `doc` must be a live XML document for the duration of the call.
-#[inline]
-unsafe fn arena(doc: *mut XmlDoc) -> Arena {
-    Arena::from_ptr(doc).expect("cross-import destination document is live")
-}
-
-/// Wrap a raw engine node as a non-null reference.
-///
-/// # Safety
-/// `node` must point into a live XML arena.
-#[inline]
-unsafe fn nref(node: *mut XmlNode) -> NodeRef {
-    NodeRef::from_raw(node).expect("cross-import node is live")
-}
-
-/// Collapse a safe mutator result onto the `mkr_xml_mut_status_t` the import
-/// reports (the produced node is dropped here, as the import links its own).
-#[inline]
-unsafe fn status(r: Result<NodeRef, i32>) -> i32 {
-    match r {
-        Ok(_) => MUT_OK,
-        Err(st) => st,
-    }
-}
 
 /* ---- the node-type constants, generated on both sides ---- */
 
@@ -109,10 +47,7 @@ use crate::xml::abi::{
     T_PI as X_PI, T_TEXT as X_TEXT,
 };
 
-/* Every Lexbor entry point below comes from the generated bindings. They were
- * hand-declared here first, and rustc reported six of them "redeclared with a
- * different signature" against the generated ones - the same class the rest of
- * this port keeps running into, and the reason build.rs allowlists them. */
+/* Every Lexbor entry point below comes from the generated bindings. */
 use lxb::{
     lxb_dom_attr_interface_create, lxb_dom_attr_set_value, lxb_dom_document_create_comment,
     lxb_dom_document_create_document_fragment, lxb_dom_document_create_element,
@@ -123,9 +58,7 @@ use lxb::{
 
 const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
-/// A DOM name or value slice must fit `u32` - the mkr arena's per-slice cap and
-/// its factory signatures. A slice over 4 GiB is rejected fail-closed rather
-/// than wrapped into a short one.
+/// A DOM name or value slice must fit `u32` - the mkr store's per-slice cap.
 #[inline]
 fn fits_u32(n: usize) -> Option<u32> {
     u32::try_from(n).ok()
@@ -151,12 +84,7 @@ unsafe fn html_ns_uri<'a>(n: *const LxbNode) -> Option<&'a [u8]> {
 }
 
 /// Intern `uri` in the DESTINATION document's namespace table and return its
-/// Lexbor id, so an element's namespace survives translation for any URI - not
-/// just the few Lexbor knows by default.
-///
-/// An empty URI, or an intern failure, is the null namespace. Fail-soft on
-/// purpose: losing a namespace annotation is not the same as producing a wrong
-/// tree, and the C did the same.
+/// Lexbor id, so an element's namespace survives translation for any URI.
 unsafe fn intern_ns(hdoc: *mut LxbDoc, uri: &[u8]) -> usize {
     if uri.is_empty() || (*hdoc).ns.is_null() {
         return NS_UNDEF;
@@ -169,11 +97,8 @@ unsafe fn intern_ns(hdoc: *mut LxbDoc, uri: &[u8]) -> usize {
     }
 }
 
-/* ---- the work stack, shared by both directions ----
- *
- * `def` carries, for HTML->XML, the default-namespace URI in scope for the
- * destination node's CHILDREN, so a child only redeclares xmlns when it
- * differs. Unused for XML->HTML. */
+/* ---- the work stack, shared by both directions ---- */
+
 struct Frame<S, D> {
     s: S,
     d: D,
@@ -197,9 +122,6 @@ fn push<S, D>(stack: &mut Vec<Frame<S, D>>, frame: Frame<S, D>) -> Result<(), ()
 }
 
 /// A `<template>`'s content fragment, when `n` is an HTML `<template>`.
-///
-/// `Some(None)` distinguishes "a template whose content is NULL" from "not a
-/// template", because the two directions apply different rules to the first.
 unsafe fn template_content(n: *const LxbNode) -> Option<*mut c_void> {
     if (*n).type_ == h::ELEMENT && (*n).local_name == TAG_TEMPLATE && (*n).ns == NS_HTML {
         return Some((*(n as *const lxb::lxb_html_template_element_t)).content as *mut c_void);
@@ -210,13 +132,11 @@ unsafe fn template_content(n: *const LxbNode) -> Option<*mut c_void> {
 /* ================= HTML (lxb) -> XML (mkr) ========================== */
 
 /// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
-/// element, as an ordinary attribute, so the subtree's prefix-based namespace
-/// resolution at link time reproduces `uri`.
-unsafe fn declare_ns(xdoc: *mut XmlDoc, el: *mut XmlNode, prefix: &[u8], uri: &[u8]) -> c_int {
+/// element, as an ordinary attribute.
+unsafe fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> c_int {
     if prefix.is_empty() {
-        return status(mutate::set_attribute(arena(xdoc), nref(el), b"xmlns", uri));
+        return status(mutate::set_attribute(doc, el, b"xmlns", uri));
     }
-    /* "xmlns:" + prefix, built in a scratch buffer. */
     let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
         Some(_) => 6 + prefix.len(),
         None => return MUT_OOM,
@@ -225,15 +145,23 @@ unsafe fn declare_ns(xdoc: *mut XmlDoc, el: *mut XmlNode, prefix: &[u8], uri: &[
         Some(v) => v,
         None => return MUT_OOM,
     };
-    name.extend_from_slice(b"xmlns:"); /* reserved above */
+    name.extend_from_slice(b"xmlns:");
     name.extend_from_slice(prefix);
-    status(mutate::set_attribute(arena(xdoc), nref(el), &name, uri))
+    status(mutate::set_attribute(doc, el, &name, uri))
+}
+
+/// Collapse a safe mutator result onto the reported status.
+#[inline]
+unsafe fn status(r: Result<NodeId, i32>) -> i32 {
+    match r {
+        Ok(_) => MUT_OK,
+        Err(st) => st,
+    }
 }
 
 /// Copy the source element's attributes onto the translated mkr element,
-/// declaring an `xmlns:PREFIX` for each foreign-prefixed one so resolution at
-/// link time succeeds. The predefined `xml:` prefix needs none.
-unsafe fn h2x_copy_attrs(xdoc: *mut XmlDoc, s: *mut LxbNode, el: *mut XmlNode) -> c_int {
+/// declaring an `xmlns:PREFIX` for each foreign-prefixed one.
+unsafe fn h2x_copy_attrs(doc: &mut XmlDoc, s: *mut LxbNode, el: NodeId) -> c_int {
     let mut a = lxb::lxb_dom_element_first_attribute_noi(s as *mut LxbElement);
     while !a.is_null() {
         let mut anl = 0usize;
@@ -254,7 +182,7 @@ unsafe fn h2x_copy_attrs(xdoc: *mut XmlDoc, s: *mut LxbNode, el: *mut XmlNode) -
         if ans != NS_UNDEF && ans != NS_HTML && ans != NS_XML {
             if let Some(colon) = name.iter().position(|&b| b == b':') {
                 if let Some(uri) = html_ns_uri(&(*a).node) {
-                    let st = declare_ns(xdoc, el, &name[..colon], uri);
+                    let st = declare_ns(doc, el, &name[..colon], uri);
                     if st != MUT_OK {
                         return st;
                     }
@@ -262,7 +190,7 @@ unsafe fn h2x_copy_attrs(xdoc: *mut XmlDoc, s: *mut LxbNode, el: *mut XmlNode) -
             }
         }
 
-        let st = status(mutate::set_attribute(arena(xdoc), nref(el), name, value));
+        let st = status(mutate::set_attribute(doc, el, name, value));
         if st != MUT_OK {
             return st;
         }
@@ -274,21 +202,20 @@ unsafe fn h2x_copy_attrs(xdoc: *mut XmlDoc, s: *mut LxbNode, el: *mut XmlNode) -
 /// What [`h2x_make`] produced, plus the default namespace in scope for the new
 /// node's children.
 struct Made<'a> {
-    node: *mut XmlNode,
+    node: NodeId,
     child_default: Option<&'a [u8]>,
 }
 
 /// Translate ONE Lexbor node into a fresh mkr node - its own fields and
 /// attributes, NOT its children.
 ///
-/// `node` is null to SKIP an unsupported type; an `Err` status fails the whole
-/// import.
+/// The invalid `NodeId` means SKIP an unsupported type; an `Err` status fails
+/// the whole import.
 unsafe fn h2x_make<'a>(
-    xdoc: *mut XmlDoc,
+    doc: &mut XmlDoc,
     s: *mut LxbNode,
     parent_default: Option<&'a [u8]>,
 ) -> Result<Made<'a>, c_int> {
-    /* A non-element does not change the default-namespace scope. */
     let unchanged = |node| {
         Ok(Made {
             node,
@@ -306,45 +233,27 @@ unsafe fn h2x_make<'a>(
             let name = core::slice::from_raw_parts(nm, nl);
             let euri = html_ns_uri(s);
 
-            /* Strict first, so a valid QName stays XML-serializable.
-             * importNode never re-validates an existing node's name - the DOM
-             * requires the source to be well-formed for its own representation -
-             * so an HTML name that is a valid DOM element name but NOT a
-             * well-formed XML QName (":good:times:", "x<", "0:a") is taken
-             * VERBATIM as an unprefixed DOM-loose name rather than rejected,
-             * the same escape hatch as create_loose_dom_element. HTML elements
-             * are always unprefixed. The namespace is passed DIRECTLY, because
-             * link-time resolution skips loose names and a synthesized xmlns
-             * declaration would never reach it. */
-            let mut made = mutate::new_element(arena(xdoc), name);
+            /* Strict first; a valid DOM element name that is not a well-formed
+             * XML QName is taken VERBATIM as an unprefixed DOM-loose name. The
+             * namespace is passed DIRECTLY (link-time resolution skips loose
+             * names). */
+            let mut made = mutate::new_element(doc, name);
             if made.as_ref().err() == Some(&MUT_BAD_NAME) && !name.is_empty() {
-                let qn = QName {
-                    qname: nm as *const c_char,
-                    qname_len: nl as u32,
-                    prefix: nm as *const c_char,
-                    prefix_len: 0,
-                    local: nm as *const c_char,
-                    local_len: nl as u32,
-                };
-                made = mutate::new_loose_dom_element(arena(xdoc), &qn, euri.unwrap_or(&[]));
+                made =
+                    mutate::new_loose_dom_element(doc, name, 0, 0, nl as u32, euri.unwrap_or(&[]));
             }
-            let el: *mut XmlNode = made.map(|n| n.as_ptr())?;
+            let el = made?;
 
-            /* Declare the default namespace iff it differs from the inherited
-             * one, so this element (unprefixed, like all HTML elements) and its
-             * children resolve to it. An element with no namespace under an
-             * inherited default UNdeclares, with xmlns="". For a loose element
-             * this only feeds child inheritance; its own ns_uri was set above. */
             let mut child_default = parent_default;
             if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
-                let st = declare_ns(xdoc, el, &[], euri.unwrap_or(&[]));
+                let st = declare_ns(doc, el, &[], euri.unwrap_or(&[]));
                 if st != MUT_OK {
                     return Err(st);
                 }
                 child_default = Some(euri.unwrap_or(&[]));
             }
 
-            let st = h2x_copy_attrs(xdoc, s, el);
+            let st = h2x_copy_attrs(doc, s, el);
             if st != MUT_OK {
                 return Err(st);
             }
@@ -370,9 +279,7 @@ unsafe fn h2x_make<'a>(
             } else {
                 core::slice::from_raw_parts(d.data, len as usize)
             };
-            let out: *mut XmlNode =
-                mutate::new_chardata(arena(xdoc), ty, text).map(|n| n.as_ptr())?;
-            unchanged(out)
+            unchanged(mutate::new_chardata(doc, ty, text)?)
         }
 
         h::PI => {
@@ -388,31 +295,20 @@ unsafe fn h2x_make<'a>(
             } else {
                 core::slice::from_raw_parts(d.data, d.length)
             };
-            let out: *mut XmlNode =
-                mutate::new_pi(arena(xdoc), target, data).map(|n| n.as_ptr())?;
-            unchanged(out)
+            unchanged(mutate::new_pi(doc, target, data)?)
         }
 
         h::FRAGMENT => {
-            let f = crate::xml::arena::arena_node(xdoc, X_FRAGMENT);
-            if f.is_null() {
-                return Err(MUT_OOM);
-            }
+            let f = doc.new_node(X_FRAGMENT).map_err(|_| MUT_OOM)?;
             unchanged(f)
         }
 
         /* An unsupported descendant type is skipped, not an error. */
-        _ => unchanged(core::ptr::null_mut()),
+        _ => unchanged(NodeId::INVALID),
     }
 }
 
-/// The children to translate under `s`.
-///
-/// An HTML `<template>` keeps its content in a SEPARATE fragment, not the normal
-/// child chain, so a plain `first_child` walk would silently drop it. The
-/// content fragment is descended into instead: the XML side has no
-/// template-content concept, so the contents become ordinary children of the
-/// translated element - lossless, and the natural XML shape.
+/// The children to translate under `s` (a `<template>` descends into content).
 unsafe fn h2x_children_of(s: *mut LxbNode) -> *mut LxbNode {
     match template_content(s) {
         Some(content) if !content.is_null() => (*(content as *mut LxbNode)).first_child,
@@ -426,27 +322,24 @@ pub unsafe fn mkr_cross_html_to_xml(
     xdoc: *mut XmlDoc,
     src: *mut LxbNode,
     deep: c_int,
-    out: *mut *mut XmlNode,
+    out: *mut NodeId,
 ) -> c_int {
-    *out = core::ptr::null_mut();
+    *out = NodeId::INVALID;
+    let doc = &mut *xdoc;
 
-    let root = match h2x_make(xdoc, src, None) {
+    let root = match h2x_make(doc, src, None) {
         Ok(m) => m,
         Err(st) => return st,
     };
-    if root.node.is_null() {
+    if root.node.is_invalid() {
         return MUT_TYPE; /* the root's type has no XML counterpart */
     }
 
     if deep != 0 {
-        let mut stack: Vec<Frame<*mut LxbNode, *mut XmlNode>> = match try_vec_with_capacity(1) {
+        let mut stack: Vec<Frame<*mut LxbNode, NodeId>> = match try_vec_with_capacity(1) {
             Some(v) => v,
             None => return MUT_OOM,
         };
-        /* The borrow is over Lexbor's interned namespace table, which lives as
-         * long as the source document - longer than this call. `Frame` says
-         * 'static because there is no lifetime here to tie it to; the arena
-         * outliving the walk is the real guarantee. */
         let rdef: Option<&'static [u8]> = core::mem::transmute(root.child_default);
         if push(
             &mut stack,
@@ -464,14 +357,12 @@ pub unsafe fn mkr_cross_html_to_xml(
         while let Some(f) = stack.pop() {
             let mut c = h2x_children_of(f.s);
             while !c.is_null() {
-                let made = match h2x_make(xdoc, c, f.def) {
+                let made = match h2x_make(doc, c, f.def) {
                     Ok(m) => m,
-                    Err(st) => return st, /* partial subtree abandoned in the arena */
+                    Err(st) => return st, /* partial subtree abandoned */
                 };
-                if !made.node.is_null() {
-                    /* The parent is detached, so namespace resolution is
-                     * deferred to the eventual link. */
-                    let st = mutate::insert_child(arena(xdoc), nref(f.d), nref(made.node));
+                if !made.node.is_invalid() {
+                    let st = mutate::insert_child(doc, f.d, made.node);
                     if st != MUT_OK {
                         return st;
                     }
@@ -502,21 +393,14 @@ pub unsafe fn mkr_cross_html_to_xml(
 
 /* ================= XML (mkr) -> HTML (lxb) ========================== */
 
-/// Copy the source element's attributes onto the translated Lexbor element,
-/// preserving each attribute's namespace: a null-namespace one through
-/// `set_attribute`, a namespaced one through an explicit
-/// `lxb_dom_attr_set_name_ns`.
-unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, s: *const XmlNode, el: *mut LxbElement) -> c_int {
-    let mut a = (*s).attrs;
-    while !a.is_null() {
-        let val = if (*a).value.is_null() {
-            &[][..]
-        } else {
-            core::slice::from_raw_parts((*a).value as *const u8, (*a).value_len as usize)
-        };
-        let qname = core::slice::from_raw_parts((*a).qname as *const u8, (*a).qname_len as usize);
+/// Copy the source element's attributes onto the translated Lexbor element.
+unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId, el: *mut LxbElement) -> c_int {
+    let mut a = doc.attrs(s);
+    while let Some(attr) = a {
+        let val = doc.value(attr);
+        let qname = doc.qname(attr);
 
-        if (*a).ns_uri_len == 0 {
+        if doc.ns(attr).is_empty() {
             if lxb_dom_element_set_attribute(
                 el,
                 qname.as_ptr(),
@@ -533,8 +417,7 @@ unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, s: *const XmlNode, el: *mut LxbEleme
             if at.is_null() {
                 return MUT_OOM;
             }
-            let ns =
-                core::slice::from_raw_parts((*a).ns_uri as *const u8, (*a).ns_uri_len as usize);
+            let ns = doc.ns(attr);
             if lxb::lxb_dom_attr_set_name_ns(
                 at,
                 ns.as_ptr(),
@@ -545,35 +428,25 @@ unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, s: *const XmlNode, el: *mut LxbEleme
             ) != LXB_STATUS_OK
                 || lxb_dom_attr_set_value(at, val.as_ptr(), val.len()) != LXB_STATUS_OK
             {
-                /* The un-appended attr is abandoned in mraw, freed with the
-                 * document - this module's fail-closed model. */
                 return MUT_OOM;
             }
             lxb_dom_element_attr_append(el, at);
         }
-        a = (*a).next;
+        a = doc.next(attr);
     }
     MUT_OK
 }
 
-/// Translate ONE mkr node into a fresh, detached Lexbor node - its own fields
-/// and attributes, NOT children.
+/// Translate ONE mkr node into a fresh, detached Lexbor node.
 ///
 /// Null to SKIP an unsupported type. An XML CDATA section has no HTML
 /// counterpart, so it fails closed rather than degrading to a text node.
-unsafe fn x2h_make(hdoc: *mut LxbDoc, s: *const XmlNode) -> Result<*mut LxbNode, c_int> {
-    let value = || -> &[u8] {
-        if (*s).value.is_null() {
-            &[]
-        } else {
-            core::slice::from_raw_parts((*s).value as *const u8, (*s).value_len as usize)
-        }
-    };
+unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut LxbNode, c_int> {
+    let value = || doc.value(s);
 
-    match (*s).type_ {
+    match doc.type_(s) {
         X_ELEMENT => {
-            let qname =
-                core::slice::from_raw_parts((*s).qname as *const u8, (*s).qname_len as usize);
+            let qname = doc.qname(s);
             let el = lxb_dom_document_create_element(
                 hdoc,
                 qname.as_ptr(),
@@ -583,15 +456,9 @@ unsafe fn x2h_make(hdoc: *mut LxbDoc, s: *const XmlNode) -> Result<*mut LxbNode,
             if el.is_null() {
                 return Err(MUT_OOM);
             }
-            /* Preserve the namespace as a Lexbor id, interning any URI. */
-            let ns = if (*s).ns_uri_len == 0 {
-                &[][..]
-            } else {
-                core::slice::from_raw_parts((*s).ns_uri as *const u8, (*s).ns_uri_len as usize)
-            };
-            (*(el as *mut LxbNode)).ns = intern_ns(hdoc, ns);
+            (*(el as *mut LxbNode)).ns = intern_ns(hdoc, doc.ns(s));
 
-            let st = x2h_copy_attrs(hdoc, s, el);
+            let st = x2h_copy_attrs(hdoc, doc, s, el);
             if st != MUT_OK {
                 return Err(st);
             }
@@ -617,9 +484,7 @@ unsafe fn x2h_make(hdoc: *mut LxbDoc, s: *const XmlNode) -> Result<*mut LxbNode,
         }
 
         X_PI => {
-            /* A PI's target is its name (local == qname); its data is the value. */
-            let target =
-                core::slice::from_raw_parts((*s).local as *const u8, (*s).local_len as usize);
+            let target = doc.local(s);
             let v = value();
             let pi = lxb_dom_document_create_processing_instruction(
                 hdoc,
@@ -648,11 +513,7 @@ unsafe fn x2h_make(hdoc: *mut LxbDoc, s: *const XmlNode) -> Result<*mut LxbNode,
     }
 }
 
-/// Where a translated element's CHILDREN attach.
-///
-/// An HTML `<template>` holds its content in a separate fragment, not the normal
-/// child chain, so children go there - matching a parsed template and the
-/// HTML->HTML import fixup. Other elements take children directly.
+/// Where a translated element's CHILDREN attach (a `<template>`'s content).
 unsafe fn x2h_link_target(el: *mut LxbNode) -> *mut LxbNode {
     match template_content(el) {
         Some(content) if !content.is_null() => content as *mut LxbNode,
@@ -663,13 +524,15 @@ unsafe fn x2h_link_target(el: *mut LxbNode) -> *mut LxbNode {
 /// Deep- or shallow-copy an XML subtree into the Lexbor arena, detached.
 pub unsafe fn mkr_cross_xml_to_html(
     hdoc: *mut LxbDoc,
-    src: *const XmlNode,
+    xdoc: *const XmlDoc,
+    src: NodeId,
     deep: c_int,
     out: *mut *mut LxbNode,
 ) -> c_int {
     *out = core::ptr::null_mut();
+    let doc = &*xdoc;
 
-    let root = match x2h_make(hdoc, src) {
+    let root = match x2h_make(hdoc, doc, src) {
         Ok(n) => n,
         Err(st) => return st,
     };
@@ -678,12 +541,10 @@ pub unsafe fn mkr_cross_xml_to_html(
     }
 
     if deep != 0 {
-        let mut stack: Vec<Frame<*const XmlNode, *mut LxbNode>> = match try_vec_with_capacity(1) {
+        let mut stack: Vec<Frame<NodeId, *mut LxbNode>> = match try_vec_with_capacity(1) {
             Some(v) => v,
             None => return MUT_OOM,
         };
-        /* The frame's `d` is the LINK TARGET for the source node's children: a
-         * template element's content fragment, else the element itself. */
         if push(
             &mut stack,
             Frame {
@@ -698,19 +559,19 @@ pub unsafe fn mkr_cross_xml_to_html(
         }
 
         while let Some(f) = stack.pop() {
-            let mut c = (*f.s).first_child as *const XmlNode;
-            while !c.is_null() {
-                let dc = match x2h_make(hdoc, c) {
+            let mut c = doc.first_child(f.s);
+            while let Some(cid) = c {
+                let dc = match x2h_make(hdoc, doc, cid) {
                     Ok(n) => n,
                     Err(st) => return st, /* partial subtree abandoned in mraw */
                 };
                 if !dc.is_null() {
                     lxb_dom_node_insert_child(f.d, dc);
-                    if !(*c).first_child.is_null()
+                    if doc.first_child(cid).is_some()
                         && push(
                             &mut stack,
                             Frame {
-                                s: c,
+                                s: cid,
                                 d: x2h_link_target(dc),
                                 def: None,
                             },
@@ -720,7 +581,7 @@ pub unsafe fn mkr_cross_xml_to_html(
                         return MUT_OOM;
                     }
                 }
-                c = (*c).next as *const XmlNode;
+                c = doc.next(cid);
             }
         }
     }

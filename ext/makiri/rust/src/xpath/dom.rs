@@ -61,8 +61,9 @@ pub unsafe trait Dom {
     /// and the CSS-lowered of-type hooks exist only for XML.
     const IS_XML: bool;
 
-    /// The owning document, for the services that need it (namespace lookup on
-    /// HTML resolves an id against the document's table).
+    /// The owning **storage**: the index-arena document for XML, the Lexbor
+    /// document for HTML. A node handle alone cannot resolve XML links or bytes
+    /// (they live in the document), so the methods that read them take this.
     type Doc: Copy;
 
     fn null() -> Self::Node;
@@ -76,47 +77,50 @@ pub unsafe trait Dom {
     /// # Safety
     /// `p` must be a handle this backend produced, or null.
     unsafe fn from_void(p: *mut core::ffi::c_void) -> Self::Node;
-    /// The same erasure for the document handle `mkr_ctx_document` returns.
+    /// The same erasure for the storage handle `mkr_ctx_arena` returns.
     ///
     /// # Safety
-    /// `p` must be this backend's document, or null.
+    /// `p` must be this backend's document/storage, or null.
     unsafe fn doc_from_void(p: *mut core::ffi::c_void) -> Self::Doc;
 
-    unsafe fn node_type(n: Self::Node) -> u32;
+    /// The document node itself, for a walk rooted at the whole tree.
+    unsafe fn document_node(doc: Self::Doc) -> Self::Node;
+
+    unsafe fn node_type(doc: Self::Doc, n: Self::Node) -> u32;
 
     /* navigation */
-    unsafe fn first_child(n: Self::Node) -> Self::Node;
-    unsafe fn last_child(n: Self::Node) -> Self::Node;
-    unsafe fn next(n: Self::Node) -> Self::Node;
-    unsafe fn prev(n: Self::Node) -> Self::Node;
-    unsafe fn parent(n: Self::Node) -> Self::Node;
+    unsafe fn first_child(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn last_child(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn next(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn prev(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn parent(doc: Self::Doc, n: Self::Node) -> Self::Node;
 
     /* attributes - iteration yields attribute handles, which are node handles
      * in both representations (the C contract's MKR_ELEM_FIRST_ATTR /
      * MKR_ATTR_NEXT). */
-    unsafe fn first_attr(el: Self::Node) -> Self::Node;
-    unsafe fn attr_next(a: Self::Node) -> Self::Node;
-    unsafe fn attr_value<'a>(a: Self::Node) -> &'a [u8];
+    unsafe fn first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node;
+    unsafe fn attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node;
+    unsafe fn attr_value<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
     /// Attribute value by raw qualified name, or None.
-    unsafe fn get_attribute<'a>(el: Self::Node, name: &[u8]) -> Option<&'a [u8]>;
+    unsafe fn get_attribute<'a>(doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]>;
 
     /* names (borrowed from the tree) */
-    unsafe fn local_name<'a>(n: Self::Node) -> &'a [u8];
-    unsafe fn attr_local_name<'a>(a: Self::Node) -> &'a [u8];
-    unsafe fn qualified_name<'a>(n: Self::Node) -> &'a [u8];
-    unsafe fn attr_qualified_name<'a>(a: Self::Node) -> &'a [u8];
-    unsafe fn pi_name<'a>(n: Self::Node) -> &'a [u8];
+    unsafe fn local_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
+    unsafe fn attr_local_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
+    unsafe fn qualified_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
+    unsafe fn attr_qualified_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
+    unsafe fn pi_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
 
     /// The node's namespace URI, empty if it has none.
-    unsafe fn ns_uri<'a>(n: Self::Node, doc: Self::Doc) -> &'a [u8];
+    unsafe fn ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
 
     /// True when a strict unprefixed element name test must NOT match this
     /// node: XML calls any namespace foreign, HTML admits its own and none.
-    unsafe fn is_foreign_ns(n: Self::Node) -> bool;
+    unsafe fn is_foreign_ns(doc: Self::Doc, n: Self::Node) -> bool;
 
     /// Whether the node is in a namespace at all - `MKR_NODE_NS_ID(n) != 0`.
     /// Separate from `ns_uri` because HTML answers it without the document.
-    unsafe fn has_ns(n: Self::Node) -> bool;
+    unsafe fn has_ns(doc: Self::Doc, n: Self::Node) -> bool;
 
     /// Append the node's own text - the bytes it contributes to a string-value -
     /// to `buf`, returning an `mkr_status_t`.
@@ -128,7 +132,7 @@ pub unsafe trait Dom {
     /// shape both can satisfy - and it is what the C contract says
     /// (`MKR_NODE_APPEND_OWN_TEXT`, which is a statement, not an expression, for
     /// exactly this reason).
-    unsafe fn append_own_text(n: Self::Node, buf: *mut Buf) -> c_int;
+    unsafe fn append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int;
 
     /// The document-level element index's answer for a document-rooted,
     /// predicate-free descendant name test, or None when it cannot serve one.

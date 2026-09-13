@@ -1,12 +1,14 @@
-//! The `mkr_xml_*` C ABI: the node / document layouts, the status and type
-//! codes, and the borrowed-slice readers over them.
+//! The XML node model: the status and type codes, the index-based node and
+//! document layouts, and the handle types shared with the XPath backend and the
+//! Ruby glue.
 //!
-//! Separate from the engine because the XPath port's XML backend needs these
-//! layouts without needing the reader or the mutators - one definition, so the
-//! two cannot drift.
+//! The tree is an **index arena**: a [`Document`] owns a `Vec<Node>` and a byte
+//! store, a node reference is a [`NodeId`] (index plus generation), structural
+//! links are `Option<NodeId>`, and every name/value is an `(offset, len)` into
+//! the document's byte store. No raw pointer is part of the model, so the
+//! parser, mutators, index and XPath XML backend can all be ordinary safe Rust.
 
-/* The readers below all carry one precondition, stated on `bytes`: the (ptr,
- * len) pair names arena bytes that live as long as the document. */
+/* Boundary readers state their precondition once, on `bytes`. */
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_char;
@@ -64,8 +66,185 @@ pub const MAX_BYTES: usize = 256 * 1024 * 1024;
 pub const XML_NS_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
 pub const XMLNS_NS_URI: &[u8] = b"http://www.w3.org/2000/xmlns/";
 
+/// A byte span into a [`Document`]'s byte store. `off` 0 with `len` 0 is the
+/// always-valid empty slice; no span ever points outside the store.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Span {
+    pub off: u32,
+    pub len: u32,
+}
+
+impl Span {
+    /// A zero-length span at offset 0 (the empty string).
+    pub(crate) const EMPTY: Span = Span { off: 0, len: 0 };
+    /// The "field never set" marker. Distinct from an empty literal, which the
+    /// doctype's PUBLIC/SYSTEM identifiers need (`PUBLIC ""` is present, not
+    /// absent). Reading an `ABSENT` span yields the empty slice.
+    pub(crate) const ABSENT: Span = Span {
+        off: u32::MAX,
+        len: 0,
+    };
+    #[inline]
+    pub(crate) fn is_absent(self) -> bool {
+        self.off == u32::MAX
+    }
+    #[inline]
+    pub(crate) fn end(self) -> usize {
+        self.off as usize + self.len as usize
+    }
+}
+
+/// A handle to one node in a live [`Document`], packed into one word: the low
+/// 32 bits are the slot index, the high 32 the generation.
+///
+/// The one-word form is deliberate. The engine carries nodes through node-sets
+/// as opaque tokens it only compares and hashes, so a node id *is* that token:
+/// an `&[NodeId]` is layout-identical to the engine's `*mut c_void` buffer, and
+/// `to_token`/`from_token` cost nothing. This assumes a 64-bit target.
+///
+/// `generation` is the slot-reuse tag; it lets a stale handle be rejected in a
+/// single compare once slots are recycled. Slots are not recycled today (detach
+/// never destroys, so a removed node stays addressable for live Ruby wrappers),
+/// so it is always 0.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NodeId(usize);
+
+impl NodeId {
+    /// The absent handle. It packs to a NULL `*mut c_void` token, which is the
+    /// engine's "no node", so index 0 is reserved and never a real node.
+    pub const INVALID: NodeId = NodeId(0);
+
+    #[inline]
+    pub(crate) fn new(index: u32, generation: u32) -> Self {
+        NodeId(((generation as usize) << 32) | index as usize)
+    }
+    #[inline]
+    pub fn index(self) -> u32 {
+        self.0 as u32
+    }
+    #[inline]
+    pub fn generation(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+    #[inline]
+    pub fn is_invalid(self) -> bool {
+        self.index() == 0
+    }
+
+    /// The opaque token the engine carries in node-sets (identity here).
+    #[inline]
+    pub(crate) fn to_token(self) -> usize {
+        self.0
+    }
+    #[inline]
+    pub(crate) fn from_token(token: usize) -> Self {
+        NodeId(token)
+    }
+}
+
+/// One node in the document's slot array.
+///
+/// Links are `Option<NodeId>` and byte fields are spans, so a `Node` is plain
+/// data with no pointer to chase.
+pub struct Node {
+    pub type_: u32,
+    pub parent: Option<NodeId>,
+    pub first_child: Option<NodeId>,
+    pub last_child: Option<NodeId>,
+    pub prev: Option<NodeId>,
+    pub next: Option<NodeId>,
+    pub attrs: Option<NodeId>,
+    pub qname: Span,
+    pub local: Span,
+    pub prefix: Span,
+    pub ns_uri: Span,
+    pub value: Span,
+    pub line: u32,
+    pub col: u32,
+    pub flags: u32,
+    pub(crate) generation: u32,
+}
+
+impl Node {
+    pub(crate) fn zeroed(type_: u32, generation: u32) -> Self {
+        Node {
+            type_,
+            parent: None,
+            first_child: None,
+            last_child: None,
+            prev: None,
+            next: None,
+            attrs: None,
+            qname: Span::ABSENT,
+            local: Span::ABSENT,
+            prefix: Span::ABSENT,
+            ns_uri: Span::ABSENT,
+            value: Span::ABSENT,
+            line: 0,
+            col: 0,
+            flags: 0,
+            generation,
+        }
+    }
+}
+
+/// The per-document allocation limit.
+pub struct Limits {
+    pub max_bytes: usize,
+}
+
+/// An XML document and the arena that owns its nodes and bytes.
+///
+/// `nodes[i]` is the node whose `NodeId.index` is `i`; the byte store holds
+/// every name and value the nodes span. Keeping byte *offsets* rather than
+/// pointers means a growing `Vec` never invalidates a node.
+pub struct Document {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) bytes: Vec<u8>,
+    /// The reserved `xml:` / `xmlns:` URIs, stored once so bindings can name
+    /// them by span like any other URI.
+    pub(crate) xml_ns: Span,
+    pub(crate) xmlns_ns: Span,
+    /// Running total counted against `max_bytes` (nodes + bytes).
+    pub arena_bytes: usize,
+    pub max_bytes: usize,
+    pub max_nodes: usize,
+    pub oom: i32,
+    pub root: Option<NodeId>,
+    pub doc_node: NodeId,
+    pub doctype: Option<NodeId>,
+    /// Rust-owned cache; mutation drops it before changing links.
+    pub(crate) name_index: Option<Box<crate::xml::index::NameIndex>>,
+    pub has_encoding_decl: i32,
+}
+
+/// Historical name for [`Document`]; the Ruby glue and XPath backend refer to
+/// the document type by this.
+pub type Doc = Document;
+
+impl Document {
+    pub(crate) fn blank() -> Self {
+        Document {
+            nodes: Vec::new(),
+            bytes: Vec::new(),
+            xml_ns: Span::EMPTY,
+            xmlns_ns: Span::EMPTY,
+            arena_bytes: 0,
+            max_bytes: MAX_BYTES,
+            max_nodes: MAX_NODES,
+            oom: 0,
+            root: None,
+            doc_node: NodeId::INVALID,
+            doctype: None,
+            name_index: None,
+            has_encoding_decl: 0,
+        }
+    }
+}
+
 /// The C `""` sentinel: a valid, non-NULL, NUL-terminated empty string that a
-/// zero-length slice may point at (never read past, never freed).
+/// zero-length slice may point at (never read past, never freed). Retained for
+/// the handful of FFI out-parameters that still hand a `*const c_char` back.
 pub static EMPTY: [u8; 1] = [0];
 
 #[inline]
@@ -73,119 +252,13 @@ pub fn empty() -> *const c_char {
     EMPTY.as_ptr() as *const c_char
 }
 
-/// A node in Makiri's Rust-owned XML arena.
-pub struct Node {
-    pub type_: u32,
-    pub parent: *mut Node,
-    pub first_child: *mut Node,
-    pub last_child: *mut Node,
-    pub prev: *mut Node,
-    pub next: *mut Node,
-    pub attrs: *mut Node,
-    pub qname: *const c_char,
-    pub local: *const c_char,
-    pub prefix: *const c_char,
-    pub ns_uri: *const c_char,
-    pub value: *const c_char,
-    pub qname_len: u32,
-    pub local_len: u32,
-    pub prefix_len: u32,
-    pub ns_uri_len: u32,
-    pub value_len: u32,
-    pub line: u32,
-    pub col: u32,
-    pub flags: u32,
-}
-/// A qualified name carried by a node.
-#[derive(Clone, Copy)]
-pub struct QName {
-    pub qname: *const c_char,
-    pub qname_len: u32,
-    pub prefix: *const c_char,
-    pub prefix_len: u32,
-    pub local: *const c_char,
-    pub local_len: u32,
-}
-
-/// An arena chunk header; the payload follows it, aligned. Part of the document
-/// layout because `Doc.chunks` points at one - the arena owns the allocation.
-pub struct Chunk {
-    pub(crate) next: *mut Chunk,
-    pub(crate) used: usize,
-    pub(crate) cap: usize,
-}
-
-/// An XML document and its arena ownership state.
-pub struct Doc {
-    pub chunks: *mut Chunk,
-    pub arena_bytes: usize,
-    pub max_bytes: usize,
-    pub nodes: usize,
-    pub max_nodes: usize,
-    pub oom: i32,
-    pub root: *mut Node,
-    pub doc_node: *mut Node,
-    pub doctype: *mut Node,
-    /// Rust-owned cache. It borrows only arena nodes, so mutation drops it
-    /// before changing links; no raw `void *` ownership hand-off is needed.
-    pub(crate) name_index: Option<Box<crate::xml::index::NameIndex>>,
-    pub has_encoding_decl: i32,
-}
-/// The per-document allocation limit.
-pub struct Limits {
-    pub max_bytes: usize,
-}
-
-/// A bounded scratch buffer handed out by the arena.
-pub struct SpanBuf {
-    pub buf: *mut c_char,
-    pub cap: usize,
-    pub pos: usize,
-    pub ok: bool,
-}
-
 /// View a C (ptr,len) pair as a byte slice. NULL or len 0 is the empty slice,
-/// so a "" / NULL field never gets dereferenced. The lifetime is the caller's
-/// claim (arena-owned bytes live as long as the document).
+/// so a "" / NULL field never gets dereferenced.
 #[inline]
 pub unsafe fn bytes<'a>(p: *const c_char, len: u32) -> &'a [u8] {
     if p.is_null() || len == 0 {
         &[]
     } else {
         core::slice::from_raw_parts(p as *const u8, len as usize)
-    }
-}
-
-#[inline]
-pub unsafe fn node_qname<'a>(n: *const Node) -> &'a [u8] {
-    bytes((*n).qname, (*n).qname_len)
-}
-#[inline]
-pub unsafe fn node_local<'a>(n: *const Node) -> &'a [u8] {
-    bytes((*n).local, (*n).local_len)
-}
-#[inline]
-pub unsafe fn node_prefix<'a>(n: *const Node) -> &'a [u8] {
-    bytes((*n).prefix, (*n).prefix_len)
-}
-#[inline]
-pub unsafe fn node_ns<'a>(n: *const Node) -> &'a [u8] {
-    bytes((*n).ns_uri, (*n).ns_uri_len)
-}
-#[inline]
-pub unsafe fn node_value<'a>(n: *const Node) -> &'a [u8] {
-    bytes((*n).value, (*n).value_len)
-}
-
-/// The QName parts a built node carries (mkr_xml_qname_of).
-#[inline]
-pub unsafe fn qname_of(n: *const Node) -> QName {
-    QName {
-        qname: (*n).qname,
-        qname_len: (*n).qname_len,
-        prefix: (*n).prefix,
-        prefix_len: (*n).prefix_len,
-        local: (*n).local,
-        local_len: (*n).local_len,
     }
 }

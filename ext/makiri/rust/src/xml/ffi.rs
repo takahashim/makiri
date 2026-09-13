@@ -1,26 +1,22 @@
 //! Rust-internal `mkr_xml_*` adapters.
 //!
-//! The C-era names remain while the Ruby glue is ported, but no C caller
-//! remains. These functions consequently use Rust's ABI; they still turn raw
-//! `(ptr, len)` inputs into slices, call the engine and fill out-parameters.
+//! The C-era names remain for the glue, but no C caller remains and the node
+//! handle is now an index-arena [`NodeId`], so these are Rust functions. They
+//! turn raw `(ptr, len)` inputs into slices, call the engine, and fill
+//! out-parameters. This is the only place a raw document pointer is dereferenced
+//! for the XML tree.
 
-/* Every function here is a raw-pointer boundary. The former C declarations are
- * useful history, but Rust callers use these definitions directly. */
 #![allow(clippy::missing_safety_doc)]
-// These retain pointer-and-length entry shapes during the glue migration; a
-// small argument struct would obscure the actual raw-pointer boundary.
 #![allow(clippy::too_many_arguments)]
 
-use crate::xml::arena::{self, Arena};
-use crate::xml::chars::{self, ExpandMode};
+use crate::xml::chars;
 use crate::xml::index;
 use crate::xml::mutate;
 use crate::xml::qname;
-use crate::xml::raw::NodeRef;
 use crate::xml::tree;
 use crate::xml::{
-    bytes, empty, node_qname, Doc, Limits, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT,
-    MAX_BYTES, MUT_OK, OK, T_ATTRIBUTE,
+    bytes, empty, Document, Limits, NodeId, Span, ERR_INTERNAL, ERR_LIMIT, MAX_BYTES, MUT_OK, OK,
+    T_ATTRIBUTE,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -32,62 +28,80 @@ unsafe fn put<T>(p: *mut T, v: T) {
     }
 }
 
-/// Write a mutation result into an `out` node parameter: the node on success,
-/// NULL on failure (the C entry points' contract).
+/// Write a mutation result into an `out` handle: the node id on success, the
+/// invalid id on failure (the C entry points' contract).
 #[inline]
-unsafe fn put_node(out: *mut *mut Node, r: Result<NodeRef, i32>) -> i32 {
+unsafe fn put_node(out: *mut NodeId, r: Result<NodeId, i32>) -> i32 {
     match r {
         Ok(n) => {
-            put(out, n.as_ptr());
+            put(out, n);
             MUT_OK
         }
         Err(st) => {
-            put(out, ptr::null_mut());
+            put(out, NodeId::INVALID);
             st
         }
     }
 }
 
-/* ---- document / arena (mkr_xml_node.h) ---- */
-
-pub unsafe fn mkr_xml_doc_new() -> *mut Doc {
-    arena::doc_new()
+#[inline]
+unsafe fn doc_mut<'a>(doc: *mut Document) -> Option<&'a mut Document> {
+    doc.as_mut()
 }
 
-pub unsafe fn mkr_xml_doc_destroy(doc: *mut Doc) {
-    arena::doc_destroy(doc)
+#[inline]
+unsafe fn doc_ref<'a>(doc: *const Document) -> Option<&'a Document> {
+    doc.as_ref()
 }
 
-pub unsafe fn mkr_xml_doc_memsize(doc: *const Doc) -> usize {
-    arena::doc_memsize(doc)
-}
+/* ---- document / arena ---- */
 
-pub unsafe fn mkr_xml_arena_node(doc: *mut Doc, type_: u32) -> *mut Node {
-    arena::arena_node(doc, type_)
-}
-
-pub unsafe fn mkr_xml_arena_bytes(doc: *mut Doc, src: *const c_char, len: u32) -> *const c_char {
-    if len == 0 {
-        return empty();
+pub unsafe fn mkr_xml_doc_new() -> *mut Document {
+    match Document::create(None, 0) {
+        Ok(doc) => Box::into_raw(doc),
+        Err(_) => ptr::null_mut(),
     }
-    if src.is_null() {
-        return ptr::null();
-    }
-    arena::arena_bytes(doc, bytes(src, len))
 }
 
-pub unsafe fn mkr_xml_arena_spanbuf(doc: *mut Doc, cap: usize) -> SpanBuf {
-    arena::arena_spanbuf(doc, cap)
+pub unsafe fn mkr_xml_doc_destroy(doc: *mut Document) {
+    if !doc.is_null() {
+        drop(Box::from_raw(doc));
+    }
+}
+
+pub unsafe fn mkr_xml_doc_memsize(doc: *const Document) -> usize {
+    match doc_ref(doc) {
+        Some(d) => d.memsize(),
+        None => 0,
+    }
+}
+
+pub unsafe fn mkr_xml_arena_node(doc: *mut Document, type_: u32) -> NodeId {
+    match doc_mut(doc) {
+        Some(d) => d.new_node(type_).unwrap_or(NodeId::INVALID),
+        None => NodeId::INVALID,
+    }
+}
+
+pub unsafe fn mkr_xml_arena_bytes(doc: *mut Document, src: *const c_char, len: u32) -> Span {
+    match doc_mut(doc) {
+        Some(d) => d.store(bytes(src, len)).unwrap_or(Span::EMPTY),
+        None => Span::EMPTY,
+    }
 }
 
 pub unsafe fn mkr_xml_node_xmlns_decl(
-    a: *const Node,
+    doc: *const Document,
+    a: NodeId,
     prefix: *mut *const c_char,
     plen: *mut u32,
     uri: *mut *const c_char,
     ulen: *mut u32,
 ) -> i32 {
-    let qn = node_qname(a);
+    let Some(doc) = doc_ref(doc) else {
+        return 0;
+    };
+    let qn = doc.qname(a);
     let p = match qname::xmlns_prefix(qn) {
         Some(p) => p,
         None => return 0,
@@ -101,15 +115,16 @@ pub unsafe fn mkr_xml_node_xmlns_decl(
         },
     );
     put(plen, p.len() as u32);
+    let u = doc.value(a);
     put(
         uri,
-        if (*a).value.is_null() {
+        if u.is_empty() {
             empty()
         } else {
-            (*a).value
+            u.as_ptr() as *const c_char
         },
     );
-    put(ulen, (*a).value_len);
+    put(ulen, u.len() as u32);
     1
 }
 
@@ -136,63 +151,33 @@ pub unsafe fn mkr_xml_xmlns_prefix(
     }
 }
 
-pub unsafe fn mkr_xml_preorder_next(root: *const Node, cur: *mut Node) -> *mut Node {
-    arena::preorder_next(root, cur)
-}
-
-unsafe fn write_qname(name: *const c_char, len: u32, sp: &qname::Split, out: *mut QName) {
-    let base = name as *const u8;
-    *out = QName {
-        qname: name,
-        qname_len: len,
-        prefix: name,
-        prefix_len: sp.prefix_len,
-        local: base.add(sp.local_off as usize) as *const c_char,
-        local_len: sp.local_len,
-    };
-}
-
-pub unsafe fn mkr_xml_qname_split(name: *const c_char, len: u32, out: *mut QName) -> i32 {
-    match qname::split_checked(bytes(name, len)) {
-        Some(sp) => {
-            write_qname(name, len, &sp, out);
-            0
-        }
-        None => -1,
+pub unsafe fn mkr_xml_preorder_next(doc: *const Document, root: NodeId, cur: NodeId) -> NodeId {
+    match doc_ref(doc).and_then(|d| d.preorder_next(root, cur)) {
+        Some(n) => n,
+        None => NodeId::INVALID,
     }
 }
 
-pub unsafe fn mkr_xml_split_scanned_qname(name: *const c_char, len: u32, out: *mut QName) -> i32 {
-    match qname::split_scanned(bytes(name, len)) {
-        Some(sp) => {
-            write_qname(name, len, &sp, out);
-            0
-        }
-        None => -1,
-    }
-}
+/* ---- self-tests (Ruby-only: the harness calls them through `__c_selftest`) ---- */
 
-pub unsafe fn mkr_xml_qname_assign(doc: *mut Doc, node: *mut Node, qn: *const QName) -> i32 {
-    arena::qname_assign(doc, node, &*qn)
-}
-
-/* ---- self-tests ---- */
-
+#[cfg(feature = "ruby")]
 pub unsafe fn mkr_xml_node_selftest() -> i32 {
     crate::xml::selftest::node_selftest()
 }
 
+#[cfg(feature = "ruby")]
 pub unsafe fn mkr_xml_parse_selftest() -> i32 {
     crate::xml::selftest::parse_selftest()
 }
 
+#[cfg(feature = "ruby")]
 pub unsafe fn mkr_xml_mutate_selftest() -> i32 {
     crate::xml::selftest::mutate_selftest()
 }
 
-/* ---- parse (mkr_xml.h) ---- */
+/* ---- parse ---- */
 
-pub unsafe fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut i32) -> *mut Doc {
+pub unsafe fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut i32) -> *mut Document {
     mkr_xml_parse_ex(src, len, ptr::null(), status)
 }
 
@@ -201,19 +186,13 @@ pub unsafe fn mkr_xml_parse_ex(
     len: usize,
     limits: *const Limits,
     status: *mut i32,
-) -> *mut Doc {
-    let lim = if limits.is_null() {
-        None
-    } else {
-        Some((*limits).max_bytes)
-    };
+) -> *mut Document {
+    let lim = limits.as_ref().map(|l| l.max_bytes);
     let max = lim.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
     if len > max {
         put(status, ERR_LIMIT);
         return ptr::null_mut();
     }
-    // SAFETY: `len` was bounded before this conversion; the FFI caller owns
-    // the readable `(src, len)` range for this call.
     let src = if src.is_null() || len == 0 {
         &[]
     } else {
@@ -232,22 +211,20 @@ pub unsafe fn mkr_xml_parse_ex(
 }
 
 pub unsafe fn mkr_xml_parse_fragment(
-    doc: *mut Doc,
+    doc: *mut Document,
     src: *const c_char,
     len: usize,
     inherit_doc_ns: i32,
     status: *mut i32,
-) -> *mut Node {
-    let Some(doc) = doc.as_mut() else {
+) -> NodeId {
+    let Some(doc) = doc_mut(doc) else {
         put(status, ERR_INTERNAL);
-        return ptr::null_mut();
+        return NodeId::INVALID;
     };
     if len > doc.max_bytes {
         put(status, ERR_LIMIT);
-        return ptr::null_mut();
+        return NodeId::INVALID;
     }
-    // SAFETY: the live document remains exclusively borrowed for parsing, and
-    // the FFI caller owns the readable `(src, len)` range for this call.
     let src = if src.is_null() || len == 0 {
         &[]
     } else {
@@ -260,7 +237,7 @@ pub unsafe fn mkr_xml_parse_fragment(
         }
         Err(st) => {
             put(status, st);
-            ptr::null_mut()
+            NodeId::INVALID
         }
     }
 }
@@ -299,99 +276,54 @@ pub unsafe fn mkr_xml_is_reserved_pi_target(s: *const c_char, len: u32) -> i32 {
     chars::is_reserved_pi_target(bytes(s, len)) as i32
 }
 
-pub unsafe fn mkr_xml_expand(
-    doc: *mut Doc,
-    src: *const c_char,
-    len: u32,
-    mode: u32,
-    out_len: *mut u32,
-    status: *mut i32,
-) -> *const c_char {
-    if out_len.is_null() || status.is_null() {
-        return ptr::null();
-    }
-    if len == 0 {
-        *out_len = 0;
-        return empty();
-    }
-    if doc.is_null() || src.is_null() {
-        *status = ERR_INTERNAL;
-        return ptr::null();
-    }
-    let m = if mode == 0 {
-        ExpandMode::Text
-    } else {
-        ExpandMode::Attr
-    };
-    match arena::expand_arena(doc, bytes(src, len), m) {
-        Ok((p, n)) => {
-            *out_len = n;
-            p
-        }
-        Err(st) => {
-            *status = st;
-            ptr::null()
-        }
+/* ---- mutation (mkr_xml_mutate.h) ---- */
+
+pub unsafe fn mkr_xml_detach(doc: *mut Document, node: NodeId) {
+    if let (Some(doc), false) = (doc_mut(doc), node.is_invalid()) {
+        mutate::detach(doc, node);
     }
 }
 
-/* ---- mutation (mkr_xml_mutate.h) ----
- *
- * The thin adapters: turn raw `(ptr, len)` inputs into slices and non-null
- * `NodeRef`/`Arena` handles, call the safe mutators, and write the result back
- * to the out-parameter. This is the only place a mutation raw pointer crosses
- * into the mutation layer. */
-
-pub unsafe fn mkr_xml_detach(node: *mut Node) {
-    if let Some(node) = NodeRef::from_raw(node) {
-        mutate::detach(node);
-    }
-}
-
-pub unsafe fn mkr_xml_remove(doc: *mut Doc, node: *mut Node) {
-    if let (Some(doc), Some(node)) = (Arena::from_ptr(doc), NodeRef::from_raw(node)) {
+pub unsafe fn mkr_xml_remove(doc: *mut Document, node: NodeId) {
+    if let (Some(doc), false) = (doc_mut(doc), node.is_invalid()) {
         mutate::remove(doc, node);
     }
 }
 
 pub unsafe fn mkr_xml_replace_with_fragment(
-    doc: *mut Doc,
-    target: *mut Node,
-    frag: *mut Node,
+    doc: *mut Document,
+    target: NodeId,
+    frag: NodeId,
 ) -> i32 {
-    let (Some(doc), Some(target), Some(frag)) = (
-        Arena::from_ptr(doc),
-        NodeRef::from_raw(target),
-        NodeRef::from_raw(frag),
-    ) else {
+    let Some(doc) = doc_mut(doc) else {
         return ERR_INTERNAL;
     };
     mutate::replace_with_fragment(doc, target, frag)
 }
 
 pub unsafe fn mkr_xml_rename(
-    doc: *mut Doc,
-    node: *mut Node,
+    doc: *mut Document,
+    node: NodeId,
     name: *const c_char,
     nlen: u32,
 ) -> i32 {
-    let (Some(doc), Some(node)) = (Arena::from_ptr(doc), NodeRef::from_raw(node)) else {
-        return ERR_INTERNAL;
-    };
-    mutate::rename(doc, node, bytes(name, nlen))
+    match doc_mut(doc) {
+        Some(doc) => mutate::rename(doc, node, bytes(name, nlen)),
+        None => ERR_INTERNAL,
+    }
 }
 
 pub unsafe fn mkr_xml_set_attribute(
-    doc: *mut Doc,
-    el: *mut Node,
+    doc: *mut Document,
+    el: NodeId,
     name: *const c_char,
     nlen: u32,
     val: *const c_char,
     vlen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let (Some(doc), Some(el)) = (Arena::from_ptr(doc), NodeRef::from_raw(el)) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     put_node(
@@ -400,26 +332,31 @@ pub unsafe fn mkr_xml_set_attribute(
     )
 }
 
-pub unsafe fn mkr_xml_remove_attribute(el: *mut Node, name: *const c_char, nlen: u32) -> i32 {
-    match NodeRef::from_raw(el) {
-        Some(el) => mutate::remove_attribute(el, bytes(name, nlen)),
+pub unsafe fn mkr_xml_remove_attribute(
+    doc: *mut Document,
+    el: NodeId,
+    name: *const c_char,
+    nlen: u32,
+) -> i32 {
+    match doc_mut(doc) {
+        Some(doc) => mutate::remove_attribute(doc, el, bytes(name, nlen)),
         None => 0,
     }
 }
 
 pub unsafe fn mkr_xml_set_attribute_ns(
-    doc: *mut Doc,
-    el: *mut Node,
+    doc: *mut Document,
+    el: NodeId,
     ns: *const c_char,
     nslen: u32,
     name: *const c_char,
     nlen: u32,
     val: *const c_char,
     vlen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let (Some(doc), Some(el)) = (Arena::from_ptr(doc), NodeRef::from_raw(el)) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     put_node(
@@ -435,76 +372,84 @@ pub unsafe fn mkr_xml_set_attribute_ns(
 }
 
 pub unsafe fn mkr_xml_remove_attribute_ns(
-    el: *mut Node,
+    doc: *mut Document,
+    el: NodeId,
     ns: *const c_char,
     nslen: u32,
     local: *const c_char,
     llen: u32,
 ) -> i32 {
-    match NodeRef::from_raw(el) {
-        Some(el) => mutate::remove_attribute_ns(el, bytes(ns, nslen), bytes(local, llen)),
+    match doc_mut(doc) {
+        Some(doc) => mutate::remove_attribute_ns(doc, el, bytes(ns, nslen), bytes(local, llen)),
         None => 0,
     }
 }
 
 pub unsafe fn mkr_xml_set_content(
-    doc: *mut Doc,
-    node: *mut Node,
+    doc: *mut Document,
+    node: NodeId,
     text: *const c_char,
     tlen: u32,
 ) -> i32 {
-    let (Some(doc), Some(node)) = (Arena::from_ptr(doc), NodeRef::from_raw(node)) else {
-        return ERR_INTERNAL;
-    };
-    mutate::set_content(doc, node, bytes(text, tlen))
+    match doc_mut(doc) {
+        Some(doc) => mutate::set_content(doc, node, bytes(text, tlen)),
+        None => ERR_INTERNAL,
+    }
 }
 
 pub unsafe fn mkr_xml_new_element(
-    doc: *mut Doc,
+    doc: *mut Document,
     name: *const c_char,
     nlen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let Some(doc) = Arena::from_ptr(doc) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     put_node(out, mutate::new_element(doc, bytes(name, nlen)))
 }
 
 pub unsafe fn mkr_xml_new_loose_dom_element(
-    doc: *mut Doc,
-    qn: *const QName,
+    doc: *mut Document,
+    name: *const c_char,
+    nlen: u32,
+    prefix_len: u32,
+    local_off: u32,
+    local_len: u32,
     ns: *const c_char,
     nslen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let Some(doc) = Arena::from_ptr(doc) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
-    if qn.is_null() {
-        put(out, ptr::null_mut());
-        return ERR_INTERNAL;
-    }
     put_node(
         out,
-        mutate::new_loose_dom_element(doc, &*qn, bytes(ns, nslen)),
+        mutate::new_loose_dom_element(
+            doc,
+            bytes(name, nlen),
+            prefix_len,
+            local_off,
+            local_len,
+            bytes(ns, nslen),
+        ),
     )
 }
 
 pub unsafe fn mkr_xml_new_document_type(
-    doc: *mut Doc,
+    doc: *mut Document,
     name: *const c_char,
     nlen: u32,
     pub_id: *const c_char,
     plen: u32,
     sys_id: *const c_char,
     slen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let Some(doc) = Arena::from_ptr(doc) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     let p = if pub_id.is_null() {
@@ -521,14 +466,14 @@ pub unsafe fn mkr_xml_new_document_type(
 }
 
 pub unsafe fn mkr_xml_new_chardata(
-    doc: *mut Doc,
+    doc: *mut Document,
     type_: u8,
     text: *const c_char,
     tlen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let Some(doc) = Arena::from_ptr(doc) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     put_node(
@@ -538,15 +483,15 @@ pub unsafe fn mkr_xml_new_chardata(
 }
 
 pub unsafe fn mkr_xml_new_pi(
-    doc: *mut Doc,
+    doc: *mut Document,
     target: *const c_char,
     tlen: u32,
     data: *const c_char,
     dlen: u32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let Some(doc) = Arena::from_ptr(doc) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     put_node(
@@ -555,95 +500,85 @@ pub unsafe fn mkr_xml_new_pi(
     )
 }
 
-pub unsafe fn mkr_xml_import_subtree(doc: *mut Doc, src: *const Node, out: *mut *mut Node) -> i32 {
-    let (Some(doc), Some(src)) = (Arena::from_ptr(doc), NodeRef::from_raw(src.cast_mut())) else {
-        put(out, ptr::null_mut());
+pub unsafe fn mkr_xml_import_subtree(
+    doc: *mut Document,
+    src_doc: *const Document,
+    src: NodeId,
+    out: *mut NodeId,
+) -> i32 {
+    let (Some(doc), Some(src_doc)) = (doc_mut(doc), doc_ref(src_doc)) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
-    put_node(out, mutate::import_subtree(doc, src))
+    put_node(out, mutate::import_subtree(doc, src_doc, src))
 }
 
 pub unsafe fn mkr_xml_copy_node(
-    doc: *mut Doc,
-    src: *const Node,
+    doc: *mut Document,
+    src_doc: *const Document,
+    src: NodeId,
     deep: i32,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let (Some(doc), Some(src)) = (Arena::from_ptr(doc), NodeRef::from_raw(src.cast_mut())) else {
-        put(out, ptr::null_mut());
+    let (Some(doc), Some(src_doc)) = (doc_mut(doc), doc_ref(src_doc)) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
-    put_node(out, mutate::copy_node(doc, src, deep != 0))
+    put_node(out, mutate::copy_node_from(doc, src_doc, src, deep != 0))
 }
 
 pub unsafe fn mkr_xml_clone_node(
-    doc: *mut Doc,
-    src: *const Node,
+    doc: *mut Document,
+    src: NodeId,
     deep: bool,
-    out: *mut *mut Node,
+    out: *mut NodeId,
 ) -> i32 {
-    let (Some(doc), Some(src)) = (Arena::from_ptr(doc), NodeRef::from_raw(src.cast_mut())) else {
-        put(out, ptr::null_mut());
+    let Some(doc) = doc_mut(doc) else {
+        put(out, NodeId::INVALID);
         return ERR_INTERNAL;
     };
     put_node(out, mutate::clone_node(doc, src, deep))
 }
 
-pub unsafe fn mkr_xml_insert_child(doc: *mut Doc, parent: *mut Node, node: *mut Node) -> i32 {
-    let (Some(doc), Some(parent), Some(node)) = (
-        Arena::from_ptr(doc),
-        NodeRef::from_raw(parent),
-        NodeRef::from_raw(node),
-    ) else {
-        return ERR_INTERNAL;
-    };
-    mutate::insert_child(doc, parent, node)
+pub unsafe fn mkr_xml_insert_child(doc: *mut Document, parent: NodeId, node: NodeId) -> i32 {
+    match doc_mut(doc) {
+        Some(doc) => mutate::insert_child(doc, parent, node),
+        None => ERR_INTERNAL,
+    }
 }
 
-pub unsafe fn mkr_xml_insert_before(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
-    let (Some(doc), Some(r), Some(node)) = (
-        Arena::from_ptr(doc),
-        NodeRef::from_raw(r),
-        NodeRef::from_raw(node),
-    ) else {
-        return ERR_INTERNAL;
-    };
-    mutate::insert_before(doc, r, node)
+pub unsafe fn mkr_xml_insert_before(doc: *mut Document, r: NodeId, node: NodeId) -> i32 {
+    match doc_mut(doc) {
+        Some(doc) => mutate::insert_before(doc, r, node),
+        None => ERR_INTERNAL,
+    }
 }
 
-pub unsafe fn mkr_xml_insert_after(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
-    let (Some(doc), Some(r), Some(node)) = (
-        Arena::from_ptr(doc),
-        NodeRef::from_raw(r),
-        NodeRef::from_raw(node),
-    ) else {
-        return ERR_INTERNAL;
-    };
-    mutate::insert_after(doc, r, node)
+pub unsafe fn mkr_xml_insert_after(doc: *mut Document, r: NodeId, node: NodeId) -> i32 {
+    match doc_mut(doc) {
+        Some(doc) => mutate::insert_after(doc, r, node),
+        None => ERR_INTERNAL,
+    }
 }
 
-pub unsafe fn mkr_xml_replace_node(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
-    let (Some(doc), Some(r), Some(node)) = (
-        Arena::from_ptr(doc),
-        NodeRef::from_raw(r),
-        NodeRef::from_raw(node),
-    ) else {
-        return ERR_INTERNAL;
-    };
-    mutate::replace_node(doc, r, node)
+pub unsafe fn mkr_xml_replace_node(doc: *mut Document, r: NodeId, node: NodeId) -> i32 {
+    match doc_mut(doc) {
+        Some(doc) => mutate::replace_node(doc, r, node),
+        None => ERR_INTERNAL,
+    }
 }
 
 /* ---- element-name index (mkr_xml_index.h) ---- */
 
-pub unsafe fn mkr_xml_name_index_get(doc: *mut Doc) -> *mut index::NameIndex {
-    match doc.as_mut().and_then(index::get) {
+pub unsafe fn mkr_xml_name_index_get(doc: *mut Document) -> *mut index::NameIndex {
+    match doc_mut(doc).and_then(index::get) {
         Some(idx) => idx as *mut index::NameIndex,
         None => ptr::null_mut(),
     }
 }
 
-pub unsafe fn mkr_xml_name_index_invalidate(doc: *mut Doc) {
-    if let Some(doc) = doc.as_mut() {
+pub unsafe fn mkr_xml_name_index_invalidate(doc: *mut Document) {
+    if let Some(doc) = doc_mut(doc) {
         index::invalidate(doc);
     }
 }
@@ -655,16 +590,13 @@ pub unsafe fn mkr_xml_name_index_lookup(
     ns_uri: *const c_char,
     ns_uri_len: usize,
     out_count: *mut usize,
-) -> *const *mut Node {
+) -> *const *mut core::ffi::c_void {
     if !out_count.is_null() {
         *out_count = 0;
     }
     let Some(idx) = idx.cast_mut().as_mut() else {
         return ptr::null();
     };
-    // SAFETY: this is the pointer-and-length FFI boundary.  Unlike `bytes`,
-    // these lengths are `usize`, so retain their full range rather than
-    // narrowing them to the XML layout's `u32` fields.
     let local = if local.is_null() || local_len == 0 {
         &[]
     } else {
@@ -679,11 +611,10 @@ pub unsafe fn mkr_xml_name_index_lookup(
     if !out_count.is_null() {
         *out_count = nodes.len();
     }
-    // SAFETY: `NodeRef` is `repr(transparent)` over `*mut Node`, so the bucket
-    // slice's storage is exactly the engine's `*mut Node` array. The borrow
-    // lives until the next mutation invalidates the index, which is the
-    // contract the XPath callback relies on.
-    nodes.as_ptr() as *const *mut Node
+    // SAFETY: `NodeId` is one word and is exactly the opaque token the engine
+    // carries, so the bucket slice is layout-identical to the engine's handle
+    // buffer. The borrow lives until the next mutation invalidates the index.
+    nodes.as_ptr() as *const *mut core::ffi::c_void
 }
 
 /* keep the attribute-type constant referenced so the import list mirrors the

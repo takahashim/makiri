@@ -33,6 +33,7 @@ unsafe fn apply_predicates<D: Dom>(
     inout: &mut Set,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     for &pred in preds {
         let mut kept = Set::new();
@@ -48,7 +49,7 @@ unsafe fn apply_predicates<D: Dom>(
                     return false;
                 }
                 let n = inout.get::<D>(i);
-                if attr_pred_matches::<D>(&ap, n) && !kept.push::<D>(n, limits, err) {
+                if attr_pred_matches::<D>(doc, &ap, n) && !kept.push::<D>(n, limits, err) {
                     return false;
                 }
             }
@@ -92,6 +93,7 @@ unsafe fn eval_step<D: Dom>(
     out: &mut Set,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let axis = (*step).axis;
     if !axis_is_implemented(axis) {
         err_setf!(
@@ -148,7 +150,7 @@ unsafe fn eval_step<D: Dom>(
 
     let preds = step_preds(step);
     if preds.is_empty() {
-        match try_descendant_index::<D>(step, context_set, &mut result, &b, err) {
+        match try_descendant_index::<D>(doc, step, context_set, &mut result, &b, err) {
             Err(()) => return false,
             Ok(true) => {}
             Ok(false) => {
@@ -169,7 +171,7 @@ unsafe fn eval_step<D: Dom>(
                             aborted = true;
                             return true;
                         }
-                        if node_principal_match::<D>(test, n, axis, &b)
+                        if node_principal_match::<D>(doc, test, n, axis, &b)
                             && !result.push::<D>(n, limits, err)
                         {
                             aborted = true;
@@ -177,7 +179,7 @@ unsafe fn eval_step<D: Dom>(
                         }
                         false
                     };
-                    walk_axis::<D, _>(axis, context_set.get::<D>(ci), &mut visit);
+                    walk_axis::<D, _>(doc, axis, context_set.get::<D>(ci), &mut visit);
                     if aborted {
                         return false;
                     }
@@ -200,7 +202,7 @@ unsafe fn eval_step<D: Dom>(
                         aborted = true;
                         return true;
                     }
-                    if node_principal_match::<D>(test, n, axis, &b)
+                    if node_principal_match::<D>(doc, test, n, axis, &b)
                         && !frag.push::<D>(n, limits, err)
                     {
                         aborted = true;
@@ -208,7 +210,7 @@ unsafe fn eval_step<D: Dom>(
                     }
                     false
                 };
-                walk_axis::<D, _>(axis, context_set.get::<D>(ci), &mut visit);
+                walk_axis::<D, _>(doc, axis, context_set.get::<D>(ci), &mut visit);
             }
             if aborted {
                 return false;
@@ -281,6 +283,7 @@ unsafe fn compare_eq<D: Dom>(
     op: u32,
     err: *mut Error,
 ) -> Option<bool> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     let want_eq = op == OP_EQ;
     let (lt, rt) = ((*l).type_, (*r).type_);
@@ -327,7 +330,7 @@ unsafe fn compare_eq<D: Dom>(
             }
             _ => {
                 let mut target = Text::new();
-                if !val_to_owned_text_or_fail::<D>(sc, limits, err, target.as_mut()) {
+                if !val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut()) {
                     return None;
                 }
                 let want = target.as_slice();
@@ -349,13 +352,13 @@ unsafe fn compare_eq<D: Dom>(
     } else if lt == T_NUMBER || rt == T_NUMBER {
         /* Both operands are non-node-sets here, so the unchecked coercion is the
          * right entry - it cannot allocate. */
-        let eq = val_to_number_unchecked::<D>(l) == val_to_number_unchecked::<D>(r);
+        let eq = val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r);
         Some(if want_eq { eq } else { !eq })
     } else {
         let mut ls = Text::new();
         let mut rs = Text::new();
-        if !val_to_owned_text_or_fail::<D>(l, limits, err, ls.as_mut())
-            || !val_to_owned_text_or_fail::<D>(r, limits, err, rs.as_mut())
+        if !val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut())
+            || !val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut())
         {
             return None;
         }
@@ -384,6 +387,7 @@ unsafe fn compare_rel<D: Dom>(
     op: u32,
     err: *mut Error,
 ) -> Option<bool> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     let (lt, rt) = ((*l).type_, (*r).type_);
 
@@ -407,7 +411,7 @@ unsafe fn compare_rel<D: Dom>(
         let (ns, sc) = if lt == T_NODESET { (l, r) } else { (r, l) };
         let swap = lt != T_NODESET;
         let mut scn = 0.0;
-        if !val_to_number_or_fail::<D>(sc, limits, err, &mut scn) {
+        if !val_to_number_or_fail::<D>(doc, sc, limits, err, &mut scn) {
             return None;
         }
         let set = &raw const (*ns).u.nodeset;
@@ -424,8 +428,8 @@ unsafe fn compare_rel<D: Dom>(
         return Some(false);
     }
     let (mut a, mut b) = (0.0, 0.0);
-    if !val_to_number_or_fail::<D>(l, limits, err, &mut a)
-        || !val_to_number_or_fail::<D>(r, limits, err, &mut b)
+    if !val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)
+        || !val_to_number_or_fail::<D>(doc, r, limits, err, &mut b)
     {
         return None;
     }
@@ -515,14 +519,14 @@ unsafe fn first_recognise(ast: *const Node) -> Option<*const Step> {
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
-unsafe fn first_node_ok<D: Dom>(step: *const Step, n: D::Node) -> bool {
+unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: *const Step, n: D::Node) -> bool {
     for &p in step_preds(step) {
         /* The recogniser already confirmed the shape. */
         let ap = match match_attr_pred(p) {
             Some(ap) => ap,
             None => return false,
         };
-        if !attr_pred_matches::<D>(&ap, n) {
+        if !attr_pred_matches::<D>(doc, &ap, n) {
             return false;
         }
     }
@@ -543,6 +547,7 @@ pub unsafe fn try_first_match<D: Dom>(
     ast: *const Node,
     err: *mut Error,
 ) -> Result<Option<D::Node>, ()> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let step = match first_recognise(ast) {
         Some(s) => s,
         None => return Ok(None),
@@ -570,7 +575,7 @@ pub unsafe fn try_first_match<D: Dom>(
     };
 
     let start: D::Node = if (*ast).u.path.absolute != 0 {
-        D::from_void(mkr_ctx_document(ctx))
+        D::document_node(D::doc_from_void(mkr_ctx_document(ctx)))
     } else {
         D::from_void(mkr_ctx_node(ctx))
     };
@@ -580,25 +585,27 @@ pub unsafe fn try_first_match<D: Dom>(
 
     let limits = mkr_ctx_limits(ctx);
     let b = Bindings::<D>::new(ctx, pre);
-    let mut n = D::first_child(start);
+    let mut n = D::first_child(doc, start);
     while !D::is_null(n) {
         if mkr_limit_eval_op(limits, err) != 0 {
             return Err(());
         }
-        if node_principal_match::<D>(test, n, (*step).axis, &b) && first_node_ok::<D>(step, n) {
+        if node_principal_match::<D>(doc, test, n, (*step).axis, &b)
+            && first_node_ok::<D>(doc, step, n)
+        {
             return Ok(Some(n));
         }
-        if !D::is_null(D::first_child(n)) {
-            n = D::first_child(n);
+        if !D::is_null(D::first_child(doc, n)) {
+            n = D::first_child(doc, n);
             continue;
         }
-        while n != start && D::is_null(D::next(n)) {
-            n = D::parent(n);
+        while n != start && D::is_null(D::next(doc, n)) {
+            n = D::parent(doc, n);
         }
         if n == start {
             break;
         }
-        n = D::next(n);
+        n = D::next(doc, n);
     }
     Ok(Some(D::null()))
 }
@@ -615,12 +622,13 @@ unsafe fn eval_path<D: Dom>(
     let limits = mkr_ctx_limits(ctx);
     let mut seed = Set::new();
     if (*n).u.path.absolute != 0 {
-        let root = mkr_ctx_document(ctx);
-        if root.is_null() {
+        let root_h = mkr_ctx_document(ctx);
+        if root_h.is_null() {
             err_setf!(err, XP_ERR_RUNTIME, "absolute path with no document");
             return false;
         }
-        if !seed.push::<D>(D::from_void(root), limits, err) {
+        let root = D::document_node(D::doc_from_void(root_h));
+        if !seed.push::<D>(root, limits, err) {
             return false;
         }
     } else if !seed.push::<D>(self_node, limits, err) {
@@ -803,6 +811,7 @@ unsafe fn eval_binop<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let b = &raw const (*n).u.binop;
     let op = (*b).op;
     let limits = mkr_ctx_limits(ctx);
@@ -852,8 +861,8 @@ unsafe fn eval_binop<D: Dom>(
         },
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MOD => {
             let (mut a, mut c) = (0.0, 0.0);
-            if !val_to_number_or_fail::<D>(lp, limits, err, &mut a)
-                || !val_to_number_or_fail::<D>(rp, limits, err, &mut c)
+            if !val_to_number_or_fail::<D>(doc, lp, limits, err, &mut a)
+                || !val_to_number_or_fail::<D>(doc, rp, limits, err, &mut c)
             {
                 return false;
             }
@@ -905,6 +914,7 @@ unsafe fn eval_node_inner<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
 
     /* Hoisting: a context-independent subtree already computed in this evaluate
@@ -990,7 +1000,7 @@ unsafe fn eval_node_inner<D: Dom>(
                 false
             } else {
                 let mut d = 0.0;
-                if val_to_number_or_fail::<D>(v.as_ptr(), limits, err, &mut d) {
+                if val_to_number_or_fail::<D>(doc, v.as_ptr(), limits, err, &mut d) {
                     *out = val_number(-d);
                     true
                 } else {

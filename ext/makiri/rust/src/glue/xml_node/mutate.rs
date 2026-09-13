@@ -26,10 +26,6 @@ use crate::glue::abi::{mkr_cNode, mkr_doc_parsed, mkr_html_node_unwrap, mkr_pars
 /// `mkr_xml_mut_status_t`.
 type MutStatus = core::ffi::c_int;
 
-/// A qualified name already split into its parts. Declared twice while C
-/// held it; the fields matched, but nothing checked that.
-use crate::xml::abi::QName;
-
 /// `mkr_node_kind_t`.
 const KIND_HTML: core::ffi::c_int = 1;
 const KIND_XML: core::ffi::c_int = 2;
@@ -153,7 +149,7 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 /// it, the same contract HTML nodes have. It is also the single mutation choke
 /// point: every mutator comes through here, and here is where the cached
 /// element-name index is dropped so the next query rebuilds it.
-unsafe fn unwrap_mutable(rb_self: Value) -> *mut Node {
+unsafe fn unwrap_mutable(rb_self: Value) -> NodeId {
     rb_sys::rb_check_frozen(rb_self.as_raw());
     mkr_xml_name_index_invalidate(xdoc(rb_self));
     unwrap(rb_self)
@@ -210,9 +206,9 @@ pub fn remove(rb_self: Value) -> Result<Value, Error> {
 }
 
 /// The element behind `rb_self`, or an error naming what was attempted.
-unsafe fn element_for(rb_self: Value) -> Result<*mut Node, Error> {
+unsafe fn element_for(rb_self: Value) -> Result<NodeId, Error> {
     let n = unwrap_mutable(rb_self);
-    if (*n).type_ != T_ELEMENT {
+    if (*xdoc(rb_self)).type_(n) != T_ELEMENT {
         return Err(Error::new(
             error_class(),
             "cannot set an attribute on a non-element node",
@@ -287,12 +283,12 @@ pub fn remove_attribute_ns(
 ) -> Result<Value, Error> {
     unsafe {
         let n = unwrap_mutable(rb_self);
-        if (*n).type_ != T_ELEMENT {
+        if (*xdoc(rb_self)).type_(n) != T_ELEMENT {
             return Ok(rb_self);
         }
         let (lv, ll) = verified(ruby, local, c"attribute local name")?;
         let (nv, nl) = verified_opt(ruby, ns, c"namespace")?;
-        mkr_xml_remove_attribute_ns(n, nv.ptr, nl, lv.ptr, ll);
+        mkr_xml_remove_attribute_ns(xdoc(rb_self), n, nv.ptr, nl, lv.ptr, ll);
         core::hint::black_box((local, ns));
         Ok(rb_self)
     }
@@ -302,11 +298,11 @@ pub fn remove_attribute_ns(
 pub fn delete(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> {
     unsafe {
         let n = unwrap_mutable(rb_self);
-        if (*n).type_ != T_ELEMENT {
+        if (*xdoc(rb_self)).type_(n) != T_ELEMENT {
             return Ok(rb_self);
         }
         let (nv, nl) = verified(ruby, name, c"attribute name")?;
-        mkr_xml_remove_attribute(n, nv.ptr, nl);
+        mkr_xml_remove_attribute(xdoc(rb_self), n, nv.ptr, nl);
         core::hint::black_box(name);
         Ok(rb_self)
     }
@@ -364,7 +360,7 @@ unsafe fn incoming_node(
     xd: *mut XmlDoc,
     target_doc: Value,
     arg: Value,
-) -> Result<(*mut Node, Value), Error> {
+) -> Result<(NodeId, Value), Error> {
     if !is_a(arg, mkr_cNode) || !is_a(node_document(arg), mkr_cXmlDocument) {
         return Err(Error::new(
             ruby.exception_type_error(),
@@ -375,8 +371,9 @@ unsafe fn incoming_node(
     if node_document(arg).as_raw() == target_doc.as_raw() {
         return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
     }
-    let mut copy: *mut Node = core::ptr::null_mut();
-    mkr_xml_mut_check(mkr_xml_import_subtree(xd, src, &mut copy));
+    let mut copy: NodeId = NodeId::INVALID;
+    let src_doc = xdoc(arg);
+    mkr_xml_mut_check(mkr_xml_import_subtree(xd, src_doc, src, &mut copy));
     Ok((copy, arg))
 }
 
@@ -391,9 +388,9 @@ unsafe fn adopt_finish(arg: Value) {
     }
     let src = unwrap(arg);
     let sdoc = xdoc(arg);
-    if (*src).type_ == T_FRAGMENT {
-        while !(*src).first_child.is_null() {
-            mkr_xml_remove(sdoc, (*src).first_child);
+    if (*sdoc).type_(src) == T_FRAGMENT {
+        while let Some(c) = (*sdoc).first_child(src) {
+            mkr_xml_remove(sdoc, c);
         }
     } else {
         mkr_xml_remove(sdoc, src);
@@ -408,8 +405,8 @@ unsafe fn adopt_finish(arg: Value) {
 /// insertion point advances so the children keep their order.
 unsafe fn splice_fragment(
     xd: *mut XmlDoc,
-    target: *mut Node,
-    frag: *mut Node,
+    target: NodeId,
+    frag: NodeId,
     doc_v: Value,
     op: Op,
 ) -> Value {
@@ -421,8 +418,8 @@ unsafe fn splice_fragment(
         return wrap(frag, doc_v);
     }
     let mut r = target; /* the moving insertion point, for AFTER */
-    while !(*frag).first_child.is_null() {
-        let c = (*frag).first_child; /* each insert detaches c from frag */
+    while let Some(c) = (*xd).first_child(frag) {
+        /* each insert detaches c from frag */
         let st = match op {
             Op::Child => mkr_xml_insert_child(xd, target, c),
             Op::After => {
@@ -444,7 +441,7 @@ fn insert(ruby: &Ruby, rb_self: Value, arg: Value, op: Op) -> Result<Value, Erro
         let xd = xdoc(rb_self);
         let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;
 
-        if (*node).type_ == T_FRAGMENT {
+        if (*xd).type_(node) == T_FRAGMENT {
             let out = splice_fragment(xd, target, node, doc_v, op);
             adopt_finish(adopt_from);
             return Ok(out);
@@ -488,7 +485,7 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
     unsafe {
-        let mut out: *mut Node = core::ptr::null_mut();
+        let mut out: NodeId = NodeId::INVALID;
         mkr_xml_mut_check(mkr_xml_clone_node(
             xdoc(rb_self),
             unwrap(rb_self),
@@ -534,7 +531,7 @@ unsafe fn dom_name_consistency(
     pv: BorrowedText,
     has_prefix: bool,
     lv: BorrowedText,
-) -> Result<QName, Error> {
+) -> Result<(u32, u32, u32), Error> {
     let (q, p, l) = (qv.bytes(), pv.bytes(), lv.bytes());
     let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());
 
@@ -547,14 +544,7 @@ unsafe fn dom_name_consistency(
                 "qualified name must equal local name when prefix is nil",
             ));
         }
-        return Ok(QName {
-            qname: qv.ptr,
-            qname_len: q.len() as u32,
-            prefix: qv.ptr,
-            prefix_len: 0,
-            local: qv.ptr,
-            local_len: q.len() as u32,
-        });
+        return Ok((0, 0, q.len() as u32));
     }
 
     if !dom_prefix_ok(p) {
@@ -567,14 +557,7 @@ unsafe fn dom_name_consistency(
     {
         return Err(arg_err("qualified name must be prefix + ':' + local name"));
     }
-    Ok(QName {
-        qname: qv.ptr,
-        qname_len: q.len() as u32,
-        prefix: qv.ptr,
-        prefix_len: p.len() as u32,
-        local: qv.ptr.add(p.len() + 1),
-        local_len: l.len() as u32,
-    })
+    Ok((p.len() as u32, (p.len() + 1) as u32, l.len() as u32))
 }
 
 /// `create_element(name, content = nil, attributes = {})` -> Element.
@@ -597,7 +580,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     unsafe {
         let xd = xdoc(rb_self);
         let (nv, nl) = verified(ruby, name, c"element name")?;
-        let mut el: *mut Node = core::ptr::null_mut();
+        let mut el: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_element(xd, nv.ptr, nl, &mut el);
         core::hint::black_box(name);
         mkr_xml_mut_check(st);
@@ -646,9 +629,19 @@ pub fn create_loose_dom_element(
         let (pv, _) = verified_opt(ruby, prefix, c"prefix")?;
         let (nv, nl) = verified_opt(ruby, ns, c"namespace URI")?;
 
-        let qn = dom_name_consistency(ruby, qv, pv, has_prefix, lv)?;
-        let mut el: *mut Node = core::ptr::null_mut();
-        let st = mkr_xml_new_loose_dom_element(xd, &qn as *const _, nv.ptr, nl, &mut el);
+        let (plen, loff, llen) = dom_name_consistency(ruby, qv, pv, has_prefix, lv)?;
+        let mut el: NodeId = NodeId::INVALID;
+        let st = mkr_xml_new_loose_dom_element(
+            xd,
+            qv.bytes().as_ptr() as *const core::ffi::c_char,
+            qv.len as u32,
+            plen,
+            loff,
+            llen,
+            nv.ptr,
+            nl,
+            &mut el,
+        );
         core::hint::black_box((qname, local, prefix, ns));
         mkr_xml_mut_check(st);
         Ok(wrap(el, rb_self))
@@ -679,7 +672,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let pub_ptr = if pl != 0 { pv.ptr } else { core::ptr::null() };
         let sys_ptr = if sl != 0 { sv.ptr } else { core::ptr::null() };
 
-        let mut dt: *mut Node = core::ptr::null_mut();
+        let mut dt: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_document_type(xd, nv.ptr, nl, pub_ptr, pl, sys_ptr, sl, &mut dt);
         core::hint::black_box((name, pub_v, sys_v));
         mkr_xml_mut_check(st);
@@ -697,7 +690,7 @@ unsafe fn create_chardata(
 ) -> Result<Value, Error> {
     let xd = xdoc(rb_self);
     let (tv, tl) = verified(ruby, text, what)?;
-    let mut n: *mut Node = core::ptr::null_mut();
+    let mut n: NodeId = NodeId::INVALID;
     let st = mkr_xml_new_chardata(xd, type_ as u8, tv.ptr, tl, &mut n);
     core::hint::black_box(text);
     mkr_xml_mut_check(st);
@@ -719,7 +712,7 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
         let xd = xdoc(rb_self);
         let (tg, tl) = verified(ruby, target, c"PI target")?;
         let (dt, dl) = verified(ruby, data, c"PI data")?;
-        let mut pi: *mut Node = core::ptr::null_mut();
+        let mut pi: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_pi(xd, tg.ptr, tl, dt.ptr, dl, &mut pi);
         core::hint::black_box((target, data));
         mkr_xml_mut_check(st);
@@ -740,9 +733,18 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
 
     unsafe {
         let xd = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())) as *mut XmlDoc;
-        let mut copy: *mut Node = core::ptr::null_mut();
+        let mut copy: NodeId = NodeId::INVALID;
         match mkr_node_kind(node_v.as_raw()) {
-            KIND_XML => mkr_xml_mut_check(mkr_xml_copy_node(xd, unwrap(node_v), deep, &mut copy)),
+            KIND_XML => {
+                let src_doc = xdoc(node_v);
+                mkr_xml_mut_check(mkr_xml_copy_node(
+                    xd,
+                    src_doc,
+                    unwrap(node_v),
+                    deep,
+                    &mut copy,
+                ))
+            }
             KIND_HTML => mkr_xml_mut_check(mkr_cross_html_to_xml(
                 xd,
                 mkr_html_node_unwrap(node_v.as_raw()) as *mut _,

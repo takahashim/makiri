@@ -74,13 +74,13 @@ pub unsafe fn match_attr_pred<'a>(p: *const Node) -> Option<AttrPred<'a>> {
 /// XPath 1.0, from Nokogiri::HTML5, and from Makiri's own attribute-axis name
 /// test, which compares the qualified name byte for byte. The fast path handles
 /// unprefixed names only, matching that comparison.
-unsafe fn attr_by_qualified_name<D: Dom>(el: D::Node, name: &[u8]) -> D::Node {
-    let mut a = D::first_attr(el);
+unsafe fn attr_by_qualified_name<D: Dom>(doc: D::Doc, el: D::Node, name: &[u8]) -> D::Node {
+    let mut a = D::first_attr(doc, el);
     while !D::is_null(a) {
-        if D::attr_qualified_name(a) == name {
+        if D::attr_qualified_name(doc, a) == name {
             return a;
         }
-        a = D::attr_next(a);
+        a = D::attr_next(doc, a);
     }
     D::null()
 }
@@ -92,16 +92,16 @@ unsafe fn attr_by_qualified_name<D: Dom>(el: D::Node, name: &[u8]) -> D::Node {
 /// # Safety
 /// `n` must be a live handle of the document being evaluated, and `ap` must
 /// still borrow the AST it came from.
-pub unsafe fn attr_pred_matches<D: Dom>(ap: &AttrPred, n: D::Node) -> bool {
-    if D::node_type(n) != NTYPE_ELEMENT {
+pub unsafe fn attr_pred_matches<D: Dom>(doc: D::Doc, ap: &AttrPred, n: D::Node) -> bool {
+    if D::node_type(doc, n) != NTYPE_ELEMENT {
         return false;
     }
-    let a = attr_by_qualified_name::<D>(n, ap.name);
+    let a = attr_by_qualified_name::<D>(doc, n, ap.name);
     if D::is_null(a) {
         return false;
     }
     match ap.value {
         None => true,
-        Some(want) => D::attr_value(a) == want,
+        Some(want) => D::attr_value(doc, a) == want,
     }
 }

@@ -385,9 +385,15 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
          * detached lxb subtree owned by this document. */
         if mkr_node_kind(node_v.as_raw()) == MKR_NODE_KIND_XML {
             let mut imp: *mut LxbNode = core::ptr::null_mut();
+            let xdoc = crate::glue::xml_node::mkr_doc_of(
+                crate::glue::xml_node::mkr_xml_node_document(node_v.as_raw()),
+            );
+            let src =
+                crate::xml::abi::NodeId::from_token(mkr_xml_node_unwrap(node_v.as_raw()) as usize);
             mkr_xml_mut_check(mkr_cross_xml_to_html(
                 doc,
-                mkr_xml_node_unwrap(node_v.as_raw()) as *const _,
+                xdoc,
+                src,
                 i32::from(deep),
                 &mut imp,
             ));

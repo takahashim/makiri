@@ -141,7 +141,7 @@ pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
             return if xdoc.is_null() {
                 core::ptr::null_mut()
             } else {
-                (*xdoc).doc_node as *mut c_void
+                (*xdoc).doc_node().to_token() as *mut c_void
             };
         }
         return super::abi::mkr_html_doc_unwrap(rb_node) as *mut c_void;

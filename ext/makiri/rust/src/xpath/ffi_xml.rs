@@ -48,7 +48,7 @@ pub unsafe fn mkr_try_first_match_xml(
     match eval::try_first_match::<Xml>(ctx, ast, err) {
         Ok(None) => 0,
         Ok(Some(n)) => {
-            *out_node = n as *mut c_void;
+            *out_node = n.to_token() as *mut c_void;
             1
         }
         Err(()) => -1,

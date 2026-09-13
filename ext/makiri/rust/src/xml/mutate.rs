@@ -1,92 +1,58 @@
 //! Mutation primitives (mkr_xml_mutate.c). Every primitive validates and
 //! allocates BEFORE changing any link, so a failure leaves the tree untouched.
 //!
-//! This module composes the raw pointer-linking in [`crate::xml::raw`] and the
-//! arena allocation in [`crate::xml::arena`]; it holds no raw-pointer
-//! dereference of its own and is therefore ordinary Rust under
-//! `#![forbid(unsafe_code)]`. `ffi.rs` is the only place a raw `*mut Node`
-//! becomes a [`NodeRef`].
-//!
-//! Invariants the API carries:
-//!
-//! - a [`NodeRef`] is non-NULL and named by a live document arena;
-//! - insertion only ever links nodes owned by the target document (the caller
-//!   passes the arena, and factories allocate from it);
-//! - self-cycles and document/attribute placement are rejected by
-//!   `prepare_insert`, so a rejected move changes nothing;
-//! - allocation precedes relinking, so an OOM leaves the tree as it was.
+//! The tree is an index arena, so this module is ordinary safe Rust under
+//! `#![forbid(unsafe_code)]`: nodes are [`NodeId`] values, structure lives in
+//! the [`Document`], and names/values are spans into its byte store.
 
 #![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;
-use crate::xml::arena::Arena;
 use crate::xml::chars::validate_chars;
-use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix};
-use crate::xml::raw::{self, NodeRef};
+use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix, Split};
 use crate::xml::{
-    empty, qname_from, QName, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME,
+    Document, NodeId, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME,
     MUT_BAD_NS_DECL, MUT_CYCLE, MUT_HIERARCHY, MUT_OK, MUT_OOM, MUT_TYPE, MUT_UNBOUND_NS,
-    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT, XMLNS_NS_URI,
-    XML_NS_URI,
+    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT,
 };
 
-// The former raw-pointer helper set (document metadata, namespace resolution,
-// subtree walking, and child-count bookkeeping) lives in this module as
-// ordinary `NodeRef` code.  Keep those helpers here: `raw.rs` should contain
-// only the small unsafe-backed accessors and link primitives, while all
-// mutation policy remains in this safe module.
-use core::ffi::c_char;
-use core::ptr;
+/// A resolved namespace: a byte-store span (empty = no namespace).
+type Ns = Span;
 
-type Ns = (*const c_char, u32);
+const NO_NS: Ns = Span::EMPTY;
 
-const NO_NS: Ns = (ptr::null(), 0);
-
-#[inline]
-fn xml_ns() -> Ns {
-    (
-        XML_NS_URI.as_ptr() as *const c_char,
-        XML_NS_URI.len() as u32,
-    )
-}
-#[inline]
-fn xmlns_ns() -> Ns {
-    (
-        XMLNS_NS_URI.as_ptr() as *const c_char,
-        XMLNS_NS_URI.len() as u32,
-    )
-}
-
-/// Resolve `qn` applied at `scope` (mirrors the parser's §7 rules). An unbound
-/// prefix is an error only when connected; deferred (unresolved) otherwise.
+/// Resolve `name` (split per `sp`) applied at `scope` (mirrors the parser's §7
+/// rules). An unbound prefix is an error only when connected; deferred
+/// (unresolved) otherwise.
 fn resolve_ns(
-    scope: Option<NodeRef>,
-    qn: &QName,
+    doc: &Document,
+    scope: Option<NodeId>,
+    name: &[u8],
+    sp: &Split,
     is_attr: bool,
     connected: bool,
 ) -> Result<Ns, i32> {
-    let qname = raw::bytes(qn.qname, qn.qname_len);
-    let prefix = raw::bytes(qn.prefix, qn.prefix_len);
-    if is_attr && xmlns_prefix(qname).is_some() {
-        return Ok(xmlns_ns());
+    let prefix = &name[..sp.prefix_len as usize];
+    if is_attr && xmlns_prefix(name).is_some() {
+        return Ok(doc.xmlns_ns_span());
     }
-    if qn.prefix_len == 0 {
+    if sp.prefix_len == 0 {
         if is_attr {
             return Ok(NO_NS); /* unprefixed attribute -> no namespace */
         }
-        return Ok(match raw::resolve_in_scope(scope, b"") {
-            Some((u, ul)) if ul > 0 => (u, ul),
+        return Ok(match doc.resolve_in_scope(scope, b"") {
+            Some(s) if s.len > 0 => s,
             _ => NO_NS,
         });
     }
     if prefix == b"xml" {
-        return Ok(xml_ns());
+        return Ok(doc.xml_ns_span());
     }
     if prefix == b"xmlns" {
         return Err(MUT_BAD_NAME);
     }
-    match raw::resolve_in_scope(scope, prefix) {
-        Some((u, ul)) if ul > 0 => Ok((u, ul)),
+    match doc.resolve_in_scope(scope, prefix) {
+        Some(s) if s.len > 0 => Ok(s),
         _ => {
             if connected {
                 Err(MUT_UNBOUND_NS)
@@ -98,81 +64,92 @@ fn resolve_ns(
 }
 
 #[inline]
-fn assign_qname(doc: Arena, node: NodeRef, qn: &QName) -> i32 {
-    if doc.assign_qname(node.as_ptr(), qn) == 0 {
+fn assign_qname(doc: &mut Document, node: NodeId, name: &[u8], sp: &Split) -> i32 {
+    if doc
+        .assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)
+        .is_ok()
+    {
         MUT_OK
     } else {
         MUT_OOM
     }
 }
 
-#[inline]
-fn set_ns(n: NodeRef, ns: Ns) {
-    n.set_ns(ns.0, ns.1);
+pub fn detach(doc: &mut Document, node: NodeId) {
+    doc.detach(node);
 }
 
-pub fn detach(node: NodeRef) {
-    raw::detach(node);
-}
-
-pub fn rename(doc: Arena, node: NodeRef, name: &[u8]) -> i32 {
-    if node.type_() != T_ELEMENT && node.type_() != T_ATTRIBUTE {
+pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> i32 {
+    if doc.type_(node) != T_ELEMENT && doc.type_(node) != T_ATTRIBUTE {
         return MUT_TYPE;
     }
     let sp = match split_checked(name) {
         Some(s) => s,
         None => return MUT_BAD_NAME,
     };
-    let qn = qname_from(name, &sp);
-    let is_attr = node.type_() == T_ATTRIBUTE;
-    let scope: Option<NodeRef> = if is_attr { node.parent() } else { Some(node) };
-    let connected = scope.is_some_and(raw::is_connected);
-    let ns = match resolve_ns(scope, &qn, is_attr, connected) {
+    let is_attr = doc.type_(node) == T_ATTRIBUTE;
+    let scope: Option<NodeId> = if is_attr {
+        doc.parent(node)
+    } else {
+        Some(node)
+    };
+    let connected = scope.is_some_and(|s| doc.is_connected(s));
+    let ns = match resolve_ns(doc, scope, name, &sp, is_attr, connected) {
         Ok(ns) => ns,
         Err(st) => return st,
     };
     /* copy the new qname BEFORE writing ns_uri, so an OOM leaves node intact */
-    let st = assign_qname(doc, node, &qn);
+    let st = assign_qname(doc, node, name, &sp);
     if st != MUT_OK {
         return st;
     }
-    set_ns(node, ns);
-    node.clear_flag(FLAG_DOM_LOOSE_NAME);
+    {
+        let n = doc.node_mut(node);
+        n.ns_uri = ns;
+        n.flags &= !FLAG_DOM_LOOSE_NAME;
+    }
     /* A rename picks a new prefix, so it decides a new URI from the scope the
      * node is in right now - and that decision is the node's identity from here
      * (an element's; an attribute follows its element). */
     if connected && !is_attr {
-        node.add_flag(FLAG_NS_RESOLVED);
+        doc.node_mut(node).flags |= FLAG_NS_RESOLVED;
     }
     MUT_OK
 }
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and append it to `el`.
-fn build_attr(doc: Arena, el: NodeRef, qn: &QName, val: &[u8], ns: Ns) -> Result<NodeRef, i32> {
-    let attr = doc.alloc_node(T_ATTRIBUTE).ok_or(MUT_OOM)?;
-    let st = assign_qname(doc, attr, qn);
+fn build_attr(
+    doc: &mut Document,
+    el: NodeId,
+    name: &[u8],
+    sp: &Split,
+    val: &[u8],
+    ns: Ns,
+) -> Result<NodeId, i32> {
+    let attr = doc.new_node(T_ATTRIBUTE).map_err(|_| MUT_OOM)?;
+    let st = assign_qname(doc, attr, name, sp);
     if st != MUT_OK {
         return Err(st);
     }
-    let nv = doc.bytes(val);
-    if nv.is_null() {
-        return Err(MUT_OOM);
-    }
-    attr.set_value(nv, val.len() as u32);
-    set_ns(attr, ns);
-    raw::append_attr(el, attr);
+    doc.set_value_bytes(attr, val).map_err(|_| MUT_OOM)?;
+    doc.node_mut(attr).ns_uri = ns;
+    doc.append_attr(el, attr);
     Ok(attr)
 }
 
-pub fn set_attribute(doc: Arena, el: NodeRef, name: &[u8], val: &[u8]) -> Result<NodeRef, i32> {
-    if el.type_() != T_ELEMENT {
+pub fn set_attribute(
+    doc: &mut Document,
+    el: NodeId,
+    name: &[u8],
+    val: &[u8],
+) -> Result<NodeId, i32> {
+    if doc.type_(el) != T_ELEMENT {
         return Err(MUT_TYPE);
     }
     let sp = match split_checked(name) {
         Some(s) => s,
         None => return Err(MUT_BAD_NAME),
     };
-    let qn = qname_from(name, &sp);
     /* xmlns:foo="" must not bind a prefix to the empty namespace */
     if val.is_empty() && sp.prefix_len == 5 && &name[..5] == b"xmlns" {
         return Err(MUT_BAD_NS_DECL);
@@ -180,150 +157,146 @@ pub fn set_attribute(doc: Arena, el: NodeRef, name: &[u8], val: &[u8]) -> Result
     if !val.is_empty() && !validate_chars(val) {
         return Err(MUT_BAD_CHARS);
     }
-    let ns = resolve_ns(Some(el), &qn, true, raw::is_connected(el))?;
+    let connected = doc.is_connected(el);
+    let ns = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
     /* an existing attribute with the same raw QName -> replace its value */
-    let mut a = el.attrs();
+    let mut a = doc.attrs(el);
     while let Some(attr) = a {
-        if attr.qname() == name {
-            let nv = doc.bytes(val);
-            if nv.is_null() {
-                return Err(MUT_OOM);
-            }
-            attr.set_value(nv, val.len() as u32);
-            set_ns(attr, ns);
+        if doc.qname(attr) == name {
+            doc.set_value_bytes(attr, val).map_err(|_| MUT_OOM)?;
+            doc.node_mut(attr).ns_uri = ns;
             return Ok(attr);
         }
-        a = attr.next();
+        a = doc.next(attr);
     }
-    build_attr(doc, el, &qn, val, ns)
+    build_attr(doc, el, name, &sp, val, ns)
 }
 
-pub fn remove_attribute(el: NodeRef, name: &[u8]) -> i32 {
-    if el.type_() != T_ELEMENT {
+pub fn remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> i32 {
+    if doc.type_(el) != T_ELEMENT {
         return 0;
     }
-    let mut prev: Option<NodeRef> = None;
-    let mut a = el.attrs();
+    let mut prev: Option<NodeId> = None;
+    let mut a = doc.attrs(el);
     while let Some(attr) = a {
-        if attr.qname() == name {
-            raw::unlink_attr(el, prev, attr);
+        if doc.qname(attr) == name {
+            doc.unlink_attr(el, prev, attr);
             return 1;
         }
         prev = Some(attr);
-        a = attr.next();
+        a = doc.next(attr);
     }
     0
 }
 
 /// `a` is keyed by (ns, local) - the DOM key; an empty wanted namespace
 /// matches an attribute with no namespace.
-fn attr_matches_ns(a: NodeRef, ns: &[u8], local: &[u8]) -> bool {
-    a.ns_uri_len() as usize == ns.len() && (ns.is_empty() || a.ns() == ns) && a.local() == local
+fn attr_matches_ns(doc: &Document, a: NodeId, ns: &[u8], local: &[u8]) -> bool {
+    doc.node(a).ns_uri.len as usize == ns.len()
+        && (ns.is_empty() || doc.ns(a) == ns)
+        && doc.local(a) == local
 }
 
 pub fn set_attribute_ns(
-    doc: Arena,
-    el: NodeRef,
+    doc: &mut Document,
+    el: NodeId,
     ns: &[u8],
     name: &[u8],
     val: &[u8],
-) -> Result<NodeRef, i32> {
-    if el.type_() != T_ELEMENT {
+) -> Result<NodeId, i32> {
+    if doc.type_(el) != T_ELEMENT {
         return Err(MUT_TYPE);
     }
     let sp = match split_checked(name) {
         Some(s) => s,
         None => return Err(MUT_BAD_NAME),
     };
-    let qn = qname_from(name, &sp);
     if !val.is_empty() && !validate_chars(val) {
         return Err(MUT_BAD_CHARS);
     }
     let local = &name[sp.local_off as usize..];
-    let mut a = el.attrs();
+    let mut a = doc.attrs(el);
     while let Some(attr) = a {
-        if attr_matches_ns(attr, ns, local) {
-            let nv = doc.bytes(val);
-            if nv.is_null() {
-                return Err(MUT_OOM);
-            }
-            attr.set_value(nv, val.len() as u32);
+        if attr_matches_ns(doc, attr, ns, local) {
+            doc.set_value_bytes(attr, val).map_err(|_| MUT_OOM)?;
             return Ok(attr);
         }
-        a = attr.next();
+        a = doc.next(attr);
     }
     /* no match: copy the namespace into the arena only now */
     let nsv: Ns = if ns.is_empty() {
         NO_NS
     } else {
-        let u = doc.bytes(ns);
-        if u.is_null() {
-            return Err(MUT_OOM);
-        }
-        (u, ns.len() as u32)
+        doc.store(ns).map_err(|_| MUT_OOM)?
     };
-    build_attr(doc, el, &qn, val, nsv)
+    build_attr(doc, el, name, &sp, val, nsv)
 }
 
-pub fn remove_attribute_ns(el: NodeRef, ns: &[u8], local: &[u8]) -> i32 {
-    if el.type_() != T_ELEMENT {
+pub fn remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> i32 {
+    if doc.type_(el) != T_ELEMENT {
         return 0;
     }
-    let mut prev: Option<NodeRef> = None;
-    let mut a = el.attrs();
+    let mut prev: Option<NodeId> = None;
+    let mut a = doc.attrs(el);
     while let Some(attr) = a {
-        if attr_matches_ns(attr, ns, local) {
-            raw::unlink_attr(el, prev, attr);
+        if attr_matches_ns(doc, attr, ns, local) {
+            doc.unlink_attr(el, prev, attr);
             return 1;
         }
         prev = Some(attr);
-        a = attr.next();
+        a = doc.next(attr);
     }
     0
 }
 
-pub fn set_content(doc: Arena, node: NodeRef, text: &[u8]) -> i32 {
+pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> i32 {
     if !text.is_empty() && !validate_chars(text) {
         return MUT_BAD_CHARS;
     }
-    match node.type_() {
+    match doc.type_(node) {
         T_TEXT | T_CDATA | T_COMMENT | T_PI => {
-            if !value_seq_ok(node.type_(), text) {
+            if !value_seq_ok(doc.type_(node), text) {
                 return MUT_BAD_CHARS;
             }
-            let nv = doc.bytes(text);
-            if nv.is_null() {
+            if doc.set_value_bytes(node, text).is_err() {
                 return MUT_OOM;
             }
-            node.set_value(nv, text.len() as u32);
             MUT_OK
         }
         T_ELEMENT => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
              * children intact */
-            let mut t: Option<NodeRef> = None;
+            let mut t: Option<NodeId> = None;
             if !text.is_empty() {
-                let nv = doc.bytes(text);
-                if nv.is_null() {
-                    return MUT_OOM;
-                }
-                let n = match doc.alloc_node(T_TEXT) {
-                    Some(n) => n,
-                    None => return MUT_OOM,
+                let v = match doc.store(text) {
+                    Ok(v) => v,
+                    Err(_) => return MUT_OOM,
                 };
-                n.set_value(nv, text.len() as u32);
+                let n = match doc.new_node(T_TEXT) {
+                    Ok(n) => n,
+                    Err(_) => return MUT_OOM,
+                };
+                doc.node_mut(n).value = v;
                 t = Some(n);
             }
-            let mut c = node.first_child();
+            let mut c = doc.first_child(node);
             while let Some(cur) = c {
-                let nx = cur.next();
-                cur.clear_links();
+                let nx = doc.next(cur);
+                {
+                    let n = doc.node_mut(cur);
+                    n.parent = None;
+                    n.prev = None;
+                    n.next = None;
+                }
                 c = nx;
             }
-            node.set_first_child(t);
-            node.set_last_child(t);
+            {
+                let n = doc.node_mut(node);
+                n.first_child = t;
+                n.last_child = t;
+            }
             if let Some(t) = t {
-                t.set_parent(Some(node));
+                doc.node_mut(t).parent = Some(node);
             }
             MUT_OK
         }
@@ -333,7 +306,7 @@ pub fn set_content(doc: Arena, node: NodeRef, text: &[u8]) -> i32 {
 
 /* ============================ Phase 2: building ============================ */
 
-pub fn new_element(doc: Arena, name: &[u8]) -> Result<NodeRef, i32> {
+pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, i32> {
     let sp = match split_checked(name) {
         Some(s) => s,
         None => return Err(MUT_BAD_NAME),
@@ -341,42 +314,46 @@ pub fn new_element(doc: Arena, name: &[u8]) -> Result<NodeRef, i32> {
     if sp.prefix_len == 5 && &name[..5] == b"xmlns" {
         return Err(MUT_BAD_NAME); /* xmlns: is not an element prefix */
     }
-    let el = doc.alloc_node(T_ELEMENT).ok_or(MUT_OOM)?;
-    let st = assign_qname(doc, el, &qname_from(name, &sp));
+    let el = doc.new_node(T_ELEMENT).map_err(|_| MUT_OOM)?;
+    let st = assign_qname(doc, el, name, &sp);
     if st != MUT_OK {
         return Err(st);
     }
     Ok(el) /* ns_uri stays unresolved until insertion */
 }
 
-pub fn new_loose_dom_element(doc: Arena, qn: &QName, ns: &[u8]) -> Result<NodeRef, i32> {
-    if qn.qname_len == 0 || qn.local_len == 0 {
+/// A DOM-loose element: `name` may not be a valid XML QName (`":good:times:"`,
+/// `"x<"`), so the caller supplies the prefix/local split explicitly and the
+/// namespace URI directly.
+pub fn new_loose_dom_element(
+    doc: &mut Document,
+    name: &[u8],
+    prefix_len: u32,
+    local_off: u32,
+    local_len: u32,
+    ns: &[u8],
+) -> Result<NodeId, i32> {
+    if name.is_empty() || local_len == 0 {
         return Err(MUT_BAD_NAME);
     }
-    let (q0, l0) = (qn.qname as usize, qn.local as usize);
-    if !(l0 >= q0
-        && qn.local_len <= qn.qname_len
-        && (l0 - q0) <= (qn.qname_len - qn.local_len) as usize)
+    if local_off as usize + local_len as usize > name.len() || prefix_len as usize > name.len() {
+        return Err(MUT_BAD_NAME);
+    }
+    let el = doc.new_node(T_ELEMENT).map_err(|_| MUT_OOM)?;
+    if doc
+        .assign_qname(el, name, prefix_len, local_off, local_len)
+        .is_err()
     {
-        return Err(MUT_BAD_NAME);
-    }
-    let el = doc.alloc_node(T_ELEMENT).ok_or(MUT_OOM)?;
-    let st = assign_qname(doc, el, qn);
-    if st != MUT_OK {
-        return Err(st);
+        return Err(MUT_OOM);
     }
     if !ns.is_empty() {
-        let u = doc.bytes(ns);
-        if u.is_null() {
-            return Err(MUT_OOM);
-        }
-        set_ns(el, (u, ns.len() as u32));
+        doc.set_ns_bytes(el, ns).map_err(|_| MUT_OOM)?;
     }
-    el.add_flag(FLAG_DOM_LOOSE_NAME);
+    doc.node_mut(el).flags |= FLAG_DOM_LOOSE_NAME;
     Ok(el)
 }
 
-pub fn new_chardata(doc: Arena, ty: u32, text: &[u8]) -> Result<NodeRef, i32> {
+pub fn new_chardata(doc: &mut Document, ty: u32, text: &[u8]) -> Result<NodeId, i32> {
     if ty != T_TEXT && ty != T_CDATA && ty != T_COMMENT {
         return Err(MUT_TYPE);
     }
@@ -386,16 +363,12 @@ pub fn new_chardata(doc: Arena, ty: u32, text: &[u8]) -> Result<NodeRef, i32> {
     if !value_seq_ok(ty, text) {
         return Err(MUT_BAD_CHARS);
     }
-    let n = doc.alloc_node(ty).ok_or(MUT_OOM)?;
-    let v = doc.bytes(text);
-    if v.is_null() {
-        return Err(MUT_OOM);
-    }
-    n.set_value(v, text.len() as u32);
+    let n = doc.new_node(ty).map_err(|_| MUT_OOM)?;
+    doc.set_value_bytes(n, text).map_err(|_| MUT_OOM)?;
     Ok(n)
 }
 
-pub fn new_pi(doc: Arena, target: &[u8], data: &[u8]) -> Result<NodeRef, i32> {
+pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, i32> {
     if !crate::xml::chars::validate_name(target) || crate::xml::chars::is_reserved_pi_target(target)
     {
         return Err(MUT_BAD_NAME);
@@ -406,26 +379,23 @@ pub fn new_pi(doc: Arena, target: &[u8], data: &[u8]) -> Result<NodeRef, i32> {
     if !value_seq_ok(T_PI, data) {
         return Err(MUT_BAD_CHARS);
     }
-    let pi = doc.alloc_node(T_PI).ok_or(MUT_OOM)?;
-    let t = doc.bytes(target);
-    if t.is_null() {
-        return Err(MUT_OOM);
+    let pi = doc.new_node(T_PI).map_err(|_| MUT_OOM)?;
+    let t = doc.store(target).map_err(|_| MUT_OOM)?;
+    let d = doc.store(data).map_err(|_| MUT_OOM)?;
+    {
+        let n = doc.node_mut(pi);
+        n.local = t;
+        n.value = d;
     }
-    let d = doc.bytes(data);
-    if d.is_null() {
-        return Err(MUT_OOM);
-    }
-    pi.set_local(t, target.len() as u32);
-    pi.set_value(d, data.len() as u32);
     Ok(pi)
 }
 
 pub fn new_document_type(
-    doc: Arena,
+    doc: &mut Document,
     name: &[u8],
     pub_id: Option<&[u8]>,
     sys_id: Option<&[u8]>,
-) -> Result<NodeRef, i32> {
+) -> Result<NodeId, i32> {
     if !crate::xml::chars::validate_name(name) {
         return Err(MUT_BAD_NAME);
     }
@@ -434,26 +404,20 @@ pub fn new_document_type(
             return Err(MUT_BAD_CHARS);
         }
     }
-    let dt = doc.alloc_node(T_DOCTYPE).ok_or(MUT_OOM)?;
-    let nm = doc.bytes(name);
-    if nm.is_null() {
-        return Err(MUT_OOM);
+    let dt = doc.new_node(T_DOCTYPE).map_err(|_| MUT_OOM)?;
+    let nm = doc.store(name).map_err(|_| MUT_OOM)?;
+    {
+        let n = doc.node_mut(dt);
+        n.local = nm;
+        n.qname = nm;
     }
-    dt.set_local(nm, name.len() as u32);
-    dt.set_qname_parts(nm, name.len() as u32);
     if let Some(p) = pub_id {
-        let pp = doc.bytes(p);
-        if pp.is_null() {
-            return Err(MUT_OOM);
-        }
-        dt.set_prefix(pp, p.len() as u32);
+        let pp = doc.store(p).map_err(|_| MUT_OOM)?;
+        doc.node_mut(dt).prefix = pp;
     }
     if let Some(s) = sys_id {
-        let sp = doc.bytes(s);
-        if sp.is_null() {
-            return Err(MUT_OOM);
-        }
-        dt.set_value(sp, s.len() as u32);
+        let sp = doc.store(s).map_err(|_| MUT_OOM)?;
+        doc.node_mut(dt).value = sp;
     }
     Ok(dt)
 }
@@ -461,177 +425,272 @@ pub fn new_document_type(
 /// Resolve the namespace of element `e` and its attributes.
 ///
 /// `commit` selects the pass: false only computes (to find out whether every
-/// prefix in the subtree binds), true writes the resolved URIs. See
-/// `resolve_subtree`.
-fn resolve_node_ns(e: NodeRef, connected: bool, commit: bool) -> i32 {
-    if e.flags() & FLAG_DOM_LOOSE_NAME == 0 {
-        let eq = e.qname_of();
-        match resolve_ns(Some(e), &eq, false, connected) {
+/// prefix in the subtree binds), true writes the resolved URIs.
+fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool) -> i32 {
+    if doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
+        let name = doc.qname(e).to_vec();
+        let prefix_len = doc.node(e).prefix.len;
+        let local_off = doc.node(e).local.off.saturating_sub(doc.node(e).qname.off);
+        let local_len = doc.node(e).local.len;
+        let sp = Split {
+            prefix_len,
+            local_off,
+            local_len,
+        };
+        match resolve_ns(doc, Some(e), &name, &sp, false, connected) {
             Ok(ns) => {
                 if commit {
-                    set_ns(e, ns)
+                    doc.node_mut(e).ns_uri = ns
                 }
             }
             Err(st) => return st,
         }
     }
-    let mut a = e.attrs();
+    let mut a = doc.attrs(e);
     while let Some(attr) = a {
-        let aq = attr.qname_of();
-        match resolve_ns(Some(e), &aq, true, connected) {
+        let name = doc.qname(attr).to_vec();
+        let prefix_len = doc.node(attr).prefix.len;
+        let local_off = doc
+            .node(attr)
+            .local
+            .off
+            .saturating_sub(doc.node(attr).qname.off);
+        let local_len = doc.node(attr).local.len;
+        let sp = Split {
+            prefix_len,
+            local_off,
+            local_len,
+        };
+        match resolve_ns(doc, Some(e), &name, &sp, true, connected) {
             Ok(ns) => {
                 if commit {
-                    set_ns(attr, ns)
+                    doc.node_mut(attr).ns_uri = ns
                 }
             }
             Err(st) => return st,
         }
-        a = attr.next();
+        a = doc.next(attr);
     }
     /* Only mark once connected: resolution inside a still-detached fragment is
      * deferred (an unbound prefix is not an error there), so the node must stay
      * open to being resolved again when the fragment joins the document. */
     if commit && connected {
-        e.add_flag(FLAG_NS_RESOLVED);
+        doc.node_mut(e).flags |= FLAG_NS_RESOLVED;
     }
     MUT_OK
 }
 
 /// True once `e`'s namespace has been decided - by the parser, or by resolving
-/// it against the context it was first inserted into. From then on the URI is
-/// the node's identity, so a later move must NOT re-derive it: that is what
-/// makes namespaceURI survive a move the way the DOM and browsers have it, and
-/// the serializer emits whatever declarations the output needs.
-fn ns_is_decided(e: NodeRef) -> bool {
-    e.flags() & FLAG_NS_RESOLVED != 0
+/// it against the context it was first inserted into.
+fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
+    doc.node(e).flags & FLAG_NS_RESOLVED != 0
 }
 
-/// Re-resolve every element in `root`'s subtree, all-or-nothing.
-///
-/// The walk writes as it goes, so a bare single pass that fails partway leaves
-/// the subtree half-rewritten: the elements before the unbound prefix carry URIs
-/// resolved against a scope the tree is not in, while the rest keep the old
-/// ones. That state is invisible to serialization (only prefixes are written)
-/// but wrong for XPath, which matches on the resolved URI. So: one pass that
+/// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
 /// only computes, and - only if every prefix binds - a second that writes.
-fn resolve_subtree(root: NodeRef, connected: bool) -> i32 {
-    /* Both passes run the SAME body - that is the point of the loop rather than
-     * two functions. If the check could drift from the commit, that drift would
-     * be the bug. */
+fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> i32 {
     for commit in [false, true] {
         let mut cur = Some(root);
         while let Some(c) = cur {
-            if c.type_() == T_ELEMENT && !ns_is_decided(c) {
-                let st = resolve_node_ns(c, connected, commit);
+            if doc.type_(c) == T_ELEMENT && !ns_is_decided(doc, c) {
+                let st = resolve_node_ns(doc, c, connected, commit);
                 if st != MUT_OK {
                     return st; /* commit == false: nothing written yet */
                 }
             }
-            cur = raw::preorder_next(root, c);
+            cur = doc.preorder_next(root, c);
         }
     }
     MUT_OK
 }
 
-/// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT
-/// linking it (borrow node.parent for the ancestor walk, then restore).
-fn resolve_into(node: NodeRef, context: NodeRef) -> i32 {
-    let saved = node.parent();
-    node.set_parent(Some(context));
-    let st = resolve_subtree(node, raw::is_connected(node));
-    node.set_parent(saved);
+/// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT linking
+/// it (borrow node.parent for the ancestor walk, then restore).
+fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> i32 {
+    let saved = doc.parent(node);
+    doc.node_mut(node).parent = Some(context);
+    let st = resolve_subtree(doc, node, doc.is_connected(node));
+    doc.node_mut(node).parent = saved;
     st
 }
 
-/// One arena copy of `src` (own fields + attributes, NOT children), INCLUDING
-/// its resolved namespace URI. A copy keeps the namespace it had: the URI is the
-/// node identity, so neither cloneNode nor importNode re-derives it from wherever
-/// the copy lands - what the DOM and browsers do.
-fn copy_one(doc: Arena, src: NodeRef) -> Result<NodeRef, i32> {
-    let n = doc.alloc_node(src.type_()).ok_or(MUT_OOM)?;
-    if !src.qname_ptr().is_null() && src.qname_len() > 0 {
-        let qn = src.qname_of();
-        if assign_qname(doc, n, &qn) != MUT_OK {
+/// One arena copy of `src` (own fields + attributes, NOT children) from the
+/// SAME document, INCLUDING its resolved namespace URI.
+fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
+    let ty = doc.type_(src);
+    let n = doc.new_node(ty).map_err(|_| MUT_OOM)?;
+    if doc.node(src).qname.len > 0 {
+        let name = doc.qname(src).to_vec();
+        let prefix_len = doc.node(src).prefix.len;
+        let local_off = doc
+            .node(src)
+            .local
+            .off
+            .saturating_sub(doc.node(src).qname.off);
+        let local_len = doc.node(src).local.len;
+        if doc
+            .assign_qname(n, &name, prefix_len, local_off, local_len)
+            .is_err()
+        {
             return Err(MUT_OOM);
         }
-    } else if !src.local().is_empty() {
-        let t = doc.bytes(src.local()); /* PI target */
-        if t.is_null() {
-            return Err(MUT_OOM);
-        }
-        n.set_local(t, src.local_len());
+    } else if doc.node(src).local.len > 0 {
+        let t = doc.local(src).to_vec();
+        let span = doc.store(&t).map_err(|_| MUT_OOM)?;
+        doc.node_mut(n).local = span;
     }
-    if src.value_len() > 0 {
-        let v = doc.bytes(src.value());
-        if v.is_null() {
-            return Err(MUT_OOM);
-        }
-        n.set_value(v, src.value_len());
-    } else if !src.value_ptr().is_null() {
-        n.set_value(empty(), 0);
+    if doc.node(src).value.len > 0 {
+        let v = doc.value(src).to_vec();
+        let span = doc.store(&v).map_err(|_| MUT_OOM)?;
+        doc.node_mut(n).value = span;
+    } else if !doc.node(src).value.is_absent() {
+        doc.node_mut(n).value = Span::EMPTY;
     }
-    n.set_flags(src.flags());
-    if !src.ns_uri_ptr().is_null() && src.ns_uri_len() > 0 {
-        let u = doc.bytes(src.ns());
-        if u.is_null() {
-            return Err(MUT_OOM);
-        }
-        n.set_ns(u, src.ns_uri_len());
+    doc.node_mut(n).flags = doc.node(src).flags;
+    if doc.node(src).ns_uri.len > 0 {
+        let u = doc.ns(src).to_vec();
+        let span = doc.store(&u).map_err(|_| MUT_OOM)?;
+        doc.node_mut(n).ns_uri = span;
     }
-    /* copy attributes (each an arena node), preserving order */
-    let mut tail: Option<NodeRef> = None;
-    let mut a = src.attrs();
+    /* copy attributes (each a node), preserving order */
+    let mut tail: Option<NodeId> = None;
+    let mut a = doc.attrs(src);
     while let Some(attr) = a {
-        let ca = copy_one(doc, attr)?; /* an attribute has no children/attrs */
-        ca.set_parent(Some(n));
+        let ca = copy_one(doc, attr)?;
+        doc.node_mut(ca).parent = Some(n);
         match tail {
-            None => n.set_attrs(Some(ca)),
-            Some(t) => t.set_next(Some(ca)),
+            None => doc.node_mut(n).attrs = Some(ca),
+            Some(t) => doc.node_mut(t).next = Some(ca),
         }
         tail = Some(ca);
-        a = attr.next();
+        a = doc.next(attr);
     }
     Ok(n)
 }
 
-/// Deep copy of `src`'s subtree (iterative; no recursion).
-fn deep_copy(doc: Arena, src: NodeRef) -> Result<NodeRef, i32> {
-    let root = copy_one(doc, src)?;
-    let mut stack: Vec<(NodeRef, NodeRef)> = Vec::new();
+/// One arena copy of `src` from ANOTHER document (importNode's cross-kind
+/// direction). Same fields as [`copy_one`], reading the source through its own
+/// document and writing into `dst`.
+fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, i32> {
+    let ty = src_doc.type_(src);
+    let n = dst.new_node(ty).map_err(|_| MUT_OOM)?;
+    if src_doc.node(src).qname.len > 0 {
+        let name = src_doc.qname(src).to_vec();
+        let prefix_len = src_doc.node(src).prefix.len;
+        let local_off = src_doc
+            .node(src)
+            .local
+            .off
+            .saturating_sub(src_doc.node(src).qname.off);
+        let local_len = src_doc.node(src).local.len;
+        if dst
+            .assign_qname(n, &name, prefix_len, local_off, local_len)
+            .is_err()
+        {
+            return Err(MUT_OOM);
+        }
+    } else if src_doc.node(src).local.len > 0 {
+        let t = src_doc.local(src).to_vec();
+        let span = dst.store(&t).map_err(|_| MUT_OOM)?;
+        dst.node_mut(n).local = span;
+    }
+    if src_doc.node(src).value.len > 0 {
+        let v = src_doc.value(src).to_vec();
+        let span = dst.store(&v).map_err(|_| MUT_OOM)?;
+        dst.node_mut(n).value = span;
+    } else if !src_doc.node(src).value.is_absent() {
+        dst.node_mut(n).value = Span::EMPTY;
+    }
+    dst.node_mut(n).flags = src_doc.node(src).flags;
+    if src_doc.node(src).ns_uri.len > 0 {
+        let u = src_doc.ns(src).to_vec();
+        let span = dst.store(&u).map_err(|_| MUT_OOM)?;
+        dst.node_mut(n).ns_uri = span;
+    }
+    let mut tail: Option<NodeId> = None;
+    let mut a = src_doc.attrs(src);
+    while let Some(attr) = a {
+        let ca = copy_one_from(dst, src_doc, attr)?;
+        dst.node_mut(ca).parent = Some(n);
+        match tail {
+            None => dst.node_mut(n).attrs = Some(ca),
+            Some(t) => dst.node_mut(t).next = Some(ca),
+        }
+        tail = Some(ca);
+        a = src_doc.next(attr);
+    }
+    Ok(n)
+}
+
+/// Deep copy of `src`'s subtree from ANOTHER document (iterative).
+fn deep_copy_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, i32> {
+    let root = copy_one_from(dst, src_doc, src)?;
+    let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
     if stack.mkr_reserve(1).is_err() {
         return Err(MUT_OOM);
     }
     stack.push((src, root));
     while let Some((s, d)) = stack.pop() {
-        let mut sc = s.first_child();
+        let mut sc = src_doc.first_child(s);
         while let Some(child) = sc {
-            let dc = copy_one(doc, child)?;
-            raw::append_child(d, dc);
-            if child.first_child().is_some() {
+            let dc = copy_one_from(dst, src_doc, child)?;
+            dst.append_child(d, dc);
+            if src_doc.first_child(child).is_some() {
                 if stack.mkr_reserve(1).is_err() {
                     return Err(MUT_OOM);
                 }
                 stack.push((child, dc));
             }
-            sc = child.next();
+            sc = src_doc.next(child);
         }
     }
     Ok(root)
 }
 
-pub fn import_subtree(doc: Arena, src: NodeRef) -> Result<NodeRef, i32> {
-    deep_copy(doc, src)
+/// Deep copy of `src`'s subtree (iterative; no recursion).
+fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
+    let root = copy_one(doc, src)?;
+    let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
+    if stack.mkr_reserve(1).is_err() {
+        return Err(MUT_OOM);
+    }
+    stack.push((src, root));
+    while let Some((s, d)) = stack.pop() {
+        let mut sc = doc.first_child(s);
+        while let Some(child) = sc {
+            let dc = copy_one(doc, child)?;
+            doc.append_child(d, dc);
+            if doc.first_child(child).is_some() {
+                if stack.mkr_reserve(1).is_err() {
+                    return Err(MUT_OOM);
+                }
+                stack.push((child, dc));
+            }
+            sc = doc.next(child);
+        }
+    }
+    Ok(root)
 }
 
-pub fn clone_node(doc: Arena, src: NodeRef, deep: bool) -> Result<NodeRef, i32> {
+pub fn import_subtree(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, i32> {
+    deep_copy_from(dst, src_doc, src)
+}
+
+/// Cross-document `copyNode`: shallow or deep, source in `src_doc`.
+pub fn copy_node_from(
+    dst: &mut Document,
+    src_doc: &Document,
+    src: NodeId,
+    deep: bool,
+) -> Result<NodeId, i32> {
     if deep {
-        deep_copy(doc, src)
+        deep_copy_from(dst, src_doc, src)
     } else {
-        copy_one(doc, src)
+        copy_one_from(dst, src_doc, src)
     }
 }
 
-pub fn copy_node(doc: Arena, src: NodeRef, deep: bool) -> Result<NodeRef, i32> {
+pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, i32> {
     if deep {
         deep_copy(doc, src)
     } else {
@@ -642,250 +701,242 @@ pub fn copy_node(doc: Arena, src: NodeRef, deep: bool) -> Result<NodeRef, i32> {
 /* ---- insertion ---- */
 
 #[inline]
-fn is_insertable(node: NodeRef) -> bool {
+fn is_insertable(doc: &Document, node: NodeId) -> bool {
     matches!(
-        node.type_(),
+        doc.type_(node),
         T_ELEMENT | T_TEXT | T_CDATA | T_COMMENT | T_PI | T_DOCTYPE
     )
 }
 
 /// WHATWG doctype ordering at the document node (fail-closed).
 fn check_doc_child_order(
-    container: NodeRef,
-    node: NodeRef,
-    before: Option<NodeRef>,
-    exclude: Option<NodeRef>,
+    doc: &Document,
+    container: NodeId,
+    node: NodeId,
+    before: Option<NodeId>,
+    exclude: Option<NodeId>,
 ) -> i32 {
-    if container.type_() != T_DOCUMENT {
-        return if node.type_() == T_DOCTYPE {
+    if doc.type_(container) != T_DOCUMENT {
+        return if doc.type_(node) == T_DOCTYPE {
             MUT_HIERARCHY
         } else {
             MUT_OK
         };
     }
-    if node.type_() == T_DOCTYPE {
-        let mut c = container.first_child();
+    if doc.type_(node) == T_DOCTYPE {
+        let mut c = doc.first_child(container);
         while let Some(cur) = c {
-            if Some(cur) != exclude && cur != node && cur.type_() == T_DOCTYPE {
+            if Some(cur) != exclude && cur != node && doc.type_(cur) == T_DOCTYPE {
                 return MUT_HIERARCHY; /* at most one */
             }
-            c = cur.next();
+            c = doc.next(cur);
         }
         /* no element before the doctype */
-        let mut c = container.first_child();
+        let mut c = doc.first_child(container);
         while let Some(cur) = c {
             if c == before {
                 break;
             }
-            if Some(cur) != exclude && cur != node && cur.type_() == T_ELEMENT {
+            if Some(cur) != exclude && cur != node && doc.type_(cur) == T_ELEMENT {
                 return MUT_HIERARCHY;
             }
-            c = cur.next();
+            c = doc.next(cur);
         }
         return MUT_OK;
     }
-    if node.type_() == T_ELEMENT {
+    if doc.type_(node) == T_ELEMENT {
         let mut c = before;
         while let Some(cur) = c {
-            if Some(cur) != exclude && cur != node && cur.type_() == T_DOCTYPE {
+            if Some(cur) != exclude && cur != node && doc.type_(cur) == T_DOCTYPE {
                 return MUT_HIERARCHY;
             }
-            c = cur.next();
+            c = doc.next(cur);
         }
     }
     MUT_OK
 }
 
-fn would_cycle(container: NodeRef, node: NodeRef) -> bool {
+fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
     let mut p = Some(container);
     while let Some(cur) = p {
         if cur == node {
             return true;
         }
-        p = cur.parent();
+        p = doc.parent(cur);
     }
     false
 }
 
-fn doc_root_ok(container: NodeRef, node: NodeRef, exclude: Option<NodeRef>) -> bool {
-    if container.type_() != T_DOCUMENT || node.type_() != T_ELEMENT {
+fn doc_root_ok(doc: &Document, container: NodeId, node: NodeId, exclude: Option<NodeId>) -> bool {
+    if doc.type_(container) != T_DOCUMENT || doc.type_(node) != T_ELEMENT {
         return true;
     }
-    let mut c = container.first_child();
+    let mut c = doc.first_child(container);
     while let Some(cur) = c {
-        if Some(cur) != exclude && cur != node && cur.type_() == T_ELEMENT {
+        if Some(cur) != exclude && cur != node && doc.type_(cur) == T_ELEMENT {
             return false;
         }
-        c = cur.next();
+        c = doc.next(cur);
     }
     true
-}
-
-/// Re-derive doc.root / doc.doctype from the tree after a change at the
-/// document node.
-fn sync_doc_meta(doc: Arena, container: NodeRef) {
-    if !ptr::eq(container.as_ptr(), doc.document_node()) {
-        return;
-    }
-    doc.set_root(ptr::null_mut());
-    doc.set_doctype(ptr::null_mut());
-    let Some(dn) = doc.doc_node_ref() else {
-        return;
-    };
-    let mut c = dn.first_child();
-    while let Some(cur) = c {
-        if doc.root().is_null() && cur.type_() == T_ELEMENT {
-            doc.set_root(cur.as_ptr());
-        }
-        if doc.doctype().is_null() && cur.type_() == T_DOCTYPE {
-            doc.set_doctype(cur.as_ptr());
-        }
-        c = cur.next();
-    }
 }
 
 /// Validation + namespace resolution for inserting `node` under `container`
 /// before `before` (None = append), replacing `exclude` (or None). No
 /// structural change.
 fn prepare_insert(
-    container: NodeRef,
-    node: NodeRef,
-    before: Option<NodeRef>,
-    exclude: Option<NodeRef>,
+    doc: &mut Document,
+    container: NodeId,
+    node: NodeId,
+    before: Option<NodeId>,
+    exclude: Option<NodeId>,
 ) -> i32 {
-    if !is_insertable(node) {
+    if !is_insertable(doc, node) {
         return MUT_HIERARCHY;
     }
-    let ct = container.type_();
+    let ct = doc.type_(container);
     if ct != T_ELEMENT && ct != T_DOCUMENT {
         return MUT_HIERARCHY;
     }
-    if would_cycle(container, node) {
+    if would_cycle(doc, container, node) {
         return MUT_CYCLE;
     }
-    if !doc_root_ok(container, node, exclude) {
+    if !doc_root_ok(doc, container, node, exclude) {
         return MUT_HIERARCHY;
     }
-    let dt = check_doc_child_order(container, node, before, exclude);
+    let dt = check_doc_child_order(doc, container, node, before, exclude);
     if dt != MUT_OK {
         return dt;
     }
-    resolve_into(node, container)
+    resolve_into(doc, node, container)
 }
 
-pub fn insert_child(doc: Arena, parent: NodeRef, node: NodeRef) -> i32 {
-    let st = prepare_insert(parent, node, None, None);
+pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> i32 {
+    let st = prepare_insert(doc, parent, node, None, None);
     if st != MUT_OK {
         return st;
     }
-    raw::detach(node);
-    raw::splice_between(parent, node, parent.last_child(), None);
-    sync_doc_meta(doc, parent);
+    doc.detach(node);
+    let last = doc.last_child(parent);
+    doc.splice_between(parent, node, last, None);
+    doc.sync_doc_meta(parent);
     MUT_OK
 }
 
-pub fn insert_before(doc: Arena, r: NodeRef, node: NodeRef) -> i32 {
+pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
     if node == r {
         return MUT_OK;
     }
-    let Some(container) = r.parent() else {
+    let Some(container) = doc.parent(r) else {
         return MUT_HIERARCHY;
     };
-    let st = prepare_insert(container, node, Some(r), None);
+    let st = prepare_insert(doc, container, node, Some(r), None);
     if st != MUT_OK {
         return st;
     }
-    raw::detach(node);
-    raw::splice_between(container, node, r.prev(), Some(r));
-    sync_doc_meta(doc, container);
+    doc.detach(node);
+    let prev = doc.prev(r);
+    doc.splice_between(container, node, prev, Some(r));
+    doc.sync_doc_meta(container);
     MUT_OK
 }
 
-pub fn insert_after(doc: Arena, r: NodeRef, node: NodeRef) -> i32 {
+pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
     if node == r {
         return MUT_OK;
     }
-    let Some(container) = r.parent() else {
+    let Some(container) = doc.parent(r) else {
         return MUT_HIERARCHY;
     };
-    let st = prepare_insert(container, node, r.next(), None);
+    let next = doc.next(r);
+    let st = prepare_insert(doc, container, node, next, None);
     if st != MUT_OK {
         return st;
     }
-    raw::detach(node);
-    raw::splice_between(container, node, Some(r), r.next());
-    sync_doc_meta(doc, container);
+    doc.detach(node);
+    let next = doc.next(r);
+    doc.splice_between(container, node, Some(r), next);
+    doc.sync_doc_meta(container);
     MUT_OK
 }
 
-pub fn replace_node(doc: Arena, r: NodeRef, node: NodeRef) -> i32 {
-    let Some(container) = r.parent() else {
+pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
+    let Some(container) = doc.parent(r) else {
         return MUT_HIERARCHY;
     };
     if node == r {
         return MUT_OK;
     }
-    let st = prepare_insert(container, node, Some(r), Some(r));
+    let st = prepare_insert(doc, container, node, Some(r), Some(r));
     if st != MUT_OK {
         return st;
     }
-    raw::detach(node);
-    raw::splice_between(container, node, r.prev(), r.next());
-    r.clear_links();
-    sync_doc_meta(doc, container);
+    doc.detach(node);
+    let (prev, next) = (doc.prev(r), doc.next(r));
+    doc.splice_between(container, node, prev, next);
+    {
+        let n = doc.node_mut(r);
+        n.parent = None;
+        n.prev = None;
+        n.next = None;
+    }
+    doc.sync_doc_meta(container);
     MUT_OK
 }
 
-pub fn remove(doc: Arena, node: NodeRef) {
-    let parent = node.parent();
-    raw::detach(node);
+pub fn remove(doc: &mut Document, node: NodeId) {
+    let parent = doc.parent(node);
+    doc.detach(node);
     if let Some(p) = parent {
-        sync_doc_meta(doc, p);
+        doc.sync_doc_meta(p);
     }
 }
 
-fn element_child_count(parent: NodeRef, exclude: Option<NodeRef>) -> usize {
+fn element_child_count(doc: &Document, parent: NodeId, exclude: Option<NodeId>) -> usize {
     let mut n = 0;
-    let mut c = parent.first_child();
+    let mut c = doc.first_child(parent);
     while let Some(cur) = c {
-        if Some(cur) != exclude && cur.type_() == T_ELEMENT {
+        if Some(cur) != exclude && doc.type_(cur) == T_ELEMENT {
             n += 1;
         }
-        c = cur.next();
+        c = doc.next(cur);
     }
     n
 }
 
 /// Replace `target` with the CHILDREN of `frag`, atomically (fail-closed).
-pub fn replace_with_fragment(doc: Arena, target: NodeRef, frag: NodeRef) -> i32 {
-    let Some(container) = target.parent() else {
+pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -> i32 {
+    let Some(container) = doc.parent(target) else {
         return MUT_HIERARCHY;
     };
     /* --- validation pass: no links change until it all passes */
-    if container.type_() == T_DOCUMENT {
-        if element_child_count(frag, None) + element_child_count(container, Some(target)) > 1 {
+    if doc.type_(container) == T_DOCUMENT {
+        if element_child_count(doc, frag, None) + element_child_count(doc, container, Some(target))
+            > 1
+        {
             return MUT_HIERARCHY;
         }
-        let mut c = frag.first_child();
+        let mut c = doc.first_child(frag);
         while let Some(cur) = c {
-            if cur.type_() == T_DOCTYPE {
+            if doc.type_(cur) == T_DOCTYPE {
                 return MUT_HIERARCHY;
             }
-            c = cur.next();
+            c = doc.next(cur);
         }
     }
-    let mut c = frag.first_child();
+    let mut c = doc.first_child(frag);
     while let Some(cur) = c {
-        let st = prepare_insert(container, cur, Some(target), Some(target));
+        let st = prepare_insert(doc, container, cur, Some(target), Some(target));
         if st != MUT_OK {
             return st;
         }
-        c = cur.next();
+        c = doc.next(cur);
     }
     /* --- commit pass: every child takes target's slot in fragment order */
-    while let Some(c) = frag.first_child() {
-        raw::detach(c);
-        raw::splice_between(container, c, target.prev(), Some(target));
+    while let Some(c) = doc.first_child(frag) {
+        doc.detach(c);
+        let prev = doc.prev(target);
+        doc.splice_between(container, c, prev, Some(target));
     }
     remove(doc, target);
     MUT_OK

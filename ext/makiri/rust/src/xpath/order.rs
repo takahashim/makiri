@@ -14,9 +14,9 @@ use core::ptr;
 /// An attribute sits "with" its owner element for cross-subtree comparisons;
 /// only when both anchor to the same element do the attribute-specific rules
 /// apply.
-unsafe fn anchor_for_cmp<D: Dom>(n: D::Node) -> D::Node {
-    if D::node_type(n) == NTYPE_ATTRIBUTE {
-        let p = D::parent(n);
+unsafe fn anchor_for_cmp<D: Dom>(doc: D::Doc, n: D::Node) -> D::Node {
+    if D::node_type(doc, n) == NTYPE_ATTRIBUTE {
+        let p = D::parent(doc, n);
         if D::is_null(p) {
             n
         } else {
@@ -27,11 +27,11 @@ unsafe fn anchor_for_cmp<D: Dom>(n: D::Node) -> D::Node {
     }
 }
 
-unsafe fn depth_of<D: Dom>(mut n: D::Node) -> i32 {
+unsafe fn depth_of<D: Dom>(doc: D::Doc, mut n: D::Node) -> i32 {
     let mut d = 0;
-    while !D::is_null(D::parent(n)) {
+    while !D::is_null(D::parent(doc, n)) {
         d += 1;
-        n = D::parent(n);
+        n = D::parent(doc, n);
     }
     d
 }
@@ -41,19 +41,19 @@ unsafe fn depth_of<D: Dom>(mut n: D::Node) -> i32 {
 ///
 /// # Safety
 /// Both handles must be live nodes of this backend.
-pub unsafe fn doc_order_cmp<D: Dom>(a: D::Node, b: D::Node) -> i32 {
+pub unsafe fn doc_order_cmp<D: Dom>(doc: D::Doc, a: D::Node, b: D::Node) -> i32 {
     if a == b {
         return 0;
     }
-    let mut aa = anchor_for_cmp::<D>(a);
-    let mut bb = anchor_for_cmp::<D>(b);
+    let mut aa = anchor_for_cmp::<D>(doc, a);
+    let mut bb = anchor_for_cmp::<D>(doc, b);
 
     /* Same anchor: decide by node type. A non-attribute node anchoring to the
      * same element E can only be E itself - any descendant anchors to itself -
      * so the attribute-vs-descendant case is left to the depth walk below. */
     if aa == bb {
-        let a_attr = D::node_type(a) == NTYPE_ATTRIBUTE;
-        let b_attr = D::node_type(b) == NTYPE_ATTRIBUTE;
+        let a_attr = D::node_type(doc, a) == NTYPE_ATTRIBUTE;
+        let b_attr = D::node_type(doc, b) == NTYPE_ATTRIBUTE;
         if a_attr && !b_attr {
             return 1; /* b is the owner element; its attribute follows it */
         }
@@ -63,7 +63,7 @@ pub unsafe fn doc_order_cmp<D: Dom>(a: D::Node, b: D::Node) -> i32 {
         if a_attr && b_attr {
             /* Both attributes of one element: the relative order is
              * implementation-defined, so use the attribute list's order. */
-            let mut at = D::first_attr(aa);
+            let mut at = D::first_attr(doc, aa);
             while !D::is_null(at) {
                 if at == a {
                     return -1;
@@ -71,31 +71,35 @@ pub unsafe fn doc_order_cmp<D: Dom>(a: D::Node, b: D::Node) -> i32 {
                 if at == b {
                     return 1;
                 }
-                at = D::attr_next(at);
+                at = D::attr_next(doc, at);
             }
             return 0;
         }
         return 0;
     }
 
-    let (mut da, mut db) = (depth_of::<D>(aa), depth_of::<D>(bb));
+    let (mut da, mut db) = (depth_of::<D>(doc, aa), depth_of::<D>(doc, bb));
     while da > db {
-        aa = D::parent(aa);
+        aa = D::parent(doc, aa);
         da -= 1;
     }
     while db > da {
-        bb = D::parent(bb);
+        bb = D::parent(doc, bb);
         db -= 1;
     }
     if aa == bb {
         /* One is an ancestor of the other, and the ancestor comes first. */
-        return if aa == anchor_for_cmp::<D>(a) { -1 } else { 1 };
+        return if aa == anchor_for_cmp::<D>(doc, a) {
+            -1
+        } else {
+            1
+        };
     }
-    while D::parent(aa) != D::parent(bb) {
-        aa = D::parent(aa);
-        bb = D::parent(bb);
+    while D::parent(doc, aa) != D::parent(doc, bb) {
+        aa = D::parent(doc, aa);
+        bb = D::parent(doc, bb);
     }
-    if D::is_null(D::parent(aa)) {
+    if D::is_null(D::parent(doc, aa)) {
         return 0; /* different documents / roots - undefined, keep it stable */
     }
     /* Resolve sibling order by scanning outward from aa and bb in lockstep
@@ -105,8 +109,8 @@ pub unsafe fn doc_order_cmp<D: Dom>(a: D::Node, b: D::Node) -> i32 {
      * picking scattered <li> out of a 2000-child <ul>. */
     let (mut fa, mut fb) = (Some(aa), Some(bb));
     loop {
-        fa = fa.map(|n| D::next(n)).filter(|n| !D::is_null(*n));
-        fb = fb.map(|n| D::next(n)).filter(|n| !D::is_null(*n));
+        fa = fa.map(|n| D::next(doc, n)).filter(|n| !D::is_null(*n));
+        fb = fb.map(|n| D::next(doc, n)).filter(|n| !D::is_null(*n));
         if fa == Some(bb) {
             return -1; /* bb lies after aa */
         }
@@ -212,7 +216,7 @@ unsafe fn order_index_lookup<D: Dom>(idx: *const OrderIndex, node: D::Node) -> O
 /// child), then its descendants - matching `doc_order_cmp`'s placement.
 /// Iterative through parent pointers, so a deep tree cannot overflow the stack,
 /// and it stays inside the subtree (it never follows `root`'s next).
-unsafe fn order_index_walk<D: Dom>(idx: *mut OrderIndex, root: D::Node) -> bool {
+unsafe fn order_index_walk<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::Node) -> bool {
     let mut cur = root;
     let mut ord = 0usize;
     while !D::is_null(cur) {
@@ -220,39 +224,39 @@ unsafe fn order_index_walk<D: Dom>(idx: *mut OrderIndex, root: D::Node) -> bool 
             return false;
         }
         ord += 1;
-        if D::node_type(cur) == NTYPE_ELEMENT {
-            let mut a = D::first_attr(cur);
+        if D::node_type(doc, cur) == NTYPE_ELEMENT {
+            let mut a = D::first_attr(doc, cur);
             while !D::is_null(a) {
                 if !order_index_insert::<D>(idx, a, ord) {
                     return false;
                 }
                 ord += 1;
-                a = D::attr_next(a);
+                a = D::attr_next(doc, a);
             }
         }
-        if !D::is_null(D::first_child(cur)) {
-            cur = D::first_child(cur);
+        if !D::is_null(D::first_child(doc, cur)) {
+            cur = D::first_child(doc, cur);
             continue;
         }
-        while cur != root && D::is_null(D::next(cur)) {
-            cur = D::parent(cur);
+        while cur != root && D::is_null(D::next(doc, cur)) {
+            cur = D::parent(doc, cur);
         }
         if cur == root {
             break;
         }
-        cur = D::next(cur);
+        cur = D::next(doc, cur);
     }
     true
 }
 
-unsafe fn order_index_build<D: Dom>(idx: *mut OrderIndex, root: D::Node) -> bool {
+unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::Node) -> bool {
     if (*idx).built != 0 {
         return true;
     }
     if D::is_null(root) {
         return false;
     }
-    if !order_index_walk::<D>(idx, root) {
+    if !order_index_walk::<D>(doc, idx, root) {
         mkr_doc_order_index_clear(idx);
         return false;
     }
@@ -263,22 +267,23 @@ unsafe fn order_index_build<D: Dom>(idx: *mut OrderIndex, root: D::Node) -> bool
 /// The indexed comparator, falling back to the parent-chain walk on any miss
 /// (a synthesised node, or a cross-document compare).
 unsafe fn doc_order_cmp_ctx<D: Dom>(ctx: *mut Context, a: D::Node, b: D::Node) -> i32 {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if a == b {
         return 0;
     }
     if ctx.is_null() {
-        return doc_order_cmp::<D>(a, b);
+        return doc_order_cmp::<D>(doc, a, b);
     }
     let idx = mkr_ctx_order_index(ctx);
     if idx.is_null() || (*idx).built == 0 {
-        return doc_order_cmp::<D>(a, b);
+        return doc_order_cmp::<D>(doc, a, b);
     }
     match (
         order_index_lookup::<D>(idx, a),
         order_index_lookup::<D>(idx, b),
     ) {
         (Some(oa), Some(ob)) => oa.cmp(&ob) as i32,
-        _ => doc_order_cmp::<D>(a, b),
+        _ => doc_order_cmp::<D>(doc, a, b),
     }
 }
 
@@ -294,6 +299,7 @@ const INDEX_BUILD_MIN: usize = 200;
 /// # Safety
 /// The set must hold live handles of this backend.
 pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet) {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if ns.is_null() || (*ns).count < 2 {
         return;
     }
@@ -320,10 +326,10 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet
         mkr_ctx_order_index(ctx)
     };
     if !idx.is_null() && (*idx).built == 0 && items.len() >= INDEX_BUILD_MIN {
-        let root = mkr_ctx_document(ctx);
-        if !root.is_null() {
+        let root_h = mkr_ctx_document(ctx);
+        if !root_h.is_null() {
             /* Best-effort: on OOM the parent-chain comparator still serves. */
-            order_index_build::<D>(idx, D::from_void(root));
+            order_index_build::<D>(doc, idx, D::document_node(D::doc_from_void(root_h)));
         }
     }
 

@@ -1,11 +1,10 @@
 //! Tokenizer + tree builder (mkr_xml_tree.c). The scanning is safe slice code
-//! over the input; all raw node operations go through `ParserArena`, so this
-//! module contains no `unsafe` code.
+//! over the input; the tree is an index arena, so this module contains no
+//! `unsafe`.
 
 #![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;
-use crate::xml::arena::{create_doc, destroy_doc, ParserArena};
 use crate::xml::chars::{
     decode1, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
     validate_chars, ExpandMode,
@@ -14,18 +13,15 @@ use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    Doc, Node, ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS, MAX_DEPTH, MAX_NS, OK,
-    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
-    XML_NS_URI,
+    Document, NodeId, Span, ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS, MAX_DEPTH,
+    MAX_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
+    XMLNS_NS_URI, XML_NS_URI,
 };
-use core::ffi::c_char;
-use core::ptr;
 
-/// A namespace binding in scope: prefix ("" = default) -> arena-owned URI.
+/// A namespace binding in scope: prefix ("" = default) -> byte-store span.
 struct Binding {
     pfx: Vec<u8>,
-    uri: *const c_char,
-    uri_len: u32,
+    uri: Span,
 }
 
 /// One attribute of the current start tag before namespace resolution, as
@@ -53,24 +49,24 @@ pub struct Parser<'a> {
     pos: usize,
     line: u32,
     col: u32,
-    arena: ParserArena,
-    fragment: *mut Node,
+    doc: &'a mut Document,
+    fragment: Option<NodeId>,
     pub status: i32,
     binds: Vec<Binding>,
     ratt: Vec<RawAttr>,
-    stack: Vec<*mut Node>,
+    stack: Vec<NodeId>,
     frame: Vec<usize>,
     saw_doctype: bool,
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a [u8], doc: *mut Doc, fragment: *mut Node) -> Self {
+    fn new(input: &'a [u8], doc: &'a mut Document, fragment: Option<NodeId>) -> Self {
         Parser {
             input,
             pos: 0,
             line: 1,
             col: 1,
-            arena: ParserArena::new(doc),
+            doc,
             fragment,
             status: OK,
             binds: Vec::new(),
@@ -148,15 +144,18 @@ impl<'a> Parser<'a> {
         self.status = ERR_LIMIT;
         Err(())
     }
-    /// Propagate an arena failure recorded on the doc, then fail.
+    /// Map a `Document` allocation error onto the parser's status.
     #[inline]
-    fn oom<T>(&mut self) -> R<T> {
-        let st = self.arena.status();
-        if st != OK {
-            self.status = st;
+    fn arena<T>(&mut self, r: Result<T, i32>) -> R<T> {
+        match r {
+            Ok(v) => Ok(v),
+            Err(st) => {
+                self.status = st;
+                Err(())
+            }
         }
-        Err(())
     }
+
     #[inline]
     fn need_space(&mut self) -> R {
         match self.peek() {
@@ -189,75 +188,58 @@ impl<'a> Parser<'a> {
 
     /// The parent a node created at the cursor attaches to.
     #[inline]
-    fn cur_parent(&self) -> *mut Node {
+    fn cur_parent(&self) -> NodeId {
         match self.stack.last() {
             Some(&n) => n,
-            None if !self.fragment.is_null() => self.fragment,
-            None => self.arena.document_node(),
+            None => self.fragment.unwrap_or_else(|| self.doc.doc_node()),
         }
     }
 
     /// Copy a slice into the arena (fails closed on budget / OOM).
-    fn own(&mut self, s: &[u8]) -> R<*const c_char> {
-        match self.arena.try_bytes(s) {
-            Ok(p) => Ok(p),
-            Err(_) => self.oom(),
-        }
+    fn own(&mut self, s: &[u8]) -> R<Span> {
+        let r = self.doc.store(s);
+        self.arena(r).map_err(|_| ())
     }
 
-    fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<(*const c_char, u32)> {
-        match self.arena.expand(s, mode) {
-            Ok(x) => Ok(x),
-            Err(st) => {
-                self.status = st;
-                Err(())
-            }
-        }
+    fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<Span> {
+        let r = self.doc.expand(s, mode);
+        self.arena(r).map_err(|_| ())
     }
 
-    fn new_node(&mut self, ty: u32) -> R<*mut Node> {
-        match self.arena.try_node(ty) {
-            Ok(n) => Ok(n),
-            Err(_) => self.oom(),
-        }
+    fn new_node(&mut self, ty: u32) -> R<NodeId> {
+        let r = self.doc.new_node(ty);
+        self.arena(r).map_err(|_| ())
     }
 
     /// Append a TEXT / CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
-    fn append_chardata(&mut self, parent: *mut Node, ty: u32, val: *const c_char, len: u32) -> R {
-        match self.arena.append_chardata(parent, ty, val, len) {
-            Ok(()) => Ok(()),
-            Err(ERR_LIMIT) => self.limit(),
-            Err(_) => self.oom(),
-        }
+    fn append_chardata(&mut self, parent: NodeId, ty: u32, val: Span) -> R {
+        let r = self.doc.append_chardata(parent, ty, val);
+        self.arena(r).map_err(|_| ())
     }
 
     /// Store `name` (prefix:local per `sp`) as one arena copy on `node`.
-    fn set_node_qname(&mut self, node: *mut Node, name: &[u8], sp: &Split) -> R {
-        let qn = crate::xml::qname_from(name, sp);
-        if self.arena.assign_qname(node, &qn) != 0 {
-            return self.oom();
-        }
-        Ok(())
+    fn set_node_qname(&mut self, node: NodeId, name: &[u8], sp: &Split) -> R {
+        let r = self
+            .doc
+            .assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len);
+        self.arena(r).map_err(|_| ())
     }
 
     /* ---- namespaces (§7) ---- */
 
-    fn ns_lookup(&self, pfx: &[u8]) -> Option<(*const c_char, u32)> {
+    fn ns_lookup(&self, pfx: &[u8]) -> Option<Span> {
         if pfx == b"xml" {
-            return Some((
-                XML_NS_URI.as_ptr() as *const c_char,
-                XML_NS_URI.len() as u32,
-            ));
+            return Some(self.doc.xml_ns_span());
         }
         self.binds
             .iter()
             .rev()
             .find(|b| b.pfx == pfx)
-            .map(|b| (b.uri, b.uri_len))
+            .map(|b| b.uri)
     }
 
-    fn push_binding(&mut self, pfx: &[u8], uri: *const c_char, uri_len: u32) -> R {
+    fn push_binding(&mut self, pfx: &[u8], uri: Span) -> R {
         if self.binds.len() + 1 > MAX_NS {
             return self.limit();
         }
@@ -267,11 +249,7 @@ impl<'a> Parser<'a> {
             return Err(());
         }
         v.extend_from_slice(pfx);
-        self.binds.push(Binding {
-            pfx: v,
-            uri,
-            uri_len,
-        });
+        self.binds.push(Binding { pfx: v, uri });
         Ok(())
     }
 
@@ -361,54 +339,52 @@ impl<'a> Parser<'a> {
             if bpfx == b"xmlns" {
                 return self.syntax(); /* xmlns:xmlns reserved */
             }
-            let (uri, ulen) = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
+            let uri = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
+            let ub = self.doc.span(uri);
             if bpfx == b"xml" {
-                if !self.arena.bytes_eq(uri, ulen, XML_NS_URI) {
+                if ub != XML_NS_URI {
                     return self.syntax();
                 }
-            } else if self.arena.bytes_eq(uri, ulen, XML_NS_URI)
-                || self.arena.bytes_eq(uri, ulen, XMLNS_NS_URI)
-            {
+            } else if ub == XML_NS_URI || ub == XMLNS_NS_URI {
                 return self.syntax(); /* reserved URI bound to another prefix */
             }
-            if !bpfx.is_empty() && ulen == 0 {
+            if !bpfx.is_empty() && ub.is_empty() {
                 return self.syntax(); /* xmlns:p="" (XML 1.0) */
             }
-            self.push_binding(bpfx, uri, ulen)?;
+            self.push_binding(bpfx, uri)?;
         }
         Ok(())
     }
 
     /// Phase 3: the element's own namespace URI.
-    fn resolve_element_ns(&mut self, el: *mut Node) -> R {
-        if self.arena.prefix_len(el) > 0 {
-            let pfx = self.arena.prefix(el);
+    fn resolve_element_ns(&mut self, el: NodeId) -> R {
+        let pfx_span = self.doc.node(el).prefix;
+        if pfx_span.len > 0 {
+            let pfx = self.doc.span(pfx_span);
             if pfx == b"xmlns" {
                 return self.syntax();
             }
             match self.ns_lookup(pfx) {
-                Some((u, l)) => {
-                    self.arena.set_namespace(el, u, l);
-                }
+                Some(span) => self.doc.node_mut(el).ns_uri = span,
                 None => return self.syntax(), /* unbound prefix */
             }
-        } else if let Some((u, l)) = self.ns_lookup(b"") {
-            if l > 0 {
-                self.arena.set_namespace(el, u, l);
+        } else if let Some(span) = self.ns_lookup(b"") {
+            if span.len > 0 {
+                self.doc.node_mut(el).ns_uri = span;
             }
         }
         /* Decided: from here the URI is the node's identity (lib.rs). A
          * parsed element in no namespace is resolved too - "no namespace" is
          * a decision, not an absence, and moving it under a default
          * namespace must not silently put it in one. */
-        self.arena.mark_namespace_resolved(el);
+        self.doc.node_mut(el).flags |= crate::xml::FLAG_NS_RESOLVED;
         Ok(())
     }
 
     /// Phase 4: the attribute nodes (xmlns kept, §7.2), then duplicates (§9.3).
-    fn build_attr_nodes(&mut self, el: *mut Node) -> R {
+    fn build_attr_nodes(&mut self, el: NodeId) -> R {
         let input = self.input;
-        let mut tail: *mut Node = ptr::null_mut();
+        let mut tail: Option<NodeId> = None;
         for i in 0..self.ratt.len() {
             let r = self.ratt[i];
             let name = &input[r.name.0..r.name.0 + r.name.1];
@@ -419,37 +395,31 @@ impl<'a> Parser<'a> {
             let attr = self.new_node(T_ATTRIBUTE)?;
             self.set_node_qname(attr, name, &sp)?;
             if xmlns_prefix(name).is_some() {
-                self.arena.set_namespace(
-                    attr,
-                    XMLNS_NS_URI.as_ptr() as *const c_char,
-                    XMLNS_NS_URI.len() as u32,
-                );
+                let span = self.doc.xmlns_ns_span();
+                self.doc.node_mut(attr).ns_uri = span;
             } else if sp.prefix_len > 0 {
                 match self.ns_lookup(&name[..sp.prefix_len as usize]) {
-                    Some((u, l)) => {
-                        self.arena.set_namespace(attr, u, l);
-                    }
+                    Some(span) => self.doc.node_mut(attr).ns_uri = span,
                     None => return self.syntax(), /* unbound prefix */
                 }
             }
-            let (v, vl) = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
-            self.arena.set_value(attr, v, vl);
-            self.arena.set_parent(attr, el);
-            if tail.is_null() {
-                self.arena.set_attributes(el, attr);
-            } else {
-                self.arena.set_next(tail, attr);
+            let v = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
+            self.doc.node_mut(attr).value = v;
+            self.doc.node_mut(attr).parent = Some(el);
+            match tail {
+                None => self.doc.node_mut(el).attrs = Some(attr),
+                Some(t) => self.doc.node_mut(t).next = Some(attr),
             }
-            tail = attr;
+            tail = Some(attr);
         }
         /* §9.3: no two attributes share (namespace URI, local name) */
-        if self.arena.has_duplicate_attributes(el) {
+        if self.doc.has_duplicate_attributes(el) {
             return self.syntax();
         }
         Ok(())
     }
 
-    fn parse_element_body(&mut self, el: *mut Node) -> R<bool> {
+    fn parse_element_body(&mut self, el: NodeId) -> R<bool> {
         let pushed = self.scan_raw_attrs()?;
         self.apply_xmlns_bindings()?;
         self.resolve_element_ns(el)?;
@@ -460,7 +430,7 @@ impl<'a> Parser<'a> {
     /* ---- markup ---- */
 
     /// '<!--' comment (cursor at '!').
-    fn parse_comment(&mut self, parent: *mut Node) -> R {
+    fn parse_comment(&mut self, parent: NodeId) -> R {
         self.advance_n(3);
         let cstart = self.pos;
         let mut j = self.pos;
@@ -484,19 +454,17 @@ impl<'a> Parser<'a> {
         if !validate_chars(&self.input[cstart..j]) {
             return self.syntax();
         }
-        if !parent.is_null() {
-            let c = self.new_node(T_COMMENT)?;
-            let v = self.own(self.sl(cstart, craw))?;
-            self.arena.set_value(c, v, craw as u32);
-            self.arena.append(parent, c);
-        }
+        let c = self.new_node(T_COMMENT)?;
+        let v = self.own(self.sl(cstart, craw))?;
+        self.doc.node_mut(c).value = v;
+        self.doc.append_child(parent, c);
         self.advance_n(craw + 3);
         Ok(())
     }
 
     /// '<![CDATA[' section (cursor at '!').
-    fn parse_cdata(&mut self, parent: *mut Node) -> R {
-        if self.stack.is_empty() && self.fragment.is_null() {
+    fn parse_cdata(&mut self, parent: NodeId) -> R {
+        if self.stack.is_empty() && self.fragment.is_none() {
             return self.syntax(); /* CDATA outside the root */
         }
         self.advance_n(8);
@@ -520,7 +488,7 @@ impl<'a> Parser<'a> {
             return self.syntax();
         }
         let cval = self.own(self.sl(cstart, craw))?;
-        self.append_chardata(parent, T_CDATA, cval, craw as u32)?;
+        self.append_chardata(parent, T_CDATA, cval)?;
         self.advance_n(craw + 3);
         Ok(())
     }
@@ -615,7 +583,7 @@ impl<'a> Parser<'a> {
             }
             if !saw_enc && !saw_sd && self.eat_keyword(b"encoding") {
                 saw_enc = true;
-                self.arena.mark_encoding_decl();
+                self.doc.mark_encoding_decl();
                 self.decl_eq()?;
                 self.decl_value(is_enc_name)?;
             } else if !saw_sd && self.eat_keyword(b"standalone") {
@@ -629,7 +597,7 @@ impl<'a> Parser<'a> {
     }
 
     /// '<?' processing instruction (cursor at '?').
-    fn parse_pi(&mut self, parent: *mut Node, at_doc_start: bool) -> R {
+    fn parse_pi(&mut self, parent: NodeId, at_doc_start: bool) -> R {
         self.advance_n(1);
         let (t, tl) = self.scan_name()?;
         let tgt = self.sl(t, tl);
@@ -667,14 +635,15 @@ impl<'a> Parser<'a> {
         if !validate_chars(&self.input[dstart..j]) {
             return self.syntax();
         }
-        if !parent.is_null() {
-            let pi = self.new_node(T_PI)?;
-            let lp = self.own(tgt)?;
-            let vp = self.own(self.sl(dstart, draw))?;
-            self.arena.set_local(pi, lp, tl as u32);
-            self.arena.set_value(pi, vp, draw as u32);
-            self.arena.append(parent, pi);
+        let pi = self.new_node(T_PI)?;
+        let lp = self.own(tgt)?;
+        let vp = self.own(self.sl(dstart, draw))?;
+        {
+            let n = self.doc.node_mut(pi);
+            n.local = lp;
+            n.value = vp;
         }
+        self.doc.append_child(parent, pi);
         self.advance_n(draw + 2);
         Ok(())
     }
@@ -693,16 +662,17 @@ impl<'a> Parser<'a> {
             None => return self.syntax(), /* end tag with no open element */
         };
         let name = self.sl(nm, nl);
-        let matched = if self.arena.prefix_len(top) > 0 {
-            let pfx = self.arena.prefix(top);
-            let local = self.arena.local(top);
+        let pfx_span = self.doc.node(top).prefix;
+        let matched = if pfx_span.len > 0 {
+            let pfx = self.doc.span(pfx_span);
+            let local = self.doc.local(top);
             let pl = pfx.len();
             nl == pl + 1 + local.len()
                 && name.starts_with(pfx)
                 && name[pl] == b':'
                 && &name[pl + 1..] == local
         } else {
-            name == self.arena.local(top)
+            name == self.doc.local(top)
         };
         if !matched {
             return self.syntax(); /* mismatched end tag */
@@ -715,7 +685,7 @@ impl<'a> Parser<'a> {
 
     /// '<!DOCTYPE' (cursor at '!'): recognized, not processed (§9.4).
     fn parse_doctype(&mut self) -> R {
-        if !self.stack.is_empty() || !self.arena.root().is_null() || self.saw_doctype {
+        if !self.stack.is_empty() || self.doc.root().is_some() || self.saw_doctype {
             return self.syntax();
         }
         self.saw_doctype = true;
@@ -774,18 +744,22 @@ impl<'a> Parser<'a> {
 
         let dt = self.new_node(T_DOCTYPE)?;
         let nm = self.own(self.sl(n, nl))?;
-        self.arena.set_local(dt, nm, nl as u32);
-        self.arena.set_qname_parts(dt, nm, nl as u32);
+        {
+            let d = self.doc.node_mut(dt);
+            d.local = nm;
+            d.qname = nm;
+        }
         if let Some((ps, pl)) = pub_id {
             let p = self.own(self.sl(ps, pl))?;
-            self.arena.set_prefix(dt, p, pl as u32);
+            self.doc.node_mut(dt).prefix = p;
         }
         if let Some((ss, sl)) = sys_id {
             let s = self.own(self.sl(ss, sl))?;
-            self.arena.set_value(dt, s, sl as u32);
+            self.doc.node_mut(dt).value = s;
         }
-        self.arena.append(self.arena.document_node(), dt);
-        self.arena.set_doctype(dt);
+        let dn = self.doc.doc_node();
+        self.doc.append_child(dn, dt);
+        self.doc.set_doctype(Some(dt));
         Ok(())
     }
 
@@ -799,7 +773,7 @@ impl<'a> Parser<'a> {
             return self.parse_cdata(parent);
         }
         if self.starts(b"!DOCTYPE") {
-            if !self.fragment.is_null() {
+            if self.fragment.is_some() {
                 return self.syntax(); /* a fragment has no DOCTYPE */
             }
             return self.parse_doctype();
@@ -817,14 +791,19 @@ impl<'a> Parser<'a> {
         };
         let el = self.new_node(T_ELEMENT)?;
         self.set_node_qname(el, name, &sp)?;
-        self.arena.set_position(el, tl, tc);
-        if self.stack.is_empty() && self.fragment.is_null() {
-            if !self.arena.root().is_null() {
+        {
+            let n = self.doc.node_mut(el);
+            n.line = tl;
+            n.col = tc;
+        }
+        if self.stack.is_empty() && self.fragment.is_none() {
+            if self.doc.root().is_some() {
                 return self.syntax(); /* multiple roots */
             }
-            self.arena.set_root(el);
+            self.doc.set_root(Some(el));
         }
-        self.arena.append(self.cur_parent(), el);
+        let parent = self.cur_parent();
+        self.doc.append_child(parent, el);
         let bind_base = self.binds.len();
         let pushed = self.parse_element_body(el)?;
         if pushed {
@@ -864,15 +843,15 @@ impl<'a> Parser<'a> {
         if traw > u32::MAX as usize {
             return self.limit();
         }
-        if self.stack.is_empty() && self.fragment.is_null() {
+        if self.stack.is_empty() && self.fragment.is_none() {
             if nonspace {
                 return self.syntax(); /* non-ws text outside any element */
             }
             return Ok(()); /* document-level whitespace: discarded */
         }
-        let (tv, tvl) = self.expand(self.sl(tstart, traw), ExpandMode::Text)?;
+        let tv = self.expand(self.sl(tstart, traw), ExpandMode::Text)?;
         let parent = self.cur_parent();
-        self.append_chardata(parent, T_TEXT, tv, tvl)
+        self.append_chardata(parent, T_TEXT, tv)
     }
 
     /// Tokenizer dispatch.
@@ -884,7 +863,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 let (tl, tc) = (self.line, self.col);
-                let at_start = self.pos == 0 && self.fragment.is_null();
+                let at_start = self.pos == 0 && self.fragment.is_none();
                 self.advance(); /* '<' */
                 let c = match self.peek() {
                     Some(c) => c,
@@ -914,14 +893,17 @@ impl<'a> Parser<'a> {
 
     /// Seed a fragment parser's scope with the document root's xmlns attributes.
     fn seed_doc_namespaces(&mut self) -> R {
-        let root = self.arena.root();
-        if root.is_null() {
+        let Some(root) = self.doc.root() else {
             return Ok(());
-        }
-        for (qn, ql, v, vl) in self.arena.attrs(root) {
-            if let Some(bpfx) = xmlns_prefix(self.arena.bytes_slice(qn, ql)) {
-                self.push_binding(bpfx, v, vl)?;
+        };
+        let mut a = self.doc.attrs(root);
+        while let Some(attr) = a {
+            let bpfx = xmlns_prefix(self.doc.qname(attr)).map(|p| p.to_vec());
+            if let Some(bpfx) = bpfx {
+                let uri = self.doc.node(attr).value;
+                self.push_binding(&bpfx, uri)?;
             }
+            a = self.doc.node(attr).next;
         }
         Ok(())
     }
@@ -929,47 +911,42 @@ impl<'a> Parser<'a> {
 
 /// Parse already-bounded input into a fresh document. Raw input is converted
 /// to this slice at the FFI boundary, before reaching the tree builder.
-pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Doc, i32> {
-    let doc = create_doc(limits, src.len())?;
+pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, i32> {
+    let mut doc = Document::create(limits, src.len())?;
     let norm = match normalize_newlines(src) {
         Ok(n) => n,
-        Err(()) => {
-            destroy_doc(doc);
-            return Err(ERR_OOM);
-        }
+        Err(()) => return Err(ERR_OOM),
     };
     let body: &[u8] = match &norm {
         Some(v) => v,
         None => src,
     };
-    let mut p = Parser::new(body, doc.as_ptr(), ptr::null_mut());
+    let mut p = Parser::new(body, &mut doc, None);
     p.run();
-    if p.status == OK && (!p.stack.is_empty() || p.arena.root().is_null()) {
+    if p.status == OK && (!p.stack.is_empty() || p.doc.root().is_none()) {
         let _ = p.syntax::<()>(); /* unclosed element(s) / no root */
     }
     let st = p.status;
     drop(p);
     if st != OK {
-        destroy_doc(doc);
         return Err(st);
     }
-    Ok(doc.as_ptr())
+    Ok(Box::into_raw(doc))
 }
 
 /// Parse a fragment into a live document's arena. The document reference and
 /// input slice make the ownership preconditions explicit to Rust callers.
-pub fn parse_fragment(doc: &mut Doc, src: &[u8], inherit_doc_ns: bool) -> Result<*mut Node, i32> {
-    let arena = ParserArena::new(doc as *mut Doc);
-    if src.len() > arena.max_bytes() {
+pub fn parse_fragment(doc: &mut Document, src: &[u8], inherit_doc_ns: bool) -> Result<NodeId, i32> {
+    if src.len() > doc.max_bytes {
         return Err(ERR_LIMIT);
     }
-    let frag = arena.try_node(T_FRAGMENT)?;
-    let norm = normalize_newlines(src).map_err(|_| arena.status())?;
+    let frag = doc.new_node(T_FRAGMENT)?;
+    let norm = normalize_newlines(src).map_err(|_| doc.status())?;
     let body: &[u8] = match &norm {
         Some(v) => v,
         None => src,
     };
-    let mut p = Parser::new(body, doc as *mut Doc, frag);
+    let mut p = Parser::new(body, doc, Some(frag));
     if inherit_doc_ns && p.seed_doc_namespaces().is_err() {
         return Err(p.status);
     }

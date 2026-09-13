@@ -168,8 +168,9 @@ unsafe fn set_bool(out: *mut Val, b: bool) -> bool {
 }
 
 unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<Text> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let mut t = Text::new();
-    if val_to_owned_text_or_fail::<D>(v, mkr_ctx_limits(ctx), err, t.as_mut()) {
+    if val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, t.as_mut()) {
         Some(t)
     } else {
         None
@@ -177,8 +178,9 @@ unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> 
 }
 
 unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<f64> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let mut d = 0.0;
-    if val_to_number_or_fail::<D>(v, mkr_ctx_limits(ctx), err, &mut d) {
+    if val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, &mut d) {
         Some(d)
     } else {
         None
@@ -193,11 +195,12 @@ unsafe fn arg_or_self_text<D: Dom>(
     ctx: *mut Context,
     err: *mut Error,
 ) -> Option<Text> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     match args.first() {
         Some(a) => to_text::<D>(a, ctx, err),
         None => {
             let mut t = Text::new();
-            if node_to_owned_text::<D>(focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
+            if node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
                 Some(t)
             } else {
                 None
@@ -307,6 +310,7 @@ unsafe fn fn_count<D: Dom>(
 /// node-set - a token per node, a tree walk per token - drives quadratic work at
 /// no cost. Returns Err(()) on an overrun, with `*err` set.
 unsafe fn find_by_id<D: Dom>(
+    doc: D::Doc,
     root: D::Node,
     id: &[u8],
     limits: *mut Limits,
@@ -320,19 +324,19 @@ unsafe fn find_by_id<D: Dom>(
         if mkr_limit_eval_op(limits, err) != 0 {
             return Err(());
         }
-        if D::node_type(n) == NTYPE_ELEMENT && D::get_attribute(n, b"id") == Some(id) {
+        if D::node_type(doc, n) == NTYPE_ELEMENT && D::get_attribute(doc, n, b"id") == Some(id) {
             return Ok(n);
         }
-        if !D::is_null(D::first_child(n)) {
-            n = D::first_child(n);
+        if !D::is_null(D::first_child(doc, n)) {
+            n = D::first_child(doc, n);
         } else {
-            while !D::is_null(n) && n != root && D::is_null(D::next(n)) {
-                n = D::parent(n);
+            while !D::is_null(n) && n != root && D::is_null(D::next(doc, n)) {
+                n = D::parent(doc, n);
             }
             if D::is_null(n) || n == root {
                 break;
             }
-            n = D::next(n);
+            n = D::next(doc, n);
         }
     }
     Ok(D::null())
@@ -349,9 +353,10 @@ unsafe fn id_collect<D: Dom>(
     ctx: *mut Context,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
-        let hit = match find_by_id::<D>(root, tok, limits, err) {
+        let hit = match find_by_id::<D>(doc, root, tok, limits, err) {
             Ok(h) => h,
             Err(()) => return false,
         };
@@ -386,7 +391,7 @@ unsafe fn fn_id<D: Dom>(
     if doc.is_null() {
         return true;
     }
-    let root = D::from_void(doc);
+    let root = D::document_node(D::doc_from_void(doc));
     let ns_out = &raw mut (*out).u.nodeset;
 
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
@@ -396,6 +401,7 @@ unsafe fn fn_id<D: Dom>(
         (0..(*set).count).all(|i| {
             let mut t = Text::new();
             node_to_owned_text::<D>(
+                D::doc_from_void(doc),
                 nodeset_at::<D>(set, i),
                 mkr_ctx_limits(ctx),
                 err,
@@ -444,6 +450,7 @@ unsafe fn name_target<D: Dom>(
 /// expanded-name is (null, target)). In HTML the qualified name equals the local
 /// name, which also keeps the LXB_NS_HTML prefix out of the result.
 unsafe fn name_emit<D: Dom>(
+    doc: D::Doc,
     n: D::Node,
     qualified: bool,
     out: *mut Val,
@@ -453,55 +460,57 @@ unsafe fn name_emit<D: Dom>(
     if D::is_null(n) {
         return set_string(out, b"", err, fname);
     }
-    let name: &[u8] = match D::node_type(n) {
+    let name: &[u8] = match D::node_type(doc, n) {
         NTYPE_ATTRIBUTE => {
             if qualified {
-                D::attr_qualified_name(n)
+                D::attr_qualified_name(doc, n)
             } else {
-                D::attr_local_name(n)
+                D::attr_local_name(doc, n)
             }
         }
         NTYPE_ELEMENT => {
             if qualified {
-                D::qualified_name(n)
+                D::qualified_name(doc, n)
             } else {
-                D::local_name(n)
+                D::local_name(doc, n)
             }
         }
-        NTYPE_PI => D::pi_name(n),
+        NTYPE_PI => D::pi_name(doc, n),
         _ => b"",
     };
     set_string(out, name, err, fname)
 }
 
 unsafe fn fn_local_name<D: Dom>(
-    _ctx: *mut Context,
+    ctx: *mut Context,
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if !arity(args.len(), 0, 1, err, "local-name") {
         return false;
     }
     match name_target::<D>(args, focus, err, "local-name") {
-        Some(t) => name_emit::<D>(t, false, out, err, "local-name"),
+        Some(t) => name_emit::<D>(doc, t, false, out, err, "local-name"),
         None => false,
     }
 }
 
 unsafe fn fn_name<D: Dom>(
-    _ctx: *mut Context,
+    ctx: *mut Context,
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if !arity(args.len(), 0, 1, err, "name") {
         return false;
     }
     match name_target::<D>(args, focus, err, "name") {
-        Some(t) => name_emit::<D>(t, true, out, err, "name"),
+        Some(t) => name_emit::<D>(doc, t, true, out, err, "name"),
         None => false,
     }
 }
@@ -516,18 +525,18 @@ unsafe fn fn_namespace_uri<D: Dom>(
     if !arity(args.len(), 0, 1, err, "namespace-uri") {
         return false;
     }
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let t = match name_target::<D>(args, focus, err, "namespace-uri") {
         Some(t) => t,
         None => return false,
     };
     if D::is_null(t)
-        || (D::node_type(t) != NTYPE_ELEMENT && D::node_type(t) != NTYPE_ATTRIBUTE)
-        || !D::has_ns(t)
+        || (D::node_type(doc, t) != NTYPE_ELEMENT && D::node_type(doc, t) != NTYPE_ATTRIBUTE)
+        || !D::has_ns(doc, t)
     {
         return set_string(out, b"", err, "namespace-uri");
     }
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    set_string(out, D::ns_uri(t, doc), err, "namespace-uri")
+    set_string(out, D::ns_uri(doc, t), err, "namespace-uri")
 }
 
 /* ---------- string functions ---------- */
@@ -924,6 +933,7 @@ unsafe fn fn_lang<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if !arity(args.len(), 1, 1, err, "lang") {
         return false;
     }
@@ -938,11 +948,11 @@ unsafe fn fn_lang<D: Dom>(
      * fallback. */
     let mut p = focus.node;
     while !D::is_null(p) {
-        if D::node_type(p) == NTYPE_ELEMENT {
+        if D::node_type(doc, p) == NTYPE_ELEMENT {
             let v = if D::IS_XML {
-                D::get_attribute(p, b"xml:lang")
+                D::get_attribute(doc, p, b"xml:lang")
             } else {
-                D::get_attribute(p, b"lang").or_else(|| D::get_attribute(p, b"xml:lang"))
+                D::get_attribute(doc, p, b"lang").or_else(|| D::get_attribute(doc, p, b"xml:lang"))
             };
             if let Some(v) = v {
                 /* Case-insensitive compare of the prefix up to a '-'. */
@@ -955,7 +965,7 @@ unsafe fn fn_lang<D: Dom>(
                 }
             }
         }
-        p = D::parent(p);
+        p = D::parent(doc, p);
     }
     true
 }
@@ -969,6 +979,7 @@ unsafe fn fn_number<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if !arity(args.len(), 0, 1, err, "number") {
         return false;
     }
@@ -980,7 +991,7 @@ unsafe fn fn_number<D: Dom>(
         None => {
             /* number() with no argument is number(string(self)). */
             let mut t = Text::new();
-            if !node_to_owned_text::<D>(focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
+            if !node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
                 return false;
             }
             set_num(out, bytes_to_number(t.as_slice()))
@@ -1112,6 +1123,7 @@ unsafe fn fn_local_name_is<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     if !arity(args.len(), 1, 1, err, "nokogiri-builtin:local-name-is") {
         return false;
     }
@@ -1119,7 +1131,7 @@ unsafe fn fn_local_name_is<D: Dom>(
         Some(t) => t,
         None => return false,
     };
-    let hit = !D::is_null(focus.node) && D::qualified_name(focus.node) == want.as_slice();
+    let hit = !D::is_null(focus.node) && D::qualified_name(doc, focus.node) == want.as_slice();
     set_bool(out, hit)
 }
 
@@ -1128,20 +1140,26 @@ unsafe fn fn_local_name_is<D: Dom>(
 /// Two elements are the same "type" iff they share an expanded name: local name
 /// plus namespace URI.
 unsafe fn same_type<D: Dom>(a: D::Node, b: D::Node, doc: D::Doc) -> bool {
-    D::local_name(a) == D::local_name(b) && D::ns_uri(a, doc) == D::ns_uri(b, doc)
+    D::local_name(doc, a) == D::local_name(doc, b) && D::ns_uri(doc, a) == D::ns_uri(doc, b)
 }
 
 /// The 1-based position of `node` among its same-type element siblings: forward
 /// counts the preceding siblings, otherwise the following ones (from the end).
 unsafe fn of_type_pos<D: Dom>(node: D::Node, forward: bool, doc: D::Doc) -> f64 {
-    if D::is_null(node) || D::node_type(node) != NTYPE_ELEMENT {
+    if D::is_null(node) || D::node_type(doc, node) != NTYPE_ELEMENT {
         return 0.0;
     }
-    let step = |n: D::Node| if forward { D::prev(n) } else { D::next(n) };
+    let step = |n: D::Node| {
+        if forward {
+            D::prev(doc, n)
+        } else {
+            D::next(doc, n)
+        }
+    };
     let mut pos = 1i64;
     let mut s = step(node);
     while !D::is_null(s) {
-        if D::node_type(s) == NTYPE_ELEMENT && same_type::<D>(node, s, doc) {
+        if D::node_type(doc, s) == NTYPE_ELEMENT && same_type::<D>(node, s, doc) {
             pos += 1;
         }
         s = step(s);

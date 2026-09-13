@@ -1,18 +1,17 @@
 //! Safe element-name index: `(local name, namespace URI)` -> document-ordered
 //! elements.
 //!
-//! The cache is built and read through `raw::NodeRef`, so this module contains
-//! no raw-pointer dereference of its own. It owns no arena memory; the only
-//! raw pointer it lets escape is the bucket's storage, whose `NodeRef` layout
-//! `ffi.rs` reinterprets as the engine's `*mut Node` array (see the
-//! `repr(transparent)` on `NodeRef`).
+//! The cache is built and read through the index-arena [`Document`], so this
+//! module contains no `unsafe` of its own. It owns no arena memory; its bucket
+//! is a `&[NodeId]`, and a node id is exactly the opaque token the XPath engine
+//! carries, so the FFI adapter can hand the slice to the engine without a
+//! conversion.
 
 #![forbid(unsafe_code)]
 
 use crate::falloc;
 use crate::falloc::{MapInsert, Reserve, VecPush};
-use crate::xml::raw::{self, NodeRef};
-use crate::xml::{Doc, T_ELEMENT};
+use crate::xml::{Document, NodeId, T_ELEMENT};
 use core::hash::{BuildHasherDefault, Hasher};
 use std::collections::HashMap;
 
@@ -42,7 +41,7 @@ impl Hasher for Fnv {
 
 /// The key is `local ++ 0xFF ++ ns_uri`: 0xFF is not valid UTF-8.
 pub struct NameIndex {
-    map: HashMap<Box<[u8]>, Vec<NodeRef>, BuildHasherDefault<Fnv>>,
+    map: HashMap<Box<[u8]>, Vec<NodeId>, BuildHasherDefault<Fnv>>,
     /// GVL serialises lookup, so this reusable key never races and avoids an
     /// allocation on the answer path.
     scratch: Vec<u8>,
@@ -61,15 +60,15 @@ fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) -> bool {
     true
 }
 
-fn build(doc: &Doc) -> Option<Box<NameIndex>> {
-    let root = raw::document_node(doc)?;
-    let mut map: HashMap<Box<[u8]>, Vec<NodeRef>, BuildHasherDefault<Fnv>> = HashMap::default();
+fn build(doc: &Document) -> Option<Box<NameIndex>> {
+    let root = doc.doc_node();
+    let mut map: HashMap<Box<[u8]>, Vec<NodeId>, BuildHasherDefault<Fnv>> = HashMap::default();
     let mut key = Vec::new();
     let mut max_key = 0usize;
     let mut cur = Some(root);
     while let Some(node) = cur {
-        if node.type_() == T_ELEMENT {
-            if !key_into(&mut key, node.local(), node.ns()) {
+        if doc.type_(node) == T_ELEMENT {
+            if !key_into(&mut key, doc.local(node), doc.ns(node)) {
                 return None;
             }
             max_key = max_key.max(key.len());
@@ -83,7 +82,7 @@ fn build(doc: &Doc) -> Option<Box<NameIndex>> {
                 }
             }
         }
-        cur = raw::preorder_next(root, node);
+        cur = doc.preorder_next(root, node);
     }
     falloc::try_box(NameIndex {
         map,
@@ -95,21 +94,21 @@ fn build(doc: &Doc) -> Option<Box<NameIndex>> {
 
 /// Builds lazily. `None` means the caller must walk the tree, never that a
 /// partially built index can answer a query.
-pub fn get(doc: &mut Doc) -> Option<&mut NameIndex> {
+pub fn get(doc: &mut Document) -> Option<&mut NameIndex> {
     if doc.name_index.is_none() {
         doc.name_index = build(doc);
     }
     doc.name_index.as_deref_mut()
 }
 
-pub fn invalidate(doc: &mut Doc) {
+pub fn invalidate(doc: &mut Document) {
     doc.name_index = None;
 }
 
 /// The bucket for `(local, ns)`, in document order. The slice borrows the cache
 /// and stays valid until the next mutation invalidates it; an over-long or
 /// absent key yields an empty slice.
-pub fn lookup<'a>(idx: &'a mut NameIndex, local: &[u8], ns: &[u8]) -> &'a [NodeRef] {
+pub fn lookup<'a>(idx: &'a mut NameIndex, local: &[u8], ns: &[u8]) -> &'a [NodeId] {
     if local.len().saturating_add(1).saturating_add(ns.len()) > idx.max_key {
         return &[];
     }

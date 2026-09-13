@@ -1,515 +1,19 @@
-//! The secure-by-design append-only arena (mkr_xml_node.c). The one
-//! overflow- and budget-checked allocation choke point is `arena_alloc`;
-//! callers get typed nodes or copied bytes, never a raw cut to cast.
+//! The index-arena document: node allocation, the byte store, linking, and the
+//! bounded readers the parser and mutators build on.
 //!
-//! This module is inherently unsafe: it hands out raw memory that the C side
-//! reads through `mkr_xml_node_t` field access.
+//! Everything here is safe Rust. A [`Document`] owns a `Vec<Node>` and a
+//! `Vec<u8>`; a node is addressed by [`NodeId`], links are `Option<NodeId>`, and
+//! names/values are spans into the byte store. No address is ever exposed, so a
+//! growing `Vec` cannot invalidate a node, and `detach` (which never destroys)
+//! is free to leave a removed node addressable for life.
 
-/* One precondition throughout: `doc` is a live document, and any node handed
- * in was allocated from its arena. The module header says why that is the
- * boundary. */
-#![allow(clippy::missing_safety_doc)]
-
+use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
-use crate::xml::raw::NodeRef;
 use crate::xml::{
-    bytes, empty, index, Chunk, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM,
-    ERR_SYNTAX, MAX_BYTES, MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT,
-    T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
+    Doc, Document, Limits, Node, NodeId, Span, ERR_INTERNAL, ERR_LIMIT, ERR_OOM, ERR_SYNTAX,
+    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
 };
 use core::ffi::c_char;
-use core::ptr::{self, NonNull};
-use std::alloc::{alloc, dealloc, Layout};
-
-/// Alignment of every cut: the strictest fundamental alignment (max_align_t).
-const ALIGN: usize = 16;
-const CHUNK_MIN: usize = 64 * 1024;
-
-/// The parser's exclusive handle to one live XML arena.  It deliberately owns
-/// no memory: `Doc` continues to own the arena, while this type keeps parser
-/// code from repeatedly opening raw `Doc*` dereferences.
-#[derive(Clone, Copy)]
-pub(crate) struct ParserArena {
-    doc: NonNull<Doc>,
-}
-
-/// The mutation layer's name for the same live-arena handle. `ParserArena` is
-/// the parser's historical name for it; the two are one type so mutation and
-/// parsing cannot drift.
-pub(crate) type Arena = ParserArena;
-
-impl ParserArena {
-    #[inline]
-    pub(crate) fn new(doc: *mut Doc) -> Self {
-        Self {
-            doc: NonNull::new(doc).expect("ParserArena requires a live document"),
-        }
-    }
-
-    /// Fallible constructor for boundary code that receives a raw pointer.
-    #[inline]
-    pub(crate) fn from_ptr(doc: *mut Doc) -> Option<Self> {
-        NonNull::new(doc).map(|doc| Self { doc })
-    }
-
-    #[inline]
-    pub(crate) fn as_ptr(self) -> *mut Doc {
-        self.doc.as_ptr()
-    }
-
-    #[inline]
-    pub(crate) fn status(self) -> i32 {
-        // SAFETY: ParserArena is created only for a live document and parsing
-        // has exclusive access under the Ruby GVL.
-        unsafe { self.doc.as_ref().oom }
-    }
-
-    #[inline]
-    pub(crate) fn document_node(self) -> *mut Node {
-        // SAFETY: see `status`.
-        unsafe { self.doc.as_ref().doc_node }
-    }
-
-    /// The document node as a non-null reference (always present in a live
-    /// document).
-    #[inline]
-    pub(crate) fn doc_node_ref(self) -> Option<NodeRef> {
-        // SAFETY: the document node is arena-owned and non-null in a live doc.
-        unsafe { NodeRef::from_raw(self.document_node()) }
-    }
-
-    #[inline]
-    pub(crate) fn doctype(self) -> *mut Node {
-        // SAFETY: see `status`.
-        unsafe { self.doc.as_ref().doctype }
-    }
-
-    #[inline]
-    pub(crate) fn root(self) -> *mut Node {
-        // SAFETY: see `status`.
-        unsafe { self.doc.as_ref().root }
-    }
-
-    #[inline]
-    pub(crate) fn set_root(self, node: *mut Node) {
-        // SAFETY: parser-only initialization of this live document.
-        unsafe { (*self.doc.as_ptr()).root = node }
-    }
-
-    #[inline]
-    pub(crate) fn set_doctype(self, node: *mut Node) {
-        // SAFETY: parser-only initialization of this live document.
-        unsafe { (*self.doc.as_ptr()).doctype = node }
-    }
-
-    #[inline]
-    pub(crate) fn mark_encoding_decl(self) {
-        // SAFETY: parser-only initialization of this live document.
-        unsafe { (*self.doc.as_ptr()).has_encoding_decl = 1 }
-    }
-
-    #[inline]
-    pub(crate) fn bytes(self, src: &[u8]) -> *const c_char {
-        // SAFETY: ParserArena guarantees a live arena for the allocation.
-        unsafe { arena_bytes(self.as_ptr(), src) }
-    }
-
-    #[inline]
-    pub(crate) fn try_bytes(self, src: &[u8]) -> Result<*const c_char, i32> {
-        let p = self.bytes(src);
-        if p.is_null() {
-            Err(self.status())
-        } else {
-            Ok(p)
-        }
-    }
-
-    #[inline]
-    pub(crate) fn node(self, type_: u32) -> *mut Node {
-        // SAFETY: ParserArena guarantees a live arena for the allocation.
-        unsafe { arena_node(self.as_ptr(), type_) }
-    }
-
-    #[inline]
-    pub(crate) fn try_node(self, type_: u32) -> Result<*mut Node, i32> {
-        let n = self.node(type_);
-        if n.is_null() {
-            Err(self.status())
-        } else {
-            Ok(n)
-        }
-    }
-
-    /// Allocate a fresh node and hand it back as a non-null reference, or
-    /// `None` on an arena failure (the caller's fail-closed OOM answer).
-    #[inline]
-    pub(crate) fn alloc_node(self, type_: u32) -> Option<NodeRef> {
-        // SAFETY: `arena_node` returns a node from this live arena, or NULL.
-        unsafe { NodeRef::from_raw(self.node(type_)) }
-    }
-
-    #[inline]
-    pub(crate) fn assign_qname(self, node: *mut Node, qn: &QName) -> i32 {
-        // SAFETY: `node` was allocated from this arena immediately before use.
-        unsafe { qname_assign(self.as_ptr(), node, qn) }
-    }
-
-    #[inline]
-    pub(crate) fn append(self, parent: *mut Node, child: *mut Node) {
-        // SAFETY: parser builds a tree from fresh nodes in one arena.
-        unsafe { append_child(parent, child) }
-    }
-
-    #[inline]
-    pub(crate) fn set_value(self, node: *mut Node, value: *const c_char, len: u32) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe {
-            (*node).value = value;
-            (*node).value_len = len;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_local(self, node: *mut Node, value: *const c_char, len: u32) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe {
-            (*node).local = value;
-            (*node).local_len = len;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_qname_parts(self, node: *mut Node, value: *const c_char, len: u32) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe {
-            (*node).qname = value;
-            (*node).qname_len = len;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_prefix(self, node: *mut Node, value: *const c_char, len: u32) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe {
-            (*node).prefix = value;
-            (*node).prefix_len = len;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_position(self, node: *mut Node, line: u32, col: u32) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe {
-            (*node).line = line;
-            (*node).col = col;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_namespace(self, node: *mut Node, uri: *const c_char, len: u32) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe {
-            (*node).ns_uri = uri;
-            (*node).ns_uri_len = len;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn mark_namespace_resolved(self, node: *mut Node) {
-        // SAFETY: `node` is a freshly allocated node in this arena.
-        unsafe { (*node).flags |= crate::xml::FLAG_NS_RESOLVED }
-    }
-
-    #[inline]
-    pub(crate) fn set_parent(self, node: *mut Node, parent: *mut Node) {
-        // SAFETY: both nodes belong to this arena's tree under construction.
-        unsafe { (*node).parent = parent }
-    }
-
-    #[inline]
-    pub(crate) fn set_attributes(self, element: *mut Node, attrs: *mut Node) {
-        // SAFETY: both nodes belong to this arena's tree under construction.
-        unsafe { (*element).attrs = attrs }
-    }
-
-    #[inline]
-    pub(crate) fn set_next(self, node: *mut Node, next: *mut Node) {
-        // SAFETY: both nodes belong to this arena's tree under construction.
-        unsafe { (*node).next = next }
-    }
-
-    #[inline]
-    pub(crate) fn prefix_len(self, node: *const Node) -> u32 {
-        unsafe { (*node).prefix_len }
-    }
-
-    #[inline]
-    pub(crate) fn prefix<'a>(self, node: *const Node) -> &'a [u8] {
-        unsafe { bytes((*node).prefix, (*node).prefix_len) }
-    }
-
-    #[inline]
-    pub(crate) fn local<'a>(self, node: *const Node) -> &'a [u8] {
-        unsafe { bytes((*node).local, (*node).local_len) }
-    }
-
-    #[inline]
-    pub(crate) fn has_duplicate_attributes(self, element: *const Node) -> bool {
-        // SAFETY: the element and its attribute chain are owned by this live
-        // arena and are immutable during the parser's duplicate check.
-        unsafe {
-            let mut first = (*element).attrs;
-            while !first.is_null() {
-                let mut second = (*first).next;
-                while !second.is_null() {
-                    if bytes((*first).local, (*first).local_len)
-                        == bytes((*second).local, (*second).local_len)
-                        && bytes((*first).ns_uri, (*first).ns_uri_len)
-                            == bytes((*second).ns_uri, (*second).ns_uri_len)
-                    {
-                        return true;
-                    }
-                    second = (*second).next;
-                }
-                first = (*first).next;
-            }
-            false
-        }
-    }
-
-    #[inline]
-    pub(crate) fn expand(self, src: &[u8], mode: ExpandMode) -> Result<(*const c_char, u32), i32> {
-        // SAFETY: ParserArena guarantees a live document for the arena cut.
-        unsafe { expand_arena(self.as_ptr(), src, mode) }
-    }
-
-    #[inline]
-    pub(crate) fn append_chardata(
-        self,
-        parent: *mut Node,
-        type_: u32,
-        value: *const c_char,
-        len: u32,
-    ) -> Result<(), i32> {
-        // SAFETY: the parser passes a parent and value from this live arena.
-        unsafe { append_chardata(self.as_ptr(), parent, type_, value, len) }
-    }
-
-    #[inline]
-    pub(crate) fn max_bytes(self) -> usize {
-        // SAFETY: ParserArena is created only for a live document.
-        unsafe { (*self.doc.as_ptr()).max_bytes }
-    }
-
-    /// View an arena `(ptr, len)` pair as a byte slice. NULL or len 0 yields an
-    /// empty slice.
-    #[inline]
-    pub(crate) fn bytes_slice<'a>(self, p: *const c_char, len: u32) -> &'a [u8] {
-        // SAFETY: the pointer names bytes owned by this live arena.
-        unsafe { bytes(p, len) }
-    }
-
-    /// Compare an arena `(ptr, len)` pair to a byte slice.
-    #[inline]
-    pub(crate) fn bytes_eq(self, p: *const c_char, len: u32, s: &[u8]) -> bool {
-        self.bytes_slice(p, len) == s
-    }
-
-    /// Iterate over `element`'s attribute list, yielding the raw qname and
-    /// value pairs. The element must belong to this arena.
-    #[inline]
-    pub(crate) fn attrs(self, element: *const Node) -> AttrIter {
-        // SAFETY: the element and its attribute chain are owned by this arena.
-        unsafe {
-            AttrIter {
-                cur: (*element).attrs,
-            }
-        }
-    }
-}
-
-/// Iterator over an element's attribute list. The yielded pointers name bytes
-/// owned by the same arena as the element.
-pub(crate) struct AttrIter {
-    cur: *const Node,
-}
-
-impl Iterator for AttrIter {
-    type Item = (*const c_char, u32, *const c_char, u32);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cur.is_null() {
-            return None;
-        }
-        unsafe {
-            let a = self.cur;
-            let qn = (*a).qname;
-            let ql = (*a).qname_len;
-            let v = (*a).value;
-            let vl = (*a).value_len;
-            self.cur = (*a).next;
-            Some((qn, ql, v, vl))
-        }
-    }
-}
-
-/// Where a chunk's payload starts: the header size rounded up to ALIGN.
-const HDR: usize = (core::mem::size_of::<Chunk>() + ALIGN - 1) & !(ALIGN - 1);
-
-#[inline]
-fn align_up(n: usize) -> Option<usize> {
-    n.checked_add(ALIGN - 1).map(|x| x & !(ALIGN - 1))
-}
-
-pub unsafe fn doc_new() -> *mut Doc {
-    // Null on failure: every caller already treats a null document as the OOM
-    // answer, because the chunk allocator below can return one too.
-    crate::falloc::try_box_raw(Doc {
-        chunks: ptr::null_mut(),
-        arena_bytes: 0,
-        max_bytes: MAX_BYTES,
-        nodes: 0,
-        max_nodes: MAX_NODES,
-        oom: 0,
-        root: ptr::null_mut(),
-        doc_node: ptr::null_mut(),
-        doctype: ptr::null_mut(),
-        name_index: None,
-        has_encoding_decl: 0,
-    })
-}
-
-/// Whole-arena free: no individual node / byte free anywhere.
-pub unsafe fn doc_destroy(doc: *mut Doc) {
-    if doc.is_null() {
-        return;
-    }
-    index::invalidate(&mut *doc);
-    let mut c = (*doc).chunks;
-    while !c.is_null() {
-        let n = (*c).next;
-        let cap = (*c).cap;
-        /* HDR + cap was checked to fit when the chunk was allocated */
-        let layout = Layout::from_size_align_unchecked(HDR + cap, ALIGN);
-        dealloc(c as *mut u8, layout);
-        c = n;
-    }
-    drop(Box::from_raw(doc));
-}
-
-/// Create and initialize a fresh document, applying `limits` and checking that
-/// `src_len` fits under the budget before allocating the document node.
-pub(crate) fn create_doc(limits: Option<usize>, src_len: usize) -> Result<NonNull<Doc>, i32> {
-    unsafe {
-        let doc = doc_new();
-        if doc.is_null() {
-            return Err(ERR_OOM);
-        }
-        if let Some(mb) = limits {
-            if mb != 0 {
-                (*doc).max_bytes = mb;
-            }
-        }
-        if src_len > (*doc).max_bytes {
-            doc_destroy(doc);
-            return Err(ERR_LIMIT);
-        }
-        (*doc).doc_node = arena_node(doc, T_DOCUMENT);
-        if (*doc).doc_node.is_null() {
-            let st = (*doc).oom;
-            doc_destroy(doc);
-            return Err(st);
-        }
-        NonNull::new(doc).ok_or(ERR_OOM)
-    }
-}
-
-/// Free a document and all arena memory it owns.
-pub(crate) fn destroy_doc(doc: NonNull<Doc>) {
-    unsafe { doc_destroy(doc.as_ptr()) }
-}
-
-pub unsafe fn doc_memsize(doc: *const Doc) -> usize {
-    if doc.is_null() {
-        return 0;
-    }
-    let mut total = core::mem::size_of::<Doc>();
-    let mut c = (*doc).chunks;
-    while !c.is_null() {
-        /* saturate rather than wrap: a bogus huge memsize is harmless */
-        match HDR
-            .checked_add((*c).cap)
-            .and_then(|chunk| total.checked_add(chunk))
-        {
-            Some(t) => total = t,
-            None => return usize::MAX,
-        }
-        c = (*c).next;
-    }
-    total
-}
-
-/// THE single checked alloc choke point. On any failure sets doc.oom (sticky)
-/// and returns null. Nothing else cuts arena.
-pub unsafe fn arena_alloc(doc: *mut Doc, size: usize) -> *mut u8 {
-    if doc.is_null() || (*doc).oom != 0 {
-        return ptr::null_mut();
-    }
-    let need = match align_up(size) {
-        Some(n) => n,
-        None => {
-            (*doc).oom = ERR_LIMIT;
-            return ptr::null_mut();
-        }
-    };
-    /* budget BEFORE allocation - fail-closed */
-    match (*doc).arena_bytes.checked_add(need) {
-        Some(p) if p <= (*doc).max_bytes => {}
-        _ => {
-            (*doc).oom = ERR_LIMIT;
-            return ptr::null_mut();
-        }
-    }
-    let mut c = (*doc).chunks;
-    if c.is_null() || need > (*c).cap - (*c).used {
-        let cap = if need > CHUNK_MIN { need } else { CHUNK_MIN };
-        let total = match HDR.checked_add(cap) {
-            Some(t) => t,
-            None => {
-                (*doc).oom = ERR_LIMIT;
-                return ptr::null_mut();
-            }
-        };
-        let layout = match Layout::from_size_align(total, ALIGN) {
-            Ok(l) => l,
-            Err(_) => {
-                (*doc).oom = ERR_LIMIT;
-                return ptr::null_mut();
-            }
-        };
-        // The arena's one libc allocation, so the sweep's consult belongs
-        // here. The branch below already handles a null, which is what makes
-        // this the cheapest place in the crate to be injectable.
-        let nc = if crate::falloc::should_fail() {
-            ptr::null_mut()
-        } else {
-            alloc(layout) as *mut Chunk
-        };
-        if nc.is_null() {
-            (*doc).oom = ERR_OOM;
-            return ptr::null_mut();
-        }
-        (*nc).next = (*doc).chunks;
-        (*nc).used = 0;
-        (*nc).cap = cap;
-        (*doc).chunks = nc;
-        c = nc;
-    }
-    let p = (c as *mut u8).add(HDR + (*c).used);
-    (*c).used += need;
-    (*doc).arena_bytes += need;
-    p
-}
 
 #[inline]
 fn valid_type(t: u32) -> bool {
@@ -527,192 +31,583 @@ fn valid_type(t: u32) -> bool {
     )
 }
 
-/// A zeroed node of `type_`, counted against the node budget.
-pub unsafe fn arena_node(doc: *mut Doc, type_: u32) -> *mut Node {
-    if doc.is_null() {
-        return ptr::null_mut();
-    }
-    if !valid_type(type_) {
-        (*doc).oom = ERR_INTERNAL;
-        return ptr::null_mut();
-    }
-    if (*doc).nodes + 1 > (*doc).max_nodes {
-        (*doc).oom = ERR_LIMIT;
-        return ptr::null_mut();
-    }
-    let n = arena_alloc(doc, core::mem::size_of::<Node>()) as *mut Node;
-    if n.is_null() {
-        return n;
-    }
-    ptr::write_bytes(n as *mut u8, 0, core::mem::size_of::<Node>());
-    (*n).type_ = type_;
-    (*doc).nodes += 1;
-    n
-}
+const NODE_COST: usize = core::mem::size_of::<Node>();
 
-/// Copy `src` into the arena (copy-on-store). len 0 -> the "" sentinel.
-pub unsafe fn arena_bytes(doc: *mut Doc, src: &[u8]) -> *const c_char {
-    if src.is_empty() {
-        return empty();
-    }
-    let p = arena_alloc(doc, src.len());
-    if p.is_null() {
-        return ptr::null();
-    }
-    ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
-    p as *const c_char
-}
-
-/// Expand XML references into one arena cut. The raw document pointer stays
-/// inside the arena layer; parser code sees only the resulting byte slice.
-pub unsafe fn expand_arena(
-    doc: *mut Doc,
-    src: &[u8],
-    mode: ExpandMode,
-) -> Result<(*const c_char, u32), i32> {
-    if src.is_empty() {
-        return Ok((empty(), 0));
-    }
-    let out = match arena_cut(doc, src.len()) {
-        Some(out) => out,
-        None => return Err((*doc).oom),
-    };
-    let base = out.as_ptr() as *const c_char;
-    match expand_into(src, mode, out) {
-        Ok(n) => Ok((base, n as u32)),
-        Err(ExpandErr::Syntax) => Err(ERR_SYNTAX),
-        Err(ExpandErr::Overflow) => Err(ERR_INTERNAL),
-    }
-}
-
-/// Append character data, coalescing an adjacent node of the same type.
-/// Allocation and node-field mutation are kept together so a failed cut can
-/// never leave the linked tree half-updated.
-unsafe fn append_chardata(
-    doc: *mut Doc,
-    parent: *mut Node,
-    type_: u32,
-    value: *const c_char,
-    len: u32,
-) -> Result<(), i32> {
-    let last = (*parent).last_child;
-    if !last.is_null() && (*last).type_ == type_ {
-        let total = match ((*last).value_len as usize).checked_add(len as usize) {
-            Some(total) if total <= u32::MAX as usize => total,
-            _ => return Err(ERR_LIMIT),
-        };
-        if total == 0 {
-            (*last).value = empty();
-            (*last).value_len = 0;
-            return Ok(());
+impl Document {
+    /// A fresh document with `limits` applied, rejecting `src_len` up front when
+    /// it already exceeds the byte budget.
+    pub fn create(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, i32> {
+        let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| ERR_OOM)?;
+        if let Some(mb) = limits {
+            if mb != 0 {
+                doc.max_bytes = mb;
+            }
         }
-        let buf = match arena_cut(doc, total) {
-            Some(buf) => buf,
-            None => return Err((*doc).oom),
+        if src_len > doc.max_bytes {
+            return Err(ERR_LIMIT);
+        }
+        doc.xml_ns = doc.store(crate::xml::XML_NS_URI)?;
+        doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
+        /* Index 0 is reserved: it is the null handle's slot (token 0 == a NULL
+         * `void *`), so a real node never has index 0. */
+        let _null_slot = doc.new_node(T_DOCUMENT)?;
+        doc.doc_node = doc.new_node(T_DOCUMENT)?;
+        Ok(doc)
+    }
+
+    #[inline]
+    pub fn xml_ns_span(&self) -> Span {
+        self.xml_ns
+    }
+    #[inline]
+    pub fn xmlns_ns_span(&self) -> Span {
+        self.xmlns_ns
+    }
+
+    #[inline]
+    pub fn status(&self) -> i32 {
+        self.oom
+    }
+
+    /// Count `amount` more bytes against the budget, failing closed.
+    fn charge(&mut self, amount: usize) -> Result<(), i32> {
+        match self.arena_bytes.checked_add(amount) {
+            Some(t) if t <= self.max_bytes => {
+                self.arena_bytes = t;
+                Ok(())
+            }
+            _ => {
+                self.oom = ERR_LIMIT;
+                Err(ERR_LIMIT)
+            }
+        }
+    }
+
+    /* ---- node access ---- */
+
+    #[inline]
+    pub fn node(&self, id: NodeId) -> &Node {
+        let n = &self.nodes[id.index() as usize];
+        debug_assert_eq!(n.generation, id.generation(), "stale NodeId");
+        n
+    }
+    #[inline]
+    pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
+        let n = &mut self.nodes[id.index() as usize];
+        debug_assert_eq!(n.generation, id.generation(), "stale NodeId");
+        n
+    }
+
+    /// A node that may hold a detached/removed value: `None` for the invalid
+    /// handle or a stale generation.
+    #[inline]
+    pub fn try_node(&self, id: NodeId) -> Option<&Node> {
+        if id.is_invalid() {
+            return None;
+        }
+        self.nodes
+            .get(id.index() as usize)
+            .filter(|n| n.generation == id.generation())
+    }
+
+    #[inline]
+    pub fn first_child(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).first_child
+    }
+    #[inline]
+    pub fn last_child(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).last_child
+    }
+    #[inline]
+    pub fn next(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).next
+    }
+    #[inline]
+    pub fn prev(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).prev
+    }
+    #[inline]
+    pub fn parent(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).parent
+    }
+    #[inline]
+    pub fn attrs(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).attrs
+    }
+    #[inline]
+    pub fn type_(&self, id: NodeId) -> u32 {
+        self.node(id).type_
+    }
+
+    /* ---- byte store ---- */
+
+    /// Borrow the bytes a span names. An absent or zero-length span is empty.
+    #[inline]
+    pub fn span(&self, s: Span) -> &[u8] {
+        if s.is_absent() || s.len == 0 {
+            return &[];
+        }
+        &self.bytes[s.off as usize..s.end()]
+    }
+    #[inline]
+    pub fn qname(&self, id: NodeId) -> &[u8] {
+        self.span(self.node(id).qname)
+    }
+    #[inline]
+    pub fn local(&self, id: NodeId) -> &[u8] {
+        self.span(self.node(id).local)
+    }
+    #[inline]
+    pub fn prefix(&self, id: NodeId) -> &[u8] {
+        self.span(self.node(id).prefix)
+    }
+    #[inline]
+    pub fn ns(&self, id: NodeId) -> &[u8] {
+        self.span(self.node(id).ns_uri)
+    }
+    #[inline]
+    pub fn value(&self, id: NodeId) -> &[u8] {
+        self.span(self.node(id).value)
+    }
+
+    /// Copy `src` into the byte store, returning its span. Empty is the shared
+    /// empty span (never an allocation).
+    pub fn store(&mut self, src: &[u8]) -> Result<Span, i32> {
+        if src.is_empty() {
+            // A present-but-empty value: offset is the tail, so it is distinct
+            // from the `ABSENT` marker (offset u32::MAX).
+            return Ok(Span {
+                off: self.bytes.len() as u32,
+                len: 0,
+            });
+        }
+        self.charge(src.len())?;
+        self.bytes
+            .mkr_reserve(src.len())
+            .map_err(|_| self.fail(ERR_OOM))?;
+        let off = self.bytes.len() as u32;
+        self.bytes.extend_from_slice(src);
+        Ok(Span {
+            off,
+            len: src.len() as u32,
+        })
+    }
+
+    /// The empty span, for callers that want a value with no bytes.
+    #[inline]
+    pub fn empty_span(&self) -> Span {
+        Span::EMPTY
+    }
+
+    /// Set a node's value to a fresh copy of `data`.
+    pub fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), i32> {
+        let span = self.store(data)?;
+        self.node_mut(id).value = span;
+        Ok(())
+    }
+
+    /// Set a node's namespace URI to a fresh copy of `uri`.
+    pub fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), i32> {
+        let span = self.store(uri)?;
+        self.node_mut(id).ns_uri = span;
+        Ok(())
+    }
+
+    /// Set a leaf's name (PI target) to a fresh copy of `name`.
+    pub fn set_local_bytes(&mut self, id: NodeId, name: &[u8]) -> Result<(), i32> {
+        let span = self.store(name)?;
+        let n = self.node_mut(id);
+        n.local = span;
+        Ok(())
+    }
+
+    /// Copy a whole QName once, then point qname/prefix/local into that copy.
+    /// `prefix_len` and `local_off`/`local_len` are offsets into `name`.
+    pub fn assign_qname(
+        &mut self,
+        id: NodeId,
+        name: &[u8],
+        prefix_len: u32,
+        local_off: u32,
+        local_len: u32,
+    ) -> Result<(), i32> {
+        let span = self.store(name)?;
+        let n = self.node_mut(id);
+        n.qname = span;
+        n.prefix = Span {
+            off: span.off,
+            len: prefix_len,
         };
-        let old = bytes((*last).value, (*last).value_len);
-        buf[..old.len()].copy_from_slice(old);
-        buf[old.len()..].copy_from_slice(bytes(value, len));
-        (*last).value = buf.as_ptr() as *const c_char;
-        (*last).value_len = total as u32;
-        return Ok(());
+        n.local = Span {
+            off: span.off + local_off,
+            len: local_len,
+        };
+        Ok(())
     }
 
-    let node = arena_node(doc, type_);
-    if node.is_null() {
-        return Err((*doc).oom);
-    }
-    (*node).value = value;
-    (*node).value_len = len;
-    append_child(parent, node);
-    Ok(())
-}
+    /* ---- allocation ---- */
 
-/// A raw arena cut of `len` bytes as a mutable slice for the caller to fill
-/// (the Rust-side counterpart of mkr_xml_arena_spanbuf). None on failure
-/// (doc.oom set). len 0 yields an empty slice at the "" sentinel.
-pub unsafe fn arena_cut<'a>(doc: *mut Doc, len: usize) -> Option<&'a mut [u8]> {
-    if len == 0 {
-        return Some(&mut []);
+    fn fail(&mut self, st: i32) -> i32 {
+        self.oom = st;
+        st
     }
-    let p = arena_alloc(doc, len);
-    if p.is_null() {
+
+    /// Allocate a zeroed node, counted against the node and byte budgets.
+    pub fn new_node(&mut self, type_: u32) -> Result<NodeId, i32> {
+        if !valid_type(type_) {
+            return Err(self.fail(ERR_INTERNAL));
+        }
+        if self.nodes.len() + 1 > self.max_nodes {
+            return Err(self.fail(ERR_LIMIT));
+        }
+        self.charge(NODE_COST)?;
+        self.nodes.mkr_reserve(1).map_err(|_| self.fail(ERR_OOM))?;
+        let index = self.nodes.len() as u32;
+        self.nodes.push(Node::zeroed(type_, 0));
+        Ok(NodeId::new(index, 0))
+    }
+
+    /// Expand XML references into one byte-store span.
+    pub fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, i32> {
+        if src.is_empty() {
+            return Ok(Span::EMPTY);
+        }
+        self.charge(src.len())?;
+        self.bytes
+            .mkr_reserve(src.len())
+            .map_err(|_| self.fail(ERR_OOM))?;
+        let off = self.bytes.len();
+        self.bytes.resize(off + src.len(), 0);
+        let n = match expand_into(src, mode, &mut self.bytes[off..]) {
+            Ok(n) => n,
+            Err(ExpandErr::Syntax) => {
+                self.bytes.truncate(off);
+                return Err(ERR_SYNTAX);
+            }
+            Err(ExpandErr::Overflow) => {
+                self.bytes.truncate(off);
+                return Err(ERR_INTERNAL);
+            }
+        };
+        self.bytes.truncate(off + n);
+        // The reservation above charged `src.len()`; the expansion never grows
+        // (references only shrink), so this is the only accounting needed.
+        Ok(Span {
+            off: off as u32,
+            len: n as u32,
+        })
+    }
+
+    /// Append a TEXT/CDATA node, coalescing with a preceding sibling of the
+    /// SAME type (as libxml2 / the XPath data model do).
+    pub fn append_chardata(&mut self, parent: NodeId, type_: u32, span: Span) -> Result<(), i32> {
+        if let Some(last) = self.node(parent).last_child {
+            if self.node(last).type_ == type_ {
+                let old = self.node(last).value;
+                if old.end() == span.off as usize {
+                    // The two chunks are contiguous in the store (the common
+                    // case): extend the span, no copy.
+                    let total = (old.len as usize)
+                        .checked_add(span.len as usize)
+                        .filter(|&t| t <= u32::MAX as usize)
+                        .ok_or_else(|| self.fail(ERR_LIMIT))?;
+                    self.node_mut(last).value.len = total as u32;
+                    return Ok(());
+                }
+                /* Not contiguous: rebuild the coalesced bytes once. */
+                let (a, b) = (old, span);
+                let mut merged: Vec<u8> = Vec::new();
+                merged
+                    .mkr_extend(self.span(a))
+                    .and_then(|()| merged.mkr_extend(self.span(b)))
+                    .map_err(|_| self.fail(ERR_OOM))?;
+                let s = self.store(&merged)?;
+                self.node_mut(last).value = s;
+                return Ok(());
+            }
+        }
+        let node = self.new_node(type_)?;
+        self.node_mut(node).value = span;
+        self.append_child(parent, node);
+        Ok(())
+    }
+
+    /* ---- linking ---- */
+
+    #[inline]
+    pub fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
+        self.node_mut(id).parent = parent;
+    }
+
+    /// Append `child` as the last child of `parent`.
+    pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
+        self.node_mut(child).parent = Some(parent);
+        let last = self.node(parent).last_child;
+        if let Some(last) = last {
+            self.node_mut(last).next = Some(child);
+            self.node_mut(child).prev = Some(last);
+        } else {
+            self.node_mut(parent).first_child = Some(child);
+        }
+        self.node_mut(parent).last_child = Some(child);
+    }
+
+    /// Unlink `node` from its parent (child chain or attribute chain). No-op
+    /// when the node is already detached.
+    pub fn detach(&mut self, node: NodeId) {
+        let Some(parent) = self.node(node).parent else {
+            return;
+        };
+        if self.node(node).type_ == T_ATTRIBUTE {
+            let mut prev: Option<NodeId> = None;
+            let mut a = self.node(parent).attrs;
+            while let Some(cur) = a {
+                if cur == node {
+                    self.unlink_attr(parent, prev, cur);
+                    break;
+                }
+                prev = Some(cur);
+                a = self.node(cur).next;
+            }
+            self.clear_links(node);
+            return;
+        }
+        let (prev, next) = (self.node(node).prev, self.node(node).next);
+        match prev {
+            Some(p) => self.node_mut(p).next = next,
+            None => self.node_mut(parent).first_child = next,
+        }
+        match next {
+            Some(n) => self.node_mut(n).prev = prev,
+            None => self.node_mut(parent).last_child = prev,
+        }
+        self.clear_links(node);
+    }
+
+    #[inline]
+    fn clear_links(&mut self, node: NodeId) {
+        let n = self.node_mut(node);
+        n.parent = None;
+        n.prev = None;
+        n.next = None;
+    }
+
+    /// Unlink attribute `a` (predecessor `prev`, `None` if head) from `el`.
+    pub fn unlink_attr(&mut self, el: NodeId, prev: Option<NodeId>, a: NodeId) {
+        let next = self.node(a).next;
+        match prev {
+            Some(p) => self.node_mut(p).next = next,
+            None => self.node_mut(el).attrs = next,
+        }
+        self.clear_links(a);
+    }
+
+    /// Append `attr` to `el`'s attribute list.
+    pub fn append_attr(&mut self, el: NodeId, attr: NodeId) {
+        self.node_mut(attr).parent = Some(el);
+        match self.node(el).attrs {
+            None => self.node_mut(el).attrs = Some(attr),
+            Some(mut t) => {
+                while let Some(n) = self.node(t).next {
+                    t = n;
+                }
+                self.node_mut(t).next = Some(attr);
+            }
+        }
+    }
+
+    /// The ONE place the doubly-linked child list is written by insertion.
+    pub fn splice_between(
+        &mut self,
+        container: NodeId,
+        node: NodeId,
+        prev: Option<NodeId>,
+        next: Option<NodeId>,
+    ) {
+        {
+            let n = self.node_mut(node);
+            n.parent = Some(container);
+            n.prev = prev;
+            n.next = next;
+        }
+        match prev {
+            Some(p) => self.node_mut(p).next = Some(node),
+            None => self.node_mut(container).first_child = Some(node),
+        }
+        match next {
+            Some(n) => self.node_mut(n).prev = Some(node),
+            None => self.node_mut(container).last_child = Some(node),
+        }
+    }
+
+    /* ---- tree walks ---- */
+
+    /// Pre-order (document-order) successor of `cur` within `root`'s subtree.
+    pub fn preorder_next(&self, root: NodeId, cur: NodeId) -> Option<NodeId> {
+        if let Some(c) = self.node(cur).first_child {
+            return Some(c);
+        }
+        let mut cur = cur;
+        while cur != root && self.node(cur).next.is_none() {
+            cur = self.node(cur).parent?;
+        }
+        if cur == root {
+            return None;
+        }
+        self.node(cur).next
+    }
+
+    /// `node`'s topmost ancestor is the document node.
+    pub fn is_connected(&self, node: NodeId) -> bool {
+        let mut top = node;
+        while let Some(p) = self.node(top).parent {
+            top = p;
+        }
+        self.node(top).type_ == T_DOCUMENT
+    }
+
+    /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`.
+    pub fn resolve_in_scope(&self, node: Option<NodeId>, prefix: &[u8]) -> Option<Span> {
+        let mut e = node;
+        while let Some(id) = e {
+            if self.node(id).type_ == T_ELEMENT {
+                let mut a = self.node(id).attrs;
+                while let Some(attr) = a {
+                    if let Some(p) = crate::xml::qname::xmlns_prefix(self.qname(attr)) {
+                        if p == prefix {
+                            return Some(self.node(attr).value);
+                        }
+                    }
+                    a = self.node(attr).next;
+                }
+            }
+            e = self.node(id).parent;
+        }
         None
-    } else {
-        Some(core::slice::from_raw_parts_mut(p, len))
     }
-}
 
-/// mkr_xml_arena_spanbuf: carve `cap` bytes and wrap them in the C bounded
-/// writer. On alloc failure the writer is already not-ok (buf == NULL).
-pub unsafe fn arena_spanbuf(doc: *mut Doc, cap: usize) -> SpanBuf {
-    let buf: *mut u8 = if cap == 0 {
-        empty() as *mut u8
-    } else {
-        arena_alloc(doc, cap)
-    };
-    SpanBuf {
-        buf: buf as *mut c_char,
-        cap,
-        pos: 0,
-        ok: !buf.is_null(),
-    }
-}
-
-/// Copy `qn`'s name into the arena as one contiguous slice and point the
-/// node's qname/local/prefix into it. 0 on success, -1 on arena OOM (node left
-/// untouched) or a contract violation (local not aliasing into qname -> doc.oom
-/// = INTERNAL). mkr_xml_qname_assign.
-pub unsafe fn qname_assign(doc: *mut Doc, node: *mut Node, qn: &QName) -> i32 {
-    let q0 = qn.qname as usize;
-    let l0 = qn.local as usize;
-    let aliases = l0 >= q0
-        && qn.local_len <= qn.qname_len
-        && (l0 - q0) <= (qn.qname_len - qn.local_len) as usize;
-    if !aliases {
-        if !doc.is_null() {
-            (*doc).oom = ERR_INTERNAL;
+    /// True when two attributes share `(local name, namespace URI)`.
+    pub fn has_duplicate_attributes(&self, element: NodeId) -> bool {
+        let mut a = self.node(element).attrs;
+        while let Some(first) = a {
+            let mut b = self.node(first).next;
+            while let Some(second) = b {
+                if self.local(first) == self.local(second) && self.ns(first) == self.ns(second) {
+                    return true;
+                }
+                b = self.node(second).next;
+            }
+            a = self.node(first).next;
         }
-        return -1;
+        false
     }
-    let q = arena_bytes(doc, bytes(qn.qname, qn.qname_len));
-    if qn.qname_len > 0 && q.is_null() {
-        return -1;
+
+    /* ---- document meta ---- */
+
+    #[inline]
+    pub fn root(&self) -> Option<NodeId> {
+        self.root
     }
-    (*node).qname = q;
-    (*node).qname_len = qn.qname_len;
-    (*node).local = (q as *const u8).add(l0 - q0) as *const c_char;
-    (*node).local_len = qn.local_len;
-    (*node).prefix = q;
-    (*node).prefix_len = qn.prefix_len;
-    0
+    #[inline]
+    pub fn set_root(&mut self, root: Option<NodeId>) {
+        self.root = root;
+    }
+    #[inline]
+    pub fn doctype(&self) -> Option<NodeId> {
+        self.doctype
+    }
+    #[inline]
+    pub fn set_doctype(&mut self, doctype: Option<NodeId>) {
+        self.doctype = doctype;
+    }
+    #[inline]
+    pub fn doc_node(&self) -> NodeId {
+        self.doc_node
+    }
+    #[inline]
+    pub fn mark_encoding_decl(&mut self) {
+        self.has_encoding_decl = 1;
+    }
+
+    /// Re-derive root / doctype from the tree after a change at the document
+    /// node.
+    pub fn sync_doc_meta(&mut self, container: NodeId) {
+        if container != self.doc_node {
+            return;
+        }
+        self.root = None;
+        self.doctype = None;
+        let mut c = self.node(self.doc_node).first_child;
+        while let Some(cur) = c {
+            let t = self.node(cur).type_;
+            if self.root.is_none() && t == T_ELEMENT {
+                self.root = Some(cur);
+            }
+            if self.doctype.is_none() && t == T_DOCTYPE {
+                self.doctype = Some(cur);
+            }
+            c = self.node(cur).next;
+        }
+    }
+
+    /// Total bytes the document holds, for `Document#memsize`.
+    pub fn memsize(&self) -> usize {
+        let mut total = core::mem::size_of::<Document>();
+        let extra = self
+            .nodes
+            .capacity()
+            .saturating_mul(NODE_COST)
+            .saturating_add(self.bytes.capacity());
+        match total.checked_add(extra) {
+            Some(t) => total = t,
+            None => return usize::MAX,
+        }
+        total
+    }
 }
 
-/// Pre-order (document-order) successor of `cur` within `root`'s subtree, or
-/// null once the subtree is exhausted. mkr_xml_preorder_next.
-pub unsafe fn preorder_next(root: *const Node, mut cur: *mut Node) -> *mut Node {
-    if !(*cur).first_child.is_null() {
-        return (*cur).first_child;
-    }
-    while !ptr::eq(cur, root) && (*cur).next.is_null() {
-        cur = (*cur).parent;
-    }
-    if ptr::eq(cur, root) {
-        return ptr::null_mut();
-    }
-    (*cur).next
-}
-
-/// Append `child` as the last child of `parent` (the parser's link helper).
+/// The C `""` sentinel check: a span is empty. Kept for the FFI adapter.
 #[inline]
-pub unsafe fn append_child(parent: *mut Node, child: *mut Node) {
-    (*child).parent = parent;
-    let last = (*parent).last_child;
-    if !last.is_null() {
-        (*last).next = child;
-        (*child).prev = last;
-    } else {
-        (*parent).first_child = child;
+pub fn span_is_empty(s: Span) -> bool {
+    s.len == 0
+}
+
+/// Historical free entry points, now thin wrappers over [`Document`]. They keep
+/// the FFI adapter's shape while the engine is index-based.
+pub fn create_doc(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, i32> {
+    Document::create(limits, src_len)
+}
+
+/// Turn a raw document handle back into an owned box (the FFI boundary).
+///
+/// # Safety
+/// `doc` must be a pointer returned by [`Document::create`]'s `Box::into_raw`
+/// and not yet freed.
+pub unsafe fn destroy_doc(doc: *mut Doc) {
+    if !doc.is_null() {
+        drop(Box::from_raw(doc));
     }
-    (*parent).last_child = child;
+}
+
+#[inline]
+pub fn doc_memsize(doc: &Document) -> usize {
+    doc.memsize()
+}
+
+/// Borrow a byte slice from an FFI `(ptr, len)` pair without copying. Retained
+/// for the handful of callers that still receive raw input.
+#[inline]
+pub fn slice_from_raw<'a>(p: *const c_char, len: u32) -> &'a [u8] {
+    if p.is_null() || len == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller owns a readable `(p, len)` range for the call.
+        unsafe { core::slice::from_raw_parts(p as *const u8, len as usize) }
+    }
+}
+
+/// A document's `Limits` are read from the raw struct at the FFI boundary.
+#[inline]
+pub fn limits_max_bytes(limits: &Limits) -> usize {
+    limits.max_bytes
 }

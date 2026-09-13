@@ -40,14 +40,16 @@ use super::abi::{mkr_cDocument, mkr_cNodeSet, mkr_doc_parsed, mkr_parsed_xml_doc
 /// `glue::abi`); the cast to the XML node is justified by this being the XML
 /// wrap path.
 pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE {
-    if node.is_null() {
+    let id = NodeId::from_token(node as usize);
+    if id.is_invalid() {
         return rb_sys::Qnil as VALUE;
     }
-    let n = node as *mut Node;
-    if (*n).type_ == T_DOCUMENT {
+    let xdoc = mkr_doc_of(document);
+    let ty = (*xdoc).type_(id);
+    if ty == T_DOCUMENT {
         return document;
     }
-    let klass = match (*n).type_ {
+    let klass = match ty {
         T_ELEMENT => mkr_cXmlElement,
         T_ATTRIBUTE => mkr_cXmlAttr,
         T_TEXT => mkr_cXmlText,
@@ -78,10 +80,15 @@ pub unsafe extern "C" fn mkr_xml_node_unwrap(rb_self: VALUE) -> *mut c_void {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
         let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self)) as *mut XmlDoc;
-        return (*xdoc).doc_node as *mut c_void;
+        return (*xdoc).doc_node().to_token() as *mut c_void;
     }
     let nd = rb_sys::rb_check_typeddata(rb_self, mkr_xml_node_type.as_ptr()) as *mut NodeData;
     (*nd).node
+}
+
+/// The XML document behind a Document or node wrapper (`Document` VALUE).
+pub unsafe fn mkr_doc_of(document: VALUE) -> *mut XmlDoc {
+    mkr_parsed_xml_doc(mkr_doc_parsed(document)) as *mut XmlDoc
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node at
@@ -97,28 +104,39 @@ pub unsafe extern "C" fn mkr_xml_node_document(rb_self: VALUE) -> VALUE {
 
 /// Wrap a node reached from `rb_self`, under `rb_self`'s Document. One of the
 /// two functions the still-C serialization half calls.
-pub unsafe extern "C" fn mkr_xml_wrap_rel(rb_self: VALUE, rel: *mut Node) -> VALUE {
-    mkr_wrap_xml_node(rel as *mut c_void, mkr_xml_node_document(rb_self))
+pub unsafe fn mkr_xml_wrap_rel(rb_self: VALUE, rel: NodeId) -> VALUE {
+    mkr_wrap_xml_node(
+        rel.to_token() as *mut c_void,
+        mkr_xml_node_document(rb_self),
+    )
 }
 
 /// The same, in Rust terms.
-pub unsafe fn mkr_xml_wrap_rel_value(rb_self: Value, rel: *mut Node) -> Value {
+pub unsafe fn mkr_xml_wrap_rel_value(rb_self: Value, rel: NodeId) -> Value {
     Value::from_raw(mkr_xml_wrap_rel(rb_self.as_raw(), rel))
 }
 
 /* ---- the Rust-side conveniences the submodules use ---- */
 
-/// [`mkr_xml_node_unwrap`] with the node typed.
-pub unsafe fn unwrap(rb_self: Value) -> *mut Node {
-    mkr_xml_node_unwrap(rb_self.as_raw()) as *mut Node
+/// [`mkr_xml_node_unwrap`] with the node id typed.
+pub unsafe fn unwrap(rb_self: Value) -> NodeId {
+    NodeId::from_token(mkr_xml_node_unwrap(rb_self.as_raw()) as usize)
 }
 
 pub unsafe fn node_document(rb_self: Value) -> Value {
     Value::from_raw(mkr_xml_node_document(rb_self.as_raw()))
 }
 
-pub unsafe fn wrap(node: *mut Node, document: Value) -> Value {
-    Value::from_raw(mkr_wrap_xml_node(node as *mut c_void, document.as_raw()))
+/// The XML document behind `rb_self`'s wrapper.
+pub unsafe fn doc(rb_self: Value) -> *mut XmlDoc {
+    mkr_doc_of(mkr_xml_node_document(rb_self.as_raw()))
+}
+
+pub unsafe fn wrap(node: NodeId, document: Value) -> Value {
+    Value::from_raw(mkr_wrap_xml_node(
+        node.to_token() as *mut c_void,
+        document.as_raw(),
+    ))
 }
 
 pub use crate::glue::node::mkr_node_equals;

@@ -30,7 +30,7 @@ use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
-use crate::xml::abi::{Doc as XmlDoc, Limits as XmlLimits, Node as XmlNode};
+use crate::xml::abi::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath_abi::{Error as XPathError, Node as Ast, XPathValue, XP_ERR_SYNTAX};
 
 use super::abi::error_class;
@@ -45,7 +45,7 @@ use super::abi::error_class;
  * 256, which would reject documents the engine accepts). Both were caught by
  * checking against the header - which is the argument for not having a second
  * copy to check. */
-use crate::xml::abi::{ERR_LIMIT, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, OK as XML_OK, T_DOCUMENT};
+use crate::xml::abi::{ERR_LIMIT, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, OK as XML_OK};
 
 /// `MKR_XPATH_TYPE_NODESET`.
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
@@ -75,13 +75,13 @@ unsafe fn mkr_parsed_xml_doc(p: *const crate::dom_adapter::post_parse::Parsed) -
 }
 
 /// Wrap an XML node, typed.
-unsafe fn wrap_typed_xml_node(node: *mut XmlNode, document: VALUE) -> VALUE {
-    wrap_xml_node(node as *mut c_void, document)
+unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
+    wrap_xml_node(node.to_token() as *mut c_void, document)
 }
 
 /// The XML node behind a wrapper, typed. Raises for an HTML node.
-unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> *mut XmlNode {
-    xml_node_unwrap(rb_node) as *mut XmlNode
+unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> NodeId {
+    NodeId::from_token(xml_node_unwrap(rb_node) as usize)
 }
 
 pub use crate::bridge::string::mkr_ruby_copy_bytes;
@@ -141,8 +141,14 @@ unsafe extern "C" fn name_index_lookup(
     ns_uri_len: usize,
     count: *mut usize,
 ) -> *const *mut c_void {
-    mkr_xml_name_index_lookup(idx as *const _, local, local_len, ns_uri, ns_uri_len, count)
-        as *const *mut c_void
+    mkr_xml_name_index_lookup(
+        idx as *const crate::xml::index::NameIndex,
+        local,
+        local_len,
+        ns_uri,
+        ns_uri_len,
+        count,
+    )
 }
 
 /* ------------------------------------------------------------------ */
@@ -353,7 +359,7 @@ unsafe fn parse_status_error(status: c_int, unit: Unit) -> Error {
 
 /// The (Document VALUE, context node) a query runs against: for a Document the
 /// context is the arena's document node, for a node it is that node.
-unsafe fn query_context(rb_self: Value) -> (Value, *mut XmlNode) {
+unsafe fn query_context(rb_self: Value) -> (Value, NodeId) {
     /* `mkr_xml_node_unwrap` is kind-checked - it raises on a non-XML node - and
      * resolves an XML Document to its document node. */
     let document = Value::from_raw(mkr_node_document(rb_self.as_raw()));
@@ -432,13 +438,13 @@ unsafe fn register_namespaces(
 unsafe fn build_ctx(
     ruby: &Ruby,
     xdoc: *mut XmlDoc,
-    context_node: *mut XmlNode,
+    context_node: NodeId,
     rb_text: Value,
     what: *const c_char,
     rb_ns: Option<Value>,
 ) -> Result<*mut XPathContext, Error> {
     mkr_verify_text(rb_sys::rb_String(rb_text.as_raw()), what);
-    let ctx = mkr_xpath_context_new((*xdoc).doc_node as *mut c_void, context_node as *mut c_void);
+    let ctx = mkr_xpath_context_new(xdoc as *mut c_void, context_node.to_token() as *mut c_void);
     if ctx.is_null() {
         return Err(Error::new(
             error_class(),
@@ -511,7 +517,7 @@ fn xpath_run(
 ) -> Result<Value, Error> {
     unsafe {
         let (document, context) = query_context(rb_self);
-        if context.is_null() {
+        if context.is_invalid() {
             return Ok(if first_only {
                 ruby.qnil().as_value()
             } else {
@@ -618,7 +624,7 @@ fn css_run(
 ) -> Result<Value, Error> {
     unsafe {
         let (document, context) = query_context(rb_self);
-        if context.is_null() {
+        if context.is_invalid() {
             return Ok(if first_only {
                 ruby.qnil().as_value()
             } else {
@@ -656,14 +662,14 @@ fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Val
 fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<bool, Error> {
     unsafe {
         let (document, node) = query_context(rb_self);
-        if node.is_null() {
+        if node.is_invalid() {
             return Ok(false);
         }
         let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw()));
         let ctx = build_ctx(
             ruby,
             xdoc,
-            (*xdoc).doc_node,
+            (*xdoc).doc_node(),
             selector,
             c"CSS selector".as_ptr(),
             Some(ns),
@@ -683,7 +689,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         if value.type_ == MKR_XPATH_TYPE_NODESET {
             let ns_ = value.u.nodeset;
             for i in 0..ns_.count {
-                if *ns_.nodes.add(i) == node as *mut c_void {
+                if *ns_.nodes.add(i) == node.to_token() as *mut c_void {
                     found = true;
                     break;
                 }
@@ -705,7 +711,10 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() {
             return ruby.qnil().as_value();
         }
-        Value::from_raw(wrap_typed_xml_node((*xdoc).root, rb_self.as_raw()))
+        Value::from_raw(wrap_typed_xml_node(
+            (*xdoc).root.unwrap_or(NodeId::INVALID),
+            rb_self.as_raw(),
+        ))
     }
 }
 
@@ -718,10 +727,13 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
 fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
         let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw()));
-        if xdoc.is_null() || (*xdoc).doctype.is_null() {
+        if xdoc.is_null() || (*xdoc).doctype.is_none() {
             return ruby.qnil().as_value();
         }
-        Value::from_raw(wrap_typed_xml_node((*xdoc).doctype, rb_self.as_raw()))
+        Value::from_raw(wrap_typed_xml_node(
+            (*xdoc).doctype.unwrap_or(NodeId::INVALID),
+            rb_self.as_raw(),
+        ))
     }
 }
 
@@ -733,7 +745,7 @@ unsafe fn fragment_into(
     xdoc: *mut XmlDoc,
     source: Value,
     inherit_doc_ns: bool,
-) -> Result<*mut XmlNode, Error> {
+) -> Result<NodeId, Error> {
     let decoded = mkr_xml_decode_input(rb_sys::rb_String(source.as_raw()), (*xdoc).max_bytes);
     let mut src = OwnedBytes {
         ptr: core::ptr::null_mut(),
@@ -754,7 +766,7 @@ unsafe fn fragment_into(
         &mut status,
     );
     free_owned(&mut src);
-    if frag.is_null() {
+    if frag.is_invalid() {
         return Err(parse_status_error(status, Unit::Fragment));
     }
     Ok(frag)
@@ -778,13 +790,6 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
         ));
     }
     mkr_parsed_set_xml_doc(parsed, xdoc as *mut c_void); /* GC now frees `xdoc` via `parsed` */
-    (*xdoc).doc_node = mkr_xml_arena_node(xdoc, T_DOCUMENT);
-    if (*xdoc).doc_node.is_null() {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    }
     Ok(Value::from_raw(doc_obj))
 }
 

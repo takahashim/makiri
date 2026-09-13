@@ -98,18 +98,3 @@ pub fn value_seq_ok(node_type: u32, text: &[u8]) -> bool {
         _ => true,
     }
 }
-
-/// A QName value over `name` split per `sp` (prefix at offset 0, local at
-/// `local_off`) - the layout the tree builder and mutators hand to
-/// qname_assign. Safe: pointer arithmetic stays within `name`.
-#[inline]
-pub fn qname_from(name: &[u8], sp: &Split) -> crate::xml::QName {
-    crate::xml::QName {
-        qname: name.as_ptr() as *const core::ffi::c_char,
-        qname_len: name.len() as u32,
-        prefix: name.as_ptr() as *const core::ffi::c_char,
-        prefix_len: sp.prefix_len,
-        local: name[sp.local_off as usize..].as_ptr() as *const core::ffi::c_char,
-        local_len: sp.local_len,
-    }
-}

@@ -26,7 +26,14 @@ use core::ptr;
 /// `descendant::tag` from the document is precisely "every element named tag",
 /// which is what the index groups.
 unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
-    set.count() == 1 && D::to_void(set.get::<D>(0)) == mkr_ctx_document(ctx)
+    if set.count() != 1 {
+        return false;
+    }
+    let dh = mkr_ctx_document(ctx);
+    if dh.is_null() {
+        return false;
+    }
+    set.get::<D>(0) == D::document_node(D::doc_from_void(dh))
 }
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
@@ -36,6 +43,7 @@ unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
 /// `step` must be a live step of the AST being evaluated, `context_set` hold
 /// live handles, and `b` be bindings built for this context.
 pub unsafe fn try_descendant_index<D: Dom>(
+    doc: D::Doc,
     step: *const Step,
     context_set: &Set,
     result: &mut Set,
@@ -68,7 +76,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
             return Err(());
         }
         let n = D::from_void(p);
-        if bucket.recheck && !node_principal_match::<D>(test, n, (*step).axis, b) {
+        if bucket.recheck && !node_principal_match::<D>(doc, test, n, (*step).axis, b) {
             continue;
         }
         if !result.push::<D>(n, limits, err) {
@@ -136,6 +144,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     result: &mut Set,
     err: *mut Error,
 ) -> Result<bool, ()> {
+    let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let need = match nth_shape::<D>(ctx, s0, s1, seed) {
         Some(n) => n,
         None => return Ok(false),
@@ -185,10 +194,10 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
             return Err(());
         }
         let e = D::from_void(p);
-        if bucket.recheck && !node_principal_match::<D>(test, e, (*s1).axis, &b) {
+        if bucket.recheck && !node_principal_match::<D>(doc, test, e, (*s1).axis, &b) {
             continue;
         }
-        let par = D::to_void(D::parent(e)) as *const c_void;
+        let par = D::to_void(D::parent(doc, e)) as *const c_void;
         let mut h = (ptr_hash(par) as usize) & mask;
         while !tab[h].0.is_null() && tab[h].0 != par {
             h = (h + 1) & mask;

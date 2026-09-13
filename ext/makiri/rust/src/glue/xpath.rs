@@ -306,17 +306,17 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
 
     if mkr_parsed_kind(parsed) == MKR_DOC_XML {
         let xdoc = mkr_parsed_xml_doc(parsed);
-        let docn = if xdoc.is_null() {
-            core::ptr::null_mut()
-        } else {
-            (*(xdoc as *mut crate::xml::abi::Doc)).doc_node as *mut c_void
-        };
+        if xdoc.is_null() {
+            return Err(Error::new(error_class(), "XPath context with no document"));
+        }
+        /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
+         * document node for a Document receiver, else the node itself. */
         let cnode = if is_kind_of(rb_node, mkr_cXmlDocument) {
-            docn
+            (*(xdoc as *mut crate::xml::abi::Doc)).doc_node().to_token() as *mut c_void
         } else {
             mkr_xml_node_unwrap(rb_node.as_raw())
         };
-        let xctx = mkr_xpath_context_new(docn, cnode);
+        let xctx = mkr_xpath_context_new(xdoc, cnode);
         if xctx.is_null() {
             return Err(Error::new(
                 error_class(),
