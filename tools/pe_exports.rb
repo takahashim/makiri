@@ -43,7 +43,7 @@ module MakiriBuild
       pe_offset = read_dword(f, DOS_LFANEW)
       return [] unless read_bytes(f, pe_offset, PE_SIG.bytesize) == PE_SIG
 
-      coff = read_bytes(f, pe_offset + PE_SIG.bytesize, COFF_SIZE)&.unpack("vvVVVVvv")
+      coff = read_bytes(f, pe_offset + PE_SIG.bytesize, COFF_SIZE)&.unpack("vvVVVvv")
       return [] unless coff
       nsections = coff[1]
       opt_size  = coff[5]
