@@ -19,10 +19,9 @@
 //! size itself from a disarmed baseline run. Arming fails exactly one allocation
 //! and then disarms, modelling a single transient OOM.
 //!
-//! Single-threaded by design, which holds because every caller is under the GVL
-//! and the sweep is sequential. That was true of the C's plain `static`
-//! variables too; the `static mut` here is the same object with the same
-//! contract.
+//! The sweep runs under the GVL, but atomics make the one-counter invariant
+//! explicit even if a diagnostic invokes it from another native thread.  This
+//! removes the old `static mut` exception from the allocator boundary.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -55,31 +54,38 @@ extern "C" {
  * read the same counter, and `inject` is private so that this re-export stays
  * the single way in. */
 #[cfg(feature = "alloc-inject")]
-pub use inject::{
-    mkr_alloc_inject_arm, mkr_alloc_inject_calls, mkr_alloc_inject_should_fail,
-};
+pub use inject::{mkr_alloc_inject_arm, mkr_alloc_inject_calls, mkr_alloc_inject_should_fail};
 
 #[cfg(feature = "alloc-inject")]
 mod inject {
+    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
     /// 0 = disarmed.
-    static mut COUNTDOWN: i64 = 0;
-    static mut ATTEMPTS: u64 = 0;
+    static COUNTDOWN: AtomicI64 = AtomicI64::new(0);
+    static ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
     pub unsafe extern "C" fn mkr_alloc_inject_arm(nth: i64) {
-        COUNTDOWN = if nth > 0 { nth } else { 0 };
-        ATTEMPTS = 0;
+        COUNTDOWN.store(if nth > 0 { nth } else { 0 }, Ordering::Release);
+        ATTEMPTS.store(0, Ordering::Release);
     }
 
     pub unsafe extern "C" fn mkr_alloc_inject_calls() -> u64 {
-        ATTEMPTS
+        ATTEMPTS.load(Ordering::Acquire)
     }
 
     pub unsafe extern "C" fn mkr_alloc_inject_should_fail() -> core::ffi::c_int {
-        ATTEMPTS = ATTEMPTS.wrapping_add(1);
-        if COUNTDOWN > 0 {
-            COUNTDOWN -= 1;
-            if COUNTDOWN == 0 {
-                return 1; /* fail this one allocation; now disarmed */
+        ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        let mut left = COUNTDOWN.load(Ordering::Acquire);
+        while left > 0 {
+            match COUNTDOWN.compare_exchange_weak(
+                left,
+                left - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) if left == 1 => return 1, /* one transient failure */
+                Ok(_) => return 0,
+                Err(actual) => left = actual,
             }
         }
         0

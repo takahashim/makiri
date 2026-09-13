@@ -75,6 +75,13 @@ jobs:
         working-directory: ext/makiri/rust
         run: cargo clippy --all-features -- -D warnings
 
+      # The Rust port has a small, explicitly audited unsafe perimeter.  This
+      # catches a raw operation added to a parsing primitive, or a new mutable
+      # global added without a GVL/ownership proof.
+      - name: Unsafe-boundary gate
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake unsafe:boundaries
+
       # Only Init_makiri may be exported (or another Lexbor-based gem in the
       # same process binds to our Lexbor and segfaults - CLAUDE.md), and no
       # Lexbor/Makiri symbol may be left undefined (it would be a NULL call).
@@ -144,4 +151,3 @@ jobs:
       # non-zero exit, failing the job.
       - name: Build + test under AddressSanitizer
         run: bundle exec rake sanitize
-

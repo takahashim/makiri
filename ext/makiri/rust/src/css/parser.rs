@@ -13,6 +13,15 @@
 //! is a `Drop`, so a path added later cannot forget - and the lowering borrows
 //! the list, so the reset must not happen before the lowering is done.
 
+//! # Unsafe boundary
+//!
+//! Lexbor owns this parser and exposes it as three raw pointers. This module is
+//! the only CSS module allowed to retain those pointers or mutate the
+//! process-global parser state. CSS compilation holds Ruby's GVL, which is the
+//! serialisation mechanism documented by [`GvlEngine`].
+
+#![deny(unsafe_op_in_unsafe_fn)]
+
 use crate::lexbor_abi::{
     lxb_css_memory_clean, lxb_css_memory_create, lxb_css_memory_destroy, lxb_css_memory_init,
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
@@ -35,53 +44,103 @@ pub enum ParseError {
     Syntax,
 }
 
+#[derive(Clone, Copy)]
 struct Engine {
     mem: *mut CssMemory,
     parser: *mut CssParser,
     sel: *mut CssSelectors,
 }
 
-static mut ENGINE: Option<Engine> = None;
+/// Process-global CSS parser state, accessed only while Ruby's GVL is held.
+///
+/// `UnsafeCell` confines the required interior mutability to this one type.
+/// The GVL serialises every caller, so no mutex is needed and no mutable
+/// reference can escape to the lowering layer.
+struct GvlEngine(core::cell::UnsafeCell<Option<Engine>>);
 
-/// Build the engine once. `None` if any piece could not be created, with
-/// everything released - so the next call retries from nothing rather than
-/// inheriting a half-built object.
-unsafe fn ready() -> Option<&'static Engine> {
-    #[allow(static_mut_refs)]
-    if let Some(e) = ENGINE.as_ref() {
-        return Some(e);
+// SAFETY: all access is from GVL-held Ruby glue; see `GvlEngine`.
+unsafe impl Sync for GvlEngine {}
+
+impl GvlEngine {
+    const fn new() -> Self {
+        Self(core::cell::UnsafeCell::new(None))
     }
 
-    let mem = lxb_css_memory_create();
-    let parser = lxb_css_parser_create();
-    let sel = lxb_css_selectors_create();
+    /// # Safety
+    /// The caller holds the GVL until the returned engine has been cleaned.
+    unsafe fn ready(&self) -> Option<Engine> {
+        // SAFETY: the GVL makes this global access exclusive.
+        let slot = unsafe { &mut *self.0.get() };
+        if let Some(e) = *slot {
+            return Some(e);
+        }
 
-    let ok = !mem.is_null()
-        && !parser.is_null()
-        && !sel.is_null()
-        && lxb_css_memory_init(mem, 128) == LXB_STATUS_OK
-        && lxb_css_parser_init(parser, core::ptr::null_mut())
-            == LXB_STATUS_OK
-        && lxb_css_selectors_init(sel) == LXB_STATUS_OK;
-    if !ok {
-        if !sel.is_null() {
-            lxb_css_selectors_destroy(sel, true);
+        // SAFETY: constructors do not borrow Rust memory; every pointer is
+        // checked before initialization or destruction.
+        let mem = unsafe { lxb_css_memory_create() };
+        let parser = unsafe { lxb_css_parser_create() };
+        let sel = unsafe { lxb_css_selectors_create() };
+        let ok = !mem.is_null()
+            && !parser.is_null()
+            && !sel.is_null()
+            // SAFETY: all pointers above were checked non-null.
+            && unsafe { lxb_css_memory_init(mem, 128) } == LXB_STATUS_OK
+            // SAFETY: all pointers above were checked non-null.
+            && unsafe { lxb_css_parser_init(parser, core::ptr::null_mut()) } == LXB_STATUS_OK
+            // SAFETY: all pointers above were checked non-null.
+            && unsafe { lxb_css_selectors_init(sel) } == LXB_STATUS_OK;
+        if !ok {
+            if !sel.is_null() {
+                // SAFETY: created by this call and not yet destroyed.
+                unsafe { lxb_css_selectors_destroy(sel, true) };
+            }
+            if !parser.is_null() {
+                // SAFETY: created by this call and not yet destroyed.
+                unsafe { lxb_css_parser_destroy(parser, true) };
+            }
+            if !mem.is_null() {
+                // SAFETY: created by this call and not yet destroyed.
+                unsafe { lxb_css_memory_destroy(mem, true) };
+            }
+            return None;
         }
-        if !parser.is_null() {
-            lxb_css_parser_destroy(parser, true);
-        }
-        if !mem.is_null() {
-            lxb_css_memory_destroy(mem, true);
-        }
-        return None;
+
+        // SAFETY: initialized live Lexbor objects; the GVL prevents a race.
+        unsafe { lxb_css_parser_memory_set_noi(parser, mem) };
+        // SAFETY: initialized live Lexbor objects; the GVL prevents a race.
+        unsafe { lxb_css_parser_selectors_set_noi(parser, sel) };
+        let engine = Engine { mem, parser, sel };
+        *slot = Some(engine);
+        Some(engine)
     }
 
-    lxb_css_parser_memory_set_noi(parser, mem);
-    lxb_css_parser_selectors_set_noi(parser, sel);
-    ENGINE = Some(Engine { mem, parser, sel });
-    #[allow(static_mut_refs)]
-    ENGINE.as_ref()
+    /// # Safety
+    /// The caller holds the GVL and no selector from `engine` is used later.
+    unsafe fn clean(&self, engine: Engine) {
+        // SAFETY: `engine` is initialized by `ready` and use is GVL-serial.
+        unsafe { lxb_css_memory_clean(engine.mem) };
+        // SAFETY: same initialized parser as above.
+        unsafe { lxb_css_parser_clean(engine.parser) };
+    }
+
+    /// # Safety
+    /// The caller holds the GVL and no `Parsed` value remains alive.
+    #[allow(dead_code)]
+    unsafe fn shutdown(&self) {
+        // SAFETY: the GVL excludes all concurrent accesses.
+        let slot = unsafe { &mut *self.0.get() };
+        if let Some(e) = slot.take() {
+            // SAFETY: all pointers belong to this initialized engine.
+            unsafe { lxb_css_selectors_destroy(e.sel, true) };
+            // SAFETY: all pointers belong to this initialized engine.
+            unsafe { lxb_css_parser_destroy(e.parser, true) };
+            // SAFETY: all pointers belong to this initialized engine.
+            unsafe { lxb_css_memory_destroy(e.mem, true) };
+        }
+    }
 }
+
+static ENGINE: GvlEngine = GvlEngine::new();
 
 /// A parsed selector list, borrowed from the engine's arena.
 ///
@@ -90,16 +149,15 @@ unsafe fn ready() -> Option<&'static Engine> {
 /// lifetime says so.
 pub struct Parsed {
     pub first: *mut SelectorList,
+    engine: Engine,
 }
 
 impl Drop for Parsed {
     fn drop(&mut self) {
+        // SAFETY: `Parsed` is constructed under the GVL and owns the interval
+        // in which `first` may be read.
         unsafe {
-            #[allow(static_mut_refs)]
-            if let Some(e) = ENGINE.as_ref() {
-                lxb_css_memory_clean(e.mem);
-                lxb_css_parser_clean(e.parser);
-            }
+            ENGINE.clean(self.engine);
         }
     }
 }
@@ -109,28 +167,33 @@ impl Drop for Parsed {
 /// # Safety
 /// Under the GVL, with `selector` a live verified slice.
 pub unsafe fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
-    let e = ready().ok_or(ParseError::NotReady)?;
+    // SAFETY: caller contract holds the GVL for the complete `Parsed` lifetime.
+    let e = unsafe { ENGINE.ready() }.ok_or(ParseError::NotReady)?;
 
-    let list = lxb_css_selectors_parse(e.parser, selector.ptr as *const u8, selector.len);
+    // SAFETY: selector is a live verified slice and `e.parser` is initialized.
+    let list =
+        unsafe { lxb_css_selectors_parse(e.parser, selector.ptr as *const u8, selector.len) };
     /* Both conditions matter: Lexbor can hand back a list AND a non-OK status
      * for a partially-recovered parse, and a recovered selector is not the one
      * the caller wrote. */
-    if list.is_null() || lxb_css_parser_status_noi(e.parser) != LXB_STATUS_OK
-    {
-        drop(Parsed { first: core::ptr::null_mut() }); /* clean the arena */
+    if list.is_null() || unsafe { lxb_css_parser_status_noi(e.parser) } != LXB_STATUS_OK {
+        drop(Parsed {
+            first: core::ptr::null_mut(),
+            engine: e,
+        }); /* clean the arena */
         return Err(ParseError::Syntax);
     }
-    Ok(Parsed { first: list })
+    Ok(Parsed {
+        first: list,
+        engine: e,
+    })
 }
 
 /// Release the engine. Not called: the C had no teardown either, because the
 /// parser lives for the process. Present so the allocation is visibly owned
 /// rather than merely leaked.
-#[allow(dead_code, static_mut_refs)]
+#[allow(dead_code)]
 pub unsafe fn shutdown() {
-    if let Some(e) = ENGINE.take() {
-        lxb_css_selectors_destroy(e.sel, true);
-        lxb_css_parser_destroy(e.parser, true);
-        lxb_css_memory_destroy(e.mem, true);
-    }
+    // SAFETY: forwarded contract; teardown is test-only.
+    unsafe { ENGINE.shutdown() };
 }

@@ -57,6 +57,13 @@ RSpec::Core::RakeTask.new(:spec)
 
 task default: %i[compile spec]
 
+namespace :unsafe do
+  desc "Check the Rust safe-module and reviewed-global boundaries"
+  task :boundaries do
+    sh FileUtils::RUBY, "script/check_unsafe_boundaries.rb"
+  end
+end
+
 # `rake spec:valgrind` - run the spec suite under Valgrind memcheck via
 # ruby_memcheck (Linux CI; see .github/workflows/valgrind.yml). The gem ships
 # Ruby's own Valgrind suppression files (matched by Ruby version) and filters

@@ -11,35 +11,45 @@
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, RArray, RClass, RHash, RString, Ruby, Value};
+use std::sync::OnceLock;
 
 use super::abi::*;
 use super::unwrap;
 
 /// The `Makiri::XML::Namespace` class, stashed at init so the value object can
 /// be built without a constant lookup per call.
-static mut NAMESPACE_CLASS: rb_sys::VALUE = 0;
+static NAMESPACE_CLASS: OnceLock<rb_sys::VALUE> = OnceLock::new();
 
-/// # Safety
 /// Called once from init, on the Ruby thread.
-pub unsafe fn set_namespace_class(klass: RClass) {
-    NAMESPACE_CLASS = klass.as_raw();
+pub fn set_namespace_class(klass: RClass) {
+    NAMESPACE_CLASS
+        .set(klass.as_raw())
+        .expect("Makiri::XML::Namespace is initialized once");
 }
 
 unsafe fn namespace_class() -> RClass {
-    RClass::from_value(Value::from_raw(NAMESPACE_CLASS)).expect("Makiri::XML::Namespace")
+    RClass::from_value(Value::from_raw(
+        *NAMESPACE_CLASS
+            .get()
+            .expect("Makiri::XML::Namespace initialized"),
+    ))
+    .expect("Makiri::XML::Namespace")
 }
 
 /// The two ivar names, interned once. `rb_intern` on every call would be a
 /// hash lookup per namespace read.
-unsafe fn ivar_ids() -> (rb_sys::ID, rb_sys::ID) {
-    static mut IDS: (rb_sys::ID, rb_sys::ID) = (0, 0);
-    if IDS.0 == 0 {
-        IDS = (
-            rb_sys::rb_intern(c"@prefix".as_ptr()),
-            rb_sys::rb_intern(c"@href".as_ptr()),
-        );
-    }
-    IDS
+fn ivar_ids() -> (rb_sys::ID, rb_sys::ID) {
+    static IDS: OnceLock<(rb_sys::ID, rb_sys::ID)> = OnceLock::new();
+    *IDS.get_or_init(|| {
+        // SAFETY: namespace methods run under the GVL; Ruby interns IDs for
+        // the VM lifetime, so caching their numeric handles is valid.
+        unsafe {
+            (
+                rb_sys::rb_intern(c"@prefix".as_ptr()),
+                rb_sys::rb_intern(c"@href".as_ptr()),
+            )
+        }
+    })
 }
 
 /// A (prefix, href) pair as a `Makiri::XML::Namespace`.
@@ -55,11 +65,21 @@ pub unsafe fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
 }
 
 pub fn ns_prefix(rb_self: Value) -> Result<Value, Error> {
-    unsafe { Ok(Value::from_raw(rb_sys::rb_ivar_get(rb_self.as_raw(), ivar_ids().0))) }
+    unsafe {
+        Ok(Value::from_raw(rb_sys::rb_ivar_get(
+            rb_self.as_raw(),
+            ivar_ids().0,
+        )))
+    }
 }
 
 pub fn ns_href(rb_self: Value) -> Result<Value, Error> {
-    unsafe { Ok(Value::from_raw(rb_sys::rb_ivar_get(rb_self.as_raw(), ivar_ids().1))) }
+    unsafe {
+        Ok(Value::from_raw(rb_sys::rb_ivar_get(
+            rb_self.as_raw(),
+            ivar_ids().1,
+        )))
+    }
 }
 
 pub fn ns_equal(rb_self: Value, other: Value) -> Result<bool, Error> {

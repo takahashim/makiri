@@ -30,10 +30,11 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::cell::{Cell, RefCell};
 use crate::falloc::Reserve;
+use core::cell::{Cell, RefCell};
 use core::ffi::{c_char, c_int, c_void};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use magnus::gc::Marker;
 use magnus::rb_sys::{AsRawValue, FromRawValue};
@@ -42,15 +43,14 @@ use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedDa
 use rb_sys::VALUE;
 
 use crate::xpath_abi::{
-    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError,
-    Node as Ast, OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME,
-    XP_ERR_SYNTAX,
+    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Node as Ast,
+    OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
 
-use super::abi::{mkr_ruby_verified_text, mkr_xml_node_unwrap, RubyText, 
-    error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed, mkr_html_node_unwrap,
-    mkr_mHtmlNodeMethods, mkr_node_document, mkr_node_raw, mkr_node_set_new, mkr_node_set_push,
-    mkr_parsed_xml_doc,
+use super::abi::{
+    error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,
+    mkr_html_node_unwrap, mkr_mHtmlNodeMethods, mkr_node_document, mkr_node_raw, mkr_node_set_new,
+    mkr_node_set_push, mkr_parsed_xml_doc, mkr_ruby_verified_text, mkr_xml_node_unwrap, RubyText,
 };
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
@@ -105,7 +105,6 @@ pub use crate::xpath::shared::mkr_nodeset_clear;
 pub use crate::xpath::shared::mkr_nodeset_init;
 pub use crate::xpath::shared::mkr_nodeset_push;
 pub use crate::xpath::shared::mkr_val_set_borrowed_text_copy;
-
 
 /* ------------------------------------------------------------------ */
 /* result + error mapping                                             */
@@ -257,17 +256,14 @@ impl XPathCtx {
 
 /// The three symbols the keyword check compares against, interned once.
 /// `to_symbol` is a lookup, and this runs on the per-call path.
-unsafe fn kw_symbols() -> (VALUE, VALUE, VALUE) {
-    static mut SYMS: (VALUE, VALUE, VALUE) = (0, 0, 0);
-    if SYMS.0 == 0 {
-        let sym = |s: &core::ffi::CStr| rb_sys::rb_id2sym(rb_sys::rb_intern(s.as_ptr()));
-        SYMS = (
-            sym(c"namespace_matching"),
-            sym(c"strict"),
-            sym(c"lax"),
-        );
-    }
-    SYMS
+fn kw_symbols() -> (VALUE, VALUE, VALUE) {
+    static SYMS: OnceLock<(VALUE, VALUE, VALUE)> = OnceLock::new();
+    *SYMS.get_or_init(|| {
+        // SAFETY: every caller is a Ruby method entered with the GVL. Symbols
+        // are interned once and are immortal for the Ruby VM's lifetime.
+        let sym = |s: &core::ffi::CStr| unsafe { rb_sys::rb_id2sym(rb_sys::rb_intern(s.as_ptr())) };
+        (sym(c"namespace_matching"), sym(c"strict"), sym(c"lax"))
+    })
 }
 
 /// Resolve the `namespace_matching:` keyword to the unprefixed-lax flag.
@@ -278,7 +274,7 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
     if opts.is_empty() {
         return Ok(0);
     }
-    let (key, strict, lax) = unsafe { kw_symbols() };
+    let (key, strict, lax) = kw_symbols();
     let Some(v) = opts.get(unsafe { Value::from_raw(key) }) else {
         return Ok(0);
     };
@@ -290,7 +286,10 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
     }
     Err(Error::new(
         ruby.exception_arg_error(),
-        format!("namespace_matching: must be :strict or :lax, got {}", v.inspect()),
+        format!(
+            "namespace_matching: must be :strict or :lax, got {}",
+            v.inspect()
+        ),
     ))
 }
 
@@ -319,7 +318,10 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
         };
         let xctx = mkr_xpath_context_new(docn, cnode);
         if xctx.is_null() {
-            return Err(Error::new(error_class(), "failed to allocate XPath context"));
+            return Err(Error::new(
+                error_class(),
+                "failed to allocate XPath context",
+            ));
         }
         mkr_xpath_set_engine_kind(xctx, 1);
         return Ok(xctx);
@@ -335,7 +337,10 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
     }
     let ctx = mkr_xpath_context_new(doc, node as *mut c_void);
     if ctx.is_null() {
-        return Err(Error::new(error_class(), "failed to allocate XPath context"));
+        return Err(Error::new(
+            error_class(),
+            "failed to allocate XPath context",
+        ));
     }
     /* Borrowed: the index lives on the parsed document, which outlives this
      * context. The engine calls back through the hooks and never sees its type. */
@@ -366,7 +371,10 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let lax = ns_matching_lax(ruby, a.keywords)?;
 
     if !unsafe { is_kind_of(rb_node, mkr_cNode) } {
-        return Err(Error::new(ruby.exception_type_error(), "expected a Makiri::Node"));
+        return Err(Error::new(
+            ruby.exception_type_error(),
+            "expected a Makiri::Node",
+        ));
     }
     let document = unsafe { Value::from_raw(mkr_node_document(rb_node.as_raw())) };
     let ctx = unsafe { context_for(rb_node, document)? };
@@ -376,7 +384,10 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         .wrap(XPathCtx {
             document: document.into(),
             node: Cell::new(rb_node.into()),
-            inner: RefCell::new(Inner { ctx, cache: AstCache(HashMap::new()) }),
+            inner: RefCell::new(Inner {
+                ctx,
+                cache: AstCache(HashMap::new()),
+            }),
         })
         .as_value())
 }
@@ -386,7 +397,10 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 /// preserved. The node must be in the same document.
 fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value, Error> {
     if !unsafe { is_kind_of(rb_node, mkr_cNode) } {
-        return Err(Error::new(ruby.exception_type_error(), "expected a Makiri::Node"));
+        return Err(Error::new(
+            ruby.exception_type_error(),
+            "expected a Makiri::Node",
+        ));
     }
     let ctx = rb_self.ctx()?;
     unsafe {
@@ -487,7 +501,10 @@ struct ErrBuf {
 
 impl ErrBuf {
     fn new() -> Self {
-        ErrBuf { buf: [0; 200], len: 0 }
+        ErrBuf {
+            buf: [0; 200],
+            len: 0,
+        }
     }
     fn set(&mut self, msg: &str) {
         let b = msg.as_bytes();
@@ -517,7 +534,13 @@ impl ErrBuf {
 }
 
 /// Ruby return value -> engine value.
-unsafe fn ruby_to_out(ctx: *mut Ctx, document: VALUE, r: VALUE, out: *mut Val, err: &mut ErrBuf) -> bool {
+unsafe fn ruby_to_out(
+    ctx: *mut Ctx,
+    document: VALUE,
+    r: VALUE,
+    out: *mut Val,
+    err: &mut ErrBuf,
+) -> bool {
     let rv = Value::from_raw(r);
     if r == rb_sys::Qtrue as VALUE || r == rb_sys::Qfalse as VALUE {
         (*out).type_ = MKR_XPATH_TYPE_BOOLEAN;
@@ -550,7 +573,9 @@ unsafe fn ruby_to_out(ctx: *mut Ctx, document: VALUE, r: VALUE, out: *mut Val, e
                 return false;
             };
             for i in 0..n {
-                let Ok(node) = rv.funcall::<_, _, Value>("[]", (i,)) else { continue };
+                let Ok(node) = rv.funcall::<_, _, Value>("[]", (i,)) else {
+                    continue;
+                };
                 if !is_kind_of(node, mkr_cNode) {
                     continue;
                 }
@@ -567,7 +592,10 @@ unsafe fn ruby_to_out(ctx: *mut Ctx, document: VALUE, r: VALUE, out: *mut Val, e
     if rv.is_nil() {
         if mkr_val_set_borrowed_text_copy(
             out,
-            VerifiedText { ptr: c"".as_ptr(), len: 0 },
+            VerifiedText {
+                ptr: c"".as_ptr(),
+                len: 0,
+            },
             core::ptr::null_mut(),
             core::ptr::null(),
         ) != 0
@@ -582,18 +610,18 @@ unsafe fn ruby_to_out(ctx: *mut Ctx, document: VALUE, r: VALUE, out: *mut Val, e
         return false;
     };
     let mut vv: RubyText = core::mem::zeroed();
-    let bad = mkr_ruby_try_verified_text(sv.as_raw(), (*mkr_ctx_limits(ctx)).max_string_bytes, &mut vv);
+    let bad = mkr_ruby_try_verified_text(
+        sv.as_raw(),
+        (*mkr_ctx_limits(ctx)).max_string_bytes,
+        &mut vv,
+    );
     if !bad.is_null() {
         let reason = core::ffi::CStr::from_ptr(bad).to_string_lossy();
         err.set_fmt(format_args!("handler returned an invalid string: {reason}"));
         return false;
     }
-    let rc = mkr_val_set_borrowed_text_copy(
-        out,
-        vv.into(),
-        core::ptr::null_mut(),
-        core::ptr::null(),
-    );
+    let rc =
+        mkr_val_set_borrowed_text_copy(out, vv.into(), core::ptr::null_mut(), core::ptr::null());
     core::hint::black_box(sv);
     if rc != 0 || (*out).u.string.ptr.is_null() {
         err.set("out of memory converting handler result");
@@ -834,7 +862,10 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
     };
 
     unsafe {
-        let bridge = Bridge { handler: handler.as_raw(), document: document.as_raw() };
+        let bridge = Bridge {
+            handler: handler.as_raw(),
+            document: document.as_raw(),
+        };
         let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
         let mut value: XPathValue = core::mem::zeroed();
         let mut error: XPathError = core::mem::zeroed();
@@ -846,7 +877,10 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         if rc != 0 {
             mkr_xpath_raise(&mut error);
         }
-        Ok(Value::from_raw(mkr_xpath_value_to_ruby(&mut value, document.as_raw())))
+        Ok(Value::from_raw(mkr_xpath_value_to_ruby(
+            &mut value,
+            document.as_raw(),
+        )))
     }
 }
 
@@ -892,10 +926,15 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
         let sv: Value = value.funcall("to_s", ())?;
         let nv = mkr_ruby_verified_text(name.as_raw(), c"variable name".as_ptr());
         let mut vv: RubyText = core::mem::zeroed();
-        let bad =
-            mkr_ruby_try_verified_text(sv.as_raw(), (*mkr_ctx_limits(ctx)).max_string_bytes, &mut vv);
+        let bad = mkr_ruby_try_verified_text(
+            sv.as_raw(),
+            (*mkr_ctx_limits(ctx)).max_string_bytes,
+            &mut vv,
+        );
         if !bad.is_null() {
-            let reason = core::ffi::CStr::from_ptr(bad).to_string_lossy().into_owned();
+            let reason = core::ffi::CStr::from_ptr(bad)
+                .to_string_lossy()
+                .into_owned();
             return Err(Error::new(
                 error_class(),
                 format!("invalid variable value: {reason}"),
@@ -941,7 +980,10 @@ fn node_xpath_run(
             mkr_xpath_raise(&mut error);
         }
 
-        let bridge = Bridge { handler: handler.as_raw(), document: document.as_raw() };
+        let bridge = Bridge {
+            handler: handler.as_raw(),
+            document: document.as_raw(),
+        };
         let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
         let mut value: XPathValue = core::mem::zeroed();
         let rc = if first_only {
@@ -959,7 +1001,10 @@ fn node_xpath_run(
          * never references the context, so a raise inside the conversion (the
          * node-set cap, OOM) cannot leak it. */
         mkr_xpath_context_free(ctx);
-        Ok(Value::from_raw(mkr_xpath_value_to_ruby(&mut value, document.as_raw())))
+        Ok(Value::from_raw(mkr_xpath_value_to_ruby(
+            &mut value,
+            document.as_raw(),
+        )))
     }
 }
 
@@ -974,9 +1019,15 @@ fn scan_query_args(ruby: &Ruby, args: &[Value]) -> Result<(Value, Value, c_int),
     if args.len() == 1 {
         return Ok((args[0], ruby.qnil().as_value(), 0));
     }
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), magnus::RHash, ()>(args)?;
+    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), magnus::RHash, ()>(
+        args,
+    )?;
     let lax = ns_matching_lax(ruby, a.keywords)?;
-    Ok((a.required.0, a.optional.0.unwrap_or(ruby.qnil().as_value()), lax))
+    Ok((
+        a.required.0,
+        a.optional.0.unwrap_or(ruby.qnil().as_value()),
+        lax,
+    ))
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
@@ -1011,10 +1062,14 @@ pub unsafe extern "C" fn mkr_init_xpath() {
     klass
         .define_method("register_variable", method!(ctx_register_variable, 2))
         .expect("#register_variable");
-    klass.define_method("node=", method!(ctx_set_node, 1)).expect("#node=");
+    klass
+        .define_method("node=", method!(ctx_set_node, 1))
+        .expect("#node=");
 
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
         .expect("Makiri::HTML::NodeMethods");
-    m.define_method("xpath", method!(node_xpath, -1)).expect("#xpath");
-    m.define_method("at_xpath", method!(node_at_xpath, -1)).expect("#at_xpath");
+    m.define_method("xpath", method!(node_xpath, -1))
+        .expect("#xpath");
+    m.define_method("at_xpath", method!(node_at_xpath, -1))
+        .expect("#at_xpath");
 }

@@ -1,5 +1,6 @@
 //! The XPath 1.0 Number production, read and written (mkr_xpath_number.c for
 //! the read; the write is `string()`'s number rule, §4.2).
+#![forbid(unsafe_code)]
 //!
 //! Both halves of one grammar, so they sit together: a change to what counts as
 //! a Number is a change to both.
@@ -11,8 +12,6 @@
 //! comma-decimal locale. Rust's `f64` parser is locale-independent and
 //! correctly rounded, so the scan below is still the grammar gate but the
 //! conversion has no fallback to get wrong.
-
-use core::ffi::c_char;
 
 #[inline]
 fn is_digit(b: u8) -> bool {
@@ -62,29 +61,6 @@ pub fn from_extent(s: &[u8]) -> f64 {
         Ok(t) => t.parse::<f64>().unwrap_or(f64::NAN),
         Err(_) => f64::NAN,
     }
-}
-
-/* ---- the C ABI (the string->number coercion in mkr_xpath_value_body.h calls
- * these; the lexer below is Rust now and calls the functions above) ---- */
-
-/// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
-pub unsafe extern "C" fn mkr_xpath_number_extent(p: *const c_char, len: usize) -> usize {
-    if p.is_null() || len == 0 {
-        return 0;
-    }
-    extent(core::slice::from_raw_parts(p as *const u8, len))
-}
-
-/// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
-pub unsafe extern "C" fn mkr_xpath_number_from_extent(p: *const c_char, extent: usize) -> f64 {
-    if p.is_null() || extent == 0 {
-        return f64::NAN;
-    }
-    from_extent(core::slice::from_raw_parts(p as *const u8, extent))
 }
 
 /* ---- the write half: `string(number)` (§4.2) ---- */
@@ -146,7 +122,11 @@ pub fn to_text(d: f64, out: &mut [u8]) -> Option<usize> {
 
     /* %.15g picks exponential when the decimal exponent is below -4 or at least
      * the precision, and strips trailing zeros either way. */
-    let exp = if d == 0.0 { 0 } else { d.abs().log10().floor() as i32 };
+    let exp = if d == 0.0 {
+        0
+    } else {
+        d.abs().log10().floor() as i32
+    };
     let mut scratch = [0u8; 64];
 
     if (-4..P).contains(&exp) {
@@ -166,7 +146,10 @@ pub fn to_text(d: f64, out: &mut [u8]) -> Option<usize> {
     let written = w.written();
     let at = written.iter().position(|&b| b == b'e')?;
     let mantissa = strip_zeros(&written[..at]);
-    let ev: i32 = core::str::from_utf8(&written[at + 1..]).ok()?.parse().ok()?;
+    let ev: i32 = core::str::from_utf8(&written[at + 1..])
+        .ok()?
+        .parse()
+        .ok()?;
 
     let mut o = Fixed::new(out);
     o.write_str(core::str::from_utf8(mantissa).ok()?).ok()?;
