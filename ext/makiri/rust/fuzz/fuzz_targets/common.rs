@@ -11,8 +11,8 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-pub use makiri_rs::xml::abi::Doc;
-pub use makiri_rs::xpath_abi::{Error as XPathError, Limits, Node as Ast, VerifiedText, XPathValue};
+pub use makiri::xml::abi::Doc;
+pub use makiri::xpath_abi::{Error as XPathError, Limits, Node as Ast, VerifiedText, XPathValue};
 
 extern "C" {
     pub fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut i32) -> *mut Doc;

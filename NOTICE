@@ -8,5 +8,6 @@ This product includes software developed by:
   Licensed under the Apache License, Version 2.0
   https://lexbor.com / https://github.com/lexbor/lexbor
 
-The XPath 1.0 engine under ext/makiri/xpath/ is an original implementation
-written for this project. No code is derived from libxml2 or libxslt.
+The XPath 1.0 engine under ext/makiri/rust/src/xpath/ is an original
+implementation written for this project. No code is derived from libxml2 or
+libxslt.

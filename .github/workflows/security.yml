@@ -9,27 +9,16 @@ on:
   workflow_dispatch:
 
 jobs:
-  security-lint:
-    name: C safety lint
-    runs-on: ubuntu-latest
-    if: github.event_name != 'schedule'
-    steps:
-      - name: Checkout (with vendored Lexbor submodule)
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          bundler-cache: true
-
-      - name: Run C safety lint
-        run: bundle exec rake security:clint
+  # A "C safety lint" job stood here (`rake security:clint`, over
+  # script/check_c_safety.rb). It enforced rules about C that no longer exists -
+  # bounded reads through mkr_span, no raw cursor members, no unchecked size
+  # arithmetic. The equivalents are now type-level rather than lint-level:
+  # slices carry their length, and the allocation chokepoint is enforced by
+  # `clippy.toml`'s disallowed-methods - run with `-D warnings` by ci.yml's
+  # Clippy step (the crate) and libfuzzer.yml's (the fuzz crate, nightly).
 
   security-sanitize:
-    name: ASan + UBSan security suite
+    name: AddressSanitizer security suite
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule'
     steps:
@@ -40,6 +29,20 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -62,6 +65,20 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -89,6 +106,20 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -114,6 +145,20 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -144,6 +189,20 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -173,6 +232,20 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -183,7 +256,7 @@ jobs:
         run: bundle exec rake invariants
 
   invariants-sanitize:
-    name: Nightly invariant checks under ASan + UBSan
+    name: Nightly invariant checks under AddressSanitizer
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
@@ -194,6 +267,20 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -219,6 +306,20 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # The extension is a Rust crate; cargo is part of the build now. stable is
+      # the default because that is what ships - but nightly has to be PRESENT
+      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
+      # for an ASan build (and aborts rather than quietly building it plain).
+      # Installed uniformly across this file's jobs; the few that never sanitize
+      # pay one toolchain download for one block instead of nine variants.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the nightly toolchain (for -Zsanitizer)
+        run: rustup toolchain install nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -228,62 +329,3 @@ jobs:
       - name: Build Lexbor under ASan and run the suite
         run: bundle exec rake "sanitize:lexbor"
 
-  # The Rust port's memory-safety and fail-closed gates. The HTML instance is
-  # the one every Node#xpath on an HTML document goes through, so it is the
-  # configuration worth the nightly budget; the per-push matrix in ci.yml covers
-  # the others with the spec suite.
-  rust-fuzz:
-    name: Rust port - fuzz + OOM (HTML instance)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (with vendored Lexbor submodule)
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          bundler-cache: true
-
-      # The xmlconf runner reads the W3C manifests with it, and it is in the
-      # optional :bench group rather than the default bundle.
-      - name: Install nokogiri (for the conformance manifests)
-        run: gem install --no-document nokogiri
-
-      # The XML parser's conformance, against the same corpus and the same
-      # scoring the C build is held to.
-      - name: XML conformance (W3C xmlts)
-        env:
-          MAKIRI_RUST: "all"
-        run: bundle exec rake conformance:xmlconf
-
-      # Under ASan + UBSan: any heap error or UB in the Rust engine aborts the
-      # run. The targets are the ones that drive it - xpath over HTML, css
-      # (whose lowering builds the same AST), and xmlcss (the XML instance plus
-      # the of-type hooks).
-      # The FULL port configuration. This job used to name four
-      # flags of nineteen, so the gate that exists to cover the port was running
-      # a build that was mostly still C - and nothing in the file showed it.
-      - name: Fuzz under sanitizers
-        env:
-          MAKIRI_RUST: "all"
-        run: |
-          bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xpath --time 300"
-          bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target css --time 180"
-          bundle exec rake "fuzz:sanitize" FUZZ_ARGS="--target xmlcss --time 180"
-
-      # Every OOM branch must fail closed - a clean raise or a result identical
-      # to the un-injected one, never a truncated answer.
-      # Likewise: falloc - the Rust allocation chokepoint the whole sweep exists
-      # to exercise - is only reached with the glue and bridge flags on.
-      - name: OOM injection sweep
-        env:
-          MAKIRI_RUST: "all"
-        run: bundle exec rake oom

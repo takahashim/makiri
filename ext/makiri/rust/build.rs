@@ -241,11 +241,18 @@ fn main() {
         .write_to_file(out.join("lexbor_sys.rs"))
         .expect("could not write the generated Lexbor bindings");
 
-    let ext_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .canonicalize()
-        .expect("ext/makiri must exist");
-    generate_makiri_enums(&ext_dir, &include, &out);
+    // Only while the C headers exist to be read. With `no-c` there is no
+    // ext/makiri/*.h at all, and nothing to keep in agreement: the definitions
+    // live in `lexbor_abi::mkr` instead. Generating from headers that are gone
+    // would simply fail the build, and generating from headers that are present
+    // is the whole point while they are.
+    if std::env::var_os("CARGO_FEATURE_NO_C").is_none() {
+        let ext_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .canonicalize()
+            .expect("ext/makiri must exist");
+        generate_makiri_enums(&ext_dir, &include, &out);
+    }
 }
 
 /// Makiri's OWN C types and enums, generated for the same reason Lexbor's are.

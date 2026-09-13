@@ -6,9 +6,19 @@ publish = false
 description = "Makiri subsystems ported from C behind the same C ABI (see src/lib.rs)"
 
 [lib]
-# staticlib for the extension link; rlib so the cargo-fuzz crate under fuzz/
-# can depend on this one and call its exported entry points.
-crate-type = ["staticlib", "rlib"]
+# The Ruby extension is `makiri.bundle` / `makiri.so`, loaded by
+# `require "makiri/makiri"`, and rb_sys's generated Makefile copies
+# `lib<lib name>.<soext>` into place - so the LIB name has to be `makiri` even
+# though the package is `makiri_rs`. (The package keeps the `_rs` suffix: it is
+# what `fuzz/Cargo.toml` depends on by name, and it distinguishes the crate from
+# the gem in cargo output.)
+name = "makiri"
+# cdylib is what Ruby loads under `standalone`, where this crate IS the
+# extension; staticlib is the transitional link into the C extension; rlib so
+# the cargo-fuzz crate under fuzz/ can depend on this one and call its exported
+# entry points. Cargo cannot select a crate-type per feature, so all three are
+# built and the build picks the artifact it needs.
+crate-type = ["cdylib", "staticlib", "rlib"]
 path = "src/lib.rs"
 
 # `kani` is set by cargo-kani, not by cargo, so declare it or every build warns
@@ -150,6 +160,44 @@ core-alloc = ["core-buf"]
 # parser (design_doc.ja.md lists re-implementing selectors among the things
 # deliberately avoided). Needs the XPath AST builders and Lexbor's layout.
 css-lower = ["xpath-shared", "lexbor-abi"]
+
+# "There is no C tree in this build." A handful of symbols never had a
+# RustPorts row because no flag could replace them piecemeal - the buffer's
+# build-time limits (core/mkr_core_abi.c), the XPath error setters
+# (xpath/mkr_xpath_err.c) and the HTML shims (xpath/mkr_xpath_html_shim.c) - so
+# Rust provides them exactly when the C that did is absent.
+#
+# Separate from `standalone` because the two are different claims, and the fuzz
+# crate needs only this one: it links no Ruby, so it cannot enable `standalone`
+# (which pulls magnus through the glue), but it has no C either. Conflating them
+# is what made the fuzz build compile four C files of its own.
+#
+# Implies `core-alloc` because the fills need it: the XPath error setters this
+# feature provides copy their message with `mkr_strdup`, which lives behind
+# `core-alloc` (and which implies `core-buf`, whose ceilings this feature also
+# defines). Without the implication a build with `no-c` and without
+# `core-alloc` fails to compile - not a hazard for the shipped extension
+# (`standalone` has both) or the fuzz crate (which names both), but a trap for
+# any narrower set, and the port-table check that used to catch this class of
+# feature drift is gone with the C.
+no-c = ["core-alloc"]
+
+# The standalone extension: Rust owns Init_makiri and the whole class
+# hierarchy, and there is no C extension at all. Implies every replacement
+# feature, because with no C fallback there is nothing for a half-on
+# configuration to fall back TO.
+standalone = [
+  "no-c",
+  "glue-serialize", "glue-node", "glue-node-set", "glue-css", "glue-lexbor-css",
+  "glue-doc", "glue-xml", "glue-xpath", "glue-xml-node-read",
+  "glue-xml-node-mutate", "glue-xml-node-serialize", "glue-html-node",
+  "glue-html-mutate", "bridge-string", "bridge-xml-decode",
+  "dom-utf8-input", "dom-text-index", "dom-index", "dom-cross-import",
+  "dom-source-loc", "dom-post-parse",
+  "core-utf8", "core-buf", "core-alloc",
+  "css-lower", "xml", "xpath", "xpath-xml", "xpath-html", "xpath-driver",
+  "xpath-shared",
+]
 
 [dependencies]
 # Only the glue needs Ruby; the engine features stay dependency-free, so a build

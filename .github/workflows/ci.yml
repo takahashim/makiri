@@ -32,28 +32,59 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
-      # Cheap, and it does not need a build: the four files that describe the
-      # port configuration have to agree with each other, and nothing was
-      # checking that until one row turned out to have no CI leg at all.
-      - name: Port table
-        run: bundle exec rake ports
+      # The extension is a Rust crate, so a toolchain is part of the build the
+      # way a C compiler used to be. (`rake ports` stood here and checked that
+      # the port table, Cargo.toml, this file and lib.rs agreed about which C
+      # each flag replaced. There is no table, no flags and no C left for it to
+      # check.)
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Compile the extension (builds vendored Lexbor, then the ext)
+      # rb-sys runs bindgen at build time to generate bindings against the local
+      # Ruby, and bindgen needs libclang. The runner image ships one; installing
+      # it explicitly is what keeps a base-image change from turning into
+      # "Unable to find libclang" in the cargo step.
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Compile the extension (builds vendored Lexbor, then the crate)
         run: bundle exec rake compile
+
+      # Warnings are errors: the lints that matter here are the project's own -
+      # `clippy.toml`'s disallowed-methods is what enforces that every heap
+      # allocation goes through `falloc`, which is the invariant `rake oom`
+      # exists to exercise. An unsafe block without a stated contract and a
+      # raw-pointer compare that should be `ptr::eq` are the others.
+      #
+      # After `rake compile`, because build.rs generates the Lexbor layout from
+      # the vendored headers and those only exist once cmake has installed them.
+      # One cell, not twelve: there is a single feature set now (`standalone`),
+      # so the other matrix cells would re-run an identical check. This step was
+      # lost when the per-flag port matrix was deleted - it used to run once per
+      # leg with that leg's features - and nothing noticed, because the comment
+      # claiming it ran was in a different file.
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust
+        run: cargo clippy --features standalone -- -D warnings
 
       # Only Init_makiri may be exported (or another Lexbor-based gem in the
       # same process binds to our Lexbor and segfaults - CLAUDE.md), and no
       # Lexbor/Makiri symbol may be left undefined (it would be a NULL call).
-      # Both were checked by hand until now.
+      # The export half matters more now than it did: rustc links the cdylib and
+      # passes its own export list, so the restriction is a post-link trim that
+      # this gate is the only thing checking.
       - name: Symbol gate
         run: bundle exec rake symbols
 
       # The :threading suite is heavy (GC.stress across threads) and checks a
       # structural property that does not vary by OS/Ruby, so run it on a single
       # representative job; the rest of the matrix skips it for a fast run.
-      # The recorded C-build differential. On this job it is a tautology today
-      # and a real check the moment the C is retired, which is the point of
-      # recording it while the C can still produce it.
+      #
+      # The recorded C-build differential. It was a tautology while the C was
+      # still what built here, and recording it then was the whole point: it is
+      # now the only surviving check that this build answers what the C
+      # answered, and it cannot be re-recorded.
       - name: Differential
         run: bundle exec rake diff
 
@@ -67,7 +98,11 @@ jobs:
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
   sanitize:
-    name: AddressSanitizer + UBSan (Ruby ${{ matrix.ruby }})
+    # AddressSanitizer only. UBSan used to run beside it over the C sources;
+    # rustc's -Zsanitizer has no `undefined`, so with the C retired there is
+    # nothing for it to instrument. Naming the job for what it runs keeps a
+    # green tick from claiming coverage that no longer exists.
+    name: AddressSanitizer (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -82,210 +117,23 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: ${{ matrix.ruby }}
-          bundler-cache: true
+      # Nightly, not stable: -Zsanitizer is unstable, and extconf refuses to
+      # build the crate uninstrumented when ASan is asked for rather than
+      # quietly producing a run that checks nothing.
+      - uses: dtolnay/rust-toolchain@nightly
 
-      # Builds the ext with -fsanitize=address,undefined and runs the whole
-      # spec suite with the ASan runtime preloaded. Any heap/UB error aborts
-      # the run with a non-zero exit, failing the job.
-      - name: Build + test under sanitizers
-        run: bundle exec rake sanitize
-
-  # The Rust port (notes/rust_rewrite_plan.ja.md). Each MAKIRI_RUST_* flag
-  # replaces a set of C sources with the Rust one behind the same C ABI, so the
-  # suite is the differential: a configuration that answers differently from the
-  # C build fails here.
-  #
-  # The gates that need something this job does not have stay elsewhere: the W3C
-  # conformance suite wants nokogiri to read its manifests and fetches a corpus
-  # on first run, and the fuzzers and the OOM sweep want more time than a push
-  # should take. Both run against the port nightly in security.yml.
-  #
-  # The instances are listed separately on purpose. Both can be replaced at
-  # once, but a regression is only bisectable if each can be replaced alone.
-  rust:
-    name: Rust port (${{ matrix.label }})
-    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: "front end"
-            flags: "MAKIRI_RUST_XPATH=1"
-            features: "xpath"
-          - label: "shared primitives"
-            flags: "MAKIRI_RUST_XPATH_SHARED=1"
-            features: "xpath-shared"
-          - label: "XPath XML instance"
-            flags: "MAKIRI_RUST_XPATH_XML=1"
-            features: "xpath-xml"
-          - label: "XPath HTML instance"
-            flags: "MAKIRI_RUST_XPATH_HTML=1"
-            features: "xpath-html"
-          - label: "XPath driver"
-            flags: "MAKIRI_RUST_XPATH_DRIVER=1"
-            features: "xpath-driver"
-          - label: "glue: serialization"
-            flags: "MAKIRI_RUST_GLUE_SERIALIZE=1"
-            features: "glue-serialize"
-          - label: "glue: node core"
-            flags: "MAKIRI_RUST_GLUE_NODE=1"
-            features: "glue-node"
-          - label: "bridge: text contract"
-            flags: "MAKIRI_RUST_BRIDGE_STRING=1"
-            features: "bridge-string"
-          - label: "glue: NodeSet"
-            flags: "MAKIRI_RUST_GLUE_NODE_SET=1"
-            features: "glue-node-set"
-          - label: "glue: CSS"
-            flags: "MAKIRI_RUST_GLUE_CSS=1"
-            features: "glue-css"
-          - label: "bridge: XML decode"
-            flags: "MAKIRI_RUST_BRIDGE_XML_DECODE=1"
-            features: "bridge-xml-decode"
-          - label: "glue: XML boundary"
-            flags: "MAKIRI_RUST_GLUE_XML=1"
-            features: "glue-xml"
-          - label: "glue: XPath boundary"
-            flags: "MAKIRI_RUST_GLUE_XPATH=1"
-            features: "glue-xpath"
-          - label: "glue: XML node readers"
-            flags: "MAKIRI_RUST_GLUE_XML_NODE_READ=1"
-            features: "glue-xml-node-read"
-          - label: "glue: XML node mutation"
-            flags: "MAKIRI_RUST_GLUE_XML_NODE_MUTATE=1"
-            features: "glue-xml-node-mutate"
-          - label: "glue: XML serializers"
-            flags: "MAKIRI_RUST_GLUE_XML_NODE_SERIALIZE=1"
-            features: "glue-xml-node-serialize"
-          - label: "glue: stylesheet"
-            flags: "MAKIRI_RUST_GLUE_LEXBOR_CSS=1"
-            features: "glue-lexbor-css"
-          - label: "glue: Document"
-            flags: "MAKIRI_RUST_GLUE_DOC=1"
-            features: "glue-doc"
-          - label: "glue: HTML node readers"
-            flags: "MAKIRI_RUST_GLUE_HTML_NODE=1"
-            features: "glue-html-node"
-          - label: "glue: HTML mutation"
-            flags: "MAKIRI_RUST_GLUE_HTML_MUTATE=1"
-            features: "glue-html-mutate"
-          - label: "dom_adapter: UTF-8 input"
-            flags: "MAKIRI_RUST_DOM_UTF8_INPUT=1"
-            features: "dom-utf8-input"
-          - label: "dom_adapter: text index"
-            flags: "MAKIRI_RUST_DOM_TEXT_INDEX=1"
-            features: "dom-text-index"
-          - label: "dom_adapter: DOM index"
-            flags: "MAKIRI_RUST_DOM_INDEX=1"
-            features: "dom-index"
-          - label: "dom_adapter: cross import"
-            flags: "MAKIRI_RUST_DOM_CROSS_IMPORT=1"
-            features: "dom-cross-import"
-          - label: "dom_adapter: source locations"
-            flags: "MAKIRI_RUST_DOM_SOURCE_LOC=1"
-            features: "dom-source-loc"
-          - label: "dom_adapter: parse pipeline"
-            flags: "MAKIRI_RUST_DOM_POST_PARSE=1"
-            features: "dom-post-parse"
-          - label: "core: UTF-8"
-            flags: "MAKIRI_RUST_CORE_UTF8=1"
-            features: "core-utf8"
-          - label: "core: buffer"
-            flags: "MAKIRI_RUST_CORE_BUF=1"
-            features: "core-buf"
-          - label: "core: allocator"
-            flags: "MAKIRI_RUST_CORE_ALLOC=1"
-            features: "core-alloc"
-          - label: "CSS lowering"
-            flags: "MAKIRI_RUST_CSS_LOWER=1"
-            features: "css-lower"
-          # The XML reader replaces a whole directory rather than named files,
-          # and had no leg of its own until script/check_port_table.rb looked -
-          # it was only ever built by the `everything` job, where a failure
-          # would have been attributed to whichever flag was suspected first.
-          - label: "XML reader"
-            flags: "MAKIRI_RUST_XML=1"
-            features: "xml"
-          # `MAKIRI_RUST=all` rather than a list: extconf expands it from the
-          # port table, so this file never enumerates the flags. A literal here
-          # is what drifted last time.
-          - label: "everything"
-            flags: "MAKIRI_RUST=all"
-            features: ""
-          # aarch64-linux, on a platform where `char` is UNSIGNED. Every other
-          # box in this project has a signed one - x86_64-linux (the rest of
-          # this matrix) and aarch64-darwin (where it is developed) - so a
-          # `[0i8; N]` written for a C char buffer builds fine on both and fails
-          # only here. That is not hypothetical: two such buffers shipped and
-          # were found on 2026-09-12 by hand, in a container, because nothing
-          # routine built this platform. It is a release target; build it.
-          - label: "everything, aarch64-linux"
-            runner: ubuntu-24.04-arm
-            flags: "MAKIRI_RUST=all"
-            features: ""
-    steps:
-      - name: Checkout (with vendored Lexbor submodule)
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      # The glue features pull in magnus -> rb-sys, which runs bindgen at build
-      # time to generate bindings against the local Ruby, and bindgen needs
-      # libclang. The runner image ships one, but installing it explicitly is
-      # what keeps a base-image change from turning into "Unable to find
-      # libclang" in the cargo step.
       - name: Install libclang (bindgen, via rb-sys)
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.4"
+          ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
-      # Warnings are errors here: the port's own lints (unsafe without a stated
-      # contract, a raw-pointer compare that should be ptr::eq) are the ones
-      # worth not letting through.
-      - name: Clippy
-        run: |
-          feats=$(bundle exec rake -s rust:features FEATURES='${{ matrix.features }}')
-          cd ext/makiri/rust && cargo clippy --features "$feats" -- -D warnings
+      # Builds the crate with -Zsanitizer=address and runs the whole spec suite
+      # with the ASan runtime preloaded. Any heap error aborts the run with a
+      # non-zero exit, failing the job.
+      - name: Build + test under AddressSanitizer
+        run: bundle exec rake sanitize
 
-      # `env A=1 B=1 cmd` relies on the shell splitting the expansion into
-      # separate assignments, which bash (the runner's shell) does. Don't quote
-      # it, and don't copy this line into a zsh script: zsh does not word-split
-      # an unquoted expansion, so it would set only the first variable, to the
-      # whole mangled string.
-      - name: Compile with ${{ matrix.flags }}
-        run: env ${{ matrix.flags }} bundle exec rake compile
-
-
-      # Before the suite, because a symbol that resolves to nothing is a NULL
-      # call the first time that code path runs - which the suite might not
-      # reach, and which macOS's -undefined dynamic_lookup turns into a
-      # segfault rather than a link error. Cheap, and it names the symbol.
-      - name: Symbol gate
-        run: env ${{ matrix.flags }} bundle exec rake symbols
-
-      # Every port configuration must answer exactly what the C build answered.
-      # This is the check that caught an ASCII-8BIT string, a quoted error
-      # message and a lost NUL terminator that `rake spec` passed over.
-      - name: Differential
-        run: env ${{ matrix.flags }} bundle exec rake diff
-
-      - name: Run the test suite
-        run: env ${{ matrix.flags }} bundle exec rake spec
-
-      - name: Invariants
-        run: env ${{ matrix.flags }} bundle exec rake invariants

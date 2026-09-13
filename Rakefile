@@ -26,10 +26,31 @@ task release: %w[release:guard_clean release:source_control_push] do
   MSG
 end
 
+# The extension is one Rust crate, and this is still rake-compiler's ordinary
+# task: it runs ext/makiri/rust/extconf.rb, which calls `create_rust_makefile`.
+# The cargo integration lives there, which is where the build's other decisions
+# (the vendored Lexbor build, the link arguments, the export trim) already are.
+#
+# NOT `RbSys::ExtensionTask`, and that is a decision rather than an oversight.
+# It is rake-compiler's task plus cross-compilation plumbing - which this
+# project does not use: `script/build_native_gem.rb` assembles the precompiled
+# gems from binaries CI has already built, with plain `Gem::Package.build`. What
+# it would cost is structural: it infers the crate by running `cargo metadata`
+# in the REPO ROOT (rb_sys/cargo/metadata.rb passes no working directory), so it
+# needs a root workspace manifest; it then looks the crate up by PACKAGE name,
+# so `makiri_rs` would have to be renamed; and a root workspace would swallow
+# the cargo-fuzz crate, which declares no `[workspace]` of its own, so that
+# would need excluding too. Three changes to the crate's shape to gain a
+# capability we do not use.
+#
+# `source_pattern` is what makes `rake compile` notice an edited .rs. The
+# Makefile that extconf writes re-runs cargo on every build anyway (cargo does
+# its own dependency tracking), but rake-compiler decides whether to invoke make
+# at all, and its default pattern is for C.
 Rake::ExtensionTask.new("makiri", GEMSPEC) do |ext|
-  ext.lib_dir       = "lib/makiri"
-  ext.ext_dir       = "ext/makiri"
-  ext.source_pattern = "**/*.{c,h}"
+  ext.lib_dir        = "lib/makiri"
+  ext.ext_dir        = "ext/makiri/rust"
+  ext.source_pattern = "**/*.{rs,toml}"
 end
 
 RSpec::Core::RakeTask.new(:spec)
@@ -141,32 +162,18 @@ task diff: :compile do
   sh FileUtils::RUBY, "spec/differential/run.rb"
 end
 
-namespace :diff do
-  desc "Rebuild C-only and re-record the differential baselines"
-  task :record do
-    # The baseline means nothing unless it comes from the C build, so this
-    # builds one rather than trusting whatever is installed - and it clears
-    # EVERY port flag, not just MAKIRI_RUST. Clearing only that one would let a
-    # MAKIRI_RUST_GLUE_CSS=1 left over in the shell record a baseline from a
-    # half-Rust build, which is precisely the thing this file exists to detect.
-    require_relative "ext/makiri/rust_ports"
-    clear = RustPorts::ALL.to_h { |r| [r[:env], nil] }.merge("MAKIRI_RUST" => nil)
-    sh(clear, "#{FileUtils::RUBY} -S rake clean compile")
-    sh FileUtils::RUBY, "spec/differential/run.rb", "record"
-  end
-end
-
-desc "Check that the port configuration agrees with itself (table, features, CI legs)"
-task :ports do
-  sh FileUtils::RUBY, "script/check_port_table.rb"
-end
-
-namespace :security do
-  desc "Run mechanical C safety lint over ext/makiri"
-  task :clint do
-    sh FileUtils::RUBY, "script/check_c_safety.rb", *Shellwords.split(ENV.fetch("C_LINT_ARGS", ""))
-  end
-end
+# There is no `diff:record` any more, and there cannot be one. Re-recording
+# meant building the C and asking it - and the C is gone, so the baselines under
+# spec/differential/baseline/ are now a historical fixture rather than something
+# regenerable. That is exactly why they were recorded: `rake diff` still answers
+# "does this build agree with what the C answered", which is the one question
+# the port had to keep answering after its second implementation disappeared.
+#
+# A baseline that no longer matches is therefore a finding to investigate, never
+# something to refresh. If a difference is genuinely intended (a deliberate
+# behaviour change), edit the baseline in the same commit that changes the
+# behaviour, so the diff is reviewable as a behaviour change rather than as a
+# regenerated blob.
 
 # `rake clean` (from rake-compiler) removes the ext build dir under tmp/,
 # including the generated Makefile. The next `rake compile` re-runs extconf,
@@ -207,15 +214,11 @@ def asan_runtime_path
   nil
 end
 
-def libfuzzer_available?
-  cxx = ENV["CXX"].to_s.empty? ? "clang++" : ENV["CXX"]
-  Dir.mktmpdir("makiri-libfuzzer-check") do |dir|
-    src = File.join(dir, "check.cc")
-    exe = File.join(dir, "check")
-    File.write(src, "extern \"C\" int LLVMFuzzerTestOneInput(const unsigned char*, unsigned long){return 0;}\n")
-    return system(cxx, "-fsanitize=fuzzer,address,undefined", src, "-o", exe,
-                  out: File::NULL, err: File::NULL)
-  end
+# The coverage-guided harnesses are a cargo-fuzz crate now (they were C files
+# under ext/makiri/fuzz driven by a Makefile). cargo-fuzz supplies libFuzzer and
+# the sanitizer itself, so the check is for the tool, not for a working clang.
+def cargo_fuzz_available?
+  system("cargo", "fuzz", "--version", out: File::NULL, err: File::NULL)
 end
 
 # The compiled extension, and whether it carries sanitizer instrumentation, so
@@ -224,102 +227,70 @@ def ext_bundle_path
   Dir["lib/makiri/makiri.{bundle,so}"].first
 end
 
-def ext_sanitized?
-  bundle = ext_bundle_path or return false
-  !(`nm "#{bundle}" 2>/dev/null` =~ /asan|ubsan/i).nil?
-end
-
-# Is the Rust crate itself ASan-instrumented? nil when this build has no Rust.
+# Is the extension Ruby will actually load ASan-instrumented?
 #
-# ext_sanitized? cannot answer this: the bundle references __asan_* as soon as
-# ANY translation unit is instrumented, and the C sources always are - so it
-# reports "sanitized" for a build whose entire Rust half is plain. That is the
-# exact failure this check exists to prevent, and it is not hypothetical: until
-# 2026-09-12 extconf passed the sanitizer to $CFLAGS only, so every sanitizer
-# run since the first glue port covered less than it appeared to, silently.
-# Instrumented code calls __asan_report_* on a failing access; uninstrumented
-# code has no such reference. Look inside the crate's own archive.
-# The C sources this configuration replaces, as paths relative to ext/makiri -
-# the form verify/Makefile spells them in. Read from the one table that decides
-# it (extconf's RUST_PORTS) rather than restated.
-def rust_replaced_sources
-  require_relative "ext/makiri/rust_ports"
-  RustPorts.replaced_sources
-end
-
-# Is this build supposed to contain Rust at all?
-def rust_build?
-  ENV["MAKIRI_RUST"].to_s.strip == "all" ||
-    ENV.keys.any? { |k| k.start_with?("MAKIRI_RUST_") }
-end
-
-# Is the Rust crate ASan-instrumented? Raises rather than guessing when it
-# cannot tell.
+# The test is `__asan_report_*`, and which symbol is asked for is the whole
+# point. An instrumented load or store calls one of those on a failing access,
+# so the reference exists only because the compiler instrumented OUR code. The
+# interceptor and bookkeeping symbols (`__asan_init`, `__asan_memcpy`,
+# `__asan_handle_no_return`) come from merely linking the runtime and appear
+# whether or not anything was instrumented - which is why the earlier version of
+# this check, grepping the bundle for /asan|ubsan/, was weaker than it looked.
+# Measured on this tree: an uninstrumented archive has 0 report references, the
+# instrumented one has 72, and the bundle built from it has 8.
 #
-# The first version returned nil for BOTH "no Rust in this build" and "could not
-# find the archive", and the caller treated nil as pass. A moved tmp/ layout, a
-# second Ruby version, a clean that put the archive elsewhere - any of those
-# would have made the check silently vacuous, which is the third time in this
-# work that a check has looked like it was checking. The two states are separate
-# now, and "should be there, is not" aborts.
-def rust_asan_instrumented?
-  archives = Dir.glob("tmp/**/rust-target/**/libmakiri_rs.a")
-  if archives.empty?
-    return nil unless rust_build?
-
-    abort "sanitize: a Rust build was asked for but no libmakiri_rs.a was found under " \
-          "tmp/ - the Rust half cannot be checked, so this run would cover " \
-          "less than it claims. (Looked for tmp/**/rust-target/**/libmakiri_rs.a.)"
-  end
-  # Every one of them, not the first: more than one appears across Ruby versions
-  # and platforms, and an uninstrumented straggler is exactly what this catches.
-  archives.all? { |a| `nm -u "#{a}" 2>/dev/null` =~ /__asan_report/ }
+# It examines the INSTALLED BUNDLE, not a target directory. That bundle is what
+# the spec suite loads, so its instrumentation is the claim being made; and it
+# cannot be fooled by build output lying around. The version before this one
+# globbed `ext/makiri/rust/target/**` - which is where a hand-run `cargo` puts
+# things and NOT where rake-compiler builds, since the generated Makefile passes
+# `--target-dir target` relative to `tmp/<platform>/makiri/<ruby>/`. It found
+# seven stale uninstrumented archives from earlier debugging and refused a
+# sanitize run that was correctly instrumented. Failing closed was the right
+# direction; looking in the wrong place was not.
+#
+# One check where there were two, because there is one artefact where there were
+# two halves. While C and Rust were linked together, a bundle-level answer could
+# not tell you whether the Rust half was plain, so a second look inside the
+# crate's own archive earned its keep. It does not any more.
+def ext_asan_instrumented?
+  bundle = ext_bundle_path or
+    abort "sanitize: no built extension under lib/makiri - nothing to check."
+  !(`nm -u #{bundle.shellescape} 2>/dev/null` =~ /__asan_report/).nil?
 end
 
-# Abort unless BOTH halves are instrumented. Called by the sanitizer tasks after
-# the build, so a green run always means what it looks like it means.
-#
-# One entry point rather than two: `ext_sanitized?` answers for the C and
-# `rust_asan_instrumented?` for the Rust, and a caller that remembers one and
-# forgets the other gets exactly the half-covered run this is here to prevent.
+# Abort unless the extension really is instrumented. Called by the sanitizer
+# tasks after the build, so a green run always means what it looks like it
+# means - and in particular on the `SKIP_BUILD=1` path, which reuses whatever is
+# on disk and is much the likeliest way to end up fuzzing a plain build.
 def assert_sanitized!(task, sanitize)
   return unless sanitize.include?("address")
 
-  unless ext_sanitized?
-    abort "#{task}: lib/makiri is not a sanitizer build."
-  end
-  assert_rust_asan!(task)
-end
-
-# The Rust half. Prefer `assert_sanitized!`.
-def assert_rust_asan!(task)
-  case rust_asan_instrumented?
-  when nil then nil # a C-only build; there is no Rust half to instrument
-  when true
-    puts "#{task}: ASan covers C and Rust; " \
-         "UBSan covers the C sources only (Rust has no UBSan)"
-  else
-    abort "#{task}: the Rust crate is NOT ASan-instrumented, so this run would " \
-          "cover only the C half and still come out green. Rebuild without " \
+  unless ext_asan_instrumented?
+    abort "#{task}: #{ext_bundle_path} is NOT ASan-instrumented, so this run " \
+          "would come out green having checked nothing. Rebuild without " \
           "SKIP_BUILD (extconf passes -Zsanitizer=address when ASan is on)."
   end
+  puts "#{task}: ASan covers the extension. UBSan does not run at all - " \
+       "rustc's -Zsanitizer has no `undefined`, and there is no C left for " \
+       "-fsanitize=undefined to instrument."
 end
 
-desc "Build the extension with sanitizers (MAKIRI_SANITIZE, default " \
-     "address,undefined) and run the spec suite under them. With MAKIRI_RUST_* " \
-     "set, ASan also covers the Rust crate (needs nightly); UBSan never does"
+desc "Build the extension under AddressSanitizer (MAKIRI_SANITIZE, default " \
+     "address; needs the nightly toolchain) and run the spec suite under it. " \
+     "There is no UBSan mode: rustc's -Zsanitizer has no `undefined`"
 task :sanitize do
-  sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+  sanitize = ENV["MAKIRI_SANITIZE"] || "address"
   sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
 
   # What this run does and does not cover, stated up front: a sanitizer run that
-  # quietly skips half the extension is worse than no run, and with the port in
-  # progress "half" is literal. extconf builds the crate with -Zsanitizer=address
-  # when ASan is on (it aborts if nightly is missing rather than silently
-  # building it plain), but Rust has no UBSan at all - rustc's -Zsanitizer takes
-  # address/cfi/dataflow/hwaddress/kcfi/kernel-address/leak/memory/memtag/
-  # safestack/shadow-call-stack/thread/realtime, and `undefined` is not one of
-  # them. That is permanent, not a gap waiting to be closed.
+  # quietly skips part of the extension is worse than no run. extconf builds the
+  # crate with -Zsanitizer=address when ASan is on (it aborts if nightly is
+  # missing rather than silently building it plain), but Rust has no UBSan at
+  # all - rustc's -Zsanitizer takes address/cfi/dataflow/hwaddress/kcfi/
+  # kernel-address/leak/memory/memtag/safestack/shadow-call-stack/thread/
+  # realtime, and `undefined` is not one of them. With the C retired, UBSan has
+  # no subject left either; that is permanent, not a gap waiting to be closed.
   assert_sanitized!("sanitize", sanitize)
 
   env = {
@@ -327,7 +298,11 @@ task :sanitize do
     # instrumented, so silence the noise and keep real heap/UB findings fatal.
     "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
                        "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
-    "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+    # Tells the child it is a sanitizer run. Without it spec_helper cannot know,
+    # and its `:slow` exclusion - written for Valgrind, where those examples were
+    # measured to dominate - never applied here. That is how a suite which takes
+    # 18s plain reached an hour under ASan without anything being wrong.
+    "MAKIRI_SANITIZE" => sanitize,
   }
   if sanitize.include?("address")
     runtime = asan_runtime_path or
@@ -371,16 +346,20 @@ task invariants: :compile do
   end
 end
 
-desc "Run the invariant checks under AddressSanitizer + UBSan (the text index " \
-     "holds borrowed slices, so staleness there is a memory bug too)"
+desc "Run the invariant checks under AddressSanitizer (the text index holds " \
+     "borrowed slices, so staleness there is a memory bug too)"
 task "invariants:sanitize" do
-  sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+  sanitize = ENV["MAKIRI_SANITIZE"] || "address"
   sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
 
   env = {
     "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
                        "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
-    "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+    # Tells the child it is a sanitizer run. Without it spec_helper cannot know,
+    # and its `:slow` exclusion - written for Valgrind, where those examples were
+    # measured to dominate - never applied here. That is how a suite which takes
+    # 18s plain reached an hour under ASan without anything being wrong.
+    "MAKIRI_SANITIZE" => sanitize,
   }
   if sanitize.include?("address")
     runtime = asan_runtime_path or
@@ -397,23 +376,26 @@ task "invariants:sanitize" do
   end
 end
 
-desc "Measure C coverage of OUR sources (clang source-based) over the spec suite. " \
-     "Prints an llvm-cov region+branch report (excludes vendored Lexbor) and writes " \
-     "a line-level detail file to tmp/coverage/show.txt."
+desc "Measure coverage of OUR sources (LLVM source-based) over the spec suite. " \
+     "Prints an llvm-cov region+branch report (excludes vendored Lexbor and the " \
+     "cargo registry) and writes a line-level detail file to tmp/coverage/show.txt."
 task :coverage do
   require "fileutils"
   dir = File.expand_path("tmp/coverage")
   FileUtils.rm_rf(dir)
   FileUtils.mkdir_p(dir)
 
-  # Instrument only our sources (Lexbor is built separately, uninstrumented).
+  # Instrument only our sources: MAKIRI_COVERAGE makes extconf pass
+  # -Cinstrument-coverage to the crate. Lexbor is built separately by cmake and
+  # is not instrumented, and the dependency crates are filtered out of the
+  # report below rather than left to dilute it.
   sh({ "MAKIRI_COVERAGE" => "1" }, "#{FileUtils::RUBY} -S rake clean compile")
   # %p -> PID, so any forked spec process gets its own raw profile.
   sh({ "LLVM_PROFILE_FILE" => File.join(dir, "makiri-%p.profraw") }, "#{FileUtils::RUBY} -S rspec")
 
   profdata = File.join(dir, "makiri.profdata")
   bundle   = "lib/makiri/makiri.bundle"
-  ignore   = "(vendor/lexbor|/usr/|/Library/|ruby/|rubygems)"
+  ignore   = "(vendor/lexbor|/usr/|/Library/|ruby/|rubygems|[.]cargo/registry|/rustc/)"
   sh "xcrun llvm-profdata merge -sparse #{dir}/*.profraw -o #{profdata}"
   sh "xcrun llvm-cov report #{bundle} -instr-profile=#{profdata} " \
      "-ignore-filename-regex='#{ignore}' -show-branch-summary"
@@ -428,7 +410,7 @@ desc "Like :sanitize but also builds the vendored Lexbor under ASan, so overflow
      "INSIDE Lexbor's mraw arena are caught (slow: full Lexbor rebuild). Runs the " \
      "spec suite, or FUZZ_ARGS via the fuzzer when set."
 task "sanitize:lexbor" do
-  sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+  sanitize = ENV["MAKIRI_SANITIZE"] || "address"
   sanitize.include?("address") or
     abort "sanitize:lexbor needs an address build (MAKIRI_SANITIZE must include 'address')"
 
@@ -441,7 +423,11 @@ task "sanitize:lexbor" do
   env = {
     "ASAN_OPTIONS"  => "detect_leaks=0:detect_container_overflow=0:" \
                        "detect_odr_violation=0:abort_on_error=1:halt_on_error=1",
-    "UBSAN_OPTIONS" => "print_stacktrace=1:halt_on_error=1",
+    # Tells the child it is a sanitizer run. Without it spec_helper cannot know,
+    # and its `:slow` exclusion - written for Valgrind, where those examples were
+    # measured to dominate - never applied here. That is how a suite which takes
+    # 18s plain reached an hour under ASan without anything being wrong.
+    "MAKIRI_SANITIZE" => sanitize,
   }
   runtime = asan_runtime_path or
     abort "sanitize:lexbor: could not locate the ASan runtime for #{RbConfig::CONFIG['CC']}"
@@ -503,19 +489,36 @@ task symbols: :compile do
           "run time):\n  #{bad.uniq.sort.join("\n  ")}"
   end
 
-  # 2. Nothing of Lexbor's may be EXPORTED either - see CLAUDE.md: another
-  #    Lexbor-based gem in the same process would bind to our different version.
+  # 2. ONLY Init_makiri (and ruby_abi_version, which Ruby reads at require time)
+  #    may be EXPORTED. The hazard this addresses is Lexbor's: another
+  #    Lexbor-based gem in the same process binding to our differently-versioned
+  #    copy and segfaulting - see CLAUDE.md.
+  #
+  #    This used to assert only "no lxb_ exported", which the flag-based link
+  #    made true as a side effect. rustc performs the cdylib link now and passes
+  #    its own export list, so the restriction is a post-link trim instead
+  #    (extconf.rb) - and a check that asserted less than the claim would have
+  #    passed happily while ~220 mkr_* names leaked into the dynamic table.
+  #    Assert the claim itself.
   exported = if macos
-               `nm -gU #{lib.shellescape}`.lines.grep(/ T _lxb_/)
+               `nm -gU #{lib.shellescape}`.lines.grep(/ T /)
              else
-               `nm -D --defined-only #{lib.shellescape}`.lines.grep(/ T lxb_/)
+               `nm -D --defined-only #{lib.shellescape}`.lines.grep(/ T /)
              end
-  unless exported.empty?
-    abort "#{lib} re-exports #{exported.size} Lexbor symbols; check the " \
-          "-exported_symbol / --exclude-libs link flags in extconf.rb"
+  allowed = ["#{u}Init_makiri", "#{u}ruby_abi_version"]
+  extra = exported.map { |l| l.split.last.to_s }.reject { |s| allowed.include?(s) }
+  unless extra.empty?
+    abort "#{lib} exports #{extra.size} symbol(s) beyond Init_makiri:\n  " \
+          "#{extra.uniq.sort.first(20).join("\n  ")}\n" \
+          "The export trim in ext/makiri/rust/extconf.rb did not take effect. " \
+          "Do not relax this check - see the note there for the fallback."
+  end
+  unless exported.any? { |l| l.include?("#{u}Init_makiri") }
+    abort "#{lib} does not export Init_makiri - Ruby could not load it."
   end
 
-  puts "symbols: 0 undefined Lexbor/Makiri, 0 exported Lexbor (#{lib})"
+  puts "symbols: 0 undefined Lexbor/Makiri, exports limited to " \
+       "#{allowed.join(' + ')} (#{lib})"
 end
 
 desc "OOM-injection gate: rebuild with MAKIRI_ALLOC_INJECT=1 and sweep every core " \
@@ -530,75 +533,18 @@ task :oom do
   puts "(injection build left in place; run `rake clean compile` to restore a normal build)"
 end
 
-desc "CBMC proofs over the Ruby/Lexbor-free carve-out (core + XML + XPath front; " \
-     "needs cbmc; see docs/formal_verification.ja.md and verify/Makefile)"
-task :verify do
-  # The 10 CBMC proofs are independent processes with a lopsided cost
-  # distribution (a few ~1-2min solves dominate, the rest are trivial), so run
-  # them in parallel: wall-clock drops toward the single slowest harness with no
-  # loss of coverage. Cap -j at the CPU count (Etc.nprocessors; the runner has
-  # RAM for that many concurrent core-set solves). smoke/selftest are quick and
-  # come first as ordered goals.
-  require "etc"
-  jobs = Integer(ENV.fetch("VERIFY_JOBS", Etc.nprocessors))
-  sh "make", "-C", "verify", "-j#{jobs}", "smoke", "selftest", "cbmc"
-
-  # Two of those proofs are over C sources a MAKIRI_RUST_* build does not
-  # compile, so a green run says nothing about that build. They are not removed
-  # - the C build is still what a default `gem install` gets, and they are real
-  # for it - but the result must not read as coverage it does not have. `rake
-  # kani` is what covers the Rust engine (notes/rust_port_remaining.ja.md §4).
-  next unless rust_build?
-
-  # Which proofs are orphaned is derived, not named: each CBMC target lists the
-  # C sources it compiles, and this configuration lists the ones it replaces.
-  # Naming them in prose was a second copy of that knowledge, and it would have
-  # gone quietly stale the next time a file was ported.
-  makefile = File.read("verify/Makefile")
-  replaced = rust_replaced_sources
-  orphaned = makefile.scan(/^cbmc-([a-z0-9-]+):\n((?:\t.*\n)+)/).filter_map do |name, body|
-    name if replaced.any? { |src| body.include?(src) }
-  end
-  next if orphaned.empty?
-
-  warn <<~ORPHANED
-
-    verify: NOTE - #{orphaned.map { |n| "cbmc-#{n}" }.join(", ")} proved C sources
-      that THIS configuration replaces with Rust. For the build you just asked
-      for they are legacy-c-proof: true of the C, silent about the Rust. Run
-      `bundle exec rake kani` for that half.
-  ORPHANED
-end
-
-# The Rust-port configuration. `MAKIRI_RUST=all` is what CI and the container
-# scripts set - extconf expands it from ext/makiri/rust_ports.rb, so nothing
-# outside that file enumerates the flags. The one thing still needing a list is
-# `cargo clippy --features`, which is what this is for.
+# `rake verify` (CBMC over the Ruby/Lexbor-free C carve-out) is gone with the C
+# it proved. Every one of its fifteen harnesses compiled a file under
+# ext/makiri/{core,xml,xpath}/, and the three that linked none of them
+# (harness_span, harness_spanbuf, harness_hash) proved `static inline` code in
+# those same headers. There was nothing left to point CBMC at.
 #
-# There was a `rust:check` beside it that validated the table. It is gone, and
-# deliberately: both halves of what it checked are enforced by something that
-# runs on every build. A srcs path that does not exist aborts in extconf
-# (RustPorts.check_paths!, called before anything else, so even a plain C build
-# fails), and a cargo feature Cargo.toml does not declare fails the cargo
-# invocation itself ("the package 'makiri_rs' does not contain this feature").
-# Both verified by probe. A task that looks like a guard but guards nothing is
-# worse than no task - it invites the next person to trust it.
-namespace :rust do
-  desc "Print the cargo feature list for MAKIRI_RUST=all (or FEATURES, passed through)"
-  task :features do
-    require_relative "ext/makiri/rust_ports"
-    given = ENV["FEATURES"].to_s.strip
-    puts given.empty? ? RustPorts.features(RustPorts.enabled("MAKIRI_RUST" => "all")).join(",") : given
-  end
-end
-
-# Kani is to the Rust half what CBMC is to the C half. It is a separate task
-# rather than part of `verify` because it needs a different tool, and because
-# the two do NOT cover the same code: a proof over ext/makiri/xml/*.c says
-# nothing about a build where those files are replaced. Which proof replaces
-# which, and what changed in the translation, is written down in
-# notes/rust_port_remaining.ja.md - the answers are not all "the same property".
-desc "Kani proofs over the Rust engine (needs cargo-kani; see notes/rust_port_remaining.ja.md)"
+# `rake kani` is the successor, and deliberately not a rename: the two tools
+# prove different things about different code, and which Kani proof replaces
+# which CBMC one - and what changed in the translation - is written down rather
+# than assumed. Not all the answers are "the same property".
+desc "Kani proofs over the Ruby-free core - the allocator, mkr_buf, UTF-8 " \
+     "validate/decode (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
   # Only the Ruby-free features: anything under glue needs magnus -> rb-sys ->
   # a live Ruby, which Kani cannot build.
@@ -613,7 +559,12 @@ task :kani do
   # core-utf8 is in the set because it is Ruby-free and its C-ABI proof is
   # gated on it: without the feature that harness silently does not run, which
   # is the failure mode this project keeps finding rather than a saving.
-  argv = ["cargo", "kani", "--features", "xml,xpath,core-utf8,core-buf,core-alloc"]
+  #
+  # `no-c` is in the set because it is what ships. Without it the buffer's
+  # ceilings are `extern static`s that Kani, which does not link C, treats as
+  # unconstrained values - so the proof would be about a configuration nobody
+  # builds. With it they are the consts the extension actually uses.
+  argv = ["cargo", "kani", "--features", "no-c,xml,xpath,core-utf8,core-buf,core-alloc"]
   harness = ENV["HARNESS"].to_s.strip
   argv += ["--harness", harness] unless harness.empty?
   Dir.chdir("ext/makiri/rust") { sh(*argv) }
@@ -712,14 +663,14 @@ namespace :fuzz do
   #   FUZZ_ARGS=... run a single custom invocation instead of the three surfaces.
   desc "Run the fuzzer under AddressSanitizer (FAST=1 non-isolated, SKIP_BUILD=1 reuse build)"
   task :sanitize do
-    sanitize = ENV["MAKIRI_SANITIZE"] || "address,undefined"
+    sanitize = ENV["MAKIRI_SANITIZE"] || "address"
     if %w[1 true yes].include?(ENV["SKIP_BUILD"].to_s.downcase)
       puts "fuzz:sanitize: reusing the existing sanitizer build (SKIP_BUILD)"
     else
       sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")
     end
     # SKIP_BUILD reuses whatever is on disk, so this is the path most likely to
-    # fuzz a half-instrumented build (see rust_asan_instrumented?).
+    # fuzz an uninstrumented build (see ext_asan_instrumented?).
     assert_sanitized!("fuzz:sanitize", sanitize)
 
     env = {
@@ -748,30 +699,35 @@ namespace :fuzz do
     end
   end
 
-  # Coverage-guided libFuzzer harnesses for the pure-C surfaces (XML parser and
-  # XPath compile+eval).  These are Ruby-free standalone binaries, so they run
-  # directly under clang's libFuzzer driver without the Ruby interpreter.
-  # They complement the Ruby-based robustness fuzzer by providing coverage
-  # feedback and 2-3 orders of magnitude faster execution for the C core.
-  desc "Build the libFuzzer harnesses (requires clang with libFuzzer support)"
+  # Coverage-guided libFuzzer harnesses for the Ruby-free surfaces (the XML
+  # reader, the XPath front end, and XPath over a parsed XML tree). They are
+  # standalone binaries, so they run without the Ruby interpreter, and they
+  # complement the Ruby-based robustness fuzzer by providing coverage feedback
+  # and 2-3 orders of magnitude faster execution for the engine core.
+  #
+  # Nothing here depends on the built extension: cargo-fuzz builds the crate
+  # itself, with its own instrumentation. It does need the vendored Lexbor
+  # HEADERS (the crate's build.rs generates the layout from them), which
+  # `rake compile` produces - hence the dependency, which is about Lexbor rather
+  # than about the bundle.
+  FUZZ_TARGETS = %w[xml xpath xml_xpath].freeze
+
+  desc "Build the cargo-fuzz harnesses (requires cargo-fuzz and a nightly toolchain)"
   task :libfuzzer_build => :compile do
-    libfuzzer_available? or
-      abort "fuzz:libfuzzer_build: #{ENV['CXX'] || 'clang++'} cannot link libFuzzer. " \
-            "Install an LLVM clang with libFuzzer support and run with " \
-            "CLANG=/path/to/clang CXX=/path/to/clang++."
-    Dir.chdir("ext/makiri/fuzz") do
-      sh "make clean"
-      sh "make all"
-    end
+    cargo_fuzz_available? or
+      abort "fuzz:libfuzzer_build: cargo-fuzz is not installed " \
+            "(`cargo install cargo-fuzz`; it needs a nightly toolchain)."
+    Dir.chdir("ext/makiri/rust/fuzz") { sh "cargo", "fuzz", "build" }
   end
 
-  desc "Run the libFuzzer coverage-guided harnesses (default: 60s per target)"
+  desc "Run the cargo-fuzz coverage-guided harnesses (default: 60s per target)"
   task :libfuzzer => :libfuzzer_build do
     time = ENV["FUZZ_TIME"] || "60"
-    Dir.chdir("ext/makiri/fuzz") do
-      sh "mkdir -p corpus/xml corpus/xpath"
-      sh "./xml_fuzz -max_total_time=#{time} -max_len=4096 corpus/xml"
-      sh "./xpath_fuzz -max_total_time=#{time} -max_len=4096 corpus/xpath"
+    Dir.chdir("ext/makiri/rust/fuzz") do
+      FUZZ_TARGETS.each do |target|
+        sh "cargo", "fuzz", "run", target, "--",
+           "-max_total_time=#{time}", "-max_len=4096"
+      end
     end
   end
 end

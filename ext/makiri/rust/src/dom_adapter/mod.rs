@@ -2,7 +2,8 @@
 //!
 //! Everything Lexbor does not give us and we will not patch it to: the
 //! attribute->owner index, source locations, the text index, cross-import, and
-//! the input sanitiser. Each file moves behind its own `MAKIRI_RUST_DOM_*` flag.
+//! the input sanitiser. Each moved behind its own flag while the C half still
+//! existed; the features remain as the compilation units, one per former file.
 
 #[cfg(feature = "dom-cross-import")]
 pub mod cross_import;

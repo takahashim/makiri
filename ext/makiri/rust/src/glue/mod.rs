@@ -4,9 +4,11 @@
 //! one - it replaces C that calls Ruby with Rust that calls Ruby through
 //! [magnus]. What it *does* preserve is the seam: `Init_makiri` still creates
 //! every class and module and still calls one `mkr_init_<feature>()` per
-//! feature, so a feature moves language without anything else moving. Each
-//! `MAKIRI_RUST_GLUE_*` flag swaps one of those `mkr_init_*` implementations and
-//! drops the C file that defined it, exactly as the engine flags do.
+//! feature, so a feature moved language without anything else moving. That seam
+//! is why the port could land one file at a time: each `MAKIRI_RUST_GLUE_*` flag
+//! swapped one `mkr_init_*` implementation and dropped the C file that defined
+//! it. The flags are gone with the C; the seam stayed, and `init.rs` still calls
+//! the same twelve entry points.
 //!
 //! # Two rules this layer lives by
 //!

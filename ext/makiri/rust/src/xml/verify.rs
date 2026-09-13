@@ -1,9 +1,11 @@
 //! Kani proofs for the XML character layer.
 //!
-//! These replace `verify/harness_xml_chars.c`, whose subject (`xml/mkr_xml_chars.c`)
-//! the Rust build no longer compiles. `rake verify` kept passing over it the
-//! whole time, which is why the correspondence below is written down rather
-//! than assumed: see notes/rust_port_remaining.ja.md step 4.
+//! These replace `verify/harness_xml_chars.c`, whose subject
+//! (`xml/mkr_xml_chars.c`) the Rust build stopped compiling long before the file
+//! was deleted - and `rake verify` kept passing over it the whole time, proving
+//! a translation unit nothing executed. That is why the correspondence below is
+//! written down rather than assumed: a proof is only evidence about the code
+//! that actually runs.
 //!
 //! Run with `rake kani` (or `cargo kani --features xml,xpath`).
 

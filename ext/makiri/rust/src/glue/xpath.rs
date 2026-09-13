@@ -42,8 +42,9 @@ use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedDa
 use rb_sys::VALUE;
 
 use crate::xpath_abi::{
-    Error as XPathError, Limits, Node as Ast, NodeSet, OwnedText, Val, VerifiedText, XPathValue,
-    XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Limits,
+    Node as Ast, NodeSet, OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME,
+    XP_ERR_SYNTAX,
 };
 
 use super::abi::{mkr_ruby_verified_text, mkr_xml_node_unwrap, RubyText, 
@@ -118,9 +119,9 @@ extern "C" {
         out: *mut XPathValue,
         err: *mut XPathError,
     ) -> c_int;
-    fn mkr_xpath_value_clear(v: *mut XPathValue);
-    fn mkr_xpath_error_clear(e: *mut XPathError);
-    fn mkr_err_set(err: *mut XPathError, status: c_int, msg: *const c_char);
+    /* mkr_xpath_value_clear / _error_clear / mkr_err_set are imported from
+     * `xpath_abi` instead: either language may provide them, and that is the
+     * file where the two halves are kept together. */
 
     fn mkr_xpath_register_ns(ctx: *mut Ctx, prefix: VerifiedText, uri: VerifiedText) -> c_int;
     fn mkr_xpath_register_variable_string(

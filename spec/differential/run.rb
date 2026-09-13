@@ -15,7 +15,8 @@
 # itself is deleted.
 #
 #   bundle exec rake diff           # compare this build against the baseline
-#   bundle exec rake diff:record    # rebuild C-only and re-record
+#
+# There is no re-record, and that is the point - see `record` below.
 #
 # A probe's own branch counts are part of the comparison, so a probe that stops
 # exercising a branch fails rather than silently agreeing about less.
@@ -47,21 +48,35 @@ def baseline_path(name) = File.join(BASELINE, "#{name}.txt")
 
 def header
   "# Recorded from: #{BASELINE_CONFIG}\n" \
-    "# Regenerate with `bundle exec rake diff:record`. See spec/differential/run.rb.\n"
+    "# NOT regenerable - see spec/differential/run.rb.\n"
 end
 
+# Recording is over. It refuses rather than being deleted, because the reason is
+# the thing worth keeping.
+#
+# A baseline is only evidence while it comes from the OTHER implementation. The
+# C is gone, so re-recording would capture what this build answers and compare it
+# against itself - a check that passes by construction and would keep passing
+# through any regression. That failure is silent and permanent: nothing would
+# ever look wrong again.
+#
+# So if a probe now differs, it is a finding. Investigate it. If the difference
+# is genuinely intended, edit the baseline file in the same commit as the
+# behaviour change, where it reviews as a behaviour change rather than as a
+# regenerated blob.
 def record
-  FileUtils.mkdir_p(BASELINE)
-  probe_names.each do |name|
-    out, ok = run_probe(name)
-    unless ok
-      warn "diff:record: probe #{name} failed:\n#{out}"
-      exit 1
-    end
-    File.write(baseline_path(name), header + out)
-    puts format("recorded %-14s %d lines", name, out.lines.size)
-  end
-  puts "diff:record: #{probe_names.size} baselines recorded from #{BASELINE_CONFIG}"
+  warn <<~REFUSED
+    diff: refusing to re-record.
+
+    The baselines under #{BASELINE.sub("#{ROOT}/", "")} hold what the C
+    implementation answered. Recording now would capture what THIS build
+    answers and compare it against itself - the check would pass by
+    construction, for ever, including through a regression.
+
+    A mismatch is a finding. If the new answer is the intended one, edit the
+    baseline in the same commit as the behaviour change.
+  REFUSED
+  exit 1
 end
 
 def compare

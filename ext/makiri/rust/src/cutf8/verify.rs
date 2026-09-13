@@ -5,10 +5,10 @@
 //! subject was the C's word-at-a-time ASCII scan, which this module does not
 //! have - `core::str::from_utf8` brings its own, and it is not ours to prove.
 //!
-//! The CBMC harnesses still run under `rake verify` and still pass. They cover
-//! `core/mkr_utf8.c`, which is what a build without `MAKIRI_RUST_CORE_UTF8`
-//! links; these cover what a build with it links. Neither statement is the
-//! other, which is why both exist.
+//! The CBMC harnesses covered `core/mkr_utf8.c` - what a build without the
+//! `core-utf8` feature linked - and these cover what a build with it links.
+//! Neither statement was the other, which is why both existed while both builds
+//! did. `core/mkr_utf8.c` is gone, and so are they.
 //!
 //! Run with `rake kani` (or `cargo kani --features xml,xpath`).
 

@@ -1,10 +1,12 @@
 //! Kani proofs for the growable capped buffer.
 //!
 //! The translation of `verify/harness_buf.c`, which checked `core/mkr_buf.c`
-//! against a shadow reference model. The C harness still runs under
-//! `rake verify` and still passes; it covers the build that links
-//! `core/mkr_buf.c`, and these cover the build that links this module. Neither
-//! statement is the other.
+//! against a shadow reference model.
+//!
+//! While both existed they proved DIFFERENT builds - the C harness covered the
+//! build that linked `core/mkr_buf.c`, these cover the build that links this
+//! module, and neither statement was the other. That distinction is why both
+//! were kept. Only one build remains, so only these do.
 //!
 //! # What is proved, and against what
 //!
@@ -46,17 +48,21 @@ const NSRC: usize = 4;
 
 /// Constrain the two build-time limits to the regime these proofs are about.
 ///
-/// **This is load-bearing.** `mkr_buf_hard_max` and `mkr_buf_default_limit` are
-/// `extern static`s defined in `core/mkr_core_abi.c`, and Kani does not link C -
-/// so without this they are UNCONSTRAINED values. The first version of this file
-/// omitted it, and the proof duly failed: `content_limit` took
+/// **This was load-bearing, and the reason it existed is worth keeping.** While
+/// the C was compiled, `mkr_buf_hard_max` and `mkr_buf_default_limit` were
+/// `extern static`s defined in `core/mkr_core_abi.c` - and Kani does not link C,
+/// so without this assumption they were UNCONSTRAINED values. The first version
+/// of this file omitted it and the proof duly failed: `content_limit` took
 /// `min(max, <anything>)`, so LIMIT could fire below the ceiling the harness
 /// thought it had set, and "LIMIT only past the ceiling" was false.
 ///
-/// That is a general hazard, not a local slip: any Rust that reads a C-defined
-/// constant is, under Kani, reading an arbitrary value. Constraining it here
-/// makes the proof say what it means - "for any hard maximum at least as large
-/// as the ceiling under test" - rather than quietly proving something else.
+/// That was a general hazard, not a local slip: any Rust reading a C-defined
+/// constant is, under Kani, reading an arbitrary value. Under `no-c` - which is
+/// what ships, and what `rake kani` now proves - the two are ordinary consts, so
+/// the assumption is trivially true rather than necessary. It stays because the
+/// proof should keep saying what it means ("for any hard maximum at least as
+/// large as the ceiling under test") and because the hazard returns the moment
+/// any constant crosses a language boundary again.
 unsafe fn assume_limits_are_sane() {
     kani::assume(super::mkr_buf_hard_max >= MAXCAP);
     kani::assume(super::mkr_buf_default_limit >= MAXCAP);

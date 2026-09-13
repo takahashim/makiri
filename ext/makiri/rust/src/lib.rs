@@ -22,14 +22,19 @@
 #[cfg(feature = "lexbor-abi")]
 pub mod lexbor_abi;
 
-/// Shared by the `verify` modules: the input bound each set of proofs quantifies
-/// over is an `option_env!` override, and a const context cannot call `parse`.
+/// Compile-time decimal parsing, for the settings that arrive as `option_env!`
+/// overrides: a const context cannot call `parse`.
 ///
-/// Raising a bound also means raising that harness's `#[kani::unwind]`, which
-/// cannot be computed - Kani wants a literal. Getting it wrong fails loudly
-/// (`unwinding assertion`), not silently, so the override is safe to use for an
-/// experiment without editing the default.
-#[cfg(kani)]
+/// Two kinds of setting use it. The `verify` modules bound the input each set of
+/// proofs quantifies over - and raising such a bound means raising that
+/// harness's `#[kani::unwind]`, which cannot be computed because Kani wants a
+/// literal. Getting it wrong fails loudly (`unwinding assertion`), not silently,
+/// so the override is safe to use for an experiment without editing the default.
+/// The buffer's content ceilings (`cbuf`) use it for a different reason: they
+/// were `-D`-overridable C macros, and standing alone that override has to
+/// arrive from the environment instead.
+///
+/// Hence ungated. It was `#[cfg(kani)]` while the proofs were its only caller.
 pub mod kani_bounds {
     /// Decimal only; a non-digit is a compile error naming the bound.
     pub const fn parse_usize(s: &str) -> usize {
@@ -92,3 +97,10 @@ pub mod xml;
 
 #[cfg(feature = "xpath")]
 pub mod xpath;
+
+/// `Init_makiri` and the class hierarchy (makiri.c). Only under `standalone`,
+/// where there is no C extension to own them: with the C present this module
+/// would define a second `Init_makiri`, so the feature that turns it on is the
+/// same one that asserts the C is gone.
+#[cfg(feature = "standalone")]
+pub mod init;

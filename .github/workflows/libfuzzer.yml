@@ -11,86 +11,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Build the libFuzzer harnesses under clang with -fsanitize=fuzzer,address
-  # and run each target for 300s.  The corpus is stored as a build artifact so
-  # it can be seeded in subsequent runs (regression asset per the roadmap).
-  libfuzzer-nightly:
-    name: libFuzzer ${{ matrix.target }} (clang)
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [xml, xpath, xml_xpath]
-
-    steps:
-      - name: Checkout (with vendored Lexbor submodule)
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          bundler-cache: true
-
-      # Build the vendored Lexbor first (plain mode is fine; the harness links
-      # the static archive).  The fuzzer binary itself is built with ASan.
-      - name: Compile the extension (builds Lexbor)
-        run: bundle exec rake compile
-
-      - name: Install clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang
-
-      - name: Build libFuzzer harnesses
-        run: |
-          cd ext/makiri/fuzz
-          make clean
-          make all
-
-      # Restore the previous corpus so the fuzzer starts from the accumulated
-      # regression seeds rather than from scratch.
-      - name: Restore corpus cache
-        uses: actions/cache@v4
-        with:
-          path: ext/makiri/fuzz/corpus/${{ matrix.target }}
-          key: libfuzzer-corpus-${{ matrix.target }}-${{ github.run_id }}
-          restore-keys: |
-            libfuzzer-corpus-${{ matrix.target }}-
-
-      - name: Run libFuzzer ${{ matrix.target }} (300s)
-        run: |
-          mkdir -p ext/makiri/fuzz/corpus/${{ matrix.target }}
-          cd ext/makiri/fuzz
-          ./${{ matrix.target }}_fuzz \
-            -max_total_time=300 \
-            -max_len=4096 \
-            -print_final_stats=1 \
-            corpus/${{ matrix.target }}
-
-      # Save the mutated corpus as an artifact for download / seeding.
-      - name: Upload corpus artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: libfuzzer-corpus-${{ matrix.target }}
-          path: ext/makiri/fuzz/corpus/${{ matrix.target }}
-          retention-days: 7
-
-  # The same three surfaces, against the RUST engine (cargo-fuzz). This is an
-  # ADDITION, not a replacement: the job above fuzzes the C build, which is
-  # still what a default `gem install` gets, and this one fuzzes the build the
-  # MAKIRI_RUST_* flags produce. Until the port lands, both are shipped code.
+  # The three surfaces, coverage-guided, under cargo-fuzz.
   #
-  # Corpora are kept apart. The two builds are meant to be behaviourally
-  # identical, so sharing would mostly work - but a corpus is a record of what
-  # reached new coverage in one binary, and silently crediting it to the other
-  # would hide a divergence rather than expose it.
+  # A second job stood beside this one and fuzzed the same three surfaces as C
+  # binaries built by ext/makiri/fuzz/Makefile under clang. Both were shipped
+  # code while the port was in progress; only one is now, and the C harnesses
+  # went with the sources they drove. The corpus cache key is unchanged, so the
+  # accumulated seeds carry over.
   cargo-fuzz-nightly:
     name: cargo-fuzz ${{ matrix.target }} (rust)
     runs-on: ubuntu-latest

@@ -189,7 +189,7 @@ SCENARIOS = {
       n = stack.pop
       stack.concat(n.children.to_a)
       # #line is deliberately absent here. Its line table is built once at parse
-      # time and is ALLOWED to fail: dom_adapter/post_parse.c documents the
+      # time and is ALLOWED to fail: dom_adapter/post_parse.rs documents the
       # degradation, and Node#line's own contract is "an Integer, or nil when no
       # line is available", so answering nil after an allocation failure is
       # within the contract rather than a wrong result. Attribute#parent is the

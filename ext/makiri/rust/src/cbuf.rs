@@ -82,13 +82,50 @@ extern "C" {
     fn libc_malloc(n: usize) -> *mut c_void;
     #[link_name = "realloc"]
     fn libc_realloc(p: *mut c_void, n: usize) -> *mut c_void;
+}
 
-    /* The build-time limits, read from the C rather than restated here - see
-     * `core/mkr_core_abi.c` and the note on `Buf::new`. They are `-D`-
-     * overridable, so their value belongs to the build. */
+/* The build-time content limits.
+ *
+ * Alongside the C these are read FROM it: `core/mkr_core_abi.c` publishes the
+ * `-D`-overridable macros of `mkr_buf.h` from a translation unit the
+ * preprocessor has already seen, so a `-DMKR_BUF_HARD_MAX=` build cannot end up
+ * with two different ceilings in one extension.
+ *
+ * Standing alone there is no preprocessor to be that source, so these become the
+ * definition and the override arrives from the environment instead. That is a
+ * CHANGE OF SPELLING for anyone who set one: `-DMKR_BUF_HARD_MAX=<bytes>` at
+ * compile time becomes `MKR_BUF_HARD_MAX=<bytes>` in the environment. The
+ * defaults are unchanged, and they are still read in one place.
+ *
+ * The lower-case names are deliberate - they are what the C ABI published, and
+ * `content_limit` below should not have to know which side defines them. */
+#[cfg(all(feature = "core-buf", not(feature = "no-c")))]
+extern "C" {
     pub(crate) static mkr_buf_hard_max: usize;
     pub(crate) static mkr_buf_default_limit: usize;
 }
+
+#[cfg(all(feature = "core-buf", feature = "no-c"))]
+#[allow(non_upper_case_globals)]
+mod limits {
+    use crate::kani_bounds::parse_usize;
+
+    /// The absolute ceiling on a buffer's CONTENT length.
+    pub(crate) const mkr_buf_hard_max: usize = match option_env!("MKR_BUF_HARD_MAX") {
+        Some(s) => parse_usize(s),
+        None => 4 << 30, /* 4 GiB */
+    };
+
+    /// The ceiling applied when a buffer was initialised with max == 0. Not
+    /// "unbounded" - that is the whole point of having a default.
+    pub(crate) const mkr_buf_default_limit: usize = match option_env!("MKR_BUF_DEFAULT_LIMIT") {
+        Some(s) => parse_usize(s),
+        None => 100 << 20, /* 100 MiB */
+    };
+}
+
+#[cfg(all(feature = "core-buf", feature = "no-c"))]
+pub(crate) use limits::{mkr_buf_default_limit, mkr_buf_hard_max};
 
 /* ------------------------------------------------------------------ *
  * the C ABI (core/mkr_buf.c)                                         *

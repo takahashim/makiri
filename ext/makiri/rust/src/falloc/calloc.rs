@@ -53,8 +53,14 @@ extern "C" {
  * failure injection                                                  *
  * ------------------------------------------------------------------ */
 
+/* All three, not just the one the allocator itself calls: the Ruby test hooks
+ * (`Makiri.__alloc_inject` / `__alloc_inject_calls`, bound in `init.rs`) arm and
+ * read the same counter, and `inject` is private so that this re-export stays
+ * the single way in. */
 #[cfg(feature = "alloc-inject")]
-pub use inject::mkr_alloc_inject_should_fail;
+pub use inject::{
+    mkr_alloc_inject_arm, mkr_alloc_inject_calls, mkr_alloc_inject_should_fail,
+};
 
 #[cfg(feature = "alloc-inject")]
 mod inject {

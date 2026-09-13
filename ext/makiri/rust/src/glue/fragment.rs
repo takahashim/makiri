@@ -52,10 +52,6 @@ extern "C" {
         -> *mut LxbNode;
     fn lxb_dom_node_insert_child(to: *mut LxbNode, node: *mut LxbNode);
     fn lxb_dom_node_insert_before(to: *mut LxbNode, node: *mut LxbNode);
-    /// The `_noi` twin: Lexbor publishes the plain name as `lxb_inline`, which
-    /// has no symbol to link against.
-    #[link_name = "lxb_tag_id_by_name_noi"]
-    fn lxb_tag_id_by_name(hash: *mut c_void, name: *const u8, len: usize) -> usize;
 }
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
@@ -63,7 +59,13 @@ extern "C" {
  * the tokenizer inside it and build.rs started generating them - two Rust types
  * for one symbol again. */
 use crate::glue::abi::LXB_STATUS_OK;
-use crate::lexbor_abi::{lxb_html_parser_create, lxb_html_parser_destroy, lxb_html_parser_init};
+use crate::lexbor_abi::{
+    lxb_html_parser_create, lxb_html_parser_destroy, lxb_html_parser_init,
+    /* The `_noi` twin of an `lxb_inline`. It was declared here, over an opaque
+     * hash, until the HTML shim needed the same symbol - one declaration per
+     * symbol, and `lexbor_abi` is where the `_noi` twins live. */
+    lxb_tag_id_by_name_noi,
+};
 
 /// The shared pre-order walk. Defined once in `lexbor_abi` - it was written out
 /// here first, and the text-index port would have been a second copy of an
@@ -403,7 +405,7 @@ pub unsafe fn resolve_fragment_context(doc: *mut LxbDoc, context: Option<Value>)
     if name == b"math" {
         return (lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize, NS_MATH);
     }
-    let tid = lxb_tag_id_by_name((*doc).tags as *mut c_void, name.as_ptr(), name.len());
+    let tid = lxb_tag_id_by_name_noi((*doc).tags, name.as_ptr(), name.len());
     if tid == lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize {
         // The C wrote `"...: %" PRIsVALUE` - two string literals the C
         // preprocessor joins. Rust has no such concatenation, so carrying the

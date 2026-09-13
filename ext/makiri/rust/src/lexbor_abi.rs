@@ -17,11 +17,60 @@ mod sys {
 
 pub use sys::*;
 
-/// Makiri's own C enums, generated for the same reason Lexbor's are - see
-/// `generate_makiri_enums` in build.rs.
+/// Makiri's own C enums and the parse handle, generated for the same reason
+/// Lexbor's are - see `generate_makiri_enums` in build.rs.
+///
+/// Generated only while the C declares them too. Generation exists to keep two
+/// declarations of one type in agreement; with the C gone there is no second
+/// declaration, so the definitions below ARE the type and there is nothing left
+/// to drift from. (Lexbor is the opposite case in the same file: it stays
+/// generated in every configuration, because its headers are never ours.)
+#[cfg(not(feature = "no-c"))]
 pub mod mkr {
     #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
     include!(concat!(env!("OUT_DIR"), "/makiri_enums.rs"));
+}
+
+#[cfg(feature = "no-c")]
+pub mod mkr {
+    #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
+    use core::ffi::{c_uint, c_void};
+
+    /// Which representation a wrapped Ruby node is, by its TypedData type (NOT
+    /// by Ruby class). A Document, a NodeSet, or any non-node is OTHER.
+    pub type mkr_node_kind_t = c_uint;
+    pub const mkr_node_kind_t_MKR_NODE_KIND_OTHER: mkr_node_kind_t = 0;
+    pub const mkr_node_kind_t_MKR_NODE_KIND_HTML: mkr_node_kind_t = 1;
+    pub const mkr_node_kind_t_MKR_NODE_KIND_XML: mkr_node_kind_t = 2;
+
+    /// The document kind a `mkr_parsed_t` holds. HTML points `doc` at a Lexbor
+    /// `lxb_html_document_t`; XML points it at our own arena.
+    pub type mkr_doc_kind_t = c_uint;
+    pub const mkr_doc_kind_t_MKR_DOC_HTML: mkr_doc_kind_t = 0;
+    pub const mkr_doc_kind_t_MKR_DOC_XML: mkr_doc_kind_t = 1;
+
+    /// The result of a parse. Owns the document arena (Lexbor for HTML, ours
+    /// for XML). The three indices are HTML-only, created lazily and null until
+    /// then; the destroy path frees whatever is set.
+    ///
+    /// The field ORDER is load-bearing - `doc` first, `kind` second - because
+    /// four `dom_adapter` modules read the first two by offset. It was
+    /// generated for exactly that reason; keeping the layout stated once, here,
+    /// is what replaces the generation.
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone)]
+    pub struct mkr_parsed_s {
+        /// HTML: `lxb_html_document_t*` / XML: `mkr_xml_doc_t*`.
+        pub doc: *mut c_void,
+        pub kind: mkr_doc_kind_t,
+        /// attr->owner map + the tag->elements index.
+        pub dom_index: *mut c_void,
+        /// byte offset -> source line.
+        pub newline_idx: *mut c_void,
+        /// node -> descendant-text slice run.
+        pub text_index: *mut c_void,
+    }
+    pub type mkr_parsed_t = mkr_parsed_s;
 }
 
 /* ------------------------------------------------------------------ *
@@ -72,6 +121,11 @@ extern "C" {
         len: *mut usize,
     ) -> *const u8;
     pub fn lxb_dom_document_destroy_text_noi(doc: *mut LxbDoc, text: *mut u8);
+    pub fn lxb_tag_id_by_name_noi(
+        hash: *mut lexbor_hash_t,
+        name: *const lxb_char_t,
+        len: usize,
+    ) -> lxb_tag_id_t;
 
     /* The tokenizer accessors the source-location recorder needs. Lexbor has a
      * setter and a ctx getter for the token-done callback but NO getter for the
@@ -295,6 +349,27 @@ mod agree {
     same_offset!(Attr, lxb_dom_attr_t, owner, "attr");
     same_offset!(Attr, lxb_dom_attr_t, next, "attr");
     same_offset!(Attr, lxb_dom_attr_t, prev, "attr");
+
+    // The engine casts a node handle to an element or attr handle, which is
+    // sound only while the node sits FIRST in both. That is a claim about the
+    // absolute offset, not about the two views agreeing, so it is asserted as
+    // zero rather than as a match - if Lexbor ever put a field ahead of `node`,
+    // both sides would move together and an agreement check would still pass
+    // while every cast in the engine became wrong.
+    //
+    // mkr_xpath_html_shim.c's runtime checker asserted these two (as
+    // "element.node offset (0)" / "attr.node offset (0)") and nothing else did.
+    // They moved here when it was retired, so retiring it lost no coverage.
+    const _: () = assert!(
+        core::mem::offset_of!(lxb_dom_element_t, node) == 0,
+        "lxb_dom_element_t no longer starts with its node - the handle cast is unsound"
+    );
+    const _: () = assert!(
+        core::mem::offset_of!(lxb_dom_attr_t, node) == 0,
+        "lxb_dom_attr_t no longer starts with its node - the handle cast is unsound"
+    );
+    same_offset!(Element, lxb_dom_element_t, node, "element");
+    same_offset!(Attr, lxb_dom_attr_t, node, "attr");
 }
 
 /* The namespace constants used to be hand-written in `xpath/html_abi.rs` and

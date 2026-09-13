@@ -8,7 +8,7 @@ require "tempfile"
 # is recognized but its DTD is NOT processed - no entity/element declarations are
 # loaded and no external subset is fetched), and it bounds every resource with a
 # per-document budget. These specs pin those guarantees from Ruby. Structural
-# details that need to read the built tree are asserted in C (Makiri.__c_selftest,
+# details that need to read the built tree are asserted natively (Makiri.__c_selftest,
 # also run under ASan+UBSan); here we exercise the externally observable
 # contract: hostile input raises a Makiri::Error and never crashes, hangs, leaks
 # a foreign exception, or returns a partial document.

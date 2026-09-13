@@ -9,19 +9,38 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-cc = "1"
 
 # Only the Ruby-free features. The glue needs magnus -> rb-sys -> a live Ruby,
-# which a standalone fuzz binary has no business linking, and the surfaces these
-# targets drive (the XML reader, the XPath front end and the XML engine
-# instance) are exactly the ones the retired C harnesses drove.
+# which a fuzz binary has no business linking, and the surfaces these targets
+# drive (the XML reader, the XPath front end and the XML engine instance) are
+# exactly the ones the retired C harnesses drove.
+#
+# `no-c` is what lets this list be Ruby-free AND complete. This crate used to
+# compile four C files of its own (core/mkr_alloc.c, mkr_buf.c, mkr_utf8.c and
+# xpath/mkr_xpath_err.c) plus verify/stub.c, because those symbols had no Rust
+# provider outside the full extension build. They have one now, under a feature
+# that says only "there is no C tree here" - which is true of a fuzz binary and
+# does not drag in the Ruby boundary the way `standalone` would.
+#
+# `xpath-html` is here for the same reason and replaces verify/stub.c outright.
+# The dispatcher references both monomorphizations; these targets pin the
+# context's engine kind to XML, so the HTML entries were unreachable and got
+# abort() stubs. Building the real instance is simpler than stubbing it, costs
+# only compile time, and removes a file whose whole job was to be never called.
 [dependencies.makiri_rs]
 path = ".."
 default-features = false
-features = ["xml", "xpath", "xpath-xml", "xpath-driver", "xpath-shared"]
-
-[build-dependencies]
-cc = "1"
+features = [
+  "no-c",
+  "xml",
+  "xpath",
+  "xpath-xml",
+  "xpath-html",
+  "xpath-driver",
+  "xpath-shared",
+  "core-alloc",
+  "core-utf8",
+]
 
 [[bin]]
 name = "xml"

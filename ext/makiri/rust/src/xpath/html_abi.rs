@@ -3,9 +3,17 @@
 //!
 //! Unlike `mkr_xml_node_t`, these belong to a vendored dependency whose pin
 //! moves (CLAUDE.md), so a reordered field would not fail to build - it would
-//! read the wrong offset. `layout_facts` below reports what this file believes,
-//! and mkr_xpath_html_shim.c compares every one against the real `offsetof`
-//! before anything can run a query.
+//! read the wrong offset. Two things guard that, and only one of them is C:
+//! `lexbor_abi::agree` compares every field this file declares against the
+//! generated header view at COMPILE time, in every configuration; and while the
+//! C is still compiled, `mkr_xpath_rs_html_layout` below additionally reports
+//! these facts to `mkr_xpath_html_shim.c`, which checks them against the real
+//! `offsetof` before anything can run a query.
+//!
+//! The compile-time half is the stronger of the two, and it is what remains
+//! standing alone. It was extended with the two facts only the C checker held
+//! (that `node` sits first in the element and attr structs, which is what makes
+//! the engine's handle casts sound) at the same time - see `agree`.
 //!
 //! Only the fields the engine navigates by are declared. Everything else Lexbor
 //! offers goes through its exported functions - including the two it publishes
@@ -115,6 +123,7 @@ pub use crate::lexbor_abi::{
 /// for why that one is hand-written where the rest are generated.
 pub use crate::lexbor_abi::lxb_dom_attr_value_noi;
 
+#[cfg(not(feature = "no-c"))]
 extern "C" {
     /* Our shims (mkr_xpath_html_shim.c). */
     pub fn mkr_html_ns_uri(
@@ -126,6 +135,7 @@ extern "C" {
     pub fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int;
 }
 
+#[cfg(not(feature = "no-c"))]
 extern "C" {
     /// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range, read
     /// from C so this file does not restate a generated constant.
@@ -133,11 +143,111 @@ extern "C" {
     pub static TAG_LAST_ENTRY: usize;
 }
 
-/// What this file believes Lexbor's layout is. The C side checks every one; see
-/// the module header for why a build failure is not available here.
+/* ---- the shims, standing alone ----
+ *
+ * The three above stayed in C for two stated reasons: two of them reach through
+ * `lxb_dom_document_t` for a field, and that struct is large, not ours, and
+ * moves with the Lexbor pin - so hand-writing a view of it would have been the
+ * most fragile part of the port; and the text append owns a Lexbor allocation
+ * for the length of the call, which is clearest with the malloc and the free in
+ * one function.
+ *
+ * Only the first reason was ever about C. bindgen generates `lxb_dom_document_t`
+ * from Lexbor's own headers, so reading `->ns` and `->tags` here transcribes
+ * nothing and moves with the pin exactly as the C did. The second reason is not
+ * about language at all: the append and the free still live together, below.
+ *
+ * `mkr_html_tag_last_entry` disappears rather than moves - it existed to carry a
+ * generated constant across the language boundary, and there is no boundary
+ * left to carry it across. */
+
+/// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range. Derived from
+/// the generated enum, so it moves with the Lexbor pin.
+#[cfg(feature = "no-c")]
+pub const TAG_LAST_ENTRY: usize =
+    crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
+
+/// Borrowed namespace-URI bytes for a node, or NULL with `*len` 0 when it has
+/// none.
+///
+/// # Safety
+/// `node` and `doc` are NULL or live; `len` is writable.
+#[cfg(feature = "no-c")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_html_ns_uri(
+    node: *const Node,
+    doc: *const Document,
+    len: *mut usize,
+) -> *const c_char {
+    *len = 0;
+    if node.is_null() || (*node).ns == NS_UNDEF || doc.is_null() {
+        return core::ptr::null();
+    }
+    let doc = doc as *const crate::lexbor_abi::LxbDoc;
+    if (*doc).ns.is_null() {
+        return core::ptr::null();
+    }
+    crate::lexbor_abi::lxb_ns_by_id((*doc).ns, (*node).ns, len) as *const c_char
+}
+
+/// Resolve a tag name to a Lexbor tag id for the `//tag` index fast path, or
+/// `LXB_TAG__UNDEF`.
+///
+/// # Safety
+/// `doc` is NULL or live; `p` is NULL or names `len` readable bytes.
+#[cfg(feature = "no-c")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_html_tag_id_by_name(
+    doc: *const Document,
+    p: *const c_char,
+    len: usize,
+) -> usize {
+    if doc.is_null() || p.is_null() || len == 0 {
+        return TAG_UNDEF;
+    }
+    let doc = doc as *const crate::lexbor_abi::LxbDoc;
+    if (*doc).tags.is_null() {
+        return TAG_UNDEF;
+    }
+    crate::lexbor_abi::lxb_tag_id_by_name_noi((*doc).tags, p as *const u8, len)
+}
+
+/// Append a node's own text content to `buf`, returning an `mkr_status_t`.
+///
+/// Lexbor builds the content on demand and hands back an allocation, so the
+/// append and the free stay together: the append copies, then the allocation
+/// goes back, on every path.
+///
+/// # Safety
+/// `node` is a live node; `buf` is a live buffer.
+#[cfg(feature = "no-c")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int {
+    let mut tlen: usize = 0;
+    let t = crate::lexbor_abi::lxb_dom_node_text_content(
+        node as *mut crate::lexbor_abi::LxbNode,
+        &mut tlen,
+    );
+    if t.is_null() {
+        return crate::xpath_abi::MKR_OK;
+    }
+    let st = crate::cbuf::mkr_buf_append(buf, t as *const c_void, tlen);
+    crate::lexbor_abi::lxb_dom_document_destroy_text_noi(
+        (*node).owner_document as *mut crate::lexbor_abi::LxbDoc,
+        t,
+    );
+    st
+}
+
+/// What this file believes Lexbor's layout is, reported to the C checker.
+///
+/// Not compiled standing alone: `mkr_xpath_html_shim.c` is its only caller, and
+/// the compile-time checks in `lexbor_abi::agree` cover the same facts without
+/// needing a round trip through C.
 ///
 /// # Safety
 /// `out` must be NULL or name `cap` writable `size_t`.
+#[cfg(not(feature = "no-c"))]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_rs_html_layout(out: *mut usize, cap: usize) -> usize {
     use core::mem::{offset_of, size_of};

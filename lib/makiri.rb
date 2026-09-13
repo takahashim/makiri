@@ -2,7 +2,7 @@
 
 require_relative "makiri/version"
 
-# Native C extension. Located at lib/makiri/<ruby_abi>/makiri.{so,bundle}
+# Native extension (a Rust crate). Located at lib/makiri/<ruby_abi>/makiri.{so,bundle}
 # (created by rake-compiler). Loading is gated so the gem can be required
 # in environments where the binary is not yet built (the require error
 # is then surfaced clearly).

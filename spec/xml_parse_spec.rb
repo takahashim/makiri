@@ -5,7 +5,7 @@ require "spec_helper"
 # Minimal XML tokenizer + tree builder (§14 steps 5-6): elements, attributes and
 # character data, with fail-closed well-formedness errors. Namespaces, entities,
 # comments/CDATA/PI/XML-decl/DOCTYPE arrive in later steps. Tree *structure* is
-# asserted in C (Makiri.__c_selftest -> mkr_xml_parse_selftest, also run under
+# asserted natively (Makiri.__c_selftest -> xml::selftest::parse_selftest, also run under
 # the sanitizer); these specs pin the accept/reject contract from Ruby.
 RSpec.describe "Makiri::XML minimal parse" do
   def ok?(src)
@@ -101,7 +101,7 @@ RSpec.describe "Makiri::XML minimal parse" do
 
   describe "character data: entities + XML Char (§9.1/§9.2)" do
     it "expands the 5 predefined entities and numeric references (in text and attrs)" do
-      # structural correctness is asserted in C (mkr_xml_parse_selftest); here we
+      # structural correctness is asserted natively (parse_selftest); here we
       # just confirm well-formed entity usage is accepted.
       expect(ok?("<a>1&lt;2&gt;3&amp;4&apos;5&quot;6</a>")).to be true
       expect(ok?("<a>&#65;&#x42;&#x1F600;</a>")).to be true
@@ -148,7 +148,7 @@ RSpec.describe "Makiri::XML minimal parse" do
   end
 
   describe "namespaces (§7)" do
-    # Resolved (ns_uri, prefix) is asserted in C (mkr_xml_parse_selftest); these
+    # Resolved (ns_uri, prefix) is asserted natively (parse_selftest); these
     # pin the accept/reject contract.
     it "accepts default and prefixed namespace declarations" do
       expect(ok?("<a xmlns='urn:d'><b/></a>")).to be true

@@ -1,9 +1,14 @@
 //! The C types of the XPath engine, and the C functions it calls back into.
 //!
 //! Every layout here mirrors a declaration in ext/makiri/xpath/mkr_xpath.h or
-//! mkr_xpath_internal.h. `mkr_xpath_rs_sizes` below hands the sizes back so the
-//! C side can check them against its own `sizeof` rather than trusting this file
-//! (see ext/makiri/xpath/mkr_xpath_rs_check.c).
+//! mkr_xpath_internal.h. While that header is still compiled, `mkr_xpath_rs_sizes`
+//! below hands the sizes back so the C side can check them against its own
+//! `sizeof` rather than trusting this file (ext/makiri/xpath/mkr_xpath_rs_check.c).
+//!
+//! Standing alone there is no second declaration to disagree with: these types
+//! ARE the layout, so the reporter has no reader and is not compiled. (Lexbor's
+//! types are the opposite case - they belong to a vendored dependency, so the
+//! checks in `lexbor_abi::agree` stay in every configuration.)
 //!
 //! It sits at the crate root rather than inside `xpath` because the glue needs
 //! these types too - the XML query entry points hold an error, a value and a
@@ -279,8 +284,6 @@ extern "C" {
     pub fn mkr_node_free(n: *mut Node);
     pub fn mkr_step_clear(s: *mut Step);
 
-    pub fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char);
-
     pub fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> c_int;
     pub fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> c_int;
     pub fn mkr_limit_recurse_leave(l: *mut Limits);
@@ -303,10 +306,15 @@ extern "C" {
 
 /// The sizes C checks its own `sizeof` against, so a field added on one side
 /// without the other is a build-time failure rather than silent corruption.
+///
+/// Not compiled standing alone: the only caller is `mkr_xpath_rs_check.c`, and
+/// with no C declaration of these structs there is nothing for it to compare
+/// against. See the module header.
+///
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-#[cfg(feature = "xpath")]
+#[cfg(all(feature = "xpath", not(feature = "no-c")))]
 #[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_rs_sizes(out: *mut usize, cap: usize) -> usize {
     let sizes = [
@@ -444,9 +452,9 @@ extern "C" {
     pub fn mkr_limit_check_nodeset_size(l: *mut Limits, n: usize, err: *mut Error) -> c_int;
     pub fn mkr_limit_check_string_bytes(l: *mut Limits, bytes: usize, err: *mut Error) -> c_int;
 
-    /* errors */
+    /* errors (the three of mkr_xpath_err.c are below, where either side may
+     * provide them) */
     pub fn mkr_err_setf(err: *mut Error, status: c_int, fmt: *const c_char, ...);
-    pub fn mkr_xpath_error_clear(e: *mut Error);
     pub fn mkr_doc_order_index_clear(idx: *mut OrderIndex);
 
     /* context accessors */
@@ -493,6 +501,104 @@ extern "C" {
     /* allocation */
     pub fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;
     pub fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void;
+}
+
+/* ------------------------------------------------------------------ *
+ * mkr_xpath_err.c - clearing an error and a result                   *
+ * ------------------------------------------------------------------ *
+ *
+ * Three functions, declared when the C provides them and defined when it does
+ * not. They are here rather than in a module of their own for the reason
+ * `cbuf` gives: the declaration and the definition of one C symbol belong in
+ * one file, so a reader never has to find the other half to know which side
+ * owns it.
+ *
+ * `mkr_err_setf` stays declared above in both configurations - it is variadic,
+ * which Rust cannot define on stable. Nothing in the crate calls it, so it has
+ * no provider to lose; if one ever does, it needs a non-variadic form first. */
+
+/// `mkr_xpath_type_t`. Only the two arms that own memory are named - the number
+/// and boolean arms have nothing to clear.
+#[cfg(feature = "no-c")]
+const MKR_XPATH_TYPE_NODESET: u32 = 0;
+#[cfg(feature = "no-c")]
+const MKR_XPATH_TYPE_STRING: u32 = 1;
+
+#[cfg(not(feature = "no-c"))]
+extern "C" {
+    pub fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char);
+    pub fn mkr_xpath_error_clear(e: *mut Error);
+    pub fn mkr_xpath_value_clear(v: *mut XPathValue);
+}
+
+#[cfg(feature = "no-c")]
+extern "C" {
+    #[link_name = "free"]
+    fn libc_free(p: *mut c_void);
+}
+
+/// Replace the error's status and message, the message owned by a fresh copy.
+///
+/// An allocation failure leaves the message NULL rather than the old one, which
+/// is what the C did: the status is still set, so the caller still fails - with
+/// a less specific message, never a stale one.
+///
+/// # Safety
+/// `err` is NULL or a live error; `msg` is NULL or NUL-terminated.
+#[cfg(feature = "no-c")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char) {
+    if err.is_null() {
+        return;
+    }
+    let err = &mut *err;
+    libc_free(err.message as *mut c_void);
+    err.status = status;
+    err.message = if msg.is_null() {
+        core::ptr::null_mut()
+    } else {
+        crate::falloc::calloc::mkr_strdup(msg)
+    };
+}
+
+/// Release the error's message and return it to OK.
+///
+/// # Safety
+/// `e` is NULL or a live error.
+#[cfg(feature = "no-c")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
+    if e.is_null() {
+        return;
+    }
+    let e = &mut *e;
+    libc_free(e.message as *mut c_void);
+    e.message = core::ptr::null_mut();
+    e.status = XP_OK;
+}
+
+/// Release whatever the result owns. The node-set arm owns its array outright -
+/// ownership transferred to the caller when the value was produced - so it is
+/// freed here rather than cleared through `mkr_nodeset_clear`.
+///
+/// # Safety
+/// `v` is NULL or a live value whose `type_` describes its active arm.
+#[cfg(feature = "no-c")]
+#[no_mangle]
+pub unsafe extern "C" fn mkr_xpath_value_clear(v: *mut XPathValue) {
+    if v.is_null() {
+        return;
+    }
+    let v = &mut *v;
+    match v.type_ {
+        MKR_XPATH_TYPE_NODESET => {
+            libc_free(v.u.nodeset.nodes as *mut c_void);
+            v.u.nodeset.nodes = core::ptr::null_mut();
+            v.u.nodeset.count = 0;
+        }
+        MKR_XPATH_TYPE_STRING => mkr_owned_text_clear(&mut v.u.string),
+        _ => {}
+    }
 }
 
 /// `mkr_ptr_hash` (core/mkr_hash.h) - the MurmurHash3 fmix64 finalizer.
