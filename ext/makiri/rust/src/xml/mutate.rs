@@ -29,6 +29,12 @@ use crate::xml::{
     T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT, XMLNS_NS_URI,
     XML_NS_URI,
 };
+
+// The former raw-pointer helper set (document metadata, namespace resolution,
+// subtree walking, and child-count bookkeeping) lives in this module as
+// ordinary `NodeRef` code.  Keep those helpers here: `raw.rs` should contain
+// only the small unsafe-backed accessors and link primitives, while all
+// mutation policy remains in this safe module.
 use core::ffi::c_char;
 use core::ptr;
 

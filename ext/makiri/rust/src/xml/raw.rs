@@ -9,7 +9,9 @@
 
 /* One precondition throughout: any node handed in was allocated from a live
  * document arena that outlives every use of the reference. `NodeRef::from_raw`
- * states it at the one place it can be established. */
+ * states it at the one place it can be established. Construction is limited
+ * to raw-pointer boundaries (`ffi.rs`, fresh arena allocations, cross-kind
+ * import, and self-tests); mutation code only passes an existing `NodeRef`. */
 
 use crate::xml::qname::xmlns_prefix;
 use crate::xml::{
