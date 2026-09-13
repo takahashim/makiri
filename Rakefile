@@ -489,6 +489,84 @@ task leaks: :compile do
   sh "#{FileUtils::RUBY} script/check_leaks.rb"
 end
 
+# Read export names from a PE32/PE32+ DLL without external tools. Used by the
+# Windows branch of the symbol gate below; nm/objdump are either unavailable or
+# too output-format-sensitive on the GitHub Actions Windows runners.
+def pe_exports(path)
+  read_at = ->(offset, length) {
+    f.seek(offset)
+    data = f.read(length)
+    return data if data && data.bytesize == length
+    warn "pe_exports(#{path}): short read at #{offset} (wanted #{length}, got #{data&.bytesize || 0})"
+    nil
+  }
+
+  File.open(path, "rb") do |f|
+    data = read_at.call(0x3c, 4) or return []
+    pe_offset = data.unpack1("V")
+
+    data = read_at.call(pe_offset, 4) or return []
+    return [] unless data == "PE\0\0"
+
+    # COFF header: Machine, NumberOfSections, ... SizeOfOptionalHeader.
+    data = read_at.call(pe_offset + 4, 20) or return []
+    _machine, nsections, _time, _symtbl, _nsyms, opt_size, _chars =
+      data.unpack("vvVVVVvv")
+
+    opt_start = pe_offset + 24
+    data = read_at.call(opt_start, 2) or return []
+    magic = data.unpack1("v")
+    pe32_plus = magic == 0x20b
+    return [] unless magic == 0x10b || pe32_plus
+
+    # DataDirectory[0] = Export Directory.
+    dd_offset = opt_start + (pe32_plus ? 112 : 96)
+    data = read_at.call(dd_offset, 8) or return []
+    export_rva, export_size = data.unpack("VV")
+    return [] if export_rva == 0 || export_size == 0
+
+    # Section headers: map RVA -> file offset.
+    sec_start = opt_start + opt_size
+    sections = nsections.times.filter_map do |i|
+      data = read_at.call(sec_start + i * 40, 40) or next
+      _name, vs, va, _srd, prd = data.unpack("a8VVVV")
+      [va, vs, prd]
+    end
+    return [] if sections.size != nsections
+
+    rva_to_offset = ->(rva) {
+      sections.each do |va, vs, prd|
+        return prd + (rva - va) if rva >= va && rva < va + vs
+      end
+      warn "pe_exports(#{path}): RVA #{rva.to_s(16)} not mapped to file offset"
+      nil
+    }
+
+    export_off = rva_to_offset.call(export_rva) or return []
+    data = read_at.call(export_off, 40) or return []
+    # IMAGE_EXPORT_DIRECTORY: ..., NumberOfNames (offset 6*4), ..., NamePointerRVA.
+    ed = data.unpack("VVVVVVVVVV")
+    number_of_names = ed[6]
+    name_pointer_rva = ed[8]
+    return [] if number_of_names == 0
+
+    table_off = rva_to_offset.call(name_pointer_rva) or return []
+    data = read_at.call(table_off, number_of_names * 4) or return []
+    name_rvas = data.unpack("V#{number_of_names}")
+
+    name_rvas.filter_map do |name_rva|
+      off = rva_to_offset.call(name_rva) or next
+      f.seek(off)
+      name = +""
+      name << c while (c = f.read(1)) && c != "\0"
+      name.empty? ? nil : name
+    end
+  end
+rescue StandardError => e
+  warn "pe_exports(#{path}) failed: #{e.class}: #{e.message}"
+  []
+end
+
 desc "Symbol gate: the built extension must export only Init_makiri and leave no " \
      "Lexbor/Makiri symbol undefined"
 task symbols: :compile do
@@ -537,35 +615,10 @@ task symbols: :compile do
   exported = if macos
                `nm -gU #{lib.shellescape}`.lines.grep(/ T /)
              elsif windows
-               # nm -D/--defined-only doesn't read PE export directories;
-               # objdump -p does. Export names appear in the
-               # "[Ordinal/Name Pointer/Address] table" section.
-               #
-               # The MSYS2/MinGW objdump that matches the devkit is not on PATH
-               # by default (Git-for-Windows ships nm but not objdump). Use
-               # RI_DEVKIT to find the right toolchain; fall back to PATH for
-               # non-RubyInstaller builds.
-               objdump = if ENV["RI_DEVKIT"]
-                           subdirs = RUBY_PLATFORM =~ /ucrt/ ? ["ucrt64"] : ["mingw64", "mingw32"]
-                           subdirs.map { |d| File.join(ENV["RI_DEVKIT"], d, "bin", "objdump.exe") }
-                                  .find { |p| File.file?(p) }
-                         end
-               objdump ||= "objdump"
-               out = IO.popen([objdump, "-p", lib], err: File::NULL, &:read)
-               in_table = false
-               out.lines.filter_map do |line|
-                  if line =~ /\[\s*Ordinal\/Name Pointer(?:\/Address)?\s*\]\s*Table/i
-                   in_table = true
-                   next
-                 end
-                 next unless in_table
-                 if line =~ /\[\s*\d+\]\s+(\S+)/
-                   "#{$1}\n"
-                 else
-                   in_table = false
-                   next
-                 end
-               end
+               # nm/objdump on Windows are either the wrong tool, not on PATH,
+               # or have output formats that vary by binutils version. Read the
+               # PE export directory directly.
+               pe_exports(lib).map { |name| "#{name}\n" }
              else
                `nm -D --defined-only #{lib.shellescape}`.lines.grep(/ T /)
              end
@@ -578,12 +631,7 @@ task symbols: :compile do
           "Do not relax this check - see the note there for the fallback."
   end
   unless exported.any? { |l| l.include?("#{u}Init_makiri") }
-    hint = if windows && defined?(out) && out
-             "\nobjdump -p output (first 40 lines):\n" + out.lines.first(40).join
-           else
-             ""
-           end
-    abort "#{lib} does not export Init_makiri - Ruby could not load it.#{hint}"
+    abort "#{lib} does not export Init_makiri - Ruby could not load it."
   end
 
   puts "symbols: 0 undefined Lexbor/Makiri, exports limited to " \
