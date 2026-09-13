@@ -26,16 +26,9 @@ use crate::glue::abi::{mkr_cNode, mkr_doc_parsed, mkr_html_node_unwrap, mkr_pars
 /// `mkr_xml_mut_status_t`.
 type MutStatus = core::ffi::c_int;
 
-/// `mkr_xml_qname_t` - a qualified name already split into its parts.
-#[repr(C)]
-struct QName {
-    qname: *const core::ffi::c_char,
-    qname_len: u32,
-    prefix: *const core::ffi::c_char,
-    prefix_len: u32,
-    local: *const core::ffi::c_char,
-    local_len: u32,
-}
+/// A qualified name already split into its parts. Declared twice while C
+/// held it; the fields matched, but nothing checked that.
+use crate::xml::abi::QName;
 
 /// `mkr_node_kind_t`.
 const KIND_HTML: core::ffi::c_int = 1;
@@ -56,127 +49,33 @@ const MUT_CYCLE: MutStatus = 6;
 const MUT_HIERARCHY: MutStatus = 7;
 const MUT_BAD_NS_DECL: MutStatus = 8;
 
+pub use crate::dom_adapter::cross_import::mkr_cross_html_to_xml;
+pub use crate::glue::node::mkr_node_kind;
+pub use crate::xml::ffi::mkr_xml_clone_node;
+pub use crate::xml::ffi::mkr_xml_copy_node;
+pub use crate::xml::ffi::mkr_xml_import_subtree;
+pub use crate::xml::ffi::mkr_xml_insert_after;
+pub use crate::xml::ffi::mkr_xml_insert_before;
+pub use crate::xml::ffi::mkr_xml_insert_child;
+pub use crate::xml::ffi::mkr_xml_name_index_invalidate;
+pub use crate::xml::ffi::mkr_xml_new_chardata;
+pub use crate::xml::ffi::mkr_xml_new_document_type;
+pub use crate::xml::ffi::mkr_xml_new_element;
+pub use crate::xml::ffi::mkr_xml_new_loose_dom_element;
+pub use crate::xml::ffi::mkr_xml_new_pi;
+pub use crate::xml::ffi::mkr_xml_remove;
+pub use crate::xml::ffi::mkr_xml_remove_attribute;
+pub use crate::xml::ffi::mkr_xml_remove_attribute_ns;
+pub use crate::xml::ffi::mkr_xml_rename;
+pub use crate::xml::ffi::mkr_xml_replace_node;
+pub use crate::xml::ffi::mkr_xml_replace_with_fragment;
+pub use crate::xml::ffi::mkr_xml_set_attribute;
+pub use crate::xml::ffi::mkr_xml_set_attribute_ns;
+pub use crate::xml::ffi::mkr_xml_set_content;
+
 extern "C" {
+
     static rb_eArgError: VALUE;
-    fn mkr_xml_name_index_invalidate(doc: *mut XmlDoc);
-
-    fn mkr_xml_remove(doc: *mut XmlDoc, node: *mut Node);
-    fn mkr_xml_set_attribute(
-        doc: *mut XmlDoc,
-        el: *mut Node,
-        name: *const core::ffi::c_char,
-        nlen: u32,
-        val: *const core::ffi::c_char,
-        vlen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_set_attribute_ns(
-        doc: *mut XmlDoc,
-        el: *mut Node,
-        ns: *const core::ffi::c_char,
-        nslen: u32,
-        name: *const core::ffi::c_char,
-        nlen: u32,
-        val: *const core::ffi::c_char,
-        vlen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_remove_attribute(el: *mut Node, name: *const core::ffi::c_char, nlen: u32) -> i32;
-    fn mkr_xml_remove_attribute_ns(
-        el: *mut Node,
-        ns: *const core::ffi::c_char,
-        nslen: u32,
-        local: *const core::ffi::c_char,
-        llen: u32,
-    ) -> i32;
-    fn mkr_xml_set_content(
-        doc: *mut XmlDoc,
-        node: *mut Node,
-        text: *const core::ffi::c_char,
-        tlen: u32,
-    ) -> MutStatus;
-    fn mkr_xml_rename(
-        doc: *mut XmlDoc,
-        node: *mut Node,
-        name: *const core::ffi::c_char,
-        nlen: u32,
-    ) -> MutStatus;
-
-    fn mkr_xml_import_subtree(
-        doc: *mut XmlDoc,
-        src: *const Node,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_copy_node(
-        doc: *mut XmlDoc,
-        src: *const Node,
-        deep: i32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_clone_node(
-        doc: *mut XmlDoc,
-        src: *const Node,
-        deep: i32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-
-    fn mkr_xml_insert_child(doc: *mut XmlDoc, parent: *mut Node, node: *mut Node) -> MutStatus;
-    fn mkr_xml_insert_before(doc: *mut XmlDoc, r: *mut Node, node: *mut Node) -> MutStatus;
-    fn mkr_xml_insert_after(doc: *mut XmlDoc, r: *mut Node, node: *mut Node) -> MutStatus;
-    fn mkr_xml_replace_node(doc: *mut XmlDoc, r: *mut Node, node: *mut Node) -> MutStatus;
-    fn mkr_xml_replace_with_fragment(
-        doc: *mut XmlDoc,
-        target: *mut Node,
-        frag: *mut Node,
-    ) -> MutStatus;
-
-    fn mkr_xml_new_element(
-        doc: *mut XmlDoc,
-        name: *const core::ffi::c_char,
-        nlen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_new_loose_dom_element(
-        doc: *mut XmlDoc,
-        qn: *const QName,
-        ns: *const core::ffi::c_char,
-        nslen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_new_document_type(
-        doc: *mut XmlDoc,
-        name: *const core::ffi::c_char,
-        nlen: u32,
-        pub_: *const core::ffi::c_char,
-        plen: u32,
-        sys: *const core::ffi::c_char,
-        slen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_new_chardata(
-        doc: *mut XmlDoc,
-        type_: u8,
-        text: *const core::ffi::c_char,
-        tlen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-    fn mkr_xml_new_pi(
-        doc: *mut XmlDoc,
-        target: *const core::ffi::c_char,
-        tlen: u32,
-        data: *const core::ffi::c_char,
-        dlen: u32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
-
-    /// Which representation a wrapped node is, by its TypedData type.
-    fn mkr_node_kind(v: VALUE) -> core::ffi::c_int;
-    fn mkr_cross_html_to_xml(
-        xdoc: *mut XmlDoc,
-        src: *mut core::ffi::c_void,
-        deep: i32,
-        out: *mut *mut Node,
-    ) -> MutStatus;
 }
 
 /// Raise for a non-OK mutation status; `MKR_XML_MUT_OK` returns.
@@ -191,7 +90,6 @@ extern "C" {
 /// # Safety
 /// Raises, so no Rust destructor may be live at the call. Every caller here
 /// passes only `Copy` locals.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xml_mut_check(st: MutStatus) {
     if st == MUT_OK {
         return;
@@ -584,7 +482,7 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
         mkr_xml_mut_check(mkr_xml_clone_node(
             xdoc(rb_self),
             unwrap(rb_self),
-            i32::from(deep),
+            deep,
             &mut out,
         ));
         Ok(super::mkr_xml_wrap_rel_value(rb_self, out))
@@ -736,7 +634,7 @@ pub fn create_loose_dom_element(
 
         let qn = dom_name_consistency(ruby, qv, pv, has_prefix, lv)?;
         let mut el: *mut Node = core::ptr::null_mut();
-        let st = mkr_xml_new_loose_dom_element(xd, &qn, nv.ptr, nl, &mut el);
+        let st = mkr_xml_new_loose_dom_element(xd, &qn as *const _, nv.ptr, nl, &mut el);
         core::hint::black_box((qname, local, prefix, ns));
         mkr_xml_mut_check(st);
         Ok(wrap(el, rb_self))
@@ -833,7 +731,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
             KIND_XML => mkr_xml_mut_check(mkr_xml_copy_node(xd, unwrap(node_v), deep, &mut copy)),
             KIND_HTML => mkr_xml_mut_check(mkr_cross_html_to_xml(
                 xd,
-                mkr_html_node_unwrap(node_v.as_raw()) as *mut core::ffi::c_void,
+                mkr_html_node_unwrap(node_v.as_raw()) as *mut _,
                 deep,
                 &mut copy,
             )),

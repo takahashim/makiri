@@ -31,7 +31,7 @@ use core::ffi::c_void;
 use crate::falloc::try_box_raw;
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
 
-type Parsed = lxb::mkr::mkr_parsed_t;
+pub type Parsed = lxb::mkr::mkr_parsed_t;
 type HtmlDoc = lxb::lxb_html_document_t;
 
 const DOC_KIND_HTML: u32 = lxb::mkr::mkr_doc_kind_t_MKR_DOC_HTML;
@@ -39,7 +39,20 @@ const DOC_KIND_XML: u32 = lxb::mkr::mkr_doc_kind_t_MKR_DOC_XML;
 const NODE_TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
 const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
+pub use crate::dom_adapter::dom_index::mkr_dom_index_free;
+pub use crate::dom_adapter::source_loc::mkr_lines_build;
+pub use crate::dom_adapter::source_loc::mkr_lines_free;
+pub use crate::dom_adapter::source_loc::mkr_pos_assign_to_dom;
+pub use crate::dom_adapter::source_loc::mkr_pos_recorder_create;
+pub use crate::dom_adapter::source_loc::mkr_pos_recorder_destroy;
+pub use crate::dom_adapter::source_loc::mkr_pos_recorder_set_delegate;
+pub use crate::dom_adapter::source_loc::mkr_pos_token_cb;
+pub use crate::dom_adapter::text_index::mkr_text_index_free;
+pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
+pub use crate::xml::ffi::mkr_xml_doc_destroy;
+
 extern "C" {
+
     fn lxb_html_document_destroy(doc: *mut HtmlDoc) -> *mut HtmlDoc;
     fn lxb_html_parse_chunk_begin(parser: *mut lxb::lxb_html_parser_t) -> *mut HtmlDoc;
     fn lxb_html_parse_chunk_process(
@@ -48,40 +61,6 @@ extern "C" {
         size: usize,
     ) -> u32;
     fn lxb_html_parse_chunk_end(parser: *mut lxb::lxb_html_parser_t) -> u32;
-
-    /* The three index frees, each a no-op on NULL. They live in their own
-     * modules (or their C originals), so this file only has to call them. */
-    fn mkr_dom_index_free(idx: *mut c_void);
-    fn mkr_lines_free(lines: *mut c_void);
-    fn mkr_text_index_free(idx: *mut c_void);
-
-    /// Browser-compatible UTF-8 sanitisation. 0 with `*out` NULL means the input
-    /// was already valid and may be used as-is.
-    fn mkr_utf8_sanitize(
-        src: *const u8,
-        len: usize,
-        out: *mut *mut u8,
-        out_len: *mut usize,
-    ) -> core::ffi::c_int;
-
-    /// The XML arena's whole-arena free, for the XML branch of destroy.
-    fn mkr_xml_doc_destroy(doc: *mut c_void);
-
-    /* The source-location recorder (dom_adapter/source_loc.c, or its port). */
-    fn mkr_pos_recorder_create(src: *const u8) -> *mut c_void;
-    fn mkr_pos_recorder_destroy(rec: *mut c_void);
-    fn mkr_pos_recorder_set_delegate(
-        rec: *mut c_void,
-        orig: lxb::lxb_html_tokenizer_token_f,
-        orig_ctx: *mut c_void,
-    );
-    fn mkr_pos_token_cb(
-        tkz: *mut lxb::lxb_html_tokenizer_t,
-        token: *mut lxb::lxb_html_token_t,
-        ctx: *mut c_void,
-    ) -> *mut lxb::lxb_html_token_t;
-    fn mkr_pos_assign_to_dom(rec: *mut c_void, root: *mut LxbNode);
-    fn mkr_lines_build(src: *const u8, len: usize) -> *mut c_void;
 
     /// libc `free`, for the sanitiser's buffer (which it `malloc`s).
     #[link_name = "free"]
@@ -118,7 +97,7 @@ impl Drop for Parser {
 
 /// The position recorder, destroyed however the parse exits unless consumed.
 struct RecorderHandle {
-    r: *mut c_void,
+    r: *mut crate::dom_adapter::source_loc::Recorder,
 }
 
 impl Drop for RecorderHandle {
@@ -167,7 +146,7 @@ unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc
         lxb::lxb_html_tokenizer_callback_token_done_set_noi(
             tkz,
             Some(mkr_pos_token_cb),
-            rec.r,
+            rec.r as *mut c_void,
         );
     }
 
@@ -197,7 +176,6 @@ unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc
 /// `assume_valid` skips the UTF-8 validation scan entirely - the caller has
 /// already proved the bytes valid, typically from a Ruby String's cached
 /// coderange. NULL on failure.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parse_html(
     src: *const u8,
     len: usize,
@@ -252,7 +230,6 @@ pub unsafe extern "C" fn mkr_parse_html(
 }
 
 /// Free a parse handle and everything it owns.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_destroy(p: *mut Parsed) {
     if p.is_null() {
         return;
@@ -269,7 +246,7 @@ pub unsafe extern "C" fn mkr_parsed_destroy(p: *mut Parsed) {
 
     if !(*p).doc.is_null() {
         if (*p).kind == DOC_KIND_XML {
-            mkr_xml_doc_destroy((*p).doc); /* whole-arena free */
+            mkr_xml_doc_destroy((*p).doc as *mut _); /* whole-arena free */
         } else {
             lxb_html_document_destroy((*p).doc as *mut HtmlDoc);
         }
@@ -281,7 +258,6 @@ pub unsafe extern "C" fn mkr_parsed_destroy(p: *mut Parsed) {
 
 /* ---- document-kind accessors ---- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_kind(p: *const Parsed) -> u32 {
     (*p).kind
 }
@@ -289,7 +265,6 @@ pub unsafe extern "C" fn mkr_parsed_kind(p: *const Parsed) -> u32 {
 /// The HTML document. The C asserted the kind; here the assert is a debug one
 /// for the same reason - a caller that gets this wrong has a bug the release
 /// build cannot usefully recover from, and every caller checks `kind` first.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_html_doc(p: *const Parsed) -> *mut HtmlDoc {
     debug_assert_eq!((*p).kind, DOC_KIND_HTML);
     (*p).doc as *mut HtmlDoc
@@ -297,7 +272,6 @@ pub unsafe extern "C" fn mkr_parsed_html_doc(p: *const Parsed) -> *mut HtmlDoc {
 
 /// Wrap an owned XML arena in a `kind = XML` handle. `xdoc` may be NULL
 /// initially and set later, so a mid-parse failure still frees cleanly.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
     try_box_raw(Parsed {
         doc: xdoc,
@@ -308,13 +282,11 @@ pub unsafe extern "C" fn mkr_parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
     })
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_xml_doc(p: *const Parsed) -> *mut c_void {
     debug_assert_eq!((*p).kind, DOC_KIND_XML);
     (*p).doc
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_set_xml_doc(p: *mut Parsed, xdoc: *mut c_void) {
     debug_assert_eq!((*p).kind, DOC_KIND_XML);
     (*p).doc = xdoc;
@@ -343,7 +315,6 @@ unsafe fn mem_used(mem: *const lxb::lexbor_mem_t) -> usize {
 
 /// The live bytes in a node's document arena, which the serializers size their
 /// buffer from.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_lxb_document_bytes(node: *mut LxbNode) -> usize {
     if node.is_null() {
         return 0;

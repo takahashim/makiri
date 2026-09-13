@@ -32,12 +32,7 @@ use rb_sys::{rb_encoding, VALUE};
 use super::string::{mkr_text_check, MKR_TEXT_HAS_NUL, MKR_TEXT_INVALID_UTF8};
 use crate::glue::abi::{mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, rb_raise};
 
-extern "C" {
-
-    /// Writes `exc`'s message as a C string, falling back to "error". Never
-    /// raises - it runs on an error path.
-    fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize);
-}
+pub use crate::bridge::string::mkr_ruby_exception_message;
 
 /// `rb_str_encode` with no replacement flags, so an undefined conversion or an
 /// invalid byte sequence RAISES rather than substituting U+FFFD. Run under
@@ -253,7 +248,6 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or raise.
 /// `max_bytes` of 0 disables the budget check (the `__decode` test hook).
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
     let eff = effective_encoding(str);
 

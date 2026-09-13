@@ -257,7 +257,6 @@ fn node_set_class() -> RClass {
 
 /// # Safety
 /// `document` must be a live `Makiri::Document`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
     let ruby = Ruby::get_unchecked();
     let doc = Value::from_raw(document);
@@ -272,7 +271,6 @@ pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
 
 /// # Safety
 /// `rb_set` must be a `Makiri::NodeSet`; `node` a node of its document.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_node_set_push(rb_set: VALUE, node: *mut c_void) {
     /* The hot path: one call per node of every CSS and XPath result. It uses
      * the unprotected accessor deliberately - magnus's `try_convert` costs an
@@ -711,7 +709,6 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`, with the classes already defined.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_node_set() {
     let klass = node_set_class();
 

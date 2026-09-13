@@ -65,18 +65,15 @@ mod inject {
     static mut COUNTDOWN: i64 = 0;
     static mut ATTEMPTS: u64 = 0;
 
-    #[no_mangle]
     pub unsafe extern "C" fn mkr_alloc_inject_arm(nth: i64) {
         COUNTDOWN = if nth > 0 { nth } else { 0 };
         ATTEMPTS = 0;
     }
 
-    #[no_mangle]
     pub unsafe extern "C" fn mkr_alloc_inject_calls() -> u64 {
         ATTEMPTS
     }
 
-    #[no_mangle]
     pub unsafe extern "C" fn mkr_alloc_inject_should_fail() -> core::ffi::c_int {
         ATTEMPTS = ATTEMPTS.wrapping_add(1);
         if COUNTDOWN > 0 {
@@ -106,7 +103,6 @@ fn inject_fail() -> bool {
 /// failure. `elem == 0` fails closed rather than falling through to a
 /// `realloc(ptr, 0)`, whose free-or-not is implementation-defined; the caller
 /// keeps ownership of `ptr`. An overflow leaves `ptr` unchanged.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_reallocarray(
     ptr: *mut c_void,
     count: usize,
@@ -134,7 +130,6 @@ pub unsafe extern "C" fn mkr_reallocarray(
 /// Two-argument `calloc` is itself overflow-safe, but the check is explicit so
 /// every core allocator fails the SAME way - a deterministic NULL - rather than
 /// leaving the overflow case to `calloc`'s implementation-defined behaviour.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void {
     if count == 0 || elem == 0 {
         return core::ptr::null_mut();
@@ -151,7 +146,6 @@ pub unsafe extern "C" fn mkr_callocarray(count: usize, elem: usize) -> *mut c_vo
 /// `n` bytes plus a NUL terminator, with the terminator already written.
 ///
 /// The bytes before it are uninitialised, as in the C: every caller fills them.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_alloc(n: usize) -> *mut c_char {
     let total = match n.checked_add(1) {
         Some(t) => t,
@@ -172,7 +166,6 @@ pub unsafe extern "C" fn mkr_str_alloc(n: usize) -> *mut c_char {
 ///
 /// `n > 0` with a NULL source fails closed: the alternative is returning
 /// uninitialised bytes.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char {
     if n > 0 && s.is_null() {
         return core::ptr::null_mut();
@@ -189,7 +182,6 @@ pub unsafe extern "C" fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char 
 }
 
 /// A NUL-terminated copy of the C string `s`. NULL in, NULL out.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_strdup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
         return core::ptr::null_mut();
@@ -202,7 +194,6 @@ pub unsafe extern "C" fn mkr_strdup(s: *const c_char) -> *mut c_char {
 /// On success `*ptr` and `*cap` are updated and `MKR_OK` is returned; on
 /// overflow or allocation failure `MKR_ERR_OOM` is returned with both left
 /// unchanged - so a failed grow never loses the caller's array.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_grow_reserve(
     ptr: *mut *mut c_void,
     cap: *mut usize,

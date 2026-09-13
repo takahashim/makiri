@@ -153,7 +153,6 @@ pub const TAG_LAST_ENTRY: usize =
 ///
 /// # Safety
 /// `node` and `doc` are NULL or live; `len` is writable.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_html_ns_uri(
     node: *const Node,
     doc: *const Document,
@@ -175,7 +174,6 @@ pub unsafe extern "C" fn mkr_html_ns_uri(
 ///
 /// # Safety
 /// `doc` is NULL or live; `p` is NULL or names `len` readable bytes.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_html_tag_id_by_name(
     doc: *const Document,
     p: *const c_char,
@@ -199,7 +197,6 @@ pub unsafe extern "C" fn mkr_html_tag_id_by_name(
 ///
 /// # Safety
 /// `node` is a live node; `buf` is a live buffer.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int {
     let mut tlen: usize = 0;
     let t = crate::lexbor_abi::lxb_dom_node_text_content(

@@ -176,7 +176,6 @@ fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
 /// # Safety
 /// Called from `Init_makiri`, on the Ruby thread with the GVL held, after the
 /// classes and modules exist.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_serialize() {
     let m = html_node_methods();
     for name in ["to_html", "to_s", "outer_html"] {

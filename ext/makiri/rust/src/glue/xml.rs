@@ -32,7 +32,7 @@ use rb_sys::VALUE;
 
 use crate::xml::abi::{Doc as XmlDoc, Limits as XmlLimits, Node as XmlNode};
 use crate::xpath_abi::{
-    Error as XPathError, Limits as XPathLimits, Node as Ast, XPathValue, XP_ERR_SYNTAX,
+    Error as XPathError, Node as Ast, XPathValue, XP_ERR_SYNTAX,
 };
 
 use super::abi::error_class;
@@ -56,20 +56,14 @@ const MKR_XPATH_TYPE_NODESET: u32 = 0;
 /// arrives under, Nokogiri's convention, so a bare type selector binds to it.
 const CSS_DEFAULT_NS_PREFIX: &str = "xmlns";
 
-/// `mkr_xpath_context_t`, opaque.
-#[repr(C)]
-struct XPathContext {
-    _private: [u8; 0],
-}
+/// The engine context. Opaque here while C held it; now the real type.
+use crate::xpath::ctx::Context as XPathContext;
 
 
-/// `mkr_css_ns_t` - the default-namespace prefix, or NULL.
-#[repr(C)]
-struct CssNs {
-    default_prefix: *const c_char,
-}
+/// The default-namespace prefix, or NULL. Declared twice while C held it (once
+/// here, once in `css`); the fields matched, but nothing checked that.
+use crate::css::CssNs;
 
-use crate::xpath_abi::VerifiedText;
 use super::abi::{mkr_ruby_verified_text, OwnedBytes, RubyText, 
     mkr_cDocument, mkr_cNodeSet, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed,
     mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
@@ -78,7 +72,7 @@ use super::abi::{mkr_ruby_verified_text, OwnedBytes, RubyText,
 };
 
 /// The XML arena behind a document handle, typed.
-unsafe fn mkr_parsed_xml_doc(p: *const c_void) -> *mut XmlDoc {
+unsafe fn mkr_parsed_xml_doc(p: *const crate::dom_adapter::post_parse::Parsed) -> *mut XmlDoc {
     parsed_xml_doc(p) as *mut XmlDoc
 }
 
@@ -92,97 +86,35 @@ unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> *mut XmlNode {
     xml_node_unwrap(rb_node) as *mut XmlNode
 }
 
+pub use crate::bridge::string::mkr_ruby_copy_bytes;
+pub use crate::bridge::string::mkr_ruby_try_verified_text;
+pub use crate::bridge::xml_decode::mkr_xml_decode_input;
+pub use crate::css::mkr_css_compile;
+pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
+pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
+pub use crate::glue::doc::mkr_wrap_document;
+pub use crate::glue::xpath::mkr_xpath_raise;
+pub use crate::glue::xpath::mkr_xpath_value_to_ruby;
+pub use crate::xml::ffi::mkr_xml_arena_node;
+pub use crate::xml::ffi::mkr_xml_doc_new;
+pub use crate::xml::ffi::mkr_xml_name_index_get;
+pub use crate::xml::ffi::mkr_xml_name_index_lookup;
+pub use crate::xml::ffi::mkr_xml_parse_ex;
+pub use crate::xml::ffi::mkr_xml_parse_fragment;
+pub use crate::xpath::ast_ops::mkr_node_free;
+pub use crate::xpath::ctx::mkr_ctx_limits;
+pub use crate::xpath::ctx::mkr_xpath_context_free;
+pub use crate::xpath::ctx::mkr_xpath_context_new;
+pub use crate::xpath::ctx::mkr_xpath_context_set_name_index;
+pub use crate::xpath::ctx::mkr_xpath_eval_compiled;
+pub use crate::xpath::ctx::mkr_xpath_eval_compiled_first;
+pub use crate::xpath::ctx::mkr_xpath_register_ns;
+pub use crate::xpath::ctx::mkr_xpath_set_engine_kind;
+pub use crate::xpath::parse::mkr_parse;
+pub use crate::xpath_abi::mkr_xpath_error_clear;
+pub use crate::xpath_abi::mkr_xpath_value_clear;
+
 extern "C" {
-    /* the document handle (dom_adapter/compat.h) */
-    fn mkr_parsed_new_xml(doc: *mut XmlDoc) -> *mut c_void;
-    fn mkr_parsed_set_xml_doc(p: *mut c_void, doc: *mut XmlDoc);
-    fn mkr_wrap_document(parsed: *mut c_void) -> VALUE;
-
-    /* the XML engine */
-    fn mkr_xml_parse_ex(
-        src: *const c_char,
-        len: usize,
-        limits: *const XmlLimits,
-        status: *mut c_int,
-    ) -> *mut XmlDoc;
-    fn mkr_xml_parse_fragment(
-        doc: *mut XmlDoc,
-        src: *const c_char,
-        len: usize,
-        inherit_doc_ns: c_int,
-        status: *mut c_int,
-    ) -> *mut XmlNode;
-    fn mkr_xml_doc_new() -> *mut XmlDoc;
-    fn mkr_xml_arena_node(doc: *mut XmlDoc, node_type: u32) -> *mut XmlNode;
-    fn mkr_xml_name_index_get(doc: *mut XmlDoc) -> *mut c_void;
-    fn mkr_xml_name_index_lookup(
-        idx: *const c_void,
-        local: *const c_char,
-        local_len: usize,
-        ns_uri: *const c_char,
-        ns_uri_len: usize,
-        count: *mut usize,
-    ) -> *const *const c_void;
-
-    /* the XPath engine */
-    fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut XPathContext;
-    fn mkr_xpath_context_free(ctx: *mut XPathContext);
-    fn mkr_xpath_set_engine_kind(ctx: *mut XPathContext, kind: c_int);
-    fn mkr_xpath_context_set_name_index(
-        ctx: *mut XPathContext,
-        owner: *mut c_void,
-        get: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-        lookup: unsafe extern "C" fn(
-            *const c_void,
-            *const c_char,
-            usize,
-            *const c_char,
-            usize,
-            *mut usize,
-        ) -> *const *const c_void,
-    );
-    fn mkr_ctx_limits(ctx: *mut XPathContext) -> *mut XPathLimits;
-    fn mkr_xpath_register_ns(
-        ctx: *mut XPathContext,
-        prefix: VerifiedText,
-        uri: VerifiedText,
-    ) -> c_int;
-    fn mkr_parse(text: VerifiedText, limits: *mut XPathLimits, err: *mut XPathError) -> *mut Ast;
-    fn mkr_css_compile(
-        text: VerifiedText,
-        ns: *const CssNs,
-        limits: *mut XPathLimits,
-        err: *mut XPathError,
-    ) -> *mut Ast;
-    fn mkr_node_free(ast: *mut Ast);
-    fn mkr_xpath_eval_compiled(
-        ctx: *mut XPathContext,
-        ast: *mut Ast,
-        out: *mut XPathValue,
-        err: *mut XPathError,
-    ) -> c_int;
-    fn mkr_xpath_eval_compiled_first(
-        ctx: *mut XPathContext,
-        ast: *mut Ast,
-        out: *mut XPathValue,
-        err: *mut XPathError,
-    ) -> c_int;
-    fn mkr_xpath_value_clear(v: *mut XPathValue);
-    fn mkr_xpath_error_clear(e: *mut XPathError);
-
-    /* shared with the HTML query glue (glue/ruby_xpath.c) */
-    fn mkr_xpath_value_to_ruby(v: *mut XPathValue, document: VALUE) -> VALUE;
-    /// Raises; frees `err`'s message on the way.
-    fn mkr_xpath_raise(err: *mut XPathError) -> !;
-
-    /* the node / string bridges */
-    fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE;
-    fn mkr_ruby_copy_bytes(input: VALUE, out: *mut OwnedBytes) -> c_int;
-    fn mkr_ruby_try_verified_text(
-        sv: VALUE,
-        max_bytes: usize,
-        out: *mut RubyText,
-    ) -> *const c_char;
 
     fn rb_thread_call_without_gvl(
         func: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
@@ -200,7 +132,7 @@ extern "C" {
  * reach the XML element-name index without the engine knowing its types. */
 
 unsafe extern "C" fn name_index_get(owner: *mut c_void) -> *mut c_void {
-    mkr_xml_name_index_get(owner as *mut XmlDoc)
+    mkr_xml_name_index_get(owner as *mut XmlDoc) as *mut c_void
 }
 
 unsafe extern "C" fn name_index_lookup(
@@ -210,8 +142,9 @@ unsafe extern "C" fn name_index_lookup(
     ns_uri: *const c_char,
     ns_uri_len: usize,
     count: *mut usize,
-) -> *const *const c_void {
-    mkr_xml_name_index_lookup(idx, local, local_len, ns_uri, ns_uri_len, count)
+) -> *const *mut c_void {
+    mkr_xml_name_index_lookup(idx as *const _, local, local_len, ns_uri, ns_uri_len, count)
+        as *const *mut c_void
 }
 
 /* ------------------------------------------------------------------ */
@@ -336,7 +269,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         if work.result.is_null() {
             return Err(parse_status_error(work.status, Unit::Document));
         }
-        mkr_parsed_set_xml_doc(parsed, work.result);
+        mkr_parsed_set_xml_doc(parsed, work.result as *mut c_void);
         Ok(Value::from_raw(obj))
     }
 }
@@ -489,8 +422,8 @@ unsafe fn build_ctx(
     mkr_xpath_context_set_name_index(
         ctx,
         xdoc as *mut c_void,
-        name_index_get,
-        name_index_lookup,
+        Some(name_index_get),
+        Some(name_index_lookup),
     );
     register_namespaces(ruby, ctx, rb_ns)?; /* frees ctx on error */
     Ok(ctx)
@@ -619,7 +552,7 @@ unsafe fn css_compile_or_raise(
     let mut error: XPathError = core::mem::zeroed();
     let limits = mkr_ctx_limits(ctx);
     (*limits).ast_nodes = 0;
-    let ast = mkr_css_compile(sv.into(), &cns, limits, &mut error);
+    let ast = mkr_css_compile(sv.into(), &cns as *const _, limits, &mut error);
     core::hint::black_box(selector);
     if !ast.is_null() {
         return Ok(ast);
@@ -797,7 +730,7 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
     if xdoc.is_null() {
         return Err(Error::new(error_class(), "out of memory allocating XML document"));
     }
-    mkr_parsed_set_xml_doc(parsed, xdoc); /* GC now frees `xdoc` via `parsed` */
+    mkr_parsed_set_xml_doc(parsed, xdoc as *mut c_void); /* GC now frees `xdoc` via `parsed` */
     (*xdoc).doc_node = mkr_xml_arena_node(xdoc, T_DOCUMENT);
     if (*xdoc).doc_node.is_null() {
         return Err(Error::new(error_class(), "out of memory allocating XML document"));
@@ -840,7 +773,6 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_xml() {
     let ruby = Ruby::get_unchecked();
     let m_xml = magnus::RModule::from_value(Value::from_raw(mkr_mXML)).expect("Makiri::XML");

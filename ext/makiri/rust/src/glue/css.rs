@@ -552,7 +552,6 @@ fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_css() {
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
         .expect("Makiri::HTML::NodeMethods");

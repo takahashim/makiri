@@ -18,7 +18,7 @@ use super::own::Text;
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
@@ -1141,6 +1141,4 @@ unsafe fn fn_of_type_pos_last<D: Dom>(
     set_num(out, of_type_pos::<D>(focus.node, false, doc))
 }
 
-extern "C" {
-    fn mkr_str_alloc(n: usize) -> *mut c_char;
-}
+pub use crate::falloc::calloc::mkr_str_alloc;

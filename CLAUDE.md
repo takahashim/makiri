@@ -42,10 +42,14 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:
   they hardened C sources, and there are none. `-fvisibility=hidden`'s job is
-  the one that survives, now done by the export trim in `extconf.rb` - rustc
-  performs the cdylib link and passes its own export list, so a linker flag
-  cannot narrow it (`ld: -unexported_symbol cannot be used with
-  -exported_symbol*`); the restriction is a post-link `strip`/`objcopy` step.
+  the one that survives, and it is enforced AT THE SOURCE: nothing but
+  `Init_makiri` is `#[no_mangle]`, so rustc emits no other exported name. That
+  is not a stylistic choice - on ELF it is the only thing that works. rustc owns
+  the cdylib link and passes its own export list, a second `--version-script` is
+  MERGED rather than applied (so it cannot narrow), and `objcopy`/`strip` cannot
+  remove an entry from a linked `.so`'s `.dynsym` at all. The post-link trim in
+  `extconf.rb` survives as belt-and-braces on macOS, where `strip -u -r -s` does
+  work; do not mistake it for the mechanism.
   UBSan is gone for the same reason: rustc's `-Zsanitizer` has no `undefined`,
   and there is no C left for `-fsanitize=undefined` to instrument.
 
@@ -177,6 +181,17 @@ was right rather than dead - the NULL symbol was an `__asan_*` one, waved throug
 by the check that concluded "every undefined symbol is legitimate".
 
 ### Build / runtime gotchas (read before debugging weirdness)
+
+- **A plain `rake compile` after a sanitizer run keeps building with ASan.**
+  extconf writes `tmp/<platform>/makiri/<ruby>/Makefile` with
+  `RB_SYS_EXTRA_RUSTFLAGS ?= -Zsanitizer=address ...`, and rake-compiler re-runs
+  extconf only when that Makefile is ABSENT - so every later `rake compile`
+  silently reuses the sanitized flags. Nothing says so: the build is quiet, and
+  the first symptom is `rake spec`/`rake diff` dying with "Interceptors are not
+  working" (or, before the preload fix, something stranger). `rake clean compile`
+  is the cure, and `nm -u lib/makiri/makiri.bundle | grep -c __asan` (0 on a
+  plain build) is the check. This is worth knowing because it invalidates
+  measurements taken in between without failing anything.
 
 - **Adding a source file needs no special step.** cargo discovers modules from
   `mod` declarations and does its own dependency tracking, and the Makefile

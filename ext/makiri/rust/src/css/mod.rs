@@ -102,7 +102,6 @@ impl Build {
 ///
 /// # Safety
 /// From the XPath/CSS glue, under the GVL.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_css_compile(
     selector: VerifiedText,
     ns: *const CssNs,

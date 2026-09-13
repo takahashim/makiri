@@ -45,7 +45,6 @@ use rb_sys::VALUE;
 macro_rules! exported {
     ($($name:ident),* $(,)?) => {
         $(
-            #[no_mangle]
             pub static mut $name: VALUE = 0;
         )*
     };

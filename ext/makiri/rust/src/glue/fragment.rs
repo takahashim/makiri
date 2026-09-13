@@ -33,10 +33,10 @@ use super::abi::{LxbDoc, LXB_DOM_NODE_TYPE_ELEMENT, mkr_ruby_bytes_view, mkr_rub
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
+pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
+pub use crate::falloc::calloc::mkr_reallocarray;
+
 extern "C" {
-    fn mkr_utf8_sanitize(src: *const u8, len: usize, out: *mut *mut u8, out_len: *mut usize)
-        -> c_int;
-    fn mkr_reallocarray(p: *mut c_void, count: usize, elem: usize) -> *mut c_void;
 
 
     fn lxb_html_parse_fragment_by_tag_id(
@@ -219,7 +219,6 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
 /// The C ABI face of [`sanitize_html_input`]: `-1` on OOM with nothing
 /// allocated, so the caller can release its parser before raising. `*owned` is
 /// the caller's to `free`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_sanitize_html_input(
     html: VALUE,
     out: *mut *const u8,
@@ -239,12 +238,10 @@ pub unsafe extern "C" fn mkr_sanitize_html_input(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_emit_append(imported: *mut LxbNode, u: *mut c_void) {
     lxb_dom_node_insert_child(u as *mut LxbNode, imported);
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_emit_before(imported: *mut LxbNode, u: *mut c_void) {
     lxb_dom_node_insert_before(u as *mut LxbNode, imported);
 }
@@ -255,7 +252,6 @@ pub unsafe extern "C" fn mkr_emit_before(imported: *mut LxbNode, u: *mut c_void)
 /// `ruby_html_mutate.c` destroys a transient fragment document after this call,
 /// and a longjmp past that free leaks one Lexbor document per failure - the leak
 /// that free was added to fix. The caller raises once its own cleanup has run.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_import_fragment_children(
     doc: *mut LxbDoc,
     root: *mut LxbNode,
@@ -283,7 +279,6 @@ type FragmentParseFn =
 /// The parser is destroyed before any raise: the fragment tree belongs to its
 /// document, not the parser, so it survives - the caller may still read
 /// `root->owner_document` afterwards.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_run_fragment_parser(
     html: VALUE,
     parse: FragmentParseFn,
@@ -347,7 +342,6 @@ pub unsafe fn import_with_fixup(
 /// Deep-import `src` into `doc`. **Raises** rather than returning a partial
 /// node. The C ABI face of [`import_with_fixup`], called by
 /// `ruby_html_mutate.c`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_html_import_deep(
     doc: *mut LxbDoc,
     src: *mut LxbNode,

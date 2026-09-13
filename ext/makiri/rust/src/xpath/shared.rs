@@ -22,12 +22,10 @@ use core::ptr;
 
 /* ---------- node-set ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_nodeset_init(ns: *mut NodeSet) {
     *ns = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_nodeset_push(
     ns: *mut NodeSet,
     node: *mut c_void,
@@ -57,7 +55,6 @@ pub unsafe extern "C" fn mkr_nodeset_push(
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_nodeset_clear(ns: *mut NodeSet) {
     if ns.is_null() {
         return;
@@ -70,14 +67,12 @@ pub unsafe extern "C" fn mkr_nodeset_clear(ns: *mut NodeSet) {
 
 /* ---------- owned / borrowed text ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_owned_text_init(t: *mut OwnedText) {
     if !t.is_null() {
         *t = OwnedText { ptr: ptr::null_mut(), len: 0 };
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_owned_text_clear(t: *mut OwnedText) {
     if t.is_null() {
         return;
@@ -91,7 +86,6 @@ pub unsafe extern "C" fn mkr_owned_text_clear(t: *mut OwnedText) {
 /// Equal lengths AND equal bytes. A zero-length view is equal regardless of its
 /// pointer, so a NULL-represented empty and a ""-represented one compare equal
 /// and NULL is never dereferenced.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_borrowed_text_eq(a: VerifiedText, b: VerifiedText) -> c_int {
     if a.len != b.len {
         return 0;
@@ -111,7 +105,6 @@ pub unsafe extern "C" fn mkr_borrowed_text_eq(a: VerifiedText, b: VerifiedText) 
 /// It takes a text view rather than raw bytes and a length to keep the type
 /// contract: an owned text can only be minted from text a caller has asserted
 /// valid, so every raw-bytes entry point stays greppable.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_owned_text_from_borrowed_copy(
     out: *mut OwnedText,
     t: VerifiedText,
@@ -141,7 +134,6 @@ pub unsafe extern "C" fn mkr_owned_text_from_borrowed_copy(
 
 /* ---------- value ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_val_clear(v: *mut Val) {
     if v.is_null() {
         return;
@@ -154,7 +146,6 @@ pub unsafe extern "C" fn mkr_val_clear(v: *mut Val) {
     *v = Val { type_: 0, u: ValU { nodeset: NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 } } };
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_val_set_owned_text(v: *mut Val, text: OwnedText) {
     if !v.is_null() {
         (*v).type_ = 1 /* string */;
@@ -169,7 +160,6 @@ pub unsafe extern "C" fn mkr_val_set_owned_text(v: *mut Val, text: OwnedText) {
 /// string into a value: they pass what they have, a borrowed slice, and never
 /// construct an owned text themselves. Keeping the copy-and-own step here keeps
 /// allocating and freeing owned strings in one layer.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_val_set_borrowed_text_copy(
     v: *mut Val,
     text: VerifiedText,
@@ -190,12 +180,10 @@ pub unsafe extern "C" fn mkr_val_set_borrowed_text_copy(
 
 /* ---------- the per-evaluate document-order index (lifecycle) ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_doc_order_index_init(idx: *mut OrderIndex) {
     *idx = OrderIndex { buckets: ptr::null_mut(), cap: 0, count: 0, built: 0 };
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_doc_order_index_clear(idx: *mut OrderIndex) {
     if idx.is_null() {
         return;
@@ -208,7 +196,6 @@ pub unsafe extern "C" fn mkr_doc_order_index_clear(idx: *mut OrderIndex) {
 
 /* ---------- the per-evaluate string-value cache (lifecycle + index) ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_cache_init(c: *mut StrCache) {
     *c = StrCache {
         entries: ptr::null_mut(),
@@ -226,7 +213,6 @@ pub unsafe extern "C" fn mkr_str_cache_init(c: *mut StrCache) {
 /// Exported rather than private because the cache splits its pure index
 /// bookkeeping from its node-dereferencing insert, which lives in the
 /// per-backend value module: both drive this one implementation.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_cache_index_put(c: *mut StrCache, idx: usize) {
     let mask = (*c).bucket_cap - 1;
     let mut j = (ptr_hash((*(*c).entries.add(idx)).node as *const c_void) as usize) & mask;
@@ -237,7 +223,6 @@ pub unsafe extern "C" fn mkr_str_cache_index_put(c: *mut StrCache, idx: usize) {
 }
 
 /// Rebuild the index from the committed entries. -1 on OOM.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_cache_reindex(c: *mut StrCache, bucket_cap: usize) -> c_int {
     let buckets = mkr_callocarray(bucket_cap, core::mem::size_of::<usize>()) as *mut usize;
     if buckets.is_null() {
@@ -254,7 +239,6 @@ pub unsafe extern "C" fn mkr_str_cache_reindex(c: *mut StrCache, bucket_cap: usi
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_cache_truncate(c: *mut StrCache, target_count: usize) {
     if c.is_null() || target_count >= (*c).count {
         return;
@@ -280,7 +264,6 @@ pub unsafe extern "C" fn mkr_str_cache_truncate(c: *mut StrCache, target_count: 
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_str_cache_clear(c: *mut StrCache) {
     if c.is_null() {
         return;

@@ -38,26 +38,11 @@ const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
-extern "C" {
-    /// The attribute's owning element. Lexbor never links an attribute back to
-    /// its element, so this comes from the compat attr->owner index. NULL means
-    /// "not in this document" - but ALSO "the index could not be built", which
-    /// is why the caller builds it explicitly first.
-    fn mkr_parsed_attr_owner(p: *mut core::ffi::c_void, attr: *mut LxbAttr) -> *mut LxbNode;
-    /// Build the attr->owner index now (idempotent); -1 on allocation failure.
-    fn mkr_parsed_dom_index_build(p: *mut core::ffi::c_void) -> core::ffi::c_int;
-    /// The 1-based source line, or 0 when the node could not be placed.
-    fn mkr_parsed_node_line(p: *mut core::ffi::c_void, node: *mut LxbNode) -> usize;
-    /// The node's descendant text as one document-order run of borrowed slices;
-    /// 0 when the index cannot serve this node and the caller must walk.
-    fn mkr_parsed_text_slices(
-        p: *mut core::ffi::c_void,
-        node: *const LxbNode,
-        slices: *mut *const BorrowedText,
-        nslices: *mut usize,
-        total: *mut usize,
-    ) -> core::ffi::c_int;
-}
+pub use crate::dom_adapter::dom_index::mkr_parsed_attr_owner;
+pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_build;
+pub use crate::dom_adapter::source_loc::mkr_parsed_node_line;
+pub use crate::dom_adapter::text_index::mkr_parsed_text_slices;
+
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *

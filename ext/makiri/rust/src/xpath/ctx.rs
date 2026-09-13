@@ -12,7 +12,6 @@
  * contract is the one at the declaration in mkr_xpath.h. */
 #![allow(clippy::missing_safety_doc)]
 
-use super::abi::Context as Opaque;
 use crate::falloc::Reserve;
 use super::abi::*;
 use core::ffi::{c_char, c_int, c_void};
@@ -96,8 +95,8 @@ pub struct Context {
 
 /// The context as its clients see it: a pointer they carry and hand back.
 #[inline]
-fn handle(ctx: *mut Context) -> *mut Opaque {
-    ctx as *mut Opaque
+fn handle(ctx: *mut Context) -> *mut Context {
+    ctx
 }
 
 /* The two node-dereferencing entries, one pair per instance. They are declared
@@ -105,31 +104,42 @@ fn handle(ctx: *mut Context) -> *mut Opaque {
  * each is a build-time choice: either C instance can still be in the build while
  * the other is Rust. The signatures are node-pointer-only, hence ABI-identical
  * across the two. */
-extern "C" {
-    fn mkr_eval_ast_html(ctx: *mut Opaque, ast: *const Node, out: *mut Val, err: *mut Error) -> c_int;
-    fn mkr_eval_ast_xml(ctx: *mut Opaque, ast: *const Node, out: *mut Val, err: *mut Error) -> c_int;
-    fn mkr_try_first_match_html(
-        ctx: *mut Opaque,
-        ast: *const Node,
-        out_node: *mut *mut c_void,
-        err: *mut Error,
-    ) -> c_int;
-    fn mkr_try_first_match_xml(
-        ctx: *mut Opaque,
-        ast: *const Node,
-        out_node: *mut *mut c_void,
-        err: *mut Error,
-    ) -> c_int;
+pub use crate::xpath::ast_ops::mkr_node_clear_memos;
+#[cfg(feature = "lexbor")]
+pub use crate::xpath::ffi_html::mkr_eval_ast_html;
+#[cfg(feature = "lexbor")]
+pub use crate::xpath::ffi_html::mkr_try_first_match_html;
 
-    /* Shared primitives (mkr_xpath_shared.c) and the error helpers
-     * (mkr_xpath_err.c). */
-    fn mkr_str_cache_init(c: *mut StrCache);
-    fn mkr_str_cache_clear(c: *mut StrCache);
-    fn mkr_str_cache_truncate(c: *mut StrCache, target: usize);
-    fn mkr_doc_order_index_init(idx: *mut OrderIndex);
-    fn mkr_node_clear_memos(n: *mut Node);
-    fn mkr_borrowed_text_eq(a: VerifiedText, b: VerifiedText) -> c_int;
+/* Without `lexbor` there is no HTML instance, and no HTML context can be built
+ * either - `engine_kind` is always XML - so the HTML arm of the two dispatches
+ * below is unreachable. These stand in for it and FAIL CLOSED rather than being
+ * a second implementation: reaching them would be a bug, not a slow path. */
+#[cfg(not(feature = "lexbor"))]
+unsafe fn mkr_eval_ast_html(
+    _ctx: *mut Context,
+    _ast: *const Node,
+    _out: *mut Val,
+    _err: *mut Error,
+) -> c_int {
+    XP_ERR_INTERNAL
 }
+
+#[cfg(not(feature = "lexbor"))]
+unsafe fn mkr_try_first_match_html(
+    _ctx: *mut Context,
+    _ast: *const Node,
+    _out_node: *mut *mut c_void,
+    _err: *mut Error,
+) -> c_int {
+    0
+}
+pub use crate::xpath::ffi_xml::mkr_eval_ast_xml;
+pub use crate::xpath::ffi_xml::mkr_try_first_match_xml;
+pub use crate::xpath::shared::mkr_borrowed_text_eq;
+pub use crate::xpath::shared::mkr_doc_order_index_init;
+pub use crate::xpath::shared::mkr_str_cache_clear;
+pub use crate::xpath::shared::mkr_str_cache_init;
+pub use crate::xpath::shared::mkr_str_cache_truncate;
 
 /* ---------- text slots ---------- */
 
@@ -170,7 +180,6 @@ unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
 
 /* ---------- lifetime ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_context_new(
     doc: *mut c_void,
     node: *mut c_void,
@@ -207,7 +216,6 @@ pub unsafe extern "C" fn mkr_xpath_context_new(
     Box::into_raw(ctx)
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_context_free(ctx: *mut Context) {
     if ctx.is_null() {
         return;
@@ -229,7 +237,6 @@ pub unsafe extern "C" fn mkr_xpath_context_free(ctx: *mut Context) {
 
 /* ---------- registries ---------- */
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_register_ns(
     ctx: *mut Context,
     prefix: VerifiedText,
@@ -265,7 +272,6 @@ pub unsafe extern "C" fn mkr_xpath_register_ns(
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_register_variable_string(
     ctx: *mut Context,
     name: VerifiedText,
@@ -301,7 +307,6 @@ pub unsafe extern "C" fn mkr_xpath_register_variable_string(
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_lookup_ns(
     ctx: *mut Context,
     prefix: *const c_char,
@@ -326,7 +331,6 @@ pub unsafe extern "C" fn mkr_ctx_lookup_ns(
     ptr::null()
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_lookup_variable_text(
     ctx: *mut Context,
     prefix: *const c_char,
@@ -361,7 +365,6 @@ pub unsafe extern "C" fn mkr_ctx_lookup_variable_text(
 
 macro_rules! getter {
     ($name:ident, $ty:ty, $field:ident, $null:expr) => {
-        #[no_mangle]
         pub unsafe extern "C" fn $name(ctx: *mut Context) -> $ty {
             if ctx.is_null() {
                 $null
@@ -384,7 +387,6 @@ getter!(mkr_ctx_func_resolver, FuncResolver, func_resolver, None);
 getter!(mkr_xpath_get_user_data, *mut c_void, user_data, ptr::null_mut());
 getter!(mkr_ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
     if ctx.is_null() {
         ptr::null_mut()
@@ -393,7 +395,6 @@ pub unsafe extern "C" fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
     if ctx.is_null() {
         ptr::null_mut()
@@ -402,7 +403,6 @@ pub unsafe extern "C" fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
     if ctx.is_null() {
         ptr::null_mut()
@@ -411,42 +411,36 @@ pub unsafe extern "C" fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderInd
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_set_node(ctx: *mut Context, node: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).node = node;
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
     if !ctx.is_null() {
         (*ctx).unprefixed_lax = c_int::from(lax != 0);
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_set_engine_kind(ctx: *mut Context, kind: c_int) {
     if !ctx.is_null() {
         (*ctx).engine_kind = c_int::from(kind != 0);
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).user_data = user_data;
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
     if !ctx.is_null() {
         (*ctx).func_resolver = resolver;
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_context_set_element_index(
     ctx: *mut Context,
     index: *mut c_void,
@@ -460,7 +454,6 @@ pub unsafe extern "C" fn mkr_xpath_context_set_element_index(
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_context_set_name_index(
     ctx: *mut Context,
     owner: *mut c_void,
@@ -478,7 +471,6 @@ pub unsafe extern "C" fn mkr_xpath_context_set_name_index(
 /// included. The glue uses it to refuse register_namespace / register_variable /
 /// node= re-entered from a handler mid-walk: those mutate the live registration
 /// tables or the context node the suspended evaluator still borrows.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_ctx_is_evaluating(ctx: *mut Context) -> c_int {
     c_int::from(!ctx.is_null() && (*ctx).evaluating > 0)
 }
@@ -501,7 +493,6 @@ unsafe fn to_public(v: &Val, out: *mut XPathValue) {
     }
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_eval_compiled(
     ctx: *mut Context,
     ast: *mut Node,
@@ -562,7 +553,6 @@ pub unsafe extern "C" fn mkr_xpath_eval_compiled(
     0
 }
 
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_eval_compiled_first(
     ctx: *mut Context,
     ast: *mut Node,

@@ -907,9 +907,10 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
     finish_path(b, steps)
 }
 
+pub use crate::falloc::calloc::mkr_callocarray;
+pub use crate::xpath::shared::mkr_owned_text_clear;
+
 extern "C" {
-    fn mkr_callocarray(count: usize, elem: usize) -> *mut core::ffi::c_void;
     #[link_name = "free"]
     fn libc_free(p: *mut core::ffi::c_void);
-    fn mkr_owned_text_clear(t: *mut crate::xpath_abi::OwnedText);
 }

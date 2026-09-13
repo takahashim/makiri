@@ -99,7 +99,6 @@ pub fn valid(s: &[u8]) -> bool {
 
 /// # Safety
 /// `src` must name `len` readable bytes, or be NULL when `len == 0`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_utf8_valid(src: *const u8, len: usize) -> bool {
     if len == 0 {
         return true; /* trivially valid; src may be NULL */
@@ -112,7 +111,6 @@ pub unsafe extern "C" fn mkr_utf8_valid(src: *const u8, len: usize) -> bool {
 ///
 /// Returns the byte length (1..=4) with `*cp` set, or 0 on any violation -
 /// including `len == 0`. `*cp` is left untouched on failure, as in the C.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_utf8_decode1(
     p: *const u8,
     len: usize,

@@ -26,7 +26,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
@@ -47,40 +47,15 @@ const STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 /// what lets [`splice_or_insert`] hold the fragment rule in one place.
 type InsertFn = unsafe extern "C" fn(*mut LxbNode, *mut LxbNode);
 
-extern "C" {
-    fn mkr_html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> *mut LxbNode;
-    fn mkr_run_fragment_parser(
-        html: VALUE,
-        parse: unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut c_void) -> *mut LxbNode,
-        ctx: *mut c_void,
-    ) -> *mut LxbNode;
-    fn mkr_import_fragment_children(
-        doc: *mut LxbDoc,
-        root: *mut LxbNode,
-        emit: unsafe extern "C" fn(*mut LxbNode, *mut c_void),
-        u: *mut c_void,
-    ) -> c_int;
-    fn mkr_emit_append(imported: *mut LxbNode, u: *mut c_void);
-    fn mkr_emit_before(imported: *mut LxbNode, u: *mut c_void);
+pub use crate::bridge::string::mkr_ruby_verified_data;
+pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_invalidate;
+pub use crate::dom_adapter::text_index::mkr_parsed_text_index_invalidate;
+pub use crate::glue::fragment::mkr_emit_append;
+pub use crate::glue::fragment::mkr_emit_before;
+pub use crate::glue::fragment::mkr_html_import_deep;
+pub use crate::glue::fragment::mkr_import_fragment_children;
+pub use crate::glue::fragment::mkr_run_fragment_parser;
 
-    fn mkr_parsed_dom_index_invalidate(p: *mut c_void);
-    fn mkr_parsed_text_index_invalidate(p: *mut c_void);
-
-    /// The DATA-family view: UTF-8 is enforced, an interior NUL is not, so DOM
-    /// text and attribute values can hold U+0000 like browsers.
-    fn mkr_ruby_verified_data(v: VALUE, what: *const c_char) -> RubyData;
-}
-
-/// `mkr_ruby_borrowed_data_t` - layout-identical to `RubyText`, different
-/// contract (see `glue::abi`). Declared here rather than aliased, so a data
-/// value cannot reach an engine input by being the same Rust type.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct RubyData {
-    value: VALUE,
-    ptr: *const c_char,
-    len: usize,
-}
 
 /* ------------------------------------------------------------------ *
  * shared helpers                                                     *

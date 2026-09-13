@@ -70,7 +70,6 @@ pub fn from_extent(s: &[u8]) -> f64 {
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_number_extent(p: *const c_char, len: usize) -> usize {
     if p.is_null() || len == 0 {
         return 0;
@@ -81,7 +80,6 @@ pub unsafe extern "C" fn mkr_xpath_number_extent(p: *const c_char, len: usize) -
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_number_from_extent(p: *const c_char, extent: usize) -> f64 {
     if p.is_null() || extent == 0 {
         return f64::NAN;

@@ -572,7 +572,6 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 ///
 /// # Safety
 /// Runs once, from `Init_makiri`, on the Ruby thread.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_lexbor_css() {
     let ruby = Ruby::get().expect("mkr_init_lexbor_css runs on the Ruby thread");
     let lexbor = magnus::RModule::from_value(Value::from_raw(mkr_mLexbor))

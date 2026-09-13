@@ -164,111 +164,60 @@ impl OwnedBytes {
  * Node pointers cross this boundary as `c_void`: at the boundary a node IS
  * representation-opaque (the C calls it `mkr_raw_node_t`), and each caller casts
  * to the representation it has already established. */
+pub use crate::bridge::string::mkr_ruby_bytes_view;
+pub use crate::bridge::string::mkr_ruby_copy_bytes;
+pub use crate::bridge::string::mkr_ruby_str_from_borrowed;
+pub use crate::bridge::string::mkr_ruby_str_from_slices;
+pub use crate::bridge::string::mkr_ruby_str_known_valid_utf8;
+pub use crate::bridge::string::mkr_ruby_to_utf8;
+pub use crate::bridge::string::mkr_ruby_verified_text;
+pub use crate::bridge::string::mkr_verify_text;
+pub use crate::dom_adapter::dom_index::mkr_element_index_has_foreign;
+pub use crate::dom_adapter::post_parse::mkr_lxb_document_bytes;
+pub use crate::dom_adapter::post_parse::mkr_parsed_xml_doc;
+pub use crate::glue::doc::mkr_doc_parsed;
+pub use crate::glue::doc::mkr_html_doc_unwrap;
+pub use crate::glue::html_node::mkr_html_node_unwrap;
+pub use crate::glue::html_node::mkr_wrap_html_node;
+pub use crate::glue::node::mkr_node_document;
+pub use crate::glue::node::mkr_node_raw;
+pub use crate::glue::node_set::mkr_node_set_new;
+pub use crate::glue::node_set::mkr_node_set_push;
+pub use crate::glue::xml_node::mkr_wrap_xml_node;
+pub use crate::glue::xml_node::mkr_xml_node_unwrap;
+pub use crate::init::mkr_cDocument;
+pub use crate::init::mkr_cDocumentFragment;
+pub use crate::init::mkr_cHtmlDocument;
+pub use crate::init::mkr_cNode;
+pub use crate::init::mkr_cNodeSet;
+pub use crate::init::mkr_cXmlDocument;
+pub use crate::init::mkr_cXmlDocumentFragment;
+pub use crate::init::mkr_eCSSSyntaxError;
+pub use crate::init::mkr_eError;
+pub use crate::init::mkr_eXmlLimitExceeded;
+pub use crate::init::mkr_eXmlSyntaxError;
+pub use crate::init::mkr_mHtmlNodeMethods;
+pub use crate::init::mkr_mLexbor;
+pub use crate::init::mkr_mXML;
+pub use crate::init::mkr_mXmlNodeMethods;
+
+/* The element index's tag hook. It was declared here as an `extern` C function
+ * while the definition might be C; the two ends then had to be kept in step by
+ * hand, and when they drifted - one symbol existing as both a static and a
+ * function - rustc renamed one and left the extension with an undefined symbol
+ * that `rake symbols` caught. Imported now, so there is one item and the
+ * compiler checks the call. */
+pub use crate::dom_adapter::dom_index::mkr_element_index_tag;
+
 extern "C" {
+
     /// libc `free`, for buffers C handed us that C's own allocator owns.
     #[link_name = "free"]
     pub fn libc_free(p: *mut c_void);
 
-    /* The class, module and exception `VALUE`s Init_makiri defines (makiri.c). */
-    pub static mkr_mHtmlNodeMethods: VALUE;
-    pub static mkr_mXmlNodeMethods: VALUE;
-    pub static mkr_mXML: VALUE;
-    /// `Makiri::Lexbor` (makiri.c). The CSS stylesheet binding hangs off it.
-    pub static mkr_mLexbor: VALUE;
-    pub static mkr_cNode: VALUE;
-    pub static mkr_cDocument: VALUE;
-    pub static mkr_cNodeSet: VALUE;
-    pub static mkr_cXmlDocument: VALUE;
-    pub static mkr_cXmlDocumentFragment: VALUE;
-    pub static mkr_cHtmlDocument: VALUE;
-    pub static mkr_cDocumentFragment: VALUE;
-    pub static mkr_eError: VALUE;
-    pub static mkr_eCSSSyntaxError: VALUE;
-    pub static mkr_eXmlSyntaxError: VALUE;
-    pub static mkr_eXmlLimitExceeded: VALUE;
-
-    /// The HTML node pointer behind a wrapper (glue/ruby_html_node.c).
-    ///
-    /// **Raises** (TypeError) for an XML node or a non-node, so see the
-    /// longjmp rule in the module docs: call it before anything is live.
-    pub fn mkr_html_node_unwrap(v: VALUE) -> *mut LxbNode;
-    /// The XML counterpart; raises for an HTML node.
-    pub fn mkr_xml_node_unwrap(v: VALUE) -> *mut c_void;
-
-    /// Wrap a node into its Ruby leaf. NULL becomes nil, and a document node
-    /// becomes the Document itself.
-    pub fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE;
-    pub fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE;
-
-    /// The keepalive Document of any wrapped node.
-    pub fn mkr_node_document(rb_node: VALUE) -> VALUE;
-    /// The kind-agnostic raw node pointer, for identity.
-    pub fn mkr_node_raw(rb_node: VALUE) -> *mut c_void;
-
-    pub fn mkr_node_set_new(document: VALUE) -> VALUE;
-    pub fn mkr_node_set_push(set: VALUE, node: *mut c_void);
-
-    /// The parsed-document handle behind a Document, and its XML arena.
-    pub fn mkr_doc_parsed(rb_doc: VALUE) -> *mut c_void;
-
-    /* The element index's two hooks (dom_adapter/dom_index.c, or its Rust
-     * port). The XPath context takes them as FUNCTION POINTERS, so what the
-     * caller needs is their address - which an `extern static c_void` also
-     * provides, and glue::xpath used to get them that way. That worked only
-     * while the definition was C: once `dom_index.rs` defined them with
-     * `#[no_mangle]`, the crate had one symbol as both a static and a function
-     * and rustc renamed one to `mkr_element_index_tag.1`, leaving an undefined
-     * symbol in the extension. `rake symbols` is what caught it. Declared once,
-     * with the real signature, and checked against the definition below. */
-    pub fn mkr_element_index_tag(
-        idx: *const c_void,
-        tag_id: usize,
-        count: *mut usize,
-    ) -> *const *mut LxbNode;
-    pub fn mkr_element_index_has_foreign(idx: *const c_void) -> c_int;
-
-    /// The `lxb_dom_document_t` behind an HTML Document. Raises TypeError for
-    /// an XML one - the TypedData check is Ruby's own type machinery.
-    ///
-    /// Declared here because four files wanted it and three wrote their own
-    /// declaration, two as `*mut c_void` and one as `*mut LxbDoc`; rustc calls
-    /// that "redeclared with a different signature", which is how it was found.
-    pub fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut LxbDoc;
-    pub fn mkr_parsed_xml_doc(p: *const c_void) -> *mut c_void;
-
-    /// Enforce the strict text contract, naming `what`. **Raises.**
-    pub fn mkr_verify_text(str: VALUE, what: *const c_char);
-    /// The same contract, returning the anchored view. **Raises.**
-    pub fn mkr_ruby_verified_text(input: VALUE, what: *const c_char) -> RubyText;
-
-    /* The text-input contract's other half (bridge/ruby_string.c): honour the
-     * String's encoding, and read its cached coderange without forcing a scan.
-     * Both the document parse and the fragment decode need them. */
-    pub fn mkr_ruby_to_utf8(v: VALUE) -> VALUE;
-    pub fn mkr_ruby_str_known_valid_utf8(v: VALUE) -> bool;
-    pub fn mkr_ruby_bytes_view(v: VALUE) -> RubyBytes;
-
-    /// A UTF-8 String copied from an unanchored slice; NULL means absent and
-    /// yields `""`. The readers hand it Lexbor's interned bytes, which live in
-    /// the document arena and so need no anchor.
-    pub fn mkr_ruby_str_from_borrowed(text: crate::xpath_abi::VerifiedText) -> VALUE;
-
-    /// The text index's output path: one pre-sized String, one memcpy run.
-    pub fn mkr_ruby_str_from_slices(
-        slices: *const crate::xpath_abi::VerifiedText,
-        n: usize,
-        total: usize,
-    ) -> VALUE;
-    pub fn mkr_ruby_copy_bytes(v: VALUE, out: *mut OwnedBytes) -> c_int;
-
     /// Variadic, so callable but not definable from Rust. It longjmps, so no
     /// Rust destructor may be live at the call (see the module docs).
     pub fn rb_raise(exc: VALUE, fmt: *const c_char, ...) -> !;
-
-    /// Live bytes in the node's document arena (dom_adapter/compat.h), which
-    /// the serializers size their buffer from.
-    pub fn mkr_lxb_document_bytes(node: *mut LxbNode) -> usize;
-
 }
 
 /// Lexbor's `lxb_inline` accessors, through the `_noi` twins it exports. They
@@ -434,7 +383,7 @@ mod agree {
         ($sym:ident, $path:path, $ty:ty) => {
             #[allow(non_upper_case_globals, dead_code)]
             const $sym: $ty = {
-                let f: $ty = $path;
+                let f: $ty = $path as $ty;
                 f
             };
         };
@@ -443,7 +392,7 @@ mod agree {
     same_signature!(
         mkr_doc_parsed,
         crate::glue::doc::mkr_doc_parsed,
-        unsafe extern "C" fn(VALUE) -> *mut c_void
+        unsafe extern "C" fn(VALUE) -> *mut crate::dom_adapter::post_parse::Parsed
     );
     same_signature!(
         mkr_html_doc_unwrap,
@@ -453,7 +402,7 @@ mod agree {
     same_signature!(
         mkr_wrap_document,
         crate::glue::doc::mkr_wrap_document,
-        unsafe extern "C" fn(*mut c_void) -> VALUE
+        unsafe extern "C" fn(*mut crate::dom_adapter::post_parse::Parsed) -> VALUE
     );
 
     same_signature!(

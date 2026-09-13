@@ -18,12 +18,13 @@ use crate::xpath_abi::{
     VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
 
+pub use crate::falloc::calloc::mkr_callocarray;
+pub use crate::xpath::ast_ops::mkr_step_clear;
+pub use crate::xpath::shared::mkr_owned_text_clear;
+
 extern "C" {
-    fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void;
     #[link_name = "free"]
     fn libc_free(p: *mut c_void);
-    fn mkr_owned_text_clear(t: *mut OwnedText);
-    fn mkr_step_clear(s: *mut Step);
 }
 
 #[inline]
@@ -354,6 +355,4 @@ impl<T> CArray<T> {
     }
 }
 
-extern "C" {
-    fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void;
-}
+pub use crate::falloc::calloc::mkr_reallocarray;

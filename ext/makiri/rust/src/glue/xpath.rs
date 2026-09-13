@@ -42,8 +42,8 @@ use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedDa
 use rb_sys::VALUE;
 
 use crate::xpath_abi::{
-    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Limits,
-    Node as Ast, NodeSet, OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME,
+    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError,
+    Node as Ast, OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME,
     XP_ERR_SYNTAX,
 };
 
@@ -72,85 +72,39 @@ const MKR_XPATH_TYPE_NUMBER: u32 = 2;
 const MKR_XPATH_TYPE_BOOLEAN: u32 = 3;
 
 /// `mkr_doc_kind_t`.
-const MKR_DOC_XML: c_int = 1;
+const MKR_DOC_XML: u32 = 1;
 
-/// `mkr_xpath_context_s`, opaque.
-#[repr(C)]
-struct Ctx {
-    _private: [u8; 0],
-}
+/// The engine context. Opaque here while C held it; now the real type.
+use crate::xpath::ctx::Context as Ctx;
 
-extern "C" {
-    static mkr_cXPathContext: VALUE;
-    static mkr_eXPathSyntaxError: VALUE;
-    static mkr_eXPathLimitExceeded: VALUE;
-
-    fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut Ctx;
-    fn mkr_xpath_context_free(ctx: *mut Ctx);
-    fn mkr_xpath_set_engine_kind(ctx: *mut Ctx, kind: c_int);
-    fn mkr_ctx_set_unprefixed_lax(ctx: *mut Ctx, lax: c_int);
-    fn mkr_ctx_set_node(ctx: *mut Ctx, node: *mut c_void);
-    fn mkr_ctx_is_evaluating(ctx: *mut Ctx) -> c_int;
-    fn mkr_ctx_limits(ctx: *mut Ctx) -> *mut Limits;
-    fn mkr_xpath_context_set_element_index(
-        ctx: *mut Ctx,
-        index: *mut c_void,
-        tag: *const c_void,
-        has_foreign: *const c_void,
-    );
-    fn mkr_xpath_context_set_user_data(ctx: *mut Ctx, data: *mut c_void);
-    fn mkr_xpath_set_func_resolver(ctx: *mut Ctx, resolver: *const c_void);
-
-    fn mkr_parsed_kind(p: *const c_void) -> c_int;
-    fn mkr_parsed_dom_index_build(p: *mut c_void) -> c_int;
-    fn mkr_parsed_element_index(p: *mut c_void) -> *mut c_void;
-
-    fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut XPathError) -> *mut Ast;
-    fn mkr_node_free(ast: *mut Ast);
-    fn mkr_xpath_eval_compiled(
-        ctx: *mut Ctx,
-        ast: *mut Ast,
-        out: *mut XPathValue,
-        err: *mut XPathError,
-    ) -> c_int;
-    fn mkr_xpath_eval_compiled_first(
-        ctx: *mut Ctx,
-        ast: *mut Ast,
-        out: *mut XPathValue,
-        err: *mut XPathError,
-    ) -> c_int;
-    /* mkr_xpath_value_clear / _error_clear / mkr_err_set are imported from
-     * `xpath_abi` instead: either language may provide them, and that is the
-     * file where the two halves are kept together. */
-
-    fn mkr_xpath_register_ns(ctx: *mut Ctx, prefix: VerifiedText, uri: VerifiedText) -> c_int;
-    fn mkr_xpath_register_variable_string(
-        ctx: *mut Ctx,
-        name: VerifiedText,
-        value: VerifiedText,
-    ) -> c_int;
-
-    fn mkr_nodeset_init(ns: *mut NodeSet);
-    fn mkr_nodeset_push(
-        ns: *mut NodeSet,
-        node: *mut c_void,
-        limits: *mut Limits,
-        err: *mut XPathError,
-    ) -> c_int;
-    fn mkr_nodeset_clear(ns: *mut NodeSet);
-    fn mkr_val_set_borrowed_text_copy(
-        v: *mut Val,
-        text: VerifiedText,
-        err: *mut XPathError,
-        what: *const c_char,
-    ) -> c_int;
-    fn mkr_ruby_try_verified_text(
-        sv: VALUE,
-        max_bytes: usize,
-        out: *mut RubyText,
-    ) -> *const c_char;
-    fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize);
-}
+pub use crate::bridge::string::mkr_ruby_exception_message;
+pub use crate::bridge::string::mkr_ruby_try_verified_text;
+pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_build;
+pub use crate::dom_adapter::dom_index::mkr_parsed_element_index;
+pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
+pub use crate::init::mkr_cXPathContext;
+pub use crate::init::mkr_eXPathLimitExceeded;
+pub use crate::init::mkr_eXPathSyntaxError;
+pub use crate::xpath::ast_ops::mkr_node_free;
+pub use crate::xpath::ctx::mkr_ctx_is_evaluating;
+pub use crate::xpath::ctx::mkr_ctx_limits;
+pub use crate::xpath::ctx::mkr_ctx_set_node;
+pub use crate::xpath::ctx::mkr_ctx_set_unprefixed_lax;
+pub use crate::xpath::ctx::mkr_xpath_context_free;
+pub use crate::xpath::ctx::mkr_xpath_context_new;
+pub use crate::xpath::ctx::mkr_xpath_context_set_element_index;
+pub use crate::xpath::ctx::mkr_xpath_context_set_user_data;
+pub use crate::xpath::ctx::mkr_xpath_eval_compiled;
+pub use crate::xpath::ctx::mkr_xpath_eval_compiled_first;
+pub use crate::xpath::ctx::mkr_xpath_register_ns;
+pub use crate::xpath::ctx::mkr_xpath_register_variable_string;
+pub use crate::xpath::ctx::mkr_xpath_set_engine_kind;
+pub use crate::xpath::ctx::mkr_xpath_set_func_resolver;
+pub use crate::xpath::parse::mkr_parse;
+pub use crate::xpath::shared::mkr_nodeset_clear;
+pub use crate::xpath::shared::mkr_nodeset_init;
+pub use crate::xpath::shared::mkr_nodeset_push;
+pub use crate::xpath::shared::mkr_val_set_borrowed_text_copy;
 
 
 /* ------------------------------------------------------------------ */
@@ -161,7 +115,6 @@ extern "C" {
 ///
 /// Exported: the XML query glue raises through this too, so an engine failure
 /// maps to the same exception whichever entry point produced it.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_raise(err: *mut XPathError) -> ! {
     let class = match (*err).status {
         XP_ERR_SYNTAX => mkr_eXPathSyntaxError,
@@ -182,7 +135,6 @@ pub unsafe extern "C" fn mkr_xpath_raise(err: *mut XPathError) -> ! {
 /// heap the engine handed us. `document` is the keepalive for a node-set.
 ///
 /// Exported for the same reason as [`mkr_xpath_raise`].
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xpath_value_to_ruby(v: *mut XPathValue, document: VALUE) -> VALUE {
     let result = match (*v).type_ {
         MKR_XPATH_TYPE_NODESET => {
@@ -390,10 +342,21 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
     mkr_xpath_context_set_element_index(
         ctx,
         mkr_parsed_element_index(parsed),
-        crate::glue::abi::mkr_element_index_tag as *const c_void,
-        crate::glue::abi::mkr_element_index_has_foreign as *const c_void,
+        Some(element_index_tag),
+        Some(crate::glue::abi::mkr_element_index_has_foreign),
     );
     Ok(ctx)
+}
+
+/* A void-typed adapter, like the XML name-index ones: the index hook is declared
+ * representation-neutral (`*const *mut c_void`) so the engine never learns
+ * Lexbor's node type, while the real function returns `*const *mut LxbNode`. */
+unsafe extern "C" fn element_index_tag(
+    index: *const c_void,
+    tag_id: usize,
+    count: *mut usize,
+) -> *const *mut c_void {
+    crate::glue::abi::mkr_element_index_tag(index, tag_id, count) as *const *mut c_void
 }
 
 /// `XPathContext.new(node, namespace_matching: :strict)`.
@@ -821,7 +784,7 @@ impl InstalledHandler {
         let installed = handler != rb_sys::Qnil as VALUE;
         if installed {
             mkr_xpath_context_set_user_data(ctx, bridge as *mut c_void);
-            mkr_xpath_set_func_resolver(ctx, handler_resolver as *const c_void);
+            mkr_xpath_set_func_resolver(ctx, Some(handler_resolver));
         }
         InstalledHandler { ctx, installed }
     }
@@ -832,7 +795,7 @@ impl Drop for InstalledHandler {
         if self.installed {
             // SAFETY: undoes exactly what new() did.
             unsafe {
-                mkr_xpath_set_func_resolver(self.ctx, core::ptr::null());
+                mkr_xpath_set_func_resolver(self.ctx, None);
                 mkr_xpath_context_set_user_data(self.ctx, core::ptr::null_mut());
             }
         }
@@ -1033,7 +996,6 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
 
 /// # Safety
 /// From `Init_makiri`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_xpath() {
     let klass = RClass::from_value(Value::from_raw(mkr_cXPathContext))
         .expect("Makiri::XPathContext is a Class");

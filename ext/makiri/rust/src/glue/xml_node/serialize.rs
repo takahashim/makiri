@@ -42,16 +42,8 @@ use crate::glue::abi::{is_kind_of, mkr_doc_parsed, mkr_parsed_xml_doc};
  * restated - the same reason the status enum is imported there. */
 use crate::xml::abi::{FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
 
-extern "C" {
-    /// The byte-level xmlns detector on a raw name, shared with the parser.
-    fn mkr_xml_xmlns_prefix(
-        name: *const c_char,
-        len: u32,
-        prefix: *mut *const c_char,
-        plen: *mut u32,
-    ) -> c_int;
-    fn mkr_xml_preorder_next(root: *const Node, cur: *mut Node) -> *mut Node;
-}
+pub use crate::xml::ffi::mkr_xml_preorder_next;
+pub use crate::xml::ffi::mkr_xml_xmlns_prefix;
 
 /* ------------------------------------------------------------------ */
 /* the output buffer                                                  */
@@ -1016,7 +1008,6 @@ fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, 
 
 /// # Safety
 /// From `Init_makiri`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_xml_node_serialize() {
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
         .expect("Makiri::XML::NodeMethods");

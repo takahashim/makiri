@@ -145,7 +145,6 @@ unsafe fn content_limit(b: &Buf) -> usize {
 ///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_buf_append(
     b: *mut Buf,
     bytes: *const c_void,
@@ -215,7 +214,6 @@ pub unsafe extern "C" fn mkr_buf_append(
 ///
 /// # Safety
 /// `b` must be a live buffer.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
     let b = &mut *b;
     let n = n.min(content_limit(b));
@@ -248,7 +246,6 @@ pub unsafe extern "C" fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
 ///
 /// # Safety
 /// `b` must be a live buffer; `out_len` must be NULL or writable.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
     let b = &mut *b;
     if b.data.is_null() {

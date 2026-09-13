@@ -41,7 +41,6 @@ use super::abi::{
 /// The signature is the representation-opaque one every caller shares (see
 /// `glue::abi`); the cast to the XML node is justified by this being the XML
 /// wrap path.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE {
     if node.is_null() {
         return rb_sys::Qnil as VALUE;
@@ -71,7 +70,7 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
     rb_sys::rb_data_typed_object_wrap(
         klass,
         nd as *mut c_void,
-        &mkr_xml_node_type as *const c_void as *const rb_sys::rb_data_type_t,
+        mkr_xml_node_type.as_ptr(),
     )
 }
 
@@ -81,7 +80,6 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
 /// through the XML TypedData type, which **raises** TypeError for an HTML node -
 /// the representation check is Ruby's own type machinery, not a flag we could
 /// forget to test.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xml_node_unwrap(rb_self: VALUE) -> *mut c_void {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
@@ -90,14 +88,13 @@ pub unsafe extern "C" fn mkr_xml_node_unwrap(rb_self: VALUE) -> *mut c_void {
     }
     let nd = rb_sys::rb_check_typeddata(
         rb_self,
-        &mkr_xml_node_type as *const c_void as *const rb_sys::rb_data_type_t,
+        mkr_xml_node_type.as_ptr(),
     ) as *mut NodeData;
     (*nd).node
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node at
 /// the type boundary, like [`mkr_xml_node_unwrap`].
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xml_node_document(rb_self: VALUE) -> VALUE {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
@@ -105,14 +102,13 @@ pub unsafe extern "C" fn mkr_xml_node_document(rb_self: VALUE) -> VALUE {
     }
     let nd = rb_sys::rb_check_typeddata(
         rb_self,
-        &mkr_xml_node_type as *const c_void as *const rb_sys::rb_data_type_t,
+        mkr_xml_node_type.as_ptr(),
     ) as *mut NodeData;
     (*nd).document
 }
 
 /// Wrap a node reached from `rb_self`, under `rb_self`'s Document. One of the
 /// two functions the still-C serialization half calls.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_xml_wrap_rel(rb_self: VALUE, rel: *mut Node) -> VALUE {
     mkr_wrap_xml_node(rel as *mut c_void, mkr_xml_node_document(rb_self))
 }
@@ -137,14 +133,9 @@ pub unsafe fn wrap(node: *mut Node, document: Value) -> Value {
     Value::from_raw(mkr_wrap_xml_node(node as *mut c_void, document.as_raw()))
 }
 
-extern "C" {
-    /* Identity is representation-neutral and lives in glue/ruby_node.c (or its
-     * Rust port): it depends only on the node pointer, so the XML and HTML
-     * modules bind the same three functions rather than each growing its own. */
-    fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE;
-    fn mkr_node_hash(self_: VALUE) -> VALUE;
-    fn mkr_node_pointer_id(self_: VALUE) -> VALUE;
-}
+pub use crate::glue::node::mkr_node_equals;
+pub use crate::glue::node::mkr_node_hash;
+pub use crate::glue::node::mkr_node_pointer_id;
 
 /// The shape `rb_define_method` wants. Ruby dispatches on the declared arity, so
 /// a 0- and a 1-argument method are both reached through this one type.
@@ -163,7 +154,6 @@ unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, ar
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_xml_node_read() {
     let ruby = Ruby::get_unchecked();
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
@@ -259,7 +249,6 @@ pub unsafe extern "C" fn mkr_init_xml_node_read() {
 ///
 /// # Safety
 /// From `Init_makiri`.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_xml_node() {
     /* Serialization (#to_xml / #canonicalize, and the refused HTML ones) is
      * still C: ruby_xml_node_serialize.c. */

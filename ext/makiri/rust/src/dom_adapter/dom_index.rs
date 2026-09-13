@@ -258,7 +258,6 @@ unsafe fn ensure(p: *mut Parsed) -> *mut DomIndex {
 /// for "the index could not be built". A caller that must tell those apart calls
 /// [`mkr_parsed_dom_index_build`] first; `Attribute#parent` does exactly that,
 /// because a nil parent there would be a navigation answer, not an error.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_attr_owner(
     p: *mut Parsed,
     attr: *mut LxbAttr,
@@ -274,7 +273,6 @@ pub unsafe extern "C" fn mkr_parsed_attr_owner(
 }
 
 /// Build the index now (idempotent). 0 on success, -1 on allocation failure.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
     if ensure(p).is_null() {
         -1
@@ -285,7 +283,6 @@ pub unsafe extern "C" fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
 
 /// Drop the index so the next query rebuilds it. Called from the one mutation
 /// hook, beside the text index's.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_dom_index_invalidate(p: *mut Parsed) {
     if p.is_null() {
         return;
@@ -295,7 +292,6 @@ pub unsafe extern "C" fn mkr_parsed_dom_index_invalidate(p: *mut Parsed) {
 }
 
 /// NULL-safe, so `mkr_parsed_destroy` can call it unconditionally.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_dom_index_free(ptr: *mut c_void) {
     if !ptr.is_null() {
         drop(Box::from_raw(ptr as *mut DomIndex));
@@ -303,7 +299,6 @@ pub unsafe extern "C" fn mkr_dom_index_free(ptr: *mut c_void) {
 }
 
 /// The element index - the same object as the attr->owner index.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_parsed_element_index(p: *mut Parsed) -> *mut c_void {
     ensure(p) as *mut c_void
 }
@@ -312,7 +307,6 @@ pub unsafe extern "C" fn mkr_parsed_element_index(p: *mut Parsed) -> *mut c_void
 /// `*count = 0`.
 ///
 /// Taken as a FUNCTION POINTER by the XPath context, so the signature is fixed.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_element_index_tag(
     ptr: *const c_void,
     tag_id: usize,
@@ -353,7 +347,6 @@ pub unsafe extern "C" fn mkr_element_index_tag(
 ///
 /// NULL answers 1 - assume foreign - which is the fail-safe direction: the
 /// `//tag` fast path is only taken for a document known to be pure HTML.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_element_index_has_foreign(ptr: *const c_void) -> c_int {
     if ptr.is_null() {
         return 1;

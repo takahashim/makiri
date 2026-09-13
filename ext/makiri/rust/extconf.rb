@@ -253,11 +253,14 @@ end
 # extension was built for this ABI. Dropping it does not fail loudly - it
 # removes a check - so it is listed explicitly rather than left to luck.
 #
-# macOS note: `strip -u -r -s` prints "removing global symbols from a final
-# linked no longer supported". It works today and the result loads; if a future
-# Xcode makes it stop working, the fallback is to stop `#[no_mangle]`-exporting
-# the `mkr_*` names at all (nothing outside the crate calls them any more), not
-# to relax the restriction. `rake symbols` asserts the outcome, so
+# What actually enforces the restriction is the SOURCE: only `Init_makiri` is
+# `#[no_mangle]`, so no other name is emitted to export. This file's trim used to
+# be the mechanism, and that was wrong on Linux - `objcopy --keep-global-symbol`
+# cannot remove an entry from a linked shared object's `.dynsym`, so 222 `mkr_*`
+# names shipped exported there while macOS looked clean. The trim stays as a
+# second line on macOS, where `strip -u -r -s` does work (it prints "removing
+# global symbols from a final linked no longer supported" and works anyway).
+# `rake symbols` asserts the outcome, so
 # that day arrives as a failing gate rather than as a silent re-export.
 keep = File.join(Dir.pwd, "makiri-exported.sym")
 

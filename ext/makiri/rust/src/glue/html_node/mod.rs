@@ -59,31 +59,20 @@ pub mod ty {
     pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 }
 
-extern "C" {
-    /// The HTML node TypedData type, owned by `glue::node` (or its C original).
-    /// Declared rather than imported so this feature does not require that one.
-    static mkr_html_node_type: c_void;
-
-    static mkr_cHtmlNode: VALUE;
-    static mkr_cHtmlElement: VALUE;
-    static mkr_cHtmlAttr: VALUE;
-    static mkr_cHtmlText: VALUE;
-    static mkr_cHtmlComment: VALUE;
-    static mkr_cHtmlCDATASection: VALUE;
-    static mkr_cHtmlProcessingInstruction: VALUE;
-    static mkr_cHtmlDocumentType: VALUE;
-    static mkr_cHtmlDocumentFragment: VALUE;
-
-    /* Representation-neutral identity, from glue::node (or its C original):
-     * it depends only on the node pointer, so HTML and XML must run the SAME
-     * code - two implementations would be two answers. */
-    fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE;
-    fn mkr_node_hash(self_: VALUE) -> VALUE;
-    fn mkr_node_pointer_id(self_: VALUE) -> VALUE;
-
-    /// `#clone_node`, which belongs to the mutation half (ruby_html_mutate.c).
-    fn mkr_node_clone_node(argc: core::ffi::c_int, argv: *const VALUE, self_: VALUE) -> VALUE;
-}
+pub use crate::glue::doc::mkr_node_clone_node;
+pub use crate::glue::node::mkr_html_node_type;
+pub use crate::glue::node::mkr_node_equals;
+pub use crate::glue::node::mkr_node_hash;
+pub use crate::glue::node::mkr_node_pointer_id;
+pub use crate::init::mkr_cHtmlAttr;
+pub use crate::init::mkr_cHtmlCDATASection;
+pub use crate::init::mkr_cHtmlComment;
+pub use crate::init::mkr_cHtmlDocumentFragment;
+pub use crate::init::mkr_cHtmlDocumentType;
+pub use crate::init::mkr_cHtmlElement;
+pub use crate::init::mkr_cHtmlNode;
+pub use crate::init::mkr_cHtmlProcessingInstruction;
+pub use crate::init::mkr_cHtmlText;
 
 /* ------------------------------------------------------------------ *
  * wrap / unwrap                                                      *
@@ -96,7 +85,6 @@ extern "C" {
 /// (entity/notation - Lexbor's HTML parser does not produce these) falls back to
 /// the generic `Makiri::HTML::Node` rather than being misclassified as an
 /// Element.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE {
     if node.is_null() {
         return rb_sys::Qnil as VALUE;
@@ -123,7 +111,7 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
         as *mut NodeData;
     (*nd).node = node as *mut c_void;
     (*nd).document = document;
-    rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, &mkr_html_node_type as *const c_void as *const rb_sys::rb_data_type_t)
+    rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, mkr_html_node_type.as_ptr())
 }
 
 /// The `lxb_dom_node_t` behind an HTML node or HTML Document.
@@ -133,7 +121,6 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
 /// `mkr_xml_node_type` - does not satisfy. Every HTML-glue site that
 /// dereferences a node or hands its pointer to Lexbor goes through here, for
 /// `self` and arguments alike.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_html_node_unwrap(rb_node: VALUE) -> *mut LxbNode {
     if is_kind_of(Value::from_raw(rb_node), mkr_cDocument) {
         if is_kind_of(Value::from_raw(rb_node), mkr_cXmlDocument) {
@@ -144,7 +131,7 @@ pub unsafe extern "C" fn mkr_html_node_unwrap(rb_node: VALUE) -> *mut LxbNode {
         }
         return mkr_html_doc_unwrap(rb_node) as *mut LxbNode;
     }
-    let nd = rb_sys::rb_check_typeddata(rb_node, &mkr_html_node_type as *const c_void as *const rb_sys::rb_data_type_t) as *mut NodeData;
+    let nd = rb_sys::rb_check_typeddata(rb_node, mkr_html_node_type.as_ptr()) as *mut NodeData;
     (*nd).node as *mut LxbNode
 }
 
@@ -188,7 +175,6 @@ unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, ar
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_node() {
     let _ = Ruby::get_unchecked();
     let m = html_node_methods();
@@ -289,7 +275,6 @@ use magnus::rb_sys::AsRawValue;
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-#[no_mangle]
 pub unsafe extern "C" fn mkr_init_mutate() {
     let m = html_node_methods();
     let doc = RClass::from_value(Value::from_raw(mkr_cHtmlDocument)).expect("HTML::Document");
