@@ -4,7 +4,13 @@
 //! [`xml::Document`] that owns the slot array and byte store, so every access
 //! resolves through the document. This is the one reviewed unsafe adapter of
 //! the XML backend: it turns the document pointer the engine carries into
-//! `&Document` and calls safe accessors; no raw node pointer is dereferenced.
+//! `&Document` and calls safe accessors.
+//!
+//! Every handle here may have come from a node-set token, which is not
+//! authenticated, so it is resolved through [`xml::Document::try_node`]: a
+//! handle naming another document, a dropped slot or an out-of-range index
+//! yields no node, and the operation reports the null node / empty bytes /
+//! false rather than panicking.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -17,8 +23,23 @@ use core::ffi::c_int;
 pub struct Xml;
 
 #[inline]
-unsafe fn d<'a>(doc: *mut xml::Document) -> &'a xml::Document {
-    &*doc
+unsafe fn d<'a>(doc: *mut xml::Document) -> Option<&'a xml::Document> {
+    doc.as_ref()
+}
+
+/// Resolve `id`, fail-closed. `None` for a null document, the null handle, an
+/// out-of-range index, or a handle whose document stamp is not this one.
+#[inline]
+unsafe fn nd<'a>(doc: *mut xml::Document, id: xml::NodeId) -> Option<&'a xml::Node> {
+    d(doc)?.try_node(id)
+}
+
+#[inline]
+unsafe fn span<'a>(doc: *mut xml::Document, s: xml::Span) -> &'a [u8] {
+    match d(doc) {
+        Some(dd) => dd.span(s),
+        None => &[],
+    }
 }
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
@@ -26,13 +47,15 @@ unsafe fn d<'a>(doc: *mut xml::Document) -> &'a xml::Document {
 /// DOM attribute (Node#attribute_nodes reads `attrs` directly, matching DOM
 /// Level 2); only the XPath iteration below skips it.
 unsafe fn is_ns_decl(doc: *mut xml::Document, a: xml::NodeId) -> bool {
-    let q = d(doc).qname(a);
+    let q = span(doc, nd(doc, a).map_or(xml::Span::ABSENT, |x| x.qname));
     q == b"xmlns" || q.starts_with(b"xmlns:")
 }
 
 unsafe fn skip_ns_decls(doc: *mut xml::Document, mut a: xml::NodeId) -> xml::NodeId {
     while !a.is_invalid() && is_ns_decl(doc, a) {
-        a = d(doc).next(a).unwrap_or(xml::NodeId::INVALID);
+        a = nd(doc, a)
+            .and_then(|x| x.next)
+            .unwrap_or(xml::NodeId::INVALID);
     }
     a
 }
@@ -67,107 +90,146 @@ unsafe impl Dom for Xml {
 
     #[inline]
     unsafe fn document_node(doc: Self::Doc) -> Self::Node {
-        d(doc).doc_node()
+        d(doc).map_or(xml::NodeId::INVALID, |dd| dd.doc_node())
     }
 
     #[inline]
     unsafe fn node_type(doc: Self::Doc, n: Self::Node) -> u32 {
-        d(doc).type_(n)
+        nd(doc, n).map_or(0, |x| x.type_)
     }
 
     #[inline]
     unsafe fn first_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc).first_child(n).unwrap_or(xml::NodeId::INVALID)
+        nd(doc, n)
+            .and_then(|x| x.first_child)
+            .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn last_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc).last_child(n).unwrap_or(xml::NodeId::INVALID)
+        nd(doc, n)
+            .and_then(|x| x.last_child)
+            .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn next(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc).next(n).unwrap_or(xml::NodeId::INVALID)
+        nd(doc, n)
+            .and_then(|x| x.next)
+            .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn prev(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc).prev(n).unwrap_or(xml::NodeId::INVALID)
+        nd(doc, n)
+            .and_then(|x| x.prev)
+            .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn parent(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc).parent(n).unwrap_or(xml::NodeId::INVALID)
+        nd(doc, n)
+            .and_then(|x| x.parent)
+            .unwrap_or(xml::NodeId::INVALID)
     }
 
     #[inline]
     unsafe fn first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node {
-        match d(doc).attrs(el) {
+        match nd(doc, el).and_then(|x| x.attrs) {
             Some(a) => skip_ns_decls(doc, a),
             None => xml::NodeId::INVALID,
         }
     }
     #[inline]
     unsafe fn attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node {
-        match d(doc).next(a) {
+        match nd(doc, a).and_then(|x| x.next) {
             Some(n) => skip_ns_decls(doc, n),
             None => xml::NodeId::INVALID,
         }
     }
     #[inline]
     unsafe fn attr_value<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        d(doc).value(a)
+        match nd(doc, a) {
+            Some(x) => span(doc, x.value),
+            None => &[],
+        }
     }
 
     unsafe fn get_attribute<'a>(doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
-        let mut a = d(doc).attrs(el);
-        while let Some(attr) = a {
-            if !is_ns_decl(doc, attr) && d(doc).qname(attr) == name {
-                return Some(d(doc).value(attr));
+        let mut a = nd(doc, el).and_then(|x| x.attrs);
+        while let Some(id) = a {
+            if !is_ns_decl(doc, id)
+                && span(doc, nd(doc, id).map_or(xml::Span::ABSENT, |x| x.qname)) == name
+            {
+                return Some(span(
+                    doc,
+                    nd(doc, id).map_or(xml::Span::ABSENT, |x| x.value),
+                ));
             }
-            a = d(doc).next(attr);
+            a = nd(doc, id).and_then(|x| x.next);
         }
         None
     }
 
     #[inline]
     unsafe fn local_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        d(doc).local(n)
+        match nd(doc, n) {
+            Some(x) => span(doc, x.local),
+            None => &[],
+        }
     }
     #[inline]
     unsafe fn attr_local_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        d(doc).local(a)
+        match nd(doc, a) {
+            Some(x) => span(doc, x.local),
+            None => &[],
+        }
     }
     #[inline]
     unsafe fn qualified_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        d(doc).qname(n)
+        match nd(doc, n) {
+            Some(x) => span(doc, x.qname),
+            None => &[],
+        }
     }
     #[inline]
     unsafe fn attr_qualified_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        d(doc).qname(a)
+        match nd(doc, a) {
+            Some(x) => span(doc, x.qname),
+            None => &[],
+        }
     }
     #[inline]
     unsafe fn pi_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        d(doc).local(n)
+        match nd(doc, n) {
+            Some(x) => span(doc, x.local),
+            None => &[],
+        }
     }
 
     #[inline]
     unsafe fn ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        d(doc).ns(n)
+        match nd(doc, n) {
+            Some(x) => span(doc, x.ns_uri),
+            None => &[],
+        }
     }
 
     /// Any namespace URI is foreign to an unprefixed test: a strict unprefixed
     /// element test matches a no-namespace node only.
     #[inline]
     unsafe fn is_foreign_ns(doc: Self::Doc, n: Self::Node) -> bool {
-        !d(doc).ns(n).is_empty()
+        nd(doc, n).is_some_and(|x| x.ns_uri.len != 0)
     }
 
     #[inline]
     unsafe fn has_ns(doc: Self::Doc, n: Self::Node) -> bool {
-        !d(doc).ns(n).is_empty()
+        nd(doc, n).is_some_and(|x| x.ns_uri.len != 0)
     }
 
     /// The node owns its value, so this is an append of a borrowed slice.
     #[inline]
     unsafe fn append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
-        let s = d(doc).value(n);
+        let s = match nd(doc, n) {
+            Some(x) => span(doc, x.value),
+            None => return MKR_OK,
+        };
         if s.is_empty() {
             return MKR_OK;
         }

@@ -100,14 +100,23 @@ impl Span {
 /// The one-word form is deliberate. The engine carries nodes through node-sets
 /// as opaque tokens it only compares and hashes, so a node id *is* that token:
 /// an `&[NodeId]` is layout-identical to the engine's `*mut c_void` buffer, and
-/// `to_token`/`from_token` cost nothing. This assumes a 64-bit target.
+/// `to_token`/`from_token` cost nothing. That packing needs a 64-bit word, which
+/// the `compile_error!` below enforces.
 ///
-/// `generation` is the slot-reuse tag; it lets a stale handle be rejected in a
-/// single compare once slots are recycled. Slots are not recycled today (detach
-/// never destroys, so a removed node stays addressable for live Ruby wrappers),
-/// so it is always 0.
+/// `generation` is a stamp that identifies the OWNING document. Because slots
+/// are never recycled (detach never destroys, so a removed node stays
+/// addressable for live Ruby wrappers), there is no reuse tag to carry; using
+/// the field as a document stamp instead lets [`Document::try_node`] reject a
+/// handle built for another document. If slots are ever recycled it becomes
+/// index + document/reuse stamp, and [`Document::try_node`] already checks it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(usize);
+
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!(
+    "Makiri's XML index arena packs a NodeId into one pointer-sized word; \
+     only 64-bit targets are supported"
+);
 
 impl NodeId {
     /// The absent handle. It packs to a NULL `*mut c_void` token, which is the
@@ -205,6 +214,9 @@ pub struct Document {
     /// them by span like any other URI.
     pub(crate) xml_ns: Span,
     pub(crate) xmlns_ns: Span,
+    /// This document's unique stamp, copied into every node's `generation` so a
+    /// `NodeId` from another document is rejected by `try_node`.
+    pub(crate) stamp: u32,
     /// Running total counted against `max_bytes` (nodes + bytes).
     pub arena_bytes: usize,
     pub max_bytes: usize,
@@ -229,6 +241,7 @@ impl Document {
             bytes: Vec::new(),
             xml_ns: Span::EMPTY,
             xmlns_ns: Span::EMPTY,
+            stamp: 0,
             arena_bytes: 0,
             max_bytes: MAX_BYTES,
             max_nodes: MAX_NODES,

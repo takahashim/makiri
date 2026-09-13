@@ -41,10 +41,18 @@ pub const NTYPE_NOTATION: u32 = 12;
 
 /// One DOM representation, as the engine needs to see it.
 ///
-/// Handles are raw pointers into a tree the engine does not own, so every
-/// method is unsafe: the caller promises the handle is live and belongs to the
-/// document being evaluated. That is the same promise the C macros made
-/// silently.
+/// The two backends differ in what a handle IS, and each states it:
+///
+/// - **HTML** (`Html`): a `*mut lxb_dom_node_t` into a Lexbor tree the engine
+///   does not own, self-contained (Lexbor nodes carry their own links). Every
+///   method is unsafe because it dereferences that pointer; the caller promises
+///   the handle is live.
+/// - **XML** (`Xml`): an index-arena `NodeId`, not a pointer. The links and
+///   bytes live in the `Document` the method also receives, and each is
+///   resolved through `Document::try_node`, which fails closed (null node /
+///   empty bytes) for an out-of-range, stale or foreign-document handle. So the
+///   XML methods are unsafe only by the trait's signature, not because they
+///   dereference anything.
 ///
 /// # Safety
 /// An implementation must report navigation that forms an actual tree - a
@@ -52,7 +60,8 @@ pub const NTYPE_NOTATION: u32 = 12;
 /// because the engine derives document order from it.
 pub unsafe trait Dom {
     /// A node handle. `Copy` so the engine can move it around freely; equality
-    /// is pointer identity, which is what node-set dedup keys on.
+    /// is identity, which is what node-set dedup keys on (pointer identity for
+    /// HTML, `NodeId` equality for XML).
     type Node: Copy + PartialEq;
 
     /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:

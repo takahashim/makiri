@@ -14,6 +14,11 @@ use crate::xml::{
     T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
 };
 use core::ffi::c_char;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Hands each document a unique stamp (never 0). Node ids carry it so a handle
+/// built for one document is rejected by another's `try_node`.
+static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 
 #[inline]
 fn valid_type(t: u32) -> bool {
@@ -46,6 +51,11 @@ impl Document {
         if src_len > doc.max_bytes {
             return Err(ERR_LIMIT);
         }
+        let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
+        if stamp == 0 {
+            stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
+        }
+        doc.stamp = stamp;
         doc.xml_ns = doc.store(crate::xml::XML_NS_URI)?;
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
         /* Index 0 is reserved: it is the null handle's slot (token 0 == a NULL
@@ -85,16 +95,30 @@ impl Document {
 
     /* ---- node access ---- */
 
+    /// The node behind an id the caller KNOWS is live. This is the internal
+    /// invariant accessor; at an untrusted boundary (an FFI or engine handle
+    /// that could name another document) use [`Document::try_node`], which
+    /// fails closed. This one asserts the invariant and is not passed ids of
+    /// unknown provenance.
     #[inline]
-    pub fn node(&self, id: NodeId) -> &Node {
+    pub(crate) fn node(&self, id: NodeId) -> &Node {
         let n = &self.nodes[id.index() as usize];
-        debug_assert_eq!(n.generation, id.generation(), "stale NodeId");
+        debug_assert_eq!(
+            n.generation,
+            id.generation(),
+            "NodeId from another document"
+        );
         n
     }
+    /// As [`Document::node`], for mutation.
     #[inline]
-    pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
+    pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         let n = &mut self.nodes[id.index() as usize];
-        debug_assert_eq!(n.generation, id.generation(), "stale NodeId");
+        debug_assert_eq!(
+            n.generation,
+            id.generation(),
+            "NodeId from another document"
+        );
         n
     }
 
@@ -112,31 +136,31 @@ impl Document {
 
     #[inline]
     pub fn first_child(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).first_child
+        self.try_node(id).and_then(|n| n.first_child)
     }
     #[inline]
     pub fn last_child(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).last_child
+        self.try_node(id).and_then(|n| n.last_child)
     }
     #[inline]
     pub fn next(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).next
+        self.try_node(id).and_then(|n| n.next)
     }
     #[inline]
     pub fn prev(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).prev
+        self.try_node(id).and_then(|n| n.prev)
     }
     #[inline]
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).parent
+        self.try_node(id).and_then(|n| n.parent)
     }
     #[inline]
     pub fn attrs(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).attrs
+        self.try_node(id).and_then(|n| n.attrs)
     }
     #[inline]
     pub fn type_(&self, id: NodeId) -> u32 {
-        self.node(id).type_
+        self.try_node(id).map_or(0, |n| n.type_)
     }
 
     /* ---- byte store ---- */
@@ -151,23 +175,23 @@ impl Document {
     }
     #[inline]
     pub fn qname(&self, id: NodeId) -> &[u8] {
-        self.span(self.node(id).qname)
+        self.try_node(id).map_or(&[], |n| self.span(n.qname))
     }
     #[inline]
     pub fn local(&self, id: NodeId) -> &[u8] {
-        self.span(self.node(id).local)
+        self.try_node(id).map_or(&[], |n| self.span(n.local))
     }
     #[inline]
     pub fn prefix(&self, id: NodeId) -> &[u8] {
-        self.span(self.node(id).prefix)
+        self.try_node(id).map_or(&[], |n| self.span(n.prefix))
     }
     #[inline]
     pub fn ns(&self, id: NodeId) -> &[u8] {
-        self.span(self.node(id).ns_uri)
+        self.try_node(id).map_or(&[], |n| self.span(n.ns_uri))
     }
     #[inline]
     pub fn value(&self, id: NodeId) -> &[u8] {
-        self.span(self.node(id).value)
+        self.try_node(id).map_or(&[], |n| self.span(n.value))
     }
 
     /// Copy `src` into the byte store, returning its span. Empty is the shared
@@ -263,8 +287,9 @@ impl Document {
         self.charge(NODE_COST)?;
         self.nodes.mkr_reserve(1).map_err(|_| self.fail(ERR_OOM))?;
         let index = self.nodes.len() as u32;
-        self.nodes.push(Node::zeroed(type_, 0));
-        Ok(NodeId::new(index, 0))
+        let stamp = self.stamp;
+        self.nodes.push(Node::zeroed(type_, stamp));
+        Ok(NodeId::new(index, stamp))
     }
 
     /// Expand XML references into one byte-store span.
