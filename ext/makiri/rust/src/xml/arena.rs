@@ -11,6 +11,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
+use crate::xml::raw::NodeRef;
 use crate::xml::{
     bytes, empty, index, Chunk, Doc, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT, ERR_OOM,
     ERR_SYNTAX, MAX_BYTES, MAX_NODES, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT,
@@ -32,12 +33,23 @@ pub(crate) struct ParserArena {
     doc: NonNull<Doc>,
 }
 
+/// The mutation layer's name for the same live-arena handle. `ParserArena` is
+/// the parser's historical name for it; the two are one type so mutation and
+/// parsing cannot drift.
+pub(crate) type Arena = ParserArena;
+
 impl ParserArena {
     #[inline]
     pub(crate) fn new(doc: *mut Doc) -> Self {
         Self {
             doc: NonNull::new(doc).expect("ParserArena requires a live document"),
         }
+    }
+
+    /// Fallible constructor for boundary code that receives a raw pointer.
+    #[inline]
+    pub(crate) fn from_ptr(doc: *mut Doc) -> Option<Self> {
+        NonNull::new(doc).map(|doc| Self { doc })
     }
 
     #[inline]
@@ -56,6 +68,20 @@ impl ParserArena {
     pub(crate) fn document_node(self) -> *mut Node {
         // SAFETY: see `status`.
         unsafe { self.doc.as_ref().doc_node }
+    }
+
+    /// The document node as a non-null reference (always present in a live
+    /// document).
+    #[inline]
+    pub(crate) fn doc_node_ref(self) -> Option<NodeRef> {
+        // SAFETY: the document node is arena-owned and non-null in a live doc.
+        unsafe { NodeRef::from_raw(self.document_node()) }
+    }
+
+    #[inline]
+    pub(crate) fn doctype(self) -> *mut Node {
+        // SAFETY: see `status`.
+        unsafe { self.doc.as_ref().doctype }
     }
 
     #[inline]
@@ -112,6 +138,14 @@ impl ParserArena {
         } else {
             Ok(n)
         }
+    }
+
+    /// Allocate a fresh node and hand it back as a non-null reference, or
+    /// `None` on an arena failure (the caller's fail-closed OOM answer).
+    #[inline]
+    pub(crate) fn alloc_node(self, type_: u32) -> Option<NodeRef> {
+        // SAFETY: `arena_node` returns a node from this live arena, or NULL.
+        unsafe { NodeRef::from_raw(self.node(type_)) }
     }
 
     #[inline]

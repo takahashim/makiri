@@ -10,9 +10,11 @@
 //!   chars.rs   pure byte/codepoint primitives + reference expansion  (no unsafe)
 //!   qname.rs   QName splitting / xmlns detection                      (no unsafe)
 //!   arena.rs   the append-only arena and node allocation              (unsafe: raw memory)
+//!   raw.rs     raw node access + pointer linking                      (unsafe: all derefs)
 //!   tree.rs    tokenizer + tree builder                               (no unsafe code;
 //!                                                                     raw nodes via ParserArena)
-//!   mutate.rs  mutation primitives                                   (unsafe: walks raw nodes)
+//!   mutate.rs  mutation primitives                                   (no unsafe code;
+//!                                                                     raw nodes via NodeRef)
 //!   index.rs   element-name index                                    (no unsafe)
 //!   ffi.rs     the exported `mkr_xml_*` symbols                       (unsafe boundary)
 //!   selftest.rs the three C self-tests, ported                       (test code)
@@ -26,9 +28,10 @@ pub mod arena;
 pub mod chars;
 pub mod ffi;
 pub mod index;
-pub mod mutate;
+pub(crate) mod mutate;
 pub mod qname;
 pub use qname::qname_from;
+pub(crate) mod raw;
 pub mod selftest;
 pub mod tree;
 

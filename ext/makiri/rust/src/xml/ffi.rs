@@ -11,15 +11,16 @@
 // small argument struct would obscure the actual raw-pointer boundary.
 #![allow(clippy::too_many_arguments)]
 
-use crate::xml::arena;
+use crate::xml::arena::{self, Arena};
 use crate::xml::chars::{self, ExpandMode};
 use crate::xml::index;
 use crate::xml::mutate;
 use crate::xml::qname;
+use crate::xml::raw::NodeRef;
 use crate::xml::tree;
 use crate::xml::{
     bytes, empty, node_qname, Doc, Limits, Node, QName, SpanBuf, ERR_INTERNAL, ERR_LIMIT,
-    MAX_BYTES, OK, T_ATTRIBUTE,
+    MAX_BYTES, MUT_BAD_NAME, MUT_HIERARCHY, MUT_OK, MUT_TYPE, OK, T_ATTRIBUTE,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -28,6 +29,22 @@ use core::ptr;
 unsafe fn put<T>(p: *mut T, v: T) {
     if !p.is_null() {
         *p = v;
+    }
+}
+
+/// Write a mutation result into an `out` node parameter: the node on success,
+/// NULL on failure (the C entry points' contract).
+#[inline]
+unsafe fn put_node(out: *mut *mut Node, r: Result<NodeRef, i32>) -> i32 {
+    match r {
+        Ok(n) => {
+            put(out, n.as_ptr());
+            MUT_OK
+        }
+        Err(st) => {
+            put(out, ptr::null_mut());
+            st
+        }
     }
 }
 
@@ -318,14 +335,23 @@ pub unsafe fn mkr_xml_expand(
     }
 }
 
-/* ---- mutation (mkr_xml_mutate.h) ---- */
+/* ---- mutation (mkr_xml_mutate.h) ----
+ *
+ * The thin adapters: turn raw `(ptr, len)` inputs into slices and non-null
+ * `NodeRef`/`Arena` handles, call the safe mutators, and write the result back
+ * to the out-parameter. This is the only place a mutation raw pointer crosses
+ * into the mutation layer. */
 
 pub unsafe fn mkr_xml_detach(node: *mut Node) {
-    mutate::detach(node)
+    if let Some(node) = NodeRef::from_raw(node) {
+        mutate::detach(node);
+    }
 }
 
 pub unsafe fn mkr_xml_remove(doc: *mut Doc, node: *mut Node) {
-    mutate::remove(doc, node)
+    if let (Some(doc), Some(node)) = (Arena::from_ptr(doc), NodeRef::from_raw(node)) {
+        mutate::remove(doc, node);
+    }
 }
 
 pub unsafe fn mkr_xml_replace_with_fragment(
@@ -333,6 +359,13 @@ pub unsafe fn mkr_xml_replace_with_fragment(
     target: *mut Node,
     frag: *mut Node,
 ) -> i32 {
+    let (Some(doc), Some(target), Some(frag)) = (
+        Arena::from_ptr(doc),
+        NodeRef::from_raw(target),
+        NodeRef::from_raw(frag),
+    ) else {
+        return MUT_HIERARCHY;
+    };
     mutate::replace_with_fragment(doc, target, frag)
 }
 
@@ -342,6 +375,9 @@ pub unsafe fn mkr_xml_rename(
     name: *const c_char,
     nlen: u32,
 ) -> i32 {
+    let (Some(doc), Some(node)) = (Arena::from_ptr(doc), NodeRef::from_raw(node)) else {
+        return MUT_TYPE;
+    };
     mutate::rename(doc, node, bytes(name, nlen))
 }
 
@@ -354,11 +390,21 @@ pub unsafe fn mkr_xml_set_attribute(
     vlen: u32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::set_attribute(doc, el, bytes(name, nlen), bytes(val, vlen), out)
+    let (Some(doc), Some(el)) = (Arena::from_ptr(doc), NodeRef::from_raw(el)) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(
+        out,
+        mutate::set_attribute(doc, el, bytes(name, nlen), bytes(val, vlen)),
+    )
 }
 
 pub unsafe fn mkr_xml_remove_attribute(el: *mut Node, name: *const c_char, nlen: u32) -> i32 {
-    mutate::remove_attribute(el, bytes(name, nlen))
+    match NodeRef::from_raw(el) {
+        Some(el) => mutate::remove_attribute(el, bytes(name, nlen)),
+        None => 0,
+    }
 }
 
 pub unsafe fn mkr_xml_set_attribute_ns(
@@ -372,13 +418,19 @@ pub unsafe fn mkr_xml_set_attribute_ns(
     vlen: u32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::set_attribute_ns(
-        doc,
-        el,
-        bytes(ns, nslen),
-        bytes(name, nlen),
-        bytes(val, vlen),
+    let (Some(doc), Some(el)) = (Arena::from_ptr(doc), NodeRef::from_raw(el)) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(
         out,
+        mutate::set_attribute_ns(
+            doc,
+            el,
+            bytes(ns, nslen),
+            bytes(name, nlen),
+            bytes(val, vlen),
+        ),
     )
 }
 
@@ -389,7 +441,10 @@ pub unsafe fn mkr_xml_remove_attribute_ns(
     local: *const c_char,
     llen: u32,
 ) -> i32 {
-    mutate::remove_attribute_ns(el, bytes(ns, nslen), bytes(local, llen))
+    match NodeRef::from_raw(el) {
+        Some(el) => mutate::remove_attribute_ns(el, bytes(ns, nslen), bytes(local, llen)),
+        None => 0,
+    }
 }
 
 pub unsafe fn mkr_xml_set_content(
@@ -398,6 +453,9 @@ pub unsafe fn mkr_xml_set_content(
     text: *const c_char,
     tlen: u32,
 ) -> i32 {
+    let (Some(doc), Some(node)) = (Arena::from_ptr(doc), NodeRef::from_raw(node)) else {
+        return MUT_TYPE;
+    };
     mutate::set_content(doc, node, bytes(text, tlen))
 }
 
@@ -407,7 +465,11 @@ pub unsafe fn mkr_xml_new_element(
     nlen: u32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::new_element(doc, bytes(name, nlen), out)
+    let Some(doc) = Arena::from_ptr(doc) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(out, mutate::new_element(doc, bytes(name, nlen)))
 }
 
 pub unsafe fn mkr_xml_new_loose_dom_element(
@@ -417,7 +479,18 @@ pub unsafe fn mkr_xml_new_loose_dom_element(
     nslen: u32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::new_loose_dom_element(doc, qn, bytes(ns, nslen), out)
+    let Some(doc) = Arena::from_ptr(doc) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    if qn.is_null() {
+        put(out, ptr::null_mut());
+        return MUT_BAD_NAME;
+    }
+    put_node(
+        out,
+        mutate::new_loose_dom_element(doc, &*qn, bytes(ns, nslen)),
+    )
 }
 
 pub unsafe fn mkr_xml_new_document_type(
@@ -430,6 +503,10 @@ pub unsafe fn mkr_xml_new_document_type(
     slen: u32,
     out: *mut *mut Node,
 ) -> i32 {
+    let Some(doc) = Arena::from_ptr(doc) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
     let p = if pub_id.is_null() {
         None
     } else {
@@ -440,7 +517,7 @@ pub unsafe fn mkr_xml_new_document_type(
     } else {
         Some(bytes(sys_id, slen))
     };
-    mutate::new_document_type(doc, bytes(name, nlen), p, s, out)
+    put_node(out, mutate::new_document_type(doc, bytes(name, nlen), p, s))
 }
 
 pub unsafe fn mkr_xml_new_chardata(
@@ -450,7 +527,14 @@ pub unsafe fn mkr_xml_new_chardata(
     tlen: u32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::new_chardata(doc, type_ as u32, bytes(text, tlen), out)
+    let Some(doc) = Arena::from_ptr(doc) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(
+        out,
+        mutate::new_chardata(doc, type_ as u32, bytes(text, tlen)),
+    )
 }
 
 pub unsafe fn mkr_xml_new_pi(
@@ -461,11 +545,22 @@ pub unsafe fn mkr_xml_new_pi(
     dlen: u32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::new_pi(doc, bytes(target, tlen), bytes(data, dlen), out)
+    let Some(doc) = Arena::from_ptr(doc) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(
+        out,
+        mutate::new_pi(doc, bytes(target, tlen), bytes(data, dlen)),
+    )
 }
 
 pub unsafe fn mkr_xml_import_subtree(doc: *mut Doc, src: *const Node, out: *mut *mut Node) -> i32 {
-    mutate::import_subtree(doc, src, out)
+    let (Some(doc), Some(src)) = (Arena::from_ptr(doc), NodeRef::from_raw(src.cast_mut())) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(out, mutate::import_subtree(doc, src))
 }
 
 pub unsafe fn mkr_xml_copy_node(
@@ -474,7 +569,11 @@ pub unsafe fn mkr_xml_copy_node(
     deep: i32,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::copy_node(doc, src, deep != 0, out)
+    let (Some(doc), Some(src)) = (Arena::from_ptr(doc), NodeRef::from_raw(src.cast_mut())) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(out, mutate::copy_node(doc, src, deep != 0))
 }
 
 pub unsafe fn mkr_xml_clone_node(
@@ -483,22 +582,54 @@ pub unsafe fn mkr_xml_clone_node(
     deep: bool,
     out: *mut *mut Node,
 ) -> i32 {
-    mutate::clone_node(doc, src, deep, out)
+    let (Some(doc), Some(src)) = (Arena::from_ptr(doc), NodeRef::from_raw(src.cast_mut())) else {
+        put(out, ptr::null_mut());
+        return MUT_TYPE;
+    };
+    put_node(out, mutate::clone_node(doc, src, deep))
 }
 
 pub unsafe fn mkr_xml_insert_child(doc: *mut Doc, parent: *mut Node, node: *mut Node) -> i32 {
+    let (Some(doc), Some(parent), Some(node)) = (
+        Arena::from_ptr(doc),
+        NodeRef::from_raw(parent),
+        NodeRef::from_raw(node),
+    ) else {
+        return MUT_HIERARCHY;
+    };
     mutate::insert_child(doc, parent, node)
 }
 
 pub unsafe fn mkr_xml_insert_before(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+    let (Some(doc), Some(r), Some(node)) = (
+        Arena::from_ptr(doc),
+        NodeRef::from_raw(r),
+        NodeRef::from_raw(node),
+    ) else {
+        return MUT_HIERARCHY;
+    };
     mutate::insert_before(doc, r, node)
 }
 
 pub unsafe fn mkr_xml_insert_after(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+    let (Some(doc), Some(r), Some(node)) = (
+        Arena::from_ptr(doc),
+        NodeRef::from_raw(r),
+        NodeRef::from_raw(node),
+    ) else {
+        return MUT_HIERARCHY;
+    };
     mutate::insert_after(doc, r, node)
 }
 
 pub unsafe fn mkr_xml_replace_node(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+    let (Some(doc), Some(r), Some(node)) = (
+        Arena::from_ptr(doc),
+        NodeRef::from_raw(r),
+        NodeRef::from_raw(node),
+    ) else {
+        return MUT_HIERARCHY;
+    };
     mutate::replace_node(doc, r, node)
 }
 

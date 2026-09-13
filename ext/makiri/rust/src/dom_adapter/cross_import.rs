@@ -55,7 +55,37 @@ use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
 use crate::xml::abi::{
     Doc as XmlDoc, Node as XmlNode, QName, MUT_BAD_NAME, MUT_OK, MUT_OOM, MUT_TYPE,
 };
+use crate::xml::arena::Arena;
 use crate::xml::mutate;
+use crate::xml::raw::NodeRef;
+
+/// Wrap the destination document as the mutation layer's arena handle.
+///
+/// # Safety
+/// `doc` must be a live XML document for the duration of the call.
+#[inline]
+unsafe fn arena(doc: *mut XmlDoc) -> Arena {
+    Arena::from_ptr(doc).expect("cross-import destination document is live")
+}
+
+/// Wrap a raw engine node as a non-null reference.
+///
+/// # Safety
+/// `node` must point into a live XML arena.
+#[inline]
+unsafe fn nref(node: *mut XmlNode) -> NodeRef {
+    NodeRef::from_raw(node).expect("cross-import node is live")
+}
+
+/// Collapse a safe mutator result onto the `mkr_xml_mut_status_t` the import
+/// reports (the produced node is dropped here, as the import links its own).
+#[inline]
+unsafe fn status(r: Result<NodeRef, i32>) -> i32 {
+    match r {
+        Ok(_) => MUT_OK,
+        Err(st) => st,
+    }
+}
 
 /* ---- the node-type constants, generated on both sides ---- */
 
@@ -184,7 +214,7 @@ unsafe fn template_content(n: *const LxbNode) -> Option<*mut c_void> {
 /// resolution at link time reproduces `uri`.
 unsafe fn declare_ns(xdoc: *mut XmlDoc, el: *mut XmlNode, prefix: &[u8], uri: &[u8]) -> c_int {
     if prefix.is_empty() {
-        return mutate::set_attribute(xdoc, el, b"xmlns", uri, core::ptr::null_mut());
+        return status(mutate::set_attribute(arena(xdoc), nref(el), b"xmlns", uri));
     }
     /* "xmlns:" + prefix, built in a scratch buffer. */
     let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
@@ -197,7 +227,7 @@ unsafe fn declare_ns(xdoc: *mut XmlDoc, el: *mut XmlNode, prefix: &[u8], uri: &[
     };
     name.extend_from_slice(b"xmlns:"); /* reserved above */
     name.extend_from_slice(prefix);
-    mutate::set_attribute(xdoc, el, &name, uri, core::ptr::null_mut())
+    status(mutate::set_attribute(arena(xdoc), nref(el), &name, uri))
 }
 
 /// Copy the source element's attributes onto the translated mkr element,
@@ -232,7 +262,7 @@ unsafe fn h2x_copy_attrs(xdoc: *mut XmlDoc, s: *mut LxbNode, el: *mut XmlNode) -
             }
         }
 
-        let st = mutate::set_attribute(xdoc, el, name, value, core::ptr::null_mut());
+        let st = status(mutate::set_attribute(arena(xdoc), nref(el), name, value));
         if st != MUT_OK {
             return st;
         }
@@ -286,9 +316,8 @@ unsafe fn h2x_make<'a>(
              * are always unprefixed. The namespace is passed DIRECTLY, because
              * link-time resolution skips loose names and a synthesized xmlns
              * declaration would never reach it. */
-            let mut el: *mut XmlNode = core::ptr::null_mut();
-            let mut st = mutate::new_element(xdoc, name, &mut el);
-            if st == MUT_BAD_NAME && !name.is_empty() {
+            let mut made = mutate::new_element(arena(xdoc), name);
+            if made.as_ref().err() == Some(&MUT_BAD_NAME) && !name.is_empty() {
                 let qn = QName {
                     qname: nm as *const c_char,
                     qname_len: nl as u32,
@@ -297,11 +326,9 @@ unsafe fn h2x_make<'a>(
                     local: nm as *const c_char,
                     local_len: nl as u32,
                 };
-                st = mutate::new_loose_dom_element(xdoc, &qn, euri.unwrap_or(&[]), &mut el);
+                made = mutate::new_loose_dom_element(arena(xdoc), &qn, euri.unwrap_or(&[]));
             }
-            if st != MUT_OK {
-                return Err(st);
-            }
+            let el: *mut XmlNode = made.map(|n| n.as_ptr())?;
 
             /* Declare the default namespace iff it differs from the inherited
              * one, so this element (unprefixed, like all HTML elements) and its
@@ -343,11 +370,8 @@ unsafe fn h2x_make<'a>(
             } else {
                 core::slice::from_raw_parts(d.data, len as usize)
             };
-            let mut out: *mut XmlNode = core::ptr::null_mut();
-            let st = mutate::new_chardata(xdoc, ty, text, &mut out);
-            if st != MUT_OK {
-                return Err(st);
-            }
+            let out: *mut XmlNode =
+                mutate::new_chardata(arena(xdoc), ty, text).map(|n| n.as_ptr())?;
             unchanged(out)
         }
 
@@ -364,11 +388,8 @@ unsafe fn h2x_make<'a>(
             } else {
                 core::slice::from_raw_parts(d.data, d.length)
             };
-            let mut out: *mut XmlNode = core::ptr::null_mut();
-            let st = mutate::new_pi(xdoc, target, data, &mut out);
-            if st != MUT_OK {
-                return Err(st);
-            }
+            let out: *mut XmlNode =
+                mutate::new_pi(arena(xdoc), target, data).map(|n| n.as_ptr())?;
             unchanged(out)
         }
 
@@ -450,7 +471,7 @@ pub unsafe fn mkr_cross_html_to_xml(
                 if !made.node.is_null() {
                     /* The parent is detached, so namespace resolution is
                      * deferred to the eventual link. */
-                    let st = mutate::insert_child(xdoc, f.d, made.node);
+                    let st = mutate::insert_child(arena(xdoc), nref(f.d), nref(made.node));
                     if st != MUT_OK {
                         return st;
                     }

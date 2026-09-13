@@ -6,13 +6,15 @@
 /* Test entry points, called only from ffi.rs with no arguments. */
 #![allow(clippy::missing_safety_doc)]
 
-use crate::xml::arena::{arena_alloc, arena_bytes, arena_node, doc_destroy, doc_new};
+use crate::xml::arena::{arena_alloc, arena_bytes, arena_node, doc_destroy, doc_new, Arena};
+use crate::xml::mutate as mutate_impl;
+use crate::xml::raw::NodeRef;
 use crate::xml::tree::{parse_ex, parse_fragment};
 use crate::xml::{
-    mutate, node_local, node_ns, node_prefix, node_value, qname, Doc, Node, QName, ERR_LIMIT,
-    ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, MUT_BAD_CHARS, MUT_BAD_NS_DECL, MUT_CYCLE,
-    MUT_HIERARCHY, MUT_OK, MUT_UNBOUND_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE,
-    T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
+    node_local, node_ns, node_prefix, node_value, qname, Doc, Node, QName, ERR_LIMIT, ERR_OOM,
+    ERR_SYNTAX, ERR_VERSION, MAX_BYTES, MUT_BAD_CHARS, MUT_BAD_NS_DECL, MUT_CYCLE, MUT_HIERARCHY,
+    MUT_OK, MUT_UNBOUND_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
+    T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -45,6 +47,94 @@ unsafe fn first(n: *const Node) -> *mut Node {
     } else {
         (*n).first_child
     }
+}
+
+/* ---- raw adapters mirroring the pre-safe mutator signatures ----
+ *
+ * The self-test drives the engine with raw arena pointers, so it is the raw
+ * boundary here - the same shape `ffi.rs` gives the Ruby glue. Each wrapper
+ * converts and delegates to the safe `mutate` API. */
+
+unsafe fn arena(doc: *mut Doc) -> Arena {
+    Arena::from_ptr(doc).expect("self-test document is live")
+}
+
+unsafe fn nr(node: *mut Node) -> NodeRef {
+    NodeRef::from_raw(node).expect("self-test node is live")
+}
+
+unsafe fn out_node(out: *mut *mut Node, r: Result<NodeRef, i32>) -> i32 {
+    match r {
+        Ok(n) => {
+            if !out.is_null() {
+                *out = n.as_ptr();
+            }
+            MUT_OK
+        }
+        Err(e) => {
+            if !out.is_null() {
+                *out = ptr::null_mut();
+            }
+            e
+        }
+    }
+}
+
+unsafe fn detach(node: *mut Node) {
+    mutate_impl::detach(nr(node));
+}
+
+unsafe fn rename(doc: *mut Doc, node: *mut Node, name: &[u8]) -> i32 {
+    mutate_impl::rename(arena(doc), nr(node), name)
+}
+
+unsafe fn set_attribute(
+    doc: *mut Doc,
+    el: *mut Node,
+    name: &[u8],
+    val: &[u8],
+    out: *mut *mut Node,
+) -> i32 {
+    out_node(
+        out,
+        mutate_impl::set_attribute(arena(doc), nr(el), name, val),
+    )
+}
+
+unsafe fn remove_attribute(el: *mut Node, name: &[u8]) -> i32 {
+    mutate_impl::remove_attribute(nr(el), name)
+}
+
+unsafe fn set_content(doc: *mut Doc, node: *mut Node, text: &[u8]) -> i32 {
+    mutate_impl::set_content(arena(doc), nr(node), text)
+}
+
+unsafe fn new_element(doc: *mut Doc, name: &[u8], out: *mut *mut Node) -> i32 {
+    out_node(out, mutate_impl::new_element(arena(doc), name))
+}
+
+unsafe fn new_chardata(doc: *mut Doc, ty: u32, text: &[u8], out: *mut *mut Node) -> i32 {
+    out_node(out, mutate_impl::new_chardata(arena(doc), ty, text))
+}
+
+unsafe fn import_subtree(doc: *mut Doc, src: *mut Node, out: *mut *mut Node) -> i32 {
+    out_node(out, mutate_impl::import_subtree(arena(doc), nr(src)))
+}
+
+unsafe fn insert_child(doc: *mut Doc, parent: *mut Node, node: *mut Node) -> i32 {
+    mutate_impl::insert_child(arena(doc), nr(parent), nr(node))
+}
+
+unsafe fn insert_before(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+    mutate_impl::insert_before(arena(doc), nr(r), nr(node))
+}
+
+unsafe fn insert_after(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+    mutate_impl::insert_after(arena(doc), nr(r), nr(node))
+}
+
+unsafe fn replace_node(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+    mutate_impl::replace_node(arena(doc), nr(r), nr(node))
 }
 
 unsafe fn parse_lit(s: &[u8], st: &mut i32) -> *mut Doc {
@@ -826,7 +916,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
         return 8;
     }
     let mut at: *mut Node = ptr::null_mut();
-    if mutate::set_attribute(doc, r, b"id", b"x", &mut at) != MUT_OK
+    if set_attribute(doc, r, b"id", b"x", &mut at) != MUT_OK
         || at.is_null()
         || (*at).value_len != 1
         || node_value(at) != b"x"
@@ -834,7 +924,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     {
         return 9;
     }
-    if mutate::set_attribute(doc, r, b"id", b"yy", &mut at) != MUT_OK
+    if set_attribute(doc, r, b"id", b"yy", &mut at) != MUT_OK
         || (*at).value_len != 2
         || !(*(*r).attrs).next.is_null()
     {
@@ -842,69 +932,66 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     }
 
     /* 3. fail-closed: non-XML-Char value */
-    if mutate::set_attribute(doc, r, b"k", b"\x01", ptr::null_mut()) != MUT_BAD_CHARS {
+    if set_attribute(doc, r, b"k", b"\x01", ptr::null_mut()) != MUT_BAD_CHARS {
         return 11;
     }
 
     /* 3b. forbidden value sequences */
     let mut chk: *mut Node = ptr::null_mut();
-    if mutate::new_chardata(doc, T_COMMENT, b"a--b", &mut chk) != MUT_BAD_CHARS {
+    if new_chardata(doc, T_COMMENT, b"a--b", &mut chk) != MUT_BAD_CHARS {
         return 111;
     }
-    if mutate::new_chardata(doc, T_COMMENT, b"x-", &mut chk) != MUT_BAD_CHARS {
+    if new_chardata(doc, T_COMMENT, b"x-", &mut chk) != MUT_BAD_CHARS {
         return 112;
     }
-    if mutate::new_chardata(doc, T_CDATA, b"a]]>b", &mut chk) != MUT_BAD_CHARS {
+    if new_chardata(doc, T_CDATA, b"a]]>b", &mut chk) != MUT_BAD_CHARS {
         return 113;
     }
-    if mutate::new_chardata(doc, T_COMMENT, b"a-b", &mut chk) != MUT_OK || chk.is_null() {
+    if new_chardata(doc, T_COMMENT, b"a-b", &mut chk) != MUT_OK || chk.is_null() {
         return 114;
     }
-    if mutate::set_content(doc, chk, b"x--y") != MUT_BAD_CHARS {
+    if set_content(doc, chk, b"x--y") != MUT_BAD_CHARS {
         return 115;
     }
-    if mutate::set_attribute(doc, r, b"xmlns:q", b"", ptr::null_mut()) != MUT_BAD_NS_DECL {
+    if set_attribute(doc, r, b"xmlns:q", b"", ptr::null_mut()) != MUT_BAD_NS_DECL {
         return 116;
     }
-    if mutate::set_attribute(doc, r, b"xmlns", b"", ptr::null_mut()) != MUT_OK {
+    if set_attribute(doc, r, b"xmlns", b"", ptr::null_mut()) != MUT_OK {
         return 117;
     }
 
     let mut det: *mut Node = ptr::null_mut();
-    if mutate::new_element(doc, b"det", &mut det) != MUT_OK
-        || mutate::set_attribute(doc, det, b"p:k", b"v", &mut at) != MUT_OK
+    if new_element(doc, b"det", &mut det) != MUT_OK
+        || set_attribute(doc, det, b"p:k", b"v", &mut at) != MUT_OK
         || (*at).ns_uri_len != 0
     {
         return 12;
     }
 
     /* 4. the predefined xml: prefix */
-    if mutate::set_attribute(doc, r, b"xml:lang", b"en", &mut at) != MUT_OK
-        || node_ns(at) != XML_NS_URI
-    {
+    if set_attribute(doc, r, b"xml:lang", b"en", &mut at) != MUT_OK || node_ns(at) != XML_NS_URI {
         return 13;
     }
 
     /* 5. xmlns:* declaration then a bound prefix */
-    if mutate::set_attribute(doc, r, b"xmlns:p", b"urn:p", &mut at) != MUT_OK
-        || node_ns(at) != XMLNS_NS_URI
+    if set_attribute(doc, r, b"xmlns:p", b"urn:p", &mut at) != MUT_OK || node_ns(at) != XMLNS_NS_URI
     {
         return 14;
     }
-    if mutate::set_attribute(doc, r, b"p:k", b"v", &mut at) != MUT_OK || node_ns(at) != b"urn:p" {
+    if set_attribute(doc, r, b"p:k", b"v", &mut at) != MUT_OK || node_ns(at) != b"urn:p" {
         return 15;
     }
 
     /* 6. remove by name (idempotent) */
-    if mutate::remove_attribute(r, b"id") != 1 {
+    if remove_attribute(r, b"id") != 1 {
         return 16;
     }
-    if mutate::remove_attribute(r, b"id") != 0 {
+    if remove_attribute(r, b"id") != 0 {
         return 17;
     }
 
     /* 7. rename */
-    if mutate::rename(doc, r, b"q") != MUT_OK
+    if rename(doc, r, b"q") != MUT_OK
         || (*r).qname_len != 1
         || node_local(r) != b"q"
         || (*r).ns_uri_len != 0
@@ -920,7 +1007,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     (*c1).parent = r;
     (*r).first_child = c1;
     (*r).last_child = c1;
-    if mutate::set_content(doc, r, b"hi") != MUT_OK {
+    if set_content(doc, r, b"hi") != MUT_OK {
         return 20;
     }
     if (*r).first_child.is_null()
@@ -931,7 +1018,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     {
         return 21;
     }
-    if mutate::set_content(doc, r, b"") != MUT_OK
+    if set_content(doc, r, b"") != MUT_OK
         || !(*r).first_child.is_null()
         || !(*r).last_child.is_null()
     {
@@ -950,11 +1037,11 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     (*a2).prev = a1;
     (*r).first_child = a1;
     (*r).last_child = a2;
-    mutate::detach(a1);
+    detach(a1);
     if (*r).first_child != a2 || !(*a2).prev.is_null() || !(*a1).parent.is_null() {
         return 24;
     }
-    mutate::detach(a2);
+    detach(a2);
     if !(*r).first_child.is_null() || !(*r).last_child.is_null() || !(*a2).parent.is_null() {
         return 25;
     }
@@ -967,44 +1054,44 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     (*doc).doc_node = docn;
     let (mut pr, mut ne, mut tx): (*mut Node, *mut Node, *mut Node) =
         (ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
-    if mutate::new_element(doc, b"pr", &mut pr) != MUT_OK
+    if new_element(doc, b"pr", &mut pr) != MUT_OK
         || pr.is_null()
         || !(*pr).parent.is_null()
         || (*pr).ns_uri_len != 0
     {
         return 27;
     }
-    if mutate::set_attribute(doc, pr, b"xmlns:p", b"urn:p", ptr::null_mut()) != MUT_OK {
+    if set_attribute(doc, pr, b"xmlns:p", b"urn:p", ptr::null_mut()) != MUT_OK {
         return 28;
     }
-    if mutate::insert_child(doc, docn, pr) != MUT_OK || (*doc).root != pr {
+    if insert_child(doc, docn, pr) != MUT_OK || (*doc).root != pr {
         return 29;
     }
-    if mutate::new_chardata(doc, T_TEXT, b"hi", &mut tx) != MUT_OK || (*tx).value_len != 2 {
+    if new_chardata(doc, T_TEXT, b"hi", &mut tx) != MUT_OK || (*tx).value_len != 2 {
         return 30;
     }
 
     /* 11. insert_child resolves the inserted subtree */
-    if mutate::new_element(doc, b"p:c", &mut ne) != MUT_OK {
+    if new_element(doc, b"p:c", &mut ne) != MUT_OK {
         return 31;
     }
-    if mutate::insert_child(doc, pr, ne) != MUT_OK
+    if insert_child(doc, pr, ne) != MUT_OK
         || (*pr).first_child != ne
         || (*ne).parent != pr
         || node_ns(ne) != b"urn:p"
     {
         return 32;
     }
-    if mutate::insert_child(doc, ne, tx) != MUT_OK || (*ne).first_child != tx {
+    if insert_child(doc, ne, tx) != MUT_OK || (*ne).first_child != tx {
         return 33;
     }
 
     /* 12. unbound prefix in the live tree */
     let mut ub: *mut Node = ptr::null_mut();
-    if mutate::new_element(doc, b"z:c", &mut ub) != MUT_OK {
+    if new_element(doc, b"z:c", &mut ub) != MUT_OK {
         return 34;
     }
-    if mutate::insert_child(doc, pr, ub) != MUT_UNBOUND_NS
+    if insert_child(doc, pr, ub) != MUT_UNBOUND_NS
         || !(*ub).parent.is_null()
         || (*pr).last_child != ne
     {
@@ -1013,15 +1100,15 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
 
     /* 13. deferred resolution */
     let (mut wrap, mut inner): (*mut Node, *mut Node) = (ptr::null_mut(), ptr::null_mut());
-    if mutate::new_element(doc, b"p:wrap", &mut wrap) != MUT_OK
-        || mutate::new_element(doc, b"p:inner", &mut inner) != MUT_OK
+    if new_element(doc, b"p:wrap", &mut wrap) != MUT_OK
+        || new_element(doc, b"p:inner", &mut inner) != MUT_OK
     {
         return 36;
     }
-    if mutate::insert_child(doc, wrap, inner) != MUT_OK || (*inner).ns_uri_len != 0 {
+    if insert_child(doc, wrap, inner) != MUT_OK || (*inner).ns_uri_len != 0 {
         return 37;
     }
-    if mutate::insert_child(doc, pr, wrap) != MUT_OK
+    if insert_child(doc, pr, wrap) != MUT_OK
         || node_ns(wrap) != b"urn:p"
         || node_ns(inner) != b"urn:p"
     {
@@ -1029,27 +1116,25 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
     }
 
     /* 14. cycle rejection */
-    if mutate::insert_child(doc, ne, pr) != MUT_CYCLE {
+    if insert_child(doc, ne, pr) != MUT_CYCLE {
         return 39;
     }
 
     /* 15. sibling order */
     let (mut b1, mut b2): (*mut Node, *mut Node) = (ptr::null_mut(), ptr::null_mut());
-    if mutate::new_element(doc, b"b1", &mut b1) != MUT_OK
-        || mutate::new_element(doc, b"b2", &mut b2) != MUT_OK
-    {
+    if new_element(doc, b"b1", &mut b1) != MUT_OK || new_element(doc, b"b2", &mut b2) != MUT_OK {
         return 40;
     }
-    if mutate::insert_before(doc, ne, b1) != MUT_OK || (*pr).first_child != b1 || (*b1).next != ne {
+    if insert_before(doc, ne, b1) != MUT_OK || (*pr).first_child != b1 || (*b1).next != ne {
         return 41;
     }
-    if mutate::insert_after(doc, ne, b2) != MUT_OK || (*ne).next != b2 {
+    if insert_after(doc, ne, b2) != MUT_OK || (*ne).next != b2 {
         return 42;
     }
-    if mutate::insert_before(doc, ne, ne) != MUT_OK
+    if insert_before(doc, ne, ne) != MUT_OK
         || (*ne).next == ne
         || (*ne).prev == ne
-        || mutate::insert_after(doc, ne, ne) != MUT_OK
+        || insert_after(doc, ne, ne) != MUT_OK
         || (*ne).next == ne
     {
         return 99;
@@ -1057,10 +1142,10 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
 
     /* 16. replace */
     let mut rep: *mut Node = ptr::null_mut();
-    if mutate::new_element(doc, b"rep", &mut rep) != MUT_OK {
+    if new_element(doc, b"rep", &mut rep) != MUT_OK {
         return 43;
     }
-    if mutate::replace_node(doc, ne, rep) != MUT_OK
+    if replace_node(doc, ne, rep) != MUT_OK
         || !(*ne).parent.is_null()
         || (*rep).parent != pr
         || (*b1).next != rep
@@ -1074,7 +1159,7 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
         return 45;
     }
     let mut imp: *mut Node = ptr::null_mut();
-    let irc = mutate::import_subtree(doc2, pr, &mut imp);
+    let irc = import_subtree(doc2, pr, &mut imp);
     let mut rc = 0;
     if irc != MUT_OK
         || imp.is_null()
@@ -1092,10 +1177,10 @@ unsafe fn mutate_selftest_body(doc: *mut Doc) -> i32 {
 
     /* 18. single-root rule */
     let mut root2: *mut Node = ptr::null_mut();
-    if mutate::new_element(doc, b"root2", &mut root2) != MUT_OK {
+    if new_element(doc, b"root2", &mut root2) != MUT_OK {
         return 47;
     }
-    if mutate::insert_child(doc, docn, root2) != MUT_HIERARCHY {
+    if insert_child(doc, docn, root2) != MUT_HIERARCHY {
         return 48;
     }
     let _ = (ERR_OOM, T_PI);
