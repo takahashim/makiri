@@ -10,7 +10,6 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_char;
-use core::ptr::NonNull;
 
 /* ---- status codes (mkr_xml_status_t) ---- */
 pub const OK: i32 = 0;
@@ -188,48 +187,5 @@ pub unsafe fn qname_of(n: *const Node) -> QName {
         prefix_len: (*n).prefix_len,
         local: (*n).local,
         local_len: (*n).local_len,
-    }
-}
-
-/* Raw-node access is confined here. `NonNull<Node>` is minted only at the XML
- * boundary after validating that it belongs to a live document arena; parser,
- * mutation and indexes can then use these read-only helpers without opening
- * new unsafe blocks for each pointer chase. */
-#[inline]
-pub(crate) fn node_type(n: NonNull<Node>) -> u32 {
-    // SAFETY: NodeRef values originate in the owning document arena.
-    unsafe { n.as_ref().type_ }
-}
-
-#[inline]
-pub(crate) fn node_local_ref<'a>(n: NonNull<Node>) -> &'a [u8] {
-    // SAFETY: the node and its byte slice are arena-owned.
-    unsafe { node_local(n.as_ptr()) }
-}
-
-#[inline]
-pub(crate) fn node_ns_ref<'a>(n: NonNull<Node>) -> &'a [u8] {
-    // SAFETY: the node and its byte slice are arena-owned.
-    unsafe { node_ns(n.as_ptr()) }
-}
-
-#[inline]
-pub(crate) fn preorder_next_ref(
-    root: NonNull<Node>,
-    mut cur: NonNull<Node>,
-) -> Option<NonNull<Node>> {
-    // SAFETY: both nodes are in the same live arena tree. This is the sole raw
-    // pointer chase for the safe index traversal.
-    unsafe {
-        if !cur.as_ref().first_child.is_null() {
-            return NonNull::new(cur.as_ref().first_child);
-        }
-        while cur != root {
-            if !cur.as_ref().next.is_null() {
-                return NonNull::new(cur.as_ref().next);
-            }
-            cur = NonNull::new(cur.as_ref().parent)?;
-        }
-        None
     }
 }

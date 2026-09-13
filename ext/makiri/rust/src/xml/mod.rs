@@ -27,7 +27,7 @@ pub use abi::*;
 pub mod arena;
 pub mod chars;
 pub mod ffi;
-pub mod index;
+pub(crate) mod index;
 pub(crate) mod mutate;
 pub mod qname;
 pub use qname::qname_from;

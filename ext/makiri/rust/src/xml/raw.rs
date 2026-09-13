@@ -15,7 +15,7 @@
 
 use crate::xml::qname::xmlns_prefix;
 use crate::xml::{
-    bytes as abi_bytes, node_local, node_ns, node_qname, node_value, qname_of, Node, QName,
+    bytes as abi_bytes, node_local, node_ns, node_qname, node_value, qname_of, Doc, Node, QName,
     T_ATTRIBUTE, T_DOCUMENT, T_ELEMENT,
 };
 use core::ffi::c_char;
@@ -27,7 +27,11 @@ use core::ptr::{self, NonNull};
 /// and is not aliased for mutation is the caller's contract, established at
 /// [`NodeRef::from_raw`] and maintained by mutation serialising under the Ruby
 /// GVL.
+///
+/// `repr(transparent)`: a `NodeRef` slice has the layout of a `*mut Node`
+/// slice, so the name-index bucket can be handed to the engine as one.
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub(crate) struct NodeRef(NonNull<Node>);
 
 impl PartialEq for NodeRef {
@@ -264,6 +268,13 @@ pub(crate) fn resolve_in_scope(
         e = n.parent();
     }
     None
+}
+
+/// The document node of a live document, as a non-null reference.
+#[inline]
+pub(crate) fn document_node(doc: &Doc) -> Option<NodeRef> {
+    // SAFETY: `doc` is live and `doc_node` is a node in its arena.
+    unsafe { NodeRef::from_raw(doc.doc_node) }
 }
 
 /// `node`'s topmost ancestor is the document node.

@@ -1,14 +1,19 @@
 //! Safe element-name index: `(local name, namespace URI)` -> document-ordered
-//! elements. Raw XML pointers are converted at `ffi.rs`; this cache owns no
-//! memory from the arena and never dereferences a pointer itself.
+//! elements.
+//!
+//! The cache is built and read through `raw::NodeRef`, so this module contains
+//! no raw-pointer dereference of its own. It owns no arena memory; the only
+//! raw pointer it lets escape is the bucket's storage, whose `NodeRef` layout
+//! `ffi.rs` reinterprets as the engine's `*mut Node` array (see the
+//! `repr(transparent)` on `NodeRef`).
 
 #![forbid(unsafe_code)]
 
 use crate::falloc;
 use crate::falloc::{MapInsert, Reserve, VecPush};
-use crate::xml::{node_local_ref, node_ns_ref, node_type, preorder_next_ref, Doc, Node, T_ELEMENT};
+use crate::xml::raw::{self, NodeRef};
+use crate::xml::{Doc, T_ELEMENT};
 use core::hash::{BuildHasherDefault, Hasher};
-use core::ptr::NonNull;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -37,7 +42,7 @@ impl Hasher for Fnv {
 
 /// The key is `local ++ 0xFF ++ ns_uri`: 0xFF is not valid UTF-8.
 pub struct NameIndex {
-    map: HashMap<Box<[u8]>, Vec<NonNull<Node>>, BuildHasherDefault<Fnv>>,
+    map: HashMap<Box<[u8]>, Vec<NodeRef>, BuildHasherDefault<Fnv>>,
     /// GVL serialises lookup, so this reusable key never races and avoids an
     /// allocation on the answer path.
     scratch: Vec<u8>,
@@ -57,15 +62,14 @@ fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) -> bool {
 }
 
 fn build(doc: &Doc) -> Option<Box<NameIndex>> {
-    let root = NonNull::new(doc.doc_node)?;
-    let mut map: HashMap<Box<[u8]>, Vec<NonNull<Node>>, BuildHasherDefault<Fnv>> =
-        HashMap::default();
+    let root = raw::document_node(doc)?;
+    let mut map: HashMap<Box<[u8]>, Vec<NodeRef>, BuildHasherDefault<Fnv>> = HashMap::default();
     let mut key = Vec::new();
     let mut max_key = 0usize;
     let mut cur = Some(root);
     while let Some(node) = cur {
-        if node_type(node) == T_ELEMENT {
-            if !key_into(&mut key, node_local_ref(node), node_ns_ref(node)) {
+        if node.type_() == T_ELEMENT {
+            if !key_into(&mut key, node.local(), node.ns()) {
                 return None;
             }
             max_key = max_key.max(key.len());
@@ -79,7 +83,7 @@ fn build(doc: &Doc) -> Option<Box<NameIndex>> {
                 }
             }
         }
-        cur = preorder_next_ref(root, node);
+        cur = raw::preorder_next(root, node);
     }
     falloc::try_box(NameIndex {
         map,
@@ -102,20 +106,19 @@ pub fn invalidate(doc: &mut Doc) {
     doc.name_index = None;
 }
 
-/// Returns the bucket's raw pointer and count. The pointer is borrowed from
-/// the cache and remains valid until the next mutation invalidates it.
-pub fn lookup(idx: &mut NameIndex, local: &[u8], ns: &[u8]) -> (*const *mut Node, usize) {
+/// The bucket for `(local, ns)`, in document order. The slice borrows the cache
+/// and stays valid until the next mutation invalidates it; an over-long or
+/// absent key yields an empty slice.
+pub fn lookup<'a>(idx: &'a mut NameIndex, local: &[u8], ns: &[u8]) -> &'a [NodeRef] {
     if local.len().saturating_add(1).saturating_add(ns.len()) > idx.max_key {
-        return (core::ptr::null(), 0);
+        return &[];
     }
     idx.scratch.clear();
     idx.scratch.extend_from_slice(local);
     idx.scratch.push(0xFF);
     idx.scratch.extend_from_slice(ns);
     match idx.map.get(&idx.scratch[..]) {
-        // `NonNull<Node>` is transparent over `*mut Node`; only the FFI
-        // adapter consumes this borrowed pointer as raw storage.
-        Some(nodes) => (nodes.as_ptr().cast::<*mut Node>(), nodes.len()),
-        None => (core::ptr::null(), 0),
+        Some(nodes) => nodes.as_slice(),
+        None => &[],
     }
 }

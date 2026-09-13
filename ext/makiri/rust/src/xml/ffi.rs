@@ -675,11 +675,15 @@ pub unsafe fn mkr_xml_name_index_lookup(
     } else {
         core::slice::from_raw_parts(ns_uri as *const u8, ns_uri_len)
     };
-    let (nodes, count) = index::lookup(idx, local, ns_uri);
+    let nodes = index::lookup(idx, local, ns_uri);
     if !out_count.is_null() {
-        *out_count = count;
+        *out_count = nodes.len();
     }
-    nodes
+    // SAFETY: `NodeRef` is `repr(transparent)` over `*mut Node`, so the bucket
+    // slice's storage is exactly the engine's `*mut Node` array. The borrow
+    // lives until the next mutation invalidates the index, which is the
+    // contract the XPath callback relies on.
+    nodes.as_ptr() as *const *mut Node
 }
 
 /* keep the attribute-type constant referenced so the import list mirrors the
