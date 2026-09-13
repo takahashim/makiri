@@ -260,7 +260,7 @@ unsafe fn ensure(p: *mut Parsed) -> *mut DomIndex {
 /// for "the index could not be built". A caller that must tell those apart calls
 /// [`mkr_parsed_dom_index_build`] first; `Attribute#parent` does exactly that,
 /// because a nil parent there would be a navigation answer, not an error.
-pub unsafe extern "C" fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut LxbNode {
+pub unsafe fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut LxbNode {
     if attr.is_null() {
         return core::ptr::null_mut();
     }
@@ -272,7 +272,7 @@ pub unsafe extern "C" fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAtt
 }
 
 /// Build the index now (idempotent). 0 on success, -1 on allocation failure.
-pub unsafe extern "C" fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
+pub unsafe fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
     if ensure(p).is_null() {
         -1
     } else {
@@ -282,7 +282,7 @@ pub unsafe extern "C" fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
 
 /// Drop the index so the next query rebuilds it. Called from the one mutation
 /// hook, beside the text index's.
-pub unsafe extern "C" fn mkr_parsed_dom_index_invalidate(p: *mut Parsed) {
+pub unsafe fn mkr_parsed_dom_index_invalidate(p: *mut Parsed) {
     if p.is_null() {
         return;
     }
@@ -291,14 +291,14 @@ pub unsafe extern "C" fn mkr_parsed_dom_index_invalidate(p: *mut Parsed) {
 }
 
 /// NULL-safe, so `mkr_parsed_destroy` can call it unconditionally.
-pub unsafe extern "C" fn mkr_dom_index_free(ptr: *mut c_void) {
+pub unsafe fn mkr_dom_index_free(ptr: *mut c_void) {
     if !ptr.is_null() {
         drop(Box::from_raw(ptr as *mut DomIndex));
     }
 }
 
 /// The element index - the same object as the attr->owner index.
-pub unsafe extern "C" fn mkr_parsed_element_index(p: *mut Parsed) -> *mut c_void {
+pub unsafe fn mkr_parsed_element_index(p: *mut Parsed) -> *mut c_void {
     ensure(p) as *mut c_void
 }
 

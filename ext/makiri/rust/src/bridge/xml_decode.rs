@@ -268,7 +268,7 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or raise.
 /// `max_bytes` of 0 disables the budget check (the `__decode` test hook).
-pub unsafe extern "C" fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
+pub unsafe fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
     let eff = effective_encoding(str);
 
     /* Phase 2: decode to UTF-8, strictly. UTF-8 / US-ASCII / ASCII-8BIT are

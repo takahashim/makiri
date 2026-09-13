@@ -1,11 +1,15 @@
-//! The exported `mkr_xml_*` C ABI. Every function here is a thin adapter:
-//! turn C (ptr,len) pairs into slices, call the engine, write out-params.
+//! Rust-internal `mkr_xml_*` adapters.
+//!
+//! The C-era names remain while the Ruby glue is ported, but no C caller
+//! remains. These functions consequently use Rust's ABI; they still turn raw
+//! `(ptr, len)` inputs into slices, call the engine and fill out-parameters.
 
-/* Every function here is a `mkr_xml_*` entry point, and its contract is the one
- * written at the C declaration in ext/makiri/xml/mkr_xml*.h - which is the
- * contract, since C callers read that and not this. Restating each here would
- * be a copy that can drift. */
+/* Every function here is a raw-pointer boundary. The former C declarations are
+ * useful history, but Rust callers use these definitions directly. */
 #![allow(clippy::missing_safety_doc)]
+// These retain pointer-and-length entry shapes during the glue migration; a
+// small argument struct would obscure the actual raw-pointer boundary.
+#![allow(clippy::too_many_arguments)]
 
 use crate::xml::arena;
 use crate::xml::chars::{self, ExpandMode};
@@ -28,27 +32,23 @@ unsafe fn put<T>(p: *mut T, v: T) {
 
 /* ---- document / arena (mkr_xml_node.h) ---- */
 
-pub unsafe extern "C" fn mkr_xml_doc_new() -> *mut Doc {
+pub unsafe fn mkr_xml_doc_new() -> *mut Doc {
     arena::doc_new()
 }
 
-pub unsafe extern "C" fn mkr_xml_doc_destroy(doc: *mut Doc) {
+pub unsafe fn mkr_xml_doc_destroy(doc: *mut Doc) {
     arena::doc_destroy(doc)
 }
 
-pub unsafe extern "C" fn mkr_xml_doc_memsize(doc: *const Doc) -> usize {
+pub unsafe fn mkr_xml_doc_memsize(doc: *const Doc) -> usize {
     arena::doc_memsize(doc)
 }
 
-pub unsafe extern "C" fn mkr_xml_arena_node(doc: *mut Doc, type_: u32) -> *mut Node {
+pub unsafe fn mkr_xml_arena_node(doc: *mut Doc, type_: u32) -> *mut Node {
     arena::arena_node(doc, type_)
 }
 
-pub unsafe extern "C" fn mkr_xml_arena_bytes(
-    doc: *mut Doc,
-    src: *const c_char,
-    len: u32,
-) -> *const c_char {
+pub unsafe fn mkr_xml_arena_bytes(doc: *mut Doc, src: *const c_char, len: u32) -> *const c_char {
     if len == 0 {
         return empty();
     }
@@ -58,11 +58,11 @@ pub unsafe extern "C" fn mkr_xml_arena_bytes(
     arena::arena_bytes(doc, bytes(src, len))
 }
 
-pub unsafe extern "C" fn mkr_xml_arena_spanbuf(doc: *mut Doc, cap: usize) -> SpanBuf {
+pub unsafe fn mkr_xml_arena_spanbuf(doc: *mut Doc, cap: usize) -> SpanBuf {
     arena::arena_spanbuf(doc, cap)
 }
 
-pub unsafe extern "C" fn mkr_xml_node_xmlns_decl(
+pub unsafe fn mkr_xml_node_xmlns_decl(
     a: *const Node,
     prefix: *mut *const c_char,
     plen: *mut u32,
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn mkr_xml_node_xmlns_decl(
     1
 }
 
-pub unsafe extern "C" fn mkr_xml_xmlns_prefix(
+pub unsafe fn mkr_xml_xmlns_prefix(
     name: *const c_char,
     len: u32,
     prefix: *mut *const c_char,
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn mkr_xml_xmlns_prefix(
     }
 }
 
-pub unsafe extern "C" fn mkr_xml_preorder_next(root: *const Node, cur: *mut Node) -> *mut Node {
+pub unsafe fn mkr_xml_preorder_next(root: *const Node, cur: *mut Node) -> *mut Node {
     arena::preorder_next(root, cur)
 }
 
@@ -134,11 +134,7 @@ unsafe fn write_qname(name: *const c_char, len: u32, sp: &qname::Split, out: *mu
     };
 }
 
-pub unsafe extern "C" fn mkr_xml_qname_split(
-    name: *const c_char,
-    len: u32,
-    out: *mut QName,
-) -> i32 {
+pub unsafe fn mkr_xml_qname_split(name: *const c_char, len: u32, out: *mut QName) -> i32 {
     match qname::split_checked(bytes(name, len)) {
         Some(sp) => {
             write_qname(name, len, &sp, out);
@@ -148,11 +144,7 @@ pub unsafe extern "C" fn mkr_xml_qname_split(
     }
 }
 
-pub unsafe extern "C" fn mkr_xml_split_scanned_qname(
-    name: *const c_char,
-    len: u32,
-    out: *mut QName,
-) -> i32 {
+pub unsafe fn mkr_xml_split_scanned_qname(name: *const c_char, len: u32, out: *mut QName) -> i32 {
     match qname::split_scanned(bytes(name, len)) {
         Some(sp) => {
             write_qname(name, len, &sp, out);
@@ -162,39 +154,31 @@ pub unsafe extern "C" fn mkr_xml_split_scanned_qname(
     }
 }
 
-pub unsafe extern "C" fn mkr_xml_qname_assign(
-    doc: *mut Doc,
-    node: *mut Node,
-    qn: *const QName,
-) -> i32 {
+pub unsafe fn mkr_xml_qname_assign(doc: *mut Doc, node: *mut Node, qn: *const QName) -> i32 {
     arena::qname_assign(doc, node, &*qn)
 }
 
 /* ---- self-tests ---- */
 
-pub unsafe extern "C" fn mkr_xml_node_selftest() -> i32 {
+pub unsafe fn mkr_xml_node_selftest() -> i32 {
     crate::xml::selftest::node_selftest()
 }
 
-pub unsafe extern "C" fn mkr_xml_parse_selftest() -> i32 {
+pub unsafe fn mkr_xml_parse_selftest() -> i32 {
     crate::xml::selftest::parse_selftest()
 }
 
-pub unsafe extern "C" fn mkr_xml_mutate_selftest() -> i32 {
+pub unsafe fn mkr_xml_mutate_selftest() -> i32 {
     crate::xml::selftest::mutate_selftest()
 }
 
 /* ---- parse (mkr_xml.h) ---- */
 
-pub unsafe extern "C" fn mkr_xml_parse(
-    src: *const c_char,
-    len: usize,
-    status: *mut i32,
-) -> *mut Doc {
+pub unsafe fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut i32) -> *mut Doc {
     mkr_xml_parse_ex(src, len, ptr::null(), status)
 }
 
-pub unsafe extern "C" fn mkr_xml_parse_ex(
+pub unsafe fn mkr_xml_parse_ex(
     src: *const c_char,
     len: usize,
     limits: *const Limits,
@@ -217,7 +201,7 @@ pub unsafe extern "C" fn mkr_xml_parse_ex(
     }
 }
 
-pub unsafe extern "C" fn mkr_xml_parse_fragment(
+pub unsafe fn mkr_xml_parse_fragment(
     doc: *mut Doc,
     src: *const c_char,
     len: usize,
@@ -238,11 +222,11 @@ pub unsafe extern "C" fn mkr_xml_parse_fragment(
 
 /* ---- character data ---- */
 
-pub extern "C" fn mkr_xml_is_char(c: u32) -> i32 {
+pub fn mkr_xml_is_char(c: u32) -> i32 {
     chars::is_char(c) as i32
 }
 
-pub unsafe extern "C" fn mkr_xml_validate_chars(src: *const c_char, len: u32) -> i32 {
+pub unsafe fn mkr_xml_validate_chars(src: *const c_char, len: u32) -> i32 {
     if chars::validate_chars(bytes(src, len)) {
         0
     } else {
@@ -250,15 +234,15 @@ pub unsafe extern "C" fn mkr_xml_validate_chars(src: *const c_char, len: u32) ->
     }
 }
 
-pub extern "C" fn mkr_xml_is_name_start(c: u32) -> i32 {
+pub fn mkr_xml_is_name_start(c: u32) -> i32 {
     chars::is_name_start(c) as i32
 }
 
-pub extern "C" fn mkr_xml_is_name_char(c: u32) -> i32 {
+pub fn mkr_xml_is_name_char(c: u32) -> i32 {
     chars::is_name_char(c) as i32
 }
 
-pub unsafe extern "C" fn mkr_xml_validate_name(src: *const c_char, len: u32) -> i32 {
+pub unsafe fn mkr_xml_validate_name(src: *const c_char, len: u32) -> i32 {
     if chars::validate_name(bytes(src, len)) {
         0
     } else {
@@ -266,11 +250,11 @@ pub unsafe extern "C" fn mkr_xml_validate_name(src: *const c_char, len: u32) -> 
     }
 }
 
-pub unsafe extern "C" fn mkr_xml_is_reserved_pi_target(s: *const c_char, len: u32) -> i32 {
+pub unsafe fn mkr_xml_is_reserved_pi_target(s: *const c_char, len: u32) -> i32 {
     chars::is_reserved_pi_target(bytes(s, len)) as i32
 }
 
-pub unsafe extern "C" fn mkr_xml_expand(
+pub unsafe fn mkr_xml_expand(
     doc: *mut Doc,
     src: *const c_char,
     len: u32,
@@ -308,15 +292,15 @@ pub unsafe extern "C" fn mkr_xml_expand(
 
 /* ---- mutation (mkr_xml_mutate.h) ---- */
 
-pub unsafe extern "C" fn mkr_xml_detach(node: *mut Node) {
+pub unsafe fn mkr_xml_detach(node: *mut Node) {
     mutate::detach(node)
 }
 
-pub unsafe extern "C" fn mkr_xml_remove(doc: *mut Doc, node: *mut Node) {
+pub unsafe fn mkr_xml_remove(doc: *mut Doc, node: *mut Node) {
     mutate::remove(doc, node)
 }
 
-pub unsafe extern "C" fn mkr_xml_replace_with_fragment(
+pub unsafe fn mkr_xml_replace_with_fragment(
     doc: *mut Doc,
     target: *mut Node,
     frag: *mut Node,
@@ -324,7 +308,7 @@ pub unsafe extern "C" fn mkr_xml_replace_with_fragment(
     mutate::replace_with_fragment(doc, target, frag)
 }
 
-pub unsafe extern "C" fn mkr_xml_rename(
+pub unsafe fn mkr_xml_rename(
     doc: *mut Doc,
     node: *mut Node,
     name: *const c_char,
@@ -333,7 +317,7 @@ pub unsafe extern "C" fn mkr_xml_rename(
     mutate::rename(doc, node, bytes(name, nlen))
 }
 
-pub unsafe extern "C" fn mkr_xml_set_attribute(
+pub unsafe fn mkr_xml_set_attribute(
     doc: *mut Doc,
     el: *mut Node,
     name: *const c_char,
@@ -345,15 +329,11 @@ pub unsafe extern "C" fn mkr_xml_set_attribute(
     mutate::set_attribute(doc, el, bytes(name, nlen), bytes(val, vlen), out)
 }
 
-pub unsafe extern "C" fn mkr_xml_remove_attribute(
-    el: *mut Node,
-    name: *const c_char,
-    nlen: u32,
-) -> i32 {
+pub unsafe fn mkr_xml_remove_attribute(el: *mut Node, name: *const c_char, nlen: u32) -> i32 {
     mutate::remove_attribute(el, bytes(name, nlen))
 }
 
-pub unsafe extern "C" fn mkr_xml_set_attribute_ns(
+pub unsafe fn mkr_xml_set_attribute_ns(
     doc: *mut Doc,
     el: *mut Node,
     ns: *const c_char,
@@ -374,7 +354,7 @@ pub unsafe extern "C" fn mkr_xml_set_attribute_ns(
     )
 }
 
-pub unsafe extern "C" fn mkr_xml_remove_attribute_ns(
+pub unsafe fn mkr_xml_remove_attribute_ns(
     el: *mut Node,
     ns: *const c_char,
     nslen: u32,
@@ -384,7 +364,7 @@ pub unsafe extern "C" fn mkr_xml_remove_attribute_ns(
     mutate::remove_attribute_ns(el, bytes(ns, nslen), bytes(local, llen))
 }
 
-pub unsafe extern "C" fn mkr_xml_set_content(
+pub unsafe fn mkr_xml_set_content(
     doc: *mut Doc,
     node: *mut Node,
     text: *const c_char,
@@ -393,7 +373,7 @@ pub unsafe extern "C" fn mkr_xml_set_content(
     mutate::set_content(doc, node, bytes(text, tlen))
 }
 
-pub unsafe extern "C" fn mkr_xml_new_element(
+pub unsafe fn mkr_xml_new_element(
     doc: *mut Doc,
     name: *const c_char,
     nlen: u32,
@@ -402,7 +382,7 @@ pub unsafe extern "C" fn mkr_xml_new_element(
     mutate::new_element(doc, bytes(name, nlen), out)
 }
 
-pub unsafe extern "C" fn mkr_xml_new_loose_dom_element(
+pub unsafe fn mkr_xml_new_loose_dom_element(
     doc: *mut Doc,
     qn: *const QName,
     ns: *const c_char,
@@ -412,7 +392,7 @@ pub unsafe extern "C" fn mkr_xml_new_loose_dom_element(
     mutate::new_loose_dom_element(doc, qn, bytes(ns, nslen), out)
 }
 
-pub unsafe extern "C" fn mkr_xml_new_document_type(
+pub unsafe fn mkr_xml_new_document_type(
     doc: *mut Doc,
     name: *const c_char,
     nlen: u32,
@@ -435,7 +415,7 @@ pub unsafe extern "C" fn mkr_xml_new_document_type(
     mutate::new_document_type(doc, bytes(name, nlen), p, s, out)
 }
 
-pub unsafe extern "C" fn mkr_xml_new_chardata(
+pub unsafe fn mkr_xml_new_chardata(
     doc: *mut Doc,
     type_: u8,
     text: *const c_char,
@@ -445,7 +425,7 @@ pub unsafe extern "C" fn mkr_xml_new_chardata(
     mutate::new_chardata(doc, type_ as u32, bytes(text, tlen), out)
 }
 
-pub unsafe extern "C" fn mkr_xml_new_pi(
+pub unsafe fn mkr_xml_new_pi(
     doc: *mut Doc,
     target: *const c_char,
     tlen: u32,
@@ -456,15 +436,11 @@ pub unsafe extern "C" fn mkr_xml_new_pi(
     mutate::new_pi(doc, bytes(target, tlen), bytes(data, dlen), out)
 }
 
-pub unsafe extern "C" fn mkr_xml_import_subtree(
-    doc: *mut Doc,
-    src: *const Node,
-    out: *mut *mut Node,
-) -> i32 {
+pub unsafe fn mkr_xml_import_subtree(doc: *mut Doc, src: *const Node, out: *mut *mut Node) -> i32 {
     mutate::import_subtree(doc, src, out)
 }
 
-pub unsafe extern "C" fn mkr_xml_copy_node(
+pub unsafe fn mkr_xml_copy_node(
     doc: *mut Doc,
     src: *const Node,
     deep: i32,
@@ -473,7 +449,7 @@ pub unsafe extern "C" fn mkr_xml_copy_node(
     mutate::copy_node(doc, src, deep != 0, out)
 }
 
-pub unsafe extern "C" fn mkr_xml_clone_node(
+pub unsafe fn mkr_xml_clone_node(
     doc: *mut Doc,
     src: *const Node,
     deep: bool,
@@ -482,45 +458,37 @@ pub unsafe extern "C" fn mkr_xml_clone_node(
     mutate::clone_node(doc, src, deep, out)
 }
 
-pub unsafe extern "C" fn mkr_xml_insert_child(
-    doc: *mut Doc,
-    parent: *mut Node,
-    node: *mut Node,
-) -> i32 {
+pub unsafe fn mkr_xml_insert_child(doc: *mut Doc, parent: *mut Node, node: *mut Node) -> i32 {
     mutate::insert_child(doc, parent, node)
 }
 
-pub unsafe extern "C" fn mkr_xml_insert_before(
-    doc: *mut Doc,
-    r: *mut Node,
-    node: *mut Node,
-) -> i32 {
+pub unsafe fn mkr_xml_insert_before(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
     mutate::insert_before(doc, r, node)
 }
 
-pub unsafe extern "C" fn mkr_xml_insert_after(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+pub unsafe fn mkr_xml_insert_after(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
     mutate::insert_after(doc, r, node)
 }
 
-pub unsafe extern "C" fn mkr_xml_replace_node(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
+pub unsafe fn mkr_xml_replace_node(doc: *mut Doc, r: *mut Node, node: *mut Node) -> i32 {
     mutate::replace_node(doc, r, node)
 }
 
 /* ---- element-name index (mkr_xml_index.h) ---- */
 
-pub unsafe extern "C" fn mkr_xml_name_index_get(doc: *mut Doc) -> *mut index::NameIndex {
+pub unsafe fn mkr_xml_name_index_get(doc: *mut Doc) -> *mut index::NameIndex {
     index::get(doc)
 }
 
-pub unsafe extern "C" fn mkr_xml_name_index_invalidate(doc: *mut Doc) {
+pub unsafe fn mkr_xml_name_index_invalidate(doc: *mut Doc) {
     index::invalidate(doc)
 }
 
-pub unsafe extern "C" fn mkr_xml_name_index_free(idx: *mut index::NameIndex) {
+pub unsafe fn mkr_xml_name_index_free(idx: *mut index::NameIndex) {
     index::free(idx)
 }
 
-pub unsafe extern "C" fn mkr_xml_name_index_lookup(
+pub unsafe fn mkr_xml_name_index_lookup(
     idx: *const index::NameIndex,
     local: *const c_char,
     local_len: usize,

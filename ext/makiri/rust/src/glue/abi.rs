@@ -436,12 +436,12 @@ mod agree {
     same_signature!(
         mkr_verify_text,
         crate::bridge::string::mkr_verify_text,
-        unsafe extern "C" fn(VALUE, *const c_char)
+        unsafe fn(VALUE, *const c_char)
     );
     same_signature!(
         mkr_ruby_verified_text,
         crate::bridge::string::mkr_ruby_verified_text,
-        unsafe extern "C" fn(VALUE, *const c_char) -> RubyText
+        unsafe fn(VALUE, *const c_char) -> RubyText
     );
 
     same_signature!(

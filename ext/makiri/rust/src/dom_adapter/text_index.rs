@@ -287,7 +287,7 @@ impl TextIndex {
  * ------------------------------------------------------------------ */
 
 /// Free an index. NULL-safe, so `mkr_parsed_destroy` can call it unconditionally.
-pub unsafe extern "C" fn mkr_text_index_free(idx: *mut c_void) {
+pub unsafe fn mkr_text_index_free(idx: *mut c_void) {
     if !idx.is_null() {
         drop(Box::from_raw(idx as *mut TextIndex));
     }
@@ -297,7 +297,7 @@ pub unsafe extern "C" fn mkr_text_index_free(idx: *mut c_void) {
 ///
 /// This is the whole safety protocol for the borrowed slices: EVERY mutation
 /// reaches here, so no cached slice outlives the storage it points into.
-pub unsafe extern "C" fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
+pub unsafe fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
     if p.is_null() || (*p).text_index.is_null() {
         return;
     }
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
 /// Returns 1 with `*out_slices` / `*out_n` / `*out_bytes` set, or 0 - meaning
 /// "walk instead", for a node outside the indexed tree (a fragment) or a build
 /// that could not allocate. Never a shorter run than the truth.
-pub unsafe extern "C" fn mkr_parsed_text_slices(
+pub unsafe fn mkr_parsed_text_slices(
     p: *mut Parsed,
     node: *const LxbNode,
     out_slices: *mut *const BorrowedText,

@@ -19,11 +19,7 @@ use core::ptr;
 /// The one AST factory: charges the node budget, then hands back a zeroed node
 /// with its kind set. The XPath parser and the CSS lowering both go through it,
 /// which is what keeps `mkr_node_free` able to take apart whatever either built.
-pub unsafe extern "C" fn mkr_node_alloc(
-    limits: *mut Limits,
-    err: *mut Error,
-    kind: u32,
-) -> *mut Node {
+pub unsafe fn mkr_node_alloc(limits: *mut Limits, err: *mut Error, kind: u32) -> *mut Node {
     if mkr_limit_ast_node(limits, err) != 0 {
         return ptr::null_mut();
     }
@@ -36,7 +32,7 @@ pub unsafe extern "C" fn mkr_node_alloc(
     n
 }
 
-pub unsafe extern "C" fn mkr_step_clear(s: *mut Step) {
+pub unsafe fn mkr_step_clear(s: *mut Step) {
     if s.is_null() {
         return;
     }
@@ -113,7 +109,7 @@ unsafe fn is_ci(n: *const Node) -> bool {
     !n.is_null() && (*n).is_context_independent != 0
 }
 
-pub unsafe extern "C" fn mkr_mark_context_independent(n: *mut Node) {
+pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
     if n.is_null() {
         return;
     }
@@ -236,7 +232,7 @@ unsafe fn peephole_step_predicates(s: *const Step) {
     }
 }
 
-pub unsafe extern "C" fn mkr_apply_peephole(n: *mut Node) {
+pub unsafe fn mkr_apply_peephole(n: *mut Node) {
     if n.is_null() {
         return;
     }
@@ -286,7 +282,7 @@ unsafe fn clear_memos_step(s: *const Step) {
     }
 }
 
-pub unsafe extern "C" fn mkr_node_clear_memos(n: *mut Node) {
+pub unsafe fn mkr_node_clear_memos(n: *mut Node) {
     if n.is_null() {
         return;
     }
@@ -329,7 +325,7 @@ pub unsafe extern "C" fn mkr_node_clear_memos(n: *mut Node) {
     }
 }
 
-pub unsafe extern "C" fn mkr_node_free(n: *mut Node) {
+pub unsafe fn mkr_node_free(n: *mut Node) {
     if n.is_null() {
         return;
     }

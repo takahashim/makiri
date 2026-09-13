@@ -154,7 +154,7 @@ unsafe fn content_limit(b: &Buf) -> usize {
 ///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
-pub unsafe extern "C" fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
+pub unsafe fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
     if n == 0 {
         return MKR_OK;
     }
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: us
 ///
 /// # Safety
 /// `b` must be a live buffer.
-pub unsafe extern "C" fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
+pub unsafe fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
     let b = &mut *b;
     let n = n.min(content_limit(b));
     let need_term = match n.checked_add(1) {
@@ -251,7 +251,7 @@ pub unsafe extern "C" fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
 ///
 /// # Safety
 /// `b` must be a live buffer; `out_len` must be NULL or writable.
-pub unsafe extern "C" fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
+pub unsafe fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
     let b = &mut *b;
     if b.data.is_null() {
         let empty = if crate::falloc::should_fail() {

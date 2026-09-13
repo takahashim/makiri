@@ -100,7 +100,7 @@ unsafe fn over_expr_bytes(bytes: usize, max: usize, err: *mut Error) -> c_int {
 ///
 /// # Safety
 /// `l` must point to a writable `mkr_xpath_limits_t`.
-pub unsafe extern "C" fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
+pub unsafe fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
     *l = Limits {
         max_expr_bytes: 64 * 1024, /* 64 KB XPath string */
         max_ast_nodes: 100_000,
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
     };
 }
 
-pub unsafe extern "C" fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> c_int {
+pub unsafe fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> c_int {
     if (*l).ast_nodes >= (*l).max_ast_nodes {
         return over_ast_nodes(l, err);
     }
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> 
 /// Kept deliberately uniform, with no bulk variant: a bulk charge would only
 /// suit run-to-completion loops and would wrongly reject an early-exiting query
 /// if misapplied, trading one foot-gun-free rule for a conditional one.
-pub unsafe extern "C" fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> c_int {
+pub unsafe fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> c_int {
     if (*l).eval_ops >= (*l).max_eval_ops {
         return over_eval_ops(l, err);
     }
@@ -144,7 +144,7 @@ pub unsafe extern "C" fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> c
     0
 }
 
-pub unsafe extern "C" fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> c_int {
+pub unsafe fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> c_int {
     if (*l).recursion_depth >= (*l).max_recursion_depth {
         /* The C increments, reports, then backs the failed entry out; comparing
          * first never counts it in the first place. */
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error
     0
 }
 
-pub unsafe extern "C" fn mkr_limit_recurse_leave(l: *mut Limits) {
+pub unsafe fn mkr_limit_recurse_leave(l: *mut Limits) {
     if (*l).recursion_depth > 0 {
         (*l).recursion_depth -= 1;
     }
@@ -169,7 +169,7 @@ unsafe fn check(value: usize, max: usize, noun: &str, err: *mut Error) -> c_int 
     0
 }
 
-pub unsafe extern "C" fn mkr_limit_check_nodeset_size(
+pub unsafe fn mkr_limit_check_nodeset_size(
     l: *mut Limits,
     new_count: usize,
     err: *mut Error,
@@ -177,38 +177,22 @@ pub unsafe extern "C" fn mkr_limit_check_nodeset_size(
     check(new_count, (*l).max_nodeset_size, "nodeset size", err)
 }
 
-pub unsafe extern "C" fn mkr_limit_check_string_bytes(
-    l: *mut Limits,
-    bytes: usize,
-    err: *mut Error,
-) -> c_int {
+pub unsafe fn mkr_limit_check_string_bytes(l: *mut Limits, bytes: usize, err: *mut Error) -> c_int {
     if bytes > (*l).max_string_bytes {
         return over_string_bytes((*l).max_string_bytes, err);
     }
     0
 }
 
-pub unsafe extern "C" fn mkr_limit_check_steps(
-    l: *mut Limits,
-    nsteps: usize,
-    err: *mut Error,
-) -> c_int {
+pub unsafe fn mkr_limit_check_steps(l: *mut Limits, nsteps: usize, err: *mut Error) -> c_int {
     check(nsteps, (*l).max_steps, "path step count", err)
 }
 
-pub unsafe extern "C" fn mkr_limit_check_predicates(
-    l: *mut Limits,
-    npreds: usize,
-    err: *mut Error,
-) -> c_int {
+pub unsafe fn mkr_limit_check_predicates(l: *mut Limits, npreds: usize, err: *mut Error) -> c_int {
     check(npreds, (*l).max_predicates, "predicate count", err)
 }
 
-pub unsafe extern "C" fn mkr_limit_check_func_args(
-    l: *mut Limits,
-    nargs: usize,
-    err: *mut Error,
-) -> c_int {
+pub unsafe fn mkr_limit_check_func_args(l: *mut Limits, nargs: usize, err: *mut Error) -> c_int {
     check(
         nargs,
         (*l).max_function_args,
@@ -217,11 +201,7 @@ pub unsafe extern "C" fn mkr_limit_check_func_args(
     )
 }
 
-pub unsafe extern "C" fn mkr_limit_check_expr_bytes(
-    l: *mut Limits,
-    bytes: usize,
-    err: *mut Error,
-) -> c_int {
+pub unsafe fn mkr_limit_check_expr_bytes(l: *mut Limits, bytes: usize, err: *mut Error) -> c_int {
     if bytes > (*l).max_expr_bytes {
         return over_expr_bytes(bytes, (*l).max_expr_bytes, err);
     }

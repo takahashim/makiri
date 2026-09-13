@@ -891,11 +891,7 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-pub unsafe extern "C" fn mkr_parse(
-    expr: VerifiedText,
-    limits: *mut Limits,
-    err: *mut Error,
-) -> *mut Node {
+pub unsafe fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
     if limits.is_null() {
         err_setf!(err, XP_ERR_INTERNAL, "mkr_parse: limits required");
         return ptr::null_mut();

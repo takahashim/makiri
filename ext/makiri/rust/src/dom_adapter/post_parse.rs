@@ -180,11 +180,7 @@ unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc
 /// `assume_valid` skips the UTF-8 validation scan entirely - the caller has
 /// already proved the bytes valid, typically from a Ruby String's cached
 /// coderange. NULL on failure.
-pub unsafe extern "C" fn mkr_parse_html(
-    src: *const u8,
-    len: usize,
-    assume_valid: bool,
-) -> *mut Parsed {
+pub unsafe fn mkr_parse_html(src: *const u8, len: usize, assume_valid: bool) -> *mut Parsed {
     if src.is_null() && len != 0 {
         return core::ptr::null_mut();
     }
@@ -236,7 +232,7 @@ pub unsafe extern "C" fn mkr_parse_html(
 }
 
 /// Free a parse handle and everything it owns.
-pub unsafe extern "C" fn mkr_parsed_destroy(p: *mut Parsed) {
+pub unsafe fn mkr_parsed_destroy(p: *mut Parsed) {
     if p.is_null() {
         return;
     }
@@ -264,21 +260,21 @@ pub unsafe extern "C" fn mkr_parsed_destroy(p: *mut Parsed) {
 
 /* ---- document-kind accessors ---- */
 
-pub unsafe extern "C" fn mkr_parsed_kind(p: *const Parsed) -> u32 {
+pub unsafe fn mkr_parsed_kind(p: *const Parsed) -> u32 {
     (*p).kind
 }
 
 /// The HTML document. The C asserted the kind; here the assert is a debug one
 /// for the same reason - a caller that gets this wrong has a bug the release
 /// build cannot usefully recover from, and every caller checks `kind` first.
-pub unsafe extern "C" fn mkr_parsed_html_doc(p: *const Parsed) -> *mut HtmlDoc {
+pub unsafe fn mkr_parsed_html_doc(p: *const Parsed) -> *mut HtmlDoc {
     debug_assert_eq!((*p).kind, DOC_KIND_HTML);
     (*p).doc as *mut HtmlDoc
 }
 
 /// Wrap an owned XML arena in a `kind = XML` handle. `xdoc` may be NULL
 /// initially and set later, so a mid-parse failure still frees cleanly.
-pub unsafe extern "C" fn mkr_parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
+pub unsafe fn mkr_parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
     try_box_raw(Parsed {
         doc: xdoc,
         kind: DOC_KIND_XML,
@@ -288,12 +284,12 @@ pub unsafe extern "C" fn mkr_parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
     })
 }
 
-pub unsafe extern "C" fn mkr_parsed_xml_doc(p: *const Parsed) -> *mut c_void {
+pub unsafe fn mkr_parsed_xml_doc(p: *const Parsed) -> *mut c_void {
     debug_assert_eq!((*p).kind, DOC_KIND_XML);
     (*p).doc
 }
 
-pub unsafe extern "C" fn mkr_parsed_set_xml_doc(p: *mut Parsed, xdoc: *mut c_void) {
+pub unsafe fn mkr_parsed_set_xml_doc(p: *mut Parsed, xdoc: *mut c_void) {
     debug_assert_eq!((*p).kind, DOC_KIND_XML);
     (*p).doc = xdoc;
 }
@@ -325,7 +321,7 @@ unsafe fn mem_used(mem: *const lxb::lexbor_mem_t) -> usize {
 
 /// The live bytes in a node's document arena, which the serializers size their
 /// buffer from.
-pub unsafe extern "C" fn mkr_lxb_document_bytes(node: *mut LxbNode) -> usize {
+pub unsafe fn mkr_lxb_document_bytes(node: *mut LxbNode) -> usize {
     if node.is_null() {
         return 0;
     }

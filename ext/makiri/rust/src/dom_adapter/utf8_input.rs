@@ -117,7 +117,7 @@ unsafe fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
 /// common case), which tells the caller to use `src` as-is with no copy.
 /// Otherwise `*out` receives a freshly `malloc`'d, NUL-terminated replacement
 /// the caller owns and `free()`s, with `*out_len` its length. Returns -1 on OOM.
-pub unsafe extern "C" fn mkr_utf8_sanitize(
+pub unsafe fn mkr_utf8_sanitize(
     src: *const u8,
     len: usize,
     out: *mut *mut u8,

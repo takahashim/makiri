@@ -16,7 +16,7 @@ use core::ffi::{c_int, c_void};
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-pub unsafe extern "C" fn mkr_eval_ast_html(
+pub unsafe fn mkr_eval_ast_html(
     ctx: *mut Context,
     ast: *const Node,
     out: *mut Val,
@@ -37,7 +37,7 @@ pub unsafe extern "C" fn mkr_eval_ast_html(
 /// # Safety
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
-pub unsafe extern "C" fn mkr_try_first_match_html(
+pub unsafe fn mkr_try_first_match_html(
     ctx: *mut Context,
     ast: *const Node,
     out_node: *mut *mut c_void,

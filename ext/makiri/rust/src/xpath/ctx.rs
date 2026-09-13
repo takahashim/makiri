@@ -186,10 +186,7 @@ unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
 
 /* ---------- lifetime ---------- */
 
-pub unsafe extern "C" fn mkr_xpath_context_new(
-    doc: *mut c_void,
-    node: *mut c_void,
-) -> *mut Context {
+pub unsafe fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut Context {
     // Null on failure: `mkr_xpath_context_new` already documents null as its
     // OOM answer (the C version returned it from mkr_callocarray), and every
     // caller checks. Aborting here would take the host process down for a
@@ -222,7 +219,7 @@ pub unsafe extern "C" fn mkr_xpath_context_new(
     Box::into_raw(ctx)
 }
 
-pub unsafe extern "C" fn mkr_xpath_context_free(ctx: *mut Context) {
+pub unsafe fn mkr_xpath_context_free(ctx: *mut Context) {
     if ctx.is_null() {
         return;
     }
@@ -243,7 +240,7 @@ pub unsafe extern "C" fn mkr_xpath_context_free(ctx: *mut Context) {
 
 /* ---------- registries ---------- */
 
-pub unsafe extern "C" fn mkr_xpath_register_ns(
+pub unsafe fn mkr_xpath_register_ns(
     ctx: *mut Context,
     prefix: VerifiedText,
     uri: VerifiedText,
@@ -278,7 +275,7 @@ pub unsafe extern "C" fn mkr_xpath_register_ns(
     0
 }
 
-pub unsafe extern "C" fn mkr_xpath_register_variable_string(
+pub unsafe fn mkr_xpath_register_variable_string(
     ctx: *mut Context,
     name: VerifiedText,
     value: VerifiedText,
@@ -317,7 +314,7 @@ pub unsafe extern "C" fn mkr_xpath_register_variable_string(
     0
 }
 
-pub unsafe extern "C" fn mkr_ctx_lookup_ns(
+pub unsafe fn mkr_ctx_lookup_ns(
     ctx: *mut Context,
     prefix: *const c_char,
     prefix_len: usize,
@@ -344,7 +341,7 @@ pub unsafe extern "C" fn mkr_ctx_lookup_ns(
     ptr::null()
 }
 
-pub unsafe extern "C" fn mkr_ctx_lookup_variable_text(
+pub unsafe fn mkr_ctx_lookup_variable_text(
     ctx: *mut Context,
     prefix: *const c_char,
     prefix_len: usize,
@@ -387,7 +384,7 @@ pub unsafe extern "C" fn mkr_ctx_lookup_variable_text(
 
 macro_rules! getter {
     ($name:ident, $ty:ty, $field:ident, $null:expr) => {
-        pub unsafe extern "C" fn $name(ctx: *mut Context) -> $ty {
+        pub unsafe fn $name(ctx: *mut Context) -> $ty {
             if ctx.is_null() {
                 $null
             } else {
@@ -434,7 +431,7 @@ getter!(
 );
 getter!(mkr_ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
 
-pub unsafe extern "C" fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
+pub unsafe fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
@@ -442,7 +439,7 @@ pub unsafe extern "C" fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
     }
 }
 
-pub unsafe extern "C" fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
+pub unsafe fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
@@ -450,7 +447,7 @@ pub unsafe extern "C" fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
     }
 }
 
-pub unsafe extern "C" fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
+pub unsafe fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
@@ -458,40 +455,37 @@ pub unsafe extern "C" fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderInd
     }
 }
 
-pub unsafe extern "C" fn mkr_ctx_set_node(ctx: *mut Context, node: *mut c_void) {
+pub unsafe fn mkr_ctx_set_node(ctx: *mut Context, node: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).node = node;
     }
 }
 
-pub unsafe extern "C" fn mkr_ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
+pub unsafe fn mkr_ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
     if !ctx.is_null() {
         (*ctx).unprefixed_lax = c_int::from(lax != 0);
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_set_engine_kind(ctx: *mut Context, kind: c_int) {
+pub unsafe fn mkr_xpath_set_engine_kind(ctx: *mut Context, kind: c_int) {
     if !ctx.is_null() {
         (*ctx).engine_kind = c_int::from(kind != 0);
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_context_set_user_data(
-    ctx: *mut Context,
-    user_data: *mut c_void,
-) {
+pub unsafe fn mkr_xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).user_data = user_data;
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
+pub unsafe fn mkr_xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
     if !ctx.is_null() {
         (*ctx).func_resolver = resolver;
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_context_set_element_index(
+pub unsafe fn mkr_xpath_context_set_element_index(
     ctx: *mut Context,
     index: *mut c_void,
     lookup: TagIndexLookup,
@@ -504,7 +498,7 @@ pub unsafe extern "C" fn mkr_xpath_context_set_element_index(
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_context_set_name_index(
+pub unsafe fn mkr_xpath_context_set_name_index(
     ctx: *mut Context,
     owner: *mut c_void,
     get: NameIndexGet,
@@ -521,7 +515,7 @@ pub unsafe extern "C" fn mkr_xpath_context_set_name_index(
 /// included. The glue uses it to refuse register_namespace / register_variable /
 /// node= re-entered from a handler mid-walk: those mutate the live registration
 /// tables or the context node the suspended evaluator still borrows.
-pub unsafe extern "C" fn mkr_ctx_is_evaluating(ctx: *mut Context) -> c_int {
+pub unsafe fn mkr_ctx_is_evaluating(ctx: *mut Context) -> c_int {
     c_int::from(!ctx.is_null() && (*ctx).evaluating > 0)
 }
 
@@ -543,7 +537,7 @@ unsafe fn to_public(v: &Val, out: *mut XPathValue) {
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_eval_compiled(
+pub unsafe fn mkr_xpath_eval_compiled(
     ctx: *mut Context,
     ast: *mut Node,
     out_value: *mut XPathValue,
@@ -619,7 +613,7 @@ pub unsafe extern "C" fn mkr_xpath_eval_compiled(
     0
 }
 
-pub unsafe extern "C" fn mkr_xpath_eval_compiled_first(
+pub unsafe fn mkr_xpath_eval_compiled_first(
     ctx: *mut Context,
     ast: *mut Node,
     out_value: *mut XPathValue,
