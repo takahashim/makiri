@@ -184,8 +184,10 @@ pub unsafe extern "C" fn mkr_mark_context_independent(n: *mut Node) {
 
 /// Collapse each pair of consecutive steps
 ///
-///     (descendant-or-self, node(), no predicates)
-///     (child,             X,       no predicates)
+/// ```text
+/// (descendant-or-self, node(), no predicates)
+/// (child,             X,       no predicates)
+/// ```
 ///
 /// into one `(descendant, X, no predicates)`.
 ///

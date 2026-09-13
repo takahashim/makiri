@@ -472,9 +472,11 @@ unsafe fn union_nodeset<D: Dom>(
 ///
 /// Recognised, after the parser's `//` peephole:
 ///
-///     //X        .//X          -> PATH [ {descendant, X} ]
-///     //X[@a..]  .//X[@a..]    -> PATH [ {desc-or-self, node()}, {child, X, preds} ]
-///     descendant::X[@a..]      -> PATH [ {descendant, X, preds} ]
+/// ```text
+/// //X        .//X          -> PATH [ {descendant, X} ]
+/// //X[@a..]  .//X[@a..]    -> PATH [ {desc-or-self, node()}, {child, X, preds} ]
+/// descendant::X[@a..]      -> PATH [ {descendant, X, preds} ]
+/// ```
 ///
 /// where every predicate is a position-independent `[@name]` / `[@name='lit']`.
 /// Each denotes "the strict descendants of the start node matching the test and

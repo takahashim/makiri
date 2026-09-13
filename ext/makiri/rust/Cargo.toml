@@ -74,6 +74,21 @@ debug = false
 [profile.dev]
 panic = "abort"
 
+# Examples are Ruby-free benchmarks/probes over the vendored Lexbor. They use
+# modules gated behind the `lexbor` feature, so cargo should skip building them
+# when that feature is off (e.g. `cargo test --no-default-features`).
+[[example]]
+name = "probe"
+required-features = ["lexbor"]
+
+[[example]]
+name = "idxbench"
+required-features = ["lexbor"]
+
+[[example]]
+name = "idclass"
+required-features = ["lexbor"]
+
 [build-dependencies]
 # Reads the vendored Lexbor headers so the layout is not transcribed by hand.
 # libclang is already required by rb-sys, so this adds no new system dependency.
