@@ -1,7 +1,7 @@
 //! The HTML fragment pipeline (was part of glue/ruby_doc.c).
 //!
 //! Parsing a fragment, importing its children into a document, and the
-//! `<template>`-content fixup that `lxb_dom_document_import_node` omits. Seven
+//! `<template>`-content fixup that `lxb_dom_document_import_node` omits. Five
 //! of these are exported C symbols, called by `ruby_html_mutate.c` and
 //! `cross_import.c`.
 //!
@@ -227,28 +227,6 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
             len: clean_len,
             owned: clean,
         })
-    }
-}
-
-/// The C ABI face of [`sanitize_html_input`]: `-1` on OOM with nothing
-/// allocated, so the caller can release its parser before raising. `*owned` is
-/// the caller's to `free`.
-pub unsafe extern "C" fn mkr_sanitize_html_input(
-    html: VALUE,
-    out: *mut *const u8,
-    out_len: *mut usize,
-    owned: *mut *mut u8,
-) -> c_int {
-    match sanitize_html_input(html) {
-        None => -1,
-        Some(mut s) => {
-            *out = s.ptr;
-            *out_len = s.len;
-            *owned = s.owned;
-            // Ownership passes to the caller, so `Drop` must not free it.
-            s.owned = core::ptr::null_mut();
-            0
-        }
     }
 }
 
