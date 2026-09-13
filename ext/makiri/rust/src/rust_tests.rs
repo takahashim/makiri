@@ -237,10 +237,7 @@ fn growth_policy_never_shrinks_a_live_allocation_for_non_empty_need() {
                     // `need` itself did not fit; the function is allowed to fail.
                     continue;
                 };
-                assert!(
-                    next >= cap,
-                    "cap={cap} need={need} elem={elem} next={next}"
-                );
+                assert!(next >= cap, "cap={cap} need={need} elem={elem} next={next}");
             }
         }
     }
