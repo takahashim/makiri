@@ -43,10 +43,12 @@ fn grow_capacity_covers_need_without_overflow() {
                 nc.checked_mul(ELEM).is_some(),
                 "the byte size of the new capacity must not overflow"
             );
-            // Only for a `cap` that could describe a live allocation; a
-            // `cap` whose byte size overflows is not one, and the function
-            // deliberately starts over from 8 in that case.
-            if cap != 0 && cap >= need && cap.checked_mul(ELEM).is_some() {
+            // Only for a `cap` that could describe a live allocation AND a
+            // non-empty request. An empty request deliberately returns 0
+            // ("no allocation is required for an empty request"), which is
+            // smaller than any live `cap`; that is a contract exception, not a
+            // shrink.
+            if cap != 0 && cap >= need && need > 0 && cap.checked_mul(ELEM).is_some() {
                 assert!(nc >= cap, "growth must never shrink a live allocation");
             }
         }
