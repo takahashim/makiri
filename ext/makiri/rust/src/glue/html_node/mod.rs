@@ -107,8 +107,8 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
 
     /* Fill the struct BEFORE handing it to Ruby: once wrapped, the object is
      * reachable and a GC would run the type's mark over whatever is there. */
-    let nd = rb_sys::ruby_xmalloc(core::mem::size_of::<NodeData>() as rb_sys::size_t)
-        as *mut NodeData;
+    let nd =
+        rb_sys::ruby_xmalloc(core::mem::size_of::<NodeData>() as rb_sys::size_t) as *mut NodeData;
     (*nd).node = node as *mut c_void;
     (*nd).document = document;
     rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, mkr_html_node_type.as_ptr())
@@ -179,32 +179,46 @@ pub unsafe extern "C" fn mkr_init_node() {
     let _ = Ruby::get_unchecked();
     let m = html_node_methods();
 
-    m.define_method("name", method!(read::name, 0)).expect("#name");
+    m.define_method("name", method!(read::name, 0))
+        .expect("#name");
     m.define_method("namespace_uri", method!(read::namespace_uri, 0))
         .expect("#namespace_uri");
-    m.define_method("prefix", method!(read::prefix, 0)).expect("#prefix");
-    m.define_method("local_name", method!(read::local_name, 0)).expect("#local_name");
-    m.define_method("tag_name", method!(read::tag_name, 0)).expect("#tag_name");
-    m.define_method("target", method!(read::pi_target, 0)).expect("#target");
-    m.define_method("node_type", method!(read::node_type, 0)).expect("#node_type");
+    m.define_method("prefix", method!(read::prefix, 0))
+        .expect("#prefix");
+    m.define_method("local_name", method!(read::local_name, 0))
+        .expect("#local_name");
+    m.define_method("tag_name", method!(read::tag_name, 0))
+        .expect("#tag_name");
+    m.define_method("target", method!(read::pi_target, 0))
+        .expect("#target");
+    m.define_method("node_type", method!(read::node_type, 0))
+        .expect("#node_type");
     for name in ["content", "text", "inner_text"] {
-        m.define_method(name, method!(read::content, 0)).expect("#content");
+        m.define_method(name, method!(read::content, 0))
+            .expect("#content");
     }
 
-    m.define_method("document", method!(read::get_document, 0)).expect("#document");
-    m.define_method("parent", method!(read::parent, 0)).expect("#parent");
+    m.define_method("document", method!(read::get_document, 0))
+        .expect("#document");
+    m.define_method("parent", method!(read::parent, 0))
+        .expect("#parent");
     for name in ["next", "next_sibling"] {
-        m.define_method(name, method!(read::next, 0)).expect("#next");
+        m.define_method(name, method!(read::next, 0))
+            .expect("#next");
     }
     for name in ["previous", "previous_sibling"] {
-        m.define_method(name, method!(read::previous, 0)).expect("#previous");
+        m.define_method(name, method!(read::previous, 0))
+            .expect("#previous");
     }
-    m.define_method("next_element", method!(read::next_element, 0)).expect("#next_element");
+    m.define_method("next_element", method!(read::next_element, 0))
+        .expect("#next_element");
     m.define_method("previous_element", method!(read::previous_element, 0))
         .expect("#previous_element");
 
-    m.define_method("child", method!(read::child, 0)).expect("#child");
-    m.define_method("children", method!(read::children, 0)).expect("#children");
+    m.define_method("child", method!(read::child, 0))
+        .expect("#child");
+    m.define_method("children", method!(read::children, 0))
+        .expect("#children");
     for name in ["element_children", "elements"] {
         m.define_method(name, method!(read::element_children, 0))
             .expect("#element_children");
@@ -213,12 +227,16 @@ pub unsafe extern "C" fn mkr_init_node() {
         .expect("#first_element_child");
     m.define_method("last_element_child", method!(read::last_element_child, 0))
         .expect("#last_element_child");
-    m.define_method("ancestors", method!(read::ancestors, 0)).expect("#ancestors");
+    m.define_method("ancestors", method!(read::ancestors, 0))
+        .expect("#ancestors");
 
     m.define_method("[]", method!(read::aref, 1)).expect("#[]");
-    m.define_method("key?", method!(read::has_key, 1)).expect("#key?");
-    m.define_method("keys", method!(read::keys, 0)).expect("#keys");
-    m.define_method("values", method!(read::values, 0)).expect("#values");
+    m.define_method("key?", method!(read::has_key, 1))
+        .expect("#key?");
+    m.define_method("keys", method!(read::keys, 0))
+        .expect("#keys");
+    m.define_method("values", method!(read::values, 0))
+        .expect("#values");
     m.define_method("attribute_nodes", method!(read::attribute_nodes, 0))
         .expect("#attribute_nodes");
     m.define_method(
@@ -231,20 +249,22 @@ pub unsafe extern "C" fn mkr_init_node() {
         method!(read::attribute_value_by_qualified_name, 1),
     )
     .expect("#attribute_value_by_qualified_name");
-    m.define_method("value", method!(read::value, 0)).expect("#value");
-    m.define_method("line", method!(read::line, 0)).expect("#line");
+    m.define_method("value", method!(read::value, 0))
+        .expect("#value");
+    m.define_method("line", method!(read::line, 0))
+        .expect("#line");
 
     /* Identity is by the node pointer and shared with the XML side; document
      * order is HTML-only and lives in read.rs. */
     let methods = m.as_raw();
     let equals: RbMethod =
         core::mem::transmute(mkr_node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
-    let hash: RbMethod = core::mem::transmute(mkr_node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
+    let hash: RbMethod =
+        core::mem::transmute(mkr_node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
     let ptr_id: RbMethod =
         core::mem::transmute(mkr_node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
     let clone: RbMethod = core::mem::transmute(
-        mkr_node_clone_node
-            as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
+        mkr_node_clone_node as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
     );
     define_c_method(methods, c"==", equals, 1);
     define_c_method(methods, c"eql?", equals, 1);
@@ -252,16 +272,19 @@ pub unsafe extern "C" fn mkr_init_node() {
     define_c_method(methods, c"pointer_id", ptr_id, 0);
     define_c_method(methods, c"clone_node", clone, -1);
 
-    m.define_method("<=>", method!(read::spaceship, 1)).expect("#<=>");
+    m.define_method("<=>", method!(read::spaceship, 1))
+        .expect("#<=>");
 
     /* DocumentType identifiers (WHATWG DOM names; external_id is the
      * Nokogiri-compatible alias for public_id). */
     let dt = RClass::from_value(Value::from_raw(mkr_cHtmlDocumentType))
         .expect("Makiri::HTML::DocumentType");
     for name in ["public_id", "external_id"] {
-        dt.define_method(name, method!(read::doctype_public_id, 0)).expect("#public_id");
+        dt.define_method(name, method!(read::doctype_public_id, 0))
+            .expect("#public_id");
     }
-    dt.define_method("system_id", method!(read::doctype_system_id, 0)).expect("#system_id");
+    dt.define_method("system_id", method!(read::doctype_system_id, 0))
+        .expect("#system_id");
 
     /* <template> contents (WHATWG DOM HTMLTemplateElement.content). */
     let el = RClass::from_value(Value::from_raw(mkr_cHtmlElement)).expect("Makiri::HTML::Element");
@@ -279,47 +302,67 @@ pub unsafe extern "C" fn mkr_init_mutate() {
     let m = html_node_methods();
     let doc = RClass::from_value(Value::from_raw(mkr_cHtmlDocument)).expect("HTML::Document");
 
-    m.define_method("add_child", method!(mutate::add_child, 1)).expect("#add_child");
-    m.define_method("<<", method!(mutate::lshift, 1)).expect("#<<");
+    m.define_method("add_child", method!(mutate::add_child, 1))
+        .expect("#add_child");
+    m.define_method("<<", method!(mutate::lshift, 1))
+        .expect("#<<");
     for name in ["add_previous_sibling", "before"] {
-        m.define_method(name, method!(mutate::before, 1)).expect("#before");
+        m.define_method(name, method!(mutate::before, 1))
+            .expect("#before");
     }
     for name in ["add_next_sibling", "after"] {
-        m.define_method(name, method!(mutate::after, 1)).expect("#after");
+        m.define_method(name, method!(mutate::after, 1))
+            .expect("#after");
     }
     for name in ["remove", "unlink"] {
-        m.define_method(name, method!(mutate::remove, 0)).expect("#remove");
+        m.define_method(name, method!(mutate::remove, 0))
+            .expect("#remove");
     }
-    m.define_method("replace", method!(mutate::replace, 1)).expect("#replace");
+    m.define_method("replace", method!(mutate::replace, 1))
+        .expect("#replace");
 
-    m.define_method("inner_html=", method!(mutate::set_inner_html, 1)).expect("#inner_html=");
-    m.define_method("outer_html=", method!(mutate::set_outer_html, 1)).expect("#outer_html=");
+    m.define_method("inner_html=", method!(mutate::set_inner_html, 1))
+        .expect("#inner_html=");
+    m.define_method("outer_html=", method!(mutate::set_outer_html, 1))
+        .expect("#outer_html=");
 
-    m.define_method("[]=", method!(mutate::aset, 2)).expect("#[]=");
+    m.define_method("[]=", method!(mutate::aset, 2))
+        .expect("#[]=");
     m.define_method("set_attribute_ns", method!(mutate::set_attribute_ns, 3))
         .expect("#set_attribute_ns");
-    m.define_method("remove_attribute_ns", method!(mutate::remove_attribute_ns, 2))
-        .expect("#remove_attribute_ns");
+    m.define_method(
+        "remove_attribute_ns",
+        method!(mutate::remove_attribute_ns, 2),
+    )
+    .expect("#remove_attribute_ns");
     for name in ["delete", "remove_attribute"] {
-        m.define_method(name, method!(mutate::delete, 1)).expect("#delete");
+        m.define_method(name, method!(mutate::delete, 1))
+            .expect("#delete");
     }
-    m.define_method("content=", method!(mutate::set_content, 1)).expect("#content=");
-    m.define_method("name=", method!(mutate::set_name, 1)).expect("#name=");
+    m.define_method("content=", method!(mutate::set_content, 1))
+        .expect("#content=");
+    m.define_method("name=", method!(mutate::set_name, 1))
+        .expect("#name=");
 
     doc.define_method("create_element", method!(mutate::create_element, 1))
         .expect("#create_element");
-    doc.define_method("create_document_type", method!(mutate::create_document_type, -1))
-        .expect("#create_document_type");
+    doc.define_method(
+        "create_document_type",
+        method!(mutate::create_document_type, -1),
+    )
+    .expect("#create_document_type");
     doc.define_method("create_text_node", method!(mutate::create_text_node, 1))
         .expect("#create_text_node");
     doc.define_method("create_comment", method!(mutate::create_comment, 1))
         .expect("#create_comment");
-    doc.define_method("create_processing_instruction", method!(mutate::create_pi, 2))
-        .expect("#create_processing_instruction");
+    doc.define_method(
+        "create_processing_instruction",
+        method!(mutate::create_pi, 2),
+    )
+    .expect("#create_processing_instruction");
     doc.define_method(
         "create_document_fragment",
         method!(mutate::create_document_fragment, 0),
     )
     .expect("#create_document_fragment");
-
 }

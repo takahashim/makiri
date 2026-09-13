@@ -123,8 +123,6 @@ pub use crate::lexbor_abi::{
 /// for why that one is hand-written where the rest are generated.
 pub use crate::lexbor_abi::lxb_dom_attr_value_noi;
 
-
-
 /* ---- the shims, standing alone ----
  *
  * The three above stayed in C for two stated reasons: two of them reach through
@@ -145,8 +143,7 @@ pub use crate::lexbor_abi::lxb_dom_attr_value_noi;
 
 /// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range. Derived from
 /// the generated enum, so it moves with the Lexbor pin.
-pub const TAG_LAST_ENTRY: usize =
-    crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
+pub const TAG_LAST_ENTRY: usize = crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
 
 /// Borrowed namespace-URI bytes for a node, or NULL with `*len` 0 when it has
 /// none.
@@ -213,4 +210,3 @@ pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf
     );
     st
 }
-

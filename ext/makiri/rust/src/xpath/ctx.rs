@@ -12,8 +12,8 @@
  * contract is the one at the declaration in mkr_xpath.h. */
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::Reserve;
 use super::abi::*;
+use crate::falloc::Reserve;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
@@ -144,11 +144,17 @@ pub use crate::xpath::shared::mkr_str_cache_truncate;
 /* ---------- text slots ---------- */
 
 fn empty_text() -> OwnedText {
-    OwnedText { ptr: ptr::null_mut(), len: 0 }
+    OwnedText {
+        ptr: ptr::null_mut(),
+        len: 0,
+    }
 }
 
 unsafe fn borrowed(t: OwnedText) -> VerifiedText {
-    VerifiedText { ptr: t.ptr, len: t.len }
+    VerifiedText {
+        ptr: t.ptr,
+        len: t.len,
+    }
 }
 
 unsafe fn text_eq(a: OwnedText, b: VerifiedText) -> bool {
@@ -303,7 +309,11 @@ pub unsafe extern "C" fn mkr_xpath_register_variable_string(
             return -1;
         }
     };
-    ctx.vars.push(VarEntry { prefix: empty_text(), name: n, value: v });
+    ctx.vars.push(VarEntry {
+        prefix: empty_text(),
+        name: n,
+        value: v,
+    });
     0
 }
 
@@ -319,7 +329,10 @@ pub unsafe extern "C" fn mkr_ctx_lookup_ns(
     if ctx.is_null() || prefix.is_null() {
         return ptr::null();
     }
-    let want = VerifiedText { ptr: prefix, len: prefix_len };
+    let want = VerifiedText {
+        ptr: prefix,
+        len: prefix_len,
+    };
     for e in (*ctx).ns.iter() {
         if text_eq(e.prefix, want) {
             if !out_uri_len.is_null() {
@@ -340,13 +353,22 @@ pub unsafe extern "C" fn mkr_ctx_lookup_variable_text(
     out: *mut VerifiedText,
 ) -> c_int {
     if !out.is_null() {
-        *out = VerifiedText { ptr: ptr::null(), len: 0 };
+        *out = VerifiedText {
+            ptr: ptr::null(),
+            len: 0,
+        };
     }
     if ctx.is_null() || name.is_null() || out.is_null() {
         return 0;
     }
-    let want_prefix = VerifiedText { ptr: prefix, len: prefix_len };
-    let want_name = VerifiedText { ptr: name, len: name_len };
+    let want_prefix = VerifiedText {
+        ptr: prefix,
+        len: prefix_len,
+    };
+    let want_name = VerifiedText {
+        ptr: name,
+        len: name_len,
+    };
     for e in (*ctx).vars.iter() {
         let prefix_match = if prefix.is_null() {
             e.prefix.ptr.is_null()
@@ -377,14 +399,39 @@ macro_rules! getter {
 
 getter!(mkr_ctx_document, *mut c_void, doc, ptr::null_mut());
 getter!(mkr_ctx_node, *mut c_void, node, ptr::null_mut());
-getter!(mkr_ctx_element_index, *mut c_void, element_index, ptr::null_mut());
+getter!(
+    mkr_ctx_element_index,
+    *mut c_void,
+    element_index,
+    ptr::null_mut()
+);
 getter!(mkr_ctx_tag_lookup, TagIndexLookup, tag_lookup, None);
-getter!(mkr_ctx_tag_has_foreign, TagIndexForeign, tag_has_foreign, None);
-getter!(mkr_ctx_name_index_owner, *mut c_void, name_index_owner, ptr::null_mut());
+getter!(
+    mkr_ctx_tag_has_foreign,
+    TagIndexForeign,
+    tag_has_foreign,
+    None
+);
+getter!(
+    mkr_ctx_name_index_owner,
+    *mut c_void,
+    name_index_owner,
+    ptr::null_mut()
+);
 getter!(mkr_ctx_name_index_get, NameIndexGet, name_index_get, None);
-getter!(mkr_ctx_name_index_lookup, NameIndexLookup, name_index_lookup, None);
+getter!(
+    mkr_ctx_name_index_lookup,
+    NameIndexLookup,
+    name_index_lookup,
+    None
+);
 getter!(mkr_ctx_func_resolver, FuncResolver, func_resolver, None);
-getter!(mkr_xpath_get_user_data, *mut c_void, user_data, ptr::null_mut());
+getter!(
+    mkr_xpath_get_user_data,
+    *mut c_void,
+    user_data,
+    ptr::null_mut()
+);
 getter!(mkr_ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
 
 pub unsafe extern "C" fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
@@ -429,7 +476,10 @@ pub unsafe extern "C" fn mkr_xpath_set_engine_kind(ctx: *mut Context, kind: c_in
     }
 }
 
-pub unsafe extern "C" fn mkr_xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
+pub unsafe extern "C" fn mkr_xpath_context_set_user_data(
+    ctx: *mut Context,
+    user_data: *mut c_void,
+) {
     if !ctx.is_null() {
         (*ctx).user_data = user_data;
     }
@@ -501,11 +551,18 @@ pub unsafe extern "C" fn mkr_xpath_eval_compiled(
 ) -> c_int {
     if ctx.is_null() || ast.is_null() || out_value.is_null() {
         if !out_error.is_null() {
-            crate::err_setf!(out_error, XP_ERR_INTERNAL, "mkr_xpath_eval_compiled: bad arguments");
+            crate::err_setf!(
+                out_error,
+                XP_ERR_INTERNAL,
+                "mkr_xpath_eval_compiled: bad arguments"
+            );
         }
         return -1;
     }
-    let mut err = Error { status: XP_OK, message: ptr::null_mut() };
+    let mut err = Error {
+        status: XP_OK,
+        message: ptr::null_mut(),
+    };
 
     /* Mark the context as evaluating for the duration of the walk, so a handler
      * that re-enters cannot mutate it out from under the evaluator. Nested
@@ -526,7 +583,16 @@ pub unsafe extern "C" fn mkr_xpath_eval_compiled(
      * outer HAD built it, leave it so the outer's sorts still see it. */
     let order_was_built = (*ctx).order_index.built != 0;
 
-    let mut v = Val { type_: 0, u: ValU { nodeset: NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 } } };
+    let mut v = Val {
+        type_: 0,
+        u: ValU {
+            nodeset: NodeSet {
+                items: ptr::null_mut(),
+                count: 0,
+                capacity: 0,
+            },
+        },
+    };
     let rc = if (*ctx).engine_kind != 0 {
         mkr_eval_ast_xml(handle(ctx), ast, &mut v, &mut err)
     } else {
@@ -578,7 +644,10 @@ pub unsafe extern "C" fn mkr_xpath_eval_compiled_first(
     (*ctx).limits.recursion_depth = 0;
 
     let mut node: *mut c_void = ptr::null_mut();
-    let mut err = Error { status: XP_OK, message: ptr::null_mut() };
+    let mut err = Error {
+        status: XP_OK,
+        message: ptr::null_mut(),
+    };
     let matched = if (*ctx).engine_kind != 0 {
         mkr_try_first_match_xml(handle(ctx), ast, &mut node, &mut err)
     } else {
@@ -597,7 +666,16 @@ pub unsafe extern "C" fn mkr_xpath_eval_compiled_first(
     if matched != 0 {
         /* A recognised first-match shape: a 0-or-1-node node-set, without
          * building or sorting the full descendant set. */
-        let mut v = Val { type_: 0, u: ValU { nodeset: NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 } } };
+        let mut v = Val {
+            type_: 0,
+            u: ValU {
+                nodeset: NodeSet {
+                    items: ptr::null_mut(),
+                    count: 0,
+                    capacity: 0,
+                },
+            },
+        };
         mkr_nodeset_init(&raw mut v.u.nodeset);
         if !node.is_null()
             && mkr_nodeset_push(&raw mut v.u.nodeset, node, ptr::null_mut(), out_error) != 0

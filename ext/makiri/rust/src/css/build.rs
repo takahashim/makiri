@@ -29,7 +29,10 @@ extern "C" {
 
 #[inline]
 fn borrowed(s: &[u8]) -> VerifiedText {
-    VerifiedText { ptr: s.as_ptr() as *const core::ffi::c_char, len: s.len() }
+    VerifiedText {
+        ptr: s.as_ptr() as *const core::ffi::c_char,
+        len: s.len(),
+    }
 }
 
 /// A zeroed node of `kind`, charged against the AST budget.
@@ -87,8 +90,10 @@ pub(crate) unsafe fn binop(b: &Build, op: u32, lhs: *mut Node, rhs: *mut Node) -
 /// Zero slots still allocates one, because `mkr_callocarray(0, _)` answers NULL
 /// and a NULL array would be indistinguishable from a failure.
 pub(crate) unsafe fn args(b: &Build, n: usize) -> *mut *mut Node {
-    let p = mkr_callocarray(if n == 0 { 1 } else { n }, core::mem::size_of::<*mut Node>())
-        as *mut *mut Node;
+    let p = mkr_callocarray(
+        if n == 0 { 1 } else { n },
+        core::mem::size_of::<*mut Node>(),
+    ) as *mut *mut Node;
     if p.is_null() {
         b.oom();
     }
@@ -226,12 +231,7 @@ pub(crate) unsafe fn call1(b: &Build, name: &[u8], a0: *mut Node) -> *mut Node {
 }
 
 /// A two-argument call.
-pub(crate) unsafe fn call2(
-    b: &Build,
-    name: &[u8],
-    a0: *mut Node,
-    a1: *mut Node,
-) -> *mut Node {
+pub(crate) unsafe fn call2(b: &Build, name: &[u8], a0: *mut Node, a1: *mut Node) -> *mut Node {
     let a = args(b, 2);
     if a.is_null() {
         mkr_node_free(a0);
@@ -249,11 +249,7 @@ pub(crate) unsafe fn norm_attr(b: &Build, prefix: Option<&[u8]>, name: &[u8]) ->
 }
 
 /// `concat(" ", normalize-space(@name), " ")` - the whitespace-padded token list.
-pub(crate) unsafe fn padded_tokens(
-    b: &Build,
-    prefix: Option<&[u8]>,
-    name: &[u8],
-) -> *mut Node {
+pub(crate) unsafe fn padded_tokens(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> *mut Node {
     let a = args(b, 3);
     if a.is_null() {
         return core::ptr::null_mut();
@@ -290,7 +286,12 @@ pub(crate) unsafe fn token_match(
     padded.extend_from_slice(value);
     padded.push(b' ');
 
-    call2(b, b"contains", padded_tokens(b, prefix, attr_name), literal(b, &padded))
+    call2(
+        b,
+        b"contains",
+        padded_tokens(b, prefix, attr_name),
+        literal(b, &padded),
+    )
 }
 
 /// Free a built-but-unattached step array.
@@ -319,29 +320,28 @@ pub(crate) struct CArray<T> {
 
 impl<T> CArray<T> {
     pub(crate) const fn new() -> CArray<T> {
-        CArray { v: core::ptr::null_mut(), n: 0, cap: 0 }
+        CArray {
+            v: core::ptr::null_mut(),
+            n: 0,
+            cap: 0,
+        }
     }
 
     /// Append, growing geometrically. `false` on failure, with `*err` set and
     /// the array unchanged.
     pub(crate) unsafe fn push(&mut self, b: &Build, item: T) -> bool {
         if self.n == self.cap {
-            let want = match crate::falloc::grow_capacity(
-                self.cap,
-                self.n + 1,
-                core::mem::size_of::<T>(),
-            ) {
-                Some(w) => w,
-                None => {
-                    b.oom();
-                    return false;
-                }
-            };
-            let p = mkr_reallocarray(
-                self.v as *mut c_void,
-                want,
-                core::mem::size_of::<T>(),
-            ) as *mut T;
+            let want =
+                match crate::falloc::grow_capacity(self.cap, self.n + 1, core::mem::size_of::<T>())
+                {
+                    Some(w) => w,
+                    None => {
+                        b.oom();
+                        return false;
+                    }
+                };
+            let p =
+                mkr_reallocarray(self.v as *mut c_void, want, core::mem::size_of::<T>()) as *mut T;
             if p.is_null() {
                 b.oom();
                 return false;

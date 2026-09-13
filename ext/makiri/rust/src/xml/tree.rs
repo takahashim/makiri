@@ -2,19 +2,22 @@
 //! over the input; the unsafe blocks are confined to arena allocation and to
 //! linking / reading the C-layout nodes.
 
-use crate::xml::arena::{append_child, arena_bytes, arena_cut, arena_node, doc_destroy, doc_new, qname_assign};
 use crate::falloc::Reserve;
+use crate::xml::arena::{
+    append_child, arena_bytes, arena_cut, arena_node, doc_destroy, doc_new, qname_assign,
+};
 use crate::xml::chars::{
     decode1, expand_into, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
     validate_chars, ExpandErr, ExpandMode,
 };
-use crate::xml::qname::{is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split};
+use crate::xml::qname::{
+    is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
+};
 use crate::xml::{
     bytes, empty, node_local, node_prefix, node_qname, node_value, Doc, Node, ERR_INTERNAL,
     ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, FLAG_NS_RESOLVED, MAX_ATTRS, MAX_DEPTH, MAX_NS,
-    OK, T_ATTRIBUTE,
-    T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
-    XML_NS_URI,
+    OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI,
+    T_TEXT, XMLNS_NS_URI, XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -293,7 +296,10 @@ impl<'a> Parser<'a> {
 
     fn ns_lookup(&self, pfx: &[u8]) -> Option<(*const c_char, u32)> {
         if pfx == b"xml" {
-            return Some((XML_NS_URI.as_ptr() as *const c_char, XML_NS_URI.len() as u32));
+            return Some((
+                XML_NS_URI.as_ptr() as *const c_char,
+                XML_NS_URI.len() as u32,
+            ));
         }
         self.binds
             .iter()
@@ -312,7 +318,11 @@ impl<'a> Parser<'a> {
             return Err(());
         }
         v.extend_from_slice(pfx);
-        self.binds.push(Binding { pfx: v, uri, uri_len });
+        self.binds.push(Binding {
+            pfx: v,
+            uri,
+            uri_len,
+        });
         Ok(())
     }
 
@@ -493,7 +503,9 @@ impl<'a> Parser<'a> {
             while !a.is_null() {
                 let mut b = (*a).next;
                 while !b.is_null() {
-                    if node_local(a) == node_local(b) && crate::xml::node_ns(a) == crate::xml::node_ns(b) {
+                    if node_local(a) == node_local(b)
+                        && crate::xml::node_ns(a) == crate::xml::node_ns(b)
+                    {
                         return self.syntax();
                     }
                     b = (*b).next;
@@ -1001,7 +1013,11 @@ impl<'a> Parser<'a> {
         let mut a = unsafe { (*root).attrs };
         while !a.is_null() {
             let (qn, v, vl) = unsafe {
-                let v = if (*a).value.is_null() { empty() } else { (*a).value };
+                let v = if (*a).value.is_null() {
+                    empty()
+                } else {
+                    (*a).value
+                };
                 (node_qname(a), v, (*a).value_len)
             };
             if let Some(bpfx) = xmlns_prefix(qn) {

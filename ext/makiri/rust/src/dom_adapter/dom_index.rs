@@ -61,8 +61,10 @@ struct AttrSlot {
     owner: *mut LxbNode,
 }
 
-const EMPTY_SLOT: AttrSlot =
-    AttrSlot { attr: core::ptr::null_mut(), owner: core::ptr::null_mut() };
+const EMPTY_SLOT: AttrSlot = AttrSlot {
+    attr: core::ptr::null_mut(),
+    owner: core::ptr::null_mut(),
+};
 
 struct DomIndex {
     slots: Vec<AttrSlot>,
@@ -258,10 +260,7 @@ unsafe fn ensure(p: *mut Parsed) -> *mut DomIndex {
 /// for "the index could not be built". A caller that must tell those apart calls
 /// [`mkr_parsed_dom_index_build`] first; `Attribute#parent` does exactly that,
 /// because a nil parent there would be a navigation answer, not an error.
-pub unsafe extern "C" fn mkr_parsed_attr_owner(
-    p: *mut Parsed,
-    attr: *mut LxbAttr,
-) -> *mut LxbNode {
+pub unsafe extern "C" fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut LxbNode {
     if attr.is_null() {
         return core::ptr::null_mut();
     }

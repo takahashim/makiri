@@ -7,16 +7,15 @@
  * what the module header means by allocating before relinking. */
 #![allow(clippy::missing_safety_doc)]
 
-use crate::xml::arena::{arena_bytes, arena_node, preorder_next, qname_assign};
 use crate::falloc::Reserve;
+use crate::xml::arena::{arena_bytes, arena_node, preorder_next, qname_assign};
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix};
 use crate::xml::{
     bytes, empty, node_local, node_ns, node_qname, node_value, qname_from, qname_of, Doc, Node,
-    QName, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME,
-    MUT_BAD_NS_DECL, MUT_CYCLE,
-    MUT_HIERARCHY, MUT_OK, MUT_OOM, MUT_TYPE, MUT_UNBOUND_NS, T_ATTRIBUTE, T_CDATA, T_COMMENT,
-    T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
+    QName, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME, MUT_BAD_NS_DECL,
+    MUT_CYCLE, MUT_HIERARCHY, MUT_OK, MUT_OOM, MUT_TYPE, MUT_UNBOUND_NS, T_ATTRIBUTE, T_CDATA,
+    T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT, XMLNS_NS_URI, XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -27,11 +26,17 @@ const NO_NS: Ns = (ptr::null(), 0);
 
 #[inline]
 fn xml_ns() -> Ns {
-    (XML_NS_URI.as_ptr() as *const c_char, XML_NS_URI.len() as u32)
+    (
+        XML_NS_URI.as_ptr() as *const c_char,
+        XML_NS_URI.len() as u32,
+    )
 }
 #[inline]
 fn xmlns_ns() -> Ns {
-    (XMLNS_NS_URI.as_ptr() as *const c_char, XMLNS_NS_URI.len() as u32)
+    (
+        XMLNS_NS_URI.as_ptr() as *const c_char,
+        XMLNS_NS_URI.len() as u32,
+    )
 }
 
 /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`.
@@ -43,7 +48,11 @@ unsafe fn resolve_in_scope(node: *const Node, prefix: &[u8]) -> Option<Ns> {
             while !a.is_null() {
                 if let Some(p) = xmlns_prefix(node_qname(a)) {
                     if p == prefix {
-                        let u = if (*a).value.is_null() { empty() } else { (*a).value };
+                        let u = if (*a).value.is_null() {
+                            empty()
+                        } else {
+                            (*a).value
+                        };
                         return Some((u, (*a).value_len));
                     }
                 }
@@ -66,7 +75,12 @@ unsafe fn is_connected(node: *const Node) -> bool {
 
 /// Resolve `qn` applied at `scope` (mirrors the parser's §7 rules). An unbound
 /// prefix is an error only when connected; deferred (unresolved) otherwise.
-unsafe fn resolve_ns(scope: *const Node, qn: &QName, is_attr: bool, connected: bool) -> Result<Ns, i32> {
+unsafe fn resolve_ns(
+    scope: *const Node,
+    qn: &QName,
+    is_attr: bool,
+    connected: bool,
+) -> Result<Ns, i32> {
     let qname = bytes(qn.qname, qn.qname_len);
     let prefix = bytes(qn.prefix, qn.prefix_len);
     if is_attr && xmlns_prefix(qname).is_some() {
@@ -306,7 +320,9 @@ pub unsafe fn remove_attribute(el: *mut Node, name: &[u8]) -> i32 {
 /// `a` is keyed by (ns, local) - the DOM key; an empty wanted namespace
 /// matches an attribute with no namespace.
 unsafe fn attr_matches_ns(a: *const Node, ns: &[u8], local: &[u8]) -> bool {
-    (*a).ns_uri_len as usize == ns.len() && (ns.is_empty() || node_ns(a) == ns) && node_local(a) == local
+    (*a).ns_uri_len as usize == ns.len()
+        && (ns.is_empty() || node_ns(a) == ns)
+        && node_local(a) == local
 }
 
 pub unsafe fn set_attribute_ns(
@@ -453,14 +469,22 @@ pub unsafe fn new_element(doc: *mut Doc, name: &[u8], out: *mut *mut Node) -> i3
     MUT_OK
 }
 
-pub unsafe fn new_loose_dom_element(doc: *mut Doc, qn: *const QName, ns: &[u8], out: *mut *mut Node) -> i32 {
+pub unsafe fn new_loose_dom_element(
+    doc: *mut Doc,
+    qn: *const QName,
+    ns: &[u8],
+    out: *mut *mut Node,
+) -> i32 {
     *out = ptr::null_mut();
     if qn.is_null() || (*qn).qname_len == 0 || (*qn).local_len == 0 {
         return MUT_BAD_NAME;
     }
     let qn = &*qn;
     let (q0, l0) = (qn.qname as usize, qn.local as usize);
-    if !(l0 >= q0 && qn.local_len <= qn.qname_len && (l0 - q0) <= (qn.qname_len - qn.local_len) as usize) {
+    if !(l0 >= q0
+        && qn.local_len <= qn.qname_len
+        && (l0 - q0) <= (qn.qname_len - qn.local_len) as usize)
+    {
         return MUT_BAD_NAME;
     }
     let el = arena_node(doc, T_ELEMENT);
@@ -510,7 +534,8 @@ pub unsafe fn new_chardata(doc: *mut Doc, ty: u32, text: &[u8], out: *mut *mut N
 
 pub unsafe fn new_pi(doc: *mut Doc, target: &[u8], data: &[u8], out: *mut *mut Node) -> i32 {
     *out = ptr::null_mut();
-    if !crate::xml::chars::validate_name(target) || crate::xml::chars::is_reserved_pi_target(target) {
+    if !crate::xml::chars::validate_name(target) || crate::xml::chars::is_reserved_pi_target(target)
+    {
         return MUT_BAD_NAME;
     }
     if !data.is_empty() && !validate_chars(data) {
@@ -818,7 +843,10 @@ pub unsafe fn copy_node(doc: *mut Doc, src: *const Node, deep: bool, out: *mut *
 
 #[inline]
 unsafe fn is_insertable(node: *const Node) -> bool {
-    matches!((*node).type_, T_ELEMENT | T_TEXT | T_CDATA | T_COMMENT | T_PI | T_DOCTYPE)
+    matches!(
+        (*node).type_,
+        T_ELEMENT | T_TEXT | T_CDATA | T_COMMENT | T_PI | T_DOCTYPE
+    )
 }
 
 /// WHATWG doctype ordering at the document node (fail-closed).
@@ -829,7 +857,11 @@ unsafe fn check_doc_child_order(
     exclude: *const Node,
 ) -> i32 {
     if (*container).type_ != T_DOCUMENT {
-        return if (*node).type_ == T_DOCTYPE { MUT_HIERARCHY } else { MUT_OK };
+        return if (*node).type_ == T_DOCTYPE {
+            MUT_HIERARCHY
+        } else {
+            MUT_OK
+        };
     }
     if (*node).type_ == T_DOCTYPE {
         let mut c = (*container).first_child as *const Node;
@@ -909,7 +941,12 @@ unsafe fn sync_doc_meta(doc: *mut Doc, container: *const Node) {
 /// Validation + namespace resolution for inserting `node` under `container`
 /// before `before` (null = append), replacing `exclude` (or null). No
 /// structural change.
-unsafe fn prepare_insert(container: *mut Node, node: *mut Node, before: *const Node, exclude: *const Node) -> i32 {
+unsafe fn prepare_insert(
+    container: *mut Node,
+    node: *mut Node,
+    before: *const Node,
+    exclude: *const Node,
+) -> i32 {
     if !is_insertable(node) {
         return MUT_HIERARCHY;
     }

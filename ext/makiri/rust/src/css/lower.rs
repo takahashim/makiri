@@ -21,9 +21,9 @@ use super::build::{self, CArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
 use crate::lexbor_abi as lxb;
 use crate::xpath_abi::{
-    mkr_node_free, Node, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT,
-    AXIS_FOLLOWING_SIBLING, AXIS_PARENT, AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME,
-    NT_NODE, NT_TEXT, NT_WILDCARD, OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
+    mkr_node_free, Node, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING,
+    AXIS_PARENT, AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME, NT_NODE, NT_TEXT,
+    NT_WILDCARD, OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
 };
 
 type Selector = lxb::lxb_css_selector_t;
@@ -74,7 +74,8 @@ mod pc {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_CHILD;
     pub const ONLY_CHILD: u32 =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_CHILD;
-    pub const EMPTY: u32 = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_EMPTY;
+    pub const EMPTY: u32 =
+        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_EMPTY;
     pub const ROOT: u32 = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ROOT;
     pub const FIRST_OF_TYPE: u32 =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE;
@@ -187,7 +188,10 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> *mut Node {
     let at = &(*s).u.attribute;
 
     if at.modifier == m::MOD_I || at.modifier == m::MOD_S {
-        b.fail(ERR_SYNTAX, c"CSS attribute case modifier ([a=v i]) is not supported");
+        b.fail(
+            ERR_SYNTAX,
+            c"CSS attribute case modifier ([a=v i]) is not supported",
+        );
         return core::ptr::null_mut();
     }
 
@@ -197,7 +201,10 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> *mut Node {
      * XPath alike. */
     let prefix = match str_opt(&(*s).ns) {
         Some(p) if p == b"*" => {
-            b.fail(ERR_SYNTAX, c"any-namespace attribute selectors ([*|a]) are not supported");
+            b.fail(
+                ERR_SYNTAX,
+                c"any-namespace attribute selectors ([*|a]) are not supported",
+            );
             return core::ptr::null_mut();
         }
         other => other, /* a zero-length one (|a) means no namespace */
@@ -219,13 +226,19 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> *mut Node {
         /* [a~=v] -> whitespace-separated token match */
         m::INCLUDE => build::token_match(b, prefix, name, value),
         /* [a^=v] -> starts-with(@a, 'v') */
-        m::PREFIX => {
-            build::call2(b, b"starts-with", build::attr_ns(b, prefix, name), build::literal(b, value))
-        }
+        m::PREFIX => build::call2(
+            b,
+            b"starts-with",
+            build::attr_ns(b, prefix, name),
+            build::literal(b, value),
+        ),
         /* [a*=v] -> contains(@a, 'v') */
-        m::SUBSTRING => {
-            build::call2(b, b"contains", build::attr_ns(b, prefix, name), build::literal(b, value))
-        }
+        m::SUBSTRING => build::call2(
+            b,
+            b"contains",
+            build::attr_ns(b, prefix, name),
+            build::literal(b, value),
+        ),
         /* [a$=v] -> substring(@a, string-length(@a) - len + 1) = 'v' */
         m::SUFFIX => {
             let slen = build::call1(b, b"string-length", build::attr_ns(b, prefix, name));
@@ -280,7 +293,11 @@ unsafe fn not_axis(b: &Build, axis: u32, nt: u32) -> *mut Node {
 unsafe fn not_named_axis(b: &Build, axis: u32, test: &crate::xpath_abi::NodeTest) -> *mut Node {
     let prefix = owned_slice(&test.prefix);
     let local = owned_slice(&test.local);
-    build::call1(b, b"not", build::named_step_path(b, axis, prefix, local.unwrap_or(&[])))
+    build::call1(
+        b,
+        b"not",
+        build::named_step_path(b, axis, prefix, local.unwrap_or(&[])),
+    )
 }
 
 /// An owned-text slot as a slice, or `None` when unset.
@@ -304,7 +321,12 @@ unsafe fn pos(b: &Build, axis: u32, named: Option<&crate::xpath_abi::NodeTest>) 
             owned_slice(&t.local).unwrap_or(&[]),
         ),
     };
-    build::binop(b, OP_ADD, build::call1(b, b"count", path), build::num(b, 1.0))
+    build::binop(
+        b,
+        OP_ADD,
+        build::call1(b, b"count", path),
+        build::num(b, 1.0),
+    )
 }
 
 /// The internal of-type position call: 1-based among same-type siblings,
@@ -314,7 +336,11 @@ unsafe fn pos(b: &Build, axis: u32, named: Option<&crate::xpath_abi::NodeTest>) 
 /// name against its siblings', which pure XPath 1.0 cannot express - there is no
 /// way to say "same name as self".
 unsafe fn of_type_pos(b: &Build, forward: bool) -> *mut Node {
-    let name = if forward { FN_OF_TYPE_POS } else { FN_OF_TYPE_POS_LAST };
+    let name = if forward {
+        FN_OF_TYPE_POS
+    } else {
+        FN_OF_TYPE_POS_LAST
+    };
     build::fncall(b, name, build::args(b, 0), 0)
 }
 
@@ -445,7 +471,11 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> *mut N
             mkr_node_free(acc);
             return core::ptr::null_mut();
         }
-        acc = if acc.is_null() { one } else { build::binop(b, OP_OR, acc, one) };
+        acc = if acc.is_null() {
+            one
+        } else {
+            build::binop(b, OP_OR, acc, one)
+        };
         if acc.is_null() {
             return core::ptr::null_mut();
         }
@@ -516,7 +546,11 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             }
             let last = ty == pf::NTH_LAST_CHILD || ty == pf::NTH_LAST_OF_TYPE;
             let of_type = ty == pf::NTH_OF_TYPE || ty == pf::NTH_LAST_OF_TYPE;
-            let axis = if last { AXIS_FOLLOWING_SIBLING } else { AXIS_PRECEDING_SIBLING };
+            let axis = if last {
+                AXIS_FOLLOWING_SIBLING
+            } else {
+                AXIS_PRECEDING_SIBLING
+            };
 
             /* Typed of-type counts same-name siblings through a literal name;
              * untyped compares the element's own expanded name at eval time. */
@@ -553,7 +587,11 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
                     mkr_node_free(acc);
                     return core::ptr::null_mut();
                 }
-                acc = if acc.is_null() { path } else { build::binop(b, OP_OR, acc, path) };
+                acc = if acc.is_null() {
+                    path
+                } else {
+                    build::binop(b, OP_OR, acc, path)
+                };
                 if acc.is_null() {
                     return core::ptr::null_mut();
                 }
@@ -572,7 +610,10 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
 
             if !(*c).insensitive {
                 let dot = build::step_path(b, AXIS_SELF, NT_NODE, None); /* "." */
-                return child_text_pred(b, build::call2(b, b"contains", dot, build::literal(b, needle)));
+                return child_text_pred(
+                    b,
+                    build::call2(b, b"contains", dot, build::literal(b, needle)),
+                );
             }
 
             /* ASCII case-insensitive: fold both sides with translate(). The
@@ -596,7 +637,10 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             *ta.add(1) = build::literal(b, UPPER);
             *ta.add(2) = build::literal(b, LOWER);
             let folded = build::fncall(b, b"translate", ta, 3);
-            child_text_pred(b, build::call2(b, b"contains", folded, build::literal(b, &low)))
+            child_text_pred(
+                b,
+                build::call2(b, b"contains", folded, build::literal(b, &low)),
+            )
         }
 
         _ => {
@@ -764,7 +808,11 @@ impl Iterator for Compounds {
                     continue;
                 }
                 self.cursor = nxt;
-                return Some(Compound { first: start, last: s, comb: (*start).combinator });
+                return Some(Compound {
+                    first: start,
+                    last: s,
+                    comb: (*start).combinator,
+                });
             }
             self.cursor = core::ptr::null();
             None
@@ -777,11 +825,7 @@ impl Iterator for Compounds {
 /// `relative_first` makes the FIRST compound honour its own combinator rather
 /// than being forced to a descendant - which is what `:has(> a)`, `:has(+ a)`
 /// and `:has(~ a)` need, since there the combinator is relative to self.
-pub(crate) unsafe fn complex(
-    b: &Build,
-    first: *mut Selector,
-    relative_first: bool,
-) -> *mut Node {
+pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bool) -> *mut Node {
     let mut steps: CArray<Step> = CArray::new();
 
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
@@ -796,7 +840,8 @@ pub(crate) unsafe fn complex(
             /* `a + b` -> following-sibling::*[1] / self::b, two steps: XPath has
              * no adjacent-sibling axis, so "the next sibling" is the first one
              * on the following-sibling axis. */
-            emit_adjacent(b, &mut steps) && emit_compound_step(b, &mut steps, AXIS_SELF, comp.first, comp.last)
+            emit_adjacent(b, &mut steps)
+                && emit_compound_step(b, &mut steps, AXIS_SELF, comp.first, comp.last)
         } else {
             let axis = axis_for_combinator(comp.comb, is_first);
             emit_compound_step(b, &mut steps, axis, comp.first, comp.last)
@@ -866,8 +911,11 @@ unsafe fn finish_path(b: &Build, steps: CArray<Step>) -> *mut Node {
 ///
 /// The path is non-empty - hence truthy - exactly when self matches.
 pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut Node {
-    let mut comps: [Compound; MAX_COMPOUNDS] =
-        [Compound { first: core::ptr::null(), last: core::ptr::null(), comb: 0 }; MAX_COMPOUNDS];
+    let mut comps: [Compound; MAX_COMPOUNDS] = [Compound {
+        first: core::ptr::null(),
+        last: core::ptr::null(),
+        comb: 0,
+    }; MAX_COMPOUNDS];
     let mut nc = 0usize;
     for comp in (Compounds { cursor: first }) {
         if nc >= MAX_COMPOUNDS {
@@ -883,7 +931,13 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
     }
 
     let mut steps: CArray<Step> = CArray::new();
-    if !emit_compound_step(b, &mut steps, AXIS_SELF, comps[nc - 1].first, comps[nc - 1].last) {
+    if !emit_compound_step(
+        b,
+        &mut steps,
+        AXIS_SELF,
+        comps[nc - 1].first,
+        comps[nc - 1].last,
+    ) {
         build::free_steps(steps.v, steps.n);
         return core::ptr::null_mut();
     }
@@ -893,7 +947,13 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
         let ok = if comps[i].comb == comb::SIBLING {
             /* Reverse adjacent: the immediately preceding sibling must match. */
             emit_positional_sibling(b, &mut steps, AXIS_PRECEDING_SIBLING)
-                && emit_compound_step(b, &mut steps, AXIS_SELF, comps[i - 1].first, comps[i - 1].last)
+                && emit_compound_step(
+                    b,
+                    &mut steps,
+                    AXIS_SELF,
+                    comps[i - 1].first,
+                    comps[i - 1].last,
+                )
         } else {
             emit_compound_step(
                 b,

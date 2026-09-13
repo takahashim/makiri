@@ -64,7 +64,10 @@ pub fn namespace_uri(ruby: &Ruby, rb_self: Value) -> Value {
 }
 
 pub fn node_type(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { ruby.integer_from_i64((*unwrap(rb_self)).type_ as i64).as_value() }
+    unsafe {
+        ruby.integer_from_i64((*unwrap(rb_self)).type_ as i64)
+            .as_value()
+    }
 }
 
 /* ---- DTD identifiers ----

@@ -24,9 +24,10 @@ use rb_sys::VALUE;
 use crate::falloc::VecPush;
 use crate::lexbor_abi as lxb;
 
-use super::abi::{LxbDoc, LXB_DOM_NODE_TYPE_ELEMENT, mkr_ruby_bytes_view, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
-    error_class, is_kind_of, libc_free, mkr_cNode, mkr_html_node_unwrap,
-    mkr_ruby_verified_text, mkr_wrap_html_node, LxbNode,
+use super::abi::{
+    error_class, is_kind_of, libc_free, mkr_cNode, mkr_html_node_unwrap, mkr_ruby_bytes_view,
+    mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, mkr_ruby_verified_text, mkr_wrap_html_node,
+    LxbDoc, LxbNode, LXB_DOM_NODE_TYPE_ELEMENT,
 };
 
 /* ------------------------------------------------------------------ *
@@ -38,7 +39,6 @@ pub use crate::falloc::calloc::mkr_reallocarray;
 
 extern "C" {
 
-
     fn lxb_html_parse_fragment_by_tag_id(
         parser: *mut c_void,
         doc: *mut c_void,
@@ -48,8 +48,11 @@ extern "C" {
         len: usize,
     ) -> *mut LxbNode;
     fn lxb_dom_document_fragment_interface_create(doc: *mut LxbDoc) -> *mut c_void;
-    fn lxb_dom_document_import_node(doc: *mut LxbDoc, node: *mut LxbNode, deep: bool)
-        -> *mut LxbNode;
+    fn lxb_dom_document_import_node(
+        doc: *mut LxbDoc,
+        node: *mut LxbNode,
+        deep: bool,
+    ) -> *mut LxbNode;
     fn lxb_dom_node_insert_child(to: *mut LxbNode, node: *mut LxbNode);
     fn lxb_dom_node_insert_before(to: *mut LxbNode, node: *mut LxbNode);
 }
@@ -71,7 +74,6 @@ use crate::lexbor_abi::{
 /// here first, and the text-index port would have been a second copy of an
 /// invariant that must not drift.
 use crate::lexbor_abi::preorder_next;
-
 
 /// Lexbor node types and the tag/namespace ids this file compares against.
 /// Generated, so a pin that renumbers them is a build-time change, not a
@@ -192,7 +194,11 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         if hv.len > 0 {
             core::ptr::copy_nonoverlapping(hv.ptr as *const u8, buf, hv.len);
         }
-        return Some(SanitizedHtml { ptr: buf, len: hv.len, owned: buf });
+        return Some(SanitizedHtml {
+            ptr: buf,
+            len: hv.len,
+            owned: buf,
+        });
     }
 
     // Not transcoded: input Ruby already knows is valid UTF-8 is borrowed in
@@ -210,9 +216,17 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         return None;
     }
     if clean.is_null() {
-        Some(SanitizedHtml { ptr: hv.ptr as *const u8, len: hv.len, owned: core::ptr::null_mut() })
+        Some(SanitizedHtml {
+            ptr: hv.ptr as *const u8,
+            len: hv.len,
+            owned: core::ptr::null_mut(),
+        })
     } else {
-        Some(SanitizedHtml { ptr: clean, len: clean_len, owned: clean })
+        Some(SanitizedHtml {
+            ptr: clean,
+            len: clean_len,
+            owned: clean,
+        })
     }
 }
 
@@ -289,7 +303,10 @@ pub unsafe extern "C" fn mkr_run_fragment_parser(
         if !parser.is_null() {
             lxb_html_parser_destroy(parser);
         }
-        super::abi::rb_raise(super::abi::mkr_eError, c"failed to create HTML parser".as_ptr());
+        super::abi::rb_raise(
+            super::abi::mkr_eError,
+            c"failed to create HTML parser".as_ptr(),
+        );
     }
 
     let Some(src) = sanitize_html_input(html) else {
@@ -307,7 +324,10 @@ pub unsafe extern "C" fn mkr_run_fragment_parser(
     drop(src); /* the parse consumed it; the buffer goes on every path */
     lxb_html_parser_destroy(parser);
     if root.is_null() {
-        super::abi::rb_raise(super::abi::mkr_eError, c"failed to parse HTML fragment".as_ptr());
+        super::abi::rb_raise(
+            super::abi::mkr_eError,
+            c"failed to parse HTML fragment".as_ptr(),
+        );
     }
     root
 }
@@ -342,10 +362,7 @@ pub unsafe fn import_with_fixup(
 /// Deep-import `src` into `doc`. **Raises** rather than returning a partial
 /// node. The C ABI face of [`import_with_fixup`], called by
 /// `ruby_html_mutate.c`.
-pub unsafe extern "C" fn mkr_html_import_deep(
-    doc: *mut LxbDoc,
-    src: *mut LxbNode,
-) -> *mut LxbNode {
+pub unsafe extern "C" fn mkr_html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> *mut LxbNode {
     match import_with_fixup(doc, src, true) {
         Some(imp) => imp,
         None => super::abi::rb_raise(super::abi::mkr_eError, c"failed to import node".as_ptr()),
@@ -456,7 +473,10 @@ pub unsafe fn build_fragment_ctx(
 
     let frag = lxb_dom_document_fragment_interface_create(doc);
     if frag.is_null() {
-        return Err(Error::new(error_class(), "failed to create document fragment"));
+        return Err(Error::new(
+            error_class(),
+            "failed to create document fragment",
+        ));
     }
     let frag_node = frag as *mut LxbNode;
 
@@ -467,7 +487,10 @@ pub unsafe fn build_fragment_ctx(
         &pctx as *const FragTagCtx as *mut c_void,
     );
     if mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node as *mut c_void) != 0 {
-        return Err(Error::new(error_class(), "failed to import a fragment child"));
+        return Err(Error::new(
+            error_class(),
+            "failed to import a fragment child",
+        ));
     }
     let out = mkr_wrap_html_node(frag_node, document.as_raw());
     Ok(Value::from_raw(out))

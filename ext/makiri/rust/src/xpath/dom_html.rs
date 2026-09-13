@@ -146,7 +146,10 @@ unsafe impl Dom for Html {
     /// defers to Lexbor's node name.
     unsafe fn qualified_name<'a>(n: Self::Node) -> &'a [u8] {
         if (*n).type_ == NTYPE_ELEMENT {
-            named(n as *mut lxb::LxbElement, lxb::lxb_dom_element_qualified_name)
+            named(
+                n as *mut lxb::LxbElement,
+                lxb::lxb_dom_element_qualified_name,
+            )
         } else {
             named_mut(n as *mut lxb::LxbNode, lxb::lxb_dom_node_name)
         }
@@ -213,8 +216,11 @@ unsafe impl Dom for Html {
         if doc.is_null() {
             return None;
         }
-        let tag =
-            lxb::mkr_html_tag_id_by_name(doc, local.as_ptr() as *const core::ffi::c_char, local.len());
+        let tag = lxb::mkr_html_tag_id_by_name(
+            doc,
+            local.as_ptr() as *const core::ffi::c_char,
+            local.len(),
+        );
         /* The index buckets only the static tag-id range; a custom element's
          * tag id is a pointer value, so those fall back to the walk and are
          * still found. */
@@ -228,6 +234,9 @@ unsafe impl Dom for Html {
         } else {
             core::slice::from_raw_parts(bucket, cnt)
         };
-        Some(Bucket { nodes, recheck: true })
+        Some(Bucket {
+            nodes,
+            recheck: true,
+        })
     }
 }

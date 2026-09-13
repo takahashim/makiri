@@ -56,7 +56,6 @@ pub use crate::glue::fragment::mkr_html_import_deep;
 pub use crate::glue::fragment::mkr_import_fragment_children;
 pub use crate::glue::fragment::mkr_run_fragment_parser;
 
-
 /* ------------------------------------------------------------------ *
  * shared helpers                                                     *
  * ------------------------------------------------------------------ */
@@ -138,7 +137,10 @@ unsafe fn prepare_insert(
         p = (*p).parent;
     }
     if (*reference).owner_document != (*incoming).owner_document {
-        return Ok((adopt_copy((*reference).owner_document, incoming), Some(rb_incoming)));
+        return Ok((
+            adopt_copy((*reference).owner_document, incoming),
+            Some(rb_incoming),
+        ));
     }
     if !(*incoming).parent.is_null() {
         lxb::lxb_dom_node_remove(incoming);
@@ -280,7 +282,12 @@ unsafe fn splice_or_insert(
 pub fn add_child(_ruby: &Ruby, rb_self: Value, rb_child: Value) -> Result<Value, Error> {
     unsafe {
         let parent = unwrap_mutable(rb_self);
-        guard_doc_child_order(parent, core::ptr::null(), core::ptr::null(), arg_node(rb_child))?;
+        guard_doc_child_order(
+            parent,
+            core::ptr::null(),
+            core::ptr::null(),
+            arg_node(rb_child),
+        )?;
         let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
         splice_or_insert(parent, ins, lxb::lxb_dom_node_insert_child, false);
         invalidate(rb_self);
@@ -355,7 +362,12 @@ pub fn replace(_ruby: &Ruby, rb_self: Value, rb_other: Value) -> Result<Value, E
         if (*reference).parent.is_null() {
             return Err(err("cannot replace a node with no parent"));
         }
-        guard_doc_child_order((*reference).parent, reference, reference, arg_node(rb_other))?;
+        guard_doc_child_order(
+            (*reference).parent,
+            reference,
+            reference,
+            arg_node(rb_other),
+        )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
         lxb::lxb_dom_node_remove(reference);
@@ -575,7 +587,10 @@ pub fn remove_attribute_ns(
             let nv = mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr());
             ns_anchor = nv.value;
             if nv.len != 0 {
-                want_ns = intern_ns(node, core::slice::from_raw_parts(nv.ptr as *const u8, nv.len));
+                want_ns = intern_ns(
+                    node,
+                    core::slice::from_raw_parts(nv.ptr as *const u8, nv.len),
+                );
             }
         }
 
@@ -839,8 +854,7 @@ pub fn create_pi(
             rb_target.as_raw(),
             c"processing instruction target".as_ptr(),
         );
-        let dv =
-            mkr_ruby_verified_text(rb_data.as_raw(), c"processing instruction data".as_ptr());
+        let dv = mkr_ruby_verified_text(rb_data.as_raw(), c"processing instruction data".as_ptr());
         let pi = lxb::lxb_dom_document_create_processing_instruction(
             doc,
             tv.ptr as *const u8,
@@ -862,7 +876,10 @@ pub fn create_pi(
 /// enforce that). An empty or omitted public/system id is treated as absent.
 /// Lexbor validates the name as a DOM Name, so an invalid one fails closed.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let args = magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(args)?;
+    let args =
+        magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
+            args,
+        )?;
     let (rb_name,) = args.required;
     let (rb_pub, rb_sys_) = args.optional;
 
@@ -870,7 +887,10 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr());
         if !lxb::lxb_dom_document_type_valid_name(nv.ptr as *const u8, nv.len) {
-            return Err(Error::new(ruby.exception_arg_error(), "invalid doctype name"));
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "invalid doctype name",
+            ));
         }
 
         let zero = || crate::glue::abi::RubyText {
@@ -886,8 +906,16 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
             Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype system id".as_ptr()),
             None => zero(),
         };
-        let pub_ptr = if pv.len != 0 { pv.ptr as *const u8 } else { core::ptr::null() };
-        let sys_ptr = if sv.len != 0 { sv.ptr as *const u8 } else { core::ptr::null() };
+        let pub_ptr = if pv.len != 0 {
+            pv.ptr as *const u8
+        } else {
+            core::ptr::null()
+        };
+        let sys_ptr = if sv.len != 0 {
+            sv.ptr as *const u8
+        } else {
+            core::ptr::null()
+        };
 
         /* The exception code is generated as a plain int; it is written but not
          * read - a NULL dt is the failure signal, as in the C. */

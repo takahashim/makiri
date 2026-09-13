@@ -22,7 +22,11 @@ impl Hasher for Fnv {
     }
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        let mut h = if self.0 == 0 { 0xcbf2_9ce4_8422_2325 } else { self.0 };
+        let mut h = if self.0 == 0 {
+            0xcbf2_9ce4_8422_2325
+        } else {
+            self.0
+        };
         for &b in bytes {
             h ^= b as u64;
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
@@ -74,8 +78,7 @@ unsafe fn build(doc: *mut Doc) -> *mut NameIndex {
     if root.is_null() {
         return ptr::null_mut();
     }
-    let mut map: HashMap<Box<[u8]>, Vec<*mut Node>, BuildHasherDefault<Fnv>> =
-        HashMap::default();
+    let mut map: HashMap<Box<[u8]>, Vec<*mut Node>, BuildHasherDefault<Fnv>> = HashMap::default();
     let mut key: Vec<u8> = Vec::new();
     let mut max_key = 0usize;
     let mut cur = root;

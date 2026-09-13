@@ -292,7 +292,6 @@ pub use crate::xpath::limits::mkr_limit_check_steps;
 pub use crate::xpath::limits::mkr_limit_recurse_enter;
 pub use crate::xpath::limits::mkr_limit_recurse_leave;
 
-
 /* ---- the engine's runtime structures (mkr_xpath_internal.h, core/mkr_buf.h) ---- */
 
 /// The engine's context. It used to be an opaque `_private: [u8; 0]` here and a
@@ -361,7 +360,11 @@ pub type FuncResolver = Option<
 /// Tag-index hooks (HTML only): `lookup` returns the document-ordered bucket of
 /// elements whose tag id matches.
 pub type TagIndexLookup = Option<
-    unsafe extern "C" fn(index: *const c_void, tag_id: usize, count: *mut usize) -> *const *mut c_void,
+    unsafe extern "C" fn(
+        index: *const c_void,
+        tag_id: usize,
+        count: *mut usize,
+    ) -> *const *mut c_void,
 >;
 pub type TagIndexForeign = Option<unsafe extern "C" fn(index: *const c_void) -> c_int>;
 
@@ -411,9 +414,7 @@ pub use crate::xpath::shared::mkr_str_cache_reindex;
 pub use crate::xpath::shared::mkr_val_clear;
 pub use crate::xpath::shared::mkr_val_set_owned_text;
 
-extern "C" {
-
-}
+extern "C" {}
 
 /* ------------------------------------------------------------------ *
  * mkr_xpath_err.c - clearing an error and a result                   *
@@ -434,7 +435,6 @@ extern "C" {
 /// and boolean arms have nothing to clear.
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
 const MKR_XPATH_TYPE_STRING: u32 = 1;
-
 
 extern "C" {
     #[link_name = "free"]

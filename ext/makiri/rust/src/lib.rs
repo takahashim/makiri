@@ -41,7 +41,10 @@ pub mod kani_bounds {
         let mut i = 0;
         let mut n = 0usize;
         while i < b.len() {
-            assert!(b[i] >= b'0' && b[i] <= b'9', "the bound must be a decimal number");
+            assert!(
+                b[i] >= b'0' && b[i] <= b'9',
+                "the bound must be a decimal number"
+            );
             n = n * 10 + (b[i] - b'0') as usize;
             i += 1;
         }

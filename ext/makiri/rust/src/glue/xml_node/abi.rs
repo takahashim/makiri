@@ -35,7 +35,6 @@ pub use crate::init::mkr_cXmlProcessingInstruction;
 pub use crate::init::mkr_cXmlText;
 pub use crate::xml::ffi::mkr_xml_node_xmlns_decl;
 
-
 /// A node's field as a UTF-8 Ruby String. A NULL pointer is the empty string,
 /// which is how the engine spells "no value".
 ///

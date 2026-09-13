@@ -23,7 +23,11 @@ use core::ptr;
 /* ---------- node-set ---------- */
 
 pub unsafe extern "C" fn mkr_nodeset_init(ns: *mut NodeSet) {
-    *ns = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
+    *ns = NodeSet {
+        items: ptr::null_mut(),
+        count: 0,
+        capacity: 0,
+    };
 }
 
 pub unsafe extern "C" fn mkr_nodeset_push(
@@ -35,9 +39,7 @@ pub unsafe extern "C" fn mkr_nodeset_push(
     if node.is_null() {
         return 0;
     }
-    if !limits.is_null()
-        && mkr_limit_check_nodeset_size(limits, (*ns).count + 1, err) != 0
-    {
+    if !limits.is_null() && mkr_limit_check_nodeset_size(limits, (*ns).count + 1, err) != 0 {
         return -1;
     }
     if mkr_grow_reserve(
@@ -62,14 +64,21 @@ pub unsafe extern "C" fn mkr_nodeset_clear(ns: *mut NodeSet) {
     if !(*ns).items.is_null() {
         free_c((*ns).items as *mut c_void);
     }
-    *ns = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
+    *ns = NodeSet {
+        items: ptr::null_mut(),
+        count: 0,
+        capacity: 0,
+    };
 }
 
 /* ---------- owned / borrowed text ---------- */
 
 pub unsafe extern "C" fn mkr_owned_text_init(t: *mut OwnedText) {
     if !t.is_null() {
-        *t = OwnedText { ptr: ptr::null_mut(), len: 0 };
+        *t = OwnedText {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
     }
 }
 
@@ -80,7 +89,10 @@ pub unsafe extern "C" fn mkr_owned_text_clear(t: *mut OwnedText) {
     if !(*t).ptr.is_null() {
         free_c((*t).ptr as *mut c_void);
     }
-    *t = OwnedText { ptr: ptr::null_mut(), len: 0 };
+    *t = OwnedText {
+        ptr: ptr::null_mut(),
+        len: 0,
+    };
 }
 
 /// Equal lengths AND equal bytes. A zero-length view is equal regardless of its
@@ -112,7 +124,11 @@ pub unsafe extern "C" fn mkr_owned_text_from_borrowed_copy(
     what: *const c_char,
 ) -> c_int {
     if out.is_null() {
-        err_setf!(err, XP_ERR_INTERNAL, "mkr_owned_text_from_borrowed_copy: bad args");
+        err_setf!(
+            err,
+            XP_ERR_INTERNAL,
+            "mkr_owned_text_from_borrowed_copy: bad args"
+        );
         return -1;
     }
     mkr_owned_text_init(out);
@@ -143,7 +159,16 @@ pub unsafe extern "C" fn mkr_val_clear(v: *mut Val) {
         1 /* string */ => mkr_owned_text_clear(&raw mut (*v).u.string),
         _ => {}
     }
-    *v = Val { type_: 0, u: ValU { nodeset: NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 } } };
+    *v = Val {
+        type_: 0,
+        u: ValU {
+            nodeset: NodeSet {
+                items: ptr::null_mut(),
+                count: 0,
+                capacity: 0,
+            },
+        },
+    };
 }
 
 pub unsafe extern "C" fn mkr_val_set_owned_text(v: *mut Val, text: OwnedText) {
@@ -167,10 +192,17 @@ pub unsafe extern "C" fn mkr_val_set_borrowed_text_copy(
     what: *const c_char,
 ) -> c_int {
     if v.is_null() {
-        err_setf!(err, XP_ERR_INTERNAL, "mkr_val_set_borrowed_text_copy: bad args");
+        err_setf!(
+            err,
+            XP_ERR_INTERNAL,
+            "mkr_val_set_borrowed_text_copy: bad args"
+        );
         return -1;
     }
-    let mut owned = OwnedText { ptr: ptr::null_mut(), len: 0 };
+    let mut owned = OwnedText {
+        ptr: ptr::null_mut(),
+        len: 0,
+    };
     if mkr_owned_text_from_borrowed_copy(&mut owned, text, err, what) != 0 {
         return -1;
     }
@@ -181,7 +213,12 @@ pub unsafe extern "C" fn mkr_val_set_borrowed_text_copy(
 /* ---------- the per-evaluate document-order index (lifecycle) ---------- */
 
 pub unsafe extern "C" fn mkr_doc_order_index_init(idx: *mut OrderIndex) {
-    *idx = OrderIndex { buckets: ptr::null_mut(), cap: 0, count: 0, built: 0 };
+    *idx = OrderIndex {
+        buckets: ptr::null_mut(),
+        cap: 0,
+        count: 0,
+        built: 0,
+    };
 }
 
 pub unsafe extern "C" fn mkr_doc_order_index_clear(idx: *mut OrderIndex) {
@@ -191,7 +228,12 @@ pub unsafe extern "C" fn mkr_doc_order_index_clear(idx: *mut OrderIndex) {
     if !(*idx).buckets.is_null() {
         free_c((*idx).buckets as *mut c_void);
     }
-    *idx = OrderIndex { buckets: ptr::null_mut(), cap: 0, count: 0, built: 0 };
+    *idx = OrderIndex {
+        buckets: ptr::null_mut(),
+        cap: 0,
+        count: 0,
+        built: 0,
+    };
 }
 
 /* ---------- the per-evaluate string-value cache (lifecycle + index) ---------- */

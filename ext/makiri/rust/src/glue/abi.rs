@@ -6,7 +6,7 @@
 //! types, so a ported feature reads both from C. As more of the glue moves,
 //! entries leave this file rather than accumulate in it.
 
-use core::ffi::{c_int, c_char, c_void};
+use core::ffi::{c_char, c_int, c_void};
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{ExceptionClass, RModule, Value};
@@ -53,7 +53,8 @@ pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
 pub const LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: u32 =
     crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
-pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 = crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;
+pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
+    crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;
 
 /* ------------------------------------------------------------------ *
  * The Ruby-string views, declared HERE, once                         *
@@ -96,12 +97,14 @@ impl RubyText {
     }
 }
 
-
 /// Dropping the Ruby anchor: the engine takes the unanchored form, and the
 /// caller is responsible for keeping the String alive across the call.
 impl From<RubyText> for crate::xpath_abi::VerifiedText {
     fn from(b: RubyText) -> Self {
-        crate::xpath_abi::VerifiedText { ptr: b.ptr, len: b.len }
+        crate::xpath_abi::VerifiedText {
+            ptr: b.ptr,
+            len: b.len,
+        }
     }
 }
 
@@ -135,7 +138,10 @@ pub struct OwnedBytes {
 
 impl OwnedBytes {
     pub const fn empty() -> OwnedBytes {
-        OwnedBytes { ptr: core::ptr::null_mut(), len: 0 }
+        OwnedBytes {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+        }
     }
 
     /// `mkr_owned_bytes_clear`, which is `static inline` in C and therefore has
@@ -225,10 +231,10 @@ extern "C" {
 /// function, because bindgen cannot generate an inline one - and are re-exported
 /// here so this module stays the single import for the glue layer.
 pub use crate::lexbor_abi::{
-    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi,
-    lxb_dom_document_type_public_id_noi, lxb_dom_document_type_system_id_noi,
-    lxb_dom_element_first_attribute_noi, lxb_dom_element_next_attribute_noi,
-    lxb_dom_node_type_noi, lxb_dom_processing_instruction_target_noi,
+    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_type_public_id_noi,
+    lxb_dom_document_type_system_id_noi, lxb_dom_element_first_attribute_noi,
+    lxb_dom_element_next_attribute_noi, lxb_dom_node_type_noi,
+    lxb_dom_processing_instruction_target_noi,
 };
 
 /// The generated Lexbor readers the glue calls, likewise re-exported so a glue

@@ -9,22 +9,21 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
-use crate::falloc::Reserve;
 use super::ast::{path_steps, step_preds};
-use super::msg::Bytes;
 use super::attr_pred::{attr_pred_matches, match_attr_pred};
 use super::axis::{axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis};
 use super::dom::*;
-use super::nodetest::{lookup_ns, node_principal_match, Bindings};
-use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::funcs;
+use super::msg::Bytes;
+use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
 use super::own::{OwnedVal, Set, Text};
+use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
+use crate::falloc::Reserve;
 use core::ffi::{c_char, c_void};
 use core::ptr;
-
 
 /* ---------- predicates ---------- */
 
@@ -61,7 +60,11 @@ unsafe fn apply_predicates<D: Dom>(
         for i in 0..size {
             let n = inout.get::<D>(i);
             let mut v = OwnedVal::new();
-            let pf = Focus::<D> { node: n, pos: i + 1, size };
+            let pf = Focus::<D> {
+                node: n,
+                pos: i + 1,
+                size,
+            };
             if !eval_node::<D>(ctx, pred, &pf, v.as_mut(), err) {
                 return false;
             }
@@ -582,8 +585,7 @@ pub unsafe fn try_first_match<D: Dom>(
         if mkr_limit_eval_op(limits, err) != 0 {
             return Err(());
         }
-        if node_principal_match::<D>(test, n, (*step).axis, &b) && first_node_ok::<D>(step, n)
-        {
+        if node_principal_match::<D>(test, n, (*step).axis, &b) && first_node_ok::<D>(step, n) {
             return Ok(Some(n));
         }
         if !D::is_null(D::first_child(n)) {
@@ -624,7 +626,13 @@ unsafe fn eval_path<D: Dom>(
     } else if !seed.push::<D>(self_node, limits, err) {
         return false;
     }
-    eval_steps::<D>(ctx, path_steps((*n).u.path.steps, (*n).u.path.nsteps), &mut seed, out, err)
+    eval_steps::<D>(
+        ctx,
+        path_steps((*n).u.path.steps, (*n).u.path.nsteps),
+        &mut seed,
+        out,
+        err,
+    )
 }
 
 unsafe fn eval_filter<D: Dom>(
@@ -645,7 +653,11 @@ unsafe fn eval_filter<D: Dom>(
             return false;
         }
         let mut set = Set::adopt((*primary.as_ptr()).u.nodeset);
-        (*primary.as_mut()).u.nodeset = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
+        (*primary.as_mut()).u.nodeset = NodeSet {
+            items: ptr::null_mut(),
+            count: 0,
+            capacity: 0,
+        };
         let preds = core::slice::from_raw_parts((*f).preds, (*f).npreds);
         if !apply_predicates::<D>(ctx, preds, &mut set, err) {
             return false;
@@ -658,8 +670,18 @@ unsafe fn eval_filter<D: Dom>(
             return false;
         }
         let mut seed = Set::adopt((*primary.as_ptr()).u.nodeset);
-        (*primary.as_mut()).u.nodeset = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
-        return eval_steps::<D>(ctx, path_steps((*f).path_steps, (*f).npath), &mut seed, out, err);
+        (*primary.as_mut()).u.nodeset = NodeSet {
+            items: ptr::null_mut(),
+            count: 0,
+            capacity: 0,
+        };
+        return eval_steps::<D>(
+            ctx,
+            path_steps((*f).path_steps, (*f).npath),
+            &mut seed,
+            out,
+            err,
+        );
     }
     *out = primary.take();
     true
@@ -682,7 +704,12 @@ unsafe fn eval_fncall<D: Dom>(
         match lookup_ns(ctx, prefix) {
             Some(u) => Some(u),
             None => {
-                err_setf!(err, XP_ERR_RUNTIME, "unknown namespace prefix '{}'", Bytes(prefix));
+                err_setf!(
+                    err,
+                    XP_ERR_RUNTIME,
+                    "unknown namespace prefix '{}'",
+                    Bytes(prefix)
+                );
                 return false;
             }
         }
@@ -695,7 +722,11 @@ unsafe fn eval_fncall<D: Dom>(
     let mut args: Vec<Val> = Vec::new();
     if nargs > 0 {
         if args.mkr_reserve_exact(nargs).is_err() {
-            err_setf!(err, XP_ERR_OOM, "out of memory allocating function arguments");
+            err_setf!(
+                err,
+                XP_ERR_OOM,
+                "out of memory allocating function arguments"
+            );
             return false;
         }
         for i in 0..nargs {
@@ -725,7 +756,11 @@ unsafe fn eval_fncall<D: Dom>(
                 (*call).name.ptr,
                 /* NULL rather than a dangling pointer when there are none,
                  * which is what the C hands a resolver. */
-                if nargs == 0 { ptr::null_mut() } else { args.as_mut_ptr() as *mut c_void },
+                if nargs == 0 {
+                    ptr::null_mut()
+                } else {
+                    args.as_mut_ptr() as *mut c_void
+                },
                 nargs,
                 out as *mut c_void,
                 err,
@@ -738,7 +773,11 @@ unsafe fn eval_fncall<D: Dom>(
                 XP_ERR_RUNTIME,
                 "unknown function {}{}{}",
                 Bytes(prefix),
-                if (*call).prefix.ptr.is_null() { "" } else { ":" },
+                if (*call).prefix.ptr.is_null() {
+                    ""
+                } else {
+                    ":"
+                },
                 Bytes(name)
             );
             false
@@ -877,9 +916,16 @@ unsafe fn eval_node_inner<D: Dom>(
 
     let ok = match (*n).kind {
         NK_LITERAL_STR => {
-            let mut text = OwnedText { ptr: ptr::null_mut(), len: 0 };
-            if owned_copy(&mut text, owned_bytes((*n).u.literal), err, b"out of memory copying literal\0")
-            {
+            let mut text = OwnedText {
+                ptr: ptr::null_mut(),
+                len: 0,
+            };
+            if owned_copy(
+                &mut text,
+                owned_bytes((*n).u.literal),
+                err,
+                b"out of memory copying literal\0",
+            ) {
                 mkr_val_set_owned_text(out, text);
                 true
             } else {
@@ -892,7 +938,10 @@ unsafe fn eval_node_inner<D: Dom>(
         }
         NK_VARREF => {
             let v = &raw const (*n).u.varref;
-            let mut got = VerifiedText { ptr: ptr::null(), len: 0 };
+            let mut got = VerifiedText {
+                ptr: ptr::null(),
+                len: 0,
+            };
             if mkr_ctx_lookup_variable_text(
                 ctx,
                 (*v).prefix.ptr,
@@ -917,8 +966,16 @@ unsafe fn eval_node_inner<D: Dom>(
                 } else {
                     core::slice::from_raw_parts(got.ptr as *const u8, got.len)
                 };
-                let mut text = OwnedText { ptr: ptr::null_mut(), len: 0 };
-                if owned_copy(&mut text, bytes, err, b"out of memory copying variable value\0") {
+                let mut text = OwnedText {
+                    ptr: ptr::null_mut(),
+                    len: 0,
+                };
+                if owned_copy(
+                    &mut text,
+                    bytes,
+                    err,
+                    b"out of memory copying variable value\0",
+                ) {
                     mkr_val_set_owned_text(out, text);
                     true
                 } else {
@@ -979,7 +1036,11 @@ pub unsafe fn eval_ast<D: Dom>(
     out: *mut Val,
     err: *mut Error,
 ) -> bool {
-    let focus = Focus::<D> { node: D::from_void(mkr_ctx_node(ctx)), pos: 1, size: 1 };
+    let focus = Focus::<D> {
+        node: D::from_void(mkr_ctx_node(ctx)),
+        pos: 1,
+        size: 1,
+    };
     eval_node::<D>(ctx, ast, &focus, out, err)
 }
 

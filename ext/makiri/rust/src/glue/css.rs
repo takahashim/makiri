@@ -37,8 +37,8 @@
 /* Every function takes the `VALUE`s its caller already holds. */
 #![allow(clippy::missing_safety_doc)]
 
-use core::cell::UnsafeCell;
 use crate::falloc::Reserve;
+use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use std::collections::HashMap;
 
@@ -105,7 +105,6 @@ type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
 extern "C" {
 
     /// The `_noi` twins of Lexbor's `lxb_inline` accessors.
-
     fn lxb_selectors_create() -> *mut Selectors;
     fn lxb_selectors_init(s: *mut Selectors) -> u32;
     fn lxb_selectors_destroy(s: *mut Selectors, self_destroy: bool) -> *mut Selectors;
@@ -216,7 +215,12 @@ unsafe fn engine() -> Result<&'static Engine, Error> {
 
         lxb_css_parser_memory_set_noi(parser, mem);
         lxb_css_parser_selectors_set_noi(parser, css_sel);
-        g.engine = Some(Engine { mem, parser, css_sel, selectors });
+        g.engine = Some(Engine {
+            mem,
+            parser,
+            css_sel,
+            selectors,
+        });
     }
     Ok(g.engine.as_ref().expect("just set"))
 }
@@ -368,7 +372,11 @@ unsafe fn with_compiled_selector(
         }
         lxb_css_memory_clean(e.mem);
         lxb_css_parser_clean(e.parser);
-        return if bad { Err(syntax_error(selector)) } else { Ok(()) };
+        return if bad {
+            Err(syntax_error(selector))
+        } else {
+            Ok(())
+        };
     }
 
     let key = core::slice::from_raw_parts(ptr, len);
@@ -457,7 +465,12 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
     let document = unsafe { Value::from_raw(mkr_node_document(rb_self.as_raw())) };
 
-    let mut ctx = FindCtx { nodes: Vec::new(), root, overflow: false, oom: false };
+    let mut ctx = FindCtx {
+        nodes: Vec::new(),
+        root,
+        overflow: false,
+        oom: false,
+    };
     unsafe {
         with_compiled_selector(
             selector,
@@ -484,7 +497,10 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
      * would skip `ctx.nodes`'s drop. `protect` turns that into an Err, the Vec
      * drops on the way out, and magnus raises afterwards - the Rust form of the
      * C's rb_ensure, at one setjmp per call rather than per node. */
-    let mut fill = Fill { set: set.as_raw(), nodes: &ctx.nodes };
+    let mut fill = Fill {
+        set: set.as_raw(),
+        nodes: &ctx.nodes,
+    };
     let mut state: c_int = 0;
     unsafe {
         rb_sys::rb_protect(
@@ -518,7 +534,10 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
     let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
 
-    let mut ctx = FirstCtx { root, found: core::ptr::null_mut() };
+    let mut ctx = FirstCtx {
+        root,
+        found: core::ptr::null_mut(),
+    };
     unsafe {
         with_compiled_selector(
             selector,
@@ -556,7 +575,9 @@ pub unsafe extern "C" fn mkr_init_css() {
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
         .expect("Makiri::HTML::NodeMethods");
     m.define_method("css", method!(css, 1)).expect("Node#css");
-    m.define_method("at_css", method!(at_css, 1)).expect("Node#at_css");
-    m.define_method("matches?", method!(matches, 1)).expect("Node#matches?");
+    m.define_method("at_css", method!(at_css, 1))
+        .expect("Node#at_css");
+    m.define_method("matches?", method!(matches, 1))
+        .expect("Node#matches?");
     let _: Option<c_int> = None;
 }

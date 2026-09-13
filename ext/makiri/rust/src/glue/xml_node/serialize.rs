@@ -26,8 +26,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
 use crate::falloc::Reserve;
+use core::ffi::{c_char, c_int, c_void};
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
@@ -353,14 +353,12 @@ unsafe fn plan_element(here: &Scope, n: *const Node, gen: &mut Gen) -> Option<Pl
 ///   bound to something else, or an
 ///     earlier attribute claimed it      -> invent a prefix, declare that
 ///   bound to nothing                    -> as-is, declare it
-unsafe fn plan_attr(
-    here: &Scope,
-    el: *const Node,
-    a: *const Node,
-    gen: &mut Gen,
-) -> Option<Plan> {
+unsafe fn plan_attr(here: &Scope, el: *const Node, a: *const Node, gen: &mut Gen) -> Option<Plan> {
     let own_prefix = field((*a).prefix, (*a).prefix_len);
-    let mut plan = Plan { prefix: Prefix::Own(own_prefix), declare: false };
+    let mut plan = Plan {
+        prefix: Prefix::Own(own_prefix),
+        declare: false,
+    };
 
     /* An unprefixed attribute is in no namespace - the default never applies to
      * one - and a declaration declares itself. */
@@ -489,7 +487,11 @@ unsafe fn write_node(
              * most one declaration synthesized for its own name. The link owns
              * the storage for an invented prefix, so nothing the element does
              * afterwards can move it out from under a descendant. */
-            let mut here = Scope { up: scope, el: n, syn: None };
+            let mut here = Scope {
+                up: scope,
+                el: n,
+                syn: None,
+            };
             let mut gen = Gen { seq: 1 }; /* shared by the names on this element */
 
             /* Decide the name before writing anything: the name comes first in
@@ -592,7 +594,11 @@ unsafe fn write_node(
 /// cycles.
 unsafe fn serialize_cap(rb_self: Value) -> usize {
     let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(node_document(rb_self).as_raw())) as *mut XmlDoc;
-    let arena = if xdoc.is_null() { 0 } else { (*xdoc).arena_bytes };
+    let arena = if xdoc.is_null() {
+        0
+    } else {
+        (*xdoc).arena_bytes
+    };
     65536usize.saturating_add(arena.saturating_mul(32))
 }
 
@@ -604,10 +610,15 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
     let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
     let h = scanned.keywords;
     let mut width = 0i32;
-    if h.get(ruby.to_symbol("pretty")).is_some_and(|v: Value| v.to_bool()) {
+    if h.get(ruby.to_symbol("pretty"))
+        .is_some_and(|v: Value| v.to_bool())
+    {
         width = 2;
     }
-    if let Some(iv) = h.get(ruby.to_symbol("indent")).filter(|v: &Value| !v.is_nil()) {
+    if let Some(iv) = h
+        .get(ruby.to_symbol("indent"))
+        .filter(|v: &Value| !v.is_nil())
+    {
         let n = i32::try_convert(iv)?;
         width = n.max(0);
     }
@@ -877,7 +888,9 @@ unsafe fn c14n_node(b: *mut Buf, n: *const Node, is_apex: bool, comments: bool, 
             attrs.sort_by(|&x, &y| {
                 field((*x).ns_uri, (*x).ns_uri_len)
                     .cmp(field((*y).ns_uri, (*y).ns_uri_len))
-                    .then_with(|| field((*x).local, (*x).local_len).cmp(field((*y).local, (*y).local_len)))
+                    .then_with(|| {
+                        field((*x).local, (*x).local_len).cmp(field((*y).local, (*y).local_len))
+                    })
             });
             for at in attrs {
                 put(b, b" ")?;
@@ -1020,6 +1033,7 @@ pub unsafe extern "C" fn mkr_init_xml_node_serialize() {
     /* CSS selectors are supported on XML through the native XPath engine and are
      * registered in the XML query glue. HTML serialization is not, and says so. */
     for name in ["to_html", "inner_html", "outer_html"] {
-        m.define_method(name, method!(no_serialize, -1)).expect("#to_html");
+        m.define_method(name, method!(no_serialize, -1))
+            .expect("#to_html");
     }
 }

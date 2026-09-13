@@ -15,7 +15,10 @@ pub struct Text(pub OwnedText);
 
 impl Text {
     pub fn new() -> Text {
-        Text(OwnedText { ptr: ptr::null_mut(), len: 0 })
+        Text(OwnedText {
+            ptr: ptr::null_mut(),
+            len: 0,
+        })
     }
     pub fn as_slice(&self) -> &[u8] {
         if self.0.ptr.is_null() || self.0.len == 0 {
@@ -29,7 +32,13 @@ impl Text {
     }
     /// Hand the allocation to the caller; the guard is left empty.
     pub fn take(&mut self) -> OwnedText {
-        core::mem::replace(&mut self.0, OwnedText { ptr: ptr::null_mut(), len: 0 })
+        core::mem::replace(
+            &mut self.0,
+            OwnedText {
+                ptr: ptr::null_mut(),
+                len: 0,
+            },
+        )
     }
 }
 
@@ -48,7 +57,11 @@ impl Drop for Text {
 /// An owned `mkr_nodeset_t`.
 pub struct Set(pub NodeSet);
 
-const EMPTY_SET: NodeSet = NodeSet { items: ptr::null_mut(), count: 0, capacity: 0 };
+const EMPTY_SET: NodeSet = NodeSet {
+    items: ptr::null_mut(),
+    count: 0,
+    capacity: 0,
+};
 
 impl Set {
     pub fn new() -> Set {
@@ -79,7 +92,12 @@ impl Set {
     }
     /// # Safety
     /// `n` must be a live handle of the document being evaluated.
-    pub unsafe fn push<D: Dom>(&mut self, n: D::Node, limits: *mut Limits, err: *mut Error) -> bool {
+    pub unsafe fn push<D: Dom>(
+        &mut self,
+        n: D::Node,
+        limits: *mut Limits,
+        err: *mut Error,
+    ) -> bool {
         mkr_nodeset_push(self.as_mut(), D::to_void(n), limits, err) == 0
     }
     /// # Safety
@@ -107,7 +125,10 @@ pub struct OwnedVal(pub Val);
 
 impl OwnedVal {
     pub fn new() -> OwnedVal {
-        OwnedVal(Val { type_: 0, u: ValU { nodeset: EMPTY_SET } })
+        OwnedVal(Val {
+            type_: 0,
+            u: ValU { nodeset: EMPTY_SET },
+        })
     }
     pub fn as_mut(&mut self) -> *mut Val {
         &mut self.0
@@ -116,7 +137,13 @@ impl OwnedVal {
         &self.0
     }
     pub fn take(&mut self) -> Val {
-        core::mem::replace(&mut self.0, Val { type_: 0, u: ValU { nodeset: EMPTY_SET } })
+        core::mem::replace(
+            &mut self.0,
+            Val {
+                type_: 0,
+                u: ValU { nodeset: EMPTY_SET },
+            },
+        )
     }
 }
 

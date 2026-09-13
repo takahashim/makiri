@@ -140,7 +140,10 @@ unsafe fn xdoc(rb_self: Value) -> *mut XmlDoc {
 fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
     u32::try_from(len).map_err(|_| {
         let _ = ruby;
-        Error::new(unsafe { error_class() }, "string too long for an XML node (max 4 GiB)")
+        Error::new(
+            unsafe { error_class() },
+            "string too long for an XML node (max 4 GiB)",
+        )
     })
 }
 
@@ -177,7 +180,14 @@ unsafe fn verified_opt(
     what: &core::ffi::CStr,
 ) -> Result<(BorrowedText, u32), Error> {
     if v.is_nil() {
-        return Ok((BorrowedText { value: 0, ptr: core::ptr::null(), len: 0 }, 0));
+        return Ok((
+            BorrowedText {
+                value: 0,
+                ptr: core::ptr::null(),
+                len: 0,
+            },
+            0,
+        ));
     }
     verified(ruby, v, what)
 }
@@ -506,7 +516,9 @@ fn dom_prefix_ok(p: &[u8]) -> bool {
 }
 
 fn dom_local_ok(p: &[u8]) -> bool {
-    let Some(&first) = p.first() else { return false };
+    let Some(&first) = p.first() else {
+        return false;
+    };
     if first < 0x80 && !(first.is_ascii_alphabetic() || first == b':' || first == b'_') {
         return false;
     }
@@ -531,7 +543,9 @@ unsafe fn dom_name_consistency(
     }
     if !has_prefix {
         if q != l {
-            return Err(arg_err("qualified name must equal local name when prefix is nil"));
+            return Err(arg_err(
+                "qualified name must equal local name when prefix is nil",
+            ));
         }
         return Ok(QName {
             qname: qv.ptr,

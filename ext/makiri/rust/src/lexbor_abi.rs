@@ -11,7 +11,12 @@
 /// `consts`, the agreement checks - were also exempt from dead-code and naming
 /// lints they should not be.
 mod sys {
-    #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+    #![allow(
+        non_camel_case_types,
+        non_snake_case,
+        non_upper_case_globals,
+        dead_code
+    )]
     include!(concat!(env!("OUT_DIR"), "/lexbor_sys.rs"));
 }
 
@@ -124,8 +129,9 @@ extern "C" {
      * setter and a ctx getter for the token-done callback but NO getter for the
      * callback function itself, so that one field is read directly from the
      * generated struct - see `dom_adapter::source_loc`. */
-    pub fn lxb_html_parser_tokenizer_noi(parser: *mut lxb_html_parser_t)
-        -> *mut lxb_html_tokenizer_t;
+    pub fn lxb_html_parser_tokenizer_noi(
+        parser: *mut lxb_html_parser_t,
+    ) -> *mut lxb_html_tokenizer_t;
     pub fn lxb_html_tokenizer_callback_token_done_set_noi(
         tkz: *mut lxb_html_tokenizer_t,
         cb: lxb_html_tokenizer_token_f,
@@ -264,8 +270,10 @@ extern "C" {
 
     pub fn lxb_css_selectors_create() -> *mut CssSelectors;
     pub fn lxb_css_selectors_init(sel: *mut CssSelectors) -> u32;
-    pub fn lxb_css_selectors_destroy(sel: *mut CssSelectors, self_destroy: bool)
-        -> *mut CssSelectors;
+    pub fn lxb_css_selectors_destroy(
+        sel: *mut CssSelectors,
+        self_destroy: bool,
+    ) -> *mut CssSelectors;
 
     pub fn lxb_css_selectors_parse(
         parser: *mut CssParser,

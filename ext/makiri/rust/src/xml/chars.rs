@@ -6,7 +6,6 @@
 /* `normalize_newlines` reports failure as `Err(())`: the detail is the parser's
  * status code, which the caller already holds, exactly as in the C. */
 #![allow(clippy::result_unit_err)]
-
 #![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;

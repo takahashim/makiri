@@ -98,8 +98,11 @@ unsafe fn next_newline(bytes: &[u8], from: usize) -> Option<usize> {
 /// Build the line table over the input. NULL on allocation failure, which the
 /// caller treats as "no line information" rather than as a parse failure.
 pub unsafe extern "C" fn mkr_lines_build(src: *const u8, len: usize) -> *mut c_void {
-    let bytes: &[u8] =
-        if src.is_null() || len == 0 { &[] } else { core::slice::from_raw_parts(src, len) };
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src, len)
+    };
 
     /* Count first, so the array is sized exactly once. Both passes go through
      * `next_newline`, so they cannot disagree about which bytes start a line. */

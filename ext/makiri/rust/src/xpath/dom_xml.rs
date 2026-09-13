@@ -202,6 +202,9 @@ unsafe impl Dom for Xml {
         } else {
             core::slice::from_raw_parts(bucket, cnt)
         };
-        Some(Bucket { nodes, recheck: false })
+        Some(Bucket {
+            nodes,
+            recheck: false,
+        })
     }
 }

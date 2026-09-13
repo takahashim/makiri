@@ -23,16 +23,11 @@
 
 use core::ffi::{c_char, c_int, c_long};
 
-use magnus::rb_sys::FromRawValue;
 use magnus::encoding::Coderange;
+use magnus::rb_sys::FromRawValue;
 use magnus::{RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
-/// `mkr_borrowed_text_t` / `mkr_verified_text_t` - the UNANCHORED slice, which
-/// is a different C type from the Ruby-anchored `glue::abi::RubyText` despite
-/// the family resemblance. It had three definitions across the crate; this is
-/// the one name for it.
-pub use crate::xpath_abi::VerifiedText as BorrowedText;
 /// The shared owned buffer.
 pub use crate::glue::abi::OwnedBytes;
 /// The anchored view, from `glue::abi` - one definition for the whole crate.
@@ -40,6 +35,11 @@ pub use crate::glue::abi::OwnedBytes;
 /// lattice's whole job is to make a data-family value reaching an engine input
 /// a type error, and that only works if they are different types.
 pub use crate::glue::abi::RubyText as RubyBorrowedText;
+/// `mkr_borrowed_text_t` / `mkr_verified_text_t` - the UNANCHORED slice, which
+/// is a different C type from the Ruby-anchored `glue::abi::RubyText` despite
+/// the family resemblance. It had three definitions across the crate; this is
+/// the one name for it.
+pub use crate::xpath_abi::VerifiedText as BorrowedText;
 
 use crate::glue::abi::{mkr_eError, rb_raise};
 
@@ -150,7 +150,10 @@ pub unsafe extern "C" fn mkr_ruby_str_from_slices(
 /// # Safety
 /// `v` must have come from `mkr_ruby_verified_text` or its try-variant.
 pub unsafe extern "C" fn mkr_verified_text_from_view(v: RubyBorrowedText) -> BorrowedText {
-    BorrowedText { ptr: v.ptr, len: v.len }
+    BorrowedText {
+        ptr: v.ptr,
+        len: v.len,
+    }
 }
 
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel

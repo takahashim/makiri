@@ -34,11 +34,14 @@ use rb_sys::{rb_data_type_t, VALUE};
 
 use crate::lexbor_abi as lxb;
 
-use super::fragment::{build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context};
-use super::abi::{LxbDoc, LXB_DOM_NODE_TYPE_ELEMENT, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, 
+use super::abi::{
     error_class, mkr_cDocumentFragment, mkr_cHtmlDocument, mkr_cXmlDocument, mkr_html_node_unwrap,
-    mkr_mHtmlNodeMethods, mkr_node_document, mkr_wrap_html_node, mkr_xml_node_unwrap, DataType,
-    LxbNode, OwnedBytes,
+    mkr_mHtmlNodeMethods, mkr_node_document, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8,
+    mkr_ruby_to_utf8, mkr_wrap_html_node, mkr_xml_node_unwrap, DataType, LxbDoc, LxbNode,
+    OwnedBytes, LXB_DOM_NODE_TYPE_ELEMENT,
+};
+use super::fragment::{
+    build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
 };
 
 /* ------------------------------------------------------------------ *
@@ -103,7 +106,13 @@ unsafe extern "C" fn doc_memsize(ptr: *const c_void) -> rb_sys::size_t {
 }
 
 const fn doc_data_type(name: *const c_char, parent: *const rb_data_type_t) -> DataType {
-    DataType::new(name, parent, Some(doc_mark), Some(doc_free), Some(doc_memsize))
+    DataType::new(
+        name,
+        parent,
+        Some(doc_mark),
+        Some(doc_free),
+        Some(doc_memsize),
+    )
 }
 
 /// The base type, exported: the kind-agnostic accessors (`mkr_doc_parsed`,
@@ -149,8 +158,8 @@ pub unsafe extern "C" fn mkr_wrap_document(
     } else {
         (mkr_cHtmlDocument, MKR_HTML_DOC_TYPE.as_ptr())
     };
-    let d = rb_sys::ruby_xcalloc(1, core::mem::size_of::<DocData>() as rb_sys::size_t)
-        as *mut DocData;
+    let d =
+        rb_sys::ruby_xcalloc(1, core::mem::size_of::<DocData>() as rb_sys::size_t) as *mut DocData;
     (*d).parsed = parsed;
     (*d).errors = rb_sys::rb_ary_new();
     rb_sys::rb_data_typed_object_wrap(klass, d as *mut c_void, ty)
@@ -237,7 +246,10 @@ fn doc_root(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
         let doc = mkr_html_doc_unwrap(self_.as_raw());
-        Value::from_raw(mkr_wrap_html_node(lxb_dom_document_root(doc), self_.as_raw()))
+        Value::from_raw(mkr_wrap_html_node(
+            lxb_dom_document_root(doc),
+            self_.as_raw(),
+        ))
     }
 }
 
@@ -247,7 +259,11 @@ fn doc_title(ruby: &Ruby, self_: Value) -> RString {
         let mut len: usize = 0;
         let doc = mkr_html_doc_unwrap(self_.as_raw());
         let s = lxb_html_document_title(doc as *mut c_void, &mut len);
-        let bytes: &[u8] = if s.is_null() { &[] } else { core::slice::from_raw_parts(s, len) };
+        let bytes: &[u8] = if s.is_null() {
+            &[]
+        } else {
+            core::slice::from_raw_parts(s, len)
+        };
         ruby.enc_str_new(bytes, ruby.utf8_encoding())
     }
 }
@@ -302,7 +318,10 @@ fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Err
         const SHELL: &[u8] = b"<html><body></body></html>";
         let parsed = mkr_parse_html(SHELL.as_ptr(), SHELL.len(), true);
         if parsed.is_null() {
-            return Err(Error::new(error_class(), "failed to create fragment document"));
+            return Err(Error::new(
+                error_class(),
+                "failed to create fragment document",
+            ));
         }
         Ok(Value::from_raw(mkr_wrap_document(parsed))) /* GC owns parsed now */
     })
@@ -426,9 +445,15 @@ pub unsafe extern "C" fn mkr_init_document() {
     html_doc
         .define_singleton_method("_parse", method!(doc_s_parse, 1))
         .expect("Document._parse");
-    html_doc.define_method("root", method!(doc_root, 0)).expect("Document#root");
-    html_doc.define_method("title", method!(doc_title, 0)).expect("Document#title");
-    html_doc.define_method("errors", method!(doc_errors, 0)).expect("Document#errors");
+    html_doc
+        .define_method("root", method!(doc_root, 0))
+        .expect("Document#root");
+    html_doc
+        .define_method("title", method!(doc_title, 0))
+        .expect("Document#title");
+    html_doc
+        .define_method("errors", method!(doc_errors, 0))
+        .expect("Document#errors");
     html_doc
         .define_method("internal_subset", method!(doc_internal_subset, 0))
         .expect("Document#internal_subset");

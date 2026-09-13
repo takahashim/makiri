@@ -34,7 +34,10 @@ pub struct MsgBuf {
 
 impl Default for MsgBuf {
     fn default() -> Self {
-        MsgBuf { buf: [0; 200], len: 0 }
+        MsgBuf {
+            buf: [0; 200],
+            len: 0,
+        }
     }
 }
 

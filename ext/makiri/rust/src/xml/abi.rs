@@ -206,4 +206,3 @@ pub unsafe fn qname_of(n: *const Node) -> QName {
         local_len: (*n).local_len,
     }
 }
-

@@ -11,7 +11,6 @@ use super::dom::*;
 use core::ffi::c_void;
 use core::ptr;
 
-
 /// An attribute sits "with" its owner element for cross-subtree comparisons;
 /// only when both anchor to the same element do the attribute-specific rules
 /// apply.
@@ -162,7 +161,10 @@ unsafe fn order_index_insert<D: Dom>(idx: *mut OrderIndex, node: D::Node, ord: u
                 while !(*(*idx).buckets.add(j)).node.is_null() {
                     j = (j + 1) & mask;
                 }
-                *(*idx).buckets.add(j) = OrderBucket { node: b.node, ord: b.ord };
+                *(*idx).buckets.add(j) = OrderBucket {
+                    node: b.node,
+                    ord: b.ord,
+                };
                 (*idx).count += 1;
             }
         }
@@ -271,7 +273,10 @@ unsafe fn doc_order_cmp_ctx<D: Dom>(ctx: *mut Context, a: D::Node, b: D::Node) -
     if idx.is_null() || (*idx).built == 0 {
         return doc_order_cmp::<D>(a, b);
     }
-    match (order_index_lookup::<D>(idx, a), order_index_lookup::<D>(idx, b)) {
+    match (
+        order_index_lookup::<D>(idx, a),
+        order_index_lookup::<D>(idx, b),
+    ) {
         (Some(oa), Some(ob)) => oa.cmp(&ob) as i32,
         _ => doc_order_cmp::<D>(a, b),
     }
@@ -309,7 +314,11 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet
 
     /* Build the index lazily, and only when the sort is large enough to
      * amortise the full-document walk. */
-    let idx = if ctx.is_null() { ptr::null_mut() } else { mkr_ctx_order_index(ctx) };
+    let idx = if ctx.is_null() {
+        ptr::null_mut()
+    } else {
+        mkr_ctx_order_index(ctx)
+    };
     if !idx.is_null() && (*idx).built == 0 && items.len() >= INDEX_BUILD_MIN {
         let root = mkr_ctx_document(ctx);
         if !root.is_null() {

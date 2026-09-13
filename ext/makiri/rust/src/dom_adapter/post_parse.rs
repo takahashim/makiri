@@ -119,7 +119,9 @@ impl Drop for RecorderHandle {
 unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc {
     *out_lines = core::ptr::null_mut();
 
-    let parser = Parser { p: lxb::lxb_html_parser_create() };
+    let parser = Parser {
+        p: lxb::lxb_html_parser_create(),
+    };
     if parser.p.is_null() || lxb::lxb_html_parser_init(parser.p) != LXB_STATUS_OK {
         return core::ptr::null_mut();
     }
@@ -132,7 +134,9 @@ unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc
     /* Install the recorder, CHAINING the parser's own tree-building callback
      * (which chunk_begin has just set). If the recorder cannot be allocated we
      * simply parse without source tracking. */
-    let mut rec = RecorderHandle { r: mkr_pos_recorder_create(src.as_ptr()) };
+    let mut rec = RecorderHandle {
+        r: mkr_pos_recorder_create(src.as_ptr()),
+    };
     if !rec.r.is_null() {
         let tkz = lxb::lxb_html_parser_tokenizer_noi(parser.p);
         /* Lexbor has a setter and a ctx getter for the token-done callback but
@@ -201,7 +205,9 @@ pub unsafe extern "C" fn mkr_parse_html(
      * always valid UTF-8. Valid input - the common case - is used as-is with no
      * copy. Source offsets are then relative to the SANITISED bytes: exact for
      * valid input, best-effort where replacement shifted byte positions. */
-    let mut clean = Sanitized { ptr: core::ptr::null_mut() };
+    let mut clean = Sanitized {
+        ptr: core::ptr::null_mut(),
+    };
     let mut clean_len = 0usize;
     if !assume_valid && mkr_utf8_sanitize(src, len, &mut clean.ptr, &mut clean_len) != 0 {
         drop(Box::from_raw(p));
@@ -302,7 +308,11 @@ pub unsafe extern "C" fn mkr_parsed_set_xml_doc(p: *mut Parsed, xdoc: *mut c_voi
 /// capacity to the buffer's hard ceiling anyway.
 unsafe fn mem_used(mem: *const lxb::lexbor_mem_t) -> usize {
     let mut total = 0usize;
-    let mut c = if mem.is_null() { core::ptr::null_mut() } else { (*mem).chunk_first };
+    let mut c = if mem.is_null() {
+        core::ptr::null_mut()
+    } else {
+        (*mem).chunk_first
+    };
     while !c.is_null() {
         total = match total.checked_add((*c).length) {
             Some(t) => t,

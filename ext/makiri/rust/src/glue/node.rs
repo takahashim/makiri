@@ -91,16 +91,12 @@ const fn node_type(name: *const c_char, parent: *const rb_data_type_t) -> DataTy
 pub static mkr_node_type: DataType = node_type(c"Makiri::Node".as_ptr(), core::ptr::null());
 
 #[allow(non_upper_case_globals)]
-pub static mkr_html_node_type: DataType = node_type(
-    c"Makiri::HTML::Node".as_ptr(),
-    mkr_node_type.as_ptr(),
-);
+pub static mkr_html_node_type: DataType =
+    node_type(c"Makiri::HTML::Node".as_ptr(), mkr_node_type.as_ptr());
 
 #[allow(non_upper_case_globals)]
-pub static mkr_xml_node_type: DataType = node_type(
-    c"Makiri::XML::Node".as_ptr(),
-    mkr_node_type.as_ptr(),
-);
+pub static mkr_xml_node_type: DataType =
+    node_type(c"Makiri::XML::Node".as_ptr(), mkr_node_type.as_ptr());
 
 /// The base type as the raw pointer the Ruby API wants.
 #[inline]
@@ -120,7 +116,7 @@ const MKR_NODE_KIND_OTHER: c_int = 0;
 const MKR_NODE_KIND_HTML: c_int = 1;
 const MKR_NODE_KIND_XML: c_int = 2;
 
-use super::abi::{DataType, mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc};
+use super::abi::{mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc, DataType};
 
 pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
 
@@ -161,13 +157,17 @@ pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
 /// `MKR_NODE_KIND_OTHER`. The cross-kind `Document#import_node` entries use this
 /// to route a node to the same-representation copy or the translator.
 pub unsafe extern "C" fn mkr_node_kind(v: VALUE) -> c_int {
-    if rb_typeddata_is_kind_of(v, &mkr_html_node_type as *const DataType as *const rb_data_type_t)
-        != 0
+    if rb_typeddata_is_kind_of(
+        v,
+        &mkr_html_node_type as *const DataType as *const rb_data_type_t,
+    ) != 0
     {
         return MKR_NODE_KIND_HTML;
     }
-    if rb_typeddata_is_kind_of(v, &mkr_xml_node_type as *const DataType as *const rb_data_type_t)
-        != 0
+    if rb_typeddata_is_kind_of(
+        v,
+        &mkr_xml_node_type as *const DataType as *const rb_data_type_t,
+    ) != 0
     {
         return MKR_NODE_KIND_XML;
     }

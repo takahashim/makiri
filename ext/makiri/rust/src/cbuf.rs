@@ -41,7 +41,12 @@ impl Buf {
     /// in Rust would only add a constant that a `-DMKR_BUF_HARD_MAX=` build
     /// could silently disagree with.
     pub fn new(max: usize) -> Buf {
-        Buf { data: core::ptr::null_mut(), len: 0, cap: 0, max }
+        Buf {
+            data: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+            max,
+        }
     }
 
     /// The bytes written so far.
@@ -135,7 +140,11 @@ pub(crate) use limits::{mkr_buf_default_limit, mkr_buf_hard_max};
 /// than `append` would pre-size past what any append will accept.
 #[inline]
 unsafe fn content_limit(b: &Buf) -> usize {
-    let soft = if b.max != 0 { b.max } else { mkr_buf_default_limit };
+    let soft = if b.max != 0 {
+        b.max
+    } else {
+        mkr_buf_default_limit
+    };
     soft.min(mkr_buf_hard_max)
 }
 
@@ -145,11 +154,7 @@ unsafe fn content_limit(b: &Buf) -> usize {
 ///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
-pub unsafe extern "C" fn mkr_buf_append(
-    b: *mut Buf,
-    bytes: *const c_void,
-    n: usize,
-) -> c_int {
+pub unsafe extern "C" fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
     if n == 0 {
         return MKR_OK;
     }
@@ -272,4 +277,3 @@ pub unsafe extern "C" fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut
     b.cap = 0;
     p
 }
-

@@ -21,8 +21,8 @@ use magnus::{prelude::*, Error, RArray, Ruby, Value};
 use super::ty;
 use super::{node_document, unwrap, wrap};
 use crate::glue::abi::{
-    error_class, is_kind_of, lxb_dom_attr_local_name, lxb_dom_attr_qualified_name, lxb_dom_attr_value_noi,
-    lxb_dom_document_destroy_text_noi, lxb_dom_document_root,
+    error_class, is_kind_of, lxb_dom_attr_local_name, lxb_dom_attr_qualified_name,
+    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_root,
     lxb_dom_document_type_public_id_noi, lxb_dom_document_type_system_id_noi,
     lxb_dom_element_first_attribute_noi, lxb_dom_element_get_attribute,
     lxb_dom_element_has_attribute, lxb_dom_element_local_name, lxb_dom_element_next_attribute_noi,
@@ -43,14 +43,16 @@ pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_build;
 pub use crate::dom_adapter::source_loc::mkr_parsed_node_line;
 pub use crate::dom_adapter::text_index::mkr_parsed_text_slices;
 
-
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
  * ------------------------------------------------------------------ */
 
 #[inline]
 fn borrowed(p: *const u8, len: usize) -> BorrowedText {
-    BorrowedText { ptr: p as *const c_char, len }
+    BorrowedText {
+        ptr: p as *const c_char,
+        len,
+    }
 }
 
 /// A UTF-8 String over Lexbor's interned bytes. They live in the document arena
@@ -285,7 +287,10 @@ use crate::glue::abi::lxb_dom_processing_instruction_target_noi;
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
 pub fn node_type(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { ruby.integer_from_i64((*unwrap(rb_self)).type_ as i64).as_value() }
+    unsafe {
+        ruby.integer_from_i64((*unwrap(rb_self)).type_ as i64)
+            .as_value()
+    }
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
@@ -611,11 +616,8 @@ pub fn has_key(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
             return ruby.qfalse().as_value();
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
-        let has = lxb_dom_element_has_attribute(
-            node as *mut LxbElement,
-            nv.ptr as *const u8,
-            nv.len,
-        );
+        let has =
+            lxb_dom_element_has_attribute(node as *mut LxbElement, nv.ptr as *const u8, nv.len);
         let _anchor = nv.value;
         if has {
             ruby.qtrue().as_value()

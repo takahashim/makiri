@@ -111,11 +111,7 @@ pub unsafe extern "C" fn mkr_utf8_valid(src: *const u8, len: usize) -> bool {
 ///
 /// Returns the byte length (1..=4) with `*cp` set, or 0 on any violation -
 /// including `len == 0`. `*cp` is left untouched on failure, as in the C.
-pub unsafe extern "C" fn mkr_utf8_decode1(
-    p: *const u8,
-    len: usize,
-    cp: *mut u32,
-) -> c_int {
+pub unsafe extern "C" fn mkr_utf8_decode1(p: *const u8, len: usize, cp: *mut u32) -> c_int {
     if len == 0 {
         return 0;
     }

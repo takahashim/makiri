@@ -75,9 +75,16 @@ fn decode1_agrees_with_from_utf8() {
 
     match decode1(s) {
         Some((cp, n)) => {
-            assert!(valid(&s[..n]), "decode1: the accepted prefix is valid UTF-8");
+            assert!(
+                valid(&s[..n]),
+                "decode1: the accepted prefix is valid UTF-8"
+            );
             /* And it decodes to the same code point the standard library sees. */
-            let first = core::str::from_utf8(&s[..n]).unwrap().chars().next().unwrap();
+            let first = core::str::from_utf8(&s[..n])
+                .unwrap()
+                .chars()
+                .next()
+                .unwrap();
             assert!(first as u32 == cp, "decode1: same code point as from_utf8");
         }
         None => {
@@ -124,7 +131,10 @@ fn chain_consumes_exactly_valid_input() {
     }
 
     if ok {
-        assert!(consumed_all && off == len, "valid input: the chain consumes it exactly");
+        assert!(
+            consumed_all && off == len,
+            "valid input: the chain consumes it exactly"
+        );
     }
     if consumed_all && off == len {
         assert!(ok, "a fully consumed buffer is valid");

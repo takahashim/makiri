@@ -222,7 +222,7 @@ fn main() {
         .allowlist_function("lxb_css_property_serialize")
         .allowlist_function("lxb_css_property_serialize_name")
         .allowlist_function("lxb_css_selector_serialize_chain")
-                // Top-level consts, not modules: the names then match the headers
+        // Top-level consts, not modules: the names then match the headers
         // exactly and do not depend on bindgen's numbering of anonymous types.
         // Lexbor's constants are uniquely prefixed, so nothing collides.
         .default_enum_style(bindgen::EnumVariation::Consts)
