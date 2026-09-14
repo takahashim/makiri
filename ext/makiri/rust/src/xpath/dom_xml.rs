@@ -52,10 +52,11 @@ unsafe fn is_ns_decl(doc: *mut xml::Document, a: xml::NodeId) -> bool {
 }
 
 unsafe fn skip_ns_decls(doc: *mut xml::Document, mut a: xml::NodeId) -> xml::NodeId {
+    let Some(dd) = d(doc) else {
+        return xml::NodeId::INVALID;
+    };
     while !a.is_invalid() && is_ns_decl(doc, a) {
-        a = nd(doc, a)
-            .and_then(|x| x.next)
-            .unwrap_or(xml::NodeId::INVALID);
+        a = dd.next(a).unwrap_or(xml::NodeId::INVALID);
     }
     a
 }
@@ -100,45 +101,45 @@ unsafe impl Dom for Xml {
 
     #[inline]
     unsafe fn first_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        nd(doc, n)
-            .and_then(|x| x.first_child)
+        d(doc)
+            .and_then(|dd| dd.first_child(n))
             .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn last_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        nd(doc, n)
-            .and_then(|x| x.last_child)
+        d(doc)
+            .and_then(|dd| dd.last_child(n))
             .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn next(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        nd(doc, n)
-            .and_then(|x| x.next)
+        d(doc)
+            .and_then(|dd| dd.next(n))
             .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn prev(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        nd(doc, n)
-            .and_then(|x| x.prev)
+        d(doc)
+            .and_then(|dd| dd.prev(n))
             .unwrap_or(xml::NodeId::INVALID)
     }
     #[inline]
     unsafe fn parent(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        nd(doc, n)
-            .and_then(|x| x.parent)
+        d(doc)
+            .and_then(|dd| dd.parent(n))
             .unwrap_or(xml::NodeId::INVALID)
     }
 
     #[inline]
     unsafe fn first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node {
-        match nd(doc, el).and_then(|x| x.attrs) {
+        match d(doc).and_then(|dd| dd.attrs(el)) {
             Some(a) => skip_ns_decls(doc, a),
             None => xml::NodeId::INVALID,
         }
     }
     #[inline]
     unsafe fn attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node {
-        match nd(doc, a).and_then(|x| x.next) {
+        match d(doc).and_then(|dd| dd.next(a)) {
             Some(n) => skip_ns_decls(doc, n),
             None => xml::NodeId::INVALID,
         }
@@ -152,7 +153,7 @@ unsafe impl Dom for Xml {
     }
 
     unsafe fn get_attribute<'a>(doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
-        let mut a = nd(doc, el).and_then(|x| x.attrs);
+        let mut a = d(doc).and_then(|dd| dd.attrs(el));
         while let Some(id) = a {
             if !is_ns_decl(doc, id)
                 && span(doc, nd(doc, id).map_or(xml::Span::ABSENT, |x| x.qname)) == name
@@ -162,7 +163,7 @@ unsafe impl Dom for Xml {
                     nd(doc, id).map_or(xml::Span::ABSENT, |x| x.value),
                 ));
             }
-            a = nd(doc, id).and_then(|x| x.next);
+            a = d(doc).and_then(|dd| dd.next(id));
         }
         None
     }

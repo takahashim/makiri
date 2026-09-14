@@ -9,7 +9,7 @@
 
 use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
-use crate::xml::{Document, Node, NodeId, NodeType, Span, Status};
+use crate::xml::{Document, Link, Node, NodeId, NodeType, Span, Status};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -77,61 +77,76 @@ impl Document {
     /// unknown provenance.
     #[inline]
     pub(crate) fn node(&self, id: NodeId) -> &Node {
-        let n = &self.nodes[id.index() as usize];
-        debug_assert_eq!(
-            n.generation,
-            id.generation(),
-            "NodeId from another document"
-        );
-        n
+        debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
+        &self.nodes[id.index() as usize]
     }
     /// As [`Document::node`], for mutation.
     #[inline]
     pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
-        let n = &mut self.nodes[id.index() as usize];
-        debug_assert_eq!(
-            n.generation,
-            id.generation(),
-            "NodeId from another document"
-        );
-        n
+        debug_assert_eq!(id.stamp(), self.stamp, "NodeId from another document");
+        &mut self.nodes[id.index() as usize]
+    }
+
+    /// Resolve a [`Link`] to a handle, re-attaching this document's stamp.
+    /// [`Link::NONE`] is no node.
+    #[inline]
+    fn node_id(&self, l: Link) -> Option<NodeId> {
+        if l.is_none() {
+            None
+        } else {
+            Some(self.id_of(l))
+        }
+    }
+    /// The handle a [`Link`] names, re-attaching this document's stamp;
+    /// [`Link::NONE`] yields [`NodeId::INVALID`].
+    #[inline]
+    fn id_of(&self, l: Link) -> NodeId {
+        NodeId::new(l.index(), self.stamp)
+    }
+    /// The node a non-[`Link::NONE`] link names.
+    #[inline]
+    fn node_at(&self, l: Link) -> &Node {
+        &self.nodes[l.index() as usize]
+    }
+    /// As [`Document::node_at`], for mutation.
+    #[inline]
+    fn node_at_mut(&mut self, l: Link) -> &mut Node {
+        &mut self.nodes[l.index() as usize]
     }
 
     /// A node that may hold a detached/removed value: `None` for the invalid
-    /// handle or a stale generation.
+    /// handle, a handle from another document, or an out-of-range index.
     #[inline]
     pub fn try_node(&self, id: NodeId) -> Option<&Node> {
-        if id.is_invalid() {
+        if id.is_invalid() || id.stamp() != self.stamp {
             return None;
         }
-        self.nodes
-            .get(id.index() as usize)
-            .filter(|n| n.generation == id.generation())
+        self.nodes.get(id.index() as usize)
     }
 
     #[inline]
     pub fn first_child(&self, id: NodeId) -> Option<NodeId> {
-        self.try_node(id).and_then(|n| n.first_child)
+        self.node_id(self.try_node(id)?.first_child)
     }
     #[inline]
     pub fn last_child(&self, id: NodeId) -> Option<NodeId> {
-        self.try_node(id).and_then(|n| n.last_child)
+        self.node_id(self.try_node(id)?.last_child)
     }
     #[inline]
     pub fn next(&self, id: NodeId) -> Option<NodeId> {
-        self.try_node(id).and_then(|n| n.next)
+        self.node_id(self.try_node(id)?.next)
     }
     #[inline]
     pub fn prev(&self, id: NodeId) -> Option<NodeId> {
-        self.try_node(id).and_then(|n| n.prev)
+        self.node_id(self.try_node(id)?.prev)
     }
     #[inline]
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        self.try_node(id).and_then(|n| n.parent)
+        self.node_id(self.try_node(id)?.parent)
     }
     #[inline]
     pub fn attrs(&self, id: NodeId) -> Option<NodeId> {
-        self.try_node(id).and_then(|n| n.attrs)
+        self.node_id(self.try_node(id)?.attrs)
     }
     #[inline]
     pub fn type_(&self, id: NodeId) -> Option<NodeType> {
@@ -262,7 +277,7 @@ impl Document {
             .map_err(|_| self.fail(Status::Oom))?;
         let index = self.nodes.len() as u32;
         let stamp = self.stamp;
-        self.nodes.push(Node::zeroed(type_, stamp));
+        self.nodes.push(Node::zeroed(type_));
         Ok(NodeId::new(index, stamp))
     }
 
@@ -305,30 +320,29 @@ impl Document {
         type_: NodeType,
         span: Span,
     ) -> Result<(), Status> {
-        if let Some(last) = self.node(parent).last_child {
-            if self.node(last).type_ == type_ {
-                let old = self.node(last).value;
-                if old.end() == span.off as usize {
-                    // The two chunks are contiguous in the store (the common
-                    // case): extend the span, no copy.
-                    let total = (old.len as usize)
-                        .checked_add(span.len as usize)
-                        .filter(|&t| t <= u32::MAX as usize)
-                        .ok_or_else(|| self.fail(Status::Limit))?;
-                    self.node_mut(last).value.len = total as u32;
-                    return Ok(());
-                }
-                /* Not contiguous: rebuild the coalesced bytes once. */
-                let (a, b) = (old, span);
-                let mut merged: Vec<u8> = Vec::new();
-                merged
-                    .mkr_extend(self.span(a))
-                    .and_then(|()| merged.mkr_extend(self.span(b)))
-                    .map_err(|_| self.fail(Status::Oom))?;
-                let s = self.store(&merged)?;
-                self.node_mut(last).value = s;
+        let last = self.node(parent).last_child;
+        if !last.is_none() && self.node_at(last).type_ == type_ {
+            let old = self.node_at(last).value;
+            if old.end() == span.off as usize {
+                // The two chunks are contiguous in the store (the common
+                // case): extend the span, no copy.
+                let total = (old.len as usize)
+                    .checked_add(span.len as usize)
+                    .filter(|&t| t <= u32::MAX as usize)
+                    .ok_or_else(|| self.fail(Status::Limit))?;
+                self.node_at_mut(last).value.len = total as u32;
                 return Ok(());
             }
+            /* Not contiguous: rebuild the coalesced bytes once. */
+            let (a, b) = (old, span);
+            let mut merged: Vec<u8> = Vec::new();
+            merged
+                .mkr_extend(self.span(a))
+                .and_then(|()| merged.mkr_extend(self.span(b)))
+                .map_err(|_| self.fail(Status::Oom))?;
+            let s = self.store(&merged)?;
+            self.node_at_mut(last).value = s;
+            return Ok(());
         }
         let node = self.new_node(type_)?;
         self.node_mut(node).value = span;
@@ -340,60 +354,65 @@ impl Document {
 
     #[inline]
     pub fn set_parent(&mut self, id: NodeId, parent: Option<NodeId>) {
-        self.node_mut(id).parent = parent;
+        self.node_mut(id).parent = Link::from_option(parent);
     }
 
     /// Append `child` as the last child of `parent`.
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        self.node_mut(child).parent = Some(parent);
-        let last = self.node(parent).last_child;
-        if let Some(last) = last {
-            self.node_mut(last).next = Some(child);
-            self.node_mut(child).prev = Some(last);
+        let (parent, child) = (Link::of(parent), Link::of(child));
+        self.node_at_mut(child).parent = parent;
+        let last = self.node_at(parent).last_child;
+        if last.is_none() {
+            self.node_at_mut(parent).first_child = child;
         } else {
-            self.node_mut(parent).first_child = Some(child);
+            self.node_at_mut(last).next = child;
+            self.node_at_mut(child).prev = last;
         }
-        self.node_mut(parent).last_child = Some(child);
+        self.node_at_mut(parent).last_child = child;
     }
 
     /// Unlink `node` from its parent (child chain or attribute chain). No-op
     /// when the node is already detached.
     pub fn detach(&mut self, node: NodeId) {
-        let Some(parent) = self.node(node).parent else {
+        let node_link = Link::of(node);
+        let parent = self.node_at(node_link).parent;
+        if parent.is_none() {
             return;
-        };
-        if self.node(node).type_ == NodeType::Attribute {
-            let mut prev: Option<NodeId> = None;
-            let mut a = self.node(parent).attrs;
-            while let Some(cur) = a {
-                if cur == node {
-                    self.unlink_attr(parent, prev, cur);
+        }
+        if self.node_at(node_link).type_ == NodeType::Attribute {
+            let mut prev = Link::NONE;
+            let mut attr = self.node_at(parent).attrs;
+            while !attr.is_none() {
+                if attr == node_link {
+                    self.unlink_attr(self.id_of(parent), self.node_id(prev), self.id_of(attr));
                     break;
                 }
-                prev = Some(cur);
-                a = self.node(cur).next;
+                prev = attr;
+                attr = self.node_at(attr).next;
             }
-            self.clear_links(node);
+            self.clear_links(node_link);
             return;
         }
-        let (prev, next) = (self.node(node).prev, self.node(node).next);
-        match prev {
-            Some(p) => self.node_mut(p).next = next,
-            None => self.node_mut(parent).first_child = next,
+        let (prev, next) = (self.node_at(node_link).prev, self.node_at(node_link).next);
+        if prev.is_none() {
+            self.node_at_mut(parent).first_child = next;
+        } else {
+            self.node_at_mut(prev).next = next;
         }
-        match next {
-            Some(n) => self.node_mut(n).prev = prev,
-            None => self.node_mut(parent).last_child = prev,
+        if next.is_none() {
+            self.node_at_mut(parent).last_child = prev;
+        } else {
+            self.node_at_mut(next).prev = prev;
         }
-        self.clear_links(node);
+        self.clear_links(node_link);
     }
 
     #[inline]
-    fn clear_links(&mut self, node: NodeId) {
-        let n = self.node_mut(node);
-        n.parent = None;
-        n.prev = None;
-        n.next = None;
+    fn clear_links(&mut self, node: Link) {
+        let n = self.node_at_mut(node);
+        n.parent = Link::NONE;
+        n.prev = Link::NONE;
+        n.next = Link::NONE;
     }
 
     /// Unlink attribute `a` (predecessor `prev`, `None` if head) from `el`.
@@ -403,20 +422,21 @@ impl Document {
             Some(p) => self.node_mut(p).next = next,
             None => self.node_mut(el).attrs = next,
         }
-        self.clear_links(a);
+        self.clear_links(Link::of(a));
     }
 
     /// Append `attr` to `el`'s attribute list.
     pub fn append_attr(&mut self, el: NodeId, attr: NodeId) {
-        self.node_mut(attr).parent = Some(el);
-        match self.node(el).attrs {
-            None => self.node_mut(el).attrs = Some(attr),
-            Some(mut t) => {
-                while let Some(n) = self.node(t).next {
-                    t = n;
-                }
-                self.node_mut(t).next = Some(attr);
+        self.node_mut(attr).parent = Link::of(el);
+        let head = self.node(el).attrs;
+        if head.is_none() {
+            self.node_mut(el).attrs = Link::of(attr);
+        } else {
+            let mut t = head;
+            while !self.node_at(t).next.is_none() {
+                t = self.node_at(t).next;
             }
+            self.node_at_mut(t).next = Link::of(attr);
         }
     }
 
@@ -428,19 +448,25 @@ impl Document {
         prev: Option<NodeId>,
         next: Option<NodeId>,
     ) {
+        let container = Link::of(container);
+        let node = Link::of(node);
+        let prev = Link::from_option(prev);
+        let next = Link::from_option(next);
         {
-            let n = self.node_mut(node);
-            n.parent = Some(container);
+            let n = self.node_at_mut(node);
+            n.parent = container;
             n.prev = prev;
             n.next = next;
         }
-        match prev {
-            Some(p) => self.node_mut(p).next = Some(node),
-            None => self.node_mut(container).first_child = Some(node),
+        if prev.is_none() {
+            self.node_at_mut(container).first_child = node;
+        } else {
+            self.node_at_mut(prev).next = node;
         }
-        match next {
-            Some(n) => self.node_mut(n).prev = Some(node),
-            None => self.node_mut(container).last_child = Some(node),
+        if next.is_none() {
+            self.node_at_mut(container).last_child = node;
+        } else {
+            self.node_at_mut(next).prev = node;
         }
     }
 
@@ -448,44 +474,52 @@ impl Document {
 
     /// Pre-order (document-order) successor of `cur` within `root`'s subtree.
     pub fn preorder_next(&self, root: NodeId, cur: NodeId) -> Option<NodeId> {
-        if let Some(c) = self.node(cur).first_child {
-            return Some(c);
+        let root_link = Link::of(root);
+        let mut cur_link = Link::of(cur);
+        let first = self.node_at(cur_link).first_child;
+        if !first.is_none() {
+            return self.node_id(first);
         }
-        let mut cur = cur;
-        while cur != root && self.node(cur).next.is_none() {
-            cur = self.node(cur).parent?;
+        while cur_link != root_link && self.node_at(cur_link).next.is_none() {
+            let up = self.node_at(cur_link).parent;
+            if up.is_none() {
+                return None;
+            }
+            cur_link = up;
         }
-        if cur == root {
+        if cur_link == root_link {
             return None;
         }
-        self.node(cur).next
+        self.node_id(self.node_at(cur_link).next)
     }
 
     /// `node`'s topmost ancestor is the document node.
     pub fn is_connected(&self, node: NodeId) -> bool {
-        let mut top = node;
-        while let Some(p) = self.node(top).parent {
-            top = p;
+        let mut top = Link::of(node);
+        while !self.node_at(top).parent.is_none() {
+            top = self.node_at(top).parent;
         }
-        self.node(top).type_ == NodeType::Document
+        self.node_at(top).type_ == NodeType::Document
     }
 
     /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`.
     pub fn resolve_in_scope(&self, node: Option<NodeId>, prefix: &[u8]) -> Option<Span> {
-        let mut e = node;
+        let mut e = node.map(Link::of);
         while let Some(id) = e {
-            if self.node(id).type_ == NodeType::Element {
-                let mut a = self.node(id).attrs;
-                while let Some(attr) = a {
-                    if let Some(p) = crate::xml::qname::xmlns_prefix(self.qname(attr)) {
+            if self.node_at(id).type_ == NodeType::Element {
+                let mut a = self.node_at(id).attrs;
+                while !a.is_none() {
+                    if let Some(p) =
+                        crate::xml::qname::xmlns_prefix(self.span(self.node_at(a).qname))
+                    {
                         if p == prefix {
-                            return Some(self.node(attr).value);
+                            return Some(self.node_at(a).value);
                         }
                     }
-                    a = self.node(attr).next;
+                    a = self.node_at(a).next;
                 }
             }
-            e = self.node(id).parent;
+            e = self.node_at(id).parent.optional();
         }
         None
     }
@@ -493,15 +527,17 @@ impl Document {
     /// True when two attributes share `(local name, namespace URI)`.
     pub fn has_duplicate_attributes(&self, element: NodeId) -> bool {
         let mut a = self.node(element).attrs;
-        while let Some(first) = a {
-            let mut b = self.node(first).next;
-            while let Some(second) = b {
-                if self.local(first) == self.local(second) && self.ns(first) == self.ns(second) {
+        while !a.is_none() {
+            let mut b = self.node_at(a).next;
+            while !b.is_none() {
+                if self.span(self.node_at(a).local) == self.span(self.node_at(b).local)
+                    && self.span(self.node_at(a).ns_uri) == self.span(self.node_at(b).ns_uri)
+                {
                     return true;
                 }
-                b = self.node(second).next;
+                b = self.node_at(b).next;
             }
-            a = self.node(first).next;
+            a = self.node_at(a).next;
         }
         false
     }
@@ -542,15 +578,15 @@ impl Document {
         self.root = None;
         self.doctype = None;
         let mut c = self.node(self.doc_node).first_child;
-        while let Some(cur) = c {
-            let t = self.node(cur).type_;
+        while !c.is_none() {
+            let t = self.node_at(c).type_;
             if self.root.is_none() && t == NodeType::Element {
-                self.root = Some(cur);
+                self.root = Some(self.id_of(c));
             }
             if self.doctype.is_none() && t == NodeType::Doctype {
-                self.doctype = Some(cur);
+                self.doctype = Some(self.id_of(c));
             }
-            c = self.node(cur).next;
+            c = self.node_at(c).next;
         }
     }
 

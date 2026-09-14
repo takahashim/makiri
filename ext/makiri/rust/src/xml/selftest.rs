@@ -10,7 +10,7 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse_ex, parse_fragment};
 use crate::xml::{
-    Document, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI, XML_NS_URI,
+    Document, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI, XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -135,10 +135,10 @@ unsafe fn node_selftest_impl() -> i32 {
     let local = doc.store(b"Feed");
     if root.is_err()
         || local.is_err()
-        || doc
+        || !doc
             .node(root.as_ref().copied().unwrap_or(NodeId::INVALID))
             .first_child
-            .is_some()
+            .is_none()
         || doc.type_(root.as_ref().copied().unwrap_or(NodeId::INVALID)) != Some(NodeType::Element)
         || doc.span(local.as_ref().copied().unwrap_or(crate::xml::Span::EMPTY)) != b"Feed"
     {
@@ -937,9 +937,9 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 19,
     };
-    doc.node_mut(c1).parent = Some(r);
-    doc.node_mut(r).first_child = Some(c1);
-    doc.node_mut(r).last_child = Some(c1);
+    doc.set_parent(c1, Some(r));
+    doc.node_mut(r).first_child = Link::of(c1);
+    doc.node_mut(r).last_child = Link::of(c1);
     if mutate::set_content(doc, r, b"hi") != MutStatus::Ok {
         return 20;
     }
@@ -968,12 +968,12 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 23,
     };
-    doc.node_mut(a1).parent = Some(r);
-    doc.node_mut(a2).parent = Some(r);
-    doc.node_mut(a1).next = Some(a2);
-    doc.node_mut(a2).prev = Some(a1);
-    doc.node_mut(r).first_child = Some(a1);
-    doc.node_mut(r).last_child = Some(a2);
+    doc.set_parent(a1, Some(r));
+    doc.set_parent(a2, Some(r));
+    doc.node_mut(a1).next = Link::of(a2);
+    doc.node_mut(a2).prev = Link::of(a1);
+    doc.node_mut(r).first_child = Link::of(a1);
+    doc.node_mut(r).last_child = Link::of(a2);
     mutate::detach(doc, a1);
     if doc.first_child(r) != Some(a2) || doc.prev(a2).is_some() || doc.parent(a1).is_some() {
         return 24;

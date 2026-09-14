@@ -266,7 +266,7 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     assert!(a.try_node(nb).is_none());
 
     // Out-of-range index -> rejected, not a panic.
-    let oob = NodeId::new(u32::MAX - 1, na.generation());
+    let oob = NodeId::new(u32::MAX - 1, na.stamp());
     assert!(a.try_node(oob).is_none());
 
     // The null handle -> rejected.

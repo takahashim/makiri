@@ -13,7 +13,7 @@ use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    Document, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS, XMLNS_NS_URI,
+    Document, Link, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS, XMLNS_NS_URI,
     XML_NS_URI,
 };
 
@@ -404,10 +404,10 @@ impl<'a> Parser<'a> {
             }
             let v = self.expand(&input[r.val.0..r.val.0 + r.val.1], ExpandMode::Attr)?;
             self.doc.node_mut(attr).value = v;
-            self.doc.node_mut(attr).parent = Some(el);
+            self.doc.set_parent(attr, Some(el));
             match tail {
-                None => self.doc.node_mut(el).attrs = Some(attr),
-                Some(t) => self.doc.node_mut(t).next = Some(attr),
+                None => self.doc.node_mut(el).attrs = Link::of(attr),
+                Some(t) => self.doc.node_mut(t).next = Link::of(attr),
             }
             tail = Some(attr);
         }
@@ -902,7 +902,7 @@ impl<'a> Parser<'a> {
                 let uri = self.doc.node(attr).value;
                 self.push_binding(&bpfx, uri)?;
             }
-            a = self.doc.node(attr).next;
+            a = self.doc.next(attr);
         }
         Ok(())
     }

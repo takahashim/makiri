@@ -714,13 +714,25 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
         match mkr_node_kind(node_v.as_raw()) {
             KIND_XML => {
                 let src_doc = xdoc(node_v);
-                mkr_xml_mut_check(mkr_xml_copy_node(
-                    &mut *xd,
-                    &*src_doc,
-                    unwrap(node_v),
-                    deep,
-                    &mut copy,
-                ))
+                if src_doc == xd {
+                    /* Same arena: the single-`&mut` clone path. Going through
+                     * `mkr_xml_copy_node` would hand `&mut *xd` and `&*src_doc`
+                     * as the same document (aliasing UB). */
+                    mkr_xml_mut_check(mkr_xml_clone_node(
+                        &mut *xd,
+                        unwrap(node_v),
+                        deep,
+                        &mut copy,
+                    ))
+                } else {
+                    mkr_xml_mut_check(mkr_xml_copy_node(
+                        &mut *xd,
+                        &*src_doc,
+                        unwrap(node_v),
+                        deep,
+                        &mut copy,
+                    ))
+                }
             }
             KIND_HTML => mkr_xml_mut_check(mkr_cross_html_to_xml(
                 xd,

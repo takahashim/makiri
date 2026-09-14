@@ -3,10 +3,11 @@
 //! Ruby glue.
 //!
 //! The tree is an **index arena**: a [`Document`] owns a `Vec<Node>` and a byte
-//! store, a node reference is a [`NodeId`] (index plus generation), structural
-//! links are `Option<NodeId>`, and every name/value is an `(offset, len)` into
-//! the document's byte store. No raw pointer is part of the model, so the
-//! parser, mutators, index and XPath XML backend can all be ordinary safe Rust.
+//! store, a node *handle* is a [`NodeId`] (slot index plus the owning
+//! document's stamp), structural links are compact [`Link`]s (a slot index
+//! only), and every name/value is an `(offset, len)` into the document's byte
+//! store. No raw pointer is part of the model, so the parser, mutators, index
+//! and XPath XML backend can all be ordinary safe Rust.
 
 /* Boundary readers state their precondition once, on `bytes`. */
 /* ---- status codes ---- */
@@ -164,21 +165,23 @@ impl Span {
 }
 
 /// A handle to one node in a live [`Document`], packed into one word: the low
-/// 32 bits are the slot index, the high 32 the generation.
+/// 32 bits are the slot index, the high 32 the document [`Document::stamp`].
 ///
 /// The one-word form is deliberate. The engine carries nodes through node-sets
 /// as opaque tokens it only compares and hashes, so a node id *is* that token:
 /// an `&[NodeId]` is layout-identical to the engine's `*mut c_void` buffer, and
-/// `to_token`/`from_token` cost nothing. That packing needs a 64-bit word, which
-/// the `compile_error!` below enforces.
+/// `to_token`/`from_token` cost nothing (`#[repr(transparent)]` makes that
+/// layout a guarantee, not an observation). The packing needs a 64-bit word,
+/// which the `compile_error!` below enforces.
 ///
-/// `generation` is a stamp that identifies the OWNING document. Because slots
-/// are never recycled (detach never destroys, so a removed node stays
-/// addressable for live Ruby wrappers), there is no reuse tag to carry; using
-/// the field as a document stamp instead lets [`Document::try_node`] reject a
-/// handle built for another document. If slots are ever recycled it becomes
+/// The high half is the owning document's stamp, NOT a slot-reuse generation:
+/// slots are never recycled (detach never destroys, so a removed node stays
+/// addressable for live Ruby wrappers), so there is no reuse tag to carry.
+/// Using it as a document stamp instead lets [`Document::try_node`] reject a
+/// handle built for another document. If slots are ever recycled this becomes
 /// index + document/reuse stamp, and [`Document::try_node`] already checks it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(transparent)]
 pub struct NodeId(usize);
 
 #[cfg(not(target_pointer_width = "64"))]
@@ -193,15 +196,16 @@ impl NodeId {
     pub const INVALID: NodeId = NodeId(0);
 
     #[inline]
-    pub(crate) fn new(index: u32, generation: u32) -> Self {
-        NodeId(((generation as usize) << 32) | index as usize)
+    pub(crate) fn new(index: u32, stamp: u32) -> Self {
+        NodeId(((stamp as usize) << 32) | index as usize)
     }
     #[inline]
     pub fn index(self) -> u32 {
         self.0 as u32
     }
+    /// The owning document's stamp (see [`Document::stamp`]).
     #[inline]
-    pub fn generation(self) -> u32 {
+    pub fn stamp(self) -> u32 {
         (self.0 >> 32) as u32
     }
     #[inline]
@@ -220,18 +224,65 @@ impl NodeId {
     }
 }
 
+/// A structural link: the slot index of a parent / child / sibling / first
+/// attribute, or [`Link::NONE`] (slot 0, the reserved null slot) when absent.
+///
+/// Links are 4 bytes and travel inside exactly one [`Document`], so they carry
+/// no stamp; the owning document re-attaches its [`Document::stamp`] when a link
+/// is handed back out as a [`NodeId`]. A link to the invalid handle
+/// ([`NodeId::INVALID`], index 0) is [`Link::NONE`], which is the correct
+/// reading: an invalid node has no link.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Link(u32);
+
+impl Link {
+    /// No link (also the encoding of a link to [`NodeId::INVALID`]).
+    pub(crate) const NONE: Link = Link(0);
+
+    /// The link naming `id`; [`NodeId::INVALID`] (index 0) becomes
+    /// [`Link::NONE`].
+    #[inline]
+    pub(crate) fn of(id: NodeId) -> Self {
+        Link(id.index())
+    }
+    /// As [`Link::of`], for an optional handle.
+    #[inline]
+    pub(crate) fn from_option(id: Option<NodeId>) -> Self {
+        Link(id.map_or(0, |id| id.index()))
+    }
+    /// This link as an `Option`, `None` for [`Link::NONE`].
+    #[inline]
+    pub(crate) fn optional(self) -> Option<Link> {
+        if self.is_none() {
+            None
+        } else {
+            Some(self)
+        }
+    }
+    /// The slot index this link names (0 = none).
+    #[inline]
+    pub(crate) fn index(self) -> u32 {
+        self.0
+    }
+    #[inline]
+    pub(crate) fn is_none(self) -> bool {
+        self.0 == 0
+    }
+}
+
 /// One node in the document's slot array.
 ///
-/// Links are `Option<NodeId>` and byte fields are spans, so a `Node` is plain
-/// data with no pointer to chase.
+/// Links are compact [`Link`]s and byte fields are spans, so a `Node` is plain
+/// data with no pointer to chase and no per-node document stamp (the stamp lives
+/// once on the [`Document`]).
 pub struct Node {
     pub type_: NodeType,
-    pub parent: Option<NodeId>,
-    pub first_child: Option<NodeId>,
-    pub last_child: Option<NodeId>,
-    pub prev: Option<NodeId>,
-    pub next: Option<NodeId>,
-    pub attrs: Option<NodeId>,
+    pub parent: Link,
+    pub first_child: Link,
+    pub last_child: Link,
+    pub prev: Link,
+    pub next: Link,
+    pub attrs: Link,
     pub qname: Span,
     pub local: Span,
     pub prefix: Span,
@@ -240,19 +291,18 @@ pub struct Node {
     pub line: u32,
     pub col: u32,
     pub flags: u32,
-    pub(crate) generation: u32,
 }
 
 impl Node {
-    pub(crate) fn zeroed(type_: NodeType, generation: u32) -> Self {
+    pub(crate) fn zeroed(type_: NodeType) -> Self {
         Node {
             type_,
-            parent: None,
-            first_child: None,
-            last_child: None,
-            prev: None,
-            next: None,
-            attrs: None,
+            parent: Link::NONE,
+            first_child: Link::NONE,
+            last_child: Link::NONE,
+            prev: Link::NONE,
+            next: Link::NONE,
+            attrs: Link::NONE,
             qname: Span::ABSENT,
             local: Span::ABSENT,
             prefix: Span::ABSENT,
@@ -261,7 +311,6 @@ impl Node {
             line: 0,
             col: 0,
             flags: 0,
-            generation,
         }
     }
 }
@@ -283,8 +332,9 @@ pub struct Document {
     /// them by span like any other URI.
     pub(crate) xml_ns: Span,
     pub(crate) xmlns_ns: Span,
-    /// This document's unique stamp, copied into every node's `generation` so a
-    /// `NodeId` from another document is rejected by `try_node`.
+    /// This document's unique stamp, carried in every `NodeId` the document
+    /// issues (the high half) so [`Document::try_node`] rejects a handle built
+    /// for another document. Node links carry only the slot index.
     pub(crate) stamp: u32,
     /// Running total counted against `max_bytes` (nodes + bytes).
     pub arena_bytes: usize,

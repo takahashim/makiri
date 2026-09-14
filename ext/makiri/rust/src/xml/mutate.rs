@@ -11,7 +11,7 @@ use crate::falloc::Reserve;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix, Split};
 use crate::xml::{
-    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED,
+    Document, Link, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED,
 };
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
@@ -147,6 +147,10 @@ pub fn mkr_xml_import_subtree(
     src: NodeId,
     out: &mut NodeId,
 ) -> MutStatus {
+    debug_assert!(
+        !core::ptr::eq(doc as *const Document, src_doc as *const Document),
+        "same-document import must use clone_node, not the cross-document copy"
+    );
     put_node(out, import_subtree(doc, src_doc, src))
 }
 
@@ -157,6 +161,10 @@ pub fn mkr_xml_copy_node(
     deep: bool,
     out: &mut NodeId,
 ) -> MutStatus {
+    debug_assert!(
+        !core::ptr::eq(doc as *const Document, src_doc as *const Document),
+        "same-document import must use clone_node, not the cross-document copy"
+    );
     put_node(out, copy_node_from(doc, src_doc, src, deep))
 }
 
@@ -449,19 +457,19 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
                 let nx = doc.next(cur);
                 {
                     let n = doc.node_mut(cur);
-                    n.parent = None;
-                    n.prev = None;
-                    n.next = None;
+                    n.parent = Link::NONE;
+                    n.prev = Link::NONE;
+                    n.next = Link::NONE;
                 }
                 c = nx;
             }
             {
                 let n = doc.node_mut(node);
-                n.first_child = t;
-                n.last_child = t;
+                n.first_child = Link::from_option(t);
+                n.last_child = Link::from_option(t);
             }
             if let Some(t) = t {
-                doc.node_mut(t).parent = Some(node);
+                doc.set_parent(t, Some(node));
             }
             MutStatus::Ok
         }
@@ -679,9 +687,9 @@ fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> MutStat
 /// it (borrow node.parent for the ancestor walk, then restore).
 fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> MutStatus {
     let saved = doc.parent(node);
-    doc.node_mut(node).parent = Some(context);
+    doc.set_parent(node, Some(context));
     let st = resolve_subtree(doc, node, doc.is_connected(node));
-    doc.node_mut(node).parent = saved;
+    doc.set_parent(node, saved);
     st
 }
 
@@ -730,10 +738,10 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
     let mut a = doc.attrs(src);
     while let Some(attr) = a {
         let ca = copy_one(doc, attr)?;
-        doc.node_mut(ca).parent = Some(n);
+        doc.set_parent(ca, Some(n));
         match tail {
-            None => doc.node_mut(n).attrs = Some(ca),
-            Some(t) => doc.node_mut(t).next = Some(ca),
+            None => doc.node_mut(n).attrs = Link::of(ca),
+            Some(t) => doc.node_mut(t).next = Link::of(ca),
         }
         tail = Some(ca);
         a = doc.next(attr);
@@ -786,10 +794,10 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
     let mut a = src_doc.attrs(src);
     while let Some(attr) = a {
         let ca = copy_one_from(dst, src_doc, attr)?;
-        dst.node_mut(ca).parent = Some(n);
+        dst.set_parent(ca, Some(n));
         match tail {
-            None => dst.node_mut(n).attrs = Some(ca),
-            Some(t) => dst.node_mut(t).next = Some(ca),
+            None => dst.node_mut(n).attrs = Link::of(ca),
+            Some(t) => dst.node_mut(t).next = Link::of(ca),
         }
         tail = Some(ca);
         a = src_doc.next(attr);
@@ -1068,9 +1076,9 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     doc.splice_between(container, node, prev, next);
     {
         let n = doc.node_mut(r);
-        n.parent = None;
-        n.prev = None;
-        n.next = None;
+        n.parent = Link::NONE;
+        n.prev = Link::NONE;
+        n.next = Link::NONE;
     }
     doc.sync_doc_meta(container);
     MutStatus::Ok
