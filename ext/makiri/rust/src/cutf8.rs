@@ -36,9 +36,6 @@
 //!   [`verify::decode1_agrees_with_from_utf8`] and
 //!   [`verify::chain_consumes_exactly_valid_input`].
 
-/* Only the gated C entries below use it. */
-use core::ffi::c_int;
-
 pub mod verify;
 
 /// Decode ONE code point from the front of `p`, strictly.
@@ -128,39 +125,4 @@ pub fn text_verdict(bytes: &[u8], known_valid_utf8: bool) -> TextVerdict {
         return TextVerdict::Ok;
     }
     TextVerdict::InvalidUtf8
-}
-
-/* ------------------------------------------------------------------ *
- * the C ABI                                                          *
- * ------------------------------------------------------------------ *
- *
- * Gated, because the pure functions above are always compiled - the XML and
- * XPath layers call them directly - while these two replace `core/mkr_utf8.c`
- * and must exist only when that file is dropped. */
-
-/// # Safety
-/// `src` must name `len` readable bytes, or be NULL when `len == 0`.
-pub unsafe fn mkr_utf8_valid(src: *const u8, len: usize) -> bool {
-    if len == 0 {
-        return true; /* trivially valid; src may be NULL */
-    }
-    valid(core::slice::from_raw_parts(src, len))
-}
-
-/// # Safety
-/// `p` must name `len` readable bytes, and `cp` must be writable.
-///
-/// Returns the byte length (1..=4) with `*cp` set, or 0 on any violation -
-/// including `len == 0`. `*cp` is left untouched on failure, as in the C.
-pub unsafe fn mkr_utf8_decode1(p: *const u8, len: usize, cp: *mut u32) -> c_int {
-    if len == 0 {
-        return 0;
-    }
-    match decode1(core::slice::from_raw_parts(p, len)) {
-        Some((c, n)) => {
-            *cp = c;
-            n as c_int
-        }
-        None => 0,
-    }
 }

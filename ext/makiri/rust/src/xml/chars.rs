@@ -54,7 +54,7 @@ pub fn is_name_char(c: u32) -> bool {
         || (0x203F..=0x2040).contains(&c)
 }
 
-/// Decode ONE code point strictly (mkr_utf8_decode1): truncation, bad
+/// Decode ONE code point strictly (`cutf8::decode1`): truncation, bad
 /// continuation bytes, overlong forms, surrogates and values above U+10FFFF are
 /// all rejected.
 ///

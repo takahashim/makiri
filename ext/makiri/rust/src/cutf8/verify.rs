@@ -140,25 +140,3 @@ fn chain_consumes_exactly_valid_input() {
         assert!(ok, "a fully consumed buffer is valid");
     }
 }
-
-/// The C ABI wrapper's boundary behaviour, which is the part neither the
-/// standard library nor the pure functions above cover.
-///
-/// `len == 0` must answer "valid" without touching `src` - the C's contract
-/// allows NULL there - and the decoder must answer 0 rather than reading.
-#[kani::proof]
-#[kani::unwind(4)]
-fn c_abi_handles_empty_input() {
-    unsafe {
-        assert!(
-            super::mkr_utf8_valid(core::ptr::null(), 0),
-            "empty input is valid and src is not read"
-        );
-        let mut cp = 0u32;
-        assert!(
-            super::mkr_utf8_decode1(core::ptr::null(), 0, &mut cp) == 0,
-            "empty input does not decode"
-        );
-        assert!(cp == 0, "a failed decode leaves *cp untouched");
-    }
-}

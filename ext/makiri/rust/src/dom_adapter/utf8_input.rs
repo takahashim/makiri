@@ -43,8 +43,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::cbuf::{Buf, BufError, OwnedBuf};
-
-pub use crate::cutf8::mkr_utf8_valid;
+use crate::cutf8::valid;
 
 /// The sanitiser's replacement buffer: `malloc`'d, NUL-terminated, and owned by
 /// the caller, who frees it with libc `free`.
@@ -126,7 +125,7 @@ fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
 /// `malloc`'d, NUL-terminated replacement the caller owns. `None` on OOM, with
 /// nothing allocated.
 pub unsafe fn mkr_utf8_sanitize(src: *const u8, len: usize) -> Option<Sanitized> {
-    if src.is_null() || len == 0 || mkr_utf8_valid(src, len) {
+    if src.is_null() || len == 0 || valid(core::slice::from_raw_parts(src, len)) {
         return Some(Sanitized::Unchanged);
     }
     replace_invalid(core::slice::from_raw_parts(src, len))

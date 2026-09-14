@@ -17,8 +17,6 @@ pub use makiri::xpath_abi::{Error as XPathError, Limits, Node as Ast, VerifiedTe
 extern "C" {
     pub fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut i32) -> *mut Doc;
     pub fn mkr_xml_doc_destroy(doc: *mut Doc);
-    pub fn mkr_utf8_valid(src: *const u8, len: usize) -> bool;
-
     pub fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut c_void;
     pub fn mkr_xpath_context_free(ctx: *mut c_void);
     pub fn mkr_xpath_set_engine_kind(ctx: *mut c_void, kind: c_int);

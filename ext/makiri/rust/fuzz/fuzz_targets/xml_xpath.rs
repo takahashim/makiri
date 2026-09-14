@@ -19,6 +19,7 @@ use libfuzzer_sys::fuzz_target;
 mod common;
 use common::*;
 use makiri::xml::chars::validate_chars;
+use makiri::cutf8::valid;
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -32,13 +33,13 @@ fuzz_target!(|data: &[u8]| {
         // target is about what the engine does with well-formed input, and the
         // `xml` target already covers the reader on arbitrary bytes. Keep the
         // XML character-class gate here so this target preserves that scope.
-        if !mkr_utf8_valid(xml.as_ptr(), xml.len()) {
+        if !valid(xml) {
             return;
         }
         if !validate_chars(xml) {
             return;
         }
-        if !mkr_utf8_valid(expr_bytes.as_ptr(), expr_bytes.len()) {
+        if !valid(expr_bytes) {
             return;
         }
 
