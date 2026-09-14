@@ -28,6 +28,7 @@
 
 use core::ffi::c_void;
 
+use crate::cbuf::OwnedBuf;
 use crate::falloc::try_box_raw;
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
 
@@ -63,22 +64,11 @@ extern "C" {
     ) -> u32;
     fn lxb_html_parse_chunk_end(parser: *mut lxb::lxb_html_parser_t) -> u32;
 
-    /// libc `free`, for the sanitiser's buffer (which it `malloc`s).
-    #[link_name = "free"]
-    fn libc_free(p: *mut c_void);
 }
 
 /// The sanitiser's replacement buffer, freed however the parse exits.
 struct CleanBuf {
-    ptr: *mut u8,
-}
-
-impl Drop for CleanBuf {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe { libc_free(self.ptr as *mut c_void) };
-        }
-    }
+    _owned: Option<OwnedBuf>,
 }
 
 /// The parser, destroyed however the parse exits. The parsed DOCUMENT is not
@@ -202,16 +192,12 @@ pub unsafe fn mkr_parse_html(src: *const u8, len: usize, assume_valid: bool) -> 
      * always valid UTF-8. Valid input - the common case - is used as-is with no
      * copy. Source offsets are then relative to the SANITISED bytes: exact for
      * valid input, best-effort where replacement shifted byte positions. */
-    let mut clean = CleanBuf {
-        ptr: core::ptr::null_mut(),
-    };
-    let mut clean_len = 0usize;
+    let mut clean = CleanBuf { _owned: None };
     if !assume_valid {
         match mkr_utf8_sanitize(src, len) {
             Some(Sanitized::Unchanged) => {}
             Some(Sanitized::Replaced(r)) => {
-                clean.ptr = r.ptr;
-                clean_len = r.len;
+                clean._owned = Some(r);
             }
             None => {
                 drop(Box::from_raw(p));
@@ -220,14 +206,14 @@ pub unsafe fn mkr_parse_html(src: *const u8, len: usize, assume_valid: bool) -> 
         }
     }
 
-    let bytes: &[u8] = if clean.ptr.is_null() {
+    let bytes: &[u8] = if let Some(owned) = clean._owned.as_ref() {
+        owned.as_slice()
+    } else {
         if src.is_null() {
             &[]
         } else {
             core::slice::from_raw_parts(src, len)
         }
-    } else {
-        core::slice::from_raw_parts(clean.ptr, clean_len)
     };
 
     (*p).doc = parse_tracked(bytes, &mut (*p).newline_idx) as *mut c_void;

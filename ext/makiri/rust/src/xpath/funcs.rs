@@ -18,6 +18,7 @@ use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
+use core::ffi::c_char;
 use core::ptr;
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
@@ -873,13 +874,21 @@ unsafe fn fn_translate<D: Dom>(
             }
         }
     }
-    let mut len = 0usize;
-    let p = mkr_buf_steal(&mut buf, &mut len);
-    if p.is_null() {
-        err_setf!(err, XP_ERR_OOM, "out of memory in translate()");
-        return false;
-    }
-    mkr_val_set_owned_text(out, OwnedText { ptr: p, len });
+    let owned = match buf.steal() {
+        Ok(owned) => owned,
+        Err(_) => {
+            err_setf!(err, XP_ERR_OOM, "out of memory in translate()");
+            return false;
+        }
+    };
+    let (ptr, len) = owned.into_raw_parts();
+    mkr_val_set_owned_text(
+        out,
+        OwnedText {
+            ptr: ptr as *mut c_char,
+            len,
+        },
+    );
     true
 }
 

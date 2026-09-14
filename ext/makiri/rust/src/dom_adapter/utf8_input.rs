@@ -42,28 +42,23 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use crate::cbuf::{mkr_buf_steal, Buf};
+use crate::cbuf::{Buf, BufError, OwnedBuf};
 
 pub use crate::cutf8::mkr_utf8_valid;
 
 /// The sanitiser's replacement buffer: `malloc`'d, NUL-terminated, and owned by
 /// the caller, who frees it with libc `free`.
-pub struct Replacement {
-    pub ptr: *mut u8,
-    pub len: usize,
-}
-
 /// What [`mkr_utf8_sanitize`] decided about the input.
 pub enum Sanitized {
     /// Already valid UTF-8: the caller parses the input in place, no copy.
     Unchanged,
     /// Invalid bytes were replaced with U+FFFD; a fresh buffer the caller owns.
-    Replaced(Replacement),
+    Replaced(OwnedBuf),
 }
 
 /// UTF-8 -> UTF-8 with every invalid sequence replaced by U+FFFD, into a freshly
 /// `malloc`'d, NUL-terminated buffer. NULL on OOM.
-unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut u8 {
+fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
     /* The output is at most 3x the input: each invalid byte becomes U+FFFD
      * (3 bytes) and valid bytes pass through 1:1. Cap at exactly that bound -
      * tight and tied to the actual input, so a large document still parses but
@@ -84,17 +79,17 @@ unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut u8 {
         match core::str::from_utf8(rest) {
             Ok(s) => {
                 if append(&mut buf, s.as_bytes()).is_err() {
-                    return core::ptr::null_mut();
+                    return Err(BufError::Oom);
                 }
                 break;
             }
             Err(e) => {
                 let good = e.valid_up_to();
                 if append(&mut buf, &rest[..good]).is_err() {
-                    return core::ptr::null_mut();
+                    return Err(BufError::Oom);
                 }
                 if append(&mut buf, "\u{FFFD}".as_bytes()).is_err() {
-                    return core::ptr::null_mut();
+                    return Err(BufError::Oom);
                 }
                 match e.error_len() {
                     /* A maximal subpart of `n` bytes was invalid; one U+FFFD
@@ -108,7 +103,7 @@ unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut u8 {
         }
     }
 
-    mkr_buf_steal(&mut buf, out_len) as *mut u8
+    buf.steal()
 }
 
 /// Append, freeing the buffer on failure so the error path leaks nothing.
@@ -134,11 +129,7 @@ pub unsafe fn mkr_utf8_sanitize(src: *const u8, len: usize) -> Option<Sanitized>
     if src.is_null() || len == 0 || mkr_utf8_valid(src, len) {
         return Some(Sanitized::Unchanged);
     }
-    let mut out_len = 0usize;
-    let ptr = replace_invalid(core::slice::from_raw_parts(src, len), &mut out_len);
-    if ptr.is_null() {
-        None
-    } else {
-        Some(Sanitized::Replaced(Replacement { ptr, len: out_len }))
-    }
+    replace_invalid(core::slice::from_raw_parts(src, len))
+        .ok()
+        .map(Sanitized::Replaced)
 }

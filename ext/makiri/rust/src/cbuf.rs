@@ -11,6 +11,7 @@
 //! the exported C function.
 
 use core::ffi::{c_char, c_int, c_void};
+use core::ptr::NonNull;
 
 pub mod verify;
 
@@ -37,6 +38,34 @@ pub struct Buf {
     cap: usize,
     /// 0 selects the conservative default ceiling; it is not "unbounded".
     max: usize,
+}
+
+/// A NUL-terminated libc allocation detached from a [`Buf`].
+pub struct OwnedBuf {
+    ptr: NonNull<u8>,
+    len: usize,
+}
+
+impl OwnedBuf {
+    /// The bytes written to the allocation, without the trailing NUL.
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// Return the allocation to a caller whose ABI requires a raw pointer.
+    ///
+    /// Ownership is transferred to the caller, which must free the pointer
+    /// with libc `free`. Consuming `self` prevents its destructor from running.
+    pub fn into_raw_parts(self) -> (*mut u8, usize) {
+        let this = core::mem::ManuallyDrop::new(self);
+        (this.ptr.as_ptr(), this.len)
+    }
+}
+
+impl Drop for OwnedBuf {
+    fn drop(&mut self) {
+        unsafe { libc_free(self.ptr.as_ptr() as *mut c_void) };
+    }
 }
 
 impl Buf {
@@ -95,6 +124,14 @@ impl Buf {
         }
     }
 
+    /// Detach the allocation and reset this buffer to an empty state.
+    pub fn steal(&mut self) -> Result<OwnedBuf, BufError> {
+        let mut len = 0usize;
+        let ptr = unsafe { mkr_buf_steal(self, &mut len) };
+        let ptr = NonNull::new(ptr as *mut u8).ok_or(BufError::Oom)?;
+        Ok(OwnedBuf { ptr, len })
+    }
+
     /// Release the allocation and reset the buffer to an empty state.
     pub fn free(&mut self) {
         if !self.data.is_null() {
@@ -103,6 +140,12 @@ impl Buf {
         }
         self.len = 0;
         self.cap = 0;
+    }
+}
+
+impl Drop for Buf {
+    fn drop(&mut self) {
+        self.free();
     }
 }
 
@@ -310,4 +353,45 @@ pub(crate) unsafe fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_c
     b.len = 0;
     b.cap = 0;
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Buf, BufError};
+
+    #[test]
+    fn safe_api_appends_and_reserves_without_exposing_storage() {
+        let mut buf = Buf::new(16);
+        assert_eq!(buf.reserve(8), Ok(()));
+        assert_eq!(buf.append(b"hello"), Ok(()));
+        assert_eq!(buf.as_slice(), b"hello");
+        assert_eq!(buf.append(b" world"), Ok(()));
+        assert_eq!(buf.as_slice(), b"hello world");
+    }
+
+    #[test]
+    fn limit_failure_leaves_the_buffer_unchanged() {
+        let mut buf = Buf::new(5);
+        assert_eq!(buf.append(b"hello"), Ok(()));
+        assert_eq!(buf.append(b"!"), Err(BufError::Limit));
+        assert_eq!(buf.as_slice(), b"hello");
+    }
+
+    #[test]
+    fn steal_transfers_ownership_and_resets_the_buffer() {
+        let mut buf = Buf::new(16);
+        buf.append(b"owned").unwrap();
+
+        let owned = buf.steal().unwrap();
+        assert_eq!(owned.as_slice(), b"owned");
+        assert!(buf.as_slice().is_empty());
+        drop(owned); /* exercises OwnedBuf's libc-free Drop */
+    }
+
+    #[test]
+    fn dropping_a_live_buffer_releases_it_without_manual_free() {
+        let mut buf = Buf::new(16);
+        buf.append(b"dropped").unwrap();
+        drop(buf); /* exercises Buf's libc-free Drop */
+    }
 }

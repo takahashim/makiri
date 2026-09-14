@@ -236,10 +236,9 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     });
     let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
-        let mut len = 0usize;
-        let p = mkr_buf_steal(&mut buf, &mut len);
-        if !p.is_null() {
-            (*out).ptr = p;
+        if let Ok(owned) = buf.steal() {
+            let (ptr, len) = owned.into_raw_parts();
+            (*out).ptr = ptr as *mut c_char;
             (*out).len = len;
             return true;
         }

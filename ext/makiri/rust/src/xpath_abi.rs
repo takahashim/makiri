@@ -282,7 +282,7 @@ pub use crate::xpath::ctx::Context;
 /// `mkr_buf_t` - a growable byte buffer with a byte ceiling. Declared in
 /// `crate::cbuf`, which is where the C layout lives now that the glue writes
 /// into one too.
-pub(crate) use crate::cbuf::{mkr_buf_append, mkr_buf_steal, Buf};
+pub(crate) use crate::cbuf::{mkr_buf_append, Buf};
 
 pub struct StrCacheEntry {
     pub node: *mut c_void,

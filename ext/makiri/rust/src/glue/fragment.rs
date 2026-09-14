@@ -25,7 +25,7 @@ use crate::falloc::VecPush;
 use crate::lexbor_abi as lxb;
 
 use super::abi::{
-    error_class, is_kind_of, libc_free, mkr_cNode, mkr_html_node_unwrap, mkr_ruby_bytes_view,
+    error_class, is_kind_of, mkr_cNode, mkr_html_node_unwrap, mkr_ruby_bytes_view,
     mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, mkr_ruby_verified_text, mkr_wrap_html_node,
     LxbDoc, LxbNode, LXB_DOM_NODE_TYPE_ELEMENT,
 };
@@ -34,9 +34,9 @@ use super::abi::{
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
+use crate::cbuf::{Buf, OwnedBuf};
 pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
-pub use crate::falloc::calloc::mkr_reallocarray;
 
 extern "C" {
 
@@ -158,18 +158,7 @@ unsafe fn fixup_template_content(
 pub struct SanitizedHtml {
     pub ptr: *const u8,
     pub len: usize,
-    owned: *mut u8,
-}
-
-impl Drop for SanitizedHtml {
-    fn drop(&mut self) {
-        if !self.owned.is_null() {
-            // SAFETY: `owned` is null or a live allocation from
-            // mkr_reallocarray / mkr_utf8_sanitize, both of which use malloc.
-            unsafe { libc_free(self.owned as *mut c_void) };
-            self.owned = core::ptr::null_mut();
-        }
-    }
+    _owned: Option<OwnedBuf>,
 }
 
 /// Browser-compatible decoding for fragment input: invalid UTF-8 becomes
@@ -187,18 +176,20 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         // Transcoded: a fresh String nothing keeps alive past this return, so
         // its bytes must NOT be borrowed. It is already valid UTF-8, so copy
         // rather than sanitise.
-        let n = if hv.len > 0 { hv.len } else { 1 };
-        let buf = mkr_reallocarray(core::ptr::null_mut(), n, 1) as *mut u8;
-        if buf.is_null() {
-            return None;
-        }
-        if hv.len > 0 {
-            core::ptr::copy_nonoverlapping(hv.ptr as *const u8, buf, hv.len);
-        }
+        let mut buf = Buf::new(hv.len);
+        buf.append(if hv.len == 0 {
+            &[]
+        } else {
+            core::slice::from_raw_parts(hv.ptr as *const u8, hv.len)
+        })
+        .ok()?;
+        let owned = buf.steal().ok()?;
+        let ptr = owned.as_slice().as_ptr();
+        let len = owned.as_slice().len();
         return Some(SanitizedHtml {
-            ptr: buf,
-            len: hv.len,
-            owned: buf,
+            ptr,
+            len,
+            _owned: Some(owned),
         });
     }
 
@@ -208,7 +199,7 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         return Some(SanitizedHtml {
             ptr: hv.ptr as *const u8,
             len: hv.len,
-            owned: core::ptr::null_mut(),
+            _owned: None,
         });
     }
     let clean = match mkr_utf8_sanitize(hv.ptr as *const u8, hv.len) {
@@ -220,13 +211,17 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         None => Some(SanitizedHtml {
             ptr: hv.ptr as *const u8,
             len: hv.len,
-            owned: core::ptr::null_mut(),
+            _owned: None,
         }),
-        Some(r) => Some(SanitizedHtml {
-            ptr: r.ptr,
-            len: r.len,
-            owned: r.ptr,
-        }),
+        Some(r) => {
+            let ptr = r.as_slice().as_ptr();
+            let len = r.as_slice().len();
+            Some(SanitizedHtml {
+                ptr,
+                len,
+                _owned: Some(r),
+            })
+        }
     }
 }
 
