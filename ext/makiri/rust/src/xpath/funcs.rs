@@ -18,7 +18,6 @@ use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
-use core::ffi::c_void;
 use core::ptr;
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
@@ -857,10 +856,10 @@ unsafe fn fn_translate<D: Dom>(
             Some(_) => None, /* past `to`: drop it */
         };
         if let Some(e) = emit {
-            let st = mkr_buf_append(&mut buf, e.as_ptr() as *const c_void, e.len());
-            if st != ST_OK {
+            let result = buf.append(e.as_bytes());
+            if result.is_err() {
                 buf.free();
-                if st == ST_ERR_LIMIT {
+                if matches!(result, Err(crate::cbuf::BufError::Limit)) {
                     err_setf!(
                         err,
                         XP_ERR_LIMIT,

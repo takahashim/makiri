@@ -42,7 +42,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use crate::cbuf::{mkr_buf_append, mkr_buf_reserve, mkr_buf_steal, Buf, MKR_OK};
+use crate::cbuf::{mkr_buf_steal, Buf};
 
 pub use crate::cutf8::mkr_utf8_valid;
 
@@ -77,7 +77,7 @@ unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut u8 {
 
     /* Pre-size once. A failure here is not fatal: append grows on its own and
      * fails closed if it cannot, so the reserve is a performance hint. */
-    let _ = mkr_buf_reserve(&mut buf, src.len());
+    let _ = buf.reserve(src.len());
 
     let mut rest = src;
     loop {
@@ -113,11 +113,11 @@ unsafe fn replace_invalid(src: &[u8], out_len: *mut usize) -> *mut u8 {
 
 /// Append, freeing the buffer on failure so the error path leaks nothing.
 #[inline]
-unsafe fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
+fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
     if bytes.is_empty() {
         return Ok(());
     }
-    if mkr_buf_append(buf, bytes.as_ptr() as *const core::ffi::c_void, bytes.len()) != MKR_OK {
+    if buf.append(bytes).is_err() {
         buf.free();
         return Err(());
     }

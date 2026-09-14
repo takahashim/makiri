@@ -17,7 +17,7 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use super::abi::*;
-use crate::cbuf::{mkr_buf_append, mkr_buf_reserve, Buf};
+use crate::cbuf::{mkr_buf_append, Buf};
 
 /// Lexbor's chunk sink. Must not panic: it is called from C.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
@@ -91,7 +91,7 @@ fn serialize(ruby: &Ruby, node: *mut LxbNode, deep: bool, pretty: bool) -> Resul
     // SAFETY: `buf` is freed on both paths below, and nothing between here and
     // there can raise - the Err is returned, not thrown.
     unsafe {
-        let _ = mkr_buf_reserve(&mut buf, reserve); /* best-effort pre-size */
+        let _ = buf.reserve(reserve); /* best-effort pre-size */
 
         let ctx = &mut buf as *mut Buf as *mut c_void;
         let st = match (deep, pretty) {

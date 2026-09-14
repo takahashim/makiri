@@ -22,13 +22,21 @@ pub const MKR_ERR_OOM: c_int = 1;
 pub const MKR_ERR_LIMIT: c_int = 2;
 pub const MKR_ERR_INVALID: c_int = 3;
 
+/// A failure returned by the safe buffer API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufError {
+    Oom,
+    Limit,
+    Invalid,
+}
+
 /// `mkr_buf_t`.
 pub struct Buf {
-    pub data: *mut c_char,
-    pub len: usize,
-    pub cap: usize,
+    data: *mut c_char,
+    len: usize,
+    cap: usize,
     /// 0 selects the conservative default ceiling; it is not "unbounded".
-    pub max: usize,
+    max: usize,
 }
 
 impl Buf {
@@ -48,22 +56,49 @@ impl Buf {
         }
     }
 
-    /// The bytes written so far.
-    ///
-    /// # Safety
-    /// The buffer must not have been freed or stolen from.
-    pub unsafe fn as_slice(&self) -> &[u8] {
+    /// The bytes written so far, without the trailing NUL.
+    pub fn as_slice(&self) -> &[u8] {
+        /* The fields are private, and every constructor/mutator in this module
+         * preserves the allocation invariant used here. */
+        unsafe { self.as_slice_unchecked() }
+    }
+
+    #[inline]
+    unsafe fn as_slice_unchecked(&self) -> &[u8] {
         if self.data.is_null() || self.len == 0 {
             return &[];
         }
         core::slice::from_raw_parts(self.data as *const u8, self.len)
     }
 
-    /// # Safety
-    /// Must not be called twice on the same buffer, or after `mkr_buf_steal`.
-    pub unsafe fn free(&mut self) {
+    /// Append bytes without exposing raw pointers to Rust callers.
+    pub fn append(&mut self, bytes: &[u8]) -> Result<(), BufError> {
+        let status = unsafe { mkr_buf_append(self, bytes.as_ptr() as *const c_void, bytes.len()) };
+        match status {
+            MKR_OK => Ok(()),
+            MKR_ERR_OOM => Err(BufError::Oom),
+            MKR_ERR_LIMIT => Err(BufError::Limit),
+            MKR_ERR_INVALID => Err(BufError::Invalid),
+            _ => Err(BufError::Invalid),
+        }
+    }
+
+    /// Reserve room for `n` content bytes without changing the current length.
+    pub fn reserve(&mut self, n: usize) -> Result<(), BufError> {
+        let status = unsafe { mkr_buf_reserve(self, n) };
+        match status {
+            MKR_OK => Ok(()),
+            MKR_ERR_OOM => Err(BufError::Oom),
+            MKR_ERR_LIMIT => Err(BufError::Limit),
+            MKR_ERR_INVALID => Err(BufError::Invalid),
+            _ => Err(BufError::Invalid),
+        }
+    }
+
+    /// Release the allocation and reset the buffer to an empty state.
+    pub fn free(&mut self) {
         if !self.data.is_null() {
-            libc_free(self.data as *mut c_void);
+            unsafe { libc_free(self.data as *mut c_void) };
             self.data = core::ptr::null_mut();
         }
         self.len = 0;
@@ -138,7 +173,7 @@ pub(crate) use limits::{mkr_buf_default_limit, mkr_buf_hard_max};
 /// `reserve` and the two must not drift - a `reserve` with a larger ceiling
 /// than `append` would pre-size past what any append will accept.
 #[inline]
-unsafe fn content_limit(b: &Buf) -> usize {
+fn content_limit(b: &Buf) -> usize {
     let soft = if b.max != 0 {
         b.max
     } else {
@@ -153,7 +188,7 @@ unsafe fn content_limit(b: &Buf) -> usize {
 ///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
-pub unsafe fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
+pub(crate) unsafe fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
     if n == 0 {
         return MKR_OK;
     }
@@ -218,7 +253,7 @@ pub unsafe fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_i
 ///
 /// # Safety
 /// `b` must be a live buffer.
-pub unsafe fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
+pub(crate) unsafe fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
     let b = &mut *b;
     let n = n.min(content_limit(b));
     let need_term = match n.checked_add(1) {
@@ -250,7 +285,7 @@ pub unsafe fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
 ///
 /// # Safety
 /// `b` must be a live buffer; `out_len` must be NULL or writable.
-pub unsafe fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
+pub(crate) unsafe fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
     let b = &mut *b;
     if b.data.is_null() {
         let empty = if crate::falloc::should_fail() {
