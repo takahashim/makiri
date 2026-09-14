@@ -4,7 +4,6 @@
 //! remain raw because they are called by the Ruby/C glue and own ABI values.
 
 use crate::falloc::raw::free_and_null;
-use crate::xpath::runtime_abi::mkr_owned_text_clear;
 use crate::xpath_abi::{Error, XPathValue, XP_OK};
 use core::ffi::{c_char, c_int, c_void};
 
@@ -58,7 +57,7 @@ pub unsafe extern "C" fn mkr_xpath_value_clear(v: *mut XPathValue) {
             v.u.nodeset.nodes = core::ptr::null_mut();
             v.u.nodeset.count = 0;
         }
-        MKR_XPATH_TYPE_STRING => mkr_owned_text_clear(&mut v.u.string),
+        MKR_XPATH_TYPE_STRING => v.u.string.clear(),
         _ => {}
     }
 }

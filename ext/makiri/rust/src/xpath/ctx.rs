@@ -13,6 +13,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
+use super::own::Text;
 use crate::falloc::Reserve;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
@@ -23,15 +24,15 @@ const MAX_NAMESPACES: usize = 65536;
 const MAX_VARIABLES: usize = 65536;
 
 struct NsEntry {
-    prefix: OwnedText,
-    uri: OwnedText,
+    prefix: Text,
+    uri: Text,
 }
 
 struct VarEntry {
     /// `ptr` null for the unprefixed (only supported) form.
-    prefix: OwnedText,
-    name: OwnedText,
-    value: OwnedText,
+    prefix: Text,
+    name: Text,
+    value: Text,
 }
 
 /// `struct mkr_xpath_context_s`, the real thing.
@@ -143,37 +144,28 @@ pub use crate::xpath::runtime_abi::mkr_str_cache_truncate;
 
 /* ---------- text slots ---------- */
 
-fn empty_text() -> OwnedText {
-    OwnedText::empty()
+fn empty_text() -> Text {
+    Text::new()
 }
 
-unsafe fn borrowed(t: OwnedText) -> VerifiedText {
-    VerifiedText {
-        ptr: t.as_ptr(),
-        len: t.len(),
-    }
+unsafe fn borrowed(t: &Text) -> VerifiedText {
+    t.as_verified()
 }
 
-unsafe fn text_eq(a: OwnedText, b: VerifiedText) -> bool {
+unsafe fn text_eq(a: &Text, b: VerifiedText) -> bool {
     mkr_borrowed_text_eq(borrowed(a), b) != 0
 }
 
 /// Copy `val` into a fresh owned text, or None on OOM.
-unsafe fn copy_text(val: VerifiedText) -> Option<OwnedText> {
-    let mut out = empty_text();
-    if mkr_owned_text_from_borrowed_copy(&mut out, val, ptr::null_mut(), ptr::null()) == 0 {
-        Some(out)
-    } else {
-        None
-    }
+unsafe fn copy_text(val: VerifiedText) -> Option<Text> {
+    crate::xpath_abi::OwnedText::try_copy(val, ptr::null_mut(), ptr::null()).map(Text::from_owned)
 }
 
 /// Replace a slot's owned text with a fresh copy: copy FIRST, then clear the
 /// old, so an OOM leaves the slot intact.
-unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
+unsafe fn set_slot(slot: &mut Text, val: VerifiedText) -> c_int {
     match copy_text(val) {
         Some(nv) => {
-            mkr_owned_text_clear(slot);
             *slot = nv;
             0
         }
@@ -221,15 +213,6 @@ pub unsafe fn mkr_xpath_context_free(ctx: *mut Context) {
         return;
     }
     let mut ctx = Box::from_raw(ctx);
-    for e in ctx.ns.iter_mut() {
-        mkr_owned_text_clear(&mut e.prefix);
-        mkr_owned_text_clear(&mut e.uri);
-    }
-    for e in ctx.vars.iter_mut() {
-        mkr_owned_text_clear(&mut e.prefix);
-        mkr_owned_text_clear(&mut e.name);
-        mkr_owned_text_clear(&mut e.value);
-    }
     mkr_str_cache_clear(&mut ctx.str_cache);
     mkr_doc_order_index_clear(&mut ctx.order_index);
     /* The Vecs and the box go with the drop. */
@@ -248,7 +231,7 @@ pub unsafe fn mkr_xpath_register_ns(
     let ctx = &mut *ctx;
     /* Replace when the prefix is already registered. */
     for e in ctx.ns.iter_mut() {
-        if text_eq(e.prefix, prefix) {
+        if text_eq(&e.prefix, prefix) {
             return set_slot(&mut e.uri, uri);
         }
     }
@@ -257,16 +240,7 @@ pub unsafe fn mkr_xpath_register_ns(
     }
     let (p, u) = match (copy_text(prefix), copy_text(uri)) {
         (Some(p), Some(u)) => (p, u),
-        (p, u) => {
-            /* One side may have been copied; neither is committed. */
-            if let Some(mut p) = p {
-                mkr_owned_text_clear(&mut p);
-            }
-            if let Some(mut u) = u {
-                mkr_owned_text_clear(&mut u);
-            }
-            return -1;
-        }
+        _ => return -1,
     };
     ctx.ns.push(NsEntry { prefix: p, uri: u });
     0
@@ -284,7 +258,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
     /* Only unprefixed string variables are supported. A null `value` means the
      * variable is set to empty, which the copy maps to "". */
     for e in ctx.vars.iter_mut() {
-        if e.prefix.is_absent() && text_eq(e.name, name) {
+        if e.prefix.is_absent() && text_eq(&e.name, name) {
             return set_slot(&mut e.value, value);
         }
     }
@@ -293,15 +267,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
     }
     let (n, v) = match (copy_text(name), copy_text(value)) {
         (Some(n), Some(v)) => (n, v),
-        (n, v) => {
-            if let Some(mut n) = n {
-                mkr_owned_text_clear(&mut n);
-            }
-            if let Some(mut v) = v {
-                mkr_owned_text_clear(&mut v);
-            }
-            return -1;
-        }
+        _ => return -1,
     };
     ctx.vars.push(VarEntry {
         prefix: empty_text(),
@@ -328,11 +294,12 @@ pub unsafe fn mkr_ctx_lookup_ns(
         len: prefix_len,
     };
     for e in (*ctx).ns.iter() {
-        if text_eq(e.prefix, want) {
+        if text_eq(&e.prefix, want) {
+            let uri = borrowed(&e.uri);
             if !out_uri_len.is_null() {
-                *out_uri_len = e.uri.len();
+                *out_uri_len = uri.len;
             }
-            return e.uri.as_ptr();
+            return uri.ptr;
         }
     }
     ptr::null()
@@ -367,10 +334,10 @@ pub unsafe fn mkr_ctx_lookup_variable_text(
         let prefix_match = if prefix.is_null() {
             e.prefix.is_absent()
         } else {
-            text_eq(e.prefix, want_prefix)
+            text_eq(&e.prefix, want_prefix)
         };
-        if prefix_match && text_eq(e.name, want_name) {
-            *out = borrowed(e.value);
+        if prefix_match && text_eq(&e.name, want_name) {
+            *out = borrowed(&e.value);
             return 1;
         }
     }

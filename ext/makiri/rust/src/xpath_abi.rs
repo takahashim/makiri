@@ -436,7 +436,6 @@ pub use crate::xpath::runtime_abi::mkr_nodeset_clear;
 pub use crate::xpath::runtime_abi::mkr_nodeset_init;
 pub use crate::xpath::runtime_abi::mkr_nodeset_push;
 pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
-pub use crate::xpath::runtime_abi::mkr_owned_text_from_borrowed_copy;
 pub use crate::xpath::runtime_abi::mkr_str_cache_index_put;
 pub use crate::xpath::runtime_abi::mkr_str_cache_reindex;
 pub use crate::xpath::runtime_abi::mkr_val_clear;

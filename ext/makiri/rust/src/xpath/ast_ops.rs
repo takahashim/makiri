@@ -37,9 +37,9 @@ pub unsafe fn mkr_step_clear(s: *mut Step) {
     if s.is_null() {
         return;
     }
-    mkr_owned_text_clear(&raw mut (*s).test.prefix);
-    mkr_owned_text_clear(&raw mut (*s).test.local);
-    mkr_owned_text_clear(&raw mut (*s).test.pi_target);
+    (*s).test.prefix.clear();
+    (*s).test.local.clear();
+    (*s).test.pi_target.clear();
     for &p in step_preds(s) {
         mkr_node_free(p);
     }
@@ -332,16 +332,16 @@ pub unsafe fn mkr_node_free(n: *mut Node) {
         (*n).memoized = 0;
     }
     match (*n).kind {
-        NK_LITERAL_STR => mkr_owned_text_clear(&raw mut (*n).u.literal),
+        NK_LITERAL_STR => (*n).u.literal.clear(),
         NK_LITERAL_NUM => {}
         NK_VARREF => {
-            mkr_owned_text_clear(&raw mut (*n).u.varref.prefix);
-            mkr_owned_text_clear(&raw mut (*n).u.varref.name);
+            (*n).u.varref.prefix.clear();
+            (*n).u.varref.name.clear();
         }
         NK_FNCALL => {
             let call = &raw mut (*n).u.fncall;
-            mkr_owned_text_clear(&raw mut (*call).prefix);
-            mkr_owned_text_clear(&raw mut (*call).name);
+            (*call).prefix.clear();
+            (*call).name.clear();
             if (*call).nargs > 0 {
                 for &a in core::slice::from_raw_parts((*call).args, (*call).nargs) {
                     mkr_node_free(a);

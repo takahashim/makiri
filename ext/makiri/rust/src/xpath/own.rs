@@ -72,7 +72,19 @@ impl Text {
     pub fn as_slice(&self) -> &[u8] {
         unsafe { self.0.as_bytes() }
     }
-    pub fn as_mut(&mut self) -> *mut OwnedText {
+    pub(crate) fn from_owned(value: OwnedText) -> Self {
+        Self(value)
+    }
+    pub(crate) fn is_absent(&self) -> bool {
+        self.0.is_absent()
+    }
+    pub(crate) unsafe fn as_verified(&self) -> VerifiedText {
+        VerifiedText {
+            ptr: self.0.as_ptr(),
+            len: self.0.len(),
+        }
+    }
+    pub(crate) fn as_mut(&mut self) -> *mut OwnedText {
         &mut self.0
     }
     /// Hand the allocation to the caller; the guard is left empty.
@@ -89,7 +101,7 @@ impl Default for Text {
 
 impl Drop for Text {
     fn drop(&mut self) {
-        unsafe { mkr_owned_text_clear(&mut self.0) }
+        unsafe { self.0.clear() }
     }
 }
 

@@ -84,7 +84,13 @@ pub unsafe fn owned_copy(out: *mut OwnedText, s: &[u8], err: *mut Error, what: &
         ptr: s.as_ptr() as *const c_char,
         len: s.len(),
     };
-    mkr_owned_text_from_borrowed_copy(out, t, err, what.as_ptr() as *const c_char) == 0
+    match crate::xpath_abi::OwnedText::try_copy(t, err, what.as_ptr() as *const c_char) {
+        Some(value) => {
+            *out = value;
+            true
+        }
+        None => false,
+    }
 }
 
 /* ---------- value clone ---------- */
@@ -509,7 +515,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         core::mem::size_of::<StrCacheEntry>(),
     ) != MKR_OK
     {
-        mkr_owned_text_clear(&mut text);
+        text.clear();
         err_setf!(err, XP_ERR_OOM, "out of memory in node string cache");
         return None;
     }
@@ -519,13 +525,13 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     let new_total = match (*c).total_bytes.checked_add(text.len()) {
         Some(t) => t,
         None => {
-            mkr_owned_text_clear(&mut text);
+            text.clear();
             err_setf!(err, XP_ERR_OOM, "node string cache size overflow");
             return None;
         }
     };
     if mkr_limit_check_string_bytes(limits, new_total, err) != 0 {
-        mkr_owned_text_clear(&mut text);
+        text.clear();
         return None;
     }
 
@@ -540,14 +546,14 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             match (*c).bucket_cap.checked_mul(2) {
                 Some(b) => b,
                 None => {
-                    mkr_owned_text_clear(&mut text);
+                    text.clear();
                     err_setf!(err, XP_ERR_OOM, "node string cache index overflow");
                     return None;
                 }
             }
         };
         if mkr_str_cache_reindex(c, new_bucket_cap) != 0 {
-            mkr_owned_text_clear(&mut text);
+            text.clear();
             err_setf!(err, XP_ERR_OOM, "out of memory indexing node string cache");
             return None;
         }
