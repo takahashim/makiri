@@ -116,7 +116,7 @@ unsafe fn eval_step<D: Dom>(
      * and the glue refuses register_namespace (and register_variable, node=)
      * while an evaluate is in progress on this context - which is exactly when a
      * predicate handler could re-enter. */
-    let pre: Option<&[u8]> = if (*test).prefix.ptr.is_null() {
+    let pre: Option<&[u8]> = if (*test).prefix.is_absent() {
         None
     } else {
         match lookup_ns(ctx, owned_bytes((*test).prefix)) {
@@ -557,7 +557,7 @@ pub unsafe fn try_first_match<D: Dom>(
     /* Reproduce the step driver's prefix validation, so the fast path stays
      * identical to the full evaluator down to the errors - and keep what it
      * resolved, so the walk below does not look the prefix up again per node. */
-    let pre = if (*test).prefix.ptr.is_null() {
+    let pre = if (*test).prefix.is_absent() {
         None
     } else {
         match lookup_ns(ctx, owned_bytes((*test).prefix)) {
@@ -706,7 +706,7 @@ unsafe fn eval_fncall<D: Dom>(
     let prefix = owned_bytes((*call).prefix);
     let name = owned_bytes((*call).name);
 
-    let ns_uri: Option<&[u8]> = if (*call).prefix.ptr.is_null() {
+    let ns_uri: Option<&[u8]> = if (*call).prefix.is_absent() {
         None
     } else {
         match lookup_ns(ctx, prefix) {
@@ -761,7 +761,7 @@ unsafe fn eval_fncall<D: Dom>(
                 focus.pos,
                 focus.size,
                 ns_uri.map_or(ptr::null(), |u| u.as_ptr() as *const c_char),
-                (*call).name.ptr,
+                (*call).name.as_ptr(),
                 /* NULL rather than a dangling pointer when there are none,
                  * which is what the C hands a resolver. */
                 if nargs == 0 {
@@ -781,11 +781,7 @@ unsafe fn eval_fncall<D: Dom>(
                 XP_ERR_RUNTIME,
                 "unknown function {}{}{}",
                 Bytes(prefix),
-                if (*call).prefix.ptr.is_null() {
-                    ""
-                } else {
-                    ":"
-                },
+                if (*call).prefix.is_absent() { "" } else { ":" },
                 Bytes(name)
             );
             false
@@ -926,10 +922,7 @@ unsafe fn eval_node_inner<D: Dom>(
 
     let ok = match (*n).kind {
         NK_LITERAL_STR => {
-            let mut text = OwnedText {
-                ptr: ptr::null_mut(),
-                len: 0,
-            };
+            let mut text = OwnedText::empty();
             if owned_copy(
                 &mut text,
                 owned_bytes((*n).u.literal),
@@ -954,10 +947,10 @@ unsafe fn eval_node_inner<D: Dom>(
             };
             if mkr_ctx_lookup_variable_text(
                 ctx,
-                (*v).prefix.ptr,
-                (*v).prefix.len,
-                (*v).name.ptr,
-                (*v).name.len,
+                (*v).prefix.as_ptr(),
+                (*v).prefix.len(),
+                (*v).name.as_ptr(),
+                (*v).name.len(),
                 &mut got,
             ) == 0
             {
@@ -966,7 +959,7 @@ unsafe fn eval_node_inner<D: Dom>(
                     XP_ERR_RUNTIME,
                     "undefined variable ${}{}{}",
                     Bytes(owned_bytes((*v).prefix)),
-                    if (*v).prefix.ptr.is_null() { "" } else { ":" },
+                    if (*v).prefix.is_absent() { "" } else { ":" },
                     Bytes(owned_bytes((*v).name))
                 );
                 false
@@ -976,10 +969,7 @@ unsafe fn eval_node_inner<D: Dom>(
                 } else {
                     core::slice::from_raw_parts(got.ptr as *const u8, got.len)
                 };
-                let mut text = OwnedText {
-                    ptr: ptr::null_mut(),
-                    len: 0,
-                };
+                let mut text = OwnedText::empty();
                 if owned_copy(
                     &mut text,
                     bytes,

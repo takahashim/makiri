@@ -45,10 +45,7 @@ pub unsafe fn mkr_val_set_borrowed_text_copy(
         );
         return -1;
     }
-    let mut owned = OwnedText {
-        ptr: ptr::null_mut(),
-        len: 0,
-    };
+    let mut owned = OwnedText::empty();
     if text::mkr_owned_text_from_borrowed_copy(&mut owned, borrowed, err, what) != 0 {
         return -1;
     }

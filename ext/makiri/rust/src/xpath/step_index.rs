@@ -53,17 +53,17 @@ pub unsafe fn try_descendant_index<D: Dom>(
     let test = &raw const (*step).test;
     if (*step).axis != AXIS_DESCENDANT
         || (*test).kind != NT_NAME
-        || (*test).local.ptr.is_null()
+        || (*test).local.is_absent()
         || !context_is_document::<D>(b.ctx, context_set)
     {
         return Ok(false);
     }
-    let ns_uri = if (*test).prefix.ptr.is_null() {
+    let ns_uri = if (*test).prefix.is_absent() {
         None
     } else {
         b.pre
     };
-    if !(*test).prefix.ptr.is_null() && ns_uri.is_none() {
+    if (*test).prefix.is_present() && ns_uri.is_none() {
         return Ok(false); /* eval_step pre-resolves, so this should not happen */
     }
     let bucket = match D::name_bucket(b.ctx, owned_bytes((*test).local), ns_uri, b.lax) {
@@ -102,14 +102,14 @@ unsafe fn nth_shape<D: Dom>(
 ) -> Option<usize> {
     if (*s0).axis != AXIS_DESCENDANT_OR_SELF
         || (*s0).test.kind != NT_NODE
-        || !(*s0).test.prefix.ptr.is_null()
+        || (*s0).test.prefix.is_present()
         || (*s0).npredicates != 0
     {
         return None;
     }
     if (*s1).axis != AXIS_CHILD
         || (*s1).test.kind != NT_NAME
-        || (*s1).test.local.ptr.is_null()
+        || (*s1).test.local.is_absent()
         || (*s1).npredicates != 1
     {
         return None;
@@ -150,7 +150,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
         None => return Ok(false),
     };
     let test = &raw const (*s1).test;
-    let ns_uri: Option<&[u8]> = if (*test).prefix.ptr.is_null() {
+    let ns_uri: Option<&[u8]> = if (*test).prefix.is_absent() {
         None
     } else {
         match lookup_ns(ctx, owned_bytes((*test).prefix)) {

@@ -99,11 +99,7 @@ unsafe fn mark_step_predicates(s: *const Step) {
 }
 
 unsafe fn text_bytes<'a>(t: OwnedText) -> &'a [u8] {
-    if t.ptr.is_null() || t.len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(t.ptr as *const u8, t.len)
-    }
+    t.as_bytes()
 }
 
 unsafe fn is_ci(n: *const Node) -> bool {
@@ -133,7 +129,7 @@ pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
             }
             /* A prefix means handler-routed or a namespaced builtin, neither
              * of which is hoistable. */
-            (*call).prefix.ptr.is_null()
+            (*call).prefix.is_absent()
                 && is_pure_builtin(text_bytes((*call).name), args.len())
                 && args.iter().all(|&a| is_ci(a))
         }
@@ -203,7 +199,7 @@ unsafe fn fuse_descendant_or_self(steps: *mut Step, nsteps: *mut usize) {
         let fusable = r + 1 < n
             && all[r].axis == AXIS_DESCENDANT_OR_SELF
             && all[r].test.kind == NT_NODE
-            && all[r].test.prefix.ptr.is_null()
+            && all[r].test.prefix.is_absent()
             && all[r].npredicates == 0
             && all[r + 1].axis == AXIS_CHILD
             && all[r + 1].npredicates == 0;

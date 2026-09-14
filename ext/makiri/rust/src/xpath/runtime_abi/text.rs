@@ -3,22 +3,17 @@
 use super::super::abi::*;
 use crate::err_setf;
 use core::ffi::{c_char, c_int, c_void};
-use core::ptr;
-
 pub unsafe fn mkr_owned_text_init(t: *mut OwnedText) {
     if !t.is_null() {
-        *t = OwnedText {
-            ptr: ptr::null_mut(),
-            len: 0,
-        };
+        *t = OwnedText::empty();
     }
 }
 pub unsafe fn mkr_owned_text_clear(t: *mut OwnedText) {
     if t.is_null() {
         return;
     }
-    if !(*t).ptr.is_null() {
-        free_c((*t).ptr as *mut c_void);
+    if !(*t).as_ptr().is_null() {
+        free_c((*t).as_ptr() as *mut c_void);
     }
     mkr_owned_text_init(t);
 }
@@ -61,8 +56,7 @@ pub unsafe fn mkr_owned_text_from_borrowed_copy(
         }
         return -1;
     }
-    (*out).ptr = p;
-    (*out).len = len;
+    *out = OwnedText::from_raw_parts(p, len);
     0
 }
 extern "C" {

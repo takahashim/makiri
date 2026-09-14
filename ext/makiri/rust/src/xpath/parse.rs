@@ -53,18 +53,9 @@ fn zero_step() -> Step {
         axis: AXIS_CHILD,
         test: NodeTest {
             kind: NT_NAME,
-            prefix: OwnedText {
-                ptr: ptr::null_mut(),
-                len: 0,
-            },
-            local: OwnedText {
-                ptr: ptr::null_mut(),
-                len: 0,
-            },
-            pi_target: OwnedText {
-                ptr: ptr::null_mut(),
-                len: 0,
-            },
+            prefix: OwnedText::empty(),
+            local: OwnedText::empty(),
+            pi_target: OwnedText::empty(),
         },
         predicates: ptr::null_mut(),
         npredicates: 0,
@@ -209,12 +200,11 @@ impl<'a> Parser<'a> {
         let p = unsafe { mkr_strndup(text.as_ptr() as *const c_char, text.len()) };
         if p.is_null() {
             err_setf!(self.err, XP_ERR_OOM, "out of memory in parser");
-            unsafe { (*out).len = 0 };
+            unsafe { *out = OwnedText::empty() };
             return false;
         }
         unsafe {
-            (*out).ptr = p;
-            (*out).len = text.len();
+            *out = OwnedText::from_raw_parts(p, text.len());
         }
         true
     }

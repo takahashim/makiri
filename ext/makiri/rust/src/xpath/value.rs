@@ -72,11 +72,7 @@ pub fn val_boolean(b: bool) -> Val {
 /// # Safety
 /// `t` must name live bytes for `'a`.
 pub unsafe fn owned_bytes<'a>(t: OwnedText) -> &'a [u8] {
-    if t.ptr.is_null() || t.len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(t.ptr as *const u8, t.len)
-    }
+    t.as_bytes()
 }
 
 /// Copy `s` into a fresh owned text. Returns false with `*err` set on OOM.
@@ -103,10 +99,7 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> bool
     *dst = val_zero((*src).type_);
     match (*src).type_ {
         T_STRING => {
-            let mut text = OwnedText {
-                ptr: ptr::null_mut(),
-                len: 0,
-            };
+            let mut text = OwnedText::empty();
             if !owned_copy(
                 &mut text,
                 owned_bytes((*src).u.string),
@@ -226,10 +219,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     err: *mut Error,
     out: *mut OwnedText,
 ) -> bool {
-    *out = OwnedText {
-        ptr: ptr::null_mut(),
-        len: 0,
-    };
+    *out = OwnedText::empty();
     let mut buf = Buf::new(if limits.is_null() {
         0
     } else {
@@ -239,8 +229,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     if st == ST_OK {
         if let Ok(owned) = buf.steal() {
             let (ptr, len) = owned.into_raw_parts();
-            (*out).ptr = ptr as *mut c_char;
-            (*out).len = len;
+            *out = OwnedText::from_raw_parts(ptr as *mut c_char, len);
             return true;
         }
         if !err.is_null() {
@@ -337,7 +326,7 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
     match (*v).type_ {
         T_BOOLEAN => (*v).u.boolean != 0,
         T_NUMBER => !((*v).u.number == 0.0 || (*v).u.number.is_nan()),
-        T_STRING => !(*v).u.string.ptr.is_null() && *(*v).u.string.ptr != 0,
+        T_STRING => (*v).u.string.is_present() && *(*v).u.string.as_ptr() != 0,
         T_NODESET => (*v).u.nodeset.count > 0,
         _ => false,
     }
@@ -354,10 +343,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     err: *mut Error,
     out: *mut OwnedText,
 ) -> bool {
-    *out = OwnedText {
-        ptr: ptr::null_mut(),
-        len: 0,
-    };
+    *out = OwnedText::empty();
     if v.is_null() {
         return owned_copy(out, b"", err, b"out of memory converting value to string\0");
     }
@@ -511,10 +497,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     }
 
     let limits = mkr_ctx_limits(ctx);
-    let mut text = OwnedText {
-        ptr: ptr::null_mut(),
-        len: 0,
-    };
+    let mut text = OwnedText::empty();
     if !node_to_owned_text::<D>(doc, node, limits, err, &mut text) {
         return None;
     }
@@ -533,7 +516,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
 
     /* A total cap on the cached bytes, so one evaluate cannot grow the cache
      * without bound. */
-    let new_total = match (*c).total_bytes.checked_add(text.len) {
+    let new_total = match (*c).total_bytes.checked_add(text.len()) {
         Some(t) => t,
         None => {
             mkr_owned_text_clear(&mut text);
@@ -574,13 +557,13 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
      * has to come first. */
     let slot = (*c).entries.add((*c).count);
     (*slot).node = key as *mut c_void;
-    (*slot).str_ = text.ptr;
-    (*slot).len = text.len;
+    (*slot).str_ = text.as_ptr();
+    (*slot).len = text.len();
     mkr_str_cache_index_put(c, (*c).count);
-    (*c).total_bytes += text.len;
+    (*c).total_bytes += text.len();
     (*c).count += 1;
 
-    Some(borrow(text.ptr, text.len))
+    Some(borrow(text.as_ptr(), text.len()))
 }
 
 #[inline]

@@ -141,10 +141,7 @@ unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> Option<OwnedText> {
         ptr::copy_nonoverlapping(s.as_ptr(), p as *mut u8, s.len());
     }
     *p.add(s.len()) = 0;
-    Some(OwnedText {
-        ptr: p,
-        len: s.len(),
-    })
+    Some(OwnedText::from_raw_parts(p, s.len()))
 }
 
 unsafe fn set_string(out: *mut Val, s: &[u8], err: *mut Error, what: &str) -> bool {
@@ -611,13 +608,7 @@ unsafe fn fn_concat<D: Dom>(
         off += s.len();
     }
     *buf.add(total) = 0;
-    mkr_val_set_owned_text(
-        out,
-        OwnedText {
-            ptr: buf,
-            len: total,
-        },
-    );
+    mkr_val_set_owned_text(out, OwnedText::from_raw_parts(buf, total));
     true
 }
 
@@ -789,7 +780,7 @@ unsafe fn fn_normalize_space<D: Dom>(
         w -= 1;
     }
     dst[w] = 0;
-    mkr_val_set_owned_text(out, OwnedText { ptr: buf, len: w });
+    mkr_val_set_owned_text(out, OwnedText::from_raw_parts(buf, w));
     true
 }
 
@@ -882,13 +873,7 @@ unsafe fn fn_translate<D: Dom>(
         }
     };
     let (ptr, len) = owned.into_raw_parts();
-    mkr_val_set_owned_text(
-        out,
-        OwnedText {
-            ptr: ptr as *mut c_char,
-            len,
-        },
-    );
+    mkr_val_set_owned_text(out, OwnedText::from_raw_parts(ptr as *mut c_char, len));
     true
 }
 

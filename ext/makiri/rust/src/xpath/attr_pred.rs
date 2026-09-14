@@ -33,8 +33,8 @@ pub unsafe fn match_attr_step<'a>(n: *const Node) -> Option<&'a [u8]> {
     if s.axis != AXIS_ATTRIBUTE
         || s.npredicates != 0
         || s.test.kind != NT_NAME
-        || !s.test.prefix.ptr.is_null()
-        || s.test.local.ptr.is_null()
+        || s.test.prefix.is_present()
+        || s.test.local.is_absent()
     {
         return None;
     }

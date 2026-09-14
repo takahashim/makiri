@@ -144,16 +144,13 @@ pub use crate::xpath::runtime_abi::mkr_str_cache_truncate;
 /* ---------- text slots ---------- */
 
 fn empty_text() -> OwnedText {
-    OwnedText {
-        ptr: ptr::null_mut(),
-        len: 0,
-    }
+    OwnedText::empty()
 }
 
 unsafe fn borrowed(t: OwnedText) -> VerifiedText {
     VerifiedText {
-        ptr: t.ptr,
-        len: t.len,
+        ptr: t.as_ptr(),
+        len: t.len(),
     }
 }
 
@@ -287,7 +284,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
     /* Only unprefixed string variables are supported. A null `value` means the
      * variable is set to empty, which the copy maps to "". */
     for e in ctx.vars.iter_mut() {
-        if e.prefix.ptr.is_null() && text_eq(e.name, name) {
+        if e.prefix.is_absent() && text_eq(e.name, name) {
             return set_slot(&mut e.value, value);
         }
     }
@@ -333,9 +330,9 @@ pub unsafe fn mkr_ctx_lookup_ns(
     for e in (*ctx).ns.iter() {
         if text_eq(e.prefix, want) {
             if !out_uri_len.is_null() {
-                *out_uri_len = e.uri.len;
+                *out_uri_len = e.uri.len();
             }
-            return e.uri.ptr;
+            return e.uri.as_ptr();
         }
     }
     ptr::null()
@@ -368,7 +365,7 @@ pub unsafe fn mkr_ctx_lookup_variable_text(
     };
     for e in (*ctx).vars.iter() {
         let prefix_match = if prefix.is_null() {
-            e.prefix.ptr.is_null()
+            e.prefix.is_absent()
         } else {
             text_eq(e.prefix, want_prefix)
         };

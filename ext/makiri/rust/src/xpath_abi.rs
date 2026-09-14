@@ -93,11 +93,65 @@ pub const OP_UNION: u32 = 13;
 
 /* ---- text views (core/mkr_text.h) ---- */
 
-/// mkr_owned_text_t - owned, NUL-terminated at ptr[len].
+/// An engine-owned UTF-8 byte string, NUL-terminated in its backing allocation.
+///
+/// The pointer representation is private. Code that needs to cross the raw
+/// runtime boundary must use the narrow accessors below; ordinary XPath code
+/// should prefer `as_bytes` and `len`.
 #[derive(Clone, Copy)]
 pub struct OwnedText {
-    pub ptr: *mut c_char,
-    pub len: usize,
+    ptr: *mut c_char,
+    len: usize,
+}
+
+impl OwnedText {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+        }
+    }
+
+    /// Construct a raw-owned value at the allocator/runtime boundary.
+    ///
+    /// # Safety
+    /// `ptr` must be null or point to `len` live bytes followed by a NUL byte,
+    /// allocated by the allocator used by `mkr_owned_text_clear`.
+    pub(crate) unsafe fn from_raw_parts(ptr: *mut c_char, len: usize) -> Self {
+        Self { ptr, len }
+    }
+
+    pub(crate) const fn as_ptr(self) -> *mut c_char {
+        self.ptr
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    /// Whether this slot represents an omitted value rather than an empty
+    /// allocated string.
+    pub(crate) const fn is_absent(self) -> bool {
+        self.ptr.is_null()
+    }
+
+    pub(crate) const fn is_present(self) -> bool {
+        !self.is_absent()
+    }
+
+    /// Whether the string has no content. An absent slot is empty by content,
+    /// but remains distinguishable through [`Self::is_absent`].
+    pub(crate) const fn is_empty(self) -> bool {
+        self.is_absent() || self.len == 0
+    }
+
+    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
+        if self.ptr.is_null() || self.len == 0 {
+            &[]
+        } else {
+            core::slice::from_raw_parts(self.ptr as *const u8, self.len)
+        }
+    }
 }
 
 /// mkr_verified_text_t / mkr_borrowed_text_t - same layout, different contract.

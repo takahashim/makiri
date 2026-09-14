@@ -162,8 +162,12 @@ pub unsafe extern "C" fn mkr_xpath_value_to_ruby(v: *mut XPathValue, document: V
 
 /// An engine string as a UTF-8 Ruby String. A NULL pointer is `""`.
 unsafe fn owned_text_to_str(t: OwnedText) -> VALUE {
-    let p = if t.ptr.is_null() { c"".as_ptr() } else { t.ptr };
-    let n = if t.ptr.is_null() { 0 } else { t.len };
+    let p = if t.is_absent() {
+        c"".as_ptr()
+    } else {
+        t.as_ptr()
+    };
+    let n = if t.is_absent() { 0 } else { t.len() };
     rb_sys::rb_utf8_str_new(p, n as core::ffi::c_long)
 }
 
@@ -617,7 +621,7 @@ unsafe fn ruby_to_out(
     let rc =
         mkr_val_set_borrowed_text_copy(out, vv.into(), core::ptr::null_mut(), core::ptr::null());
     core::hint::black_box(sv);
-    if rc != 0 || (*out).u.string.ptr.is_null() {
+    if rc != 0 || (*out).u.string.is_absent() {
         err.set("out of memory converting handler result");
         return false;
     }

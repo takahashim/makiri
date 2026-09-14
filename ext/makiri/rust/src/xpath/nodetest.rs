@@ -62,11 +62,11 @@ unsafe fn name_test_match<D: Dom>(
     b: &Bindings<D>,
 ) -> bool {
     let want_local = owned_bytes((*test).local);
-    if (*test).local.ptr.is_null() {
+    if (*test).local.is_absent() {
         return false;
     }
     let is_attr = axis == AXIS_ATTRIBUTE;
-    let prefixed = !(*test).prefix.ptr.is_null();
+    let prefixed = (*test).prefix.is_present();
 
     let got: &[u8] = if D::IS_XML || prefixed {
         if is_attr {
@@ -168,7 +168,7 @@ pub unsafe fn node_principal_match<D: Dom>(
             if D::node_type(doc, node) != NTYPE_PI {
                 return false;
             }
-            if (*test).pi_target.ptr.is_null() {
+            if (*test).pi_target.is_absent() {
                 return true;
             }
             D::pi_name(doc, node) == owned_bytes((*test).pi_target)
@@ -188,7 +188,7 @@ pub unsafe fn node_principal_match<D: Dom>(
             /* `*` matches any namespace; `prefix:*` only the one bound to the
              * prefix. An unknown prefix is reported up front by the step driver;
              * here it is a non-match. */
-            if (*test).prefix.ptr.is_null() {
+            if (*test).prefix.is_absent() {
                 return true;
             }
             match resolved_prefix(b, test) {

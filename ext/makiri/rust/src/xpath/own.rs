@@ -67,30 +67,17 @@ pub struct Text(pub(crate) OwnedText);
 
 impl Text {
     pub fn new() -> Text {
-        Text(OwnedText {
-            ptr: ptr::null_mut(),
-            len: 0,
-        })
+        Text(OwnedText::empty())
     }
     pub fn as_slice(&self) -> &[u8] {
-        if self.0.ptr.is_null() || self.0.len == 0 {
-            &[]
-        } else {
-            unsafe { core::slice::from_raw_parts(self.0.ptr as *const u8, self.0.len) }
-        }
+        unsafe { self.0.as_bytes() }
     }
     pub fn as_mut(&mut self) -> *mut OwnedText {
         &mut self.0
     }
     /// Hand the allocation to the caller; the guard is left empty.
     pub fn take(&mut self) -> OwnedText {
-        core::mem::replace(
-            &mut self.0,
-            OwnedText {
-                ptr: ptr::null_mut(),
-                len: 0,
-            },
-        )
+        core::mem::replace(&mut self.0, OwnedText::empty())
     }
 }
 
