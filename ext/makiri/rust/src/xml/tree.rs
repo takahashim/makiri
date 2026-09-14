@@ -908,9 +908,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Parse already-bounded input into a fresh document. Raw input is converted
-/// to this slice at the FFI boundary, before reaching the tree builder.
-pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, Status> {
+/// Parse already-bounded input into a fresh document.
+pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<Box<Document>, Status> {
     let mut doc = Document::create(limits, src.len())?;
     let norm = match normalize_newlines(src) {
         Ok(n) => n,
@@ -930,7 +929,7 @@ pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, Stat
     if st != Status::Ok {
         return Err(st);
     }
-    Ok(Box::into_raw(doc))
+    Ok(doc)
 }
 
 /// Parse a fragment into a live document's arena. The document reference and

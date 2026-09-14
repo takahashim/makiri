@@ -3,7 +3,7 @@
 //! exercises the engine. The tree is an index arena, so the checks address
 //! nodes by `NodeId` through the `Document`.
 
-/* Test entry points, called only from ffi.rs with no arguments. */
+/* Test entry points, called only from the Ruby glue with no arguments. */
 #![allow(clippy::missing_safety_doc)]
 
 use crate::xml::arena::destroy_doc;
@@ -57,7 +57,7 @@ unsafe fn parse_lit(s: &[u8], st: &mut Status) -> *mut Document {
     match parse_ex(s, None) {
         Ok(d) => {
             *st = Status::Ok;
-            d
+            Box::into_raw(d)
         }
         Err(e) => {
             *st = e;
@@ -80,7 +80,7 @@ unsafe fn parse_ex_raw(
     } else {
         core::slice::from_raw_parts(src as *const u8, len)
     };
-    parse_ex(src, limits)
+    parse_ex(src, limits).map(Box::into_raw)
 }
 
 unsafe fn parse_fragment_raw(
@@ -113,7 +113,11 @@ unsafe fn rejects(s: &[u8], want: Status) -> bool {
 
 /* ---- mkr_xml_node_selftest ---- */
 
-pub unsafe fn node_selftest() -> i32 {
+pub fn node_selftest() -> i32 {
+    unsafe { node_selftest_impl() }
+}
+
+unsafe fn node_selftest_impl() -> i32 {
     let mut idx = 0;
     let doc = Document::create(None, 0);
     idx += 1; /* 1 */
@@ -200,19 +204,16 @@ pub unsafe fn node_selftest() -> i32 {
         }
     }
 
-    idx += 1; /* 8: fail-closed on a NULL document at the FFI boundary */
-    if !crate::xml::ffi::mkr_xml_arena_node(ptr::null_mut(), NodeType::Element).is_invalid()
-        || crate::xml::ffi::mkr_xml_arena_bytes(ptr::null_mut(), ptr::null(), 1)
-            != crate::xml::Span::EMPTY
-    {
-        return idx;
-    }
     0
 }
 
 /* ---- mkr_xml_parse_selftest ---- */
 
-pub unsafe fn parse_selftest() -> i32 {
+pub fn parse_selftest() -> i32 {
+    unsafe { parse_selftest_impl() }
+}
+
+unsafe fn parse_selftest_impl() -> i32 {
     let mut st = Status::Ok;
     let mut i = 0;
 
@@ -785,7 +786,11 @@ pub unsafe fn parse_selftest() -> i32 {
 
 /* ---- mkr_xml_mutate_selftest ---- */
 
-pub unsafe fn mutate_selftest() -> i32 {
+pub fn mutate_selftest() -> i32 {
+    unsafe { mutate_selftest_impl() }
+}
+
+unsafe fn mutate_selftest_impl() -> i32 {
     let doc = doc_new();
     if doc.is_null() {
         return 1;

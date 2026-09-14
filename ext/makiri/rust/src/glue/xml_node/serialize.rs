@@ -40,8 +40,6 @@ use crate::glue::abi::is_kind_of;
 /* Taken from `crate::xml::abi`, the XML engine's own declaration. */
 use crate::xml::abi::{FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
 
-pub use crate::xml::ffi::mkr_xml_xmlns_prefix;
-
 /// The XML document behind `rb_self`'s wrapper.
 unsafe fn xdoc(rb_self: Value) -> *mut XmlDoc {
     crate::glue::xml_node::mkr_doc_of(node_document(rb_self).as_raw())

@@ -87,12 +87,11 @@ pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
 pub use crate::glue::xpath::mkr_xpath_raise;
 pub use crate::glue::xpath::mkr_xpath_value_to_ruby;
-pub use crate::xml::ffi::mkr_xml_arena_node;
-pub use crate::xml::ffi::mkr_xml_doc_new;
-pub use crate::xml::ffi::mkr_xml_name_index_get;
-pub use crate::xml::ffi::mkr_xml_name_index_lookup;
-pub use crate::xml::ffi::mkr_xml_parse_ex;
-pub use crate::xml::ffi::mkr_xml_parse_fragment;
+pub use crate::xml::api::mkr_xml_doc_new;
+pub use crate::xml::api::mkr_xml_name_index_get;
+pub use crate::xml::api::mkr_xml_name_index_lookup;
+pub use crate::xml::api::mkr_xml_parse_ex;
+pub use crate::xml::api::mkr_xml_parse_fragment;
 pub use crate::xpath::ast_ops::mkr_node_free;
 pub use crate::xpath::ctx::mkr_ctx_limits;
 pub use crate::xpath::ctx::mkr_xpath_context_free;
@@ -124,7 +123,10 @@ extern "C" {
  * reach the XML element-name index without the engine knowing its types. */
 
 unsafe extern "C" fn name_index_get(owner: *mut c_void) -> *mut c_void {
-    mkr_xml_name_index_get(owner as *mut XmlDoc) as *mut c_void
+    match mkr_xml_name_index_get(&mut *(owner as *mut XmlDoc)) {
+        Some(idx) => idx as *mut _ as *mut c_void,
+        None => core::ptr::null_mut(),
+    }
 }
 
 unsafe extern "C" fn name_index_lookup(
@@ -135,14 +137,30 @@ unsafe extern "C" fn name_index_lookup(
     ns_uri_len: usize,
     count: *mut usize,
 ) -> *const *mut c_void {
-    mkr_xml_name_index_lookup(
-        idx as *const crate::xml::index::NameIndex,
-        local,
-        local_len,
-        ns_uri,
-        ns_uri_len,
-        count,
-    )
+    let Some(idx) = (idx as *mut crate::xml::index::NameIndex).as_mut() else {
+        if !count.is_null() {
+            *count = 0;
+        }
+        return core::ptr::null();
+    };
+    let local = if local.is_null() || local_len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(local as *const u8, local_len)
+    };
+    let ns_uri = if ns_uri.is_null() || ns_uri_len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(ns_uri as *const u8, ns_uri_len)
+    };
+    let nodes = mkr_xml_name_index_lookup(idx, local, ns_uri);
+    if !count.is_null() {
+        *count = nodes.len();
+    }
+    // SAFETY: `NodeId` is one word and is exactly the opaque token the engine
+    // carries. The borrow remains valid until the next mutation invalidates
+    // the name index; the engine consumes it only during this GVL-held call.
+    nodes.as_ptr() as *const *mut c_void
 }
 
 /* ------------------------------------------------------------------ */
@@ -161,7 +179,21 @@ struct ParseWork {
 
 unsafe extern "C" fn parse_nogvl(arg: *mut c_void) -> *mut c_void {
     let w = &mut *(arg as *mut ParseWork);
-    w.result = mkr_xml_parse_ex(w.src, w.len, &w.limits, &mut w.status);
+    let src = if w.src.is_null() || w.len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(w.src as *const u8, w.len)
+    };
+    match mkr_xml_parse_ex(src, Some(&w.limits)) {
+        Ok(doc) => {
+            w.result = Box::into_raw(doc);
+            w.status = Status::Ok;
+        }
+        Err(status) => {
+            w.result = core::ptr::null_mut();
+            w.status = status;
+        }
+    }
     core::ptr::null_mut()
 }
 
@@ -753,13 +785,14 @@ unsafe fn fragment_into(
             "out of memory copying XML fragment source",
         ));
     }
-    let mut status = Status::Ok;
-    let frag = mkr_xml_parse_fragment(xdoc, src.ptr, src.len, inherit_doc_ns, &mut status);
+    let bytes = if src.ptr.is_null() || src.len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(src.ptr as *const u8, src.len)
+    };
+    let frag = mkr_xml_parse_fragment(&mut *xdoc, bytes, inherit_doc_ns);
     free_owned(&mut src);
-    if frag.is_invalid() {
-        return Err(parse_status_error(status, Unit::Fragment));
-    }
-    Ok(frag)
+    frag.map_err(|status| parse_status_error(status, Unit::Fragment))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
@@ -772,13 +805,15 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
         ));
     }
     let doc_obj = mkr_wrap_document(parsed); /* GC owns `parsed` from here */
-    let xdoc = mkr_xml_doc_new();
-    if xdoc.is_null() {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    }
+    let xdoc = match mkr_xml_doc_new() {
+        Ok(doc) => Box::into_raw(doc),
+        Err(_) => {
+            return Err(Error::new(
+                error_class(),
+                "out of memory allocating XML document",
+            ));
+        }
+    };
     mkr_parsed_set_xml_doc(parsed, xdoc as *mut c_void); /* GC now frees `xdoc` via `parsed` */
     Ok(Value::from_raw(doc_obj))
 }

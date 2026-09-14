@@ -66,7 +66,7 @@ pub use crate::dom_adapter::post_parse::mkr_parsed_html_doc;
 pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
 pub use crate::glue::node::mkr_node_kind;
 pub use crate::glue::xml_node::mutate::mkr_xml_mut_check;
-pub use crate::xml::ffi::mkr_xml_doc_memsize;
+pub use crate::xml::api::mkr_xml_doc_memsize;
 
 extern "C" {
 
@@ -99,7 +99,7 @@ unsafe extern "C" fn doc_memsize(ptr: *const c_void) -> rb_sys::size_t {
     // Lexbor's arena size is not cheaply queryable, so an HTML document reports
     // the wrapper only; the XML arena tracks its own byte total.
     if !d.parsed.is_null() && mkr_parsed_kind(d.parsed) == MKR_DOC_XML {
-        total += mkr_xml_doc_memsize(super::abi::mkr_parsed_xml_doc(d.parsed) as *const _);
+        total += mkr_xml_doc_memsize(&*(super::abi::mkr_parsed_xml_doc(d.parsed) as *const _));
     }
     total as rb_sys::size_t
 }

@@ -49,7 +49,7 @@ pub use crate::dom_adapter::source_loc::mkr_pos_recorder_set_delegate;
 pub use crate::dom_adapter::source_loc::mkr_pos_token_cb;
 pub use crate::dom_adapter::text_index::mkr_text_index_free;
 pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
-pub use crate::xml::ffi::mkr_xml_doc_destroy;
+pub use crate::xml::api::mkr_xml_doc_destroy;
 
 extern "C" {
 
@@ -248,7 +248,7 @@ pub unsafe fn mkr_parsed_destroy(p: *mut Parsed) {
 
     if !(*p).doc.is_null() {
         if (*p).kind == DOC_KIND_XML {
-            mkr_xml_doc_destroy((*p).doc as *mut _); /* whole-arena free */
+            mkr_xml_doc_destroy(Box::from_raw((*p).doc as *mut _)); /* whole-arena free */
         } else {
             lxb_html_document_destroy((*p).doc as *mut HtmlDoc);
         }

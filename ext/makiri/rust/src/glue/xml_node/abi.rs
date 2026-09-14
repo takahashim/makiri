@@ -28,7 +28,6 @@ pub use crate::init::mkr_cXmlElement;
 pub use crate::init::mkr_cXmlNode;
 pub use crate::init::mkr_cXmlProcessingInstruction;
 pub use crate::init::mkr_cXmlText;
-pub use crate::xml::ffi::mkr_xml_node_xmlns_decl;
 
 /// A field's bytes as a UTF-8 Ruby String (empty bytes -> `""`).
 pub fn str_field(ruby: &Ruby, bytes: &[u8]) -> Value {

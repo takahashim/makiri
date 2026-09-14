@@ -82,15 +82,18 @@ exported! {
 /// XML engine end to end, which the spec suite does through the public API.
 fn c_selftest(ruby: &Ruby) -> Result<bool, Error> {
     let checks: [(&str, i32); 3] = [
-        ("mkr_xml_node_selftest", unsafe {
-            crate::xml::selftest::node_selftest()
-        }),
-        ("mkr_xml_parse_selftest", unsafe {
-            crate::xml::selftest::parse_selftest()
-        }),
-        ("mkr_xml_mutate_selftest", unsafe {
-            crate::xml::selftest::mutate_selftest()
-        }),
+        (
+            "mkr_xml_node_selftest",
+            crate::xml::selftest::node_selftest(),
+        ),
+        (
+            "mkr_xml_parse_selftest",
+            crate::xml::selftest::parse_selftest(),
+        ),
+        (
+            "mkr_xml_mutate_selftest",
+            crate::xml::selftest::mutate_selftest(),
+        ),
     ];
     for (name, rc) in checks {
         if rc != 0 {
