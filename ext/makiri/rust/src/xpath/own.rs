@@ -7,8 +7,60 @@
 //! visibly the odd one out.
 
 use super::abi::*;
+use super::ast_ops::mkr_node_free;
 use super::dom::Dom;
 use core::ptr;
+use core::ptr::NonNull;
+
+/// An owned compiled XPath AST.
+///
+/// The AST still uses the stable C layout internally so the evaluator and the
+/// ABI adapters can borrow it, but ownership is represented by Rust. Raw AST
+/// pointers must cross this type only through `from_raw` or `into_raw`.
+#[allow(dead_code)]
+pub(crate) struct Ast(NonNull<Node>);
+
+#[allow(dead_code)]
+impl Ast {
+    /// # Safety
+    /// `ptr` must be a live root AST allocated by `mkr_node_alloc`, and no
+    /// other owner may free it after this call.
+    pub(crate) unsafe fn from_raw(ptr: *mut Node) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+
+    /// Borrow the AST for the evaluator. The evaluator mutates memo fields, so
+    /// callers must keep the GVL/exclusive evaluation contract while using it.
+    pub(crate) fn as_raw(&self) -> *mut Node {
+        self.0.as_ptr()
+    }
+
+    /// Transfer ownership to the legacy raw-pointer ABI.
+    pub(crate) fn into_raw(self) -> *mut Node {
+        let ptr = self.0.as_ptr();
+        core::mem::forget(self);
+        ptr
+    }
+
+    /// Release a raw AST at an ABI boundary.
+    ///
+    /// This is the only operation CSS/XPath construction code should need when
+    /// it still has a legacy raw pointer. Keeping it beside `Ast::Drop` makes
+    /// the C ownership rule explicit without spreading `mkr_node_free` calls
+    /// across the builders.
+    pub(crate) unsafe fn drop_raw(ptr: *mut Node) {
+        if let Some(ast) = Self::from_raw(ptr) {
+            drop(ast);
+        }
+    }
+}
+
+impl Drop for Ast {
+    fn drop(&mut self) {
+        // SAFETY: `Ast` is constructed only from an owned live AST root.
+        unsafe { mkr_node_free(self.0.as_ptr()) }
+    }
+}
 
 /// An owned `mkr_owned_text_t`.
 pub struct Text(pub(crate) OwnedText);

@@ -885,6 +885,18 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 
 /* ---- entry ---- */
 
+/// Parse an expression into a Rust-owned compiled AST.
+#[allow(dead_code)]
+pub(crate) unsafe fn parse_owned(
+    expr: VerifiedText,
+    limits: *mut Limits,
+    err: *mut Error,
+) -> Option<super::own::Ast> {
+    let root = parse_raw(expr, limits, err);
+    // SAFETY: `parse_raw` returns an owned root or NULL.
+    unsafe { super::own::Ast::from_raw(root) }
+}
+
 /// Parse an expression into a compiled AST; NULL on error with `*err` filled.
 ///
 /// `expr` is a verified text: NUL-free, NUL-terminated, valid UTF-8.
@@ -892,6 +904,10 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// A C entry point: the contract is the one at its declaration in
 /// ext/makiri/xpath/mkr_xpath*.h.
 pub unsafe fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
+    parse_raw(expr, limits, err)
+}
+
+unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
     if limits.is_null() {
         err_setf!(err, XP_ERR_INTERNAL, "mkr_parse: limits required");
         return ptr::null_mut();

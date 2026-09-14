@@ -18,16 +18,10 @@
 //!
 //! # Ownership
 //!
-//! Every allocation matches `mkr_node_free`'s contract: nodes through
-//! `mkr_node_alloc`, owned text through `mkr_owned_text_from_borrowed_copy`,
-//! arrays through the C allocator. On any failure the builder returns `None`
-//! with `*err` set and frees what it built, so a partial AST never escapes.
-//!
-//! Rust's `Drop` does not help here: these are raw C-owned nodes whose free
-//! function is `mkr_node_free`, and wrapping them would mean either a newtype
-//! per field or a `Drop` that duplicates the C's recursive free. The helpers
-//! below take ownership explicitly, as the C's did, and every early return
-//! frees on the way out.
+//! The builder uses the stable C layout while constructing the AST, but the
+//! completed root is wrapped in `xpath::own::Ast`. Any remaining raw-pointer
+//! cleanup in the lowering helpers goes through that same owner, so the
+//! recursive `mkr_node_free` contract is not duplicated at each call site.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -37,7 +31,8 @@ mod parser;
 
 use core::ffi::{c_char, c_int};
 
-use crate::xpath_abi::{mkr_err_set, mkr_node_free, Error, Limits, Node, VerifiedText, OP_UNION};
+use crate::xpath::own::Ast;
+use crate::xpath_abi::{mkr_err_set, Error, Limits, Node, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -99,48 +94,60 @@ impl Build {
 ///
 /// # Safety
 /// From the XPath/CSS glue, under the GVL.
-pub unsafe fn mkr_css_compile(
+pub(crate) unsafe fn compile_owned(
     selector: VerifiedText,
     ns: *const CssNs,
     limits: *mut Limits,
     err: *mut Error,
-) -> *mut Node {
+) -> Option<Ast> {
     let b = Build { limits, err, ns };
 
     let parsed = match parser::parse(selector) {
         Ok(p) => p,
         Err(parser::ParseError::NotReady) => {
             b.fail(ERR_INTERNAL, c"failed to initialise CSS parser");
-            return core::ptr::null_mut();
+            return None;
         }
         Err(parser::ParseError::Syntax) => {
             b.fail(ERR_SYNTAX, c"invalid CSS selector");
-            return core::ptr::null_mut();
+            return None;
         }
     };
 
     /* Lower each comma-group to a PATH and union them. `parsed` cleans the
      * parser's arena when it drops, on every path out of this function - the C
      * spelled that out at each return instead. */
-    let mut acc: *mut Node = core::ptr::null_mut();
+    let mut acc: Option<Ast> = None;
     let mut g = parsed.first;
     while !g.is_null() {
         /* Top level: the first compound is a descendant of the context node. */
         let path = lower::complex(&b, (*g).first, false);
         if path.is_null() {
-            mkr_node_free(acc);
-            return core::ptr::null_mut();
+            drop(acc);
+            return None;
         }
-        acc = if acc.is_null() {
-            path
-        } else {
-            build::binop(&b, OP_UNION, acc, path)
-        };
-        if acc.is_null() {
-            /* binop freed both operands. */
-            return core::ptr::null_mut();
-        }
+        let path = Ast::from_raw(path)?;
+        acc = Some(match acc {
+            None => path,
+            Some(lhs) => {
+                // `binop` consumes both raw operands, including on failure.
+                let raw = build::binop(&b, OP_UNION, lhs.into_raw(), path.into_raw());
+                Ast::from_raw(raw)?
+            }
+        });
         g = (*g).next;
     }
-    acc /* NULL with *err set on failure */
+    acc
+}
+
+/// Legacy raw-pointer adapter for the Ruby/FFI boundary.
+pub unsafe fn mkr_css_compile(
+    selector: VerifiedText,
+    ns: *const CssNs,
+    limits: *mut Limits,
+    err: *mut Error,
+) -> *mut Node {
+    compile_owned(selector, ns, limits, err)
+        .map(Ast::into_raw)
+        .unwrap_or(core::ptr::null_mut())
 }

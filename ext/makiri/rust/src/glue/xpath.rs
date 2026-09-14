@@ -42,6 +42,7 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use rb_sys::VALUE;
 
+use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
     mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Node as Ast,
     OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
@@ -85,7 +86,6 @@ pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
 pub use crate::init::mkr_cXPathContext;
 pub use crate::init::mkr_eXPathLimitExceeded;
 pub use crate::init::mkr_eXPathSyntaxError;
-pub use crate::xpath::ast_ops::mkr_node_free;
 pub use crate::xpath::ctx::mkr_ctx_is_evaluating;
 pub use crate::xpath::ctx::mkr_ctx_limits;
 pub use crate::xpath::ctx::mkr_ctx_set_node;
@@ -176,16 +176,7 @@ unsafe fn owned_text_to_str(t: OwnedText) -> VALUE {
 /// without the scan. The bound and the fallback are unchanged: past
 /// [`AST_CACHE_MAX`] nothing more is cached and the caller frees the AST it was
 /// handed.
-struct AstCache(HashMap<Box<[u8]>, *mut Ast>);
-
-impl Drop for AstCache {
-    fn drop(&mut self) {
-        for (_, ast) in self.0.drain() {
-            // SAFETY: every value was produced by mkr_parse and is owned here.
-            unsafe { mkr_node_free(ast) };
-        }
-    }
-}
+struct AstCache(HashMap<Box<[u8]>, OwnedAst>);
 
 struct Inner {
     ctx: *mut Ctx,
@@ -771,33 +762,31 @@ unsafe extern "C" fn handler_resolver(
 
 /// The compiled AST for `expr`, parsing and caching it on first use.
 ///
-/// Returns `(ast, owned)`; `owned` means the cache did not take it and the
-/// caller must free it.
+/// Returns the raw view plus an owner when the AST could not be cached.
 unsafe fn cached_ast(
     d: &mut Inner,
     expr: RubyText,
     err: *mut XPathError,
-) -> Option<(*mut Ast, bool)> {
+) -> Option<(*mut Ast, Option<OwnedAst>)> {
     let key = if expr.ptr.is_null() || expr.len == 0 {
         &[][..]
     } else {
         core::slice::from_raw_parts(expr.ptr as *const u8, expr.len)
     };
-    if let Some(&ast) = d.cache.0.get(key) {
-        return Some((ast, false));
+    if let Some(ast) = d.cache.0.get(key) {
+        return Some((ast.as_raw(), None));
     }
 
     let limits = mkr_ctx_limits(d.ctx);
     (*limits).ast_nodes = 0;
-    let ast = mkr_parse(expr.into(), limits, err);
-    if ast.is_null() {
-        return None;
-    }
+    let ast = crate::xpath::parse::parse_owned(expr.into(), limits, err)?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
-        return Some((ast, true));
+        let raw = ast.as_raw();
+        return Some((raw, Some(ast)));
     }
     d.cache.0.insert(key.to_vec().into_boxed_slice(), ast);
-    Some((ast, false))
+    let ast = d.cache.0.get(key).expect("inserted AST");
+    Some((ast.as_raw(), None))
 }
 
 /// Install the handler bridge for one evaluation, and take it back off.
@@ -873,9 +862,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         let mut error: XPathError = core::mem::zeroed();
         let rc = mkr_xpath_eval_compiled(ctx, ast, &mut value, &mut error);
         drop(installed);
-        if owned {
-            mkr_node_free(ast);
-        }
+        drop(owned);
         if rc != 0 {
             mkr_xpath_raise(&mut error);
         }
@@ -975,13 +962,11 @@ fn node_xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let ast = mkr_parse(ev.into(), limits, &mut error);
-        core::hint::black_box(expr); /* keep the expression's bytes alive */
-        if ast.is_null() {
+        let Some(ast) = crate::xpath::parse::parse_owned(ev.into(), limits, &mut error) else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
-        }
-
+        };
+        core::hint::black_box(expr); /* keep the expression's bytes alive */
         let bridge = Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
@@ -989,12 +974,12 @@ fn node_xpath_run(
         let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
         let mut value: XPathValue = core::mem::zeroed();
         let rc = if first_only {
-            mkr_xpath_eval_compiled_first(ctx, ast, &mut value, &mut error)
+            mkr_xpath_eval_compiled_first(ctx, ast.as_raw(), &mut value, &mut error)
         } else {
-            mkr_xpath_eval_compiled(ctx, ast, &mut value, &mut error)
+            mkr_xpath_eval_compiled(ctx, ast.as_raw(), &mut value, &mut error)
         };
         drop(installed);
-        mkr_node_free(ast);
+        drop(ast);
         if rc != 0 {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);

@@ -31,7 +31,8 @@ use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
-use crate::xpath_abi::{Error as XPathError, Node as Ast, XPathValue, XP_ERR_SYNTAX};
+use crate::xpath::own::Ast as OwnedAst;
+use crate::xpath_abi::{Error as XPathError, XPathValue, XP_ERR_SYNTAX};
 
 use super::abi::error_class;
 
@@ -92,7 +93,6 @@ pub use crate::xml::api::mkr_xml_name_index_get;
 pub use crate::xml::api::mkr_xml_name_index_lookup;
 pub use crate::xml::api::mkr_xml_parse_ex;
 pub use crate::xml::api::mkr_xml_parse_fragment;
-pub use crate::xpath::ast_ops::mkr_node_free;
 pub use crate::xpath::ctx::mkr_ctx_limits;
 pub use crate::xpath::ctx::mkr_xpath_context_free;
 pub use crate::xpath::ctx::mkr_xpath_context_new;
@@ -497,18 +497,18 @@ unsafe fn build_ctx(
 unsafe fn run_ast(
     ruby: &Ruby,
     ctx: *mut XPathContext,
-    ast: *mut Ast,
+    ast: OwnedAst,
     first_only: bool,
     document: Value,
 ) -> Result<Value, Error> {
     let mut value: XPathValue = core::mem::zeroed();
     let mut error: XPathError = core::mem::zeroed();
     let rc = if first_only {
-        mkr_xpath_eval_compiled_first(ctx, ast, &mut value, &mut error)
+        mkr_xpath_eval_compiled_first(ctx, ast.as_raw(), &mut value, &mut error)
     } else {
-        mkr_xpath_eval_compiled(ctx, ast, &mut value, &mut error)
+        mkr_xpath_eval_compiled(ctx, ast.as_raw(), &mut value, &mut error)
     };
-    mkr_node_free(ast);
+    drop(ast);
     if rc != 0 {
         mkr_xpath_context_free(ctx);
         mkr_xpath_raise(&mut error);
@@ -556,17 +556,16 @@ fn xpath_run(
 
         /* Mint the borrowed view AFTER namespace registration: that step
          * allocates Ruby objects and may run a GC, and the borrowed bytes must
-         * not be live across one. `mkr_parse` below is pure C. */
+         * not be live across one. */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let ast = mkr_parse(ev.into(), limits, &mut error);
-        core::hint::black_box(expr);
-        if ast.is_null() {
+        let Some(ast) = crate::xpath::parse::parse_owned(ev.into(), limits, &mut error) else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
-        }
+        };
+        core::hint::black_box(expr);
         run_ast(ruby, ctx, ast, first_only, document)
     }
 }
@@ -610,7 +609,7 @@ unsafe fn css_compile_or_raise(
     ctx: *mut XPathContext,
     selector: Value,
     rb_ns: Option<Value>,
-) -> Result<*mut Ast, Error> {
+) -> Result<OwnedAst, Error> {
     let cns = CssNs {
         default_prefix: css_default_prefix(rb_ns),
     };
@@ -618,9 +617,9 @@ unsafe fn css_compile_or_raise(
     let mut error: XPathError = core::mem::zeroed();
     let limits = mkr_ctx_limits(ctx);
     (*limits).ast_nodes = 0;
-    let ast = mkr_css_compile(sv.into(), &cns as *const _, limits, &mut error);
+    let ast = crate::css::compile_owned(sv.into(), &cns as *const _, limits, &mut error);
     core::hint::black_box(selector);
-    if !ast.is_null() {
+    if let Some(ast) = ast {
         return Ok(ast);
     }
 
@@ -705,8 +704,8 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 
         let mut value: XPathValue = core::mem::zeroed();
         let mut error: XPathError = core::mem::zeroed();
-        let rc = mkr_xpath_eval_compiled(ctx, ast, &mut value, &mut error);
-        mkr_node_free(ast);
+        let rc = mkr_xpath_eval_compiled(ctx, ast.as_raw(), &mut value, &mut error);
+        drop(ast);
         if rc != 0 {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);

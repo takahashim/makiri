@@ -20,10 +20,11 @@
 use super::build::{self, NodeArray, StepArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
 use crate::lexbor_abi as lxb;
+use crate::xpath::own::Ast;
 use crate::xpath_abi::{
-    mkr_node_free, Node, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING,
-    AXIS_PARENT, AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME, NT_NODE, NT_TEXT,
-    NT_WILDCARD, OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
+    Node, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING, AXIS_PARENT,
+    AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME, NT_NODE, NT_TEXT, NT_WILDCARD, OP_ADD,
+    OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
 };
 
 type Selector = lxb::lxb_css_selector_t;
@@ -265,7 +266,7 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> *mut Node {
             let mut dashed = match crate::falloc::try_vec_with_capacity::<u8>(value.len() + 1) {
                 Some(v) => v,
                 None => {
-                    mkr_node_free(eq);
+                    Ast::drop_raw(eq);
                     b.oom();
                     return core::ptr::null_mut();
                 }
@@ -474,7 +475,7 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> *mut N
     while !g.is_null() {
         let one = complex_selftest(b, (*g).first);
         if one.is_null() {
-            mkr_node_free(acc);
+            Ast::drop_raw(acc);
             return core::ptr::null_mut();
         }
         acc = if acc.is_null() {
@@ -504,12 +505,12 @@ unsafe fn child_text_pred(b: &Build, pred: *mut Node) -> *mut Node {
     }
     let n = build::node(b, NK_PATH);
     if n.is_null() {
-        mkr_node_free(pred);
+        Ast::drop_raw(pred);
         return core::ptr::null_mut();
     }
     let Some(preds) = NodeArray::single(b, pred) else {
-        mkr_node_free(pred);
-        mkr_node_free(n);
+        Ast::drop_raw(pred);
+        Ast::drop_raw(n);
         return core::ptr::null_mut();
     };
     let mut step: Step = core::mem::zeroed();
@@ -517,9 +518,9 @@ unsafe fn child_text_pred(b: &Build, pred: *mut Node) -> *mut Node {
     step.test.kind = NT_TEXT;
     preds.install_into_step(&mut step);
     let mut steps = StepArray::new();
-    if !steps.push(b, step) {
+    if let Err(mut step) = steps.push(b, step) {
         build::mkr_step_clear(&mut step);
-        mkr_node_free(n);
+        Ast::drop_raw(n);
         return core::ptr::null_mut();
     }
     (*n).u.path.absolute = 0;
@@ -584,7 +585,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
                 /* Relative to self, so a leading >, + or ~ is honoured. */
                 let path = complex(b, (*g).first, true);
                 if path.is_null() {
-                    mkr_node_free(acc);
+                    Ast::drop_raw(acc);
                     return core::ptr::null_mut();
                 }
                 acc = if acc.is_null() {
@@ -656,7 +657,7 @@ unsafe fn push_pred(b: &Build, preds: &mut NodeArray, p: *mut Node) -> bool {
         return false;
     }
     if !preds.push(b, p) {
-        mkr_node_free(p);
+        Ast::drop_raw(p);
         return false;
     }
     true
@@ -747,7 +748,7 @@ unsafe fn emit_compound_step(
     let mut s = first;
     loop {
         if !fold_simple(b, s, &mut step, &mut preds) {
-            build::free_preds(preds);
+            drop(preds);
             build::mkr_step_clear(&mut step);
             return false;
         }
@@ -758,7 +759,7 @@ unsafe fn emit_compound_step(
     }
 
     preds.install_into_step(&mut step);
-    if !steps.push(b, step) {
+    if let Err(mut step) = steps.push(b, step) {
         build::mkr_step_clear(&mut step);
         return false;
     }
@@ -823,7 +824,7 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
         if nc >= MAX_COMPOUNDS {
             b.fail(ERR_LIMIT, c"CSS selector too complex");
-            build::free_steps(steps);
+            drop(steps);
             return core::ptr::null_mut();
         }
         let is_first = nc == 0 && !relative_first;
@@ -839,7 +840,7 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
             emit_compound_step(b, &mut steps, axis, comp.first, comp.last)
         };
         if !ok {
-            build::free_steps(steps);
+            drop(steps);
             return core::ptr::null_mut();
         }
     }
@@ -862,11 +863,11 @@ unsafe fn emit_positional_sibling(b: &Build, steps: &mut StepArray, axis: u32) -
         return false;
     }
     let Some(preds) = NodeArray::single(b, p) else {
-        mkr_node_free(p);
+        Ast::drop_raw(p);
         return false;
     };
     preds.install_into_step(&mut st);
-    if !steps.push(b, st) {
+    if let Err(mut st) = steps.push(b, st) {
         build::mkr_step_clear(&mut st);
         return false;
     }
@@ -877,7 +878,7 @@ unsafe fn emit_positional_sibling(b: &Build, steps: &mut StepArray, axis: u32) -
 unsafe fn finish_path(b: &Build, steps: StepArray) -> *mut Node {
     let path = build::node(b, NK_PATH);
     if path.is_null() {
-        build::free_steps(steps);
+        drop(steps);
         return core::ptr::null_mut();
     }
     (*path).u.path.absolute = 0;
@@ -925,7 +926,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
         comps[nc - 1].first,
         comps[nc - 1].last,
     ) {
-        build::free_steps(steps);
+        drop(steps);
         return core::ptr::null_mut();
     }
 
@@ -951,7 +952,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
             )
         };
         if !ok {
-            build::free_steps(steps);
+            drop(steps);
             return core::ptr::null_mut();
         }
     }
