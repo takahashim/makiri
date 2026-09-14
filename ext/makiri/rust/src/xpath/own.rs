@@ -11,7 +11,7 @@ use super::dom::Dom;
 use core::ptr;
 
 /// An owned `mkr_owned_text_t`.
-pub struct Text(pub OwnedText);
+pub struct Text(pub(crate) OwnedText);
 
 impl Text {
     pub fn new() -> Text {
@@ -55,7 +55,7 @@ impl Drop for Text {
 }
 
 /// An owned `mkr_nodeset_t`.
-pub struct Set(pub NodeSet);
+pub struct Set(pub(crate) NodeSet);
 
 const EMPTY_SET: NodeSet = NodeSet {
     items: ptr::null_mut(),
@@ -121,7 +121,7 @@ impl Drop for Set {
 }
 
 /// An owned `mkr_val_t`.
-pub struct OwnedVal(pub Val);
+pub struct OwnedVal(pub(crate) Val);
 
 impl OwnedVal {
     pub fn new() -> OwnedVal {

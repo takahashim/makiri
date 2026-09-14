@@ -20,7 +20,7 @@ use crate::xpath_abi::{
 
 pub use crate::falloc::calloc::mkr_callocarray;
 pub use crate::xpath::ast_ops::mkr_step_clear;
-pub use crate::xpath::shared::mkr_owned_text_clear;
+pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
 
 extern "C" {
     #[link_name = "free"]

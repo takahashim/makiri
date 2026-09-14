@@ -101,10 +101,10 @@ pub use crate::xpath::ctx::mkr_xpath_set_func_resolver;
 pub use crate::xpath::evaluate::mkr_xpath_eval_compiled;
 pub use crate::xpath::evaluate::mkr_xpath_eval_compiled_first;
 pub use crate::xpath::parse::mkr_parse;
-pub use crate::xpath::shared::mkr_nodeset_clear;
-pub use crate::xpath::shared::mkr_nodeset_init;
-pub use crate::xpath::shared::mkr_nodeset_push;
-pub use crate::xpath::shared::mkr_val_set_borrowed_text_copy;
+pub use crate::xpath::runtime_abi::mkr_nodeset_clear;
+pub use crate::xpath::runtime_abi::mkr_nodeset_init;
+pub use crate::xpath::runtime_abi::mkr_nodeset_push;
+pub use crate::xpath::runtime_abi::mkr_val_set_borrowed_text_copy;
 
 /* ------------------------------------------------------------------ */
 /* result + error mapping                                             */

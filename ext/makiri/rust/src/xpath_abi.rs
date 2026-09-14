@@ -379,16 +379,16 @@ pub use crate::xpath::ctx::mkr_xpath_get_user_data;
 pub use crate::xpath::limits::mkr_limit_check_nodeset_size;
 pub use crate::xpath::limits::mkr_limit_check_string_bytes;
 pub use crate::xpath::limits::mkr_limit_eval_op;
-pub use crate::xpath::shared::mkr_doc_order_index_clear;
-pub use crate::xpath::shared::mkr_nodeset_clear;
-pub use crate::xpath::shared::mkr_nodeset_init;
-pub use crate::xpath::shared::mkr_nodeset_push;
-pub use crate::xpath::shared::mkr_owned_text_clear;
-pub use crate::xpath::shared::mkr_owned_text_from_borrowed_copy;
-pub use crate::xpath::shared::mkr_str_cache_index_put;
-pub use crate::xpath::shared::mkr_str_cache_reindex;
-pub use crate::xpath::shared::mkr_val_clear;
-pub use crate::xpath::shared::mkr_val_set_owned_text;
+pub use crate::xpath::runtime_abi::mkr_doc_order_index_clear;
+pub use crate::xpath::runtime_abi::mkr_nodeset_clear;
+pub use crate::xpath::runtime_abi::mkr_nodeset_init;
+pub use crate::xpath::runtime_abi::mkr_nodeset_push;
+pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
+pub use crate::xpath::runtime_abi::mkr_owned_text_from_borrowed_copy;
+pub use crate::xpath::runtime_abi::mkr_str_cache_index_put;
+pub use crate::xpath::runtime_abi::mkr_str_cache_reindex;
+pub use crate::xpath::runtime_abi::mkr_val_clear;
+pub use crate::xpath::runtime_abi::mkr_val_set_owned_text;
 
 extern "C" {}
 

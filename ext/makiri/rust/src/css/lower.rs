@@ -973,7 +973,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
 }
 
 pub use crate::falloc::calloc::mkr_callocarray;
-pub use crate::xpath::shared::mkr_owned_text_clear;
+pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
 
 extern "C" {
     #[link_name = "free"]

@@ -1,7 +1,7 @@
 //! The XPath 1.0 engine.
 //!
 //! Shared:
-//!   abi.rs        the shared types
+//!   abi.rs        the shared ABI type re-exports
 //!   msg.rs        error messages, assembled without allocating
 //!
 //! The front end:
@@ -19,7 +19,7 @@
 //!   own.rs        guards over the allocations the engine passes around
 //!   ast.rs        the AST's arrays, viewed as slices
 //!   ast_ops.rs    building, destroying and rewriting one
-//!   shared.rs     node-sets, owned text, values, the per-evaluate caches
+//!   runtime_abi.rs raw node-sets, owned text, values and per-evaluate caches
 //!   axis.rs       the thirteen axes, as orders over the tree
 //!   order.rs      document order and its per-evaluate index
 //!   value.rs      string-values, coercions, the string-value cache
@@ -50,7 +50,7 @@ pub mod evaluate;
 pub mod limits;
 
 pub mod ast_ops;
-pub mod shared;
+pub mod runtime_abi;
 
 pub mod attr_pred;
 pub mod axis;

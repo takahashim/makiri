@@ -1,12 +1,11 @@
-//! The representation-independent engine primitives (mkr_xpath_shared.c):
+//! The raw runtime ABI primitives formerly provided by `mkr_xpath_shared.c`:
 //! node-set build and free, owned engine strings, the runtime value, and the
 //! lifecycles of the two per-evaluate caches.
 //!
-//! None of this dereferences a DOM node. It moves node *pointers*, owns and
-//! compares engine strings, and manages cache storage - a pointer is a pointer
-//! whichever representation it points at, so there is one copy rather than one
-//! per backend. The AST's own build and destroy live in `ast.rs` with the views
-//! of it.
+//! None of this dereferences a DOM node. It moves erased node handles, owns and
+//! compares engine strings, and manages cache storage. These functions retain
+//! raw-pointer signatures because they are also consumed by the glue and CSS
+//! lowering; the safe RAII views live in `own.rs`.
 //!
 //! Every function here is exported: the glue, the CSS lowering, the parser, the
 //! driver and both engine instances all call them by name.

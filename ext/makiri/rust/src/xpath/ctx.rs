@@ -135,11 +135,11 @@ unsafe fn mkr_try_first_match_html(
 }
 pub use crate::xpath::ffi_xml::mkr_eval_ast_xml;
 pub use crate::xpath::ffi_xml::mkr_try_first_match_xml;
-pub use crate::xpath::shared::mkr_borrowed_text_eq;
-pub use crate::xpath::shared::mkr_doc_order_index_init;
-pub use crate::xpath::shared::mkr_str_cache_clear;
-pub use crate::xpath::shared::mkr_str_cache_init;
-pub use crate::xpath::shared::mkr_str_cache_truncate;
+pub use crate::xpath::runtime_abi::mkr_borrowed_text_eq;
+pub use crate::xpath::runtime_abi::mkr_doc_order_index_init;
+pub use crate::xpath::runtime_abi::mkr_str_cache_clear;
+pub use crate::xpath::runtime_abi::mkr_str_cache_init;
+pub use crate::xpath::runtime_abi::mkr_str_cache_truncate;
 
 /* ---------- text slots ---------- */
 
