@@ -93,6 +93,16 @@ pub const OP_UNION: u32 = 13;
 
 /* ---- text views (core/mkr_text.h) ---- */
 
+/// The raw representation of an engine-owned UTF-8 byte string.
+///
+/// This is only the pointer/length pair used by the low-level runtime layer;
+/// callers should normally use [`OwnedText`] instead.
+#[derive(Clone, Copy)]
+pub(crate) struct RawText {
+    ptr: *mut c_char,
+    len: usize,
+}
+
 /// An engine-owned UTF-8 byte string, NUL-terminated in its backing allocation.
 ///
 /// The pointer representation is private. Code that needs to cross the raw
@@ -100,15 +110,16 @@ pub const OP_UNION: u32 = 13;
 /// should prefer `as_bytes` and `len`.
 #[derive(Clone, Copy)]
 pub struct OwnedText {
-    ptr: *mut c_char,
-    len: usize,
+    raw: RawText,
 }
 
 impl OwnedText {
     pub(crate) const fn empty() -> Self {
         Self {
-            ptr: core::ptr::null_mut(),
-            len: 0,
+            raw: RawText {
+                ptr: core::ptr::null_mut(),
+                len: 0,
+            },
         }
     }
 
@@ -118,21 +129,23 @@ impl OwnedText {
     /// `ptr` must be null or point to `len` live bytes followed by a NUL byte,
     /// allocated by the allocator used by `mkr_owned_text_clear`.
     pub(crate) unsafe fn from_raw_parts(ptr: *mut c_char, len: usize) -> Self {
-        Self { ptr, len }
+        Self {
+            raw: RawText { ptr, len },
+        }
     }
 
     pub(crate) const fn as_ptr(self) -> *mut c_char {
-        self.ptr
+        self.raw.ptr
     }
 
     pub(crate) const fn len(self) -> usize {
-        self.len
+        self.raw.len
     }
 
     /// Whether this slot represents an omitted value rather than an empty
     /// allocated string.
     pub(crate) const fn is_absent(self) -> bool {
-        self.ptr.is_null()
+        self.raw.ptr.is_null()
     }
 
     pub(crate) const fn is_present(self) -> bool {
@@ -142,14 +155,14 @@ impl OwnedText {
     /// Whether the string has no content. An absent slot is empty by content,
     /// but remains distinguishable through [`Self::is_absent`].
     pub(crate) const fn is_empty(self) -> bool {
-        self.is_absent() || self.len == 0
+        self.is_absent() || self.raw.len == 0
     }
 
     pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
-        if self.ptr.is_null() || self.len == 0 {
+        if self.raw.ptr.is_null() || self.raw.len == 0 {
             &[]
         } else {
-            core::slice::from_raw_parts(self.ptr as *const u8, self.len)
+            core::slice::from_raw_parts(self.raw.ptr as *const u8, self.raw.len)
         }
     }
 }
