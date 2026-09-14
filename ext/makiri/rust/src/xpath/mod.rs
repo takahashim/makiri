@@ -34,6 +34,8 @@
 //!   dom_xml.rs / ffi_xml.rs                    the XML reader's nodes
 //!   dom_html.rs / ffi_html.rs / lexbor_abi.rs    Lexbor's nodes (`lexbor`)
 
+#![allow(private_bounds)]
+
 pub mod abi;
 pub mod msg;
 

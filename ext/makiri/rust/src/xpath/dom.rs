@@ -40,7 +40,7 @@ pub const NTYPE_DOCUMENT: u32 = 9;
 pub const NTYPE_DOCUMENT_TYPE: u32 = 10;
 pub const NTYPE_NOTATION: u32 = 12;
 
-/// One DOM representation, as the engine needs to see it.
+/// Raw DOM operations implemented by a backend adapter.
 ///
 /// The two backends differ in what a handle IS, and each states it:
 ///
@@ -59,51 +59,55 @@ pub const NTYPE_NOTATION: u32 = 12;
 /// An implementation must report navigation that forms an actual tree - a
 /// child's parent is the node it was reached from, siblings agree on order -
 /// because the engine derives document order from it.
-pub unsafe trait Dom: DomHandle {
+pub(crate) unsafe trait DomRaw: DomHandle {
     /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:
     /// `id()` is the empty node-set in XML (an ID is DTD-declared, and DTDs are
     /// rejected at parse), `lang()` reads xml:lang rather than HTML's `lang`,
     /// and the CSS-lowered of-type hooks exist only for XML.
-    const IS_XML: bool;
+    const RAW_IS_XML: bool;
 
     /// The document node itself, for a walk rooted at the whole tree.
-    unsafe fn document_node(doc: Self::Doc) -> Self::Node;
+    unsafe fn raw_document_node(doc: Self::Doc) -> Self::Node;
 
-    unsafe fn node_type(doc: Self::Doc, n: Self::Node) -> u32;
+    unsafe fn raw_node_type(doc: Self::Doc, n: Self::Node) -> u32;
 
     /* navigation */
-    unsafe fn first_child(doc: Self::Doc, n: Self::Node) -> Self::Node;
-    unsafe fn last_child(doc: Self::Doc, n: Self::Node) -> Self::Node;
-    unsafe fn next(doc: Self::Doc, n: Self::Node) -> Self::Node;
-    unsafe fn prev(doc: Self::Doc, n: Self::Node) -> Self::Node;
-    unsafe fn parent(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn raw_first_child(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn raw_last_child(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn raw_next(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn raw_prev(doc: Self::Doc, n: Self::Node) -> Self::Node;
+    unsafe fn raw_parent(doc: Self::Doc, n: Self::Node) -> Self::Node;
 
     /* attributes - iteration yields attribute handles, which are node handles
      * in both representations (the C contract's MKR_ELEM_FIRST_ATTR /
      * MKR_ATTR_NEXT). */
-    unsafe fn first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node;
-    unsafe fn attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node;
-    unsafe fn attr_value<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
+    unsafe fn raw_first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node;
+    unsafe fn raw_attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node;
+    unsafe fn raw_attr_value<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
     /// Attribute value by raw qualified name, or None.
-    unsafe fn get_attribute<'a>(doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]>;
+    unsafe fn raw_get_attribute<'a>(
+        doc: Self::Doc,
+        el: Self::Node,
+        name: &[u8],
+    ) -> Option<&'a [u8]>;
 
     /* names (borrowed from the tree) */
-    unsafe fn local_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
-    unsafe fn attr_local_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
-    unsafe fn qualified_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
-    unsafe fn attr_qualified_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
-    unsafe fn pi_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
+    unsafe fn raw_local_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
+    unsafe fn raw_attr_local_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
+    unsafe fn raw_qualified_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
+    unsafe fn raw_attr_qualified_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8];
+    unsafe fn raw_pi_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
 
     /// The node's namespace URI, empty if it has none.
-    unsafe fn ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
+    unsafe fn raw_ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8];
 
     /// True when a strict unprefixed element name test must NOT match this
     /// node: XML calls any namespace foreign, HTML admits its own and none.
-    unsafe fn is_foreign_ns(doc: Self::Doc, n: Self::Node) -> bool;
+    unsafe fn raw_is_foreign_ns(doc: Self::Doc, n: Self::Node) -> bool;
 
     /// Whether the node is in a namespace at all - `MKR_NODE_NS_ID(n) != 0`.
     /// Separate from `ns_uri` because HTML answers it without the document.
-    unsafe fn has_ns(doc: Self::Doc, n: Self::Node) -> bool;
+    unsafe fn raw_has_ns(doc: Self::Doc, n: Self::Node) -> bool;
 
     /// Append the node's own text - the bytes it contributes to a string-value -
     /// to `buf`, returning an `mkr_status_t`.
@@ -115,7 +119,7 @@ pub unsafe trait Dom: DomHandle {
     /// shape both can satisfy - and it is what the C contract says
     /// (`MKR_NODE_APPEND_OWN_TEXT`, which is a statement, not an expression, for
     /// exactly this reason).
-    unsafe fn append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int;
+    unsafe fn raw_append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int;
 
     /// The document-level element index's answer for a document-rooted,
     /// predicate-free descendant name test, or None when it cannot serve one.
@@ -126,13 +130,94 @@ pub unsafe trait Dom: DomHandle {
     ///
     /// # Safety
     /// `ctx` must be the evaluating context.
-    unsafe fn name_bucket<'a>(
+    unsafe fn raw_name_bucket<'a>(
         ctx: *mut Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
     ) -> Option<Bucket<'a>>;
 }
+
+/// Safe logical DOM operations used by the XPath evaluator.
+///
+/// The evaluator never calls [`DomRaw`] directly. The blanket implementation
+/// below is the single place where the adapter's raw-operation contract is
+/// entered. `DomRaw` is crate-visible only; external callers cannot use this
+/// trait to dereference a Lexbor handle.
+pub(crate) trait Dom: DomRaw {
+    const IS_XML: bool = <Self as DomRaw>::RAW_IS_XML;
+
+    fn document_node(doc: Self::Doc) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_document_node(doc) }
+    }
+    fn node_type(doc: Self::Doc, n: Self::Node) -> u32 {
+        unsafe { <Self as DomRaw>::raw_node_type(doc, n) }
+    }
+    fn first_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_first_child(doc, n) }
+    }
+    fn last_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_last_child(doc, n) }
+    }
+    fn next(doc: Self::Doc, n: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_next(doc, n) }
+    }
+    fn prev(doc: Self::Doc, n: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_prev(doc, n) }
+    }
+    fn parent(doc: Self::Doc, n: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_parent(doc, n) }
+    }
+    fn first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_first_attr(doc, el) }
+    }
+    fn attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node {
+        unsafe { <Self as DomRaw>::raw_attr_next(doc, a) }
+    }
+    fn attr_value<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_attr_value(doc, a) }
+    }
+    fn get_attribute<'a>(doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
+        unsafe { <Self as DomRaw>::raw_get_attribute(doc, el, name) }
+    }
+    fn local_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_local_name(doc, n) }
+    }
+    fn attr_local_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_attr_local_name(doc, a) }
+    }
+    fn qualified_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_qualified_name(doc, n) }
+    }
+    fn attr_qualified_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_attr_qualified_name(doc, a) }
+    }
+    fn pi_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_pi_name(doc, n) }
+    }
+    fn ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        unsafe { <Self as DomRaw>::raw_ns_uri(doc, n) }
+    }
+    fn is_foreign_ns(doc: Self::Doc, n: Self::Node) -> bool {
+        unsafe { <Self as DomRaw>::raw_is_foreign_ns(doc, n) }
+    }
+    fn has_ns(doc: Self::Doc, n: Self::Node) -> bool {
+        unsafe { <Self as DomRaw>::raw_has_ns(doc, n) }
+    }
+    fn append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
+        unsafe { <Self as DomRaw>::raw_append_own_text(doc, n, buf) }
+    }
+    fn name_bucket<'a>(
+        ctx: *mut Context,
+        local: &[u8],
+        ns_uri: Option<&[u8]>,
+        lax: bool,
+    ) -> Option<Bucket<'a>> {
+        unsafe { <Self as DomRaw>::raw_name_bucket(ctx, local, ns_uri, lax) }
+    }
+}
+
+impl<T: DomRaw> Dom for T {}
 
 /// What `Dom::name_bucket` found: the elements, in document order, and whether
 /// each still has to be re-checked against the name test before it counts. The

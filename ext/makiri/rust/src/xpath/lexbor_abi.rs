@@ -19,8 +19,10 @@
 //! offers goes through its exported functions - including the two it publishes
 //! as `lxb_inline`, which it also exports as `_noi` for exactly this case.
 
-use super::abi::Buf;
+use super::abi::*;
+use super::dom::{Bucket, DomHandle, DomRaw};
 use core::ffi::{c_char, c_int, c_void};
+use core::ptr;
 
 /// `lxb_dom_node_t`. 96 bytes; the first field is an event-target pointer.
 #[repr(C)]
@@ -347,5 +349,131 @@ pub unsafe fn bucket<'a>(nodes: *const *mut c_void, count: usize) -> &'a [*mut c
         &[]
     } else {
         core::slice::from_raw_parts(nodes, count)
+    }
+}
+
+/* ---------- the HTML backend's raw adapter ---------- */
+
+/// Lexbor-backed XPath representation.
+pub struct Html;
+
+unsafe impl DomHandle for Html {
+    type Node = *mut Node;
+    type Doc = *mut Document;
+
+    fn null() -> Self::Node {
+        ptr::null_mut()
+    }
+    fn is_null(n: Self::Node) -> bool {
+        n.is_null()
+    }
+    fn to_void(n: Self::Node) -> *mut c_void {
+        n as *mut c_void
+    }
+    unsafe fn from_void(p: *mut c_void) -> Self::Node {
+        p as Self::Node
+    }
+    unsafe fn doc_from_void(p: *mut c_void) -> Self::Doc {
+        p as Self::Doc
+    }
+}
+
+unsafe impl DomRaw for Html {
+    const RAW_IS_XML: bool = false;
+
+    unsafe fn raw_document_node(doc: Self::Doc) -> Self::Node {
+        document_node(doc)
+    }
+    unsafe fn raw_node_type(_doc: Self::Doc, n: Self::Node) -> u32 {
+        node_type(n)
+    }
+    unsafe fn raw_first_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
+        first_child(n)
+    }
+    unsafe fn raw_last_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
+        last_child(n)
+    }
+    unsafe fn raw_next(_doc: Self::Doc, n: Self::Node) -> Self::Node {
+        next(n)
+    }
+    unsafe fn raw_prev(_doc: Self::Doc, n: Self::Node) -> Self::Node {
+        prev(n)
+    }
+    unsafe fn raw_parent(_doc: Self::Doc, n: Self::Node) -> Self::Node {
+        parent(n)
+    }
+    unsafe fn raw_first_attr(_doc: Self::Doc, el: Self::Node) -> Self::Node {
+        first_attr(el)
+    }
+    unsafe fn raw_attr_next(_doc: Self::Doc, a: Self::Node) -> Self::Node {
+        attr_next(a)
+    }
+    unsafe fn raw_attr_value<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
+        attr_value(a)
+    }
+    unsafe fn raw_get_attribute<'a>(
+        _doc: Self::Doc,
+        el: Self::Node,
+        name: &[u8],
+    ) -> Option<&'a [u8]> {
+        get_attribute(el, name)
+    }
+    unsafe fn raw_local_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        local_name(n)
+    }
+    unsafe fn raw_attr_local_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
+        attr_local_name(a)
+    }
+    unsafe fn raw_qualified_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        qualified_name(n)
+    }
+    unsafe fn raw_attr_qualified_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
+        attr_qualified_name(a)
+    }
+    unsafe fn raw_pi_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        pi_name(n)
+    }
+    unsafe fn raw_ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
+        ns_uri(n, doc)
+    }
+    unsafe fn raw_is_foreign_ns(_doc: Self::Doc, n: Self::Node) -> bool {
+        is_foreign_ns(n)
+    }
+    unsafe fn raw_has_ns(_doc: Self::Doc, n: Self::Node) -> bool {
+        has_ns(n)
+    }
+    unsafe fn raw_append_own_text(_doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
+        mkr_html_append_own_text(n, buf)
+    }
+
+    unsafe fn raw_name_bucket<'a>(
+        ctx: *mut Context,
+        local: &[u8],
+        ns_uri: Option<&[u8]>,
+        _lax: bool,
+    ) -> Option<Bucket<'a>> {
+        if ns_uri.is_some() {
+            return None;
+        }
+        let index = mkr_ctx_element_index(ctx);
+        let lookup = mkr_ctx_tag_lookup(ctx)?;
+        let has_foreign = mkr_ctx_tag_has_foreign(ctx)?;
+        if index.is_null() || has_foreign(index) != 0 {
+            return None;
+        }
+        let doc = mkr_ctx_document(ctx) as *const Document;
+        if doc.is_null() {
+            return None;
+        }
+        let tag = tag_id_by_name(doc, local);
+        if tag == TAG_UNDEF || tag >= TAG_LAST_ENTRY {
+            return None;
+        }
+        let mut cnt = 0usize;
+        let nodes = bucket(lookup(index, tag, &mut cnt), cnt);
+        Some(Bucket {
+            nodes,
+            recheck: true,
+        })
     }
 }
