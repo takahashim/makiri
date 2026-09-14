@@ -39,6 +39,25 @@ pub const NTYPE_DOCUMENT: u32 = 9;
 pub const NTYPE_DOCUMENT_TYPE: u32 = 10;
 pub const NTYPE_NOTATION: u32 = 12;
 
+/// The raw-handle boundary shared by each DOM representation.
+///
+/// Only this part converts the erased pointers used by the context and
+/// node-set ABI back into backend handles. The safety contract is deliberately
+/// separate from [`Dom`], whose methods describe DOM operations.
+pub unsafe trait DomHandle {
+    type Node: Copy + PartialEq;
+    type Doc: Copy;
+
+    fn null() -> Self::Node;
+    fn is_null(n: Self::Node) -> bool;
+    fn to_void(n: Self::Node) -> *mut core::ffi::c_void;
+
+    /// `p` must be a handle produced by this backend, or null.
+    unsafe fn from_void(p: *mut core::ffi::c_void) -> Self::Node;
+    /// `p` must be storage produced by this backend, or null.
+    unsafe fn doc_from_void(p: *mut core::ffi::c_void) -> Self::Doc;
+}
+
 /// One DOM representation, as the engine needs to see it.
 ///
 /// The two backends differ in what a handle IS, and each states it:
@@ -58,39 +77,12 @@ pub const NTYPE_NOTATION: u32 = 12;
 /// An implementation must report navigation that forms an actual tree - a
 /// child's parent is the node it was reached from, siblings agree on order -
 /// because the engine derives document order from it.
-pub unsafe trait Dom {
-    /// A node handle. `Copy` so the engine can move it around freely; equality
-    /// is identity, which is what node-set dedup keys on (pointer identity for
-    /// HTML, `NodeId` equality for XML).
-    type Node: Copy + PartialEq;
-
+pub unsafe trait Dom: DomHandle {
     /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:
     /// `id()` is the empty node-set in XML (an ID is DTD-declared, and DTDs are
     /// rejected at parse), `lang()` reads xml:lang rather than HTML's `lang`,
     /// and the CSS-lowered of-type hooks exist only for XML.
     const IS_XML: bool;
-
-    /// The owning **storage**: the index-arena document for XML, the Lexbor
-    /// document for HTML. A node handle alone cannot resolve XML links or bytes
-    /// (they live in the document), so the methods that read them take this.
-    type Doc: Copy;
-
-    fn null() -> Self::Node;
-    fn is_null(n: Self::Node) -> bool;
-
-    /* A node-set stores `void *` because it crosses into the glue and the
-     * custom-function bridge, which do not know the representation. These two
-     * are where that erasure happens, so each backend - and only each backend -
-     * states how its handle maps to a pointer. */
-    fn to_void(n: Self::Node) -> *mut core::ffi::c_void;
-    /// # Safety
-    /// `p` must be a handle this backend produced, or null.
-    unsafe fn from_void(p: *mut core::ffi::c_void) -> Self::Node;
-    /// The same erasure for the storage handle `mkr_ctx_arena` returns.
-    ///
-    /// # Safety
-    /// `p` must be this backend's document/storage, or null.
-    unsafe fn doc_from_void(p: *mut core::ffi::c_void) -> Self::Doc;
 
     /// The document node itself, for a walk rooted at the whole tree.
     unsafe fn document_node(doc: Self::Doc) -> Self::Node;

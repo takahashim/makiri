@@ -9,7 +9,7 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
-use super::ast::{path_steps, step_preds};
+use super::ast_view::{path_steps, step_preds};
 use super::attr_pred::{attr_pred_matches, match_attr_pred};
 use super::axis::{axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis};
 use super::dom::*;

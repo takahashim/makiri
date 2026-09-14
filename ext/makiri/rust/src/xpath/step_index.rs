@@ -11,7 +11,7 @@
 #![allow(clippy::result_unit_err)]
 
 use super::abi::*;
-use super::ast::step_preds;
+use super::ast_view::step_preds;
 use super::dom::*;
 use super::msg::Bytes;
 use super::nodetest::{lookup_ns, node_principal_match, Bindings};

@@ -11,7 +11,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::ast::{path_steps, step_preds};
+use super::ast_view::{path_steps, step_preds};
 use crate::err_setf;
 use core::ffi::c_void;
 use core::ptr;

@@ -537,7 +537,7 @@ unsafe fn to_public(v: &Val, out: *mut XPathValue) {
     }
 }
 
-pub unsafe fn mkr_xpath_eval_compiled(
+pub(crate) unsafe fn eval_compiled(
     ctx: *mut Context,
     ast: *mut Node,
     out_value: *mut XPathValue,
@@ -613,7 +613,7 @@ pub unsafe fn mkr_xpath_eval_compiled(
     0
 }
 
-pub unsafe fn mkr_xpath_eval_compiled_first(
+pub(crate) unsafe fn eval_compiled_first(
     ctx: *mut Context,
     ast: *mut Node,
     out_value: *mut XPathValue,
@@ -680,5 +680,5 @@ pub unsafe fn mkr_xpath_eval_compiled_first(
         to_public(&v, out_value);
         return 0;
     }
-    mkr_xpath_eval_compiled(ctx, ast, out_value, out_error)
+    eval_compiled(ctx, ast, out_value, out_error)
 }

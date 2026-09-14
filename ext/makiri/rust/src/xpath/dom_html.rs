@@ -9,7 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::dom::{Bucket, Dom, NTYPE_ELEMENT};
+use super::dom::{Bucket, Dom, DomHandle, NTYPE_ELEMENT};
 use super::html_abi as lxb;
 use core::ffi::{c_int, c_void};
 use core::ptr;
@@ -48,11 +48,9 @@ unsafe fn named_mut<'a, T>(
     seen(f(h, &mut len), len)
 }
 
-unsafe impl Dom for Html {
+unsafe impl DomHandle for Html {
     type Node = *mut lxb::Node;
     type Doc = *mut lxb::Document;
-
-    const IS_XML: bool = false;
 
     #[inline]
     fn null() -> Self::Node {
@@ -74,6 +72,10 @@ unsafe impl Dom for Html {
     unsafe fn doc_from_void(p: *mut c_void) -> Self::Doc {
         p as Self::Doc
     }
+}
+
+unsafe impl Dom for Html {
+    const IS_XML: bool = false;
 
     #[inline]
     unsafe fn document_node(doc: Self::Doc) -> Self::Node {

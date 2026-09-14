@@ -10,7 +10,8 @@
 //!   parse.rs      recursive descent
 //!
 //! The driver:
-//!   ctx.rs        the context, its registries and the evaluate entries
+//!   ctx.rs        the context, its registries and state
+//!   evaluate.rs  the compiled-expression evaluation entries
 //!   limits.rs     the per-evaluate budgets
 //!
 //! The engine, generic over `Dom`:
@@ -36,6 +37,7 @@ pub mod abi;
 pub mod msg;
 
 pub mod ast;
+pub mod ast_view;
 pub mod lex;
 pub mod number;
 pub mod parse;
@@ -44,6 +46,7 @@ pub mod parse;
 mod verify;
 
 pub mod ctx;
+pub mod evaluate;
 pub mod limits;
 
 pub mod ast_ops;

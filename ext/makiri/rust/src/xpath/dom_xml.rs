@@ -15,7 +15,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::dom::{Bucket, Dom};
+use super::dom::{Bucket, Dom, DomHandle};
 use crate::xml::model as xml;
 use core::ffi::c_int;
 
@@ -61,11 +61,9 @@ unsafe fn skip_ns_decls(doc: *mut xml::Document, mut a: xml::NodeId) -> xml::Nod
     a
 }
 
-unsafe impl Dom for Xml {
+unsafe impl DomHandle for Xml {
     type Node = xml::NodeId;
     type Doc = *mut xml::Document;
-
-    const IS_XML: bool = true;
 
     #[inline]
     fn null() -> Self::Node {
@@ -75,7 +73,6 @@ unsafe impl Dom for Xml {
     fn is_null(n: Self::Node) -> bool {
         n.is_invalid()
     }
-
     #[inline]
     fn to_void(n: Self::Node) -> *mut core::ffi::c_void {
         n.to_token() as *mut core::ffi::c_void
@@ -88,6 +85,10 @@ unsafe impl Dom for Xml {
     unsafe fn doc_from_void(p: *mut core::ffi::c_void) -> Self::Doc {
         p as *mut xml::Document
     }
+}
+
+unsafe impl Dom for Xml {
+    const IS_XML: bool = true;
 
     #[inline]
     unsafe fn document_node(doc: Self::Doc) -> Self::Node {

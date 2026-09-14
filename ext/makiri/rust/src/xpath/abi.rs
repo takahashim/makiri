@@ -1,6 +1,8 @@
-//! The engine's view of the shared C types.
+//! Compatibility view of the shared XPath ABI types.
 //!
-//! They live at the crate root (`crate::xpath_abi`) because the glue needs them
-//! as well; this re-export keeps every `super::abi::` in the engine working.
+//! The canonical definitions live at `crate::xpath_abi` because the Ruby glue
+//! uses them too. This module keeps the engine's existing `super::abi` imports
+//! local and makes the boundary role explicit; it does not define engine
+//! models or DOM access.
 
 pub use crate::xpath_abi::*;
