@@ -29,7 +29,7 @@ use magnus::rb_sys::FromRawValue;
 use magnus::{RString, Value};
 use rb_sys::{rb_encoding, VALUE};
 
-use super::string::{mkr_text_check, MKR_TEXT_HAS_NUL, MKR_TEXT_INVALID_UTF8};
+use super::string::{mkr_text_check, TextVerdict};
 use crate::glue::abi::{mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, rb_raise};
 
 pub use crate::bridge::string::mkr_ruby_exception_message;
@@ -331,15 +331,15 @@ pub unsafe fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * suffix too - the BOM is one complete UTF-8 character) while the bytes
      * validated are the suffix. */
     match mkr_text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
-        MKR_TEXT_HAS_NUL => rb_raise(
+        TextVerdict::HasNul => rb_raise(
             mkr_eXmlSyntaxError,
             c"XML input must not contain a NUL byte".as_ptr(),
         ),
-        MKR_TEXT_INVALID_UTF8 => rb_raise(
+        TextVerdict::InvalidUtf8 => rb_raise(
             mkr_eXmlSyntaxError,
             c"XML input must be valid UTF-8".as_ptr(),
         ),
-        _ => {}
+        TextVerdict::Ok => {}
     }
 
     /* Build the result from the VALUE, not the borrow: rb_str_subseq allocates,

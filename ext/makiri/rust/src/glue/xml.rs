@@ -273,16 +273,15 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
         /* Copy into a private buffer BEFORE allocating any Ruby object, so there
          * is no GC point between obtaining `decoded` and copying it. */
-        let mut src = OwnedBytes {
-            ptr: core::ptr::null_mut(),
-            len: 0,
+        let mut src = match mkr_ruby_copy_bytes(decoded) {
+            Some(src) => src,
+            None => {
+                return Err(Error::new(
+                    error_class(),
+                    "out of memory copying XML source",
+                ))
+            }
         };
-        if mkr_ruby_copy_bytes(decoded, &mut src) != 0 {
-            return Err(Error::new(
-                error_class(),
-                "out of memory copying XML source",
-            ));
-        }
 
         /* Wrap an empty handle first, so a failure mid-parse still frees
          * cleanly through the GC. The source is already copied, so this Ruby
@@ -775,16 +774,15 @@ unsafe fn fragment_into(
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
     let decoded = mkr_xml_decode_input(rb_sys::rb_String(source.as_raw()), (*xdoc).max_bytes);
-    let mut src = OwnedBytes {
-        ptr: core::ptr::null_mut(),
-        len: 0,
+    let mut src = match mkr_ruby_copy_bytes(decoded) {
+        Some(src) => src,
+        None => {
+            return Err(Error::new(
+                error_class(),
+                "out of memory copying XML fragment source",
+            ))
+        }
     };
-    if mkr_ruby_copy_bytes(decoded, &mut src) != 0 {
-        return Err(Error::new(
-            error_class(),
-            "out of memory copying XML fragment source",
-        ));
-    }
     let bytes = if src.ptr.is_null() || src.len == 0 {
         &[]
     } else {

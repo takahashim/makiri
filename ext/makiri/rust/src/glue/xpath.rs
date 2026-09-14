@@ -331,7 +331,7 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
 
     let node = mkr_html_node_unwrap(rb_node.as_raw());
     let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw()) as *mut c_void;
-    if mkr_parsed_dom_index_build(parsed) != 0 {
+    if !mkr_parsed_dom_index_build(parsed) {
         return Err(Error::new(
             error_class(),
             "failed to build attribute index for XPath",

@@ -9,6 +9,10 @@ use super::ctx::Context;
 use core::ffi::c_int;
 
 /// Evaluate a compiled XPath expression.
+///
+/// # Safety
+/// `ctx`, `ast`, `out_value` and `out_error` must be live pointers from the
+/// matching constructors; the caller holds the GVL for the whole call.
 pub unsafe fn mkr_xpath_eval_compiled(
     ctx: *mut Context,
     ast: *mut Node,
@@ -20,6 +24,9 @@ pub unsafe fn mkr_xpath_eval_compiled(
 
 /// Evaluate a compiled expression using the first-match fast path when
 /// possible, falling back to the full evaluator otherwise.
+///
+/// # Safety
+/// As [`mkr_xpath_eval_compiled`].
 pub unsafe fn mkr_xpath_eval_compiled_first(
     ctx: *mut Context,
     ast: *mut Node,

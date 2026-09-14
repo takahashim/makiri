@@ -273,3 +273,66 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     assert!(a.try_node(NodeId::INVALID).is_none());
     assert!(NodeId::INVALID.is_invalid());
 }
+
+#[test]
+fn text_verdict_accepts_valid_utf8() {
+    use crate::cutf8::{text_verdict, TextVerdict};
+    assert_eq!(text_verdict(b"", false), TextVerdict::Ok);
+    assert_eq!(text_verdict(b"hello", false), TextVerdict::Ok);
+    assert_eq!(text_verdict("日本語".as_bytes(), false), TextVerdict::Ok);
+}
+
+#[test]
+fn text_verdict_rejects_nul_before_utf8() {
+    // NUL is well-formed UTF-8, but the strict contract forbids it, so it is
+    // reported as HasNul even when the bytes are otherwise valid, and even when
+    // a caller has already proved the bytes valid UTF-8.
+    use crate::cutf8::{text_verdict, TextVerdict};
+    assert_eq!(text_verdict(b"a\0b", false), TextVerdict::HasNul);
+    assert_eq!(text_verdict(b"a\0b", true), TextVerdict::HasNul);
+}
+
+#[test]
+fn text_verdict_rejects_invalid_utf8() {
+    use crate::cutf8::{text_verdict, TextVerdict};
+    assert_eq!(text_verdict(b"\xFF", false), TextVerdict::InvalidUtf8);
+    // A truncated multi-byte sequence.
+    assert_eq!(text_verdict(b"\xE2\x82", false), TextVerdict::InvalidUtf8);
+    // An overlong encoding of '/' (0xC0 0xAF) is not well-formed.
+    assert_eq!(text_verdict(b"\xC0\xAF", false), TextVerdict::InvalidUtf8);
+}
+
+#[test]
+fn text_verdict_skips_the_scan_when_already_known_valid() {
+    // A caller that has proved validity (a whole-string coderange) skips the
+    // UTF-8 scan, so bytes the scan would reject are accepted - the
+    // BOM-stripped-suffix case - while the NUL rule still applies.
+    use crate::cutf8::{text_verdict, TextVerdict};
+    assert_eq!(text_verdict(b"\xFF", true), TextVerdict::Ok);
+    assert_eq!(text_verdict(b"\xFF\0", true), TextVerdict::HasNul);
+}
+
+#[test]
+fn text_verdict_agrees_with_the_standard_library_on_every_one_and_two_byte_input() {
+    // The verdict is "well-formed UTF-8 and no NUL", which `str::from_utf8`
+    // answers for the whole 1- and 2-byte domain - the boundary-rich part. A
+    // standalone oracle, not the validator under test.
+    use crate::cutf8::{text_verdict, TextVerdict};
+    let oracle = |b: &[u8]| -> TextVerdict {
+        if b.contains(&0) {
+            TextVerdict::HasNul
+        } else if core::str::from_utf8(b).is_ok() {
+            TextVerdict::Ok
+        } else {
+            TextVerdict::InvalidUtf8
+        }
+    };
+    for first in 0u8..=u8::MAX {
+        let one = [first];
+        assert_eq!(text_verdict(&one, false), oracle(&one), "{one:02x?}");
+        for second in 0u8..=u8::MAX {
+            let two = [first, second];
+            assert_eq!(text_verdict(&two, false), oracle(&two), "{two:02x?}");
+        }
+    }
+}

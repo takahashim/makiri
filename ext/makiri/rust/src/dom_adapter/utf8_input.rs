@@ -26,27 +26,40 @@
 //!
 //! # One spelling of the signature
 //!
-//! `out` is `*mut *mut u8`, matching the C's `lxb_char_t **`. Two callers
-//! declare this function - `glue::fragment` and `dom_adapter::post_parse` - and
-//! they had drifted to two spellings (`u8` and `c_char`, which differ in
-//! signedness on every platform here). rustc reports that as "redeclared with a
-//! different signature" and CI compiles with `-D warnings`, so the three sites
-//! cannot drift again without the build saying so.
+//! The sanitised result is an owned buffer the caller frees with libc `free`.
+//! It used to be returned through two out-parameters (`*mut *mut u8`, `*mut
+//! usize`) to match the C's `lxb_char_t **`; the two callers wrapped it in a
+//! `Drop` guard each, so the ownership was already Rust's. [`Sanitized`] now
+//! carries it in the type and neither caller has to remember.
 //!
 //! # The allocation stays C's
 //!
-//! The result is handed to a C caller that `free()`s it, so it is built in an
-//! `mkr_buf_t` and stolen, exactly as before. That also keeps the growth clamp,
-//! the NUL terminator and the `rake oom` injection hook - three properties that
-//! a Rust `Vec` and a hand-written `malloc` would each have had to re-earn.
+//! The result is a `malloc`'d buffer the caller frees with libc `free`, so it is
+//! built in an `mkr_buf_t` and stolen, exactly as before. That also keeps the
+//! growth clamp, the NUL terminator and the `rake oom` injection hook - three
+//! properties that a Rust `Vec` and a hand-written `malloc` would each have had
+//! to re-earn.
 
 #![allow(clippy::missing_safety_doc)]
-
-use core::ffi::c_int;
 
 use crate::cbuf::{mkr_buf_append, mkr_buf_reserve, mkr_buf_steal, Buf, MKR_OK};
 
 pub use crate::cutf8::mkr_utf8_valid;
+
+/// The sanitiser's replacement buffer: `malloc`'d, NUL-terminated, and owned by
+/// the caller, who frees it with libc `free`.
+pub struct Replacement {
+    pub ptr: *mut u8,
+    pub len: usize,
+}
+
+/// What [`mkr_utf8_sanitize`] decided about the input.
+pub enum Sanitized {
+    /// Already valid UTF-8: the caller parses the input in place, no copy.
+    Unchanged,
+    /// Invalid bytes were replaced with U+FFFD; a fresh buffer the caller owns.
+    Replaced(Replacement),
+}
 
 /// UTF-8 -> UTF-8 with every invalid sequence replaced by U+FFFD, into a freshly
 /// `malloc`'d, NUL-terminated buffer. NULL on OOM.
@@ -113,25 +126,19 @@ unsafe fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
 
 /// Sanitise `src` for the HTML parser.
 ///
-/// Sets `*out` to NULL and returns 0 when the input is already valid UTF-8 (the
-/// common case), which tells the caller to use `src` as-is with no copy.
-/// Otherwise `*out` receives a freshly `malloc`'d, NUL-terminated replacement
-/// the caller owns and `free()`s, with `*out_len` its length. Returns -1 on OOM.
-pub unsafe fn mkr_utf8_sanitize(
-    src: *const u8,
-    len: usize,
-    out: *mut *mut u8,
-    out_len: *mut usize,
-) -> c_int {
-    *out = core::ptr::null_mut();
-    *out_len = 0;
+/// `Unchanged` when the input is already valid UTF-8 (the common case), so the
+/// caller parses `src` as-is with no copy. `Replaced` carries a freshly
+/// `malloc`'d, NUL-terminated replacement the caller owns. `None` on OOM, with
+/// nothing allocated.
+pub unsafe fn mkr_utf8_sanitize(src: *const u8, len: usize) -> Option<Sanitized> {
     if src.is_null() || len == 0 || mkr_utf8_valid(src, len) {
-        return 0;
+        return Some(Sanitized::Unchanged);
     }
-    *out = replace_invalid(core::slice::from_raw_parts(src, len), out_len);
-    if (*out).is_null() {
-        -1
+    let mut out_len = 0usize;
+    let ptr = replace_invalid(core::slice::from_raw_parts(src, len), &mut out_len);
+    if ptr.is_null() {
+        None
     } else {
-        0
+        Some(Sanitized::Replaced(Replacement { ptr, len: out_len }))
     }
 }

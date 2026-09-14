@@ -35,6 +35,7 @@ use super::abi::{
  * ------------------------------------------------------------------ */
 
 pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
+use crate::dom_adapter::utf8_input::Sanitized;
 pub use crate::falloc::calloc::mkr_reallocarray;
 
 extern "C" {
@@ -210,23 +211,22 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
             owned: core::ptr::null_mut(),
         });
     }
-    let mut clean: *mut u8 = core::ptr::null_mut();
-    let mut clean_len: usize = 0;
-    if mkr_utf8_sanitize(hv.ptr as *const u8, hv.len, &mut clean, &mut clean_len) != 0 {
-        return None;
-    }
-    if clean.is_null() {
-        Some(SanitizedHtml {
+    let clean = match mkr_utf8_sanitize(hv.ptr as *const u8, hv.len) {
+        Some(Sanitized::Unchanged) => None,
+        Some(Sanitized::Replaced(r)) => Some(r),
+        None => return None,
+    };
+    match clean {
+        None => Some(SanitizedHtml {
             ptr: hv.ptr as *const u8,
             len: hv.len,
             owned: core::ptr::null_mut(),
-        })
-    } else {
-        Some(SanitizedHtml {
-            ptr: clean,
-            len: clean_len,
-            owned: clean,
-        })
+        }),
+        Some(r) => Some(SanitizedHtml {
+            ptr: r.ptr,
+            len: r.len,
+            owned: r.ptr,
+        }),
     }
 }
 

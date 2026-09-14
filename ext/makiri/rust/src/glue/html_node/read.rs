@@ -466,7 +466,7 @@ pub fn parent(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
         let document = node_document(rb_self);
         if (*node).type_ == ty::ATTRIBUTE {
             let parsed = mkr_doc_parsed(document.as_raw());
-            if parsed.is_null() || mkr_parsed_dom_index_build(parsed) != 0 {
+            if parsed.is_null() || !mkr_parsed_dom_index_build(parsed) {
                 return Err(Error::new(
                     error_class(),
                     "could not build the attribute index (out of memory)",

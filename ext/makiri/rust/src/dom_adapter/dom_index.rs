@@ -271,13 +271,10 @@ pub unsafe fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut 
     (*idx).attr_owner(attr)
 }
 
-/// Build the index now (idempotent). 0 on success, -1 on allocation failure.
-pub unsafe fn mkr_parsed_dom_index_build(p: *mut Parsed) -> c_int {
-    if ensure(p).is_null() {
-        -1
-    } else {
-        0
-    }
+/// Build the index now (idempotent). `true` on success, `false` on allocation
+/// failure.
+pub unsafe fn mkr_parsed_dom_index_build(p: *mut Parsed) -> bool {
+    !ensure(p).is_null()
 }
 
 /// Drop the index so the next query rebuilds it. Called from the one mutation

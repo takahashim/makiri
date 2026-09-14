@@ -89,6 +89,47 @@ pub fn valid(s: &[u8]) -> bool {
     core::str::from_utf8(s).is_ok()
 }
 
+/// The strict-text verdict the name/engine boundary enforces over already-
+/// resolved bytes: NUL, then well-formed UTF-8.
+///
+/// This is the whole check behind `bridge::string::mkr_text_check`, lifted here
+/// (Ruby-free, Lexbor-free) so the logic is a plain function rather than an
+/// `unsafe` one and is testable under the always-compiled core - the
+/// `cargo test --no-default-features` set. The bridge keeps a thin `unsafe`
+/// wrapper that resolves the raw pointer and the String's cached coderange into
+/// the two ordinary arguments:
+///
+///   * `bytes`: the byte range to validate.
+///   * `known_valid_utf8`: whether the bytes are ALREADY known valid UTF-8
+///     (typically read from a Ruby String's cached coderange). When true the
+///     UTF-8 scan is skipped; the NUL search still runs, because NUL is valid
+///     UTF-8 but the strict contract forbids it.
+///
+/// `known_valid_utf8` may be established from a SUPERSTRING of `bytes` (the XML
+/// path knows the whole decoded String is valid but validates a BOM-stripped
+/// suffix): a whole-string VALID coderange proves any suffix valid, because the
+/// BOM is one complete UTF-8 character.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextVerdict {
+    /// Valid UTF-8 with no interior NUL.
+    Ok,
+    /// Valid UTF-8 but containing a NUL, which names and engine inputs forbid.
+    HasNul,
+    /// Not well-formed UTF-8.
+    InvalidUtf8,
+}
+
+#[inline]
+pub fn text_verdict(bytes: &[u8], known_valid_utf8: bool) -> TextVerdict {
+    if bytes.contains(&0) {
+        return TextVerdict::HasNul;
+    }
+    if known_valid_utf8 || valid(bytes) {
+        return TextVerdict::Ok;
+    }
+    TextVerdict::InvalidUtf8
+}
+
 /* ------------------------------------------------------------------ *
  * the C ABI                                                          *
  * ------------------------------------------------------------------ *

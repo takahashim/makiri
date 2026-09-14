@@ -49,6 +49,7 @@ pub use crate::dom_adapter::source_loc::mkr_pos_recorder_set_delegate;
 pub use crate::dom_adapter::source_loc::mkr_pos_token_cb;
 pub use crate::dom_adapter::text_index::mkr_text_index_free;
 pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
+use crate::dom_adapter::utf8_input::Sanitized;
 pub use crate::xml::api::mkr_xml_doc_destroy;
 
 extern "C" {
@@ -68,11 +69,11 @@ extern "C" {
 }
 
 /// The sanitiser's replacement buffer, freed however the parse exits.
-struct Sanitized {
+struct CleanBuf {
     ptr: *mut u8,
 }
 
-impl Drop for Sanitized {
+impl Drop for CleanBuf {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             unsafe { libc_free(self.ptr as *mut c_void) };
@@ -201,13 +202,22 @@ pub unsafe fn mkr_parse_html(src: *const u8, len: usize, assume_valid: bool) -> 
      * always valid UTF-8. Valid input - the common case - is used as-is with no
      * copy. Source offsets are then relative to the SANITISED bytes: exact for
      * valid input, best-effort where replacement shifted byte positions. */
-    let mut clean = Sanitized {
+    let mut clean = CleanBuf {
         ptr: core::ptr::null_mut(),
     };
     let mut clean_len = 0usize;
-    if !assume_valid && mkr_utf8_sanitize(src, len, &mut clean.ptr, &mut clean_len) != 0 {
-        drop(Box::from_raw(p));
-        return core::ptr::null_mut(); /* OOM */
+    if !assume_valid {
+        match mkr_utf8_sanitize(src, len) {
+            Some(Sanitized::Unchanged) => {}
+            Some(Sanitized::Replaced(r)) => {
+                clean.ptr = r.ptr;
+                clean_len = r.len;
+            }
+            None => {
+                drop(Box::from_raw(p));
+                return core::ptr::null_mut(); /* OOM */
+            }
+        }
     }
 
     let bytes: &[u8] = if clean.ptr.is_null() {

@@ -38,7 +38,7 @@ use super::abi::{
     error_class, mkr_cDocumentFragment, mkr_cHtmlDocument, mkr_cXmlDocument, mkr_html_node_unwrap,
     mkr_mHtmlNodeMethods, mkr_node_document, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8,
     mkr_ruby_to_utf8, mkr_wrap_html_node, mkr_xml_node_unwrap, DataType, LxbDoc, LxbNode,
-    OwnedBytes, LXB_DOM_NODE_TYPE_ELEMENT,
+    LXB_DOM_NODE_TYPE_ELEMENT,
 };
 use super::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
@@ -197,10 +197,10 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
          * coderange is read first (no scan): a source Ruby already knows is
          * valid UTF-8 lets the parse skip its sanitisation. */
         let assume_valid = mkr_ruby_str_known_valid_utf8(src);
-        let mut owned = OwnedBytes::empty();
-        if mkr_ruby_copy_bytes(src, &mut owned) != 0 {
-            return Err(Error::new(error_class(), "out of memory copying source"));
-        }
+        let mut owned = match mkr_ruby_copy_bytes(src) {
+            Some(owned) => owned,
+            None => return Err(Error::new(error_class(), "out of memory copying source")),
+        };
 
         /* Allocate the wrapper with a null handle, so a failed parse still
          * frees cleanly through GC. This entry is defined on

@@ -67,10 +67,11 @@ pub struct RubyBorrowedBytes {
     pub len: usize,
 }
 
-/// `mkr_text_verdict_t`.
-pub const MKR_TEXT_OK: c_int = 0;
-pub const MKR_TEXT_HAS_NUL: c_int = 1;
-pub const MKR_TEXT_INVALID_UTF8: c_int = 2;
+/// What the strict-text check found (`mkr_text_verdict_t`).
+///
+/// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
+/// re-exported here so the bridge's callers keep naming it from this module.
+pub use crate::cutf8::TextVerdict;
 
 pub use crate::cutf8::mkr_utf8_valid;
 pub use crate::falloc::calloc::mkr_reallocarray;
@@ -150,40 +151,37 @@ pub unsafe fn mkr_ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
 /// violation so each caller can map it to its own error surface (`Makiri::Error`,
 /// `XML::SyntaxError`, or a reason string).
 ///
-/// `coderange_str` is consulted only for its CACHED coderange and may be a
-/// superstring of the bytes: the XML path passes the whole decoded String for
-/// the coderange but a BOM-stripped suffix as the bytes, which is sound because
-/// the BOM is one complete UTF-8 character, so a whole-string VALID coderange
-/// still proves the suffix valid. Bytes are validated as UTF-8 whatever the
-/// String's declared encoding says.
+/// A thin `unsafe` boundary: it resolves the raw pointer and the String's cached
+/// coderange into ordinary values, then delegates the actual check to the pure
+/// [`crate::cutf8::text_verdict`]. This is the only `unsafe` in the path; the
+/// logic is Ruby-free and testable under the always-compiled core.
+///
+/// `coderange_str` is consulted only for its CACHED coderange, which never
+/// scans and never allocates.
 ///
 /// Allocation-free - see the module docs.
-pub unsafe fn mkr_text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -> c_int {
+///
+/// # Safety
+/// `ptr` must be readable for `len` bytes (or null), and `coderange_str` must be
+/// a valid `T_STRING`. Both borrows must not be held across a Ruby allocation.
+pub unsafe fn mkr_text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -> TextVerdict {
     let bytes = if ptr.is_null() || len == 0 {
         &[][..]
     } else {
         core::slice::from_raw_parts(ptr as *const u8, len)
     };
-    if bytes.contains(&0) {
-        return MKR_TEXT_HAS_NUL;
-    }
-    /* The cached coderange reads flags; it never scans and never allocates. NUL
-     * is valid UTF-8, so the search above stands either way. */
-    if mkr_ruby_str_known_valid_utf8(coderange_str) {
-        return MKR_TEXT_OK;
-    }
-    if !mkr_utf8_valid(bytes.as_ptr(), bytes.len()) {
-        return MKR_TEXT_INVALID_UTF8;
-    }
-    MKR_TEXT_OK
+    /* The cached coderange reads flags; it never scans and never allocates. */
+    crate::cutf8::text_verdict(bytes, mkr_ruby_str_known_valid_utf8(coderange_str))
 }
 
 pub unsafe fn mkr_verify_text(str: VALUE, what: *const c_char) {
     let (_, ptr, len) = borrow(str);
     match mkr_text_check(str, ptr, len) {
-        MKR_TEXT_HAS_NUL => rb_raise(mkr_eError, c"%s must not contain a NUL byte".as_ptr(), what),
-        MKR_TEXT_INVALID_UTF8 => rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what),
-        _ => {}
+        TextVerdict::HasNul => {
+            rb_raise(mkr_eError, c"%s must not contain a NUL byte".as_ptr(), what)
+        }
+        TextVerdict::InvalidUtf8 => rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what),
+        TextVerdict::Ok => {}
     }
 }
 
@@ -204,7 +202,7 @@ pub unsafe fn mkr_ruby_verified_text(in_: VALUE, what: *const c_char) -> RubyBor
 pub unsafe fn mkr_ruby_verified_data(in_: VALUE, what: *const c_char) -> RubyBorrowedData {
     let s = to_string(in_);
     let (value, ptr, len) = borrow(s);
-    if mkr_text_check(s, ptr, len) == MKR_TEXT_INVALID_UTF8 {
+    if mkr_text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
         rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what);
     }
     RubyBorrowedData { value, ptr, len }
@@ -219,28 +217,26 @@ pub unsafe fn mkr_ruby_bytes_view(in_: VALUE) -> RubyBorrowedBytes {
 }
 
 /// Copy a String's raw bytes into owned C storage, at least one byte even for
-/// an empty input, so the result is usable while the GVL is released.
-/// -1 on OOM, with nothing allocated.
-pub unsafe fn mkr_ruby_copy_bytes(in_: VALUE, out: *mut OwnedBytes) -> c_int {
+/// an empty input, so the result is usable while the GVL is released. `None` on
+/// OOM, with nothing allocated.
+pub unsafe fn mkr_ruby_copy_bytes(in_: VALUE) -> Option<OwnedBytes> {
     let v = mkr_ruby_bytes_view(in_);
-    (*out).ptr = core::ptr::null_mut();
-    (*out).len = 0;
-
     let alloc_len = if v.len > 0 { v.len } else { 1 };
     let buf = mkr_reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
     if buf.is_null() {
-        return -1;
+        return None;
     }
     if v.len > 0 {
         core::ptr::copy_nonoverlapping(v.ptr as *const u8, buf, v.len);
     }
-    (*out).ptr = buf as *mut c_char;
-    (*out).len = v.len;
     /* Keep the String reachable until the copy is done - the C's RB_GC_GUARD.
      * `black_box` is the Rust equivalent: it stops the optimiser from deciding
      * the value is dead before this point. */
     core::hint::black_box(v.value);
-    0
+    Some(OwnedBytes {
+        ptr: buf as *mut c_char,
+        len: v.len,
+    })
 }
 
 /* ---- encoding ---- */
@@ -306,9 +302,9 @@ pub unsafe fn mkr_ruby_try_verified_text(
         return c"string exceeds the maximum length".as_ptr();
     }
     match mkr_text_check(sv, ptr, len) {
-        MKR_TEXT_HAS_NUL => return c"string contains a NUL byte".as_ptr(),
-        MKR_TEXT_INVALID_UTF8 => return c"string is not valid UTF-8".as_ptr(),
-        _ => {}
+        TextVerdict::HasNul => return c"string contains a NUL byte".as_ptr(),
+        TextVerdict::InvalidUtf8 => return c"string is not valid UTF-8".as_ptr(),
+        TextVerdict::Ok => {}
     }
     (*out).value = value;
     (*out).ptr = ptr;
