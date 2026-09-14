@@ -37,7 +37,7 @@
 /* Every function takes the `VALUE`s its caller already holds. */
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::Reserve;
+use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use std::collections::HashMap;
@@ -397,6 +397,25 @@ unsafe fn with_compiled_selector(
         h.clear();
     }
 
+    /* Prepare the owned key and reserve the map before Lexbor allocates the
+     * compiled list. A cache bookkeeping OOM therefore cannot leave a live
+     * Lexbor list stranded in the shared arena. */
+    let owned_key = match try_to_boxed_slice(key) {
+        Some(k) => k,
+        None => {
+            return Err(Error::new(
+                unsafe { error_class() },
+                "out of memory caching CSS selector",
+            ));
+        }
+    };
+    if h.mkr_reserve(1).is_err() {
+        return Err(Error::new(
+            unsafe { error_class() },
+            "out of memory caching CSS selector",
+        ));
+    }
+
     let list = lxb_css_selectors_parse(e.parser, ptr, len);
     let bad = list.is_null() || lxb_css_parser_status_noi(e.parser) != LXB_STATUS_OK;
     /* Return the parser to its CLEAN stage, but do NOT clean the arena - the
@@ -408,7 +427,13 @@ unsafe fn with_compiled_selector(
 
     /* The key is copied: the borrow points into a Ruby String that may be
      * collected or mutated, while the entry has to outlive the call. */
-    h.insert(key.to_vec().into_boxed_slice(), list);
+    if h.mkr_insert(owned_key, list).is_err() {
+        lxb_css_memory_clean(e.mem);
+        return Err(Error::new(
+            unsafe { error_class() },
+            "out of memory caching CSS selector",
+        ));
+    }
     run.call(e, node, list, ctx);
     Ok(())
 }

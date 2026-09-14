@@ -1,6 +1,7 @@
 //! Per-evaluation order and string-cache storage.
 #![allow(clippy::missing_safety_doc)]
 use super::super::abi::*;
+use crate::falloc::raw::mkr_callocarray;
 use crate::xpath_abi::ptr_hash;
 use core::ffi::c_void;
 use core::ptr;

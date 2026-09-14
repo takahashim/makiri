@@ -1197,4 +1197,4 @@ unsafe fn fn_of_type_pos_last<D: Dom>(
     set_num(out, of_type_pos::<D>(focus.node, false, doc))
 }
 
-pub use crate::falloc::calloc::mkr_str_alloc;
+pub use crate::falloc::cstr::mkr_str_alloc;

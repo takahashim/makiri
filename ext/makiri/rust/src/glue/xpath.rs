@@ -30,7 +30,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use crate::falloc::Reserve;
+use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::{Cell, RefCell};
 use core::ffi::{c_char, c_int, c_void};
 use std::collections::HashMap;
@@ -45,7 +45,8 @@ use rb_sys::VALUE;
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
     mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Node as Ast,
-    OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+    OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME,
+    XP_ERR_SYNTAX,
 };
 
 use super::abi::{
@@ -784,7 +785,18 @@ unsafe fn cached_ast(
         let raw = ast.as_raw();
         return Some((raw, Some(ast)));
     }
-    d.cache.0.insert(key.to_vec().into_boxed_slice(), ast);
+    let Some(owned_key) = try_to_boxed_slice(key) else {
+        let raw = ast.as_raw();
+        return Some((raw, Some(ast)));
+    };
+    if d.cache.0.mkr_insert(owned_key, ast).is_err() {
+        mkr_err_set(
+            err,
+            XP_ERR_OOM,
+            c"out of memory caching XPath expression".as_ptr(),
+        );
+        return None;
+    }
     let ast = d.cache.0.get(key).expect("inserted AST");
     Some((ast.as_raw(), None))
 }

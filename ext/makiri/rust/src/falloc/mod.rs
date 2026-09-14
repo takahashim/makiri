@@ -46,7 +46,8 @@
 //!
 //! # Cost when not sweeping
 //!
-//! None. Without the `alloc-inject` feature `should_fail` is a `const false`
+//! None. Without the `alloc-inject` feature `allocation_should_fail` is a
+//! `const false`
 //! that the optimiser deletes along with the branch, exactly as the C macro
 //! `MKR_ALLOC_INJECT_FAIL()` compiles to `0` outside `-DMKR_ALLOC_INJECT`.
 //! extconf turns the feature on for the same `MAKIRI_ALLOC_INJECT=1` that
@@ -66,27 +67,31 @@ pub mod calloc;
 /// left after the size arithmetic went to `checked_*` and the OOM branches to
 /// `rake oom`.
 pub mod calloc_verify;
+pub(crate) mod cstr;
+#[cfg(feature = "alloc-inject")]
+pub(crate) mod inject;
+pub(crate) mod raw;
 
-/* The injection counter has ONE home, `calloc::inject`, and `should_fail` below
- * is the only way in - so a sweep cannot end up counting against two of them. */
+/* The injection counter has ONE home, `inject`. The allocator implementations
+ * call only `allocation_should_fail`, which is a constant false in production. */
 
 #[cfg(feature = "alloc-inject")]
-use calloc::mkr_alloc_inject_should_fail;
+use inject::mkr_alloc_inject_should_fail;
 
-/// Should this allocation be failed? Always false outside a sweep build.
+/// Allocation instrumentation hook. Always false in production builds.
 #[cfg(feature = "alloc-inject")]
 #[inline(always)]
-pub fn should_fail() -> bool {
+pub(crate) fn allocation_should_fail() -> bool {
     // SAFETY: a plain counter read in C, no arguments, no pointers. The hook is
     // single-threaded by design (the sweep is), which holds here because every
     // caller is under the GVL.
     unsafe { mkr_alloc_inject_should_fail() != 0 }
 }
 
-/// Always false: a release build carries no counter and no branch.
+/// Production allocator hook: no test instrumentation or branch remains.
 #[cfg(not(feature = "alloc-inject"))]
 #[inline(always)]
-pub fn should_fail() -> bool {
+pub(crate) const fn allocation_should_fail() -> bool {
     false
 }
 
@@ -104,7 +109,7 @@ pub fn try_box<T>(value: T) -> Result<Box<T>, T> {
         #[allow(clippy::disallowed_methods)]
         return Ok(Box::new(value));
     }
-    if should_fail() {
+    if allocation_should_fail() {
         return Err(value);
     }
     // SAFETY: the layout is non-zero-sized (checked above), so `alloc` is being
@@ -188,7 +193,7 @@ impl<T> Reserve for Vec<T> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()> {
-        if should_fail() {
+        if allocation_should_fail() {
             return Err(());
         }
         self.try_reserve(additional).map_err(|_| ())
@@ -196,7 +201,7 @@ impl<T> Reserve for Vec<T> {
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()> {
-        if should_fail() {
+        if allocation_should_fail() {
             return Err(());
         }
         self.try_reserve_exact(additional).map_err(|_| ())
@@ -207,7 +212,7 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> Reserve for HashMa
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()> {
-        if should_fail() {
+        if allocation_should_fail() {
             return Err(());
         }
         self.try_reserve(additional).map_err(|_| ())
@@ -222,7 +227,7 @@ impl<T: core::hash::Hash + Eq, S: core::hash::BuildHasher> Reserve for HashSet<T
     #[inline]
     #[allow(clippy::disallowed_methods)]
     fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()> {
-        if should_fail() {
+        if allocation_should_fail() {
             return Err(());
         }
         self.try_reserve(additional).map_err(|_| ())

@@ -3,17 +3,13 @@
 //! The evaluator uses the typed APIs in the sibling modules. These functions
 //! remain raw because they are called by the Ruby/C glue and own ABI values.
 
+use crate::falloc::raw::free_and_null;
 use crate::xpath::runtime_abi::mkr_owned_text_clear;
 use crate::xpath_abi::{Error, XPathValue, XP_OK};
 use core::ffi::{c_char, c_int, c_void};
 
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
 const MKR_XPATH_TYPE_STRING: u32 = 1;
-
-extern "C" {
-    #[link_name = "free"]
-    fn libc_free(p: *mut c_void);
-}
 
 /// Replace an error message, preserving the C ABI's ownership rules.
 ///
@@ -24,12 +20,12 @@ pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const
         return;
     }
     let err = &mut *err;
-    libc_free(err.message as *mut c_void);
+    free_and_null(err.message as *mut c_void);
     err.status = status;
     err.message = if msg.is_null() {
         core::ptr::null_mut()
     } else {
-        crate::falloc::calloc::mkr_strdup(msg)
+        crate::falloc::cstr::mkr_strdup(msg)
     };
 }
 
@@ -42,7 +38,7 @@ pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
         return;
     }
     let e = &mut *e;
-    libc_free(e.message as *mut c_void);
+    free_and_null(e.message as *mut c_void);
     e.message = core::ptr::null_mut();
     e.status = XP_OK;
 }
@@ -58,7 +54,7 @@ pub unsafe extern "C" fn mkr_xpath_value_clear(v: *mut XPathValue) {
     let v = &mut *v;
     match v.type_ {
         MKR_XPATH_TYPE_NODESET => {
-            libc_free(v.u.nodeset.nodes as *mut c_void);
+            free_and_null(v.u.nodeset.nodes as *mut c_void);
             v.u.nodeset.nodes = core::ptr::null_mut();
             v.u.nodeset.count = 0;
         }

@@ -15,6 +15,7 @@ use super::abi::*;
 use super::lex::{LexErr, Lexer, Tok, Token};
 use super::msg::Bytes;
 use crate::err_setf;
+use crate::falloc::cstr::mkr_strndup;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 

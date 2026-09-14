@@ -13,6 +13,7 @@
 use super::abi::*;
 use super::ast_view::{path_steps, step_preds};
 use crate::err_setf;
+use crate::falloc::raw::mkr_callocarray;
 use core::ffi::c_void;
 use core::ptr;
 

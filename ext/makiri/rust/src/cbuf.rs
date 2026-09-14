@@ -206,8 +206,9 @@ pub(crate) use limits::{mkr_buf_default_limit, mkr_buf_hard_max};
  * The buffer's memory is libc's, not Rust's: `mkr_buf_steal` hands the pointer
  * to a caller that `free()`s it, and C code still appends to buffers Rust made.
  * So these use malloc/realloc directly rather than `falloc`, and consult the
- * injection counter themselves - `falloc::should_fail` IS that counter, so
- * `rake oom` reaches these allocations exactly as it reached the C's. */
+ * allocation instrumentation through `falloc::allocation_should_fail`, so
+ * `rake oom` reaches these allocations exactly as it reached the C's while
+ * production builds compile that hook to `false`. */
 
 /// The effective content ceiling for a buffer: its own `max` (0 meaning the
 /// default), clamped by the absolute hard maximum.
@@ -270,7 +271,7 @@ pub(crate) unsafe fn mkr_buf_append(b: *mut Buf, bytes: *const c_void, n: usize)
                 new_cap = ceiling;
             }
         }
-        let p = if crate::falloc::should_fail() {
+        let p = if crate::falloc::allocation_should_fail() {
             core::ptr::null_mut()
         } else {
             libc_realloc(b.data as *mut c_void, new_cap)
@@ -306,7 +307,7 @@ pub(crate) unsafe fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
     if need_term <= b.cap {
         return MKR_OK; /* already have room */
     }
-    let p = if crate::falloc::should_fail() {
+    let p = if crate::falloc::allocation_should_fail() {
         core::ptr::null_mut()
     } else {
         libc_realloc(b.data as *mut c_void, need_term)
@@ -331,7 +332,7 @@ pub(crate) unsafe fn mkr_buf_reserve(b: *mut Buf, n: usize) -> c_int {
 pub(crate) unsafe fn mkr_buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
     let b = &mut *b;
     if b.data.is_null() {
-        let empty = if crate::falloc::should_fail() {
+        let empty = if crate::falloc::allocation_should_fail() {
             core::ptr::null_mut()
         } else {
             libc_malloc(1)

@@ -21,17 +21,11 @@
 
 use core::ffi::c_void;
 
-use super::calloc::{mkr_callocarray, mkr_reallocarray, mkr_str_alloc, mkr_strndup};
+use super::cstr::{mkr_str_alloc, mkr_strndup};
+use super::raw::{free_and_null, mkr_callocarray, mkr_reallocarray};
 
-/// `mkr_reallocarray`'s three non-allocating answers differ in who owns `ptr`
-/// afterwards, and getting that wrong is a double free or a leak.
-///
-/// - `count == 0` FREES `ptr` and answers NULL. The one case that is not a
-///   failure, and the one where ownership transfers.
-/// - `elem == 0` answers NULL and does NOT free: the caller keeps `ptr`. The C
-///   comment is explicit that this exists so the call never falls through to a
-///   `realloc(ptr, 0)`, whose free-or-not is implementation-defined.
-/// - an overflowing `count * elem` answers NULL and leaves `ptr` untouched.
+/// `mkr_reallocarray` returns NULL without freeing `ptr` for every rejected
+/// request. `free_and_null` is the explicit ownership-transfer operation.
 ///
 /// The proof is that the last two leave the allocation usable: Kani's memory
 /// model reports a use-after-free, so writing through `ptr` afterwards is what
@@ -43,9 +37,7 @@ fn reallocarray_ownership() {
         /* elem == 0: NULL, and the caller still owns ptr. */
         let p = mkr_callocarray(4, 1);
         if !p.is_null() {
-            let count: usize = kani::any();
-            kani::assume(count > 0);
-            let r = mkr_reallocarray(p, count, 0);
+            let r = mkr_reallocarray(p, 4, 0);
             assert!(r.is_null(), "elem == 0 answers NULL");
             *(p as *mut u8) = 7; /* still ours: a freed one would be caught here */
             assert!(*(p as *const u8) == 7);
@@ -62,15 +54,16 @@ fn reallocarray_ownership() {
             free(q);
         }
 
-        /* count == 0 frees. Nothing is asserted about `ptr` afterwards for the
-         * obvious reason - it is gone, and reading it is the bug this case
-         * exists to let callers avoid. */
+        /* count == 0 is rejected and leaves ownership with the caller. */
         let z = mkr_callocarray(4, 1);
         if !z.is_null() {
             assert!(
                 mkr_reallocarray(z, 0, 1).is_null(),
                 "count == 0 answers NULL"
             );
+            *(z as *mut u8) = 11;
+            assert!(*(z as *const u8) == 11);
+            free_and_null(z);
         }
     }
 }

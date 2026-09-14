@@ -13,14 +13,14 @@
 use core::ffi::c_void;
 
 use super::Build;
-use crate::falloc::calloc::mkr_reallocarray;
+use crate::falloc::raw::mkr_reallocarray;
 use crate::xpath::own::Ast;
 use crate::xpath_abi::{
     mkr_node_alloc, mkr_owned_text_from_borrowed_copy, Node, OwnedText, Step, VerifiedText,
     NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
 
-use crate::falloc::calloc::mkr_callocarray;
+use crate::falloc::raw::mkr_callocarray;
 pub use crate::xpath::ast_ops::mkr_step_clear;
 
 extern "C" {

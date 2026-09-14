@@ -8,6 +8,7 @@
 
 use super::abi::*;
 use super::dom::*;
+use crate::falloc::raw::mkr_callocarray;
 use core::ffi::c_void;
 use core::ptr;
 

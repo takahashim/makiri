@@ -12,6 +12,7 @@ use super::dom::*;
 use super::number;
 use super::own::Text;
 use crate::err_setf;
+use crate::falloc::raw::mkr_reallocarray;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
