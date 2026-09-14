@@ -95,7 +95,7 @@ unsafe impl Dom for Xml {
 
     #[inline]
     unsafe fn node_type(doc: Self::Doc, n: Self::Node) -> u32 {
-        nd(doc, n).map_or(0, |x| x.type_)
+        nd(doc, n).map_or(0, |x| x.type_.as_u32())
     }
 
     #[inline]

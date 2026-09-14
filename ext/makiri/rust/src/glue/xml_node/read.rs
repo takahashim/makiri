@@ -23,12 +23,12 @@ pub fn name(ruby: &Ruby, rb_self: Value) -> Value {
         let d = &*doc(rb_self);
         let id = unwrap(rb_self);
         match d.type_(id) {
-            T_ELEMENT | T_ATTRIBUTE => str_span(ruby, d, d.node(id).qname),
-            T_PI | T_DOCTYPE => str_span(ruby, d, d.node(id).local),
-            T_TEXT => ruby.str_new("text").as_value(),
-            T_CDATA => ruby.str_new("#cdata-section").as_value(),
-            T_COMMENT => ruby.str_new("comment").as_value(),
-            T_FRAGMENT => ruby.str_new("#document-fragment").as_value(),
+            Some(NodeType::Element | NodeType::Attribute) => str_span(ruby, d, d.node(id).qname),
+            Some(NodeType::Pi | NodeType::Doctype) => str_span(ruby, d, d.node(id).local),
+            Some(NodeType::Text) => ruby.str_new("text").as_value(),
+            Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
+            Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
+            Some(NodeType::Fragment) => ruby.str_new("#document-fragment").as_value(),
             _ => ruby.str_new("document").as_value(),
         }
     }
@@ -38,7 +38,7 @@ pub fn local_name(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
         let d = &*doc(rb_self);
         let id = unwrap(rb_self);
-        if d.type_(id) == T_ELEMENT || d.type_(id) == T_ATTRIBUTE {
+        if d.type_(id) == Some(NodeType::Element) || d.type_(id) == Some(NodeType::Attribute) {
             return str_span(ruby, d, d.node(id).local);
         }
         ruby.qnil().as_value()
@@ -72,8 +72,8 @@ pub fn namespace_uri(ruby: &Ruby, rb_self: Value) -> Value {
 pub fn node_type(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
         let d = &*doc(rb_self);
-        ruby.integer_from_i64(d.type_(unwrap(rb_self)) as i64)
-            .as_value()
+        let ty = d.type_(unwrap(rb_self)).map_or(0, |t| t.as_u32());
+        ruby.integer_from_i64(ty as i64).as_value()
     }
 }
 
@@ -106,7 +106,13 @@ pub fn content(ruby: &Ruby, rb_self: Value) -> Value {
         let id = unwrap(rb_self);
         if matches!(
             d.type_(id),
-            T_TEXT | T_CDATA | T_COMMENT | T_ATTRIBUTE | T_PI
+            Some(
+                NodeType::Text
+                    | NodeType::CData
+                    | NodeType::Comment
+                    | NodeType::Attribute
+                    | NodeType::Pi
+            )
         ) {
             return str_span(ruby, d, d.node(id).value);
         }
@@ -114,7 +120,7 @@ pub fn content(ruby: &Ruby, rb_self: Value) -> Value {
         let mut out: Vec<u8> = Vec::new();
         let mut cur = d.first_child(id);
         while let Some(c) = cur {
-            if matches!(d.type_(c), T_TEXT | T_CDATA) {
+            if matches!(d.type_(c), Some(NodeType::Text | NodeType::CData)) {
                 out.extend_from_slice(d.value(c));
             }
             if d.first_child(c).is_some() {
@@ -189,7 +195,7 @@ pub fn element_children(rb_self: Value) -> Value {
         let set = mkr_node_set_new(node_document(rb_self).as_raw());
         let mut c = d.first_child(unwrap(rb_self));
         while let Some(id) = c {
-            if d.type_(id) == T_ELEMENT {
+            if d.type_(id) == Some(NodeType::Element) {
                 mkr_node_set_push(set, id.to_token() as *mut core::ffi::c_void);
             }
             c = d.next(id);
@@ -215,7 +221,7 @@ pub fn children(rb_self: Value) -> Value {
 
 /// The attribute of `el` whose qualified name is exactly `name`.
 unsafe fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
-    if d.type_(el) != T_ELEMENT {
+    if d.type_(el) != Some(NodeType::Element) {
         return None;
     }
     let mut a = d.attrs(el);
@@ -233,7 +239,7 @@ pub fn aref(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error>
     unsafe {
         let d = &*doc(rb_self);
         let id = unwrap(rb_self);
-        if d.type_(id) != T_ELEMENT {
+        if d.type_(id) != Some(NodeType::Element) {
             return Ok(ruby.qnil().as_value());
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
@@ -255,7 +261,7 @@ pub fn attribute_by_qualified_name(
     unsafe {
         let d = &*doc(rb_self);
         let id = unwrap(rb_self);
-        if d.type_(id) != T_ELEMENT {
+        if d.type_(id) != Some(NodeType::Element) {
             return Ok(ruby.qnil().as_value());
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
@@ -281,7 +287,7 @@ pub fn attribute_nodes(rb_self: Value) -> Value {
         let d = &*doc(rb_self);
         let set = mkr_node_set_new(node_document(rb_self).as_raw());
         let id = unwrap(rb_self);
-        if d.type_(id) == T_ELEMENT {
+        if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
             while let Some(at) = a {
                 mkr_node_set_push(set, at.to_token() as *mut core::ffi::c_void);

@@ -11,10 +11,7 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse_ex, parse_fragment};
 use crate::xml::{
-    Document, NodeId, ERR_LIMIT, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, MUT_BAD_CHARS,
-    MUT_BAD_NS_DECL, MUT_CYCLE, MUT_HIERARCHY, MUT_OK, MUT_UNBOUND_NS, OK, T_ATTRIBUTE, T_CDATA,
-    T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT, XMLNS_NS_URI,
-    XML_NS_URI,
+    Document, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI, XML_NS_URI,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -56,10 +53,10 @@ unsafe fn doc_new() -> *mut Document {
     }
 }
 
-unsafe fn parse_lit(s: &[u8], st: &mut i32) -> *mut Document {
+unsafe fn parse_lit(s: &[u8], st: &mut Status) -> *mut Document {
     match parse_ex(s, None) {
         Ok(d) => {
-            *st = OK;
+            *st = Status::Ok;
             d
         }
         Err(e) => {
@@ -73,10 +70,10 @@ unsafe fn parse_ex_raw(
     src: *const c_char,
     len: usize,
     limits: Option<usize>,
-) -> Result<*mut Document, i32> {
+) -> Result<*mut Document, Status> {
     let max = limits.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
     if len > max {
-        return Err(ERR_LIMIT);
+        return Err(Status::Limit);
     }
     let src = if src.is_null() || len == 0 {
         &[]
@@ -91,9 +88,9 @@ unsafe fn parse_fragment_raw(
     src: *const c_char,
     len: usize,
     inherit_doc_ns: bool,
-) -> Result<NodeId, i32> {
+) -> Result<NodeId, Status> {
     if doc.is_null() || len > (*doc).max_bytes {
-        return Err(ERR_LIMIT);
+        return Err(Status::Limit);
     }
     let src = if src.is_null() || len == 0 {
         &[]
@@ -104,8 +101,8 @@ unsafe fn parse_fragment_raw(
 }
 
 /// `s` must be rejected with status `want`.
-unsafe fn rejects(s: &[u8], want: i32) -> bool {
-    let mut st = OK;
+unsafe fn rejects(s: &[u8], want: Status) -> bool {
+    let mut st = Status::Ok;
     let e = parse_lit(s, &mut st);
     if !e.is_null() {
         destroy_doc(e);
@@ -125,7 +122,7 @@ pub unsafe fn node_selftest() -> i32 {
     };
 
     idx += 1; /* 2: node zero-init + byte copy into the store */
-    let root = doc.new_node(T_ELEMENT);
+    let root = doc.new_node(NodeType::Element);
     let local = doc.store(b"Feed");
     if root.is_err()
         || local.is_err()
@@ -133,7 +130,7 @@ pub unsafe fn node_selftest() -> i32 {
             .node(root.as_ref().copied().unwrap_or(NodeId::INVALID))
             .first_child
             .is_some()
-        || doc.type_(root.as_ref().copied().unwrap_or(NodeId::INVALID)) != T_ELEMENT
+        || doc.type_(root.as_ref().copied().unwrap_or(NodeId::INVALID)) != Some(NodeType::Element)
         || doc.span(local.as_ref().copied().unwrap_or(crate::xml::Span::EMPTY)) != b"Feed"
     {
         return idx;
@@ -147,7 +144,7 @@ pub unsafe fn node_selftest() -> i32 {
 
     idx += 1; /* 4: build 1000 children */
     for _ in 0..1000 {
-        let Ok(c) = doc.new_node(T_ELEMENT) else {
+        let Ok(c) = doc.new_node(NodeType::Element) else {
             return idx;
         };
         doc.append_child(root, c);
@@ -158,7 +155,7 @@ pub unsafe fn node_selftest() -> i32 {
         cnt += 1;
         c = doc.next(id);
     }
-    if cnt != 1000 || doc.status() != OK {
+    if cnt != 1000 || doc.status != Status::Ok {
         return idx;
     }
 
@@ -166,7 +163,7 @@ pub unsafe fn node_selftest() -> i32 {
     {
         let mut doc = Document::create(None, 0).unwrap();
         doc.max_bytes = doc.arena_bytes; /* no room left for another node */
-        if doc.new_node(T_ELEMENT).is_ok() || doc.status() != ERR_LIMIT {
+        if doc.new_node(NodeType::Element).is_ok() || doc.status != Status::Limit {
             return idx;
         }
     }
@@ -177,8 +174,8 @@ pub unsafe fn node_selftest() -> i32 {
         doc.max_bytes = 4096;
         let mut hit = false;
         for _ in 0..100000 {
-            if doc.new_node(T_ELEMENT).is_err() {
-                hit = doc.status() == ERR_LIMIT;
+            if doc.new_node(NodeType::Element).is_err() {
+                hit = doc.status == Status::Limit;
                 break;
             }
         }
@@ -193,8 +190,8 @@ pub unsafe fn node_selftest() -> i32 {
         doc.max_nodes = 10;
         let mut nlimit = false;
         for _ in 0..100 {
-            if doc.new_node(T_ELEMENT).is_err() {
-                nlimit = doc.status() == ERR_LIMIT;
+            if doc.new_node(NodeType::Element).is_err() {
+                nlimit = doc.status == Status::Limit;
                 break;
             }
         }
@@ -204,7 +201,7 @@ pub unsafe fn node_selftest() -> i32 {
     }
 
     idx += 1; /* 8: fail-closed on a NULL document at the FFI boundary */
-    if !crate::xml::ffi::mkr_xml_arena_node(ptr::null_mut(), T_ELEMENT).is_invalid()
+    if !crate::xml::ffi::mkr_xml_arena_node(ptr::null_mut(), NodeType::Element).is_invalid()
         || crate::xml::ffi::mkr_xml_arena_bytes(ptr::null_mut(), ptr::null(), 1)
             != crate::xml::Span::EMPTY
     {
@@ -216,12 +213,12 @@ pub unsafe fn node_selftest() -> i32 {
 /* ---- mkr_xml_parse_selftest ---- */
 
 pub unsafe fn parse_selftest() -> i32 {
-    let mut st = OK;
+    let mut st = Status::Ok;
     let mut i = 0;
 
     i += 1; /* 1 */
     let d = parse_lit(b"<Feed x='1' y='two'>hi<b/>z</Feed>", &mut st);
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -230,7 +227,10 @@ pub unsafe fn parse_selftest() -> i32 {
     i += 1; /* 2 */
     let doc = &*d;
     let root = doc.root().unwrap_or(NodeId::INVALID);
-    if !name_is(doc, root, b"Feed") || doc.type_(root) != T_ELEMENT || doc.node(root).line != 1 {
+    if !name_is(doc, root, b"Feed")
+        || doc.type_(root) != Some(NodeType::Element)
+        || doc.node(root).line != 1
+    {
         destroy_doc(d);
         return i;
     }
@@ -238,7 +238,7 @@ pub unsafe fn parse_selftest() -> i32 {
     let a0 = doc.attrs(root).unwrap_or(NodeId::INVALID);
     let a1 = next(doc, a0).unwrap_or(NodeId::INVALID);
     if a0.is_invalid()
-        || doc.type_(a0) != T_ATTRIBUTE
+        || doc.type_(a0) != Some(NodeType::Attribute)
         || !name_is(doc, a0, b"x")
         || !val_is(doc, a0, b"1")
         || a1.is_invalid()
@@ -254,14 +254,14 @@ pub unsafe fn parse_selftest() -> i32 {
     let c1 = next(doc, c0).unwrap_or(NodeId::INVALID);
     let c2 = next(doc, c1).unwrap_or(NodeId::INVALID);
     if c0.is_invalid()
-        || doc.type_(c0) != T_TEXT
+        || doc.type_(c0) != Some(NodeType::Text)
         || !val_is(doc, c0, b"hi")
         || c1.is_invalid()
-        || doc.type_(c1) != T_ELEMENT
+        || doc.type_(c1) != Some(NodeType::Element)
         || !name_is(doc, c1, b"b")
         || doc.first_child(c1).is_some()
         || c2.is_invalid()
-        || doc.type_(c2) != T_TEXT
+        || doc.type_(c2) != Some(NodeType::Text)
         || !val_is(doc, c2, b"z")
         || doc.next(c2).is_some()
     {
@@ -298,7 +298,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<a x=>",
         b"<a y='<'>",
     ] {
-        if !rejects(s, ERR_SYNTAX) {
+        if !rejects(s, Status::Syntax) {
             return i;
         }
     }
@@ -308,7 +308,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<a x='p&amp;q' y='&#65;&#x42;'>1&lt;2&gt;3&amp;4&apos;5&quot;6</a>",
         &mut st,
     );
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -323,7 +323,7 @@ pub unsafe fn parse_selftest() -> i32 {
         if !val_is(doc, ax, b"p&q")
             || !val_is(doc, ay, b"AB")
             || tx.is_invalid()
-            || doc.type_(tx) != T_TEXT
+            || doc.type_(tx) != Some(NodeType::Text)
             || !val_is(doc, tx, b"1<2>3&4'5\"6")
         {
             destroy_doc(d);
@@ -340,7 +340,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<a>&#xD800;</a>",
         b"<a>&#;</a>",
     ] {
-        if !rejects(s, ERR_SYNTAX) {
+        if !rejects(s, Status::Syntax) {
             return i;
         }
     }
@@ -350,7 +350,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>",
         &mut st,
     );
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -412,14 +412,14 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<a xmlns:xml='wrong'/>",
         b"<a:b xmlns:a=''/>",
     ] {
-        if !rejects(s, ERR_SYNTAX) {
+        if !rejects(s, Status::Syntax) {
             return i;
         }
     }
 
     i += 1; /* 12: attribute-value normalization */
     let d = parse_lit(b"<a x=\"p\tq\nr\" y=\"p&#9;q&#10;r\">u\tv\nw</a>", &mut st);
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -434,7 +434,7 @@ pub unsafe fn parse_selftest() -> i32 {
         if !val_is(doc, ax, b"p q r")
             || !val_is(doc, ay, b"p\tq\nr")
             || tx.is_invalid()
-            || doc.type_(tx) != T_TEXT
+            || doc.type_(tx) != Some(NodeType::Text)
             || !val_is(doc, tx, b"u\tv\nw")
         {
             destroy_doc(d);
@@ -448,7 +448,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<?xml version=\"1.0\"?><?xml-stylesheet href=\"x\"?><!--top--><r><!--c--><![CDATA[a<b]]><?pi dat?></r><?tail t?>",
         &mut st,
     );
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -465,13 +465,13 @@ pub unsafe fn parse_selftest() -> i32 {
         let cd = next(doc, cm).unwrap_or(NodeId::INVALID);
         let pi = next(doc, cd).unwrap_or(NodeId::INVALID);
         if cm.is_invalid()
-            || doc.type_(cm) != T_COMMENT
+            || doc.type_(cm) != Some(NodeType::Comment)
             || !val_is(doc, cm, b"c")
             || cd.is_invalid()
-            || doc.type_(cd) != T_CDATA
+            || doc.type_(cd) != Some(NodeType::CData)
             || !val_is(doc, cd, b"a<b")
             || pi.is_invalid()
-            || doc.type_(pi) != T_PI
+            || doc.type_(pi) != Some(NodeType::Pi)
             || !name_is(doc, pi, b"pi")
             || !val_is(doc, pi, b"dat")
             || doc.next(pi).is_some()
@@ -485,15 +485,15 @@ pub unsafe fn parse_selftest() -> i32 {
         let p3 = next(doc, p2).unwrap_or(NodeId::INVALID);
         let p4 = next(doc, p3).unwrap_or(NodeId::INVALID);
         if p1.is_invalid()
-            || doc.type_(p1) != T_PI
+            || doc.type_(p1) != Some(NodeType::Pi)
             || !name_is(doc, p1, b"xml-stylesheet")
             || p2.is_invalid()
-            || doc.type_(p2) != T_COMMENT
+            || doc.type_(p2) != Some(NodeType::Comment)
             || !val_is(doc, p2, b"top")
             || p3 != r
             || doc.parent(r) != Some(dn)
             || p4.is_invalid()
-            || doc.type_(p4) != T_PI
+            || doc.type_(p4) != Some(NodeType::Pi)
             || !name_is(doc, p4, b"tail")
             || doc.next(p4).is_some()
         {
@@ -512,7 +512,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b" <?xml version=\"1.0\"?><r/>",
         b"<![CDATA[x]]><r/>",
     ] {
-        if !rejects(s, ERR_SYNTAX) {
+        if !rejects(s, Status::Syntax) {
             return i;
         }
     }
@@ -522,7 +522,7 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<!DOCTYPE r SYSTEM \"a>b\" [ <!ELEMENT r (#PCDATA)> ]><r>ok</r>",
         &mut st,
     );
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -537,7 +537,7 @@ pub unsafe fn parse_selftest() -> i32 {
         }
         let dt = doc.doctype().unwrap_or(NodeId::INVALID);
         if dt.is_invalid()
-            || doc.type_(dt) != T_DOCTYPE
+            || doc.type_(dt) != Some(NodeType::Doctype)
             || doc.parent(dt) != Some(doc.doc_node())
             || first(doc, doc.doc_node()) != Some(dt)
             || doc.prev(dt).is_some()
@@ -554,7 +554,7 @@ pub unsafe fn parse_selftest() -> i32 {
 
     i += 1; /* 15: line-ending normalization */
     let d = parse_lit(b"<a x=\"p\r\nq\r\">m\r\nn\ro</a>", &mut st);
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -567,7 +567,7 @@ pub unsafe fn parse_selftest() -> i32 {
         let tx = doc.first_child(r).unwrap_or(NodeId::INVALID);
         if !val_is(doc, ax, b"p q ")
             || tx.is_invalid()
-            || doc.type_(tx) != T_TEXT
+            || doc.type_(tx) != Some(NodeType::Text)
             || !val_is(doc, tx, b"m\nn\no")
         {
             destroy_doc(d);
@@ -584,12 +584,12 @@ pub unsafe fn parse_selftest() -> i32 {
         b"<e xmlns:a='u' xmlns:b='u' a:x='1' b:x='2'/>",
         b"<a>foo]]>bar</a>",
     ] {
-        if !rejects(s, ERR_SYNTAX) {
+        if !rejects(s, Status::Syntax) {
             return i;
         }
     }
     let d = parse_lit(b"<a>1]2]]3</a>", &mut st);
-    if d.is_null() || st != OK {
+    if d.is_null() || st != Status::Ok {
         if !d.is_null() {
             destroy_doc(d);
         }
@@ -611,7 +611,7 @@ pub unsafe fn parse_selftest() -> i32 {
             b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>",
             &mut st,
         );
-        if d.is_null() || st != OK {
+        if d.is_null() || st != Status::Ok {
             if !d.is_null() {
                 destroy_doc(d);
             }
@@ -631,13 +631,13 @@ pub unsafe fn parse_selftest() -> i32 {
             b"<a x=\"1\"y=\"2\"/>",
             b"<a>&#X58;</a>",
         ] {
-            if !rejects(s, ERR_SYNTAX) {
+            if !rejects(s, Status::Syntax) {
                 return i;
             }
         }
-        if !rejects(b"<?xml version=\"1.1\"?><r/>", ERR_VERSION)
-            || !rejects(b"<?xml version=\"1.5\"?><r/>", ERR_VERSION)
-            || !rejects(b"<?xml version=\"2.0\"?><r/>", ERR_SYNTAX)
+        if !rejects(b"<?xml version=\"1.1\"?><r/>", Status::Version)
+            || !rejects(b"<?xml version=\"1.5\"?><r/>", Status::Version)
+            || !rejects(b"<?xml version=\"2.0\"?><r/>", Status::Syntax)
         {
             return i;
         }
@@ -647,7 +647,7 @@ pub unsafe fn parse_selftest() -> i32 {
     {
         let tiny = b"<r/>";
         match parse_ex_raw(tiny.as_ptr() as *const c_char, MAX_BYTES + 1, None) {
-            Err(e) if e == ERR_LIMIT => {}
+            Err(Status::Limit) => {}
             Ok(d) => {
                 destroy_doc(d);
                 return i;
@@ -655,7 +655,7 @@ pub unsafe fn parse_selftest() -> i32 {
             Err(_) => return i,
         }
         let d = parse_lit(tiny, &mut st);
-        if d.is_null() || st != OK {
+        if d.is_null() || st != Status::Ok {
             if !d.is_null() {
                 destroy_doc(d);
             }
@@ -669,7 +669,7 @@ pub unsafe fn parse_selftest() -> i32 {
         let src = b"<root><a/><b/><c/></root>";
         let p = src.as_ptr() as *const c_char;
         match parse_ex_raw(p, src.len(), Some(2)) {
-            Err(e) if e == ERR_LIMIT => {}
+            Err(Status::Limit) => {}
             Ok(d) => {
                 destroy_doc(d);
                 return i;
@@ -677,7 +677,7 @@ pub unsafe fn parse_selftest() -> i32 {
             Err(_) => return i,
         }
         match parse_ex_raw(p, src.len(), Some(64)) {
-            Err(e) if e == ERR_LIMIT => {}
+            Err(Status::Limit) => {}
             Ok(d) => {
                 destroy_doc(d);
                 return i;
@@ -715,7 +715,7 @@ pub unsafe fn parse_selftest() -> i32 {
             }
         };
         let d = &*fd;
-        if d.type_(frag) != T_FRAGMENT {
+        if d.type_(frag) != Some(NodeType::Fragment) {
             destroy_doc(fd);
             return i;
         }
@@ -723,9 +723,9 @@ pub unsafe fn parse_selftest() -> i32 {
         let c1 = next(d, c0).unwrap_or(NodeId::INVALID);
         let c2 = next(d, c1).unwrap_or(NodeId::INVALID);
         if !name_is(d, c0, b"a")
-            || d.type_(c0) != T_ELEMENT
+            || d.type_(c0) != Some(NodeType::Element)
             || c1.is_invalid()
-            || d.type_(c1) != T_TEXT
+            || d.type_(c1) != Some(NodeType::Text)
             || !val_is(d, c1, b"txt")
             || !name_is(d, c2, b"b")
             || !ns_is(d, c2, b"urn:p")
@@ -762,7 +762,7 @@ pub unsafe fn parse_selftest() -> i32 {
     {
         let fsrc = b"<p:a/><plain/>";
         let fd = parse_lit(b"<r xmlns:p='urn:p' xmlns='urn:d'/>", &mut st);
-        if fd.is_null() || st != OK {
+        if fd.is_null() || st != Status::Ok {
             if !fd.is_null() {
                 destroy_doc(fd);
             }
@@ -817,7 +817,7 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 2. root element, attribute set/replace */
-    let r = match doc.new_node(T_ELEMENT) {
+    let r = match doc.new_node(NodeType::Element) {
         Ok(n) => n,
         Err(_) => return 7,
     };
@@ -840,28 +840,28 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 3. fail-closed: non-XML-Char value */
-    if mutate::set_attribute(doc, r, b"k", b"\x01") != Err(MUT_BAD_CHARS) {
+    if mutate::set_attribute(doc, r, b"k", b"\x01") != Err(MutStatus::BadChars) {
         return 11;
     }
 
     /* 3b. forbidden value sequences */
-    if mutate::new_chardata(doc, T_COMMENT, b"a--b") != Err(MUT_BAD_CHARS) {
+    if mutate::new_chardata(doc, NodeType::Comment, b"a--b") != Err(MutStatus::BadChars) {
         return 111;
     }
-    if mutate::new_chardata(doc, T_COMMENT, b"x-") != Err(MUT_BAD_CHARS) {
+    if mutate::new_chardata(doc, NodeType::Comment, b"x-") != Err(MutStatus::BadChars) {
         return 112;
     }
-    if mutate::new_chardata(doc, T_CDATA, b"a]]>b") != Err(MUT_BAD_CHARS) {
+    if mutate::new_chardata(doc, NodeType::CData, b"a]]>b") != Err(MutStatus::BadChars) {
         return 113;
     }
-    let chk = match mutate::new_chardata(doc, T_COMMENT, b"a-b") {
+    let chk = match mutate::new_chardata(doc, NodeType::Comment, b"a-b") {
         Ok(n) => n,
         Err(_) => return 114,
     };
-    if mutate::set_content(doc, chk, b"x--y") != MUT_BAD_CHARS {
+    if mutate::set_content(doc, chk, b"x--y") != MutStatus::BadChars {
         return 115;
     }
-    if mutate::set_attribute(doc, r, b"xmlns:q", b"") != Err(MUT_BAD_NS_DECL) {
+    if mutate::set_attribute(doc, r, b"xmlns:q", b"") != Err(MutStatus::BadNsDecl) {
         return 116;
     }
     if mutate::set_attribute(doc, r, b"xmlns", b"").is_err() {
@@ -906,15 +906,15 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 6. remove by name (idempotent) */
-    if mutate::remove_attribute(doc, r, b"id") != 1 {
+    if !mutate::remove_attribute(doc, r, b"id") {
         return 16;
     }
-    if mutate::remove_attribute(doc, r, b"id") != 0 {
+    if mutate::remove_attribute(doc, r, b"id") {
         return 17;
     }
 
     /* 7. rename */
-    if mutate::rename(doc, r, b"q") != MUT_OK
+    if mutate::rename(doc, r, b"q") != MutStatus::Ok
         || doc.node(r).qname.len != 1
         || doc.local(r) != b"q"
         || doc.node(r).ns_uri.len != 0
@@ -923,26 +923,26 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 8. content */
-    let c1 = match doc.new_node(T_ELEMENT) {
+    let c1 = match doc.new_node(NodeType::Element) {
         Ok(n) => n,
         Err(_) => return 19,
     };
     doc.node_mut(c1).parent = Some(r);
     doc.node_mut(r).first_child = Some(c1);
     doc.node_mut(r).last_child = Some(c1);
-    if mutate::set_content(doc, r, b"hi") != MUT_OK {
+    if mutate::set_content(doc, r, b"hi") != MutStatus::Ok {
         return 20;
     }
     let fc = doc.first_child(r).unwrap_or(invalid);
     if fc.is_invalid()
-        || doc.type_(fc) != T_TEXT
+        || doc.type_(fc) != Some(NodeType::Text)
         || doc.node(fc).value.len != 2
         || doc.last_child(r) != Some(fc)
         || doc.parent(c1).is_some()
     {
         return 21;
     }
-    if mutate::set_content(doc, r, b"") != MUT_OK
+    if mutate::set_content(doc, r, b"") != MutStatus::Ok
         || doc.first_child(r).is_some()
         || doc.last_child(r).is_some()
     {
@@ -950,11 +950,11 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 9. detach */
-    let a1 = match doc.new_node(T_ELEMENT) {
+    let a1 = match doc.new_node(NodeType::Element) {
         Ok(n) => n,
         Err(_) => return 23,
     };
-    let a2 = match doc.new_node(T_ELEMENT) {
+    let a2 = match doc.new_node(NodeType::Element) {
         Ok(n) => n,
         Err(_) => return 23,
     };
@@ -974,7 +974,7 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 10. a live document node + connected root */
-    let docn = match doc.new_node(T_DOCUMENT) {
+    let docn = match doc.new_node(NodeType::Document) {
         Ok(n) => n,
         Err(_) => return 26,
     };
@@ -989,10 +989,10 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     if mutate::set_attribute(doc, pr, b"xmlns:p", b"urn:p").is_err() {
         return 28;
     }
-    if mutate::insert_child(doc, docn, pr) != MUT_OK || doc.root() != Some(pr) {
+    if mutate::insert_child(doc, docn, pr) != MutStatus::Ok || doc.root() != Some(pr) {
         return 29;
     }
-    let tx = match mutate::new_chardata(doc, T_TEXT, b"hi") {
+    let tx = match mutate::new_chardata(doc, NodeType::Text, b"hi") {
         Ok(n) => n,
         Err(_) => return 30,
     };
@@ -1005,14 +1005,14 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 31,
     };
-    if mutate::insert_child(doc, pr, ne) != MUT_OK
+    if mutate::insert_child(doc, pr, ne) != MutStatus::Ok
         || doc.first_child(pr) != Some(ne)
         || doc.parent(ne) != Some(pr)
         || doc.ns(ne) != b"urn:p"
     {
         return 32;
     }
-    if mutate::insert_child(doc, ne, tx) != MUT_OK || doc.first_child(ne) != Some(tx) {
+    if mutate::insert_child(doc, ne, tx) != MutStatus::Ok || doc.first_child(ne) != Some(tx) {
         return 33;
     }
 
@@ -1021,7 +1021,7 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 34,
     };
-    if mutate::insert_child(doc, pr, ub) != MUT_UNBOUND_NS
+    if mutate::insert_child(doc, pr, ub) != MutStatus::UnboundNs
         || doc.parent(ub).is_some()
         || doc.last_child(pr) != Some(ne)
     {
@@ -1037,10 +1037,10 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 36,
     };
-    if mutate::insert_child(doc, wrap, inner) != MUT_OK || doc.node(inner).ns_uri.len != 0 {
+    if mutate::insert_child(doc, wrap, inner) != MutStatus::Ok || doc.node(inner).ns_uri.len != 0 {
         return 37;
     }
-    if mutate::insert_child(doc, pr, wrap) != MUT_OK
+    if mutate::insert_child(doc, pr, wrap) != MutStatus::Ok
         || doc.ns(wrap) != b"urn:p"
         || doc.ns(inner) != b"urn:p"
     {
@@ -1048,7 +1048,7 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
     }
 
     /* 14. cycle rejection */
-    if mutate::insert_child(doc, ne, pr) != MUT_CYCLE {
+    if mutate::insert_child(doc, ne, pr) != MutStatus::Cycle {
         return 39;
     }
 
@@ -1061,19 +1061,19 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 40,
     };
-    if mutate::insert_before(doc, ne, b1) != MUT_OK
+    if mutate::insert_before(doc, ne, b1) != MutStatus::Ok
         || doc.first_child(pr) != Some(b1)
         || doc.next(b1) != Some(ne)
     {
         return 41;
     }
-    if mutate::insert_after(doc, ne, b2) != MUT_OK || doc.next(ne) != Some(b2) {
+    if mutate::insert_after(doc, ne, b2) != MutStatus::Ok || doc.next(ne) != Some(b2) {
         return 42;
     }
-    if mutate::insert_before(doc, ne, ne) != MUT_OK
+    if mutate::insert_before(doc, ne, ne) != MutStatus::Ok
         || doc.next(ne) == Some(ne)
         || doc.prev(ne) == Some(ne)
-        || mutate::insert_after(doc, ne, ne) != MUT_OK
+        || mutate::insert_after(doc, ne, ne) != MutStatus::Ok
         || doc.next(ne) == Some(ne)
     {
         return 99;
@@ -1084,7 +1084,7 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 43,
     };
-    if mutate::replace_node(doc, ne, rep) != MUT_OK
+    if mutate::replace_node(doc, ne, rep) != MutStatus::Ok
         || doc.parent(ne).is_some()
         || doc.parent(rep) != Some(pr)
         || doc.next(b1) != Some(rep)
@@ -1116,7 +1116,7 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         Ok(n) => n,
         Err(_) => return 47,
     };
-    if mutate::insert_child(doc, docn, root2) != MUT_HIERARCHY {
+    if mutate::insert_child(doc, docn, root2) != MutStatus::Hierarchy {
         return 48;
     }
     0

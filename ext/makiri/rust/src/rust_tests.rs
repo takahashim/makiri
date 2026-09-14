@@ -249,16 +249,16 @@ fn node_id_tokens_fail_closed_outside_their_document() {
     // reject anything that does not name a live slot in THIS document: a
     // foreign document's handle (same index, different stamp), an out-of-range
     // index, and the null handle.
-    use crate::xml::{Document, NodeId, T_ELEMENT};
+    use crate::xml::{Document, NodeId, NodeType};
 
     let mut a = Document::create(None, 0).expect("doc a");
     let mut b = Document::create(None, 0).expect("doc b");
-    let na = a.new_node(T_ELEMENT).expect("node a");
-    let nb = b.new_node(T_ELEMENT).expect("node b");
+    let na = a.new_node(NodeType::Element).expect("node a");
+    let nb = b.new_node(NodeType::Element).expect("node b");
 
     // The handle resolves in its own document.
-    assert_eq!(a.try_node(na).map(|n| n.type_), Some(T_ELEMENT));
-    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(T_ELEMENT));
+    assert_eq!(a.try_node(na).map(|n| n.type_), Some(NodeType::Element));
+    assert_eq!(b.try_node(nb).map(|n| n.type_), Some(NodeType::Element));
 
     // Same slot index, different document stamp -> rejected.
     assert_eq!(na.index(), nb.index());

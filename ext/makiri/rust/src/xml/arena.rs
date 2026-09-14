@@ -9,10 +9,7 @@
 
 use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
-use crate::xml::{
-    Doc, Document, Limits, Node, NodeId, Span, ERR_INTERNAL, ERR_LIMIT, ERR_OOM, ERR_SYNTAX,
-    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
-};
+use crate::xml::{Doc, Document, Limits, Node, NodeId, NodeType, Span, Status};
 use core::ffi::c_char;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -20,36 +17,20 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// built for one document is rejected by another's `try_node`.
 static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 
-#[inline]
-fn valid_type(t: u32) -> bool {
-    matches!(
-        t,
-        T_ELEMENT
-            | T_ATTRIBUTE
-            | T_TEXT
-            | T_CDATA
-            | T_PI
-            | T_COMMENT
-            | T_DOCUMENT
-            | T_DOCTYPE
-            | T_FRAGMENT
-    )
-}
-
 const NODE_COST: usize = core::mem::size_of::<Node>();
 
 impl Document {
     /// A fresh document with `limits` applied, rejecting `src_len` up front when
     /// it already exceeds the byte budget.
-    pub fn create(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, i32> {
-        let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| ERR_OOM)?;
+    pub fn create(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, Status> {
+        let mut doc = crate::falloc::try_box(Document::blank()).map_err(|_| Status::Oom)?;
         if let Some(mb) = limits {
             if mb != 0 {
                 doc.max_bytes = mb;
             }
         }
         if src_len > doc.max_bytes {
-            return Err(ERR_LIMIT);
+            return Err(Status::Limit);
         }
         let mut stamp = DOC_STAMP.fetch_add(1, Ordering::Relaxed);
         if stamp == 0 {
@@ -60,8 +41,8 @@ impl Document {
         doc.xmlns_ns = doc.store(crate::xml::XMLNS_NS_URI)?;
         /* Index 0 is reserved: it is the null handle's slot (token 0 == a NULL
          * `void *`), so a real node never has index 0. */
-        let _null_slot = doc.new_node(T_DOCUMENT)?;
-        doc.doc_node = doc.new_node(T_DOCUMENT)?;
+        let _null_slot = doc.new_node(NodeType::Document)?;
+        doc.doc_node = doc.new_node(NodeType::Document)?;
         Ok(doc)
     }
 
@@ -74,21 +55,16 @@ impl Document {
         self.xmlns_ns
     }
 
-    #[inline]
-    pub fn status(&self) -> i32 {
-        self.oom
-    }
-
     /// Count `amount` more bytes against the budget, failing closed.
-    fn charge(&mut self, amount: usize) -> Result<(), i32> {
+    fn charge(&mut self, amount: usize) -> Result<(), Status> {
         match self.arena_bytes.checked_add(amount) {
             Some(t) if t <= self.max_bytes => {
                 self.arena_bytes = t;
                 Ok(())
             }
             _ => {
-                self.oom = ERR_LIMIT;
-                Err(ERR_LIMIT)
+                self.status = Status::Limit;
+                Err(Status::Limit)
             }
         }
     }
@@ -159,8 +135,8 @@ impl Document {
         self.try_node(id).and_then(|n| n.attrs)
     }
     #[inline]
-    pub fn type_(&self, id: NodeId) -> u32 {
-        self.try_node(id).map_or(0, |n| n.type_)
+    pub fn type_(&self, id: NodeId) -> Option<NodeType> {
+        self.try_node(id).map(|n| n.type_)
     }
 
     /* ---- byte store ---- */
@@ -196,7 +172,7 @@ impl Document {
 
     /// Copy `src` into the byte store, returning its span. Empty is the shared
     /// empty span (never an allocation).
-    pub fn store(&mut self, src: &[u8]) -> Result<Span, i32> {
+    pub fn store(&mut self, src: &[u8]) -> Result<Span, Status> {
         if src.is_empty() {
             // A present-but-empty value: offset is the tail, so it is distinct
             // from the `ABSENT` marker (offset u32::MAX).
@@ -208,7 +184,7 @@ impl Document {
         self.charge(src.len())?;
         self.bytes
             .mkr_reserve(src.len())
-            .map_err(|_| self.fail(ERR_OOM))?;
+            .map_err(|_| self.fail(Status::Oom))?;
         let off = self.bytes.len() as u32;
         self.bytes.extend_from_slice(src);
         Ok(Span {
@@ -224,21 +200,21 @@ impl Document {
     }
 
     /// Set a node's value to a fresh copy of `data`.
-    pub fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), i32> {
+    pub fn set_value_bytes(&mut self, id: NodeId, data: &[u8]) -> Result<(), Status> {
         let span = self.store(data)?;
         self.node_mut(id).value = span;
         Ok(())
     }
 
     /// Set a node's namespace URI to a fresh copy of `uri`.
-    pub fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), i32> {
+    pub fn set_ns_bytes(&mut self, id: NodeId, uri: &[u8]) -> Result<(), Status> {
         let span = self.store(uri)?;
         self.node_mut(id).ns_uri = span;
         Ok(())
     }
 
     /// Set a leaf's name (PI target) to a fresh copy of `name`.
-    pub fn set_local_bytes(&mut self, id: NodeId, name: &[u8]) -> Result<(), i32> {
+    pub fn set_local_bytes(&mut self, id: NodeId, name: &[u8]) -> Result<(), Status> {
         let span = self.store(name)?;
         let n = self.node_mut(id);
         n.local = span;
@@ -254,7 +230,7 @@ impl Document {
         prefix_len: u32,
         local_off: u32,
         local_len: u32,
-    ) -> Result<(), i32> {
+    ) -> Result<(), Status> {
         let span = self.store(name)?;
         let n = self.node_mut(id);
         n.qname = span;
@@ -271,21 +247,20 @@ impl Document {
 
     /* ---- allocation ---- */
 
-    fn fail(&mut self, st: i32) -> i32 {
-        self.oom = st;
+    fn fail(&mut self, st: Status) -> Status {
+        self.status = st;
         st
     }
 
     /// Allocate a zeroed node, counted against the node and byte budgets.
-    pub fn new_node(&mut self, type_: u32) -> Result<NodeId, i32> {
-        if !valid_type(type_) {
-            return Err(self.fail(ERR_INTERNAL));
-        }
+    pub fn new_node(&mut self, type_: NodeType) -> Result<NodeId, Status> {
         if self.nodes.len() + 1 > self.max_nodes {
-            return Err(self.fail(ERR_LIMIT));
+            return Err(self.fail(Status::Limit));
         }
         self.charge(NODE_COST)?;
-        self.nodes.mkr_reserve(1).map_err(|_| self.fail(ERR_OOM))?;
+        self.nodes
+            .mkr_reserve(1)
+            .map_err(|_| self.fail(Status::Oom))?;
         let index = self.nodes.len() as u32;
         let stamp = self.stamp;
         self.nodes.push(Node::zeroed(type_, stamp));
@@ -293,25 +268,25 @@ impl Document {
     }
 
     /// Expand XML references into one byte-store span.
-    pub fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, i32> {
+    pub fn expand(&mut self, src: &[u8], mode: ExpandMode) -> Result<Span, Status> {
         if src.is_empty() {
             return Ok(Span::EMPTY);
         }
         self.charge(src.len())?;
         self.bytes
             .mkr_reserve(src.len())
-            .map_err(|_| self.fail(ERR_OOM))?;
+            .map_err(|_| self.fail(Status::Oom))?;
         let off = self.bytes.len();
         self.bytes.resize(off + src.len(), 0);
         let n = match expand_into(src, mode, &mut self.bytes[off..]) {
             Ok(n) => n,
             Err(ExpandErr::Syntax) => {
                 self.bytes.truncate(off);
-                return Err(ERR_SYNTAX);
+                return Err(Status::Syntax);
             }
             Err(ExpandErr::Overflow) => {
                 self.bytes.truncate(off);
-                return Err(ERR_INTERNAL);
+                return Err(Status::Internal);
             }
         };
         self.bytes.truncate(off + n);
@@ -325,7 +300,12 @@ impl Document {
 
     /// Append a TEXT/CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
-    pub fn append_chardata(&mut self, parent: NodeId, type_: u32, span: Span) -> Result<(), i32> {
+    pub fn append_chardata(
+        &mut self,
+        parent: NodeId,
+        type_: NodeType,
+        span: Span,
+    ) -> Result<(), Status> {
         if let Some(last) = self.node(parent).last_child {
             if self.node(last).type_ == type_ {
                 let old = self.node(last).value;
@@ -335,7 +315,7 @@ impl Document {
                     let total = (old.len as usize)
                         .checked_add(span.len as usize)
                         .filter(|&t| t <= u32::MAX as usize)
-                        .ok_or_else(|| self.fail(ERR_LIMIT))?;
+                        .ok_or_else(|| self.fail(Status::Limit))?;
                     self.node_mut(last).value.len = total as u32;
                     return Ok(());
                 }
@@ -345,7 +325,7 @@ impl Document {
                 merged
                     .mkr_extend(self.span(a))
                     .and_then(|()| merged.mkr_extend(self.span(b)))
-                    .map_err(|_| self.fail(ERR_OOM))?;
+                    .map_err(|_| self.fail(Status::Oom))?;
                 let s = self.store(&merged)?;
                 self.node_mut(last).value = s;
                 return Ok(());
@@ -383,7 +363,7 @@ impl Document {
         let Some(parent) = self.node(node).parent else {
             return;
         };
-        if self.node(node).type_ == T_ATTRIBUTE {
+        if self.node(node).type_ == NodeType::Attribute {
             let mut prev: Option<NodeId> = None;
             let mut a = self.node(parent).attrs;
             while let Some(cur) = a {
@@ -488,14 +468,14 @@ impl Document {
         while let Some(p) = self.node(top).parent {
             top = p;
         }
-        self.node(top).type_ == T_DOCUMENT
+        self.node(top).type_ == NodeType::Document
     }
 
     /// Nearest in-scope binding for `prefix` ("" = default) at or above `node`.
     pub fn resolve_in_scope(&self, node: Option<NodeId>, prefix: &[u8]) -> Option<Span> {
         let mut e = node;
         while let Some(id) = e {
-            if self.node(id).type_ == T_ELEMENT {
+            if self.node(id).type_ == NodeType::Element {
                 let mut a = self.node(id).attrs;
                 while let Some(attr) = a {
                     if let Some(p) = crate::xml::qname::xmlns_prefix(self.qname(attr)) {
@@ -551,7 +531,7 @@ impl Document {
     }
     #[inline]
     pub fn mark_encoding_decl(&mut self) {
-        self.has_encoding_decl = 1;
+        self.has_encoding_decl = true;
     }
 
     /// Re-derive root / doctype from the tree after a change at the document
@@ -565,10 +545,10 @@ impl Document {
         let mut c = self.node(self.doc_node).first_child;
         while let Some(cur) = c {
             let t = self.node(cur).type_;
-            if self.root.is_none() && t == T_ELEMENT {
+            if self.root.is_none() && t == NodeType::Element {
                 self.root = Some(cur);
             }
-            if self.doctype.is_none() && t == T_DOCTYPE {
+            if self.doctype.is_none() && t == NodeType::Doctype {
                 self.doctype = Some(cur);
             }
             c = self.node(cur).next;
@@ -599,7 +579,7 @@ pub fn span_is_empty(s: Span) -> bool {
 
 /// Historical free entry points, now thin wrappers over [`Document`]. They keep
 /// the FFI adapter's shape while the engine is index-based.
-pub fn create_doc(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, i32> {
+pub fn create_doc(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, Status> {
     Document::create(limits, src_len)
 }
 

@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use crate::xml::chars::{decode1, is_name_start, validate_name};
+use crate::xml::NodeType;
 
 /// A QName split into its parts as OFFSETS into the name (prefix is always
 /// at offset 0; prefix_len 0 = unprefixed).
@@ -90,11 +91,11 @@ pub fn is_yes_no(s: &[u8]) -> bool {
 
 /// Forbidden character SEQUENCE for a leaf value: "--" (or a trailing "-") in
 /// a comment, "]]>" in CDATA, "?>" in a PI. mkr_xml_check_value_seq.
-pub fn value_seq_ok(node_type: u32, text: &[u8]) -> bool {
+pub fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
     match node_type {
-        crate::xml::T_COMMENT => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
-        crate::xml::T_CDATA => !text.windows(3).any(|w| w == b"]]>"),
-        crate::xml::T_PI => !text.windows(2).any(|w| w == b"?>"),
+        NodeType::Comment => text.last() != Some(&b'-') && !text.windows(2).any(|w| w == b"--"),
+        NodeType::CData => !text.windows(3).any(|w| w == b"]]>"),
+        NodeType::Pi => !text.windows(2).any(|w| w == b"?>"),
         _ => true,
     }
 }

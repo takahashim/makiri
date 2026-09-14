@@ -101,7 +101,9 @@ pub fn namespace(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     unsafe {
         let d = &*doc(rb_self);
         let id = unwrap(rb_self);
-        if !matches!(d.type_(id), T_ELEMENT | T_ATTRIBUTE) || d.node(id).ns_uri.len == 0 {
+        if !matches!(d.type_(id), Some(NodeType::Element | NodeType::Attribute))
+            || d.node(id).ns_uri.len == 0
+        {
             return Ok(ruby.qnil().as_value());
         }
         let prefix = if d.node(id).prefix.len == 0 {
@@ -119,7 +121,7 @@ pub fn namespace_definitions(ruby: &Ruby, rb_self: Value) -> Result<RArray, Erro
     unsafe {
         let d = &*doc(rb_self);
         let id = unwrap(rb_self);
-        if d.type_(id) == T_ELEMENT {
+        if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
             while let Some(at) = a {
                 if let Some((p, u)) = xmlns_decl(d, at) {
@@ -145,7 +147,7 @@ pub fn namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
         let d = &*doc(rb_self);
         let mut e = Some(unwrap(rb_self));
         while let Some(id) = e {
-            if d.type_(id) == T_ELEMENT {
+            if d.type_(id) == Some(NodeType::Element) {
                 let mut a = d.attrs(id);
                 while let Some(at) = a {
                     if let Some((_, u)) = xmlns_decl(d, at) {
@@ -175,7 +177,7 @@ pub fn collect_namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
         }
         let mut cur = Some(root);
         while let Some(id) = cur {
-            if d.type_(id) == T_ELEMENT {
+            if d.type_(id) == Some(NodeType::Element) {
                 let mut a = d.attrs(id);
                 while let Some(at) = a {
                     if let Some((_, u)) = xmlns_decl(d, at) {

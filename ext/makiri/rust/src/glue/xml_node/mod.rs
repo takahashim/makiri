@@ -46,18 +46,18 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
     }
     let xdoc = mkr_doc_of(document);
     let ty = (*xdoc).type_(id);
-    if ty == T_DOCUMENT {
+    if ty == Some(NodeType::Document) {
         return document;
     }
     let klass = match ty {
-        T_ELEMENT => mkr_cXmlElement,
-        T_ATTRIBUTE => mkr_cXmlAttr,
-        T_TEXT => mkr_cXmlText,
-        T_CDATA => mkr_cXmlCDATASection,
-        T_COMMENT => mkr_cXmlComment,
-        T_PI => mkr_cXmlProcessingInstruction,
-        T_DOCTYPE => mkr_cXmlDocumentType,
-        T_FRAGMENT => mkr_cXmlDocumentFragment,
+        Some(NodeType::Element) => mkr_cXmlElement,
+        Some(NodeType::Attribute) => mkr_cXmlAttr,
+        Some(NodeType::Text) => mkr_cXmlText,
+        Some(NodeType::CData) => mkr_cXmlCDATASection,
+        Some(NodeType::Comment) => mkr_cXmlComment,
+        Some(NodeType::Pi) => mkr_cXmlProcessingInstruction,
+        Some(NodeType::Doctype) => mkr_cXmlDocumentType,
+        Some(NodeType::Fragment) => mkr_cXmlDocumentFragment,
         _ => mkr_cXmlNode,
     };
 

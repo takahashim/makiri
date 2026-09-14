@@ -15,8 +15,7 @@ use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree;
 use crate::xml::{
-    bytes, empty, Document, Limits, NodeId, Span, ERR_INTERNAL, ERR_LIMIT, MAX_BYTES, MUT_OK, OK,
-    T_ATTRIBUTE,
+    bytes, empty, Document, Limits, MutStatus, NodeId, NodeType, Span, Status, MAX_BYTES,
 };
 use core::ffi::c_char;
 use core::ptr;
@@ -31,11 +30,11 @@ unsafe fn put<T>(p: *mut T, v: T) {
 /// Write a mutation result into an `out` handle: the node id on success, the
 /// invalid id on failure (the C entry points' contract).
 #[inline]
-unsafe fn put_node(out: *mut NodeId, r: Result<NodeId, i32>) -> i32 {
+unsafe fn put_node(out: *mut NodeId, r: Result<NodeId, MutStatus>) -> MutStatus {
     match r {
         Ok(n) => {
             put(out, n);
-            MUT_OK
+            MutStatus::Ok
         }
         Err(st) => {
             put(out, NodeId::INVALID);
@@ -76,7 +75,7 @@ pub unsafe fn mkr_xml_doc_memsize(doc: *const Document) -> usize {
     }
 }
 
-pub unsafe fn mkr_xml_arena_node(doc: *mut Document, type_: u32) -> NodeId {
+pub unsafe fn mkr_xml_arena_node(doc: *mut Document, type_: NodeType) -> NodeId {
     match doc_mut(doc) {
         Some(d) => d.new_node(type_).unwrap_or(NodeId::INVALID),
         None => NodeId::INVALID,
@@ -177,7 +176,7 @@ pub unsafe fn mkr_xml_mutate_selftest() -> i32 {
 
 /* ---- parse ---- */
 
-pub unsafe fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut i32) -> *mut Document {
+pub unsafe fn mkr_xml_parse(src: *const c_char, len: usize, status: *mut Status) -> *mut Document {
     mkr_xml_parse_ex(src, len, ptr::null(), status)
 }
 
@@ -185,12 +184,12 @@ pub unsafe fn mkr_xml_parse_ex(
     src: *const c_char,
     len: usize,
     limits: *const Limits,
-    status: *mut i32,
+    status: *mut Status,
 ) -> *mut Document {
     let lim = limits.as_ref().map(|l| l.max_bytes);
     let max = lim.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
     if len > max {
-        put(status, ERR_LIMIT);
+        put(status, Status::Limit);
         return ptr::null_mut();
     }
     let src = if src.is_null() || len == 0 {
@@ -200,7 +199,7 @@ pub unsafe fn mkr_xml_parse_ex(
     };
     match tree::parse_ex(src, lim) {
         Ok(doc) => {
-            put(status, OK);
+            put(status, Status::Ok);
             doc
         }
         Err(st) => {
@@ -214,15 +213,15 @@ pub unsafe fn mkr_xml_parse_fragment(
     doc: *mut Document,
     src: *const c_char,
     len: usize,
-    inherit_doc_ns: i32,
-    status: *mut i32,
+    inherit_doc_ns: bool,
+    status: *mut Status,
 ) -> NodeId {
     let Some(doc) = doc_mut(doc) else {
-        put(status, ERR_INTERNAL);
+        put(status, Status::Internal);
         return NodeId::INVALID;
     };
     if len > doc.max_bytes {
-        put(status, ERR_LIMIT);
+        put(status, Status::Limit);
         return NodeId::INVALID;
     }
     let src = if src.is_null() || len == 0 {
@@ -230,9 +229,9 @@ pub unsafe fn mkr_xml_parse_fragment(
     } else {
         core::slice::from_raw_parts(src as *const u8, len)
     };
-    match tree::parse_fragment(doc, src, inherit_doc_ns != 0) {
+    match tree::parse_fragment(doc, src, inherit_doc_ns) {
         Ok(frag) => {
-            put(status, OK);
+            put(status, Status::Ok);
             frag
         }
         Err(st) => {
@@ -242,7 +241,13 @@ pub unsafe fn mkr_xml_parse_fragment(
     }
 }
 
-/* ---- character data ---- */
+/* ---- character data ----
+ *
+ * These keep the C predicate convention (`0` = valid, `-1` = invalid for the
+ * `validate_*` pair; `0`/`1` for the `is_*` pair) rather than `bool`: the
+ * cargo-fuzz target `xml_xpath.rs` declares and tests `mkr_xml_validate_chars`
+ * against exactly that contract, so changing it here would silently invert the
+ * harness's skip check. The rest of the engine does not call them. */
 
 pub fn mkr_xml_is_char(c: u32) -> i32 {
     chars::is_char(c) as i32
@@ -294,9 +299,9 @@ pub unsafe fn mkr_xml_replace_with_fragment(
     doc: *mut Document,
     target: NodeId,
     frag: NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     mutate::replace_with_fragment(doc, target, frag)
 }
@@ -306,10 +311,10 @@ pub unsafe fn mkr_xml_rename(
     node: NodeId,
     name: *const c_char,
     nlen: u32,
-) -> i32 {
+) -> MutStatus {
     match doc_mut(doc) {
         Some(doc) => mutate::rename(doc, node, bytes(name, nlen)),
-        None => ERR_INTERNAL,
+        None => MutStatus::Internal,
     }
 }
 
@@ -321,10 +326,10 @@ pub unsafe fn mkr_xml_set_attribute(
     val: *const c_char,
     vlen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(
         out,
@@ -337,10 +342,10 @@ pub unsafe fn mkr_xml_remove_attribute(
     el: NodeId,
     name: *const c_char,
     nlen: u32,
-) -> i32 {
+) -> bool {
     match doc_mut(doc) {
         Some(doc) => mutate::remove_attribute(doc, el, bytes(name, nlen)),
-        None => 0,
+        None => false,
     }
 }
 
@@ -354,10 +359,10 @@ pub unsafe fn mkr_xml_set_attribute_ns(
     val: *const c_char,
     vlen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(
         out,
@@ -378,10 +383,10 @@ pub unsafe fn mkr_xml_remove_attribute_ns(
     nslen: u32,
     local: *const c_char,
     llen: u32,
-) -> i32 {
+) -> bool {
     match doc_mut(doc) {
         Some(doc) => mutate::remove_attribute_ns(doc, el, bytes(ns, nslen), bytes(local, llen)),
-        None => 0,
+        None => false,
     }
 }
 
@@ -390,10 +395,10 @@ pub unsafe fn mkr_xml_set_content(
     node: NodeId,
     text: *const c_char,
     tlen: u32,
-) -> i32 {
+) -> MutStatus {
     match doc_mut(doc) {
         Some(doc) => mutate::set_content(doc, node, bytes(text, tlen)),
-        None => ERR_INTERNAL,
+        None => MutStatus::Internal,
     }
 }
 
@@ -402,10 +407,10 @@ pub unsafe fn mkr_xml_new_element(
     name: *const c_char,
     nlen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(out, mutate::new_element(doc, bytes(name, nlen)))
 }
@@ -420,10 +425,10 @@ pub unsafe fn mkr_xml_new_loose_dom_element(
     ns: *const c_char,
     nslen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(
         out,
@@ -447,10 +452,10 @@ pub unsafe fn mkr_xml_new_document_type(
     sys_id: *const c_char,
     slen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     let p = if pub_id.is_null() {
         None
@@ -467,19 +472,16 @@ pub unsafe fn mkr_xml_new_document_type(
 
 pub unsafe fn mkr_xml_new_chardata(
     doc: *mut Document,
-    type_: u8,
+    type_: NodeType,
     text: *const c_char,
     tlen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
-    put_node(
-        out,
-        mutate::new_chardata(doc, type_ as u32, bytes(text, tlen)),
-    )
+    put_node(out, mutate::new_chardata(doc, type_, bytes(text, tlen)))
 }
 
 pub unsafe fn mkr_xml_new_pi(
@@ -489,10 +491,10 @@ pub unsafe fn mkr_xml_new_pi(
     data: *const c_char,
     dlen: u32,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(
         out,
@@ -505,10 +507,10 @@ pub unsafe fn mkr_xml_import_subtree(
     src_doc: *const Document,
     src: NodeId,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let (Some(doc), Some(src_doc)) = (doc_mut(doc), doc_ref(src_doc)) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(out, mutate::import_subtree(doc, src_doc, src))
 }
@@ -517,14 +519,14 @@ pub unsafe fn mkr_xml_copy_node(
     doc: *mut Document,
     src_doc: *const Document,
     src: NodeId,
-    deep: i32,
+    deep: bool,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let (Some(doc), Some(src_doc)) = (doc_mut(doc), doc_ref(src_doc)) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
-    put_node(out, mutate::copy_node_from(doc, src_doc, src, deep != 0))
+    put_node(out, mutate::copy_node_from(doc, src_doc, src, deep))
 }
 
 pub unsafe fn mkr_xml_clone_node(
@@ -532,39 +534,39 @@ pub unsafe fn mkr_xml_clone_node(
     src: NodeId,
     deep: bool,
     out: *mut NodeId,
-) -> i32 {
+) -> MutStatus {
     let Some(doc) = doc_mut(doc) else {
         put(out, NodeId::INVALID);
-        return ERR_INTERNAL;
+        return MutStatus::Internal;
     };
     put_node(out, mutate::clone_node(doc, src, deep))
 }
 
-pub unsafe fn mkr_xml_insert_child(doc: *mut Document, parent: NodeId, node: NodeId) -> i32 {
+pub unsafe fn mkr_xml_insert_child(doc: *mut Document, parent: NodeId, node: NodeId) -> MutStatus {
     match doc_mut(doc) {
         Some(doc) => mutate::insert_child(doc, parent, node),
-        None => ERR_INTERNAL,
+        None => MutStatus::Internal,
     }
 }
 
-pub unsafe fn mkr_xml_insert_before(doc: *mut Document, r: NodeId, node: NodeId) -> i32 {
+pub unsafe fn mkr_xml_insert_before(doc: *mut Document, r: NodeId, node: NodeId) -> MutStatus {
     match doc_mut(doc) {
         Some(doc) => mutate::insert_before(doc, r, node),
-        None => ERR_INTERNAL,
+        None => MutStatus::Internal,
     }
 }
 
-pub unsafe fn mkr_xml_insert_after(doc: *mut Document, r: NodeId, node: NodeId) -> i32 {
+pub unsafe fn mkr_xml_insert_after(doc: *mut Document, r: NodeId, node: NodeId) -> MutStatus {
     match doc_mut(doc) {
         Some(doc) => mutate::insert_after(doc, r, node),
-        None => ERR_INTERNAL,
+        None => MutStatus::Internal,
     }
 }
 
-pub unsafe fn mkr_xml_replace_node(doc: *mut Document, r: NodeId, node: NodeId) -> i32 {
+pub unsafe fn mkr_xml_replace_node(doc: *mut Document, r: NodeId, node: NodeId) -> MutStatus {
     match doc_mut(doc) {
         Some(doc) => mutate::replace_node(doc, r, node),
-        None => ERR_INTERNAL,
+        None => MutStatus::Internal,
     }
 }
 
@@ -619,4 +621,4 @@ pub unsafe fn mkr_xml_name_index_lookup(
 
 /* keep the attribute-type constant referenced so the import list mirrors the
  * C unit's (documentation aid for the symbol audit) */
-const _: u32 = T_ATTRIBUTE;
+const _: NodeType = NodeType::Attribute;

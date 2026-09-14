@@ -11,9 +11,7 @@ use crate::falloc::Reserve;
 use crate::xml::chars::validate_chars;
 use crate::xml::qname::{split_checked, value_seq_ok, xmlns_prefix, Split};
 use crate::xml::{
-    Document, NodeId, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED, MUT_BAD_CHARS, MUT_BAD_NAME,
-    MUT_BAD_NS_DECL, MUT_CYCLE, MUT_HIERARCHY, MUT_OK, MUT_OOM, MUT_TYPE, MUT_UNBOUND_NS,
-    T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT, T_PI, T_TEXT,
+    Document, MutStatus, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, FLAG_NS_RESOLVED,
 };
 
 /// A resolved namespace: a byte-store span (empty = no namespace).
@@ -31,7 +29,7 @@ fn resolve_ns(
     sp: &Split,
     is_attr: bool,
     connected: bool,
-) -> Result<Ns, i32> {
+) -> Result<Ns, MutStatus> {
     let prefix = &name[..sp.prefix_len as usize];
     if is_attr && xmlns_prefix(name).is_some() {
         return Ok(doc.xmlns_ns_span());
@@ -49,13 +47,13 @@ fn resolve_ns(
         return Ok(doc.xml_ns_span());
     }
     if prefix == b"xmlns" {
-        return Err(MUT_BAD_NAME);
+        return Err(MutStatus::BadName);
     }
     match doc.resolve_in_scope(scope, prefix) {
         Some(s) if s.len > 0 => Ok(s),
         _ => {
             if connected {
-                Err(MUT_UNBOUND_NS)
+                Err(MutStatus::UnboundNs)
             } else {
                 Ok(NO_NS)
             }
@@ -64,14 +62,14 @@ fn resolve_ns(
 }
 
 #[inline]
-fn assign_qname(doc: &mut Document, node: NodeId, name: &[u8], sp: &Split) -> i32 {
+fn assign_qname(doc: &mut Document, node: NodeId, name: &[u8], sp: &Split) -> MutStatus {
     if doc
         .assign_qname(node, name, sp.prefix_len, sp.local_off, sp.local_len)
         .is_ok()
     {
-        MUT_OK
+        MutStatus::Ok
     } else {
-        MUT_OOM
+        MutStatus::Oom
     }
 }
 
@@ -79,15 +77,15 @@ pub fn detach(doc: &mut Document, node: NodeId) {
     doc.detach(node);
 }
 
-pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> i32 {
-    if doc.type_(node) != T_ELEMENT && doc.type_(node) != T_ATTRIBUTE {
-        return MUT_TYPE;
+pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
+    if doc.type_(node) != Some(NodeType::Element) && doc.type_(node) != Some(NodeType::Attribute) {
+        return MutStatus::Type;
     }
     let sp = match split_checked(name) {
         Some(s) => s,
-        None => return MUT_BAD_NAME,
+        None => return MutStatus::BadName,
     };
-    let is_attr = doc.type_(node) == T_ATTRIBUTE;
+    let is_attr = doc.type_(node) == Some(NodeType::Attribute);
     let scope: Option<NodeId> = if is_attr {
         doc.parent(node)
     } else {
@@ -100,7 +98,7 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> i32 {
     };
     /* copy the new qname BEFORE writing ns_uri, so an OOM leaves node intact */
     let st = assign_qname(doc, node, name, &sp);
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return st;
     }
     {
@@ -114,7 +112,7 @@ pub fn rename(doc: &mut Document, node: NodeId, name: &[u8]) -> i32 {
     if connected && !is_attr {
         doc.node_mut(node).flags |= FLAG_NS_RESOLVED;
     }
-    MUT_OK
+    MutStatus::Ok
 }
 
 /// Build a fresh ATTRIBUTE (qname + value + namespace) and append it to `el`.
@@ -125,13 +123,15 @@ fn build_attr(
     sp: &Split,
     val: &[u8],
     ns: Ns,
-) -> Result<NodeId, i32> {
-    let attr = doc.new_node(T_ATTRIBUTE).map_err(|_| MUT_OOM)?;
+) -> Result<NodeId, MutStatus> {
+    let attr = doc
+        .new_node(NodeType::Attribute)
+        .map_err(|_| MutStatus::Oom)?;
     let st = assign_qname(doc, attr, name, sp);
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return Err(st);
     }
-    doc.set_value_bytes(attr, val).map_err(|_| MUT_OOM)?;
+    doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
     doc.node_mut(attr).ns_uri = ns;
     doc.append_attr(el, attr);
     Ok(attr)
@@ -142,20 +142,20 @@ pub fn set_attribute(
     el: NodeId,
     name: &[u8],
     val: &[u8],
-) -> Result<NodeId, i32> {
-    if doc.type_(el) != T_ELEMENT {
-        return Err(MUT_TYPE);
+) -> Result<NodeId, MutStatus> {
+    if doc.type_(el) != Some(NodeType::Element) {
+        return Err(MutStatus::Type);
     }
     let sp = match split_checked(name) {
         Some(s) => s,
-        None => return Err(MUT_BAD_NAME),
+        None => return Err(MutStatus::BadName),
     };
     /* xmlns:foo="" must not bind a prefix to the empty namespace */
     if val.is_empty() && sp.prefix_len == 5 && &name[..5] == b"xmlns" {
-        return Err(MUT_BAD_NS_DECL);
+        return Err(MutStatus::BadNsDecl);
     }
     if !val.is_empty() && !validate_chars(val) {
-        return Err(MUT_BAD_CHARS);
+        return Err(MutStatus::BadChars);
     }
     let connected = doc.is_connected(el);
     let ns = resolve_ns(doc, Some(el), name, &sp, true, connected)?;
@@ -163,7 +163,7 @@ pub fn set_attribute(
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if doc.qname(attr) == name {
-            doc.set_value_bytes(attr, val).map_err(|_| MUT_OOM)?;
+            doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
             doc.node_mut(attr).ns_uri = ns;
             return Ok(attr);
         }
@@ -172,21 +172,22 @@ pub fn set_attribute(
     build_attr(doc, el, name, &sp, val, ns)
 }
 
-pub fn remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> i32 {
-    if doc.type_(el) != T_ELEMENT {
-        return 0;
+/// Remove `el`'s attribute named `name`; `true` when one was removed.
+pub fn remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
+    if doc.type_(el) != Some(NodeType::Element) {
+        return false;
     }
     let mut prev: Option<NodeId> = None;
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if doc.qname(attr) == name {
             doc.unlink_attr(el, prev, attr);
-            return 1;
+            return true;
         }
         prev = Some(attr);
         a = doc.next(attr);
     }
-    0
+    false
 }
 
 /// `a` is keyed by (ns, local) - the DOM key; an empty wanted namespace
@@ -203,22 +204,22 @@ pub fn set_attribute_ns(
     ns: &[u8],
     name: &[u8],
     val: &[u8],
-) -> Result<NodeId, i32> {
-    if doc.type_(el) != T_ELEMENT {
-        return Err(MUT_TYPE);
+) -> Result<NodeId, MutStatus> {
+    if doc.type_(el) != Some(NodeType::Element) {
+        return Err(MutStatus::Type);
     }
     let sp = match split_checked(name) {
         Some(s) => s,
-        None => return Err(MUT_BAD_NAME),
+        None => return Err(MutStatus::BadName),
     };
     if !val.is_empty() && !validate_chars(val) {
-        return Err(MUT_BAD_CHARS);
+        return Err(MutStatus::BadChars);
     }
     let local = &name[sp.local_off as usize..];
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if attr_matches_ns(doc, attr, ns, local) {
-            doc.set_value_bytes(attr, val).map_err(|_| MUT_OOM)?;
+            doc.set_value_bytes(attr, val).map_err(|_| MutStatus::Oom)?;
             return Ok(attr);
         }
         a = doc.next(attr);
@@ -227,54 +228,55 @@ pub fn set_attribute_ns(
     let nsv: Ns = if ns.is_empty() {
         NO_NS
     } else {
-        doc.store(ns).map_err(|_| MUT_OOM)?
+        doc.store(ns).map_err(|_| MutStatus::Oom)?
     };
     build_attr(doc, el, name, &sp, val, nsv)
 }
 
-pub fn remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> i32 {
-    if doc.type_(el) != T_ELEMENT {
-        return 0;
+/// Remove `el`'s attribute keyed by `(ns, local)`; `true` when one was removed.
+pub fn remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> bool {
+    if doc.type_(el) != Some(NodeType::Element) {
+        return false;
     }
     let mut prev: Option<NodeId> = None;
     let mut a = doc.attrs(el);
     while let Some(attr) = a {
         if attr_matches_ns(doc, attr, ns, local) {
             doc.unlink_attr(el, prev, attr);
-            return 1;
+            return true;
         }
         prev = Some(attr);
         a = doc.next(attr);
     }
-    0
+    false
 }
 
-pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> i32 {
+pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
     if !text.is_empty() && !validate_chars(text) {
-        return MUT_BAD_CHARS;
+        return MutStatus::BadChars;
     }
     match doc.type_(node) {
-        T_TEXT | T_CDATA | T_COMMENT | T_PI => {
-            if !value_seq_ok(doc.type_(node), text) {
-                return MUT_BAD_CHARS;
+        Some(ty @ (NodeType::Text | NodeType::CData | NodeType::Comment | NodeType::Pi)) => {
+            if !value_seq_ok(ty, text) {
+                return MutStatus::BadChars;
             }
             if doc.set_value_bytes(node, text).is_err() {
-                return MUT_OOM;
+                return MutStatus::Oom;
             }
-            MUT_OK
+            MutStatus::Ok
         }
-        T_ELEMENT => {
+        Some(NodeType::Element) => {
             /* build the replacement TEXT node FIRST, so an OOM leaves the
              * children intact */
             let mut t: Option<NodeId> = None;
             if !text.is_empty() {
                 let v = match doc.store(text) {
                     Ok(v) => v,
-                    Err(_) => return MUT_OOM,
+                    Err(_) => return MutStatus::Oom,
                 };
-                let n = match doc.new_node(T_TEXT) {
+                let n = match doc.new_node(NodeType::Text) {
                     Ok(n) => n,
-                    Err(_) => return MUT_OOM,
+                    Err(_) => return MutStatus::Oom,
                 };
                 doc.node_mut(n).value = v;
                 t = Some(n);
@@ -298,25 +300,27 @@ pub fn set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> i32 {
             if let Some(t) = t {
                 doc.node_mut(t).parent = Some(node);
             }
-            MUT_OK
+            MutStatus::Ok
         }
-        _ => MUT_TYPE,
+        _ => MutStatus::Type,
     }
 }
 
 /* ============================ Phase 2: building ============================ */
 
-pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, i32> {
+pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus> {
     let sp = match split_checked(name) {
         Some(s) => s,
-        None => return Err(MUT_BAD_NAME),
+        None => return Err(MutStatus::BadName),
     };
     if sp.prefix_len == 5 && &name[..5] == b"xmlns" {
-        return Err(MUT_BAD_NAME); /* xmlns: is not an element prefix */
+        return Err(MutStatus::BadName); /* xmlns: is not an element prefix */
     }
-    let el = doc.new_node(T_ELEMENT).map_err(|_| MUT_OOM)?;
+    let el = doc
+        .new_node(NodeType::Element)
+        .map_err(|_| MutStatus::Oom)?;
     let st = assign_qname(doc, el, name, &sp);
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return Err(st);
     }
     Ok(el) /* ns_uri stays unresolved until insertion */
@@ -332,56 +336,58 @@ pub fn new_loose_dom_element(
     local_off: u32,
     local_len: u32,
     ns: &[u8],
-) -> Result<NodeId, i32> {
+) -> Result<NodeId, MutStatus> {
     if name.is_empty() || local_len == 0 {
-        return Err(MUT_BAD_NAME);
+        return Err(MutStatus::BadName);
     }
     if local_off as usize + local_len as usize > name.len() || prefix_len as usize > name.len() {
-        return Err(MUT_BAD_NAME);
+        return Err(MutStatus::BadName);
     }
-    let el = doc.new_node(T_ELEMENT).map_err(|_| MUT_OOM)?;
+    let el = doc
+        .new_node(NodeType::Element)
+        .map_err(|_| MutStatus::Oom)?;
     if doc
         .assign_qname(el, name, prefix_len, local_off, local_len)
         .is_err()
     {
-        return Err(MUT_OOM);
+        return Err(MutStatus::Oom);
     }
     if !ns.is_empty() {
-        doc.set_ns_bytes(el, ns).map_err(|_| MUT_OOM)?;
+        doc.set_ns_bytes(el, ns).map_err(|_| MutStatus::Oom)?;
     }
     doc.node_mut(el).flags |= FLAG_DOM_LOOSE_NAME;
     Ok(el)
 }
 
-pub fn new_chardata(doc: &mut Document, ty: u32, text: &[u8]) -> Result<NodeId, i32> {
-    if ty != T_TEXT && ty != T_CDATA && ty != T_COMMENT {
-        return Err(MUT_TYPE);
+pub fn new_chardata(doc: &mut Document, ty: NodeType, text: &[u8]) -> Result<NodeId, MutStatus> {
+    if ty != NodeType::Text && ty != NodeType::CData && ty != NodeType::Comment {
+        return Err(MutStatus::Type);
     }
     if !text.is_empty() && !validate_chars(text) {
-        return Err(MUT_BAD_CHARS);
+        return Err(MutStatus::BadChars);
     }
     if !value_seq_ok(ty, text) {
-        return Err(MUT_BAD_CHARS);
+        return Err(MutStatus::BadChars);
     }
-    let n = doc.new_node(ty).map_err(|_| MUT_OOM)?;
-    doc.set_value_bytes(n, text).map_err(|_| MUT_OOM)?;
+    let n = doc.new_node(ty).map_err(|_| MutStatus::Oom)?;
+    doc.set_value_bytes(n, text).map_err(|_| MutStatus::Oom)?;
     Ok(n)
 }
 
-pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, i32> {
+pub fn new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, MutStatus> {
     if !crate::xml::chars::validate_name(target) || crate::xml::chars::is_reserved_pi_target(target)
     {
-        return Err(MUT_BAD_NAME);
+        return Err(MutStatus::BadName);
     }
     if !data.is_empty() && !validate_chars(data) {
-        return Err(MUT_BAD_CHARS);
+        return Err(MutStatus::BadChars);
     }
-    if !value_seq_ok(T_PI, data) {
-        return Err(MUT_BAD_CHARS);
+    if !value_seq_ok(NodeType::Pi, data) {
+        return Err(MutStatus::BadChars);
     }
-    let pi = doc.new_node(T_PI).map_err(|_| MUT_OOM)?;
-    let t = doc.store(target).map_err(|_| MUT_OOM)?;
-    let d = doc.store(data).map_err(|_| MUT_OOM)?;
+    let pi = doc.new_node(NodeType::Pi).map_err(|_| MutStatus::Oom)?;
+    let t = doc.store(target).map_err(|_| MutStatus::Oom)?;
+    let d = doc.store(data).map_err(|_| MutStatus::Oom)?;
     {
         let n = doc.node_mut(pi);
         n.local = t;
@@ -395,28 +401,30 @@ pub fn new_document_type(
     name: &[u8],
     pub_id: Option<&[u8]>,
     sys_id: Option<&[u8]>,
-) -> Result<NodeId, i32> {
+) -> Result<NodeId, MutStatus> {
     if !crate::xml::chars::validate_name(name) {
-        return Err(MUT_BAD_NAME);
+        return Err(MutStatus::BadName);
     }
     for id in [pub_id, sys_id].into_iter().flatten() {
         if !id.is_empty() && (!validate_chars(id) || id.contains(&b'"')) {
-            return Err(MUT_BAD_CHARS);
+            return Err(MutStatus::BadChars);
         }
     }
-    let dt = doc.new_node(T_DOCTYPE).map_err(|_| MUT_OOM)?;
-    let nm = doc.store(name).map_err(|_| MUT_OOM)?;
+    let dt = doc
+        .new_node(NodeType::Doctype)
+        .map_err(|_| MutStatus::Oom)?;
+    let nm = doc.store(name).map_err(|_| MutStatus::Oom)?;
     {
         let n = doc.node_mut(dt);
         n.local = nm;
         n.qname = nm;
     }
     if let Some(p) = pub_id {
-        let pp = doc.store(p).map_err(|_| MUT_OOM)?;
+        let pp = doc.store(p).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(dt).prefix = pp;
     }
     if let Some(s) = sys_id {
-        let sp = doc.store(s).map_err(|_| MUT_OOM)?;
+        let sp = doc.store(s).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(dt).value = sp;
     }
     Ok(dt)
@@ -426,7 +434,7 @@ pub fn new_document_type(
 ///
 /// `commit` selects the pass: false only computes (to find out whether every
 /// prefix in the subtree binds), true writes the resolved URIs.
-fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool) -> i32 {
+fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool) -> MutStatus {
     if doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
         let name = doc.qname(e).to_vec();
         let prefix_len = doc.node(e).prefix.len;
@@ -477,7 +485,7 @@ fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool)
     if commit && connected {
         doc.node_mut(e).flags |= FLAG_NS_RESOLVED;
     }
-    MUT_OK
+    MutStatus::Ok
 }
 
 /// True once `e`'s namespace has been decided - by the parser, or by resolving
@@ -488,25 +496,25 @@ fn ns_is_decided(doc: &Document, e: NodeId) -> bool {
 
 /// Re-resolve every element in `root`'s subtree, all-or-nothing: one pass that
 /// only computes, and - only if every prefix binds - a second that writes.
-fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> i32 {
+fn resolve_subtree(doc: &mut Document, root: NodeId, connected: bool) -> MutStatus {
     for commit in [false, true] {
         let mut cur = Some(root);
         while let Some(c) = cur {
-            if doc.type_(c) == T_ELEMENT && !ns_is_decided(doc, c) {
+            if doc.type_(c) == Some(NodeType::Element) && !ns_is_decided(doc, c) {
                 let st = resolve_node_ns(doc, c, connected, commit);
-                if st != MUT_OK {
+                if st != MutStatus::Ok {
                     return st; /* commit == false: nothing written yet */
                 }
             }
             cur = doc.preorder_next(root, c);
         }
     }
-    MUT_OK
+    MutStatus::Ok
 }
 
 /// Resolve `node`'s subtree as if it were a child of `context`, WITHOUT linking
 /// it (borrow node.parent for the ancestor walk, then restore).
-fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> i32 {
+fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> MutStatus {
     let saved = doc.parent(node);
     doc.node_mut(node).parent = Some(context);
     let st = resolve_subtree(doc, node, doc.is_connected(node));
@@ -516,9 +524,11 @@ fn resolve_into(doc: &mut Document, node: NodeId, context: NodeId) -> i32 {
 
 /// One arena copy of `src` (own fields + attributes, NOT children) from the
 /// SAME document, INCLUDING its resolved namespace URI.
-fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
-    let ty = doc.type_(src);
-    let n = doc.new_node(ty).map_err(|_| MUT_OOM)?;
+fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
+    let Some(ty) = doc.type_(src) else {
+        return Err(MutStatus::Type);
+    };
+    let n = doc.new_node(ty).map_err(|_| MutStatus::Oom)?;
     if doc.node(src).qname.len > 0 {
         let name = doc.qname(src).to_vec();
         let prefix_len = doc.node(src).prefix.len;
@@ -532,16 +542,16 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
             .assign_qname(n, &name, prefix_len, local_off, local_len)
             .is_err()
         {
-            return Err(MUT_OOM);
+            return Err(MutStatus::Oom);
         }
     } else if doc.node(src).local.len > 0 {
         let t = doc.local(src).to_vec();
-        let span = doc.store(&t).map_err(|_| MUT_OOM)?;
+        let span = doc.store(&t).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(n).local = span;
     }
     if doc.node(src).value.len > 0 {
         let v = doc.value(src).to_vec();
-        let span = doc.store(&v).map_err(|_| MUT_OOM)?;
+        let span = doc.store(&v).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(n).value = span;
     } else if !doc.node(src).value.is_absent() {
         doc.node_mut(n).value = Span::EMPTY;
@@ -549,7 +559,7 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
     doc.node_mut(n).flags = doc.node(src).flags;
     if doc.node(src).ns_uri.len > 0 {
         let u = doc.ns(src).to_vec();
-        let span = doc.store(&u).map_err(|_| MUT_OOM)?;
+        let span = doc.store(&u).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(n).ns_uri = span;
     }
     /* copy attributes (each a node), preserving order */
@@ -571,9 +581,11 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
 /// One arena copy of `src` from ANOTHER document (importNode's cross-kind
 /// direction). Same fields as [`copy_one`], reading the source through its own
 /// document and writing into `dst`.
-fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, i32> {
-    let ty = src_doc.type_(src);
-    let n = dst.new_node(ty).map_err(|_| MUT_OOM)?;
+fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, MutStatus> {
+    let Some(ty) = src_doc.type_(src) else {
+        return Err(MutStatus::Type);
+    };
+    let n = dst.new_node(ty).map_err(|_| MutStatus::Oom)?;
     if src_doc.node(src).qname.len > 0 {
         let name = src_doc.qname(src).to_vec();
         let prefix_len = src_doc.node(src).prefix.len;
@@ -587,16 +599,16 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
             .assign_qname(n, &name, prefix_len, local_off, local_len)
             .is_err()
         {
-            return Err(MUT_OOM);
+            return Err(MutStatus::Oom);
         }
     } else if src_doc.node(src).local.len > 0 {
         let t = src_doc.local(src).to_vec();
-        let span = dst.store(&t).map_err(|_| MUT_OOM)?;
+        let span = dst.store(&t).map_err(|_| MutStatus::Oom)?;
         dst.node_mut(n).local = span;
     }
     if src_doc.node(src).value.len > 0 {
         let v = src_doc.value(src).to_vec();
-        let span = dst.store(&v).map_err(|_| MUT_OOM)?;
+        let span = dst.store(&v).map_err(|_| MutStatus::Oom)?;
         dst.node_mut(n).value = span;
     } else if !src_doc.node(src).value.is_absent() {
         dst.node_mut(n).value = Span::EMPTY;
@@ -604,7 +616,7 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
     dst.node_mut(n).flags = src_doc.node(src).flags;
     if src_doc.node(src).ns_uri.len > 0 {
         let u = src_doc.ns(src).to_vec();
-        let span = dst.store(&u).map_err(|_| MUT_OOM)?;
+        let span = dst.store(&u).map_err(|_| MutStatus::Oom)?;
         dst.node_mut(n).ns_uri = span;
     }
     let mut tail: Option<NodeId> = None;
@@ -623,11 +635,15 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
 }
 
 /// Deep copy of `src`'s subtree from ANOTHER document (iterative).
-fn deep_copy_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, i32> {
+fn deep_copy_from(
+    dst: &mut Document,
+    src_doc: &Document,
+    src: NodeId,
+) -> Result<NodeId, MutStatus> {
     let root = copy_one_from(dst, src_doc, src)?;
     let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
     if stack.mkr_reserve(1).is_err() {
-        return Err(MUT_OOM);
+        return Err(MutStatus::Oom);
     }
     stack.push((src, root));
     while let Some((s, d)) = stack.pop() {
@@ -637,7 +653,7 @@ fn deep_copy_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result
             dst.append_child(d, dc);
             if src_doc.first_child(child).is_some() {
                 if stack.mkr_reserve(1).is_err() {
-                    return Err(MUT_OOM);
+                    return Err(MutStatus::Oom);
                 }
                 stack.push((child, dc));
             }
@@ -648,11 +664,11 @@ fn deep_copy_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result
 }
 
 /// Deep copy of `src`'s subtree (iterative; no recursion).
-fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
+fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
     let root = copy_one(doc, src)?;
     let mut stack: Vec<(NodeId, NodeId)> = Vec::new();
     if stack.mkr_reserve(1).is_err() {
-        return Err(MUT_OOM);
+        return Err(MutStatus::Oom);
     }
     stack.push((src, root));
     while let Some((s, d)) = stack.pop() {
@@ -662,7 +678,7 @@ fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
             doc.append_child(d, dc);
             if doc.first_child(child).is_some() {
                 if stack.mkr_reserve(1).is_err() {
-                    return Err(MUT_OOM);
+                    return Err(MutStatus::Oom);
                 }
                 stack.push((child, dc));
             }
@@ -672,7 +688,11 @@ fn deep_copy(doc: &mut Document, src: NodeId) -> Result<NodeId, i32> {
     Ok(root)
 }
 
-pub fn import_subtree(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<NodeId, i32> {
+pub fn import_subtree(
+    dst: &mut Document,
+    src_doc: &Document,
+    src: NodeId,
+) -> Result<NodeId, MutStatus> {
     deep_copy_from(dst, src_doc, src)
 }
 
@@ -682,7 +702,7 @@ pub fn copy_node_from(
     src_doc: &Document,
     src: NodeId,
     deep: bool,
-) -> Result<NodeId, i32> {
+) -> Result<NodeId, MutStatus> {
     if deep {
         deep_copy_from(dst, src_doc, src)
     } else {
@@ -690,7 +710,7 @@ pub fn copy_node_from(
     }
 }
 
-pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, i32> {
+pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutStatus> {
     if deep {
         deep_copy(doc, src)
     } else {
@@ -704,7 +724,14 @@ pub fn clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId,
 fn is_insertable(doc: &Document, node: NodeId) -> bool {
     matches!(
         doc.type_(node),
-        T_ELEMENT | T_TEXT | T_CDATA | T_COMMENT | T_PI | T_DOCTYPE
+        Some(
+            NodeType::Element
+                | NodeType::Text
+                | NodeType::CData
+                | NodeType::Comment
+                | NodeType::Pi
+                | NodeType::Doctype
+        )
     )
 }
 
@@ -715,19 +742,19 @@ fn check_doc_child_order(
     node: NodeId,
     before: Option<NodeId>,
     exclude: Option<NodeId>,
-) -> i32 {
-    if doc.type_(container) != T_DOCUMENT {
-        return if doc.type_(node) == T_DOCTYPE {
-            MUT_HIERARCHY
+) -> MutStatus {
+    if doc.type_(container) != Some(NodeType::Document) {
+        return if doc.type_(node) == Some(NodeType::Doctype) {
+            MutStatus::Hierarchy
         } else {
-            MUT_OK
+            MutStatus::Ok
         };
     }
-    if doc.type_(node) == T_DOCTYPE {
+    if doc.type_(node) == Some(NodeType::Doctype) {
         let mut c = doc.first_child(container);
         while let Some(cur) = c {
-            if Some(cur) != exclude && cur != node && doc.type_(cur) == T_DOCTYPE {
-                return MUT_HIERARCHY; /* at most one */
+            if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Doctype) {
+                return MutStatus::Hierarchy; /* at most one */
             }
             c = doc.next(cur);
         }
@@ -737,23 +764,23 @@ fn check_doc_child_order(
             if c == before {
                 break;
             }
-            if Some(cur) != exclude && cur != node && doc.type_(cur) == T_ELEMENT {
-                return MUT_HIERARCHY;
+            if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Element) {
+                return MutStatus::Hierarchy;
             }
             c = doc.next(cur);
         }
-        return MUT_OK;
+        return MutStatus::Ok;
     }
-    if doc.type_(node) == T_ELEMENT {
+    if doc.type_(node) == Some(NodeType::Element) {
         let mut c = before;
         while let Some(cur) = c {
-            if Some(cur) != exclude && cur != node && doc.type_(cur) == T_DOCTYPE {
-                return MUT_HIERARCHY;
+            if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Doctype) {
+                return MutStatus::Hierarchy;
             }
             c = doc.next(cur);
         }
     }
-    MUT_OK
+    MutStatus::Ok
 }
 
 fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
@@ -768,12 +795,14 @@ fn would_cycle(doc: &Document, container: NodeId, node: NodeId) -> bool {
 }
 
 fn doc_root_ok(doc: &Document, container: NodeId, node: NodeId, exclude: Option<NodeId>) -> bool {
-    if doc.type_(container) != T_DOCUMENT || doc.type_(node) != T_ELEMENT {
+    if doc.type_(container) != Some(NodeType::Document)
+        || doc.type_(node) != Some(NodeType::Element)
+    {
         return true;
     }
     let mut c = doc.first_child(container);
     while let Some(cur) = c {
-        if Some(cur) != exclude && cur != node && doc.type_(cur) == T_ELEMENT {
+        if Some(cur) != exclude && cur != node && doc.type_(cur) == Some(NodeType::Element) {
             return false;
         }
         c = doc.next(cur);
@@ -790,85 +819,85 @@ fn prepare_insert(
     node: NodeId,
     before: Option<NodeId>,
     exclude: Option<NodeId>,
-) -> i32 {
+) -> MutStatus {
     if !is_insertable(doc, node) {
-        return MUT_HIERARCHY;
+        return MutStatus::Hierarchy;
     }
     let ct = doc.type_(container);
-    if ct != T_ELEMENT && ct != T_DOCUMENT {
-        return MUT_HIERARCHY;
+    if ct != Some(NodeType::Element) && ct != Some(NodeType::Document) {
+        return MutStatus::Hierarchy;
     }
     if would_cycle(doc, container, node) {
-        return MUT_CYCLE;
+        return MutStatus::Cycle;
     }
     if !doc_root_ok(doc, container, node, exclude) {
-        return MUT_HIERARCHY;
+        return MutStatus::Hierarchy;
     }
     let dt = check_doc_child_order(doc, container, node, before, exclude);
-    if dt != MUT_OK {
+    if dt != MutStatus::Ok {
         return dt;
     }
     resolve_into(doc, node, container)
 }
 
-pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> i32 {
+pub fn insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
     let st = prepare_insert(doc, parent, node, None, None);
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return st;
     }
     doc.detach(node);
     let last = doc.last_child(parent);
     doc.splice_between(parent, node, last, None);
     doc.sync_doc_meta(parent);
-    MUT_OK
+    MutStatus::Ok
 }
 
-pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
+pub fn insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     if node == r {
-        return MUT_OK;
+        return MutStatus::Ok;
     }
     let Some(container) = doc.parent(r) else {
-        return MUT_HIERARCHY;
+        return MutStatus::Hierarchy;
     };
     let st = prepare_insert(doc, container, node, Some(r), None);
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return st;
     }
     doc.detach(node);
     let prev = doc.prev(r);
     doc.splice_between(container, node, prev, Some(r));
     doc.sync_doc_meta(container);
-    MUT_OK
+    MutStatus::Ok
 }
 
-pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
+pub fn insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     if node == r {
-        return MUT_OK;
+        return MutStatus::Ok;
     }
     let Some(container) = doc.parent(r) else {
-        return MUT_HIERARCHY;
+        return MutStatus::Hierarchy;
     };
     let next = doc.next(r);
     let st = prepare_insert(doc, container, node, next, None);
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return st;
     }
     doc.detach(node);
     let next = doc.next(r);
     doc.splice_between(container, node, Some(r), next);
     doc.sync_doc_meta(container);
-    MUT_OK
+    MutStatus::Ok
 }
 
-pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
+pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     let Some(container) = doc.parent(r) else {
-        return MUT_HIERARCHY;
+        return MutStatus::Hierarchy;
     };
     if node == r {
-        return MUT_OK;
+        return MutStatus::Ok;
     }
     let st = prepare_insert(doc, container, node, Some(r), Some(r));
-    if st != MUT_OK {
+    if st != MutStatus::Ok {
         return st;
     }
     doc.detach(node);
@@ -881,7 +910,7 @@ pub fn replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> i32 {
         n.next = None;
     }
     doc.sync_doc_meta(container);
-    MUT_OK
+    MutStatus::Ok
 }
 
 pub fn remove(doc: &mut Document, node: NodeId) {
@@ -896,7 +925,7 @@ fn element_child_count(doc: &Document, parent: NodeId, exclude: Option<NodeId>) 
     let mut n = 0;
     let mut c = doc.first_child(parent);
     while let Some(cur) = c {
-        if Some(cur) != exclude && doc.type_(cur) == T_ELEMENT {
+        if Some(cur) != exclude && doc.type_(cur) == Some(NodeType::Element) {
             n += 1;
         }
         c = doc.next(cur);
@@ -905,21 +934,21 @@ fn element_child_count(doc: &Document, parent: NodeId, exclude: Option<NodeId>) 
 }
 
 /// Replace `target` with the CHILDREN of `frag`, atomically (fail-closed).
-pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -> i32 {
+pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -> MutStatus {
     let Some(container) = doc.parent(target) else {
-        return MUT_HIERARCHY;
+        return MutStatus::Hierarchy;
     };
     /* --- validation pass: no links change until it all passes */
-    if doc.type_(container) == T_DOCUMENT {
+    if doc.type_(container) == Some(NodeType::Document) {
         if element_child_count(doc, frag, None) + element_child_count(doc, container, Some(target))
             > 1
         {
-            return MUT_HIERARCHY;
+            return MutStatus::Hierarchy;
         }
         let mut c = doc.first_child(frag);
         while let Some(cur) = c {
-            if doc.type_(cur) == T_DOCTYPE {
-                return MUT_HIERARCHY;
+            if doc.type_(cur) == Some(NodeType::Doctype) {
+                return MutStatus::Hierarchy;
             }
             c = doc.next(cur);
         }
@@ -927,7 +956,7 @@ pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -
     let mut c = doc.first_child(frag);
     while let Some(cur) = c {
         let st = prepare_insert(doc, container, cur, Some(target), Some(target));
-        if st != MUT_OK {
+        if st != MutStatus::Ok {
             return st;
         }
         c = doc.next(cur);
@@ -939,5 +968,5 @@ pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -
         doc.splice_between(container, c, prev, Some(target));
     }
     remove(doc, target);
-    MUT_OK
+    MutStatus::Ok
 }

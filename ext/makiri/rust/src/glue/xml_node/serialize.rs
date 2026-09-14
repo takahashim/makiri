@@ -323,7 +323,7 @@ unsafe fn indent(b: *mut Buf, level: i32, width: i32) -> W {
 unsafe fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
     let mut c = doc.first_child(e);
     while let Some(id) = c {
-        if matches!(doc.type_(id), T_TEXT | T_CDATA) {
+        if matches!(doc.type_(id), Some(NodeType::Text | NodeType::CData)) {
             return true;
         }
         c = doc.next(id);
@@ -334,7 +334,8 @@ unsafe fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
 unsafe fn has_dom_loose_name(doc: &XmlDoc, root: NodeId) -> bool {
     let mut cur = Some(root);
     while let Some(id) = cur {
-        if doc.type_(id) == T_ELEMENT && doc.node(id).flags & FLAG_DOM_LOOSE_NAME != 0 {
+        if doc.type_(id) == Some(NodeType::Element) && doc.node(id).flags & FLAG_DOM_LOOSE_NAME != 0
+        {
             return true;
         }
         cur = doc.preorder_next(root, id);
@@ -371,8 +372,8 @@ unsafe fn write_node<'a>(
     depth: u32,
 ) -> W {
     match doc.type_(n) {
-        T_DOCTYPE => write_doctype(b, doc, n),
-        T_ELEMENT => {
+        Some(NodeType::Doctype) => write_doctype(b, doc, n),
+        Some(NodeType::Element) => {
             if depth as usize >= MAX_DEPTH {
                 return Err(());
             }
@@ -427,18 +428,18 @@ unsafe fn write_node<'a>(
             write_name(b, doc, n, &el)?;
             put(b, b">")
         }
-        T_TEXT => escaped(b, field(doc, doc.node(n).value), false),
-        T_CDATA => {
+        Some(NodeType::Text) => escaped(b, field(doc, doc.node(n).value), false),
+        Some(NodeType::CData) => {
             put(b, b"<![CDATA[")?;
             put(b, field(doc, doc.node(n).value))?;
             put(b, b"]]>")
         }
-        T_COMMENT => {
+        Some(NodeType::Comment) => {
             put(b, b"<!--")?;
             put(b, field(doc, doc.node(n).value))?;
             put(b, b"-->")
         }
-        T_PI => {
+        Some(NodeType::Pi) => {
             put(b, b"<?")?;
             put(b, field(doc, doc.node(n).local))?;
             if doc.node(n).value.len != 0 {
@@ -447,7 +448,7 @@ unsafe fn write_node<'a>(
             }
             put(b, b"?>")
         }
-        T_FRAGMENT => {
+        Some(NodeType::Fragment) => {
             let mut c = doc.first_child(n);
             while let Some(cid) = c {
                 write_node(b, doc, cid, level, width, scope, depth)?;
@@ -524,7 +525,7 @@ fn to_xml(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
             if !is_kind_of(rb_self, mkr_cXmlDocument) {
                 return write_node(b, doc, n, 0, width, None, 0);
             }
-            let emit_enc = !enc_name.is_nil() || doc.has_encoding_decl != 0;
+            let emit_enc = !enc_name.is_nil() || doc.has_encoding_decl;
             if emit_enc {
                 let name = if enc_name.is_nil() {
                     ruby.str_new("UTF-8")
@@ -617,7 +618,7 @@ struct C14nNs {
 unsafe fn c14n_nearest(doc: &XmlDoc, node: NodeId, prefix: &[u8]) -> Option<&'static [u8]> {
     let mut e = Some(node);
     while let Some(id) = e {
-        if doc.type_(id) == T_ELEMENT {
+        if doc.type_(id) == Some(NodeType::Element) {
             let mut a = doc.attrs(id);
             while let Some(at) = a {
                 if let Some((p, u)) = xmlns_decl(doc, at) {
@@ -638,7 +639,7 @@ unsafe fn c14n_namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<
     let mut default_seen = false;
     let mut e = Some(n);
     while let Some(id) = e {
-        if doc.type_(id) == T_ELEMENT {
+        if doc.type_(id) == Some(NodeType::Element) {
             let mut a = doc.attrs(id);
             while let Some(at) = a {
                 if let Some((p, u)) = xmlns_decl(doc, at) {
@@ -687,7 +688,7 @@ unsafe fn c14n_node(
     depth: u32,
 ) -> W {
     match doc.type_(n) {
-        T_ELEMENT => {
+        Some(NodeType::Element) => {
             if depth as usize >= MAX_DEPTH {
                 return Err(());
             }
@@ -738,8 +739,10 @@ unsafe fn c14n_node(
             put(b, field(doc, doc.node(n).qname))?;
             put(b, b">")
         }
-        T_TEXT | T_CDATA => c14n_escaped(b, field(doc, doc.node(n).value), false),
-        T_COMMENT => {
+        Some(NodeType::Text | NodeType::CData) => {
+            c14n_escaped(b, field(doc, doc.node(n).value), false)
+        }
+        Some(NodeType::Comment) => {
             if comments {
                 put(b, b"<!--")?;
                 put(b, field(doc, doc.node(n).value))?;
@@ -747,7 +750,7 @@ unsafe fn c14n_node(
             }
             Ok(())
         }
-        T_PI => {
+        Some(NodeType::Pi) => {
             put(b, b"<?")?;
             put(b, field(doc, doc.node(n).local))?;
             if doc.node(n).value.len != 0 {
@@ -756,7 +759,7 @@ unsafe fn c14n_node(
             }
             put(b, b"?>")
         }
-        T_FRAGMENT => {
+        Some(NodeType::Fragment) => {
             let mut c = doc.first_child(n);
             while let Some(cid) = c {
                 c14n_node(b, doc, cid, false, comments, depth)?;
@@ -798,10 +801,10 @@ fn canonicalize(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Er
             let mut c = doc.first_child(n);
             while let Some(cid) = c {
                 let ty = doc.type_(cid);
-                if ty == T_ELEMENT {
+                if ty == Some(NodeType::Element) {
                     c14n_node(b, doc, cid, true, comments, 0)?;
                     seen_root = true;
-                } else if ty == T_PI || (ty == T_COMMENT && comments) {
+                } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
                     if seen_root {
                         put(b, b"\n")?;
                     }

@@ -13,9 +13,8 @@ use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
 };
 use crate::xml::{
-    Document, NodeId, Span, ERR_LIMIT, ERR_OOM, ERR_SYNTAX, ERR_VERSION, MAX_ATTRS, MAX_DEPTH,
-    MAX_NS, OK, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_ELEMENT, T_FRAGMENT, T_PI, T_TEXT,
-    XMLNS_NS_URI, XML_NS_URI,
+    Document, NodeId, NodeType, Span, Status, MAX_ATTRS, MAX_DEPTH, MAX_NS, XMLNS_NS_URI,
+    XML_NS_URI,
 };
 
 /// A namespace binding in scope: prefix ("" = default) -> byte-store span.
@@ -51,7 +50,7 @@ pub struct Parser<'a> {
     col: u32,
     doc: &'a mut Document,
     fragment: Option<NodeId>,
-    pub status: i32,
+    pub status: Status,
     binds: Vec<Binding>,
     ratt: Vec<RawAttr>,
     stack: Vec<NodeId>,
@@ -68,7 +67,7 @@ impl<'a> Parser<'a> {
             col: 1,
             doc,
             fragment,
-            status: OK,
+            status: Status::Ok,
             binds: Vec::new(),
             ratt: Vec::new(),
             stack: Vec::new(),
@@ -134,19 +133,19 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn syntax<T>(&mut self) -> R<T> {
-        if self.status == OK {
-            self.status = ERR_SYNTAX;
+        if self.status.is_ok() {
+            self.status = Status::Syntax;
         }
         Err(())
     }
     #[inline]
     fn limit<T>(&mut self) -> R<T> {
-        self.status = ERR_LIMIT;
+        self.status = Status::Limit;
         Err(())
     }
     /// Map a `Document` allocation error onto the parser's status.
     #[inline]
-    fn arena<T>(&mut self, r: Result<T, i32>) -> R<T> {
+    fn arena<T>(&mut self, r: Result<T, Status>) -> R<T> {
         match r {
             Ok(v) => Ok(v),
             Err(st) => {
@@ -206,14 +205,14 @@ impl<'a> Parser<'a> {
         self.arena(r).map_err(|_| ())
     }
 
-    fn new_node(&mut self, ty: u32) -> R<NodeId> {
+    fn new_node(&mut self, ty: NodeType) -> R<NodeId> {
         let r = self.doc.new_node(ty);
         self.arena(r).map_err(|_| ())
     }
 
     /// Append a TEXT / CDATA node, coalescing with a preceding sibling of the
     /// SAME type (as libxml2 / the XPath data model do).
-    fn append_chardata(&mut self, parent: NodeId, ty: u32, val: Span) -> R {
+    fn append_chardata(&mut self, parent: NodeId, ty: NodeType, val: Span) -> R {
         let r = self.doc.append_chardata(parent, ty, val);
         self.arena(r).map_err(|_| ())
     }
@@ -245,7 +244,7 @@ impl<'a> Parser<'a> {
         }
         let mut v: Vec<u8> = Vec::new();
         if v.mkr_reserve_exact(pfx.len()).is_err() || self.binds.mkr_reserve(1).is_err() {
-            self.status = ERR_OOM;
+            self.status = Status::Oom;
             return Err(());
         }
         v.extend_from_slice(pfx);
@@ -316,7 +315,7 @@ impl<'a> Parser<'a> {
                 return self.limit();
             }
             if self.ratt.mkr_reserve(1).is_err() {
-                self.status = ERR_OOM;
+                self.status = Status::Oom;
                 return Err(());
             }
             self.ratt.push(RawAttr {
@@ -392,7 +391,7 @@ impl<'a> Parser<'a> {
                 Some(s) => s,
                 None => return self.syntax(),
             };
-            let attr = self.new_node(T_ATTRIBUTE)?;
+            let attr = self.new_node(NodeType::Attribute)?;
             self.set_node_qname(attr, name, &sp)?;
             if xmlns_prefix(name).is_some() {
                 let span = self.doc.xmlns_ns_span();
@@ -454,7 +453,7 @@ impl<'a> Parser<'a> {
         if !validate_chars(&self.input[cstart..j]) {
             return self.syntax();
         }
-        let c = self.new_node(T_COMMENT)?;
+        let c = self.new_node(NodeType::Comment)?;
         let v = self.own(self.sl(cstart, craw))?;
         self.doc.node_mut(c).value = v;
         self.doc.append_child(parent, c);
@@ -488,7 +487,7 @@ impl<'a> Parser<'a> {
             return self.syntax();
         }
         let cval = self.own(self.sl(cstart, craw))?;
-        self.append_chardata(parent, T_CDATA, cval)?;
+        self.append_chardata(parent, NodeType::CData, cval)?;
         self.advance_n(craw + 3);
         Ok(())
     }
@@ -560,7 +559,7 @@ impl<'a> Parser<'a> {
             return self.syntax();
         }
         if ver != b"1.0" {
-            self.status = ERR_VERSION; /* well-formed, unsupported version */
+            self.status = Status::Version; /* well-formed, unsupported version */
             return Err(());
         }
         let (mut saw_enc, mut saw_sd) = (false, false);
@@ -635,7 +634,7 @@ impl<'a> Parser<'a> {
         if !validate_chars(&self.input[dstart..j]) {
             return self.syntax();
         }
-        let pi = self.new_node(T_PI)?;
+        let pi = self.new_node(NodeType::Pi)?;
         let lp = self.own(tgt)?;
         let vp = self.own(self.sl(dstart, draw))?;
         {
@@ -742,7 +741,7 @@ impl<'a> Parser<'a> {
             return self.syntax(); /* unterminated DOCTYPE */
         }
 
-        let dt = self.new_node(T_DOCTYPE)?;
+        let dt = self.new_node(NodeType::Doctype)?;
         let nm = self.own(self.sl(n, nl))?;
         {
             let d = self.doc.node_mut(dt);
@@ -789,7 +788,7 @@ impl<'a> Parser<'a> {
             Some(s) => s,
             None => return self.syntax(),
         };
-        let el = self.new_node(T_ELEMENT)?;
+        let el = self.new_node(NodeType::Element)?;
         self.set_node_qname(el, name, &sp)?;
         {
             let n = self.doc.node_mut(el);
@@ -811,7 +810,7 @@ impl<'a> Parser<'a> {
                 return self.limit();
             }
             if self.stack.mkr_reserve(1).is_err() || self.frame.mkr_reserve(1).is_err() {
-                self.status = ERR_OOM;
+                self.status = Status::Oom;
                 return Err(());
             }
             self.stack.push(el);
@@ -851,7 +850,7 @@ impl<'a> Parser<'a> {
         }
         let tv = self.expand(self.sl(tstart, traw), ExpandMode::Text)?;
         let parent = self.cur_parent();
-        self.append_chardata(parent, T_TEXT, tv)
+        self.append_chardata(parent, NodeType::Text, tv)
     }
 
     /// Tokenizer dispatch.
@@ -885,7 +884,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
-            if self.status != OK {
+            if self.status != Status::Ok {
                 break;
             }
         }
@@ -911,11 +910,11 @@ impl<'a> Parser<'a> {
 
 /// Parse already-bounded input into a fresh document. Raw input is converted
 /// to this slice at the FFI boundary, before reaching the tree builder.
-pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, i32> {
+pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, Status> {
     let mut doc = Document::create(limits, src.len())?;
     let norm = match normalize_newlines(src) {
         Ok(n) => n,
-        Err(()) => return Err(ERR_OOM),
+        Err(()) => return Err(Status::Oom),
     };
     let body: &[u8] = match &norm {
         Some(v) => v,
@@ -923,12 +922,12 @@ pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, i32>
     };
     let mut p = Parser::new(body, &mut doc, None);
     p.run();
-    if p.status == OK && (!p.stack.is_empty() || p.doc.root().is_none()) {
+    if p.status == Status::Ok && (!p.stack.is_empty() || p.doc.root().is_none()) {
         let _ = p.syntax::<()>(); /* unclosed element(s) / no root */
     }
     let st = p.status;
     drop(p);
-    if st != OK {
+    if st != Status::Ok {
         return Err(st);
     }
     Ok(Box::into_raw(doc))
@@ -936,12 +935,16 @@ pub fn parse_ex(src: &[u8], limits: Option<usize>) -> Result<*mut Document, i32>
 
 /// Parse a fragment into a live document's arena. The document reference and
 /// input slice make the ownership preconditions explicit to Rust callers.
-pub fn parse_fragment(doc: &mut Document, src: &[u8], inherit_doc_ns: bool) -> Result<NodeId, i32> {
+pub fn parse_fragment(
+    doc: &mut Document,
+    src: &[u8],
+    inherit_doc_ns: bool,
+) -> Result<NodeId, Status> {
     if src.len() > doc.max_bytes {
-        return Err(ERR_LIMIT);
+        return Err(Status::Limit);
     }
-    let frag = doc.new_node(T_FRAGMENT)?;
-    let norm = normalize_newlines(src).map_err(|_| doc.status())?;
+    let frag = doc.new_node(NodeType::Fragment)?;
+    let norm = normalize_newlines(src).map_err(|_| doc.status)?;
     let body: &[u8] = match &norm {
         Some(v) => v,
         None => src,
@@ -951,10 +954,10 @@ pub fn parse_fragment(doc: &mut Document, src: &[u8], inherit_doc_ns: bool) -> R
         return Err(p.status);
     }
     p.run();
-    if p.status == OK && !p.stack.is_empty() {
+    if p.status == Status::Ok && !p.stack.is_empty() {
         let _ = p.syntax::<()>(); /* unclosed element(s) */
     }
-    if p.status != OK {
+    if p.status != Status::Ok {
         return Err(p.status); /* the partial fragment stays detached in the arena */
     }
     Ok(frag)

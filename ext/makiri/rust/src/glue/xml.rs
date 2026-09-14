@@ -24,7 +24,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_void};
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
@@ -35,17 +35,11 @@ use crate::xpath_abi::{Error as XPathError, Node as Ast, XPathValue, XP_ERR_SYNT
 
 use super::abi::error_class;
 
-/* The statuses, the document node type and the arena ceiling come from
- * `crate::xml::abi` rather than being restated here: that module is the XML
- * engine's own declaration of them, so there is one place for each value.
- *
- * Restating them was not hypothetical. The first draft of this file guessed the
- * status enum (SYNTAX/LIMIT/VERSION as 2/3/4 instead of 1/2/5, which maps three
- * failures onto the wrong exceptions) and the arena ceiling (64 MiB instead of
- * 256, which would reject documents the engine accepts). Both were caught by
- * checking against the header - which is the argument for not having a second
- * copy to check. */
-use crate::xml::abi::{ERR_LIMIT, ERR_SYNTAX, ERR_VERSION, MAX_BYTES, OK as XML_OK};
+/* The statuses and the arena ceiling come from `crate::xml::abi` rather than
+ * being restated here: that module is the XML engine's own declaration of them,
+ * and the statuses are now a real enum, so the compiler holds the two copies
+ * together. */
+use crate::xml::abi::{Status, MAX_BYTES};
 
 /// `MKR_XPATH_TYPE_NODESET`.
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
@@ -162,7 +156,7 @@ struct ParseWork {
     len: usize,
     limits: XmlLimits,
     result: *mut XmlDoc,
-    status: c_int,
+    status: Status,
 }
 
 unsafe extern "C" fn parse_nogvl(arg: *mut c_void) -> *mut c_void {
@@ -276,7 +270,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
             len: src.len,
             limits,
             result: core::ptr::null_mut(),
-            status: XML_OK,
+            status: Status::Ok,
         };
         rb_thread_call_without_gvl(
             parse_nogvl,
@@ -338,18 +332,20 @@ impl Unit {
 }
 
 /// Map a parse status onto its Ruby exception.
-unsafe fn parse_status_error(status: c_int, unit: Unit) -> Error {
+unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
     let class = |v: VALUE| {
         magnus::ExceptionClass::from_value(Value::from_raw(v)).expect("an exception class")
     };
     match status {
-        ERR_SYNTAX => Error::new(class(mkr_eXmlSyntaxError), unit.malformed()),
-        ERR_LIMIT => Error::new(class(mkr_eXmlLimitExceeded), unit.budget()),
-        ERR_VERSION => Error::new(
+        Status::Syntax => Error::new(class(mkr_eXmlSyntaxError), unit.malformed()),
+        Status::Limit => Error::new(class(mkr_eXmlLimitExceeded), unit.budget()),
+        Status::Version => Error::new(
             class(mkr_eXmlSyntaxError),
             "unsupported XML version (only XML 1.0 is supported)",
         ),
-        _ => Error::new(class(mkr_eError), unit.failed()),
+        /* `Ok` never reaches here (it means no failure); the rest are the
+         * generic "failed to parse" bucket. */
+        Status::Ok | Status::Oom | Status::Internal => Error::new(class(mkr_eError), unit.failed()),
     }
 }
 
@@ -757,14 +753,8 @@ unsafe fn fragment_into(
             "out of memory copying XML fragment source",
         ));
     }
-    let mut status = XML_OK;
-    let frag = mkr_xml_parse_fragment(
-        xdoc,
-        src.ptr,
-        src.len,
-        c_int::from(inherit_doc_ns),
-        &mut status,
-    );
+    let mut status = Status::Ok;
+    let frag = mkr_xml_parse_fragment(xdoc, src.ptr, src.len, inherit_doc_ns, &mut status);
     free_owned(&mut src);
     if frag.is_invalid() {
         return Err(parse_status_error(status, Unit::Fragment));

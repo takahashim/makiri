@@ -11,7 +11,7 @@
 
 use crate::falloc;
 use crate::falloc::{MapInsert, Reserve, VecPush};
-use crate::xml::{Document, NodeId, T_ELEMENT};
+use crate::xml::{Document, NodeId, NodeType};
 use core::hash::{BuildHasherDefault, Hasher};
 use std::collections::HashMap;
 
@@ -67,7 +67,7 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
     let mut max_key = 0usize;
     let mut cur = Some(root);
     while let Some(node) = cur {
-        if doc.type_(node) == T_ELEMENT {
+        if doc.type_(node) == Some(NodeType::Element) {
             if !key_into(&mut key, doc.local(node), doc.ns(node)) {
                 return None;
             }

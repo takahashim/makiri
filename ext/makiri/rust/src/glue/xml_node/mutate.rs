@@ -23,27 +23,9 @@ use super::abi::*;
 use super::{node_document, unwrap, wrap};
 use crate::glue::abi::{mkr_cNode, mkr_doc_parsed, mkr_html_node_unwrap, mkr_parsed_xml_doc};
 
-/// `mkr_xml_mut_status_t`.
-type MutStatus = core::ffi::c_int;
-
 /// `mkr_node_kind_t`.
 const KIND_HTML: core::ffi::c_int = 1;
 const KIND_XML: core::ffi::c_int = 2;
-
-/* `mkr_xml_mut_status_t`, in the header's order. Restating an enum is how two
- * constants went wrong in glue/xml.rs, so these are checked against
- * xml/mkr_xml_mutate.h rather than inferred, and there is exactly one arm per
- * value below - a new status added to the header makes `status_message` fall
- * through to "unknown", which raises rather than silently succeeding. */
-const MUT_OK: MutStatus = 0;
-const MUT_OOM: MutStatus = 1;
-const MUT_BAD_NAME: MutStatus = 2;
-const MUT_BAD_CHARS: MutStatus = 3;
-const MUT_UNBOUND_NS: MutStatus = 4;
-const MUT_TYPE: MutStatus = 5;
-const MUT_CYCLE: MutStatus = 6;
-const MUT_HIERARCHY: MutStatus = 7;
-const MUT_BAD_NS_DECL: MutStatus = 8;
 
 pub use crate::dom_adapter::cross_import::mkr_cross_html_to_xml;
 pub use crate::glue::node::mkr_node_kind;
@@ -74,51 +56,54 @@ extern "C" {
     static rb_eArgError: VALUE;
 }
 
-/// Raise for a non-OK mutation status; `MKR_XML_MUT_OK` returns.
+/// Raise for a non-OK mutation status; [`MutStatus::Ok`] returns.
 ///
-/// Exported because it is NOT only ours: `ruby_doc.c` and
-/// `dom_adapter/cross_import.c` call it, so this is the one place a mutation
-/// failure becomes an exception, whichever entry point produced it. (Dropping
-/// the C file that used to define it without providing this is what turned the
-/// first build of this port into a crash rather than a link error - on macOS an
-/// unresolved symbol becomes a NULL jump at runtime.)
+/// The one place a mutation failure becomes an exception, so every entry point
+/// that can produce a [`MutStatus`] routes through it: the node mutators here,
+/// `glue/doc.rs`, and `dom_adapter/cross_import.rs`. (Dropping the C file that
+/// used to define it without providing this is what turned the first build of
+/// this port into a crash rather than a link error - on macOS an unresolved
+/// symbol becomes a NULL jump at runtime.)
 ///
 /// # Safety
 /// Raises, so no Rust destructor may be live at the call. Every caller here
 /// passes only `Copy` locals.
-pub unsafe extern "C" fn mkr_xml_mut_check(st: MutStatus) {
-    if st == MUT_OK {
-        return;
-    }
+pub unsafe fn mkr_xml_mut_check(st: MutStatus) {
     let (exc, msg) = match st {
-        MUT_OOM => (error_class().as_raw(), c"out of memory mutating XML"),
-        MUT_BAD_NAME => (rb_eArgError, c"not a well-formed XML name"),
-        MUT_BAD_CHARS => (
+        MutStatus::Ok => return,
+        MutStatus::Oom => (error_class().as_raw(), c"out of memory mutating XML"),
+        MutStatus::BadName => (rb_eArgError, c"not a well-formed XML name"),
+        MutStatus::BadChars => (
             error_class().as_raw(),
             c"value contains a character or sequence not permitted in XML",
         ),
-        MUT_UNBOUND_NS => (
+        MutStatus::UnboundNs => (
             error_class().as_raw(),
             c"namespace prefix is not bound in this scope",
         ),
-        MUT_TYPE => (
+        MutStatus::Type => (
             error_class().as_raw(),
             c"operation unsupported for this node type",
         ),
-        MUT_CYCLE => (
+        MutStatus::Cycle => (
             error_class().as_raw(),
             c"cannot insert a node into its own subtree",
         ),
-        MUT_HIERARCHY => (
+        MutStatus::Hierarchy => (
             error_class().as_raw(),
             c"invalid placement (an attribute/document node cannot be a tree child, a document \
 allows a single root element, and a sibling target must have a parent)",
         ),
-        MUT_BAD_NS_DECL => (
+        MutStatus::BadNsDecl => (
             error_class().as_raw(),
             c"cannot bind a namespace prefix to the empty namespace",
         ),
-        _ => (error_class().as_raw(), c"unknown XML mutation error"),
+        /* No C caller, so a null/stale document handle reaching a mutator is a
+         * Rust-side invariant break, not a user error. */
+        MutStatus::Internal => (
+            error_class().as_raw(),
+            c"internal error mutating XML (no document)",
+        ),
     };
     crate::glue::abi::rb_raise(exc, c"%s".as_ptr(), msg.as_ptr())
 }
@@ -208,7 +193,7 @@ pub fn remove(rb_self: Value) -> Result<Value, Error> {
 /// The element behind `rb_self`, or an error naming what was attempted.
 unsafe fn element_for(rb_self: Value) -> Result<NodeId, Error> {
     let n = unwrap_mutable(rb_self);
-    if (*xdoc(rb_self)).type_(n) != T_ELEMENT {
+    if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
         return Err(Error::new(
             error_class(),
             "cannot set an attribute on a non-element node",
@@ -283,7 +268,7 @@ pub fn remove_attribute_ns(
 ) -> Result<Value, Error> {
     unsafe {
         let n = unwrap_mutable(rb_self);
-        if (*xdoc(rb_self)).type_(n) != T_ELEMENT {
+        if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
         let (lv, ll) = verified(ruby, local, c"attribute local name")?;
@@ -298,7 +283,7 @@ pub fn remove_attribute_ns(
 pub fn delete(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> {
     unsafe {
         let n = unwrap_mutable(rb_self);
-        if (*xdoc(rb_self)).type_(n) != T_ELEMENT {
+        if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
         let (nv, nl) = verified(ruby, name, c"attribute name")?;
@@ -388,7 +373,7 @@ unsafe fn adopt_finish(arg: Value) {
     }
     let src = unwrap(arg);
     let sdoc = xdoc(arg);
-    if (*sdoc).type_(src) == T_FRAGMENT {
+    if (*sdoc).type_(src) == Some(NodeType::Fragment) {
         while let Some(c) = (*sdoc).first_child(src) {
             mkr_xml_remove(sdoc, c);
         }
@@ -441,7 +426,7 @@ fn insert(ruby: &Ruby, rb_self: Value, arg: Value, op: Op) -> Result<Value, Erro
         let xd = xdoc(rb_self);
         let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;
 
-        if (*xd).type_(node) == T_FRAGMENT {
+        if (*xd).type_(node) == Some(NodeType::Fragment) {
             let out = splice_fragment(xd, target, node, doc_v, op);
             adopt_finish(adopt_from);
             return Ok(out);
@@ -685,26 +670,26 @@ unsafe fn create_chardata(
     ruby: &Ruby,
     rb_self: Value,
     text: Value,
-    type_: u32,
+    type_: NodeType,
     what: &core::ffi::CStr,
 ) -> Result<Value, Error> {
     let xd = xdoc(rb_self);
     let (tv, tl) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
-    let st = mkr_xml_new_chardata(xd, type_ as u8, tv.ptr, tl, &mut n);
+    let st = mkr_xml_new_chardata(xd, type_, tv.ptr, tl, &mut n);
     core::hint::black_box(text);
     mkr_xml_mut_check(st);
     Ok(wrap(n, rb_self))
 }
 
 pub fn create_text_node(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    unsafe { create_chardata(ruby, rb_self, t, T_TEXT, c"text content") }
+    unsafe { create_chardata(ruby, rb_self, t, NodeType::Text, c"text content") }
 }
 pub fn create_comment(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    unsafe { create_chardata(ruby, rb_self, t, T_COMMENT, c"comment content") }
+    unsafe { create_chardata(ruby, rb_self, t, NodeType::Comment, c"comment content") }
 }
 pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    unsafe { create_chardata(ruby, rb_self, t, T_CDATA, c"CDATA content") }
+    unsafe { create_chardata(ruby, rb_self, t, NodeType::CData, c"CDATA content") }
 }
 
 pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
@@ -729,7 +714,7 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
 pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
     let node_v = a.required.0;
-    let deep = i32::from(a.optional.0.is_some_and(|v| v.to_bool()));
+    let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
     unsafe {
         let xd = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())) as *mut XmlDoc;

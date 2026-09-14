@@ -18,11 +18,11 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
-use crate::xml::abi::{Document as XmlDoc, NodeId, MUT_BAD_NAME, MUT_OK, MUT_OOM, MUT_TYPE};
+use crate::xml::abi::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
 
 /* ---- the node-type constants, generated on both sides ---- */
@@ -41,11 +41,6 @@ const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const NS_XML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize;
 const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
-
-use crate::xml::abi::{
-    T_CDATA as X_CDATA, T_COMMENT as X_COMMENT, T_ELEMENT as X_ELEMENT, T_FRAGMENT as X_FRAGMENT,
-    T_PI as X_PI, T_TEXT as X_TEXT,
-};
 
 /* Every Lexbor entry point below comes from the generated bindings. */
 use lxb::{
@@ -133,17 +128,17 @@ unsafe fn template_content(n: *const LxbNode) -> Option<*mut c_void> {
 
 /// Declare `xmlns` (no prefix) or `xmlns:PREFIX` = `uri` on the detached mkr
 /// element, as an ordinary attribute.
-unsafe fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> c_int {
+unsafe fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) -> MutStatus {
     if prefix.is_empty() {
         return status(mutate::set_attribute(doc, el, b"xmlns", uri));
     }
     let nlen = match 6usize.checked_add(prefix.len()).and_then(fits_u32) {
         Some(_) => 6 + prefix.len(),
-        None => return MUT_OOM,
+        None => return MutStatus::Oom,
     };
     let mut name: Vec<u8> = match try_vec_with_capacity(nlen) {
         Some(v) => v,
-        None => return MUT_OOM,
+        None => return MutStatus::Oom,
     };
     name.extend_from_slice(b"xmlns:");
     name.extend_from_slice(prefix);
@@ -152,16 +147,16 @@ unsafe fn declare_ns(doc: &mut XmlDoc, el: NodeId, prefix: &[u8], uri: &[u8]) ->
 
 /// Collapse a safe mutator result onto the reported status.
 #[inline]
-unsafe fn status(r: Result<NodeId, i32>) -> i32 {
+unsafe fn status(r: Result<NodeId, MutStatus>) -> MutStatus {
     match r {
-        Ok(_) => MUT_OK,
+        Ok(_) => MutStatus::Ok,
         Err(st) => st,
     }
 }
 
 /// Copy the source element's attributes onto the translated mkr element,
 /// declaring an `xmlns:PREFIX` for each foreign-prefixed one.
-unsafe fn h2x_copy_attrs(doc: &mut XmlDoc, s: *mut LxbNode, el: NodeId) -> c_int {
+unsafe fn h2x_copy_attrs(doc: &mut XmlDoc, s: *mut LxbNode, el: NodeId) -> MutStatus {
     let mut a = lxb::lxb_dom_element_first_attribute_noi(s as *mut LxbElement);
     while !a.is_null() {
         let mut anl = 0usize;
@@ -169,7 +164,7 @@ unsafe fn h2x_copy_attrs(doc: &mut XmlDoc, s: *mut LxbNode, el: NodeId) -> c_int
         let an = lxb::lxb_dom_attr_qualified_name(a, &mut anl);
         let av = lxb::lxb_dom_attr_value_noi(a, &mut avl);
         if fits_u32(anl).is_none() || fits_u32(avl).is_none() {
-            return MUT_OOM;
+            return MutStatus::Oom;
         }
         let name = core::slice::from_raw_parts(an, anl);
         let value = if av.is_null() {
@@ -183,7 +178,7 @@ unsafe fn h2x_copy_attrs(doc: &mut XmlDoc, s: *mut LxbNode, el: NodeId) -> c_int
             if let Some(colon) = name.iter().position(|&b| b == b':') {
                 if let Some(uri) = html_ns_uri(&(*a).node) {
                     let st = declare_ns(doc, el, &name[..colon], uri);
-                    if st != MUT_OK {
+                    if st != MutStatus::Ok {
                         return st;
                     }
                 }
@@ -191,12 +186,12 @@ unsafe fn h2x_copy_attrs(doc: &mut XmlDoc, s: *mut LxbNode, el: NodeId) -> c_int
         }
 
         let st = status(mutate::set_attribute(doc, el, name, value));
-        if st != MUT_OK {
+        if st != MutStatus::Ok {
             return st;
         }
         a = lxb::lxb_dom_element_next_attribute_noi(a);
     }
-    MUT_OK
+    MutStatus::Ok
 }
 
 /// What [`h2x_make`] produced, plus the default namespace in scope for the new
@@ -215,7 +210,7 @@ unsafe fn h2x_make<'a>(
     doc: &mut XmlDoc,
     s: *mut LxbNode,
     parent_default: Option<&'a [u8]>,
-) -> Result<Made<'a>, c_int> {
+) -> Result<Made<'a>, MutStatus> {
     let unchanged = |node| {
         Ok(Made {
             node,
@@ -228,7 +223,7 @@ unsafe fn h2x_make<'a>(
             let mut nl = 0usize;
             let nm = lxb::lxb_dom_element_qualified_name(s as *mut LxbElement, &mut nl);
             if fits_u32(nl).is_none() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             let name = core::slice::from_raw_parts(nm, nl);
             let euri = html_ns_uri(s);
@@ -238,7 +233,7 @@ unsafe fn h2x_make<'a>(
              * namespace is passed DIRECTLY (link-time resolution skips loose
              * names). */
             let mut made = mutate::new_element(doc, name);
-            if made.as_ref().err() == Some(&MUT_BAD_NAME) && !name.is_empty() {
+            if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
                 made =
                     mutate::new_loose_dom_element(doc, name, 0, 0, nl as u32, euri.unwrap_or(&[]));
             }
@@ -247,14 +242,14 @@ unsafe fn h2x_make<'a>(
             let mut child_default = parent_default;
             if euri.unwrap_or(&[]) != parent_default.unwrap_or(&[]) {
                 let st = declare_ns(doc, el, &[], euri.unwrap_or(&[]));
-                if st != MUT_OK {
+                if st != MutStatus::Ok {
                     return Err(st);
                 }
                 child_default = Some(euri.unwrap_or(&[]));
             }
 
             let st = h2x_copy_attrs(doc, s, el);
-            if st != MUT_OK {
+            if st != MutStatus::Ok {
                 return Err(st);
             }
             Ok(Made {
@@ -267,12 +262,12 @@ unsafe fn h2x_make<'a>(
             let d = &(*(s as *const lxb::lxb_dom_character_data_t)).data;
             let len = match fits_u32(d.length) {
                 Some(l) => l,
-                None => return Err(MUT_OOM),
+                None => return Err(MutStatus::Oom),
             };
             let ty = match (*s).type_ {
-                h::TEXT => X_TEXT,
-                h::CDATA => X_CDATA,
-                _ => X_COMMENT,
+                h::TEXT => NodeType::Text,
+                h::CDATA => NodeType::CData,
+                _ => NodeType::Comment,
             };
             let text = if d.data.is_null() {
                 &[][..]
@@ -287,7 +282,7 @@ unsafe fn h2x_make<'a>(
             let tg = lxb::lxb_dom_processing_instruction_target_noi(s as *mut _, &mut tl);
             let d = &(*(s as *const lxb::lxb_dom_character_data_t)).data;
             if fits_u32(tl).is_none() || fits_u32(d.length).is_none() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             let target = core::slice::from_raw_parts(tg, tl);
             let data = if d.data.is_null() {
@@ -299,7 +294,9 @@ unsafe fn h2x_make<'a>(
         }
 
         h::FRAGMENT => {
-            let f = doc.new_node(X_FRAGMENT).map_err(|_| MUT_OOM)?;
+            let f = doc
+                .new_node(NodeType::Fragment)
+                .map_err(|_| MutStatus::Oom)?;
             unchanged(f)
         }
 
@@ -321,9 +318,9 @@ unsafe fn h2x_children_of(s: *mut LxbNode) -> *mut LxbNode {
 pub unsafe fn mkr_cross_html_to_xml(
     xdoc: *mut XmlDoc,
     src: *mut LxbNode,
-    deep: c_int,
+    deep: bool,
     out: *mut NodeId,
-) -> c_int {
+) -> MutStatus {
     *out = NodeId::INVALID;
     let doc = &mut *xdoc;
 
@@ -332,13 +329,13 @@ pub unsafe fn mkr_cross_html_to_xml(
         Err(st) => return st,
     };
     if root.node.is_invalid() {
-        return MUT_TYPE; /* the root's type has no XML counterpart */
+        return MutStatus::Type; /* the root's type has no XML counterpart */
     }
 
-    if deep != 0 {
+    if deep {
         let mut stack: Vec<Frame<*mut LxbNode, NodeId>> = match try_vec_with_capacity(1) {
             Some(v) => v,
-            None => return MUT_OOM,
+            None => return MutStatus::Oom,
         };
         let rdef: Option<&'static [u8]> = core::mem::transmute(root.child_default);
         if push(
@@ -351,7 +348,7 @@ pub unsafe fn mkr_cross_html_to_xml(
         )
         .is_err()
         {
-            return MUT_OOM;
+            return MutStatus::Oom;
         }
 
         while let Some(f) = stack.pop() {
@@ -363,7 +360,7 @@ pub unsafe fn mkr_cross_html_to_xml(
                 };
                 if !made.node.is_invalid() {
                     let st = mutate::insert_child(doc, f.d, made.node);
-                    if st != MUT_OK {
+                    if st != MutStatus::Ok {
                         return st;
                     }
                     if !h2x_children_of(c).is_null() {
@@ -378,7 +375,7 @@ pub unsafe fn mkr_cross_html_to_xml(
                         )
                         .is_err()
                         {
-                            return MUT_OOM;
+                            return MutStatus::Oom;
                         }
                     }
                 }
@@ -388,13 +385,18 @@ pub unsafe fn mkr_cross_html_to_xml(
     }
 
     *out = root.node;
-    MUT_OK
+    MutStatus::Ok
 }
 
 /* ================= XML (mkr) -> HTML (lxb) ========================== */
 
 /// Copy the source element's attributes onto the translated Lexbor element.
-unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId, el: *mut LxbElement) -> c_int {
+unsafe fn x2h_copy_attrs(
+    hdoc: *mut LxbDoc,
+    doc: &XmlDoc,
+    s: NodeId,
+    el: *mut LxbElement,
+) -> MutStatus {
     let mut a = doc.attrs(s);
     while let Some(attr) = a {
         let val = doc.value(attr);
@@ -410,12 +412,12 @@ unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId, el: *mut Lx
             )
             .is_null()
             {
-                return MUT_OOM;
+                return MutStatus::Oom;
             }
         } else {
             let at = lxb_dom_attr_interface_create(hdoc);
             if at.is_null() {
-                return MUT_OOM;
+                return MutStatus::Oom;
             }
             let ns = doc.ns(attr);
             if lxb::lxb_dom_attr_set_name_ns(
@@ -428,24 +430,24 @@ unsafe fn x2h_copy_attrs(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId, el: *mut Lx
             ) != LXB_STATUS_OK
                 || lxb_dom_attr_set_value(at, val.as_ptr(), val.len()) != LXB_STATUS_OK
             {
-                return MUT_OOM;
+                return MutStatus::Oom;
             }
             lxb_dom_element_attr_append(el, at);
         }
         a = doc.next(attr);
     }
-    MUT_OK
+    MutStatus::Ok
 }
 
 /// Translate ONE mkr node into a fresh, detached Lexbor node.
 ///
 /// Null to SKIP an unsupported type. An XML CDATA section has no HTML
 /// counterpart, so it fails closed rather than degrading to a text node.
-unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut LxbNode, c_int> {
+unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut LxbNode, MutStatus> {
     let value = || doc.value(s);
 
     match doc.type_(s) {
-        X_ELEMENT => {
+        Some(NodeType::Element) => {
             let qname = doc.qname(s);
             let el = lxb_dom_document_create_element(
                 hdoc,
@@ -454,36 +456,36 @@ unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut Lx
                 core::ptr::null_mut(),
             );
             if el.is_null() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             (*(el as *mut LxbNode)).ns = intern_ns(hdoc, doc.ns(s));
 
             let st = x2h_copy_attrs(hdoc, doc, s, el);
-            if st != MUT_OK {
+            if st != MutStatus::Ok {
                 return Err(st);
             }
             Ok(el as *mut LxbNode)
         }
 
-        X_TEXT => {
+        Some(NodeType::Text) => {
             let v = value();
             let t = lxb_dom_document_create_text_node(hdoc, v.as_ptr(), v.len());
             if t.is_null() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             Ok(t as *mut LxbNode)
         }
 
-        X_COMMENT => {
+        Some(NodeType::Comment) => {
             let v = value();
             let c = lxb_dom_document_create_comment(hdoc, v.as_ptr(), v.len());
             if c.is_null() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             Ok(c as *mut LxbNode)
         }
 
-        X_PI => {
+        Some(NodeType::Pi) => {
             let target = doc.local(s);
             let v = value();
             let pi = lxb_dom_document_create_processing_instruction(
@@ -494,17 +496,17 @@ unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut Lx
                 v.len(),
             );
             if pi.is_null() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             Ok(pi as *mut LxbNode)
         }
 
-        X_CDATA => Err(MUT_TYPE), /* HTML has no CDATA section */
+        Some(NodeType::CData) => Err(MutStatus::Type), /* HTML has no CDATA section */
 
-        X_FRAGMENT => {
+        Some(NodeType::Fragment) => {
             let f = lxb_dom_document_create_document_fragment(hdoc);
             if f.is_null() {
-                return Err(MUT_OOM);
+                return Err(MutStatus::Oom);
             }
             Ok(f as *mut LxbNode)
         }
@@ -526,9 +528,9 @@ pub unsafe fn mkr_cross_xml_to_html(
     hdoc: *mut LxbDoc,
     xdoc: *const XmlDoc,
     src: NodeId,
-    deep: c_int,
+    deep: bool,
     out: *mut *mut LxbNode,
-) -> c_int {
+) -> MutStatus {
     *out = core::ptr::null_mut();
     let doc = &*xdoc;
 
@@ -537,13 +539,13 @@ pub unsafe fn mkr_cross_xml_to_html(
         Err(st) => return st,
     };
     if root.is_null() {
-        return MUT_TYPE; /* the root's type has no HTML counterpart */
+        return MutStatus::Type; /* the root's type has no HTML counterpart */
     }
 
-    if deep != 0 {
+    if deep {
         let mut stack: Vec<Frame<NodeId, *mut LxbNode>> = match try_vec_with_capacity(1) {
             Some(v) => v,
-            None => return MUT_OOM,
+            None => return MutStatus::Oom,
         };
         if push(
             &mut stack,
@@ -555,7 +557,7 @@ pub unsafe fn mkr_cross_xml_to_html(
         )
         .is_err()
         {
-            return MUT_OOM;
+            return MutStatus::Oom;
         }
 
         while let Some(f) = stack.pop() {
@@ -578,7 +580,7 @@ pub unsafe fn mkr_cross_xml_to_html(
                         )
                         .is_err()
                     {
-                        return MUT_OOM;
+                        return MutStatus::Oom;
                     }
                 }
                 c = doc.next(cid);
@@ -587,5 +589,5 @@ pub unsafe fn mkr_cross_xml_to_html(
     }
 
     *out = root;
-    MUT_OK
+    MutStatus::Ok
 }

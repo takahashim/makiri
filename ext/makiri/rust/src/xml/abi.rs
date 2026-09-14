@@ -1,4 +1,4 @@
-//! The XML node model: the status and type codes, the index-based node and
+//! The XML node model: the status and node-type enums, the index-based node and
 //! document layouts, and the handle types shared with the XPath backend and the
 //! Ruby glue.
 //!
@@ -13,24 +13,83 @@
 
 use core::ffi::c_char;
 
-/* ---- status codes (mkr_xml_status_t) ---- */
-pub const OK: i32 = 0;
-pub const ERR_SYNTAX: i32 = 1;
-pub const ERR_LIMIT: i32 = 2;
-pub const ERR_OOM: i32 = 3;
-pub const ERR_INTERNAL: i32 = 4;
-pub const ERR_VERSION: i32 = 5;
+/* ---- status codes ---- */
 
-/* ---- node types (mkr_xml_node_type_t) ---- */
-pub const T_ELEMENT: u32 = 1;
-pub const T_ATTRIBUTE: u32 = 2;
-pub const T_TEXT: u32 = 3;
-pub const T_CDATA: u32 = 4;
-pub const T_PI: u32 = 7;
-pub const T_COMMENT: u32 = 8;
-pub const T_DOCUMENT: u32 = 9;
-pub const T_DOCTYPE: u32 = 10;
-pub const T_FRAGMENT: u32 = 11;
+/// The outcome of an XML operation that reports failure through a status rather
+/// than a typed error: parsing, tree building and arena allocation all
+/// accumulate one. [`Status::Ok`] is success; the rest name the failure so the
+/// Ruby glue can pick an exception class. The `#[repr(i32)]` values are the
+/// numbers the C entry points published.
+///
+/// `Ok` is a member (the parser and the arena keep a sticky status that starts
+/// there) but a `Result<T, Status>` never carries it in the `Err` position.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(i32)]
+pub enum Status {
+    Ok = 0,
+    Syntax = 1,
+    Limit = 2,
+    Oom = 3,
+    Internal = 4,
+    Version = 5,
+}
+
+impl Status {
+    /// Whether this is the success status (the common `status != Ok` test).
+    #[inline]
+    pub fn is_ok(self) -> bool {
+        matches!(self, Status::Ok)
+    }
+}
+
+/* ---- node types ---- */
+
+/// A DOM node type (`Node.nodeType`). The discriminants are the WHATWG DOM
+/// numbers - the same value Ruby's `#node_type` returns and the same set the
+/// XPath engine's `NTYPE_*` constants name - so converting to `u32` at those
+/// two boundaries is a plain cast. Entity / entity-reference / notation (5, 6,
+/// 12) have no Makiri node and are not representable.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(u32)]
+pub enum NodeType {
+    Element = 1,
+    Attribute = 2,
+    Text = 3,
+    CData = 4,
+    Pi = 7,
+    Comment = 8,
+    Document = 9,
+    Doctype = 10,
+    Fragment = 11,
+}
+
+impl NodeType {
+    #[inline]
+    pub fn as_u32(self) -> u32 {
+        self as u32
+    }
+}
+
+impl TryFrom<u32> for NodeType {
+    type Error = ();
+    /// The inverse of [`NodeType::as_u32`], failing on anything the DOM does not
+    /// define (including the unused 5/6/12) so a bad value can never be stored.
+    #[inline]
+    fn try_from(v: u32) -> Result<Self, ()> {
+        Ok(match v {
+            1 => NodeType::Element,
+            2 => NodeType::Attribute,
+            3 => NodeType::Text,
+            4 => NodeType::CData,
+            7 => NodeType::Pi,
+            8 => NodeType::Comment,
+            9 => NodeType::Document,
+            10 => NodeType::Doctype,
+            11 => NodeType::Fragment,
+            _ => return Err(()),
+        })
+    }
+}
 
 pub const FLAG_DOM_LOOSE_NAME: u32 = 0x0000_0001;
 
@@ -45,16 +104,30 @@ pub const FLAG_DOM_LOOSE_NAME: u32 = 0x0000_0001;
 /// attaching it gives the same tree as building it top-down.
 pub const FLAG_NS_RESOLVED: u32 = 0x0000_0002;
 
-/* ---- mutation status (mkr_xml_mut_status_t) ---- */
-pub const MUT_OK: i32 = 0;
-pub const MUT_OOM: i32 = 1;
-pub const MUT_BAD_NAME: i32 = 2;
-pub const MUT_BAD_CHARS: i32 = 3;
-pub const MUT_UNBOUND_NS: i32 = 4;
-pub const MUT_TYPE: i32 = 5;
-pub const MUT_CYCLE: i32 = 6;
-pub const MUT_HIERARCHY: i32 = 7;
-pub const MUT_BAD_NS_DECL: i32 = 8;
+/* ---- mutation status ---- */
+
+/// The outcome of a tree mutation. [`MutStatus::Ok`] is success; each failure
+/// names a rule the mutation broke, which the glue maps to a Ruby exception.
+/// Kept distinct from [`Status`] because the failure domains differ (a mutation
+/// never fails with [`Status::Syntax`], a parse never with
+/// [`MutStatus::Cycle`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(i32)]
+pub enum MutStatus {
+    Ok = 0,
+    Oom = 1,
+    BadName = 2,
+    BadChars = 3,
+    UnboundNs = 4,
+    Type = 5,
+    Cycle = 6,
+    Hierarchy = 7,
+    BadNsDecl = 8,
+    /// A null / stale document handle reached a mutator. The C entry points
+    /// overloaded the parse code `4` here; as its own variant it can no longer
+    /// be mistaken for [`MutStatus::UnboundNs`].
+    Internal = 9,
+}
 
 /* ---- budgets (§4) ---- */
 pub const MAX_DEPTH: usize = 1024;
@@ -156,7 +229,7 @@ impl NodeId {
 /// Links are `Option<NodeId>` and byte fields are spans, so a `Node` is plain
 /// data with no pointer to chase.
 pub struct Node {
-    pub type_: u32,
+    pub type_: NodeType,
     pub parent: Option<NodeId>,
     pub first_child: Option<NodeId>,
     pub last_child: Option<NodeId>,
@@ -175,7 +248,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub(crate) fn zeroed(type_: u32, generation: u32) -> Self {
+    pub(crate) fn zeroed(type_: NodeType, generation: u32) -> Self {
         Node {
             type_,
             parent: None,
@@ -221,13 +294,15 @@ pub struct Document {
     pub arena_bytes: usize,
     pub max_bytes: usize,
     pub max_nodes: usize,
-    pub oom: i32,
+    /// The first failure the arena hit, sticky until the document is dropped.
+    /// [`Status::Ok`] until something fails.
+    pub status: Status,
     pub root: Option<NodeId>,
     pub doc_node: NodeId,
     pub doctype: Option<NodeId>,
     /// Rust-owned cache; mutation drops it before changing links.
     pub(crate) name_index: Option<Box<crate::xml::index::NameIndex>>,
-    pub has_encoding_decl: i32,
+    pub has_encoding_decl: bool,
 }
 
 /// Historical name for [`Document`]; the Ruby glue and XPath backend refer to
@@ -245,12 +320,12 @@ impl Document {
             arena_bytes: 0,
             max_bytes: MAX_BYTES,
             max_nodes: MAX_NODES,
-            oom: 0,
+            status: Status::Ok,
             root: None,
             doc_node: NodeId::INVALID,
             doctype: None,
             name_index: None,
-            has_encoding_decl: 0,
+            has_encoding_decl: false,
         }
     }
 }

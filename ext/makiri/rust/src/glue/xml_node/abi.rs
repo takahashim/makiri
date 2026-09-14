@@ -12,10 +12,7 @@ pub use super::super::abi::{
     mkr_eError, mkr_eXmlSyntaxError, mkr_mXML, mkr_mXmlNodeMethods, mkr_node_set_new,
     mkr_node_set_push, mkr_parsed_xml_doc,
 };
-pub use crate::xml::abi::{
-    Doc as XmlDoc, NodeId, Span, T_ATTRIBUTE, T_CDATA, T_COMMENT, T_DOCTYPE, T_DOCUMENT, T_ELEMENT,
-    T_FRAGMENT, T_PI, T_TEXT,
-};
+pub use crate::xml::abi::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
 /// whole crate. Aliased rather than re-imported at every use site so the
