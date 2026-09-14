@@ -45,7 +45,7 @@ use rb_sys::{
     rb_ull2inum, ruby_xfree, VALUE,
 };
 
-use crate::xml::abi::Doc as XmlDoc;
+use crate::xml::model::Doc as XmlDoc;
 
 /* `mkr_node_data_t` lives in `super::abi`: the node wrapper holds a node pointer
  * plus the keepalive Document, and the XML wrap path writes the same struct.

@@ -9,10 +9,6 @@
 //! parser, mutators, index and XPath XML backend can all be ordinary safe Rust.
 
 /* Boundary readers state their precondition once, on `bytes`. */
-#![allow(clippy::missing_safety_doc)]
-
-use core::ffi::c_char;
-
 /* ---- status codes ---- */
 
 /// The outcome of an XML operation that reports failure through a status rather
@@ -327,26 +323,5 @@ impl Document {
             name_index: None,
             has_encoding_decl: false,
         }
-    }
-}
-
-/// The C `""` sentinel: a valid, non-NULL, NUL-terminated empty string that a
-/// zero-length slice may point at (never read past, never freed). Retained for
-/// the handful of FFI out-parameters that still hand a `*const c_char` back.
-pub static EMPTY: [u8; 1] = [0];
-
-#[inline]
-pub fn empty() -> *const c_char {
-    EMPTY.as_ptr() as *const c_char
-}
-
-/// View a C (ptr,len) pair as a byte slice. NULL or len 0 is the empty slice,
-/// so a "" / NULL field never gets dereferenced.
-#[inline]
-pub unsafe fn bytes<'a>(p: *const c_char, len: u32) -> &'a [u8] {
-    if p.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(p as *const u8, len as usize)
     }
 }

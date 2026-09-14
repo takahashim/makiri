@@ -9,8 +9,7 @@
 
 use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
-use crate::xml::{Doc, Document, Limits, Node, NodeId, NodeType, Span, Status};
-use core::ffi::c_char;
+use crate::xml::{Document, Node, NodeId, NodeType, Span, Status};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
@@ -575,44 +574,4 @@ impl Document {
 #[inline]
 pub fn span_is_empty(s: Span) -> bool {
     s.len == 0
-}
-
-/// Historical free entry points, now thin wrappers over [`Document`]. They keep
-/// the FFI adapter's shape while the engine is index-based.
-pub fn create_doc(limits: Option<usize>, src_len: usize) -> Result<Box<Document>, Status> {
-    Document::create(limits, src_len)
-}
-
-/// Turn a raw document handle back into an owned box (the FFI boundary).
-///
-/// # Safety
-/// `doc` must be a pointer returned by [`Document::create`]'s `Box::into_raw`
-/// and not yet freed.
-pub unsafe fn destroy_doc(doc: *mut Doc) {
-    if !doc.is_null() {
-        drop(Box::from_raw(doc));
-    }
-}
-
-#[inline]
-pub fn doc_memsize(doc: &Document) -> usize {
-    doc.memsize()
-}
-
-/// Borrow a byte slice from an FFI `(ptr, len)` pair without copying. Retained
-/// for the handful of callers that still receive raw input.
-#[inline]
-pub fn slice_from_raw<'a>(p: *const c_char, len: u32) -> &'a [u8] {
-    if p.is_null() || len == 0 {
-        &[]
-    } else {
-        // SAFETY: the caller owns a readable `(p, len)` range for the call.
-        unsafe { core::slice::from_raw_parts(p as *const u8, len as usize) }
-    }
-}
-
-/// A document's `Limits` are read from the raw struct at the FFI boundary.
-#[inline]
-pub fn limits_max_bytes(limits: &Limits) -> usize {
-    limits.max_bytes
 }

@@ -37,8 +37,8 @@ use super::{node_document, unwrap};
 use crate::cbuf::{mkr_buf_append, Buf, MKR_OK};
 use crate::glue::abi::is_kind_of;
 
-/* Taken from `crate::xml::abi`, the XML engine's own declaration. */
-use crate::xml::abi::{FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
+/* Taken from `crate::xml::model`, the XML engine's own declaration. */
+use crate::xml::model::{FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
 
 /// The XML document behind `rb_self`'s wrapper.
 unsafe fn xdoc(rb_self: Value) -> *mut XmlDoc {

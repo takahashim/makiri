@@ -10,7 +10,7 @@
 //! functions, [`mkr_xml_node_document`] and [`mkr_xml_wrap_rel`], which is why
 //! those two are exported under their C names.
 //!
-//! Nothing here touches Lexbor. The node layout comes from `crate::xml::abi`,
+//! Nothing here touches Lexbor. The node layout comes from `crate::xml::model`,
 //! the XML engine's own declaration, so no offset or type constant is restated.
 
 #![allow(clippy::missing_safety_doc)]

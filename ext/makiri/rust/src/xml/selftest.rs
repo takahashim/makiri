@@ -6,7 +6,6 @@
 /* Test entry points, called only from the Ruby glue with no arguments. */
 #![allow(clippy::missing_safety_doc)]
 
-use crate::xml::arena::destroy_doc;
 use crate::xml::mutate;
 use crate::xml::qname;
 use crate::xml::tree::{parse_ex, parse_fragment};
@@ -50,6 +49,12 @@ unsafe fn doc_new() -> *mut Document {
     match Document::create(None, 0) {
         Ok(d) => Box::into_raw(d),
         Err(_) => ptr::null_mut(),
+    }
+}
+
+unsafe fn destroy_doc(doc: *mut Document) {
+    if !doc.is_null() {
+        drop(Box::from_raw(doc));
     }
 }
 

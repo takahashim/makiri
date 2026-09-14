@@ -30,16 +30,16 @@ use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
-use crate::xml::abi::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
+use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath_abi::{Error as XPathError, Node as Ast, XPathValue, XP_ERR_SYNTAX};
 
 use super::abi::error_class;
 
-/* The statuses and the arena ceiling come from `crate::xml::abi` rather than
+/* The statuses and the arena ceiling come from `crate::xml::model` rather than
  * being restated here: that module is the XML engine's own declaration of them,
  * and the statuses are now a real enum, so the compiler holds the two copies
  * together. */
-use crate::xml::abi::{Status, MAX_BYTES};
+use crate::xml::model::{Status, MAX_BYTES};
 
 /// `MKR_XPATH_TYPE_NODESET`.
 const MKR_XPATH_TYPE_NODESET: u32 = 0;

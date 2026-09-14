@@ -388,8 +388,9 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
             let xdoc = crate::glue::xml_node::mkr_doc_of(
                 crate::glue::xml_node::mkr_xml_node_document(node_v.as_raw()),
             );
-            let src =
-                crate::xml::abi::NodeId::from_token(mkr_xml_node_unwrap(node_v.as_raw()) as usize);
+            let src = crate::xml::model::NodeId::from_token(
+                mkr_xml_node_unwrap(node_v.as_raw()) as usize
+            );
             mkr_xml_mut_check(mkr_cross_xml_to_html(doc, xdoc, src, deep, &mut imp));
             return Ok(Value::from_raw(mkr_wrap_html_node(imp, self_.as_raw())));
         }

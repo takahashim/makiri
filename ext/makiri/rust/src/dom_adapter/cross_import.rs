@@ -22,7 +22,7 @@ use core::ffi::c_void;
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
-use crate::xml::abi::{Document as XmlDoc, MutStatus, NodeId, NodeType};
+use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
 
 /* ---- the node-type constants, generated on both sides ---- */

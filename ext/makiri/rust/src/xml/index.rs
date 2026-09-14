@@ -121,3 +121,19 @@ pub fn lookup<'a>(idx: &'a mut NameIndex, local: &[u8], ns: &[u8]) -> &'a [NodeI
         None => &[],
     }
 }
+
+pub fn mkr_xml_name_index_get(doc: &mut Document) -> Option<&mut NameIndex> {
+    get(doc)
+}
+
+pub fn mkr_xml_name_index_invalidate(doc: &mut Document) {
+    invalidate(doc)
+}
+
+pub fn mkr_xml_name_index_lookup<'a>(
+    idx: &'a mut NameIndex,
+    local: &[u8],
+    ns_uri: &[u8],
+) -> &'a [NodeId] {
+    lookup(idx, local, ns_uri)
+}

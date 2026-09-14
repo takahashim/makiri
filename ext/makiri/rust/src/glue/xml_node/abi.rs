@@ -1,7 +1,7 @@
 //! What the XML node glue reaches across to, and the small readers every one of
 //! its modules needs.
 //!
-//! The node layout comes from `crate::xml::abi` - the XML engine's own
+//! The node layout comes from `crate::xml::model` - the XML engine's own
 //! declaration - so nothing here restates a field offset or a type constant.
 
 use magnus::rb_sys::FromRawValue;
@@ -12,7 +12,7 @@ pub use super::super::abi::{
     mkr_eError, mkr_eXmlSyntaxError, mkr_mXML, mkr_mXmlNodeMethods, mkr_node_set_new,
     mkr_node_set_push, mkr_parsed_xml_doc,
 };
-pub use crate::xml::abi::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
+pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
 /// whole crate. Aliased rather than re-imported at every use site so the

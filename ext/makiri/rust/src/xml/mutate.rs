@@ -19,6 +19,169 @@ type Ns = Span;
 
 const NO_NS: Ns = Span::EMPTY;
 
+fn put_node(out: &mut NodeId, result: Result<NodeId, MutStatus>) -> MutStatus {
+    match result {
+        Ok(node) => {
+            *out = node;
+            MutStatus::Ok
+        }
+        Err(status) => {
+            *out = NodeId::INVALID;
+            status
+        }
+    }
+}
+
+pub fn mkr_xml_detach(doc: &mut Document, node: NodeId) {
+    if !node.is_invalid() {
+        detach(doc, node);
+    }
+}
+
+pub fn mkr_xml_remove(doc: &mut Document, node: NodeId) {
+    if !node.is_invalid() {
+        remove(doc, node);
+    }
+}
+
+pub fn mkr_xml_replace_with_fragment(
+    doc: &mut Document,
+    target: NodeId,
+    frag: NodeId,
+) -> MutStatus {
+    replace_with_fragment(doc, target, frag)
+}
+
+pub fn mkr_xml_rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
+    rename(doc, node, name)
+}
+
+pub fn mkr_xml_set_attribute(
+    doc: &mut Document,
+    el: NodeId,
+    name: &[u8],
+    val: &[u8],
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, set_attribute(doc, el, name, val))
+}
+
+pub fn mkr_xml_remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
+    remove_attribute(doc, el, name)
+}
+
+pub fn mkr_xml_set_attribute_ns(
+    doc: &mut Document,
+    el: NodeId,
+    ns: &[u8],
+    name: &[u8],
+    val: &[u8],
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, set_attribute_ns(doc, el, ns, name, val))
+}
+
+pub fn mkr_xml_remove_attribute_ns(
+    doc: &mut Document,
+    el: NodeId,
+    ns: &[u8],
+    local: &[u8],
+) -> bool {
+    remove_attribute_ns(doc, el, ns, local)
+}
+
+pub fn mkr_xml_set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
+    set_content(doc, node, text)
+}
+
+pub fn mkr_xml_new_element(doc: &mut Document, name: &[u8], out: &mut NodeId) -> MutStatus {
+    put_node(out, new_element(doc, name))
+}
+
+pub fn mkr_xml_new_loose_dom_element(
+    doc: &mut Document,
+    name: &[u8],
+    prefix_len: u32,
+    local_off: u32,
+    local_len: u32,
+    ns: &[u8],
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(
+        out,
+        new_loose_dom_element(doc, name, prefix_len, local_off, local_len, ns),
+    )
+}
+
+pub fn mkr_xml_new_document_type(
+    doc: &mut Document,
+    name: &[u8],
+    pub_id: Option<&[u8]>,
+    sys_id: Option<&[u8]>,
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, new_document_type(doc, name, pub_id, sys_id))
+}
+
+pub fn mkr_xml_new_chardata(
+    doc: &mut Document,
+    type_: NodeType,
+    text: &[u8],
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, new_chardata(doc, type_, text))
+}
+
+pub fn mkr_xml_new_pi(
+    doc: &mut Document,
+    target: &[u8],
+    data: &[u8],
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, new_pi(doc, target, data))
+}
+
+pub fn mkr_xml_import_subtree(
+    doc: &mut Document,
+    src_doc: &Document,
+    src: NodeId,
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, import_subtree(doc, src_doc, src))
+}
+
+pub fn mkr_xml_copy_node(
+    doc: &mut Document,
+    src_doc: &Document,
+    src: NodeId,
+    deep: bool,
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, copy_node_from(doc, src_doc, src, deep))
+}
+
+pub fn mkr_xml_clone_node(
+    doc: &mut Document,
+    src: NodeId,
+    deep: bool,
+    out: &mut NodeId,
+) -> MutStatus {
+    put_node(out, clone_node(doc, src, deep))
+}
+
+pub fn mkr_xml_insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
+    insert_child(doc, parent, node)
+}
+pub fn mkr_xml_insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+    insert_before(doc, r, node)
+}
+pub fn mkr_xml_insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+    insert_after(doc, r, node)
+}
+pub fn mkr_xml_replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+    replace_node(doc, r, node)
+}
+
 /// Resolve `name` (split per `sp`) applied at `scope` (mirrors the parser's §7
 /// rules). An unbound prefix is an error only when connected; deferred
 /// (unresolved) otherwise.

@@ -312,7 +312,9 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
         /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
          * document node for a Document receiver, else the node itself. */
         let cnode = if is_kind_of(rb_node, mkr_cXmlDocument) {
-            (*(xdoc as *mut crate::xml::abi::Doc)).doc_node().to_token() as *mut c_void
+            (*(xdoc as *mut crate::xml::model::Doc))
+                .doc_node()
+                .to_token() as *mut c_void
         } else {
             mkr_xml_node_unwrap(rb_node.as_raw())
         };

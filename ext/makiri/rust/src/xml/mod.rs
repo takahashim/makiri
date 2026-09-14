@@ -4,14 +4,15 @@
 //! fields refer to the byte store through `Span`s, so the XML engine contains
 //! no raw pointers.
 
-pub mod abi;
-pub use abi::*;
+pub mod model;
+pub use model::*;
 
 pub mod api;
 pub mod arena;
 pub mod chars;
 pub mod index;
-pub(crate) mod mutate;
+pub mod mutate;
+pub mod parse;
 pub mod qname;
 #[cfg(feature = "ruby")]
 pub mod selftest;

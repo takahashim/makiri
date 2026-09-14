@@ -16,7 +16,7 @@
 
 use super::abi::*;
 use super::dom::{Bucket, Dom};
-use crate::xml::abi as xml;
+use crate::xml::model as xml;
 use core::ffi::c_int;
 
 /// The XML storage handle: the index-arena document.
