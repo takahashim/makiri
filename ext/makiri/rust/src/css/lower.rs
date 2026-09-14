@@ -19,7 +19,6 @@
 
 use super::build::{self, NodeArray, StepArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
-use crate::falloc::calloc::mkr_callocarray;
 use crate::lexbor_abi as lxb;
 use crate::xpath_abi::{
     mkr_node_free, Node, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING,
@@ -159,7 +158,10 @@ unsafe fn lower_type(
         /* `*|el`: any namespace with a specific local name. XPath has no such
          * test, so it becomes a wildcard plus a local-name() predicate. */
         (*step).test.kind = NT_WILDCARD;
-        let ln = build::fncall(b, b"local-name", build::args(b, 0), 0);
+        let ln = match build::args(b, 0) {
+            Some(args) => build::fncall(b, b"local-name", args),
+            None => core::ptr::null_mut(),
+        };
         let lit = build::literal(b, name);
         return push_pred(b, preds, build::binop(b, OP_EQ, ln, lit));
     }
@@ -342,7 +344,10 @@ unsafe fn of_type_pos(b: &Build, forward: bool) -> *mut Node {
     } else {
         FN_OF_TYPE_POS_LAST
     };
-    build::fncall(b, name, build::args(b, 0), 0)
+    match build::args(b, 0) {
+        Some(args) => build::fncall(b, name, args),
+        None => core::ptr::null_mut(),
+    }
 }
 
 /// The 1-based position expression for `:nth-*`.
@@ -502,29 +507,23 @@ unsafe fn child_text_pred(b: &Build, pred: *mut Node) -> *mut Node {
         mkr_node_free(pred);
         return core::ptr::null_mut();
     }
-    let steps = mkr_callocarray(1, core::mem::size_of::<Step>()) as *mut Step;
-    if steps.is_null() {
-        b.oom();
+    let Some(preds) = NodeArray::single(b, pred) else {
         mkr_node_free(pred);
         mkr_node_free(n);
         return core::ptr::null_mut();
-    }
-    let pv = mkr_callocarray(1, core::mem::size_of::<*mut Node>()) as *mut *mut Node;
-    if pv.is_null() {
-        b.oom();
-        libc_free(steps as *mut core::ffi::c_void);
-        mkr_node_free(pred);
+    };
+    let mut step: Step = core::mem::zeroed();
+    step.axis = AXIS_CHILD;
+    step.test.kind = NT_TEXT;
+    preds.install_into_step(&mut step);
+    let mut steps = StepArray::new();
+    if !steps.push(b, step) {
+        build::mkr_step_clear(&mut step);
         mkr_node_free(n);
         return core::ptr::null_mut();
     }
-    *pv = pred;
-    (*steps).axis = AXIS_CHILD;
-    (*steps).test.kind = NT_TEXT;
-    (*steps).predicates = pv;
-    (*steps).npredicates = 1;
     (*n).u.path.absolute = 0;
-    (*n).u.path.steps = steps;
-    (*n).u.path.nsteps = 1;
+    steps.install_into_path(n);
     n
 }
 
@@ -630,14 +629,13 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             };
             low.extend(needle.iter().map(|&ch| ch.to_ascii_lowercase()));
 
-            let ta = build::args(b, 3);
-            if ta.is_null() {
+            let Some(mut ta) = build::args(b, 3) else {
                 return core::ptr::null_mut();
-            }
-            *ta = build::step_path(b, AXIS_SELF, NT_NODE, None);
-            *ta.add(1) = build::literal(b, UPPER);
-            *ta.add(2) = build::literal(b, LOWER);
-            let folded = build::fncall(b, b"translate", ta, 3);
+            };
+            ta.set(0, build::step_path(b, AXIS_SELF, NT_NODE, None));
+            ta.set(1, build::literal(b, UPPER));
+            ta.set(2, build::literal(b, LOWER));
+            let folded = build::fncall(b, b"translate", ta);
             child_text_pred(
                 b,
                 build::call2(b, b"contains", folded, build::literal(b, &low)),
@@ -750,7 +748,7 @@ unsafe fn emit_compound_step(
     loop {
         if !fold_simple(b, s, &mut step, &mut preds) {
             build::free_preds(preds);
-            clear_test(&mut step);
+            build::mkr_step_clear(&mut step);
             return false;
         }
         if s == last {
@@ -765,11 +763,6 @@ unsafe fn emit_compound_step(
         return false;
     }
     true
-}
-
-unsafe fn clear_test(step: *mut Step) {
-    mkr_owned_text_clear(&mut (*step).test.local);
-    mkr_owned_text_clear(&mut (*step).test.prefix);
 }
 
 /// A compound - a CLOSE-linked run of simple selectors - and the combinator
@@ -864,21 +857,17 @@ unsafe fn emit_positional_sibling(b: &Build, steps: &mut StepArray, axis: u32) -
     let mut st: Step = core::mem::zeroed();
     st.axis = axis;
     st.test.kind = NT_WILDCARD;
-    let p = mkr_callocarray(1, core::mem::size_of::<*mut Node>()) as *mut *mut Node;
+    let p = build::num(b, 1.0);
     if p.is_null() {
-        b.oom();
         return false;
     }
-    *p = build::num(b, 1.0);
-    if (*p).is_null() {
-        libc_free(p as *mut core::ffi::c_void);
+    let Some(preds) = NodeArray::single(b, p) else {
+        mkr_node_free(p);
         return false;
-    }
-    st.predicates = p;
-    st.npredicates = 1;
+    };
+    preds.install_into_step(&mut st);
     if !steps.push(b, st) {
-        mkr_node_free(*p);
-        libc_free(p as *mut core::ffi::c_void);
+        build::mkr_step_clear(&mut st);
         return false;
     }
     true
@@ -968,11 +957,4 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
     }
 
     finish_path(b, steps)
-}
-
-pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
-
-extern "C" {
-    #[link_name = "free"]
-    fn libc_free(p: *mut core::ffi::c_void);
 }

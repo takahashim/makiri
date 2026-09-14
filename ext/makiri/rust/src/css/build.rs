@@ -21,7 +21,6 @@ use crate::xpath_abi::{
 
 use crate::falloc::calloc::mkr_callocarray;
 pub use crate::xpath::ast_ops::mkr_step_clear;
-pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
 
 extern "C" {
     #[link_name = "free"]
@@ -90,51 +89,31 @@ pub(crate) unsafe fn binop(b: &Build, op: u32, lhs: *mut Node, rhs: *mut Node) -
 ///
 /// Zero slots still allocates one, because `mkr_callocarray(0, _)` answers NULL
 /// and a NULL array would be indistinguishable from a failure.
-pub(crate) unsafe fn args(b: &Build, n: usize) -> *mut *mut Node {
-    let p = mkr_callocarray(
-        if n == 0 { 1 } else { n },
-        core::mem::size_of::<*mut Node>(),
-    ) as *mut *mut Node;
-    if p.is_null() {
-        b.oom();
-    }
-    p
+pub(crate) unsafe fn args(b: &Build, n: usize) -> Option<NodeArray> {
+    NodeArray::with_slots(b, n)
 }
 
 /// A call to an internal, compile-time-known function name, taking ownership of
 /// `argv[0..nargs)`. Frees them on any failure.
-pub(crate) unsafe fn fncall(
-    b: &Build,
-    name: &[u8],
-    argv: *mut *mut Node,
-    nargs: usize,
-) -> *mut Node {
-    if argv.is_null() {
-        return core::ptr::null_mut();
-    }
-    let free_args = |argv: *mut *mut Node| {
-        for i in 0..nargs {
-            mkr_node_free(*argv.add(i));
-        }
-        libc_free(argv as *mut c_void);
-    };
+pub(crate) unsafe fn fncall(b: &Build, name: &[u8], argv: NodeArray) -> *mut Node {
+    let nargs = argv.len();
     for i in 0..nargs {
-        if (*argv.add(i)).is_null() {
-            free_args(argv);
+        if argv.get(i).is_null() {
+            free_preds(argv);
             return core::ptr::null_mut();
         }
     }
     let n = node(b, NK_FNCALL);
     if n.is_null() {
-        free_args(argv);
+        free_preds(argv);
         return core::ptr::null_mut();
     }
     if !set_text(b, &mut (*n).u.fncall.name, name) {
-        free_args(argv);
+        free_preds(argv);
         mkr_node_free(n);
         return core::ptr::null_mut();
     }
-    (*n).u.fncall.args = argv;
+    (*n).u.fncall.args = argv.into_raw_parts().0;
     (*n).u.fncall.nargs = nargs;
     n
 }
@@ -177,36 +156,35 @@ unsafe fn named_step_path_inner(
     if n.is_null() {
         return n;
     }
-    let steps = mkr_callocarray(1, core::mem::size_of::<Step>()) as *mut Step;
-    if steps.is_null() {
-        b.oom();
-        mkr_node_free(n);
-        return core::ptr::null_mut();
-    }
-    (*steps).axis = axis;
-    (*steps).test.kind = nt_kind;
+    let mut step: Step = core::mem::zeroed();
+    step.axis = axis;
+    step.test.kind = nt_kind;
 
     if nt_kind == NT_NAME {
         if let Some(local) = local {
-            if !set_text(b, &mut (*steps).test.local, local) {
-                libc_free(steps as *mut c_void);
+            if !set_text(b, &mut step.test.local, local) {
+                mkr_step_clear(&mut step);
                 mkr_node_free(n);
                 return core::ptr::null_mut();
             }
         }
         if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
-            if !set_text(b, &mut (*steps).test.prefix, prefix) {
-                mkr_owned_text_clear(&mut (*steps).test.local);
-                libc_free(steps as *mut c_void);
+            if !set_text(b, &mut step.test.prefix, prefix) {
+                mkr_step_clear(&mut step);
                 mkr_node_free(n);
                 return core::ptr::null_mut();
             }
         }
     }
 
+    let mut steps = StepArray::new();
+    if !steps.push(b, step) {
+        mkr_step_clear(&mut step);
+        mkr_node_free(n);
+        return core::ptr::null_mut();
+    }
     (*n).u.path.absolute = 0;
-    (*n).u.path.steps = steps;
-    (*n).u.path.nsteps = 1;
+    steps.install_into_path(n);
     n
 }
 
@@ -222,26 +200,24 @@ pub(crate) unsafe fn attr(b: &Build, name: &[u8]) -> *mut Node {
 
 /// A one-argument call, the shape most of the lowering wants.
 pub(crate) unsafe fn call1(b: &Build, name: &[u8], a0: *mut Node) -> *mut Node {
-    let a = args(b, 1);
-    if a.is_null() {
+    let Some(mut a) = args(b, 1) else {
         mkr_node_free(a0);
         return core::ptr::null_mut();
-    }
-    *a = a0;
-    fncall(b, name, a, 1)
+    };
+    a.set(0, a0);
+    fncall(b, name, a)
 }
 
 /// A two-argument call.
 pub(crate) unsafe fn call2(b: &Build, name: &[u8], a0: *mut Node, a1: *mut Node) -> *mut Node {
-    let a = args(b, 2);
-    if a.is_null() {
+    let Some(mut a) = args(b, 2) else {
         mkr_node_free(a0);
         mkr_node_free(a1);
         return core::ptr::null_mut();
-    }
-    *a = a0;
-    *a.add(1) = a1;
-    fncall(b, name, a, 2)
+    };
+    a.set(0, a0);
+    a.set(1, a1);
+    fncall(b, name, a)
 }
 
 /// `normalize-space(@[prefix:]name)`.
@@ -251,14 +227,13 @@ pub(crate) unsafe fn norm_attr(b: &Build, prefix: Option<&[u8]>, name: &[u8]) ->
 
 /// `concat(" ", normalize-space(@name), " ")` - the whitespace-padded token list.
 pub(crate) unsafe fn padded_tokens(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> *mut Node {
-    let a = args(b, 3);
-    if a.is_null() {
+    let Some(mut a) = args(b, 3) else {
         return core::ptr::null_mut();
-    }
-    *a = literal(b, b" ");
-    *a.add(1) = norm_attr(b, prefix, name);
-    *a.add(2) = literal(b, b" ");
-    fncall(b, b"concat", a, 3)
+    };
+    a.set(0, literal(b, b" "));
+    a.set(1, norm_attr(b, prefix, name));
+    a.set(2, literal(b, b" "));
+    fncall(b, b"concat", a)
 }
 
 /// `contains(concat(' ', normalize-space(@name), ' '), ' value ')` - the
@@ -399,13 +374,56 @@ impl NodeArray {
         Self(CArray::new())
     }
 
+    pub(crate) unsafe fn with_slots(b: &Build, n: usize) -> Option<Self> {
+        let capacity = if n == 0 { 1 } else { n };
+        let v = mkr_callocarray(capacity, core::mem::size_of::<*mut Node>()) as *mut *mut Node;
+        if v.is_null() {
+            b.oom();
+            return None;
+        }
+        Some(Self(CArray {
+            v,
+            n,
+            cap: capacity,
+        }))
+    }
+
+    /// Create a one-element predicate array, taking ownership of `item` on
+    /// success. The caller retains ownership when allocation fails.
+    pub(crate) unsafe fn single(b: &Build, item: *mut Node) -> Option<Self> {
+        let mut array = Self::new();
+        if array.push(b, item) {
+            Some(array)
+        } else {
+            None
+        }
+    }
+
     pub(crate) unsafe fn push(&mut self, b: &Build, item: *mut Node) -> bool {
         self.0.push(b, item)
+    }
+
+    pub(crate) unsafe fn set(&mut self, index: usize, item: *mut Node) {
+        debug_assert!(index < self.0.n);
+        *self.0.v.add(index) = item;
+    }
+
+    unsafe fn get(&self, index: usize) -> *mut Node {
+        debug_assert!(index < self.0.n);
+        *self.0.v.add(index)
+    }
+
+    fn len(&self) -> usize {
+        self.0.n
     }
 
     pub(crate) unsafe fn install_into_step(self, step: *mut Step) {
         let (predicates, npredicates) = self.0.into_raw_parts();
         (*step).predicates = predicates;
         (*step).npredicates = npredicates;
+    }
+
+    fn into_raw_parts(self) -> (*mut *mut Node, usize) {
+        self.0.into_raw_parts()
     }
 }
