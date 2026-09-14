@@ -291,7 +291,7 @@ extern "C" {
  * Agreement with the hand-written view                               *
  * ------------------------------------------------------------------ */
 
-/// `xpath/html_abi.rs` declares the three node structs by hand, and keeps doing
+/// `xpath/lexbor_abi.rs` declares the three node structs by hand, and keeps doing
 /// so for one reason: the engine's hot paths read those fields per node, and a
 /// view shaped for that is worth having under the cursor rather than in
 /// `OUT_DIR`. What it must not be is a SECOND source of truth, so every field
@@ -303,7 +303,7 @@ extern "C" {
 /// covers - libclang and the build's `cc` disagreeing with each other.
 mod agree {
     use super::{lxb_dom_attr_t, lxb_dom_element_t, lxb_dom_node_t};
-    use crate::xpath::html_abi::{Attr, Element, Node};
+    use crate::xpath::lexbor_abi::{Attr, Element, Node};
 
     macro_rules! same_size {
         ($ours:ty, $theirs:ty, $what:literal) => {
@@ -372,7 +372,7 @@ mod agree {
     same_offset!(Attr, lxb_dom_attr_t, node, "attr");
 }
 
-/* The namespace constants used to be hand-written in `xpath/html_abi.rs` and
+/* The namespace constants used to be hand-written in `xpath/lexbor_abi.rs` and
  * checked here. They are now derived from the generated enum directly, so there
  * is nothing left to disagree - the check was removed rather than kept as
  * decoration. The layout checks above remain, because a hand-written struct
