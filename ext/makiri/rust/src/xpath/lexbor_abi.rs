@@ -210,3 +210,142 @@ pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf
     );
     st
 }
+
+/* ---------- typed views over the Lexbor layout ---------- */
+
+#[inline]
+unsafe fn seen<'a>(p: *const u8, len: usize) -> &'a [u8] {
+    if p.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(p, len)
+    }
+}
+
+#[inline]
+unsafe fn named<'a, T>(
+    h: *mut T,
+    f: unsafe extern "C" fn(*const T, *mut usize) -> *const u8,
+) -> &'a [u8] {
+    let mut len = 0;
+    seen(f(h, &mut len), len)
+}
+
+#[inline]
+unsafe fn named_mut<'a, T>(
+    h: *mut T,
+    f: unsafe extern "C" fn(*mut T, *mut usize) -> *const u8,
+) -> &'a [u8] {
+    let mut len = 0;
+    seen(f(h, &mut len), len)
+}
+
+#[inline]
+pub unsafe fn document_node(doc: *mut Document) -> *mut Node {
+    doc as *mut Node
+}
+
+#[inline]
+pub unsafe fn node_type(node: *mut Node) -> u32 {
+    (*node).type_
+}
+#[inline]
+pub unsafe fn first_child(node: *mut Node) -> *mut Node {
+    (*node).first_child
+}
+#[inline]
+pub unsafe fn last_child(node: *mut Node) -> *mut Node {
+    (*node).last_child
+}
+#[inline]
+pub unsafe fn next(node: *mut Node) -> *mut Node {
+    (*node).next
+}
+#[inline]
+pub unsafe fn prev(node: *mut Node) -> *mut Node {
+    (*node).prev
+}
+#[inline]
+pub unsafe fn parent(node: *mut Node) -> *mut Node {
+    (*node).parent
+}
+
+#[inline]
+pub unsafe fn first_attr(element: *mut Node) -> *mut Node {
+    (*(element as *mut Element)).first_attr as *mut Node
+}
+#[inline]
+pub unsafe fn attr_next(attr: *mut Node) -> *mut Node {
+    (*(attr as *mut Attr)).next as *mut Node
+}
+#[inline]
+pub unsafe fn attr_value<'a>(attr: *mut Node) -> &'a [u8] {
+    named_mut(attr as *mut LxbAttr, lxb_dom_attr_value_noi)
+}
+
+#[inline]
+pub unsafe fn get_attribute<'a>(element: *mut Node, name: &[u8]) -> Option<&'a [u8]> {
+    let mut len = 0;
+    let value = lxb_dom_element_get_attribute(
+        element as *mut LxbElement,
+        name.as_ptr(),
+        name.len(),
+        &mut len,
+    );
+    if value.is_null() {
+        None
+    } else {
+        Some(seen(value, len))
+    }
+}
+
+#[inline]
+pub unsafe fn local_name<'a>(node: *mut Node) -> &'a [u8] {
+    named_mut(node as *mut LxbElement, lxb_dom_element_local_name)
+}
+#[inline]
+pub unsafe fn attr_local_name<'a>(attr: *mut Node) -> &'a [u8] {
+    named(attr as *mut LxbAttr, lxb_dom_attr_local_name)
+}
+#[inline]
+pub unsafe fn qualified_name<'a>(node: *mut Node) -> &'a [u8] {
+    if (*node).type_ == 1 {
+        named(node as *mut LxbElement, lxb_dom_element_qualified_name)
+    } else {
+        named_mut(node as *mut LxbNode, lxb_dom_node_name)
+    }
+}
+#[inline]
+pub unsafe fn attr_qualified_name<'a>(attr: *mut Node) -> &'a [u8] {
+    named(attr as *mut LxbAttr, lxb_dom_attr_qualified_name)
+}
+#[inline]
+pub unsafe fn pi_name<'a>(node: *mut Node) -> &'a [u8] {
+    named_mut(node as *mut LxbNode, lxb_dom_node_name)
+}
+#[inline]
+pub unsafe fn ns_uri<'a>(node: *mut Node, doc: *mut Document) -> &'a [u8] {
+    let mut len = 0;
+    seen(mkr_html_ns_uri(node, doc, &mut len) as *const u8, len)
+}
+#[inline]
+pub unsafe fn is_foreign_ns(node: *mut Node) -> bool {
+    (*node).ns != NS_HTML && (*node).ns != NS_UNDEF
+}
+#[inline]
+pub unsafe fn has_ns(node: *mut Node) -> bool {
+    (*node).ns != NS_UNDEF
+}
+
+#[inline]
+pub unsafe fn tag_id_by_name(doc: *const Document, local: &[u8]) -> usize {
+    mkr_html_tag_id_by_name(doc, local.as_ptr() as *const c_char, local.len())
+}
+#[inline]
+pub unsafe fn bucket<'a>(nodes: *const *mut c_void, count: usize) -> &'a [*mut c_void] {
+    if nodes.is_null() || count == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(nodes, count)
+    }
+}

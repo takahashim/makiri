@@ -9,44 +9,13 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::dom::{Bucket, Dom, DomHandle, NTYPE_ELEMENT};
-use super::html_abi as lxb;
-use core::ffi::{c_int, c_void};
+use super::dom::{Bucket, Dom, DomHandle};
+use super::lexbor_abi as lxb;
+use core::ffi::c_void;
 use core::ptr;
 
 /// Lexbor's `lxb_dom_node_t`.
 pub struct Html;
-
-/// Borrow a (ptr, len) pair Lexbor handed back, empty when it returned NULL.
-#[inline]
-unsafe fn seen<'a>(p: *const u8, len: usize) -> &'a [u8] {
-    if p.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(p, len)
-    }
-}
-
-/// Call one of Lexbor's `(handle, *mut len) -> *const u8` accessors. They come
-/// in both pointer flavours, so there are two of these rather than the call
-/// being spelled out at each site that does not fit.
-#[inline]
-unsafe fn named<'a, T>(
-    h: *mut T,
-    f: unsafe extern "C" fn(*const T, *mut usize) -> *const u8,
-) -> &'a [u8] {
-    let mut len = 0usize;
-    seen(f(h, &mut len), len)
-}
-
-#[inline]
-unsafe fn named_mut<'a, T>(
-    h: *mut T,
-    f: unsafe extern "C" fn(*mut T, *mut usize) -> *const u8,
-) -> &'a [u8] {
-    let mut len = 0usize;
-    seen(f(h, &mut len), len)
-}
 
 unsafe impl DomHandle for Html {
     type Node = *mut lxb::Node;
@@ -79,33 +48,33 @@ unsafe impl Dom for Html {
 
     #[inline]
     unsafe fn document_node(doc: Self::Doc) -> Self::Node {
-        doc as *mut lxb::Node
+        lxb::document_node(doc)
     }
 
     #[inline]
     unsafe fn node_type(_doc: Self::Doc, n: Self::Node) -> u32 {
-        (*n).type_
+        lxb::node_type(n)
     }
 
     #[inline]
     unsafe fn first_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        (*n).first_child
+        lxb::first_child(n)
     }
     #[inline]
     unsafe fn last_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        (*n).last_child
+        lxb::last_child(n)
     }
     #[inline]
     unsafe fn next(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        (*n).next
+        lxb::next(n)
     }
     #[inline]
     unsafe fn prev(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        (*n).prev
+        lxb::prev(n)
     }
     #[inline]
     unsafe fn parent(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        (*n).parent
+        lxb::parent(n)
     }
 
     /* An element and an attribute embed the node first, so a handle is the
@@ -113,61 +82,43 @@ unsafe impl Dom for Html {
      * casts are, and the layout check asserts both offsets are 0. */
     #[inline]
     unsafe fn first_attr(_doc: Self::Doc, el: Self::Node) -> Self::Node {
-        (*(el as *mut lxb::Element)).first_attr as Self::Node
+        lxb::first_attr(el)
     }
     #[inline]
     unsafe fn attr_next(_doc: Self::Doc, a: Self::Node) -> Self::Node {
-        (*(a as *mut lxb::Attr)).next as Self::Node
+        lxb::attr_next(a)
     }
     #[inline]
     unsafe fn attr_value<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        named_mut(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_value_noi)
+        lxb::attr_value(a)
     }
 
     unsafe fn get_attribute<'a>(_doc: Self::Doc, el: Self::Node, name: &[u8]) -> Option<&'a [u8]> {
-        let mut len = 0usize;
-        let v = lxb::lxb_dom_element_get_attribute(
-            el as *mut lxb::LxbElement,
-            name.as_ptr(),
-            name.len(),
-            &mut len,
-        );
-        if v.is_null() {
-            None
-        } else {
-            Some(seen(v, len))
-        }
+        lxb::get_attribute(el, name)
     }
 
     #[inline]
     unsafe fn local_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        named_mut(n as *mut lxb::LxbElement, lxb::lxb_dom_element_local_name)
+        lxb::local_name(n)
     }
     #[inline]
     unsafe fn attr_local_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        named(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_local_name)
+        lxb::attr_local_name(a)
     }
 
     /// An HTML element reports its lowercase local name, which is the data
     /// model the rest of Makiri assumes (`Node#name`); every other kind
     /// defers to Lexbor's node name.
     unsafe fn qualified_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        if (*n).type_ == NTYPE_ELEMENT {
-            named(
-                n as *mut lxb::LxbElement,
-                lxb::lxb_dom_element_qualified_name,
-            )
-        } else {
-            named_mut(n as *mut lxb::LxbNode, lxb::lxb_dom_node_name)
-        }
+        lxb::qualified_name(n)
     }
     #[inline]
     unsafe fn attr_qualified_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        named(a as *mut lxb::LxbAttr, lxb::lxb_dom_attr_qualified_name)
+        lxb::attr_qualified_name(a)
     }
     #[inline]
     unsafe fn pi_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        named_mut(n as *mut lxb::LxbNode, lxb::lxb_dom_node_name)
+        lxb::pi_name(n)
     }
 
     /// The node carries a namespace id, so the URI is a lookup in the
@@ -175,8 +126,7 @@ unsafe impl Dom for Html {
     /// ignores.
     #[inline]
     unsafe fn ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        let mut len = 0usize;
-        seen(lxb::mkr_html_ns_uri(n, doc, &mut len) as *const u8, len)
+        lxb::ns_uri(n, doc)
     }
 
     /// A strict unprefixed element test resolves in the HTML namespace, so
@@ -184,17 +134,17 @@ unsafe impl Dom for Html {
     /// HTML and none both pass.
     #[inline]
     unsafe fn is_foreign_ns(_doc: Self::Doc, n: Self::Node) -> bool {
-        (*n).ns != lxb::NS_HTML && (*n).ns != lxb::NS_UNDEF
+        lxb::is_foreign_ns(n)
     }
     #[inline]
     unsafe fn has_ns(_doc: Self::Doc, n: Self::Node) -> bool {
-        (*n).ns != lxb::NS_UNDEF
+        lxb::has_ns(n)
     }
 
     /// Lexbor builds a node's text content on demand and hands back an
     /// allocation, so the append and the free stay together in C.
     #[inline]
-    unsafe fn append_own_text(_doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
+    unsafe fn append_own_text(_doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> core::ffi::c_int {
         lxb::mkr_html_append_own_text(n, buf)
     }
 
@@ -223,11 +173,7 @@ unsafe impl Dom for Html {
         if doc.is_null() {
             return None;
         }
-        let tag = lxb::mkr_html_tag_id_by_name(
-            doc,
-            local.as_ptr() as *const core::ffi::c_char,
-            local.len(),
-        );
+        let tag = lxb::tag_id_by_name(doc, local);
         /* The index buckets only the static tag-id range; a custom element's
          * tag id is a pointer value, so those fall back to the walk and are
          * still found. */
@@ -236,11 +182,7 @@ unsafe impl Dom for Html {
         }
         let mut cnt = 0usize;
         let bucket = lookup(index, tag, &mut cnt);
-        let nodes = if bucket.is_null() || cnt == 0 {
-            &[][..]
-        } else {
-            core::slice::from_raw_parts(bucket, cnt)
-        };
+        let nodes = lxb::bucket(bucket, cnt);
         Some(Bucket {
             nodes,
             recheck: true,

@@ -16,6 +16,7 @@
 //!
 //! The engine, generic over `Dom`:
 //!   dom.rs        the node-access contract, as a trait
+//!   dom_handle.rs raw handle conversion at the ABI boundary
 //!   own.rs        guards over the allocations the engine passes around
 //!   ast.rs        the AST's arrays, viewed as slices
 //!   ast_ops.rs    building, destroying and rewriting one
@@ -31,7 +32,7 @@
 //!
 //! An instance binds the contract to one representation:
 //!   dom_xml.rs / ffi_xml.rs                    the XML reader's nodes
-//!   dom_html.rs / ffi_html.rs / html_abi.rs    Lexbor's nodes (`lexbor`)
+//!   dom_html.rs / ffi_html.rs / lexbor_abi.rs    Lexbor's nodes (`lexbor`)
 
 pub mod abi;
 pub mod msg;
@@ -50,11 +51,13 @@ pub mod evaluate;
 pub mod limits;
 
 pub mod ast_ops;
+pub mod boundary;
 pub mod runtime_abi;
 
 pub mod attr_pred;
 pub mod axis;
 pub mod dom;
+pub mod dom_handle;
 pub mod eval;
 pub mod funcs;
 pub mod nodetest;
@@ -73,4 +76,4 @@ pub mod dom_html;
 #[cfg(feature = "lexbor")]
 pub mod ffi_html;
 #[cfg(feature = "lexbor")]
-pub mod html_abi;
+pub mod lexbor_abi;

@@ -19,6 +19,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
+pub use super::dom_handle::DomHandle;
 use core::ffi::c_int;
 
 /* ---- node types (shared numeric encoding) ----
@@ -38,25 +39,6 @@ pub const NTYPE_COMMENT: u32 = 8;
 pub const NTYPE_DOCUMENT: u32 = 9;
 pub const NTYPE_DOCUMENT_TYPE: u32 = 10;
 pub const NTYPE_NOTATION: u32 = 12;
-
-/// The raw-handle boundary shared by each DOM representation.
-///
-/// Only this part converts the erased pointers used by the context and
-/// node-set ABI back into backend handles. The safety contract is deliberately
-/// separate from [`Dom`], whose methods describe DOM operations.
-pub unsafe trait DomHandle {
-    type Node: Copy + PartialEq;
-    type Doc: Copy;
-
-    fn null() -> Self::Node;
-    fn is_null(n: Self::Node) -> bool;
-    fn to_void(n: Self::Node) -> *mut core::ffi::c_void;
-
-    /// `p` must be a handle produced by this backend, or null.
-    unsafe fn from_void(p: *mut core::ffi::c_void) -> Self::Node;
-    /// `p` must be storage produced by this backend, or null.
-    unsafe fn doc_from_void(p: *mut core::ffi::c_void) -> Self::Doc;
-}
 
 /// One DOM representation, as the engine needs to see it.
 ///
