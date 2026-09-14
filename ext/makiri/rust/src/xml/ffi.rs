@@ -9,7 +9,6 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::too_many_arguments)]
 
-use crate::xml::chars;
 use crate::xml::index;
 use crate::xml::mutate;
 use crate::xml::qname;
@@ -239,46 +238,6 @@ pub unsafe fn mkr_xml_parse_fragment(
             NodeId::INVALID
         }
     }
-}
-
-/* ---- character data ----
- *
- * These keep the C predicate convention (`0` = valid, `-1` = invalid for the
- * `validate_*` pair; `0`/`1` for the `is_*` pair) rather than `bool`: the
- * cargo-fuzz target `xml_xpath.rs` declares and tests `mkr_xml_validate_chars`
- * against exactly that contract, so changing it here would silently invert the
- * harness's skip check. The rest of the engine does not call them. */
-
-pub fn mkr_xml_is_char(c: u32) -> i32 {
-    chars::is_char(c) as i32
-}
-
-pub unsafe fn mkr_xml_validate_chars(src: *const c_char, len: u32) -> i32 {
-    if chars::validate_chars(bytes(src, len)) {
-        0
-    } else {
-        -1
-    }
-}
-
-pub fn mkr_xml_is_name_start(c: u32) -> i32 {
-    chars::is_name_start(c) as i32
-}
-
-pub fn mkr_xml_is_name_char(c: u32) -> i32 {
-    chars::is_name_char(c) as i32
-}
-
-pub unsafe fn mkr_xml_validate_name(src: *const c_char, len: u32) -> i32 {
-    if chars::validate_name(bytes(src, len)) {
-        0
-    } else {
-        -1
-    }
-}
-
-pub unsafe fn mkr_xml_is_reserved_pi_target(s: *const c_char, len: u32) -> i32 {
-    chars::is_reserved_pi_target(bytes(s, len)) as i32
 }
 
 /* ---- mutation (mkr_xml_mutate.h) ---- */

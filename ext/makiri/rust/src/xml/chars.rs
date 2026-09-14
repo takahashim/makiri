@@ -64,7 +64,7 @@ pub fn is_name_char(c: u32) -> bool {
 /// `core::str::from_utf8` precisely because there should be exactly one of ours.
 pub use crate::cutf8::decode1;
 
-/// All of `s` is XML Char (no reference recognition). mkr_xml_validate_chars.
+/// All of `s` is XML Char (no reference recognition).
 pub fn validate_chars(s: &[u8]) -> bool {
     let mut i = 0;
     while i < s.len() {
@@ -77,7 +77,7 @@ pub fn validate_chars(s: &[u8]) -> bool {
 }
 
 /// `s` is a well-formed XML 1.0 Name (NameStartChar NameChar*). A colon is
-/// permitted (this is the PITarget check). mkr_xml_validate_name.
+/// permitted (this is the PITarget check).
 pub fn validate_name(s: &[u8]) -> bool {
     let (cp, bl) = match decode1(s) {
         Some(x) => x,
