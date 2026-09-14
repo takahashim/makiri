@@ -17,8 +17,9 @@
 //! reverse axes. The path it builds is non-empty - hence truthy - exactly when
 //! self matches the selector.
 
-use super::build::{self, CArray};
+use super::build::{self, NodeArray, StepArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
+use crate::falloc::calloc::mkr_callocarray;
 use crate::lexbor_abi as lxb;
 use crate::xpath_abi::{
     mkr_node_free, Node, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING,
@@ -142,7 +143,7 @@ unsafe fn lower_type(
     b: &Build,
     s: *const Selector,
     step: *mut Step,
-    preds: &mut CArray<*mut Node>,
+    preds: &mut NodeArray,
 ) -> bool {
     let name = str_or_empty(&(*s).name);
 
@@ -652,7 +653,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
 
 /// Push a predicate, freeing it if the array cannot grow. A NULL predicate means
 /// the builder that made it already failed.
-unsafe fn push_pred(b: &Build, preds: &mut CArray<*mut Node>, p: *mut Node) -> bool {
+unsafe fn push_pred(b: &Build, preds: &mut NodeArray, p: *mut Node) -> bool {
     if p.is_null() {
         return false;
     }
@@ -669,7 +670,7 @@ unsafe fn fold_simple(
     b: &Build,
     s: *const Selector,
     step: *mut Step,
-    preds: &mut CArray<*mut Node>,
+    preds: &mut NodeArray,
 ) -> bool {
     match (*s).type_ {
         k::ANY | k::ELEMENT => lower_type(b, s, step, preds),
@@ -735,7 +736,7 @@ fn reverse_axis(c: u32) -> u32 {
 /// Build one step for the compound `[first ..= last]` and append it.
 unsafe fn emit_compound_step(
     b: &Build,
-    steps: &mut CArray<Step>,
+    steps: &mut StepArray,
     axis: u32,
     first: *const Selector,
     last: *const Selector,
@@ -743,12 +744,12 @@ unsafe fn emit_compound_step(
     let mut step: Step = core::mem::zeroed();
     step.axis = axis;
     step.test.kind = NT_WILDCARD; /* a type selector overrides this */
-    let mut preds: CArray<*mut Node> = CArray::new();
+    let mut preds = NodeArray::new();
 
     let mut s = first;
     loop {
         if !fold_simple(b, s, &mut step, &mut preds) {
-            build::free_preds(preds.v, preds.n);
+            build::free_preds(preds);
             clear_test(&mut step);
             return false;
         }
@@ -758,11 +759,9 @@ unsafe fn emit_compound_step(
         s = (*s).next;
     }
 
-    step.predicates = preds.v;
-    step.npredicates = preds.n;
+    preds.install_into_step(&mut step);
     if !steps.push(b, step) {
-        build::free_preds(preds.v, preds.n);
-        clear_test(&mut step);
+        build::mkr_step_clear(&mut step);
         return false;
     }
     true
@@ -826,12 +825,12 @@ impl Iterator for Compounds {
 /// than being forced to a descendant - which is what `:has(> a)`, `:has(+ a)`
 /// and `:has(~ a)` need, since there the combinator is relative to self.
 pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bool) -> *mut Node {
-    let mut steps: CArray<Step> = CArray::new();
+    let mut steps = StepArray::new();
 
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
         if nc >= MAX_COMPOUNDS {
             b.fail(ERR_LIMIT, c"CSS selector too complex");
-            build::free_steps(steps.v, steps.n);
+            build::free_steps(steps);
             return core::ptr::null_mut();
         }
         let is_first = nc == 0 && !relative_first;
@@ -847,7 +846,7 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
             emit_compound_step(b, &mut steps, axis, comp.first, comp.last)
         };
         if !ok {
-            build::free_steps(steps.v, steps.n);
+            build::free_steps(steps);
             return core::ptr::null_mut();
         }
     }
@@ -856,12 +855,12 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
 }
 
 /// The `following-sibling::*[1]` step of an adjacent combinator.
-unsafe fn emit_adjacent(b: &Build, steps: &mut CArray<Step>) -> bool {
+unsafe fn emit_adjacent(b: &Build, steps: &mut StepArray) -> bool {
     emit_positional_sibling(b, steps, AXIS_FOLLOWING_SIBLING)
 }
 
 /// `axis::*[1]` - the immediately adjacent sibling in either direction.
-unsafe fn emit_positional_sibling(b: &Build, steps: &mut CArray<Step>, axis: u32) -> bool {
+unsafe fn emit_positional_sibling(b: &Build, steps: &mut StepArray, axis: u32) -> bool {
     let mut st: Step = core::mem::zeroed();
     st.axis = axis;
     st.test.kind = NT_WILDCARD;
@@ -886,15 +885,14 @@ unsafe fn emit_positional_sibling(b: &Build, steps: &mut CArray<Step>, axis: u32
 }
 
 /// Wrap a built step array in a relative PATH node, or free it on failure.
-unsafe fn finish_path(b: &Build, steps: CArray<Step>) -> *mut Node {
+unsafe fn finish_path(b: &Build, steps: StepArray) -> *mut Node {
     let path = build::node(b, NK_PATH);
     if path.is_null() {
-        build::free_steps(steps.v, steps.n);
+        build::free_steps(steps);
         return core::ptr::null_mut();
     }
     (*path).u.path.absolute = 0;
-    (*path).u.path.steps = steps.v;
-    (*path).u.path.nsteps = steps.n;
+    steps.install_into_path(path);
     path
 }
 
@@ -930,7 +928,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
         return core::ptr::null_mut();
     }
 
-    let mut steps: CArray<Step> = CArray::new();
+    let mut steps = StepArray::new();
     if !emit_compound_step(
         b,
         &mut steps,
@@ -938,7 +936,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
         comps[nc - 1].first,
         comps[nc - 1].last,
     ) {
-        build::free_steps(steps.v, steps.n);
+        build::free_steps(steps);
         return core::ptr::null_mut();
     }
 
@@ -964,7 +962,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
             )
         };
         if !ok {
-            build::free_steps(steps.v, steps.n);
+            build::free_steps(steps);
             return core::ptr::null_mut();
         }
     }
@@ -972,7 +970,6 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> *mut N
     finish_path(b, steps)
 }
 
-pub use crate::falloc::calloc::mkr_callocarray;
 pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
 
 extern "C" {

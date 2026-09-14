@@ -13,12 +13,13 @@
 use core::ffi::c_void;
 
 use super::Build;
+use crate::falloc::calloc::mkr_reallocarray;
 use crate::xpath_abi::{
     mkr_node_alloc, mkr_node_free, mkr_owned_text_from_borrowed_copy, Node, OwnedText, Step,
     VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
 
-pub use crate::falloc::calloc::mkr_callocarray;
+use crate::falloc::calloc::mkr_callocarray;
 pub use crate::xpath::ast_ops::mkr_step_clear;
 pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
 
@@ -295,7 +296,9 @@ pub(crate) unsafe fn token_match(
 }
 
 /// Free a built-but-unattached step array.
-pub(crate) unsafe fn free_steps(v: *mut Step, n: usize) {
+pub(crate) unsafe fn free_steps(steps: StepArray) {
+    let steps = steps.0;
+    let (v, n) = steps.into_raw_parts();
     for i in 0..n {
         mkr_step_clear(v.add(i));
     }
@@ -303,7 +306,9 @@ pub(crate) unsafe fn free_steps(v: *mut Step, n: usize) {
 }
 
 /// Free a built-but-unattached predicate array.
-pub(crate) unsafe fn free_preds(v: *mut *mut Node, n: usize) {
+pub(crate) unsafe fn free_preds(preds: NodeArray) {
+    let preds = preds.0;
+    let (v, n) = preds.into_raw_parts();
     for i in 0..n {
         mkr_node_free(*v.add(i));
     }
@@ -312,14 +317,14 @@ pub(crate) unsafe fn free_preds(v: *mut *mut Node, n: usize) {
 
 /// A growable array of `T` in the C allocator, so `mkr_step_clear` /
 /// `mkr_node_free` can own the result.
-pub(crate) struct CArray<T> {
-    pub v: *mut T,
-    pub n: usize,
-    pub cap: usize,
+struct CArray<T> {
+    v: *mut T,
+    n: usize,
+    cap: usize,
 }
 
 impl<T> CArray<T> {
-    pub(crate) const fn new() -> CArray<T> {
+    const fn new() -> CArray<T> {
         CArray {
             v: core::ptr::null_mut(),
             n: 0,
@@ -327,9 +332,19 @@ impl<T> CArray<T> {
         }
     }
 
+    /// Transfer the C allocation to an AST field or a matching destructor.
+    ///
+    /// `CArray` deliberately has no `Drop`: the element cleanup depends on
+    /// the AST field receiving it (`mkr_step_clear` vs `mkr_node_free`).
+    /// Consuming the array makes that ownership transfer explicit at the two
+    /// boundaries where raw pointers are unavoidable.
+    fn into_raw_parts(self) -> (*mut T, usize) {
+        (self.v, self.n)
+    }
+
     /// Append, growing geometrically. `false` on failure, with `*err` set and
     /// the array unchanged.
-    pub(crate) unsafe fn push(&mut self, b: &Build, item: T) -> bool {
+    unsafe fn push(&mut self, b: &Build, item: T) -> bool {
         if self.n == self.cap {
             let want =
                 match crate::falloc::grow_capacity(self.cap, self.n + 1, core::mem::size_of::<T>())
@@ -355,4 +370,42 @@ impl<T> CArray<T> {
     }
 }
 
-pub use crate::falloc::calloc::mkr_reallocarray;
+/// A growable C-owned array of AST steps. Its contents are cleared with
+/// `mkr_step_clear` before the allocation is released.
+pub(crate) struct StepArray(CArray<Step>);
+
+impl StepArray {
+    pub(crate) const fn new() -> Self {
+        Self(CArray::new())
+    }
+
+    pub(crate) unsafe fn push(&mut self, b: &Build, item: Step) -> bool {
+        self.0.push(b, item)
+    }
+
+    pub(crate) unsafe fn install_into_path(self, path: *mut Node) {
+        let (steps, nsteps) = self.0.into_raw_parts();
+        (*path).u.path.steps = steps;
+        (*path).u.path.nsteps = nsteps;
+    }
+}
+
+/// A growable C-owned array of owned AST node pointers. Its contents are
+/// recursively freed with `mkr_node_free` before the allocation is released.
+pub(crate) struct NodeArray(CArray<*mut Node>);
+
+impl NodeArray {
+    pub(crate) const fn new() -> Self {
+        Self(CArray::new())
+    }
+
+    pub(crate) unsafe fn push(&mut self, b: &Build, item: *mut Node) -> bool {
+        self.0.push(b, item)
+    }
+
+    pub(crate) unsafe fn install_into_step(self, step: *mut Step) {
+        let (predicates, npredicates) = self.0.into_raw_parts();
+        (*step).predicates = predicates;
+        (*step).npredicates = npredicates;
+    }
+}

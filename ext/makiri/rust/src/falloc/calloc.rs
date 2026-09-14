@@ -109,7 +109,7 @@ fn inject_fail() -> bool {
 /// failure. `elem == 0` fails closed rather than falling through to a
 /// `realloc(ptr, 0)`, whose free-or-not is implementation-defined; the caller
 /// keeps ownership of `ptr`. An overflow leaves `ptr` unchanged.
-pub unsafe fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void {
+pub(crate) unsafe fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void {
     if count == 0 {
         libc_free(ptr);
         return core::ptr::null_mut();
@@ -132,7 +132,7 @@ pub unsafe fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *
 /// Two-argument `calloc` is itself overflow-safe, but the check is explicit so
 /// every core allocator fails the SAME way - a deterministic NULL - rather than
 /// leaving the overflow case to `calloc`'s implementation-defined behaviour.
-pub unsafe fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void {
+pub(crate) unsafe fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void {
     if count == 0 || elem == 0 {
         return core::ptr::null_mut();
     }

@@ -358,8 +358,8 @@ pub type NameIndexLookup = Option<
     ) -> *const *mut c_void,
 >;
 
-pub use crate::falloc::calloc::mkr_callocarray;
-pub use crate::falloc::calloc::mkr_reallocarray;
+pub(crate) use crate::falloc::calloc::mkr_callocarray;
+pub(crate) use crate::falloc::calloc::mkr_reallocarray;
 pub use crate::xpath::ctx::mkr_ctx_document;
 pub use crate::xpath::ctx::mkr_ctx_element_index;
 pub use crate::xpath::ctx::mkr_ctx_func_resolver;

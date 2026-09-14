@@ -73,7 +73,7 @@ pub struct RubyBorrowedBytes {
 /// re-exported here so the bridge's callers keep naming it from this module.
 pub use crate::cutf8::TextVerdict;
 
-pub use crate::falloc::calloc::mkr_reallocarray;
+use crate::falloc::calloc::mkr_reallocarray;
 
 /// The `value` + `(ptr, len)` of a String, taken together so the borrow and its
 /// anchor cannot be separated by accident.
