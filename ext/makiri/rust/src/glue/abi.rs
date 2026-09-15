@@ -168,34 +168,6 @@ impl<C> Drop for RubyStr<C> {
     }
 }
 
-/// `mkr_owned_bytes_t`: a heap buffer this side owns.
-pub struct OwnedBytes {
-    pub ptr: *mut c_char,
-    pub len: usize,
-}
-
-impl OwnedBytes {
-    pub const fn empty() -> OwnedBytes {
-        OwnedBytes {
-            ptr: core::ptr::null_mut(),
-            len: 0,
-        }
-    }
-
-    /// `mkr_owned_bytes_clear`, which is `static inline` in C and therefore has
-    /// no symbol to call.
-    ///
-    /// # Safety
-    /// `ptr` must be null or a live `malloc` allocation.
-    pub unsafe fn clear(&mut self) {
-        if !self.ptr.is_null() {
-            crate::glue::abi::libc_free(self.ptr as *mut c_void);
-        }
-        self.ptr = core::ptr::null_mut();
-        self.len = 0;
-    }
-}
-
 /* Every symbol the glue shares with C is declared HERE, once.
  *
  * It used to be declared wherever it was needed, and that let two modules give
@@ -254,10 +226,6 @@ pub unsafe fn parsed_xml_doc(
 }
 
 extern "C" {
-
-    /// libc `free`, for buffers C handed us that C's own allocator owns.
-    #[link_name = "free"]
-    pub fn libc_free(p: *mut c_void);
 
     /// Variadic, so callable but not definable from Rust. It longjmps, so no
     /// Rust destructor may be live at the call (see the module docs).

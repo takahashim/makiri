@@ -29,7 +29,7 @@ use magnus::{Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
 /// The shared owned buffer.
-pub use crate::glue::abi::OwnedBytes;
+use crate::cbuf::OwnedBuf;
 /// The anchored views, from `glue::abi` - one definition for the whole crate.
 /// `RubyText` and `RubyData` are deliberately SEPARATE types: the lattice's whole
 /// job is to make a data-family value reaching an engine input a type error.
@@ -58,8 +58,6 @@ use crate::glue::abi::{error_class, rb_raise, EXC_ERROR};
 /// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
 /// re-exported here so the bridge's callers keep naming it from this module.
 pub use crate::cutf8::TextVerdict;
-
-use crate::falloc::raw::reallocarray;
 
 /// The `value` + `(ptr, len)` of a String, taken together so the borrow and its
 /// anchor cannot be separated by accident.
@@ -216,23 +214,13 @@ pub unsafe fn ruby_bytes_view(s: VALUE) -> RubyBytes {
     RubyBytes::from_raw_parts(value, ptr, len)
 }
 
-/// Copy a String's raw bytes into owned C storage, at least one byte even for
-/// an empty input, so the result is usable while the GVL is released. `None` on
-/// OOM, with nothing allocated. `s` must already be a String.
-pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBytes> {
+/// Copy a String's raw bytes into an owned buffer, so the result is usable
+/// while the GVL is released. `None` on OOM, with nothing allocated. `s` must
+/// already be a String.
+pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBuf> {
     let v = ruby_bytes_view(s);
-    let alloc_len = if v.len() > 0 { v.len() } else { 1 };
-    let buf = reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
-    if buf.is_null() {
-        return None;
-    }
-    let bytes = v.bytes();
-    core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
     /* `v` keeps the String reachable until it drops, after the copy. */
-    Some(OwnedBytes {
-        ptr: buf as *mut c_char,
-        len: v.len(),
-    })
+    OwnedBuf::copy_from(v.bytes())
 }
 
 /* ---- encoding ---- */

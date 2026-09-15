@@ -218,18 +218,17 @@ pub unsafe extern "C" fn wrap_document(
 /* ---- Document.parse ---- */
 
 /// Arguments for the GVL-released parse.
-struct ParseArgs {
-    src: *const u8,
-    len: usize,
+struct ParseArgs<'a> {
+    src: &'a [u8],
     assume_valid: bool,
     result: *mut crate::dom_adapter::post_parse::Parsed,
 }
 
 /// Runs with the GVL released: pure C (Lexbor + libc), touching no Ruby state.
 unsafe extern "C" fn parse_nogvl(p: *mut c_void) -> *mut c_void {
-    let a = &mut *(p as *mut ParseArgs);
-    a.result =
-        parse_html(a.src, a.len, a.assume_valid).map_or(core::ptr::null_mut(), Box::into_raw);
+    let a = &mut *(p as *mut ParseArgs<'_>);
+    a.result = parse_html(a.src.as_ptr(), a.src.len(), a.assume_valid)
+        .map_or(core::ptr::null_mut(), Box::into_raw);
     core::ptr::null_mut()
 }
 
@@ -249,9 +248,8 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
          * coderange is read first (no scan): a source Ruby already knows is
          * valid UTF-8 lets the parse skip its sanitisation. */
         let assume_valid = ruby_str_known_valid_utf8(src);
-        let mut owned = match ruby_copy_bytes(src) {
-            Some(owned) => owned,
-            None => return Err(Error::new(error_class(), "out of memory copying source")),
+        let Some(owned) = ruby_copy_bytes(src) else {
+            return Err(Error::new(error_class(), "out of memory copying source"));
         };
 
         /* Allocate the wrapper with a null handle, so a failed parse still
@@ -270,20 +268,20 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
         );
 
         let mut args = ParseArgs {
-            src: owned.ptr as *const u8,
-            len: owned.len,
+            src: owned.as_slice(),
             assume_valid,
             result: core::ptr::null_mut(),
         };
         rb_sys::rb_thread_call_without_gvl(
             Some(parse_nogvl),
-            &mut args as *mut ParseArgs as *mut c_void,
+            &mut args as *mut ParseArgs<'_> as *mut c_void,
             None,
             core::ptr::null_mut(),
         );
-        owned.clear();
+        let result = args.result;
+        drop(owned);
 
-        (*d).parsed = args.result;
+        (*d).parsed = result;
         if (*d).parsed.is_null() {
             return Err(Error::new(error_class(), "failed to parse HTML document"));
         }

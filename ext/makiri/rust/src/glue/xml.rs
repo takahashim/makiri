@@ -24,7 +24,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
@@ -56,7 +56,7 @@ use crate::css::CssNs;
 
 use super::abi::{
     doc_parsed, keepalive_document, node_set_new, parsed_xml_doc, ruby_verified_text, verify_text,
-    wrap_xml_node, xml_node_unwrap, OwnedBytes, CLASS_DOCUMENT, CLASS_XML_DOCUMENT,
+    wrap_xml_node, xml_node_unwrap, CLASS_DOCUMENT, CLASS_XML_DOCUMENT,
     CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED,
     EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
 };
@@ -100,22 +100,16 @@ extern "C" {
 
 /// What crosses into the GVL-released closure: plain data only. No `VALUE`, no
 /// `Ruby` handle - that rule is what makes the release safe.
-struct ParseWork {
-    src: *const c_char,
-    len: usize,
+struct ParseWork<'a> {
+    src: &'a [u8],
     limits: XmlLimits,
     result: *mut XmlDoc,
     status: Status,
 }
 
 unsafe extern "C" fn parse_nogvl(arg: *mut c_void) -> *mut c_void {
-    let w = &mut *(arg as *mut ParseWork);
-    let src = if w.src.is_null() || w.len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(w.src as *const u8, w.len)
-    };
-    match xml_parse_ex(src, Some(&w.limits)) {
+    let w = &mut *(arg as *mut ParseWork<'_>);
+    match xml_parse_ex(w.src, Some(&w.limits)) {
         Ok(doc) => {
             w.result = Box::into_raw(doc);
             w.status = Status::Ok;
@@ -204,21 +198,17 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
         /* Copy into a private buffer BEFORE allocating any Ruby object, so there
          * is no GC point between obtaining `decoded` and copying it. */
-        let mut src = match ruby_copy_bytes(decoded) {
-            Some(src) => src,
-            None => {
-                return Err(Error::new(
-                    error_class(),
-                    "out of memory copying XML source",
-                ))
-            }
+        let Some(src) = ruby_copy_bytes(decoded) else {
+            return Err(Error::new(
+                error_class(),
+                "out of memory copying XML source",
+            ));
         };
 
         /* Wrap an empty handle first, so a failure mid-parse still frees
          * cleanly through the GC. The source is already copied, so this Ruby
          * allocation cannot disturb it. */
         let Some(parsed) = Parsed::new_xml() else {
-            free_owned(&mut src);
             return Err(Error::new(
                 error_class(),
                 "out of memory allocating XML document",
@@ -228,39 +218,26 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         let obj = wrap_document(parsed); /* GC owns `parsed` from here */
 
         let mut work = ParseWork {
-            src: src.ptr,
-            len: src.len,
+            src: src.as_slice(),
             limits,
             result: core::ptr::null_mut(),
             status: Status::Ok,
         };
         rb_thread_call_without_gvl(
             parse_nogvl,
-            &mut work as *mut ParseWork as *mut c_void,
+            &mut work as *mut ParseWork<'_> as *mut c_void,
             core::ptr::null(),
             core::ptr::null_mut(),
         );
-        free_owned(&mut src);
+        let ParseWork { result, status, .. } = work;
+        drop(src);
 
-        if work.result.is_null() {
-            return Err(parse_status_error(work.status, Unit::Document));
+        if result.is_null() {
+            return Err(parse_status_error(status, Unit::Document));
         }
-        (*parsed).set_xml_doc(Box::from_raw(work.result));
+        (*parsed).set_xml_doc(Box::from_raw(result));
         Ok(Value::from_raw(obj))
     }
-}
-
-unsafe fn free_owned(b: &mut OwnedBytes) {
-    if !b.ptr.is_null() {
-        libc_free(b.ptr as *mut c_void);
-        b.ptr = core::ptr::null_mut();
-        b.len = 0;
-    }
-}
-
-extern "C" {
-    #[link_name = "free"]
-    fn libc_free(p: *mut c_void);
 }
 
 /// Which entry point failed. The two carry their own wording rather than one
@@ -608,23 +585,14 @@ unsafe fn fragment_into(
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
     let decoded = xml_decode_input(rb_sys::rb_String(source.as_raw()), (*xdoc).max_bytes);
-    let mut src = match ruby_copy_bytes(decoded) {
-        Some(src) => src,
-        None => {
-            return Err(Error::new(
-                error_class(),
-                "out of memory copying XML fragment source",
-            ))
-        }
+    let Some(src) = ruby_copy_bytes(decoded) else {
+        return Err(Error::new(
+            error_class(),
+            "out of memory copying XML fragment source",
+        ));
     };
-    let bytes = if src.ptr.is_null() || src.len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src.ptr as *const u8, src.len)
-    };
-    let frag = xml_parse_fragment(&mut *xdoc, bytes, inherit_doc_ns);
-    free_owned(&mut src);
-    frag.map_err(|status| parse_status_error(status, Unit::Fragment))
+    xml_parse_fragment(&mut *xdoc, src.as_slice(), inherit_doc_ns)
+        .map_err(|status| parse_status_error(status, Unit::Fragment))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
