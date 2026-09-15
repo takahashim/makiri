@@ -21,9 +21,8 @@
 //! `Err` for exactly that reason, and a Ruby C function that can raise is called
 //! through `bridge::ruby`, which catches the raise and hands it back the same
 //! way. What still raises directly is `node_set_push`, an entry point called
-//! with the C convention that has no `Result` to return, and the few
-//! `bridge::string` builders that refuse an impossible length. Both longjmp,
-//! so their callers must not own anything that needs dropping.
+//! with the C convention that has no `Result` to return. It longjmps, so its
+//! callers must not own anything that needs dropping.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
 //! `Ruby` handle. The C glue already works this way (parse copies its input to a

@@ -63,7 +63,6 @@ RB_SYS_COUNTS = {
 
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
 RAISING_COUNTS = {
-  "glue/abi.rs" => 1,              # the rb_raise declaration
   "glue/node_set.rs" => 4,         # push from the C-convention entry point
 }.freeze
 

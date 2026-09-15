@@ -40,7 +40,7 @@ pub use crate::glue::abi::{RubyBytes, RubyData, RubyText};
 pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
-use crate::glue::abi::{error_class, rb_raise, EXC_ERROR};
+use crate::glue::abi::error_class;
 
 /* ---- the borrowed-text layouts ----
  *
@@ -80,9 +80,9 @@ unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
 /// intermediate. The bounds checks are not redundant with the caller's
 /// bookkeeping - a wrong `total` would otherwise run past the allocation, so
 /// both a long slice and a short sum fail closed.
-pub unsafe fn ruby_str_from_slices(slices: *const BorrowedText, n: usize, total: usize) -> VALUE {
+pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Result<VALUE, Error> {
     if total > c_long::MAX as usize {
-        rb_raise(EXC_ERROR.raw(), c"text too large to assemble".as_ptr());
+        return Err(Error::new(error_class(), "text too large to assemble"));
     }
     let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
     /* We just created it and hold the only reference, so writing through the
@@ -90,23 +90,22 @@ pub unsafe fn ruby_str_from_slices(slices: *const BorrowedText, n: usize, total:
     let dst = rb_sys::stable_api::get_default().rstring_ptr(str) as *mut u8;
 
     let mut off = 0usize;
-    for i in 0..n {
-        let s = &*slices.add(i);
+    for s in slices {
         if s.is_empty() {
             continue;
         }
         if s.len() > total - off {
             /* off <= total holds, so the subtraction cannot underflow. */
-            rb_raise(EXC_ERROR.raw(), c"text slice length inconsistency".as_ptr());
+            return Err(Error::new(error_class(), "text slice length inconsistency"));
         }
         core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, dst.add(off), s.len());
         off += s.len();
     }
     if off != total {
         /* A short sum would leave the tail of the uninitialised String unwritten. */
-        rb_raise(EXC_ERROR.raw(), c"text slice length inconsistency".as_ptr());
+        return Err(Error::new(error_class(), "text slice length inconsistency"));
     }
-    str
+    Ok(str)
 }
 
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel

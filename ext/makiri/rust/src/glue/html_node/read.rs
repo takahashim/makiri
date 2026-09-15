@@ -250,12 +250,12 @@ pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 ///
 /// The DOM makes a Document's textContent null; this returns the ROOT element's
 /// text instead, which is the intuitive, Nokogiri-like `Document#text`.
-pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let mut node = this.node();
     if node.node_type() == ty::DOCUMENT {
         match node.document_root() {
             Some(root) => node = root,
-            None => return ruby.str_new("").as_value(),
+            None => return Ok(ruby.str_new("").as_value()),
         }
     }
 
@@ -267,10 +267,10 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
      * String, not magnus's str_from_slice: that one tags the String
      * ASCII-8BIT, and a binary Text#content poisons every UTF-8 String it is
      * appended to. */
-    node.with_text_content(|text| match text {
+    Ok(node.with_text_content(|text| match text {
         Some(bytes) => dom_str(bytes),
         None => ruby.str_new("").as_value(),
-    })
+    }))
 }
 
 /// The element/fragment half of [`content`], which is the common case and
@@ -285,13 +285,13 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// a fragment - or a build OOM): an iterative pre-order walk that appends each
 /// text/CDATA node's data, stack-safe and skipping Lexbor's intermediate arena
 /// buffer and copy.
-fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Value {
+fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
     // SAFETY: `document` is the node's live Document, and the slices the index
     // hands back are copied into the String before anything can change it.
     unsafe {
         let parsed = crate::glue::doc::doc_parsed_known(document);
         if let Some((slices, total)) = parsed.as_mut().and_then(|p| p.text_slices(node.as_raw())) {
-            return Value::from_raw(ruby_str_from_slices(slices.as_ptr(), slices.len(), total));
+            return Ok(Value::from_raw(ruby_str_from_slices(slices, total)?));
         }
     }
 
@@ -307,7 +307,7 @@ fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Value {
         }
         cur = c.preorder_next(node);
     }
-    str.as_value()
+    Ok(str.as_value())
 }
 
 /* ------------------------------------------------------------------ *
@@ -575,9 +575,9 @@ pub fn attribute_value_by_qualified_name(
 
 /// `attr.value`. For a non-attribute node this falls back to text content,
 /// matching the loose Nokogiri-ish meaning of `#value`.
-pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     match this.node().attr() {
-        Some(at) => dom_str(at.value()),
+        Some(at) => Ok(dom_str(at.value())),
         None => content(ruby, this),
     }
 }

@@ -225,13 +225,6 @@ pub unsafe fn parsed_xml_doc(
     (*p).xml_doc()
 }
 
-extern "C" {
-
-    /// Variadic, so callable but not definable from Rust. It longjmps, so no
-    /// Rust destructor may be live at the call (see the module docs).
-    pub fn rb_raise(exc: VALUE, fmt: *const c_char, ...) -> !;
-}
-
 /// Lexbor's `lxb_inline` accessors, through the `_noi` twins it exports. They
 /// live in `lexbor_abi` - the one place in the crate that hand-declares a Lexbor
 /// function, because bindgen cannot generate an inline one - and are re-exported
