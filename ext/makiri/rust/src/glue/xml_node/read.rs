@@ -235,15 +235,19 @@ unsafe fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 
 /// `#[]` - the attribute's value, or nil.
 pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let id = this.id;
+    // SAFETY: the receiver's arena, borrowed for this statement only.
+    if unsafe { (*this.doc()).type_(id) } != Some(NodeType::Element) {
+        return Ok(ruby.qnil().as_value());
+    }
+    /* Convert the name BEFORE borrowing the arena: its `to_str` is Ruby code,
+     * and it may edit this same document. */
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    // SAFETY: no Ruby code runs while the arena and the name's bytes are read;
+    // building the String only allocates.
     unsafe {
         let d = &*this.doc();
-        let id = this.id;
-        if d.type_(id) != Some(NodeType::Element) {
-            return Ok(ruby.qnil().as_value());
-        }
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        let a = find_attr(d, id, nv.bytes());
-        match a {
+        match find_attr(d, id, nv.bytes()) {
             None => Ok(ruby.qnil().as_value()),
             Some(at) => Ok(str_span(ruby, d, d.node(at).value)),
         }
@@ -256,16 +260,16 @@ pub fn attribute_by_qualified_name(
     this: super::XmlSelf,
     rb_name: Value,
 ) -> Result<Value, Error> {
-    unsafe {
-        let d = &*this.doc();
-        let id = this.id;
-        if d.type_(id) != Some(NodeType::Element) {
-            return Ok(ruby.qnil().as_value());
-        }
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        let a = find_attr(d, id, nv.bytes());
-        Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
+    let id = this.id;
+    // SAFETY: as in `aref`.
+    if unsafe { (*this.doc()).type_(id) } != Some(NodeType::Element) {
+        return Ok(ruby.qnil().as_value());
     }
+    /* Converted before the arena is borrowed - see `aref`. */
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    // SAFETY: the borrow ends with this statement, before the wrap allocates.
+    let a = unsafe { find_attr(&*this.doc(), id, nv.bytes()) };
+    Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
 }
 
 pub fn attribute_value_by_qualified_name(
