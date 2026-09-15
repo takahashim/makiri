@@ -86,16 +86,12 @@ pub use crate::glue::doc::mkr_wrap_document;
 use crate::glue::xpath::value_to_ruby;
 use crate::glue::xpath::xpath_error;
 pub use crate::xml::api::mkr_xml_doc_new;
-pub use crate::xml::api::mkr_xml_name_index_get;
-pub use crate::xml::api::mkr_xml_name_index_lookup;
 pub use crate::xml::api::mkr_xml_parse_ex;
 pub use crate::xml::api::mkr_xml_parse_fragment;
 pub use crate::xpath::ctx::ctx_limits;
-pub use crate::xpath::ctx::xpath_context_set_name_index;
 pub use crate::xpath::ctx::xpath_register_ns;
-pub use crate::xpath::ctx::xpath_set_engine_kind;
-use crate::xpath::ctx::OwnedContext;
 use crate::xpath::ctx::{evaluate, evaluate_first};
+use crate::xpath::ctx::{Backend, OwnedContext};
 pub use crate::xpath::parse::parse_raw;
 
 extern "C" {
@@ -106,54 +102,6 @@ extern "C" {
         ubf: *const c_void,
         ubf_data: *mut c_void,
     ) -> *mut c_void;
-}
-
-/* ------------------------------------------------------------------ */
-/* name-index hooks                                                   */
-/* ------------------------------------------------------------------ */
-
-/* void-typed adapters, so the engine's representation-neutral name-index hooks
- * reach the XML element-name index without the engine knowing its types. */
-
-unsafe extern "C" fn name_index_get(owner: *mut c_void) -> *mut c_void {
-    match mkr_xml_name_index_get(&mut *(owner as *mut XmlDoc)) {
-        Some(idx) => idx as *mut _ as *mut c_void,
-        None => core::ptr::null_mut(),
-    }
-}
-
-unsafe extern "C" fn name_index_lookup(
-    idx: *const c_void,
-    local: *const c_char,
-    local_len: usize,
-    ns_uri: *const c_char,
-    ns_uri_len: usize,
-    count: *mut usize,
-) -> *const *mut c_void {
-    let Some(idx) = (idx as *mut crate::xml::index::NameIndex).as_mut() else {
-        if !count.is_null() {
-            *count = 0;
-        }
-        return core::ptr::null();
-    };
-    let local = if local.is_null() || local_len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(local as *const u8, local_len)
-    };
-    let ns_uri = if ns_uri.is_null() || ns_uri_len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(ns_uri as *const u8, ns_uri_len)
-    };
-    let nodes = mkr_xml_name_index_lookup(idx, local, ns_uri);
-    if !count.is_null() {
-        *count = nodes.len();
-    }
-    // SAFETY: `NodeId` is one word and is exactly the opaque token the engine
-    // carries. The borrow remains valid until the next mutation invalidates
-    // the name index; the engine consumes it only during this GVL-held call.
-    nodes.as_ptr() as *const *mut c_void
 }
 
 /* ------------------------------------------------------------------ */
@@ -447,20 +395,16 @@ unsafe fn build_ctx(
     rb_ns: Option<Value>,
 ) -> Result<OwnedContext, Error> {
     mkr_verify_text(rb_sys::rb_String(rb_text.as_raw()), what);
-    let Some(ctx) = OwnedContext::new(xdoc as *mut c_void, context_node.to_token() as *mut c_void)
-    else {
+    let Some(ctx) = OwnedContext::new(
+        xdoc as *mut c_void,
+        context_node.to_token() as *mut c_void,
+        Backend::Xml { name_index: true },
+    ) else {
         return Err(Error::new(
             error_class(),
             "failed to allocate XPath context",
         ));
     };
-    xpath_set_engine_kind(ctx.as_ptr(), 1);
-    xpath_context_set_name_index(
-        ctx.as_ptr(),
-        xdoc as *mut c_void,
-        Some(name_index_get),
-        Some(name_index_lookup),
-    );
     register_namespaces(ruby, ctx.as_ptr(), rb_ns)?; /* ctx drops on error */
     Ok(ctx)
 }

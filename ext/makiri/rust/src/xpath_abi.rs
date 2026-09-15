@@ -487,6 +487,7 @@ pub use crate::xpath::limits::limit_recurse_leave;
 /// with no C ABI between them that is two types, so this IS the one type.
 pub use crate::xpath::ctx::Context;
 pub use crate::xpath::ctx::XPathValue;
+pub use crate::xpath::ctx::{ctx_backend, Backend};
 
 /// `mkr_buf_t` - a growable byte buffer with a byte ceiling. Declared in
 /// `crate::cbuf`, which is where the C layout lives now that the glue writes
@@ -552,45 +553,14 @@ pub type FuncResolver = Option<
     ) -> Result<Option<crate::xpath::own::OwnedVal>, Reported>,
 >;
 
-/// Tag-index hooks (HTML only): `lookup` returns the document-ordered bucket of
-/// elements whose tag id matches.
-pub type TagIndexLookup = Option<
-    unsafe extern "C" fn(
-        index: *const c_void,
-        tag_id: usize,
-        count: *mut usize,
-    ) -> *const *mut c_void,
->;
-pub type TagIndexForeign = Option<unsafe extern "C" fn(index: *const c_void) -> c_int>;
-
-/// Name-index hooks (XML only): `get` lazily builds and caches the index on the
-/// owning document, `lookup` returns the document-ordered bucket for a name.
-pub type NameIndexGet = Option<unsafe extern "C" fn(owner: *mut c_void) -> *mut c_void>;
-pub type NameIndexLookup = Option<
-    unsafe extern "C" fn(
-        index: *const c_void,
-        local: *const c_char,
-        local_len: usize,
-        ns_uri: *const c_char,
-        ns_uri_len: usize,
-        count: *mut usize,
-    ) -> *const *mut c_void,
->;
-
 pub use crate::xpath::ctx::ctx_document;
-pub use crate::xpath::ctx::ctx_element_index;
 pub use crate::xpath::ctx::ctx_func_resolver;
 pub use crate::xpath::ctx::ctx_limits;
 pub use crate::xpath::ctx::ctx_lookup_ns;
 pub use crate::xpath::ctx::ctx_lookup_variable_text;
-pub use crate::xpath::ctx::ctx_name_index_get;
-pub use crate::xpath::ctx::ctx_name_index_lookup;
-pub use crate::xpath::ctx::ctx_name_index_owner;
 pub use crate::xpath::ctx::ctx_node;
 pub use crate::xpath::ctx::ctx_order_index;
 pub use crate::xpath::ctx::ctx_str_cache;
-pub use crate::xpath::ctx::ctx_tag_has_foreign;
-pub use crate::xpath::ctx::ctx_tag_lookup;
 pub use crate::xpath::ctx::ctx_unprefixed_lax;
 pub use crate::xpath::ctx::xpath_get_user_data;
 pub use crate::xpath::limits::limit_check_nodeset_size;

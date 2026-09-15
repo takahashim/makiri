@@ -41,7 +41,7 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use rb_sys::VALUE;
 
-use crate::xpath::ctx::OwnedContext;
+use crate::xpath::ctx::{Backend, OwnedContext};
 use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
 use crate::xpath_abi::{
     ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot, Val, ValRef, VerifiedText,
@@ -86,11 +86,9 @@ pub use crate::xpath::ctx::ctx_is_evaluating;
 pub use crate::xpath::ctx::ctx_limits;
 pub use crate::xpath::ctx::ctx_set_context_node;
 pub use crate::xpath::ctx::ctx_set_unprefixed_lax;
-pub use crate::xpath::ctx::xpath_context_set_element_index;
 pub use crate::xpath::ctx::xpath_context_set_user_data;
 pub use crate::xpath::ctx::xpath_register_ns;
 pub use crate::xpath::ctx::xpath_register_variable_string;
-pub use crate::xpath::ctx::xpath_set_engine_kind;
 pub use crate::xpath::ctx::xpath_set_func_resolver;
 use crate::xpath::ctx::{evaluate, evaluate_first};
 pub use crate::xpath::parse::parse_raw;
@@ -294,13 +292,12 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, E
         } else {
             mkr_xml_node_unwrap(rb_node.as_raw())
         };
-        let Some(xctx) = OwnedContext::new(xdoc, cnode) else {
+        let Some(xctx) = OwnedContext::new(xdoc, cnode, Backend::Xml { name_index: false }) else {
             return Err(Error::new(
                 error_class(),
                 "failed to allocate XPath context",
             ));
         };
-        xpath_set_engine_kind(xctx.as_ptr(), 1);
         return Ok(xctx);
     }
 
@@ -312,32 +309,21 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, E
             "failed to build attribute index for XPath",
         ));
     }
-    let Some(ctx) = OwnedContext::new(doc, node as *mut c_void) else {
+    /* The element index is borrowed: it lives on the parsed document, which
+     * outlives this context. */
+    let Some(ctx) = OwnedContext::new(
+        doc,
+        node as *mut c_void,
+        Backend::Html {
+            index: mkr_parsed_element_index(parsed),
+        },
+    ) else {
         return Err(Error::new(
             error_class(),
             "failed to allocate XPath context",
         ));
     };
-    /* Borrowed: the index lives on the parsed document, which outlives this
-     * context. The engine calls back through the hooks and never sees its type. */
-    xpath_context_set_element_index(
-        ctx.as_ptr(),
-        mkr_parsed_element_index(parsed),
-        Some(element_index_tag),
-        Some(crate::glue::abi::mkr_element_index_has_foreign),
-    );
     Ok(ctx)
-}
-
-/* A void-typed adapter, like the XML name-index ones: the index hook is declared
- * representation-neutral (`*const *mut c_void`) so the engine never learns
- * Lexbor's node type, while the real function returns `*const *mut LxbNode`. */
-unsafe extern "C" fn element_index_tag(
-    index: *const c_void,
-    tag_id: usize,
-    count: *mut usize,
-) -> *const *mut c_void {
-    crate::glue::abi::mkr_element_index_tag(index, tag_id, count) as *const *mut c_void
 }
 
 /// `XPathContext.new(node, namespace_matching: :strict)`.

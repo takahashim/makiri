@@ -262,30 +262,19 @@ unsafe impl DomRaw for Xml {
             None if lax => return None,
             None => b"", /* strict unprefixed -> no namespace */
         };
-        let owner = ctx_document(ctx); /* the XML storage == the name index owner */
-        let get = ctx_name_index_get(ctx)?;
-        let lookup = ctx_name_index_lookup(ctx)?;
-        if owner.is_null() {
+        if !matches!(ctx_backend(ctx), Some(Backend::Xml { name_index: true })) {
             return None;
         }
-        let idx = get(owner); /* lazily builds and caches; NULL on OOM */
-        if idx.is_null() {
-            return None;
-        }
-        let mut cnt = 0usize;
-        let bucket = lookup(
-            idx,
-            local.as_ptr() as *const core::ffi::c_char,
-            local.len(),
-            uri.as_ptr() as *const core::ffi::c_char,
-            uri.len(),
-            &mut cnt,
-        );
-        let nodes = if bucket.is_null() || cnt == 0 {
-            &[][..]
-        } else {
-            core::slice::from_raw_parts(bucket, cnt)
-        };
+        /* The XML storage owns the index. */
+        let doc = (ctx_document(ctx) as *mut xml::Document).as_mut()?;
+        /* Built lazily and cached; None on OOM, and the caller walks. */
+        let idx = crate::xml::index::get(doc)?;
+        let ids = crate::xml::index::lookup(idx, local, uri);
+        // SAFETY: `NodeId` is one word and is exactly the opaque token the engine
+        // carries. The borrow stays valid until the next mutation invalidates the
+        // index; the engine consumes it only during this GVL-held evaluate.
+        let nodes =
+            core::slice::from_raw_parts(ids.as_ptr() as *const *mut core::ffi::c_void, ids.len());
         Some(Bucket {
             nodes,
             recheck: false,

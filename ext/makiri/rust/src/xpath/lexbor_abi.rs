@@ -503,10 +503,12 @@ unsafe impl DomRaw for Html {
         if ns_uri.is_some() {
             return None;
         }
-        let index = ctx_element_index(ctx);
-        let lookup = ctx_tag_lookup(ctx)?;
-        let has_foreign = ctx_tag_has_foreign(ctx)?;
-        if index.is_null() || has_foreign(index) != 0 {
+        let Some(Backend::Html { index }) = ctx_backend(ctx) else {
+            return None;
+        };
+        if index.is_null()
+            || crate::dom_adapter::dom_index::mkr_element_index_has_foreign(index) != 0
+        {
             return None;
         }
         let doc = ctx_document(ctx) as *const Document;
@@ -518,7 +520,11 @@ unsafe impl DomRaw for Html {
             return None;
         }
         let mut cnt = 0usize;
-        let nodes = bucket(lookup(index, tag, &mut cnt), cnt);
+        let nodes = bucket(
+            crate::dom_adapter::dom_index::mkr_element_index_tag(index, tag, &mut cnt)
+                as *const *mut c_void,
+            cnt,
+        );
         Some(Bucket {
             nodes,
             recheck: true,

@@ -31,6 +31,20 @@ struct VarEntry {
     value: OwnedText,
 }
 
+/// Which representation a context walks, and the index its `//name` fast path
+/// reads. Fixed when the context is made, so the instance that dereferences a
+/// node handle always matches the document the handle came from.
+#[derive(Clone, Copy)]
+pub enum Backend {
+    /// A Lexbor document. `index` is the parsed document's element index,
+    /// borrowed - the document outlives the context - or null to walk instead.
+    #[cfg(feature = "lexbor")]
+    Html { index: *const c_void },
+    /// A Makiri XML arena. `name_index` enables the lazily built element-name
+    /// index that hangs off the document itself.
+    Xml { name_index: bool },
+}
+
 /// `struct mkr_xpath_context_s`, the real thing.
 ///
 /// Its layout is not ABI: no client names the type - the glue holds a
@@ -58,29 +72,15 @@ pub struct Context {
     str_cache: StrCache,
     order_index: OrderIndex,
 
-    /* The borrowed document-level element index plus its hooks, injected by the
-     * glue before evaluation - the engine never sees the index's concrete type.
-     * A null index or hook disables the fast path and the engine walks. */
-    element_index: *mut c_void,
-    tag_lookup: TagIndexLookup,
-    tag_has_foreign: TagIndexForeign,
-
-    /* The XML element-name index: the owning document plus a lazy getter and a
-     * string-keyed lookup, injected by the XML glue. HTML uses the tag-id index
-     * above instead. */
-    name_index_owner: *mut c_void,
-    name_index_get: NameIndexGet,
-    name_index_lookup: NameIndexLookup,
-
     /* Namespace matching for UNPREFIXED name tests. 0 (default) is strict and
      * HTML5-faithful: an unprefixed name resolves in the HTML namespace, so
      * foreign SVG/MathML needs a prefix. 1 is lax: match by local name. */
     unprefixed_lax: c_int,
 
-    /* Which instance walks this context's nodes: 0 = HTML, 1 = XML. Only the
-     * two node-dereferencing entries dispatch on it; everything else per
-     * evaluate is representation-neutral. */
-    engine_kind: c_int,
+    /* Which instance walks this context's nodes, and its index. Only the two
+     * node-dereferencing entries dispatch on it; everything else per evaluate is
+     * representation-neutral. */
+    backend: Backend,
 
     /* Re-entrancy depth, >0 while an evaluate() runs on this context. A custom
      * function handler runs arbitrary Ruby mid-walk and could re-enter to mutate
@@ -107,31 +107,6 @@ pub use crate::xpath::ffi_html::eval_ast_html;
 #[cfg(feature = "lexbor")]
 pub use crate::xpath::ffi_html::try_first_match_html;
 
-/* Without `lexbor` there is no HTML instance, and no HTML context can be built
- * either - `engine_kind` is always XML - so the HTML arm of the two dispatches
- * below is unreachable. These stand in for it and FAIL CLOSED rather than being
- * a second implementation: reaching them would be a bug, not a slow path. */
-#[cfg(not(feature = "lexbor"))]
-unsafe fn eval_ast_html(
-    _ctx: *mut Context,
-    _ast: *const Node,
-    err: ErrSink,
-) -> Result<OwnedVal, Reported> {
-    Err(crate::err_setf!(
-        err,
-        XP_ERR_INTERNAL,
-        "no HTML engine in this build"
-    ))
-}
-
-#[cfg(not(feature = "lexbor"))]
-unsafe fn try_first_match_html(
-    _ctx: *mut Context,
-    _ast: *const Node,
-    _err: ErrSink,
-) -> Result<Option<*mut c_void>, Reported> {
-    Ok(None)
-}
 pub use crate::xpath::ffi_xml::eval_ast_xml;
 pub use crate::xpath::ffi_xml::try_first_match_xml;
 pub use crate::xpath::runtime_abi::doc_order_index_init;
@@ -170,7 +145,11 @@ unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
 
 /* ---------- lifetime ---------- */
 
-pub unsafe fn xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut Context {
+pub unsafe fn xpath_context_new(
+    doc: *mut c_void,
+    node: *mut c_void,
+    backend: Backend,
+) -> *mut Context {
     // Null on failure: `xpath_context_new` already documents null as its
     // OOM answer (the C version returned it from mkr_callocarray), and every
     // caller checks. Aborting here would take the host process down for a
@@ -185,14 +164,8 @@ pub unsafe fn xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut Con
         func_resolver: None,
         str_cache: core::mem::zeroed(),
         order_index: core::mem::zeroed(),
-        element_index: ptr::null_mut(),
-        tag_lookup: None,
-        tag_has_foreign: None,
-        name_index_owner: ptr::null_mut(),
-        name_index_get: None,
-        name_index_lookup: None,
         unprefixed_lax: 0,
-        engine_kind: 0,
+        backend,
         evaluating: 0,
     }) else {
         return ptr::null_mut();
@@ -222,8 +195,8 @@ impl OwnedContext {
     ///
     /// # Safety
     /// As [`xpath_context_new`]: `doc` and `node` must outlive the context.
-    pub unsafe fn new(doc: *mut c_void, node: *mut c_void) -> Option<Self> {
-        ptr::NonNull::new(xpath_context_new(doc, node)).map(OwnedContext)
+    pub unsafe fn new(doc: *mut c_void, node: *mut c_void, backend: Backend) -> Option<Self> {
+        ptr::NonNull::new(xpath_context_new(doc, node, backend)).map(OwnedContext)
     }
 
     /// The context, for the engine calls that take it raw. Valid while `self` is.
@@ -358,30 +331,17 @@ macro_rules! getter {
 
 getter!(ctx_document, *mut c_void, doc, ptr::null_mut());
 getter!(ctx_node, *mut c_void, node, ptr::null_mut());
-getter!(
-    ctx_element_index,
-    *mut c_void,
-    element_index,
-    ptr::null_mut()
-);
-getter!(ctx_tag_lookup, TagIndexLookup, tag_lookup, None);
-getter!(ctx_tag_has_foreign, TagIndexForeign, tag_has_foreign, None);
-getter!(
-    ctx_name_index_owner,
-    *mut c_void,
-    name_index_owner,
-    ptr::null_mut()
-);
-getter!(ctx_name_index_get, NameIndexGet, name_index_get, None);
-getter!(
-    ctx_name_index_lookup,
-    NameIndexLookup,
-    name_index_lookup,
-    None
-);
 getter!(ctx_func_resolver, FuncResolver, func_resolver, None);
 getter!(xpath_get_user_data, *mut c_void, user_data, ptr::null_mut());
 getter!(ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
+
+pub unsafe fn ctx_backend(ctx: *mut Context) -> Option<Backend> {
+    if ctx.is_null() {
+        None
+    } else {
+        Some((*ctx).backend)
+    }
+}
 
 pub unsafe fn ctx_limits(ctx: *mut Context) -> *mut Limits {
     if ctx.is_null() {
@@ -419,12 +379,6 @@ pub unsafe fn ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
     }
 }
 
-pub unsafe fn xpath_set_engine_kind(ctx: *mut Context, kind: c_int) {
-    if !ctx.is_null() {
-        (*ctx).engine_kind = c_int::from(kind != 0);
-    }
-}
-
 pub unsafe fn xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).user_data = user_data;
@@ -434,32 +388,6 @@ pub unsafe fn xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_v
 pub unsafe fn xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
     if !ctx.is_null() {
         (*ctx).func_resolver = resolver;
-    }
-}
-
-pub unsafe fn xpath_context_set_element_index(
-    ctx: *mut Context,
-    index: *mut c_void,
-    lookup: TagIndexLookup,
-    has_foreign: TagIndexForeign,
-) {
-    if !ctx.is_null() {
-        (*ctx).element_index = index;
-        (*ctx).tag_lookup = lookup;
-        (*ctx).tag_has_foreign = has_foreign;
-    }
-}
-
-pub unsafe fn xpath_context_set_name_index(
-    ctx: *mut Context,
-    owner: *mut c_void,
-    get: NameIndexGet,
-    lookup: NameIndexLookup,
-) {
-    if !ctx.is_null() {
-        (*ctx).name_index_owner = owner;
-        (*ctx).name_index_get = get;
-        (*ctx).name_index_lookup = lookup;
     }
 }
 
@@ -533,10 +461,10 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
      * outer HAD built it, leave it so the outer's sorts still see it. */
     let order_was_built = (*ctx).order_index.built != 0;
 
-    let result = if (*ctx).engine_kind != 0 {
-        eval_ast_xml(handle(ctx), ast, ErrSink::new(&mut err))
-    } else {
-        eval_ast_html(handle(ctx), ast, ErrSink::new(&mut err))
+    let result = match (*ctx).backend {
+        Backend::Xml { .. } => eval_ast_xml(handle(ctx), ast, ErrSink::new(&mut err)),
+        #[cfg(feature = "lexbor")]
+        Backend::Html { .. } => eval_ast_html(handle(ctx), ast, ErrSink::new(&mut err)),
     };
     str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
     if !order_was_built && (*ctx).order_index.built != 0 {
@@ -577,10 +505,10 @@ pub unsafe fn evaluate_first(ctx: *mut Context, ast: *mut Node) -> Result<XPathV
     (*ctx).limits.eval_ops = 0;
     (*ctx).limits.recursion_depth = 0;
 
-    let matched = if (*ctx).engine_kind != 0 {
-        try_first_match_xml(handle(ctx), ast, ErrSink::new(&mut err))
-    } else {
-        try_first_match_html(handle(ctx), ast, ErrSink::new(&mut err))
+    let matched = match (*ctx).backend {
+        Backend::Xml { .. } => try_first_match_xml(handle(ctx), ast, ErrSink::new(&mut err)),
+        #[cfg(feature = "lexbor")]
+        Backend::Html { .. } => try_first_match_html(handle(ctx), ast, ErrSink::new(&mut err)),
     };
     match matched {
         /* Op budget exceeded while walking: fail closed rather than falling back

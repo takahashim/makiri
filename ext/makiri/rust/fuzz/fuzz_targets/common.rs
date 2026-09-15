@@ -16,16 +16,12 @@ pub use makiri::xml::parse::mkr_xml_parse;
 pub use makiri::xml::Document;
 pub use makiri::xpath::ast_ops::node_free;
 pub use makiri::xpath::ctx::{
-    ctx_limits, xpath_context_free, xpath_context_new, xpath_register_ns,
-    xpath_set_engine_kind,
+    ctx_limits, xpath_context_free, xpath_context_new, xpath_register_ns, Backend,
 };
 pub use makiri::xpath::ctx::evaluate;
 pub use makiri::xpath::limits::xpath_limits_init_defaults;
 pub use makiri::xpath::parse::parse_raw;
 pub use makiri::xpath_abi::{Context, Error as XPathError, Limits, XPathValue};
-
-/// The engine kind the XML monomorphization answers to. Every target pins it.
-pub const ENGINE_XML: c_int = 1;
 
 /// A context over `doc`, rooted at its document node and pinned to the XML
 /// engine - the same arguments the glue's `build_ctx` passes. `None` when the
@@ -39,11 +35,14 @@ pub unsafe fn xml_context(doc: &mut Document) -> Option<*mut Context> {
         return None;
     }
     let node = doc.doc_node.to_token() as *mut c_void;
-    let ctx = xpath_context_new(doc as *mut Document as *mut c_void, node);
+    let ctx = xpath_context_new(
+        doc as *mut Document as *mut c_void,
+        node,
+        Backend::Xml { name_index: true },
+    );
     if ctx.is_null() {
         return None;
     }
-    xpath_set_engine_kind(ctx, ENGINE_XML);
     Some(ctx)
 }
 
