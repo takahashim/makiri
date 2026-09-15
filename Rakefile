@@ -242,9 +242,17 @@ end
 #
 # LeakSanitizer stays off - it would flag Ruby's intentional caches, and the
 # interpreter is not instrumented. Real heap findings stay fatal.
+#
+# `use_sigaltstack=0`: Ruby installs its own (malloc'd) alternate signal stack
+# on every native thread, replacing the one ASan mmap'd at thread start. When
+# such a thread exits, ASan's `UnsetAlternateSignalStack` munmaps whatever stack
+# is current - Ruby's heap pointer - gets EINVAL, and dies with "failed to
+# deallocate ... unable to unmmap" (seen on Linux as soon as a spec ran XPath
+# in a `Thread.new`). Not installing ASan's stack means nothing is unmapped.
 ASAN_ENV_OPTIONS = "detect_leaks=0:detect_container_overflow=0:" \
                    "detect_odr_violation=0:verify_interceptors=0:" \
-                   "verify_asan_link_order=0:abort_on_error=1:halt_on_error=1"
+                   "verify_asan_link_order=0:use_sigaltstack=0:" \
+                   "abort_on_error=1:halt_on_error=1"
 
 # The ASan runtime to preload. Linux only - on macOS preloading is the thing
 # that breaks the run, so this returns nil there by construction rather than by
