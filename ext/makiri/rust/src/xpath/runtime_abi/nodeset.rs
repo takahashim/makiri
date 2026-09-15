@@ -24,7 +24,7 @@ pub unsafe fn nodeset_push(
     if !budget.is_null() {
         limit_check_nodeset_size(budget, (*ns).count + 1)?;
     }
-    if mkr_grow_reserve(
+    if grow_reserve(
         &raw mut (*ns).items as *mut *mut c_void,
         &raw mut (*ns).capacity,
         (*ns).count + 1,

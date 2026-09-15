@@ -30,7 +30,7 @@ fn allocation_should_fail() -> bool {
 /// A zero count is rejected without touching `ptr`. Releasing an existing
 /// allocation is a separate operation, `free_and_null`, so a NULL result
 /// from this function always means that the caller still owns the old block.
-pub(crate) unsafe fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void {
+pub(crate) unsafe fn reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void {
     if count == 0 {
         return core::ptr::null_mut();
     }
@@ -55,7 +55,7 @@ pub(crate) unsafe fn free_and_null(ptr: *mut c_void) -> *mut c_void {
     core::ptr::null_mut()
 }
 
-pub(crate) unsafe fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void {
+pub(crate) unsafe fn callocarray(count: usize, elem: usize) -> *mut c_void {
     if count == 0 || elem == 0 || count.checked_mul(elem).is_none() {
         return core::ptr::null_mut();
     }
@@ -65,7 +65,7 @@ pub(crate) unsafe fn mkr_callocarray(count: usize, elem: usize) -> *mut c_void {
     libc_calloc(count, elem)
 }
 
-pub unsafe fn mkr_grow_reserve(
+pub unsafe fn grow_reserve(
     ptr: *mut *mut c_void,
     cap: *mut usize,
     need: usize,
@@ -78,7 +78,7 @@ pub unsafe fn mkr_grow_reserve(
         Some(c) => c,
         None => return MKR_ERR_OOM,
     };
-    let p = mkr_reallocarray(*ptr, new_cap, elem);
+    let p = reallocarray(*ptr, new_cap, elem);
     if p.is_null() {
         return MKR_ERR_OOM;
     }

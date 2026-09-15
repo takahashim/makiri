@@ -21,10 +21,10 @@
 
 use core::ffi::c_void;
 
-use super::cstr::{mkr_str_alloc, mkr_strndup};
-use super::raw::{free_and_null, mkr_callocarray, mkr_reallocarray};
+use super::cstr::{str_alloc, strndup};
+use super::raw::{callocarray, free_and_null, reallocarray};
 
-/// `mkr_reallocarray` returns NULL without freeing `ptr` for every rejected
+/// `reallocarray` returns NULL without freeing `ptr` for every rejected
 /// request. `free_and_null` is the explicit ownership-transfer operation.
 ///
 /// The proof is that the last two leave the allocation usable: Kani's memory
@@ -35,9 +35,9 @@ use super::raw::{free_and_null, mkr_callocarray, mkr_reallocarray};
 fn reallocarray_ownership() {
     unsafe {
         /* elem == 0: NULL, and the caller still owns ptr. */
-        let p = mkr_callocarray(4, 1);
+        let p = callocarray(4, 1);
         if !p.is_null() {
-            let r = mkr_reallocarray(p, 4, 0);
+            let r = reallocarray(p, 4, 0);
             assert!(r.is_null(), "elem == 0 answers NULL");
             *(p as *mut u8) = 7; /* still ours: a freed one would be caught here */
             assert!(*(p as *const u8) == 7);
@@ -45,9 +45,9 @@ fn reallocarray_ownership() {
         }
 
         /* An overflowing size: NULL, and the caller still owns ptr. */
-        let q = mkr_callocarray(4, 1);
+        let q = callocarray(4, 1);
         if !q.is_null() {
-            let r = mkr_reallocarray(q, usize::MAX, 2);
+            let r = reallocarray(q, usize::MAX, 2);
             assert!(r.is_null(), "an overflowing size answers NULL");
             *(q as *mut u8) = 9;
             assert!(*(q as *const u8) == 9);
@@ -55,12 +55,9 @@ fn reallocarray_ownership() {
         }
 
         /* count == 0 is rejected and leaves ownership with the caller. */
-        let z = mkr_callocarray(4, 1);
+        let z = callocarray(4, 1);
         if !z.is_null() {
-            assert!(
-                mkr_reallocarray(z, 0, 1).is_null(),
-                "count == 0 answers NULL"
-            );
+            assert!(reallocarray(z, 0, 1).is_null(), "count == 0 answers NULL");
             *(z as *mut u8) = 11;
             assert!(*(z as *const u8) == 11);
             free_and_null(z);
@@ -68,7 +65,7 @@ fn reallocarray_ownership() {
     }
 }
 
-/// `mkr_callocarray` answers NULL for a zero dimension without allocating, and
+/// `callocarray` answers NULL for a zero dimension without allocating, and
 /// zeroes what it does allocate.
 #[kani::proof]
 #[kani::unwind(8)]
@@ -76,17 +73,11 @@ fn callocarray_zeroes_and_rejects_zero_dimensions() {
     unsafe {
         let n: usize = kani::any();
         kani::assume(n <= 4);
-        assert!(
-            mkr_callocarray(n, 0).is_null(),
-            "elem == 0 allocates nothing"
-        );
-        assert!(
-            mkr_callocarray(0, n).is_null(),
-            "count == 0 allocates nothing"
-        );
+        assert!(callocarray(n, 0).is_null(), "elem == 0 allocates nothing");
+        assert!(callocarray(0, n).is_null(), "count == 0 allocates nothing");
 
         kani::assume(n > 0);
-        let p = mkr_callocarray(n, 1) as *mut u8;
+        let p = callocarray(n, 1) as *mut u8;
         if !p.is_null() {
             for i in 0..n {
                 assert!(*p.add(i) == 0, "callocarray: the bytes are zeroed");
@@ -96,14 +87,14 @@ fn callocarray_zeroes_and_rejects_zero_dimensions() {
     }
 }
 
-/// `mkr_str_alloc` writes the terminator, and `mkr_strndup` copies exactly `n`
+/// `str_alloc` writes the terminator, and `strndup` copies exactly `n`
 /// bytes and terminates after them.
 ///
 /// The terminator is the whole point of these two over a bare `malloc`: every
 /// caller hands the result to something that reads it as a C string.
 ///
 /// This proof is the ONLY net for that property, which was checked rather than
-/// assumed: deleting `mkr_str_alloc`'s terminator write leaves the C core
+/// assumed: deleting `str_alloc`'s terminator write leaves the C core
 /// selftest green and all 1001 specs green - the callers each write `n` bytes
 /// and the uninitialised byte at `n` happened to read as zero - and fails here.
 /// The same was true before the port; the gap is in the runtime gates, not in
@@ -115,14 +106,14 @@ fn str_alloc_and_strndup_terminate() {
         let n: usize = kani::any();
         kani::assume(n <= 4);
 
-        let p = mkr_str_alloc(n);
+        let p = str_alloc(n);
         if !p.is_null() {
             assert!(*p.add(n) == 0, "str_alloc: terminated at n");
             free(p as *mut c_void);
         }
 
         let src: [u8; 4] = kani::any();
-        let d = mkr_strndup(src.as_ptr() as *const core::ffi::c_char, n);
+        let d = strndup(src.as_ptr() as *const core::ffi::c_char, n);
         if !d.is_null() {
             for i in 0..n {
                 assert!(*d.add(i) as u8 == src[i], "strndup: copies the bytes");
@@ -135,7 +126,7 @@ fn str_alloc_and_strndup_terminate() {
          * uninitialised bytes. */
         kani::assume(n > 0);
         assert!(
-            mkr_strndup(core::ptr::null(), n).is_null(),
+            strndup(core::ptr::null(), n).is_null(),
             "strndup: a NULL source with n > 0 fails closed"
         );
     }

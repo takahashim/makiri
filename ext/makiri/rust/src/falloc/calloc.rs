@@ -8,10 +8,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-pub use super::cstr::{mkr_str_alloc, mkr_strdup, mkr_strndup};
-pub use super::raw::mkr_grow_reserve;
+pub use super::cstr::{str_alloc, strdup, strndup};
+pub use super::raw::grow_reserve;
 
 #[cfg(feature = "alloc-inject")]
-pub use super::inject::{
-    mkr_alloc_inject_arm, mkr_alloc_inject_calls, mkr_alloc_inject_should_fail,
-};
+pub use super::inject::{alloc_inject_arm, alloc_inject_call_count, alloc_inject_should_fail};

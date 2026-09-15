@@ -16,7 +16,7 @@ fn allocation_should_fail() -> bool {
     crate::falloc::allocation_should_fail()
 }
 
-pub unsafe fn mkr_str_alloc(n: usize) -> *mut c_char {
+pub unsafe fn str_alloc(n: usize) -> *mut c_char {
     let total = match n.checked_add(1) {
         Some(t) => t,
         None => return core::ptr::null_mut(),
@@ -32,11 +32,11 @@ pub unsafe fn mkr_str_alloc(n: usize) -> *mut c_char {
     p
 }
 
-pub unsafe fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char {
+pub unsafe fn strndup(s: *const c_char, n: usize) -> *mut c_char {
     if n > 0 && s.is_null() {
         return core::ptr::null_mut();
     }
-    let p = mkr_str_alloc(n);
+    let p = str_alloc(n);
     if p.is_null() {
         return core::ptr::null_mut();
     }
@@ -47,9 +47,9 @@ pub unsafe fn mkr_strndup(s: *const c_char, n: usize) -> *mut c_char {
     p
 }
 
-pub unsafe fn mkr_strdup(s: *const c_char) -> *mut c_char {
+pub unsafe fn strdup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
         return core::ptr::null_mut();
     }
-    mkr_strndup(s, libc_strlen(s))
+    strndup(s, libc_strlen(s))
 }

@@ -1,7 +1,7 @@
 //! Per-evaluation order and string-cache storage.
 #![allow(clippy::missing_safety_doc)]
 use super::super::abi::*;
-use crate::falloc::raw::mkr_callocarray;
+use crate::falloc::raw::callocarray;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
@@ -75,7 +75,7 @@ pub unsafe fn str_cache_index_put(c: *mut StrCache, idx: usize) {
     *(*c).buckets.add(j) = idx + 1;
 }
 pub unsafe fn str_cache_reindex(c: *mut StrCache, bucket_cap: usize) -> i32 {
-    let buckets = mkr_callocarray(bucket_cap, core::mem::size_of::<usize>()) as *mut usize;
+    let buckets = callocarray(bucket_cap, core::mem::size_of::<usize>()) as *mut usize;
     if buckets.is_null() {
         return -1;
     }

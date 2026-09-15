@@ -8,7 +8,7 @@
 
 use super::abi::*;
 use super::dom::*;
-use crate::falloc::raw::mkr_callocarray;
+use crate::falloc::raw::callocarray;
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
@@ -164,7 +164,7 @@ unsafe fn order_index_insert<D: Dom>(idx: *mut OrderIndex, node: D::Node, ord: u
             }
         };
         let new_buckets =
-            mkr_callocarray(new_cap, core::mem::size_of::<OrderBucket>()) as *mut OrderBucket;
+            callocarray(new_cap, core::mem::size_of::<OrderBucket>()) as *mut OrderBucket;
         if new_buckets.is_null() {
             return false;
         }

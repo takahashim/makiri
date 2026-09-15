@@ -57,6 +57,6 @@ pub use super::runtime_abi::str_cache_reindex;
 pub use super::runtime_abi::val_clear;
 pub use super::runtime_abi::val_set_owned_text;
 pub(crate) use crate::cbuf::{mkr_buf_append, Buf};
-pub use crate::falloc::calloc::mkr_grow_reserve;
-pub use crate::falloc::calloc::mkr_strndup;
+pub use crate::falloc::calloc::grow_reserve;
+pub use crate::falloc::calloc::strndup;
 pub use crate::text::{BorrowedText, VerifiedText};

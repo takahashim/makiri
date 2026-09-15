@@ -79,7 +79,7 @@ fn alloc_inject_p() -> bool {
 fn alloc_inject(ruby: &Ruby, nth: i64) -> Result<(), Error> {
     #[cfg(feature = "alloc-inject")]
     {
-        unsafe { crate::falloc::calloc::mkr_alloc_inject_arm(nth) };
+        unsafe { crate::falloc::calloc::alloc_inject_arm(nth) };
         let _ = ruby;
         Ok(())
     }
@@ -99,7 +99,7 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
     #[cfg(feature = "alloc-inject")]
     {
         let _ = ruby;
-        Ok(unsafe { crate::falloc::calloc::mkr_alloc_inject_calls() })
+        Ok(unsafe { crate::falloc::calloc::alloc_inject_call_count() })
     }
     #[cfg(not(feature = "alloc-inject"))]
     {

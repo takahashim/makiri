@@ -58,7 +58,7 @@ use crate::glue::abi::{error_class, mkr_eError, rb_raise};
 /// re-exported here so the bridge's callers keep naming it from this module.
 pub use crate::cutf8::TextVerdict;
 
-use crate::falloc::raw::mkr_reallocarray;
+use crate::falloc::raw::reallocarray;
 
 /// The `value` + `(ptr, len)` of a String, taken together so the borrow and its
 /// anchor cannot be separated by accident.
@@ -208,7 +208,7 @@ pub unsafe fn ruby_bytes_view(s: VALUE) -> RubyBytes {
 pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBytes> {
     let v = ruby_bytes_view(s);
     let alloc_len = if v.len() > 0 { v.len() } else { 1 };
-    let buf = mkr_reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
+    let buf = reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
     if buf.is_null() {
         return None;
     }

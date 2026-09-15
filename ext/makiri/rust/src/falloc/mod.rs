@@ -13,8 +13,8 @@
 //!
 //!  1. **Not injectable.** Allocations made with `std` containers never consult
 //!     the hook, so no sweep could reach them. The XPath engine and the bridge
-//!     were fine - they call `mkr_callocarray` / `mkr_reallocarray` /
-//!     `mkr_grow_reserve` and inherit the hook - but everything built on `Vec`,
+//!     were fine - they call `callocarray` / `reallocarray` /
+//!     `grow_reserve` and inherit the hook - but everything built on `Vec`,
 //!     `HashMap` and `Box` was invisible.
 //!  2. **Not fallible.** `Box::new`, `Vec::push` and `HashMap::insert` abort the
 //!     process on allocation failure (`handle_alloc_error`). For a library
@@ -28,7 +28,7 @@
 //!
 //! # The counter is shared, deliberately
 //!
-//! `mkr_alloc_inject_should_fail` is the C hook itself, not a copy of it. One
+//! `alloc_inject_should_fail` is the C hook itself, not a copy of it. One
 //! counter means one sweep with one numbering: `rake oom` does not need to know
 //! which language owns allocation number 4,271, and a sweep sized from a
 //! disarmed baseline run stays correct as sites move from C to Rust. When
@@ -76,7 +76,7 @@ pub(crate) mod raw;
  * call only `allocation_should_fail`, which is a constant false in production. */
 
 #[cfg(feature = "alloc-inject")]
-use inject::mkr_alloc_inject_should_fail;
+use inject::alloc_inject_should_fail;
 
 /// Allocation instrumentation hook. Always false in production builds.
 #[cfg(feature = "alloc-inject")]
@@ -85,7 +85,7 @@ pub(crate) fn allocation_should_fail() -> bool {
     // SAFETY: a plain counter read in C, no arguments, no pointers. The hook is
     // single-threaded by design (the sweep is), which holds here because every
     // caller is under the GVL.
-    unsafe { mkr_alloc_inject_should_fail() != 0 }
+    unsafe { alloc_inject_should_fail() != 0 }
 }
 
 /// Production allocator hook: no test instrumentation or branch remains.
@@ -101,7 +101,7 @@ pub(crate) const fn allocation_should_fail() -> bool {
 /// for the layout, write the value into it, and only then claim ownership, so a
 /// null response leaves `value` untouched and returns it to the caller. A
 /// zero-sized `T` never allocates, so it cannot fail and is not counted - the
-/// same convention as `mkr_callocarray(0, _)`.
+/// same convention as `callocarray(0, _)`.
 #[inline]
 pub fn try_box<T>(value: T) -> Result<Box<T>, T> {
     let layout = std::alloc::Layout::new::<T>();
@@ -127,7 +127,7 @@ pub fn try_box<T>(value: T) -> Result<Box<T>, T> {
 }
 
 /// `Box::into_raw(Box::new(v))` for the handles the C ABI hands out. Null is the
-/// failure the C callers already expect from `mkr_callocarray`.
+/// failure the C callers already expect from `callocarray`.
 #[inline]
 pub fn try_box_raw<T>(value: T) -> *mut T {
     match try_box(value) {

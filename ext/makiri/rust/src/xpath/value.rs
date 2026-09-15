@@ -12,7 +12,7 @@ use super::dom::*;
 use super::number;
 use super::own::{OwnedText, OwnedVal};
 use crate::err_setf;
-use crate::falloc::raw::mkr_reallocarray;
+use crate::falloc::raw::reallocarray;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
@@ -269,7 +269,7 @@ pub unsafe fn val_clone(src: &Val, err: ErrSink) -> Result<OwnedVal, Reported> {
             if n == 0 {
                 return Ok(OwnedVal::new());
             }
-            let items = mkr_reallocarray(ptr::null_mut(), n, core::mem::size_of::<*mut c_void>())
+            let items = reallocarray(ptr::null_mut(), n, core::mem::size_of::<*mut c_void>())
                 as *mut *mut c_void;
             if items.is_null() {
                 return Err(err_setf!(err, XP_ERR_OOM, "out of memory cloning node-set"));
@@ -611,7 +611,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
      * it on the way out. */
     let mut text = node_to_owned_text::<D>(doc, node, budget)?;
 
-    if mkr_grow_reserve(
+    if grow_reserve(
         &raw mut (*c).entries as *mut *mut c_void,
         &raw mut (*c).cap,
         (*c).count + 1,

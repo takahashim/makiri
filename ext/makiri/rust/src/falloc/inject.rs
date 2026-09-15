@@ -9,7 +9,7 @@ static ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 ///
 /// # Safety
 /// This test hook must only be used by the serialized OOM sweep.
-pub unsafe fn mkr_alloc_inject_arm(nth: i64) {
+pub unsafe fn alloc_inject_arm(nth: i64) {
     COUNTDOWN.store(if nth > 0 { nth } else { 0 }, Ordering::Release);
     ATTEMPTS.store(0, Ordering::Release);
 }
@@ -19,7 +19,7 @@ pub unsafe fn mkr_alloc_inject_arm(nth: i64) {
 /// # Safety
 /// This test hook has no memory-safety preconditions; callers must only use
 /// the result for the matching OOM sweep.
-pub unsafe fn mkr_alloc_inject_calls() -> u64 {
+pub unsafe fn alloc_inject_call_count() -> u64 {
     ATTEMPTS.load(Ordering::Acquire)
 }
 
@@ -28,7 +28,7 @@ pub unsafe fn mkr_alloc_inject_calls() -> u64 {
 /// # Safety
 /// The hook must be called once per allocation attempt and must not be used to
 /// replace the allocator's normal failure handling.
-pub unsafe fn mkr_alloc_inject_should_fail() -> core::ffi::c_int {
+pub unsafe fn alloc_inject_should_fail() -> core::ffi::c_int {
     ATTEMPTS.fetch_add(1, Ordering::Relaxed);
     let mut left = COUNTDOWN.load(Ordering::Acquire);
     while left > 0 {

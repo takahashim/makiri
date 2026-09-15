@@ -177,7 +177,7 @@ pub unsafe fn xpath_context_new(
     backend: Backend,
 ) -> *mut Context {
     // Null on failure: `xpath_context_new` already documents null as its
-    // OOM answer (the C version returned it from mkr_callocarray), and every
+    // OOM answer (the C version returned it from callocarray), and every
     // caller checks. Aborting here would take the host process down for a
     // failure the API can already express.
     let Ok(mut ctx) = crate::falloc::try_box(Context {

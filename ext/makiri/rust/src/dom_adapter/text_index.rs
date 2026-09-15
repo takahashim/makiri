@@ -261,7 +261,7 @@ impl TextIndex {
                  * unconditionally made each of a document's containers its own
                  * injection point - 178 for one `rake oom` scenario where the C
                  * had 16, all re-testing one branch. The C grows the same way,
-                 * through mkr_grow_reserve, and only when it must. */
+                 * through grow_reserve, and only when it must. */
                 if stack.len() == stack.capacity() {
                     let want = crate::falloc::grow_capacity(
                         stack.capacity(),

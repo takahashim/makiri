@@ -12,7 +12,7 @@ use super::abi::*;
 use super::ast_view::{path_steps, step_preds};
 use super::own::Ast;
 use crate::err_setf;
-use crate::falloc::raw::mkr_callocarray;
+use crate::falloc::raw::callocarray;
 use core::ffi::c_void;
 use core::ptr;
 use core::ptr::NonNull;
@@ -26,8 +26,7 @@ use core::ptr::NonNull;
 pub(crate) unsafe fn node_alloc(budget: *mut Budget, kind: u32) -> Result<Ast, Reported> {
     let err = budget_sink(budget);
     limit_ast_node(budget)?;
-    let Some(n) = NonNull::new(mkr_callocarray(1, core::mem::size_of::<Node>()) as *mut Node)
-    else {
+    let Some(n) = NonNull::new(callocarray(1, core::mem::size_of::<Node>()) as *mut Node) else {
         return Err(err_setf!(
             err,
             XP_ERR_OOM,

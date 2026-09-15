@@ -38,7 +38,7 @@ impl TextSlot {
         } else {
             bytes.as_ptr() as *const c_char
         };
-        let p = mkr_strndup(src, len);
+        let p = strndup(src, len);
         if p.is_null() {
             return Err(match what {
                 Some(what) => err_set(err, XP_ERR_OOM, what),
@@ -61,8 +61,8 @@ impl TextSlot {
     ///
     /// The room is zeroed first, so `fill` never sees uninitialised bytes.
     pub(crate) fn try_fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<Self> {
-        // SAFETY: `mkr_str_alloc` returns null or `cap + 1` writable bytes.
-        let p = unsafe { crate::falloc::cstr::mkr_str_alloc(cap) };
+        // SAFETY: `str_alloc` returns null or `cap + 1` writable bytes.
+        let p = unsafe { crate::falloc::cstr::str_alloc(cap) };
         if p.is_null() {
             return None;
         }

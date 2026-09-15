@@ -9,7 +9,7 @@
 use super::abi::*;
 use super::ast_ops::{node_free, step_clear};
 use super::dom::Dom;
-use crate::falloc::raw::mkr_reallocarray;
+use crate::falloc::raw::reallocarray;
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr;
@@ -158,7 +158,7 @@ impl<T> RawArray<T> {
         };
         // SAFETY: `v` is null or this array's own C allocation.
         let p = unsafe {
-            mkr_reallocarray(self.v as *mut c_void, want, core::mem::size_of::<T>()) as *mut T
+            reallocarray(self.v as *mut c_void, want, core::mem::size_of::<T>()) as *mut T
         };
         if p.is_null() {
             return false;
