@@ -655,8 +655,24 @@ unsafe fn handler_resolver(
     }
 
     let method = rb_sys::rb_intern(name.as_ptr() as *const c_char);
-    if rb_sys::rb_respond_to(bridge.handler, method) == 0 {
-        return Ok(None); /* let the engine raise "unknown function" */
+    /* `respond_to?` - and `respond_to_missing?` behind it - is the handler's own
+     * Ruby code, so it is asked under protect: a raise there fails this call like
+     * any handler raise, instead of unwinding past the evaluation's guards. */
+    match crate::bridge::ruby::respond_to(Value::from_raw(bridge.handler), method) {
+        Ok(true) => {}
+        Ok(false) => return Ok(None), /* let the engine raise "unknown function" */
+        Err(e) => {
+            let mut msg = [0 as c_char; 200];
+            if let magnus::error::ErrorType::Exception(x) = e.error_type() {
+                ruby_exception_message(x.as_raw(), msg.as_mut_ptr(), msg.len());
+            }
+            return Err(crate::err_setf!(
+                err,
+                XP_ERR_RUNTIME,
+                "handler raised: {}",
+                core::ffi::CStr::from_ptr(msg.as_ptr()).to_string_lossy()
+            ));
+        }
     }
 
     if call.args.len() > HANDLER_MAX_ARGS {

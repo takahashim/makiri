@@ -89,6 +89,21 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
     .map(|_| ())
 }
 
+/// `rb_respond_to` returning a raise from the object's own `respond_to?` (or the
+/// `respond_to_missing?` behind it) as `Err`, rather than unwinding through the
+/// caller.
+pub fn respond_to(v: Value, method: rb_sys::ID) -> Result<bool, Error> {
+    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
+    let answer = protect(|| unsafe {
+        if rb_sys::rb_respond_to(v.as_raw(), method) != 0 {
+            rb_sys::Qtrue as VALUE
+        } else {
+            rb_sys::Qfalse as VALUE
+        }
+    })?;
+    Ok(answer == rb_sys::Qtrue as VALUE)
+}
+
 /// The data pointer of a TypedData object of type `ty` (or a type deriving
 /// from it), or the `TypeError` Ruby's own check raises.
 ///
