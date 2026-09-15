@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # `rust` carries the in-progress Rust port, whose build configurations only
+    # this workflow exercises - so it gets CI on push like the mainlines do.
+    branches: [main, master, rust]
   pull_request:
 
 jobs:
@@ -30,12 +32,98 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
-      - name: Compile the extension (builds vendored Lexbor, then the ext)
+      # The extension is a Rust crate, so a toolchain is part of the build the
+      # way a C compiler used to be. (`rake ports` stood here and checked that
+      # the port table, Cargo.toml, this file and lib.rs agreed about which C
+      # each flag replaced. There is no table, no flags and no C left for it to
+      # check.)
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # RubyInstaller's Ruby is a MinGW build, but a default rustup on
+          # Windows installs the MSVC host - and rb-sys will not generate
+          # bindings from Ruby's headers across that ABI boundary. extconf.rb
+          # names the GNU triple; this installs the std that goes with it.
+          # Empty elsewhere, so the other runners are unaffected.
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
+
+      # rb-sys runs bindgen at build time to generate bindings against the local
+      # Ruby, and bindgen needs libclang. The runner image ships one; installing
+      # it explicitly is what keeps a base-image change from turning into
+      # "Unable to find libclang" in the cargo step.
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Compile the extension (builds vendored Lexbor, then the crate)
         run: bundle exec rake compile
+
+      # Warnings are errors: the lints that matter here are the project's own -
+      # `clippy.toml`'s disallowed-methods is what enforces that every heap
+      # allocation goes through `falloc`, which is the invariant `rake oom`
+      # exists to exercise. An unsafe block without a stated contract and a
+      # raw-pointer compare that should be `ptr::eq` are the others.
+      #
+      # After `rake compile`, because build.rs generates the Lexbor layout from
+      # the vendored headers and those only exist once cmake has installed them.
+      # One cell, not twelve: `--all-features` is every configuration the crate
+      # has, so the other matrix cells would re-run it. This step was
+      # lost when the per-flag port matrix was deleted - it used to run once per
+      # leg with that leg's features - and nothing noticed, because the comment
+      # claiming it ran was in a different file.
+      - name: Clippy
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust
+        run: cargo clippy --all-features -- -D warnings
+
+      - name: Rust formatting
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust
+        run: cargo fmt --all -- --check
+
+      # The cargo-fuzz crate is a separate crate that nothing else here builds,
+      # so an engine API change used to break it silently until the nightly
+      # run. Clippy on stable proves it still compiles against this commit;
+      # libFuzzer and the sanitizer stay nightly-only (libfuzzer.yml).
+      - name: Fuzz crate builds
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust/fuzz
+        run: cargo clippy --bins -- -D warnings
+
+      # Fast, Ruby- and Lexbor-free checks for the Rust core. Kani proves the
+      # bounded symbolic contracts in verify.yml; this executes exhaustive
+      # small-domain and regression properties on every ordinary CI run.
+      - name: Rust core tests
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake rust:test
+
+      # The Rust port has a small, explicitly audited unsafe perimeter.  This
+      # catches a raw operation added to a parsing primitive, or a new mutable
+      # global added without a GVL/ownership proof.
+      - name: Unsafe-boundary gate
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        run: bundle exec rake unsafe:boundaries
+
+      # Only Init_makiri may be exported (or another Lexbor-based gem in the
+      # same process binds to our Lexbor and segfaults - CLAUDE.md), and no
+      # Lexbor/Makiri symbol may be left undefined (it would be a NULL call).
+      # The export half is enforced at the SOURCE - only Init_makiri is
+      # #[no_mangle] - because on ELF nothing else works: objcopy cannot remove
+      # an entry from a linked .so's .dynsym, and a second --version-script is
+      # merged rather than applied. This gate is what proves it held.
+      - name: Symbol gate
+        run: bundle exec rake symbols
 
       # The :threading suite is heavy (GC.stress across threads) and checks a
       # structural property that does not vary by OS/Ruby, so run it on a single
       # representative job; the rest of the matrix skips it for a fast run.
+      #
+      # The recorded C-build differential. It was a tautology while the C was
+      # still what built here, and recording it then was the whole point: it is
+      # now the only surviving check that this build answers what the C
+      # answered, and it cannot be re-recorded.
+      - name: Differential
+        run: bundle exec rake diff
+
       - name: Run the test suite
         run: bundle exec rake spec
         env:
@@ -46,7 +134,11 @@ jobs:
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
   sanitize:
-    name: AddressSanitizer + UBSan (Ruby ${{ matrix.ruby }})
+    # AddressSanitizer only. UBSan used to run beside it over the C sources;
+    # rustc's -Zsanitizer has no `undefined`, so with the C retired there is
+    # nothing for it to instrument. Naming the job for what it runs keeps a
+    # green tick from claiming coverage that no longer exists.
+    name: AddressSanitizer (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -61,14 +153,34 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # Nightly, not stable: -Zsanitizer is unstable, and extconf refuses to
+      # build the crate uninstrumented when ASan is asked for rather than
+      # quietly producing a run that checks nothing.
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
-      # Builds the ext with -fsanitize=address,undefined and runs the whole
-      # spec suite with the ASan runtime preloaded. Any heap/UB error aborts
-      # the run with a non-zero exit, failing the job.
-      - name: Build + test under sanitizers
+      # Builds the crate with -Zsanitizer=address and runs the whole spec suite
+      # with the ASan runtime preloaded. Any heap error aborts the run with a
+      # non-zero exit, failing the job.
+      - name: Build + test under AddressSanitizer
         run: bundle exec rake sanitize
+
+      # The Ruby-free engine tests under ASan too - the XPath and CSS evaluation
+      # cases, and the arena, tree and mutation self-checks, which reach states
+      # no public API can build and
+      # ran under `rake sanitize` while they were a Ruby hook. `--target` keeps
+      # the build scripts uninstrumented. Linux only: on macOS an ASan test
+      # binary deadlocks in dyld before main (see the Rakefile's cargo-fuzz note).
+      - name: Rust core tests under AddressSanitizer
+        working-directory: ext/makiri/rust
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+        run: cargo test --no-default-features --features lexbor --target x86_64-unknown-linux-gnu

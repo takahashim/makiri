@@ -287,6 +287,18 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('translate("héllo", "é", "e")')).to eq("hello")
       expect(doc.xpath('translate("abcd", "bd", "x")')).to eq("axc") # surplus 'from' dropped
     end
+
+    it "keeps an embedded U+0000 in DOM text through string functions" do
+      # HTML text may hold U+0000 (the data-family contract). Engine strings are
+      # (ptr, len), so the NUL is data, never a terminator.
+      doc.at_css("#p1").content = "a\u0000b"
+      expect(doc.xpath('string(//p[@id="p1"])')).to eq("a\u0000b")
+      expect(doc.xpath('string-length(//p[@id="p1"])')).to eq(3.0)
+      expect(doc.xpath('concat(//p[@id="p1"], "c")')).to eq("a\u0000bc")
+      expect(doc.xpath('substring-after(//p[@id="p1"], "a")')).to eq("\u0000b")
+      expect(doc.xpath('contains(//p[@id="p1"], "b")')).to be(true)
+      expect(doc.at_xpath('//p[string-length(.) = 3 and starts-with(., "a")]')["id"]).to eq("p1")
+    end
   end
 
   describe "number functions and arithmetic" do
@@ -297,6 +309,10 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("floor(1.7)")).to eq(1.0)
       expect(doc.xpath("ceiling(1.2)")).to eq(2.0)
       expect(doc.xpath("round(2.5)")).to eq(3.0)
+      expect(doc.xpath("round(-2.5)")).to eq(-2.0)
+      expect(doc.xpath("round(0.49999999999999994)")).to eq(0.0)
+      # XPath 1.0 §4.4: [-0.5, 0) rounds to negative zero, which a division shows.
+      expect(doc.xpath("1 div round(-0.5)")).to eq(-Float::INFINITY)
     end
 
     it "sum over a node-set" do
@@ -436,6 +452,15 @@ RSpec.describe "Makiri XPath" do
       ctx = Makiri::XPathContext.new(doc)
       expect { ctx.register_variable("v", "a\u0000b") }
         .to raise_error(Makiri::Error)
+    end
+
+    it "stays usable after rejecting an expression that breaks the text contract" do
+      ctx = Makiri::XPathContext.new(doc)
+      ["//p\u0000", "//p\xFF".dup.force_encoding("UTF-8")].each do |bad|
+        expect { ctx.evaluate(bad) }.to raise_error(Makiri::Error, /must/)
+        expect(ctx.evaluate("count(//p)")).to be > 0
+        expect { ctx.register_namespace("x", "urn:x") }.not_to raise_error
+      end
     end
 
     it "caps the number of registered namespaces (fail closed)", :slow do
@@ -580,6 +605,15 @@ RSpec.describe "Makiri XPath" do
       expr = "#{"(" * 300}1#{")" * 300}"
       expect { small.xpath(expr) }
         .to raise_error(Makiri::XPath::LimitExceeded, /recursion depth/i)
+    end
+
+    it "rejects an operator chain nested past the AST depth cap instead of overflowing the stack" do
+      # A binary-operator chain is parsed in a loop, so parser recursion does not
+      # bound it; without the cap `1+1+...` built a tree deep enough that taking
+      # it apart overflowed a thread's native stack.
+      expr = "1#{"+1" * 20_000}"
+      expect { Thread.new { small.xpath(expr) }.value }
+        .to raise_error(Makiri::XPath::LimitExceeded, /nesting depth/i)
     end
 
     it "charges a low-selectivity axis walk to the op budget" do

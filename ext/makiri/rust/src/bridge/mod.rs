@@ -1,0 +1,17 @@
+//! The Ruby boundary's text layer, ported from ext/makiri/bridge/.
+//!
+//! This is the ONLY layer allowed raw Ruby String access and verified-string
+//! minting; everything else receives an already-checked view. See
+//! docs/string_types.md for the type lattice these functions move values
+//! through, and CLAUDE.md's "Text-input contract" for the rules they enforce.
+//!
+//! Nothing here defines a Ruby method - these are functions the rest of the
+//! extension calls. A failure comes back as `Err(magnus::Error)` rather than
+//! as a raise: `ruby` holds the few places a raising C function is still
+//! called, and turns each raise into an `Err` there.
+
+pub mod ruby;
+
+pub mod string;
+
+pub mod xml_decode;

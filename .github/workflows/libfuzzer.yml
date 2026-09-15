@@ -11,17 +11,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Build the libFuzzer harnesses under clang with -fsanitize=fuzzer,address
-  # and run each target for 300s.  The corpus is stored as a build artifact so
-  # it can be seeded in subsequent runs (regression asset per the roadmap).
-  libfuzzer-nightly:
-    name: libFuzzer ${{ matrix.target }} (clang)
+  # The surfaces, coverage-guided, under cargo-fuzz.
+  #
+  # A second job stood beside this one and fuzzed the same three XML/XPath
+  # surfaces as C binaries built by ext/makiri/fuzz/Makefile under clang.
+  # Both were shipped code while the port was in progress; only one is now,
+  # and the C harnesses went with the sources they drove. The corpus cache
+  # key is unchanged, so the accumulated seeds carry over.
+  cargo-fuzz-nightly:
+    name: cargo-fuzz ${{ matrix.target }} (rust)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        target: [xml, xpath, xml_xpath]
+        target: [xml, xpath, xml_xpath, css, html, html_xpath]
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
@@ -32,52 +36,77 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # -Zsanitizer is unstable, and cargo-fuzz needs it.
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
 
-      # Build the vendored Lexbor first (plain mode is fine; the harness links
-      # the static archive).  The fuzzer binary itself is built with ASan.
+      # The targets need the vendored Lexbor library and headers - the crate's
+      # build.rs links the archive and generates bindings from the headers.
       - name: Compile the extension (builds Lexbor)
         run: bundle exec rake compile
 
-      - name: Install clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
 
-      - name: Build libFuzzer harnesses
-        run: |
-          cd ext/makiri/fuzz
-          make clean
-          make all
+      # The fuzz crate inherits the allocation lint from ../clippy.toml, and it
+      # was firing there unseen: nothing built this crate with -D warnings.
+      - name: Clippy the fuzz crate
+        working-directory: ext/makiri/rust/fuzz
+        run: cargo clippy --all-targets -- -D warnings
 
-      # Restore the previous corpus so the fuzzer starts from the accumulated
-      # regression seeds rather than from scratch.
+      - name: Build the fuzz targets
+        working-directory: ext/makiri/rust/fuzz
+        run: cargo fuzz build ${{ matrix.target }}
+
+      # A green fuzz run proves nothing if the sanitizer is inert, and the
+      # obvious check for that (nm -u | grep __asan_report) reads 0 on Linux
+      # whether or not the binary is instrumented, because the runtime is
+      # linked statically. Assert on the full symbol table instead.
+      - name: Assert the target is instrumented
+        working-directory: ext/makiri/rust/fuzz
+        run: |
+          bin=$(ls target/*/release/${{ matrix.target }})
+          reports=$(nm "$bin" | grep -c '__asan_report')
+          echo "$bin: __asan_report symbols = $reports"
+          test "$reports" -gt 0 || { echo "not ASan-instrumented"; exit 1; }
+
       - name: Restore corpus cache
         uses: actions/cache@v4
         with:
-          path: ext/makiri/fuzz/corpus/${{ matrix.target }}
-          key: libfuzzer-corpus-${{ matrix.target }}-${{ github.run_id }}
+          path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
+          key: cargo-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: |
-            libfuzzer-corpus-${{ matrix.target }}-
+            cargo-fuzz-corpus-${{ matrix.target }}-
 
-      - name: Run libFuzzer ${{ matrix.target }} (300s)
+      - name: Run cargo-fuzz ${{ matrix.target }} (300s)
+        working-directory: ext/makiri/rust/fuzz
         run: |
-          mkdir -p ext/makiri/fuzz/corpus/${{ matrix.target }}
-          cd ext/makiri/fuzz
-          ./${{ matrix.target }}_fuzz \
+          mkdir -p corpus/${{ matrix.target }}
+          cargo fuzz run ${{ matrix.target }} -- \
             -max_total_time=300 \
             -max_len=4096 \
-            -print_final_stats=1 \
-            corpus/${{ matrix.target }}
+            -print_final_stats=1
 
-      # Save the mutated corpus as an artifact for download / seeding.
       - name: Upload corpus artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libfuzzer-corpus-${{ matrix.target }}
-          path: ext/makiri/fuzz/corpus/${{ matrix.target }}
+          name: cargo-fuzz-corpus-${{ matrix.target }}
+          path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
           retention-days: 7
+
+      # Anything cargo-fuzz saved under artifacts/ is a reproducer.
+      - name: Upload reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-fuzz-artifacts-${{ matrix.target }}
+          path: ext/makiri/rust/fuzz/artifacts/${{ matrix.target }}
+          retention-days: 30

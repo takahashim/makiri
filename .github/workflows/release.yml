@@ -6,7 +6,7 @@ name: Release
 #
 # Native gems are built on each target platform's own runner — NOT
 # cross-compiled — because the extension builds vendored Lexbor with CMake using
-# the host toolchain (see ext/makiri/extconf.rb). Each runner compiles for
+# the host toolchain (see ext/makiri/rust/extconf.rb). Each runner compiles for
 # Ruby 3.2/3.3/3.4; script/build_native_gem.rb then assembles one gem per
 # platform containing all three ABIs (lib/makiri.rb selects the right one at
 # require time). `gem install` of a native gem does not recompile or need
@@ -74,11 +74,26 @@ jobs:
           submodules: recursive
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+      # The extension is a Rust crate, so every release runner needs cargo. This
+      # is the job that produces the precompiled gems, which is what most users
+      # install - if it cannot build, the gem falls back to a source install and
+      # every one of those users needs a toolchain of their own.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # RubyInstaller's Ruby is a MinGW build, but a default rustup on
+          # Windows installs the MSVC host - and rb-sys will not generate
+          # bindings from Ruby's headers across that ABI boundary. extconf.rb
+          # names the GNU triple; this installs the std that goes with it.
+          # Empty elsewhere, so the other runners are unaffected.
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
+      - name: Install libclang (bindgen, via rb-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - name: Compile (builds vendored Lexbor, then the ext)
+      - name: Compile (builds vendored Lexbor, then the crate)
         run: bundle exec rake compile
       - name: Smoke-load
         shell: bash

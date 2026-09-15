@@ -3,7 +3,7 @@
 require "spec_helper"
 
 # CSS selector queries over Makiri::XML, lowered to the native XPath engine
-# (ext/makiri/xpath/mkr_css.c). Unlike an HTML matcher, matching is
+# (ext/makiri/rust/src/css/). Unlike an HTML matcher, matching is
 # case-sensitive and namespace-aware; bare type selectors bind to the document's
 # default namespace (Nokogiri-compatible).
 RSpec.describe "Makiri::XML CSS selectors" do

@@ -2,21 +2,29 @@ name: Verify
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, rust]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  cbmc:
-    name: CBMC proofs
+  # A CBMC job stood here and proved ext/makiri/{core,xml,xpath}/*.c. Those
+  # files are gone, and `rake verify` with them: every one of its fifteen
+  # harnesses compiled one of them, and the three that linked none proved
+  # `static inline` code in the same headers - there was nothing left to point
+  # CBMC at.
+  #
+  # Kani is the successor and deliberately not a rename: the two tools prove
+  # different things about different code, and which Kani proof replaces which
+  # CBMC one - and what changed in the translation - is written down rather than
+  # assumed. Not all the answers are "the same property".
+  kani:
+    name: Kani proofs (rust)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout (with vendored Lexbor submodule)
+      - name: Checkout
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -24,14 +32,14 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      - name: Install CBMC
-        env:
-          CBMC_VERSION: "6.9.0"
+      # Kani pins its own Rust toolchain, so no rust-toolchain step here.
+      - name: Install Kani
         run: |
-          curl -fsSLO "https://github.com/diffblue/cbmc/releases/download/cbmc-${CBMC_VERSION}/ubuntu-24.04-cbmc-${CBMC_VERSION}-Linux.deb"
-          sudo apt-get update
-          sudo apt-get install -y "./ubuntu-24.04-cbmc-${CBMC_VERSION}-Linux.deb"
-          cbmc --version
+          cargo install --locked kani-verifier
+          cargo kani setup
+          cargo kani --version
 
-      - name: Run verification suite
-        run: bundle exec rake verify
+      # No `rake compile` first: these proofs are over the Ruby- and
+      # Lexbor-free features, which is the whole reason Kani can build them.
+      - name: Run the Kani proofs
+        run: bundle exec rake kani

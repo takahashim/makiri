@@ -72,6 +72,16 @@ RSpec.describe "Makiri::XML namespaces & unsupported surface" do
       ctx.register_ns("a", "http://www.w3.org/2005/Atom")
       expect(ctx.evaluate("count(.//a:title)")).to eq(1.0)
     end
+
+    it "answers from the name index and sees a mutation between evaluations" do
+      doc = Makiri::XML("<r><c/><c/></r>")
+      ctx = Makiri::XPathContext.new(doc)
+      expect(ctx.evaluate("//c").length).to eq(2)
+      doc.root.add_child(doc.create_element("c"))
+      expect(ctx.evaluate("//c").length).to eq(3)
+      doc.root.children.first.unlink
+      expect(ctx.evaluate("//c").length).to eq(2)
+    end
   end
 
   describe "CSS selectors (lowered to the native XPath engine)" do

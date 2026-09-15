@@ -31,6 +31,12 @@ jobs:
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
 
+      # The extension is a Rust crate; cargo is part of the build now.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
@@ -81,6 +87,12 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1

@@ -3,7 +3,8 @@
 module Makiri
   module XML
     # XML-specific document conveniences. The XML node leaves and the document
-    # itself are defined in C (ext/makiri/glue/ruby_xml*.c); construction sugar
+    # itself are defined in the extension (ext/makiri/rust/src/glue/xml.rs);
+    # construction sugar
     # that is pure composition over the public surface lives here, not on the
     # abstract Makiri::Document (which carries no construction).
     class Document

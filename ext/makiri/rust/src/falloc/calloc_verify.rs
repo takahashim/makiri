@@ -1,0 +1,138 @@
+//! Kani proofs for the C allocator surface.
+//!
+//! `verify/harness_alloc.c` proved three things about `core/mkr_alloc.c`, and
+//! they went to three different places:
+//!
+//! - **the size arithmetic** (`mkr_size_add`, `mkr_size_mul`): gone as an
+//!   obligation. `checked_add` / `checked_mul` are the standard library's.
+//! - **`mkr_grow_capacity`**: already proved in `falloc::verify`, where Kani
+//!   found a real precondition the C harness had not.
+//! - **the OOM branches**: `rake oom`, end to end. Not a proof, but it exercises
+//!   the whole extension rather than one function, and the sweep's injection
+//!   points are identical to the C build's.
+//!
+//! What is left is the OWNERSHIP contract at the boundary, which none of those
+//! three covers and which is the part that turns into a double free or a leak
+//! when it is wrong. That is what this file proves.
+//!
+//! Run with `rake kani`.
+
+#![cfg(kani)]
+
+use core::ffi::c_void;
+
+use super::cstr::{str_alloc, strndup};
+use super::raw::{callocarray, free_and_null, reallocarray};
+
+/// `reallocarray` returns NULL without freeing `ptr` for every rejected
+/// request. `free_and_null` is the explicit ownership-transfer operation.
+///
+/// The proof is that the last two leave the allocation usable: Kani's memory
+/// model reports a use-after-free, so writing through `ptr` afterwards is what
+/// makes "did not free" a checked claim rather than a comment.
+#[kani::proof]
+#[kani::unwind(4)]
+fn reallocarray_ownership() {
+    unsafe {
+        /* elem == 0: NULL, and the caller still owns ptr. */
+        let p = callocarray(4, 1);
+        if !p.is_null() {
+            let r = reallocarray(p, 4, 0);
+            assert!(r.is_null(), "elem == 0 answers NULL");
+            *(p as *mut u8) = 7; /* still ours: a freed one would be caught here */
+            assert!(*(p as *const u8) == 7);
+            free(p);
+        }
+
+        /* An overflowing size: NULL, and the caller still owns ptr. */
+        let q = callocarray(4, 1);
+        if !q.is_null() {
+            let r = reallocarray(q, usize::MAX, 2);
+            assert!(r.is_null(), "an overflowing size answers NULL");
+            *(q as *mut u8) = 9;
+            assert!(*(q as *const u8) == 9);
+            free(q);
+        }
+
+        /* count == 0 is rejected and leaves ownership with the caller. */
+        let z = callocarray(4, 1);
+        if !z.is_null() {
+            assert!(reallocarray(z, 0, 1).is_null(), "count == 0 answers NULL");
+            *(z as *mut u8) = 11;
+            assert!(*(z as *const u8) == 11);
+            free_and_null(z);
+        }
+    }
+}
+
+/// `callocarray` answers NULL for a zero dimension without allocating, and
+/// zeroes what it does allocate.
+#[kani::proof]
+#[kani::unwind(8)]
+fn callocarray_zeroes_and_rejects_zero_dimensions() {
+    unsafe {
+        let n: usize = kani::any();
+        kani::assume(n <= 4);
+        assert!(callocarray(n, 0).is_null(), "elem == 0 allocates nothing");
+        assert!(callocarray(0, n).is_null(), "count == 0 allocates nothing");
+
+        kani::assume(n > 0);
+        let p = callocarray(n, 1) as *mut u8;
+        if !p.is_null() {
+            for i in 0..n {
+                assert!(*p.add(i) == 0, "callocarray: the bytes are zeroed");
+            }
+            free(p as *mut c_void);
+        }
+    }
+}
+
+/// `str_alloc` writes the terminator, and `strndup` copies exactly `n`
+/// bytes and terminates after them.
+///
+/// The terminator is the whole point of these two over a bare `malloc`: every
+/// caller hands the result to something that reads it as a C string.
+///
+/// This proof is the ONLY net for that property, which was checked rather than
+/// assumed: deleting `str_alloc`'s terminator write leaves the C core
+/// selftest green and all 1001 specs green - the callers each write `n` bytes
+/// and the uninitialised byte at `n` happened to read as zero - and fails here.
+/// The same was true before the port; the gap is in the runtime gates, not in
+/// the move to Rust.
+#[kani::proof]
+#[kani::unwind(8)]
+fn str_alloc_and_strndup_terminate() {
+    unsafe {
+        let n: usize = kani::any();
+        kani::assume(n <= 4);
+
+        let p = str_alloc(n);
+        if !p.is_null() {
+            assert!(*p.add(n) == 0, "str_alloc: terminated at n");
+            free(p as *mut c_void);
+        }
+
+        let src: [u8; 4] = kani::any();
+        let d = strndup(src.as_ptr() as *const core::ffi::c_char, n);
+        if !d.is_null() {
+            for i in 0..n {
+                assert!(*d.add(i) as u8 == src[i], "strndup: copies the bytes");
+            }
+            assert!(*d.add(n) == 0, "strndup: terminated at n");
+            free(d as *mut c_void);
+        }
+
+        /* A NULL source with n > 0 fails closed rather than returning
+         * uninitialised bytes. */
+        kani::assume(n > 0);
+        assert!(
+            strndup(core::ptr::null(), n).is_null(),
+            "strndup: a NULL source with n > 0 fails closed"
+        );
+    }
+}
+
+extern "C" {
+    #[link_name = "free"]
+    fn free(p: *mut c_void);
+}

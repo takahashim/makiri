@@ -16,9 +16,9 @@
 *.dll
 *.o
 *.a
-ext/makiri/Makefile
-ext/makiri/build/
-ext/makiri/mkmf.log
+ext/makiri/rust/Makefile
+ext/makiri/rust/mkmf.log
+ext/makiri/rust/makiri-exported.sym
 
 # Vendored Lexbor build output (vendor/lexbor itself is a submodule)
 vendor/lexbor/build/
@@ -42,5 +42,12 @@ spec/fuzz/regressions/*
 # Conformance test data (fetched on demand & pinned by the runner; not vendored)
 spec/conformance/data/
 
-# verification build (verify/Makefile)
-/verify/build/
+# Rust build output
+ext/makiri/rust/target/
+
+# cargo-fuzz: build output, the accumulated corpus (kept in CI cache, not here)
+# and any crash reproducers it saves.
+ext/makiri/rust/fuzz/target/
+ext/makiri/rust/fuzz/corpus/
+ext/makiri/rust/fuzz/artifacts/
+

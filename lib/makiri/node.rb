@@ -2,7 +2,7 @@
 
 module Makiri
   # Base class for every DOM node (element, attribute, text, comment, ...).
-  # The bulk of the API lives in the C extension; this file defines the
+  # The bulk of the API lives in the extension; this file defines the
   # Ruby-only conveniences.
   class Node
     # Order by document (pre-order) position via the native #<=>, so nodes can
@@ -14,7 +14,7 @@ module Makiri
     # (#to_h is unaffected: Node defines its own, returning the attribute hash.)
     include Enumerable
 
-    # Identity is by wrapped node pointer; defined in C.
+    # Identity is by wrapped node pointer; defined in the extension.
 
     # Yield each child node in document order. Iterates a snapshot of the
     # children (taken when called), so the block may safely move or remove the
