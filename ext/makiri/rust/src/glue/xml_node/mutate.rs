@@ -147,7 +147,7 @@ unsafe fn verified(
     ruby: &Ruby,
     v: Value,
     what: &core::ffi::CStr,
-) -> Result<(BorrowedText, u32), Error> {
+) -> Result<(RubyText, u32), Error> {
     let t = mkr_ruby_verified_text(v.as_raw(), what.as_ptr());
     let n = u32_len(ruby, t.len)?;
     Ok((t, n))
@@ -159,10 +159,10 @@ unsafe fn verified_opt(
     ruby: &Ruby,
     v: Value,
     what: &core::ffi::CStr,
-) -> Result<(BorrowedText, u32), Error> {
+) -> Result<(RubyText, u32), Error> {
     if v.is_nil() {
         return Ok((
-            BorrowedText {
+            RubyText {
                 value: 0,
                 ptr: core::ptr::null(),
                 len: 0,
@@ -503,10 +503,10 @@ fn dom_local_ok(p: &[u8]) -> bool {
 /// disagree.
 unsafe fn dom_name_consistency(
     ruby: &Ruby,
-    qv: BorrowedText,
-    pv: BorrowedText,
+    qv: RubyText,
+    pv: RubyText,
     has_prefix: bool,
-    lv: BorrowedText,
+    lv: RubyText,
 ) -> Result<(u32, u32, u32), Error> {
     let (q, p, l) = (qv.bytes(), pv.bytes(), lv.bytes());
     let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());

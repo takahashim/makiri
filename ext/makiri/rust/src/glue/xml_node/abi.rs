@@ -15,9 +15,8 @@ pub use super::super::abi::{
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
-/// whole crate. Aliased rather than re-imported at every use site so the
-/// existing `BorrowedText` spellings in this subtree keep working.
-pub use crate::glue::abi::{mkr_ruby_verified_text, RubyText as BorrowedText};
+/// whole crate. Not `crate::text::BorrowedText`, which has no Ruby anchor.
+pub use crate::glue::abi::{mkr_ruby_verified_text, RubyText};
 
 pub use crate::glue::node::mkr_xml_node_type;
 pub use crate::init::mkr_cXmlAttr;

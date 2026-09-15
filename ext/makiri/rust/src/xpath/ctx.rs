@@ -148,17 +148,18 @@ fn empty_text() -> Text {
     Text::new()
 }
 
-unsafe fn borrowed(t: &Text) -> VerifiedText {
-    t.as_verified()
+unsafe fn borrowed(t: &Text) -> BorrowedText {
+    t.as_borrowed()
 }
 
-unsafe fn text_eq(a: &Text, b: VerifiedText) -> bool {
+unsafe fn text_eq(a: &Text, b: BorrowedText) -> bool {
     mkr_borrowed_text_eq(borrowed(a), b) != 0
 }
 
 /// Copy `val` into a fresh owned text, or None on OOM.
 unsafe fn copy_text(val: VerifiedText) -> Option<Text> {
-    crate::xpath_abi::OwnedText::try_copy(val, ptr::null_mut(), ptr::null()).map(Text::from_owned)
+    crate::xpath_abi::OwnedText::try_copy(val.into(), ptr::null_mut(), ptr::null())
+        .map(Text::from_owned)
 }
 
 /// Replace a slot's owned text with a fresh copy: copy FIRST, then clear the
@@ -231,7 +232,7 @@ pub unsafe fn mkr_xpath_register_ns(
     let ctx = &mut *ctx;
     /* Replace when the prefix is already registered. */
     for e in ctx.ns.iter_mut() {
-        if text_eq(&e.prefix, prefix) {
+        if text_eq(&e.prefix, prefix.into()) {
             return set_slot(&mut e.uri, uri);
         }
     }
@@ -258,7 +259,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
     /* Only unprefixed string variables are supported. A null `value` means the
      * variable is set to empty, which the copy maps to "". */
     for e in ctx.vars.iter_mut() {
-        if e.prefix.is_absent() && text_eq(&e.name, name) {
+        if e.prefix.is_absent() && text_eq(&e.name, name.into()) {
             return set_slot(&mut e.value, value);
         }
     }
@@ -289,7 +290,7 @@ pub unsafe fn mkr_ctx_lookup_ns(
     if ctx.is_null() || prefix.is_null() {
         return ptr::null();
     }
-    let want = VerifiedText::from_raw_parts(prefix, prefix_len);
+    let want = BorrowedText::from_raw_parts(prefix, prefix_len);
     for e in (*ctx).ns.iter() {
         if text_eq(&e.prefix, want) {
             let uri = borrowed(&e.uri);
@@ -308,16 +309,16 @@ pub unsafe fn mkr_ctx_lookup_variable_text(
     prefix_len: usize,
     name: *const c_char,
     name_len: usize,
-    out: *mut VerifiedText,
+    out: *mut BorrowedText,
 ) -> c_int {
     if !out.is_null() {
-        *out = VerifiedText::absent();
+        *out = BorrowedText::absent();
     }
     if ctx.is_null() || name.is_null() || out.is_null() {
         return 0;
     }
-    let want_prefix = VerifiedText::from_raw_parts(prefix, prefix_len);
-    let want_name = VerifiedText::from_raw_parts(name, name_len);
+    let want_prefix = BorrowedText::from_raw_parts(prefix, prefix_len);
+    let want_name = BorrowedText::from_raw_parts(name, name_len);
     for e in (*ctx).vars.iter() {
         let prefix_match = if prefix.is_null() {
             e.prefix.is_absent()

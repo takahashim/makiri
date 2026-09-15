@@ -64,9 +64,9 @@ pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
  * in four files and the unanchored two-field `mkr_verified_text_t` in a fifth.
  * Two distinct C types under one Rust name is worse than a duplicate - it is how
  * a caller reaches for the wrong one and gets a layout that happens to compile.
- * So the names below say which C type they are, and the unanchored one keeps its
- * existing home in `crate::xpath_abi::VerifiedText` rather than gaining a
- * fourth alias. */
+ * So the names below say which type they are, and the unanchored views live in
+ * `crate::text` (`VerifiedText`, `BorrowedText`) rather than gaining another
+ * alias. */
 
 /// `mkr_ruby_borrowed_text_t`: bytes borrowed from a Ruby String, with the
 /// String itself so it stays alive while the view is on the stack.
@@ -102,9 +102,9 @@ impl RubyText {
     /// The Ruby String represented by `value` must remain reachable and must
     /// not be allowed to move or be collected until the returned view is no
     /// longer used.
-    pub(crate) unsafe fn into_verified(self) -> crate::xpath_abi::VerifiedText {
+    pub(crate) unsafe fn into_verified(self) -> crate::text::VerifiedText {
         // SAFETY: forwarded by this function's contract.
-        unsafe { crate::xpath_abi::VerifiedText::from_raw_parts(self.ptr, self.len) }
+        unsafe { crate::text::VerifiedText::from_raw_parts(self.ptr, self.len) }
     }
 }
 

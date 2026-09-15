@@ -32,7 +32,7 @@ use crate::glue::abi::{
     mkr_ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
 };
 use crate::lexbor_abi as lxb;
-use crate::xpath_abi::VerifiedText as BorrowedText;
+use crate::text::BorrowedText;
 
 const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;

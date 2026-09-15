@@ -287,6 +287,18 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath('translate("héllo", "é", "e")')).to eq("hello")
       expect(doc.xpath('translate("abcd", "bd", "x")')).to eq("axc") # surplus 'from' dropped
     end
+
+    it "keeps an embedded U+0000 in DOM text through string functions" do
+      # HTML text may hold U+0000 (the data-family contract). Engine strings are
+      # (ptr, len), so the NUL is data, never a terminator.
+      doc.at_css("#p1").content = "a\u0000b"
+      expect(doc.xpath('string(//p[@id="p1"])')).to eq("a\u0000b")
+      expect(doc.xpath('string-length(//p[@id="p1"])')).to eq(3.0)
+      expect(doc.xpath('concat(//p[@id="p1"], "c")')).to eq("a\u0000bc")
+      expect(doc.xpath('substring-after(//p[@id="p1"], "a")')).to eq("\u0000b")
+      expect(doc.xpath('contains(//p[@id="p1"], "b")')).to be(true)
+      expect(doc.at_xpath('//p[string-length(.) = 3 and starts-with(., "a")]')["id"]).to eq("p1")
+    end
   end
 
   describe "number functions and arithmetic" do

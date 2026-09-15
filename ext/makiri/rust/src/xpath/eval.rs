@@ -941,7 +941,7 @@ unsafe fn eval_node_inner<D: Dom>(
         }
         NK_VARREF => {
             let v = &raw const (*n).u.varref;
-            let mut got = VerifiedText::absent();
+            let mut got = BorrowedText::absent();
             if mkr_ctx_lookup_variable_text(
                 ctx,
                 (*v).prefix.as_ptr(),

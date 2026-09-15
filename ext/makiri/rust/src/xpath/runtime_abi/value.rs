@@ -33,7 +33,7 @@ pub unsafe fn mkr_val_set_owned_text(v: *mut Val, owned: OwnedText) {
 }
 pub unsafe fn mkr_val_set_borrowed_text_copy(
     v: *mut Val,
-    borrowed: VerifiedText,
+    borrowed: BorrowedText,
     err: *mut Error,
     what: *const core::ffi::c_char,
 ) -> core::ffi::c_int {

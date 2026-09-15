@@ -78,8 +78,10 @@ impl Text {
     pub(crate) fn is_absent(&self) -> bool {
         self.0.is_absent()
     }
-    pub(crate) unsafe fn as_verified(&self) -> VerifiedText {
-        VerifiedText::from_raw_parts(self.0.as_ptr(), self.0.len())
+    /// Borrow the bytes. Engine text may hold U+0000, so this is the
+    /// NUL-permitting view.
+    pub(crate) unsafe fn as_borrowed(&self) -> BorrowedText {
+        BorrowedText::from_raw_parts(self.0.as_ptr(), self.0.len())
     }
     pub(crate) fn as_mut(&mut self) -> *mut OwnedText {
         &mut self.0

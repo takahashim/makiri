@@ -70,6 +70,11 @@ pub mod css;
 /// feature set, and only the `#[no_mangle]` C entries are gated.
 pub mod cutf8;
 
+/// Borrowed text views and their two contracts: `VerifiedText` (no NUL, for
+/// engine inputs) and `BorrowedText` (NUL permitted, for DOM data).
+/// Unconditional: the engine, the DOM adapter and the glue all pass them.
+pub mod text;
+
 /// The XPath engine's C types. Shared with the glue, which holds an error, a
 /// value and a limits pointer at the XML query entry points.
 pub mod xpath_abi;

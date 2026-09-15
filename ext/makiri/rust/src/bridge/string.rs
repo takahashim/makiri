@@ -35,11 +35,10 @@ pub use crate::glue::abi::OwnedBytes;
 /// lattice's whole job is to make a data-family value reaching an engine input
 /// a type error, and that only works if they are different types.
 pub use crate::glue::abi::RubyText as RubyBorrowedText;
-/// `mkr_borrowed_text_t` / `mkr_verified_text_t` - the UNANCHORED slice, which
-/// is a different C type from the Ruby-anchored `glue::abi::RubyText` despite
-/// the family resemblance. It had three definitions across the crate; this is
-/// the one name for it.
-pub use crate::xpath_abi::VerifiedText as BorrowedText;
+/// The UNANCHORED, NUL-permitting slice from `crate::text` - a different type
+/// from the Ruby-anchored `glue::abi::RubyText` despite the family resemblance.
+/// Text-index slices and Lexbor-interned names reach Ruby through it.
+pub use crate::text::BorrowedText;
 
 use crate::glue::abi::{mkr_eError, rb_raise};
 

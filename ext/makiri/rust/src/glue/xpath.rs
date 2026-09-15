@@ -590,7 +590,7 @@ unsafe fn ruby_to_out(
     if rv.is_nil() {
         if mkr_val_set_borrowed_text_copy(
             out,
-            VerifiedText::empty(),
+            VerifiedText::empty().into(),
             core::ptr::null_mut(),
             core::ptr::null(),
         ) != 0
@@ -617,7 +617,7 @@ unsafe fn ruby_to_out(
     }
     let rc = mkr_val_set_borrowed_text_copy(
         out,
-        unsafe { vv.into_verified() },
+        unsafe { vv.into_verified() }.into(),
         core::ptr::null_mut(),
         core::ptr::null(),
     );

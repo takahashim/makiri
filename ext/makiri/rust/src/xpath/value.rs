@@ -80,8 +80,7 @@ pub unsafe fn owned_bytes<'a>(t: OwnedText) -> &'a [u8] {
 /// # Safety
 /// `out` must be a writable `mkr_owned_text_t`.
 pub unsafe fn owned_copy(out: *mut OwnedText, s: &[u8], err: *mut Error, what: &[u8]) -> bool {
-    let t = VerifiedText::from_verified_bytes(s);
-    match crate::xpath_abi::OwnedText::try_copy(t, err, what.as_ptr() as *const c_char) {
+    match crate::xpath_abi::OwnedText::try_copy_bytes(s, err, what.as_ptr() as *const c_char) {
         Some(value) => {
             *out = value;
             true

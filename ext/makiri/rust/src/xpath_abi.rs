@@ -91,35 +91,30 @@ pub const OP_DIV: u32 = 11;
 pub const OP_MOD: u32 = 12;
 pub const OP_UNION: u32 = 13;
 
-/* ---- text views (core/mkr_text.h) ---- */
+/* ---- text (core/mkr_text.h) ---- */
 
-/// The raw representation of an engine-owned UTF-8 byte string.
-///
-/// This is only the pointer/length pair used by the low-level runtime layer;
-/// callers should normally use [`OwnedText`] instead.
-#[derive(Clone, Copy)]
-pub(crate) struct RawText {
-    ptr: *mut c_char,
-    len: usize,
-}
+/// The borrowed views live in `crate::text`; re-exported so the engine's
+/// `super::abi::*` imports see them beside the owned slot.
+pub use crate::text::{BorrowedText, VerifiedText};
 
 /// An engine-owned UTF-8 byte string, NUL-terminated in its backing allocation.
 ///
-/// The pointer representation is private. Code that needs to cross the raw
-/// runtime boundary must use the narrow accessors below; ordinary XPath code
-/// should prefer `as_bytes` and `len`.
+/// Interior NULs are possible - DOM text may hold U+0000 - so it is read as
+/// `(ptr, len)` and borrowed as a [`BorrowedText`], never a [`VerifiedText`].
+///
+/// This is a slot, not an owner: it is `Copy` because the AST and value unions
+/// hold it, and clearing one copy leaves the others dangling.
 #[derive(Clone, Copy)]
 pub struct OwnedText {
-    raw: RawText,
+    ptr: *mut c_char,
+    len: usize,
 }
 
 impl OwnedText {
     pub(crate) const fn empty() -> Self {
         Self {
-            raw: RawText {
-                ptr: core::ptr::null_mut(),
-                len: 0,
-            },
+            ptr: core::ptr::null_mut(),
+            len: 0,
         }
     }
 
@@ -129,23 +124,21 @@ impl OwnedText {
     /// `ptr` must be null or point to `len` live bytes followed by a NUL byte,
     /// allocated by the allocator used by `mkr_owned_text_clear`.
     pub(crate) unsafe fn from_raw_parts(ptr: *mut c_char, len: usize) -> Self {
-        Self {
-            raw: RawText { ptr, len },
-        }
+        Self { ptr, len }
     }
 
     pub(crate) const fn as_ptr(self) -> *mut c_char {
-        self.raw.ptr
+        self.ptr
     }
 
     pub(crate) const fn len(self) -> usize {
-        self.raw.len
+        self.len
     }
 
     /// Whether this slot represents an omitted value rather than an empty
     /// allocated string.
     pub(crate) const fn is_absent(self) -> bool {
-        self.raw.ptr.is_null()
+        self.ptr.is_null()
     }
 
     pub(crate) const fn is_present(self) -> bool {
@@ -155,98 +148,14 @@ impl OwnedText {
     /// Whether the string has no content. An absent slot is empty by content,
     /// but remains distinguishable through [`Self::is_absent`].
     pub(crate) const fn is_empty(self) -> bool {
-        self.is_absent() || self.raw.len == 0
-    }
-
-    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
-        if self.raw.ptr.is_null() || self.raw.len == 0 {
-            &[]
-        } else {
-            core::slice::from_raw_parts(self.raw.ptr as *const u8, self.raw.len)
-        }
-    }
-}
-
-/// mkr_verified_text_t / mkr_borrowed_text_t - same layout, different contract.
-#[derive(Clone, Copy)]
-pub struct VerifiedText {
-    raw: RawText,
-}
-
-impl VerifiedText {
-    /// An omitted value, represented by the null sentinel used by the C ABI.
-    pub(crate) const fn absent() -> Self {
-        Self {
-            raw: RawText {
-                ptr: core::ptr::null_mut(),
-                len: 0,
-            },
-        }
-    }
-
-    /// A present, zero-length view backed by a static empty C string.
-    pub(crate) const fn empty() -> Self {
-        Self {
-            raw: RawText {
-                ptr: c"".as_ptr() as *mut c_char,
-                len: 0,
-            },
-        }
-    }
-
-    /// Create a verified view after checking the byte slice's text contract.
-    ///
-    /// The returned view borrows `bytes`; the caller must keep it alive and
-    /// must not let the backing storage move while the view is used.
-    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if crate::cutf8::text_verdict(bytes, false) != crate::cutf8::TextVerdict::Ok {
-            return None;
-        }
-        // SAFETY: `bytes.as_ptr()` is valid for `bytes.len()` bytes, and the
-        // preceding check establishes VerifiedText's UTF-8/NUL invariant.
-        Some(unsafe { Self::from_verified_bytes(bytes) })
-    }
-
-    /// Create a view from bytes whose UTF-8/no-NUL invariant is already known.
-    ///
-    /// # Safety
-    /// `bytes` must contain valid UTF-8 and no NUL byte. The returned view is
-    /// valid only while `bytes` remains alive at the same address.
-    pub(crate) unsafe fn from_verified_bytes(bytes: &[u8]) -> Self {
-        // SAFETY: forwarded by this function's contract.
-        unsafe { Self::from_raw_parts(bytes.as_ptr() as *const c_char, bytes.len()) }
-    }
-
-    pub(crate) const unsafe fn from_raw_parts(ptr: *const c_char, len: usize) -> Self {
-        Self {
-            raw: RawText {
-                ptr: ptr as *mut c_char,
-                len,
-            },
-        }
-    }
-
-    pub(crate) const fn as_ptr(self) -> *const c_char {
-        self.raw.ptr as *const c_char
-    }
-
-    pub(crate) const fn len(self) -> usize {
-        self.raw.len
-    }
-
-    pub(crate) const fn is_absent(self) -> bool {
-        self.as_ptr().is_null()
-    }
-
-    pub(crate) const fn is_empty(self) -> bool {
-        self.is_absent() || self.raw.len == 0
+        self.is_absent() || self.len == 0
     }
 
     pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
         if self.is_empty() {
             &[]
         } else {
-            core::slice::from_raw_parts(self.as_ptr() as *const u8, self.raw.len)
+            core::slice::from_raw_parts(self.ptr as *const u8, self.len)
         }
     }
 }

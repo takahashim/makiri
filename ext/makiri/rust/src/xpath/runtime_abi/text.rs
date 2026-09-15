@@ -13,17 +13,28 @@ impl OwnedText {
         *self = Self::empty();
     }
 
-    /// Copy a verified view into a fresh owned slot, or return `None` on OOM.
+    /// Copy a view into a fresh owned slot, or return `None` on OOM. An absent
+    /// view yields a present empty string.
     pub(crate) unsafe fn try_copy(
-        t: VerifiedText,
+        t: BorrowedText,
         err: *mut Error,
         what: *const c_char,
     ) -> Option<Self> {
-        let len = t.len();
-        let src = if t.is_absent() {
+        Self::try_copy_bytes(t.as_bytes(), err, what)
+    }
+
+    /// Copy `bytes` into a fresh NUL-terminated slot, interior NULs included,
+    /// or return `None` on OOM.
+    pub(crate) unsafe fn try_copy_bytes(
+        bytes: &[u8],
+        err: *mut Error,
+        what: *const c_char,
+    ) -> Option<Self> {
+        let len = bytes.len();
+        let src = if len == 0 {
             c"".as_ptr()
         } else {
-            t.as_ptr()
+            bytes.as_ptr() as *const c_char
         };
         let p = mkr_strndup(src, len);
         if p.is_null() {
@@ -49,7 +60,7 @@ pub unsafe fn mkr_owned_text_clear(t: *mut OwnedText) {
     }
     (*t).clear();
 }
-pub unsafe fn mkr_borrowed_text_eq(a: VerifiedText, b: VerifiedText) -> c_int {
+pub unsafe fn mkr_borrowed_text_eq(a: BorrowedText, b: BorrowedText) -> c_int {
     if a.len() != b.len() {
         return 0;
     }

@@ -336,3 +336,74 @@ fn text_verdict_agrees_with_the_standard_library_on_every_one_and_two_byte_input
         }
     }
 }
+
+#[test]
+fn verified_text_rejects_nul_and_invalid_utf8() {
+    use crate::text::VerifiedText;
+    assert!(VerifiedText::from_bytes(b"a\0b").is_none());
+    assert!(VerifiedText::from_bytes(b"\xFF").is_none());
+
+    let bytes = "日本語".as_bytes();
+    let t = VerifiedText::from_bytes(bytes).unwrap();
+    // A borrow, not a copy.
+    assert_eq!(t.as_ptr() as *const u8, bytes.as_ptr());
+    assert_eq!(t.len(), bytes.len());
+    assert_eq!(unsafe { t.as_bytes() }, bytes);
+}
+
+#[test]
+fn text_views_distinguish_absent_from_empty() {
+    use crate::text::{BorrowedText, VerifiedText};
+
+    let absent = BorrowedText::absent();
+    assert!(absent.is_absent() && absent.is_empty());
+    assert!(unsafe { absent.as_bytes() }.is_empty());
+
+    // `empty` is present and NUL-terminated, so it is safe wherever a present
+    // string is required.
+    let empty = VerifiedText::empty();
+    assert!(!empty.is_absent() && empty.is_empty());
+    assert_eq!(unsafe { *empty.as_ptr() }, 0);
+
+    let present = VerifiedText::from_bytes(b"").unwrap();
+    assert!(!present.is_absent() && present.is_empty());
+
+    // Weakening to a borrowed view keeps presence and the bytes.
+    let b: BorrowedText = empty.into();
+    assert!(!b.is_absent() && b.is_empty());
+    let v = VerifiedText::from_bytes(b"xy").unwrap();
+    let b: BorrowedText = v.into();
+    assert_eq!((b.as_ptr(), b.len()), (v.as_ptr(), v.len()));
+}
+
+#[test]
+fn borrowed_text_carries_an_interior_nul() {
+    use crate::text::BorrowedText;
+    let data = b"a\0b";
+    let b = unsafe { BorrowedText::from_raw_parts(data.as_ptr() as *const _, data.len()) };
+    assert_eq!(b.len(), 3);
+    assert_eq!(unsafe { b.as_bytes() }, data);
+}
+
+#[test]
+fn owned_text_copy_keeps_interior_nul_and_terminates() {
+    use crate::text::BorrowedText;
+    use crate::xpath_abi::OwnedText;
+    use core::ptr;
+
+    let mut t = unsafe { OwnedText::try_copy_bytes(b"a\0b", ptr::null_mut(), ptr::null()) }
+        .expect("allocation");
+    assert_eq!(t.len(), 3);
+    assert_eq!(unsafe { t.as_bytes() }, b"a\0b");
+    assert_eq!(unsafe { *t.as_ptr().add(3) }, 0);
+    unsafe { t.clear() };
+    assert!(t.is_absent());
+
+    // An absent view copies to a present empty string, not to another absent.
+    let mut e =
+        unsafe { OwnedText::try_copy(BorrowedText::absent(), ptr::null_mut(), ptr::null()) }
+            .expect("allocation");
+    assert!(e.is_present() && e.is_empty());
+    assert_eq!(unsafe { *e.as_ptr() }, 0);
+    unsafe { e.clear() };
+}
