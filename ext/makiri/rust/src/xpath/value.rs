@@ -113,13 +113,13 @@ pub const T_STRING: u32 = 1;
 pub const T_NUMBER: u32 = 2;
 pub const T_BOOLEAN: u32 = 3;
 
-/// mkr_val_t - the engine's internal value, embedded in a node's memo slot.
+/// mkr_val_t - the engine's internal value.
 ///
 /// The tag and the union are private, so they cannot disagree: a value is made
 /// by one of the constructors and read through [`Val::get`]. Every constructor
 /// starts from the all-zero empty node-set, so all of the union's bytes are
-/// initialised whichever arm is written - which is also why a calloc'd memo slot
-/// is a valid value.
+/// initialised whichever arm is written - which is also why zeroed memory is a
+/// valid value.
 #[derive(Clone, Copy)]
 pub struct Val {
     type_: u32,
