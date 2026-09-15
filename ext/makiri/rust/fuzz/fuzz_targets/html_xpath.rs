@@ -46,19 +46,13 @@ fuzz_target!(|data: &[u8]| {
 unsafe fn run(p: &mut Parsed, text: VerifiedText, lax: bool) {
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
-    let doc = p.html_doc() as *mut makiri::lexbor_abi::LxbDoc;
-    let Some(index) = p.dom_index() else {
+    let doc = p.html_doc() as *mut c_void;
+    if p.dom_index().is_none() {
         return;
-    };
+    }
     // SAFETY: the caller destroys `p` only after the context is dropped, and
     // nothing changes the document in between.
-    let mut ctx = Context::new(
-        Backend::Html {
-            doc,
-            index,
-        },
-        doc as *mut c_void,
-    );
+    let mut ctx = Context::new(Backend::Html { parsed: p }, doc);
     ctx.set_lax(lax);
 
     // As tight as `xml_xpath`'s: the fuzzer controls the document here too.

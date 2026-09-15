@@ -168,7 +168,6 @@ impl<'d> Dom<'d> for &'d xml::Document {
     /// falls back to the walk.
     fn name_bucket(
         self,
-        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
@@ -178,9 +177,6 @@ impl<'d> Dom<'d> for &'d xml::Document {
             None if lax => return None,
             None => b"", /* strict unprefixed -> no namespace */
         };
-        if !matches!(cx.backend(), Backend::Xml { .. }) {
-            return None;
-        }
         /* Built lazily and cached on the document; None on OOM, and the caller
          * walks. */
         let idx = crate::xml::index::get(self)?;

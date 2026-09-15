@@ -101,12 +101,12 @@ impl Names {
 /// handle always matches the document the handle came from.
 #[derive(Clone, Copy)]
 pub enum Backend {
-    /// A Lexbor document. `index` is the parsed document's element index,
-    /// borrowed - the document outlives the context - or null to walk instead.
+    /// A Lexbor document, through its parse handle, which also carries the
+    /// element index. Every evaluate reads the index afresh from the handle: a
+    /// mutation between evaluates drops it, and the next evaluate rebuilds it.
     #[cfg(feature = "lexbor")]
     Html {
-        doc: *mut crate::lexbor_abi::LxbDoc,
-        index: *const crate::dom_adapter::dom_index::DomIndex,
+        parsed: *mut crate::dom_adapter::post_parse::Parsed,
     },
     /// A Makiri XML arena. Its element-name index hangs off the document itself
     /// and is built on first use.
@@ -299,12 +299,8 @@ impl<'d> Context<'d> {
                 eval::eval_ast(self, &run.names, doc, node, ast, handler)
             }
             #[cfg(feature = "lexbor")]
-            Backend::Html { doc, .. } => {
-                // SAFETY: as above.
-                let Some(doc) = (unsafe { crate::dom_adapter::html::HtmlDoc::from_raw(doc) })
-                else {
-                    return Err(self.no_document());
-                };
+            Backend::Html { parsed } => {
+                let doc = self.html_dom(parsed)?;
                 let node = self.focus_node(doc);
                 eval::eval_ast(self, &run.names, doc, node, ast, handler)
             }
@@ -336,14 +332,9 @@ impl<'d> Context<'d> {
                     }
                 }
                 #[cfg(feature = "lexbor")]
-                Backend::Html { doc, .. } => {
-                    // SAFETY: as in `evaluate`.
-                    match unsafe { crate::dom_adapter::html::HtmlDoc::from_raw(doc) } {
-                        Some(doc) => {
-                            eval::try_first_match(self, &run.names, doc, self.focus_node(doc), ast)
-                        }
-                        None => Ok(None),
-                    }
+                Backend::Html { parsed } => {
+                    let doc = self.html_dom(parsed)?;
+                    eval::try_first_match(self, &run.names, doc, self.focus_node(doc), ast)
                 }
             }
         }?;
@@ -351,6 +342,45 @@ impl<'d> Context<'d> {
             Some(value) => Ok(value),
             None => self.evaluate(ast, handler),
         }
+    }
+
+    /// The HTML document an evaluate reads, with the element index as it is
+    /// now - rebuilt if a mutation since the last evaluate dropped it.
+    ///
+    /// The index is required, not an optimisation: building it also backfills
+    /// each attribute's parent, which the parent and ancestor axes read. An
+    /// evaluate that cannot build it fails closed rather than answer wrongly.
+    #[cfg(feature = "lexbor")]
+    #[allow(clippy::result_large_err)]
+    fn html_dom<'e>(
+        &self,
+        parsed: *mut crate::dom_adapter::post_parse::Parsed,
+    ) -> Result<crate::xpath::dom_html::HtmlDom<'e>, Error> {
+        // SAFETY: `new`'s contract - the handle is live for `'d`, and its
+        // document does not change while this evaluate runs.
+        let Some(parsed) = (unsafe { parsed.as_mut() }) else {
+            return Err(self.no_document());
+        };
+        let raw_doc = parsed.html_doc() as *mut crate::lexbor_abi::LxbDoc;
+        // SAFETY: as above.
+        let Some(doc) = (unsafe { crate::dom_adapter::html::HtmlDoc::from_raw(raw_doc) }) else {
+            return Err(self.no_document());
+        };
+        let Some(index) = parsed.dom_index() else {
+            let mut budget = Budget::with_limits(self.limits);
+            let _ = crate::err_setf!(
+                budget.sink(),
+                XP_ERR_OOM,
+                "out of memory building the attribute index"
+            );
+            return Err(budget.take_error());
+        };
+        let index = index as *const crate::dom_adapter::dom_index::DomIndex;
+        // SAFETY: the index has an allocation of its own, which only a mutation
+        // frees, and none runs during this evaluate (a nested one only reads
+        // it), so it outlives the borrow of the handle it came from.
+        let index = unsafe { &*index };
+        Ok(crate::xpath::dom_html::HtmlDom::new(doc, index))
     }
 
     /// Mark an evaluate as running for as long as the guard lives, and lend it

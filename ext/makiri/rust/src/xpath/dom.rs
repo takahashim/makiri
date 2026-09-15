@@ -133,7 +133,6 @@ pub trait Dom<'d>: Copy {
     /// Lexbor tag id, which is only an approximation - hence `recheck`.
     fn name_bucket(
         self,
-        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,

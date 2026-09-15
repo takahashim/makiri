@@ -379,14 +379,18 @@ keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
 first_child/next, never attr.parent), so the XPath engine handles
 parent/ancestor axes and document-order over attributes with no special-casing.
-Reached via `parsed_attr_owner`; `parsed_dom_index_invalidate` drops it
-after any mutation so it rebuilds on the next query. The same walk **co-builds
+Owned by the parse handle (`Parsed::dom_index`, `DomIndex::owner_of`);
+`Parsed::invalidate_indexes` drops it after any mutation so it rebuilds on the
+next query. The same walk **co-builds
 an element index** (`tag id → elements`, document-order CSR) used by the XPath
 `//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
 is bucketed - custom-element tag ids are *pointer values* (`lxb_tag_append`),
 so those elements are left out and `//customtag` falls back to the tree walk.
-Reached via `parsed_element_index` / `element_index_tag` /
-`element_index_has_foreign`; invalidated with the attr index.
+Reached via `DomIndex::tag_bucket` / `DomIndex::has_foreign`; invalidated with
+the attr index. **Every evaluate reads the index afresh from the handle**: a
+reused `XPathContext` must never keep the one it first saw, because a mutation
+frees it - that stale pointer was a use-after-free that answered from another
+document's index (`spec/xpath_context_mutation_spec.rb`).
 
 **text index** (`dom_adapter/text_index.rs`). Removes the per-call descendant
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
@@ -397,10 +401,10 @@ prefix-sum of their lengths, and a pointer-keyed open-addressing hash mapping
 each element/fragment to the `[start,end)` run of slices its subtree owns. A
 `Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
 memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
-Cached on `Parsed::text_index`; `parsed_text_index_invalidate` drops it
+Cached on the parse handle; `Parsed::invalidate_indexes` drops it
 from the **same single mutation hook** as the attr index, so a borrowed slice
 can never point at reallocated/detached text storage. Reached via
-`parsed_text_slices` (returns 0 → caller walks: fragments, build OOM).
+`Parsed::text_slices` (None → caller walks: fragments, build OOM).
 Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 
 **XPath engine** (`src/xpath/`). Original implementation: lexer →
@@ -483,7 +487,7 @@ Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
 inserting a fragment splices its **children**. Guards Lexbor omits: same-document
 only, no self-cycles, attribute nodes can't be tree children. Every structural /
-attribute change calls `parsed_dom_index_invalidate`.
+attribute change calls `Parsed::invalidate_indexes`.
 
 **Ruby surface niceties.** Node classes, under the WHATWG DOM interface names:
 Document, Element, Attr, Text, Comment, CDATASection, ProcessingInstruction,

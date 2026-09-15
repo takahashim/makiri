@@ -287,20 +287,19 @@ pub(crate) unsafe fn context_for(
     }
 
     let node = html_node_unwrap(rb_node.as_raw())?;
-    let doc = crate::glue::abi::html_doc_unwrap(document.as_raw())? as *mut c_void;
-    let Some(index) = (*parsed).dom_index() else {
+    /* TypeError for a Document that is not HTML. */
+    crate::glue::abi::html_doc_unwrap(document.as_raw())?;
+    /* Built up front, so an allocation failure raises here rather than on the
+     * first evaluate. Each evaluate still reads the index afresh from the
+     * handle, which rebuilds it after a mutation - the context must not keep
+     * the one it saw here. */
+    if (*parsed).dom_index().is_none() {
         return Err(Error::new(
             error_class(),
             "failed to build attribute index for XPath",
         ));
-    };
-    /* The element index is borrowed: it lives on the parsed document, which
-     * outlives this context, and a mutation - which drops it - cannot run while
-     * an evaluate reads it. */
-    let backend = Backend::Html {
-        doc: doc as *mut crate::lexbor_abi::LxbDoc,
-        index,
-    };
+    }
+    let backend = Backend::Html { parsed };
     Ok(Context::new(backend, node as *mut c_void))
 }
 

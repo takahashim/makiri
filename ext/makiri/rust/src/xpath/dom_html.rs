@@ -12,6 +12,7 @@ use core::ffi::c_void;
 
 use super::abi::*;
 use super::dom::*;
+use crate::dom_adapter::dom_index::DomIndex;
 use crate::dom_adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
 use crate::lexbor_abi::{self as lxb, LxbNode};
 
@@ -33,7 +34,22 @@ const _: () = {
     assert!(NTYPE_NOTATION == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
 };
 
-impl<'d> Dom<'d> for HtmlDoc<'d> {
+/// The HTML backend as an evaluate holds it: the document, and its element
+/// index as it stood when the evaluate began.
+#[derive(Clone, Copy)]
+pub struct HtmlDom<'d> {
+    doc: HtmlDoc<'d>,
+    index: &'d DomIndex,
+}
+
+impl<'d> HtmlDom<'d> {
+    /// `index` must be the index built over `doc`.
+    pub fn new(doc: HtmlDoc<'d>, index: &'d DomIndex) -> HtmlDom<'d> {
+        HtmlDom { doc, index }
+    }
+}
+
+impl<'d> Dom<'d> for HtmlDom<'d> {
     const IS_XML: bool = false;
 
     type Node = HtmlNode<'d>;
@@ -51,7 +67,7 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
 
     #[inline]
     fn document_node(self) -> HtmlNode<'d> {
-        self.as_node()
+        self.doc.as_node()
     }
     #[inline]
     fn node_type(self, n: HtmlNode<'d>) -> u32 {
@@ -146,29 +162,19 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
 
     fn name_bucket(
         self,
-        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         _lax: bool,
     ) -> Option<Bucket<'d, HtmlNode<'d>>> {
-        if ns_uri.is_some() {
+        if ns_uri.is_some() || self.index.has_foreign() {
             return None;
         }
-        let Backend::Html { index, .. } = cx.backend() else {
-            return None;
-        };
-        // SAFETY: the context's element index belongs to this document and is
-        // dropped only by a mutation, which cannot happen while it is lent.
-        let index = unsafe { index.as_ref() }?;
-        if index.has_foreign() {
-            return None;
-        }
-        // SAFETY: `self` is a live document.
-        let tag = unsafe { dom::tag_id_by_name(self.as_raw(), local) };
+        // SAFETY: `self.doc` is a live document.
+        let tag = unsafe { dom::tag_id_by_name(self.doc.as_raw(), local) };
         if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
             return None;
         }
-        let nodes = index.tag_bucket(tag);
+        let nodes = self.index.tag_bucket(tag);
         // SAFETY: `HtmlNode` is a transparent non-null node pointer, and the
         // index holds only live elements of this document, none null.
         let nodes: &'d [HtmlNode<'d>] = unsafe {
