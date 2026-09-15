@@ -568,8 +568,10 @@ Key decisions that got there, worth not regressing:
   asserts byte-identity with a plain walk across subtrees + mutations).
 - **String-value cache is hashed** (`xpath/value.rs`): a pointer-keyed
   open-addressing index over an ordered store, so per-node predicate compares
-  are O(1), not the old O(n²) linear scan. The ordered store keeps
-  snapshot/partial-truncate working for nested (handler-triggered) evals.
+  are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
+  (`xpath::eval::Evaluation`), as do the op budget and the document-order
+  index, so a nested (handler-triggered) evaluate gets its own and cannot
+  disturb the walk that called it.
 - **`[@name]` / `[@name='lit']` predicates take a direct-attribute fast path**
   (`match_attr_pred`/`attr_pred_matches` in `xpath/attr_pred.rs`): a
   position-independent filter via `lxb_dom_element_has_attribute`/`get_attribute`

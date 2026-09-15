@@ -572,18 +572,18 @@ unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText
 
 /// The cached string-value of `node`, building and caching it on a miss.
 ///
-/// The returned bytes are borrowed: the cache owns them until the evaluate that
-/// built them unwinds to its snapshot.
+/// The returned bytes are borrowed: the cache owns them until the evaluation
+/// that built them is dropped.
 ///
 /// # Safety
-/// `ctx` must be the evaluating context and `node` live.
+/// `node` must be a live handle of the evaluation's document.
 pub unsafe fn cached_node_text<'a, D: Dom>(
-    ctx: *mut Context,
+    ev: &mut super::eval::Evaluation<'_, D>,
     node: D::Node,
 ) -> Result<&'a [u8], Reported> {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
-    let c = ctx_str_cache(ctx);
+    let err = ev.budget.sink();
+    let doc = ev.doc;
+    let c: *mut StrCache = &raw mut ev.str_cache;
     if c.is_null() {
         return Err(err_setf!(
             err,
@@ -606,7 +606,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         }
     }
 
-    let budget = ctx_budget(ctx);
+    let budget: *mut Budget = &raw mut ev.budget;
     /* Held in its guard until the cache takes it, so every refusal below frees
      * it on the way out. */
     let mut text = node_to_owned_text::<D>(doc, node, budget)?;

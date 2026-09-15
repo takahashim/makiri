@@ -8,9 +8,9 @@
 
 use super::abi::*;
 use super::dom::*;
+use super::eval::Evaluation;
 use crate::falloc::raw::callocarray;
 use core::ffi::{c_int, c_void};
-use core::ptr;
 
 pub struct OrderBucket {
     /// NULL is an empty slot.
@@ -281,15 +281,15 @@ unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::
 
 /// The indexed comparator, falling back to the parent-chain walk on any miss
 /// (a synthesised node, or a cross-document compare).
-unsafe fn doc_order_cmp_ctx<D: Dom>(ctx: *mut Context, a: D::Node, b: D::Node) -> i32 {
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn doc_order_cmp_indexed<D: Dom>(
+    doc: D::Doc,
+    idx: *const OrderIndex,
+    a: D::Node,
+    b: D::Node,
+) -> i32 {
     if a == b {
         return 0;
     }
-    if ctx.is_null() {
-        return doc_order_cmp::<D>(doc, a, b);
-    }
-    let idx = ctx_order_index(ctx);
     if idx.is_null() || (*idx).built == 0 {
         return doc_order_cmp::<D>(doc, a, b);
     }
@@ -313,8 +313,9 @@ const INDEX_BUILD_MIN: usize = 200;
 ///
 /// # Safety
 /// The set must hold live handles of this backend.
-pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet) {
-    let doc = D::doc_from_void(ctx_document(ctx));
+pub unsafe fn nodeset_sort_doc_order<D: Dom>(ev: &mut Evaluation<'_, D>, ns: *mut NodeSet) {
+    let doc = ev.doc;
+    let idx: *mut OrderIndex = &raw mut ev.order_index;
     if ns.is_null() || (*ns).count < 2 {
         return;
     }
@@ -327,7 +328,7 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet
      * it, so this can only skip work, never change the result. Reverse axes and
      * interleaved results fail the scan early. */
     let cmp = |a: &*mut c_void, b: &*mut c_void| {
-        doc_order_cmp_ctx::<D>(ctx, D::from_void(*a), D::from_void(*b))
+        doc_order_cmp_indexed::<D>(doc, idx, D::from_void(*a), D::from_void(*b))
     };
     if items.windows(2).all(|w| cmp(&w[0], &w[1]) <= 0) {
         return;
@@ -335,17 +336,9 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet
 
     /* Build the index lazily, and only when the sort is large enough to
      * amortise the full-document walk. */
-    let idx = if ctx.is_null() {
-        ptr::null_mut()
-    } else {
-        ctx_order_index(ctx)
-    };
-    if !idx.is_null() && (*idx).built == 0 && items.len() >= INDEX_BUILD_MIN {
-        let root_h = ctx_document(ctx);
-        if !root_h.is_null() {
-            /* Best-effort: on OOM the parent-chain comparator still serves. */
-            order_index_build::<D>(doc, idx, D::document_node(D::doc_from_void(root_h)));
-        }
+    if (*idx).built == 0 && items.len() >= INDEX_BUILD_MIN && !ev.cx.document().is_null() {
+        /* Best-effort: on OOM the parent-chain comparator still serves. */
+        order_index_build::<D>(doc, idx, D::document_node(doc));
     }
 
     /* A stable merge sort, so ties - possible only for synthesised nodes that
@@ -359,11 +352,11 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet
 ///
 /// # Safety
 /// See `nodeset_sort_doc_order`.
-pub unsafe fn nodeset_unique_sorted<D: Dom>(ctx: *mut Context, ns: *mut NodeSet) {
+pub unsafe fn nodeset_unique_sorted<D: Dom>(ev: &mut Evaluation<'_, D>, ns: *mut NodeSet) {
     if ns.is_null() || (*ns).count < 2 {
         return;
     }
-    nodeset_sort_doc_order::<D>(ctx, ns);
+    nodeset_sort_doc_order::<D>(ev, ns);
     let items = nodeset_items(ns);
     let mut w = 1;
     for r in 1..items.len() {

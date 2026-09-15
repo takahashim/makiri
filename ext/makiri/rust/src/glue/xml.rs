@@ -32,7 +32,7 @@ use rb_sys::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{ctx_budget, XPathValue};
+use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::XP_ERR_SYNTAX;
 
 use super::abi::error_class;
@@ -496,14 +496,13 @@ unsafe fn css_compile_or_raise(
         default_prefix: css_default_prefix(rb_ns),
     };
     let sv = ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
-    let budget = ctx_budget(ctx);
-    (*budget).ast_nodes = 0;
-    let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, budget);
+    let mut budget = crate::xpath::limits::Budget::with_limits(*ctx_limits(ctx));
+    let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, &mut budget);
     drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);
     }
-    let error = (*budget).take_error();
+    let error = budget.take_error();
 
     if error.status == XP_ERR_SYNTAX {
         let msg = error.message().map_or_else(

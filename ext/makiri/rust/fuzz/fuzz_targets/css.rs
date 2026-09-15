@@ -70,9 +70,8 @@ fuzz_target!(|data: &[u8]| {
             }
         };
 
-        let budget = ctx_budget(ctx.as_ptr());
-        (*budget).ast_nodes = 0;
-        let Ok(ast) = compile_owned(text, &ns, budget) else {
+        let mut budget = Budget::with_limits(*ctx_limits(ctx.as_ptr()));
+        let Ok(ast) = compile_owned(text, &ns, &mut budget) else {
             return;
         };
         evaluate_both(&ctx, &ast);

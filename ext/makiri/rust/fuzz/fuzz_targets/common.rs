@@ -19,7 +19,7 @@ pub use makiri::xpath::ctx::{
 pub use makiri::xpath::limits::Budget;
 pub use makiri::xpath::ast::Ast;
 pub use makiri::xpath::parse::parse_owned;
-pub use makiri::xpath::ctx::{ctx_budget, Context};
+pub use makiri::xpath::ctx::{ctx_limits, Context};
 pub use makiri::xpath::limits::Limits;
 
 /// A context over `doc`, rooted at its document node and pinned to the XML
@@ -36,25 +36,23 @@ pub unsafe fn xml_context(doc: &mut Document) -> Option<OwnedContext> {
     OwnedContext::new(doc as *mut Document as *mut c_void, node, Backend::Xml)
 }
 
-/// The context's budgets, for a target to tighten before it parses or
-/// evaluates.
+/// The context's caps, for a target to tighten before it parses or evaluates.
 ///
 /// # Safety
 /// `ctx` must be live, and the borrow must end before the next engine call on
 /// it.
 pub unsafe fn limits<'a>(ctx: *mut Context) -> &'a mut Limits {
-    &mut (*ctx_budget(ctx)).limits
+    &mut *ctx_limits(ctx)
 }
 
-/// Parse `text` against the context's budget, with the AST counter reset the
-/// way the glue resets it before each parse.
+/// Parse `text` under the context's caps, on a budget of the parse's own - the
+/// way the glue parses.
 ///
 /// # Safety
 /// `ctx` must be live.
 pub unsafe fn parse(ctx: &OwnedContext, text: VerifiedText) -> Option<Box<Ast>> {
-    let budget = ctx_budget(ctx.as_ptr());
-    (*budget).ast_nodes = 0;
-    parse_owned(text, budget).ok()
+    let mut budget = Budget::with_limits(*ctx_limits(ctx.as_ptr()));
+    parse_owned(text, &mut budget).ok()
 }
 
 /// Evaluate `ast` both ways the glue does, and hold the `at_xpath` fast path to
@@ -66,8 +64,8 @@ pub unsafe fn parse(ctx: &OwnedContext, text: VerifiedText) -> Option<Box<Ast>> 
 /// # Safety
 /// `ctx` must be live and `ast` parsed for it.
 pub unsafe fn evaluate_both(ctx: &OwnedContext, ast: &Ast) {
-    let full = evaluate(ctx.as_ptr(), ast);
-    let first = evaluate_first(ctx.as_ptr(), ast);
+    let full = evaluate(ctx.as_ptr(), ast, None);
+    let first = evaluate_first(ctx.as_ptr(), ast, None);
     if let (Ok(XPathValue::NodeSet(all)), Ok(XPathValue::NodeSet(one))) = (&full, &first) {
         assert_eq!(
             all.as_slice().first(),

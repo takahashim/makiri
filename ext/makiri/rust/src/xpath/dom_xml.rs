@@ -252,7 +252,7 @@ unsafe impl DomRaw for Xml {
     /// LAX test means "any namespace", which one bucket cannot express, so it
     /// falls back to the walk.
     unsafe fn raw_name_bucket<'a>(
-        ctx: *mut Context,
+        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
@@ -262,11 +262,11 @@ unsafe impl DomRaw for Xml {
             None if lax => return None,
             None => b"", /* strict unprefixed -> no namespace */
         };
-        if !matches!(ctx_backend(ctx), Some(Backend::Xml)) {
+        if !matches!(cx.backend(), Backend::Xml) {
             return None;
         }
         /* The XML storage owns the index. */
-        let doc = (ctx_document(ctx) as *mut xml::Document).as_mut()?;
+        let doc = (cx.document() as *mut xml::Document).as_mut()?;
         /* Built lazily and cached; None on OOM, and the caller walks. */
         let idx = crate::xml::index::get(doc)?;
         let ids = crate::xml::index::lookup(idx, local, uri);

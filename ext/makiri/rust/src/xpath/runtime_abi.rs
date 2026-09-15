@@ -15,7 +15,7 @@ pub mod value;
 
 pub use cache::{
     doc_order_index_clear, doc_order_index_init, str_cache_clear, str_cache_index_put,
-    str_cache_init, str_cache_reindex, str_cache_truncate,
+    str_cache_init, str_cache_reindex,
 };
 pub use nodeset::{nodeset_clear, nodeset_init, nodeset_push};
 pub use text::{owned_text_clear, owned_text_init};

@@ -128,10 +128,8 @@ pub(crate) unsafe trait DomRaw: DomHandle {
     /// (local name, namespace URI), which is exactly the test, and HTML by
     /// Lexbor tag id, which is only an approximation - hence `recheck`.
     ///
-    /// # Safety
-    /// `ctx` must be the evaluating context.
     unsafe fn raw_name_bucket<'a>(
-        ctx: *mut Context,
+        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
@@ -208,12 +206,12 @@ pub(crate) trait Dom: DomRaw {
         unsafe { <Self as DomRaw>::raw_append_own_text(doc, n, buf) }
     }
     fn name_bucket<'a>(
-        ctx: *mut Context,
+        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
     ) -> Option<Bucket<'a>> {
-        unsafe { <Self as DomRaw>::raw_name_bucket(ctx, local, ns_uri, lax) }
+        unsafe { <Self as DomRaw>::raw_name_bucket(cx, local, ns_uri, lax) }
     }
 }
 

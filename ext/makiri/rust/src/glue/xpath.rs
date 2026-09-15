@@ -43,9 +43,9 @@ use rb_sys::VALUE;
 
 use crate::text::VerifiedText;
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{ctx_budget, ResolverCall, XPathValue};
 use crate::xpath::ctx::{Backend, OwnedContext};
-use crate::xpath::limits::budget_sink;
+use crate::xpath::ctx::{ResolverCall, XPathValue};
+use crate::xpath::limits::Budget;
 use crate::xpath::msg::{
     ErrSink, Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
@@ -89,10 +89,8 @@ pub use crate::xpath::ctx::ctx_is_evaluating;
 pub use crate::xpath::ctx::ctx_limits;
 pub use crate::xpath::ctx::ctx_set_context_node;
 pub use crate::xpath::ctx::ctx_set_unprefixed_lax;
-pub use crate::xpath::ctx::xpath_context_set_user_data;
 pub use crate::xpath::ctx::xpath_register_ns;
 pub use crate::xpath::ctx::xpath_register_variable_string;
-pub use crate::xpath::ctx::xpath_set_func_resolver;
 use crate::xpath::ctx::{evaluate, evaluate_first};
 pub use crate::xpath::runtime_abi::nodeset_clear;
 pub use crate::xpath::runtime_abi::nodeset_init;
@@ -448,7 +446,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
 /// an XML node too, whose pointer is an arena node rather than a Lexbor one. A
 /// node from another document fails closed.
 unsafe fn push_result_node(
-    ctx: *mut Ctx,
+    budget: *mut Budget,
     document: VALUE,
     rb_node: VALUE,
     set: *mut NodeSet,
@@ -467,7 +465,7 @@ unsafe fn push_result_node(
         err.set("handler returned an unusable node");
         return false;
     };
-    if nodeset_push(set, n, ctx_budget(ctx)).is_err() {
+    if nodeset_push(set, n, budget).is_err() {
         err.set("out of memory building handler result");
         return false;
     }
@@ -517,7 +515,7 @@ impl ErrBuf {
 
 /// Ruby return value -> engine value.
 unsafe fn ruby_to_out(
-    ctx: *mut Ctx,
+    budget: *mut Budget,
     document: VALUE,
     r: VALUE,
     out: *mut Val,
@@ -541,7 +539,7 @@ unsafe fn ruby_to_out(
     if is_node || is_kind_of(rv, CLASS_NODE_SET) {
         let mut set = NodeSet::EMPTY;
         if is_node {
-            if !push_result_node(ctx, document, r, &mut set, err) {
+            if !push_result_node(budget, document, r, &mut set, err) {
                 nodeset_clear(&mut set);
                 return false;
             }
@@ -557,7 +555,7 @@ unsafe fn ruby_to_out(
                 if !is_kind_of(node, CLASS_NODE) {
                     continue;
                 }
-                if !push_result_node(ctx, document, node.as_raw(), &mut set, err) {
+                if !push_result_node(budget, document, node.as_raw(), &mut set, err) {
                     nodeset_clear(&mut set);
                     return false;
                 }
@@ -581,7 +579,7 @@ unsafe fn ruby_to_out(
         err.set("handler result could not be converted to a string");
         return false;
     };
-    let vv = match ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes) {
+    let vv = match ruby_try_verified_text(sv.as_raw(), (*budget).limits.max_string_bytes) {
         Ok(vv) => vv,
         Err(reason) => {
             let reason = reason.to_string_lossy();
@@ -612,7 +610,7 @@ fn is_numeric(ruby: &Ruby, v: Value) -> bool {
 /// use does not depend on the runtime argument count.
 struct HandlerCall {
     bridge: *const Bridge,
-    ctx: *mut Ctx,
+    budget: *mut Budget,
     method: rb_sys::ID,
     args: *const Val,
     nargs: usize,
@@ -635,7 +633,7 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
         c.nargs as c_int,
         c.argv.as_ptr(),
     );
-    c.ok = ruby_to_out(c.ctx, (*c.bridge).document, r, c.out, &mut c.err);
+    c.ok = ruby_to_out(c.budget, (*c.bridge).document, r, c.out, &mut c.err);
     rb_sys::Qnil as VALUE
 }
 
@@ -643,15 +641,16 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
 /// `Ok(None)` when the handler has no such method and the engine reports the
 /// function unknown.
 unsafe fn handler_resolver(
-    user_data: *mut c_void,
-    ctx: *mut Ctx,
+    data: *mut c_void,
+    budget: &mut Budget,
     call: &ResolverCall<'_>,
 ) -> Result<Option<OwnedVal>, Reported> {
-    let err = budget_sink(ctx_budget(ctx));
-    if user_data.is_null() {
+    let err = budget.sink();
+    let budget: *mut Budget = budget;
+    if data.is_null() {
         return Ok(None);
     }
-    let bridge = &*(user_data as *const Bridge);
+    let bridge = &*(data as *const Bridge);
     if bridge.handler == rb_sys::Qnil as VALUE {
         return Ok(None);
     }
@@ -686,7 +685,7 @@ unsafe fn handler_resolver(
     let mut out = Val::EMPTY;
     let mut state_of_call = HandlerCall {
         bridge,
-        ctx,
+        budget,
         method,
         args: call.args.as_ptr(),
         nargs: call.args.len(),
@@ -738,75 +737,38 @@ unsafe fn handler_resolver(
 ///
 /// Returns a pointer to the AST plus its owner when it could not be cached. A
 /// cached AST lives as long as the context (see [`AstCache`]).
-unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*const Ast, Option<Box<Ast>>)> {
+#[allow(clippy::result_large_err)]
+unsafe fn cached_ast(
+    d: &mut Inner,
+    expr: RubyText,
+) -> Result<(*const Ast, Option<Box<Ast>>), crate::xpath::msg::Error> {
     let key = expr.bytes();
     if let Some(ast) = d.cache.0.get(key) {
-        return Some((&**ast as *const Ast, None));
+        return Ok((&**ast as *const Ast, None));
     }
 
-    let budget = ctx_budget(d.ctx.as_ptr());
-    (*budget).ast_nodes = 0;
-    let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, budget).ok()?;
+    /* Each parse charges a budget of its own, made from the context's caps. */
+    let mut budget = Budget::with_limits(*ctx_limits(d.ctx.as_ptr()));
+    let Ok(ast) = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, &mut budget)
+    else {
+        return Err(budget.take_error());
+    };
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
-        return Some((&*ast as *const Ast, Some(ast)));
+        return Ok((&*ast as *const Ast, Some(ast)));
     }
     let Some(owned_key) = try_to_boxed_slice(key) else {
-        return Some((&*ast as *const Ast, Some(ast)));
+        return Ok((&*ast as *const Ast, Some(ast)));
     };
     if d.cache.0.mkr_insert(owned_key, ast).is_err() {
         crate::xpath::msg::err_set(
-            budget_sink(budget),
+            budget.sink(),
             XP_ERR_OOM,
             c"out of memory caching XPath expression",
         );
-        return None;
+        return Err(budget.take_error());
     }
     let ast = d.cache.0.get(key).expect("inserted AST");
-    Some((&**ast as *const Ast, None))
-}
-
-/// Install the handler bridge for one evaluation, and put back what was there.
-///
-/// It has to come off: the bridge lives on the caller's stack, and the context
-/// outlives the call. And it has to be put BACK rather than cleared: a handler
-/// can evaluate on this same context with a handler of its own, and clearing
-/// on the way out of that nested evaluate left the outer walk with no resolver,
-/// so its next handler call failed as an unknown function.
-struct InstalledHandler {
-    ctx: *mut Ctx,
-    installed: bool,
-    previous_resolver: crate::xpath::ctx::FuncResolver,
-    previous_data: *mut c_void,
-}
-
-impl InstalledHandler {
-    unsafe fn new(ctx: *mut Ctx, bridge: *const Bridge, handler: VALUE) -> Self {
-        let installed = handler != rb_sys::Qnil as VALUE;
-        let previous_resolver = crate::xpath::ctx::ctx_func_resolver(ctx);
-        let previous_data = crate::xpath::ctx::xpath_get_user_data(ctx);
-        if installed {
-            xpath_context_set_user_data(ctx, bridge as *mut c_void);
-            xpath_set_func_resolver(ctx, Some(handler_resolver));
-        }
-        InstalledHandler {
-            ctx,
-            installed,
-            previous_resolver,
-            previous_data,
-        }
-    }
-}
-
-impl Drop for InstalledHandler {
-    fn drop(&mut self) {
-        if self.installed {
-            // SAFETY: restores exactly what new() found.
-            unsafe {
-                xpath_set_func_resolver(self.ctx, self.previous_resolver);
-                xpath_context_set_user_data(self.ctx, self.previous_data);
-            }
-        }
-    }
+    Ok((&**ast as *const Ast, None))
 }
 
 /* ------------------------------------------------------------------ */
@@ -816,16 +778,15 @@ impl Drop for InstalledHandler {
  * and `XPathContext#evaluate` all run parse -> evaluate -> convert through
  * these three; they differ only in how the context is built and who owns it. */
 
-/// Parse `expr` for one query under `ctx`. The AST-node budget is per query, so
-/// it is reset first, and a failure is that budget's error as the exception.
+/// Parse `expr` for one query under `ctx`'s caps, on a budget of the query's
+/// own; a failure is that budget's error as the exception.
 pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
-    let budget = ctx_budget(ctx);
-    (*budget).ast_nodes = 0;
-    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
+    let mut budget = Budget::with_limits(*ctx_limits(ctx));
+    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
-    parsed.map_err(|_| xpath_error(&(*budget).take_error()))
+    parsed.map_err(|_| xpath_error(&budget.take_error()))
 }
 
 /// Evaluate `ast` under `ctx`, with `handler` (nil for none) answering unknown
@@ -851,13 +812,16 @@ pub(crate) unsafe fn evaluate_query(
         handler: handler.as_raw(),
         document: document.as_raw(),
     };
-    let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
+    /* The bridge lives on this frame and is handed to this evaluate alone. */
+    let resolver = (!handler.is_nil()).then_some(crate::xpath::ctx::Handler {
+        resolve: handler_resolver,
+        data: &bridge as *const Bridge as *mut c_void,
+    });
     let result = if first_only {
-        evaluate_first(ctx, ast)
+        evaluate_first(ctx, ast, resolver)
     } else {
-        evaluate(ctx, ast)
+        evaluate(ctx, ast, resolver)
     };
-    drop(installed);
     result.map_err(|error| xpath_error(&error))
 }
 
@@ -902,8 +866,8 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
          * a NoMemoryError there would longjmp past the RefMut. */
         drop(d);
         match parsed {
-            Some((ast, owned)) => (ctx, ast, owned),
-            None => return Err(xpath_error(&(*ctx_budget(ctx)).take_error())),
+            Ok((ast, owned)) => (ctx, ast, owned),
+            Err(error) => return Err(xpath_error(&error)),
         }
     };
 

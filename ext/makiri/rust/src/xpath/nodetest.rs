@@ -19,7 +19,7 @@ use super::dom::*;
 /// hottest loop in the engine.
 #[derive(Clone, Copy)]
 pub struct Bindings<'a, D: Dom> {
-    pub ctx: *mut Context,
+    pub cx: &'a Context,
     pub doc: D::Doc,
     /// namespace_matching: :lax - the unprefixed element rule is relaxed.
     pub lax: bool,
@@ -28,13 +28,11 @@ pub struct Bindings<'a, D: Dom> {
 }
 
 impl<'a, D: Dom> Bindings<'a, D> {
-    /// # Safety
-    /// `ctx` must be the evaluating context.
-    pub unsafe fn new(ctx: *mut Context, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
+    pub fn new(cx: &'a Context, doc: D::Doc, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
         Bindings {
-            ctx,
-            doc: D::doc_from_void(ctx_document(ctx)),
-            lax: ctx_unprefixed_lax(ctx) != 0,
+            cx,
+            doc,
+            lax: cx.lax(),
             pre,
         }
     }
@@ -106,17 +104,8 @@ unsafe fn name_test_match<D: Dom>(
 unsafe fn resolved_prefix<'a, D: Dom>(b: &Bindings<'a, D>, test: &NodeTest) -> Option<&'a [u8]> {
     match b.pre {
         Some(u) => Some(u),
-        None => lookup_ns(b.ctx, test.prefix.as_deref().unwrap_or(&[])),
+        None => b.cx.lookup_ns(test.prefix.as_deref().unwrap_or(&[])),
     }
-}
-
-///
-/// # Safety
-/// `ctx` must be the evaluating context. The returned bytes belong to its
-/// namespace registry, which the glue refuses to re-register during an
-/// evaluate - so they stay valid for the call, but not past it.
-pub unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
-    ctx_lookup_ns(ctx, prefix)
 }
 
 ///

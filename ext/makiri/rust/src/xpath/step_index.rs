@@ -8,8 +8,9 @@
 
 use super::abi::*;
 use super::dom::*;
+use super::eval::Evaluation;
 use super::msg::Bytes;
-use super::nodetest::{lookup_ns, node_principal_match, Bindings};
+use super::nodetest::{node_principal_match, Bindings};
 use super::own::Set;
 use crate::err_setf;
 use crate::falloc::Reserve;
@@ -19,11 +20,11 @@ use core::ptr;
 /// Is the context exactly the document node? Both index fast paths need that:
 /// `descendant::tag` from the document is precisely "every element named tag",
 /// which is what the index groups.
-unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
+unsafe fn context_is_document<D: Dom>(cx: &Context, set: &Set) -> bool {
     if set.count() != 1 {
         return false;
     }
-    let dh = ctx_document(ctx);
+    let dh = cx.document();
     if dh.is_null() {
         return false;
     }
@@ -42,6 +43,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
     context_set: &Set,
     result: &mut Set,
     b: &Bindings<D>,
+    budget: *mut Budget,
 ) -> Result<bool, Reported> {
     let test = &step.test;
     let Some(local) = test.local.as_deref() else {
@@ -49,7 +51,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
     };
     if step.axis != Axis::Descendant
         || test.kind != TestKind::Name
-        || !context_is_document::<D>(b.ctx, context_set)
+        || !context_is_document::<D>(b.cx, context_set)
     {
         return Ok(false);
     }
@@ -57,11 +59,10 @@ pub unsafe fn try_descendant_index<D: Dom>(
     if test.prefix.is_some() && ns_uri.is_none() {
         return Ok(false); /* eval_step pre-resolves, so this should not happen */
     }
-    let bucket = match D::name_bucket(b.ctx, local, ns_uri, b.lax) {
+    let bucket = match D::name_bucket(b.cx, local, ns_uri, b.lax) {
         Some(bk) => bk,
         None => return Ok(false),
     };
-    let budget = ctx_budget(b.ctx);
     for &p in bucket.nodes {
         limit_eval_op(budget)?;
         let n = D::from_void(p);
@@ -81,7 +82,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
 /// name-children appear among them in child order: one sweep with a
 /// pointer-keyed parent -> count map emits exactly those whose running count
 /// reaches N, already in document order, with no sort or dedup.
-unsafe fn nth_shape<D: Dom>(ctx: *mut Context, s0: &Step, s1: &Step, seed: &Set) -> Option<usize> {
+unsafe fn nth_shape<D: Dom>(cx: &Context, s0: &Step, s1: &Step, seed: &Set) -> Option<usize> {
     if s0.axis != Axis::DescendantOrSelf
         || s0.test.kind != TestKind::Node
         || s0.test.prefix.is_some()
@@ -106,7 +107,7 @@ unsafe fn nth_shape<D: Dom>(ctx: *mut Context, s0: &Step, s1: &Step, seed: &Set)
     if dn.is_nan() || dn < 1.0 || dn != dn.trunc() || dn > usize::MAX as f64 {
         return None;
     }
-    if !context_is_document::<D>(ctx, seed) {
+    if !context_is_document::<D>(cx, seed) {
         return None;
     }
     Some(dn as usize)
@@ -116,22 +117,23 @@ unsafe fn nth_shape<D: Dom>(ctx: *mut Context, s0: &Step, s1: &Step, seed: &Set)
 /// # Safety
 /// Same as `try_descendant_index`, for the two leading steps `s0` and `s1`.
 pub unsafe fn try_descendant_index_nth<D: Dom>(
-    ctx: *mut Context,
+    ev: &mut Evaluation<'_, D>,
     s0: &Step,
     s1: &Step,
     seed: &Set,
     result: &mut Set,
 ) -> Result<bool, Reported> {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
-    let need = match nth_shape::<D>(ctx, s0, s1, seed) {
+    let err = ev.budget.sink();
+    let doc = ev.doc;
+    let cx = ev.cx;
+    let need = match nth_shape::<D>(cx, s0, s1, seed) {
         Some(n) => n,
         None => return Ok(false),
     };
     let test = &s1.test;
     let ns_uri: Option<&[u8]> = match test.prefix.as_deref() {
         None => None,
-        Some(prefix) => match lookup_ns(ctx, prefix) {
+        Some(prefix) => match cx.lookup_ns(prefix) {
             Some(u) => Some(u),
             None => {
                 return Err(err_setf!(
@@ -143,9 +145,9 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
             }
         },
     };
-    let b = Bindings::<D>::new(ctx, ns_uri);
+    let b = Bindings::<D>::new(cx, doc, ns_uri);
     let local = test.local.as_deref().unwrap_or(&[]);
-    let bucket = match D::name_bucket(ctx, local, ns_uri, b.lax) {
+    let bucket = match D::name_bucket(cx, local, ns_uri, b.lax) {
         Some(bk) => bk,
         None => return Ok(false),
     };
@@ -166,7 +168,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     }
     tab.resize(cap, (ptr::null(), 0));
     let mask = cap - 1;
-    let budget = ctx_budget(ctx);
+    let budget: *mut Budget = &raw mut ev.budget;
 
     for &p in bucket.nodes {
         limit_eval_op(budget)?;

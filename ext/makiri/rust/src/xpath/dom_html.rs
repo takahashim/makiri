@@ -121,7 +121,7 @@ unsafe impl DomRaw for Html {
     }
 
     unsafe fn raw_name_bucket<'a>(
-        ctx: *mut Context,
+        cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         _lax: bool,
@@ -129,13 +129,13 @@ unsafe impl DomRaw for Html {
         if ns_uri.is_some() {
             return None;
         }
-        let Some(Backend::Html { index }) = ctx_backend(ctx) else {
+        let Backend::Html { index } = cx.backend() else {
             return None;
         };
         if index.is_null() || crate::dom_adapter::dom_index::element_index_has_foreign(index) != 0 {
             return None;
         }
-        let tag = dom::tag_id_by_name(ctx_document(ctx) as *const LxbDoc, local);
+        let tag = dom::tag_id_by_name(cx.document() as *const LxbDoc, local);
         if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
             return None;
         }

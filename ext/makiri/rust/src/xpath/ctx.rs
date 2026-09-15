@@ -11,6 +11,7 @@
 use super::abi::*;
 use super::own::{OwnedText, OwnedVal, Set};
 use crate::falloc::Reserve;
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
@@ -27,18 +28,22 @@ pub struct ResolverCall<'a> {
     pub args: &'a [Val],
 }
 
-/// The custom-function resolver the glue installs for a Ruby handler.
+/// What answers the function calls an evaluate has no built-in for: the glue's
+/// bridge to a Ruby handler, passed to one evaluate.
 ///
-/// `Ok(Some(value))` answers the call; `Ok(None)` means there is no such
-/// function, which the evaluator reports; `Err` is the function's own failure,
-/// already written to the context's budget.
-pub type FuncResolver = Option<
-    unsafe fn(
-        user_data: *mut c_void,
-        ctx: *mut Context,
+/// `resolve` gets `data` back, the evaluation's budget, and the call.
+/// `Ok(Some(value))` answers it; `Ok(None)` means there is no such function,
+/// which the evaluator reports; `Err` is the function's own failure, already
+/// written to the budget.
+#[derive(Clone, Copy)]
+pub struct Handler {
+    pub resolve: unsafe fn(
+        data: *mut c_void,
+        budget: &mut Budget,
         call: &ResolverCall<'_>,
-    ) -> Result<Option<crate::xpath::own::OwnedVal>, Reported>,
->;
+    ) -> Result<Option<OwnedVal>, Reported>,
+    pub data: *mut c_void,
+}
 
 /// Per-context registration caps. These bound an abusive Ruby loop that calls
 /// register_namespace / register_variable without limit; far above any real use.
@@ -76,8 +81,8 @@ pub enum Backend {
 /// Its layout is not ABI: no client names the type - the glue holds a
 /// `mkr_xpath_context_t *` and calls accessors, and the engine instances only
 /// pass it back - so it can be a plain Rust struct with `Vec` registries rather
-/// than the hand-grown arrays the C kept. `abi::Context` is the opaque handle
-/// everyone else sees, and `handle()` is the one place the two meet.
+/// than the hand-grown arrays the C kept. What one evaluate changes lives in its
+/// own `eval::Evaluation`, so an evaluate holds this only shared.
 pub struct Context {
     doc: *mut c_void,
     node: *mut c_void,
@@ -85,18 +90,9 @@ pub struct Context {
     ns: Vec<NsEntry>,
     vars: Vec<VarEntry>,
 
-    budget: Budget,
-
-    /* The custom function resolver, set by the Ruby handler bridge for the
-     * duration of one evaluate() and cleared after. */
-    user_data: *mut c_void,
-    func_resolver: FuncResolver,
-
-    /* Per-evaluate caches. Both stay C layouts: the value body fills the string
-     * cache through str_cache_index_put, and the document-order index is
-     * built and cleared by C helpers. */
-    str_cache: StrCache,
-    order_index: OrderIndex,
+    /* The caps every run under this context starts from. Each evaluate and
+     * parse charges a `Budget` of its own made from these. */
+    limits: Limits,
 
     /* Namespace matching for UNPREFIXED name tests. 0 (default) is strict and
      * HTML5-faithful: an unprefixed name resolves in the HTML namespace, so
@@ -112,14 +108,60 @@ pub struct Context {
      * function handler runs arbitrary Ruby mid-walk and could re-enter to mutate
      * this same context; such a mutation can free a registration string the
      * suspended evaluator still borrows, or swap the context node mid-walk. The
-     * glue refuses those while this holds. A nested evaluate just stacks. */
-    evaluating: c_int,
+     * glue refuses those while this holds. A nested evaluate just stacks.
+     *
+     * A `Cell`, because it is the one field that changes while an evaluate
+     * holds the context shared. */
+    evaluating: Cell<c_int>,
 }
 
-/// The context as its clients see it: a pointer they carry and hand back.
-#[inline]
-fn handle(ctx: *mut Context) -> *mut Context {
-    ctx
+impl Context {
+    /// The document handle, as the backend stores it.
+    pub fn document(&self) -> *mut c_void {
+        self.doc
+    }
+
+    /// The context node handle.
+    pub fn context_node(&self) -> *mut c_void {
+        self.node
+    }
+
+    /// The caps a run under this context starts from.
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    pub fn backend(&self) -> Backend {
+        self.backend
+    }
+
+    /// namespace_matching: :lax - the unprefixed element rule is relaxed.
+    pub fn lax(&self) -> bool {
+        self.unprefixed_lax != 0
+    }
+
+    /// The URI registered for `prefix`, borrowed from the registry.
+    pub fn lookup_ns(&self, prefix: &[u8]) -> Option<&[u8]> {
+        self.ns
+            .iter()
+            .find(|e| text_eq(&e.prefix, prefix))
+            .map(|e| e.uri.as_slice())
+    }
+
+    /// The string bound to `$prefix:name` (`prefix` is `None` when
+    /// unprefixed), borrowed from the registry.
+    pub fn variable_text(&self, prefix: Option<&[u8]>, name: &[u8]) -> Option<&[u8]> {
+        self.vars
+            .iter()
+            .find(|e| {
+                let prefix_match = match prefix {
+                    None => e.prefix.is_absent(),
+                    Some(p) => text_eq(&e.prefix, p),
+                };
+                prefix_match && text_eq(&e.name, name)
+            })
+            .map(|e| e.value.as_slice())
+    }
 }
 
 /* The two node-dereferencing entries, one pair per instance. They are declared
@@ -134,10 +176,6 @@ pub use crate::xpath::ffi_html::try_first_match_html;
 
 pub use crate::xpath::ffi_xml::eval_ast_xml;
 pub use crate::xpath::ffi_xml::try_first_match_xml;
-pub use crate::xpath::runtime_abi::doc_order_index_init;
-pub use crate::xpath::runtime_abi::str_cache_clear;
-pub use crate::xpath::runtime_abi::str_cache_init;
-pub use crate::xpath::runtime_abi::str_cache_truncate;
 
 /* ---------- text slots ---------- */
 
@@ -179,24 +217,18 @@ pub unsafe fn xpath_context_new(
     // OOM answer (the C version returned it from callocarray), and every
     // caller checks. Aborting here would take the host process down for a
     // failure the API can already express.
-    let Ok(mut ctx) = crate::falloc::try_box(Context {
+    let Ok(ctx) = crate::falloc::try_box(Context {
         doc,
         node,
         ns: Vec::new(),
         vars: Vec::new(),
-        budget: Budget::new(),
-        user_data: ptr::null_mut(),
-        func_resolver: None,
-        str_cache: core::mem::zeroed(),
-        order_index: core::mem::zeroed(),
+        limits: Limits::DEFAULT,
         unprefixed_lax: 0,
         backend,
-        evaluating: 0,
+        evaluating: Cell::new(0),
     }) else {
         return ptr::null_mut();
     };
-    str_cache_init(&mut ctx.str_cache);
-    doc_order_index_init(&mut ctx.order_index);
     Box::into_raw(ctx)
 }
 
@@ -204,10 +236,8 @@ pub unsafe fn xpath_context_free(ctx: *mut Context) {
     if ctx.is_null() {
         return;
     }
-    let mut ctx = Box::from_raw(ctx);
-    str_cache_clear(&mut ctx.str_cache);
-    doc_order_index_clear(&mut ctx.order_index);
     /* The Vecs and the box go with the drop. */
+    drop(Box::from_raw(ctx));
 }
 
 /// Owner of a context from [`xpath_context_new`]: dropping it frees the
@@ -296,49 +326,6 @@ pub unsafe fn xpath_register_variable_string(
     0
 }
 
-/// The URI registered for `prefix`, borrowed from the registry.
-///
-/// # Safety
-/// `ctx` must be null or live. The bytes belong to its namespace registry, which
-/// the glue refuses to change during an evaluate: valid for the call, not past it.
-pub unsafe fn ctx_lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
-    if ctx.is_null() {
-        return None;
-    }
-    (*ctx)
-        .ns
-        .iter()
-        .find(|e| text_eq(&e.prefix, prefix))
-        .map(|e| e.uri.as_slice())
-}
-
-/// The string bound to `$prefix:name` (`prefix` is `None` when unprefixed),
-/// borrowed from the registry.
-///
-/// # Safety
-/// `ctx` must be null or live. The bytes are valid until the variable is
-/// registered again, which the glue refuses during an evaluate.
-pub unsafe fn ctx_lookup_variable_text<'a>(
-    ctx: *mut Context,
-    prefix: Option<&[u8]>,
-    name: &[u8],
-) -> Option<&'a [u8]> {
-    if ctx.is_null() {
-        return None;
-    }
-    (*ctx)
-        .vars
-        .iter()
-        .find(|e| {
-            let prefix_match = match prefix {
-                None => e.prefix.is_absent(),
-                Some(p) => text_eq(&e.prefix, p),
-            };
-            prefix_match && text_eq(&e.name, name)
-        })
-        .map(|e| e.value.as_slice())
-}
-
 /* ---------- accessors ---------- */
 
 macro_rules! getter {
@@ -355,8 +342,6 @@ macro_rules! getter {
 
 getter!(ctx_document, *mut c_void, doc, ptr::null_mut());
 getter!(ctx_node, *mut c_void, node, ptr::null_mut());
-getter!(ctx_func_resolver, FuncResolver, func_resolver, None);
-getter!(xpath_get_user_data, *mut c_void, user_data, ptr::null_mut());
 getter!(ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
 
 pub unsafe fn ctx_backend(ctx: *mut Context) -> Option<Backend> {
@@ -371,31 +356,7 @@ pub unsafe fn ctx_limits(ctx: *mut Context) -> *mut Limits {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
-        &raw mut (*ctx).budget.limits
-    }
-}
-
-pub unsafe fn ctx_budget(ctx: *mut Context) -> *mut Budget {
-    if ctx.is_null() {
-        ptr::null_mut()
-    } else {
-        &raw mut (*ctx).budget
-    }
-}
-
-pub unsafe fn ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
-    if ctx.is_null() {
-        ptr::null_mut()
-    } else {
-        &raw mut (*ctx).str_cache
-    }
-}
-
-pub unsafe fn ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
-    if ctx.is_null() {
-        ptr::null_mut()
-    } else {
-        &raw mut (*ctx).order_index
+        &raw mut (*ctx).limits
     }
 }
 
@@ -411,24 +372,12 @@ pub unsafe fn ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
     }
 }
 
-pub unsafe fn xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
-    if !ctx.is_null() {
-        (*ctx).user_data = user_data;
-    }
-}
-
-pub unsafe fn xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
-    if !ctx.is_null() {
-        (*ctx).func_resolver = resolver;
-    }
-}
-
 /// True while an evaluate() is in progress on this context, nested ones
 /// included. The glue uses it to refuse register_namespace / register_variable /
 /// node= re-entered from a handler mid-walk: those mutate the live registration
 /// tables or the context node the suspended evaluator still borrows.
 pub unsafe fn ctx_is_evaluating(ctx: *mut Context) -> c_int {
-    c_int::from(!ctx.is_null() && (*ctx).evaluating > 0)
+    c_int::from(!ctx.is_null() && (*ctx).evaluating.get() > 0)
 }
 
 /* ---------- evaluate ---------- */
@@ -457,77 +406,43 @@ impl XPathValue {
     }
 }
 
-/// The per-evaluate counters, as an evaluate found them.
-unsafe fn save_counters(ctx: *mut Context) -> (usize, usize) {
-    let b = &(*ctx).budget;
-    (b.eval_ops, b.recursion_depth)
-}
-
-/// Put back what [`save_counters`] found, for the walk this one ran inside.
-unsafe fn restore_counters(ctx: *mut Context, (eval_ops, recursion_depth): (usize, usize)) {
-    let b = &mut (*ctx).budget;
-    b.eval_ops = eval_ops;
-    b.recursion_depth = recursion_depth;
-}
-
-/// Evaluate `ast` against the context, with the context node as the focus.
+/// Evaluate `ast` against the context, with the context node as the focus;
+/// `handler` answers the function calls there is no built-in for.
+///
+/// Each call runs on an evaluation of its own - its budget, its caches - and
+/// only reads the context, so a handler that evaluates again on this same
+/// context cannot disturb the walk it was called from.
 ///
 /// # Safety
-/// `ctx` must be live and `ast` parsed for this context's host; the caller holds
-/// the GVL.
+/// `ctx` must be live and `ast` parsed for this context's host; `handler`'s
+/// data must stay valid for the call; the caller holds the GVL.
 #[allow(clippy::result_large_err)]
-pub unsafe fn evaluate(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error> {
-    let mut err = Error::new();
-    if ctx.is_null() {
+pub unsafe fn evaluate(
+    ctx: *mut Context,
+    ast: &Ast,
+    handler: Option<Handler>,
+) -> Result<XPathValue, Error> {
+    let Some(cx) = ctx.as_ref() else {
+        let mut err = Error::new();
         crate::err_setf!(
             ErrSink::new(&mut err),
             XP_ERR_INTERNAL,
             "evaluate: bad arguments"
         );
         return Err(err);
-    }
+    };
 
     /* Mark the context as evaluating for the duration of the walk, so a handler
      * that re-enters cannot mutate it out from under the evaluator. Nested
      * evaluates just stack the depth. */
-    (*ctx).evaluating += 1;
-
-    /* Per-eval counters reset, and restored on the way out. ast_nodes is NOT
-     * reset: the AST is already built and its budget was checked at parse time.
-     *
-     * The restore is what keeps a budget a budget: a handler can evaluate on
-     * this same context mid-walk, and a nested evaluate that left the counters
-     * at its own values would refill the outer walk's op budget on every
-     * handler call - and leave its recursion depth wrong. */
-    let outer_counters = save_counters(ctx);
-    (*ctx).budget.eval_ops = 0;
-    (*ctx).budget.recursion_depth = 0;
-
-    /* String-value cache snapshot. A nested eval - a handler calling back into
-     * XPath on the same context - sees the outer entries, but anything it adds
-     * is discarded on return, so outer borrowed pointers stay valid. */
-    let snapshot = (*ctx).str_cache.count;
-    /* Document-order index: the outermost evaluate owns the lifecycle. If the
-     * outer had not built it, an inner build is cleared at this exit; if the
-     * outer HAD built it, leave it so the outer's sorts still see it. */
-    let order_was_built = (*ctx).order_index.built != 0;
-
-    let result = match (*ctx).backend {
-        Backend::Xml => eval_ast_xml(handle(ctx), ast),
+    cx.evaluating.set(cx.evaluating.get() + 1);
+    let result = match cx.backend {
+        Backend::Xml => eval_ast_xml(cx, ast, handler),
         #[cfg(feature = "lexbor")]
-        Backend::Html { .. } => eval_ast_html(handle(ctx), ast),
+        Backend::Html { .. } => eval_ast_html(cx, ast, handler),
     };
-    str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
-    if !order_was_built && (*ctx).order_index.built != 0 {
-        doc_order_index_clear(&raw mut (*ctx).order_index);
-    }
-    restore_counters(ctx, outer_counters);
-    (*ctx).evaluating -= 1;
-
-    match result {
-        Ok(v) => Ok(XPathValue::from_owned(v)),
-        Err(_) => Err((*ctx).budget.take_error()),
-    }
+    cx.evaluating.set(cx.evaluating.get() - 1);
+    result.map(XPathValue::from_owned)
 }
 
 /// [`evaluate`] through the `at_xpath` first-match fast path when the shape
@@ -536,44 +451,39 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error
 /// # Safety
 /// As [`evaluate`].
 #[allow(clippy::result_large_err)]
-pub unsafe fn evaluate_first(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error> {
-    let mut err = Error::new();
-    if ctx.is_null() {
+pub unsafe fn evaluate_first(
+    ctx: *mut Context,
+    ast: &Ast,
+    handler: Option<Handler>,
+) -> Result<XPathValue, Error> {
+    let Some(cx) = ctx.as_ref() else {
+        let mut err = Error::new();
         crate::err_setf!(
             ErrSink::new(&mut err),
             XP_ERR_INTERNAL,
             "evaluate_first: bad arguments"
         );
         return Err(err);
-    }
-    /* Reset the per-evaluate counters before the fast path: its descendant walk
-     * charges every visited node, so it is bounded fail-closed exactly like the
-     * full evaluator (which resets these itself). The not-recognised fallback
-     * resets them again; the walk only runs for recognised shapes, so nothing
-     * double-counts. */
-    let outer_counters = save_counters(ctx);
-    (*ctx).budget.eval_ops = 0;
-    (*ctx).budget.recursion_depth = 0;
-
-    let matched = match (*ctx).backend {
-        Backend::Xml => try_first_match_xml(handle(ctx), ast),
-        #[cfg(feature = "lexbor")]
-        Backend::Html { .. } => try_first_match_html(handle(ctx), ast),
     };
-    restore_counters(ctx, outer_counters);
+    /* The fast path charges every visited node to a budget of its own, so it is
+     * bounded fail-closed exactly like the full evaluator; it only runs for
+     * recognised shapes, which call no functions, so it needs no handler. */
+    let matched = match cx.backend {
+        Backend::Xml => try_first_match_xml(cx, ast)?,
+        #[cfg(feature = "lexbor")]
+        Backend::Html { .. } => try_first_match_html(cx, ast)?,
+    };
     match matched {
-        /* Op budget exceeded while walking: fail closed rather than falling back
-         * to the full evaluator, which would hit the same wall. */
-        Err(_) => Err((*ctx).budget.take_error()),
         /* A recognised first-match shape: a 0-or-1-node node-set, without
          * building or sorting the full descendant set. */
-        Ok(Some(node)) => {
+        Some(node) => {
             let mut set = Set::new();
-            if !node.is_null() && nodeset_push(set.as_mut(), node, ctx_budget(ctx)).is_err() {
-                return Err((*ctx).budget.take_error());
+            let mut budget = Budget::with_limits(cx.limits);
+            if !node.is_null() && nodeset_push(set.as_mut(), node, &mut budget).is_err() {
+                return Err(budget.take_error());
             }
             Ok(XPathValue::NodeSet(set))
         }
-        Ok(None) => evaluate(ctx, ast),
+        None => evaluate(ctx, ast, handler),
     }
 }

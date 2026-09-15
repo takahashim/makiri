@@ -3,7 +3,7 @@
 //! It defines nothing.
 
 pub use super::ast::*;
-pub use super::ctx::{FuncResolver, ResolverCall};
+pub use super::ctx::{Handler, ResolverCall};
 pub use super::funcs::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 pub use super::limits::Limits;
 pub use super::msg::{
@@ -18,18 +18,12 @@ pub use super::value::{
 pub use crate::cbuf::BUF_OK;
 
 pub use super::ctx::ctx_document;
-pub use super::ctx::ctx_func_resolver;
 pub use super::ctx::ctx_limits;
-pub use super::ctx::ctx_lookup_ns;
-pub use super::ctx::ctx_lookup_variable_text;
 pub use super::ctx::ctx_node;
-pub use super::ctx::ctx_order_index;
-pub use super::ctx::ctx_str_cache;
 pub use super::ctx::ctx_unprefixed_lax;
-pub use super::ctx::xpath_get_user_data;
 pub use super::ctx::Context;
 pub use super::ctx::XPathValue;
-pub use super::ctx::{ctx_backend, ctx_budget, Backend};
+pub use super::ctx::{ctx_backend, Backend};
 pub use super::limits::limit_ast_node;
 pub use super::limits::limit_check_expr_bytes;
 pub use super::limits::limit_check_func_args;

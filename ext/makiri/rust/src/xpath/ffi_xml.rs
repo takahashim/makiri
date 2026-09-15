@@ -14,10 +14,15 @@ use core::ffi::c_void;
 /// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` must be live and `ast` parsed for this context's host; the caller holds
-/// the GVL.
-pub unsafe fn eval_ast_xml(ctx: *mut Context, ast: &Ast) -> Result<OwnedVal, Reported> {
-    eval::eval_ast::<Xml>(ctx, ast)
+/// `cx`'s document must be this instance's, and `ast` parsed for it; the caller
+/// holds the GVL.
+#[allow(clippy::result_large_err)]
+pub unsafe fn eval_ast_xml(
+    cx: &Context,
+    ast: &Ast,
+    handler: Option<Handler>,
+) -> Result<OwnedVal, Error> {
+    eval::eval_ast::<Xml>(cx, ast, handler)
 }
 
 /// The `at_xpath` first-match short-circuit: `Some(node)` when it handled the
@@ -26,9 +31,7 @@ pub unsafe fn eval_ast_xml(ctx: *mut Context, ast: &Ast) -> Result<OwnedVal, Rep
 ///
 /// # Safety
 /// As [`eval_ast_xml`].
-pub unsafe fn try_first_match_xml(
-    ctx: *mut Context,
-    ast: &Ast,
-) -> Result<Option<*mut c_void>, Reported> {
-    Ok(eval::try_first_match::<Xml>(ctx, ast)?.map(|n| n.to_token() as *mut c_void))
+#[allow(clippy::result_large_err)]
+pub unsafe fn try_first_match_xml(cx: &Context, ast: &Ast) -> Result<Option<*mut c_void>, Error> {
+    Ok(eval::try_first_match::<Xml>(cx, ast)?.map(|n| n.to_token() as *mut c_void))
 }

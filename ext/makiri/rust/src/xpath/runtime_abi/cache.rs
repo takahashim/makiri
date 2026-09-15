@@ -89,27 +89,6 @@ pub unsafe fn str_cache_reindex(c: *mut StrCache, bucket_cap: usize) -> i32 {
     }
     0
 }
-pub unsafe fn str_cache_truncate(c: *mut StrCache, target_count: usize) {
-    if c.is_null() || target_count >= (*c).count {
-        return;
-    }
-    for i in target_count..(*c).count {
-        let e = &*(*c).entries.add(i);
-        (*c).total_bytes = (*c).total_bytes.saturating_sub(e.len);
-        if !e.str_.is_null() {
-            free_c(e.str_ as *mut c_void);
-        }
-    }
-    (*c).count = target_count;
-    if !(*c).buckets.is_null() {
-        if target_count == 0 {
-            ptr::write_bytes((*c).buckets, 0, (*c).bucket_cap);
-            (*c).total_bytes = 0;
-        } else {
-            str_cache_reindex(c, (*c).bucket_cap);
-        }
-    }
-}
 pub unsafe fn str_cache_clear(c: *mut StrCache) {
     if c.is_null() {
         return;

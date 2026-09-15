@@ -12,6 +12,7 @@
 
 use super::abi::*;
 use super::dom::*;
+use super::eval::Evaluation;
 use super::order::nodeset_unique_sorted;
 use super::own::{OwnedText, OwnedVal, Set};
 use super::value::Focus;
@@ -45,7 +46,7 @@ pub type Answer = FnResult<OwnedVal>;
 
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call.
-pub type FnImpl<D> = unsafe fn(*mut Context, &Focus<D>, &[Val]) -> Answer;
+pub type FnImpl<D> = unsafe fn(&mut Evaluation<'_, D>, &Focus<D>, &[Val]) -> Answer;
 
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
 /// routes the call to the registered resolver.
@@ -163,14 +164,14 @@ fn boolean(b: bool) -> Answer {
     Ok(Val::boolean(b).into())
 }
 
-unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context) -> FnResult<OwnedText> {
-    let doc = D::doc_from_void(ctx_document(ctx));
-    val_to_owned_text_or_fail::<D>(doc, v, ctx_budget(ctx))
+unsafe fn to_text<D: Dom>(v: *const Val, ev: &mut Evaluation<'_, D>) -> FnResult<OwnedText> {
+    let doc = ev.doc;
+    val_to_owned_text_or_fail::<D>(doc, v, &raw mut ev.budget)
 }
 
-unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context) -> FnResult<f64> {
-    let doc = D::doc_from_void(ctx_document(ctx));
-    val_to_number_or_fail::<D>(doc, v, ctx_budget(ctx))
+unsafe fn to_number<D: Dom>(v: *const Val, ev: &mut Evaluation<'_, D>) -> FnResult<f64> {
+    let doc = ev.doc;
+    val_to_number_or_fail::<D>(doc, v, &raw mut ev.budget)
 }
 
 /// The string-value of `args[0]`, or of the context node when there is none -
@@ -178,22 +179,22 @@ unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context) -> FnResult<f64> {
 unsafe fn arg_or_self_text<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
-    ctx: *mut Context,
+    ev: &mut Evaluation<'_, D>,
 ) -> FnResult<OwnedText> {
-    let doc = D::doc_from_void(ctx_document(ctx));
+    let doc = ev.doc;
     match args.first() {
-        Some(a) => to_text::<D>(a, ctx),
-        None => node_to_owned_text::<D>(doc, focus.node, ctx_budget(ctx)),
+        Some(a) => to_text::<D>(a, ev),
+        None => node_to_owned_text::<D>(doc, focus.node, &raw mut ev.budget),
     }
 }
 
 /// Pull both string operands, then run `f`. The guards free them on every path.
-unsafe fn two<D: Dom, F>(ctx: *mut Context, args: &[Val], f: F) -> Answer
+unsafe fn two<D: Dom, F>(ev: &mut Evaluation<'_, D>, args: &[Val], f: F) -> Answer
 where
     F: FnOnce(&[u8], &[u8]) -> Answer,
 {
-    let a = to_text::<D>(&args[0], ctx)?;
-    let b = to_text::<D>(&args[1], ctx)?;
+    let a = to_text::<D>(&args[0], ev)?;
+    let b = to_text::<D>(&args[1], ev)?;
     f(a.as_slice(), b.as_slice())
 }
 
@@ -239,20 +240,24 @@ fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
 
 /* ---------- node-set functions ---------- */
 
-unsafe fn fn_last<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_last<D: Dom>(ev: &mut Evaluation<'_, D>, focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 0, err, "last")?;
     number(focus.size as f64)
 }
 
-unsafe fn fn_position<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_position<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 0, err, "position")?;
     number(focus.pos as f64)
 }
 
-unsafe fn fn_count<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_count<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, "count")?;
     let ns = require_nodeset(&args[0], "count", err)?;
     number((*ns).count as f64)
@@ -301,10 +306,10 @@ unsafe fn id_collect<D: Dom>(
     s: &[u8],
     root: D::Node,
     out: &mut Set,
-    ctx: *mut Context,
+    ev: &mut Evaluation<'_, D>,
 ) -> FnResult {
-    let doc = D::doc_from_void(ctx_document(ctx));
-    let budget = ctx_budget(ctx);
+    let doc = ev.doc;
+    let budget = &raw mut ev.budget;
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
         let hit = find_by_id::<D>(doc, root, tok, budget)?;
         if !D::is_null(hit) {
@@ -314,8 +319,8 @@ unsafe fn id_collect<D: Dom>(
     Ok(())
 }
 
-unsafe fn fn_id<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_id<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, "id")?;
 
     if D::IS_XML {
@@ -325,11 +330,11 @@ unsafe fn fn_id<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> A
          * empty node-set. (xml:id is a separate, optional spec.) */
         return Ok(OwnedVal::new());
     }
-    let doc = ctx_document(ctx);
-    if doc.is_null() {
+    if ev.cx.document().is_null() {
         return Ok(OwnedVal::new());
     }
-    let root = D::document_node(D::doc_from_void(doc));
+    let doc = ev.doc;
+    let root = D::document_node(doc);
     /* Collected in a guard, so a failure part-way frees what was found. */
     let mut found = Set::new();
 
@@ -337,19 +342,15 @@ unsafe fn fn_id<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> A
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
         (0..set.count).try_for_each(|i| {
-            let t = node_to_owned_text::<D>(
-                D::doc_from_void(doc),
-                nodeset_at::<D>(set, i),
-                ctx_budget(ctx),
-            )?;
-            id_collect::<D>(t.as_slice(), root, &mut found, ctx)
+            let t = node_to_owned_text::<D>(doc, nodeset_at::<D>(set, i), &raw mut ev.budget)?;
+            id_collect::<D>(t.as_slice(), root, &mut found, ev)
         })?;
     } else {
-        let t = to_text::<D>(&args[0], ctx)?;
-        id_collect::<D>(t.as_slice(), root, &mut found, ctx)?;
+        let t = to_text::<D>(&args[0], ev)?;
+        id_collect::<D>(t.as_slice(), root, &mut found, ev)?;
     }
     /* §4.1: the result is in document order with duplicates removed. */
-    nodeset_unique_sorted::<D>(ctx, found.as_mut());
+    nodeset_unique_sorted::<D>(ev, found.as_mut());
     Ok(Val::nodeset(found.take()).into())
 }
 
@@ -410,26 +411,34 @@ unsafe fn name_emit<D: Dom>(
     string(name, err, fname)
 }
 
-unsafe fn fn_local_name<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn fn_local_name<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
+    let doc = ev.doc;
     arity(args.len(), 0, 1, err, "local-name")?;
     let t = name_target::<D>(args, focus, err, "local-name")?;
     name_emit::<D>(doc, t, false, err, "local-name")
 }
 
-unsafe fn fn_name<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn fn_name<D: Dom>(ev: &mut Evaluation<'_, D>, focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
+    let doc = ev.doc;
     arity(args.len(), 0, 1, err, "name")?;
     let t = name_target::<D>(args, focus, err, "name")?;
     name_emit::<D>(doc, t, true, err, "name")
 }
 
-unsafe fn fn_namespace_uri<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_namespace_uri<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 1, err, "namespace-uri")?;
-    let doc = D::doc_from_void(ctx_document(ctx));
+    let doc = ev.doc;
     let t = name_target::<D>(args, focus, err, "namespace-uri")?;
     if D::is_null(t)
         || (D::node_type(doc, t) != NTYPE_ELEMENT && D::node_type(doc, t) != NTYPE_ATTRIBUTE)
@@ -442,15 +451,15 @@ unsafe fn fn_namespace_uri<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[
 
 /* ---------- string functions ---------- */
 
-unsafe fn fn_string<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_string<D: Dom>(ev: &mut Evaluation<'_, D>, focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 1, err, "string")?;
-    let mut t = arg_or_self_text::<D>(focus, args, ctx)?;
+    let mut t = arg_or_self_text::<D>(focus, args, ev)?;
     Ok(Val::string(t.take()).into())
 }
 
-unsafe fn fn_concat<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_concat<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     if args.len() < 2 {
         return Err(err_setf!(
             err,
@@ -458,11 +467,11 @@ unsafe fn fn_concat<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) 
             "concat(): expected at least 2 arguments"
         ));
     }
-    let budget = ctx_budget(ctx);
+    let budget = &raw mut ev.budget;
     let mut parts = try_vec::<OwnedText>(args.len(), err, "concat")?;
     let mut total = 0usize;
     for a in args {
-        let t = to_text::<D>(a, ctx)?;
+        let t = to_text::<D>(a, ev)?;
         total = match total.checked_add(t.as_slice().len()) {
             Some(n) => n,
             None => return Err(err_setf!(err, XP_ERR_OOM, "concat() size overflow")),
@@ -485,26 +494,34 @@ unsafe fn fn_concat<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) 
     Ok(Val::string(joined).into())
 }
 
-unsafe fn fn_starts_with<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    arity(args.len(), 2, 2, err, "starts-with")?;
-    two::<D, _>(ctx, args, |s, t| boolean(s.starts_with(t)))
-}
-
-unsafe fn fn_contains<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    arity(args.len(), 2, 2, err, "contains")?;
-    two::<D, _>(ctx, args, |s, t| boolean(find_bytes(s, t).is_some()))
-}
-
-unsafe fn fn_substring_before<D: Dom>(
-    ctx: *mut Context,
+unsafe fn fn_starts_with<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
     _focus: &Focus<D>,
     args: &[Val],
 ) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+    let err = ev.budget.sink();
+    arity(args.len(), 2, 2, err, "starts-with")?;
+    two::<D, _>(ev, args, |s, t| boolean(s.starts_with(t)))
+}
+
+unsafe fn fn_contains<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
+    arity(args.len(), 2, 2, err, "contains")?;
+    two::<D, _>(ev, args, |s, t| boolean(find_bytes(s, t).is_some()))
+}
+
+unsafe fn fn_substring_before<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 2, 2, err, "substring-before")?;
-    two::<D, _>(ctx, args, |s, t| {
+    two::<D, _>(ev, args, |s, t| {
         /* the bytes of s before the first t, or "" when t is empty or absent */
         let end = if t.is_empty() {
             0
@@ -515,10 +532,14 @@ unsafe fn fn_substring_before<D: Dom>(
     })
 }
 
-unsafe fn fn_substring_after<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_substring_after<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 2, 2, err, "substring-after")?;
-    two::<D, _>(ctx, args, |s, t| {
+    two::<D, _>(ev, args, |s, t| {
         let rest: &[u8] = if t.is_empty() {
             s
         } else {
@@ -533,15 +554,19 @@ unsafe fn fn_substring_after<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args:
 
 /// substring(s, start[, length]). Positions are 1-based character offsets that
 /// round to nearest, and out-of-range positions clip silently.
-unsafe fn fn_substring<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_substring<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 2, 3, err, "substring")?;
-    let s = to_text::<D>(&args[0], ctx)?;
-    let start_d = to_number::<D>(&args[1], ctx)?;
+    let s = to_text::<D>(&args[0], ev)?;
+    let start_d = to_number::<D>(&args[1], ev)?;
     let bytes = s.as_slice();
     let nchars = count_chars(bytes);
     let end_d = match args.get(2) {
-        Some(a) => start_d + to_number::<D>(a, ctx)?,
+        Some(a) => start_d + to_number::<D>(a, ev)?,
         None => nchars as f64 + 1.0,
     };
 
@@ -562,18 +587,26 @@ unsafe fn fn_substring<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val
     string(&bytes[from..to], err, "substring")
 }
 
-unsafe fn fn_string_length<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_string_length<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 1, err, "string-length")?;
-    let t = arg_or_self_text::<D>(focus, args, ctx)?;
+    let t = arg_or_self_text::<D>(focus, args, ev)?;
     number(count_chars(t.as_slice()) as f64)
 }
 
 /// normalize-space: collapse runs of whitespace and trim the ends.
-unsafe fn fn_normalize_space<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_normalize_space<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 1, err, "normalize-space")?;
-    let s = arg_or_self_text::<D>(focus, args, ctx)?;
+    let s = arg_or_self_text::<D>(focus, args, ev)?;
     let src = s.as_slice();
     let normalized = TextSlot::try_fill(src.len(), |dst| {
         let mut w = 0usize;
@@ -612,13 +645,17 @@ unsafe fn fn_normalize_space<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: 
 ///
 /// The input is valid UTF-8 (the literal lexer validates, and DOM string-values
 /// are valid), but a decode failure fails closed rather than truncating.
-unsafe fn fn_translate<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_translate<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 3, 3, err, "translate")?;
-    let budget = ctx_budget(ctx);
+    let budget = &raw mut ev.budget;
     let mut texts = try_vec::<OwnedText>(3, err, "translate")?;
     for a in args {
-        texts.push(to_text::<D>(a, ctx)?);
+        texts.push(to_text::<D>(a, ev)?);
     }
     let (sv, fv, tv) = match (
         core::str::from_utf8(texts[0].as_slice()),
@@ -681,35 +718,39 @@ unsafe fn fn_translate<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val
 
 /* ---------- boolean functions ---------- */
 
-unsafe fn fn_not<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_not<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, "not")?;
     boolean(!val_to_boolean(&args[0]))
 }
 
-unsafe fn fn_true<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_true<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 0, err, "true")?;
     boolean(true)
 }
 
-unsafe fn fn_false<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_false<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 0, 0, err, "false")?;
     boolean(false)
 }
 
-unsafe fn fn_boolean<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_boolean<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, "boolean")?;
     boolean(val_to_boolean(&args[0]))
 }
 
-unsafe fn fn_lang<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn fn_lang<D: Dom>(ev: &mut Evaluation<'_, D>, focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
+    let doc = ev.doc;
     arity(args.len(), 1, 1, err, "lang")?;
-    let want = to_text::<D>(&args[0], ctx)?;
+    let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
     /* Walk the ancestors for the host's language attribute. Host policy: XPath
      * 1.0 lang() is xml:lang based; HTML uses `lang`, accepting xml:lang as a
@@ -739,48 +780,52 @@ unsafe fn fn_lang<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> 
 
 /* ---------- number functions ---------- */
 
-unsafe fn fn_number<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn fn_number<D: Dom>(ev: &mut Evaluation<'_, D>, focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
+    let doc = ev.doc;
     arity(args.len(), 0, 1, err, "number")?;
     match args.first() {
-        Some(a) => number(to_number::<D>(a, ctx)?),
+        Some(a) => number(to_number::<D>(a, ev)?),
         None => {
             /* number() with no argument is number(string(self)). */
-            let t = node_to_owned_text::<D>(doc, focus.node, ctx_budget(ctx))?;
+            let t = node_to_owned_text::<D>(doc, focus.node, &raw mut ev.budget)?;
             number(bytes_to_number(t.as_slice()))
         }
     }
 }
 
-unsafe fn fn_sum<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_sum<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, "sum")?;
     let ns = require_nodeset(&args[0], "sum", err)?;
-    let budget = ctx_budget(ctx);
+    let budget = &raw mut ev.budget;
     let mut total = 0.0;
     for i in 0..(*ns).count {
         limit_eval_op(budget)?;
-        total += bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ns, i))?);
+        total += bytes_to_number(cached_node_text::<D>(ev, nodeset_at::<D>(ns, i))?);
     }
     number(total)
 }
 
-unsafe fn num1<D: Dom, F>(ctx: *mut Context, args: &[Val], name: &str, f: F) -> Answer
+unsafe fn num1<D: Dom, F>(ev: &mut Evaluation<'_, D>, args: &[Val], name: &str, f: F) -> Answer
 where
     F: FnOnce(f64) -> f64,
 {
-    let err = budget_sink(ctx_budget(ctx));
+    let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, name)?;
-    number(f(to_number::<D>(&args[0], ctx)?))
+    number(f(to_number::<D>(&args[0], ev)?))
 }
 
-unsafe fn fn_floor<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    num1::<D, _>(ctx, args, "floor", f64::floor)
+unsafe fn fn_floor<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    num1::<D, _>(ev, args, "floor", f64::floor)
 }
 
-unsafe fn fn_ceiling<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    num1::<D, _>(ctx, args, "ceiling", f64::ceil)
+unsafe fn fn_ceiling<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    num1::<D, _>(ev, args, "ceiling", f64::ceil)
 }
 
 /// XPath round(): the integer closest to the argument, the one nearer +inf when
@@ -806,8 +851,8 @@ fn round_half_up(d: f64) -> f64 {
     }
 }
 
-unsafe fn fn_round<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    num1::<D, _>(ctx, args, "round", round_half_up)
+unsafe fn fn_round<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    num1::<D, _>(ev, args, "round", round_half_up)
 }
 
 /* ---------- the Nokogiri builtins ---------- */
@@ -827,21 +872,29 @@ fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
     hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
 }
 
-unsafe fn fn_css_class<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
+unsafe fn fn_css_class<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    _focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
     arity(args.len(), 2, 2, err, "nokogiri-builtin:css-class")?;
-    two::<D, _>(ctx, args, |hay, needle| {
+    two::<D, _>(ev, args, |hay, needle| {
         boolean(ws_token_match(Some(hay), Some(needle)))
     })
 }
 
 /// local-name-is(name): true iff the context node's qualified name (for HTML the
 /// lowercase local name) equals the argument.
-unsafe fn fn_local_name_is<D: Dom>(ctx: *mut Context, focus: &Focus<D>, args: &[Val]) -> Answer {
-    let err = budget_sink(ctx_budget(ctx));
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn fn_local_name_is<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    args: &[Val],
+) -> Answer {
+    let err = ev.budget.sink();
+    let doc = ev.doc;
     arity(args.len(), 1, 1, err, "nokogiri-builtin:local-name-is")?;
-    let want = to_text::<D>(&args[0], ctx)?;
+    let want = to_text::<D>(&args[0], ev)?;
     boolean(!D::is_null(focus.node) && D::qualified_name(doc, focus.node) == want.as_slice())
 }
 
@@ -877,17 +930,21 @@ unsafe fn of_type_pos<D: Dom>(node: D::Node, forward: bool, doc: D::Doc) -> f64 
     pos as f64
 }
 
-unsafe fn fn_of_type_pos<D: Dom>(ctx: *mut Context, focus: &Focus<D>, _args: &[Val]) -> Answer {
-    let doc = D::doc_from_void(ctx_document(ctx));
+unsafe fn fn_of_type_pos<D: Dom>(
+    ev: &mut Evaluation<'_, D>,
+    focus: &Focus<D>,
+    _args: &[Val],
+) -> Answer {
+    let doc = ev.doc;
     number(of_type_pos::<D>(focus.node, true, doc))
 }
 
 unsafe fn fn_of_type_pos_last<D: Dom>(
-    ctx: *mut Context,
+    ev: &mut Evaluation<'_, D>,
     focus: &Focus<D>,
     _args: &[Val],
 ) -> Answer {
-    let doc = D::doc_from_void(ctx_document(ctx));
+    let doc = ev.doc;
     number(of_type_pos::<D>(focus.node, false, doc))
 }
 

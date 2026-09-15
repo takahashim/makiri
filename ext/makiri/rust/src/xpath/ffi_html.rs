@@ -11,10 +11,15 @@ use core::ffi::c_void;
 /// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` must be live and `ast` parsed for this context's host; the caller holds
-/// the GVL.
-pub unsafe fn eval_ast_html(ctx: *mut Context, ast: &Ast) -> Result<OwnedVal, Reported> {
-    eval::eval_ast::<Html>(ctx, ast)
+/// `cx`'s document must be this instance's, and `ast` parsed for it; the caller
+/// holds the GVL.
+#[allow(clippy::result_large_err)]
+pub unsafe fn eval_ast_html(
+    cx: &Context,
+    ast: &Ast,
+    handler: Option<Handler>,
+) -> Result<OwnedVal, Error> {
+    eval::eval_ast::<Html>(cx, ast, handler)
 }
 
 /// The `at_xpath` first-match short-circuit: `Some(node)` when it handled the
@@ -23,9 +28,7 @@ pub unsafe fn eval_ast_html(ctx: *mut Context, ast: &Ast) -> Result<OwnedVal, Re
 ///
 /// # Safety
 /// As [`eval_ast_html`].
-pub unsafe fn try_first_match_html(
-    ctx: *mut Context,
-    ast: &Ast,
-) -> Result<Option<*mut c_void>, Reported> {
-    Ok(eval::try_first_match::<Html>(ctx, ast)?.map(|n| n as *mut c_void))
+#[allow(clippy::result_large_err)]
+pub unsafe fn try_first_match_html(cx: &Context, ast: &Ast) -> Result<Option<*mut c_void>, Error> {
+    Ok(eval::try_first_match::<Html>(cx, ast)?.map(|n| n as *mut c_void))
 }
