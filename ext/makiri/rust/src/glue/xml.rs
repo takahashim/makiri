@@ -67,10 +67,8 @@ unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
 }
 
 /// The XML node behind a wrapper, typed. `Err(TypeError)` for an HTML node.
-unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> Result<NodeId, Error> {
-    Ok(NodeId::from_token(
-        xml_node_unwrap(Value::from_raw(rb_node))? as usize,
-    ))
+fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
+    Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
 }
 
 pub use crate::bridge::string::ruby_copy_bytes;
@@ -271,21 +269,18 @@ impl Unit {
 }
 
 /// Map a parse status onto its Ruby exception.
-unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
-    let class = |v: VALUE| {
-        magnus::ExceptionClass::from_value(Value::from_raw(v)).expect("an exception class")
-    };
+fn parse_status_error(status: Status, unit: Unit) -> Error {
     match status {
-        Status::Syntax => Error::new(class(EXC_XML_SYNTAX_ERROR.raw()), unit.malformed()),
-        Status::Limit => Error::new(class(EXC_XML_LIMIT_EXCEEDED.raw()), unit.budget()),
+        Status::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
+        Status::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
         Status::Version => Error::new(
-            class(EXC_XML_SYNTAX_ERROR.raw()),
+            EXC_XML_SYNTAX_ERROR.exception(),
             "unsupported XML version (only XML 1.0 is supported)",
         ),
         /* `Ok` never reaches here (it means no failure); the rest are the
          * generic "failed to parse" bucket. */
         Status::Ok | Status::Oom | Status::Internal => {
-            Error::new(class(EXC_ERROR.raw()), unit.failed())
+            Error::new(EXC_ERROR.exception(), unit.failed())
         }
     }
 }
@@ -296,11 +291,11 @@ unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
 
 /// The (Document VALUE, context node) a query runs against: for a Document the
 /// context is the arena's document node, for a node it is that node.
-unsafe fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
+fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
     /* `xml_node_unwrap` is kind-checked - `Err` for a non-XML node - and
      * resolves an XML Document to its document node. */
     let document = keepalive_document(rb_self)?;
-    Ok((document, typed_xml_node_unwrap(rb_self.as_raw())?))
+    Ok((document, typed_xml_node_unwrap(rb_self)?))
 }
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.
@@ -439,11 +434,11 @@ fn at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error>
  * synthetic "xmlns" prefix, which a bare type selector binds to. */
 
 /// Whether the (already prefix-normalised) namespace hash carries "xmlns".
-unsafe fn css_default_namespace(rb_ns: Option<Value>) -> bool {
+fn css_default_namespace(rb_ns: Option<Value>) -> bool {
     let Some(h) = rb_ns.and_then(RHash::from_value) else {
         return false;
     };
-    let ruby = Ruby::get_unchecked();
+    let ruby = Ruby::get_with(h);
     matches!(h.get(ruby.str_new(CSS_DEFAULT_NS_PREFIX)), Some(found) if !found.is_nil())
 }
 
@@ -470,9 +465,7 @@ unsafe fn css_compile_or_raise(
             || "invalid CSS selector".to_string(),
             |m| m.to_string_lossy().into_owned(),
         );
-        let class = magnus::ExceptionClass::from_value(EXC_CSS_SYNTAX_ERROR.value())
-            .expect("Makiri::CSS::SyntaxError");
-        return Err(Error::new(class, msg));
+        return Err(Error::new(EXC_CSS_SYNTAX_ERROR.exception(), msg));
     }
     Err(xpath_error(&error))
 }

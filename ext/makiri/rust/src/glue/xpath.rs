@@ -84,18 +84,22 @@ pub use crate::init::EXC_XPATH_SYNTAX_ERROR;
 /// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
 /// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
 /// magnus raises once its frames - and the context they own - are gone.
-pub(crate) unsafe fn xpath_error(err: &XPathError) -> Error {
+pub(crate) fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
-        XP_ERR_SYNTAX => EXC_XPATH_SYNTAX_ERROR.raw(),
-        XP_ERR_LIMIT => EXC_XPATH_LIMIT_EXCEEDED.raw(),
-        _ => error_class().as_raw(),
+        XP_ERR_SYNTAX => EXC_XPATH_SYNTAX_ERROR.exception(),
+        XP_ERR_LIMIT => EXC_XPATH_LIMIT_EXCEEDED.exception(),
+        _ => error_class(),
     };
-    let msg =
-        rb_sys::rb_utf8_str_new_cstr(err.message().unwrap_or(c"XPath evaluation failed").as_ptr());
-    let exc = rb_sys::rb_exc_new_str(class, msg);
-    match magnus::Exception::from_value(Value::from_raw(exc)) {
-        Some(e) => Error::from(e),
-        None => Error::new(error_class(), "XPath evaluation failed"),
+    let ruby = Ruby::get_with(class);
+    /* The message's bytes as they are, tagged UTF-8 - not a lossy copy. */
+    let bytes = err
+        .message()
+        .unwrap_or(c"XPath evaluation failed")
+        .to_bytes();
+    let msg = ruby.enc_str_new(bytes, ruby.utf8_encoding());
+    match class.new_instance((msg,)) {
+        Ok(e) => Error::from(e),
+        Err(e) => e,
     }
 }
 

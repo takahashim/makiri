@@ -325,7 +325,7 @@ fn raise_owned(msg: String) -> ! {
      * one. The CString must outlive the exception's construction, which it
      * does - rb_exc_new copies. */
     unsafe {
-        let exc = rb_sys::rb_exc_new_cstr(error_class_raw(), ptr);
+        let exc = rb_sys::rb_exc_new_cstr(error_class().as_raw(), ptr);
         drop_before_raise(c);
         rb_sys::rb_exc_raise(exc)
     }
@@ -334,10 +334,6 @@ fn raise_owned(msg: String) -> ! {
 /// Release the formatted message before the longjmp that never returns.
 fn drop_before_raise<T>(v: T) {
     drop(v);
-}
-
-unsafe fn error_class_raw() -> VALUE {
-    error_class().as_raw()
 }
 
 /* ------------------------------------------------------------------ */

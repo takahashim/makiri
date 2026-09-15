@@ -4,72 +4,61 @@
 //! declarations are stored as ordinary attribute nodes - qname `xmlns` or
 //! `xmlns:PREFIX` - so all four queries below are just tree reads.
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{prelude::*, Error, RArray, RClass, RHash, RString, Ruby, Value};
+use magnus::value::{LazyId, Opaque};
+use magnus::{prelude::*, Error, RArray, RClass, RHash, RObject, RString, Ruby, Value};
 use std::sync::OnceLock;
 
 use super::abi::*;
 
 /// The `Makiri::XML::Namespace` class, stashed at init.
-static NAMESPACE_CLASS: OnceLock<rb_sys::VALUE> = OnceLock::new();
+static NAMESPACE_CLASS: OnceLock<Opaque<RClass>> = OnceLock::new();
+
+/// The instance variables a Namespace keeps its two fields in.
+static PREFIX: LazyId = LazyId::new("@prefix");
+static HREF: LazyId = LazyId::new("@href");
 
 pub fn set_namespace_class(klass: RClass) {
-    NAMESPACE_CLASS
-        .set(klass.as_raw())
-        .expect("Makiri::XML::Namespace is initialized once");
+    if NAMESPACE_CLASS.set(Opaque::from(klass)).is_err() {
+        panic!("Makiri::XML::Namespace is initialized once");
+    }
 }
 
-unsafe fn namespace_class() -> RClass {
-    RClass::from_value(Value::from_raw(
+fn namespace_class(ruby: &Ruby) -> RClass {
+    ruby.get_inner(
         *NAMESPACE_CLASS
             .get()
             .expect("Makiri::XML::Namespace initialized"),
-    ))
-    .expect("Makiri::XML::Namespace")
+    )
 }
 
-fn ivar_ids() -> (rb_sys::ID, rb_sys::ID) {
-    static IDS: OnceLock<(rb_sys::ID, rb_sys::ID)> = OnceLock::new();
-    *IDS.get_or_init(|| {
-        // SAFETY: namespace methods run under the GVL; Ruby interns IDs for
-        // the VM lifetime.
-        unsafe {
-            (
-                rb_sys::rb_intern(c"@prefix".as_ptr()),
-                rb_sys::rb_intern(c"@href".as_ptr()),
-            )
-        }
+pub fn new_ns(ruby: &Ruby, prefix: Value, href: Value) -> Result<Value, Error> {
+    let ns = RObject::from_value(namespace_class(ruby).obj_alloc()?)
+        .expect("Makiri::XML::Namespace allocates a plain object");
+    ns.ivar_set(*PREFIX, prefix)?;
+    ns.ivar_set(*HREF, href)?;
+    Ok(ns.as_value())
+}
+
+/// A Namespace receiver as the object that holds its fields.
+fn ns_object(rb_self: Value) -> Result<RObject, Error> {
+    RObject::from_value(rb_self).ok_or_else(|| {
+        Error::new(
+            Ruby::get_with(rb_self).exception_type_error(),
+            "not a Makiri::XML::Namespace",
+        )
     })
 }
 
-pub unsafe fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
-    let (p_id, h_id) = ivar_ids();
-    let ns = rb_sys::rb_obj_alloc(namespace_class().as_raw());
-    rb_sys::rb_ivar_set(ns, p_id, prefix.as_raw());
-    rb_sys::rb_ivar_set(ns, h_id, href.as_raw());
-    Ok(Value::from_raw(ns))
-}
-
 pub fn ns_prefix(rb_self: Value) -> Result<Value, Error> {
-    unsafe {
-        Ok(Value::from_raw(rb_sys::rb_ivar_get(
-            rb_self.as_raw(),
-            ivar_ids().0,
-        )))
-    }
+    ns_object(rb_self)?.ivar_get(*PREFIX)
 }
 
 pub fn ns_href(rb_self: Value) -> Result<Value, Error> {
-    unsafe {
-        Ok(Value::from_raw(rb_sys::rb_ivar_get(
-            rb_self.as_raw(),
-            ivar_ids().1,
-        )))
-    }
+    ns_object(rb_self)?.ivar_get(*HREF)
 }
 
 pub fn ns_equal(rb_self: Value, other: Value) -> Result<bool, Error> {
-    if !other.is_kind_of(unsafe { namespace_class() }) {
+    if !other.is_kind_of(namespace_class(&Ruby::get_with(rb_self))) {
         return Ok(false);
     }
     Ok(ns_prefix(rb_self)?.eql(ns_prefix(other)?)? && ns_href(rb_self)?.eql(ns_href(other)?)?)
@@ -110,7 +99,7 @@ pub fn namespace(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, Error> {
         } else {
             str_span(ruby, d, d.node(id).prefix)
         };
-        new_ns(prefix, str_span(ruby, d, d.node(id).ns_uri))
+        new_ns(ruby, prefix, str_span(ruby, d, d.node(id).ns_uri))
     }
 }
 
@@ -129,7 +118,7 @@ pub fn namespace_definitions(ruby: &Ruby, this: super::XmlSelf) -> Result<RArray
                     } else {
                         utf8(ruby, p).as_value()
                     };
-                    arr.push(new_ns(prefix, utf8(ruby, u).as_value())?)?;
+                    arr.push(new_ns(ruby, prefix, utf8(ruby, u).as_value())?)?;
                 }
                 a = d.next(at);
             }
