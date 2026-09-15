@@ -5,8 +5,8 @@ require "spec_helper"
 # Minimal XML tokenizer + tree builder (§14 steps 5-6): elements, attributes and
 # character data, with fail-closed well-formedness errors. Namespaces, entities,
 # comments/CDATA/PI/XML-decl/DOCTYPE arrive in later steps. Tree *structure* is
-# asserted natively (Makiri.__c_selftest -> xml::selftest::parse_selftest, also run under
-# the sanitizer); these specs pin the accept/reject contract from Ruby.
+# asserted natively (xml::selftest's parse checks, run by `cargo test` and under
+# ASan in CI); these specs pin the accept/reject contract from Ruby.
 RSpec.describe "Makiri::XML minimal parse" do
   def ok?(src)
     Makiri::XML(src).is_a?(Makiri::XML::Document)

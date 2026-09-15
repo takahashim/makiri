@@ -1,9 +1,11 @@
-//! The three C self-tests (mkr_xml_node_selftest / mkr_xml_parse_selftest /
-//! mkr_xml_mutate_selftest), ported check-for-check so Makiri.__c_selftest
-//! exercises the engine. The tree is an index arena, so the checks address
+//! The arena, tree and mutation self-checks, run by `cargo test`.
+//!
+//! They were the C self-tests (mkr_xml_node_selftest / mkr_xml_parse_selftest /
+//! mkr_xml_mutate_selftest), ported check-for-check, and reach edge and
+//! overflow states no public API can construct. Each returns 0, or the number
+//! of the check that failed. The tree is an index arena, so the checks address
 //! nodes by `NodeId` through the `Document`.
 
-/* Test entry points, called only from the Ruby glue with no arguments. */
 #![allow(clippy::missing_safety_doc)]
 
 use crate::xml::mutate;
@@ -118,7 +120,7 @@ unsafe fn rejects(s: &[u8], want: Status) -> bool {
 
 /* ---- mkr_xml_node_selftest ---- */
 
-pub fn node_selftest() -> i32 {
+fn node_selftest() -> i32 {
     unsafe { node_selftest_impl() }
 }
 
@@ -214,7 +216,7 @@ unsafe fn node_selftest_impl() -> i32 {
 
 /* ---- mkr_xml_parse_selftest ---- */
 
-pub fn parse_selftest() -> i32 {
+fn parse_selftest() -> i32 {
     unsafe { parse_selftest_impl() }
 }
 
@@ -791,7 +793,7 @@ unsafe fn parse_selftest_impl() -> i32 {
 
 /* ---- mkr_xml_mutate_selftest ---- */
 
-pub fn mutate_selftest() -> i32 {
+fn mutate_selftest() -> i32 {
     unsafe { mutate_selftest_impl() }
 }
 
@@ -1130,4 +1132,22 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
         return 48;
     }
     0
+}
+
+#[test]
+fn node_checks_pass() {
+    let rc = node_selftest();
+    assert_eq!(rc, 0, "node self-check {rc} failed");
+}
+
+#[test]
+fn parse_checks_pass() {
+    let rc = parse_selftest();
+    assert_eq!(rc, 0, "parse self-check {rc} failed");
+}
+
+#[test]
+fn mutate_checks_pass() {
+    let rc = mutate_selftest();
+    assert_eq!(rc, 0, "mutate self-check {rc} failed");
 }

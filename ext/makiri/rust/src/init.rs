@@ -67,45 +67,6 @@ exported! {
  * the test hooks                                                     *
  * ------------------------------------------------------------------ */
 
-/// `Makiri.__c_selftest` - the arena/tree/mutation self-checks, which exercise
-/// edge and overflow paths real input cannot reach.
-///
-/// The name kept its `__c_` prefix although nothing here is C any more: it is a
-/// documented test hook that `spec/safe_core_spec.rb` and the sanitizer runs
-/// call, and renaming it would buy nothing.
-///
-/// Two of the five checks the C version ran are gone with the C. `mkr_core_selftest`
-/// covered the allocator, the buffer and the UTF-8 validator, all of which are
-/// now proved by Kani (`falloc::verify`, `calloc_verify`, `cbuf::verify`,
-/// `cutf8::verify`) rather than sampled here - and its span/spanbuf checks have
-/// no subject at all, since Rust uses slices. `mkr_xpath_xml_selftest` drove the
-/// XML engine end to end, which the spec suite does through the public API.
-fn c_selftest(ruby: &Ruby) -> Result<bool, Error> {
-    let checks: [(&str, i32); 3] = [
-        (
-            "mkr_xml_node_selftest",
-            crate::xml::selftest::node_selftest(),
-        ),
-        (
-            "mkr_xml_parse_selftest",
-            crate::xml::selftest::parse_selftest(),
-        ),
-        (
-            "mkr_xml_mutate_selftest",
-            crate::xml::selftest::mutate_selftest(),
-        ),
-    ];
-    for (name, rc) in checks {
-        if rc != 0 {
-            return Err(Error::new(
-                error_class(ruby),
-                format!("{name} failed at check {rc}"),
-            ));
-        }
-    }
-    Ok(true)
-}
-
 /// Whether this build carries the allocation-failure hook.
 ///
 /// False in a normal build, so `rake oom`'s harness fails loudly on the wrong
@@ -160,12 +121,6 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Value {
             0,
         ))
     }
-}
-
-fn error_class(ruby: &Ruby) -> magnus::ExceptionClass {
-    let _ = ruby;
-    magnus::ExceptionClass::from_value(unsafe { Value::from_raw(mkr_eError) })
-        .expect("Makiri::Error is a Class < Exception")
 }
 
 /* ------------------------------------------------------------------ *
@@ -360,7 +315,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         crate::glue::xml_node::mkr_init_xml_node();
     }
 
-    makiri.define_singleton_method("__c_selftest", function!(c_selftest, 0))?;
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
     makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;

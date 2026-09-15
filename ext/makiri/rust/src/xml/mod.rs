@@ -14,8 +14,8 @@ pub mod index;
 pub mod mutate;
 pub mod parse;
 pub mod qname;
-#[cfg(feature = "ruby")]
-pub mod selftest;
+#[cfg(test)]
+mod selftest;
 pub mod serialize;
 pub mod tree;
 
