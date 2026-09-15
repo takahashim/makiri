@@ -432,7 +432,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
 /// an XML node too, whose pointer is an arena node rather than a Lexbor one. A
 /// node from another document fails closed.
 unsafe fn push_result_node(
-    budget: *mut Budget,
+    budget: &mut Budget,
     document: VALUE,
     rb_node: VALUE,
     set: &mut NodeSet,
@@ -451,7 +451,7 @@ unsafe fn push_result_node(
         err.set("handler returned an unusable node");
         return false;
     };
-    if set.push_token(n, &mut *budget).is_err() {
+    if set.push_token(n, budget).is_err() {
         err.set("out of memory building handler result");
         return false;
     }
@@ -501,7 +501,7 @@ impl ErrBuf {
 
 /// Ruby return value -> engine value.
 unsafe fn ruby_to_out(
-    budget: *mut Budget,
+    budget: &mut Budget,
     document: VALUE,
     r: VALUE,
     out: *mut Val,
@@ -558,7 +558,7 @@ unsafe fn ruby_to_out(
         err.set("handler result could not be converted to a string");
         return false;
     };
-    let vv = match ruby_try_verified_text(sv.as_raw(), (*budget).limits.max_string_bytes) {
+    let vv = match ruby_try_verified_text(sv.as_raw(), budget.limits.max_string_bytes) {
         Ok(vv) => vv,
         Err(reason) => {
             let reason = reason.to_string_lossy();
@@ -607,7 +607,7 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
         c.nargs as c_int,
         c.argv.as_ptr(),
     );
-    c.ok = ruby_to_out(c.budget, (*c.bridge).document, r, c.out, &mut c.err);
+    c.ok = ruby_to_out(&mut *c.budget, (*c.bridge).document, r, c.out, &mut c.err);
     rb_sys::Qnil as VALUE
 }
 

@@ -103,10 +103,10 @@ unsafe fn apply_predicates<'e, D: Dom<'e>>(
                 /* Charge per candidate: this replaces a per-node generic
                  * predicate eval, which would tick through eval_node, so the
                  * shortcut stays under the same budget as the path it skips. */
-                limit_eval_op(&raw mut ev.budget)?;
+                ev.budget.charge_op()?;
                 let n = inout.get::<D>(doc, i);
                 if attr_pred_matches::<D>(doc, &ap, n) {
-                    kept.push::<D>(n, &raw mut ev.budget)?;
+                    kept.push::<D>(n, &mut ev.budget)?;
                 }
             }
             *inout = kept;
@@ -128,7 +128,7 @@ unsafe fn apply_predicates<'e, D: Dom<'e>>(
                 _ => val_to_boolean(&v),
             };
             if keep {
-                kept.push::<D>(n, &raw mut ev.budget)?;
+                kept.push::<D>(n, &mut ev.budget)?;
             }
         }
         *inout = kept;
@@ -181,7 +181,6 @@ unsafe fn eval_step<'e, D: Dom<'e>>(
         ));
     }
     let test = &step.test;
-    let budget: *mut Budget = &raw mut ev.budget;
 
     /* Resolve the namespace prefix once up front (covering `prefix:local` and
      * `prefix:*`): a uniform RUNTIME error rather than a silently empty match,
@@ -205,7 +204,7 @@ unsafe fn eval_step<'e, D: Dom<'e>>(
 
     let preds = step.predicates.as_slice();
     if preds.is_empty() {
-        if !try_descendant_index::<D>(doc, step, context_set, &mut result, &b, budget)? {
+        if !try_descendant_index::<D>(doc, step, context_set, &mut result, &b, &mut ev.budget)? {
             /* No-predicate walk: every context goes straight into the result
              * buffer regardless of the post-pass, saving the per-context
              * fragment the predicate path needs. */
@@ -218,12 +217,12 @@ unsafe fn eval_step<'e, D: Dom<'e>>(
                      * cap, which bounds only what is pushed, leaves the walk
                      * itself bounded by document size, defeating max_eval_ops on
                      * a descendant walk that matches nothing. */
-                    if let Err(e) = limit_eval_op(budget) {
+                    if let Err(e) = ev.budget.charge_op() {
                         failure = Some(e);
                         return true;
                     }
                     if node_principal_match::<D>(doc, test, n, axis, &b) {
-                        if let Err(e) = result.push::<D>(n, budget) {
+                        if let Err(e) = result.push::<D>(n, &mut ev.budget) {
                             failure = Some(e);
                             return true;
                         }
@@ -248,12 +247,12 @@ unsafe fn eval_step<'e, D: Dom<'e>>(
             {
                 let frag = &mut fragment;
                 let mut visit = |n: D::Node| -> bool {
-                    if let Err(e) = limit_eval_op(budget) {
+                    if let Err(e) = ev.budget.charge_op() {
                         failure = Some(e);
                         return true;
                     }
                     if node_principal_match::<D>(doc, test, n, axis, &b) {
-                        if let Err(e) = frag.push::<D>(n, budget) {
+                        if let Err(e) = frag.push::<D>(n, &mut ev.budget) {
                             failure = Some(e);
                             return true;
                         }
@@ -272,7 +271,7 @@ unsafe fn eval_step<'e, D: Dom<'e>>(
              * meaning. */
             apply_predicates::<D>(ev, preds, &mut fragment)?;
             for i in 0..fragment.len() {
-                result.push::<D>(fragment.get::<D>(doc, i), &raw mut ev.budget)?;
+                result.push::<D>(fragment.get::<D>(doc, i), &mut ev.budget)?;
             }
         }
     }
@@ -329,7 +328,7 @@ unsafe fn compare_eq<'e, D: Dom<'e>>(
             for i in 0..ls.len() {
                 let a = cached_node_text::<D>(ev, nodeset_at::<D>(doc, ls, i))?;
                 for j in 0..rs.len() {
-                    limit_eval_op(&raw mut ev.budget)?;
+                    ev.budget.charge_op()?;
                     let b = cached_node_text::<D>(ev, nodeset_at::<D>(doc, rs, j))?;
                     if (ev.str_cache.text(a) == ev.str_cache.text(b)) == want_eq {
                         return Ok(true);
@@ -351,8 +350,8 @@ unsafe fn compare_eq<'e, D: Dom<'e>>(
                     val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r)
                 }
                 _ => {
-                    let ls = val_to_owned_text_or_fail::<D>(doc, l, &raw mut ev.budget)?;
-                    let rs = val_to_owned_text_or_fail::<D>(doc, r, &raw mut ev.budget)?;
+                    let ls = val_to_owned_text_or_fail::<D>(doc, l, &mut ev.budget)?;
+                    let rs = val_to_owned_text_or_fail::<D>(doc, r, &mut ev.budget)?;
                     ls.as_slice() == rs.as_slice()
                 }
             };
@@ -362,7 +361,7 @@ unsafe fn compare_eq<'e, D: Dom<'e>>(
     match sc.get() {
         ValRef::Number(target) => {
             for i in 0..set.len() {
-                limit_eval_op(&raw mut ev.budget)?;
+                ev.budget.charge_op()?;
                 let s = cached_node_number::<D>(ev, nodeset_at::<D>(doc, set, i))?;
                 if (s == target) == want_eq {
                     return Ok(true);
@@ -375,10 +374,10 @@ unsafe fn compare_eq<'e, D: Dom<'e>>(
             Ok(if want_eq { eq } else { !eq })
         }
         _ => {
-            let target = val_to_owned_text_or_fail::<D>(doc, sc, &raw mut ev.budget)?;
+            let target = val_to_owned_text_or_fail::<D>(doc, sc, &mut ev.budget)?;
             let want = target.as_slice();
             for i in 0..set.len() {
-                limit_eval_op(&raw mut ev.budget)?;
+                ev.budget.charge_op()?;
                 let s = cached_node_text::<D>(ev, nodeset_at::<D>(doc, set, i))?;
                 if (ev.str_cache.text(s) == want) == want_eq {
                     return Ok(true);
@@ -417,7 +416,7 @@ unsafe fn compare_rel<'e, D: Dom<'e>>(
             for i in 0..ls.len() {
                 let a = cached_node_number::<D>(ev, nodeset_at::<D>(doc, ls, i))?;
                 for j in 0..rs.len() {
-                    limit_eval_op(&raw mut ev.budget)?;
+                    ev.budget.charge_op()?;
                     let b = cached_node_number::<D>(ev, nodeset_at::<D>(doc, rs, j))?;
                     if rel_hit(op, a, b) {
                         return Ok(true);
@@ -429,14 +428,14 @@ unsafe fn compare_rel<'e, D: Dom<'e>>(
         (Some(set), None) => (set, r, false),
         (None, Some(set)) => (set, l, true),
         (None, None) => {
-            let a = val_to_number_or_fail::<D>(doc, l, &raw mut ev.budget)?;
-            let b = val_to_number_or_fail::<D>(doc, r, &raw mut ev.budget)?;
+            let a = val_to_number_or_fail::<D>(doc, l, &mut ev.budget)?;
+            let b = val_to_number_or_fail::<D>(doc, r, &mut ev.budget)?;
             return Ok(rel_hit(op, a, b));
         }
     };
-    let scn = val_to_number_or_fail::<D>(doc, sc, &raw mut ev.budget)?;
+    let scn = val_to_number_or_fail::<D>(doc, sc, &mut ev.budget)?;
     for i in 0..set.len() {
-        limit_eval_op(&raw mut ev.budget)?;
+        ev.budget.charge_op()?;
         let nv = cached_node_number::<D>(ev, nodeset_at::<D>(doc, set, i))?;
         let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
         if rel_hit(op, a, b) {
@@ -466,7 +465,7 @@ unsafe fn union_nodeset<'e, D: Dom<'e>>(
     let mut merged = NodeSet::new();
     for set in [ls, rs] {
         for i in 0..set.len() {
-            merged.push::<D>(nodeset_at::<D>(doc, set, i), &raw mut ev.budget)?;
+            merged.push::<D>(nodeset_at::<D>(doc, set, i), &mut ev.budget)?;
         }
     }
     /* §3.3: the result of '|' is a node-set in document order, which the
@@ -591,7 +590,7 @@ unsafe fn first_match_walk<'e, D: Dom<'e>>(
     let b = Bindings::<D>::new(ev.cx, doc, pre);
     let mut cur = doc.first_child(start);
     while let Some(n) = cur {
-        limit_eval_op(&raw mut ev.budget)?;
+        ev.budget.charge_op()?;
         if node_principal_match::<D>(doc, test, n, step.axis, &b)
             && first_node_ok::<D>(doc, step, n)
         {
@@ -633,7 +632,7 @@ unsafe fn eval_path<'e, D: Dom<'e>>(
         self_node
     };
     if let Some(n) = start {
-        seed.push::<D>(n, &raw mut ev.budget)?;
+        seed.push::<D>(n, &mut ev.budget)?;
     }
     eval_steps::<D>(ev, &p.steps, &mut seed)
 }
@@ -770,8 +769,8 @@ unsafe fn eval_binop<'e, D: Dom<'e>>(
         Op::Eq | Op::Ne => Ok(Val::boolean(compare_eq::<D>(ev, l, r, op)?)),
         Op::Lt | Op::Le | Op::Gt | Op::Ge => Ok(Val::boolean(compare_rel::<D>(ev, l, r, op)?)),
         Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod => {
-            let a = val_to_number_or_fail::<D>(doc, l, &raw mut ev.budget)?;
-            let c = val_to_number_or_fail::<D>(doc, r, &raw mut ev.budget)?;
+            let a = val_to_number_or_fail::<D>(doc, l, &mut ev.budget)?;
+            let c = val_to_number_or_fail::<D>(doc, r, &mut ev.budget)?;
             Ok(Val::number(match op {
                 Op::Add => a + c,
                 Op::Sub => a - c,
@@ -798,7 +797,7 @@ unsafe fn eval_negate<'e, D: Dom<'e>>(
 ) -> EvalResult<Val> {
     let doc = ev.doc;
     let v = eval_node::<D>(ev, x, focus)?;
-    let d = val_to_number_or_fail::<D>(doc, &v, &raw mut ev.budget)?;
+    let d = val_to_number_or_fail::<D>(doc, &v, &mut ev.budget)?;
     Ok(Val::number(-d))
 }
 

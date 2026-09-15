@@ -33,7 +33,7 @@ use core::ffi::{c_char, c_int};
 
 use crate::falloc::try_box;
 use crate::text::VerifiedText;
-use crate::xpath::limits::{budget_sink, Budget};
+use crate::xpath::limits::Budget;
 use crate::xpath::msg::{ErrSink, Reported};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
@@ -62,6 +62,9 @@ pub const ERR_INTERNAL: c_int = crate::xpath::msg::XP_ERR_INTERNAL;
 
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.
+///
+/// The budget stays a pointer here: every builder takes the `Build` shared, and
+/// the lowering is reworked with the rest of the CSS front end.
 pub(crate) struct Build {
     pub budget: *mut Budget,
     pub err: ErrSink,
@@ -98,9 +101,9 @@ impl Build {
 pub unsafe fn compile_owned(
     selector: VerifiedText,
     ns: *const CssNs,
-    budget: *mut Budget,
+    budget: &mut Budget,
 ) -> Result<Box<Ast>, Reported> {
-    let err = budget_sink(budget);
+    let err = budget.sink();
     let b = Build { budget, err, ns };
 
     let parsed = match parser::parse(selector) {

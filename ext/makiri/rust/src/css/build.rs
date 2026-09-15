@@ -13,7 +13,7 @@ use super::Build;
 use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
-use crate::xpath::limits::{check_ast_depth, limit_ast_node};
+use crate::xpath::limits::check_ast_depth;
 use crate::xpath::msg::Reported;
 
 /// A node under construction, or the proof its build failed with `*err` set.
@@ -21,7 +21,7 @@ pub(crate) type Built = Result<Expr, Reported>;
 
 /// Charge one expression node against the AST budget.
 pub(crate) unsafe fn charge(b: &Build) -> Result<(), Reported> {
-    limit_ast_node(b.budget)
+    (*b.budget).charge_ast_node()
 }
 
 /// `kind` as a node, refused if it would nest the AST too deeply.

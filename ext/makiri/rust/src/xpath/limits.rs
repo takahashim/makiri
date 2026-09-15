@@ -204,20 +204,6 @@ impl Budget {
     }
 }
 
-/// Where `b` reports: its error slot, or nowhere for a null budget - which is
-/// also unbounded, the pairing the best-effort paths want.
-///
-/// # Safety
-/// `b` must be null or live.
-#[inline]
-pub unsafe fn budget_sink(b: *mut Budget) -> ErrSink {
-    if b.is_null() {
-        ErrSink::silent()
-    } else {
-        (*b).sink()
-    }
-}
-
 #[cold]
 #[inline(never)]
 fn over_ast_nodes(max: usize, err: ErrSink) -> Reported {
@@ -318,72 +304,4 @@ fn check(value: usize, max: usize, noun: &str, err: ErrSink) -> Result<(), Repor
         return Err(over_check(max, noun, err));
     }
     Ok(())
-}
-
-/* ---- the raw-pointer entries ----
- *
- * The parser, the CSS lowering and the node-set store still hold a budget as a
- * pointer; these forward to the methods above. Each takes a live `b`. */
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_ast_node(b: *mut Budget) -> Result<(), Reported> {
-    (*b).charge_ast_node()
-}
-
-/// # Safety
-/// `b` must be live.
-#[inline]
-pub unsafe fn limit_eval_op(b: *mut Budget) -> Result<(), Reported> {
-    (*b).charge_op()
-}
-
-/// # Safety
-/// `b` must be live.
-#[inline]
-pub unsafe fn limit_recurse_enter(b: *mut Budget) -> Result<(), Reported> {
-    (*b).enter_recursion()
-}
-
-/// # Safety
-/// `b` must be live.
-#[inline]
-pub unsafe fn limit_recurse_leave(b: *mut Budget) {
-    (*b).leave_recursion()
-}
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_check_nodeset_size(b: *mut Budget, new_count: usize) -> Result<(), Reported> {
-    (*b).check_nodeset_size(new_count)
-}
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_check_string_bytes(b: *mut Budget, bytes: usize) -> Result<(), Reported> {
-    (*b).check_string_bytes(bytes)
-}
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_check_steps(b: *mut Budget, nsteps: usize) -> Result<(), Reported> {
-    (*b).check_steps(nsteps)
-}
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_check_predicates(b: *mut Budget, npreds: usize) -> Result<(), Reported> {
-    (*b).check_predicates(npreds)
-}
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_check_func_args(b: *mut Budget, nargs: usize) -> Result<(), Reported> {
-    (*b).check_func_args(nargs)
-}
-
-/// # Safety
-/// `b` must be live.
-pub unsafe fn limit_check_expr_bytes(b: *mut Budget, bytes: usize) -> Result<(), Reported> {
-    (*b).check_expr_bytes(bytes)
 }

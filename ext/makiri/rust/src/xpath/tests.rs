@@ -82,20 +82,19 @@ fn run(
 
         let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
         let mut parse_budget = crate::xpath::limits::Budget::with_limits(*ctx_limits(ctx.as_ptr()));
-        let budget: *mut crate::xpath::limits::Budget = &mut parse_budget;
         let compiled: Result<Box<Ast>, _> = match query {
-            Query::XPath => parse_owned(source, budget),
+            Query::XPath => parse_owned(source, &mut parse_budget),
             #[cfg(feature = "lexbor")]
             Query::Css => {
                 let ns = crate::css::CssNs {
                     default_prefix: core::ptr::null(),
                 };
-                crate::css::compile_owned(source, &ns, budget)
+                crate::css::compile_owned(source, &ns, &mut parse_budget)
             }
         };
         let ast = match compiled {
             Ok(ast) => ast,
-            Err(_) => return Answer::Err((*budget).take_error().status),
+            Err(_) => return Answer::Err(parse_budget.take_error().status),
         };
 
         let describe = |node: &*mut c_void| {

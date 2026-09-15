@@ -24,7 +24,7 @@ use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 struct Parser<'a> {
     lx: Lexer<'a>,
     err: ErrSink,
-    budget: *mut Budget,
+    budget: &'a mut Budget,
 }
 
 /// A parse step: the value, or proof its error was written to the budget.
@@ -123,8 +123,7 @@ impl<'a> Parser<'a> {
 
     /// Charge one expression node against the AST budget.
     fn charge(&mut self) -> PResult {
-        // SAFETY: the parser's budget is live for the parse.
-        unsafe { limit_ast_node(self.budget) }
+        self.budget.charge_ast_node()
     }
 
     /// Copy `text` into an AST name. A failure must be propagated: a missing
@@ -159,7 +158,7 @@ impl<'a> Parser<'a> {
 
     /// Charge the step budget, then append. A step that does not land is freed.
     fn push_step(&mut self, steps: &mut Vec<Step>, s: Step) -> PResult {
-        unsafe { limit_check_steps(self.budget, steps.len() + 1)? };
+        self.budget.check_steps(steps.len() + 1)?;
         if steps.mkr_push(s).is_err() {
             return Err(err_setf!(
                 self.err,
@@ -247,7 +246,7 @@ impl<'a> Parser<'a> {
 
     fn parse_predicates(&mut self, preds: &mut Vec<Expr>) -> PResult {
         while self.kind() == Tok::LBracket {
-            unsafe { limit_check_predicates(self.budget, preds.len() + 1)? };
+            self.budget.check_predicates(preds.len() + 1)?;
             self.advance()?;
             let e = self.parse_expr()?;
             self.eat(Tok::RBracket, "']' to close predicate")?;
@@ -382,7 +381,7 @@ impl<'a> Parser<'a> {
         let mut args = Vec::new();
         if self.kind() != Tok::RParen {
             loop {
-                unsafe { limit_check_func_args(self.budget, args.len() + 1)? };
+                self.budget.check_func_args(args.len() + 1)?;
                 let arg = self.parse_expr()?;
                 if args.mkr_push(arg).is_err() {
                     return Err(err_setf!(
@@ -580,9 +579,9 @@ impl<'a> Parser<'a> {
 
     fn parse_expr(&mut self) -> PResult<Expr> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
-        unsafe { limit_recurse_enter(self.budget)? };
+        self.budget.enter_recursion()?;
         let n = self.parse_binary(BINOP_LEVELS.len() - 1);
-        unsafe { limit_recurse_leave(self.budget) };
+        self.budget.leave_recursion();
         n
     }
 }
@@ -638,13 +637,10 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// `expr` is a verified text: NUL-free, valid UTF-8.
 ///
 /// # Safety
-/// `budget` must be null or live.
-pub unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Box<Ast>, Reported> {
-    let err = budget_sink(budget);
-    if budget.is_null() {
-        return Err(err_setf!(err, XP_ERR_INTERNAL, "parse: budget required"));
-    }
-    limit_check_expr_bytes(budget, expr.len())?;
+/// `expr`'s bytes must stay live for the parse.
+pub unsafe fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box<Ast>, Reported> {
+    let err = budget.sink();
+    budget.check_expr_bytes(expr.len())?;
 
     let src: &[u8] = unsafe { expr.as_bytes() };
 

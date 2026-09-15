@@ -30,14 +30,14 @@ unsafe fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet) -> bool {
 /// filled `result`, Ok(false) when the shape does not qualify.
 ///
 /// # Safety
-/// `context_set` must hold this document's handles, and `budget` be live.
+/// `context_set` must hold this document's handles.
 pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
     doc: D,
     step: &Step,
     context_set: &NodeSet,
     result: &mut NodeSet,
     b: &Bindings<'e, D>,
-    budget: *mut Budget,
+    budget: &mut Budget,
 ) -> Result<bool, Reported> {
     let test = &step.test;
     let Some(local) = test.local.as_deref() else {
@@ -58,7 +58,7 @@ pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
         None => return Ok(false),
     };
     for &p in bucket.nodes {
-        limit_eval_op(budget)?;
+        budget.charge_op()?;
         let n = doc.node(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, step.axis, b) {
             continue;
@@ -165,10 +165,10 @@ pub unsafe fn try_descendant_index_nth<'e, D: Dom<'e>>(
     }
     tab.resize(cap, (ptr::null(), 0));
     let mask = cap - 1;
-    let budget: *mut Budget = &raw mut ev.budget;
+    let budget = &mut ev.budget;
 
     for &p in bucket.nodes {
-        limit_eval_op(budget)?;
+        budget.charge_op()?;
         let e = doc.node(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, s1.axis, &b) {
             continue;

@@ -164,12 +164,12 @@ fn boolean(b: bool) -> Answer {
 
 unsafe fn to_text<'e, D: Dom<'e>>(v: &Val, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
     let doc = ev.doc;
-    val_to_owned_text_or_fail::<D>(doc, v, &raw mut ev.budget)
+    val_to_owned_text_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
 unsafe fn to_number<'e, D: Dom<'e>>(v: &Val, ev: &mut Evaluation<'e, D>) -> FnResult<f64> {
     let doc = ev.doc;
-    val_to_number_or_fail::<D>(doc, v, &raw mut ev.budget)
+    val_to_number_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
 /// The string-value of `args[0]`, or of the context node when there is none -
@@ -191,7 +191,7 @@ unsafe fn self_text<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
 ) -> FnResult<Text> {
     match focus.node {
-        Some(n) => node_to_owned_text::<D>(ev.doc, n, &raw mut ev.budget),
+        Some(n) => node_to_owned_text::<D>(ev.doc, n, Some(&mut ev.budget)),
         None => owned_copy(
             b"",
             ev.budget.sink(),
@@ -292,14 +292,14 @@ unsafe fn find_by_id<'e, D: Dom<'e>>(
     doc: D,
     root: D::Node,
     id: &[u8],
-    budget: *mut Budget,
+    budget: &mut Budget,
 ) -> Result<Option<D::Node>, Reported> {
     if id.is_empty() {
         return Ok(None);
     }
     let mut n = root;
     loop {
-        limit_eval_op(budget)?;
+        budget.charge_op()?;
         if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, b"id") == Some(id) {
             return Ok(Some(n));
         }
@@ -334,7 +334,7 @@ unsafe fn id_collect<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
 ) -> FnResult {
     let doc = ev.doc;
-    let budget = &raw mut ev.budget;
+    let budget = &mut ev.budget;
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
         if let Some(hit) = find_by_id::<D>(doc, root, tok, budget)? {
             out.push::<D>(hit, budget)?;
@@ -370,7 +370,8 @@ unsafe fn fn_id<'e, D: Dom<'e>>(
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
         (0..set.len()).try_for_each(|i| {
-            let t = node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, set, i), &raw mut ev.budget)?;
+            let t =
+                node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, set, i), Some(&mut ev.budget))?;
             id_collect::<D>(t.as_slice(), root, &mut found, ev)
         })?;
     } else {
@@ -508,7 +509,6 @@ unsafe fn fn_concat<'e, D: Dom<'e>>(
             "concat(): expected at least 2 arguments"
         ));
     }
-    let budget = &raw mut ev.budget;
     let mut parts = try_vec::<Text>(args.len(), err, "concat")?;
     let mut total = 0usize;
     for a in args {
@@ -517,7 +517,7 @@ unsafe fn fn_concat<'e, D: Dom<'e>>(
             Some(n) => n,
             None => return Err(err_setf!(err, XP_ERR_OOM, "concat() size overflow")),
         };
-        limit_check_string_bytes(budget, total)?;
+        ev.budget.check_string_bytes(total)?;
         parts.push(t);
     }
     let joined = Text::try_fill(total, |dst| {
@@ -693,7 +693,6 @@ unsafe fn fn_translate<'e, D: Dom<'e>>(
 ) -> Answer {
     let err = ev.budget.sink();
     arity(args.len(), 3, 3, err, "translate")?;
-    let budget = &raw mut ev.budget;
     let mut texts = try_vec::<Text>(3, err, "translate")?;
     for a in args {
         texts.push(to_text::<D>(a, ev)?);
@@ -723,7 +722,7 @@ unsafe fn fn_translate<'e, D: Dom<'e>>(
     /* Capped: a multibyte replacement can push the result past the limit even
      * when the input is inside it ("a" -> an emoji), so the append fails closed
      * with LIMIT or OOM. */
-    let mut buf = Buf::new((*budget).limits.max_string_bytes);
+    let mut buf = Buf::new(ev.budget.limits.max_string_bytes);
     let mut enc = [0u8; 4];
     for c in sv.chars() {
         let emit: Option<&str> = match from_cp.iter().position(|&f| f == c) {
@@ -740,7 +739,7 @@ unsafe fn fn_translate<'e, D: Dom<'e>>(
                         err,
                         XP_ERR_LIMIT,
                         "string size limit exceeded ({} bytes) in translate()",
-                        (*budget).limits.max_string_bytes
+                        ev.budget.limits.max_string_bytes
                     )
                 } else {
                     err_setf!(err, XP_ERR_OOM, "out of memory in translate()")
@@ -864,10 +863,9 @@ unsafe fn fn_sum<'e, D: Dom<'e>>(
     arity(args.len(), 1, 1, err, "sum")?;
     let ns = require_nodeset(&args[0], "sum", err)?;
     let doc = ev.doc;
-    let budget = &raw mut ev.budget;
     let mut total = 0.0;
     for i in 0..ns.len() {
-        limit_eval_op(budget)?;
+        ev.budget.charge_op()?;
         total += cached_node_number::<D>(ev, nodeset_at::<D>(doc, ns, i))?;
     }
     number(total)
