@@ -74,6 +74,19 @@ impl core::fmt::Write for MsgBuf {
 #[derive(Debug)]
 pub struct Reported(());
 
+impl Reported {
+    /// The proof, for a callee that reports through the error slot but answers
+    /// only a status - the Ruby handler resolver, whose C-shaped signature
+    /// returns a negative code after writing `*err`.
+    ///
+    /// # Safety
+    /// The callee must have written the slot (or been handed a null one) for
+    /// the failure this answers.
+    pub(crate) unsafe fn assume_written() -> Self {
+        Reported(())
+    }
+}
+
 /// Set `err` from a formatted message. `mkr_err_set` copies it (mkr_xpath.c),
 /// so the stack buffer does not outlive the call.
 ///

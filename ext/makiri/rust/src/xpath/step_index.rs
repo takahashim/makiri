@@ -6,10 +6,6 @@
 //! the caller walks. Keeping them out of the step driver keeps that "never
 //! changes the answer, only the cost" property readable.
 
-/* The failure detail lives in the `*mut Error` the caller owns, so the Rust
- * error type carries nothing (as in eval.rs). */
-#![allow(clippy::result_unit_err)]
-
 use super::abi::*;
 use super::ast_view::step_preds;
 use super::dom::*;

@@ -21,7 +21,7 @@ pub unsafe fn mkr_eval_ast_xml(
     out: *mut Val,
     err: *mut Error,
 ) -> c_int {
-    if eval::eval_ast::<Xml>(ctx, ast, out, err) {
+    if eval::eval_ast::<Xml>(ctx, ast, out, err).is_ok() {
         0
     } else {
         -1
