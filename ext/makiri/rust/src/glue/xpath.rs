@@ -61,8 +61,8 @@ use super::abi::{
 /// An `XPathContext` is typically reused to run the same handful of expressions
 /// many times, so each is parsed once and the AST re-evaluated (the evaluator
 /// resets the per-eval counters and keeps its per-evaluate state off the AST,
-/// so a cached AST is safely reusable). Bounded, so a context fed unbounded distinct expressions cannot
-/// grow without limit.
+/// so a cached AST is safely reusable). Bounded, so a context fed unbounded
+/// distinct expressions cannot grow without limit.
 const AST_CACHE_MAX: usize = 1024;
 
 /// Upper bound on handler arguments, matching the engine's default

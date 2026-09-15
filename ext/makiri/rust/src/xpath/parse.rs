@@ -531,26 +531,40 @@ impl<'a> Parser<'a> {
         Ok(Expr::new(ExprKind::Negate(self.boxed(e)?)))
     }
 
-    /// Parse binary level `li`, recursing into the tighter levels; the tightest
-    /// level's operand is `parse_unary` (prefix '-'). Left-associative.
-    fn parse_binary_level(&mut self, li: usize) -> PResult<Expr> {
-        let operand = |p: &mut Self| {
-            if li == 0 {
-                p.parse_unary()
-            } else {
-                p.parse_binary_level(li - 1)
+    /// The binary operator at the current token and its level in
+    /// [`BINOP_LEVELS`], if there is one.
+    fn binop_here(&self) -> Option<(Op, usize)> {
+        BINOP_LEVELS.iter().enumerate().find_map(|(li, level)| {
+            level.iter().find_map(|m| {
+                let hit = match m.word {
+                    Some(w) => self.lx.tok_is_word(w),
+                    None => self.kind() == m.kind,
+                };
+                hit.then_some((m.op, li))
+            })
+        })
+    }
+
+    /// Parse an expression whose operators bind no looser than level `max_li`,
+    /// left-associatively; the operands are `parse_unary` (prefix '-').
+    ///
+    /// Precedence climbing rather than one function per level: the tree and
+    /// the order nodes are charged in are the same, but reading an operand no
+    /// longer descends through every level, which was most of the parser's cost
+    /// on a short expression.
+    fn parse_binary(&mut self, max_li: usize) -> PResult<Expr> {
+        let mut l = self.parse_unary()?;
+        while let Some((op, li)) = self.binop_here() {
+            if li > max_li {
+                break;
             }
-        };
-        let mut l = operand(self)?;
-        while let Some(op) = BINOP_LEVELS[li].iter().find_map(|m| {
-            let hit = match m.word {
-                Some(w) => self.lx.tok_is_word(w),
-                None => self.kind() == m.kind,
-            };
-            hit.then_some(m.op)
-        }) {
             self.advance()?;
-            let r = operand(self)?;
+            /* The right operand holds only tighter operators, so an operator of
+             * this same level after it folds into `l`: left-associative. */
+            let r = match li.checked_sub(1) {
+                Some(tighter) => self.parse_binary(tighter)?,
+                None => self.parse_unary()?,
+            };
             l = self.make_binop(op, l, r)?;
         }
         Ok(l)
@@ -559,7 +573,7 @@ impl<'a> Parser<'a> {
     fn parse_expr(&mut self) -> PResult<Expr> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
         unsafe { limit_recurse_enter(self.budget)? };
-        let n = self.parse_binary_level(BINOP_LEVELS.len() - 1);
+        let n = self.parse_binary(BINOP_LEVELS.len() - 1);
         unsafe { limit_recurse_leave(self.budget) };
         n
     }

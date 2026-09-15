@@ -127,7 +127,7 @@ pub enum ExprKind {
 pub struct Expr {
     pub kind: ExprKind,
     /// Whether this subtree evaluates to the same value wherever it appears in
-    /// one evaluate. Set by the hoisting pass in `ast_ops`.
+    /// one evaluate. Set by the pass in `ast_ops::finish`.
     pub context_independent: bool,
     /// This subtree's slot in the per-evaluate memo table, when remembering its
     /// value can save work: it is context-independent and may be evaluated
