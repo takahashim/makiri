@@ -42,18 +42,16 @@ pub unsafe fn owned_bytes<'a>(t: TextSlot) -> &'a [u8] {
     t.as_bytes()
 }
 
-/// Copy `s` into a fresh owned text, or `Err` with `*err` set on OOM.
+/// Copy `s` into a fresh owned text, or `Err` with `err` set to `what` on OOM.
 ///
 /// # Safety
-/// `out` must be a writable `mkr_owned_text_t`.
+/// None beyond `TextSlot::try_copy_bytes`'s.
 pub unsafe fn owned_copy(
-    out: *mut TextSlot,
     s: &[u8],
     err: ErrSink,
     what: &core::ffi::CStr,
-) -> Result<(), Reported> {
-    *out = crate::xpath_abi::TextSlot::try_copy_bytes(s, err, Some(what))?;
-    Ok(())
+) -> Result<OwnedText, Reported> {
+    Ok(OwnedText(TextSlot::try_copy_bytes(s, err, Some(what))?))
 }
 
 /* ---------- value clone ---------- */
@@ -66,14 +64,8 @@ pub unsafe fn owned_copy(
 pub unsafe fn val_clone(src: &Val, err: ErrSink) -> Result<OwnedVal, Reported> {
     let copy = match src.get() {
         ValRef::String(s) => {
-            let mut text = TextSlot::empty();
-            owned_copy(
-                &mut text,
-                owned_bytes(s),
-                err,
-                c"out of memory cloning string value",
-            )?;
-            Val::string(text)
+            let mut text = owned_copy(owned_bytes(s), err, c"out of memory cloning string value")?;
+            Val::string(text.take())
         }
         ValRef::Number(d) => Val::number(d),
         ValRef::Boolean(b) => Val::boolean(b),
@@ -155,8 +147,7 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
     }
 }
 
-/// Build `node`'s XPath string-value into `out` - the one node string-value
-/// builder.
+/// Build `node`'s XPath string-value - the one node string-value builder.
 ///
 /// With a reporting `err` the build is bounded by `limits.max_string_bytes` and
 /// any failure returns `Err` with the slot set. With a silent one it is
@@ -166,15 +157,13 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
 /// anyway.
 ///
 /// # Safety
-/// `node` must be live; `out` writable.
+/// `node` must be live.
 pub unsafe fn node_to_owned_text<D: Dom>(
     doc: D::Doc,
     node: D::Node,
     limits: *mut Limits,
     err: ErrSink,
-    out: *mut TextSlot,
-) -> Result<(), Reported> {
-    *out = TextSlot::empty();
+) -> Result<OwnedText, Reported> {
     let mut buf = Buf::new(if limits.is_null() {
         0
     } else {
@@ -183,8 +172,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
         if let Ok(owned) = buf.steal() {
-            *out = TextSlot::from_buf(owned);
-            return Ok(());
+            return Ok(OwnedText(TextSlot::from_buf(owned)));
         }
         if !err.is_silent() {
             return Err(err_setf!(
@@ -208,10 +196,9 @@ pub unsafe fn node_to_owned_text<D: Dom>(
             });
         }
     }
-    /* best-effort: never fail - yield an owned "". An OOM here leaves the slot
+    /* best-effort: never fail - yield an owned "". An OOM here leaves the text
      * absent, which reads as "" too. */
-    let _ = owned_copy(out, b"", ErrSink::silent(), c"");
-    Ok(())
+    Ok(owned_copy(b"", ErrSink::silent(), c"").unwrap_or_default())
 }
 
 /* ---------- coercions ---------- */
@@ -290,17 +277,15 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
 /// value -> string (§4.2), bounded by `limits` when it is non-null.
 ///
 /// # Safety
-/// `v` may be null (yields ""); `out` must be writable.
+/// `v` may be null (yields "").
 pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     doc: D::Doc,
     v: *const Val,
     limits: *mut Limits,
     err: ErrSink,
-    out: *mut TextSlot,
-) -> Result<(), Reported> {
-    *out = TextSlot::empty();
+) -> Result<OwnedText, Reported> {
     if v.is_null() {
-        return owned_copy(out, b"", err, c"out of memory converting value to string");
+        return owned_copy(b"", err, c"out of memory converting value to string");
     }
     match (*v).get() {
         ValRef::String(s) => {
@@ -308,27 +293,27 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             if !limits.is_null() {
                 mkr_limit_check_string_bytes(limits, text.len(), err)?;
             }
-            owned_copy(out, text, err, c"out of memory copying string value")
+            owned_copy(text, err, c"out of memory copying string value")
         }
         ValRef::Boolean(b) => {
             let s: &[u8] = if b { b"true" } else { b"false" };
-            owned_copy(out, s, err, c"out of memory converting boolean to string")
+            owned_copy(s, err, c"out of memory converting boolean to string")
         }
         ValRef::Number(d) => {
             let what = c"out of memory converting number to string";
             if d.is_nan() {
-                return owned_copy(out, b"NaN", err, what);
+                return owned_copy(b"NaN", err, what);
             }
             if d.is_infinite() {
                 let s: &[u8] = if d < 0.0 { b"-Infinity" } else { b"Infinity" };
-                return owned_copy(out, s, err, what);
+                return owned_copy(s, err, what);
             }
             if d == 0.0 {
-                return owned_copy(out, b"0", err, what);
+                return owned_copy(b"0", err, what);
             }
             let mut buf = [0u8; 64];
             match number::to_text(d, &mut buf) {
-                Some(n) => owned_copy(out, &buf[..n], err, what),
+                Some(n) => owned_copy(&buf[..n], err, what),
                 None => Err(err_setf!(
                     err,
                     XP_ERR_INTERNAL,
@@ -338,11 +323,11 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
         }
         ValRef::NodeSet(ns) => {
             if ns.count == 0 {
-                return owned_copy(out, b"", err, c"out of memory");
+                return owned_copy(b"", err, c"out of memory");
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err, out)
+            node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err)
         }
     }
 }
@@ -351,26 +336,21 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
 /// string-value first).
 ///
 /// # Safety
-/// `v` and `out` must be valid.
+/// `v` must be valid.
 pub unsafe fn val_to_number_or_fail<D: Dom>(
     doc: D::Doc,
     v: *const Val,
     limits: *mut Limits,
     err: ErrSink,
-    out: *mut f64,
-) -> Result<(), Reported> {
+) -> Result<f64, Reported> {
     if let Some(ns) = (*v).as_nodeset() {
         if ns.count == 0 {
-            *out = f64::NAN;
-            return Ok(());
+            return Ok(f64::NAN);
         }
-        let mut text = OwnedText::new();
-        node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err, text.as_mut())?;
-        *out = bytes_to_number(text.as_slice());
-        return Ok(());
+        let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err)?;
+        return Ok(bytes_to_number(text.as_slice()));
     }
-    *out = val_to_number_unchecked::<D>(doc, v);
-    Ok(())
+    Ok(val_to_number_unchecked::<D>(doc, v))
 }
 
 /* ---------- node-set element access ---------- */
@@ -391,9 +371,7 @@ pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
 unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText {
-    let mut t = OwnedText::new();
-    let _ = node_to_owned_text::<D>(doc, node, ptr::null_mut(), ErrSink::silent(), t.as_mut());
-    t
+    node_to_owned_text::<D>(doc, node, ptr::null_mut(), ErrSink::silent()).unwrap_or_default()
 }
 
 /* ---------- the string-value cache's node-keyed insert ---------- */
@@ -435,8 +413,9 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     }
 
     let limits = mkr_ctx_limits(ctx);
-    let mut text = TextSlot::empty();
-    node_to_owned_text::<D>(doc, node, limits, err, &mut text)?;
+    /* Held in its guard until the cache takes it, so every refusal below frees
+     * it on the way out. */
+    let mut text = node_to_owned_text::<D>(doc, node, limits, err)?;
 
     if mkr_grow_reserve(
         &raw mut (*c).entries as *mut *mut c_void,
@@ -445,7 +424,6 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         core::mem::size_of::<StrCacheEntry>(),
     ) != MKR_OK
     {
-        text.clear();
         return Err(err_setf!(
             err,
             XP_ERR_OOM,
@@ -455,10 +433,9 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
 
     /* A total cap on the cached bytes, so one evaluate cannot grow the cache
      * without bound. */
-    let new_total = match (*c).total_bytes.checked_add(text.len()) {
+    let new_total = match (*c).total_bytes.checked_add(text.as_slice().len()) {
         Some(t) => t,
         None => {
-            text.clear();
             return Err(err_setf!(
                 err,
                 XP_ERR_OOM,
@@ -466,10 +443,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             ));
         }
     };
-    if let Err(reported) = mkr_limit_check_string_bytes(limits, new_total, err) {
-        text.clear();
-        return Err(reported);
-    }
+    mkr_limit_check_string_bytes(limits, new_total, err)?;
 
     /* Grow the index FIRST. It rebuilds only from the already-committed
      * entries, so every fallible step happens while the slot at [count] is
@@ -482,7 +456,6 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             match (*c).bucket_cap.checked_mul(2) {
                 Some(b) => b,
                 None => {
-                    text.clear();
                     return Err(err_setf!(
                         err,
                         XP_ERR_OOM,
@@ -492,7 +465,6 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             }
         };
         if mkr_str_cache_reindex(c, new_bucket_cap) != 0 {
-            text.clear();
             return Err(err_setf!(
                 err,
                 XP_ERR_OOM,
@@ -500,6 +472,9 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             ));
         }
     }
+
+    /* The cache owns the bytes from here. */
+    let text = text.take();
 
     /* Commit. mkr_str_cache_index_put reads entries[count].node, so the write
      * has to come first. */

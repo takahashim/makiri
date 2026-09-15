@@ -157,16 +157,12 @@ fn boolean(b: bool) -> Answer {
 
 unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: ErrSink) -> FnResult<OwnedText> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let mut t = OwnedText::new();
-    val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, t.as_mut())?;
-    Ok(t)
+    val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err)
 }
 
 unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context, err: ErrSink) -> FnResult<f64> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let mut d = 0.0;
-    val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, &mut d)?;
-    Ok(d)
+    val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err)
 }
 
 /// The string-value of `args[0]`, or of the context node when there is none -
@@ -180,11 +176,7 @@ unsafe fn arg_or_self_text<D: Dom>(
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     match args.first() {
         Some(a) => to_text::<D>(a, ctx, err),
-        None => {
-            let mut t = OwnedText::new();
-            node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut())?;
-            Ok(t)
-        }
+        None => node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err),
     }
 }
 
@@ -357,13 +349,11 @@ unsafe fn fn_id<D: Dom>(
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
         (0..set.count).try_for_each(|i| {
-            let mut t = OwnedText::new();
-            node_to_owned_text::<D>(
+            let t = node_to_owned_text::<D>(
                 D::doc_from_void(doc),
                 nodeset_at::<D>(set, i),
                 mkr_ctx_limits(ctx),
                 err,
-                t.as_mut(),
             )?;
             id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
         })?;
@@ -842,8 +832,7 @@ unsafe fn fn_number<D: Dom>(
         Some(a) => number(to_number::<D>(a, ctx, err)?),
         None => {
             /* number() with no argument is number(string(self)). */
-            let mut t = OwnedText::new();
-            node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut())?;
+            let t = node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err)?;
             number(bytes_to_number(t.as_slice()))
         }
     }

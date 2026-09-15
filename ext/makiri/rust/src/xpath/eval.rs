@@ -17,7 +17,7 @@ use super::funcs;
 use super::msg::Bytes;
 use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
-use super::own::{OwnedText, OwnedVal, Set};
+use super::own::{OwnedVal, Set};
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
@@ -294,10 +294,8 @@ unsafe fn compare_eq<D: Dom>(
                     val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r)
                 }
                 _ => {
-                    let mut ls = OwnedText::new();
-                    let mut rs = OwnedText::new();
-                    val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut())?;
-                    val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut())?;
+                    let ls = val_to_owned_text_or_fail::<D>(doc, l, limits, err)?;
+                    let rs = val_to_owned_text_or_fail::<D>(doc, r, limits, err)?;
                     ls.as_slice() == rs.as_slice()
                 }
             };
@@ -320,8 +318,7 @@ unsafe fn compare_eq<D: Dom>(
             Ok(if want_eq { eq } else { !eq })
         }
         _ => {
-            let mut target = OwnedText::new();
-            val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut())?;
+            let target = val_to_owned_text_or_fail::<D>(doc, sc, limits, err)?;
             let want = target.as_slice();
             for i in 0..set.count {
                 mkr_limit_eval_op(limits, err)?;
@@ -378,14 +375,12 @@ unsafe fn compare_rel<D: Dom>(
         (Some(set), None) => (set, r, false),
         (None, Some(set)) => (set, l, true),
         (None, None) => {
-            let (mut a, mut b) = (0.0, 0.0);
-            val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)?;
-            val_to_number_or_fail::<D>(doc, r, limits, err, &mut b)?;
+            let a = val_to_number_or_fail::<D>(doc, l, limits, err)?;
+            let b = val_to_number_or_fail::<D>(doc, r, limits, err)?;
             return Ok(rel_hit(op, a, b));
         }
     };
-    let mut scn = 0.0;
-    val_to_number_or_fail::<D>(doc, sc, limits, err, &mut scn)?;
+    let scn = val_to_number_or_fail::<D>(doc, sc, limits, err)?;
     for i in 0..set.count {
         mkr_limit_eval_op(limits, err)?;
         let nv = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?);
@@ -753,9 +748,8 @@ unsafe fn eval_binop<D: Dom>(
             Ok(Val::boolean(compare_rel::<D>(ctx, l, r, op, err)?).into())
         }
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MOD => {
-            let (mut a, mut c) = (0.0, 0.0);
-            val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)?;
-            val_to_number_or_fail::<D>(doc, r, limits, err, &mut c)?;
+            let a = val_to_number_or_fail::<D>(doc, l, limits, err)?;
+            let c = val_to_number_or_fail::<D>(doc, r, limits, err)?;
             Ok(Val::number(match op {
                 OP_ADD => a + c,
                 OP_SUB => a - c,
@@ -781,16 +775,14 @@ unsafe fn eval_negate<D: Dom>(
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     let v = eval_node::<D>(ctx, (*n).u.unary.expr, focus, err)?;
-    let mut d = 0.0;
-    val_to_number_or_fail::<D>(doc, &*v, limits, err, &mut d)?;
+    let d = val_to_number_or_fail::<D>(doc, &*v, limits, err)?;
     Ok(Val::number(-d).into())
 }
 
 /// A string result copied from `bytes`.
 unsafe fn string_value(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> EvalResult<OwnedVal> {
-    let mut text = TextSlot::empty();
-    owned_copy(&mut text, bytes, err, what)?;
-    Ok(Val::string(text).into())
+    let mut text = owned_copy(bytes, err, what)?;
+    Ok(Val::string(text.take()).into())
 }
 
 /// The evaluator's only recursive function, and therefore the whole of "AST

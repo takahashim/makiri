@@ -321,9 +321,6 @@ impl OwnedText {
     pub(crate) fn is_absent(&self) -> bool {
         self.0.is_absent()
     }
-    pub(crate) fn as_mut(&mut self) -> *mut TextSlot {
-        &mut self.0
-    }
     /// Hand the allocation to the caller; the guard is left empty.
     pub fn take(&mut self) -> TextSlot {
         core::mem::replace(&mut self.0, TextSlot::empty())
