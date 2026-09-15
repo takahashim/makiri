@@ -365,9 +365,6 @@ fn fn_id<'e, D: Dom<'e>>(
          * empty node-set. (xml:id is a separate, optional spec.) */
         return Ok(Val::default());
     }
-    if ev.cx.document().is_null() {
-        return Ok(Val::default());
-    }
     let doc = ev.doc;
     let root = doc.document_node();
     /* Collected in a guard, so a failure part-way frees what was found. */

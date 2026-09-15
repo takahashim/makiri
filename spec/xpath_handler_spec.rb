@@ -179,7 +179,7 @@ RSpec.describe "Makiri XPath custom function handler" do
     # namespace prefix freed the URI string the evaluator still borrowed -> an
     # ASan-confirmed use-after-free read on the next context iteration's walk.
     # The fix refuses register_namespace / register_variable / node= while an
-    # evaluate is in progress on that context (mkr_ctx_is_evaluating), so the
+    # evaluate is in progress on that context (Context::is_evaluating), so the
     # borrowed registrations and context node can never be freed/swapped under
     # the suspended evaluator. The mutation fails closed; the handler exception
     # surfaces as a clean Makiri::Error.

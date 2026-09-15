@@ -20,7 +20,6 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use core::ffi::c_void;
 
 /// An evaluation step: the value, or proof its error was written to the
 /// evaluation's budget.
@@ -58,30 +57,34 @@ impl<N> Memo<N> {
 /// its own, so it can neither refill this walk's budget nor take its handler
 /// away.
 pub struct Evaluation<'e, D: Dom<'e>> {
-    pub cx: &'e Context,
+    pub cx: &'e Context<'e>,
+    pub names: &'e Names,
     pub doc: D,
     pub budget: Budget,
     pub str_cache: StrCache,
     pub order_index: OrderIndex,
     memo: Memo<D::Node>,
-    handler: Option<Handler>,
+    handler: Option<&'e dyn Resolver>,
 }
 
 impl<'e, D: Dom<'e>> Evaluation<'e, D> {
-    /// One evaluate on `cx`, or None when the context has no document.
-    ///
-    /// # Safety
-    /// `cx`'s document must be this backend's, live and unchanged for `'e`.
-    pub(crate) unsafe fn new(cx: &'e Context, handler: Option<Handler>) -> Option<Self> {
-        Some(Evaluation {
+    /// One evaluate of `doc` under `cx`, whose registrations are `names`.
+    fn new(
+        cx: &'e Context<'e>,
+        names: &'e Names,
+        doc: D,
+        handler: Option<&'e dyn Resolver>,
+    ) -> Self {
+        Evaluation {
             cx,
-            doc: D::from_document(cx.document())?,
+            names,
+            doc,
             budget: Budget::with_limits(cx.limits()),
             str_cache: StrCache::new(),
             order_index: OrderIndex::new(),
             memo: Memo(Vec::new()),
             handler,
-        })
+        }
     }
 }
 
@@ -152,8 +155,8 @@ fn resolve_test_prefix<'e, D: Dom<'e>>(
     let Some(prefix) = test.prefix.as_deref() else {
         return Ok(None);
     };
-    let cx: &'e Context = ev.cx;
-    match cx.lookup_ns(prefix) {
+    let names: &'e Names = ev.names;
+    match names.lookup_ns(prefix) {
         Some(u) => Ok(Some(u)),
         None => Err(err_setf!(
             ev.budget.sink(),
@@ -187,7 +190,7 @@ fn eval_step<'e, D: Dom<'e>>(
      * and every per-node match then reuses the URI instead of re-resolving. */
     let pre = resolve_test_prefix(ev, test)?;
 
-    let b = Bindings::<D>::new(ev.cx, doc, pre);
+    let b = Bindings::<D>::new(ev.cx, ev.names, doc, pre);
 
     /* A post-pass (sort to document order, then optional adjacent dedup) is
      * needed when the axis emits in reverse order per context, when it aliases
@@ -542,25 +545,34 @@ fn first_node_ok<'e, D: Dom<'e>>(doc: D, step: &Step, n: D::Node) -> bool {
 /// exceeded. Every visited node is charged, so a huge late- or no-match document
 /// fails closed here exactly as it would in the full evaluator.
 ///
-/// # Safety
-/// `cx`'s document must be this backend's.
+/// On a match or none, the answer is the 0-or-1-node node-set.
 #[allow(clippy::result_large_err)]
-pub unsafe fn try_first_match<'e, D: Dom<'e>>(
-    cx: &'e Context,
+pub(crate) fn try_first_match<'e, D: Dom<'e>>(
+    cx: &'e Context<'e>,
+    names: &'e Names,
+    doc: D,
+    node: Option<D::Node>,
     ast: &Ast,
-) -> Result<Option<*mut c_void>, Error> {
-    let Some(mut ev) = Evaluation::<D>::new(cx, None) else {
-        return Ok(None); /* no document: the full evaluator reports it */
+) -> Result<Option<Val>, Error> {
+    let mut ev = Evaluation::new(cx, names, doc, None);
+    let found = match first_match_walk::<D>(&mut ev, ast, node) {
+        Ok(Some(found)) => found,
+        Ok(None) => return Ok(None),
+        Err(_) => return Err(ev.budget.take_error()),
     };
-    match first_match_walk::<D>(&mut ev, ast) {
-        Ok(found) => Ok(found.map(|n| n.map_or(core::ptr::null_mut(), D::token))),
-        Err(_) => Err(ev.budget.take_error()),
+    let mut set = NodeSet::new();
+    if let Some(n) = found {
+        if set.push(D::token(n), &mut ev.budget).is_err() {
+            return Err(ev.budget.take_error());
+        }
     }
+    Ok(Some(Val::NodeSet(set)))
 }
 
 fn first_match_walk<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     ast: &Ast,
+    node: Option<D::Node>,
 ) -> EvalResult<Option<Option<D::Node>>> {
     let doc = ev.doc;
     let root = ast.root();
@@ -579,15 +591,13 @@ fn first_match_walk<'e, D: Dom<'e>>(
     let start = if absolute {
         Some(doc.document_node())
     } else {
-        let p = ev.cx.context_node();
-        // SAFETY: the glue sets the context node from a node of this document.
-        (!p.is_null()).then(|| unsafe { doc.node(p) })
+        node
     };
     let Some(start) = start else {
         return Ok(Some(None)); /* recognised; no context means no match */
     };
 
-    let b = Bindings::<D>::new(ev.cx, doc, pre);
+    let b = Bindings::<D>::new(ev.cx, ev.names, doc, pre);
     let mut cur = doc.first_child(start);
     while let Some(n) = cur {
         ev.budget.charge_op()?;
@@ -676,10 +686,10 @@ fn eval_fncall<'e, D: Dom<'e>>(
     args: &[Expr],
     focus: &Focus<'e, D>,
 ) -> EvalResult<Val<D::Node>> {
-    let cx = ev.cx;
+    let names = ev.names;
     let ns_uri: Option<&[u8]> = match prefix {
         None => None,
-        Some(prefix) => match cx.lookup_ns(prefix) {
+        Some(prefix) => match names.lookup_ns(prefix) {
             Some(u) => Some(u),
             None => {
                 return Err(err_setf!(
@@ -737,12 +747,10 @@ fn eval_fncall<'e, D: Dom<'e>>(
                 local: name,
                 args: &token_args,
             };
-            // SAFETY: the handler and its data were installed by the glue for
-            // this evaluate, and stay live for it.
-            let answer = unsafe { (handler.resolve)(handler.data, &mut ev.budget, &site)? };
+            let answer = handler.resolve(&mut ev.budget, &site)?;
             match answer {
-                // SAFETY: the glue refuses a node from another document, so every
-                // token it answers with names a node of this one.
+                // SAFETY: `Resolver`'s contract - it answers only nodes of the
+                // document this evaluate walks.
                 Some(v) => match unsafe { val_from_tokens::<D>(ev.doc, v) } {
                     Some(v) => Some(v),
                     None => return Err(handler_oom(&mut ev.budget)),
@@ -869,13 +877,13 @@ fn eval_node_inner<'e, D: Dom<'e>>(
         }
     }
 
-    let cx = ev.cx;
+    let names = ev.names;
     let value = match &e.kind {
         ExprKind::LiteralStr(t) => {
             string_value(t, ev.budget.sink(), c"out of memory copying literal")
         }
         ExprKind::LiteralNum(d) => Ok(Val::number(*d)),
-        ExprKind::VarRef { prefix, name } => match cx.variable_text(prefix.as_deref(), name) {
+        ExprKind::VarRef { prefix, name } => match names.variable_text(prefix.as_deref(), name) {
             Some(bytes) => string_value(
                 bytes,
                 ev.budget.sink(),
@@ -916,28 +924,23 @@ fn eval_node_inner<'e, D: Dom<'e>>(
     Ok(value)
 }
 
-/// Evaluate an AST against the context, with the context node as the focus, on
-/// a fresh evaluation that `handler` answers unknown functions for.
-///
-/// # Safety
-/// `cx`'s document must be this backend's, and `ast` parsed for it.
+/// Evaluate an AST over `doc` with `node` as the focus, on a fresh evaluation
+/// that `handler` answers unknown functions for.
 #[allow(clippy::result_large_err)]
-pub unsafe fn eval_ast<'e, D: Dom<'e>>(
-    cx: &'e Context,
+pub(crate) fn eval_ast<'e, D: Dom<'e>>(
+    cx: &'e Context<'e>,
+    names: &'e Names,
+    doc: D,
+    node: Option<D::Node>,
     ast: &Ast,
-    handler: Option<Handler>,
+    handler: Option<&'e dyn Resolver>,
 ) -> Result<Val, Error> {
-    let Some(mut ev) = Evaluation::<D>::new(cx, handler) else {
-        let mut budget = Budget::with_limits(cx.limits());
-        let _ = err_setf!(budget.sink(), XP_ERR_RUNTIME, "evaluate with no document");
-        return Err(budget.take_error());
-    };
+    let mut ev = Evaluation::new(cx, names, doc, handler);
     let result = match Memo::new(ast.memo_slots(), ev.budget.sink()) {
         Ok(memo) => {
             ev.memo = memo;
-            let p = cx.context_node();
             let focus = Focus {
-                node: (!p.is_null()).then(|| ev.doc.node(p)),
+                node,
                 pos: 1,
                 size: 1,
             };

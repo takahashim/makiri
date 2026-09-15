@@ -20,7 +20,6 @@ use makiri::dom_adapter::dom_index::{parsed_dom_index_build, parsed_element_inde
 use makiri::dom_adapter::post_parse::{
     parse_html, parsed_destroy, parsed_html_doc, Parsed,
 };
-use makiri::xpath::ctx::ctx_set_unprefixed_lax;
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -55,20 +54,20 @@ unsafe fn run(p: *mut Parsed, text: VerifiedText, lax: bool) {
     }
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
-    let doc = parsed_html_doc(p) as *mut c_void;
-    let Some(ctx) = OwnedContext::new(
-        doc,
-        doc,
+    let doc = parsed_html_doc(p) as *mut makiri::lexbor_abi::LxbDoc;
+    // SAFETY: the caller destroys `p` only after the context is dropped, and
+    // nothing changes the document in between.
+    let mut ctx = Context::new(
         Backend::Html {
+            doc,
             index: parsed_element_index(p),
         },
-    ) else {
-        return;
-    };
-    ctx_set_unprefixed_lax(ctx.as_ptr(), lax as core::ffi::c_int);
+        doc as *mut c_void,
+    );
+    ctx.set_lax(lax);
 
     // As tight as `xml_xpath`'s: the fuzzer controls the document here too.
-    let l = limits(ctx.as_ptr());
+    let l = ctx.limits_mut();
     l.max_eval_ops = 20_000;
     l.max_nodeset_size = 1024;
     l.max_string_bytes = 4096;
@@ -78,12 +77,7 @@ unsafe fn run(p: *mut Parsed, text: VerifiedText, lax: bool) {
         (b"math", b"http://www.w3.org/1998/Math/MathML"),
         (b"h", b"http://www.w3.org/1999/xhtml"),
     ] {
-        if let (Some(pr), Some(u)) = (
-            VerifiedText::from_bytes(prefix),
-            VerifiedText::from_bytes(uri),
-        ) {
-            xpath_register_ns(ctx.as_ptr(), pr, u);
-        }
+        let _ = ctx.register_ns(prefix, uri);
     }
 
     let Some(ast) = parse(&ctx, text) else {

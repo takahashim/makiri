@@ -39,10 +39,6 @@ impl<'d> Dom<'d> for &'d xml::Document {
     type Attr = xml::NodeId;
 
     #[inline]
-    unsafe fn from_document(p: *mut c_void) -> Option<Self> {
-        (p as *const xml::Document).as_ref()
-    }
-    #[inline]
     fn token(n: xml::NodeId) -> *mut c_void {
         n.to_token() as *mut c_void
     }
@@ -182,7 +178,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
             None if lax => return None,
             None => b"", /* strict unprefixed -> no namespace */
         };
-        if !matches!(cx.backend(), Backend::Xml) {
+        if !matches!(cx.backend(), Backend::Xml { .. }) {
             return None;
         }
         /* Built lazily and cached on the document; None on OOM, and the caller

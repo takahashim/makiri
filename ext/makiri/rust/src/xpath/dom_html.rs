@@ -13,7 +13,7 @@ use core::ffi::c_void;
 use super::abi::*;
 use super::dom::*;
 use crate::dom_adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
-use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
+use crate::lexbor_abi::{self as lxb, LxbNode};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
  * Lexbor's enum must agree value for value; a mismatch would make an HTML walk
@@ -39,10 +39,6 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
     type Node = HtmlNode<'d>;
     type Attr = HtmlAttr<'d>;
 
-    #[inline]
-    unsafe fn from_document(p: *mut c_void) -> Option<Self> {
-        HtmlDoc::from_raw(p as *mut LxbDoc)
-    }
     #[inline]
     fn token(n: HtmlNode<'d>) -> *mut c_void {
         n.as_raw() as *mut c_void
@@ -158,7 +154,7 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
         if ns_uri.is_some() {
             return None;
         }
-        let Backend::Html { index } = cx.backend() else {
+        let Backend::Html { index, .. } = cx.backend() else {
             return None;
         };
         // SAFETY: the context's element index belongs to this document and is

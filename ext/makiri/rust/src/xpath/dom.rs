@@ -45,9 +45,9 @@ pub const NTYPE_NOTATION: u32 = 12;
 /// that time: without a handler no Ruby runs, and with one the document refuses
 /// every mutation until the evaluate returns (`glue::doc::DocumentEvaluation`).
 ///
-/// Two entries are unsafe, and they are the boundary with the glue: taking the
-/// borrow from the context's erased document pointer, and reading a node-set's
-/// erased token back as a node.
+/// One entry is unsafe, and it is the boundary with the glue: reading an erased
+/// node token - the context node, a handler's answer, an index bucket - back as
+/// a node.
 pub trait Dom<'d>: Copy {
     /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:
     /// `id()` is the empty node-set in XML (an ID is DTD-declared, and DTDs are
@@ -60,13 +60,6 @@ pub trait Dom<'d>: Copy {
     /// An attribute node, as its own type: holding one is the proof it is an
     /// attribute, so the attribute readers take it without checking again.
     type Attr: Copy;
-
-    /// The document behind the context's erased pointer, or None for null.
-    ///
-    /// # Safety
-    /// `p` must be null or this backend's document, live and unchanged for
-    /// `'d`.
-    unsafe fn from_document(p: *mut c_void) -> Option<Self>;
 
     /// The erased token a node-set stores for `n`.
     fn token(n: Self::Node) -> *mut c_void;

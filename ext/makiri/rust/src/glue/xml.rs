@@ -87,9 +87,6 @@ use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result}
 pub use crate::xml::api::xml_doc_new;
 pub use crate::xml::api::xml_parse_ex;
 pub use crate::xml::api::xml_parse_fragment;
-pub use crate::xpath::ctx::ctx_limits;
-pub use crate::xpath::ctx::xpath_register_ns;
-use crate::xpath::ctx::OwnedContext;
 
 extern "C" {
 
@@ -338,7 +335,7 @@ unsafe fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
 /// namespace, so a prefix is the strict-mode way to select them.
 unsafe fn register_namespaces(
     ruby: &Ruby,
-    ctx: *mut XPathContext,
+    ctx: &XPathContext,
     rb_ns: Option<Value>,
 ) -> Result<(), Error> {
     let Some(rb_ns) = rb_ns.filter(|v| !v.is_nil()) else {
@@ -350,7 +347,7 @@ unsafe fn register_namespaces(
             "namespaces must be a Hash of prefix => uri",
         ));
     };
-    let cap = (*ctx_limits(ctx)).max_string_bytes;
+    let cap = ctx.limits().max_string_bytes;
 
     let keys: RArray = h.funcall("keys", ())?;
     for k in keys.into_iter() {
@@ -369,8 +366,10 @@ unsafe fn register_namespaces(
                 ));
             }
         };
-        let rc = xpath_register_ns(ctx, pv.as_verified(), uv.as_verified());
-        if rc != 0 {
+        if ctx
+            .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
+            .is_err()
+        {
             return Err(Error::new(error_class(), "failed to register namespace"));
         }
     }
@@ -391,10 +390,10 @@ unsafe fn build_ctx(
     rb_text: Value,
     what: *const c_char,
     rb_ns: Option<Value>,
-) -> Result<OwnedContext, Error> {
+) -> Result<XPathContext<'static>, Error> {
     verify_text(crate::bridge::ruby::string_of(rb_text.as_raw())?, what)?;
     let ctx = context_for(context, document)?;
-    register_namespaces(ruby, ctx.as_ptr(), rb_ns)?; /* ctx drops on error */
+    register_namespaces(ruby, &ctx, rb_ns)?; /* ctx drops on error */
     Ok(ctx)
 }
 
@@ -402,13 +401,13 @@ unsafe fn build_ctx(
 /// AST and the context first.
 unsafe fn run_ast(
     ruby: &Ruby,
-    ctx: OwnedContext,
+    ctx: XPathContext<'static>,
     ast: Box<Ast>,
     first_only: bool,
     document: Value,
 ) -> Result<Value, Error> {
     let nil = ruby.qnil().as_value();
-    let value = evaluate_query(ctx.as_ptr(), &ast, nil, document, first_only);
+    let value = evaluate_query(&ctx, &ast, nil, document, first_only);
     drop(ast);
     drop(ctx);
     query_result(value?, document, first_only)
@@ -448,7 +447,7 @@ fn xpath_run(
         /* Parse AFTER namespace registration: that step allocates Ruby objects
          * and may run a GC, and the borrowed expression bytes must not be live
          * across one. */
-        let ast = parse_query(ctx.as_ptr(), expr)?;
+        let ast = parse_query(&ctx, expr)?;
         run_ast(ruby, ctx, ast, first_only, document)
     }
 }
@@ -488,7 +487,7 @@ unsafe fn css_default_prefix(rb_ns: Option<Value>) -> *const c_char {
 
 /// Compile a selector under `ctx`, whose namespaces are already registered.
 unsafe fn css_compile_or_raise(
-    ctx: *mut XPathContext,
+    ctx: &XPathContext,
     selector: Value,
     rb_ns: Option<Value>,
 ) -> Result<Box<Ast>, Error> {
@@ -496,7 +495,7 @@ unsafe fn css_compile_or_raise(
         default_prefix: css_default_prefix(rb_ns),
     };
     let sv = ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
-    let mut budget = crate::xpath::limits::Budget::with_limits(*ctx_limits(ctx));
+    let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
     let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, &mut budget);
     drop(sv);
     if let Ok(ast) = ast {
@@ -540,7 +539,7 @@ fn css_run(
             c"CSS selector".as_ptr(),
             Some(ns),
         )?;
-        let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
+        let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
         run_ast(ruby, ctx, ast, first_only, document)
     }
 }
@@ -574,10 +573,10 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
             c"CSS selector".as_ptr(),
             Some(ns),
         )?;
-        let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
+        let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
 
         let nil = ruby.qnil().as_value();
-        let value = evaluate_query(ctx.as_ptr(), &ast, nil, document, false);
+        let value = evaluate_query(&ctx, &ast, nil, document, false);
         drop(ast);
         let value = value?;
         let target = node.to_token() as *mut c_void;

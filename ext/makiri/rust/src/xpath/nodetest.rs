@@ -21,7 +21,9 @@ use super::dom::*;
 /// hottest loop in the engine.
 #[derive(Clone, Copy)]
 pub struct Bindings<'a, D: Dom<'a>> {
-    pub cx: &'a Context,
+    pub cx: &'a Context<'a>,
+    /// The context's registrations, for a prefix the step did not resolve.
+    pub names: &'a Names,
     pub doc: D,
     /// namespace_matching: :lax - the unprefixed element rule is relaxed.
     pub lax: bool,
@@ -30,9 +32,15 @@ pub struct Bindings<'a, D: Dom<'a>> {
 }
 
 impl<'a, D: Dom<'a>> Bindings<'a, D> {
-    pub fn new(cx: &'a Context, doc: D, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
+    pub fn new(
+        cx: &'a Context<'a>,
+        names: &'a Names,
+        doc: D,
+        pre: Option<&'a [u8]>,
+    ) -> Bindings<'a, D> {
         Bindings {
             cx,
+            names,
             doc,
             lax: cx.lax(),
             pre,
@@ -112,7 +120,7 @@ fn name_test_match<'a, D: Dom<'a>>(
 fn resolved_prefix<'a, D: Dom<'a>>(b: &Bindings<'a, D>, test: &NodeTest) -> Option<&'a [u8]> {
     match b.pre {
         Some(u) => Some(u),
-        None => b.cx.lookup_ns(test.prefix.as_deref().unwrap_or(&[])),
+        None => b.names.lookup_ns(test.prefix.as_deref().unwrap_or(&[])),
     }
 }
 

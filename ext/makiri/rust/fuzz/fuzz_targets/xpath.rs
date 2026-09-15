@@ -23,7 +23,7 @@ const FIXED_XML: &[u8] = b"<?xml version='1.0'?>\
 </root>";
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(mut doc) = xml_parse(FIXED_XML) else {
+    let Ok(doc) = xml_parse(FIXED_XML) else {
         return;
     };
     let Some(expr) = Expr::new(data) else {
@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let Some(ctx) = xml_context(&mut doc) else {
+        let Some(mut ctx) = xml_context(&doc) else {
             return;
         };
 
@@ -42,14 +42,14 @@ fuzz_target!(|data: &[u8]| {
         // burning fuzzer time. Same numbers the C harness used, and applied in
         // the same order: the compile-time pair for the parse, the rest only for
         // the evaluation.
-        let l = limits(ctx.as_ptr());
+        let l = ctx.limits_mut();
         l.max_ast_nodes = 10_000;
         l.max_expr_bytes = 16 * 1024;
         let Some(ast) = parse(&ctx, text) else {
             return;
         };
 
-        let l = limits(ctx.as_ptr());
+        let l = ctx.limits_mut();
         l.max_eval_ops = 5_000_000;
         l.max_nodeset_size = 10_000;
         l.max_string_bytes = 1024 * 1024;

@@ -36,7 +36,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let Ok(mut doc) = xml_parse(xml) else {
+    let Ok(doc) = xml_parse(xml) else {
         return;
     };
     let Some(expr) = Expr::new(expr_bytes) else {
@@ -44,24 +44,19 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let Some(ctx) = xml_context(&mut doc) else {
+        let Some(mut ctx) = xml_context(&doc) else {
             return;
         };
 
         // Much tighter than the `xpath` target's: here the fuzzer controls the
         // document too, so a single input could otherwise build a large tree
         // AND walk it. An overrun fails closed, which is the point.
-        let l = limits(ctx.as_ptr());
+        let l = ctx.limits_mut();
         l.max_eval_ops = 20_000;
         l.max_nodeset_size = 1024;
         l.max_string_bytes = 4096;
 
-        if let (Some(prefix), Some(uri)) = (
-            VerifiedText::from_bytes(b"d"),
-            VerifiedText::from_bytes(b"urn:d"),
-        ) {
-            xpath_register_ns(ctx.as_ptr(), prefix, uri);
-        }
+        let _ = ctx.register_ns(b"d", b"urn:d");
 
         let Some(ast) = expr.text().and_then(|text| parse(&ctx, text)) else {
             return;

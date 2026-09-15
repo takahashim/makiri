@@ -528,7 +528,7 @@ Key decisions that got there, worth not regressing:
   `glue/xpath.rs`): parse copies the source to a C buffer then runs
   `parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. **XPath holds
-  the GVL for the whole evaluation by design** (`xpath::ctx::evaluate` is a plain
+  the GVL for the whole evaluation by design** (`xpath::ctx::Context::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL
   serialises all Ruby-thread C code, so an XPath walk never runs in parallel
@@ -591,7 +591,7 @@ Key decisions that got there, worth not regressing:
   (positional predicates, functions/variables, reverse axes, unions, prefixes,
   longer paths) returns 0 from the recogniser → full evaluator. Only `at_xpath`
   uses it; `xpath` always builds the full set.
-- **Per-context compiled-AST cache** (`xpath/ctx.rs`): an `XPathContext` parses
+- **Per-context compiled-AST cache** (`glue/xpath.rs`): an `XPathContext` parses
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
 - Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't

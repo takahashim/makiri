@@ -42,7 +42,7 @@ use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedDa
 use rb_sys::VALUE;
 
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{Backend, OwnedContext};
+use crate::xpath::ctx::{Backend, Context, ContextError, Resolver};
 use crate::xpath::ctx::{ResolverCall, XPathValue};
 use crate::xpath::limits::Budget;
 use crate::xpath::msg::{
@@ -72,9 +72,6 @@ const HANDLER_MAX_ARGS: usize = 64;
 /// `DocKind`.
 const DOC_XML: u32 = 1;
 
-/// The engine context. Opaque here while C held it; now the real type.
-use crate::xpath::ctx::Context as Ctx;
-
 pub use crate::bridge::string::ruby_exception_message;
 pub use crate::bridge::string::ruby_try_verified_text;
 pub use crate::dom_adapter::dom_index::parsed_dom_index_build;
@@ -83,13 +80,6 @@ pub use crate::dom_adapter::post_parse::parsed_kind;
 pub use crate::init::CLASS_XPATH_CONTEXT;
 pub use crate::init::EXC_XPATH_LIMIT_EXCEEDED;
 pub use crate::init::EXC_XPATH_SYNTAX_ERROR;
-pub use crate::xpath::ctx::ctx_is_evaluating;
-pub use crate::xpath::ctx::ctx_limits;
-pub use crate::xpath::ctx::ctx_set_context_node;
-pub use crate::xpath::ctx::ctx_set_unprefixed_lax;
-pub use crate::xpath::ctx::xpath_register_ns;
-pub use crate::xpath::ctx::xpath_register_variable_string;
-use crate::xpath::ctx::{evaluate, evaluate_first};
 
 /* ------------------------------------------------------------------ */
 /* result + error mapping                                             */
@@ -164,18 +154,6 @@ pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Val
 /// before the context itself is freed.
 struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
-struct Inner {
-    /* Fields drop in declaration order, so the cached ASTs go before the
-     * context they were parsed under. */
-    cache: AstCache,
-    ctx: OwnedContext,
-}
-
-/* SAFETY: every access holds the GVL, which serialises Ruby threads. magnus's
- * TypedData needs the bound because a wrapped value may be freed on whichever
- * thread runs the GC - still under the GVL. */
-unsafe impl Send for Inner {}
-
 /// `Makiri::XPathContext`.
 ///
 /// `document` never changes and so is a plain field. `node` DOES change (via
@@ -183,6 +161,10 @@ unsafe impl Send for Inner {}
 /// in the `RefCell`: `mark` must reach both on every GC, and a GC can land while
 /// a mutable borrow is outstanding - the mistake that had to be fixed in
 /// `glue::node_set`.
+///
+/// The engine context sits outside the `RefCell` too: everything done with it
+/// takes `&Context`, so a handler re-entering mid-walk can evaluate again on it,
+/// and the context itself refuses the changes that would disturb the walk.
 #[derive(TypedData)]
 #[magnus(class = "Makiri::XPathContext", mark, size, free_immediately)]
 struct XPathCtx {
@@ -190,8 +172,14 @@ struct XPathCtx {
     document: Opaque<Value>,
     /// Keepalive: the context node's wrapper.
     node: Cell<Opaque<Value>>,
-    inner: RefCell<Inner>,
+    cache: RefCell<AstCache>,
+    ctx: Context<'static>,
 }
+
+/* SAFETY: every access holds the GVL, which serialises Ruby threads. magnus's
+ * TypedData needs the bound because a wrapped value may be freed on whichever
+ * thread runs the GC - still under the GVL. */
+unsafe impl Send for XPathCtx {}
 
 impl DataTypeFunctions for XPathCtx {
     fn mark(&self, marker: &Marker) {
@@ -205,19 +193,21 @@ impl DataTypeFunctions for XPathCtx {
 }
 
 impl XPathCtx {
-    fn borrow(&self) -> Result<core::cell::RefMut<'_, Inner>, Error> {
-        self.inner
+    fn cache(&self) -> Result<core::cell::RefMut<'_, AstCache>, Error> {
+        self.cache
             .try_borrow_mut()
             .map_err(|_| Error::new(unsafe { error_class() }, "XPath context is already in use"))
     }
+}
 
-    /// The native context pointer, read under a borrow that is released before
-    /// it is used. Nothing frees the context while this object is alive, so the
-    /// pointer stays valid - and not holding the borrow is what lets a handler
-    /// re-enter (see `ctx_evaluate`).
-    fn ctx(&self) -> Result<*mut Ctx, Error> {
-        Ok(self.borrow()?.ctx.as_ptr())
-    }
+/// A context's refusal as the exception it raises: `busy` when an evaluate is
+/// running on it, `failed` otherwise.
+fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Error {
+    let msg = match error {
+        ContextError::Evaluating => busy,
+        ContextError::Failed => failed,
+    };
+    Error::new(unsafe { error_class() }, msg)
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,19 +230,19 @@ fn kw_symbols() -> (VALUE, VALUE, VALUE) {
 ///
 /// `:strict` (the default) resolves an unprefixed name test in the HTML
 /// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
-fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
+fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<bool, Error> {
     if opts.is_empty() {
-        return Ok(0);
+        return Ok(false);
     }
     let (key, strict, lax) = kw_symbols();
     let Some(v) = opts.get(unsafe { Value::from_raw(key) }) else {
-        return Ok(0);
+        return Ok(false);
     };
     if v.is_nil() || v.as_raw() == strict {
-        return Ok(0);
+        return Ok(false);
     }
     if v.as_raw() == lax {
-        return Ok(1);
+        return Ok(true);
     }
     Err(Error::new(
         ruby.exception_arg_error(),
@@ -270,8 +260,16 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
 /// parent and ancestor axes and its document-order sort see attribute owners,
 /// and hands over the element index so `//tag` is answered without a tree walk.
 /// The XML branch needs neither: the custom node links attributes to their owner
-/// directly, and `//tag` falls back to a walk.
-pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
+/// directly, and its name index hangs off the document.
+///
+/// The context is `'static` because Ruby, not a Rust borrow, keeps the document
+/// alive: the caller holds `document` for as long as the context lives. The
+/// document does not change while an evaluate runs: without a handler no Ruby
+/// runs, and with one [`Bridge`] holds the document's mutation guard.
+pub(crate) unsafe fn context_for(
+    rb_node: Value,
+    document: Value,
+) -> Result<Context<'static>, Error> {
     let parsed = doc_parsed(document.as_raw())?;
 
     if parsed_kind(parsed) == DOC_XML {
@@ -288,13 +286,10 @@ pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<Owne
         } else {
             xml_node_unwrap(rb_node.as_raw())?
         };
-        let Some(xctx) = OwnedContext::new(xdoc, cnode, Backend::Xml) else {
-            return Err(Error::new(
-                error_class(),
-                "failed to allocate XPath context",
-            ));
+        let backend = Backend::Xml {
+            doc: xdoc as *const crate::xml::model::Document,
         };
-        return Ok(xctx);
+        return Ok(Context::new(backend, cnode));
     }
 
     let node = html_node_unwrap(rb_node.as_raw())?;
@@ -307,19 +302,11 @@ pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<Owne
     }
     /* The element index is borrowed: it lives on the parsed document, which
      * outlives this context. */
-    let Some(ctx) = OwnedContext::new(
-        doc,
-        node as *mut c_void,
-        Backend::Html {
-            index: parsed_element_index(parsed),
-        },
-    ) else {
-        return Err(Error::new(
-            error_class(),
-            "failed to allocate XPath context",
-        ));
+    let backend = Backend::Html {
+        doc: doc as *mut crate::lexbor_abi::LxbDoc,
+        index: parsed_element_index(parsed),
     };
-    Ok(ctx)
+    Ok(Context::new(backend, node as *mut c_void))
 }
 
 /// `XPathContext.new(node, namespace_matching: :strict)`.
@@ -335,17 +322,15 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         ));
     }
     let document = unsafe { Value::from_raw(keepalive_document(rb_node.as_raw())?) };
-    let ctx = unsafe { context_for(rb_node, document)? };
-    unsafe { ctx_set_unprefixed_lax(ctx.as_ptr(), lax) };
+    let mut ctx = unsafe { context_for(rb_node, document)? };
+    ctx.set_lax(lax);
 
     let obj = ruby
         .wrap(XPathCtx {
             document: document.into(),
             node: Cell::new(rb_node.into()),
-            inner: RefCell::new(Inner {
-                cache: AstCache(HashMap::new()),
-                ctx,
-            }),
+            cache: RefCell::new(AstCache(HashMap::new())),
+            ctx,
         })
         .as_value();
     /* While `wrap` allocates the object - a GC point - both values are held only
@@ -366,14 +351,12 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
             "expected a Makiri::Node",
         ));
     }
-    let ctx = rb_self.ctx()?;
+    const BUSY: &str =
+        "cannot change the context node while evaluating (re-entrant mutation from a handler)";
+    if rb_self.ctx.is_evaluating() {
+        return Err(refused(ContextError::Evaluating, BUSY, BUSY));
+    }
     unsafe {
-        if ctx_is_evaluating(ctx) != 0 {
-            return Err(Error::new(
-                error_class(),
-                "cannot change the context node while evaluating (re-entrant mutation from a handler)",
-            ));
-        }
         if keepalive_document(rb_node.as_raw())? != ruby.get_inner(rb_self.document).as_raw() {
             return Err(Error::new(
                 error_class(),
@@ -381,9 +364,12 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
             ));
         }
         rb_self.node.set(rb_node.into()); /* keepalive; marked above */
-        /* Same-document is verified, so rb_node is the context's representation
-         * and the engine - monomorphized per kind - takes the raw pointer. */
-        ctx_set_context_node(ctx, node_raw(rb_node.as_raw())?);
+        /* Same-document is verified, so rb_node is a node of the context's
+         * document. */
+        rb_self
+            .ctx
+            .set_context_node(node_raw(rb_node.as_raw())?)
+            .map_err(|e| refused(e, BUSY, BUSY))?;
     }
     Ok(rb_node)
 }
@@ -403,6 +389,22 @@ struct Bridge {
     handler: VALUE,
     /// Keepalive, and the document node-set arguments are wrapped under.
     document: VALUE,
+    /// Every mutator on `document` refuses while this lives.
+    _reading: crate::glue::doc::DocumentEvaluation,
+}
+
+// SAFETY: the bridge holds `document`'s evaluation guard for as long as it
+// exists, so a handler cannot change the document mid-walk; and
+// `push_result_node` admits only nodes whose document is `document`.
+unsafe impl Resolver for Bridge {
+    fn resolve(
+        &self,
+        budget: &mut Budget,
+        call: &ResolverCall<'_>,
+    ) -> Result<Option<Val>, Reported> {
+        // SAFETY: called by the engine mid-evaluate, under the GVL.
+        unsafe { handler_resolver(self, budget, call) }
+    }
 }
 
 /// engine value -> Ruby.
@@ -615,16 +617,12 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
 /// `Ok(None)` when the handler has no such method and the engine reports the
 /// function unknown.
 unsafe fn handler_resolver(
-    data: *mut c_void,
+    bridge: &Bridge,
     budget: &mut Budget,
     call: &ResolverCall<'_>,
 ) -> Result<Option<Val>, Reported> {
     let err = budget.sink();
     let budget: *mut Budget = budget;
-    if data.is_null() {
-        return Ok(None);
-    }
-    let bridge = &*(data as *const Bridge);
     if bridge.handler == rb_sys::Qnil as VALUE {
         return Ok(None);
     }
@@ -712,27 +710,28 @@ unsafe fn handler_resolver(
 /// cached AST lives as long as the context (see [`AstCache`]).
 #[allow(clippy::result_large_err)]
 unsafe fn cached_ast(
-    d: &mut Inner,
+    cache: &mut AstCache,
+    limits: crate::xpath::limits::Limits,
     expr: RubyText,
 ) -> Result<(*const Ast, Option<Box<Ast>>), crate::xpath::msg::Error> {
     let key = expr.bytes();
-    if let Some(ast) = d.cache.0.get(key) {
+    if let Some(ast) = cache.0.get(key) {
         return Ok((&**ast as *const Ast, None));
     }
 
     /* Each parse charges a budget of its own, made from the context's caps. */
-    let mut budget = Budget::with_limits(*ctx_limits(d.ctx.as_ptr()));
+    let mut budget = Budget::with_limits(limits);
     let Ok(ast) = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, &mut budget)
     else {
         return Err(budget.take_error());
     };
-    if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
+    if cache.0.len() >= AST_CACHE_MAX || cache.0.mkr_reserve(1).is_err() {
         return Ok((&*ast as *const Ast, Some(ast)));
     }
     let Some(owned_key) = try_to_boxed_slice(key) else {
         return Ok((&*ast as *const Ast, Some(ast)));
     };
-    if d.cache.0.mkr_insert(owned_key, ast).is_err() {
+    if cache.0.mkr_insert(owned_key, ast).is_err() {
         crate::xpath::msg::err_set(
             budget.sink(),
             XP_ERR_OOM,
@@ -740,7 +739,7 @@ unsafe fn cached_ast(
         );
         return Err(budget.take_error());
     }
-    let ast = d.cache.0.get(key).expect("inserted AST");
+    let ast = cache.0.get(key).expect("inserted AST");
     Ok((&**ast as *const Ast, None))
 }
 
@@ -753,9 +752,9 @@ unsafe fn cached_ast(
 
 /// Parse `expr` for one query under `ctx`'s caps, on a budget of the query's
 /// own; a failure is that budget's error as the exception.
-pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<Box<Ast>, Error> {
+pub(crate) unsafe fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
-    let mut budget = Budget::with_limits(*ctx_limits(ctx));
+    let mut budget = Budget::with_limits(ctx.limits());
     let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
@@ -766,34 +765,29 @@ pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<Box<Ast>,
 /// functions for this evaluation only. `first_only` takes the `at_xpath` fast
 /// path.
 pub(crate) unsafe fn evaluate_query(
-    ctx: *mut Ctx,
+    ctx: &Context,
     ast: &Ast,
     handler: Value,
     document: Value,
     first_only: bool,
 ) -> Result<XPathValue, Error> {
     /* A handler runs Ruby mid-walk, so for as long as one can, the document
-     * refuses to be changed. Declared first, so it is released last. */
-    let _reading = if handler.is_nil() {
+     * refuses to be changed: the bridge holds that guard, and lives on this
+     * frame for this evaluate alone. */
+    let bridge = if handler.is_nil() {
         None
     } else {
-        Some(crate::glue::doc::DocumentEvaluation::enter(
-            document.as_raw(),
-        )?)
+        Some(Bridge {
+            handler: handler.as_raw(),
+            document: document.as_raw(),
+            _reading: crate::glue::doc::DocumentEvaluation::enter(document.as_raw())?,
+        })
     };
-    let bridge = Bridge {
-        handler: handler.as_raw(),
-        document: document.as_raw(),
-    };
-    /* The bridge lives on this frame and is handed to this evaluate alone. */
-    let resolver = (!handler.is_nil()).then_some(crate::xpath::ctx::Handler {
-        resolve: handler_resolver,
-        data: &bridge as *const Bridge as *mut c_void,
-    });
+    let resolver = bridge.as_ref().map(|b| b as &dyn Resolver);
     let result = if first_only {
-        evaluate_first(ctx, ast, resolver)
+        ctx.evaluate_first(ast, resolver)
     } else {
-        evaluate(ctx, ast, resolver)
+        ctx.evaluate(ast, resolver)
     };
     result.map_err(|error| xpath_error(&error))
 }
@@ -820,26 +814,25 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
     let handler = a.optional.0.unwrap_or(ruby.qnil().as_value());
     let document = ruby.get_inner(rb_self.document);
 
-    /* The borrow is taken for the cache lookup ONLY, and released before the
+    /* The cache borrow is taken for the lookup ONLY, and released before the
      * evaluation. A handler called mid-walk re-enters this object - to register
      * a namespace, to rebind the node, or to evaluate again on the same context
-     * - and re-entrancy is governed by the engine's own `is_evaluating` flag,
-     * which reports the specific refusal (and permits a nested evaluate). Holding
-     * the borrow across the walk would turn all four into one generic "already in
-     * use", which is how the handler specs first caught this. */
-    let (ctx, ast, owned) = unsafe {
+     * - and re-entrancy is governed by the context itself, which reports the
+     * specific refusal (and permits a nested evaluate). Holding the borrow
+     * across the walk would turn all four into one generic "already in use",
+     * which is how the handler specs first caught this. */
+    let (ast, owned) = unsafe {
         /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
          * which may re-enter this context, and a borrow held across that would
          * turn the re-entry into "already in use". */
         let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
-        let mut d = rb_self.borrow()?;
-        let parsed = cached_ast(&mut d, ev);
-        let ctx = d.ctx.as_ptr();
+        let mut cache = rb_self.cache()?;
+        let parsed = cached_ast(&mut cache, rb_self.ctx.limits(), ev);
         /* Release the borrow before building the exception: that allocates, and
          * a NoMemoryError there would longjmp past the RefMut. */
-        drop(d);
+        drop(cache);
         match parsed {
-            Ok((ast, owned)) => (ctx, ast, owned),
+            Ok((ast, owned)) => (ast, owned),
             Err(error) => return Err(xpath_error(&error)),
         }
     };
@@ -847,27 +840,26 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
     unsafe {
         /* A cached AST outlives this call: the context is live (it is
          * `rb_self`), and its cache frees nothing before the context goes. */
-        let value = evaluate_query(ctx, &*ast, handler, document, false);
+        let value = evaluate_query(&rb_self.ctx, &*ast, handler, document, false);
         drop(owned);
         query_result(value?, document, false)
     }
 }
 
 fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Value, Error> {
-    let ctx = rb_self.ctx()?;
+    const BUSY: &str =
+        "cannot register a namespace while evaluating (re-entrant mutation from a handler)";
+    const FAILED: &str = "failed to register namespace";
+    if rb_self.ctx.is_evaluating() {
+        return Err(refused(ContextError::Evaluating, BUSY, FAILED));
+    }
     unsafe {
-        if ctx_is_evaluating(ctx) != 0 {
-            return Err(Error::new(
-                error_class(),
-                "cannot register a namespace while evaluating (re-entrant mutation from a handler)",
-            ));
-        }
         let pv = ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr())?;
         let uv = ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr())?;
-        let rc = xpath_register_ns(ctx, pv.as_verified(), uv.as_verified()); /* copies both */
-        if rc != 0 {
-            return Err(Error::new(error_class(), "failed to register namespace"));
-        }
+        rb_self
+            .ctx
+            .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) /* copies both */
+            .map_err(|e| refused(e, BUSY, FAILED))?;
     }
     Ok(rb_self_value())
 }
@@ -879,21 +871,20 @@ fn rb_self_value() -> Value {
 }
 
 fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Result<Value, Error> {
-    let ctx = rb_self.ctx()?;
+    const BUSY: &str =
+        "cannot register a variable while evaluating (re-entrant mutation from a handler)";
+    const FAILED: &str = "failed to register variable";
+    if rb_self.ctx.is_evaluating() {
+        return Err(refused(ContextError::Evaluating, BUSY, FAILED));
+    }
     unsafe {
-        if ctx_is_evaluating(ctx) != 0 {
-            return Err(Error::new(
-                error_class(),
-                "cannot register a variable while evaluating (re-entrant mutation from a handler)",
-            ));
-        }
         /* Coerce the value FIRST - to_s allocates, which is a GC point - so no
          * borrowed name bytes are held across it. The value then gets the
          * stricter engine-string check, which adds the byte cap on top of the
          * no-NUL / valid-UTF-8 contract. */
         let sv: Value = value.funcall("to_s", ())?;
         let nv = ruby_verified_text(name.as_raw(), c"variable name".as_ptr())?;
-        let vv = match ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes) {
+        let vv = match ruby_try_verified_text(sv.as_raw(), rb_self.ctx.limits().max_string_bytes) {
             Ok(vv) => vv,
             Err(reason) => {
                 return Err(Error::new(
@@ -902,10 +893,10 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
                 ));
             }
         };
-        let rc = xpath_register_variable_string(ctx, nv.as_verified(), vv.as_verified()); /* copies both */
-        if rc != 0 {
-            return Err(Error::new(error_class(), "failed to register variable"));
-        }
+        rb_self
+            .ctx
+            .register_variable(nv.as_verified().as_bytes(), vv.as_verified().as_bytes()) /* copies both */
+            .map_err(|e| refused(e, BUSY, FAILED))?;
     }
     Ok(rb_self_value())
 }
@@ -921,15 +912,15 @@ fn node_xpath_run(
     rb_self: Value,
     expr: Value,
     handler: Value,
-    lax: c_int,
+    lax: bool,
     first_only: bool,
 ) -> Result<Value, Error> {
     unsafe {
         let document = Value::from_raw(keepalive_document(rb_self.as_raw())?);
-        let ctx = context_for(rb_self, document)?;
-        ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
-        let ast = parse_query(ctx.as_ptr(), expr)?;
-        let value = evaluate_query(ctx.as_ptr(), &ast, handler, document, first_only);
+        let mut ctx = context_for(rb_self, document)?;
+        ctx.set_lax(lax);
+        let ast = parse_query(&ctx, expr)?;
+        let value = evaluate_query(&ctx, &ast, handler, document, first_only);
         drop(ast);
         drop(ctx);
         query_result(value?, document, first_only)
@@ -943,9 +934,9 @@ fn node_xpath_run(
 /// with a keyword type allocates an empty Hash even when no keywords were
 /// passed, and `at_xpath` spends about 650ns per call in total, so the
 /// allocation and the symbol lookups behind it measured ~32% of it.
-fn scan_query_args(ruby: &Ruby, args: &[Value]) -> Result<(Value, Value, c_int), Error> {
+fn scan_query_args(ruby: &Ruby, args: &[Value]) -> Result<(Value, Value, bool), Error> {
     if args.len() == 1 {
-        return Ok((args[0], ruby.qnil().as_value(), 0));
+        return Ok((args[0], ruby.qnil().as_value(), false));
     }
     let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), magnus::RHash, ()>(
         args,

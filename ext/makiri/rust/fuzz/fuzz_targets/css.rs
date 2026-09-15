@@ -28,7 +28,7 @@ fuzz_target!(|data: &[u8]| {
     let Some((&mode, selector)) = data.split_first() else {
         return;
     };
-    let Ok(mut doc) = xml_parse(FIXED_XML) else {
+    let Ok(doc) = xml_parse(FIXED_XML) else {
         return;
     };
     let Some(expr) = Expr::new(selector) else {
@@ -39,10 +39,10 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let Some(ctx) = xml_context(&mut doc) else {
+        let Some(mut ctx) = xml_context(&doc) else {
             return;
         };
-        let l = limits(ctx.as_ptr());
+        let l = ctx.limits_mut();
         l.max_eval_ops = 1_000_000;
         l.max_nodeset_size = 10_000;
         l.max_string_bytes = 64 * 1024;
@@ -51,12 +51,7 @@ fuzz_target!(|data: &[u8]| {
         // prefix, and - when the hash names one - the default namespace under
         // the sentinel prefix the lowering then binds bare type selectors to.
         let register = |prefix: &[u8], uri: &[u8]| {
-            if let (Some(p), Some(u)) = (
-                VerifiedText::from_bytes(prefix),
-                VerifiedText::from_bytes(uri),
-            ) {
-                xpath_register_ns(ctx.as_ptr(), p, u);
-            }
+            let _ = ctx.register_ns(prefix, uri);
         };
         register(b"ns", b"http://example.com/ns");
         let ns = if mode & 1 == 0 {
@@ -70,7 +65,7 @@ fuzz_target!(|data: &[u8]| {
             }
         };
 
-        let mut budget = Budget::with_limits(*ctx_limits(ctx.as_ptr()));
+        let mut budget = Budget::with_limits(ctx.limits());
         let Ok(ast) = compile_owned(text, &ns, &mut budget) else {
             return;
         };

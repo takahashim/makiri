@@ -10,8 +10,7 @@
 //!   parse.rs      recursive descent
 //!
 //! The driver:
-//!   ctx.rs        the context, its registries and state
-//!   evaluate.rs  the compiled-expression evaluation entries
+//!   ctx.rs        the context, its registries, and the evaluate entries
 //!   limits.rs     the per-evaluate budgets
 //!
 //! The engine, generic over `Dom`:
@@ -29,8 +28,8 @@
 //!   eval.rs       node tests, predicates, steps, operators
 //!
 //! An instance binds the contract to one representation:
-//!   dom_xml.rs / ffi_xml.rs     the XML reader's nodes
-//!   dom_html.rs / ffi_html.rs   Lexbor's nodes, through `dom_adapter::html` (`lexbor`)
+//!   dom_xml.rs    the XML reader's nodes
+//!   dom_html.rs   Lexbor's nodes, through `dom_adapter::html` (`lexbor`)
 
 #![allow(private_bounds)]
 
@@ -66,10 +65,7 @@ pub mod value;
 
 /* The XML instance. */
 pub mod dom_xml;
-pub mod ffi_xml;
 
 /* The HTML instance: it reads Lexbor's DOM, so it comes with `lexbor`. */
 #[cfg(feature = "lexbor")]
 pub mod dom_html;
-#[cfg(feature = "lexbor")]
-pub mod ffi_html;

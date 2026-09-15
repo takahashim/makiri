@@ -120,6 +120,7 @@ pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
     let err = ev.budget.sink();
     let doc = ev.doc;
     let cx = ev.cx;
+    let names = ev.names;
     let need = match nth_shape::<D>(doc, s0, s1, seed) {
         Some(n) => n,
         None => return Ok(false),
@@ -127,7 +128,7 @@ pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
     let test = &s1.test;
     let ns_uri: Option<&[u8]> = match test.prefix.as_deref() {
         None => None,
-        Some(prefix) => match cx.lookup_ns(prefix) {
+        Some(prefix) => match names.lookup_ns(prefix) {
             Some(u) => Some(u),
             None => {
                 return Err(err_setf!(
@@ -139,7 +140,7 @@ pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
             }
         },
     };
-    let b = Bindings::<D>::new(cx, doc, ns_uri);
+    let b = Bindings::<D>::new(cx, names, doc, ns_uri);
     let local = test.local.as_deref().unwrap_or(&[]);
     let bucket = match doc.name_bucket(cx, local, ns_uri, b.lax) {
         Some(bk) => bk,

@@ -8,14 +8,13 @@
 
 use core::ffi::{c_int, c_void};
 
+use crate::xpath::limits::Budget;
+
 use crate::text::VerifiedText;
 use crate::xml::parse::xml_parse;
 use crate::xml::{NodeId, NodeType};
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{
-    ctx_limits, evaluate, evaluate_first, xpath_register_ns, Backend, Handler, OwnedContext,
-    XPathValue,
-};
+use crate::xpath::ctx::{Context, Resolver, ResolverCall, XPathValue};
 use crate::xpath::msg::{XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
 use crate::xpath::parse::parse_owned;
 
@@ -66,23 +65,16 @@ fn run(
     expr: &str,
     tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
 ) -> Answer {
-    let mut doc = xml_parse(DOC).expect("the fixture parses");
-    // SAFETY: the document outlives the context and the AST, which drop first
-    // (declared after it); every engine call runs on this thread.
-    unsafe {
-        let node = doc.doc_node().to_token() as *mut c_void;
-        let ctx = OwnedContext::new(&mut *doc as *mut _ as *mut c_void, node, Backend::Xml)
-            .expect("a context");
-        let (prefix, uri) = (
-            VerifiedText::from_bytes(b"d").expect("verified"),
-            VerifiedText::from_bytes(b"urn:d").expect("verified"),
-        );
-        assert_eq!(xpath_register_ns(ctx.as_ptr(), prefix, uri), 0);
-        tighten(&mut *ctx_limits(ctx.as_ptr()));
+    let doc = xml_parse(DOC).expect("the fixture parses");
+    let mut ctx = Context::xml(&doc, doc.doc_node());
+    ctx.register_ns(b"d", b"urn:d").expect("registered");
+    tighten(ctx.limits_mut());
 
-        let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
-        let mut parse_budget = crate::xpath::limits::Budget::with_limits(*ctx_limits(ctx.as_ptr()));
-        let compiled: Result<Box<Ast>, _> = match query {
+    let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
+    let mut parse_budget = Budget::with_limits(ctx.limits());
+    // SAFETY: `source` borrows `expr`, which outlives the parse.
+    let compiled: Result<Box<Ast>, _> = unsafe {
+        match query {
             Query::XPath => parse_owned(source, &mut parse_budget),
             #[cfg(feature = "lexbor")]
             Query::Css => {
@@ -91,12 +83,13 @@ fn run(
                 };
                 crate::css::compile_owned(source, &ns, &mut parse_budget)
             }
-        };
-        let ast = match compiled {
-            Ok(ast) => ast,
-            Err(_) => return Answer::Err(parse_budget.take_error().status),
-        };
-
+        }
+    };
+    let ast = match compiled {
+        Ok(ast) => ast,
+        Err(_) => return Answer::Err(parse_budget.take_error().status),
+    };
+    {
         let describe = |node: &*mut c_void| {
             let id = NodeId::from_token(*node as usize);
             match doc.type_(id) {
@@ -106,11 +99,11 @@ fn run(
                 _ => String::from_utf8_lossy(doc.qname(id)).into_owned(),
             }
         };
-        match evaluate(ctx.as_ptr(), &ast, None) {
+        match ctx.evaluate(&ast, None) {
             Err(e) => Answer::Err(e.status),
             Ok(XPathValue::NodeSet(set)) => {
                 let all: Vec<String> = set.as_slice().iter().map(describe).collect();
-                if let Ok(XPathValue::NodeSet(one)) = evaluate_first(ctx.as_ptr(), &ast, None) {
+                if let Ok(XPathValue::NodeSet(one)) = ctx.evaluate_first(&ast, None) {
                     assert_eq!(
                         one.as_slice().first().map(describe),
                         all.first().cloned(),
@@ -208,18 +201,14 @@ fn chain(ops: usize) -> String {
 /// Parse only: evaluating a tree this deep takes more stack than a debug build's
 /// test thread has, and what is being tested is where the tree stops being built.
 fn parse_status(expr: &str) -> Result<(), c_int> {
-    let mut doc = xml_parse(DOC).expect("the fixture parses");
-    // SAFETY: as in `run` - the document outlives the context.
-    unsafe {
-        let node = doc.doc_node().to_token() as *mut c_void;
-        let ctx = OwnedContext::new(&mut *doc as *mut _ as *mut c_void, node, Backend::Xml)
-            .expect("a context");
-        let mut budget = crate::xpath::limits::Budget::with_limits(*ctx_limits(ctx.as_ptr()));
-        let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
-        match parse_owned(source, &mut budget) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(budget.take_error().status),
-        }
+    let doc = xml_parse(DOC).expect("the fixture parses");
+    let ctx = Context::xml(&doc, doc.doc_node());
+    let mut budget = Budget::with_limits(ctx.limits());
+    let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
+    // SAFETY: `source` borrows `expr`, which outlives the parse.
+    match unsafe { parse_owned(source, &mut budget) } {
+        Ok(_) => Ok(()),
+        Err(_) => Err(budget.take_error().status),
     }
 }
 
@@ -235,65 +224,56 @@ fn nesting_depth_is_bounded_where_the_tree_is_built() {
     assert_eq!(parse_status(&chain(30_000)), Err(XP_ERR_LIMIT));
 }
 
-/// What [`nesting_resolver`] reads through its data.
-struct Nesting {
-    ctx: *mut crate::xpath::ctx::Context,
+/// `f()` answers true, first running `inner` on the same context when `nest`
+/// is set - the shape of a Ruby handler that evaluates again mid-walk.
+struct Nesting<'a> {
+    ctx: &'a Context<'a>,
     inner: Box<Ast>,
     nest: bool,
 }
 
-/// `f()` answers true, first running `inner` on the same context when `nest`
-/// is set - the shape of a Ruby handler that evaluates again mid-walk.
-unsafe fn nesting_resolver(
-    data: *mut c_void,
-    _budget: &mut crate::xpath::limits::Budget,
-    call: &crate::xpath::ctx::ResolverCall<'_>,
-) -> Result<Option<crate::xpath::value::Val>, crate::xpath::msg::Reported> {
-    let n = &*(data as *const Nesting);
-    if call.local != b"f" {
-        return Ok(None);
+// SAFETY: it answers no nodes, and changes nothing.
+unsafe impl Resolver for Nesting<'_> {
+    fn resolve(
+        &self,
+        _budget: &mut Budget,
+        call: &ResolverCall<'_>,
+    ) -> Result<Option<crate::xpath::value::Val>, crate::xpath::msg::Reported> {
+        if call.local != b"f" {
+            return Ok(None);
+        }
+        if self.nest {
+            let _ = self.ctx.evaluate(&self.inner, None);
+        }
+        Ok(Some(crate::xpath::value::Val::boolean(true)))
     }
-    if n.nest {
-        let _ = evaluate(n.ctx, &n.inner, None);
-    }
-    Ok(Some(crate::xpath::value::Val::boolean(true)))
 }
 
 /// `//node()[f()]` against [`DOC`] under `max_eval_ops`, with or without the
 /// nested evaluate inside `f()`.
 fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
-    let mut doc = xml_parse(DOC).expect("the fixture parses");
-    // SAFETY: as in `run`; `nesting` outlives the evaluate that reads it.
-    unsafe {
-        let node = doc.doc_node().to_token() as *mut c_void;
-        let ctx = OwnedContext::new(&mut *doc as *mut _ as *mut c_void, node, Backend::Xml)
-            .expect("a context");
-        let parse = |text: &str| {
-            let mut budget = crate::xpath::limits::Budget::new();
-            match parse_owned(
-                VerifiedText::from_bytes(text.as_bytes()).unwrap(),
-                &mut budget,
-            ) {
-                Ok(ast) => ast,
-                Err(_) => panic!("{text} parses"),
-            }
-        };
-        let outer = parse("//node()[f()]");
-        let nesting = Nesting {
-            ctx: ctx.as_ptr(),
-            inner: parse("true()"),
-            nest,
-        };
-        let handler = Handler {
-            resolve: nesting_resolver,
-            data: &nesting as *const Nesting as *mut c_void,
-        };
-        (*ctx_limits(ctx.as_ptr())).max_eval_ops = max_eval_ops;
-        match evaluate(ctx.as_ptr(), &outer, Some(handler)) {
-            Ok(XPathValue::NodeSet(set)) => Answer::Num(set.len() as f64),
-            Ok(_) => Answer::Err(-1),
-            Err(e) => Answer::Err(e.status),
+    let doc = xml_parse(DOC).expect("the fixture parses");
+    let mut ctx = Context::xml(&doc, doc.doc_node());
+    ctx.limits_mut().max_eval_ops = max_eval_ops;
+    let parse = |text: &str| {
+        let mut budget = Budget::new();
+        let source = VerifiedText::from_bytes(text.as_bytes()).unwrap();
+        // SAFETY: `source` borrows `text`, which outlives the parse.
+        match unsafe { parse_owned(source, &mut budget) } {
+            Ok(ast) => ast,
+            Err(_) => panic!("{text} parses"),
         }
+    };
+    let outer = parse("//node()[f()]");
+    let nesting = Nesting {
+        ctx: &ctx,
+        inner: parse("true()"),
+        nest,
+    };
+    match ctx.evaluate(&outer, Some(&nesting)) {
+        Ok(XPathValue::NodeSet(set)) => Answer::Num(set.len() as f64),
+        Ok(_) => Answer::Err(-1),
+        Err(e) => Answer::Err(e.status),
     }
 }
 
