@@ -27,7 +27,7 @@ struct Parser<'a> {
 
 /// Report a lexer failure as an `mkr_xpath_error_t`. A free function because
 /// the very first token is lexed before there is a parser to hold it.
-fn lex_err(err: *mut Error, e: LexErr) {
+fn lex_err(err: *mut Error, e: LexErr) -> Reported {
     match e {
         LexErr::ExpectedNumber => err_setf!(err, XP_ERR_SYNTAX, "expected number"),
         LexErr::UnterminatedString => {
@@ -147,7 +147,7 @@ impl<'a> Parser<'a> {
     /// Charge the step budget, then append. A step that does not land is freed.
     fn push_step(&mut self, steps: &mut StepArray, s: OwnedStep) -> bool {
         unsafe {
-            if mkr_limit_check_steps(self.limits, steps.len() + 1, self.err) != 0 {
+            if mkr_limit_check_steps(self.limits, steps.len() + 1, self.err).is_err() {
                 return false;
             }
         }
@@ -255,7 +255,7 @@ impl<'a> Parser<'a> {
     fn parse_predicates(&mut self, preds: &mut NodeArray) -> bool {
         while self.kind() == Tok::LBracket {
             unsafe {
-                if mkr_limit_check_predicates(self.limits, preds.len() + 1, self.err) != 0 {
+                if mkr_limit_check_predicates(self.limits, preds.len() + 1, self.err).is_err() {
                     return false;
                 }
             }
@@ -437,7 +437,7 @@ impl<'a> Parser<'a> {
         if self.kind() != Tok::RParen {
             loop {
                 unsafe {
-                    if mkr_limit_check_func_args(self.limits, args.len() + 1, self.err) != 0 {
+                    if mkr_limit_check_func_args(self.limits, args.len() + 1, self.err).is_err() {
                         return None;
                     }
                 }
@@ -668,7 +668,7 @@ impl<'a> Parser<'a> {
     fn parse_expr(&mut self) -> Option<Ast> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
         unsafe {
-            if mkr_limit_recurse_enter(self.limits, self.err) != 0 {
+            if mkr_limit_recurse_enter(self.limits, self.err).is_err() {
                 return None;
             }
         }
@@ -735,7 +735,7 @@ pub(crate) unsafe fn parse_owned(
         err_setf!(err, XP_ERR_INTERNAL, "mkr_parse: limits required");
         return None;
     }
-    if mkr_limit_check_expr_bytes(limits, expr.len(), err) != 0 {
+    if mkr_limit_check_expr_bytes(limits, expr.len(), err).is_err() {
         return None;
     }
 

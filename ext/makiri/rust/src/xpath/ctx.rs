@@ -604,7 +604,7 @@ pub(crate) unsafe fn eval_compiled_first(
         };
         mkr_nodeset_init(&raw mut v.u.nodeset);
         if !node.is_null()
-            && mkr_nodeset_push(&raw mut v.u.nodeset, node, ptr::null_mut(), out_error) != 0
+            && mkr_nodeset_push(&raw mut v.u.nodeset, node, ptr::null_mut(), out_error).is_err()
         {
             mkr_nodeset_clear(&raw mut v.u.nodeset);
             return -1;

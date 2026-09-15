@@ -298,22 +298,20 @@ unsafe fn fn_count<D: Dom>(
 ///
 /// Every visited node is charged to the op budget: without it, id() over a large
 /// node-set - a token per node, a tree walk per token - drives quadratic work at
-/// no cost. Returns Err(()) on an overrun, with `*err` set.
+/// no cost. Returns Err on an overrun, with `*err` set.
 unsafe fn find_by_id<D: Dom>(
     doc: D::Doc,
     root: D::Node,
     id: &[u8],
     limits: *mut Limits,
     err: *mut Error,
-) -> Result<D::Node, ()> {
+) -> Result<D::Node, Reported> {
     if D::is_null(root) || id.is_empty() {
         return Ok(D::null());
     }
     let mut n = root;
     while !D::is_null(n) {
-        if mkr_limit_eval_op(limits, err) != 0 {
-            return Err(());
-        }
+        mkr_limit_eval_op(limits, err)?;
         if D::node_type(doc, n) == NTYPE_ELEMENT && D::get_attribute(doc, n, b"id") == Some(id) {
             return Ok(n);
         }
@@ -348,9 +346,9 @@ unsafe fn id_collect<D: Dom>(
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
         let hit = match find_by_id::<D>(doc, root, tok, limits, err) {
             Ok(h) => h,
-            Err(()) => return false,
+            Err(_) => return false,
         };
-        if !D::is_null(hit) && mkr_nodeset_push(out, D::to_void(hit), limits, err) != 0 {
+        if !D::is_null(hit) && mkr_nodeset_push(out, D::to_void(hit), limits, err).is_err() {
             return false;
         }
     }
@@ -584,7 +582,7 @@ unsafe fn fn_concat<D: Dom>(
                 return false;
             }
         };
-        if mkr_limit_check_string_bytes(limits, total, err) != 0 {
+        if mkr_limit_check_string_bytes(limits, total, err).is_err() {
             return false;
         }
         parts.push(t);
@@ -1002,7 +1000,7 @@ unsafe fn fn_sum<D: Dom>(
     let limits = mkr_ctx_limits(ctx);
     let mut total = 0.0;
     for i in 0..(*ns).count {
-        if mkr_limit_eval_op(limits, err) != 0 {
+        if mkr_limit_eval_op(limits, err).is_err() {
             return false;
         }
         match cached_node_text::<D>(ctx, nodeset_at::<D>(ns, i), err) {

@@ -441,6 +441,9 @@ pub use crate::xpath::runtime_abi::mkr_val_set_owned_text;
 /* The cleanup entry points the glue calls live at the raw boundary. */
 pub use crate::xpath::boundary::{mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear};
 
+/// The proof a failure's message was written; see `xpath::msg`.
+pub use crate::xpath::msg::Reported;
+
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
 /// One definition for every pointer-keyed table: the string-value cache's index

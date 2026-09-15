@@ -41,7 +41,9 @@ impl TextSlot {
         if p.is_null() {
             match what {
                 Some(what) => mkr_err_set(err, XP_ERR_OOM, what.as_ptr()),
-                None => err_setf!(err, XP_ERR_OOM, "out of memory copying text"),
+                None => {
+                    err_setf!(err, XP_ERR_OOM, "out of memory copying text");
+                }
             }
             return None;
         }

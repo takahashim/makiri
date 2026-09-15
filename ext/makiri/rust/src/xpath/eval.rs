@@ -45,11 +45,11 @@ unsafe fn apply_predicates<D: Dom>(
                 /* Charge per candidate: this replaces a per-node generic
                  * predicate eval, which would tick through eval_node, so the
                  * shortcut stays under the same budget as the path it skips. */
-                if mkr_limit_eval_op(limits, err) != 0 {
+                if mkr_limit_eval_op(limits, err).is_err() {
                     return false;
                 }
                 let n = inout.get::<D>(i);
-                if attr_pred_matches::<D>(doc, &ap, n) && !kept.push::<D>(n, limits, err) {
+                if attr_pred_matches::<D>(doc, &ap, n) && kept.push::<D>(n, limits, err).is_err() {
                     return false;
                 }
             }
@@ -75,7 +75,7 @@ unsafe fn apply_predicates<D: Dom>(
             } else {
                 val_to_boolean(v.as_ptr())
             };
-            if keep && !kept.push::<D>(n, limits, err) {
+            if keep && kept.push::<D>(n, limits, err).is_err() {
                 return false;
             }
         }
@@ -151,7 +151,7 @@ unsafe fn eval_step<D: Dom>(
     let preds = step_preds(step);
     if preds.is_empty() {
         match try_descendant_index::<D>(doc, step, context_set, &mut result, &b, err) {
-            Err(()) => return false,
+            Err(_) => return false,
             Ok(true) => {}
             Ok(false) => {
                 /* No-predicate walk: every context goes straight into the result
@@ -167,12 +167,12 @@ unsafe fn eval_step<D: Dom>(
                          * pushed, leaves the walk itself bounded by document
                          * size, defeating max_eval_ops on a descendant walk that
                          * matches nothing. */
-                        if mkr_limit_eval_op(limits, err) != 0 {
+                        if mkr_limit_eval_op(limits, err).is_err() {
                             aborted = true;
                             return true;
                         }
                         if node_principal_match::<D>(doc, test, n, axis, &b)
-                            && !result.push::<D>(n, limits, err)
+                            && result.push::<D>(n, limits, err).is_err()
                         {
                             aborted = true;
                             return true;
@@ -198,12 +198,12 @@ unsafe fn eval_step<D: Dom>(
             {
                 let frag = &mut fragment;
                 let mut visit = |n: D::Node| -> bool {
-                    if mkr_limit_eval_op(limits, err) != 0 {
+                    if mkr_limit_eval_op(limits, err).is_err() {
                         aborted = true;
                         return true;
                     }
                     if node_principal_match::<D>(doc, test, n, axis, &b)
-                        && !frag.push::<D>(n, limits, err)
+                        && frag.push::<D>(n, limits, err).is_err()
                     {
                         aborted = true;
                         return true;
@@ -224,7 +224,7 @@ unsafe fn eval_step<D: Dom>(
                 return false;
             }
             for i in 0..fragment.count() {
-                if !result.push::<D>(fragment.get::<D>(i), limits, err) {
+                if result.push::<D>(fragment.get::<D>(i), limits, err).is_err() {
                     return false;
                 }
             }
@@ -251,7 +251,7 @@ unsafe fn eval_steps<D: Dom>(
     if let [s0, s1, ..] = steps {
         let mut nth = Set::new();
         match try_descendant_index_nth::<D>(ctx, s0, s1, &current, &mut nth, err) {
-            Err(()) => return false,
+            Err(_) => return false,
             Ok(true) => {
                 current = Set::adopt(nth.take());
                 rest = &steps[2..];
@@ -296,7 +296,7 @@ unsafe fn compare_eq<D: Dom>(
         for i in 0..(*ls).count {
             let a = cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?;
             for j in 0..(*rs).count {
-                if mkr_limit_eval_op(limits, err) != 0 {
+                if mkr_limit_eval_op(limits, err).is_err() {
                     return None;
                 }
                 let b = cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?;
@@ -314,7 +314,7 @@ unsafe fn compare_eq<D: Dom>(
             T_NUMBER => {
                 let target = (*sc).u.number;
                 for i in 0..(*set).count {
-                    if mkr_limit_eval_op(limits, err) != 0 {
+                    if mkr_limit_eval_op(limits, err).is_err() {
                         return None;
                     }
                     let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
@@ -335,7 +335,7 @@ unsafe fn compare_eq<D: Dom>(
                 }
                 let want = target.as_slice();
                 for i in 0..(*set).count {
-                    if mkr_limit_eval_op(limits, err) != 0 {
+                    if mkr_limit_eval_op(limits, err).is_err() {
                         return None;
                     }
                     let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
@@ -396,7 +396,7 @@ unsafe fn compare_rel<D: Dom>(
         for i in 0..(*ls).count {
             let a = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?);
             for j in 0..(*rs).count {
-                if mkr_limit_eval_op(limits, err) != 0 {
+                if mkr_limit_eval_op(limits, err).is_err() {
                     return None;
                 }
                 let b = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?);
@@ -416,7 +416,7 @@ unsafe fn compare_rel<D: Dom>(
         }
         let set = &raw const (*ns).u.nodeset;
         for i in 0..(*set).count {
-            if mkr_limit_eval_op(limits, err) != 0 {
+            if mkr_limit_eval_op(limits, err).is_err() {
                 return None;
             }
             let nv = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?);
@@ -456,7 +456,10 @@ unsafe fn union_nodeset<D: Dom>(
     for side in [l, r] {
         let set = &raw const (*side).u.nodeset;
         for i in 0..(*set).count {
-            if !merged.push::<D>(nodeset_at::<D>(set, i), limits, err) {
+            if merged
+                .push::<D>(nodeset_at::<D>(set, i), limits, err)
+                .is_err()
+            {
                 return false;
             }
         }
@@ -536,7 +539,7 @@ unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: *const Step, n: D::Node) -> b
 /// Walk for the first match if `ast` is a recognised shape.
 ///
 /// Returns Ok(Some(node)) or Ok(Some(null)) when it handled the expression,
-/// Ok(None) when the shape is not recognised, and Err(()) when the op budget was
+/// Ok(None) when the shape is not recognised, and Err when the op budget was
 /// exceeded. Every visited node is charged, so a huge late- or no-match document
 /// fails closed here exactly as it would in the full evaluator.
 ///
@@ -546,7 +549,7 @@ pub unsafe fn try_first_match<D: Dom>(
     ctx: *mut Context,
     ast: *const Node,
     err: *mut Error,
-) -> Result<Option<D::Node>, ()> {
+) -> Result<Option<D::Node>, Reported> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let step = match first_recognise(ast) {
         Some(s) => s,
@@ -563,13 +566,12 @@ pub unsafe fn try_first_match<D: Dom>(
         match lookup_ns(ctx, owned_bytes((*test).prefix)) {
             Some(u) => Some(u),
             None => {
-                err_setf!(
+                return Err(err_setf!(
                     err,
                     XP_ERR_RUNTIME,
                     "unknown namespace prefix '{}' in name test",
                     Bytes(owned_bytes((*test).prefix))
-                );
-                return Err(());
+                ));
             }
         }
     };
@@ -587,9 +589,7 @@ pub unsafe fn try_first_match<D: Dom>(
     let b = Bindings::<D>::new(ctx, pre);
     let mut n = D::first_child(doc, start);
     while !D::is_null(n) {
-        if mkr_limit_eval_op(limits, err) != 0 {
-            return Err(());
-        }
+        mkr_limit_eval_op(limits, err)?;
         if node_principal_match::<D>(doc, test, n, (*step).axis, &b)
             && first_node_ok::<D>(doc, step, n)
         {
@@ -628,10 +628,10 @@ unsafe fn eval_path<D: Dom>(
             return false;
         }
         let root = D::document_node(D::doc_from_void(root_h));
-        if !seed.push::<D>(root, limits, err) {
+        if seed.push::<D>(root, limits, err).is_err() {
             return false;
         }
-    } else if !seed.push::<D>(self_node, limits, err) {
+    } else if seed.push::<D>(self_node, limits, err).is_err() {
         return false;
     }
     eval_steps::<D>(
@@ -892,10 +892,10 @@ unsafe fn eval_node<D: Dom>(
     err: *mut Error,
 ) -> bool {
     let limits = mkr_ctx_limits(ctx);
-    if mkr_limit_eval_op(limits, err) != 0 {
+    if mkr_limit_eval_op(limits, err).is_err() {
         return false;
     }
-    if mkr_limit_recurse_enter(limits, err) != 0 {
+    if mkr_limit_recurse_enter(limits, err).is_err() {
         return false;
     }
     let ok = eval_node_inner::<D>(ctx, n, focus, out, err);

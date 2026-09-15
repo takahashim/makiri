@@ -49,6 +49,6 @@ pub unsafe fn mkr_try_first_match_html(
             *out_node = n as *mut c_void;
             1
         }
-        Err(()) => -1,
+        Err(_) => -1,
     }
 }

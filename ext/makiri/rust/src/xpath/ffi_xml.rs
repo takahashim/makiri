@@ -50,6 +50,6 @@ pub unsafe fn mkr_try_first_match_xml(
             *out_node = n.to_token() as *mut c_void;
             1
         }
-        Err(()) => -1,
+        Err(_) => -1,
     }
 }

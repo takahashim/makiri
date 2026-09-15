@@ -49,7 +49,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
     result: &mut Set,
     b: &Bindings<D>,
     err: *mut Error,
-) -> Result<bool, ()> {
+) -> Result<bool, Reported> {
     let test = &raw const (*step).test;
     if (*step).axis != AXIS_DESCENDANT
         || (*test).kind != NT_NAME
@@ -72,16 +72,12 @@ pub unsafe fn try_descendant_index<D: Dom>(
     };
     let limits = mkr_ctx_limits(b.ctx);
     for &p in bucket.nodes {
-        if mkr_limit_eval_op(limits, err) != 0 {
-            return Err(());
-        }
+        mkr_limit_eval_op(limits, err)?;
         let n = D::from_void(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, (*step).axis, b) {
             continue;
         }
-        if !result.push::<D>(n, limits, err) {
-            return Err(());
-        }
+        result.push::<D>(n, limits, err)?;
     }
     Ok(true)
 }
@@ -143,7 +139,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     seed: &Set,
     result: &mut Set,
     err: *mut Error,
-) -> Result<bool, ()> {
+) -> Result<bool, Reported> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let need = match nth_shape::<D>(ctx, s0, s1, seed) {
         Some(n) => n,
@@ -156,13 +152,12 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
         match lookup_ns(ctx, owned_bytes((*test).prefix)) {
             Some(u) => Some(u),
             None => {
-                err_setf!(
+                return Err(err_setf!(
                     err,
                     XP_ERR_RUNTIME,
                     "unknown namespace prefix '{}' in name test",
                     Bytes(owned_bytes((*test).prefix))
-                );
-                return Err(());
+                ));
             }
         }
     };
@@ -179,20 +174,19 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
      * addressing stays under a 2/3 load; an overflow in the sizer falls back to
      * the generic evaluator rather than risking a table that never finds a slot. */
     let want = bucket.nodes.len() + (bucket.nodes.len() >> 1) + 1;
-    let cap = want.checked_next_power_of_two().ok_or(())?;
+    let Some(cap) = want.checked_next_power_of_two() else {
+        return Ok(false);
+    };
     let mut tab: Vec<(*const c_void, usize)> = Vec::new();
     if tab.mkr_reserve_exact(cap).is_err() {
-        err_setf!(err, XP_ERR_OOM, "out of memory (//name[N])");
-        return Err(());
+        return Err(err_setf!(err, XP_ERR_OOM, "out of memory (//name[N])"));
     }
     tab.resize(cap, (ptr::null(), 0));
     let mask = cap - 1;
     let limits = mkr_ctx_limits(ctx);
 
     for &p in bucket.nodes {
-        if mkr_limit_eval_op(limits, err) != 0 {
-            return Err(());
-        }
+        mkr_limit_eval_op(limits, err)?;
         let e = D::from_void(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, (*s1).axis, &b) {
             continue;
@@ -204,8 +198,8 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
         }
         tab[h].0 = par;
         tab[h].1 += 1;
-        if tab[h].1 == need && !result.push::<D>(e, limits, err) {
-            return Err(());
+        if tab[h].1 == need {
+            result.push::<D>(e, limits, err)?;
         }
     }
     Ok(true)

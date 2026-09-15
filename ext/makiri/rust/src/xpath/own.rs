@@ -377,8 +377,8 @@ impl Set {
         n: D::Node,
         limits: *mut Limits,
         err: *mut Error,
-    ) -> bool {
-        mkr_nodeset_push(self.as_mut(), D::to_void(n), limits, err) == 0
+    ) -> Result<(), Reported> {
+        mkr_nodeset_push(self.as_mut(), D::to_void(n), limits, err)
     }
     /// # Safety
     /// `i` must be below `count()`, and the set must hold this backend's handles.

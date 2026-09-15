@@ -61,17 +61,35 @@ impl core::fmt::Write for MsgBuf {
     }
 }
 
+/// Proof that an error has been written to the caller's error slot.
+///
+/// Only this module makes one, and only by writing the slot, so a
+/// `Result<_, Reported>` cannot fail without its message having been set. A null
+/// slot means the caller asked not to be told; the proof holds for it all the
+/// same. Zero-sized, so a `Result<(), Reported>` costs what the `bool` or
+/// `c_int` it replaces did - which matters on the per-node budget checks.
+///
+/// Public so public engine functions can return it; the field is private, so
+/// nothing outside this module can make one without writing an error.
+#[derive(Debug)]
+pub struct Reported(());
+
 /// Set `err` from a formatted message. `mkr_err_set` copies it (mkr_xpath.c),
 /// so the stack buffer does not outlive the call.
 ///
 /// Crate-internal, and the one place the front end writes an error: every
 /// caller already holds the `*mut Error` its caller handed it, and passing a
 /// NULL or a dangling one would be the caller's bug either way.
-pub(crate) fn err_set_fmt(err: *mut Error, status: c_int, args: core::fmt::Arguments<'_>) {
+pub(crate) fn err_set_fmt(
+    err: *mut Error,
+    status: c_int,
+    args: core::fmt::Arguments<'_>,
+) -> Reported {
     use core::fmt::Write;
     let mut m = MsgBuf::default();
     let _ = m.write_fmt(args);
-    unsafe { mkr_err_set(err, status, m.as_ptr()) }
+    unsafe { mkr_err_set(err, status, m.as_ptr()) };
+    Reported(())
 }
 
 /// `mkr_err_setf` for the Rust side: `err_setf!(err, status, "...", args)`.

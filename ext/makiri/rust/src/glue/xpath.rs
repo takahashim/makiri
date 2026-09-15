@@ -488,7 +488,7 @@ unsafe fn push_result_node(
     }
     let n = mkr_node_raw(rb_node);
     let mut ierr: XPathError = core::mem::zeroed();
-    if mkr_nodeset_push(&mut (*out).u.nodeset, n, mkr_ctx_limits(ctx), &mut ierr) != 0 {
+    if mkr_nodeset_push(&mut (*out).u.nodeset, n, mkr_ctx_limits(ctx), &mut ierr).is_err() {
         mkr_xpath_error_clear(&mut ierr);
         err.set("out of memory building handler result");
         return false;

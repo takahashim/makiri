@@ -356,7 +356,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     match (*v).type_ {
         T_STRING => {
             let text = owned_bytes((*v).u.string);
-            if !limits.is_null() && mkr_limit_check_string_bytes(limits, text.len(), err) != 0 {
+            if !limits.is_null() && mkr_limit_check_string_bytes(limits, text.len(), err).is_err() {
                 return false;
             }
             owned_copy(out, text, err, c"out of memory copying string value")
@@ -530,7 +530,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             return None;
         }
     };
-    if mkr_limit_check_string_bytes(limits, new_total, err) != 0 {
+    if mkr_limit_check_string_bytes(limits, new_total, err).is_err() {
         text.clear();
         return None;
     }

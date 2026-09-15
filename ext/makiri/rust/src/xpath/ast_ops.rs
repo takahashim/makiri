@@ -19,7 +19,7 @@ use core::ptr;
 /// with its kind set. The XPath parser and the CSS lowering both go through it,
 /// which is what keeps `mkr_node_free` able to take apart whatever either built.
 pub unsafe fn mkr_node_alloc(limits: *mut Limits, err: *mut Error, kind: u32) -> *mut Node {
-    if mkr_limit_ast_node(limits, err) != 0 {
+    if mkr_limit_ast_node(limits, err).is_err() {
         return ptr::null_mut();
     }
     let n = mkr_callocarray(1, core::mem::size_of::<Node>()) as *mut Node;
