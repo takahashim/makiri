@@ -45,7 +45,7 @@ pub unsafe fn mkr_val_set_borrowed_text_copy(
         );
         return -1;
     }
-    let Some(owned) = TextSlot::try_copy(borrowed, err, what) else {
+    let Ok(owned) = TextSlot::try_copy(borrowed, err, what) else {
         return -1;
     };
     mkr_val_set_owned_text(v, owned);

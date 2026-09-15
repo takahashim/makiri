@@ -128,8 +128,8 @@ impl<'a> Parser<'a> {
         // SAFETY: a null error slot is accepted; the parser reports its own.
         let copied = unsafe { TextSlot::try_copy_bytes(text, ptr::null_mut(), None) };
         let (slot, result) = match copied {
-            Some(t) => (t, Ok(())),
-            None => (
+            Ok(t) => (t, Ok(())),
+            Err(_) => (
                 TextSlot::empty(),
                 Err(err_setf!(self.err, XP_ERR_OOM, "out of memory in parser")),
             ),

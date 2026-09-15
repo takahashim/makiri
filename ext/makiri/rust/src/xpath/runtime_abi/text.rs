@@ -3,6 +3,7 @@
 use super::super::abi::*;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
+use crate::xpath::msg::err_set;
 use core::ffi::{c_char, c_void, CStr};
 
 impl TextSlot {
@@ -14,23 +15,23 @@ impl TextSlot {
         *self = Self::empty();
     }
 
-    /// Copy a view into a fresh owned slot, or return `None` on OOM. An absent
-    /// view yields a present empty string.
+    /// Copy a view into a fresh owned slot, or `Err` on OOM. An absent view
+    /// yields a present empty string.
     pub(crate) unsafe fn try_copy(
         t: BorrowedText,
         err: *mut Error,
         what: Option<&CStr>,
-    ) -> Option<Self> {
+    ) -> Result<Self, Reported> {
         Self::try_copy_bytes(t.as_bytes(), err, what)
     }
 
     /// Copy `bytes` into a fresh NUL-terminated slot, interior NULs included,
-    /// or return `None` on OOM with `*err` set to `what` (or a generic message).
+    /// or `Err` on OOM with `*err` set to `what` (or a generic message).
     pub(crate) unsafe fn try_copy_bytes(
         bytes: &[u8],
         err: *mut Error,
         what: Option<&CStr>,
-    ) -> Option<Self> {
+    ) -> Result<Self, Reported> {
         let len = bytes.len();
         let src = if len == 0 {
             c"".as_ptr()
@@ -39,15 +40,12 @@ impl TextSlot {
         };
         let p = mkr_strndup(src, len);
         if p.is_null() {
-            match what {
-                Some(what) => mkr_err_set(err, XP_ERR_OOM, what.as_ptr()),
-                None => {
-                    err_setf!(err, XP_ERR_OOM, "out of memory copying text");
-                }
-            }
-            return None;
+            return Err(match what {
+                Some(what) => err_set(err, XP_ERR_OOM, what),
+                None => err_setf!(err, XP_ERR_OOM, "out of memory copying text"),
+            });
         }
-        Some(Self::from_raw_parts(p, len))
+        Ok(Self::from_raw_parts(p, len))
     }
 
     /// Adopt a buffer detached from a `Buf`: a NUL-terminated libc allocation,

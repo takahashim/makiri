@@ -608,7 +608,7 @@ unsafe fn css_compile_or_raise(
         limits,
         &mut error,
     );
-    if let Some(ast) = ast {
+    if let Ok(ast) = ast {
         return Ok(ast);
     }
 

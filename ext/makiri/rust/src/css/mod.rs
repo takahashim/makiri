@@ -32,7 +32,7 @@ mod parser;
 use core::ffi::{c_char, c_int};
 
 use crate::xpath::own::Ast;
-use crate::xpath_abi::{mkr_err_set, Error, Limits, Node, VerifiedText, OP_UNION};
+use crate::xpath_abi::{Error, Limits, Node, Reported, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -67,12 +67,12 @@ pub(crate) struct Build {
 }
 
 impl Build {
-    pub(crate) unsafe fn fail(&self, status: c_int, msg: &core::ffi::CStr) {
-        mkr_err_set(self.err, status, msg.as_ptr());
+    pub(crate) unsafe fn fail(&self, status: c_int, msg: &core::ffi::CStr) -> Reported {
+        crate::xpath::msg::err_set(self.err, status, msg)
     }
 
-    pub(crate) unsafe fn oom(&self) {
-        self.fail(ERR_OOM, c"out of memory (css)");
+    pub(crate) unsafe fn oom(&self) -> Reported {
+        self.fail(ERR_OOM, c"out of memory (css)")
     }
 
     /// The default-namespace prefix in scope, if any.
@@ -87,7 +87,7 @@ impl Build {
 /// Compile `selector` into a freshly allocated AST, which the caller frees with
 /// `mkr_node_free`.
 ///
-/// NULL on error with `*err` filled: SYNTAX for a malformed selector or an
+/// `Err` with `*err` filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
 /// `ns` may be NULL, in which case a bare selector matches no namespace.
@@ -99,18 +99,16 @@ pub(crate) unsafe fn compile_owned(
     ns: *const CssNs,
     limits: *mut Limits,
     err: *mut Error,
-) -> Option<Ast> {
+) -> Result<Ast, Reported> {
     let b = Build { limits, err, ns };
 
     let parsed = match parser::parse(selector) {
         Ok(p) => p,
         Err(parser::ParseError::NotReady) => {
-            b.fail(ERR_INTERNAL, c"failed to initialise CSS parser");
-            return None;
+            return Err(b.fail(ERR_INTERNAL, c"failed to initialise CSS parser"));
         }
         Err(parser::ParseError::Syntax) => {
-            b.fail(ERR_SYNTAX, c"invalid CSS selector");
-            return None;
+            return Err(b.fail(ERR_SYNTAX, c"invalid CSS selector"));
         }
     };
 
@@ -124,11 +122,13 @@ pub(crate) unsafe fn compile_owned(
         let path = lower::complex(&b, (*g).first, false)?;
         acc = Some(match acc {
             None => path,
-            Some(lhs) => build::binop(&b, OP_UNION, Some(lhs), Some(path))?,
+            Some(lhs) => build::binop(&b, OP_UNION, Ok(lhs), Ok(path))?,
         });
         g = (*g).next;
     }
-    acc
+    /* Lexbor rejects an empty selector list before it gets here; answering it
+     * anyway keeps every failure reported. */
+    acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector"))
 }
 
 /// [`compile_owned`] for a caller that holds the AST as a raw pointer.
@@ -138,7 +138,5 @@ pub unsafe fn mkr_css_compile(
     limits: *mut Limits,
     err: *mut Error,
 ) -> *mut Node {
-    compile_owned(selector, ns, limits, err)
-        .map(Ast::into_raw)
-        .unwrap_or(core::ptr::null_mut())
+    compile_owned(selector, ns, limits, err).map_or(core::ptr::null_mut(), Ast::into_raw)
 }

@@ -92,6 +92,15 @@ pub(crate) fn err_set_fmt(
     Reported(())
 }
 
+/// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
+///
+/// # Safety
+/// `err` must be null or a live error slot.
+pub(crate) unsafe fn err_set(err: *mut Error, status: c_int, msg: &core::ffi::CStr) -> Reported {
+    mkr_err_set(err, status, msg.as_ptr());
+    Reported(())
+}
+
 /// `mkr_err_setf` for the Rust side: `err_setf!(err, status, "...", args)`.
 #[macro_export]
 macro_rules! err_setf {

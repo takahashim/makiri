@@ -86,11 +86,11 @@ pub unsafe fn owned_copy(
     what: &core::ffi::CStr,
 ) -> bool {
     match crate::xpath_abi::TextSlot::try_copy_bytes(s, err, Some(what)) {
-        Some(value) => {
+        Ok(value) => {
             *out = value;
             true
         }
-        None => false,
+        Err(_) => false,
     }
 }
 

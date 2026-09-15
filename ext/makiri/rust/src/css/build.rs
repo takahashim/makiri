@@ -1,6 +1,6 @@
 //! AST builders shared by the lowering.
 //!
-//! Every one takes the nodes it is handed as [`Built`] and returns one: a `None`
+//! Every one takes the nodes it is handed as [`Built`] and returns one: an `Err`
 //! operand fails the build, and the operands it did receive are dropped - freed -
 //! on the way out. So a caller chains builders without tracking partial state,
 //! which is what the C's cascade of `if (x == NULL) { free(...); return NULL; }`
@@ -14,13 +14,12 @@
 use super::Build;
 pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::xpath_abi::{
-    node_alloc, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR,
-    NK_PATH, NT_NAME,
+    node_alloc, Reported, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
+    NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
 
-/// A node under construction, or `None` once its build has failed with `*err`
-/// set.
-pub(crate) type Built = Option<Ast>;
+/// A node under construction, or the proof its build failed with `*err` set.
+pub(crate) type Built = Result<Ast, Reported>;
 
 #[inline]
 fn borrowed(s: &[u8]) -> Option<VerifiedText> {
@@ -29,40 +28,32 @@ fn borrowed(s: &[u8]) -> Option<VerifiedText> {
 
 /// A zeroed node of `kind`, charged against the AST budget.
 pub(crate) unsafe fn node(b: &Build, kind: u32) -> Built {
-    node_alloc(b.limits, b.err, kind).ok()
+    node_alloc(b.limits, b.err, kind)
 }
 
-/// Copy `s` into an owned text slot. `false` on failure, with `*err` set.
-pub(crate) unsafe fn set_text(b: &Build, out: *mut TextSlot, s: &[u8]) -> bool {
+/// Copy `s` into an owned text slot, or `Err` with `*err` set.
+pub(crate) unsafe fn set_text(b: &Build, out: *mut TextSlot, s: &[u8]) -> Result<(), Reported> {
     let Some(text) = borrowed(s) else {
-        crate::err_setf!(
+        return Err(crate::err_setf!(
             b.err,
             crate::xpath_abi::XP_ERR_INTERNAL,
             "invalid internal CSS text"
-        );
-        return false;
+        ));
     };
-    match crate::xpath_abi::TextSlot::try_copy(text.into(), b.err, Some(c"css name")) {
-        Some(value) => {
-            *out = value;
-            true
-        }
-        None => false,
-    }
+    *out = crate::xpath_abi::TextSlot::try_copy(text.into(), b.err, Some(c"css name"))?;
+    Ok(())
 }
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
     let mut n = node(b, NK_LITERAL_STR)?;
-    if !set_text(b, &mut n.node_mut().u.literal, s) {
-        return None;
-    }
-    Some(n)
+    set_text(b, &mut n.node_mut().u.literal, s)?;
+    Ok(n)
 }
 
 pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
     let mut n = node(b, NK_LITERAL_NUM)?;
     n.node_mut().u.literal_num = v;
-    Some(n)
+    Ok(n)
 }
 
 /// `lhs op rhs`. A `None` operand fails without allocating, dropping the other.
@@ -73,7 +64,7 @@ pub(crate) unsafe fn binop(b: &Build, op: u32, lhs: Built, rhs: Built) -> Built 
     bin.op = op;
     bin.lhs = lhs.into_raw();
     bin.rhs = rhs.into_raw();
-    Some(n)
+    Ok(n)
 }
 
 /// A call to an internal, compile-time-known function name. Any `None` argument
@@ -82,16 +73,13 @@ pub(crate) unsafe fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; 
     let mut argv = NodeArray::new();
     for arg in args {
         if argv.try_push(arg?).is_err() {
-            b.oom();
-            return None;
+            return Err(b.oom());
         }
     }
     let mut n = node(b, NK_FNCALL)?;
-    if !set_text(b, &mut n.node_mut().u.fncall.name, name) {
-        return None;
-    }
+    set_text(b, &mut n.node_mut().u.fncall.name, name)?;
     argv.install_as_args(n.as_raw());
-    Some(n)
+    Ok(n)
 }
 
 /// A one-argument call, the shape most of the lowering wants.
@@ -109,7 +97,7 @@ pub(crate) unsafe fn path(b: &Build, steps: StepArray) -> Built {
     let mut n = node(b, NK_PATH)?;
     n.node_mut().u.path.absolute = 0;
     steps.install_into_path(n.as_raw());
-    Some(n)
+    Ok(n)
 }
 
 /// A one-step relative PATH with no predicates: `axis::nodetest`.
@@ -146,25 +134,20 @@ unsafe fn named_step_path_inner(
 
     if nt_kind == NT_NAME {
         if let Some(local) = local {
-            if !set_text(b, &mut step.test.local, local) {
-                return None;
-            }
+            set_text(b, &mut step.test.local, local)?;
         }
         if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
-            if !set_text(b, &mut step.test.prefix, prefix) {
-                return None;
-            }
+            set_text(b, &mut step.test.prefix, prefix)?;
         }
     }
 
     let mut steps = StepArray::new();
     if steps.try_push(step).is_err() {
-        b.oom();
-        return None;
+        return Err(b.oom());
     }
     n.node_mut().u.path.absolute = 0;
     steps.install_into_path(n.as_raw());
-    Some(n)
+    Ok(n)
 }
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.
@@ -211,8 +194,7 @@ pub(crate) unsafe fn token_match(
      * only until then. The C malloc'd it because it had no other way to
      * concatenate. */
     let Some(mut padded) = crate::falloc::try_vec_with_capacity::<u8>(value.len() + 2) else {
-        b.oom();
-        return None;
+        return Err(b.oom());
     };
     padded.push(b' ');
     padded.extend_from_slice(value);

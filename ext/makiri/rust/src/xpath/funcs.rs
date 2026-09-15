@@ -130,7 +130,7 @@ unsafe fn require_nodeset(arg: *const Val, fname: &str, err: *mut Error) -> Opti
 
 /// An owned copy of `s`, or None with `*err` naming `what` on OOM.
 unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> Option<TextSlot> {
-    let t = TextSlot::try_copy_bytes(s, ptr::null_mut(), None);
+    let t = TextSlot::try_copy_bytes(s, ptr::null_mut(), None).ok();
     if t.is_none() {
         err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what);
     }

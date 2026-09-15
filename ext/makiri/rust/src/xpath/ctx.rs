@@ -150,6 +150,7 @@ fn text_eq(a: &OwnedText, b: &[u8]) -> bool {
 /// Copy `val` into a fresh owned text, or None on OOM.
 unsafe fn copy_text(val: VerifiedText) -> Option<OwnedText> {
     crate::xpath_abi::TextSlot::try_copy(val.into(), ptr::null_mut(), None)
+        .ok()
         .map(OwnedText::from_slot)
 }
 
