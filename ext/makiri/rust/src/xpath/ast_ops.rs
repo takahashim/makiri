@@ -22,10 +22,10 @@ use core::ptr::NonNull;
 /// which is what keeps `mkr_node_free` able to take apart whatever either built.
 ///
 /// # Safety
-/// `limits` must be live, and `err` null or a writable error slot.
+/// `limits` must be live, and `err`'s slot too.
 pub(crate) unsafe fn node_alloc(
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
     kind: u32,
 ) -> Result<Ast, Reported> {
     mkr_limit_ast_node(limits, err)?;

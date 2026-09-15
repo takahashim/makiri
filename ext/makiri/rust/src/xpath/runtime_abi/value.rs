@@ -34,7 +34,7 @@ pub unsafe fn mkr_val_set_owned_text(v: *mut Val, owned: TextSlot) {
 pub unsafe fn mkr_val_set_borrowed_text_copy(
     v: *mut Val,
     borrowed: BorrowedText,
-    err: *mut Error,
+    err: ErrSink,
     what: Option<&core::ffi::CStr>,
 ) -> core::ffi::c_int {
     if v.is_null() {

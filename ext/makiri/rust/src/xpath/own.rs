@@ -384,7 +384,7 @@ impl Set {
         &mut self,
         n: D::Node,
         limits: *mut Limits,
-        err: *mut Error,
+        err: ErrSink,
     ) -> Result<(), Reported> {
         mkr_nodeset_push(self.as_mut(), D::to_void(n), limits, err)
     }

@@ -16,7 +16,7 @@ pub unsafe fn mkr_nodeset_push(
     ns: *mut NodeSet,
     node: *mut c_void,
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     if node.is_null() {
         return Ok(());

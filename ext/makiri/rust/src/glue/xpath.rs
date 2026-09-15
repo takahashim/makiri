@@ -44,8 +44,8 @@ use rb_sys::VALUE;
 
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
-    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Node as Ast,
-    TextSlot, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME,
+    mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, ErrSink, Error as XPathError,
+    Node as Ast, TextSlot, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME,
     XP_ERR_SYNTAX,
 };
 
@@ -488,7 +488,14 @@ unsafe fn push_result_node(
     }
     let n = mkr_node_raw(rb_node);
     let mut ierr: XPathError = core::mem::zeroed();
-    if mkr_nodeset_push(&mut (*out).u.nodeset, n, mkr_ctx_limits(ctx), &mut ierr).is_err() {
+    if mkr_nodeset_push(
+        &mut (*out).u.nodeset,
+        n,
+        mkr_ctx_limits(ctx),
+        ErrSink::new(&mut ierr),
+    )
+    .is_err()
+    {
         mkr_xpath_error_clear(&mut ierr);
         err.set("out of memory building handler result");
         return false;
@@ -597,7 +604,7 @@ unsafe fn ruby_to_out(
         if mkr_val_set_borrowed_text_copy(
             out,
             VerifiedText::empty().into(),
-            core::ptr::null_mut(),
+            ErrSink::silent(),
             None,
         ) != 0
         {
@@ -622,7 +629,7 @@ unsafe fn ruby_to_out(
     let rc = mkr_val_set_borrowed_text_copy(
         out,
         unsafe { vv.as_verified() }.into(),
-        core::ptr::null_mut(),
+        ErrSink::silent(),
         None,
     );
     if rc != 0 || (*out).u.string.is_absent() {
@@ -784,7 +791,12 @@ unsafe fn cached_ast(
 
     let limits = mkr_ctx_limits(d.ctx);
     (*limits).ast_nodes = 0;
-    let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, limits, err).ok()?;
+    let ast = crate::xpath::parse::parse_owned(
+        unsafe { expr.as_verified() },
+        limits,
+        ErrSink::from_raw(err),
+    )
+    .ok()?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         let raw = ast.as_raw();
         return Some((raw, Some(ast)));
@@ -972,7 +984,9 @@ fn node_xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Ok(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error) else {
+        let Ok(ast) =
+            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error))
+        else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };

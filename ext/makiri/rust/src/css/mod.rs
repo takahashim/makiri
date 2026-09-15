@@ -32,7 +32,7 @@ mod parser;
 use core::ffi::{c_char, c_int};
 
 use crate::xpath::own::Ast;
-use crate::xpath_abi::{Error, Limits, Node, Reported, VerifiedText, OP_UNION};
+use crate::xpath_abi::{ErrSink, Error, Limits, Node, Reported, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -62,7 +62,7 @@ pub const ERR_INTERNAL: c_int = crate::xpath_abi::XP_ERR_INTERNAL;
 /// to report a failure, and the namespace context.
 pub(crate) struct Build {
     pub limits: *mut Limits,
-    pub err: *mut Error,
+    pub err: ErrSink,
     pub ns: *const CssNs,
 }
 
@@ -98,7 +98,7 @@ pub(crate) unsafe fn compile_owned(
     selector: VerifiedText,
     ns: *const CssNs,
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<Ast, Reported> {
     let b = Build { limits, err, ns };
 
@@ -138,5 +138,6 @@ pub unsafe fn mkr_css_compile(
     limits: *mut Limits,
     err: *mut Error,
 ) -> *mut Node {
-    compile_owned(selector, ns, limits, err).map_or(core::ptr::null_mut(), Ast::into_raw)
+    compile_owned(selector, ns, limits, ErrSink::from_raw(err))
+        .map_or(core::ptr::null_mut(), Ast::into_raw)
 }

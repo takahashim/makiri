@@ -33,7 +33,7 @@ unsafe fn apply_predicates<D: Dom>(
     ctx: *mut Context,
     preds: &[*mut Node],
     inout: &mut Set,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
@@ -89,7 +89,7 @@ unsafe fn eval_step<D: Dom>(
     step: *const Step,
     context_set: &Set,
     out: &mut Set,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let axis = (*step).axis;
@@ -230,7 +230,7 @@ unsafe fn eval_steps<D: Dom>(
     steps: &[Step],
     seed: &mut Set,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let mut current = Set::adopt(seed.take());
     let mut rest = steps;
@@ -262,7 +262,7 @@ unsafe fn compare_eq<D: Dom>(
     l: *const Val,
     r: *const Val,
     op: u32,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult<bool> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
@@ -355,7 +355,7 @@ unsafe fn compare_rel<D: Dom>(
     l: *const Val,
     r: *const Val,
     op: u32,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult<bool> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
@@ -404,7 +404,7 @@ unsafe fn union_nodeset<D: Dom>(
     l: *const Val,
     r: *const Val,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     if (*l).type_ != T_NODESET || (*r).type_ != T_NODESET {
         return Err(err_setf!(
@@ -507,7 +507,7 @@ unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: *const Step, n: D::Node) -> b
 pub unsafe fn try_first_match<D: Dom>(
     ctx: *mut Context,
     ast: *const Node,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<Option<D::Node>, Reported> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let step = match first_recognise(ast) {
@@ -576,7 +576,7 @@ unsafe fn eval_path<D: Dom>(
     n: *const Node,
     self_node: D::Node,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let limits = mkr_ctx_limits(ctx);
     let mut seed = Set::new();
@@ -608,7 +608,7 @@ unsafe fn eval_filter<D: Dom>(
     n: *const Node,
     focus: &Focus<D>,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let f = &raw const (*n).u.filter;
     let mut primary = OwnedVal::new();
@@ -658,7 +658,7 @@ unsafe fn eval_fncall<D: Dom>(
     n: *const Node,
     focus: &Focus<D>,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let call = &raw const (*n).u.fncall;
     let prefix = owned_bytes((*call).prefix);
@@ -727,7 +727,7 @@ unsafe fn eval_fncall<D: Dom>(
                 },
                 nargs,
                 out as *mut c_void,
-                err,
+                err.as_raw(),
             ),
             None => 1, /* not found */
         };
@@ -763,7 +763,7 @@ unsafe fn eval_binop<D: Dom>(
     n: *const Node,
     focus: &Focus<D>,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let b = &raw const (*n).u.binop;
@@ -825,7 +825,7 @@ unsafe fn eval_negate<D: Dom>(
     n: *const Node,
     focus: &Focus<D>,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
@@ -841,7 +841,7 @@ unsafe fn eval_negate<D: Dom>(
 unsafe fn string_value(
     out: *mut Val,
     bytes: &[u8],
-    err: *mut Error,
+    err: ErrSink,
     what: &core::ffi::CStr,
 ) -> EvalResult {
     let mut text = TextSlot::empty();
@@ -859,7 +859,7 @@ unsafe fn eval_node<D: Dom>(
     n: *const Node,
     focus: &Focus<D>,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let limits = mkr_ctx_limits(ctx);
     mkr_limit_eval_op(limits, err)?;
@@ -875,7 +875,7 @@ unsafe fn eval_node_inner<D: Dom>(
     n: *const Node,
     focus: &Focus<D>,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     /* Hoisting: a context-independent subtree already computed in this evaluate
      * comes back as a clone, which keeps ownership clean - clearing either copy
@@ -948,7 +948,7 @@ pub unsafe fn eval_ast<D: Dom>(
     ctx: *mut Context,
     ast: *const Node,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> EvalResult {
     let focus = Focus::<D> {
         node: D::from_void(mkr_ctx_node(ctx)),

@@ -21,7 +21,7 @@ use core::ptr;
 
 struct Parser<'a> {
     lx: Lexer<'a>,
-    err: *mut Error,
+    err: ErrSink,
     limits: *mut Limits,
 }
 
@@ -30,7 +30,7 @@ type PResult<T = ()> = Result<T, Reported>;
 
 /// Report a lexer failure as an `mkr_xpath_error_t`. A free function because
 /// the very first token is lexed before there is a parser to hold it.
-fn lex_err(err: *mut Error, e: LexErr) -> Reported {
+fn lex_err(err: ErrSink, e: LexErr) -> Reported {
     match e {
         LexErr::ExpectedNumber => err_setf!(err, XP_ERR_SYNTAX, "expected number"),
         LexErr::UnterminatedString => {
@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
     /// the parse fails closed instead.
     fn fill_owned(&mut self, text: &[u8], out: *mut TextSlot) -> PResult {
         // SAFETY: a null error slot is accepted; the parser reports its own.
-        let copied = unsafe { TextSlot::try_copy_bytes(text, ptr::null_mut(), None) };
+        let copied = unsafe { TextSlot::try_copy_bytes(text, ErrSink::silent(), None) };
         let (slot, result) = match copied {
             Ok(t) => (t, Ok(())),
             Err(_) => (
@@ -651,11 +651,11 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// `expr` is a verified text: NUL-free, valid UTF-8.
 ///
 /// # Safety
-/// `limits` must be null or live, and `err` null or a writable error slot.
+/// `limits` must be null or live, and `err`'s slot live.
 pub(crate) unsafe fn parse_owned(
     expr: VerifiedText,
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<Ast, Reported> {
     if limits.is_null() {
         return Err(err_setf!(
@@ -690,7 +690,8 @@ pub(crate) unsafe fn parse_owned(
 /// Parse an expression into a compiled AST; NULL on error with `*err` filled.
 ///
 /// # Safety
-/// As [`parse_owned`]; the caller frees the result with `mkr_node_free`.
+/// As [`parse_owned`], with `err` null or a writable error slot; the caller
+/// frees the result with `mkr_node_free`.
 pub unsafe fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
-    parse_owned(expr, limits, err).map_or(ptr::null_mut(), Ast::into_raw)
+    parse_owned(expr, limits, ErrSink::from_raw(err)).map_or(ptr::null_mut(), Ast::into_raw)
 }

@@ -116,7 +116,7 @@ unsafe fn mkr_eval_ast_html(
     _ctx: *mut Context,
     _ast: *const Node,
     _out: *mut Val,
-    _err: *mut Error,
+    _err: ErrSink,
 ) -> c_int {
     XP_ERR_INTERNAL
 }
@@ -126,7 +126,7 @@ unsafe fn mkr_try_first_match_html(
     _ctx: *mut Context,
     _ast: *const Node,
     _out_node: *mut *mut c_void,
-    _err: *mut Error,
+    _err: ErrSink,
 ) -> c_int {
     0
 }
@@ -149,7 +149,7 @@ fn text_eq(a: &OwnedText, b: &[u8]) -> bool {
 
 /// Copy `val` into a fresh owned text, or None on OOM.
 unsafe fn copy_text(val: VerifiedText) -> Option<OwnedText> {
-    crate::xpath_abi::TextSlot::try_copy(val.into(), ptr::null_mut(), None)
+    crate::xpath_abi::TextSlot::try_copy(val.into(), ErrSink::silent(), None)
         .ok()
         .map(OwnedText::from_slot)
 }
@@ -479,7 +479,7 @@ pub(crate) unsafe fn eval_compiled(
     if ctx.is_null() || ast.is_null() || out_value.is_null() {
         if !out_error.is_null() {
             crate::err_setf!(
-                out_error,
+                ErrSink::from_raw(out_error),
                 XP_ERR_INTERNAL,
                 "mkr_xpath_eval_compiled: bad arguments"
             );
@@ -521,9 +521,9 @@ pub(crate) unsafe fn eval_compiled(
         },
     };
     let rc = if (*ctx).engine_kind != 0 {
-        mkr_eval_ast_xml(handle(ctx), ast, &mut v, &mut err)
+        mkr_eval_ast_xml(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
     } else {
-        mkr_eval_ast_html(handle(ctx), ast, &mut v, &mut err)
+        mkr_eval_ast_html(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
     };
     mkr_str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
     if !order_was_built && (*ctx).order_index.built != 0 {
@@ -555,7 +555,7 @@ pub(crate) unsafe fn eval_compiled_first(
     if ctx.is_null() || ast.is_null() || out_value.is_null() {
         if !out_error.is_null() {
             crate::err_setf!(
-                out_error,
+                ErrSink::from_raw(out_error),
                 XP_ERR_INTERNAL,
                 "mkr_xpath_eval_compiled_first: bad arguments"
             );
@@ -576,9 +576,9 @@ pub(crate) unsafe fn eval_compiled_first(
         message: ptr::null_mut(),
     };
     let matched = if (*ctx).engine_kind != 0 {
-        mkr_try_first_match_xml(handle(ctx), ast, &mut node, &mut err)
+        mkr_try_first_match_xml(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
     } else {
-        mkr_try_first_match_html(handle(ctx), ast, &mut node, &mut err)
+        mkr_try_first_match_html(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
     };
     if matched < 0 {
         /* Op budget exceeded while walking: fail closed rather than falling back
@@ -605,7 +605,13 @@ pub(crate) unsafe fn eval_compiled_first(
         };
         mkr_nodeset_init(&raw mut v.u.nodeset);
         if !node.is_null()
-            && mkr_nodeset_push(&raw mut v.u.nodeset, node, ptr::null_mut(), out_error).is_err()
+            && mkr_nodeset_push(
+                &raw mut v.u.nodeset,
+                node,
+                ptr::null_mut(),
+                ErrSink::from_raw(out_error),
+            )
+            .is_err()
         {
             mkr_nodeset_clear(&raw mut v.u.nodeset);
             return -1;

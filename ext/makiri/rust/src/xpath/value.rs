@@ -82,7 +82,7 @@ pub unsafe fn owned_bytes<'a>(t: TextSlot) -> &'a [u8] {
 pub unsafe fn owned_copy(
     out: *mut TextSlot,
     s: &[u8],
-    err: *mut Error,
+    err: ErrSink,
     what: &core::ffi::CStr,
 ) -> Result<(), Reported> {
     *out = crate::xpath_abi::TextSlot::try_copy_bytes(s, err, Some(what))?;
@@ -97,7 +97,7 @@ pub unsafe fn owned_copy(
 /// # Safety
 /// Both must point at valid `mkr_val_t`; `dst` is overwritten without being
 /// cleared first, so the caller owns whatever was in it.
-pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> Result<(), Reported> {
+pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: ErrSink) -> Result<(), Reported> {
     *dst = val_zero((*src).type_);
     match (*src).type_ {
         T_STRING => {
@@ -204,11 +204,12 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
 /// Build `node`'s XPath string-value into `out` - the one node string-value
 /// builder.
 ///
-/// With `err` non-null the build is bounded by `limits.max_string_bytes` and any
-/// failure returns `Err` with `*err` set. With `err` null it is best-effort: a
-/// failure yields an owned "" and returns `Ok`, because the sole such caller is
-/// the NUMBER coercion, and a node whose text overran the ceiling was never a
-/// valid number - "" coerces to NaN, which is the right answer anyway.
+/// With a reporting `err` the build is bounded by `limits.max_string_bytes` and
+/// any failure returns `Err` with the slot set. With a silent one it is
+/// best-effort: a failure yields an owned "" and returns `Ok`, because the sole
+/// such caller is the NUMBER coercion, and a node whose text overran the ceiling
+/// was never a valid number - "" coerces to NaN, which is the right answer
+/// anyway.
 ///
 /// # Safety
 /// `node` must be live; `out` writable.
@@ -216,7 +217,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     doc: D::Doc,
     node: D::Node,
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
     out: *mut TextSlot,
 ) -> Result<(), Reported> {
     *out = TextSlot::empty();
@@ -231,7 +232,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
             *out = TextSlot::from_buf(owned);
             return Ok(());
         }
-        if !err.is_null() {
+        if !err.is_silent() {
             return Err(err_setf!(
                 err,
                 XP_ERR_OOM,
@@ -240,7 +241,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
         }
     } else {
         buf.free();
-        if !err.is_null() {
+        if !err.is_silent() {
             return Err(if st == ST_ERR_LIMIT {
                 err_setf!(
                     err,
@@ -255,7 +256,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     }
     /* best-effort: never fail - yield an owned "". An OOM here leaves the slot
      * absent, which reads as "" too. */
-    let _ = owned_copy(out, b"", ptr::null_mut(), c"");
+    let _ = owned_copy(out, b"", ErrSink::silent(), c"");
     Ok(())
 }
 
@@ -342,7 +343,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     doc: D::Doc,
     v: *const Val,
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
     out: *mut TextSlot,
 ) -> Result<(), Reported> {
     *out = TextSlot::empty();
@@ -409,7 +410,7 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
     doc: D::Doc,
     v: *const Val,
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
     out: *mut f64,
 ) -> Result<(), Reported> {
     if (*v).type_ == T_NODESET {
@@ -451,7 +452,7 @@ pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
 #[inline]
 unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText {
     let mut t = OwnedText::new();
-    let _ = node_to_owned_text::<D>(doc, node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
+    let _ = node_to_owned_text::<D>(doc, node, ptr::null_mut(), ErrSink::silent(), t.as_mut());
     t
 }
 
@@ -467,7 +468,7 @@ unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText
 pub unsafe fn cached_node_text<'a, D: Dom>(
     ctx: *mut Context,
     node: D::Node,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<&'a [u8], Reported> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let c = mkr_ctx_str_cache(ctx);

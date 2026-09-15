@@ -44,7 +44,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
     context_set: &Set,
     result: &mut Set,
     b: &Bindings<D>,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<bool, Reported> {
     let test = &raw const (*step).test;
     if (*step).axis != AXIS_DESCENDANT
@@ -134,7 +134,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     s1: *const Step,
     seed: &Set,
     result: &mut Set,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<bool, Reported> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let need = match nth_shape::<D>(ctx, s0, s1, seed) {

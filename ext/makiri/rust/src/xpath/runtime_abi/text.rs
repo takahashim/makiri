@@ -19,7 +19,7 @@ impl TextSlot {
     /// yields a present empty string.
     pub(crate) unsafe fn try_copy(
         t: BorrowedText,
-        err: *mut Error,
+        err: ErrSink,
         what: Option<&CStr>,
     ) -> Result<Self, Reported> {
         Self::try_copy_bytes(t.as_bytes(), err, what)
@@ -29,7 +29,7 @@ impl TextSlot {
     /// or `Err` on OOM with `*err` set to `what` (or a generic message).
     pub(crate) unsafe fn try_copy_bytes(
         bytes: &[u8],
-        err: *mut Error,
+        err: ErrSink,
         what: Option<&CStr>,
     ) -> Result<Self, Reported> {
         let len = bytes.len();

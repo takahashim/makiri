@@ -18,7 +18,6 @@ use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
-use core::ptr;
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
@@ -35,7 +34,7 @@ pub type FnResult<T = ()> = Result<T, Reported>;
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call; `out` starts zeroed, and an `Err`
 /// leaves it for the caller to clear.
-pub type FnImpl<D> = unsafe fn(*mut Context, &Focus<D>, &[Val], *mut Val, *mut Error) -> FnResult;
+pub type FnImpl<D> = unsafe fn(*mut Context, &Focus<D>, &[Val], *mut Val, ErrSink) -> FnResult;
 
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
 /// routes the call to the registered resolver.
@@ -95,7 +94,7 @@ pub fn lookup<D: Dom>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnImpl<D>> 
 
 /* ---------- shared helpers ---------- */
 
-unsafe fn arity(got: usize, min: usize, max: usize, err: *mut Error, name: &str) -> FnResult {
+unsafe fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) -> FnResult {
     if got < min || got > max {
         return Err(if min == max {
             err_setf!(
@@ -122,11 +121,7 @@ unsafe fn arity(got: usize, min: usize, max: usize, err: *mut Error, name: &str)
 }
 
 /// The shared "argument must be a node-set" check.
-unsafe fn require_nodeset(
-    arg: *const Val,
-    fname: &str,
-    err: *mut Error,
-) -> FnResult<*const NodeSet> {
+unsafe fn require_nodeset(arg: *const Val, fname: &str, err: ErrSink) -> FnResult<*const NodeSet> {
     if (*arg).type_ != T_NODESET {
         return Err(err_setf!(
             err,
@@ -139,12 +134,12 @@ unsafe fn require_nodeset(
 }
 
 /// An owned copy of `s`, or `Err` with `*err` naming `what` on OOM.
-unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> FnResult<TextSlot> {
-    TextSlot::try_copy_bytes(s, ptr::null_mut(), None)
+unsafe fn c_string(s: &[u8], err: ErrSink, what: &str) -> FnResult<TextSlot> {
+    TextSlot::try_copy_bytes(s, ErrSink::silent(), None)
         .map_err(|_| err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what))
 }
 
-unsafe fn set_string(out: *mut Val, s: &[u8], err: *mut Error, what: &str) -> FnResult {
+unsafe fn set_string(out: *mut Val, s: &[u8], err: ErrSink, what: &str) -> FnResult {
     mkr_val_set_owned_text(out, c_string(s, err, what)?);
     Ok(())
 }
@@ -159,18 +154,14 @@ unsafe fn set_bool(out: *mut Val, b: bool) -> FnResult {
     Ok(())
 }
 
-unsafe fn to_text<D: Dom>(
-    v: *const Val,
-    ctx: *mut Context,
-    err: *mut Error,
-) -> FnResult<OwnedText> {
+unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: ErrSink) -> FnResult<OwnedText> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let mut t = OwnedText::new();
     val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, t.as_mut())?;
     Ok(t)
 }
 
-unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> FnResult<f64> {
+unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context, err: ErrSink) -> FnResult<f64> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let mut d = 0.0;
     val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, &mut d)?;
@@ -183,7 +174,7 @@ unsafe fn arg_or_self_text<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     ctx: *mut Context,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult<OwnedText> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     match args.first() {
@@ -197,7 +188,7 @@ unsafe fn arg_or_self_text<D: Dom>(
 }
 
 /// Pull both string operands, then run `f`. The guards free them on every path.
-unsafe fn two<D: Dom, F>(ctx: *mut Context, args: &[Val], err: *mut Error, f: F) -> FnResult
+unsafe fn two<D: Dom, F>(ctx: *mut Context, args: &[Val], err: ErrSink, f: F) -> FnResult
 where
     F: FnOnce(&[u8], &[u8]) -> FnResult,
 {
@@ -238,7 +229,7 @@ fn advance_chars(s: &[u8], n: usize) -> usize {
 
 /// A `Vec` sized up front, so a failed allocation is an XPath OOM rather than
 /// the abort a plain `Vec` growth would give under `panic = "abort"`.
-fn try_vec<T>(n: usize, err: *mut Error, what: &str) -> FnResult<Vec<T>> {
+fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
     let mut v: Vec<T> = Vec::new();
     if v.mkr_reserve_exact(n).is_err() {
         return Err(err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what));
@@ -253,7 +244,7 @@ unsafe fn fn_last<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 0, err, "last")?;
     set_num(out, focus.size as f64)
@@ -264,7 +255,7 @@ unsafe fn fn_position<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 0, err, "position")?;
     set_num(out, focus.pos as f64)
@@ -275,7 +266,7 @@ unsafe fn fn_count<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 1, 1, err, "count")?;
     let ns = require_nodeset(&args[0], "count", err)?;
@@ -292,7 +283,7 @@ unsafe fn find_by_id<D: Dom>(
     root: D::Node,
     id: &[u8],
     limits: *mut Limits,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<D::Node, Reported> {
     if D::is_null(root) || id.is_empty() {
         return Ok(D::null());
@@ -327,7 +318,7 @@ unsafe fn id_collect<D: Dom>(
     root: D::Node,
     out: *mut NodeSet,
     ctx: *mut Context,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
@@ -345,7 +336,7 @@ unsafe fn fn_id<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 1, 1, err, "id")?;
     (*out).type_ = T_NODESET;
@@ -401,7 +392,7 @@ unsafe fn fn_id<D: Dom>(
 unsafe fn name_target<D: Dom>(
     args: &[Val],
     focus: &Focus<D>,
-    err: *mut Error,
+    err: ErrSink,
     fname: &str,
 ) -> FnResult<D::Node> {
     if args.is_empty() {
@@ -424,7 +415,7 @@ unsafe fn name_emit<D: Dom>(
     n: D::Node,
     qualified: bool,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
     fname: &str,
 ) -> FnResult {
     if D::is_null(n) {
@@ -456,7 +447,7 @@ unsafe fn fn_local_name<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     arity(args.len(), 0, 1, err, "local-name")?;
@@ -469,7 +460,7 @@ unsafe fn fn_name<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     arity(args.len(), 0, 1, err, "name")?;
@@ -482,7 +473,7 @@ unsafe fn fn_namespace_uri<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 1, err, "namespace-uri")?;
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
@@ -503,7 +494,7 @@ unsafe fn fn_string<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 1, err, "string")?;
     let mut t = arg_or_self_text::<D>(focus, args, ctx, err)?;
@@ -517,7 +508,7 @@ unsafe fn fn_concat<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     if args.len() < 2 {
         return Err(err_setf!(
@@ -559,7 +550,7 @@ unsafe fn fn_starts_with<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 2, 2, err, "starts-with")?;
     two::<D, _>(ctx, args, err, |s, t| set_bool(out, s.starts_with(t)))
@@ -570,7 +561,7 @@ unsafe fn fn_contains<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 2, 2, err, "contains")?;
     two::<D, _>(ctx, args, err, |s, t| {
@@ -583,7 +574,7 @@ unsafe fn fn_substring_before<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 2, 2, err, "substring-before")?;
     two::<D, _>(ctx, args, err, |s, t| {
@@ -602,7 +593,7 @@ unsafe fn fn_substring_after<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 2, 2, err, "substring-after")?;
     two::<D, _>(ctx, args, err, |s, t| {
@@ -625,7 +616,7 @@ unsafe fn fn_substring<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 2, 3, err, "substring")?;
     let s = to_text::<D>(&args[0], ctx, err)?;
@@ -659,7 +650,7 @@ unsafe fn fn_string_length<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 1, err, "string-length")?;
     let t = arg_or_self_text::<D>(focus, args, ctx, err)?;
@@ -672,7 +663,7 @@ unsafe fn fn_normalize_space<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 1, err, "normalize-space")?;
     let s = arg_or_self_text::<D>(focus, args, ctx, err)?;
@@ -720,7 +711,7 @@ unsafe fn fn_translate<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 3, 3, err, "translate")?;
     let limits = mkr_ctx_limits(ctx);
@@ -795,7 +786,7 @@ unsafe fn fn_not<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 1, 1, err, "not")?;
     set_bool(out, !val_to_boolean(&args[0]))
@@ -806,7 +797,7 @@ unsafe fn fn_true<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 0, err, "true")?;
     set_bool(out, true)
@@ -817,7 +808,7 @@ unsafe fn fn_false<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 0, 0, err, "false")?;
     set_bool(out, false)
@@ -828,7 +819,7 @@ unsafe fn fn_boolean<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 1, 1, err, "boolean")?;
     set_bool(out, val_to_boolean(&args[0]))
@@ -839,7 +830,7 @@ unsafe fn fn_lang<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     arity(args.len(), 1, 1, err, "lang")?;
@@ -880,7 +871,7 @@ unsafe fn fn_number<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     arity(args.len(), 0, 1, err, "number")?;
@@ -900,7 +891,7 @@ unsafe fn fn_sum<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 1, 1, err, "sum")?;
     let ns = require_nodeset(&args[0], "sum", err)?;
@@ -916,7 +907,7 @@ unsafe fn fn_sum<D: Dom>(
 unsafe fn num1<D: Dom, F>(
     ctx: *mut Context,
     args: &[Val],
-    err: *mut Error,
+    err: ErrSink,
     name: &str,
     out: *mut Val,
     f: F,
@@ -933,7 +924,7 @@ unsafe fn fn_floor<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     num1::<D, _>(ctx, args, err, "floor", out, f64::floor)
 }
@@ -943,7 +934,7 @@ unsafe fn fn_ceiling<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     num1::<D, _>(ctx, args, err, "ceiling", out, f64::ceil)
 }
@@ -954,7 +945,7 @@ unsafe fn fn_round<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     num1::<D, _>(ctx, args, err, "round", out, |d| {
         if d.is_nan() {
@@ -987,7 +978,7 @@ unsafe fn fn_css_class<D: Dom>(
     _focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 2, 2, err, "nokogiri-builtin:css-class")?;
     two::<D, _>(ctx, args, err, |hay, needle| {
@@ -1002,7 +993,7 @@ unsafe fn fn_local_name_is<D: Dom>(
     focus: &Focus<D>,
     args: &[Val],
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     arity(args.len(), 1, 1, err, "nokogiri-builtin:local-name-is")?;
@@ -1048,7 +1039,7 @@ unsafe fn fn_of_type_pos<D: Dom>(
     focus: &Focus<D>,
     _args: &[Val],
     out: *mut Val,
-    _err: *mut Error,
+    _err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     set_num(out, of_type_pos::<D>(focus.node, true, doc))
@@ -1059,7 +1050,7 @@ unsafe fn fn_of_type_pos_last<D: Dom>(
     focus: &Focus<D>,
     _args: &[Val],
     out: *mut Val,
-    _err: *mut Error,
+    _err: ErrSink,
 ) -> FnResult {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     set_num(out, of_type_pos::<D>(focus.node, false, doc))

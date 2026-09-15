@@ -388,11 +388,11 @@ fn borrowed_text_carries_an_interior_nul() {
 #[test]
 fn owned_text_copy_keeps_interior_nul_and_terminates() {
     use crate::text::BorrowedText;
-    use crate::xpath_abi::TextSlot;
+    use crate::xpath_abi::{ErrSink, TextSlot};
     use core::ptr;
 
     let mut t =
-        unsafe { TextSlot::try_copy_bytes(b"a\0b", ptr::null_mut(), None) }.expect("allocation");
+        unsafe { TextSlot::try_copy_bytes(b"a\0b", ErrSink::silent(), None) }.expect("allocation");
     assert_eq!(t.len(), 3);
     assert_eq!(unsafe { t.as_bytes() }, b"a\0b");
     assert_eq!(unsafe { *t.as_ptr().add(3) }, 0);
@@ -403,7 +403,7 @@ fn owned_text_copy_keeps_interior_nul_and_terminates() {
     let mut e = unsafe {
         TextSlot::try_copy(
             BorrowedText::from_raw_parts(ptr::null(), 0),
-            ptr::null_mut(),
+            ErrSink::silent(),
             None,
         )
     }

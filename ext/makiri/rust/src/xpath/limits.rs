@@ -29,7 +29,7 @@ use crate::err_setf;
 
 #[cold]
 #[inline(never)]
-unsafe fn over_ast_nodes(l: *mut Limits, err: *mut Error) -> Reported {
+unsafe fn over_ast_nodes(l: *mut Limits, err: ErrSink) -> Reported {
     err_setf!(
         err,
         XP_ERR_LIMIT,
@@ -40,7 +40,7 @@ unsafe fn over_ast_nodes(l: *mut Limits, err: *mut Error) -> Reported {
 
 #[cold]
 #[inline(never)]
-unsafe fn over_eval_ops(l: *mut Limits, err: *mut Error) -> Reported {
+unsafe fn over_eval_ops(l: *mut Limits, err: ErrSink) -> Reported {
     err_setf!(
         err,
         XP_ERR_LIMIT,
@@ -51,7 +51,7 @@ unsafe fn over_eval_ops(l: *mut Limits, err: *mut Error) -> Reported {
 
 #[cold]
 #[inline(never)]
-unsafe fn over_recursion(l: *mut Limits, err: *mut Error) -> Reported {
+unsafe fn over_recursion(l: *mut Limits, err: ErrSink) -> Reported {
     err_setf!(
         err,
         XP_ERR_LIMIT,
@@ -62,13 +62,13 @@ unsafe fn over_recursion(l: *mut Limits, err: *mut Error) -> Reported {
 
 #[cold]
 #[inline(never)]
-unsafe fn over_check(max: usize, noun: &str, err: *mut Error) -> Reported {
+unsafe fn over_check(max: usize, noun: &str, err: ErrSink) -> Reported {
     err_setf!(err, XP_ERR_LIMIT, "{} limit exceeded ({})", noun, max)
 }
 
 #[cold]
 #[inline(never)]
-unsafe fn over_string_bytes(max: usize, err: *mut Error) -> Reported {
+unsafe fn over_string_bytes(max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
         XP_ERR_LIMIT,
@@ -79,7 +79,7 @@ unsafe fn over_string_bytes(max: usize, err: *mut Error) -> Reported {
 
 #[cold]
 #[inline(never)]
-unsafe fn over_expr_bytes(bytes: usize, max: usize, err: *mut Error) -> Reported {
+unsafe fn over_expr_bytes(bytes: usize, max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
         XP_ERR_LIMIT,
@@ -110,7 +110,7 @@ pub unsafe fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
     };
 }
 
-pub unsafe fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> Result<(), Reported> {
+pub unsafe fn mkr_limit_ast_node(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
     if (*l).ast_nodes >= (*l).max_ast_nodes {
         return Err(over_ast_nodes(l, err));
     }
@@ -129,7 +129,7 @@ pub unsafe fn mkr_limit_ast_node(l: *mut Limits, err: *mut Error) -> Result<(), 
 /// Kept deliberately uniform, with no bulk variant: a bulk charge would only
 /// suit run-to-completion loops and would wrongly reject an early-exiting query
 /// if misapplied, trading one foot-gun-free rule for a conditional one.
-pub unsafe fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> Result<(), Reported> {
+pub unsafe fn mkr_limit_eval_op(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
     if (*l).eval_ops >= (*l).max_eval_ops {
         return Err(over_eval_ops(l, err));
     }
@@ -137,7 +137,7 @@ pub unsafe fn mkr_limit_eval_op(l: *mut Limits, err: *mut Error) -> Result<(), R
     Ok(())
 }
 
-pub unsafe fn mkr_limit_recurse_enter(l: *mut Limits, err: *mut Error) -> Result<(), Reported> {
+pub unsafe fn mkr_limit_recurse_enter(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
     if (*l).recursion_depth >= (*l).max_recursion_depth {
         /* The C increments, reports, then backs the failed entry out; comparing
          * first never counts it in the first place. */
@@ -155,7 +155,7 @@ pub unsafe fn mkr_limit_recurse_leave(l: *mut Limits) {
 
 /// The shared "value must not exceed max" gate for the count checks. The
 /// byte-oriented ones keep their own wording.
-unsafe fn check(value: usize, max: usize, noun: &str, err: *mut Error) -> Result<(), Reported> {
+unsafe fn check(value: usize, max: usize, noun: &str, err: ErrSink) -> Result<(), Reported> {
     if value > max {
         return Err(over_check(max, noun, err));
     }
@@ -165,7 +165,7 @@ unsafe fn check(value: usize, max: usize, noun: &str, err: *mut Error) -> Result
 pub unsafe fn mkr_limit_check_nodeset_size(
     l: *mut Limits,
     new_count: usize,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     check(new_count, (*l).max_nodeset_size, "nodeset size", err)
 }
@@ -173,7 +173,7 @@ pub unsafe fn mkr_limit_check_nodeset_size(
 pub unsafe fn mkr_limit_check_string_bytes(
     l: *mut Limits,
     bytes: usize,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     if bytes > (*l).max_string_bytes {
         return Err(over_string_bytes((*l).max_string_bytes, err));
@@ -184,7 +184,7 @@ pub unsafe fn mkr_limit_check_string_bytes(
 pub unsafe fn mkr_limit_check_steps(
     l: *mut Limits,
     nsteps: usize,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     check(nsteps, (*l).max_steps, "path step count", err)
 }
@@ -192,7 +192,7 @@ pub unsafe fn mkr_limit_check_steps(
 pub unsafe fn mkr_limit_check_predicates(
     l: *mut Limits,
     npreds: usize,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     check(npreds, (*l).max_predicates, "predicate count", err)
 }
@@ -200,7 +200,7 @@ pub unsafe fn mkr_limit_check_predicates(
 pub unsafe fn mkr_limit_check_func_args(
     l: *mut Limits,
     nargs: usize,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     check(
         nargs,
@@ -213,7 +213,7 @@ pub unsafe fn mkr_limit_check_func_args(
 pub unsafe fn mkr_limit_check_expr_bytes(
     l: *mut Limits,
     bytes: usize,
-    err: *mut Error,
+    err: ErrSink,
 ) -> Result<(), Reported> {
     if bytes > (*l).max_expr_bytes {
         return Err(over_expr_bytes(bytes, (*l).max_expr_bytes, err));

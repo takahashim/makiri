@@ -87,30 +87,64 @@ impl Reported {
     }
 }
 
+/// Where a failure is reported: the caller's error slot, or nowhere.
+///
+/// A copyable handle rather than a borrow, because every layer of the engine
+/// passes it down beside its other raw handles. Null is spelled
+/// [`ErrSink::silent`], so "don't tell me" is visible at the call site instead
+/// of being one more `ptr::null_mut()` among the arguments.
+#[derive(Clone, Copy)]
+pub struct ErrSink(*mut Error);
+
+impl ErrSink {
+    /// Report into `slot`, which must outlive every use of the sink.
+    pub fn new(slot: &mut Error) -> Self {
+        ErrSink(slot)
+    }
+
+    /// Report nowhere: a failure still comes back as `Err(Reported)`, but no
+    /// message is built.
+    pub const fn silent() -> Self {
+        ErrSink(core::ptr::null_mut())
+    }
+
+    /// # Safety
+    /// `slot` must be null or a live error slot for every use of the sink.
+    pub unsafe fn from_raw(slot: *mut Error) -> Self {
+        ErrSink(slot)
+    }
+
+    pub fn is_silent(self) -> bool {
+        self.0.is_null()
+    }
+
+    /// The slot, for a C-shaped callee: the handler resolver, `mkr_err_set`.
+    pub fn as_raw(self) -> *mut Error {
+        self.0
+    }
+}
+
 /// Set `err` from a formatted message. `mkr_err_set` copies it (mkr_xpath.c),
 /// so the stack buffer does not outlive the call.
 ///
-/// Crate-internal, and the one place the front end writes an error: every
-/// caller already holds the `*mut Error` its caller handed it, and passing a
-/// NULL or a dangling one would be the caller's bug either way.
-pub(crate) fn err_set_fmt(
-    err: *mut Error,
-    status: c_int,
-    args: core::fmt::Arguments<'_>,
-) -> Reported {
+/// Crate-internal, and the one place the front end writes an error. A silent
+/// sink skips the formatting as well as the write.
+pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Arguments<'_>) -> Reported {
     use core::fmt::Write;
-    let mut m = MsgBuf::default();
-    let _ = m.write_fmt(args);
-    unsafe { mkr_err_set(err, status, m.as_ptr()) };
+    if !err.is_silent() {
+        let mut m = MsgBuf::default();
+        let _ = m.write_fmt(args);
+        unsafe { mkr_err_set(err.as_raw(), status, m.as_ptr()) };
+    }
     Reported(())
 }
 
 /// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
 ///
 /// # Safety
-/// `err` must be null or a live error slot.
-pub(crate) unsafe fn err_set(err: *mut Error, status: c_int, msg: &core::ffi::CStr) -> Reported {
-    mkr_err_set(err, status, msg.as_ptr());
+/// `err`'s slot must still be live.
+pub(crate) unsafe fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Reported {
+    mkr_err_set(err.as_raw(), status, msg.as_ptr());
     Reported(())
 }
 

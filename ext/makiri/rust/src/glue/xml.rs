@@ -32,7 +32,7 @@ use rb_sys::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath::own::Ast as OwnedAst;
-use crate::xpath_abi::{Error as XPathError, XPathValue, XP_ERR_SYNTAX};
+use crate::xpath_abi::{ErrSink, Error as XPathError, XPathValue, XP_ERR_SYNTAX};
 
 use super::abi::error_class;
 
@@ -547,7 +547,9 @@ fn xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Ok(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error) else {
+        let Ok(ast) =
+            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error))
+        else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };
@@ -606,7 +608,7 @@ unsafe fn css_compile_or_raise(
         unsafe { sv.as_verified() },
         &cns as *const _,
         limits,
-        &mut error,
+        ErrSink::new(&mut error),
     );
     if let Ok(ast) = ast {
         return Ok(ast);

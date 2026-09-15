@@ -17,7 +17,7 @@ pub unsafe fn mkr_eval_ast_html(
     ctx: *mut Context,
     ast: *const Node,
     out: *mut Val,
-    err: *mut Error,
+    err: ErrSink,
 ) -> c_int {
     if eval::eval_ast::<Html>(ctx, ast, out, err).is_ok() {
         0
@@ -38,7 +38,7 @@ pub unsafe fn mkr_try_first_match_html(
     ctx: *mut Context,
     ast: *const Node,
     out_node: *mut *mut c_void,
-    err: *mut Error,
+    err: ErrSink,
 ) -> c_int {
     if out_node.is_null() {
         return 0;
