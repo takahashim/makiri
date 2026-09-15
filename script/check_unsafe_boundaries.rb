@@ -57,7 +57,7 @@ RB_SYS_COUNTS = {
   "glue/node_set.rs" => 19,
   "glue/xml.rs" => 4,
   "glue/xml_node/mod.rs" => 3,
-  "glue/xml_node/mutate.rs" => 2,
+  "glue/xml_node/mutate.rs" => 1,
   "glue/xml_node/ns.rs" => 12,
   "glue/xml_node/serialize.rs" => 8,
   "glue/xpath.rs" => 28,
@@ -70,7 +70,6 @@ RAISING_COUNTS = {
   "glue/doc.rs" => 1,              # clone_node, a C-convention entry point
   "glue/fragment.rs" => 4,         # fragment parse failures
   "glue/node_set.rs" => 4,         # push from the C-convention entry point
-  "glue/xml_node/mutate.rs" => 1,  # mkr_xml_mut_check
 }.freeze
 
 def rust_code(path)

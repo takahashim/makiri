@@ -11,7 +11,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::abi::*;
 
 /// Wrap an optional reached node under `rb_self`'s Document (invalid -> nil).
-unsafe fn wrap_rel(this: super::XmlSelf, rel: Option<NodeId>) -> Value {
+fn wrap_rel(this: super::XmlSelf, rel: Option<NodeId>) -> Value {
     super::wrap(rel.unwrap_or(NodeId::INVALID), this.document)
 }
 

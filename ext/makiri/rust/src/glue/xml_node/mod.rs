@@ -40,6 +40,11 @@ pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VA
         return rb_sys::Qnil as VALUE;
     }
     let xdoc = doc_of(Value::from_raw(document));
+    /* An HTML Document has no arena: refuse it rather than read through null. */
+    assert!(
+        !xdoc.is_null(),
+        "an XML node wrapped under a Document with no XML arena"
+    );
     let ty = (*xdoc).type_(id);
     if ty == Some(NodeType::Document) {
         return document;
@@ -104,7 +109,7 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, magnus::Error> {
 }
 
 /// Wrap a node reached from a checked receiver, under its Document.
-pub unsafe fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
+pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
     wrap(rel, this.document)
 }
 
@@ -154,11 +159,17 @@ pub fn doc(v: Value) -> Result<*mut XmlDoc, magnus::Error> {
     Ok(doc_of(xml_node_document(v)?))
 }
 
-pub unsafe fn wrap(node: NodeId, document: Value) -> Value {
-    Value::from_raw(wrap_xml_node(
-        node.to_token() as *mut c_void,
-        document.as_raw(),
-    ))
+/// Wrap an arena node under `document`, its XML Document.
+pub fn wrap(node: NodeId, document: Value) -> Value {
+    // SAFETY: `document` is a live value; `wrap_xml_node` checks it is a
+    // Document with an arena before reading it, and resolves `node` through that
+    // arena, where a stale or foreign id reads as no node.
+    unsafe {
+        Value::from_raw(wrap_xml_node(
+            node.to_token() as *mut c_void,
+            document.as_raw(),
+        ))
+    }
 }
 
 pub use crate::glue::node::node_equals;

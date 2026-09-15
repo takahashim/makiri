@@ -435,7 +435,7 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
             let xdoc =
                 crate::glue::xml_node::doc_of(crate::glue::xml_node::xml_node_document(node_v)?);
             let src = crate::xml::model::NodeId::from_token(xml_node_unwrap(node_v)? as usize);
-            xml_mut_check(cross_xml_to_html(doc, xdoc, src, deep, &mut imp));
+            xml_mut_check(cross_xml_to_html(doc, xdoc, src, deep, &mut imp))?;
             return Ok(Value::from_raw(wrap_html_node(imp, self_.as_raw())));
         }
 

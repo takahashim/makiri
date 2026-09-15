@@ -17,7 +17,6 @@
 
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
-use rb_sys::VALUE;
 
 use super::abi::*;
 use super::{node_document, unwrap, wrap};
@@ -51,61 +50,37 @@ pub use crate::xml::api::xml_set_attribute;
 pub use crate::xml::api::xml_set_attribute_ns;
 pub use crate::xml::api::xml_set_content;
 
-extern "C" {
-
-    static rb_eArgError: VALUE;
-}
-
-/// Raise for a non-OK mutation status; [`MutStatus::Ok`] returns.
+/// The exception for a non-OK mutation status; [`MutStatus::Ok`] is `Ok`.
 ///
 /// The one place a mutation failure becomes an exception, so every entry point
-/// that can produce a [`MutStatus`] routes through it: the node mutators here,
-/// `glue/doc.rs`, and `dom_adapter/cross_import.rs`. (Dropping the C file that
-/// used to define it without providing this is what turned the first build of
-/// this port into a crash rather than a link error - on macOS an unresolved
-/// symbol becomes a NULL jump at runtime.)
-///
-/// # Safety
-/// Raises, so no Rust destructor may be live at the call. Every caller here
-/// passes only `Copy` locals.
-pub unsafe fn xml_mut_check(st: MutStatus) {
-    let (exc, msg) = match st {
-        MutStatus::Ok => return,
-        MutStatus::Oom => (error_class().as_raw(), c"out of memory mutating XML"),
-        MutStatus::BadName => (rb_eArgError, c"not a well-formed XML name"),
-        MutStatus::BadChars => (
-            error_class().as_raw(),
-            c"value contains a character or sequence not permitted in XML",
-        ),
-        MutStatus::UnboundNs => (
-            error_class().as_raw(),
-            c"namespace prefix is not bound in this scope",
-        ),
-        MutStatus::Type => (
-            error_class().as_raw(),
-            c"operation unsupported for this node type",
-        ),
-        MutStatus::Cycle => (
-            error_class().as_raw(),
-            c"cannot insert a node into its own subtree",
-        ),
-        MutStatus::Hierarchy => (
-            error_class().as_raw(),
-            c"invalid placement (an attribute/document node cannot be a tree child, a document \
-allows a single root element, and a sibling target must have a parent)",
-        ),
-        MutStatus::BadNsDecl => (
-            error_class().as_raw(),
-            c"cannot bind a namespace prefix to the empty namespace",
-        ),
+/// that can produce a [`MutStatus`] routes through it: the node mutators here
+/// and `glue/doc.rs`. It hands the error back rather than raising, so the
+/// caller's frames unwind normally and nothing they own is skipped.
+pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
+    let msg: &str = match st {
+        MutStatus::Ok => return Ok(()),
+        MutStatus::Oom => "out of memory mutating XML",
+        MutStatus::BadName => {
+            let ruby = Ruby::get().expect("under the GVL");
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "not a well-formed XML name",
+            ));
+        }
+        MutStatus::BadChars => "value contains a character or sequence not permitted in XML",
+        MutStatus::UnboundNs => "namespace prefix is not bound in this scope",
+        MutStatus::Type => "operation unsupported for this node type",
+        MutStatus::Cycle => "cannot insert a node into its own subtree",
+        MutStatus::Hierarchy => {
+            "invalid placement (an attribute/document node cannot be a tree child, a document \
+allows a single root element, and a sibling target must have a parent)"
+        }
+        MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
         /* No C caller, so a null/stale document handle reaching a mutator is a
          * Rust-side invariant break, not a user error. */
-        MutStatus::Internal => (
-            error_class().as_raw(),
-            c"internal error mutating XML (no document)",
-        ),
+        MutStatus::Internal => "internal error mutating XML (no document)",
     };
-    crate::glue::abi::rb_raise(exc, c"%s".as_ptr(), msg.as_ptr())
+    Err(Error::new(error_class(), msg))
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,7 +182,7 @@ pub fn aset(ruby: &Ruby, this: super::XmlSelf, name: Value, val: Value) -> Resul
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let mut out = NodeId::INVALID;
         let st = xml_set_attribute(&mut *this.doc(), n, nv.bytes(), vv.bytes(), &mut out);
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(val)
     }
 }
@@ -239,7 +214,7 @@ pub fn set_attribute_ns(
             vv.bytes(),
             &mut out,
         );
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(val)
     }
 }
@@ -286,7 +261,7 @@ pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Val
         let n = unwrap_mutable(this)?;
         let (tv, _) = verified(ruby, text, c"node content")?;
         let st = xml_set_content(&mut *this.doc(), n, tv.bytes());
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(text)
     }
 }
@@ -299,7 +274,7 @@ pub fn set_name(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value,
         let n = unwrap_mutable(this)?;
         let (nv, _) = verified(ruby, name, c"node name")?;
         let st = xml_rename(&mut *this.doc(), n, nv.bytes());
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(name)
     }
 }
@@ -344,7 +319,7 @@ unsafe fn incoming_node(
     crate::glue::doc::ensure_document_mutable(node_document(arg)?)?;
     let mut copy: NodeId = NodeId::INVALID;
     let src_doc = xdoc(arg)?;
-    xml_mut_check(xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy));
+    xml_mut_check(xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy))?;
     Ok((copy, arg))
 }
 
@@ -385,13 +360,13 @@ unsafe fn splice_fragment(
     frag: NodeId,
     doc_v: Value,
     op: Op,
-) -> Value {
+) -> Result<Value, Error> {
     if op == Op::Replace {
         /* Whole-fragment replace is an engine primitive: it validates the
          * fragment before touching a link and keeps `target` until every child
          * is spliced in, so a rejected replace never destroys what it replaced. */
-        xml_mut_check(xml_replace_with_fragment(&mut *xd, target, frag));
-        return wrap(frag, doc_v);
+        xml_mut_check(xml_replace_with_fragment(&mut *xd, target, frag))?;
+        return Ok(wrap(frag, doc_v));
     }
     let mut r = target; /* the moving insertion point, for AFTER */
     while let Some(c) = (*xd).first_child(frag) {
@@ -405,9 +380,9 @@ unsafe fn splice_fragment(
             }
             _ => xml_insert_before(&mut *xd, target, c),
         };
-        xml_mut_check(st);
+        xml_mut_check(st)?;
     }
-    wrap(frag, doc_v)
+    Ok(wrap(frag, doc_v))
 }
 
 fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value, Error> {
@@ -418,7 +393,7 @@ fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value
         let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;
 
         if (*xd).type_(node) == Some(NodeType::Fragment) {
-            let out = splice_fragment(xd, target, node, doc_v, op);
+            let out = splice_fragment(xd, target, node, doc_v, op)?;
             adopt_finish(adopt_from);
             return Ok(out);
         }
@@ -429,7 +404,7 @@ fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value
             Op::After => xml_insert_after(&mut *xd, target, node),
             Op::Replace => xml_replace_node(&mut *xd, target, node),
         };
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         adopt_finish(adopt_from);
         Ok(wrap(node, doc_v))
     }
@@ -463,7 +438,7 @@ pub fn clone_node(this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> 
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
     unsafe {
         let mut out: NodeId = NodeId::INVALID;
-        xml_mut_check(xml_clone_node(&mut *this.doc(), this.id, deep, &mut out));
+        xml_mut_check(xml_clone_node(&mut *this.doc(), this.id, deep, &mut out))?;
         Ok(super::xml_wrap_rel_value(this, out))
     }
 }
@@ -554,12 +529,12 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         let (nv, _) = verified(ruby, name, c"element name")?;
         let mut el: NodeId = NodeId::INVALID;
         let st = xml_new_element(&mut *xd, nv.bytes(), &mut el);
-        xml_mut_check(st);
+        xml_mut_check(st)?;
 
         if !content.is_nil() {
             let (tv, _) = verified(ruby, content, c"element content")?;
             let st = xml_set_content(&mut *xd, el, tv.bytes());
-            xml_mut_check(st);
+            xml_mut_check(st)?;
         }
         let rb_el = wrap(el, rb_self);
         if let Some(h) = attrs {
@@ -610,7 +585,7 @@ pub fn create_loose_dom_element(
         let mut el: NodeId = NodeId::INVALID;
         let st =
             xml_new_loose_dom_element(&mut *xd, qv.bytes(), plen, loff, llen, nv.bytes(), &mut el);
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(wrap(el, rb_self))
     }
 }
@@ -644,7 +619,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
             (sl != 0).then_some(sv.bytes()),
             &mut dt,
         );
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(wrap(dt, rb_self))
     }
 }
@@ -661,7 +636,7 @@ unsafe fn create_chardata(
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
     let st = xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n);
-    xml_mut_check(st);
+    xml_mut_check(st)?;
     Ok(wrap(n, rb_self))
 }
 
@@ -682,7 +657,7 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
         let (dt, _) = verified(ruby, data, c"PI data")?;
         let mut pi: NodeId = NodeId::INVALID;
         let st = xml_new_pi(&mut *xd, tg.bytes(), dt.bytes(), &mut pi);
-        xml_mut_check(st);
+        xml_mut_check(st)?;
         Ok(wrap(pi, rb_self))
     }
 }
@@ -708,7 +683,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                     /* Same arena: the single-`&mut` clone path. Going through
                      * `xml_copy_node` would hand `&mut *xd` and `&*src_doc`
                      * as the same document (aliasing UB). */
-                    xml_mut_check(xml_clone_node(&mut *xd, unwrap(node_v)?, deep, &mut copy))
+                    xml_mut_check(xml_clone_node(&mut *xd, unwrap(node_v)?, deep, &mut copy))?
                 } else {
                     xml_mut_check(xml_copy_node(
                         &mut *xd,
@@ -716,7 +691,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                         unwrap(node_v)?,
                         deep,
                         &mut copy,
-                    ))
+                    ))?
                 }
             }
             KIND_HTML => xml_mut_check(cross_html_to_xml(
@@ -724,7 +699,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                 html_node_unwrap(node_v)? as *mut _,
                 deep,
                 &mut copy,
-            )),
+            ))?,
             _ => {
                 return Err(Error::new(
                     ruby.exception_type_error(),
