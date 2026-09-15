@@ -7,15 +7,13 @@
 //! wrap/unwrap and reader methods stay where they are (ruby_html_node.c,
 //! ruby_xml_node.c).
 //!
-//! # Why there is no magnus here
+//! # Where magnus comes in
 //!
-//! This file defines no Ruby method. It is a library the other glue files call,
-//! and the three functions that *do* end up as Ruby methods (`==`/`eql?`,
-//! `hash`, `pointer_id`) are bound by C with `rb_define_method`, which means
-//! they must keep the C calling convention. magnus enters where a method is
-//! defined; nothing here defines one. So this port is the same shape as the
-//! XPath one - identical C ABI in, identical C ABI out - and it uses rb-sys
-//! directly.
+//! Most of this file is a library the other glue files call, over rb-sys: the
+//! TypedData types and their GC functions keep the calling convention Ruby's GC
+//! uses. The identity methods (`==`/`eql?`, `hash`, `pointer_id`) are ordinary
+//! magnus methods that return `Result`, bound by both NodeMethods modules from
+//! this one definition, so HTML and XML answer identity with the same code.
 //!
 //! # Who owns the TypedData
 //!
@@ -37,11 +35,8 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use magnus::rb_sys::FromRawValue;
-use magnus::Value;
-use rb_sys::{
-    rb_data_type_t, rb_gc_mark, rb_obj_is_kind_of, rb_typeddata_is_kind_of, rb_ull2inum,
-    ruby_xfree, VALUE,
-};
+use magnus::{Integer, Ruby, Value};
+use rb_sys::{rb_data_type_t, rb_gc_mark, rb_typeddata_is_kind_of, ruby_xfree, VALUE};
 
 use crate::xml::model::Doc as XmlDoc;
 
@@ -104,11 +99,6 @@ const NODE_KIND_XML: c_int = 2;
 
 use super::abi::{doc_parsed, parsed_xml_doc, DataType, CLASS_DOCUMENT, CLASS_NODE};
 
-#[inline]
-unsafe fn is_kind_of(v: VALUE, klass: &crate::init::RbConst) -> bool {
-    rb_obj_is_kind_of(v, klass.raw()) == rb_sys::Qtrue as VALUE
-}
-
 /// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an
 /// opaque `*mut c_void` - dereferencing it takes an explicit cast, so it cannot
 /// be mistaken for a typed pointer. Only for the few sites where the
@@ -168,15 +158,6 @@ pub fn node_identity(rb_node: Value) -> Result<usize, magnus::Error> {
     Ok(node_raw(rb_node)? as usize)
 }
 
-/// [`node_identity`] for the C-convention identity methods below, which Ruby
-/// calls directly: a failure is raised from here, where nothing is owned.
-unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
-    match node_identity(Value::from_raw(rb_node)) {
-        Ok(id) => id,
-        Err(e) => crate::bridge::ruby::raise(e),
-    }
-}
-
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
 pub fn keepalive_document(rb_node: Value) -> Result<Value, magnus::Error> {
@@ -199,15 +180,11 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, magnus::Error> {
 
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.
-pub unsafe extern "C" fn node_equals(self_: VALUE, other: VALUE) -> VALUE {
-    if !is_kind_of(other, &CLASS_NODE) {
-        return rb_sys::Qfalse as VALUE;
+pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> {
+    if !crate::glue::abi::is_kind_of(other, &CLASS_NODE) {
+        return Ok(false);
     }
-    if node_id_or_raise(self_) == node_id_or_raise(other) {
-        rb_sys::Qtrue as VALUE
-    } else {
-        rb_sys::Qfalse as VALUE
-    }
+    Ok(node_identity(rb_self)? == node_identity(other)?)
 }
 
 /// Nokogiri-compatible identity: the underlying node pointer as an Integer.
@@ -215,13 +192,13 @@ pub unsafe extern "C" fn node_equals(self_: VALUE, other: VALUE) -> VALUE {
 /// freed-then-reallocated node may reuse an address (the same caveat as
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
-pub unsafe extern "C" fn node_pointer_id(self_: VALUE) -> VALUE {
-    rb_ull2inum(node_id_or_raise(self_) as core::ffi::c_ulonglong)
+pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
+    Ok(ruby.integer_from_u64(node_identity(rb_self)? as u64))
 }
 
 /// A stable hash from the node pointer, so `a == b` implies `a.hash == b.hash`
 /// even across separately-created wrappers. Shares the pointer value with
 /// `#pointer_id`.
-pub unsafe extern "C" fn node_hash(self_: VALUE) -> VALUE {
-    node_pointer_id(self_)
+pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Integer, magnus::Error> {
+    node_pointer_id(ruby, rb_self)
 }

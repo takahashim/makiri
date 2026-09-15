@@ -176,19 +176,6 @@ pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;
 pub use crate::glue::node::node_pointer_id;
 
-/// The shape `rb_define_method` wants. Ruby dispatches on the declared arity, so
-/// a 0- and a 1-argument method are both reached through this one type.
-type RbMethod = unsafe extern "C" fn() -> VALUE;
-
-/// Bind a method implemented by a C-ABI function, for the identity trio above.
-///
-/// They are bound as function pointers rather than re-implemented, because
-/// identity depends only on the node pointer and so must be the SAME code the
-/// HTML side runs - two implementations would be two answers.
-unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, arity: i32) {
-    rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
-}
-
 /// `init_xml_node_read` - the same entry point `init_xml_node` calls.
 ///
 /// # Safety
@@ -293,15 +280,13 @@ pub unsafe extern "C" fn init_xml_node_read() {
 
     /* Node identity by the underlying pointer, so #path, NodeSet dedup, Set and
      * Hash all work - the same contract HTML nodes have, from the same code. */
-    let equals: RbMethod =
-        core::mem::transmute(node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
-    let hash: RbMethod = core::mem::transmute(node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
-    let ptr_id: RbMethod =
-        core::mem::transmute(node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
-    define_c_method(MOD_XML_NODE_METHODS.raw(), c"==", equals, 1);
-    define_c_method(MOD_XML_NODE_METHODS.raw(), c"eql?", equals, 1);
-    define_c_method(MOD_XML_NODE_METHODS.raw(), c"hash", hash, 0);
-    define_c_method(MOD_XML_NODE_METHODS.raw(), c"pointer_id", ptr_id, 0);
+    m.define_method("==", method!(node_equals, 1)).expect("#==");
+    m.define_method("eql?", method!(node_equals, 1))
+        .expect("#eql?");
+    m.define_method("hash", method!(node_hash, 0))
+        .expect("#hash");
+    m.define_method("pointer_id", method!(node_pointer_id, 0))
+        .expect("#pointer_id");
 
     /* DocumentType identifiers; #public_id is the Nokogiri-style alias of
      * #external_id, and #name comes from the shared reader above. */

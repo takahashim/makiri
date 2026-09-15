@@ -242,8 +242,7 @@ pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
 /// so every arity is reached through this one type.
 type RbMethod = unsafe extern "C" fn() -> VALUE;
 
-/// Bind a method implemented with the C calling convention: the identity
-/// methods shared with the XML side, and `clone_node`.
+/// Bind a method implemented with the C calling convention: `clone_node`.
 unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, arity: i32) {
     rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
 }
@@ -333,20 +332,17 @@ pub unsafe extern "C" fn init_node() {
 
     /* Identity is by the node pointer and shared with the XML side; document
      * order is HTML-only and lives in read.rs. */
-    let methods = m.as_raw();
-    let equals: RbMethod =
-        core::mem::transmute(node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
-    let hash: RbMethod = core::mem::transmute(node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
-    let ptr_id: RbMethod =
-        core::mem::transmute(node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
+    m.define_method("==", method!(node_equals, 1)).expect("#==");
+    m.define_method("eql?", method!(node_equals, 1))
+        .expect("#eql?");
+    m.define_method("hash", method!(node_hash, 0))
+        .expect("#hash");
+    m.define_method("pointer_id", method!(node_pointer_id, 0))
+        .expect("#pointer_id");
     let clone: RbMethod = core::mem::transmute(
         node_clone_node as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
     );
-    define_c_method(methods, c"==", equals, 1);
-    define_c_method(methods, c"eql?", equals, 1);
-    define_c_method(methods, c"hash", hash, 0);
-    define_c_method(methods, c"pointer_id", ptr_id, 0);
-    define_c_method(methods, c"clone_node", clone, -1);
+    define_c_method(m.as_raw(), c"clone_node", clone, -1);
 
     m.define_method("<=>", method!(read::spaceship, 1))
         .expect("#<=>");
