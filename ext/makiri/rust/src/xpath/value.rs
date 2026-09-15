@@ -12,7 +12,7 @@ use super::dom::*;
 use super::number;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
-use crate::falloc::Reserve;
+use crate::falloc::{try_vec_with_capacity, Reserve};
 use core::ffi::{c_int, c_void};
 
 /* ---- the values ---- */
@@ -53,15 +53,26 @@ impl Text {
     }
 }
 
-/// A node-set: node tokens in the order the engine collected them.
-///
-/// It grows only through [`push_token`](Self::push_token), which holds it to
-/// the budget's node-set cap and fails closed on OOM.
-#[derive(Default)]
-pub struct NodeSet(Vec<*mut c_void>);
+/// A node as the glue carries it: an erased handle, which only the backend
+/// that made it can read back.
+pub type Token = *mut c_void;
 
-impl NodeSet {
-    pub const fn new() -> NodeSet {
+/// A node-set: nodes in the order the engine collected them.
+///
+/// Inside the engine the nodes are the backend's own handles (`NodeSet<D::Node>`);
+/// the glue sees tokens (`NodeSet<Token>`, the default), and the evaluator
+/// converts at that boundary. It grows only through [`push`](Self::push), which
+/// holds it to the budget's node-set cap and fails closed on OOM.
+pub struct NodeSet<N = Token>(Vec<N>);
+
+impl<N> Default for NodeSet<N> {
+    fn default() -> NodeSet<N> {
+        NodeSet::new()
+    }
+}
+
+impl<N> NodeSet<N> {
+    pub const fn new() -> NodeSet<N> {
         NodeSet(Vec::new())
     }
     pub fn len(&self) -> usize {
@@ -70,12 +81,12 @@ impl NodeSet {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    /// The node tokens, in order.
-    pub fn as_slice(&self) -> &[*mut c_void] {
+    /// The nodes, in order.
+    pub fn as_slice(&self) -> &[N] {
         &self.0
     }
-    /// The node tokens, for the passes that reorder a set in place.
-    pub fn as_mut_slice(&mut self) -> &mut [*mut c_void] {
+    /// The nodes, for the passes that reorder a set in place.
+    pub fn as_mut_slice(&mut self) -> &mut [N] {
         &mut self.0
     }
     /// Drop the nodes, keeping the allocation for reuse.
@@ -86,12 +97,8 @@ impl NodeSet {
         self.0.truncate(len);
     }
 
-    /// Append a node token within `budget`'s node-set cap. A null token names no
-    /// node and is not pushed.
-    pub fn push_token(&mut self, token: *mut c_void, budget: &mut Budget) -> Result<(), Reported> {
-        if token.is_null() {
-            return Ok(());
-        }
+    /// Append `n` within `budget`'s node-set cap.
+    pub fn push(&mut self, n: N, budget: &mut Budget) -> Result<(), Reported> {
         budget.check_nodeset_size(self.0.len() + 1)?;
         if self.0.mkr_reserve(1).is_err() {
             return Err(err_setf!(
@@ -100,74 +107,89 @@ impl NodeSet {
                 "out of memory growing node-set"
             ));
         }
-        self.0.push(token);
+        self.0.push(n);
         Ok(())
     }
+}
 
-    /// Append `n`.
-    pub fn push<'d, D: Dom<'d>>(
-        &mut self,
-        n: D::Node,
-        budget: &mut Budget,
-    ) -> Result<(), Reported> {
-        self.push_token(D::token(n), budget)
-    }
-
+impl<N: Copy> NodeSet<N> {
     /// Node `i`.
-    ///
-    /// # Safety
-    /// The set must hold `doc`'s tokens.
-    pub unsafe fn get<'d, D: Dom<'d>>(&self, doc: D, i: usize) -> D::Node {
-        doc.node(self.0[i])
+    pub fn get(&self, i: usize) -> N {
+        self.0[i]
     }
 
     /// A copy, or None on OOM. The nodes belong to the document, so only the
-    /// tokens are copied.
-    pub fn try_clone(&self) -> Option<NodeSet> {
+    /// handles are copied.
+    pub fn try_clone(&self) -> Option<NodeSet<N>> {
         crate::falloc::try_to_vec(&self.0).map(NodeSet)
+    }
+
+    /// Each node passed through `f`, into a new set, or None on OOM.
+    pub fn try_map<M>(&self, f: impl FnMut(N) -> M) -> Option<NodeSet<M>> {
+        let mut nodes = try_vec_with_capacity(self.0.len())?;
+        nodes.extend(self.0.iter().copied().map(f));
+        Some(NodeSet(nodes))
+    }
+}
+
+impl NodeSet<Token> {
+    /// Append a token within `budget`'s node-set cap. A null token names no
+    /// node and is not pushed.
+    pub fn push_token(&mut self, token: Token, budget: &mut Budget) -> Result<(), Reported> {
+        if token.is_null() {
+            return Ok(());
+        }
+        self.push(token, budget)
     }
 }
 
 /// An XPath value (§1): a node-set, a string, a number or a boolean. It owns
-/// what it holds.
-pub enum Val {
-    NodeSet(NodeSet),
+/// what it holds. As with [`NodeSet`], the nodes are the backend's handles
+/// inside the engine and tokens at the glue.
+pub enum Val<N = Token> {
+    NodeSet(NodeSet<N>),
     String(Text),
     Number(f64),
     Boolean(bool),
 }
 
 /// A value's contents, borrowed.
-#[derive(Clone, Copy)]
-pub enum ValRef<'a> {
-    NodeSet(&'a NodeSet),
+pub enum ValRef<'a, N = Token> {
+    NodeSet(&'a NodeSet<N>),
     String(&'a Text),
     Number(f64),
     Boolean(bool),
 }
 
-impl Default for Val {
+impl<N> Clone for ValRef<'_, N> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<N> Copy for ValRef<'_, N> {}
+
+impl<N> Default for Val<N> {
     /// The empty node-set.
-    fn default() -> Val {
+    fn default() -> Val<N> {
         Val::NodeSet(NodeSet::new())
     }
 }
 
-impl Val {
-    pub fn nodeset(ns: NodeSet) -> Val {
+impl<N> Val<N> {
+    pub fn nodeset(ns: NodeSet<N>) -> Val<N> {
         Val::NodeSet(ns)
     }
-    pub fn string(text: Text) -> Val {
+    pub fn string(text: Text) -> Val<N> {
         Val::String(text)
     }
-    pub fn number(d: f64) -> Val {
+    pub fn number(d: f64) -> Val<N> {
         Val::Number(d)
     }
-    pub fn boolean(b: bool) -> Val {
+    pub fn boolean(b: bool) -> Val<N> {
         Val::Boolean(b)
     }
 
-    pub fn get(&self) -> ValRef<'_> {
+    pub fn get(&self) -> ValRef<'_, N> {
         match self {
             Val::NodeSet(ns) => ValRef::NodeSet(ns),
             Val::String(t) => ValRef::String(t),
@@ -176,19 +198,54 @@ impl Val {
         }
     }
 
-    pub fn as_nodeset(&self) -> Option<&NodeSet> {
+    pub fn as_nodeset(&self) -> Option<&NodeSet<N>> {
         match self {
             Val::NodeSet(ns) => Some(ns),
             _ => None,
         }
     }
 
-    pub fn as_nodeset_mut(&mut self) -> Option<&mut NodeSet> {
+    pub fn as_nodeset_mut(&mut self) -> Option<&mut NodeSet<N>> {
         match self {
             Val::NodeSet(ns) => Some(ns),
             _ => None,
         }
     }
+}
+
+/* ---- the token boundary ---- */
+
+/// `v` as the glue carries it - its nodes as tokens - or None on OOM.
+pub fn val_to_tokens<'d, D: Dom<'d>>(v: Val<D::Node>) -> Option<Val> {
+    Some(match v {
+        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(D::token)?),
+        Val::String(t) => Val::String(t),
+        Val::Number(d) => Val::Number(d),
+        Val::Boolean(b) => Val::Boolean(b),
+    })
+}
+
+/// A copy of `v` as the glue carries it, or None on OOM.
+pub fn val_copy_to_tokens<'d, D: Dom<'d>>(v: &Val<D::Node>) -> Option<Val> {
+    Some(match v {
+        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(D::token)?),
+        Val::String(t) => Val::String(Text::try_copy(t.as_slice())?),
+        Val::Number(d) => Val::Number(*d),
+        Val::Boolean(b) => Val::Boolean(*b),
+    })
+}
+
+/// `v` with its tokens read back as `doc`'s nodes, or None on OOM.
+///
+/// # Safety
+/// Every token must name a node of `doc`.
+pub unsafe fn val_from_tokens<'d, D: Dom<'d>>(doc: D, v: Val) -> Option<Val<D::Node>> {
+    Some(match v {
+        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(|t| doc.node(t))?),
+        Val::String(t) => Val::String(t),
+        Val::Number(d) => Val::Number(d),
+        Val::Boolean(b) => Val::Boolean(b),
+    })
 }
 
 /// The dynamic context of XPath 1.0 - the "focus": the context node with its
@@ -217,9 +274,9 @@ pub fn owned_copy(s: &[u8], err: ErrSink, what: &core::ffi::CStr) -> Result<Text
 
 /* ---------- value clone ---------- */
 
-/// Deep-copy `src`. The node-set case copies the tokens only: the nodes belong
+/// Deep-copy `src`. The node-set case copies the handles only: the nodes belong
 /// to the document, not to the value.
-pub fn val_clone(src: &Val, err: ErrSink) -> Result<Val, Reported> {
+pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported> {
     Ok(match src {
         Val::String(s) => Val::String(owned_copy(
             s.as_slice(),
@@ -388,7 +445,7 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
 ///
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
-pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val) -> f64 {
+pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val<D::Node>) -> f64 {
     match v.get() {
         ValRef::Number(d) => d,
         ValRef::Boolean(b) => {
@@ -404,7 +461,7 @@ pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val) -> f64 {
                 return f64::NAN;
             }
             /* string-value of the first node in document order */
-            let text = node_text_best_effort::<D>(doc, nodeset_at::<D>(doc, ns, 0));
+            let text = node_text_best_effort::<D>(doc, ns.get(0));
             bytes_to_number(text.as_slice())
         }
     }
@@ -412,7 +469,7 @@ pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val) -> f64 {
 
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
-pub fn val_to_boolean(v: &Val) -> bool {
+pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
     match v.get() {
         ValRef::Boolean(b) => b,
         ValRef::Number(d) => !(d == 0.0 || d.is_nan()),
@@ -429,7 +486,7 @@ pub fn val_to_boolean(v: &Val) -> bool {
 /// A node-set value must hold `doc`'s tokens.
 pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
     doc: D,
-    v: &Val,
+    v: &Val<D::Node>,
     budget: &mut Budget,
 ) -> Result<Text, Reported> {
     let err = budget.sink();
@@ -471,7 +528,7 @@ pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, ns, 0), Some(budget))
+            node_to_owned_text::<D>(doc, ns.get(0), Some(budget))
         }
     }
 }
@@ -483,29 +540,17 @@ pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
 /// `v` must be valid.
 pub unsafe fn val_to_number_or_fail<'d, D: Dom<'d>>(
     doc: D,
-    v: &Val,
+    v: &Val<D::Node>,
     budget: &mut Budget,
 ) -> Result<f64, Reported> {
     if let Some(ns) = v.as_nodeset() {
         if ns.is_empty() {
             return Ok(f64::NAN);
         }
-        let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, ns, 0), Some(budget))?;
+        let text = node_to_owned_text::<D>(doc, ns.get(0), Some(budget))?;
         return Ok(bytes_to_number(text.as_slice()));
     }
     Ok(val_to_number_unchecked::<D>(doc, v))
-}
-
-/* ---------- node-set element access ---------- */
-
-/// The node-set stores `void *`; this is where one becomes a backend handle.
-///
-/// # Safety
-/// `i` must be within `ns.count`, and the set must hold handles of this
-/// backend's representation - which the engine kind selects.
-#[inline]
-pub unsafe fn nodeset_at<'d, D: Dom<'d>>(doc: D, ns: &NodeSet, i: usize) -> D::Node {
-    ns.get::<D>(doc, i)
 }
 
 /// Build `node`'s string-value with no limit and no error reporting - the

@@ -20,10 +20,8 @@ use core::ptr;
 /// `descendant::tag` from the document is precisely "every element named tag",
 /// which is what the index groups.
 ///
-/// # Safety
-/// `set` must hold this document's handles.
-unsafe fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet) -> bool {
-    set.len() == 1 && set.get::<D>(doc, 0) == doc.document_node()
+fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet<D::Node>) -> bool {
+    set.len() == 1 && set.get(0) == doc.document_node()
 }
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
@@ -34,8 +32,8 @@ unsafe fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet) -> bool {
 pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
     doc: D,
     step: &Step,
-    context_set: &NodeSet,
-    result: &mut NodeSet,
+    context_set: &NodeSet<D::Node>,
+    result: &mut NodeSet<D::Node>,
     b: &Bindings<'e, D>,
     budget: &mut Budget,
 ) -> Result<bool, Reported> {
@@ -63,7 +61,7 @@ pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, step.axis, b) {
             continue;
         }
-        result.push::<D>(n, budget)?;
+        result.push(n, budget)?;
     }
     Ok(true)
 }
@@ -77,9 +75,12 @@ pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
 /// pointer-keyed parent -> count map emits exactly those whose running count
 /// reaches N, already in document order, with no sort or dedup.
 ///
-/// # Safety
-/// `seed` must hold this document's handles.
-unsafe fn nth_shape<'e, D: Dom<'e>>(doc: D, s0: &Step, s1: &Step, seed: &NodeSet) -> Option<usize> {
+fn nth_shape<'e, D: Dom<'e>>(
+    doc: D,
+    s0: &Step,
+    s1: &Step,
+    seed: &NodeSet<D::Node>,
+) -> Option<usize> {
     if s0.axis != Axis::DescendantOrSelf
         || s0.test.kind != TestKind::Node
         || s0.test.prefix.is_some()
@@ -117,8 +118,8 @@ pub unsafe fn try_descendant_index_nth<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     s0: &Step,
     s1: &Step,
-    seed: &NodeSet,
-    result: &mut NodeSet,
+    seed: &NodeSet<D::Node>,
+    result: &mut NodeSet<D::Node>,
 ) -> Result<bool, Reported> {
     let err = ev.budget.sink();
     let doc = ev.doc;
@@ -183,7 +184,7 @@ pub unsafe fn try_descendant_index_nth<'e, D: Dom<'e>>(
         tab[h].0 = par;
         tab[h].1 += 1;
         if tab[h].1 == need {
-            result.push::<D>(e, budget)?;
+            result.push(e, budget)?;
         }
     }
     Ok(true)

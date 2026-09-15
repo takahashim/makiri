@@ -299,10 +299,10 @@ fn doc_order_cmp_indexed<'d, D: Dom<'d>>(doc: D, idx: &OrderIndex, a: D::Node, b
 const INDEX_BUILD_MIN: usize = 200;
 
 /// Sort a node-set into document order.
-///
-/// # Safety
-/// `ns` must hold this document's tokens.
-pub unsafe fn nodeset_sort_doc_order<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, ns: &mut NodeSet) {
+pub fn nodeset_sort_doc_order<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
+    ns: &mut NodeSet<D::Node>,
+) {
     let doc = ev.doc;
     if ns.len() < 2 {
         return;
@@ -315,9 +315,7 @@ pub unsafe fn nodeset_sort_doc_order<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>,
      * the sort is pure waste. One O(n) scan with the same comparator confirms
      * it, so this can only skip work, never change the result. Reverse axes and
      * interleaved results fail the scan early. */
-    let cmp = |idx: &OrderIndex, a: *mut c_void, b: *mut c_void| {
-        doc_order_cmp_indexed::<D>(doc, idx, doc.node(a), doc.node(b))
-    };
+    let cmp = |idx: &OrderIndex, a: D::Node, b: D::Node| doc_order_cmp_indexed::<D>(doc, idx, a, b);
     if items
         .windows(2)
         .all(|w| cmp(&ev.order_index, w[0], w[1]) <= 0)
@@ -341,10 +339,10 @@ pub unsafe fn nodeset_sort_doc_order<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>,
 }
 
 /// Sort into document order and drop duplicates.
-///
-/// # Safety
-/// See `nodeset_sort_doc_order`.
-pub unsafe fn nodeset_unique_sorted<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, ns: &mut NodeSet) {
+pub fn nodeset_unique_sorted<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
+    ns: &mut NodeSet<D::Node>,
+) {
     if ns.len() < 2 {
         return;
     }
