@@ -19,6 +19,7 @@ CSS  = "div.a, #b > span { color: red !important; --v: 1px }\n" \
        "@media (min-width: 600px) { .x { opacity: 0 } }\n@font-face { font-family: y }"
 
 handler = Class.new { def my_fn(nodes) = nodes.length.to_s }.new
+RAISING_TO_S = Object.new.tap { |o| def o.to_s = raise("to_s failed") }
 
 ITERATIONS.times do |i|
   # --- HTML: parse / query / serialize / mutate / fragments ---
@@ -46,6 +47,7 @@ ITERATIONS.times do |i|
   begin Makiri::XML(%(<?xml version="1.1"?><r/>)) rescue Makiri::XML::SyntaxError; end
   x.xpath("//d:a", "d" => "urn:d"); x.at_xpath("//p:b", "p" => "urn:p")
   begin x.xpath("//unbound:a") rescue Makiri::Error; end
+  begin x.xpath("//d:a", RAISING_TO_S => "urn:d") rescue RuntimeError; end # namespaces coercion raises (context freed)
   x.css("a"); x.at_css("p|b", "p" => "urn:p")
   begin x.css("a[") rescue Makiri::CSS::SyntaxError; end
   x.to_xml; x.to_xml(pretty: true); x.root.canonicalize
@@ -59,6 +61,7 @@ ITERATIONS.times do |i|
   ctx.register_namespace("d", "urn:d"); ctx.register_variable("v", "1")
   ctx.evaluate("//d:a[@id=$v]"); ctx.evaluate("//d:a[@id=$v]")
   begin ctx.evaluate("//(") rescue Makiri::XPath::SyntaxError; end
+  begin ctx.evaluate("//a\0") rescue Makiri::Error; end                 # text-contract raise
 
   # --- Lexbor CSS stylesheet parser (per-call parser+stylesheet lifetime,
   # freed under rb_ensure) including the NUL-reject raise path ---

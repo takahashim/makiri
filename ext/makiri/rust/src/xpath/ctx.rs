@@ -211,6 +211,33 @@ pub unsafe fn mkr_xpath_context_free(ctx: *mut Context) {
     /* The Vecs and the box go with the drop. */
 }
 
+/// Owner of a context from [`mkr_xpath_context_new`]: dropping it frees the
+/// context, so no early return or `?` can leak one.
+pub struct OwnedContext(ptr::NonNull<Context>);
+
+impl OwnedContext {
+    /// A fresh context, or None when it could not be allocated.
+    ///
+    /// # Safety
+    /// As [`mkr_xpath_context_new`]: `doc` and `node` must outlive the context.
+    pub unsafe fn new(doc: *mut c_void, node: *mut c_void) -> Option<Self> {
+        ptr::NonNull::new(mkr_xpath_context_new(doc, node)).map(OwnedContext)
+    }
+
+    /// The context, for the engine calls that take it raw. Valid while `self` is.
+    pub fn as_ptr(&self) -> *mut Context {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedContext {
+    fn drop(&mut self) {
+        // SAFETY: the pointer came from mkr_xpath_context_new, and only this
+        // owner frees it.
+        unsafe { mkr_xpath_context_free(self.0.as_ptr()) }
+    }
+}
+
 /* ---------- registries ---------- */
 
 pub unsafe fn mkr_xpath_register_ns(

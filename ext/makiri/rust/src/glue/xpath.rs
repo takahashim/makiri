@@ -21,12 +21,11 @@
 //! GVL-released walk safe against shared-document mutation was judged not worth
 //! the verification burden.
 //!
-//! # Two functions here are not only ours
+//! # Shared with the XML query glue
 //!
-//! [`mkr_xpath_raise`] and [`mkr_xpath_value_to_ruby`] are called by the XML
-//! query glue as well, so they keep their C names and are defined here. Dropping
-//! the C file without providing them would leave an unresolved symbol that macOS
-//! turns into a NULL jump at runtime rather than a link error.
+//! [`xpath_error`] and [`mkr_xpath_value_to_ruby`] are used by the XML query
+//! glue as well, so an engine failure or value maps to the same Ruby object
+//! whichever entry point produced it.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -42,6 +41,7 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use rb_sys::VALUE;
 
+use crate::xpath::ctx::OwnedContext;
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
     mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, ErrSink, Error as XPathError,
@@ -91,8 +91,6 @@ pub use crate::xpath::ctx::mkr_ctx_is_evaluating;
 pub use crate::xpath::ctx::mkr_ctx_limits;
 pub use crate::xpath::ctx::mkr_ctx_set_node;
 pub use crate::xpath::ctx::mkr_ctx_set_unprefixed_lax;
-pub use crate::xpath::ctx::mkr_xpath_context_free;
-pub use crate::xpath::ctx::mkr_xpath_context_new;
 pub use crate::xpath::ctx::mkr_xpath_context_set_element_index;
 pub use crate::xpath::ctx::mkr_xpath_context_set_user_data;
 pub use crate::xpath::ctx::mkr_xpath_register_ns;
@@ -111,30 +109,35 @@ pub use crate::xpath::runtime_abi::mkr_val_set_borrowed_text_copy;
 /* result + error mapping                                             */
 /* ------------------------------------------------------------------ */
 
-/// Turn an engine error into a Ruby exception and raise. Never returns.
+/// An engine error as the Ruby exception it maps to, clearing the native error.
 ///
-/// Exported: the XML query glue raises through this too, so an engine failure
-/// maps to the same exception whichever entry point produced it.
-pub unsafe extern "C" fn mkr_xpath_raise(err: *mut XPathError) -> ! {
-    let class = match (*err).status {
+/// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
+/// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
+/// magnus raises once its frames - and the context they own - are gone.
+pub(crate) unsafe fn xpath_error(err: &mut XPathError) -> Error {
+    let class = match err.status {
         XP_ERR_SYNTAX => mkr_eXPathSyntaxError,
         XP_ERR_LIMIT => mkr_eXPathLimitExceeded,
         _ => error_class().as_raw(),
     };
     /* Copy the message out before clearing the native error. */
-    let msg = if (*err).message.is_null() {
+    let msg = if err.message.is_null() {
         rb_sys::rb_utf8_str_new_cstr(c"XPath evaluation failed".as_ptr())
     } else {
-        rb_sys::rb_utf8_str_new_cstr((*err).message)
+        rb_sys::rb_utf8_str_new_cstr(err.message)
     };
     mkr_xpath_error_clear(err);
-    rb_sys::rb_exc_raise(rb_sys::rb_exc_new_str(class, msg))
+    let exc = rb_sys::rb_exc_new_str(class, msg);
+    match magnus::Exception::from_value(Value::from_raw(exc)) {
+        Some(e) => Error::from(e),
+        None => Error::new(error_class(), "XPath evaluation failed"),
+    }
 }
 
 /// Convert a just-produced engine value into a Ruby object, then release the
 /// heap the engine handed us. `document` is the keepalive for a node-set.
 ///
-/// Exported for the same reason as [`mkr_xpath_raise`].
+/// Shared with the XML query glue, like [`xpath_error`].
 pub unsafe extern "C" fn mkr_xpath_value_to_ruby(v: *mut XPathValue, document: VALUE) -> VALUE {
     let result = match (*v).type_ {
         MKR_XPATH_TYPE_NODESET => {
@@ -184,17 +187,10 @@ unsafe fn owned_text_to_str(t: TextSlot) -> VALUE {
 struct AstCache(HashMap<Box<[u8]>, OwnedAst>);
 
 struct Inner {
-    ctx: *mut Ctx,
+    /* Fields drop in declaration order, so the cached ASTs go before the
+     * context they were parsed under. */
     cache: AstCache,
-}
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        if !self.ctx.is_null() {
-            // SAFETY: paired with mkr_xpath_context_new; the cache drops first.
-            unsafe { mkr_xpath_context_free(self.ctx) };
-        }
-    }
+    ctx: OwnedContext,
 }
 
 /* SAFETY: every access holds the GVL, which serialises Ruby threads. magnus's
@@ -242,7 +238,7 @@ impl XPathCtx {
     /// pointer stays valid - and not holding the borrow is what lets a handler
     /// re-enter (see `ctx_evaluate`).
     fn ctx(&self) -> Result<*mut Ctx, Error> {
-        Ok(self.borrow()?.ctx)
+        Ok(self.borrow()?.ctx.as_ptr())
     }
 }
 
@@ -297,7 +293,7 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
 /// and hands over the element index so `//tag` is answered without a tree walk.
 /// The XML branch needs neither: the custom node links attributes to their owner
 /// directly, and `//tag` falls back to a walk.
-unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error> {
+unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
     let parsed = mkr_doc_parsed(document.as_raw());
 
     if mkr_parsed_kind(parsed) == MKR_DOC_XML {
@@ -314,14 +310,13 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
         } else {
             mkr_xml_node_unwrap(rb_node.as_raw())
         };
-        let xctx = mkr_xpath_context_new(xdoc, cnode);
-        if xctx.is_null() {
+        let Some(xctx) = OwnedContext::new(xdoc, cnode) else {
             return Err(Error::new(
                 error_class(),
                 "failed to allocate XPath context",
             ));
-        }
-        mkr_xpath_set_engine_kind(xctx, 1);
+        };
+        mkr_xpath_set_engine_kind(xctx.as_ptr(), 1);
         return Ok(xctx);
     }
 
@@ -333,17 +328,16 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<*mut Ctx, Error
             "failed to build attribute index for XPath",
         ));
     }
-    let ctx = mkr_xpath_context_new(doc, node as *mut c_void);
-    if ctx.is_null() {
+    let Some(ctx) = OwnedContext::new(doc, node as *mut c_void) else {
         return Err(Error::new(
             error_class(),
             "failed to allocate XPath context",
         ));
-    }
+    };
     /* Borrowed: the index lives on the parsed document, which outlives this
      * context. The engine calls back through the hooks and never sees its type. */
     mkr_xpath_context_set_element_index(
-        ctx,
+        ctx.as_ptr(),
         mkr_parsed_element_index(parsed),
         Some(element_index_tag),
         Some(crate::glue::abi::mkr_element_index_has_foreign),
@@ -376,15 +370,15 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     }
     let document = unsafe { Value::from_raw(mkr_node_document(rb_node.as_raw())) };
     let ctx = unsafe { context_for(rb_node, document)? };
-    unsafe { mkr_ctx_set_unprefixed_lax(ctx, lax) };
+    unsafe { mkr_ctx_set_unprefixed_lax(ctx.as_ptr(), lax) };
 
     let obj = ruby
         .wrap(XPathCtx {
             document: document.into(),
             node: Cell::new(rb_node.into()),
             inner: RefCell::new(Inner {
-                ctx,
                 cache: AstCache(HashMap::new()),
+                ctx,
             }),
         })
         .as_value();
@@ -782,21 +776,18 @@ unsafe extern "C" fn handler_resolver(
 unsafe fn cached_ast(
     d: &mut Inner,
     expr: RubyText,
-    err: *mut XPathError,
+    err: &mut XPathError,
 ) -> Option<(*mut Ast, Option<OwnedAst>)> {
     let key = expr.bytes();
     if let Some(ast) = d.cache.0.get(key) {
         return Some((ast.as_raw(), None));
     }
 
-    let limits = mkr_ctx_limits(d.ctx);
+    let limits = mkr_ctx_limits(d.ctx.as_ptr());
     (*limits).ast_nodes = 0;
-    let ast = crate::xpath::parse::parse_owned(
-        unsafe { expr.as_verified() },
-        limits,
-        ErrSink::from_raw(err),
-    )
-    .ok()?;
+    let ast =
+        crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, limits, ErrSink::new(err))
+            .ok()?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         let raw = ast.as_raw();
         return Some((raw, Some(ast)));
@@ -870,15 +861,13 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         let mut d = rb_self.borrow()?;
         let mut error: XPathError = core::mem::zeroed();
         let parsed = cached_ast(&mut d, ev, &mut error);
-        let ctx = d.ctx;
+        let ctx = d.ctx.as_ptr();
+        /* Release the borrow before building the exception: that allocates, and
+         * a NoMemoryError there would longjmp past the RefMut. */
+        drop(d);
         match parsed {
             Some((ast, owned)) => (ctx, ast, owned),
-            None => {
-                /* rb_raise longjmps, which would leave the RefCell marked in
-                 * use forever; release it first. */
-                drop(d);
-                mkr_xpath_raise(&mut error);
-            }
+            None => return Err(xpath_error(&mut error)),
         }
     };
 
@@ -894,7 +883,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         drop(installed);
         drop(owned);
         if rc != 0 {
-            mkr_xpath_raise(&mut error);
+            return Err(xpath_error(&mut error));
         }
         Ok(Value::from_raw(mkr_xpath_value_to_ruby(
             &mut value,
@@ -982,38 +971,38 @@ fn node_xpath_run(
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
 
         let ctx = context_for(rb_self, document)?;
-        mkr_ctx_set_unprefixed_lax(ctx, lax);
+        mkr_ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
 
         let mut error: XPathError = core::mem::zeroed();
-        let limits = mkr_ctx_limits(ctx);
+        let limits = mkr_ctx_limits(ctx.as_ptr());
         (*limits).ast_nodes = 0;
-        let Ok(ast) =
-            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error))
-        else {
-            mkr_xpath_context_free(ctx);
-            mkr_xpath_raise(&mut error);
+        let parsed =
+            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error));
+        /* No borrowed bytes across the exception's allocation. */
+        drop(ev);
+        let Ok(ast) = parsed else {
+            return Err(xpath_error(&mut error));
         };
         let bridge = Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
         };
-        let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
+        let installed = InstalledHandler::new(ctx.as_ptr(), &bridge, handler.as_raw());
         let mut value: XPathValue = core::mem::zeroed();
         let rc = if first_only {
-            mkr_xpath_eval_compiled_first(ctx, ast.as_raw(), &mut value, &mut error)
+            mkr_xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
         } else {
-            mkr_xpath_eval_compiled(ctx, ast.as_raw(), &mut value, &mut error)
+            mkr_xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
         };
         drop(installed);
         drop(ast);
         if rc != 0 {
-            mkr_xpath_context_free(ctx);
-            mkr_xpath_raise(&mut error);
+            return Err(xpath_error(&mut error));
         }
         /* Free the context BEFORE converting: the value owns its own data and
-         * never references the context, so a raise inside the conversion (the
-         * node-set cap, OOM) cannot leak it. */
-        mkr_xpath_context_free(ctx);
+         * never references the context, and a Ruby allocation failing inside
+         * the conversion longjmps past any destructor still pending. */
+        drop(ctx);
         Ok(Value::from_raw(mkr_xpath_value_to_ruby(
             &mut value,
             document.as_raw(),

@@ -86,19 +86,18 @@ pub use crate::css::mkr_css_compile;
 pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
 pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
-pub use crate::glue::xpath::mkr_xpath_raise;
 pub use crate::glue::xpath::mkr_xpath_value_to_ruby;
+use crate::glue::xpath::xpath_error;
 pub use crate::xml::api::mkr_xml_doc_new;
 pub use crate::xml::api::mkr_xml_name_index_get;
 pub use crate::xml::api::mkr_xml_name_index_lookup;
 pub use crate::xml::api::mkr_xml_parse_ex;
 pub use crate::xml::api::mkr_xml_parse_fragment;
 pub use crate::xpath::ctx::mkr_ctx_limits;
-pub use crate::xpath::ctx::mkr_xpath_context_free;
-pub use crate::xpath::ctx::mkr_xpath_context_new;
 pub use crate::xpath::ctx::mkr_xpath_context_set_name_index;
 pub use crate::xpath::ctx::mkr_xpath_register_ns;
 pub use crate::xpath::ctx::mkr_xpath_set_engine_kind;
+use crate::xpath::ctx::OwnedContext;
 pub use crate::xpath::evaluate::mkr_xpath_eval_compiled;
 pub use crate::xpath::evaluate::mkr_xpath_eval_compiled_first;
 pub use crate::xpath::parse::mkr_parse;
@@ -395,9 +394,9 @@ unsafe fn query_context(rb_self: Value) -> (Value, NodeId) {
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.
 ///
-/// On any bad entry the context is freed and an error returned - never a partial
-/// registration. RSS and Atom live in a default namespace, so a prefix is the
-/// strict-mode way to select them.
+/// On any bad entry an error is returned, and the caller's owner frees the
+/// context - never a partial registration. RSS and Atom live in a default
+/// namespace, so a prefix is the strict-mode way to select them.
 unsafe fn register_namespaces(
     ruby: &Ruby,
     ctx: *mut XPathContext,
@@ -407,7 +406,6 @@ unsafe fn register_namespaces(
         return Ok(());
     };
     let Some(h) = RHash::from_value(rb_ns) else {
-        mkr_xpath_context_free(ctx);
         return Err(Error::new(
             ruby.exception_type_error(),
             "namespaces must be a Hash of prefix => uri",
@@ -426,7 +424,6 @@ unsafe fn register_namespaces(
         let (pv, uv) = match pair {
             Ok(pair) => pair,
             Err(reason) => {
-                mkr_xpath_context_free(ctx);
                 return Err(Error::new(
                     error_class(),
                     format!("invalid namespace mapping: {}", reason.to_string_lossy()),
@@ -435,7 +432,6 @@ unsafe fn register_namespaces(
         };
         let rc = mkr_xpath_register_ns(ctx, pv.as_verified(), uv.as_verified());
         if rc != 0 {
-            mkr_xpath_context_free(ctx);
             return Err(Error::new(error_class(), "failed to register namespace"));
         }
     }
@@ -455,23 +451,23 @@ unsafe fn build_ctx(
     rb_text: Value,
     what: *const c_char,
     rb_ns: Option<Value>,
-) -> Result<*mut XPathContext, Error> {
+) -> Result<OwnedContext, Error> {
     mkr_verify_text(rb_sys::rb_String(rb_text.as_raw()), what);
-    let ctx = mkr_xpath_context_new(xdoc as *mut c_void, context_node.to_token() as *mut c_void);
-    if ctx.is_null() {
+    let Some(ctx) = OwnedContext::new(xdoc as *mut c_void, context_node.to_token() as *mut c_void)
+    else {
         return Err(Error::new(
             error_class(),
             "failed to allocate XPath context",
         ));
-    }
-    mkr_xpath_set_engine_kind(ctx, 1);
+    };
+    mkr_xpath_set_engine_kind(ctx.as_ptr(), 1);
     mkr_xpath_context_set_name_index(
-        ctx,
+        ctx.as_ptr(),
         xdoc as *mut c_void,
         Some(name_index_get),
         Some(name_index_lookup),
     );
-    register_namespaces(ruby, ctx, rb_ns)?; /* frees ctx on error */
+    register_namespaces(ruby, ctx.as_ptr(), rb_ns)?; /* ctx drops on error */
     Ok(ctx)
 }
 
@@ -482,7 +478,7 @@ unsafe fn build_ctx(
 /// context, so a raise during conversion cannot leak it.
 unsafe fn run_ast(
     ruby: &Ruby,
-    ctx: *mut XPathContext,
+    ctx: OwnedContext,
     ast: OwnedAst,
     first_only: bool,
     document: Value,
@@ -490,16 +486,15 @@ unsafe fn run_ast(
     let mut value: XPathValue = core::mem::zeroed();
     let mut error: XPathError = core::mem::zeroed();
     let rc = if first_only {
-        mkr_xpath_eval_compiled_first(ctx, ast.as_raw(), &mut value, &mut error)
+        mkr_xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
     } else {
-        mkr_xpath_eval_compiled(ctx, ast.as_raw(), &mut value, &mut error)
+        mkr_xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
     };
     drop(ast);
     if rc != 0 {
-        mkr_xpath_context_free(ctx);
-        mkr_xpath_raise(&mut error);
+        return Err(xpath_error(&mut error));
     }
-    mkr_xpath_context_free(ctx);
+    drop(ctx);
     /* Converts AND clears the value. */
     let result = Value::from_raw(mkr_xpath_value_to_ruby(&mut value, document.as_raw()));
     if first_only && result.is_kind_of(node_set_class()) {
@@ -545,13 +540,14 @@ fn xpath_run(
          * not be live across one. */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
         let mut error: XPathError = core::mem::zeroed();
-        let limits = mkr_ctx_limits(ctx);
+        let limits = mkr_ctx_limits(ctx.as_ptr());
         (*limits).ast_nodes = 0;
-        let Ok(ast) =
-            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error))
-        else {
-            mkr_xpath_context_free(ctx);
-            mkr_xpath_raise(&mut error);
+        let parsed =
+            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error));
+        /* No borrowed bytes across the exception's allocation. */
+        drop(ev);
+        let Ok(ast) = parsed else {
+            return Err(xpath_error(&mut error));
         };
         run_ast(ruby, ctx, ast, first_only, document)
     }
@@ -591,7 +587,6 @@ unsafe fn css_default_prefix(rb_ns: Option<Value>) -> *const c_char {
 }
 
 /// Compile a selector under `ctx`, whose namespaces are already registered.
-/// Frees `ctx` on any failure.
 unsafe fn css_compile_or_raise(
     ctx: *mut XPathContext,
     selector: Value,
@@ -610,13 +605,12 @@ unsafe fn css_compile_or_raise(
         limits,
         ErrSink::new(&mut error),
     );
+    drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);
     }
 
-    let syntax = error.status == XP_ERR_SYNTAX;
-    mkr_xpath_context_free(ctx);
-    if syntax {
+    if error.status == XP_ERR_SYNTAX {
         let msg = if error.message.is_null() {
             "invalid CSS selector".to_string()
         } else {
@@ -629,7 +623,7 @@ unsafe fn css_compile_or_raise(
             .expect("Makiri::CSS::SyntaxError");
         return Err(Error::new(class, msg));
     }
-    mkr_xpath_raise(&mut error); /* frees the message, never returns */
+    Err(xpath_error(&mut error))
 }
 
 fn css_run(
@@ -657,7 +651,7 @@ fn css_run(
             c"CSS selector".as_ptr(),
             Some(ns),
         )?;
-        let ast = css_compile_or_raise(ctx, selector, Some(ns))?;
+        let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
         run_ast(ruby, ctx, ast, first_only, document)
     }
 }
@@ -691,15 +685,14 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
             c"CSS selector".as_ptr(),
             Some(ns),
         )?;
-        let ast = css_compile_or_raise(ctx, selector, Some(ns))?;
+        let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
 
         let mut value: XPathValue = core::mem::zeroed();
         let mut error: XPathError = core::mem::zeroed();
-        let rc = mkr_xpath_eval_compiled(ctx, ast.as_raw(), &mut value, &mut error);
+        let rc = mkr_xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error);
         drop(ast);
         if rc != 0 {
-            mkr_xpath_context_free(ctx);
-            mkr_xpath_raise(&mut error);
+            return Err(xpath_error(&mut error));
         }
 
         let mut found = false;
@@ -713,7 +706,6 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
             }
         }
         mkr_xpath_value_clear(&mut value);
-        mkr_xpath_context_free(ctx);
         Ok(found)
     }
 }
