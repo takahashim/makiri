@@ -176,11 +176,11 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         // Transcoded: a fresh String nothing keeps alive past this return, so
         // its bytes must NOT be borrowed. It is already valid UTF-8, so copy
         // rather than sanitise.
-        let mut buf = Buf::new(hv.len);
-        buf.append(if hv.len == 0 {
+        let mut buf = Buf::new(hv.len());
+        buf.append(if hv.len() == 0 {
             &[]
         } else {
-            core::slice::from_raw_parts(hv.ptr as *const u8, hv.len)
+            core::slice::from_raw_parts(hv.as_ptr() as *const u8, hv.len())
         })
         .ok()?;
         let owned = buf.steal().ok()?;
@@ -197,20 +197,20 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
     // place (the caller keeps `html` alive); anything else is sanitised.
     if mkr_ruby_str_known_valid_utf8(html) {
         return Some(SanitizedHtml {
-            ptr: hv.ptr as *const u8,
-            len: hv.len,
+            ptr: hv.as_ptr() as *const u8,
+            len: hv.len(),
             _owned: None,
         });
     }
-    let clean = match mkr_utf8_sanitize(hv.ptr as *const u8, hv.len) {
+    let clean = match mkr_utf8_sanitize(hv.as_ptr() as *const u8, hv.len()) {
         Some(Sanitized::Unchanged) => None,
         Some(Sanitized::Replaced(r)) => Some(r),
         None => return None,
     };
     match clean {
         None => Some(SanitizedHtml {
-            ptr: hv.ptr as *const u8,
-            len: hv.len,
+            ptr: hv.as_ptr() as *const u8,
+            len: hv.len(),
             _owned: None,
         }),
         Some(r) => {
@@ -378,10 +378,10 @@ pub unsafe fn resolve_fragment_context(doc: *mut LxbDoc, context: Option<Value>)
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
     let cv = mkr_ruby_verified_text(context.as_raw(), c"fragment context element".as_ptr());
-    let name = if cv.ptr.is_null() || cv.len == 0 {
+    let name = if cv.as_ptr().is_null() || cv.len() == 0 {
         &[][..]
     } else {
-        core::slice::from_raw_parts(cv.ptr as *const u8, cv.len)
+        core::slice::from_raw_parts(cv.as_ptr() as *const u8, cv.len())
     };
     if name == b"svg" {
         return (lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize, NS_SVG);

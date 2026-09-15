@@ -30,7 +30,6 @@ use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
-use rb_sys::VALUE;
 
 use super::ty;
 use super::{node_document, unwrap, wrap};
@@ -391,12 +390,11 @@ pub fn aset(_ruby: &Ruby, rb_self: Value, rb_name: Value, rb_value: Value) -> Re
         let vv = mkr_ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr());
         let attr = lxb::lxb_dom_element_set_attribute(
             node as *mut LxbElement,
-            nv.ptr as *const u8,
-            nv.len,
-            vv.ptr as *const u8,
-            vv.len,
+            nv.as_ptr() as *const u8,
+            nv.len(),
+            vv.as_ptr() as *const u8,
+            vv.len(),
         );
-        let _anchor = (nv.value, vv.value);
         if attr.is_null() {
             return Err(err("failed to set attribute"));
         }
@@ -487,15 +485,12 @@ pub fn set_attribute_ns(
         let qv = mkr_ruby_verified_text(rb_qname.as_raw(), c"attribute qualified name".as_ptr());
         let vv = mkr_ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr());
 
-        let mut ns_anchor: VALUE = rb_sys::Qnil as VALUE;
-        let mut ns_bytes: &[u8] = &[];
-        if !rb_ns.is_nil() {
-            let nv = mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr());
-            ns_anchor = nv.value;
-            if nv.len != 0 {
-                ns_bytes = core::slice::from_raw_parts(nv.ptr as *const u8, nv.len);
-            }
-        }
+        let nv = (!rb_ns.is_nil())
+            .then(|| mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr()));
+        let ns_bytes: &[u8] = match &nv {
+            Some(nv) => nv.bytes(),
+            None => &[],
+        };
         let have_ns = !ns_bytes.is_empty();
 
         /* Intern the wanted namespace so the existing attribute is matched on
@@ -503,7 +498,7 @@ pub fn set_attribute_ns(
          * name. */
         let want_ns = intern_ns(node, ns_bytes);
 
-        let qname = core::slice::from_raw_parts(qv.ptr as *const u8, qv.len);
+        let qname = core::slice::from_raw_parts(qv.as_ptr() as *const u8, qv.len());
         let local = match qname.iter().position(|&b| b == b':') {
             Some(i) => &qname[i + 1..],
             None => qname,
@@ -515,7 +510,9 @@ pub fn set_attribute_ns(
          * existing one in a different namespace. */
         let existing = attr_find_ns(el, want_ns, local);
         let outcome = if !existing.is_null() {
-            if lxb::lxb_dom_attr_set_value(existing, vv.ptr as *const u8, vv.len) != STATUS_OK {
+            if lxb::lxb_dom_attr_set_value(existing, vv.as_ptr() as *const u8, vv.len())
+                != STATUS_OK
+            {
                 Err(err("failed to set attribute value"))
             } else {
                 Ok(())
@@ -532,15 +529,16 @@ pub fn set_attribute_ns(
                         attr,
                         ns_bytes.as_ptr(),
                         ns_bytes.len(),
-                        qv.ptr as *const u8,
-                        qv.len,
+                        qv.as_ptr() as *const u8,
+                        qv.len(),
                         false,
                     )
                 } else {
-                    lxb::lxb_dom_attr_set_name(attr, qv.ptr as *const u8, qv.len, false)
+                    lxb::lxb_dom_attr_set_name(attr, qv.as_ptr() as *const u8, qv.len(), false)
                 };
                 if st != STATUS_OK
-                    || lxb::lxb_dom_attr_set_value(attr, vv.ptr as *const u8, vv.len) != STATUS_OK
+                    || lxb::lxb_dom_attr_set_value(attr, vv.as_ptr() as *const u8, vv.len())
+                        != STATUS_OK
                 {
                     /* Leave the un-appended attr for the document arena to free
                      * wholesale (this module's "never destroy" convention). */
@@ -552,8 +550,6 @@ pub fn set_attribute_ns(
             }
         };
 
-        /* The anchors must outlive every read of their bytes above. */
-        let _anchor = (qv.value, vv.value, ns_anchor);
         outcome?;
 
         invalidate(rb_self);
@@ -581,22 +577,16 @@ pub fn remove_attribute_ns(
 
         let lv = mkr_ruby_verified_text(rb_local.as_raw(), c"attribute local name".as_ptr());
 
-        let mut ns_anchor: VALUE = rb_sys::Qnil as VALUE;
         let mut want_ns = NS_UNDEF;
         if !rb_ns.is_nil() {
             let nv = mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr());
-            ns_anchor = nv.value;
-            if nv.len != 0 {
-                want_ns = intern_ns(
-                    node,
-                    core::slice::from_raw_parts(nv.ptr as *const u8, nv.len),
-                );
+            if nv.len() != 0 {
+                want_ns = intern_ns(node, nv.bytes());
             }
         }
 
-        let local = core::slice::from_raw_parts(lv.ptr as *const u8, lv.len);
+        let local = lv.bytes();
         let attr = attr_find_ns(el, want_ns, local);
-        let _anchor = (lv.value, ns_anchor);
 
         if !attr.is_null() {
             lxb::lxb_dom_element_attr_remove(el, attr);
@@ -620,11 +610,10 @@ pub fn set_name(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, E
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr());
         let fresh = lxb::lxb_dom_document_create_element(
             (*node).owner_document,
-            nv.ptr as *const u8,
-            nv.len,
+            nv.as_ptr() as *const u8,
+            nv.len(),
             core::ptr::null_mut(),
         );
-        let _anchor = nv.value;
         if fresh.is_null() {
             return Err(err("failed to rename element"));
         }
@@ -654,8 +643,7 @@ pub fn set_content(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value
     unsafe {
         let node = unwrap_mutable(rb_self);
         let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"node content".as_ptr());
-        let st = lxb::lxb_dom_node_text_content_set(node, tv.ptr as *const u8, tv.len);
-        let _anchor = tv.value;
+        let st = lxb::lxb_dom_node_text_content_set(node, tv.as_ptr() as *const u8, tv.len());
         if st != STATUS_OK {
             return Err(err("failed to set node content"));
         }
@@ -672,8 +660,11 @@ pub fn delete(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Err
             return Ok(rb_self);
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
-        lxb::lxb_dom_element_remove_attribute(node as *mut LxbElement, nv.ptr as *const u8, nv.len);
-        let _anchor = nv.value;
+        lxb::lxb_dom_element_remove_attribute(
+            node as *mut LxbElement,
+            nv.as_ptr() as *const u8,
+            nv.len(),
+        );
         invalidate(rb_self);
         Ok(rb_self)
     }
@@ -801,11 +792,10 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr());
         let el = lxb::lxb_dom_document_create_element(
             doc,
-            nv.ptr as *const u8,
-            nv.len,
+            nv.as_ptr() as *const u8,
+            nv.len(),
             core::ptr::null_mut(),
         );
-        let _anchor = nv.value;
         if el.is_null() {
             return Err(err("failed to create element"));
         }
@@ -817,8 +807,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
         let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"text content".as_ptr());
-        let t = lxb::lxb_dom_document_create_text_node(doc, tv.ptr as *const u8, tv.len);
-        let _anchor = tv.value;
+        let t = lxb::lxb_dom_document_create_text_node(doc, tv.as_ptr() as *const u8, tv.len());
         if t.is_null() {
             return Err(err("failed to create text node"));
         }
@@ -830,8 +819,7 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Va
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
         let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"comment content".as_ptr());
-        let c = lxb::lxb_dom_document_create_comment(doc, tv.ptr as *const u8, tv.len);
-        let _anchor = tv.value;
+        let c = lxb::lxb_dom_document_create_comment(doc, tv.as_ptr() as *const u8, tv.len());
         if c.is_null() {
             return Err(err("failed to create comment"));
         }
@@ -857,12 +845,11 @@ pub fn create_pi(
         let dv = mkr_ruby_verified_text(rb_data.as_raw(), c"processing instruction data".as_ptr());
         let pi = lxb::lxb_dom_document_create_processing_instruction(
             doc,
-            tv.ptr as *const u8,
-            tv.len,
-            dv.ptr as *const u8,
-            dv.len,
+            tv.as_ptr() as *const u8,
+            tv.len(),
+            dv.as_ptr() as *const u8,
+            dv.len(),
         );
-        let _anchor = (tv.value, dv.value);
         if pi.is_null() {
             return Err(err("failed to create processing instruction"));
         }
@@ -886,18 +873,14 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr());
-        if !lxb::lxb_dom_document_type_valid_name(nv.ptr as *const u8, nv.len) {
+        if !lxb::lxb_dom_document_type_valid_name(nv.as_ptr() as *const u8, nv.len()) {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "invalid doctype name",
             ));
         }
 
-        let zero = || crate::glue::abi::RubyText {
-            value: rb_sys::Qnil as VALUE,
-            ptr: core::ptr::null(),
-            len: 0,
-        };
+        let zero = crate::glue::abi::RubyText::absent;
         let pv = match rb_pub.filter(|v| !v.is_nil()) {
             Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype public id".as_ptr()),
             None => zero(),
@@ -906,13 +889,13 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
             Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype system id".as_ptr()),
             None => zero(),
         };
-        let pub_ptr = if pv.len != 0 {
-            pv.ptr as *const u8
+        let pub_ptr = if pv.len() != 0 {
+            pv.as_ptr() as *const u8
         } else {
             core::ptr::null()
         };
-        let sys_ptr = if sv.len != 0 {
-            sv.ptr as *const u8
+        let sys_ptr = if sv.len() != 0 {
+            sv.as_ptr() as *const u8
         } else {
             core::ptr::null()
         };
@@ -922,16 +905,15 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let mut code: core::ffi::c_int = 0;
         let dt = lxb::lxb_dom_document_type_create(
             doc,
-            nv.ptr as *const u8,
-            nv.len,
+            nv.as_ptr() as *const u8,
+            nv.len(),
             pub_ptr,
-            pv.len,
+            pv.len(),
             sys_ptr,
-            sv.len,
+            sv.len(),
             &mut code,
         );
         if dt.is_null() {
-            let _anchor = nv.value;
             return Err(err("failed to create doctype"));
         }
         /* create() interned the name ASCII-lowercased (the attr local-name
@@ -939,10 +921,9 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
          * repoint. */
         let nd = lxb::lxb_dom_attr_qualified_name_append(
             (*doc).attrs as *mut c_void,
-            nv.ptr as *const u8,
-            nv.len,
+            nv.as_ptr() as *const u8,
+            nv.len(),
         );
-        let _anchor = (nv.value, pv.value, sv.value);
         if nd.is_null() {
             return Err(err("failed to intern doctype name"));
         }

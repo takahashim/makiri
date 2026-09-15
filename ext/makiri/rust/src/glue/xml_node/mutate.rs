@@ -149,7 +149,7 @@ unsafe fn verified(
     what: &core::ffi::CStr,
 ) -> Result<(RubyText, u32), Error> {
     let t = mkr_ruby_verified_text(v.as_raw(), what.as_ptr());
-    let n = u32_len(ruby, t.len)?;
+    let n = u32_len(ruby, t.len())?;
     Ok((t, n))
 }
 
@@ -161,14 +161,7 @@ unsafe fn verified_opt(
     what: &core::ffi::CStr,
 ) -> Result<(RubyText, u32), Error> {
     if v.is_nil() {
-        return Ok((
-            RubyText {
-                value: 0,
-                ptr: core::ptr::null(),
-                len: 0,
-            },
-            0,
-        ));
+        return Ok((RubyText::absent(), 0));
     }
     verified(ruby, v, what)
 }
@@ -210,8 +203,6 @@ pub fn aset(ruby: &Ruby, rb_self: Value, name: Value, val: Value) -> Result<Valu
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let mut out = NodeId::INVALID;
         let st = mkr_xml_set_attribute(&mut *xdoc(rb_self), n, nv.bytes(), vv.bytes(), &mut out);
-        /* Keep both Strings reachable until the arena has copied their bytes. */
-        core::hint::black_box((name, val));
         mkr_xml_mut_check(st);
         Ok(val)
     }
@@ -244,7 +235,6 @@ pub fn set_attribute_ns(
             vv.bytes(),
             &mut out,
         );
-        core::hint::black_box((qname, val, ns));
         mkr_xml_mut_check(st);
         Ok(val)
     }
@@ -265,7 +255,6 @@ pub fn remove_attribute_ns(
         let (lv, _) = verified(ruby, local, c"attribute local name")?;
         let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
         mkr_xml_remove_attribute_ns(&mut *xdoc(rb_self), n, nv.bytes(), lv.bytes());
-        core::hint::black_box((local, ns));
         Ok(rb_self)
     }
 }
@@ -279,7 +268,6 @@ pub fn delete(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> 
         }
         let (nv, _) = verified(ruby, name, c"attribute name")?;
         mkr_xml_remove_attribute(&mut *xdoc(rb_self), n, nv.bytes());
-        core::hint::black_box(name);
         Ok(rb_self)
     }
 }
@@ -292,7 +280,6 @@ pub fn set_content(ruby: &Ruby, rb_self: Value, text: Value) -> Result<Value, Er
         let n = unwrap_mutable(rb_self);
         let (tv, _) = verified(ruby, text, c"node content")?;
         let st = mkr_xml_set_content(&mut *xdoc(rb_self), n, tv.bytes());
-        core::hint::black_box(text);
         mkr_xml_mut_check(st);
         Ok(text)
     }
@@ -306,7 +293,6 @@ pub fn set_name(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error
         let n = unwrap_mutable(rb_self);
         let (nv, _) = verified(ruby, name, c"node name")?;
         let st = mkr_xml_rename(&mut *xdoc(rb_self), n, nv.bytes());
-        core::hint::black_box(name);
         mkr_xml_mut_check(st);
         Ok(name)
     }
@@ -503,10 +489,10 @@ fn dom_local_ok(p: &[u8]) -> bool {
 /// disagree.
 unsafe fn dom_name_consistency(
     ruby: &Ruby,
-    qv: RubyText,
-    pv: RubyText,
+    qv: &RubyText,
+    pv: &RubyText,
     has_prefix: bool,
-    lv: RubyText,
+    lv: &RubyText,
 ) -> Result<(u32, u32, u32), Error> {
     let (q, p, l) = (qv.bytes(), pv.bytes(), lv.bytes());
     let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());
@@ -558,13 +544,11 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         let (nv, _) = verified(ruby, name, c"element name")?;
         let mut el: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_element(&mut *xd, nv.bytes(), &mut el);
-        core::hint::black_box(name);
         mkr_xml_mut_check(st);
 
         if !content.is_nil() {
             let (tv, _) = verified(ruby, content, c"element content")?;
             let st = mkr_xml_set_content(&mut *xd, el, tv.bytes());
-            core::hint::black_box(content);
             mkr_xml_mut_check(st);
         }
         let rb_el = wrap(el, rb_self);
@@ -605,7 +589,7 @@ pub fn create_loose_dom_element(
         let (pv, _) = verified_opt(ruby, prefix, c"prefix")?;
         let (nv, _) = verified_opt(ruby, ns, c"namespace URI")?;
 
-        let (plen, loff, llen) = dom_name_consistency(ruby, qv, pv, has_prefix, lv)?;
+        let (plen, loff, llen) = dom_name_consistency(ruby, &qv, &pv, has_prefix, &lv)?;
         let mut el: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_loose_dom_element(
             &mut *xd,
@@ -616,7 +600,6 @@ pub fn create_loose_dom_element(
             nv.bytes(),
             &mut el,
         );
-        core::hint::black_box((qname, local, prefix, ns));
         mkr_xml_mut_check(st);
         Ok(wrap(el, rb_self))
     }
@@ -651,7 +634,6 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
             (sl != 0).then_some(sv.bytes()),
             &mut dt,
         );
-        core::hint::black_box((name, pub_v, sys_v));
         mkr_xml_mut_check(st);
         Ok(wrap(dt, rb_self))
     }
@@ -669,7 +651,6 @@ unsafe fn create_chardata(
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
     let st = mkr_xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n);
-    core::hint::black_box(text);
     mkr_xml_mut_check(st);
     Ok(wrap(n, rb_self))
 }
@@ -691,7 +672,6 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
         let (dt, _) = verified(ruby, data, c"PI data")?;
         let mut pi: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_pi(&mut *xd, tg.bytes(), dt.bytes(), &mut pi);
-        core::hint::black_box((target, data));
         mkr_xml_mut_check(st);
         Ok(wrap(pi, rb_self))
     }

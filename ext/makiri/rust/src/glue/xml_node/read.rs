@@ -244,7 +244,6 @@ pub fn aref(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error>
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
         let a = find_attr(d, id, nv.bytes());
-        core::hint::black_box(rb_name);
         match a {
             None => Ok(ruby.qnil().as_value()),
             Some(at) => Ok(str_span(ruby, d, d.node(at).value)),
@@ -266,7 +265,6 @@ pub fn attribute_by_qualified_name(
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
         let a = find_attr(d, id, nv.bytes());
-        core::hint::black_box(rb_name);
         Ok(super::wrap(
             a.unwrap_or(NodeId::INVALID),
             node_document(rb_self),

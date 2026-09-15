@@ -61,7 +61,7 @@ use super::abi::{
     mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
     mkr_mXmlNodeMethods, mkr_node_document, mkr_node_set_new, mkr_parsed_xml_doc as parsed_xml_doc,
     mkr_ruby_verified_text, mkr_verify_text, mkr_wrap_xml_node as wrap_xml_node,
-    mkr_xml_node_unwrap as xml_node_unwrap, OwnedBytes, RubyText,
+    mkr_xml_node_unwrap as xml_node_unwrap, OwnedBytes,
 };
 
 /// The XML arena behind a document handle, typed.
@@ -421,35 +421,19 @@ unsafe fn register_namespaces(
         let v = h.get(k).unwrap_or_else(|| ruby.qnil().as_value());
         let vs: RString = v.funcall("to_s", ())?;
 
-        let mut pv = RubyText {
-            value: 0,
-            ptr: core::ptr::null(),
-            len: 0,
+        let pair = mkr_ruby_try_verified_text(ks.as_raw(), cap)
+            .and_then(|pv| Ok((pv, mkr_ruby_try_verified_text(vs.as_raw(), cap)?)));
+        let (pv, uv) = match pair {
+            Ok(pair) => pair,
+            Err(reason) => {
+                mkr_xpath_context_free(ctx);
+                return Err(Error::new(
+                    error_class(),
+                    format!("invalid namespace mapping: {}", reason.to_string_lossy()),
+                ));
+            }
         };
-        let mut uv = RubyText {
-            value: 0,
-            ptr: core::ptr::null(),
-            len: 0,
-        };
-        let mut bad = mkr_ruby_try_verified_text(ks.as_raw(), cap, &mut pv);
-        if bad.is_null() {
-            bad = mkr_ruby_try_verified_text(vs.as_raw(), cap, &mut uv);
-        }
-        if !bad.is_null() {
-            let reason = core::ffi::CStr::from_ptr(bad)
-                .to_string_lossy()
-                .into_owned();
-            mkr_xpath_context_free(ctx);
-            return Err(Error::new(
-                error_class(),
-                format!("invalid namespace mapping: {reason}"),
-            ));
-        }
-        let rc = mkr_xpath_register_ns(ctx, unsafe { pv.into_verified() }, unsafe {
-            uv.into_verified()
-        });
-        /* Keep both Strings reachable until the copy inside register_ns is done. */
-        core::hint::black_box((ks, vs));
+        let rc = mkr_xpath_register_ns(ctx, pv.as_verified(), uv.as_verified());
         if rc != 0 {
             mkr_xpath_context_free(ctx);
             return Err(Error::new(error_class(), "failed to register namespace"));
@@ -563,12 +547,11 @@ fn xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Some(ast) = crate::xpath::parse::parse_owned(ev.into_verified(), limits, &mut error)
+        let Some(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error)
         else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };
-        core::hint::black_box(expr);
         run_ast(ruby, ctx, ast, first_only, document)
     }
 }
@@ -621,12 +604,11 @@ unsafe fn css_compile_or_raise(
     let limits = mkr_ctx_limits(ctx);
     (*limits).ast_nodes = 0;
     let ast = crate::css::compile_owned(
-        unsafe { sv.into_verified() },
+        unsafe { sv.as_verified() },
         &cns as *const _,
         limits,
         &mut error,
     );
-    core::hint::black_box(selector);
     if let Some(ast) = ast {
         return Ok(ast);
     }

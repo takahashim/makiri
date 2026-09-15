@@ -556,11 +556,7 @@ impl Drop for Engine {
 
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = unsafe { mkr_ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr()) };
-    let css: &[u8] = if tv.ptr.is_null() || tv.len == 0 {
-        &[]
-    } else {
-        unsafe { core::slice::from_raw_parts(tv.ptr as *const u8, tv.len) }
-    };
+    let css: &[u8] = unsafe { tv.bytes() };
 
     // SAFETY: `error_class` reads a VALUE that Init_makiri set before any Ruby
     // code could call this, and we are on the Ruby thread.
@@ -619,9 +615,6 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
             }
         }
     };
-
-    // The borrowed input is no longer read; keep the String alive until here.
-    let _ = tv.value;
 
     // ---- phase two ----
     rules_to_ruby(ruby, &Keys::new(ruby), &parsed)

@@ -8,10 +8,8 @@
 //!
 //! Building any String or NodeSet is a GC point, so a view borrowed from a Ruby
 //! String must not be live across one. The attribute lookups take their name
-//! through `mkr_ruby_verified_text` (which anchors the String in the returned
-//! view) and are written so the anchor outlives the last use of its bytes; the
-//! `let _anchor` at the end of each is that lifetime, spelled out, and is the
-//! Rust equivalent of the C's `RB_GC_GUARD`.
+//! through `mkr_ruby_verified_text`, whose guard keeps the String reachable until
+//! it drops, and read the bytes before building anything.
 
 use core::ffi::c_char;
 
@@ -592,15 +590,14 @@ pub fn aref(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
         let el = node as *mut LxbElement;
-        let out = if !lxb_dom_element_has_attribute(el, nv.ptr as *const u8, nv.len) {
+        if !lxb_dom_element_has_attribute(el, nv.as_ptr() as *const u8, nv.len()) {
             ruby.qnil().as_value()
         } else {
             let mut vlen = 0usize;
-            let val = lxb_dom_element_get_attribute(el, nv.ptr as *const u8, nv.len, &mut vlen);
+            let val =
+                lxb_dom_element_get_attribute(el, nv.as_ptr() as *const u8, nv.len(), &mut vlen);
             str_of(val, vlen)
-        };
-        let _anchor = nv.value;
-        out
+        }
     }
 }
 
@@ -613,9 +610,11 @@ pub fn has_key(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
             return ruby.qfalse().as_value();
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
-        let has =
-            lxb_dom_element_has_attribute(node as *mut LxbElement, nv.ptr as *const u8, nv.len);
-        let _anchor = nv.value;
+        let has = lxb_dom_element_has_attribute(
+            node as *mut LxbElement,
+            nv.as_ptr() as *const u8,
+            nv.len(),
+        );
         if has {
             ruby.qtrue().as_value()
         } else {
@@ -714,9 +713,7 @@ pub fn attribute_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: Value) 
             }
             true
         });
-        /* The anchor must outlive `want`, which the scan above reads; wrapping
-         * allocates, so the wrap happens after. */
-        let _anchor = nv.value;
+        /* `want` is not read past here; wrapping allocates, so it happens after. */
 
         if found.is_null() {
             return ruby.qnil().as_value();
@@ -755,7 +752,6 @@ pub fn attribute_value_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: V
             }
             true
         });
-        let _anchor = nv.value;
 
         if !hit {
             return ruby.qnil().as_value();
