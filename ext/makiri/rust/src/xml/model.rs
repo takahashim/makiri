@@ -347,7 +347,7 @@ pub struct Document {
     pub doc_node: NodeId,
     pub doctype: Option<NodeId>,
     /// Rust-owned cache; mutation drops it before changing links.
-    pub(crate) name_index: Option<Box<crate::xml::index::NameIndex>>,
+    pub(crate) name_index: core::cell::OnceCell<Box<crate::xml::index::NameIndex>>,
     pub has_encoding_decl: bool,
 }
 
@@ -370,7 +370,7 @@ impl Document {
             root: None,
             doc_node: NodeId::INVALID,
             doctype: None,
-            name_index: None,
+            name_index: core::cell::OnceCell::new(),
             has_encoding_decl: false,
         }
     }

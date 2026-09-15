@@ -12,6 +12,7 @@
 use crate::falloc;
 use crate::falloc::{MapInsert, Reserve, VecPush};
 use crate::xml::{Document, NodeId, NodeType};
+use core::cell::Cell;
 use core::hash::{BuildHasherDefault, Hasher};
 use std::collections::HashMap;
 
@@ -42,9 +43,10 @@ impl Hasher for Fnv {
 /// The key is `local ++ 0xFF ++ ns_uri`: 0xFF is not valid UTF-8.
 pub struct NameIndex {
     map: HashMap<Box<[u8]>, Vec<NodeId>, BuildHasherDefault<Fnv>>,
-    /// GVL serialises lookup, so this reusable key never races and avoids an
-    /// allocation on the answer path.
-    scratch: Vec<u8>,
+    /// The reusable key buffer, so the answer path does not allocate. A `Cell`,
+    /// because the index is read through a shared borrow of its document; the
+    /// GVL serialises lookups, and one takes the buffer and puts it back.
+    scratch: Cell<Vec<u8>>,
     max_key: usize,
 }
 
@@ -86,7 +88,7 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
     }
     falloc::try_box(NameIndex {
         map,
-        scratch: falloc::try_vec_with_capacity(max_key)?,
+        scratch: Cell::new(falloc::try_vec_with_capacity(max_key)?),
         max_key,
     })
     .ok()
@@ -94,35 +96,40 @@ fn build(doc: &Document) -> Option<Box<NameIndex>> {
 
 /// Builds lazily. `None` means the caller must walk the tree, never that a
 /// partially built index can answer a query.
-pub fn get(doc: &mut Document) -> Option<&mut NameIndex> {
-    if doc.name_index.is_none() {
-        doc.name_index = build(doc);
+pub fn get(doc: &Document) -> Option<&NameIndex> {
+    if doc.name_index.get().is_none() {
+        /* Kept only when the build succeeds, so an OOM is retried next time. */
+        let _ = doc.name_index.set(build(doc)?);
     }
-    doc.name_index.as_deref_mut()
+    doc.name_index.get().map(|idx| &**idx)
 }
 
 pub fn invalidate(doc: &mut Document) {
-    doc.name_index = None;
+    doc.name_index.take();
 }
 
 /// The bucket for `(local, ns)`, in document order. The slice borrows the cache
 /// and stays valid until the next mutation invalidates it; an over-long or
 /// absent key yields an empty slice.
-pub fn lookup<'a>(idx: &'a mut NameIndex, local: &[u8], ns: &[u8]) -> &'a [NodeId] {
+pub fn lookup<'a>(idx: &'a NameIndex, local: &[u8], ns: &[u8]) -> &'a [NodeId] {
     if local.len().saturating_add(1).saturating_add(ns.len()) > idx.max_key {
         return &[];
     }
-    idx.scratch.clear();
-    idx.scratch.extend_from_slice(local);
-    idx.scratch.push(0xFF);
-    idx.scratch.extend_from_slice(ns);
-    match idx.map.get(&idx.scratch[..]) {
+    /* The buffer was reserved for the longest key, so these do not allocate. */
+    let mut key = idx.scratch.take();
+    key.clear();
+    key.extend_from_slice(local);
+    key.push(0xFF);
+    key.extend_from_slice(ns);
+    let nodes = match idx.map.get(&key[..]) {
         Some(nodes) => nodes.as_slice(),
         None => &[],
-    }
+    };
+    idx.scratch.set(key);
+    nodes
 }
 
-pub fn xml_name_index_get(doc: &mut Document) -> Option<&mut NameIndex> {
+pub fn xml_name_index_get(doc: &Document) -> Option<&NameIndex> {
     get(doc)
 }
 
@@ -130,10 +137,6 @@ pub fn xml_name_index_invalidate(doc: &mut Document) {
     invalidate(doc)
 }
 
-pub fn xml_name_index_lookup<'a>(
-    idx: &'a mut NameIndex,
-    local: &[u8],
-    ns_uri: &[u8],
-) -> &'a [NodeId] {
+pub fn xml_name_index_lookup<'a>(idx: &'a NameIndex, local: &[u8], ns_uri: &[u8]) -> &'a [NodeId] {
     lookup(idx, local, ns_uri)
 }

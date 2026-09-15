@@ -21,6 +21,7 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
+use core::ffi::c_void;
 
 /// An evaluation step: the value, or proof its error was written to the
 /// evaluation's budget.
@@ -57,9 +58,9 @@ impl Memo {
 /// A handler that evaluates again on the same context gets an `Evaluation` of
 /// its own, so it can neither refill this walk's budget nor take its handler
 /// away.
-pub struct Evaluation<'cx, D: Dom> {
-    pub cx: &'cx Context,
-    pub doc: D::Doc,
+pub struct Evaluation<'e, D: Dom<'e>> {
+    pub cx: &'e Context,
+    pub doc: D,
     pub budget: Budget,
     pub str_cache: StrCache,
     pub order_index: OrderIndex,
@@ -67,26 +68,28 @@ pub struct Evaluation<'cx, D: Dom> {
     handler: Option<Handler>,
 }
 
-impl<'cx, D: Dom> Evaluation<'cx, D> {
+impl<'e, D: Dom<'e>> Evaluation<'e, D> {
+    /// One evaluate on `cx`, or None when the context has no document.
+    ///
     /// # Safety
-    /// `cx` must be a context whose document is this backend's.
-    pub(crate) unsafe fn new(cx: &'cx Context, handler: Option<Handler>) -> Self {
-        Evaluation {
+    /// `cx`'s document must be this backend's, live and unchanged for `'e`.
+    pub(crate) unsafe fn new(cx: &'e Context, handler: Option<Handler>) -> Option<Self> {
+        Some(Evaluation {
             cx,
-            doc: D::doc_from_void(cx.document()),
+            doc: D::from_document(cx.document())?,
             budget: Budget::with_limits(cx.limits()),
             str_cache: StrCache::new(),
             order_index: OrderIndex::new(),
             memo: Memo(Vec::new()),
             handler,
-        }
+        })
     }
 }
 
 /* ---------- predicates ---------- */
 
-unsafe fn apply_predicates<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn apply_predicates<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     preds: &[Expr],
     inout: &mut Set,
 ) -> EvalResult {
@@ -102,7 +105,7 @@ unsafe fn apply_predicates<D: Dom>(
                  * predicate eval, which would tick through eval_node, so the
                  * shortcut stays under the same budget as the path it skips. */
                 limit_eval_op(&raw mut ev.budget)?;
-                let n = inout.get::<D>(i);
+                let n = inout.get::<D>(doc, i);
                 if attr_pred_matches::<D>(doc, &ap, n) {
                     kept.push::<D>(n, &raw mut ev.budget)?;
                 }
@@ -113,9 +116,9 @@ unsafe fn apply_predicates<D: Dom>(
 
         let size = inout.count();
         for i in 0..size {
-            let n = inout.get::<D>(i);
-            let pf = Focus::<D> {
-                node: n,
+            let n = inout.get::<D>(doc, i);
+            let pf = Focus {
+                node: Some(n),
                 pos: i + 1,
                 size,
             };
@@ -143,14 +146,14 @@ unsafe fn apply_predicates<D: Dom>(
 /// register_namespace (and register_variable, node=) while an evaluate is in
 /// progress on the context - which is exactly when a predicate handler could
 /// re-enter.
-fn resolve_test_prefix<'cx, D: Dom>(
-    ev: &mut Evaluation<'cx, D>,
+fn resolve_test_prefix<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     test: &NodeTest,
-) -> EvalResult<Option<&'cx [u8]>> {
+) -> EvalResult<Option<&'e [u8]>> {
     let Some(prefix) = test.prefix.as_deref() else {
         return Ok(None);
     };
-    let cx: &'cx Context = ev.cx;
+    let cx: &'e Context = ev.cx;
     match cx.lookup_ns(prefix) {
         Some(u) => Ok(Some(u)),
         None => Err(err_setf!(
@@ -162,8 +165,8 @@ fn resolve_test_prefix<'cx, D: Dom>(
     }
 }
 
-unsafe fn eval_step<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_step<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     step: &Step,
     context_set: &Set,
     out: &mut Set,
@@ -228,7 +231,7 @@ unsafe fn eval_step<D: Dom>(
                     }
                     false
                 };
-                walk_axis::<D, _>(doc, axis, context_set.get::<D>(ci), &mut visit);
+                walk_axis::<D, _>(doc, axis, context_set.get::<D>(doc, ci), &mut visit);
                 if let Some(e) = failure.take() {
                     return Err(e);
                 }
@@ -258,7 +261,7 @@ unsafe fn eval_step<D: Dom>(
                     }
                     false
                 };
-                walk_axis::<D, _>(doc, axis, context_set.get::<D>(ci), &mut visit);
+                walk_axis::<D, _>(doc, axis, context_set.get::<D>(doc, ci), &mut visit);
             }
             if let Some(e) = failure {
                 return Err(e);
@@ -270,7 +273,7 @@ unsafe fn eval_step<D: Dom>(
              * meaning. */
             apply_predicates::<D>(ev, preds, &mut fragment)?;
             for i in 0..fragment.count() {
-                result.push::<D>(fragment.get::<D>(i), &raw mut ev.budget)?;
+                result.push::<D>(fragment.get::<D>(doc, i), &raw mut ev.budget)?;
             }
         }
     }
@@ -282,8 +285,8 @@ unsafe fn eval_step<D: Dom>(
     Ok(())
 }
 
-unsafe fn eval_steps<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_steps<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     steps: &[Step],
     seed: &mut Set,
 ) -> EvalResult<OwnedVal> {
@@ -310,8 +313,8 @@ unsafe fn eval_steps<D: Dom>(
 /// §3.4 equality. A node-set on either side means "true iff SOME node satisfies
 /// it"; all node string-values go through the per-evaluate cache, so an M-by-N
 /// comparison costs O(M+N) string builds.
-unsafe fn compare_eq<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn compare_eq<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     l: &Val,
     r: &Val,
     op: Op,
@@ -325,10 +328,10 @@ unsafe fn compare_eq<D: Dom>(
              * O(M+N), so charge each pair: otherwise an all-pairs node-set
              * equality drives up to ~1e14 comparisons as a handful of ops. */
             for i in 0..ls.count {
-                let a = cached_node_text::<D>(ev, nodeset_at::<D>(ls, i))?;
+                let a = cached_node_text::<D>(ev, nodeset_at::<D>(doc, ls, i))?;
                 for j in 0..rs.count {
                     limit_eval_op(&raw mut ev.budget)?;
-                    let b = cached_node_text::<D>(ev, nodeset_at::<D>(rs, j))?;
+                    let b = cached_node_text::<D>(ev, nodeset_at::<D>(doc, rs, j))?;
                     if (ev.str_cache.text(a) == ev.str_cache.text(b)) == want_eq {
                         return Ok(true);
                     }
@@ -361,7 +364,7 @@ unsafe fn compare_eq<D: Dom>(
         ValRef::Number(target) => {
             for i in 0..set.count {
                 limit_eval_op(&raw mut ev.budget)?;
-                let s = cached_node_number::<D>(ev, nodeset_at::<D>(set, i))?;
+                let s = cached_node_number::<D>(ev, nodeset_at::<D>(doc, set, i))?;
                 if (s == target) == want_eq {
                     return Ok(true);
                 }
@@ -377,7 +380,7 @@ unsafe fn compare_eq<D: Dom>(
             let want = target.as_slice();
             for i in 0..set.count {
                 limit_eval_op(&raw mut ev.budget)?;
-                let s = cached_node_text::<D>(ev, nodeset_at::<D>(set, i))?;
+                let s = cached_node_text::<D>(ev, nodeset_at::<D>(doc, set, i))?;
                 if (ev.str_cache.text(s) == want) == want_eq {
                     return Ok(true);
                 }
@@ -400,8 +403,8 @@ fn rel_hit(op: Op, a: f64, b: f64) -> bool {
 /// §3.4 relational. A node-set on either side is true iff SOME pair satisfies
 /// the relation on their numeric string-values - every pair, not just the first
 /// node of each side.
-unsafe fn compare_rel<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn compare_rel<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     l: &Val,
     r: &Val,
     op: Op,
@@ -413,10 +416,10 @@ unsafe fn compare_rel<D: Dom>(
     let (set, sc, swap) = match (l.as_nodeset(), r.as_nodeset()) {
         (Some(ls), Some(rs)) => {
             for i in 0..ls.count {
-                let a = cached_node_number::<D>(ev, nodeset_at::<D>(ls, i))?;
+                let a = cached_node_number::<D>(ev, nodeset_at::<D>(doc, ls, i))?;
                 for j in 0..rs.count {
                     limit_eval_op(&raw mut ev.budget)?;
-                    let b = cached_node_number::<D>(ev, nodeset_at::<D>(rs, j))?;
+                    let b = cached_node_number::<D>(ev, nodeset_at::<D>(doc, rs, j))?;
                     if rel_hit(op, a, b) {
                         return Ok(true);
                     }
@@ -435,7 +438,7 @@ unsafe fn compare_rel<D: Dom>(
     let scn = val_to_number_or_fail::<D>(doc, sc, &raw mut ev.budget)?;
     for i in 0..set.count {
         limit_eval_op(&raw mut ev.budget)?;
-        let nv = cached_node_number::<D>(ev, nodeset_at::<D>(set, i))?;
+        let nv = cached_node_number::<D>(ev, nodeset_at::<D>(doc, set, i))?;
         let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
         if rel_hit(op, a, b) {
             return Ok(true);
@@ -446,8 +449,8 @@ unsafe fn compare_rel<D: Dom>(
 
 /* ---------- union ---------- */
 
-unsafe fn union_nodeset<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn union_nodeset<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     l: &Val,
     r: &Val,
 ) -> EvalResult<OwnedVal> {
@@ -460,10 +463,11 @@ unsafe fn union_nodeset<D: Dom>(
     };
     /* Push both sides without deduplicating per insert - that was quadratic -
      * then sort once and collapse adjacent duplicates. */
+    let doc = ev.doc;
     let mut merged = Set::new();
     for set in [ls, rs] {
         for i in 0..set.count {
-            merged.push::<D>(nodeset_at::<D>(set, i), &raw mut ev.budget)?;
+            merged.push::<D>(nodeset_at::<D>(doc, set, i), &raw mut ev.budget)?;
         }
     }
     /* §3.3: the result of '|' is a node-set in document order, which the
@@ -520,7 +524,7 @@ fn first_recognise(root: &Expr) -> Option<&Step> {
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
-unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: &Step, n: D::Node) -> bool {
+fn first_node_ok<'e, D: Dom<'e>>(doc: D, step: &Step, n: D::Node) -> bool {
     for p in &step.predicates {
         /* The recogniser already confirmed the shape. */
         let ap = match match_attr_pred(p) {
@@ -544,15 +548,23 @@ unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: &Step, n: D::Node) -> bool {
 /// # Safety
 /// `cx`'s document must be this backend's.
 #[allow(clippy::result_large_err)]
-pub unsafe fn try_first_match<D: Dom>(cx: &Context, ast: &Ast) -> Result<Option<D::Node>, Error> {
-    let mut ev = Evaluation::<D>::new(cx, None);
-    first_match_walk::<D>(&mut ev, ast).map_err(|_| ev.budget.take_error())
+pub unsafe fn try_first_match<'e, D: Dom<'e>>(
+    cx: &'e Context,
+    ast: &Ast,
+) -> Result<Option<*mut c_void>, Error> {
+    let Some(mut ev) = Evaluation::<D>::new(cx, None) else {
+        return Ok(None); /* no document: the full evaluator reports it */
+    };
+    match first_match_walk::<D>(&mut ev, ast) {
+        Ok(found) => Ok(found.map(|n| n.map_or(core::ptr::null_mut(), D::token))),
+        Err(_) => Err(ev.budget.take_error()),
+    }
 }
 
-unsafe fn first_match_walk<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn first_match_walk<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     ast: &Ast,
-) -> EvalResult<Option<D::Node>> {
+) -> EvalResult<Option<Option<D::Node>>> {
     let doc = ev.doc;
     let root = ast.root();
     let step = match first_recognise(root) {
@@ -567,69 +579,72 @@ unsafe fn first_match_walk<D: Dom>(
     let pre = resolve_test_prefix(ev, test)?;
 
     let absolute = matches!(&root.kind, ExprKind::Path(p) if p.absolute);
-    let start: D::Node = if absolute {
-        D::document_node(doc)
+    let start = if absolute {
+        Some(doc.document_node())
     } else {
-        D::from_void(ev.cx.context_node())
+        let p = ev.cx.context_node();
+        (!p.is_null()).then(|| doc.node(p))
     };
-    if D::is_null(start) {
-        return Ok(Some(D::null())); /* recognised; no context means no match */
-    }
+    let Some(start) = start else {
+        return Ok(Some(None)); /* recognised; no context means no match */
+    };
 
     let b = Bindings::<D>::new(ev.cx, doc, pre);
-    let mut n = D::first_child(doc, start);
-    while !D::is_null(n) {
+    let mut cur = doc.first_child(start);
+    while let Some(n) = cur {
         limit_eval_op(&raw mut ev.budget)?;
         if node_principal_match::<D>(doc, test, n, step.axis, &b)
             && first_node_ok::<D>(doc, step, n)
         {
-            return Ok(Some(n));
+            return Ok(Some(Some(n)));
         }
-        if !D::is_null(D::first_child(doc, n)) {
-            n = D::first_child(doc, n);
+        if let Some(c) = doc.first_child(n) {
+            cur = Some(c);
             continue;
         }
-        while n != start && D::is_null(D::next(doc, n)) {
-            n = D::parent(doc, n);
-        }
-        if n == start {
-            break;
-        }
-        n = D::next(doc, n);
+        /* Past `n`'s subtree, without leaving `start`'s. */
+        let mut m = n;
+        cur = loop {
+            if m == start {
+                break None;
+            }
+            if let Some(s) = doc.next(m) {
+                break Some(s);
+            }
+            match doc.parent(m) {
+                Some(p) => m = p,
+                None => break None,
+            }
+        };
     }
-    Ok(Some(D::null()))
+    Ok(Some(None))
 }
 
 /* ---------- the expression evaluator ---------- */
 
-unsafe fn eval_path<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_path<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     p: &Path,
-    self_node: D::Node,
+    self_node: Option<D::Node>,
 ) -> EvalResult<OwnedVal> {
     let mut seed = Set::new();
-    if p.absolute {
-        if ev.cx.document().is_null() {
-            return Err(err_setf!(
-                ev.budget.sink(),
-                XP_ERR_RUNTIME,
-                "absolute path with no document"
-            ));
-        }
-        let root = D::document_node(ev.doc);
-        seed.push::<D>(root, &raw mut ev.budget)?;
+    let start = if p.absolute {
+        Some(ev.doc.document_node())
     } else {
-        seed.push::<D>(self_node, &raw mut ev.budget)?;
+        self_node
+    };
+    if let Some(n) = start {
+        seed.push::<D>(n, &raw mut ev.budget)?;
     }
     eval_steps::<D>(ev, &p.steps, &mut seed)
 }
 
-unsafe fn eval_filter<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_filter<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     expr: &Expr,
     predicates: &[Expr],
     steps: &[Step],
-    focus: &Focus<D>,
+    focus: &Focus<'e, D>,
 ) -> EvalResult<OwnedVal> {
     let mut primary = eval_node::<D>(ev, expr, focus)?;
     if !predicates.is_empty() {
@@ -659,12 +674,12 @@ unsafe fn eval_filter<D: Dom>(
     Ok(primary)
 }
 
-unsafe fn eval_fncall<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_fncall<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     prefix: Option<&[u8]>,
     name: &[u8],
     args: &[Expr],
-    focus: &Focus<D>,
+    focus: &Focus<'e, D>,
 ) -> EvalResult<OwnedVal> {
     let cx = ev.cx;
     let ns_uri: Option<&[u8]> = match prefix {
@@ -708,7 +723,7 @@ unsafe fn eval_fncall<D: Dom>(
     let answer = match ev.handler {
         Some(handler) => {
             let site = ResolverCall {
-                node: D::to_void(focus.node),
+                node: focus.node.map_or(core::ptr::null_mut(), D::token),
                 pos: focus.pos,
                 size: focus.size,
                 ns_uri,
@@ -731,12 +746,12 @@ unsafe fn eval_fncall<D: Dom>(
     })
 }
 
-unsafe fn eval_binop<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_binop<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     op: Op,
     lhs: &Expr,
     rhs: &Expr,
-    focus: &Focus<D>,
+    focus: &Focus<'e, D>,
 ) -> EvalResult<OwnedVal> {
     let doc = ev.doc;
 
@@ -783,10 +798,10 @@ unsafe fn eval_binop<D: Dom>(
 }
 
 /// Unary minus: the operand as a number, negated.
-unsafe fn eval_negate<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_negate<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     x: &Expr,
-    focus: &Focus<D>,
+    focus: &Focus<'e, D>,
 ) -> EvalResult<OwnedVal> {
     let doc = ev.doc;
     let v = eval_node::<D>(ev, x, focus)?;
@@ -804,10 +819,10 @@ unsafe fn string_value(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> Ev
 /// recursion is bounded": one op and one recursion level are charged on entry
 /// and the level is released at the single exit. Keeping it single-exit is what
 /// makes that balance locally checkable.
-unsafe fn eval_node<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_node<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     e: &Expr,
-    focus: &Focus<D>,
+    focus: &Focus<'e, D>,
 ) -> EvalResult<OwnedVal> {
     ev.budget.charge_op()?;
     /* A refused entry is not counted, so returning here needs no release. */
@@ -817,10 +832,10 @@ unsafe fn eval_node<D: Dom>(
     result
 }
 
-unsafe fn eval_node_inner<D: Dom>(
-    ev: &mut Evaluation<'_, D>,
+unsafe fn eval_node_inner<'e, D: Dom<'e>>(
+    ev: &mut Evaluation<'e, D>,
     e: &Expr,
-    focus: &Focus<D>,
+    focus: &Focus<'e, D>,
 ) -> EvalResult<OwnedVal> {
     /* Hoisting: a context-independent subtree already computed in this evaluate
      * comes back as a clone, which keeps ownership clean - clearing either copy
@@ -884,17 +899,22 @@ unsafe fn eval_node_inner<D: Dom>(
 /// # Safety
 /// `cx`'s document must be this backend's, and `ast` parsed for it.
 #[allow(clippy::result_large_err)]
-pub unsafe fn eval_ast<D: Dom>(
-    cx: &Context,
+pub unsafe fn eval_ast<'e, D: Dom<'e>>(
+    cx: &'e Context,
     ast: &Ast,
     handler: Option<Handler>,
 ) -> Result<OwnedVal, Error> {
-    let mut ev = Evaluation::<D>::new(cx, handler);
+    let Some(mut ev) = Evaluation::<D>::new(cx, handler) else {
+        let mut budget = Budget::with_limits(cx.limits());
+        let _ = err_setf!(budget.sink(), XP_ERR_RUNTIME, "evaluate with no document");
+        return Err(budget.take_error());
+    };
     let result = match Memo::new(ast.memo_slots(), ev.budget.sink()) {
         Ok(memo) => {
             ev.memo = memo;
-            let focus = Focus::<D> {
-                node: D::from_void(cx.context_node()),
+            let p = cx.context_node();
+            let focus = Focus {
+                node: (!p.is_null()).then(|| ev.doc.node(p)),
                 pos: 1,
                 size: 1,
             };

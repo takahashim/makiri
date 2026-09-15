@@ -6,9 +6,9 @@
 //! two symbols that left the translation unit.
 
 use super::abi::*;
-use super::dom_xml::Xml;
 use super::eval;
 use super::own::OwnedVal;
+use crate::xml::model as xml;
 use core::ffi::c_void;
 
 /// Evaluate an AST against the context, with the context node as the focus.
@@ -22,7 +22,7 @@ pub unsafe fn eval_ast_xml(
     ast: &Ast,
     handler: Option<Handler>,
 ) -> Result<OwnedVal, Error> {
-    eval::eval_ast::<Xml>(cx, ast, handler)
+    eval::eval_ast::<&xml::Document>(cx, ast, handler)
 }
 
 /// The `at_xpath` first-match short-circuit: `Some(node)` when it handled the
@@ -33,5 +33,5 @@ pub unsafe fn eval_ast_xml(
 /// As [`eval_ast_xml`].
 #[allow(clippy::result_large_err)]
 pub unsafe fn try_first_match_xml(cx: &Context, ast: &Ast) -> Result<Option<*mut c_void>, Error> {
-    Ok(eval::try_first_match::<Xml>(cx, ast)?.map(|n| n.to_token() as *mut c_void))
+    eval::try_first_match::<&xml::Document>(cx, ast)
 }

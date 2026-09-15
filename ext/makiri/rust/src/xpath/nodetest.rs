@@ -5,6 +5,8 @@
 //! re-check a bucket candidate against the same test. Leaving it in eval.rs made
 //! those two modules depend on each other.
 
+#![forbid(unsafe_code)]
+
 use super::abi::*;
 use super::dom::*;
 
@@ -18,17 +20,17 @@ use super::dom::*;
 /// function call, so they are hoisted here instead - a name-test walk is the
 /// hottest loop in the engine.
 #[derive(Clone, Copy)]
-pub struct Bindings<'a, D: Dom> {
+pub struct Bindings<'a, D: Dom<'a>> {
     pub cx: &'a Context,
-    pub doc: D::Doc,
+    pub doc: D,
     /// namespace_matching: :lax - the unprefixed element rule is relaxed.
     pub lax: bool,
     /// The name test's prefix, already resolved to a URI.
     pub pre: Option<&'a [u8]>,
 }
 
-impl<'a, D: Dom> Bindings<'a, D> {
-    pub fn new(cx: &'a Context, doc: D::Doc, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
+impl<'a, D: Dom<'a>> Bindings<'a, D> {
+    pub fn new(cx: &'a Context, doc: D, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
         Bindings {
             cx,
             doc,
@@ -50,12 +52,15 @@ impl<'a, D: Dom> Bindings<'a, D> {
 ///
 /// `pre` carries the prefix's already-resolved URI, so a hot multi-node walk
 /// resolves it once in `eval_step` rather than per node.
-unsafe fn name_test_match<D: Dom>(
-    doc: D::Doc,
+///
+/// The caller has checked an element's kind; an attribute is checked here, by
+/// taking it as one.
+fn name_test_match<'a, D: Dom<'a>>(
+    doc: D,
     test: &NodeTest,
     node: D::Node,
     axis: Axis,
-    b: &Bindings<D>,
+    b: &Bindings<'a, D>,
 ) -> bool {
     let Some(want_local) = test.local.as_deref() else {
         return false;
@@ -63,16 +68,19 @@ unsafe fn name_test_match<D: Dom>(
     let is_attr = axis == Axis::Attribute;
     let prefixed = test.prefix.is_some();
 
-    let got: &[u8] = if D::IS_XML || prefixed {
-        if is_attr {
-            D::attr_local_name(doc, node)
+    let got: &[u8] = if is_attr {
+        let Some(a) = doc.as_attr(node) else {
+            return false;
+        };
+        if D::IS_XML || prefixed {
+            doc.attr_local_name(a)
         } else {
-            D::local_name(doc, node)
+            doc.attr_qualified_name(a)
         }
-    } else if is_attr {
-        D::attr_qualified_name(doc, node)
+    } else if D::IS_XML || prefixed {
+        doc.local_name(node)
     } else {
-        D::qualified_name(doc, node)
+        doc.qualified_name(node)
     };
     if got != want_local {
         return false;
@@ -83,41 +91,39 @@ unsafe fn name_test_match<D: Dom>(
             Some(u) => u,
             None => return false, /* unknown prefix -> non-match; the step driver reports it */
         };
-        return want_uri == D::ns_uri(b.doc, node);
+        return want_uri == b.doc.ns_uri(node);
     }
     if b.lax {
         return true;
     }
     if D::IS_XML {
         /* strict unprefixed: the node must be in no namespace */
-        D::ns_uri(b.doc, node).is_empty()
+        b.doc.ns_uri(node).is_empty()
     } else {
         /* strict: unprefixed ELEMENT tests resolve in the HTML namespace, so a
          * foreign (SVG / MathML) element needs a prefix. Attributes are exempt -
          * an unprefixed attribute test matches by no-namespace local name, and
          * the qualified-name compare above already excluded prefixed foreign
          * attributes. */
-        is_attr || !D::is_foreign_ns(doc, node)
+        is_attr || !doc.is_foreign_ns(node)
     }
 }
 
-unsafe fn resolved_prefix<'a, D: Dom>(b: &Bindings<'a, D>, test: &NodeTest) -> Option<&'a [u8]> {
+fn resolved_prefix<'a, D: Dom<'a>>(b: &Bindings<'a, D>, test: &NodeTest) -> Option<&'a [u8]> {
     match b.pre {
         Some(u) => Some(u),
         None => b.cx.lookup_ns(test.prefix.as_deref().unwrap_or(&[])),
     }
 }
 
-///
-/// # Safety
-/// `node` must be a live handle, and `b` bindings built for the evaluating
+/// Whether `node` passes `test` on `axis`, with `b` built for the evaluating
 /// context.
-pub unsafe fn node_principal_match<D: Dom>(
-    doc: D::Doc,
+pub fn node_principal_match<'a, D: Dom<'a>>(
+    doc: D,
     test: &NodeTest,
     node: D::Node,
     axis: Axis,
-    b: &Bindings<D>,
+    b: &Bindings<'a, D>,
 ) -> bool {
     match test.kind {
         TestKind::Node => {
@@ -128,19 +134,19 @@ pub unsafe fn node_principal_match<D: Dom>(
              * DocumentFragment IS matched: it is the root of a fragment-rooted
              * context, so '.' over a fragment has to see it. */
             !matches!(
-                D::node_type(doc, node),
+                doc.node_type(node),
                 NTYPE_DOCUMENT_TYPE | NTYPE_ENTITY | NTYPE_ENTITY_REFERENCE | NTYPE_NOTATION
             )
         }
-        TestKind::Text => matches!(D::node_type(doc, node), NTYPE_TEXT | NTYPE_CDATA_SECTION),
-        TestKind::Comment => D::node_type(doc, node) == NTYPE_COMMENT,
+        TestKind::Text => matches!(doc.node_type(node), NTYPE_TEXT | NTYPE_CDATA_SECTION),
+        TestKind::Comment => doc.node_type(node) == NTYPE_COMMENT,
         TestKind::Pi => {
-            if D::node_type(doc, node) != NTYPE_PI {
+            if doc.node_type(node) != NTYPE_PI {
                 return false;
             }
             match test.pi_target.as_deref() {
                 None => true,
-                Some(target) => D::pi_name(doc, node) == target,
+                Some(target) => doc.pi_name(node) == target,
             }
         }
         TestKind::Wildcard => {
@@ -149,10 +155,10 @@ pub unsafe fn node_principal_match<D: Dom>(
             }
             /* the principal node type of the axis */
             if axis == Axis::Attribute {
-                if D::node_type(doc, node) != NTYPE_ATTRIBUTE {
+                if doc.node_type(node) != NTYPE_ATTRIBUTE {
                     return false;
                 }
-            } else if D::node_type(doc, node) != NTYPE_ELEMENT {
+            } else if doc.node_type(node) != NTYPE_ELEMENT {
                 return false;
             }
             /* `*` matches any namespace; `prefix:*` only the one bound to the
@@ -162,16 +168,14 @@ pub unsafe fn node_principal_match<D: Dom>(
                 return true;
             }
             match resolved_prefix(b, test) {
-                Some(want) => want == D::ns_uri(b.doc, node),
+                Some(want) => want == b.doc.ns_uri(node),
                 None => false,
             }
         }
         TestKind::Name => {
-            if axis == Axis::Attribute {
-                if D::node_type(doc, node) != NTYPE_ATTRIBUTE {
-                    return false;
-                }
-            } else if D::node_type(doc, node) != NTYPE_ELEMENT {
+            /* An attribute's kind is checked by the name test, which takes it as
+             * one. */
+            if axis != Axis::Attribute && doc.node_type(node) != NTYPE_ELEMENT {
                 return false;
             }
             name_test_match::<D>(doc, test, node, axis, b)

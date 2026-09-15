@@ -3,9 +3,9 @@
 //! instance every `Node#xpath` on an HTML document goes through.
 
 use super::abi::*;
-use super::dom_html::Html;
 use super::eval;
 use super::own::OwnedVal;
+use crate::dom_adapter::html::HtmlDoc;
 use core::ffi::c_void;
 
 /// Evaluate an AST against the context, with the context node as the focus.
@@ -19,7 +19,7 @@ pub unsafe fn eval_ast_html(
     ast: &Ast,
     handler: Option<Handler>,
 ) -> Result<OwnedVal, Error> {
-    eval::eval_ast::<Html>(cx, ast, handler)
+    eval::eval_ast::<HtmlDoc<'_>>(cx, ast, handler)
 }
 
 /// The `at_xpath` first-match short-circuit: `Some(node)` when it handled the
@@ -30,5 +30,5 @@ pub unsafe fn eval_ast_html(
 /// As [`eval_ast_html`].
 #[allow(clippy::result_large_err)]
 pub unsafe fn try_first_match_html(cx: &Context, ast: &Ast) -> Result<Option<*mut c_void>, Error> {
-    Ok(eval::try_first_match::<Html>(cx, ast)?.map(|n| n as *mut c_void))
+    eval::try_first_match::<HtmlDoc<'_>>(cx, ast)
 }

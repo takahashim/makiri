@@ -1,262 +1,186 @@
-//! The XML binding of the node-access contract.
+//! The XML binding of the node-access contract: `Dom` for `&xml::Document`.
 //!
 //! A node handle is an opaque, stamped [`xml::NodeId`]. It is not a slot index:
 //! the stamp identifies the owning [`xml::Document`], and the low bits identify
 //! the arena slot. The adapter never indexes the arena directly; every access
 //! resolves through `Document`'s checked API.
 //!
-//! The only unsafe boundary here is the erased document pointer and the
-//! NodeId-to-void token conversion required by the shared XPath ABI. Once that
-//! boundary is crossed, navigation and byte access use the safe XML API.
-//!
 //! A handle coming from a node-set token is untrusted. `try_node` therefore
 //! rejects a token naming another document, an invalid or out-of-range slot,
-//! and any stale handle. The operation then reports the null node, empty bytes,
-//! or `false`, never a panic or a cross-document access.
-
-#![allow(clippy::missing_safety_doc)]
+//! and any stale handle. The operation then reports no node, empty bytes, or
+//! `false`, never a panic or a cross-document access.
 
 use super::abi::*;
-use super::dom::{Bucket, DomHandle, DomRaw};
+use super::dom::{Bucket, Dom};
 use crate::xml::model as xml;
-use core::ffi::c_int;
-
-/// The XML storage handle: the index-arena document.
-pub struct Xml;
-
-#[inline]
-unsafe fn d<'a>(doc: *mut xml::Document) -> Option<&'a xml::Document> {
-    doc.as_ref()
-}
-
-/// Resolve `id`, fail-closed. `None` for a null document, the null handle, an
-/// out-of-range index, or a handle whose document stamp is not this one.
-#[inline]
-unsafe fn nd<'a>(doc: *mut xml::Document, id: xml::NodeId) -> Option<&'a xml::Node> {
-    d(doc)?.try_node(id)
-}
-
-#[inline]
-unsafe fn span<'a>(doc: *mut xml::Document, s: xml::Span) -> &'a [u8] {
-    match d(doc) {
-        Some(dd) => dd.span(s),
-        None => &[],
-    }
-}
+use core::ffi::{c_int, c_void};
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
 /// so it must not appear on the attribute axis. The reader still keeps it as a
 /// DOM attribute (Node#attribute_nodes reads `attrs` directly, matching DOM
 /// Level 2); only the XPath iteration below skips it.
-unsafe fn is_ns_decl(doc: *mut xml::Document, a: xml::NodeId) -> bool {
-    let q = span(doc, nd(doc, a).map_or(xml::Span::ABSENT, |x| x.qname));
+fn is_ns_decl(doc: &xml::Document, a: xml::NodeId) -> bool {
+    let q = doc.try_node(a).map_or(&[][..], |x| doc.span(x.qname));
     q == b"xmlns" || q.starts_with(b"xmlns:")
 }
 
-unsafe fn skip_ns_decls(doc: *mut xml::Document, mut a: xml::NodeId) -> xml::NodeId {
-    let Some(dd) = d(doc) else {
-        return xml::NodeId::INVALID;
-    };
-    while !a.is_invalid() && is_ns_decl(doc, a) {
-        a = dd.next(a).unwrap_or(xml::NodeId::INVALID);
+fn skip_ns_decls(doc: &xml::Document, mut a: xml::NodeId) -> Option<xml::NodeId> {
+    while is_ns_decl(doc, a) {
+        a = doc.next(a)?;
     }
-    a
+    Some(a)
 }
 
-unsafe impl DomHandle for Xml {
+impl<'d> Dom<'d> for &'d xml::Document {
+    const IS_XML: bool = true;
+
     type Node = xml::NodeId;
-    type Doc = *mut xml::Document;
+    /// Checked once, by `as_attr` or by coming out of `first_attr`.
+    type Attr = xml::NodeId;
 
     #[inline]
-    fn null() -> Self::Node {
-        xml::NodeId::INVALID
+    unsafe fn from_document(p: *mut c_void) -> Option<Self> {
+        (p as *const xml::Document).as_ref()
     }
     #[inline]
-    fn is_null(n: Self::Node) -> bool {
-        n.is_invalid()
+    fn token(n: xml::NodeId) -> *mut c_void {
+        n.to_token() as *mut c_void
     }
+    /// The token is opaque data: every read resolves it through
+    /// `Document::try_node`, so a stale or foreign one reads as no node.
     #[inline]
-    fn to_void(n: Self::Node) -> *mut core::ffi::c_void {
-        n.to_token() as *mut core::ffi::c_void
-    }
-    /// The token is opaque ABI data; validation happens when `NodeId` is
-    /// resolved against the document by `nd`.
-    #[inline]
-    unsafe fn from_void(p: *mut core::ffi::c_void) -> Self::Node {
+    unsafe fn node(self, p: *mut c_void) -> xml::NodeId {
         xml::NodeId::from_token(p as usize)
     }
-    /// The document pointer is validated for nullness by `d`; node ownership
-    /// is validated later by `Document::try_node`.
-    unsafe fn doc_from_void(p: *mut core::ffi::c_void) -> Self::Doc {
-        p as *mut xml::Document
-    }
-}
-
-unsafe impl DomRaw for Xml {
-    const RAW_IS_XML: bool = true;
 
     #[inline]
-    unsafe fn raw_document_node(doc: Self::Doc) -> Self::Node {
-        d(doc).map_or(xml::NodeId::INVALID, |dd| dd.doc_node())
+    fn document_node(self) -> xml::NodeId {
+        self.doc_node()
+    }
+    #[inline]
+    fn node_type(self, n: xml::NodeId) -> u32 {
+        self.try_node(n).map_or(0, |x| x.type_.as_u32())
     }
 
     #[inline]
-    unsafe fn raw_node_type(doc: Self::Doc, n: Self::Node) -> u32 {
-        nd(doc, n).map_or(0, |x| x.type_.as_u32())
+    fn first_child(self, n: xml::NodeId) -> Option<xml::NodeId> {
+        xml::Document::first_child(self, n)
+    }
+    #[inline]
+    fn last_child(self, n: xml::NodeId) -> Option<xml::NodeId> {
+        xml::Document::last_child(self, n)
+    }
+    #[inline]
+    fn next(self, n: xml::NodeId) -> Option<xml::NodeId> {
+        xml::Document::next(self, n)
+    }
+    #[inline]
+    fn prev(self, n: xml::NodeId) -> Option<xml::NodeId> {
+        xml::Document::prev(self, n)
+    }
+    #[inline]
+    fn parent(self, n: xml::NodeId) -> Option<xml::NodeId> {
+        xml::Document::parent(self, n)
     }
 
     #[inline]
-    unsafe fn raw_first_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc)
-            .and_then(|dd| dd.first_child(n))
-            .unwrap_or(xml::NodeId::INVALID)
+    fn first_attr(self, el: xml::NodeId) -> Option<xml::NodeId> {
+        skip_ns_decls(self, xml::Document::attrs(self, el)?)
     }
     #[inline]
-    unsafe fn raw_last_child(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc)
-            .and_then(|dd| dd.last_child(n))
-            .unwrap_or(xml::NodeId::INVALID)
+    fn attr_next(self, a: xml::NodeId) -> Option<xml::NodeId> {
+        skip_ns_decls(self, xml::Document::next(self, a)?)
     }
     #[inline]
-    unsafe fn raw_next(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc)
-            .and_then(|dd| dd.next(n))
-            .unwrap_or(xml::NodeId::INVALID)
+    fn attr_node(a: xml::NodeId) -> xml::NodeId {
+        a
     }
     #[inline]
-    unsafe fn raw_prev(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc)
-            .and_then(|dd| dd.prev(n))
-            .unwrap_or(xml::NodeId::INVALID)
+    fn as_attr(self, n: xml::NodeId) -> Option<xml::NodeId> {
+        self.try_node(n)
+            .is_some_and(|x| x.type_.as_u32() == super::dom::NTYPE_ATTRIBUTE)
+            .then_some(n)
     }
     #[inline]
-    unsafe fn raw_parent(doc: Self::Doc, n: Self::Node) -> Self::Node {
-        d(doc)
-            .and_then(|dd| dd.parent(n))
-            .unwrap_or(xml::NodeId::INVALID)
+    fn attr_value(self, a: xml::NodeId) -> &'d [u8] {
+        self.try_node(a).map_or(&[], |x| self.span(x.value))
     }
-
-    #[inline]
-    unsafe fn raw_first_attr(doc: Self::Doc, el: Self::Node) -> Self::Node {
-        match d(doc).and_then(|dd| dd.attrs(el)) {
-            Some(a) => skip_ns_decls(doc, a),
-            None => xml::NodeId::INVALID,
-        }
-    }
-    #[inline]
-    unsafe fn raw_attr_next(doc: Self::Doc, a: Self::Node) -> Self::Node {
-        match d(doc).and_then(|dd| dd.next(a)) {
-            Some(n) => skip_ns_decls(doc, n),
-            None => xml::NodeId::INVALID,
-        }
-    }
-    #[inline]
-    unsafe fn raw_attr_value<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        match nd(doc, a) {
-            Some(x) => span(doc, x.value),
-            None => &[],
-        }
-    }
-
-    unsafe fn raw_get_attribute<'a>(
-        doc: Self::Doc,
-        el: Self::Node,
-        name: &[u8],
-    ) -> Option<&'a [u8]> {
-        let mut a = d(doc).and_then(|dd| dd.attrs(el));
+    fn get_attribute(self, el: xml::NodeId, name: &[u8]) -> Option<&'d [u8]> {
+        let mut a = xml::Document::attrs(self, el);
         while let Some(id) = a {
-            if !is_ns_decl(doc, id)
-                && span(doc, nd(doc, id).map_or(xml::Span::ABSENT, |x| x.qname)) == name
-            {
-                return Some(span(
-                    doc,
-                    nd(doc, id).map_or(xml::Span::ABSENT, |x| x.value),
-                ));
+            if let Some(x) = self.try_node(id) {
+                if !is_ns_decl(self, id) && self.span(x.qname) == name {
+                    return Some(self.span(x.value));
+                }
             }
-            a = d(doc).and_then(|dd| dd.next(id));
+            a = xml::Document::next(self, id);
         }
         None
     }
 
     #[inline]
-    unsafe fn raw_local_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        match nd(doc, n) {
-            Some(x) => span(doc, x.local),
-            None => &[],
-        }
+    fn local_name(self, n: xml::NodeId) -> &'d [u8] {
+        self.try_node(n).map_or(&[], |x| self.span(x.local))
     }
     #[inline]
-    unsafe fn raw_attr_local_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        match nd(doc, a) {
-            Some(x) => span(doc, x.local),
-            None => &[],
-        }
+    fn attr_local_name(self, a: xml::NodeId) -> &'d [u8] {
+        self.try_node(a).map_or(&[], |x| self.span(x.local))
     }
     #[inline]
-    unsafe fn raw_qualified_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        match nd(doc, n) {
-            Some(x) => span(doc, x.qname),
-            None => &[],
-        }
+    fn qualified_name(self, n: xml::NodeId) -> &'d [u8] {
+        self.try_node(n).map_or(&[], |x| self.span(x.qname))
     }
     #[inline]
-    unsafe fn raw_attr_qualified_name<'a>(doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        match nd(doc, a) {
-            Some(x) => span(doc, x.qname),
-            None => &[],
-        }
+    fn attr_qualified_name(self, a: xml::NodeId) -> &'d [u8] {
+        self.try_node(a).map_or(&[], |x| self.span(x.qname))
     }
     #[inline]
-    unsafe fn raw_pi_name<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        match nd(doc, n) {
-            Some(x) => span(doc, x.local),
-            None => &[],
-        }
+    fn pi_name(self, n: xml::NodeId) -> &'d [u8] {
+        self.try_node(n).map_or(&[], |x| self.span(x.local))
     }
 
     #[inline]
-    unsafe fn raw_ns_uri<'a>(doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        match nd(doc, n) {
-            Some(x) => span(doc, x.ns_uri),
-            None => &[],
-        }
+    fn ns_uri(self, n: xml::NodeId) -> &'d [u8] {
+        self.try_node(n).map_or(&[], |x| self.span(x.ns_uri))
     }
 
     /// Any namespace URI is foreign to an unprefixed test: a strict unprefixed
     /// element test matches a no-namespace node only.
     #[inline]
-    unsafe fn raw_is_foreign_ns(doc: Self::Doc, n: Self::Node) -> bool {
-        nd(doc, n).is_some_and(|x| x.ns_uri.len != 0)
+    fn is_foreign_ns(self, n: xml::NodeId) -> bool {
+        self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
     }
 
     #[inline]
-    unsafe fn raw_has_ns(doc: Self::Doc, n: Self::Node) -> bool {
-        nd(doc, n).is_some_and(|x| x.ns_uri.len != 0)
+    fn has_ns(self, n: xml::NodeId) -> bool {
+        self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
     }
 
     /// The node owns its value, so this is an append of a borrowed slice.
     #[inline]
-    unsafe fn raw_append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
-        let s = match nd(doc, n) {
-            Some(x) => span(doc, x.value),
+    fn append_own_text(self, n: xml::NodeId, buf: &mut Buf) -> c_int {
+        let s = match self.try_node(n) {
+            Some(x) => self.span(x.value),
             None => return BUF_OK,
         };
         if s.is_empty() {
             return BUF_OK;
         }
-        buf_append(buf, s.as_ptr() as *const core::ffi::c_void, s.len())
+        // SAFETY: `s` is `s.len()` readable bytes, copied before this returns.
+        unsafe { buf_append(buf, s.as_ptr() as *const c_void, s.len()) }
     }
 
     /// The XML name index is keyed by (local name, namespace URI), so a bucket
     /// holds exactly the matching elements and needs no re-check. An unprefixed
     /// LAX test means "any namespace", which one bucket cannot express, so it
     /// falls back to the walk.
-    unsafe fn raw_name_bucket<'a>(
+    fn name_bucket(
+        self,
         cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
-    ) -> Option<Bucket<'a>> {
+    ) -> Option<Bucket<'d>> {
         let uri = match ns_uri {
             Some(u) => u,
             None if lax => return None,
@@ -265,16 +189,14 @@ unsafe impl DomRaw for Xml {
         if !matches!(cx.backend(), Backend::Xml) {
             return None;
         }
-        /* The XML storage owns the index. */
-        let doc = (cx.document() as *mut xml::Document).as_mut()?;
-        /* Built lazily and cached; None on OOM, and the caller walks. */
-        let idx = crate::xml::index::get(doc)?;
+        /* Built lazily and cached on the document; None on OOM, and the caller
+         * walks. */
+        let idx = crate::xml::index::get(self)?;
         let ids = crate::xml::index::lookup(idx, local, uri);
-        // SAFETY: `NodeId` is one word and is exactly the opaque token the engine
-        // carries. The borrow stays valid until the next mutation invalidates the
-        // index; the engine consumes it only during this GVL-held evaluate.
+        // SAFETY: `NodeId` is one transparent word, exactly the token the engine
+        // carries, and the slice lives as long as the document's index.
         let nodes =
-            core::slice::from_raw_parts(ids.as_ptr() as *const *mut core::ffi::c_void, ids.len());
+            unsafe { core::slice::from_raw_parts(ids.as_ptr() as *const *mut c_void, ids.len()) };
         Some(Bucket {
             nodes,
             recheck: false,

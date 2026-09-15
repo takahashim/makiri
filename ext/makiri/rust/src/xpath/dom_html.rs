@@ -1,13 +1,18 @@
-//! The XPath engine's HTML backend: `Html` binds the generic engine to Lexbor's
-//! DOM through [`crate::dom_adapter::html`], which is the only module that reads
-//! Lexbor's structs.
+//! The XPath engine's HTML backend: `Dom` for a Lexbor document, through
+//! [`crate::dom_adapter::html`], which is the only module that reads Lexbor's
+//! structs.
+//!
+//! The adapter's typed handles carry the contract - a live node of a document
+//! that is not restructured while they are held - so the readers here are safe.
+//! What they add is the kind check the raw readers leave to their callers: an
+//! element-only or attribute-only read of another kind of node answers empty
+//! rather than reading it as the wrong struct.
 
 use core::ffi::{c_int, c_void};
-use core::ptr;
 
 use super::abi::*;
 use super::dom::*;
-use crate::dom_adapter::html as dom;
+use crate::dom_adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
@@ -28,128 +33,159 @@ const _: () = {
     assert!(NTYPE_NOTATION == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
 };
 
-/// Lexbor-backed XPath representation.
-pub struct Html;
+impl<'d> Dom<'d> for HtmlDoc<'d> {
+    const IS_XML: bool = false;
 
-unsafe impl DomHandle for Html {
-    type Node = *mut LxbNode;
-    type Doc = *mut LxbDoc;
+    type Node = HtmlNode<'d>;
+    type Attr = HtmlAttr<'d>;
 
-    fn null() -> Self::Node {
-        ptr::null_mut()
+    #[inline]
+    unsafe fn from_document(p: *mut c_void) -> Option<Self> {
+        HtmlDoc::from_raw(p as *mut LxbDoc)
     }
-    fn is_null(n: Self::Node) -> bool {
-        n.is_null()
+    #[inline]
+    fn token(n: HtmlNode<'d>) -> *mut c_void {
+        n.as_raw() as *mut c_void
     }
-    fn to_void(n: Self::Node) -> *mut c_void {
-        n as *mut c_void
-    }
-    unsafe fn from_void(p: *mut c_void) -> Self::Node {
-        p as Self::Node
-    }
-    unsafe fn doc_from_void(p: *mut c_void) -> Self::Doc {
-        p as Self::Doc
-    }
-}
-
-unsafe impl DomRaw for Html {
-    const RAW_IS_XML: bool = false;
-
-    unsafe fn raw_document_node(doc: Self::Doc) -> Self::Node {
-        dom::document_node(doc)
-    }
-    unsafe fn raw_node_type(_doc: Self::Doc, n: Self::Node) -> u32 {
-        dom::node_type(n)
-    }
-    unsafe fn raw_first_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        dom::first_child(n)
-    }
-    unsafe fn raw_last_child(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        dom::last_child(n)
-    }
-    unsafe fn raw_next(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        dom::next(n)
-    }
-    unsafe fn raw_prev(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        dom::prev(n)
-    }
-    unsafe fn raw_parent(_doc: Self::Doc, n: Self::Node) -> Self::Node {
-        dom::parent(n)
-    }
-    unsafe fn raw_first_attr(_doc: Self::Doc, el: Self::Node) -> Self::Node {
-        dom::first_attr(el)
-    }
-    unsafe fn raw_attr_next(_doc: Self::Doc, a: Self::Node) -> Self::Node {
-        dom::attr_next(a)
-    }
-    unsafe fn raw_attr_value<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        dom::attr_value(a)
-    }
-    unsafe fn raw_get_attribute<'a>(
-        _doc: Self::Doc,
-        el: Self::Node,
-        name: &[u8],
-    ) -> Option<&'a [u8]> {
-        dom::get_attribute(el, name)
-    }
-    unsafe fn raw_local_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        dom::local_name(n)
-    }
-    unsafe fn raw_attr_local_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        dom::attr_local_name(a)
-    }
-    unsafe fn raw_qualified_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        dom::qualified_name(n)
-    }
-    unsafe fn raw_attr_qualified_name<'a>(_doc: Self::Doc, a: Self::Node) -> &'a [u8] {
-        dom::attr_qualified_name(a)
-    }
-    unsafe fn raw_pi_name<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        dom::pi_name(n)
-    }
-    unsafe fn raw_ns_uri<'a>(_doc: Self::Doc, n: Self::Node) -> &'a [u8] {
-        dom::ns_uri(n)
-    }
-    unsafe fn raw_is_foreign_ns(_doc: Self::Doc, n: Self::Node) -> bool {
-        dom::is_foreign_ns(n)
-    }
-    unsafe fn raw_has_ns(_doc: Self::Doc, n: Self::Node) -> bool {
-        dom::has_ns(n)
-    }
-    unsafe fn raw_append_own_text(_doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
-        dom::append_own_text(n, buf)
+    #[inline]
+    unsafe fn node(self, p: *mut c_void) -> HtmlNode<'d> {
+        debug_assert!(!p.is_null());
+        HtmlNode::from_raw(p as *mut LxbNode).unwrap_unchecked()
     }
 
-    unsafe fn raw_name_bucket<'a>(
+    #[inline]
+    fn document_node(self) -> HtmlNode<'d> {
+        self.as_node()
+    }
+    #[inline]
+    fn node_type(self, n: HtmlNode<'d>) -> u32 {
+        n.node_type()
+    }
+
+    #[inline]
+    fn first_child(self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.first_child()
+    }
+    #[inline]
+    fn last_child(self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.last_child()
+    }
+    #[inline]
+    fn next(self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.next()
+    }
+    #[inline]
+    fn prev(self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.prev()
+    }
+    #[inline]
+    fn parent(self, n: HtmlNode<'d>) -> Option<HtmlNode<'d>> {
+        n.parent()
+    }
+
+    #[inline]
+    fn first_attr(self, el: HtmlNode<'d>) -> Option<HtmlAttr<'d>> {
+        el.element()?.first_attr()
+    }
+    #[inline]
+    fn attr_next(self, a: HtmlAttr<'d>) -> Option<HtmlAttr<'d>> {
+        a.next_attr()
+    }
+    #[inline]
+    fn attr_node(a: HtmlAttr<'d>) -> HtmlNode<'d> {
+        a.node()
+    }
+    #[inline]
+    fn as_attr(self, n: HtmlNode<'d>) -> Option<HtmlAttr<'d>> {
+        n.attr()
+    }
+    #[inline]
+    fn attr_value(self, a: HtmlAttr<'d>) -> &'d [u8] {
+        a.value()
+    }
+    #[inline]
+    fn get_attribute(self, el: HtmlNode<'d>, name: &[u8]) -> Option<&'d [u8]> {
+        el.element()?.get_attribute(name)
+    }
+
+    #[inline]
+    fn local_name(self, n: HtmlNode<'d>) -> &'d [u8] {
+        n.element().map_or(&[], |e| e.local_name())
+    }
+    #[inline]
+    fn attr_local_name(self, a: HtmlAttr<'d>) -> &'d [u8] {
+        a.local_name()
+    }
+    #[inline]
+    fn qualified_name(self, n: HtmlNode<'d>) -> &'d [u8] {
+        // SAFETY: a live node; the reader handles every node kind.
+        unsafe { dom::qualified_name(n.as_raw()) }
+    }
+    #[inline]
+    fn attr_qualified_name(self, a: HtmlAttr<'d>) -> &'d [u8] {
+        a.qualified_name()
+    }
+    #[inline]
+    fn pi_name(self, n: HtmlNode<'d>) -> &'d [u8] {
+        n.node_name()
+    }
+
+    #[inline]
+    fn ns_uri(self, n: HtmlNode<'d>) -> &'d [u8] {
+        n.ns_uri().unwrap_or(&[])
+    }
+    #[inline]
+    fn is_foreign_ns(self, n: HtmlNode<'d>) -> bool {
+        let ns = n.ns_id();
+        ns != dom::NS_HTML && ns != dom::NS_UNDEF
+    }
+    #[inline]
+    fn has_ns(self, n: HtmlNode<'d>) -> bool {
+        n.ns_id() != dom::NS_UNDEF
+    }
+    #[inline]
+    fn append_own_text(self, n: HtmlNode<'d>, buf: &mut Buf) -> c_int {
+        // SAFETY: a live node; the text Lexbor builds is freed inside.
+        unsafe { dom::append_own_text(n.as_raw(), buf) }
+    }
+
+    fn name_bucket(
+        self,
         cx: &Context,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         _lax: bool,
-    ) -> Option<Bucket<'a>> {
+    ) -> Option<Bucket<'d>> {
         if ns_uri.is_some() {
             return None;
         }
         let Backend::Html { index } = cx.backend() else {
             return None;
         };
-        if index.is_null() || crate::dom_adapter::dom_index::element_index_has_foreign(index) != 0 {
-            return None;
+        // SAFETY: the context's element index belongs to this document and is
+        // dropped only by a mutation, which cannot happen while it is lent.
+        unsafe {
+            if index.is_null()
+                || crate::dom_adapter::dom_index::element_index_has_foreign(index) != 0
+            {
+                return None;
+            }
+            let tag = dom::tag_id_by_name(self.as_raw(), local);
+            if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
+                return None;
+            }
+            let mut cnt = 0usize;
+            let nodes = crate::dom_adapter::dom_index::element_index_tag(index, tag, &mut cnt)
+                as *const *mut c_void;
+            let nodes: &'d [*mut c_void] = if nodes.is_null() || cnt == 0 {
+                &[]
+            } else {
+                core::slice::from_raw_parts(nodes, cnt)
+            };
+            Some(Bucket {
+                nodes,
+                recheck: true,
+            })
         }
-        let tag = dom::tag_id_by_name(cx.document() as *const LxbDoc, local);
-        if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
-            return None;
-        }
-        let mut cnt = 0usize;
-        let nodes = crate::dom_adapter::dom_index::element_index_tag(index, tag, &mut cnt)
-            as *const *mut c_void;
-        let nodes: &'a [*mut c_void] = if nodes.is_null() || cnt == 0 {
-            &[]
-        } else {
-            core::slice::from_raw_parts(nodes, cnt)
-        };
-        Some(Bucket {
-            nodes,
-            recheck: true,
-        })
     }
 }

@@ -405,7 +405,7 @@ Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 
 **XPath engine** (`src/xpath/`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
-external hook is `Dom::raw_qualified_name` (in `xpath/dom.rs`). Per-evaluate
+external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set & string
 caps) live in `xpath/limits.rs` and fail closed with `XP_ERR_LIMIT`. Ruby:
 `Node#{xpath,at_xpath}(expr, handler=nil)`, `Makiri::XPathContext`

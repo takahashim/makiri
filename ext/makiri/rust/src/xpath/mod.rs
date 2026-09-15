@@ -16,7 +16,6 @@
 //!
 //! The engine, generic over `Dom`:
 //!   dom.rs        the node-access contract, as a trait
-//!   dom_handle.rs raw handle conversion
 //!   own.rs        guards over the allocations the engine passes around
 //!   ast.rs        the compiled AST
 //!   ast_ops.rs    the peephole and hoisting pass over a parsed one
@@ -59,7 +58,6 @@ pub mod runtime_abi;
 pub mod attr_pred;
 pub mod axis;
 pub mod dom;
-pub mod dom_handle;
 pub mod eval;
 pub mod funcs;
 pub mod nodetest;

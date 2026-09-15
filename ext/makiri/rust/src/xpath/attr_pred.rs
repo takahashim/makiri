@@ -5,6 +5,8 @@
 //! return exactly what the full evaluation would. Sharing the code is what makes
 //! that claim true by construction rather than by a hand-kept copy.
 
+#![forbid(unsafe_code)]
+
 use super::abi::*;
 use super::dom::*;
 
@@ -77,33 +79,27 @@ fn string_literal(e: &Expr) -> Option<&[u8]> {
 /// XPath 1.0, from Nokogiri::HTML5, and from Makiri's own attribute-axis name
 /// test, which compares the qualified name byte for byte. The fast path handles
 /// unprefixed names only, matching that comparison.
-unsafe fn attr_by_qualified_name<D: Dom>(doc: D::Doc, el: D::Node, name: &[u8]) -> D::Node {
-    let mut a = D::first_attr(doc, el);
-    while !D::is_null(a) {
-        if D::attr_qualified_name(doc, a) == name {
-            return a;
+fn attr_by_qualified_name<'d, D: Dom<'d>>(doc: D, el: D::Node, name: &[u8]) -> Option<D::Attr> {
+    let mut a = doc.first_attr(el);
+    while let Some(x) = a {
+        if doc.attr_qualified_name(x) == name {
+            return Some(x);
         }
-        a = D::attr_next(doc, a);
+        a = doc.attr_next(x);
     }
-    D::null()
+    None
 }
 
 /// THE single per-node test for a recognised attribute predicate, shared by the
 /// predicate filter and the at_xpath first-match path so the two stay identical
 /// by construction rather than by a hand-kept copy.
-///
-/// # Safety
-/// `n` must be a live handle of the document being evaluated.
-pub unsafe fn attr_pred_matches<D: Dom>(doc: D::Doc, ap: &AttrPred, n: D::Node) -> bool {
-    if D::node_type(doc, n) != NTYPE_ELEMENT {
+pub fn attr_pred_matches<'d, D: Dom<'d>>(doc: D, ap: &AttrPred, n: D::Node) -> bool {
+    /* Only an element has attributes, so a node of any other kind finds none. */
+    let Some(a) = attr_by_qualified_name::<D>(doc, n, ap.name) else {
         return false;
-    }
-    let a = attr_by_qualified_name::<D>(doc, n, ap.name);
-    if D::is_null(a) {
-        return false;
-    }
+    };
     match ap.value {
         None => true,
-        Some(want) => D::attr_value(doc, a) == want,
+        Some(want) => doc.attr_value(a) == want,
     }
 }

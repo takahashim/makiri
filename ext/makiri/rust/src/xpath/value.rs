@@ -219,8 +219,9 @@ impl Val {
 /// pass, and the outermost evaluate); the function library only ever receives
 /// one, so it lives here with the other runtime values rather than there.
 #[derive(Clone, Copy)]
-pub struct Focus<D: Dom> {
-    pub node: D::Node,
+pub struct Focus<'e, D: Dom<'e>> {
+    /// None when the context has no node.
+    pub node: Option<D::Node>,
     pub pos: usize,
     pub size: usize,
 }
@@ -298,46 +299,52 @@ pub unsafe fn val_clone(src: &Val, err: ErrSink) -> Result<OwnedVal, Reported> {
 /// text, not a distinct node type). The walk is iterative through parent
 /// pointers rather than recursive, so an adversarially deep tree cannot
 /// overflow the stack; it descends only into elements.
-unsafe fn append_text_descendants<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) -> c_int {
-    let mut cur = D::first_child(doc, node);
-    while !D::is_null(cur) {
-        let t = D::node_type(doc, cur);
+unsafe fn append_text_descendants<'d, D: Dom<'d>>(doc: D, node: D::Node, buf: &mut Buf) -> c_int {
+    let mut cur = doc.first_child(node);
+    while let Some(n) = cur {
+        let t = doc.node_type(n);
         if t == NTYPE_TEXT || t == NTYPE_CDATA_SECTION {
-            let st = D::append_own_text(doc, cur, buf);
+            let st = doc.append_own_text(n, buf);
             if st != ST_OK {
                 return st; /* LIMIT or OOM - the caller fails closed */
             }
         }
-        if t == NTYPE_ELEMENT && !D::is_null(D::first_child(doc, cur)) {
-            cur = D::first_child(doc, cur);
-            continue;
+        if t == NTYPE_ELEMENT {
+            if let Some(c) = doc.first_child(n) {
+                cur = Some(c);
+                continue;
+            }
         }
-        while cur != node && D::is_null(D::next(doc, cur)) {
-            cur = D::parent(doc, cur);
-        }
-        if cur == node {
-            return ST_OK;
-        }
-        cur = D::next(doc, cur);
+        /* Past `n`'s subtree, without leaving `node`'s. */
+        let mut m = n;
+        cur = loop {
+            if m == node {
+                break None;
+            }
+            if let Some(s) = doc.next(m) {
+                break Some(s);
+            }
+            match doc.parent(m) {
+                Some(p) => m = p,
+                None => break None,
+            }
+        };
     }
     ST_OK
 }
 
-unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) -> c_int {
-    if D::is_null(node) {
-        return ST_OK;
+unsafe fn build_string_value<'d, D: Dom<'d>>(doc: D, node: D::Node, buf: &mut Buf) -> c_int {
+    if let Some(a) = doc.as_attr(node) {
+        let v = doc.attr_value(a);
+        return if v.is_empty() {
+            ST_OK
+        } else {
+            buf_append(buf, v.as_ptr() as *const c_void, v.len())
+        };
     }
-    match D::node_type(doc, node) {
-        NTYPE_ATTRIBUTE => {
-            let v = D::attr_value(doc, node);
-            if v.is_empty() {
-                ST_OK
-            } else {
-                buf_append(buf, v.as_ptr() as *const c_void, v.len())
-            }
-        }
+    match doc.node_type(node) {
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
-            D::append_own_text(doc, node, buf)
+            doc.append_own_text(node, buf)
         }
         _ => append_text_descendants::<D>(doc, node, buf),
     }
@@ -354,8 +361,8 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
 ///
 /// # Safety
 /// `node` must be live.
-pub unsafe fn node_to_owned_text<D: Dom>(
-    doc: D::Doc,
+pub unsafe fn node_to_owned_text<'d, D: Dom<'d>>(
+    doc: D,
     node: D::Node,
     budget: *mut Budget,
 ) -> Result<OwnedText, Reported> {
@@ -437,7 +444,7 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
 ///
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
-pub unsafe fn val_to_number_unchecked<D: Dom>(doc: D::Doc, v: *const Val) -> f64 {
+pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: *const Val) -> f64 {
     match (*v).get() {
         ValRef::Number(d) => d,
         ValRef::Boolean(b) => {
@@ -453,7 +460,7 @@ pub unsafe fn val_to_number_unchecked<D: Dom>(doc: D::Doc, v: *const Val) -> f64
                 return f64::NAN;
             }
             /* string-value of the first node in document order */
-            let text = node_text_best_effort::<D>(doc, nodeset_at::<D>(ns, 0));
+            let text = node_text_best_effort::<D>(doc, nodeset_at::<D>(doc, ns, 0));
             bytes_to_number(text.as_slice())
         }
     }
@@ -474,8 +481,8 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
 ///
 /// # Safety
 /// `v` may be null (yields "").
-pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
-    doc: D::Doc,
+pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
+    doc: D,
     v: *const Val,
     budget: *mut Budget,
 ) -> Result<OwnedText, Reported> {
@@ -523,7 +530,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), budget)
+            node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, ns, 0), budget)
         }
     }
 }
@@ -533,8 +540,8 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
 ///
 /// # Safety
 /// `v` must be valid.
-pub unsafe fn val_to_number_or_fail<D: Dom>(
-    doc: D::Doc,
+pub unsafe fn val_to_number_or_fail<'d, D: Dom<'d>>(
+    doc: D,
     v: *const Val,
     budget: *mut Budget,
 ) -> Result<f64, Reported> {
@@ -542,7 +549,7 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
         if ns.count == 0 {
             return Ok(f64::NAN);
         }
-        let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), budget)?;
+        let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, ns, 0), budget)?;
         return Ok(bytes_to_number(text.as_slice()));
     }
     Ok(val_to_number_unchecked::<D>(doc, v))
@@ -556,16 +563,16 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
 /// `i` must be within `ns.count`, and the set must hold handles of this
 /// backend's representation - which the engine kind selects.
 #[inline]
-pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
+pub unsafe fn nodeset_at<'d, D: Dom<'d>>(doc: D, ns: *const NodeSet, i: usize) -> D::Node {
     debug_assert!(i < (*ns).count);
-    D::from_void(*(*ns).items.add(i))
+    doc.node(*(*ns).items.add(i))
 }
 
 /// Build `node`'s string-value with no limit and no error reporting - the
 /// best-effort form the NUMBER coercion wants, where an overrun yields "" and
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
-unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText {
+unsafe fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> OwnedText {
     node_to_owned_text::<D>(doc, node, ptr::null_mut()).unwrap_or_default()
 }
 
@@ -576,11 +583,11 @@ unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText
 ///
 /// # Safety
 /// `node` must be a live handle of the evaluation's document.
-pub unsafe fn cached_node_text<D: Dom>(
-    ev: &mut super::eval::Evaluation<'_, D>,
+pub unsafe fn cached_node_text<'d, D: Dom<'d>>(
+    ev: &mut super::eval::Evaluation<'d, D>,
     node: D::Node,
 ) -> Result<TextId, Reported> {
-    let key = D::to_void(node) as *const c_void;
+    let key = D::token(node) as *const c_void;
     if let Some(id) = ev.str_cache.find(key) {
         return Ok(id);
     }
@@ -593,8 +600,8 @@ pub unsafe fn cached_node_text<D: Dom>(
 /// # Safety
 /// As [`cached_node_text`].
 #[inline]
-pub unsafe fn cached_node_number<D: Dom>(
-    ev: &mut super::eval::Evaluation<'_, D>,
+pub unsafe fn cached_node_number<'d, D: Dom<'d>>(
+    ev: &mut super::eval::Evaluation<'d, D>,
     node: D::Node,
 ) -> Result<f64, Reported> {
     let id = cached_node_text::<D>(ev, node)?;

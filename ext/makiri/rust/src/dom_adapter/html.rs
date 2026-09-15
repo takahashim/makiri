@@ -276,6 +276,41 @@ pub struct HtmlElement<'doc>(HtmlNode<'doc>);
 #[repr(transparent)]
 pub struct HtmlAttr<'doc>(HtmlNode<'doc>);
 
+/// A live Lexbor document, borrowed for `'doc`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct HtmlDoc<'doc> {
+    raw: NonNull<LxbDoc>,
+    _doc: PhantomData<&'doc LxbDoc>,
+}
+
+impl<'doc> HtmlDoc<'doc> {
+    /// # Safety
+    /// `raw` must be null or a live document that outlives `'doc` and is not
+    /// restructured (see the section note) while `'doc` lasts.
+    #[inline]
+    pub unsafe fn from_raw(raw: *mut LxbDoc) -> Option<Self> {
+        NonNull::new(raw).map(|raw| HtmlDoc {
+            raw,
+            _doc: PhantomData,
+        })
+    }
+
+    #[inline]
+    pub fn as_raw(self) -> *mut LxbDoc {
+        self.raw.as_ptr()
+    }
+
+    /// The document as a node: an `lxb_dom_document_t` leads with its node.
+    #[inline]
+    pub fn as_node(self) -> HtmlNode<'doc> {
+        HtmlNode {
+            raw: self.raw.cast(),
+            _doc: PhantomData,
+        }
+    }
+}
+
 impl<'doc> HtmlNode<'doc> {
     /// # Safety
     /// `raw` must be null or a live node whose document outlives `'doc` and is
@@ -526,6 +561,13 @@ impl<'doc> HtmlElement<'doc> {
         (!p.is_null()).then(|| unsafe { seen(p, len) })
     }
 
+    /// The first attribute, read straight from the element.
+    #[inline]
+    pub fn first_attr(self) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: a live element; its attribute list belongs to the document.
+        HtmlNode::link(unsafe { first_attr(self.0.as_raw()) }).map(HtmlAttr)
+    }
+
     /// The attributes, in document order.
     pub fn attrs(self) -> Attrs<'doc> {
         // SAFETY: a live element.
@@ -555,14 +597,24 @@ impl<'doc> HtmlAttr<'doc> {
         self.0.as_raw() as *mut LxbAttr
     }
 
+    /// The next attribute of the same element, read straight from this one.
+    #[inline]
+    pub fn next_attr(self) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: a live attribute; the next one is in the same list.
+        HtmlNode::link(unsafe { attr_next(self.0.as_raw()) }).map(HtmlAttr)
+    }
+
+    #[inline]
     pub fn qualified_name(self) -> &'doc [u8] {
         // SAFETY: a live attribute.
         unsafe { named(self.raw(), lxb::lxb_dom_attr_qualified_name) }
     }
+    #[inline]
     pub fn local_name(self) -> &'doc [u8] {
         // SAFETY: a live attribute.
         unsafe { named(self.raw(), lxb::lxb_dom_attr_local_name) }
     }
+    #[inline]
     pub fn value(self) -> &'doc [u8] {
         // SAFETY: a live attribute; the value is only changed by a mutator,
         // which the handle's contract rules out for 'doc.

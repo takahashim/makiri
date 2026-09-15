@@ -93,15 +93,19 @@ impl Set {
         self.0 = ns;
     }
     /// # Safety
-    /// `n` must be a live handle of the document being evaluated.
-    pub unsafe fn push<D: Dom>(&mut self, n: D::Node, budget: *mut Budget) -> Result<(), Reported> {
-        nodeset_push(self.as_mut(), D::to_void(n), budget)
+    /// `budget` must be null or live.
+    pub unsafe fn push<'d, D: Dom<'d>>(
+        &mut self,
+        n: D::Node,
+        budget: *mut Budget,
+    ) -> Result<(), Reported> {
+        nodeset_push(self.as_mut(), D::token(n), budget)
     }
     /// # Safety
-    /// `i` must be below `count()`, and the set must hold this backend's handles.
-    pub unsafe fn get<D: Dom>(&self, i: usize) -> D::Node {
+    /// `i` must be below `count()`, and the set must hold `doc`'s handles.
+    pub unsafe fn get<'d, D: Dom<'d>>(&self, doc: D, i: usize) -> D::Node {
         debug_assert!(i < self.0.count);
-        D::from_void(*self.0.items.add(i))
+        doc.node(*self.0.items.add(i))
     }
 }
 
