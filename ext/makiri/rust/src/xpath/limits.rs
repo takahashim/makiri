@@ -1,8 +1,8 @@
 //! The per-evaluate budgets (mkr_xpath.c's limits section).
 //!
 //! Every overrun is MKR_XPATH_ERR_LIMIT - never a truncated or empty result.
-//! The counters live in the context but the struct is ABI (the glue resets
-//! `ast_nodes` before each parse), so it stays a C layout.
+//! The counters live in the context, and the glue reads the struct directly (it
+//! resets `ast_nodes` before each parse), so its fields are public.
 
 /* Each function here takes the `*mut Limits` the caller already holds, so the
  * contract is the pointer's, stated once. */

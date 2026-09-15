@@ -65,7 +65,7 @@ impl core::fmt::Write for MsgBuf {
 /// so the stack buffer does not outlive the call.
 ///
 /// Crate-internal, and the one place the front end writes an error: every
-/// caller already holds the `*mut Error` the C caller handed it, and passing a
+/// caller already holds the `*mut Error` its caller handed it, and passing a
 /// NULL or a dangling one would be the caller's bug either way.
 pub(crate) fn err_set_fmt(err: *mut Error, status: c_int, args: core::fmt::Arguments<'_>) {
     use core::fmt::Write;

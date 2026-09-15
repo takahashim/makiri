@@ -2,10 +2,10 @@
 //! (XPath 1.0 §5), the coercions that read a node-set's first node, document
 //! order, and the string-value cache's node-keyed insert.
 //!
-//! Generic over `Dom`, which is what the C achieves by compiling the same body
-//! once per representation. The values themselves (`mkr_val_t`, `mkr_nodeset_t`)
-//! stay the C types: they cross into the glue's custom-function bridge and out
-//! as the evaluate result, so their layout is ABI.
+//! Generic over `Dom`, where the C compiled the same body once per
+//! representation. The values themselves (`Val`, `NodeSet`) keep their C
+//! layout: they cross into the glue's custom-function bridge and out as the
+//! evaluate result.
 
 use super::abi::*;
 use super::dom::*;

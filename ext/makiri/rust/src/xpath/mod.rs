@@ -1,7 +1,7 @@
 //! The XPath 1.0 engine.
 //!
 //! Shared:
-//!   abi.rs        the shared ABI type re-exports
+//!   abi.rs        the shared layouts, re-exported from crate::xpath_abi
 //!   msg.rs        error messages, assembled without allocating
 //!
 //! The front end:
@@ -16,7 +16,7 @@
 //!
 //! The engine, generic over `Dom`:
 //!   dom.rs        the node-access contract, as a trait
-//!   dom_handle.rs raw handle conversion at the ABI boundary
+//!   dom_handle.rs raw handle conversion
 //!   own.rs        guards over the allocations the engine passes around
 //!   ast.rs        the AST's arrays, viewed as slices
 //!   ast_ops.rs    building, destroying and rewriting one

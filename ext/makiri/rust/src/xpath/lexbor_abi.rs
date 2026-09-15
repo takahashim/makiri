@@ -3,17 +3,11 @@
 //!
 //! Unlike `mkr_xml_node_t`, these belong to a vendored dependency whose pin
 //! moves (CLAUDE.md), so a reordered field would not fail to build - it would
-//! read the wrong offset. Two things guard that, and only one of them is C:
-//! `lexbor_abi::agree` compares every field this file declares against the
-//! generated header view at COMPILE time, in every configuration; and while the
-//! C is still compiled, `mkr_xpath_rs_html_layout` below additionally reports
-//! these facts to `mkr_xpath_html_shim.c`, which checks them against the real
-//! `offsetof` before anything can run a query.
-//!
-//! The compile-time half is the stronger of the two, and it is what remains
-//! standing alone. It was extended with the two facts only the C checker held
-//! (that `node` sits first in the element and attr structs, which is what makes
-//! the engine's handle casts sound) at the same time - see `agree`.
+//! read the wrong offset. `lexbor_abi::agree` guards that: it compares every
+//! field this file declares against the generated header view at COMPILE time,
+//! in every configuration. It also holds the two facts the retired C checker
+//! did (that `node` sits first in the element and attr structs, which is what
+//! makes the engine's handle casts sound).
 //!
 //! Only the fields the engine navigates by are declared. Everything else Lexbor
 //! offers goes through its exported functions - including the two it publishes

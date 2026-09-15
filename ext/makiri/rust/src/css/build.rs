@@ -5,10 +5,10 @@
 //! what the C's cascade of `if (x == NULL) { free(...); return NULL; }` was
 //! doing, spelled once per builder instead of once per call.
 //!
-//! The allocations match the AST owner's contract exactly: nodes through
+//! The allocations match the AST destructors exactly: nodes through
 //! `mkr_node_alloc`, owned text through `TextSlot::try_copy`, arrays through
-//! the C allocator. That is why none of this uses `falloc` or a
-//! `Vec` - the AST owner eventually walks these C-layout fields.
+//! `xpath::own`'s `NodeArray` / `StepArray`. That is why none of this uses a
+//! `Vec`: the destructors walk these C-layout fields and free them with libc.
 
 use super::Build;
 pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};

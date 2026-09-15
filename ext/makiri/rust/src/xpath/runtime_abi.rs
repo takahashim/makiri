@@ -1,7 +1,8 @@
-//! Compatibility facade for the feature-specific runtime ABI modules.
+//! The engine's runtime storage - node-sets, owned text, values and the
+//! per-evaluate caches - one module each, re-exported under one namespace.
 //!
-//! The C-facing names remain in one Rust namespace, while ownership and cache
-//! responsibilities live in separate modules.
+//! These operate on the raw layouts in `crate::xpath_abi`; the guards in
+//! `xpath::own` are the ownership-safe way to hold them.
 
 #[path = "runtime_abi/cache.rs"]
 pub mod cache;

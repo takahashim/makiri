@@ -4,7 +4,7 @@
 //! one position and operators in another (`and`, `or`, `div`, `mod`, `node()`)
 //! by lookahead.
 //!
-//! The C version reads the input only through a bounded reader (`mkr_span_t`), a
+//! The C version read the input only through a bounded reader (`mkr_span_t`), a
 //! discipline the build lints for, because a raw cursor in a byte scanner is
 //! where out-of-bounds reads come from. Here the input is a slice and the cursor
 //! an index, so every read is checked by the language and the discipline needs

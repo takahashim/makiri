@@ -1,4 +1,4 @@
-//! Borrowed views over the pointer/count arrays in the C AST.
+//! Borrowed views over the pointer/count arrays in the AST.
 //!
 //! The AST layout remains in [`super::ast`]. These helpers are kept separate
 //! because they are the unsafe view boundary, not AST construction or

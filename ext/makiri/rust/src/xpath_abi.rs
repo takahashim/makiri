@@ -1,19 +1,15 @@
-//! The C types of the XPath engine, and the C functions it calls back into.
+//! The XPath engine's shared data layouts - the AST, values, node-sets, limits
+//! and errors - and the construction entry points the front ends build with.
 //!
-//! Every layout here mirrors a declaration in ext/makiri/xpath/mkr_xpath.h or
-//! mkr_xpath_internal.h. While that header is still compiled, `mkr_xpath_rs_sizes`
-//! below hands the sizes back so the C side can check them against its own
-//! `sizeof` rather than trusting this file (ext/makiri/xpath/mkr_xpath_rs_check.c).
+//! These are Rust types that keep the field layout the C engine had. Nothing
+//! outside the crate reads them (the extension exports only `Init_makiri`), so
+//! the layout is not an ABI. It stays because every allocation behind these
+//! types goes through `falloc`, which is what lets `rake oom` fail each one and
+//! the engine raise instead of aborting; a `Box` or `Vec` AST would abort the
+//! process on OOM. Ownership on the Rust side is `xpath::own`'s guards.
 //!
-//! Standing alone there is no second declaration to disagree with: these types
-//! ARE the layout, so the reporter has no reader and is not compiled. (Lexbor's
-//! types are the opposite case - they belong to a vendored dependency, so the
-//! checks in `lexbor_abi::agree` stay in every configuration.)
-//!
-//! It sits at the crate root rather than inside `xpath` because the glue needs
-//! these types too - the XML query entry points hold an error, a value and a
-//! limits pointer - and two Rust copies of one C layout is the drift that check
-//! exists to catch. The engine reaches it as `xpath::abi`.
+//! It sits at the crate root rather than inside `xpath` because the glue and the
+//! CSS lowering use these types too. The engine reaches it as `xpath::abi`.
 
 use core::ffi::{c_char, c_int, c_void};
 
@@ -91,7 +87,7 @@ pub const OP_DIV: u32 = 11;
 pub const OP_MOD: u32 = 12;
 pub const OP_UNION: u32 = 13;
 
-/* ---- text (core/mkr_text.h) ---- */
+/* ---- text ---- */
 
 /// The borrowed views live in `crate::text`; re-exported so the engine's
 /// `super::abi::*` imports see them beside the owned slot.
@@ -162,7 +158,7 @@ impl TextSlot {
     }
 }
 
-/* ---- error / limits (mkr_xpath.h) ---- */
+/* ---- error / limits ---- */
 
 pub struct Error {
     pub status: c_int,
@@ -184,7 +180,7 @@ pub struct Limits {
     pub recursion_depth: usize,
 }
 
-/* ---- the AST (mkr_xpath_internal.h) ---- */
+/* ---- the AST ---- */
 
 #[derive(Clone, Copy)]
 pub struct NodeSet {
@@ -300,8 +296,8 @@ pub union NodeU {
     pub filter: Filter,
 }
 
-/// struct mkr_node_s - the compiled AST node. Allocated zeroed by
-/// `mkr_node_alloc` and freed by `mkr_node_free`, both on the C side.
+/// The compiled AST node. Allocated zeroed by `mkr_node_alloc` and freed by
+/// `mkr_node_free`, both in `xpath::ast_ops`.
 pub struct Node {
     pub kind: u32,
     pub is_context_independent: u8,
@@ -310,7 +306,7 @@ pub struct Node {
     pub u: NodeU,
 }
 
-/* ---- the C functions the front end calls back into ---- */
+/* ---- the construction entry points the front ends build with ---- */
 
 pub use crate::falloc::calloc::mkr_grow_reserve;
 pub use crate::falloc::calloc::mkr_strndup;
@@ -327,7 +323,7 @@ pub use crate::xpath::limits::mkr_limit_check_steps;
 pub use crate::xpath::limits::mkr_limit_recurse_enter;
 pub use crate::xpath::limits::mkr_limit_recurse_leave;
 
-/* ---- the engine's runtime structures (mkr_xpath_internal.h, core/mkr_buf.h) ---- */
+/* ---- the engine's runtime structures ---- */
 
 /// The engine's context. It used to be an opaque `_private: [u8; 0]` here and a
 /// real struct in `xpath::ctx`, reconciled only by the linker seeing one C name;
@@ -442,18 +438,14 @@ pub use crate::xpath::runtime_abi::mkr_str_cache_reindex;
 pub use crate::xpath::runtime_abi::mkr_val_clear;
 pub use crate::xpath::runtime_abi::mkr_val_set_owned_text;
 
-extern "C" {}
-
-/* The C/Ruby-facing cleanup entry points live at the explicit raw boundary. */
+/* The cleanup entry points the glue calls live at the raw boundary. */
 pub use crate::xpath::boundary::{mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear};
 
-/// `mkr_ptr_hash` (core/mkr_hash.h) - the MurmurHash3 fmix64 finalizer.
+/// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
-/// Written out because C's is `static inline`, and it belongs with the C
-/// declarations rather than with the tables that use it: the string-value
-/// cache's open-addressing index is filled by `mkr_str_cache_index_put` on the
-/// C side and probed here, so the two hashes have to agree bit for bit. That
-/// makes it an ABI fact, not a hashing choice.
+/// One definition for every pointer-keyed table: the string-value cache's index
+/// is filled by `mkr_str_cache_index_put` and probed by its readers, and the
+/// text index uses it too, so all of them must hash the same way.
 #[inline]
 pub fn ptr_hash<T>(p: *const T) -> u64 {
     let mut h = p as usize as u64;

@@ -1,10 +1,9 @@
-//! The XML engine instance's exported symbols - what
-//! ext/makiri/xpath/mkr_xpath_engine_xml.c compiles to.
+//! The XML engine instance: the two entries the driver dispatches on, as the
+//! `Xml` instantiation of the generic engine.
 //!
-//! That translation unit is one merged copy of the three engine bodies with the
-//! node-access macros bound to `mkr_xml_node_t`, and only two symbols leave it:
-//! the entries the driver dispatches on, suffixed `_xml`. Here the same two are
-//! the `Xml` instantiation of the generic engine.
+//! The `_xml` suffix is from ext/makiri/xpath/mkr_xpath_engine_xml.c, where the
+//! engine bodies were compiled once per representation and these were the only
+//! two symbols that left the translation unit.
 
 use super::abi::*;
 use super::dom_xml::Xml;
@@ -14,8 +13,8 @@ use core::ffi::{c_int, c_void};
 /// Evaluate an AST against the context. 0 on success (filling `out`), -1 with
 /// `*err` set otherwise.
 /// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
+/// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
+/// out-pointers writable; the caller holds the GVL.
 pub unsafe fn mkr_eval_ast_xml(
     ctx: *mut Context,
     ast: *const Node,
@@ -34,8 +33,8 @@ pub unsafe fn mkr_eval_ast_xml(
 /// recognised and the caller should run the full evaluator, -1 on a budget
 /// overrun with `*err` set.
 /// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
+/// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
+/// out-pointers writable; the caller holds the GVL.
 pub unsafe fn mkr_try_first_match_xml(
     ctx: *mut Context,
     ast: *const Node,

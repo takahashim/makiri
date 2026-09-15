@@ -117,7 +117,8 @@ impl Drop for OwnedStep {
     }
 }
 
-/// A growable array in the C allocator, which is what the AST destructors free.
+/// A growable array in libc's allocator (through `falloc`), which is what the AST
+/// destructors free.
 ///
 /// No `Drop` of its own: freeing an element means something different for a
 /// step and for a node, so [`StepArray`] and [`NodeArray`] each supply it.

@@ -2,9 +2,9 @@
 //! predicates, the operator semantics, and the two index fast paths.
 //!
 //! Generic over `Dom`, so one body compiles per representation - what the C
-//! achieves by `#include`-ing this file twice behind different macros.
+//! did by `#include`-ing this file twice behind different macros.
 
-/* The failure detail lives in the `*mut Error` the C caller owns, exactly as it
+/* The failure detail lives in the `*mut Error` the caller owns, exactly as it
  * does in the C, so the Rust error type carries nothing. */
 #![allow(clippy::result_unit_err)]
 

@@ -1,8 +1,6 @@
-//! Compatibility view of the shared XPath ABI types.
+//! The shared layouts from `crate::xpath_abi`, under the engine's local name.
 //!
-//! The canonical definitions live at `crate::xpath_abi` because the Ruby glue
-//! uses them too. This module keeps the engine's existing `super::abi` imports
-//! local and makes the boundary role explicit; it does not define engine
-//! models or DOM access.
+//! They live at the crate root because the glue and the CSS lowering use them
+//! too; this lets the engine keep importing `super::abi`. It defines nothing.
 
 pub use crate::xpath_abi::*;

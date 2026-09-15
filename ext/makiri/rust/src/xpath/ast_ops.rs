@@ -1,13 +1,11 @@
-//! Building, destroying and rewriting the C AST (mkr_xpath_shared.c's half of
-//! it): the one node factory, the destructors, the hoisting pass that marks
-//! context-independent subtrees, and the `//` peephole.
+//! Building, destroying and rewriting the AST: the one node factory, the
+//! destructors, the hoisting pass that marks context-independent subtrees, and
+//! the `//` peephole.
 //!
-//! Separate from `ast.rs` because these export C symbols that
-//! mkr_xpath_shared.c still defines unless this feature replaces it, while the
-//! views next door export nothing and are always available.
+//! Separate from `ast_view.rs`, whose views only borrow: everything here
+//! allocates, frees or rewrites.
 
-/* Each takes AST pointers its caller already holds; the contract is the one at
- * the declaration in mkr_xpath_internal.h. */
+/* Each takes AST pointers its caller already holds. */
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;

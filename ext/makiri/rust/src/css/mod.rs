@@ -1,4 +1,4 @@
-//! CSS selector front end (xpath/mkr_css.c): lowers a Lexbor-parsed selector
+//! CSS selector front end: lowers a Lexbor-parsed selector
 //! list into the native XPath engine's AST.
 //!
 //! No new evaluator opcodes. Every selector becomes existing PATH / step /
@@ -18,10 +18,10 @@
 //!
 //! # Ownership
 //!
-//! The builder uses the stable C layout while constructing the AST, but the
-//! completed root is wrapped in `xpath::own::Ast`. Any remaining raw-pointer
-//! cleanup in the lowering helpers goes through that same owner, so the
-//! recursive `mkr_node_free` contract is not duplicated at each call site.
+//! The lowering builds C-layout nodes through `build`, holding steps and arrays in
+//! `xpath::own`'s guards, and the finished root is an `xpath::own::Ast`. The
+//! builders still pass nodes as raw pointers; on failure they free them with
+//! `Ast::drop_raw`, so the recursive `mkr_node_free` contract lives in one place.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -140,7 +140,7 @@ pub(crate) unsafe fn compile_owned(
     acc
 }
 
-/// Legacy raw-pointer adapter for the Ruby/FFI boundary.
+/// [`compile_owned`] for a caller that holds the AST as a raw pointer.
 pub unsafe fn mkr_css_compile(
     selector: VerifiedText,
     ns: *const CssNs,

@@ -1,7 +1,8 @@
-//! C-facing XPath boundary helpers.
+//! The raw boundary the glue calls: setting and clearing the errors and results
+//! it holds.
 //!
-//! The evaluator uses the typed APIs in the sibling modules. These functions
-//! remain raw because they are called by the Ruby/C glue and own ABI values.
+//! The evaluator uses the typed APIs in the sibling modules. These stay raw
+//! because the glue holds errors and results as C-layout structs.
 
 use crate::falloc::raw::free_and_null;
 use crate::xpath_abi::{Error, XPathValue, XP_OK};
@@ -10,7 +11,7 @@ use core::ffi::{c_char, c_int, c_void};
 const MKR_XPATH_TYPE_NODESET: u32 = 0;
 const MKR_XPATH_TYPE_STRING: u32 = 1;
 
-/// Replace an error message, preserving the C ABI's ownership rules.
+/// Replace an error message, freeing the one the error held.
 ///
 /// # Safety
 /// `err` is null or a live error; `msg` is null or NUL-terminated.

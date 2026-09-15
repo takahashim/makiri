@@ -26,8 +26,8 @@ use core::ffi::c_int;
  *
  * The whole monomorphization rests on the two representations agreeing on the
  * node-type encoding, so a node's `type` integer means the same thing whichever
- * backend walks it. The C header asserts that equality against Lexbor's
- * LXB_DOM_NODE_TYPE_*; the values below are the same ones. */
+ * backend walks it. The values below are Lexbor's LXB_DOM_NODE_TYPE_*, and
+ * `dom_html` asserts that equality at compile time. */
 pub const NTYPE_ELEMENT: u32 = 1;
 pub const NTYPE_ATTRIBUTE: u32 = 2;
 pub const NTYPE_TEXT: u32 = 3;

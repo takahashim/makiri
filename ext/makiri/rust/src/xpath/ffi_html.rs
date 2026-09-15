@@ -1,9 +1,6 @@
-//! The HTML engine instance's exported symbols - what
-//! ext/makiri/xpath/mkr_xpath_engine_html.c compiles to.
-//!
-//! The same two entries as the XML instance, suffixed `_html`, over the `Html`
-//! binding of the same generic engine. This is the instance every `Node#xpath`
-//! on an HTML document goes through.
+//! The HTML engine instance: the same two entries as the XML instance, suffixed
+//! `_html`, over the `Html` binding of the same generic engine. This is the
+//! instance every `Node#xpath` on an HTML document goes through.
 
 use super::abi::*;
 use super::dom_html::Html;
@@ -14,8 +11,8 @@ use core::ffi::{c_int, c_void};
 /// `*err` set otherwise.
 ///
 /// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
+/// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
+/// out-pointers writable; the caller holds the GVL.
 pub unsafe fn mkr_eval_ast_html(
     ctx: *mut Context,
     ast: *const Node,
@@ -35,8 +32,8 @@ pub unsafe fn mkr_eval_ast_html(
 /// overrun with `*err` set.
 ///
 /// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
+/// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
+/// out-pointers writable; the caller holds the GVL.
 pub unsafe fn mkr_try_first_match_html(
     ctx: *mut Context,
     ast: *const Node,

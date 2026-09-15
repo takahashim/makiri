@@ -2,14 +2,10 @@
 //! variable registries, the accessors every layer reads it through, and the two
 //! evaluate entries that drive an instance.
 //!
-//! The context is opaque to its clients - the glue only ever holds a
-//! `mkr_xpath_context_t *` and calls the accessors - so this file owns the
-//! struct outright. What stays C is the error helpers (mkr_xpath_err.c, for a
-//! variadic the glue still calls) and the shared primitives the registries
-//! build on.
+//! The glue holds the context only as a pointer and goes through the accessors,
+//! so this file owns the struct outright.
 
-/* Every function here takes pointers its C caller already holds, and the
- * contract is the one at the declaration in mkr_xpath.h. */
+/* Every function here takes pointers its caller already holds. */
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
