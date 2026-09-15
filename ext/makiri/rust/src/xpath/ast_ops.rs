@@ -68,6 +68,15 @@ unsafe fn steps_mut<'a>(steps: *mut Step, n: usize) -> &'a mut [Step] {
     }
 }
 
+/// A node-pointer array as a slice; empty when there are none.
+unsafe fn node_list<'a>(p: *mut *mut Node, n: usize) -> &'a [*mut Node] {
+    if n == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(p, n)
+    }
+}
+
 /* ---------- hoisting ---------- */
 
 /// The pure XPath 1.0 built-ins safe to hoist when all their arguments are
@@ -119,18 +128,13 @@ pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
     if n.is_null() {
         return;
     }
-    let ci = match (*n).kind {
-        NK_LITERAL_STR | NK_LITERAL_NUM => true,
+    let ci = match Node::view(n) {
+        NodeRef::LiteralStr(_) | NodeRef::LiteralNum(_) => true,
         /* Conservative: a variable is not hoisted even though §1 fixes it per
          * evaluation. */
-        NK_VARREF => false,
-        NK_FNCALL => {
-            let call = &raw const (*n).u.fncall;
-            let args = if (*call).nargs == 0 {
-                &[][..]
-            } else {
-                core::slice::from_raw_parts((*call).args, (*call).nargs)
-            };
+        NodeRef::VarRef(_) => false,
+        NodeRef::FnCall(call) => {
+            let args = node_list(call.args, call.nargs);
             /* Recurse first, so subtrees get their own marks even when this call
              * is not itself hoistable. */
             for &a in args {
@@ -138,46 +142,43 @@ pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
             }
             /* A prefix means handler-routed or a namespaced builtin, neither
              * of which is hoistable. */
-            (*call).prefix.is_absent()
-                && is_pure_builtin(text_bytes((*call).name), args.len())
+            call.prefix.is_absent()
+                && is_pure_builtin(text_bytes(call.name), args.len())
                 && args.iter().all(|&a| is_ci(a))
         }
-        NK_UNARY => {
-            mkr_mark_context_independent((*n).u.unary.expr);
-            is_ci((*n).u.unary.expr)
+        NodeRef::Unary(u) => {
+            mkr_mark_context_independent(u.expr);
+            is_ci(u.expr)
         }
-        NK_BINOP => {
-            mkr_mark_context_independent((*n).u.binop.lhs);
-            mkr_mark_context_independent((*n).u.binop.rhs);
-            is_ci((*n).u.binop.lhs) && is_ci((*n).u.binop.rhs)
+        NodeRef::BinOp(b) => {
+            mkr_mark_context_independent(b.lhs);
+            mkr_mark_context_independent(b.rhs);
+            is_ci(b.lhs) && is_ci(b.rhs)
         }
-        NK_PATH => {
+        NodeRef::Path(p) => {
             /* An absolute path is context-independent: its seed is the document
              * root whatever the outer context. A relative one uses the outer
              * context node and is not hoistable. Predicates inside a path are
              * evaluated against the path's own context, so their position() and
              * last() do not leak - recurse so pure sub-expressions still get
              * marked. */
-            for s in path_steps((*n).u.path.steps, (*n).u.path.nsteps) {
+            for s in path_steps(p.steps, p.nsteps) {
                 mark_step_predicates(s);
             }
-            (*n).u.path.absolute != 0
+            p.absolute != 0
         }
-        NK_FILTER => {
+        NodeRef::Filter(f) => {
             /* Conservative: filter expressions are not hoisted. */
-            let f = &raw const (*n).u.filter;
-            mkr_mark_context_independent((*f).expr);
-            if (*f).npreds > 0 {
-                for &p in core::slice::from_raw_parts((*f).preds, (*f).npreds) {
-                    mkr_mark_context_independent(p);
-                }
+            mkr_mark_context_independent(f.expr);
+            for &p in node_list(f.preds, f.npreds) {
+                mkr_mark_context_independent(p);
             }
-            for s in path_steps((*f).path_steps, (*f).npath) {
+            for s in path_steps(f.path_steps, f.npath) {
                 mark_step_predicates(s);
             }
             false
         }
-        _ => false,
+        NodeRef::Unknown => false,
     };
     (*n).is_context_independent = u8::from(ci);
 }
@@ -242,37 +243,30 @@ pub unsafe fn mkr_apply_peephole(n: *mut Node) {
     if n.is_null() {
         return;
     }
-    match (*n).kind {
-        NK_FNCALL => {
-            let call = &raw const (*n).u.fncall;
-            if (*call).nargs > 0 {
-                for &a in core::slice::from_raw_parts((*call).args, (*call).nargs) {
-                    mkr_apply_peephole(a);
-                }
+    match Node::view_mut(n) {
+        NodeMut::FnCall(call) => {
+            for &a in node_list(call.args, call.nargs) {
+                mkr_apply_peephole(a);
             }
         }
-        NK_UNARY => mkr_apply_peephole((*n).u.unary.expr),
-        NK_BINOP => {
-            mkr_apply_peephole((*n).u.binop.lhs);
-            mkr_apply_peephole((*n).u.binop.rhs);
+        NodeMut::Unary(u) => mkr_apply_peephole(u.expr),
+        NodeMut::BinOp(b) => {
+            mkr_apply_peephole(b.lhs);
+            mkr_apply_peephole(b.rhs);
         }
-        NK_PATH => {
-            let p = &raw mut (*n).u.path;
-            fuse_descendant_or_self((*p).steps, &raw mut (*p).nsteps);
-            for s in path_steps((*p).steps, (*p).nsteps) {
+        NodeMut::Path(p) => {
+            fuse_descendant_or_self(p.steps, &mut p.nsteps);
+            for s in path_steps(p.steps, p.nsteps) {
                 peephole_step_predicates(s);
             }
         }
-        NK_FILTER => {
-            let f = &raw mut (*n).u.filter;
-            mkr_apply_peephole((*f).expr);
-            if (*f).npreds > 0 {
-                for &p in core::slice::from_raw_parts((*f).preds, (*f).npreds) {
-                    mkr_apply_peephole(p);
-                }
+        NodeMut::Filter(f) => {
+            mkr_apply_peephole(f.expr);
+            for &p in node_list(f.preds, f.npreds) {
+                mkr_apply_peephole(p);
             }
-            fuse_descendant_or_self((*f).path_steps, &raw mut (*f).npath);
-            for s in path_steps((*f).path_steps, (*f).npath) {
+            fuse_descendant_or_self(f.path_steps, &mut f.npath);
+            for s in path_steps(f.path_steps, f.npath) {
                 peephole_step_predicates(s);
             }
         }
@@ -296,34 +290,28 @@ pub unsafe fn mkr_node_clear_memos(n: *mut Node) {
         mkr_val_clear(&raw mut (*n).memo_value);
         (*n).memoized = 0;
     }
-    match (*n).kind {
-        NK_FNCALL => {
-            let call = &raw const (*n).u.fncall;
-            if (*call).nargs > 0 {
-                for &a in core::slice::from_raw_parts((*call).args, (*call).nargs) {
-                    mkr_node_clear_memos(a);
-                }
+    match Node::view(n) {
+        NodeRef::FnCall(call) => {
+            for &a in node_list(call.args, call.nargs) {
+                mkr_node_clear_memos(a);
             }
         }
-        NK_UNARY => mkr_node_clear_memos((*n).u.unary.expr),
-        NK_BINOP => {
-            mkr_node_clear_memos((*n).u.binop.lhs);
-            mkr_node_clear_memos((*n).u.binop.rhs);
+        NodeRef::Unary(u) => mkr_node_clear_memos(u.expr),
+        NodeRef::BinOp(b) => {
+            mkr_node_clear_memos(b.lhs);
+            mkr_node_clear_memos(b.rhs);
         }
-        NK_PATH => {
-            for s in path_steps((*n).u.path.steps, (*n).u.path.nsteps) {
+        NodeRef::Path(p) => {
+            for s in path_steps(p.steps, p.nsteps) {
                 clear_memos_step(s);
             }
         }
-        NK_FILTER => {
-            let f = &raw const (*n).u.filter;
-            mkr_node_clear_memos((*f).expr);
-            if (*f).npreds > 0 {
-                for &p in core::slice::from_raw_parts((*f).preds, (*f).npreds) {
-                    mkr_node_clear_memos(p);
-                }
+        NodeRef::Filter(f) => {
+            mkr_node_clear_memos(f.expr);
+            for &p in node_list(f.preds, f.npreds) {
+                mkr_node_clear_memos(p);
             }
-            for s in path_steps((*f).path_steps, (*f).npath) {
+            for s in path_steps(f.path_steps, f.npath) {
                 clear_memos_step(s);
             }
         }
@@ -340,59 +328,51 @@ pub unsafe fn mkr_node_free(n: *mut Node) {
         mkr_val_clear(&raw mut (*n).memo_value);
         (*n).memoized = 0;
     }
-    match (*n).kind {
-        NK_LITERAL_STR => (*n).u.literal.clear(),
-        NK_LITERAL_NUM => {}
-        NK_VARREF => {
-            (*n).u.varref.prefix.clear();
-            (*n).u.varref.name.clear();
+    match Node::view_mut(n) {
+        NodeMut::LiteralStr(t) => t.clear(),
+        NodeMut::LiteralNum(_) | NodeMut::Unknown => {}
+        NodeMut::VarRef(v) => {
+            v.prefix.clear();
+            v.name.clear();
         }
-        NK_FNCALL => {
-            let call = &raw mut (*n).u.fncall;
-            (*call).prefix.clear();
-            (*call).name.clear();
-            if (*call).nargs > 0 {
-                for &a in core::slice::from_raw_parts((*call).args, (*call).nargs) {
-                    mkr_node_free(a);
-                }
+        NodeMut::FnCall(call) => {
+            call.prefix.clear();
+            call.name.clear();
+            for &a in node_list(call.args, call.nargs) {
+                mkr_node_free(a);
             }
-            if !(*call).args.is_null() {
-                free_c((*call).args as *mut c_void);
+            if !call.args.is_null() {
+                free_c(call.args as *mut c_void);
             }
         }
-        NK_UNARY => mkr_node_free((*n).u.unary.expr),
-        NK_BINOP => {
-            mkr_node_free((*n).u.binop.lhs);
-            mkr_node_free((*n).u.binop.rhs);
+        NodeMut::Unary(u) => mkr_node_free(u.expr),
+        NodeMut::BinOp(b) => {
+            mkr_node_free(b.lhs);
+            mkr_node_free(b.rhs);
         }
-        NK_PATH => {
-            let p = &raw mut (*n).u.path;
-            for s in steps_mut((*p).steps, (*p).nsteps) {
+        NodeMut::Path(p) => {
+            for s in steps_mut(p.steps, p.nsteps) {
                 mkr_step_clear(s);
             }
-            if !(*p).steps.is_null() {
-                free_c((*p).steps as *mut c_void);
+            if !p.steps.is_null() {
+                free_c(p.steps as *mut c_void);
             }
         }
-        NK_FILTER => {
-            let f = &raw mut (*n).u.filter;
-            mkr_node_free((*f).expr);
-            if (*f).npreds > 0 {
-                for &p in core::slice::from_raw_parts((*f).preds, (*f).npreds) {
-                    mkr_node_free(p);
-                }
+        NodeMut::Filter(f) => {
+            mkr_node_free(f.expr);
+            for &p in node_list(f.preds, f.npreds) {
+                mkr_node_free(p);
             }
-            if !(*f).preds.is_null() {
-                free_c((*f).preds as *mut c_void);
+            if !f.preds.is_null() {
+                free_c(f.preds as *mut c_void);
             }
-            for s in steps_mut((*f).path_steps, (*f).npath) {
+            for s in steps_mut(f.path_steps, f.npath) {
                 mkr_step_clear(s);
             }
-            if !(*f).path_steps.is_null() {
-                free_c((*f).path_steps as *mut c_void);
+            if !f.path_steps.is_null() {
+                free_c(f.path_steps as *mut c_void);
             }
         }
-        _ => {}
     }
     free_c(n as *mut c_void);
 }

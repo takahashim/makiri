@@ -44,13 +44,13 @@ impl Ast {
         Self(ptr)
     }
 
-    /// The node, for filling in its fields while it is being built.
+    /// The node's payload by kind, for filling it in while it is being built.
     ///
     /// # Safety
     /// Writes must keep the node in a state `mkr_node_free` can take apart: an
     /// owned child pointer is null or owned by this node alone.
-    pub(crate) unsafe fn node_mut(&mut self) -> &mut Node {
-        &mut *self.0.as_ptr()
+    pub(crate) unsafe fn payload_mut(&mut self) -> NodeMut<'_> {
+        Node::view_mut(self.0.as_ptr())
     }
 
     /// Transfer ownership to the legacy raw-pointer ABI.
@@ -204,17 +204,23 @@ impl StepArray {
     /// # Safety
     /// `path` must be a live `NK_PATH` node with no steps yet.
     pub(crate) unsafe fn install_into_path(self, path: *mut Node) {
+        let NodeMut::Path(p) = Node::view_mut(path) else {
+            unreachable!("install_into_path on a non-PATH node")
+        };
         let (steps, nsteps) = self.into_raw_parts();
-        (*path).u.path.steps = steps;
-        (*path).u.path.nsteps = nsteps;
+        p.steps = steps;
+        p.nsteps = nsteps;
     }
 
     /// # Safety
     /// `filter` must be a live `NK_FILTER` node with no trailing path yet.
     pub(crate) unsafe fn install_as_filter_path(self, filter: *mut Node) {
+        let NodeMut::Filter(f) = Node::view_mut(filter) else {
+            unreachable!("install_as_filter_path on a non-FILTER node")
+        };
         let (steps, nsteps) = self.into_raw_parts();
-        (*filter).u.filter.path_steps = steps;
-        (*filter).u.filter.npath = nsteps;
+        f.path_steps = steps;
+        f.npath = nsteps;
     }
 
     fn into_raw_parts(self) -> (*mut Step, usize) {
@@ -268,17 +274,23 @@ impl NodeArray {
     /// # Safety
     /// `call` must be a live `NK_FNCALL` node with no arguments yet.
     pub(crate) unsafe fn install_as_args(self, call: *mut Node) {
+        let NodeMut::FnCall(c) = Node::view_mut(call) else {
+            unreachable!("install_as_args on a non-FNCALL node")
+        };
         let (args, nargs) = self.into_raw_parts();
-        (*call).u.fncall.args = args;
-        (*call).u.fncall.nargs = nargs;
+        c.args = args;
+        c.nargs = nargs;
     }
 
     /// # Safety
     /// `filter` must be a live `NK_FILTER` node with no predicates yet.
     pub(crate) unsafe fn install_as_filter_preds(self, filter: *mut Node) {
+        let NodeMut::Filter(f) = Node::view_mut(filter) else {
+            unreachable!("install_as_filter_preds on a non-FILTER node")
+        };
         let (preds, npreds) = self.into_raw_parts();
-        (*filter).u.filter.preds = preds;
-        (*filter).u.filter.npreds = npreds;
+        f.preds = preds;
+        f.npreds = npreds;
     }
 
     fn into_raw_parts(self) -> (*mut *mut Node, usize) {

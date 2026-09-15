@@ -110,10 +110,12 @@ unsafe fn nth_shape<D: Dom>(
      * position() == N. `[position()=N]` and `[last()]` are binops or calls and
      * fall back. */
     let pred = step_preds(s1)[0];
-    if pred.is_null() || (*pred).kind != NK_LITERAL_NUM {
+    if pred.is_null() {
         return None;
     }
-    let dn = (*pred).u.literal_num;
+    let NodeRef::LiteralNum(dn) = Node::view(pred) else {
+        return None;
+    };
     /* NaN is spelled out rather than left to a negated comparison: `[NaN]`
      * must fall back, and `!(dn >= 1.0)` says so only by accident. */
     if dn.is_nan() || dn < 1.0 || dn != dn.trunc() || dn > usize::MAX as f64 {

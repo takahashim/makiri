@@ -340,7 +340,10 @@ impl<'a> Parser<'a> {
         };
         // SAFETY: a fresh PATH node with no steps yet.
         unsafe {
-            n.node_mut().u.path.absolute = c_int::from(absolute);
+            let NodeMut::Path(p) = n.payload_mut() else {
+                unreachable!("a fresh PATH node")
+            };
+            p.absolute = c_int::from(absolute);
             steps.install_into_path(n.as_raw());
         }
         Ok(n)
@@ -360,7 +363,9 @@ impl<'a> Parser<'a> {
         let mut n = self.new_node(NK_FNCALL)?;
         {
             // SAFETY: a fresh FNCALL node; only its name slots are written.
-            let f = unsafe { &mut n.node_mut().u.fncall };
+            let NodeMut::FnCall(f) = (unsafe { n.payload_mut() }) else {
+                unreachable!("a fresh FNCALL node")
+            };
             if name_tok.kind == Tok::QName {
                 /* Each copy lands in the node as it is made, so a failure on the
                  * second leaves the first for the node's guard to free. */
@@ -412,7 +417,9 @@ impl<'a> Parser<'a> {
                 let t = self.tok();
                 {
                     // SAFETY: a fresh VARREF node; only its name slots are written.
-                    let v = unsafe { &mut n.node_mut().u.varref };
+                    let NodeMut::VarRef(v) = (unsafe { n.payload_mut() }) else {
+                        unreachable!("a fresh VARREF node")
+                    };
                     if t.kind == Tok::QName {
                         let (p, l) = split_qname(self.text(&t));
                         v.prefix = self.fill_owned(p)?;
@@ -437,14 +444,21 @@ impl<'a> Parser<'a> {
                 let s = self.text(&t);
                 let text = self.fill_owned(s)?;
                 // SAFETY: a fresh LITERAL node; only its text slot is written.
-                unsafe { n.node_mut().u.literal = text };
+                let NodeMut::LiteralStr(slot) = (unsafe { n.payload_mut() }) else {
+                    unreachable!("a fresh LITERAL node")
+                };
+                *slot = text;
                 self.advance()?;
                 Ok(n)
             }
             Tok::Number => {
                 let mut n = self.new_node(NK_LITERAL_NUM)?;
                 // SAFETY: a fresh number LITERAL node.
-                unsafe { n.node_mut().u.literal_num = self.tok().num };
+                let num = self.tok().num;
+                let NodeMut::LiteralNum(slot) = (unsafe { n.payload_mut() }) else {
+                    unreachable!("a fresh number LITERAL node")
+                };
+                *slot = num;
                 self.advance()?;
                 Ok(n)
             }
@@ -475,7 +489,10 @@ impl<'a> Parser<'a> {
         }
         let mut f = self.new_node(NK_FILTER)?;
         // SAFETY: a fresh FILTER node takes sole ownership of `primary`.
-        unsafe { f.node_mut().u.filter.expr = primary.into_raw() };
+        let NodeMut::Filter(filter) = (unsafe { f.payload_mut() }) else {
+            unreachable!("a fresh FILTER node")
+        };
+        filter.expr = primary.into_raw();
         let mut preds = NodeArray::new();
         self.parse_predicates(&mut preds)?;
         /* Optional trailing location path (`$x/foo`, `(expr)//bar`). The shared
@@ -524,7 +541,9 @@ impl<'a> Parser<'a> {
         let mut n = self.new_node(NK_BINOP)?;
         // SAFETY: a fresh BINOP node takes sole ownership of both operands.
         unsafe {
-            let b = &mut n.node_mut().u.binop;
+            let NodeMut::BinOp(b) = n.payload_mut() else {
+                unreachable!("a fresh BINOP node")
+            };
             b.op = op;
             b.lhs = lhs.into_raw();
             b.rhs = rhs.into_raw();
@@ -554,7 +573,10 @@ impl<'a> Parser<'a> {
         }
         let mut u = self.new_node(NK_UNARY)?;
         // SAFETY: a fresh UNARY node takes sole ownership of `e`.
-        unsafe { u.node_mut().u.unary.expr = e.into_raw() };
+        let NodeMut::Unary(un) = (unsafe { u.payload_mut() }) else {
+            unreachable!("a fresh UNARY node")
+        };
+        un.expr = e.into_raw();
         Ok(u)
     }
 

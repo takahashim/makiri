@@ -14,7 +14,7 @@
 use super::Build;
 pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::xpath_abi::{
-    node_alloc, Reported, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
+    node_alloc, NodeMut, Reported, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
     NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
 
@@ -45,13 +45,20 @@ pub(crate) unsafe fn copy_text(b: &Build, s: &[u8]) -> Result<TextSlot, Reported
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
     let mut n = node(b, NK_LITERAL_STR)?;
-    n.node_mut().u.literal = copy_text(b, s)?;
+    let text = copy_text(b, s)?;
+    let NodeMut::LiteralStr(slot) = n.payload_mut() else {
+        unreachable!("a fresh LITERAL node")
+    };
+    *slot = text;
     Ok(n)
 }
 
 pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
     let mut n = node(b, NK_LITERAL_NUM)?;
-    n.node_mut().u.literal_num = v;
+    let NodeMut::LiteralNum(slot) = n.payload_mut() else {
+        unreachable!("a fresh number LITERAL node")
+    };
+    *slot = v;
     Ok(n)
 }
 
@@ -59,7 +66,9 @@ pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
 pub(crate) unsafe fn binop(b: &Build, op: u32, lhs: Built, rhs: Built) -> Built {
     let (lhs, rhs) = (lhs?, rhs?);
     let mut n = node(b, NK_BINOP)?;
-    let bin = &mut n.node_mut().u.binop;
+    let NodeMut::BinOp(bin) = n.payload_mut() else {
+        unreachable!("a fresh BINOP node")
+    };
     bin.op = op;
     bin.lhs = lhs.into_raw();
     bin.rhs = rhs.into_raw();
@@ -76,7 +85,11 @@ pub(crate) unsafe fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; 
         }
     }
     let mut n = node(b, NK_FNCALL)?;
-    n.node_mut().u.fncall.name = copy_text(b, name)?;
+    let text = copy_text(b, name)?;
+    let NodeMut::FnCall(f) = n.payload_mut() else {
+        unreachable!("a fresh FNCALL node")
+    };
+    f.name = text;
     argv.install_as_args(n.as_raw());
     Ok(n)
 }
@@ -93,8 +106,8 @@ pub(crate) unsafe fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Buil
 
 /// A relative PATH node over an already-built step array.
 pub(crate) unsafe fn path(b: &Build, steps: StepArray) -> Built {
-    let mut n = node(b, NK_PATH)?;
-    n.node_mut().u.path.absolute = 0;
+    let n = node(b, NK_PATH)?;
+    /* Zeroed at allocation, so the path is already relative. */
     steps.install_into_path(n.as_raw());
     Ok(n)
 }
@@ -128,7 +141,7 @@ unsafe fn named_step_path_inner(
     local: Option<&[u8]>,
     nt_kind: u32,
 ) -> Built {
-    let mut n = node(b, NK_PATH)?;
+    let n = node(b, NK_PATH)?;
     let mut step = OwnedStep::new(axis, nt_kind);
 
     if nt_kind == NT_NAME {
@@ -144,7 +157,7 @@ unsafe fn named_step_path_inner(
     if steps.try_push(step).is_err() {
         return Err(b.oom());
     }
-    n.node_mut().u.path.absolute = 0;
+    /* Zeroed at allocation, so the path is already relative. */
     steps.install_into_path(n.as_raw());
     Ok(n)
 }

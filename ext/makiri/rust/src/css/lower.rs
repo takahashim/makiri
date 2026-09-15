@@ -483,7 +483,7 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built 
 /// the HTML one.
 unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
     let pred = pred?;
-    let mut n = build::node(b, NK_PATH)?;
+    let n = build::node(b, NK_PATH)?;
     let mut preds = NodeArray::new();
     if preds.try_push(pred).is_err() {
         return Err(b.oom());
@@ -494,7 +494,7 @@ unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
     if steps.try_push(step).is_err() {
         return Err(b.oom());
     }
-    n.node_mut().u.path.absolute = 0;
+    /* Zeroed at allocation, so the path is already relative. */
     steps.install_into_path(n.as_raw());
     Ok(n)
 }

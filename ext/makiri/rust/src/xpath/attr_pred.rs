@@ -26,10 +26,16 @@ pub struct AttrPred<'a> {
 /// `n` must be NULL or a live AST node, and the returned name borrows that
 /// node's owned text.
 pub unsafe fn match_attr_step<'a>(n: *const Node) -> Option<&'a [u8]> {
-    if n.is_null() || (*n).kind != NK_PATH || (*n).u.path.absolute != 0 || (*n).u.path.nsteps != 1 {
+    if n.is_null() {
         return None;
     }
-    let s = &*(*n).u.path.steps;
+    let NodeRef::Path(p) = Node::view(n) else {
+        return None;
+    };
+    if p.absolute != 0 || p.nsteps != 1 {
+        return None;
+    }
+    let s = &*p.steps;
     if s.axis != AXIS_ATTRIBUTE
         || s.npredicates != 0
         || s.test.kind != NT_NAME
@@ -49,22 +55,38 @@ pub unsafe fn match_attr_pred<'a>(p: *const Node) -> Option<AttrPred<'a>> {
     if let Some(name) = match_attr_step(p) {
         return Some(AttrPred { name, value: None });
     }
-    if p.is_null() || (*p).kind != NK_BINOP || (*p).u.binop.op != OP_EQ {
+    if p.is_null() {
         return None;
     }
-    let (lhs, rhs) = ((*p).u.binop.lhs, (*p).u.binop.rhs);
-    let (lit, attr) = if !lhs.is_null() && (*lhs).kind == NK_LITERAL_STR {
-        (lhs, rhs)
-    } else if !rhs.is_null() && (*rhs).kind == NK_LITERAL_STR {
-        (rhs, lhs)
-    } else {
+    let NodeRef::BinOp(b) = Node::view(p) else {
         return None;
+    };
+    if b.op != OP_EQ {
+        return None;
+    }
+    let (lit, attr) = match string_literal(b.lhs) {
+        Some(t) => (t, b.rhs),
+        None => (string_literal(b.rhs)?, b.lhs),
     };
     let name = match_attr_step(attr)?;
     Some(AttrPred {
         name,
-        value: Some(owned_bytes((*lit).u.literal)),
+        value: Some(owned_bytes(lit)),
     })
+}
+
+/// The text of a string-literal node, or None for anything else.
+///
+/// # Safety
+/// `n` must be NULL or a live AST node.
+unsafe fn string_literal(n: *const Node) -> Option<TextSlot> {
+    if n.is_null() {
+        return None;
+    }
+    match Node::view(n) {
+        NodeRef::LiteralStr(t) => Some(t),
+        _ => None,
+    }
 }
 
 /// The attribute whose QUALIFIED name is exactly `name`, case-sensitively.

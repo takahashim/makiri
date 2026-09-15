@@ -404,12 +404,90 @@ pub union NodeU {
 
 /// The compiled AST node. Allocated zeroed by `node_alloc` and freed by
 /// `mkr_node_free`, both in `xpath::ast_ops`.
+///
+/// The payload union is private and read by kind through [`Node::view`] and
+/// [`Node::view_mut`], so no caller picks an arm the kind does not name. The node
+/// is calloc'd, so whichever arm is read, its bytes are initialised; `kind` is
+/// set once, by `node_alloc`.
 pub struct Node {
     pub kind: u32,
     pub is_context_independent: u8,
     pub memoized: u8,
     pub memo_value: Val,
-    pub u: NodeU,
+    u: NodeU,
+}
+
+/// A node's payload by kind.
+#[derive(Clone, Copy)]
+pub enum NodeRef<'a> {
+    LiteralStr(TextSlot),
+    LiteralNum(f64),
+    VarRef(&'a VarRef),
+    FnCall(&'a FnCall),
+    Unary(&'a Unary),
+    BinOp(&'a BinOp),
+    Path(&'a Path),
+    Filter(&'a Filter),
+    /// A kind no builder makes; the walkers treat it as a leaf.
+    Unknown,
+}
+
+/// A node's payload by kind, writable: for the builders, the peephole and the
+/// destructor.
+pub enum NodeMut<'a> {
+    LiteralStr(&'a mut TextSlot),
+    LiteralNum(&'a mut f64),
+    VarRef(&'a mut VarRef),
+    FnCall(&'a mut FnCall),
+    Unary(&'a mut Unary),
+    BinOp(&'a mut BinOp),
+    Path(&'a mut Path),
+    Filter(&'a mut Filter),
+    Unknown,
+}
+
+impl Node {
+    /// `n`'s payload by kind.
+    ///
+    /// Takes the node by pointer and borrows only the payload - never the memo
+    /// slot beside it, which a nested evaluate (a handler re-entering) may
+    /// rewrite while a caller still holds the payload.
+    ///
+    /// # Safety
+    /// `n` must be a live node for `'a`.
+    pub unsafe fn view<'a>(n: *const Node) -> NodeRef<'a> {
+        match (*n).kind {
+            NK_LITERAL_STR => NodeRef::LiteralStr((*n).u.literal),
+            NK_LITERAL_NUM => NodeRef::LiteralNum((*n).u.literal_num),
+            NK_VARREF => NodeRef::VarRef(&(*n).u.varref),
+            NK_FNCALL => NodeRef::FnCall(&(*n).u.fncall),
+            NK_UNARY => NodeRef::Unary(&(*n).u.unary),
+            NK_BINOP => NodeRef::BinOp(&(*n).u.binop),
+            NK_PATH => NodeRef::Path(&(*n).u.path),
+            NK_FILTER => NodeRef::Filter(&(*n).u.filter),
+            _ => NodeRef::Unknown,
+        }
+    }
+
+    /// [`Node::view`], writable.
+    ///
+    /// # Safety
+    /// `n` must be a live node for `'a` whose payload nothing else uses
+    /// meanwhile, and writes must leave it in a state `mkr_node_free` can take
+    /// apart: an owned child pointer is null or owned by this node alone.
+    pub unsafe fn view_mut<'a>(n: *mut Node) -> NodeMut<'a> {
+        match (*n).kind {
+            NK_LITERAL_STR => NodeMut::LiteralStr(&mut (*n).u.literal),
+            NK_LITERAL_NUM => NodeMut::LiteralNum(&mut (*n).u.literal_num),
+            NK_VARREF => NodeMut::VarRef(&mut (*n).u.varref),
+            NK_FNCALL => NodeMut::FnCall(&mut (*n).u.fncall),
+            NK_UNARY => NodeMut::Unary(&mut (*n).u.unary),
+            NK_BINOP => NodeMut::BinOp(&mut (*n).u.binop),
+            NK_PATH => NodeMut::Path(&mut (*n).u.path),
+            NK_FILTER => NodeMut::Filter(&mut (*n).u.filter),
+            _ => NodeMut::Unknown,
+        }
+    }
 }
 
 /* ---- the construction entry points the front ends build with ---- */
