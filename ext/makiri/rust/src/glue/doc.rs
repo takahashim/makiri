@@ -33,8 +33,7 @@ use crate::lexbor_abi as lxb;
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
     ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbDoc, LxbNode,
-    CLASS_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT, LXB_DOM_NODE_TYPE_ELEMENT,
-    MOD_HTML_NODE_METHODS,
+    CLASS_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS,
 };
 use super::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
@@ -327,18 +326,13 @@ fn doc_title(ruby: &Ruby, self_: Value) -> RString {
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
 /// child of the document node (typically first), so a short scan finds it.
-fn doc_internal_subset(ruby: &Ruby, self_: Value) -> Value {
-    unsafe {
-        let doc = html_doc_known(self_.as_raw()) as *mut LxbNode;
-        let mut c = (*doc).first_child;
-        while !c.is_null() {
-            if (*c).type_ == NODE_TYPE_DOCUMENT_TYPE {
-                return Value::from_raw(wrap_html_node(c, self_.as_raw()));
-            }
-            c = (*c).next;
-        }
-        ruby.qnil().as_value()
-    }
+fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
+    let doc = crate::glue::html_node::arg_node(&self_)?;
+    let doctype = doc
+        .children()
+        .find(|c| c.node_type() == NODE_TYPE_DOCUMENT_TYPE);
+    // SAFETY: the doctype is a child of this Document, its own keepalive.
+    Ok(unsafe { crate::glue::html_node::wrap_node(doctype, self_) })
 }
 
 /// The quirks mode as an Integer matching Lexbor (and Gumbo/Nokogiri):
@@ -412,18 +406,19 @@ fn fragment_in(
 /// element's context. Nokogiri-compatible, and the way to reach a foreign
 /// (SVG/MathML) fragment context.
 fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error> {
+    let Some(context) = crate::glue::html_node::arg_node(&self_)?.element() else {
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            "Node#parse requires an element context",
+        ));
+    };
+    /* Only the context's tag and namespace ids are needed, read before the
+     * fragment parse runs. */
+    let (tag, ns) = (context.node().tag_id(), context.node().ns_id());
     unsafe {
-        let node = html_node_unwrap(self_.as_raw())?;
-        if (*node).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                "Node#parse requires an element context",
-            ));
-        }
         let document = Value::from_raw(keepalive_document(self_.as_raw())?);
         let doc = html_doc_unwrap(document.as_raw())?;
-        let frag =
-            build_fragment_ctx(ruby, document, doc, rb_html, (*node).local_name, (*node).ns)?;
+        let frag = build_fragment_ctx(ruby, document, doc, rb_html, tag, ns)?;
         frag.funcall("children", ())
     }
 }
@@ -483,7 +478,10 @@ pub unsafe extern "C" fn node_clone_node(argc: c_int, argv: *const VALUE, self_:
         Ok(node) => node,
         Err(e) => crate::bridge::ruby::raise(e),
     };
-    let doc = (*node).owner_document;
+    let Some(handle) = crate::dom_adapter::html::HtmlNode::from_raw(node) else {
+        crate::bridge::ruby::raise(Error::new(error_class(), "uninitialized HTML node"));
+    };
+    let doc = handle.owner_document();
 
     let Some(clone) = import_with_fixup(doc, node, deep) else {
         super::abi::rb_raise(super::abi::EXC_ERROR, c"failed to clone node".as_ptr());

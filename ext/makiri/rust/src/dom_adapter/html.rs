@@ -400,6 +400,13 @@ impl<'doc> HtmlNode<'doc> {
         (!uri.is_empty()).then_some(uri)
     }
 
+    /// The document the node belongs to, as Lexbor's handle.
+    #[inline]
+    pub fn owner_document(self) -> *mut LxbDoc {
+        // SAFETY: as `node_type`.
+        unsafe { (*self.as_raw()).owner_document }
+    }
+
     /// Whether both nodes belong to the same document.
     pub fn same_document(self, other: HtmlNode<'_>) -> bool {
         // SAFETY: both are live nodes.
