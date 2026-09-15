@@ -18,10 +18,10 @@
 //!
 //! # Ownership
 //!
-//! The lowering builds C-layout nodes through `build`, holding steps and arrays in
-//! `xpath::own`'s guards, and the finished root is an `xpath::own::Ast`. The
-//! builders still pass nodes as raw pointers; on failure they free them with
-//! `Ast::drop_raw`, so the recursive `mkr_node_free` contract lives in one place.
+//! The lowering builds C-layout nodes through `build`. Every node under
+//! construction is an `xpath::own::Ast` (as `build::Built`), and steps and arrays
+//! are `xpath::own`'s guards, so a failure anywhere drops - frees - what was built
+//! and the recursive `mkr_node_free` contract lives in one place.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -121,19 +121,10 @@ pub(crate) unsafe fn compile_owned(
     let mut g = parsed.first;
     while !g.is_null() {
         /* Top level: the first compound is a descendant of the context node. */
-        let path = lower::complex(&b, (*g).first, false);
-        if path.is_null() {
-            drop(acc);
-            return None;
-        }
-        let path = Ast::from_raw(path)?;
+        let path = lower::complex(&b, (*g).first, false)?;
         acc = Some(match acc {
             None => path,
-            Some(lhs) => {
-                // `binop` consumes both raw operands, including on failure.
-                let raw = build::binop(&b, OP_UNION, lhs.into_raw(), path.into_raw());
-                Ast::from_raw(raw)?
-            }
+            Some(lhs) => build::binop(&b, OP_UNION, Some(lhs), Some(path))?,
         });
         g = (*g).next;
     }

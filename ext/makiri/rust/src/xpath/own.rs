@@ -279,68 +279,6 @@ impl NodeArray {
     }
 }
 
-/// The raw-pointer side of [`NodeArray`], for the CSS lowering, whose builders
-/// still pass nodes as pointers.
-#[cfg(feature = "lexbor")]
-impl NodeArray {
-    /// `n` null slots, to be filled with `set`. Zero slots still allocates one,
-    /// because `mkr_callocarray(0, _)` answers NULL and a NULL array would be
-    /// indistinguishable from a failure. `None` on OOM.
-    pub(crate) fn with_slots(n: usize) -> Option<Self> {
-        let capacity = n.max(1);
-        // SAFETY: a fresh zeroed allocation; null slots are valid entries.
-        let v = unsafe {
-            crate::falloc::raw::mkr_callocarray(capacity, core::mem::size_of::<*mut Node>())
-                as *mut *mut Node
-        };
-        if v.is_null() {
-            return None;
-        }
-        Some(Self(RawArray {
-            v,
-            n,
-            cap: capacity,
-        }))
-    }
-
-    /// Append a raw node, taking ownership only on success: on OOM the caller
-    /// still owns it.
-    ///
-    /// # Safety
-    /// `node` must be null or an owned AST node.
-    pub(crate) unsafe fn push_raw(&mut self, node: *mut Node) -> bool {
-        if !self.0.reserve_one() {
-            return false;
-        }
-        self.0.push_reserved(node);
-        true
-    }
-
-    /// A one-element array holding `node`, owned on success only.
-    ///
-    /// # Safety
-    /// As [`Self::push_raw`].
-    pub(crate) unsafe fn single_raw(node: *mut Node) -> Option<Self> {
-        let mut array = Self::new();
-        array.push_raw(node).then_some(array)
-    }
-
-    /// # Safety
-    /// `index < len()`, and `node` is null or an owned AST node; a node already
-    /// in the slot is overwritten, not freed.
-    pub(crate) unsafe fn set(&mut self, index: usize, node: *mut Node) {
-        debug_assert!(index < self.0.n);
-        *self.0.v.add(index) = node;
-    }
-
-    /// # Safety
-    /// `index < len()`.
-    pub(crate) unsafe fn get(&self, index: usize) -> *mut Node {
-        debug_assert!(index < self.0.n);
-        *self.0.v.add(index)
-    }
-}
-
 impl Drop for NodeArray {
     fn drop(&mut self) {
         // SAFETY: entries are null or owned nodes; `v` is the array's own.
