@@ -2,9 +2,42 @@
 #![allow(clippy::missing_safety_doc)]
 use super::super::abi::*;
 use crate::falloc::raw::mkr_callocarray;
-use crate::xpath_abi::ptr_hash;
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void};
 use core::ptr;
+
+pub struct StrCacheEntry {
+    pub node: *mut c_void,
+    pub str_: *mut c_char,
+    pub len: usize,
+}
+
+/// `mkr_str_cache_t` - the per-evaluate node string-value cache: an ordered
+/// store plus a pointer-keyed open-addressing index into it.
+pub struct StrCache {
+    pub entries: *mut StrCacheEntry,
+    pub count: usize,
+    pub cap: usize,
+    /// node pointer -> entry index + 1; 0 is an empty slot.
+    pub buckets: *mut usize,
+    pub bucket_cap: usize,
+    pub total_bytes: usize,
+}
+
+/// The MurmurHash3 fmix64 finalizer over a pointer value.
+///
+/// One definition for every pointer-keyed table: the string-value cache's index
+/// is filled by `str_cache_index_put` and probed by its readers, and the
+/// text index uses it too, so all of them must hash the same way.
+#[inline]
+pub fn ptr_hash<T>(p: *const T) -> u64 {
+    let mut h = p as usize as u64;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51afd7ed558ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+    h ^= h >> 33;
+    h
+}
 
 pub unsafe fn doc_order_index_init(idx: *mut OrderIndex) {
     *idx = OrderIndex {

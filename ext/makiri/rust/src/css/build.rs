@@ -12,11 +12,14 @@
 //! `Vec`: the destructors walk these C-layout fields and free them with libc.
 
 use super::Build;
-pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
-use crate::xpath_abi::{
-    node_alloc, NodeMut, Reported, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
-    NK_LITERAL_STR, NK_PATH, NT_NAME,
+use crate::text::VerifiedText;
+use crate::xpath::ast::{
+    NodeMut, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
+use crate::xpath::ast_ops::node_alloc;
+use crate::xpath::msg::Reported;
+pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
+use crate::xpath::value::TextSlot;
 
 /// A node under construction, or the proof its build failed with `*err` set.
 pub(crate) type Built = Result<Ast, Reported>;
@@ -36,11 +39,11 @@ pub(crate) unsafe fn copy_text(b: &Build, s: &[u8]) -> Result<TextSlot, Reported
     let Some(text) = borrowed(s) else {
         return Err(crate::err_setf!(
             b.err,
-            crate::xpath_abi::XP_ERR_INTERNAL,
+            crate::xpath::msg::XP_ERR_INTERNAL,
             "invalid internal CSS text"
         ));
     };
-    crate::xpath_abi::TextSlot::try_copy(text.into(), b.err, Some(c"css name"))
+    TextSlot::try_copy(text.into(), b.err, Some(c"css name"))
 }
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
@@ -164,7 +167,7 @@ unsafe fn named_step_path_inner(
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.
 pub(crate) unsafe fn attr_ns(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    named_step_path(b, crate::xpath_abi::AXIS_ATTRIBUTE, prefix, name)
+    named_step_path(b, crate::xpath::ast::AXIS_ATTRIBUTE, prefix, name)
 }
 
 /// `@name` with no namespace.

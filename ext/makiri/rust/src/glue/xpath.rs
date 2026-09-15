@@ -41,13 +41,16 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use rb_sys::VALUE;
 
+use crate::text::VerifiedText;
+use crate::xpath::ast::Node as Ast;
+use crate::xpath::ctx::{ctx_budget, ResolverCall, XPathValue};
 use crate::xpath::ctx::{Backend, OwnedContext};
-use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
-use crate::xpath_abi::{budget_sink, ctx_budget, Reported, ResolverCall};
-use crate::xpath_abi::{
-    ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot, Val, ValRef, VerifiedText,
-    XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+use crate::xpath::limits::budget_sink;
+use crate::xpath::msg::{
+    ErrSink, Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
+use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
+use crate::xpath::value::{NodeSet, TextSlot, Val, ValRef};
 
 use super::abi::{
     error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,

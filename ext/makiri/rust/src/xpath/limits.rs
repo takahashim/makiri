@@ -12,6 +12,21 @@
 use super::abi::*;
 use crate::err_setf;
 
+pub struct Limits {
+    pub max_expr_bytes: usize,
+    pub max_ast_nodes: usize,
+    pub max_steps: usize,
+    pub max_predicates: usize,
+    pub max_function_args: usize,
+    pub max_nodeset_size: usize,
+    pub max_eval_ops: usize,
+    pub max_string_bytes: usize,
+    pub max_recursion_depth: usize,
+    pub ast_nodes: usize,
+    pub eval_ops: usize,
+    pub recursion_depth: usize,
+}
+
 /* The two counters below are charged once per visited node, so they are the
  * hottest functions in the engine. Two things have to stay out of them.
  *

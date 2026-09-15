@@ -31,8 +31,11 @@ mod parser;
 
 use core::ffi::{c_char, c_int};
 
+use crate::text::VerifiedText;
+use crate::xpath::ast::OP_UNION;
+use crate::xpath::limits::{budget_sink, Budget};
+use crate::xpath::msg::{ErrSink, Reported};
 use crate::xpath::own::Ast;
-use crate::xpath_abi::{budget_sink, Budget, ErrSink, Reported, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -53,10 +56,10 @@ pub const DEFAULT_NS_PREFIX: &[u8] = b"xmlns";
 pub const MAX_COMPOUNDS: usize = 64;
 
 /// `MKR_XPATH_ERR_*`, as the C names them.
-pub const ERR_SYNTAX: c_int = crate::xpath_abi::XP_ERR_SYNTAX;
-pub const ERR_OOM: c_int = crate::xpath_abi::XP_ERR_OOM;
-pub const ERR_LIMIT: c_int = crate::xpath_abi::XP_ERR_LIMIT;
-pub const ERR_INTERNAL: c_int = crate::xpath_abi::XP_ERR_INTERNAL;
+pub const ERR_SYNTAX: c_int = crate::xpath::msg::XP_ERR_SYNTAX;
+pub const ERR_OOM: c_int = crate::xpath::msg::XP_ERR_OOM;
+pub const ERR_LIMIT: c_int = crate::xpath::msg::XP_ERR_LIMIT;
+pub const ERR_INTERNAL: c_int = crate::xpath::msg::XP_ERR_INTERNAL;
 
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.

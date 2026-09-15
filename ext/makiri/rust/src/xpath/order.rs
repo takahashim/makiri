@@ -9,8 +9,22 @@
 use super::abi::*;
 use super::dom::*;
 use crate::falloc::raw::mkr_callocarray;
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 use core::ptr;
+
+pub struct OrderBucket {
+    /// NULL is an empty slot.
+    pub node: *const c_void,
+    pub ord: usize,
+}
+
+/// `mkr_doc_order_index_t` - the per-evaluate document-order index.
+pub struct OrderIndex {
+    pub buckets: *mut OrderBucket,
+    pub cap: usize,
+    pub count: usize,
+    pub built: c_int,
+}
 
 /// An attribute sits "with" its owner element for cross-subtree comparisons;
 /// only when both anchor to the same element do the attribute-specific rules

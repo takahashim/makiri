@@ -75,10 +75,6 @@ pub mod cutf8;
 /// Unconditional: the engine, the DOM adapter and the glue all pass them.
 pub mod text;
 
-/// The XPath engine's C types. Shared with the glue, which holds an error, a
-/// value and a limits pointer at the XML query entry points.
-pub mod xpath_abi;
-
 /// The Ruby boundary - the only part of the crate that depends on magnus.
 #[cfg(feature = "ruby")]
 pub mod bridge;

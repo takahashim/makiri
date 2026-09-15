@@ -37,7 +37,7 @@ use core::ffi::{c_int, c_void};
 
 use crate::falloc::{try_box, try_vec_with_capacity};
 use crate::lexbor_abi::{self as lxb, preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
-use crate::xpath_abi::ptr_hash;
+use crate::xpath::runtime_abi::cache::ptr_hash;
 
 type Parsed = lxb::mkr::mkr_parsed_t;
 

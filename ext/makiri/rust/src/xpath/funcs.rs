@@ -19,14 +19,21 @@ use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
 
+/// Names the CSS lowering EMITS and the evaluator RESOLVES for an untyped
+/// `:*-of-type`, where the "type" is the element's own expanded name - a
+/// self-reference XPath 1.0 cannot express (there is no `current()`). The
+/// leading \x01 cannot come out of the lexer, so these are unreachable from a
+/// user expression. XML host only.
+///
+/// They live here, not beside the evaluator: one end emits them and the other
+/// resolves them, and a name that only one end knows is a call that resolves to
+/// nothing.
+pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
+pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
+
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
 pub const NS_NOKOGIRI_BUILTIN_URI: &[u8] = b"https://www.nokogiri.org/default_ns/ruby/builtins";
-
-/// The internal of-type position names, declared in `xpath_abi` so the CSS
-/// lowering that EMITS them and this evaluator that RESOLVES them cannot drift -
-/// they sit in different feature trees.
-pub use crate::xpath_abi::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 
 /// A builtin step: the value, or proof its error was written to the context's
 /// budget.

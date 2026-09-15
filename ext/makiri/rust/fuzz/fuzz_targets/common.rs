@@ -19,7 +19,8 @@ pub use makiri::xpath::ctx::{
 pub use makiri::xpath::limits::Budget;
 pub use makiri::xpath::own::Ast;
 pub use makiri::xpath::parse::parse_owned;
-pub use makiri::xpath_abi::{ctx_budget, Context, Limits};
+pub use makiri::xpath::ctx::{ctx_budget, Context};
+pub use makiri::xpath::limits::Limits;
 
 /// A context over `doc`, rooted at its document node and pinned to the XML
 /// engine - the same arguments the glue's `build_ctx` passes. `None` when the

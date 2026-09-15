@@ -14,6 +14,32 @@ use crate::falloc::Reserve;
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
+/// One call the evaluator routes to the custom-function resolver.
+pub struct ResolverCall<'a> {
+    /// The focus: the context node as the engine's handle, and its position.
+    pub node: *mut c_void,
+    pub pos: usize,
+    pub size: usize,
+    /// The namespace URI of the call's prefix, when it had one.
+    pub ns_uri: Option<&'a [u8]>,
+    /// The function's local name.
+    pub local: &'a [u8],
+    pub args: &'a [Val],
+}
+
+/// The custom-function resolver the glue installs for a Ruby handler.
+///
+/// `Ok(Some(value))` answers the call; `Ok(None)` means there is no such
+/// function, which the evaluator reports; `Err` is the function's own failure,
+/// already written to the context's budget.
+pub type FuncResolver = Option<
+    unsafe fn(
+        user_data: *mut c_void,
+        ctx: *mut Context,
+        call: &ResolverCall<'_>,
+    ) -> Result<Option<crate::xpath::own::OwnedVal>, Reported>,
+>;
+
 /// Per-context registration caps. These bound an abusive Ruby loop that calls
 /// register_namespace / register_variable without limit; far above any real use.
 const MAX_NAMESPACES: usize = 65536;
@@ -126,7 +152,7 @@ fn text_eq(a: &OwnedText, b: &[u8]) -> bool {
 
 /// Copy `val` into a fresh owned text, or None on OOM.
 unsafe fn copy_text(val: VerifiedText) -> Option<OwnedText> {
-    crate::xpath_abi::TextSlot::try_copy(val.into(), ErrSink::silent(), None)
+    crate::xpath::abi::TextSlot::try_copy(val.into(), ErrSink::silent(), None)
         .ok()
         .map(OwnedText::from_slot)
 }

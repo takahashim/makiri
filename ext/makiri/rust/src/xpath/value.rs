@@ -16,6 +16,201 @@ use crate::falloc::raw::mkr_reallocarray;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
+/* ---- the value layouts ---- */
+
+/// The raw slot for an engine-owned UTF-8 byte string, NUL-terminated in its
+/// backing allocation.
+///
+/// Interior NULs are possible - DOM text may hold U+0000 - so it is read as
+/// `(ptr, len)` and borrowed as a [`BorrowedText`], never a [`VerifiedText`].
+///
+/// This is a slot, not an owner: it is `Copy` because the AST and value unions
+/// hold it, and clearing one copy leaves the others dangling. Code that owns
+/// text outside those layouts holds a [`crate::xpath::own::OwnedText`].
+#[derive(Clone, Copy)]
+pub struct TextSlot {
+    ptr: *mut c_char,
+    len: usize,
+}
+
+impl TextSlot {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+        }
+    }
+
+    /// Construct a raw-owned value at the allocator/runtime boundary.
+    ///
+    /// # Safety
+    /// `ptr` must be null or point to `len` live bytes followed by a NUL byte,
+    /// allocated by the allocator used by `owned_text_clear`.
+    pub(crate) unsafe fn from_raw_parts(ptr: *mut c_char, len: usize) -> Self {
+        Self { ptr, len }
+    }
+
+    pub(crate) const fn as_ptr(self) -> *mut c_char {
+        self.ptr
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    /// Whether this slot represents an omitted value rather than an empty
+    /// allocated string.
+    pub(crate) const fn is_absent(self) -> bool {
+        self.ptr.is_null()
+    }
+
+    pub(crate) const fn is_present(self) -> bool {
+        !self.is_absent()
+    }
+
+    /// Whether the string has no content. An absent slot is empty by content,
+    /// but remains distinguishable through [`Self::is_absent`].
+    pub(crate) const fn is_empty(self) -> bool {
+        self.is_absent() || self.len == 0
+    }
+
+    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
+        if self.is_empty() {
+            &[]
+        } else {
+            core::slice::from_raw_parts(self.ptr as *const u8, self.len)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct NodeSet {
+    pub items: *mut *mut c_void,
+    pub count: usize,
+    pub capacity: usize,
+}
+
+impl NodeSet {
+    /// No nodes and no array.
+    pub const EMPTY: NodeSet = NodeSet {
+        items: core::ptr::null_mut(),
+        count: 0,
+        capacity: 0,
+    };
+}
+
+#[derive(Clone, Copy)]
+pub union ValU {
+    pub nodeset: NodeSet,
+    pub string: TextSlot,
+    pub number: f64,
+    pub boolean: c_int,
+}
+
+/* mkr_xpath_type_t */
+pub const T_NODESET: u32 = 0;
+pub const T_STRING: u32 = 1;
+pub const T_NUMBER: u32 = 2;
+pub const T_BOOLEAN: u32 = 3;
+
+/// mkr_val_t - the engine's internal value, embedded in a node's memo slot.
+///
+/// The tag and the union are private, so they cannot disagree: a value is made
+/// by one of the constructors and read through [`Val::get`]. Every constructor
+/// starts from the all-zero empty node-set, so all of the union's bytes are
+/// initialised whichever arm is written - which is also why a calloc'd memo slot
+/// is a valid value.
+#[derive(Clone, Copy)]
+pub struct Val {
+    type_: u32,
+    u: ValU,
+}
+
+/// A value's contents by type: matching on the tag and reading the field it
+/// names, as one step that cannot pick the wrong field.
+#[derive(Clone, Copy)]
+pub enum ValRef<'a> {
+    NodeSet(&'a NodeSet),
+    /// Borrowed: the value still owns the bytes.
+    String(TextSlot),
+    Number(f64),
+    Boolean(bool),
+}
+
+impl Val {
+    /// The empty node-set - what every slot starts as.
+    pub const EMPTY: Val = Val {
+        type_: T_NODESET,
+        u: ValU {
+            nodeset: NodeSet::EMPTY,
+        },
+    };
+
+    /// A node-set value, owning `ns`'s array. The node-set is the union's
+    /// largest arm, so writing it initialises every byte.
+    pub fn nodeset(ns: NodeSet) -> Val {
+        Val {
+            type_: T_NODESET,
+            u: ValU { nodeset: ns },
+        }
+    }
+
+    /// A string value, owning `text`.
+    pub fn string(text: TextSlot) -> Val {
+        let mut v = Val::EMPTY;
+        v.type_ = T_STRING;
+        v.u.string = text;
+        v
+    }
+
+    pub fn number(d: f64) -> Val {
+        let mut v = Val::EMPTY;
+        v.type_ = T_NUMBER;
+        v.u.number = d;
+        v
+    }
+
+    pub fn boolean(b: bool) -> Val {
+        let mut v = Val::EMPTY;
+        v.type_ = T_BOOLEAN;
+        v.u.boolean = c_int::from(b);
+        v
+    }
+
+    /// The tag as `mkr_xpath_type_t` numbers it, for the public value.
+    pub fn type_tag(&self) -> u32 {
+        self.type_
+    }
+
+    pub fn get(&self) -> ValRef<'_> {
+        // SAFETY: only the constructors set the tag, each together with the
+        // field it names, over a fully initialised union.
+        unsafe {
+            match self.type_ {
+                T_STRING => ValRef::String(self.u.string),
+                T_NUMBER => ValRef::Number(self.u.number),
+                T_BOOLEAN => ValRef::Boolean(self.u.boolean != 0),
+                _ => ValRef::NodeSet(&self.u.nodeset),
+            }
+        }
+    }
+
+    pub fn as_nodeset(&self) -> Option<&NodeSet> {
+        match self.get() {
+            ValRef::NodeSet(ns) => Some(ns),
+            _ => None,
+        }
+    }
+
+    pub fn as_nodeset_mut(&mut self) -> Option<&mut NodeSet> {
+        match self.type_ {
+            T_STRING | T_NUMBER | T_BOOLEAN => None,
+            // SAFETY: as in `get`.
+            _ => Some(unsafe { &mut self.u.nodeset }),
+        }
+    }
+}
+
 /// The dynamic context of XPath 1.0 - the "focus": the context node with its
 /// 1-based position and the context size. These three always travel together.
 ///

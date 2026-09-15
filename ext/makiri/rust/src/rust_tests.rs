@@ -388,7 +388,8 @@ fn borrowed_text_carries_an_interior_nul() {
 #[test]
 fn owned_text_copy_keeps_interior_nul_and_terminates() {
     use crate::text::BorrowedText;
-    use crate::xpath_abi::{ErrSink, TextSlot};
+    use crate::xpath::msg::ErrSink;
+    use crate::xpath::value::TextSlot;
     use core::ptr;
 
     let mut t =
@@ -416,7 +417,7 @@ fn owned_text_copy_keeps_interior_nul_and_terminates() {
 #[test]
 fn owned_text_adopts_a_detached_buffer() {
     use crate::cbuf::Buf;
-    use crate::xpath_abi::TextSlot;
+    use crate::xpath::value::TextSlot;
 
     let mut buf = Buf::new(0);
     buf.append(b"a\0b").expect("append");
@@ -428,7 +429,7 @@ fn owned_text_adopts_a_detached_buffer() {
 
 #[test]
 fn owned_text_fill_terminates_at_the_length_written() {
-    use crate::xpath_abi::TextSlot;
+    use crate::xpath::value::TextSlot;
 
     let mut t = TextSlot::try_fill(5, |dst| {
         // The reservation arrives zeroed.

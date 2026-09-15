@@ -29,7 +29,7 @@ use crate::lexbor_abi::{
     lxb_css_selectors_create, lxb_css_selectors_destroy, lxb_css_selectors_init,
     lxb_css_selectors_parse, CssMemory, CssParser, CssSelectors,
 };
-use crate::xpath_abi::VerifiedText;
+use crate::text::VerifiedText;
 
 /// `lxb_css_selector_list_t`, generated.
 pub type SelectorList = crate::lexbor_abi::lxb_css_selector_list_t;

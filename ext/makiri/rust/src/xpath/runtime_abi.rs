@@ -1,7 +1,7 @@
 //! The engine's runtime storage - node-sets, owned text, values and the
 //! per-evaluate caches - one module each, re-exported under one namespace.
 //!
-//! These operate on the raw layouts in `crate::xpath_abi`; the guards in
+//! These operate on the raw layouts in `xpath::value`; the guards in
 //! `xpath::own` are the ownership-safe way to hold them.
 
 #[path = "runtime_abi/cache.rs"]

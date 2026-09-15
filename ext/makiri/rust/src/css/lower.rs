@@ -20,12 +20,13 @@
 use super::build::{self, Built, NodeArray, OwnedStep, StepArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
 use crate::lexbor_abi as lxb;
-use crate::xpath::own::Ast;
-use crate::xpath_abi::{
-    Reported, Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING,
-    AXIS_PARENT, AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME, NT_NODE, NT_TEXT,
-    NT_WILDCARD, OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
+use crate::xpath::ast::{
+    Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING, AXIS_PARENT,
+    AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME, NT_NODE, NT_TEXT, NT_WILDCARD, OP_ADD,
+    OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
 };
+use crate::xpath::msg::Reported;
+use crate::xpath::own::Ast;
 
 type Selector = lxb::lxb_css_selector_t;
 type SelectorList = lxb::lxb_css_selector_list_t;
@@ -111,7 +112,7 @@ mod pf {
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.
-use crate::xpath_abi::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
+use crate::xpath::funcs::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 
 /// A `lexbor_str_t` as a slice, or `None` when its data pointer is NULL.
 ///
@@ -288,7 +289,7 @@ unsafe fn not_axis(b: &Build, axis: u32, nt: u32) -> Built {
 }
 
 /// `not([prefix:]name on axis)` - "no same-named sibling on that axis".
-unsafe fn not_named_axis(b: &Build, axis: u32, test: &crate::xpath_abi::NodeTest) -> Built {
+unsafe fn not_named_axis(b: &Build, axis: u32, test: &crate::xpath::ast::NodeTest) -> Built {
     let prefix = owned_slice(&test.prefix);
     let local = owned_slice(&test.local);
     build::call1(
@@ -300,7 +301,7 @@ unsafe fn not_named_axis(b: &Build, axis: u32, test: &crate::xpath_abi::NodeTest
 
 /// An owned-text slot as a slice, or `None` when unset.
 #[inline]
-unsafe fn owned_slice<'a>(t: &crate::xpath_abi::TextSlot) -> Option<&'a [u8]> {
+unsafe fn owned_slice<'a>(t: &crate::xpath::value::TextSlot) -> Option<&'a [u8]> {
     if t.is_empty() {
         None
     } else {
@@ -309,7 +310,7 @@ unsafe fn owned_slice<'a>(t: &crate::xpath_abi::TextSlot) -> Option<&'a [u8]> {
 }
 
 /// `count(axis::test) + 1` - the 1-based position among matched siblings.
-unsafe fn pos(b: &Build, axis: u32, named: Option<&crate::xpath_abi::NodeTest>) -> Built {
+unsafe fn pos(b: &Build, axis: u32, named: Option<&crate::xpath::ast::NodeTest>) -> Built {
     let path = match named {
         None => build::step_path(b, axis, NT_WILDCARD, None),
         Some(t) => build::named_step_path(
@@ -346,7 +347,7 @@ unsafe fn of_type_pos(b: &Build, forward: bool) -> Built {
 unsafe fn pos_expr(
     b: &Build,
     axis: u32,
-    named: Option<&crate::xpath_abi::NodeTest>,
+    named: Option<&crate::xpath::ast::NodeTest>,
     oftype_untyped: bool,
 ) -> Built {
     if oftype_untyped {
@@ -359,7 +360,7 @@ unsafe fn pos_expr(
 unsafe fn nth(
     b: &Build,
     axis: u32,
-    named: Option<&crate::xpath_abi::NodeTest>,
+    named: Option<&crate::xpath::ast::NodeTest>,
     oftype_untyped: bool,
     /* `c_long`, not i64: these come straight from Lexbor's
      * `lxb_css_syntax_anb_t`, whose fields are C `long` - 64-bit on LP64 and

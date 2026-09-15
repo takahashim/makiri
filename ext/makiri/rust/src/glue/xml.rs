@@ -31,8 +31,9 @@ use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
+use crate::xpath::ctx::{ctx_budget, XPathValue};
+use crate::xpath::msg::XP_ERR_SYNTAX;
 use crate::xpath::own::Ast as OwnedAst;
-use crate::xpath_abi::{ctx_budget, XPathValue, XP_ERR_SYNTAX};
 
 use super::abi::error_class;
 

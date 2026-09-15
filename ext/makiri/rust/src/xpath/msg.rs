@@ -4,7 +4,6 @@
 //! allocate - one of them reports OOM - so every message is assembled in a
 //! fixed stack buffer and truncated rather than grown.
 
-use super::abi::XP_OK;
 use core::ffi::{c_char, c_int, CStr};
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
@@ -215,3 +214,14 @@ macro_rules! err_setf {
         $crate::xpath::msg::err_set_fmt($err, $status, format_args!($($arg)*))
     };
 }
+
+/* ---- statuses ---- */
+
+pub const XP_OK: c_int = 0;
+pub const XP_ERR_SYNTAX: c_int = 2;
+pub const XP_ERR_INTERNAL: c_int = 5;
+pub const XP_ERR_OOM: c_int = 6;
+pub const XP_ERR_LIMIT: c_int = 7;
+pub const XP_ERR_TYPE: c_int = 3;
+pub const XP_ERR_RUNTIME: c_int = 4;
+pub const XP_ERR_NOT_IMPLEMENTED: c_int = 1;
