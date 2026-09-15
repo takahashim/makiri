@@ -104,10 +104,10 @@ fn base_type() -> *const rb_data_type_t {
 /* kind-agnostic accessors (identity / document)                      */
 /* ------------------------------------------------------------------ */
 
-/// `mkr_doc_kind_t`.
+/// `DocKind`.
 const DOC_XML: u32 = 1;
 
-/// `mkr_node_kind_t`.
+/// `NodeKind`.
 const NODE_KIND_OTHER: c_int = 0;
 const NODE_KIND_HTML: c_int = 1;
 const NODE_KIND_XML: c_int = 2;

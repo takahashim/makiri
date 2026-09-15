@@ -39,7 +39,7 @@ use crate::falloc::{try_box, try_vec_with_capacity};
 use crate::lexbor_abi::{self as lxb, preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
 use crate::xpath::runtime_abi::cache::ptr_hash;
 
-type Parsed = lxb::mkr::mkr_parsed_t;
+type Parsed = lxb::parsed::Parsed;
 
 const NODE_TYPE_ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;

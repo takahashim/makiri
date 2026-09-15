@@ -38,9 +38,9 @@ use crate::lexbor_abi::{self as lxb, preorder_next, LxbDoc, LxbNode};
 use crate::text::BorrowedText;
 use crate::xpath::runtime_abi::cache::ptr_hash;
 
-/// `mkr_parsed_t` - the parse handle. Generated, so a field added ahead of `doc`
+/// `Parsed` - the parse handle. Generated, so a field added ahead of `doc`
 /// cannot become a silent wrong read here.
-type Parsed = lxb::mkr::mkr_parsed_t;
+type Parsed = lxb::parsed::Parsed;
 
 mod ty {
     use crate::lexbor_abi as lxb;

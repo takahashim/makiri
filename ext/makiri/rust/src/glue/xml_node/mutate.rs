@@ -23,7 +23,7 @@ use super::abi::*;
 use super::{node_document, unwrap, wrap};
 use crate::glue::abi::{doc_parsed, html_node_unwrap, mkr_cNode, parsed_xml_doc};
 
-/// `mkr_node_kind_t`.
+/// `NodeKind`.
 const KIND_HTML: core::ffi::c_int = 1;
 const KIND_XML: core::ffi::c_int = 2;
 

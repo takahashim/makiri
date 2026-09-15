@@ -53,7 +53,7 @@ struct DocData {
 
 /// Generated, not transcribed. A hand-written 1 here (it is 2) made
 /// `import_node` treat every HTML node as an XML one.
-const NODE_KIND_XML: c_int = lxb::mkr::mkr_node_kind_t_MKR_NODE_KIND_XML as c_int;
+const NODE_KIND_XML: c_int = lxb::parsed::NODE_KIND_XML as c_int;
 
 pub use crate::dom_adapter::cross_import::cross_xml_to_html;
 pub use crate::dom_adapter::post_parse::parse_html;
@@ -74,7 +74,7 @@ extern "C" {
 const NODE_TYPE_DOCUMENT_TYPE: u32 = super::abi::LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
 /// Stated once, in `lexbor_abi::mkr`, rather than restated here.
-const DOC_XML: u32 = lxb::mkr::mkr_doc_kind_t_MKR_DOC_XML;
+const DOC_XML: u32 = lxb::parsed::DOC_XML;
 
 unsafe extern "C" fn doc_mark(ptr: *mut c_void) {
     let d = &*(ptr as *const DocData);

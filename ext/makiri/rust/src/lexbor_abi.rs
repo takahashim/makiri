@@ -30,22 +30,22 @@ pub use sys::*;
 /// headers went with the rest of the C, so there is no second reading of them
 /// left to check against: this module is now the definition. That is why the
 /// field order below is spelled out rather than left to be noticed.
-pub mod mkr {
-    #![allow(non_camel_case_types, non_upper_case_globals, dead_code)]
+pub mod parsed {
+    #![allow(dead_code)]
     use core::ffi::{c_uint, c_void};
 
     /// Which representation a wrapped Ruby node is, by its TypedData type (NOT
     /// by Ruby class). A Document, a NodeSet, or any non-node is OTHER.
-    pub type mkr_node_kind_t = c_uint;
-    pub const mkr_node_kind_t_MKR_NODE_KIND_OTHER: mkr_node_kind_t = 0;
-    pub const mkr_node_kind_t_MKR_NODE_KIND_HTML: mkr_node_kind_t = 1;
-    pub const mkr_node_kind_t_MKR_NODE_KIND_XML: mkr_node_kind_t = 2;
+    pub type NodeKind = c_uint;
+    pub const NODE_KIND_OTHER: NodeKind = 0;
+    pub const NODE_KIND_HTML: NodeKind = 1;
+    pub const NODE_KIND_XML: NodeKind = 2;
 
-    /// The document kind a `mkr_parsed_t` holds. HTML points `doc` at a Lexbor
+    /// The document kind a `Parsed` holds. HTML points `doc` at a Lexbor
     /// `lxb_html_document_t`; XML points it at our own arena.
-    pub type mkr_doc_kind_t = c_uint;
-    pub const mkr_doc_kind_t_MKR_DOC_HTML: mkr_doc_kind_t = 0;
-    pub const mkr_doc_kind_t_MKR_DOC_XML: mkr_doc_kind_t = 1;
+    pub type DocKind = c_uint;
+    pub const DOC_HTML: DocKind = 0;
+    pub const DOC_XML: DocKind = 1;
 
     /// The result of a parse. Owns the document arena (Lexbor for HTML, ours
     /// for XML). The three indices are HTML-only, created lazily and null until
@@ -57,10 +57,10 @@ pub mod mkr {
     /// is what replaces the generation.
     #[repr(C)]
     #[derive(Debug, Copy, Clone)]
-    pub struct mkr_parsed_s {
+    pub struct Parsed {
         /// HTML: `lxb_html_document_t*` / XML: `mkr_xml_doc_t*`.
         pub doc: *mut c_void,
-        pub kind: mkr_doc_kind_t,
+        pub kind: DocKind,
         /// attr->owner map + the tag->elements index.
         pub dom_index: *mut c_void,
         /// byte offset -> source line.
@@ -68,7 +68,6 @@ pub mod mkr {
         /// node -> descendant-text slice run.
         pub text_index: *mut c_void,
     }
-    pub type mkr_parsed_t = mkr_parsed_s;
 }
 
 /* ------------------------------------------------------------------ *

@@ -32,11 +32,11 @@ use crate::cbuf::OwnedBuf;
 use crate::falloc::try_box_raw;
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
 
-pub type Parsed = lxb::mkr::mkr_parsed_t;
+pub type Parsed = lxb::parsed::Parsed;
 type HtmlDoc = lxb::lxb_html_document_t;
 
-const DOC_KIND_HTML: u32 = lxb::mkr::mkr_doc_kind_t_MKR_DOC_HTML;
-const DOC_KIND_XML: u32 = lxb::mkr::mkr_doc_kind_t_MKR_DOC_XML;
+const DOC_KIND_HTML: u32 = lxb::parsed::DOC_HTML;
+const DOC_KIND_XML: u32 = lxb::parsed::DOC_XML;
 const NODE_TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
 const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 

@@ -71,7 +71,7 @@ const AST_CACHE_MAX: usize = 1024;
 /// use stays independent of the runtime argument count.
 const HANDLER_MAX_ARGS: usize = 64;
 
-/// `mkr_doc_kind_t`.
+/// `DocKind`.
 const DOC_XML: u32 = 1;
 
 /// The engine context. Opaque here while C held it; now the real type.

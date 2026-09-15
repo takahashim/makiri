@@ -41,7 +41,7 @@ extern "C" {
     fn libc_memchr(s: *const c_void, c: core::ffi::c_int, n: usize) -> *const c_void;
 }
 
-pub type Parsed = lxb::mkr::mkr_parsed_t;
+pub type Parsed = lxb::parsed::Parsed;
 type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
