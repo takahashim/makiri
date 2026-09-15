@@ -39,7 +39,7 @@ pub use crate::glue::abi::{RubyBytes, RubyData, RubyText};
 pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
-use crate::glue::abi::{error_class, mkr_eError, rb_raise};
+use crate::glue::abi::{error_class, rb_raise, EXC_ERROR};
 
 /* ---- the borrowed-text layouts ----
  *
@@ -83,7 +83,7 @@ unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
 /// both a long slice and a short sum fail closed.
 pub unsafe fn ruby_str_from_slices(slices: *const BorrowedText, n: usize, total: usize) -> VALUE {
     if total > c_long::MAX as usize {
-        rb_raise(mkr_eError, c"text too large to assemble".as_ptr());
+        rb_raise(EXC_ERROR, c"text too large to assemble".as_ptr());
     }
     let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
     /* We just created it and hold the only reference, so writing through the
@@ -98,14 +98,14 @@ pub unsafe fn ruby_str_from_slices(slices: *const BorrowedText, n: usize, total:
         }
         if s.len() > total - off {
             /* off <= total holds, so the subtraction cannot underflow. */
-            rb_raise(mkr_eError, c"text slice length inconsistency".as_ptr());
+            rb_raise(EXC_ERROR, c"text slice length inconsistency".as_ptr());
         }
         core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, dst.add(off), s.len());
         off += s.len();
     }
     if off != total {
         /* A short sum would leave the tail of the uninitialised String unwritten. */
-        rb_raise(mkr_eError, c"text slice length inconsistency".as_ptr());
+        rb_raise(EXC_ERROR, c"text slice length inconsistency".as_ptr());
     }
     str
 }

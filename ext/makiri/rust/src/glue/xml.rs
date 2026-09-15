@@ -55,10 +55,10 @@ use crate::xpath::ctx::Context as XPathContext;
 use crate::css::CssNs;
 
 use super::abi::{
-    cXmlDocument, doc_parsed, keepalive_document, mkr_cDocument, mkr_cXmlDocumentFragment,
-    mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
-    mkr_mXmlNodeMethods, node_set_new, parsed_xml_doc as raw_parsed_xml_doc, ruby_verified_text,
-    verify_text, wrap_xml_node, xml_node_unwrap, OwnedBytes,
+    doc_parsed, keepalive_document, node_set_new, parsed_xml_doc as raw_parsed_xml_doc,
+    ruby_verified_text, verify_text, wrap_xml_node, xml_node_unwrap, OwnedBytes, CLASS_DOCUMENT,
+    CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, EXC_ERROR,
+    EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
 };
 
 /// The XML arena behind a document handle, typed.
@@ -306,15 +306,15 @@ unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
         magnus::ExceptionClass::from_value(Value::from_raw(v)).expect("an exception class")
     };
     match status {
-        Status::Syntax => Error::new(class(mkr_eXmlSyntaxError), unit.malformed()),
-        Status::Limit => Error::new(class(mkr_eXmlLimitExceeded), unit.budget()),
+        Status::Syntax => Error::new(class(EXC_XML_SYNTAX_ERROR), unit.malformed()),
+        Status::Limit => Error::new(class(EXC_XML_LIMIT_EXCEEDED), unit.budget()),
         Status::Version => Error::new(
-            class(mkr_eXmlSyntaxError),
+            class(EXC_XML_SYNTAX_ERROR),
             "unsupported XML version (only XML 1.0 is supported)",
         ),
         /* `Ok` never reaches here (it means no failure); the rest are the
          * generic "failed to parse" bucket. */
-        Status::Ok | Status::Oom | Status::Internal => Error::new(class(mkr_eError), unit.failed()),
+        Status::Ok | Status::Oom | Status::Internal => Error::new(class(EXC_ERROR), unit.failed()),
     }
 }
 
@@ -510,7 +510,7 @@ unsafe fn css_compile_or_raise(
             || "invalid CSS selector".to_string(),
             |m| m.to_string_lossy().into_owned(),
         );
-        let class = magnus::ExceptionClass::from_value(Value::from_raw(mkr_eCSSSyntaxError))
+        let class = magnus::ExceptionClass::from_value(Value::from_raw(EXC_CSS_SYNTAX_ERROR))
             .expect("Makiri::CSS::SyntaxError");
         return Err(Error::new(class, msg));
     }
@@ -711,9 +711,9 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 /// Called from `Init_makiri`.
 pub unsafe extern "C" fn init_xml() {
     let ruby = Ruby::get_unchecked();
-    let m_xml = magnus::RModule::from_value(Value::from_raw(mkr_mXML)).expect("Makiri::XML");
+    let m_xml = magnus::RModule::from_value(Value::from_raw(MOD_XML)).expect("Makiri::XML");
     let base =
-        magnus::RClass::from_value(Value::from_raw(mkr_cDocument)).expect("Makiri::Document");
+        magnus::RClass::from_value(Value::from_raw(CLASS_DOCUMENT)).expect("Makiri::Document");
 
     /* XML::Document is a Makiri::Document leaf: is_a?(Makiri::Document) holds,
      * but it carries no HTML readers - those live on Makiri::HTML, which it does
@@ -723,11 +723,11 @@ pub unsafe extern "C" fn init_xml() {
         .expect("Makiri::XML::Document");
     rb_sys::rb_undef_alloc_func(doc.as_raw()); /* created only from C, never .new */
     let node_methods =
-        magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods)).expect("NodeMethods");
+        magnus::RModule::from_value(Value::from_raw(MOD_XML_NODE_METHODS)).expect("NodeMethods");
     doc.include_module(node_methods)
         .expect("include NodeMethods");
     /* Init_makiri's global, which the rest of the extension reads. */
-    let slot = &raw const cXmlDocument as *mut VALUE;
+    let slot = &raw const CLASS_XML_DOCUMENT as *mut VALUE;
     *slot = doc.as_raw();
 
     doc.define_method("root", method!(doc_root, 0))
@@ -738,7 +738,7 @@ pub unsafe extern "C" fn init_xml() {
         .expect("#fragment");
     doc.define_singleton_method("new", magnus::function!(document_s_new, -1))
         .expect("Document.new");
-    magnus::RClass::from_value(Value::from_raw(mkr_cXmlDocumentFragment))
+    magnus::RClass::from_value(Value::from_raw(CLASS_XML_DOCUMENT_FRAGMENT))
         .expect("XML::DocumentFragment")
         .define_singleton_method("parse", method!(fragment_s_parse, 1))
         .expect("DocumentFragment.parse");

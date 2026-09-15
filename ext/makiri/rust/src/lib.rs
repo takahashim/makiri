@@ -11,10 +11,9 @@
 //!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
 //!            (`ruby`, on by default; it implies `lexbor`).
 //!
-//! The `mkr_` prefix on exported symbols is what the C ABI published and is kept
-//! where an entry point is still reached from outside Rust: `Init_makiri`, the
-//! callbacks Lexbor invokes, and the test hooks. It is not a naming rule for
-//! Rust-internal items.
+//! Nothing here carries the C ABI's `mkr_` prefix any more: the crate exports only
+//! `Init_makiri` (and `ruby_abi_version`), so every item is named as Rust.
+//! Lexbor's own names stay `lxb_*`.
 
 /// Lexbor's layout and constants, generated from its own headers by build.rs
 /// and checked against the hand-written view the engine's hot paths use.
@@ -57,7 +56,7 @@ pub mod kani_bounds {
 /// fail it and so that failure raises instead of aborting the host process.
 pub mod falloc;
 
-/// `mkr_buf_t`, which more than one subsystem writes into.
+/// `Buf`, the capped byte buffer more than one subsystem writes into.
 pub mod cbuf;
 
 /// The CSS selector front end: lowers a Lexbor-parsed selector list into the

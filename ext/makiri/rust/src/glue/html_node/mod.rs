@@ -34,10 +34,11 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use super::abi::{
-    cXmlDocument, html_doc_unwrap, html_node_methods, is_kind_of, mkr_cDocument, LxbNode, NodeData,
+    html_doc_unwrap, html_node_methods, is_kind_of, LxbNode, NodeData, CLASS_DOCUMENT,
+    CLASS_XML_DOCUMENT,
 };
 /* Only the mutation half registers on the Document class. */
-use super::abi::mkr_cHtmlDocument;
+use super::abi::CLASS_HTML_DOCUMENT;
 
 /* ------------------------------------------------------------------ *
  * the DOM node types                                                 *
@@ -58,19 +59,19 @@ pub mod ty {
 }
 
 pub use crate::glue::doc::node_clone_node;
-pub use crate::glue::node::html_node_type;
 pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;
 pub use crate::glue::node::node_pointer_id;
-pub use crate::init::mkr_cHtmlAttr;
-pub use crate::init::mkr_cHtmlCDATASection;
-pub use crate::init::mkr_cHtmlComment;
-pub use crate::init::mkr_cHtmlDocumentFragment;
-pub use crate::init::mkr_cHtmlDocumentType;
-pub use crate::init::mkr_cHtmlElement;
-pub use crate::init::mkr_cHtmlNode;
-pub use crate::init::mkr_cHtmlProcessingInstruction;
-pub use crate::init::mkr_cHtmlText;
+pub use crate::glue::node::HTML_NODE_TYPE;
+pub use crate::init::CLASS_HTML_ATTR;
+pub use crate::init::CLASS_HTML_CDATA_SECTION;
+pub use crate::init::CLASS_HTML_COMMENT;
+pub use crate::init::CLASS_HTML_DOCUMENT_FRAGMENT;
+pub use crate::init::CLASS_HTML_DOCUMENT_TYPE;
+pub use crate::init::CLASS_HTML_ELEMENT;
+pub use crate::init::CLASS_HTML_NODE;
+pub use crate::init::CLASS_HTML_PROCESSING_INSTRUCTION;
+pub use crate::init::CLASS_HTML_TEXT;
 
 /* ------------------------------------------------------------------ *
  * wrap / unwrap                                                      *
@@ -92,21 +93,21 @@ pub unsafe extern "C" fn wrap_html_node(node: *mut LxbNode, document: VALUE) -> 
     }
 
     let klass = match (*node).type_ {
-        ty::ELEMENT => mkr_cHtmlElement,
-        ty::ATTRIBUTE => mkr_cHtmlAttr,
-        ty::TEXT => mkr_cHtmlText,
-        ty::COMMENT => mkr_cHtmlComment,
-        ty::CDATA => mkr_cHtmlCDATASection,
-        ty::PI => mkr_cHtmlProcessingInstruction,
-        ty::DOCTYPE => mkr_cHtmlDocumentType,
-        ty::FRAGMENT => mkr_cHtmlDocumentFragment,
-        _ => mkr_cHtmlNode,
+        ty::ELEMENT => CLASS_HTML_ELEMENT,
+        ty::ATTRIBUTE => CLASS_HTML_ATTR,
+        ty::TEXT => CLASS_HTML_TEXT,
+        ty::COMMENT => CLASS_HTML_COMMENT,
+        ty::CDATA => CLASS_HTML_CDATA_SECTION,
+        ty::PI => CLASS_HTML_PROCESSING_INSTRUCTION,
+        ty::DOCTYPE => CLASS_HTML_DOCUMENT_TYPE,
+        ty::FRAGMENT => CLASS_HTML_DOCUMENT_FRAGMENT,
+        _ => CLASS_HTML_NODE,
     };
 
     /* The Document is stored after the wrap: see `wrap_zeroed`. */
     crate::bridge::ruby::wrap_zeroed::<NodeData>(
         klass,
-        html_node_type.as_ptr(),
+        HTML_NODE_TYPE.as_ptr(),
         |nd| nd.node = node as *mut c_void,
         |nd| nd.document = document,
     )
@@ -115,13 +116,13 @@ pub unsafe extern "C" fn wrap_html_node(node: *mut LxbNode, document: VALUE) -> 
 /// The `lxb_dom_node_t` behind an HTML node or HTML Document.
 ///
 /// `Err(TypeError)` for an XML node or Document: the typed-data check is
-/// against `html_node_type`, which an XML node - wrapped under
-/// `xml_node_type` - does not satisfy. Every HTML-glue site that
+/// against `HTML_NODE_TYPE`, which an XML node - wrapped under
+/// `XML_NODE_TYPE` - does not satisfy. Every HTML-glue site that
 /// dereferences a node or hands its pointer to Lexbor goes through here, for
 /// `self` and arguments alike.
 pub unsafe fn html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::Error> {
-    if is_kind_of(Value::from_raw(rb_node), mkr_cDocument) {
-        if is_kind_of(Value::from_raw(rb_node), cXmlDocument) {
+    if is_kind_of(Value::from_raw(rb_node), CLASS_DOCUMENT) {
+        if is_kind_of(Value::from_raw(rb_node), CLASS_XML_DOCUMENT) {
             return Err(magnus::Error::new(
                 magnus::Ruby::get_unchecked().exception_type_error(),
                 "expected an HTML node, got a Makiri::XML::Document",
@@ -129,7 +130,7 @@ pub unsafe fn html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::E
         }
         return Ok(html_doc_unwrap(rb_node)? as *mut LxbNode);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_node, html_node_type.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(rb_node, HTML_NODE_TYPE.as_ptr())? as *mut NodeData;
     Ok((*nd).node as *mut LxbNode)
 }
 
@@ -300,7 +301,7 @@ pub unsafe extern "C" fn init_node() {
 
     /* DocumentType identifiers (WHATWG DOM names; external_id is the
      * Nokogiri-compatible alias for public_id). */
-    let dt = RClass::from_value(Value::from_raw(mkr_cHtmlDocumentType))
+    let dt = RClass::from_value(Value::from_raw(CLASS_HTML_DOCUMENT_TYPE))
         .expect("Makiri::HTML::DocumentType");
     for name in ["public_id", "external_id"] {
         dt.define_method(name, method!(read::doctype_public_id, 0))
@@ -310,7 +311,8 @@ pub unsafe extern "C" fn init_node() {
         .expect("#system_id");
 
     /* <template> contents (WHATWG DOM HTMLTemplateElement.content). */
-    let el = RClass::from_value(Value::from_raw(mkr_cHtmlElement)).expect("Makiri::HTML::Element");
+    let el =
+        RClass::from_value(Value::from_raw(CLASS_HTML_ELEMENT)).expect("Makiri::HTML::Element");
     el.define_method("content_fragment", method!(read::content_fragment, 0))
         .expect("#content_fragment");
 }
@@ -323,7 +325,7 @@ use magnus::rb_sys::AsRawValue;
 /// From `Init_makiri`, after the classes exist.
 pub unsafe extern "C" fn init_mutate() {
     let m = html_node_methods();
-    let doc = RClass::from_value(Value::from_raw(mkr_cHtmlDocument)).expect("HTML::Document");
+    let doc = RClass::from_value(Value::from_raw(CLASS_HTML_DOCUMENT)).expect("HTML::Document");
 
     m.define_method("add_child", method!(mutate::add_child, 1))
         .expect("#add_child");

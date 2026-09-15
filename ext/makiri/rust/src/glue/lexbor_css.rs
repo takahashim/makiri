@@ -45,8 +45,8 @@ use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::consts as k;
 
 use super::abi::{
-    error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, mkr_mLexbor,
-    ruby_verified_text, CssParser,
+    error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
+    ruby_verified_text, CssParser, MOD_LEXBOR,
 };
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
@@ -626,7 +626,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 /// Runs once, from `Init_makiri`, on the Ruby thread.
 pub unsafe extern "C" fn init_lexbor_css() {
     let ruby = Ruby::get().expect("init_lexbor_css runs on the Ruby thread");
-    let lexbor = magnus::RModule::from_value(Value::from_raw(mkr_mLexbor))
+    let lexbor = magnus::RModule::from_value(Value::from_raw(MOD_LEXBOR))
         .expect("Makiri::Lexbor is a module by the time this runs");
     let css = ruby.module_new();
     lexbor.const_set("CSS", css).expect("Makiri::Lexbor::CSS");

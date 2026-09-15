@@ -47,8 +47,8 @@ use magnus::{method, prelude::*, Error, Exception, Ruby, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
 use super::abi::{
-    error_class, html_node_unwrap, keepalive_document, mkr_eCSSSyntaxError, mkr_mHtmlNodeMethods,
-    node_set_new, node_set_push, verify_text, wrap_html_node, LxbNode, LXB_STATUS_OK,
+    error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push, verify_text,
+    wrap_html_node, LxbNode, EXC_CSS_SYNTAX_ERROR, LXB_STATUS_OK, MOD_HTML_NODE_METHODS,
 };
 
 /// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
@@ -454,8 +454,9 @@ unsafe fn str_bytes(v: Value) -> (*const u8, usize) {
 /// release said `invalid CSS selector: p:hover` - a user-visible change that no
 /// spec asserted, found by the CSS differential when the lowering was ported.
 fn syntax_error(selector: Value) -> Error {
-    let class = magnus::ExceptionClass::from_value(unsafe { Value::from_raw(mkr_eCSSSyntaxError) })
-        .expect("Makiri::CSS::SyntaxError");
+    let class =
+        magnus::ExceptionClass::from_value(unsafe { Value::from_raw(EXC_CSS_SYNTAX_ERROR) })
+            .expect("Makiri::CSS::SyntaxError");
     let shown = selector.to_string();
     Error::new(class, format!("invalid CSS selector: {shown}"))
 }
@@ -595,7 +596,7 @@ fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
 /// # Safety
 /// Called from `Init_makiri`.
 pub unsafe extern "C" fn init_css() {
-    let m = magnus::RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
+    let m = magnus::RModule::from_value(Value::from_raw(MOD_HTML_NODE_METHODS))
         .expect("Makiri::HTML::NodeMethods");
     m.define_method("css", method!(css, 1)).expect("Node#css");
     m.define_method("at_css", method!(at_css, 1))

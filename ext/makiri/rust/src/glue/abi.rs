@@ -227,21 +227,21 @@ pub use crate::glue::node_set::node_set_new;
 pub use crate::glue::node_set::node_set_push;
 pub use crate::glue::xml_node::wrap_xml_node;
 pub use crate::glue::xml_node::xml_node_unwrap;
-pub use crate::init::cXmlDocument;
-pub use crate::init::mkr_cDocument;
-pub use crate::init::mkr_cDocumentFragment;
-pub use crate::init::mkr_cHtmlDocument;
-pub use crate::init::mkr_cNode;
-pub use crate::init::mkr_cNodeSet;
-pub use crate::init::mkr_cXmlDocumentFragment;
-pub use crate::init::mkr_eCSSSyntaxError;
-pub use crate::init::mkr_eError;
-pub use crate::init::mkr_eXmlLimitExceeded;
-pub use crate::init::mkr_eXmlSyntaxError;
-pub use crate::init::mkr_mHtmlNodeMethods;
-pub use crate::init::mkr_mLexbor;
-pub use crate::init::mkr_mXML;
-pub use crate::init::mkr_mXmlNodeMethods;
+pub use crate::init::CLASS_DOCUMENT;
+pub use crate::init::CLASS_DOCUMENT_FRAGMENT;
+pub use crate::init::CLASS_HTML_DOCUMENT;
+pub use crate::init::CLASS_NODE;
+pub use crate::init::CLASS_NODE_SET;
+pub use crate::init::CLASS_XML_DOCUMENT;
+pub use crate::init::CLASS_XML_DOCUMENT_FRAGMENT;
+pub use crate::init::EXC_CSS_SYNTAX_ERROR;
+pub use crate::init::EXC_ERROR;
+pub use crate::init::EXC_XML_LIMIT_EXCEEDED;
+pub use crate::init::EXC_XML_SYNTAX_ERROR;
+pub use crate::init::MOD_HTML_NODE_METHODS;
+pub use crate::init::MOD_LEXBOR;
+pub use crate::init::MOD_XML;
+pub use crate::init::MOD_XML_NODE_METHODS;
 
 /* The element index's tag hook. It was declared here as an `extern` C function
  * while the definition might be C; the two ends then had to be kept in step by
@@ -287,7 +287,7 @@ pub use crate::lexbor_abi::{
 /// # Safety
 /// Only after `Init_makiri` has defined it, i.e. from a `mkr_init_*` or later.
 pub unsafe fn html_node_methods() -> RModule {
-    RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
+    RModule::from_value(Value::from_raw(MOD_HTML_NODE_METHODS))
         .expect("Makiri::HTML::NodeMethods is a Module")
 }
 
@@ -306,7 +306,7 @@ pub use crate::bridge::ruby::typed_data_unprotected;
 /// # Safety
 /// As [`html_node_methods`].
 pub unsafe fn error_class() -> ExceptionClass {
-    ExceptionClass::from_value(Value::from_raw(mkr_eError))
+    ExceptionClass::from_value(Value::from_raw(EXC_ERROR))
         .expect("Makiri::Error is a Class < Exception")
 }
 

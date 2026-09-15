@@ -19,15 +19,15 @@ use magnus::{prelude::*, Error, RArray, Ruby, Value};
 use super::ty;
 use super::{unwrap, wrap};
 use crate::glue::abi::{
-    cXmlDocument, doc_parsed, error_class, is_kind_of, lxb_dom_attr_local_name,
-    lxb_dom_attr_qualified_name, lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi,
-    lxb_dom_document_root, lxb_dom_document_type_public_id_noi,
-    lxb_dom_document_type_system_id_noi, lxb_dom_element_first_attribute_noi,
-    lxb_dom_element_get_attribute, lxb_dom_element_has_attribute, lxb_dom_element_local_name,
-    lxb_dom_element_next_attribute_noi, lxb_dom_element_qualified_name, lxb_dom_element_tag_name,
-    lxb_dom_node_name, lxb_dom_node_text_content, lxb_ns_by_id, mkr_cNode, node_set_new,
-    node_set_push, ruby_str_from_borrowed, ruby_str_from_slices, ruby_verified_text, LxbAttr,
-    LxbDoc, LxbElement, LxbNode,
+    doc_parsed, error_class, is_kind_of, lxb_dom_attr_local_name, lxb_dom_attr_qualified_name,
+    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_root,
+    lxb_dom_document_type_public_id_noi, lxb_dom_document_type_system_id_noi,
+    lxb_dom_element_first_attribute_noi, lxb_dom_element_get_attribute,
+    lxb_dom_element_has_attribute, lxb_dom_element_local_name, lxb_dom_element_next_attribute_noi,
+    lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
+    lxb_dom_node_text_content, lxb_ns_by_id, node_set_new, node_set_push, ruby_str_from_borrowed,
+    ruby_str_from_slices, ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode, CLASS_NODE,
+    CLASS_XML_DOCUMENT,
 };
 use crate::lexbor_abi as lxb;
 use crate::text::BorrowedText;
@@ -825,14 +825,14 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
         use magnus::rb_sys::AsRawValue;
         let nil = ruby.qnil().as_value();
 
-        if !is_kind_of(other, mkr_cNode) {
+        if !is_kind_of(other, CLASS_NODE) {
             return Ok(nil);
         }
         /* An XML node is never order-comparable to an HTML one, and asking is
          * how we avoid unwrap's TypeError below. */
         if is_kind_of(
             Value::from_raw(crate::glue::abi::keepalive_document(other.as_raw())?),
-            cXmlDocument,
+            CLASS_XML_DOCUMENT,
         ) {
             return Ok(nil);
         }

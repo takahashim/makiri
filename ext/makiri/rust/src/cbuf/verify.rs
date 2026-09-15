@@ -47,7 +47,7 @@ const NSRC: usize = 4;
 /// Constrain the two build-time limits to the regime these proofs are about.
 ///
 /// **This was load-bearing, and the reason it existed is worth keeping.** While
-/// the C was compiled, `buf_hard_max` and `buf_default_limit` were
+/// the C was compiled, `BUF_HARD_MAX` and `BUF_DEFAULT_LIMIT` were
 /// `extern static`s defined in `core/mkr_core_abi.c` - and Kani does not link C,
 /// so without this assumption they were UNCONSTRAINED values. The first version
 /// of this file omitted it and the proof duly failed: `content_limit` took
@@ -62,8 +62,8 @@ const NSRC: usize = 4;
 /// large as the ceiling under test") and because the hazard returns the moment
 /// any constant crosses a language boundary again.
 unsafe fn assume_limits_are_sane() {
-    kani::assume(super::buf_hard_max >= MAXCAP);
-    kani::assume(super::buf_default_limit >= MAXCAP);
+    kani::assume(super::BUF_HARD_MAX >= MAXCAP);
+    kani::assume(super::BUF_DEFAULT_LIMIT >= MAXCAP);
 }
 
 /// The effective ceiling for a buffer whose `max` is in the assumed range.

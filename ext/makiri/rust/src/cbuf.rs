@@ -1,5 +1,5 @@
-//! `mkr_buf_t` (core/mkr_buf.h): the owned, capped, growable byte buffer that
-//! every C layer collects output into.
+//! `Buf` (once `mkr_buf_t`, core/mkr_buf.h): the owned, capped, growable byte
+//! buffer that output is collected into.
 //!
 //! Declared here rather than inside one subsystem because more than one of them
 //! now writes into it - the XPath engine's string values and the glue's
@@ -179,25 +179,24 @@ extern "C" {
  * The lower-case names are deliberate - they are what the C ABI published, and
  * `content_limit` below should not have to know which side defines them. */
 
-#[allow(non_upper_case_globals)]
 mod limits {
     use crate::kani_bounds::parse_usize;
 
     /// The absolute ceiling on a buffer's CONTENT length.
-    pub(crate) const buf_hard_max: usize = match option_env!("MKR_BUF_HARD_MAX") {
+    pub(crate) const BUF_HARD_MAX: usize = match option_env!("MKR_BUF_HARD_MAX") {
         Some(s) => parse_usize(s),
         None => 4 << 30, /* 4 GiB */
     };
 
     /// The ceiling applied when a buffer was initialised with max == 0. Not
     /// "unbounded" - that is the whole point of having a default.
-    pub(crate) const buf_default_limit: usize = match option_env!("MKR_BUF_DEFAULT_LIMIT") {
+    pub(crate) const BUF_DEFAULT_LIMIT: usize = match option_env!("MKR_BUF_DEFAULT_LIMIT") {
         Some(s) => parse_usize(s),
         None => 100 << 20, /* 100 MiB */
     };
 }
 
-pub(crate) use limits::{buf_default_limit, buf_hard_max};
+pub(crate) use limits::{BUF_DEFAULT_LIMIT, BUF_HARD_MAX};
 
 /* ------------------------------------------------------------------ *
  * the C ABI (core/mkr_buf.c)                                         *
@@ -218,8 +217,8 @@ pub(crate) use limits::{buf_default_limit, buf_hard_max};
 /// than `append` would pre-size past what any append will accept.
 #[inline]
 fn content_limit(b: &Buf) -> usize {
-    let soft = if b.max != 0 { b.max } else { buf_default_limit };
-    soft.min(buf_hard_max)
+    let soft = if b.max != 0 { b.max } else { BUF_DEFAULT_LIMIT };
+    soft.min(BUF_HARD_MAX)
 }
 
 /// Append `n` bytes. Fails closed, leaving the buffer untouched:

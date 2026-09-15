@@ -26,7 +26,7 @@
 //! HTML and XML nodes share the `mkr_node_data_t` layout and the same GC
 //! functions but are wrapped under DISTINCT types, so the representation is
 //! checked by Ruby's own type machinery: an HTML accessor handed an XML node
-//! raises TypeError, and vice versa. `node_data_type` is the shared base both
+//! raises TypeError, and vice versa. `NODE_DATA_TYPE` is the shared base both
 //! derive from, so the kind-agnostic accessors below accept either. This is the
 //! single source of HTML/XML node-pointer safety - there is deliberately no
 //! "return an lxb_dom_node_t for any node" unwrap.
@@ -83,21 +83,18 @@ const fn node_type(name: *const c_char, parent: *const rb_data_type_t) -> DataTy
     )
 }
 
-#[allow(non_upper_case_globals)]
-pub static node_data_type: DataType = node_type(c"Makiri::Node".as_ptr(), core::ptr::null());
+pub static NODE_DATA_TYPE: DataType = node_type(c"Makiri::Node".as_ptr(), core::ptr::null());
 
-#[allow(non_upper_case_globals)]
-pub static html_node_type: DataType =
-    node_type(c"Makiri::HTML::Node".as_ptr(), node_data_type.as_ptr());
+pub static HTML_NODE_TYPE: DataType =
+    node_type(c"Makiri::HTML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
 
-#[allow(non_upper_case_globals)]
-pub static xml_node_type: DataType =
-    node_type(c"Makiri::XML::Node".as_ptr(), node_data_type.as_ptr());
+pub static XML_NODE_TYPE: DataType =
+    node_type(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
 
 /// The base type as the raw pointer the Ruby API wants.
 #[inline]
 fn base_type() -> *const rb_data_type_t {
-    node_data_type.as_ptr()
+    NODE_DATA_TYPE.as_ptr()
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,7 +109,7 @@ const NODE_KIND_OTHER: c_int = 0;
 const NODE_KIND_HTML: c_int = 1;
 const NODE_KIND_XML: c_int = 2;
 
-use super::abi::{doc_parsed, mkr_cDocument, mkr_cNode, parsed_xml_doc, DataType};
+use super::abi::{doc_parsed, parsed_xml_doc, DataType, CLASS_DOCUMENT, CLASS_NODE};
 
 pub use crate::dom_adapter::post_parse::parsed_kind;
 
@@ -130,7 +127,7 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
 pub unsafe fn node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
-    if is_kind_of(rb_node, mkr_cDocument) {
+    if is_kind_of(rb_node, CLASS_DOCUMENT) {
         let parsed = doc_parsed(rb_node)?;
         if parsed_kind(parsed) == DOC_XML {
             let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
@@ -154,14 +151,14 @@ pub unsafe fn node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
 pub unsafe extern "C" fn node_kind(v: VALUE) -> c_int {
     if rb_typeddata_is_kind_of(
         v,
-        &html_node_type as *const DataType as *const rb_data_type_t,
+        &HTML_NODE_TYPE as *const DataType as *const rb_data_type_t,
     ) != 0
     {
         return NODE_KIND_HTML;
     }
     if rb_typeddata_is_kind_of(
         v,
-        &xml_node_type as *const DataType as *const rb_data_type_t,
+        &XML_NODE_TYPE as *const DataType as *const rb_data_type_t,
     ) != 0
     {
         return NODE_KIND_XML;
@@ -187,7 +184,7 @@ unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
 pub unsafe fn keepalive_document(rb_node: VALUE) -> Result<VALUE, magnus::Error> {
-    if is_kind_of(rb_node, mkr_cDocument) {
+    if is_kind_of(rb_node, CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
     let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
@@ -205,7 +202,7 @@ pub unsafe fn keepalive_document(rb_node: VALUE) -> Result<VALUE, magnus::Error>
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.
 pub unsafe extern "C" fn node_equals(self_: VALUE, other: VALUE) -> VALUE {
-    if !is_kind_of(other, mkr_cNode) {
+    if !is_kind_of(other, CLASS_NODE) {
         return rb_sys::Qfalse as VALUE;
     }
     if node_id_or_raise(self_) == node_id_or_raise(other) {

@@ -23,7 +23,7 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use self::abi::*;
-use super::abi::{doc_parsed, mkr_cDocument, mkr_cNodeSet, parsed_xml_doc, NodeData};
+use super::abi::{doc_parsed, parsed_xml_doc, NodeData, CLASS_DOCUMENT, CLASS_NODE_SET};
 
 /// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///
@@ -45,21 +45,21 @@ pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VA
         return document;
     }
     let klass = match ty {
-        Some(NodeType::Element) => mkr_cXmlElement,
-        Some(NodeType::Attribute) => mkr_cXmlAttr,
-        Some(NodeType::Text) => mkr_cXmlText,
-        Some(NodeType::CData) => mkr_cXmlCDATASection,
-        Some(NodeType::Comment) => mkr_cXmlComment,
-        Some(NodeType::Pi) => mkr_cXmlProcessingInstruction,
-        Some(NodeType::Doctype) => mkr_cXmlDocumentType,
-        Some(NodeType::Fragment) => mkr_cXmlDocumentFragment,
-        _ => mkr_cXmlNode,
+        Some(NodeType::Element) => CLASS_XML_ELEMENT,
+        Some(NodeType::Attribute) => CLASS_XML_ATTR,
+        Some(NodeType::Text) => CLASS_XML_TEXT,
+        Some(NodeType::CData) => CLASS_XML_CDATA_SECTION,
+        Some(NodeType::Comment) => CLASS_XML_COMMENT,
+        Some(NodeType::Pi) => CLASS_XML_PROCESSING_INSTRUCTION,
+        Some(NodeType::Doctype) => CLASS_XML_DOCUMENT_TYPE,
+        Some(NodeType::Fragment) => CLASS_XML_DOCUMENT_FRAGMENT,
+        _ => CLASS_XML_NODE,
     };
 
     /* The Document is stored after the wrap: see `wrap_zeroed`. */
     crate::bridge::ruby::wrap_zeroed::<NodeData>(
         klass,
-        xml_node_type.as_ptr(),
+        XML_NODE_TYPE.as_ptr(),
         |nd| nd.node = node,
         |nd| nd.document = document,
     )
@@ -73,11 +73,11 @@ pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VA
 /// forget to test.
 pub unsafe fn xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Error> {
     let v = Value::from_raw(rb_self);
-    if is_a(v, cXmlDocument) {
+    if is_a(v, CLASS_XML_DOCUMENT) {
         let xdoc = parsed_xml_doc(doc_parsed(rb_self)?) as *mut XmlDoc;
         return Ok((*xdoc).doc_node().to_token() as *mut c_void);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, xml_node_type.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(rb_self, XML_NODE_TYPE.as_ptr())? as *mut NodeData;
     Ok((*nd).node)
 }
 
@@ -93,10 +93,10 @@ pub unsafe fn doc_of(document: VALUE) -> *mut XmlDoc {
 /// the type boundary, like [`xml_node_unwrap`].
 pub unsafe fn xml_node_document(rb_self: VALUE) -> Result<VALUE, magnus::Error> {
     let v = Value::from_raw(rb_self);
-    if is_a(v, cXmlDocument) {
+    if is_a(v, CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, xml_node_type.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(rb_self, XML_NODE_TYPE.as_ptr())? as *mut NodeData;
     Ok((*nd).document)
 }
 
@@ -184,7 +184,7 @@ unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, ar
 /// From `Init_makiri`, after the classes exist.
 pub unsafe extern "C" fn init_xml_node_read() {
     let ruby = Ruby::get_unchecked();
-    let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
+    let m = magnus::RModule::from_value(Value::from_raw(MOD_XML_NODE_METHODS))
         .expect("Makiri::XML::NodeMethods");
 
     m.define_method("name", method!(read::name, 0))
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn init_xml_node_read() {
         .expect("#node_type");
 
     /* Namespace introspection, plus the (prefix, href) value object it hands back. */
-    let m_xml = magnus::RModule::from_value(Value::from_raw(mkr_mXML)).expect("Makiri::XML");
+    let m_xml = magnus::RModule::from_value(Value::from_raw(MOD_XML)).expect("Makiri::XML");
     let ns_class: RClass = m_xml
         .define_class("Namespace", ruby.class_object())
         .expect("Makiri::XML::Namespace");
@@ -287,14 +287,14 @@ pub unsafe extern "C" fn init_xml_node_read() {
     let hash: RbMethod = core::mem::transmute(node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
     let ptr_id: RbMethod =
         core::mem::transmute(node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
-    define_c_method(mkr_mXmlNodeMethods, c"==", equals, 1);
-    define_c_method(mkr_mXmlNodeMethods, c"eql?", equals, 1);
-    define_c_method(mkr_mXmlNodeMethods, c"hash", hash, 0);
-    define_c_method(mkr_mXmlNodeMethods, c"pointer_id", ptr_id, 0);
+    define_c_method(MOD_XML_NODE_METHODS, c"==", equals, 1);
+    define_c_method(MOD_XML_NODE_METHODS, c"eql?", equals, 1);
+    define_c_method(MOD_XML_NODE_METHODS, c"hash", hash, 0);
+    define_c_method(MOD_XML_NODE_METHODS, c"pointer_id", ptr_id, 0);
 
     /* DocumentType identifiers; #public_id is the Nokogiri-style alias of
      * #external_id, and #name comes from the shared reader above. */
-    let dt = RClass::from_value(Value::from_raw(mkr_cXmlDocumentType))
+    let dt = RClass::from_value(Value::from_raw(CLASS_XML_DOCUMENT_TYPE))
         .expect("Makiri::XML::DocumentType");
     for name in ["external_id", "public_id"] {
         dt.define_method(name, method!(read::dtd_external_id, 0))
@@ -303,7 +303,7 @@ pub unsafe extern "C" fn init_xml_node_read() {
     dt.define_method("system_id", method!(read::dtd_system_id, 0))
         .expect("#system_id");
 
-    let _ = (mkr_cDocument, mkr_cNodeSet);
+    let _ = (CLASS_DOCUMENT, CLASS_NODE_SET);
 }
 
 /// `init_xml_node` - the whole XML node surface, once the mutation half is
@@ -317,9 +317,9 @@ pub unsafe extern "C" fn init_xml_node() {
     init_xml_node_serialize();
     init_xml_node_read();
 
-    let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
+    let m = magnus::RModule::from_value(Value::from_raw(MOD_XML_NODE_METHODS))
         .expect("Makiri::XML::NodeMethods");
-    let doc = RClass::from_value(Value::from_raw(cXmlDocument)).expect("XML::Document");
+    let doc = RClass::from_value(Value::from_raw(CLASS_XML_DOCUMENT)).expect("XML::Document");
 
     /* In-place edits. Detach-never-destroy; the primitives live in
      * xml/mkr_xml_mutate.c. */

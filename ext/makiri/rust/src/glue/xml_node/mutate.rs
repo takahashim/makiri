@@ -21,7 +21,7 @@ use rb_sys::VALUE;
 
 use super::abi::*;
 use super::{node_document, unwrap, wrap};
-use crate::glue::abi::{doc_parsed, html_node_unwrap, mkr_cNode, parsed_xml_doc};
+use crate::glue::abi::{doc_parsed, html_node_unwrap, parsed_xml_doc, CLASS_NODE};
 
 /// `NodeKind`.
 const KIND_HTML: core::ffi::c_int = 1;
@@ -177,7 +177,7 @@ unsafe fn verified_opt(
 pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        if is_a(rb_self, cXmlDocument) {
+        if is_a(rb_self, CLASS_XML_DOCUMENT) {
             return Err(Error::new(error_class(), "cannot remove the document node"));
         }
         let n = unwrap_mutable(this);
@@ -328,7 +328,7 @@ unsafe fn incoming_node(
     target_doc: Value,
     arg: Value,
 ) -> Result<(NodeId, Value), Error> {
-    if !is_a(arg, mkr_cNode) || !is_a(node_document(arg)?, cXmlDocument) {
+    if !is_a(arg, CLASS_NODE) || !is_a(node_document(arg)?, CLASS_XML_DOCUMENT) {
         return Err(Error::new(
             ruby.exception_type_error(),
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",

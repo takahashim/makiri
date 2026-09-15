@@ -29,8 +29,6 @@
 //! Every leaf also loses its allocator. These objects are created only from
 //! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
 
-#![allow(non_upper_case_globals)]
-
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{function, Error, Module, Object, Ruby, Value};
 use rb_sys::VALUE;
@@ -39,8 +37,8 @@ use rb_sys::VALUE;
  * the classes and modules other modules read                         *
  * ------------------------------------------------------------------ *
  *
- * Exported under the same names the C used, so every `mkr_init_*` and every
- * glue module that already reads one keeps working unchanged. */
+ * Written once by `init`, read by the glue modules that raise or check against
+ * them. */
 
 macro_rules! exported {
     ($($name:ident),* $(,)?) => {
@@ -51,16 +49,16 @@ macro_rules! exported {
 }
 
 exported! {
-    mkr_cNode, mkr_cDocument, mkr_cDocumentFragment, mkr_cNodeSet, mkr_cXPathContext,
-    mkr_mXML, mkr_mLexbor,
-    mkr_mHtmlNodeMethods, mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement,
-    mkr_cHtmlAttr, mkr_cHtmlText, mkr_cHtmlComment, mkr_cHtmlCDATASection,
-    mkr_cHtmlProcessingInstruction, mkr_cHtmlDocumentType, mkr_cHtmlDocumentFragment,
-    mkr_mXmlNodeMethods, mkr_cXmlNode, cXmlDocument, mkr_cXmlElement,
-    mkr_cXmlAttr, mkr_cXmlText, mkr_cXmlComment, mkr_cXmlCDATASection,
-    mkr_cXmlProcessingInstruction, mkr_cXmlDocumentType, mkr_cXmlDocumentFragment,
-    mkr_eError, mkr_eXPathSyntaxError, mkr_eXPathLimitExceeded,
-    mkr_eCSSSyntaxError, mkr_eXmlSyntaxError, mkr_eXmlLimitExceeded,
+    CLASS_NODE, CLASS_DOCUMENT, CLASS_DOCUMENT_FRAGMENT, CLASS_NODE_SET, CLASS_XPATH_CONTEXT,
+    MOD_XML, MOD_LEXBOR,
+    MOD_HTML_NODE_METHODS, CLASS_HTML_NODE, CLASS_HTML_DOCUMENT, CLASS_HTML_ELEMENT,
+    CLASS_HTML_ATTR, CLASS_HTML_TEXT, CLASS_HTML_COMMENT, CLASS_HTML_CDATA_SECTION,
+    CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_DOCUMENT_FRAGMENT,
+    MOD_XML_NODE_METHODS, CLASS_XML_NODE, CLASS_XML_DOCUMENT, CLASS_XML_ELEMENT,
+    CLASS_XML_ATTR, CLASS_XML_TEXT, CLASS_XML_COMMENT, CLASS_XML_CDATA_SECTION,
+    CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_DOCUMENT_TYPE, CLASS_XML_DOCUMENT_FRAGMENT,
+    EXC_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
+    EXC_CSS_SYNTAX_ERROR, EXC_XML_SYNTAX_ERROR, EXC_XML_LIMIT_EXCEEDED,
 }
 
 /* ------------------------------------------------------------------ *
@@ -212,71 +210,71 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let xml_limit = m_xml.define_error("LimitExceeded", err)?;
 
     unsafe {
-        mkr_cNode = node.as_raw();
-        mkr_cDocument = document.as_raw();
-        mkr_cDocumentFragment = fragment.as_raw();
-        mkr_cNodeSet = node_set.as_raw();
-        mkr_cXPathContext = xpath_context.as_raw();
-        mkr_mXML = m_xml.as_raw();
-        mkr_mLexbor = m_lexbor.as_raw();
+        CLASS_NODE = node.as_raw();
+        CLASS_DOCUMENT = document.as_raw();
+        CLASS_DOCUMENT_FRAGMENT = fragment.as_raw();
+        CLASS_NODE_SET = node_set.as_raw();
+        CLASS_XPATH_CONTEXT = xpath_context.as_raw();
+        MOD_XML = m_xml.as_raw();
+        MOD_LEXBOR = m_lexbor.as_raw();
 
-        mkr_mHtmlNodeMethods = html_methods.as_raw();
-        mkr_cHtmlNode = h_node.as_raw();
-        mkr_cHtmlDocument = h_document.as_raw();
-        mkr_cHtmlElement = h_element.as_raw();
-        mkr_cHtmlAttr = h_attr.as_raw();
-        mkr_cHtmlText = h_text.as_raw();
-        mkr_cHtmlComment = h_comment.as_raw();
-        mkr_cHtmlCDATASection = h_cdata.as_raw();
-        mkr_cHtmlProcessingInstruction = h_pi.as_raw();
-        mkr_cHtmlDocumentType = h_doctype.as_raw();
-        mkr_cHtmlDocumentFragment = h_fragment.as_raw();
+        MOD_HTML_NODE_METHODS = html_methods.as_raw();
+        CLASS_HTML_NODE = h_node.as_raw();
+        CLASS_HTML_DOCUMENT = h_document.as_raw();
+        CLASS_HTML_ELEMENT = h_element.as_raw();
+        CLASS_HTML_ATTR = h_attr.as_raw();
+        CLASS_HTML_TEXT = h_text.as_raw();
+        CLASS_HTML_COMMENT = h_comment.as_raw();
+        CLASS_HTML_CDATA_SECTION = h_cdata.as_raw();
+        CLASS_HTML_PROCESSING_INSTRUCTION = h_pi.as_raw();
+        CLASS_HTML_DOCUMENT_TYPE = h_doctype.as_raw();
+        CLASS_HTML_DOCUMENT_FRAGMENT = h_fragment.as_raw();
 
-        mkr_mXmlNodeMethods = xml_methods.as_raw();
-        mkr_cXmlNode = x_node.as_raw();
-        mkr_cXmlElement = x_element.as_raw();
-        mkr_cXmlAttr = x_attr.as_raw();
-        mkr_cXmlText = x_text.as_raw();
-        mkr_cXmlComment = x_comment.as_raw();
-        mkr_cXmlCDATASection = x_cdata.as_raw();
-        mkr_cXmlProcessingInstruction = x_pi.as_raw();
-        mkr_cXmlDocumentType = x_doctype.as_raw();
-        mkr_cXmlDocumentFragment = x_fragment.as_raw();
+        MOD_XML_NODE_METHODS = xml_methods.as_raw();
+        CLASS_XML_NODE = x_node.as_raw();
+        CLASS_XML_ELEMENT = x_element.as_raw();
+        CLASS_XML_ATTR = x_attr.as_raw();
+        CLASS_XML_TEXT = x_text.as_raw();
+        CLASS_XML_COMMENT = x_comment.as_raw();
+        CLASS_XML_CDATA_SECTION = x_cdata.as_raw();
+        CLASS_XML_PROCESSING_INSTRUCTION = x_pi.as_raw();
+        CLASS_XML_DOCUMENT_TYPE = x_doctype.as_raw();
+        CLASS_XML_DOCUMENT_FRAGMENT = x_fragment.as_raw();
 
-        mkr_eError = err.as_raw();
-        mkr_eXPathSyntaxError = xpath_syntax.as_raw();
-        mkr_eXPathLimitExceeded = xpath_limit.as_raw();
-        mkr_eCSSSyntaxError = css_syntax.as_raw();
-        mkr_eXmlSyntaxError = xml_syntax.as_raw();
-        mkr_eXmlLimitExceeded = xml_limit.as_raw();
+        EXC_ERROR = err.as_raw();
+        EXC_XPATH_SYNTAX_ERROR = xpath_syntax.as_raw();
+        EXC_XPATH_LIMIT_EXCEEDED = xpath_limit.as_raw();
+        EXC_CSS_SYNTAX_ERROR = css_syntax.as_raw();
+        EXC_XML_SYNTAX_ERROR = xml_syntax.as_raw();
+        EXC_XML_LIMIT_EXCEEDED = xml_limit.as_raw();
 
         seal_leaves(
-            mkr_mHtmlNodeMethods,
+            MOD_HTML_NODE_METHODS,
             &[
-                mkr_cHtmlNode,
-                mkr_cHtmlDocument,
-                mkr_cHtmlElement,
-                mkr_cHtmlAttr,
-                mkr_cHtmlText,
-                mkr_cHtmlComment,
-                mkr_cHtmlCDATASection,
-                mkr_cHtmlProcessingInstruction,
-                mkr_cHtmlDocumentType,
-                mkr_cHtmlDocumentFragment,
+                CLASS_HTML_NODE,
+                CLASS_HTML_DOCUMENT,
+                CLASS_HTML_ELEMENT,
+                CLASS_HTML_ATTR,
+                CLASS_HTML_TEXT,
+                CLASS_HTML_COMMENT,
+                CLASS_HTML_CDATA_SECTION,
+                CLASS_HTML_PROCESSING_INSTRUCTION,
+                CLASS_HTML_DOCUMENT_TYPE,
+                CLASS_HTML_DOCUMENT_FRAGMENT,
             ],
         );
         seal_leaves(
-            mkr_mXmlNodeMethods,
+            MOD_XML_NODE_METHODS,
             &[
-                mkr_cXmlNode,
-                mkr_cXmlElement,
-                mkr_cXmlAttr,
-                mkr_cXmlText,
-                mkr_cXmlComment,
-                mkr_cXmlCDATASection,
-                mkr_cXmlProcessingInstruction,
-                mkr_cXmlDocumentType,
-                mkr_cXmlDocumentFragment,
+                CLASS_XML_NODE,
+                CLASS_XML_ELEMENT,
+                CLASS_XML_ATTR,
+                CLASS_XML_TEXT,
+                CLASS_XML_COMMENT,
+                CLASS_XML_CDATA_SECTION,
+                CLASS_XML_PROCESSING_INSTRUCTION,
+                CLASS_XML_DOCUMENT_TYPE,
+                CLASS_XML_DOCUMENT_FRAGMENT,
             ],
         );
 
@@ -285,8 +283,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
          * nothing. XPathContext.new exists, but it is defined by
          * init_xpath and wraps a native context. */
         for base in [
-            mkr_cNode,
-            mkr_cDocument,
+            CLASS_NODE,
+            CLASS_DOCUMENT,
             element.as_raw(),
             attr.as_raw(),
             text.as_raw(),
@@ -294,9 +292,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
             cdata.as_raw(),
             pi.as_raw(),
             doctype.as_raw(),
-            mkr_cDocumentFragment,
-            mkr_cNodeSet,
-            mkr_cXPathContext,
+            CLASS_DOCUMENT_FRAGMENT,
+            CLASS_NODE_SET,
+            CLASS_XPATH_CONTEXT,
         ] {
             rb_sys::rb_undef_alloc_func(base);
         }
