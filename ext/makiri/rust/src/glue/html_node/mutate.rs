@@ -57,7 +57,7 @@ pub use crate::glue::fragment::run_fragment_parser;
  * ------------------------------------------------------------------ */
 
 fn err(msg: &str) -> Error {
-    Error::new(unsafe { error_class() }, msg.to_owned())
+    Error::new(error_class(), msg.to_owned())
 }
 
 /// Drop the DOM and text indexes so the next query rebuilds them.

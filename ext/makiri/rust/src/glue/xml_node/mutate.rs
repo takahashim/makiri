@@ -122,10 +122,7 @@ unsafe fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
 fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
     u32::try_from(len).map_err(|_| {
         let _ = ruby;
-        Error::new(
-            unsafe { error_class() },
-            "string too long for an XML node (max 4 GiB)",
-        )
+        Error::new(error_class(), "string too long for an XML node (max 4 GiB)")
     })
 }
 
@@ -181,7 +178,7 @@ unsafe fn verified_opt(
 pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        if is_a(rb_self, CLASS_XML_DOCUMENT) {
+        if is_a(rb_self, &CLASS_XML_DOCUMENT) {
             return Err(Error::new(error_class(), "cannot remove the document node"));
         }
         let n = unwrap_mutable(this)?;
@@ -332,7 +329,7 @@ unsafe fn incoming_node(
     target_doc: Value,
     arg: Value,
 ) -> Result<(NodeId, Value), Error> {
-    if !is_a(arg, CLASS_NODE) || !is_a(node_document(arg)?, CLASS_XML_DOCUMENT) {
+    if !is_a(arg, &CLASS_NODE) || !is_a(node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(Error::new(
             ruby.exception_type_error(),
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",

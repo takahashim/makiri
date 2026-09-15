@@ -5,7 +5,7 @@
 //! the contract "export only `Init_makiri`" is unchanged - it is enforced by the
 //! linker flag, as it always was, not by the language the function is written in.
 //!
-//! # Why the class VALUEs are `static mut`
+//! # The class VALUEs are written once
 //!
 //! Forty-six classes and modules are created here and read from a dozen other
 //! modules. In C they were plain globals; they are the same object with the same
@@ -14,8 +14,8 @@
 //! and stay local.
 //!
 //! They are written exactly once, during `init`, before any Ruby code can run,
-//! and only read afterwards. That is what makes the `static mut` sound, and it
-//! is the same argument the C relied on - not a weaker one.
+//! and only read afterwards - the argument the C's plain globals relied on. An
+//! [`RbConst`] states it once, so reading one takes no `unsafe`.
 //!
 //! # What the hierarchy encodes
 //!
@@ -29,8 +29,10 @@
 //! Every leaf also loses its allocator. These objects are created only from
 //! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
 
+use core::sync::atomic::{AtomicUsize, Ordering};
 use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{function, Error, Module, Object, Ruby, Value};
+
+use magnus::{function, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
 use rb_sys::VALUE;
 
 /* ------------------------------------------------------------------ *
@@ -40,10 +42,58 @@ use rb_sys::VALUE;
  * Written once by `init`, read by the glue modules that raise or check against
  * them. */
 
+/// A class, module or exception class `init` defines, for the glue to read.
+///
+/// Written once, during `init`, before any Ruby code can run, and only read
+/// afterwards. Every object one holds is a constant under `Makiri`, so it lives
+/// for the rest of the process. Read before `init` it is `0` - Ruby's `false`,
+/// a valid immediate rather than a dangling object.
+pub struct RbConst(AtomicUsize);
+
+const _: () = assert!(core::mem::size_of::<VALUE>() <= core::mem::size_of::<usize>());
+
+impl RbConst {
+    const fn new() -> RbConst {
+        RbConst(AtomicUsize::new(0))
+    }
+
+    /// # Safety
+    /// `v` must be a class or module that lives for the rest of the process.
+    pub(crate) unsafe fn set(&self, v: VALUE) {
+        self.0.store(v as usize, Ordering::Relaxed);
+    }
+
+    /// The object as Ruby's handle, for a C call.
+    #[inline]
+    pub fn raw(&self) -> VALUE {
+        self.0.load(Ordering::Relaxed) as VALUE
+    }
+
+    /// The object as a value.
+    #[inline]
+    pub fn value(&self) -> Value {
+        // SAFETY: `0` or, once `init` has run, a class that lives for the
+        // process - see the type.
+        unsafe { Value::from_raw(self.raw()) }
+    }
+
+    pub fn class(&self) -> RClass {
+        RClass::from_value(self.value()).expect("a Makiri class, after Init_makiri")
+    }
+
+    pub fn module(&self) -> RModule {
+        RModule::from_value(self.value()).expect("a Makiri module, after Init_makiri")
+    }
+
+    pub fn exception(&self) -> ExceptionClass {
+        ExceptionClass::from_value(self.value()).expect("a Makiri exception, after Init_makiri")
+    }
+}
+
 macro_rules! exported {
     ($($name:ident),* $(,)?) => {
         $(
-            pub static mut $name: VALUE = 0;
+            pub static $name: RbConst = RbConst::new();
         )*
     };
 }
@@ -210,71 +260,71 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let xml_limit = m_xml.define_error("LimitExceeded", err)?;
 
     unsafe {
-        CLASS_NODE = node.as_raw();
-        CLASS_DOCUMENT = document.as_raw();
-        CLASS_DOCUMENT_FRAGMENT = fragment.as_raw();
-        CLASS_NODE_SET = node_set.as_raw();
-        CLASS_XPATH_CONTEXT = xpath_context.as_raw();
-        MOD_XML = m_xml.as_raw();
-        MOD_LEXBOR = m_lexbor.as_raw();
+        CLASS_NODE.set(node.as_raw());
+        CLASS_DOCUMENT.set(document.as_raw());
+        CLASS_DOCUMENT_FRAGMENT.set(fragment.as_raw());
+        CLASS_NODE_SET.set(node_set.as_raw());
+        CLASS_XPATH_CONTEXT.set(xpath_context.as_raw());
+        MOD_XML.set(m_xml.as_raw());
+        MOD_LEXBOR.set(m_lexbor.as_raw());
 
-        MOD_HTML_NODE_METHODS = html_methods.as_raw();
-        CLASS_HTML_NODE = h_node.as_raw();
-        CLASS_HTML_DOCUMENT = h_document.as_raw();
-        CLASS_HTML_ELEMENT = h_element.as_raw();
-        CLASS_HTML_ATTR = h_attr.as_raw();
-        CLASS_HTML_TEXT = h_text.as_raw();
-        CLASS_HTML_COMMENT = h_comment.as_raw();
-        CLASS_HTML_CDATA_SECTION = h_cdata.as_raw();
-        CLASS_HTML_PROCESSING_INSTRUCTION = h_pi.as_raw();
-        CLASS_HTML_DOCUMENT_TYPE = h_doctype.as_raw();
-        CLASS_HTML_DOCUMENT_FRAGMENT = h_fragment.as_raw();
+        MOD_HTML_NODE_METHODS.set(html_methods.as_raw());
+        CLASS_HTML_NODE.set(h_node.as_raw());
+        CLASS_HTML_DOCUMENT.set(h_document.as_raw());
+        CLASS_HTML_ELEMENT.set(h_element.as_raw());
+        CLASS_HTML_ATTR.set(h_attr.as_raw());
+        CLASS_HTML_TEXT.set(h_text.as_raw());
+        CLASS_HTML_COMMENT.set(h_comment.as_raw());
+        CLASS_HTML_CDATA_SECTION.set(h_cdata.as_raw());
+        CLASS_HTML_PROCESSING_INSTRUCTION.set(h_pi.as_raw());
+        CLASS_HTML_DOCUMENT_TYPE.set(h_doctype.as_raw());
+        CLASS_HTML_DOCUMENT_FRAGMENT.set(h_fragment.as_raw());
 
-        MOD_XML_NODE_METHODS = xml_methods.as_raw();
-        CLASS_XML_NODE = x_node.as_raw();
-        CLASS_XML_ELEMENT = x_element.as_raw();
-        CLASS_XML_ATTR = x_attr.as_raw();
-        CLASS_XML_TEXT = x_text.as_raw();
-        CLASS_XML_COMMENT = x_comment.as_raw();
-        CLASS_XML_CDATA_SECTION = x_cdata.as_raw();
-        CLASS_XML_PROCESSING_INSTRUCTION = x_pi.as_raw();
-        CLASS_XML_DOCUMENT_TYPE = x_doctype.as_raw();
-        CLASS_XML_DOCUMENT_FRAGMENT = x_fragment.as_raw();
+        MOD_XML_NODE_METHODS.set(xml_methods.as_raw());
+        CLASS_XML_NODE.set(x_node.as_raw());
+        CLASS_XML_ELEMENT.set(x_element.as_raw());
+        CLASS_XML_ATTR.set(x_attr.as_raw());
+        CLASS_XML_TEXT.set(x_text.as_raw());
+        CLASS_XML_COMMENT.set(x_comment.as_raw());
+        CLASS_XML_CDATA_SECTION.set(x_cdata.as_raw());
+        CLASS_XML_PROCESSING_INSTRUCTION.set(x_pi.as_raw());
+        CLASS_XML_DOCUMENT_TYPE.set(x_doctype.as_raw());
+        CLASS_XML_DOCUMENT_FRAGMENT.set(x_fragment.as_raw());
 
-        EXC_ERROR = err.as_raw();
-        EXC_XPATH_SYNTAX_ERROR = xpath_syntax.as_raw();
-        EXC_XPATH_LIMIT_EXCEEDED = xpath_limit.as_raw();
-        EXC_CSS_SYNTAX_ERROR = css_syntax.as_raw();
-        EXC_XML_SYNTAX_ERROR = xml_syntax.as_raw();
-        EXC_XML_LIMIT_EXCEEDED = xml_limit.as_raw();
+        EXC_ERROR.set(err.as_raw());
+        EXC_XPATH_SYNTAX_ERROR.set(xpath_syntax.as_raw());
+        EXC_XPATH_LIMIT_EXCEEDED.set(xpath_limit.as_raw());
+        EXC_CSS_SYNTAX_ERROR.set(css_syntax.as_raw());
+        EXC_XML_SYNTAX_ERROR.set(xml_syntax.as_raw());
+        EXC_XML_LIMIT_EXCEEDED.set(xml_limit.as_raw());
 
         seal_leaves(
-            MOD_HTML_NODE_METHODS,
+            MOD_HTML_NODE_METHODS.raw(),
             &[
-                CLASS_HTML_NODE,
-                CLASS_HTML_DOCUMENT,
-                CLASS_HTML_ELEMENT,
-                CLASS_HTML_ATTR,
-                CLASS_HTML_TEXT,
-                CLASS_HTML_COMMENT,
-                CLASS_HTML_CDATA_SECTION,
-                CLASS_HTML_PROCESSING_INSTRUCTION,
-                CLASS_HTML_DOCUMENT_TYPE,
-                CLASS_HTML_DOCUMENT_FRAGMENT,
+                CLASS_HTML_NODE.raw(),
+                CLASS_HTML_DOCUMENT.raw(),
+                CLASS_HTML_ELEMENT.raw(),
+                CLASS_HTML_ATTR.raw(),
+                CLASS_HTML_TEXT.raw(),
+                CLASS_HTML_COMMENT.raw(),
+                CLASS_HTML_CDATA_SECTION.raw(),
+                CLASS_HTML_PROCESSING_INSTRUCTION.raw(),
+                CLASS_HTML_DOCUMENT_TYPE.raw(),
+                CLASS_HTML_DOCUMENT_FRAGMENT.raw(),
             ],
         );
         seal_leaves(
-            MOD_XML_NODE_METHODS,
+            MOD_XML_NODE_METHODS.raw(),
             &[
-                CLASS_XML_NODE,
-                CLASS_XML_ELEMENT,
-                CLASS_XML_ATTR,
-                CLASS_XML_TEXT,
-                CLASS_XML_COMMENT,
-                CLASS_XML_CDATA_SECTION,
-                CLASS_XML_PROCESSING_INSTRUCTION,
-                CLASS_XML_DOCUMENT_TYPE,
-                CLASS_XML_DOCUMENT_FRAGMENT,
+                CLASS_XML_NODE.raw(),
+                CLASS_XML_ELEMENT.raw(),
+                CLASS_XML_ATTR.raw(),
+                CLASS_XML_TEXT.raw(),
+                CLASS_XML_COMMENT.raw(),
+                CLASS_XML_CDATA_SECTION.raw(),
+                CLASS_XML_PROCESSING_INSTRUCTION.raw(),
+                CLASS_XML_DOCUMENT_TYPE.raw(),
+                CLASS_XML_DOCUMENT_FRAGMENT.raw(),
             ],
         );
 
@@ -283,8 +333,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
          * nothing. XPathContext.new exists, but it is defined by
          * init_xpath and wraps a native context. */
         for base in [
-            CLASS_NODE,
-            CLASS_DOCUMENT,
+            CLASS_NODE.raw(),
+            CLASS_DOCUMENT.raw(),
             element.as_raw(),
             attr.as_raw(),
             text.as_raw(),
@@ -292,9 +342,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
             cdata.as_raw(),
             pi.as_raw(),
             doctype.as_raw(),
-            CLASS_DOCUMENT_FRAGMENT,
-            CLASS_NODE_SET,
-            CLASS_XPATH_CONTEXT,
+            CLASS_DOCUMENT_FRAGMENT.raw(),
+            CLASS_NODE_SET.raw(),
+            CLASS_XPATH_CONTEXT.raw(),
         ] {
             rb_sys::rb_undef_alloc_func(base);
         }

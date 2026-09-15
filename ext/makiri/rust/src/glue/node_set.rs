@@ -90,8 +90,7 @@ impl PushError {
 
 impl From<PushError> for Error {
     fn from(e: PushError) -> Error {
-        // SAFETY: Makiri::Error exists once Init_makiri has run.
-        Error::new(unsafe { error_class() }, e.message())
+        Error::new(error_class(), e.message())
     }
 }
 
@@ -217,13 +216,13 @@ impl NodeSet {
     fn read(&self) -> Result<std::cell::Ref<'_, NodeVec>, Error> {
         self.nodes
             .try_borrow()
-            .map_err(|_| Error::new(unsafe { error_class() }, "node set is already in use"))
+            .map_err(|_| Error::new(error_class(), "node set is already in use"))
     }
 
     fn write(&self) -> Result<std::cell::RefMut<'_, NodeVec>, Error> {
         self.nodes
             .try_borrow_mut()
-            .map_err(|_| Error::new(unsafe { error_class() }, "node set is already in use"))
+            .map_err(|_| Error::new(error_class(), "node set is already in use"))
     }
 
     fn document(&self, ruby: &Ruby) -> Value {
@@ -253,9 +252,7 @@ unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
 
 /// `Makiri::NodeSet`, as created by Init_makiri.
 fn node_set_class() -> RClass {
-    // SAFETY: defined before any of this runs.
-    RClass::from_value(unsafe { Value::from_raw(CLASS_NODE_SET) })
-        .expect("Makiri::NodeSet is a Class")
+    CLASS_NODE_SET.class()
 }
 
 /* ------------------------------------------------------------------ */
@@ -268,7 +265,7 @@ pub unsafe extern "C" fn node_set_new(document: VALUE) -> VALUE {
     let ruby = Ruby::get_unchecked();
     let doc = Value::from_raw(document);
     let doc_is_xml =
-        rb_sys::rb_obj_is_kind_of(document, CLASS_XML_DOCUMENT) == rb_sys::Qtrue as VALUE;
+        rb_sys::rb_obj_is_kind_of(document, CLASS_XML_DOCUMENT.raw()) == rb_sys::Qtrue as VALUE;
     let obj = ruby
         .wrap(NodeSet {
             document: doc.into(),
@@ -593,7 +590,7 @@ fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSe
     let o = <&NodeSet>::try_convert(other)?;
     if o.document(ruby).as_raw() != document.as_raw() {
         return Err(Error::new(
-            unsafe { error_class() },
+            error_class(),
             "cannot combine node sets from different documents",
         ));
     }
@@ -700,9 +697,11 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let (list,) = a.optional;
 
     let doc_raw = unsafe {
-        if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_DOCUMENT) == rb_sys::Qtrue as VALUE {
+        if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_DOCUMENT.raw()) == rb_sys::Qtrue as VALUE {
             ctx.as_raw()
-        } else if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_NODE) == rb_sys::Qtrue as VALUE {
+        } else if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_NODE.raw())
+            == rb_sys::Qtrue as VALUE
+        {
             keepalive_document(ctx.as_raw())?
         } else {
             return Err(Error::new(
@@ -727,7 +726,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let mut w = s.write()?;
     for item in arr.into_iter() {
         let ok = unsafe {
-            rb_sys::rb_obj_is_kind_of(item.as_raw(), CLASS_NODE) == rb_sys::Qtrue as VALUE
+            rb_sys::rb_obj_is_kind_of(item.as_raw(), CLASS_NODE.raw()) == rb_sys::Qtrue as VALUE
                 && keepalive_document(item.as_raw())? == doc_raw
         };
         if !ok {
@@ -749,7 +748,7 @@ pub unsafe extern "C" fn init_node_set() {
     let klass = node_set_class();
 
     /* Nodes come only from C; `.new` seeds through the factory below. */
-    rb_sys::rb_undef_alloc_func(CLASS_NODE_SET);
+    rb_sys::rb_undef_alloc_func(CLASS_NODE_SET.raw());
     klass
         .define_singleton_method("new", magnus::function!(s_new, -1))
         .expect("NodeSet.new");

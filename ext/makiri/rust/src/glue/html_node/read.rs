@@ -623,10 +623,10 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
     // SAFETY: the class VALUEs are set once at init; a Node has a keepalive
     // Document.
     let comparable = unsafe {
-        is_kind_of(other, CLASS_NODE)
+        is_kind_of(other, &CLASS_NODE)
             && !is_kind_of(
                 Value::from_raw(crate::glue::abi::keepalive_document(other.as_raw())?),
-                CLASS_XML_DOCUMENT,
+                &CLASS_XML_DOCUMENT,
             )
     };
     if !comparable {

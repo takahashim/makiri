@@ -402,14 +402,14 @@ unsafe fn with_compiled_selector(
         Some(k) => k,
         None => {
             return Err(Error::new(
-                unsafe { error_class() },
+                error_class(),
                 "out of memory caching CSS selector",
             ));
         }
     };
     if h.mkr_reserve(1).is_err() {
         return Err(Error::new(
-            unsafe { error_class() },
+            error_class(),
             "out of memory caching CSS selector",
         ));
     }
@@ -428,7 +428,7 @@ unsafe fn with_compiled_selector(
     if h.mkr_insert(owned_key, list).is_err() {
         lxb_css_memory_clean(e.mem);
         return Err(Error::new(
-            unsafe { error_class() },
+            error_class(),
             "out of memory caching CSS selector",
         ));
     }
@@ -454,9 +454,8 @@ unsafe fn str_bytes(v: Value) -> (*const u8, usize) {
 /// release said `invalid CSS selector: p:hover` - a user-visible change that no
 /// spec asserted, found by the CSS differential when the lowering was ported.
 fn syntax_error(selector: Value) -> Error {
-    let class =
-        magnus::ExceptionClass::from_value(unsafe { Value::from_raw(EXC_CSS_SYNTAX_ERROR) })
-            .expect("Makiri::CSS::SyntaxError");
+    let class = magnus::ExceptionClass::from_value(EXC_CSS_SYNTAX_ERROR.value())
+        .expect("Makiri::CSS::SyntaxError");
     let shown = selector.to_string();
     Error::new(class, format!("invalid CSS selector: {shown}"))
 }
@@ -505,13 +504,13 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     }
     if ctx.overflow {
         return Err(Error::new(
-            unsafe { error_class() },
+            error_class(),
             format!("CSS result set exceeded the node limit ({NODE_SET_MAX})"),
         ));
     }
     if ctx.oom {
         return Err(Error::new(
-            unsafe { error_class() },
+            error_class(),
             "out of memory collecting CSS results",
         ));
     }
@@ -544,7 +543,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         };
         return Err(match exc {
             Some(e) => Error::from(e),
-            None => Error::new(unsafe { error_class() }, "CSS result could not be built"),
+            None => Error::new(error_class(), "CSS result could not be built"),
         });
     }
     Ok(set)
@@ -596,7 +595,7 @@ fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
 /// # Safety
 /// Called from `Init_makiri`.
 pub unsafe extern "C" fn init_css() {
-    let m = magnus::RModule::from_value(Value::from_raw(MOD_HTML_NODE_METHODS))
+    let m = magnus::RModule::from_value(MOD_HTML_NODE_METHODS.value())
         .expect("Makiri::HTML::NodeMethods");
     m.define_method("css", method!(css, 1)).expect("Node#css");
     m.define_method("at_css", method!(at_css, 1))

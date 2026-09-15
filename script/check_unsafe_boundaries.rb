@@ -35,9 +35,7 @@ SAFE_FILES = %w[
 # These are the remaining C/Ruby ABI globals.  Each entry is deliberately
 # exact: adding another static mut must come with a dedicated boundary type or
 # an explicit review of its synchronisation proof.
-STATIC_MUT_COUNTS = {
-  "init.rs" => 1,
-}.freeze
+STATIC_MUT_COUNTS = {}.freeze
 
 # Ruby's C API outside `bridge/` is a ratchet. The bridge is where raw VALUEs,
 # typed data and the C calls that raise are meant to live (glue/mod.rs): a raise

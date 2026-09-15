@@ -69,7 +69,7 @@ pub fn ns_href(rb_self: Value) -> Result<Value, Error> {
 }
 
 pub fn ns_equal(rb_self: Value, other: Value) -> Result<bool, Error> {
-    if !unsafe { is_a(other, namespace_class().as_raw()) } {
+    if !other.is_kind_of(unsafe { namespace_class() }) {
         return Ok(false);
     }
     Ok(ns_prefix(rb_self)?.eql(ns_prefix(other)?)? && ns_href(rb_self)?.eql(ns_href(other)?)?)

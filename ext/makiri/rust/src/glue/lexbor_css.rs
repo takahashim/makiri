@@ -37,7 +37,7 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Symbol, Value};
 
 use crate::falloc::{self, VecPush};
@@ -558,9 +558,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = unsafe { ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr())? };
     let css: &[u8] = unsafe { tv.bytes() };
 
-    // SAFETY: `error_class` reads a VALUE that Init_makiri set before any Ruby
-    // code could call this, and we are on the Ruby thread.
-    let eclass = unsafe { error_class() };
+    let eclass = error_class();
     let err = |m: &str| Error::new(eclass, m.to_owned());
 
     // ---- phase one: no Ruby object is created below this line ----
@@ -626,7 +624,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 /// Runs once, from `Init_makiri`, on the Ruby thread.
 pub unsafe extern "C" fn init_lexbor_css() {
     let ruby = Ruby::get().expect("init_lexbor_css runs on the Ruby thread");
-    let lexbor = magnus::RModule::from_value(Value::from_raw(MOD_LEXBOR))
+    let lexbor = magnus::RModule::from_value(MOD_LEXBOR.value())
         .expect("Makiri::Lexbor is a module by the time this runs");
     let css = ruby.module_new();
     lexbor.const_set("CSS", css).expect("Makiri::Lexbor::CSS");

@@ -86,8 +86,8 @@ pub use crate::init::EXC_XPATH_SYNTAX_ERROR;
 /// magnus raises once its frames - and the context they own - are gone.
 pub(crate) unsafe fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
-        XP_ERR_SYNTAX => EXC_XPATH_SYNTAX_ERROR,
-        XP_ERR_LIMIT => EXC_XPATH_LIMIT_EXCEEDED,
+        XP_ERR_SYNTAX => EXC_XPATH_SYNTAX_ERROR.raw(),
+        XP_ERR_LIMIT => EXC_XPATH_LIMIT_EXCEEDED.raw(),
         _ => error_class().as_raw(),
     };
     let msg =
@@ -190,7 +190,7 @@ impl XPathCtx {
     fn cache(&self) -> Result<core::cell::RefMut<'_, AstCache>, Error> {
         self.cache
             .try_borrow_mut()
-            .map_err(|_| Error::new(unsafe { error_class() }, "XPath context is already in use"))
+            .map_err(|_| Error::new(error_class(), "XPath context is already in use"))
     }
 }
 
@@ -201,7 +201,7 @@ fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Err
         ContextError::Evaluating => busy,
         ContextError::Failed => failed,
     };
-    Error::new(unsafe { error_class() }, msg)
+    Error::new(error_class(), msg)
 }
 
 /* ------------------------------------------------------------------ */
@@ -273,7 +273,7 @@ pub(crate) unsafe fn context_for(
         }
         /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
          * document node for a Document receiver, else the node itself. */
-        let cnode = if is_kind_of(rb_node, CLASS_XML_DOCUMENT) {
+        let cnode = if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
             (*(xdoc as *mut crate::xml::model::Doc))
                 .doc_node()
                 .to_token() as *mut c_void
@@ -309,7 +309,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let rb_node = a.required.0;
     let lax = ns_matching_lax(ruby, a.keywords)?;
 
-    if !unsafe { is_kind_of(rb_node, CLASS_NODE) } {
+    if !is_kind_of(rb_node, &CLASS_NODE) {
         return Err(Error::new(
             ruby.exception_type_error(),
             "expected a Makiri::Node",
@@ -339,7 +339,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 /// expressions against several nodes. Namespace and variable registrations are
 /// preserved. The node must be in the same document.
 fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value, Error> {
-    if !unsafe { is_kind_of(rb_node, CLASS_NODE) } {
+    if !is_kind_of(rb_node, &CLASS_NODE) {
         return Err(Error::new(
             ruby.exception_type_error(),
             "expected a Makiri::Node",
@@ -517,8 +517,8 @@ unsafe fn ruby_to_out(
         *out = Val::number(f);
         return true;
     }
-    let is_node = is_kind_of(rv, CLASS_NODE);
-    if is_node || is_kind_of(rv, CLASS_NODE_SET) {
+    let is_node = is_kind_of(rv, &CLASS_NODE);
+    if is_node || is_kind_of(rv, &CLASS_NODE_SET) {
         let mut set = NodeSet::new();
         if is_node {
             if !push_result_node(budget, document, r, &mut set, err) {
@@ -533,7 +533,7 @@ unsafe fn ruby_to_out(
                 let Ok(node) = rv.funcall::<_, _, Value>("[]", (i,)) else {
                     continue;
                 };
-                if !is_kind_of(node, CLASS_NODE) {
+                if !is_kind_of(node, &CLASS_NODE) {
                     continue;
                 }
                 if !push_result_node(budget, document, node.as_raw(), &mut set, err) {
@@ -796,7 +796,7 @@ pub(crate) unsafe fn query_result(
     first_only: bool,
 ) -> Result<Value, Error> {
     let result = value_to_ruby(value, document)?;
-    if first_only && is_kind_of(result, CLASS_NODE_SET) {
+    if first_only && is_kind_of(result, &CLASS_NODE_SET) {
         return result.funcall("first", ());
     }
     Ok(result)
@@ -957,8 +957,8 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
 /// # Safety
 /// From `Init_makiri`.
 pub unsafe extern "C" fn init_xpath() {
-    let klass = RClass::from_value(Value::from_raw(CLASS_XPATH_CONTEXT))
-        .expect("Makiri::XPathContext is a Class");
+    let klass =
+        RClass::from_value(CLASS_XPATH_CONTEXT.value()).expect("Makiri::XPathContext is a Class");
     klass
         .define_singleton_method("new", magnus::function!(ctx_s_new, -1))
         .expect("XPathContext.new");
@@ -975,7 +975,7 @@ pub unsafe extern "C" fn init_xpath() {
         .define_method("node=", method!(ctx_set_node, 1))
         .expect("#node=");
 
-    let m = magnus::RModule::from_value(Value::from_raw(MOD_HTML_NODE_METHODS))
+    let m = magnus::RModule::from_value(MOD_HTML_NODE_METHODS.value())
         .expect("Makiri::HTML::NodeMethods");
     m.define_method("xpath", method!(node_xpath, -1))
         .expect("#xpath");

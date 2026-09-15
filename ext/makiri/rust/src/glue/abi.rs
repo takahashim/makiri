@@ -8,9 +8,11 @@
 
 use core::ffi::{c_char, c_void};
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{ExceptionClass, RModule, Value};
 use rb_sys::VALUE;
+
+use crate::init::RbConst;
 
 /// `mkr_node_data_t` - what a node wrapper holds: the node pointer plus the
 /// keepalive Document. Declared here because both `glue::node` (which owns the
@@ -283,31 +285,22 @@ pub use crate::lexbor_abi::{
 };
 
 /// The `Makiri::HTML::NodeMethods` module every HTML node leaf includes.
-///
-/// # Safety
-/// Only after `Init_makiri` has defined it, i.e. from a `mkr_init_*` or later.
-pub unsafe fn html_node_methods() -> RModule {
-    RModule::from_value(Value::from_raw(MOD_HTML_NODE_METHODS))
-        .expect("Makiri::HTML::NodeMethods is a Module")
+pub fn html_node_methods() -> RModule {
+    MOD_HTML_NODE_METHODS.module()
 }
 
-/// Is `v` an instance of the class held in `klass`?
-///
-/// # Safety
-/// `klass` must hold a live Class (one of the statics above).
-pub unsafe fn is_kind_of(v: Value, klass: VALUE) -> bool {
-    rb_sys::rb_obj_is_kind_of(v.as_raw(), klass) == rb_sys::Qtrue as VALUE
+/// Is `v` an instance of `klass`?
+pub fn is_kind_of(v: Value, klass: &RbConst) -> bool {
+    // SAFETY: `v` is a live value and `klass` one of `init`'s classes, which
+    // `rb_obj_is_kind_of` accepts without raising.
+    unsafe { rb_sys::rb_obj_is_kind_of(v.as_raw(), klass.raw()) == rb_sys::Qtrue as VALUE }
 }
 
 pub use crate::bridge::ruby::typed_data_unprotected;
 
 /// `Makiri::Error`.
-///
-/// # Safety
-/// As [`html_node_methods`].
-pub unsafe fn error_class() -> ExceptionClass {
-    ExceptionClass::from_value(Value::from_raw(EXC_ERROR))
-        .expect("Makiri::Error is a Class < Exception")
+pub fn error_class() -> ExceptionClass {
+    EXC_ERROR.exception()
 }
 
 /* ------------------------------------------------------------------ *

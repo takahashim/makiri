@@ -4,7 +4,6 @@
 //! The node layout comes from `crate::xml::model` - the XML engine's own
 //! declaration - so nothing here restates a field offset or a type constant.
 
-use magnus::rb_sys::FromRawValue;
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
 pub use super::super::abi::{
@@ -59,9 +58,8 @@ pub fn utf8(ruby: &Ruby, bytes: &[u8]) -> RString {
 ///
 /// # Safety
 /// After `Init_makiri`.
-pub unsafe fn xml_syntax_error_class() -> ExceptionClass {
-    ExceptionClass::from_value(Value::from_raw(EXC_XML_SYNTAX_ERROR))
-        .expect("Makiri::XML::SyntaxError")
+pub fn xml_syntax_error_class() -> ExceptionClass {
+    ExceptionClass::from_value(EXC_XML_SYNTAX_ERROR.value()).expect("Makiri::XML::SyntaxError")
 }
 
 /// Is `v` an instance of the class in `klass`? The shared one, renamed for the

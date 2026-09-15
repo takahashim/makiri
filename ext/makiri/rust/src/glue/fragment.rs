@@ -277,7 +277,7 @@ pub unsafe extern "C" fn run_fragment_parser(
             lxb_html_parser_destroy(parser);
         }
         super::abi::rb_raise(
-            super::abi::EXC_ERROR,
+            super::abi::EXC_ERROR.raw(),
             c"failed to create HTML parser".as_ptr(),
         );
     }
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn run_fragment_parser(
     let Some(src) = sanitize_html_input(html) else {
         lxb_html_parser_destroy(parser);
         super::abi::rb_raise(
-            super::abi::EXC_ERROR,
+            super::abi::EXC_ERROR.raw(),
             c"out of memory decoding fragment HTML".as_ptr(),
         );
     };
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn run_fragment_parser(
     lxb_html_parser_destroy(parser);
     if root.is_null() {
         super::abi::rb_raise(
-            super::abi::EXC_ERROR,
+            super::abi::EXC_ERROR.raw(),
             c"failed to parse HTML fragment".as_ptr(),
         );
     }
@@ -338,7 +338,10 @@ pub unsafe fn import_with_fixup(
 pub unsafe extern "C" fn html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> *mut LxbNode {
     match import_with_fixup(doc, src, true) {
         Some(imp) => imp,
-        None => super::abi::rb_raise(super::abi::EXC_ERROR, c"failed to import node".as_ptr()),
+        None => super::abi::rb_raise(
+            super::abi::EXC_ERROR.raw(),
+            c"failed to import node".as_ptr(),
+        ),
     }
 }
 
@@ -366,7 +369,7 @@ pub unsafe fn resolve_fragment_context(
         return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML));
     }
 
-    if is_kind_of(context, CLASS_NODE) {
+    if is_kind_of(context, &CLASS_NODE) {
         /* Reject an XML node before any Lexbor use. */
         let cn = html_node_unwrap(context.as_raw())?;
         if (*cn).type_ != LXB_DOM_NODE_TYPE_ELEMENT {

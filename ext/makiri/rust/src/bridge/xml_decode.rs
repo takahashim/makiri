@@ -229,14 +229,14 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
 
     if !bom.is_null() && !decl.is_null() && !compatible(bom, decl) {
         rb_raise(
-            EXC_XML_SYNTAX_ERROR,
+            EXC_XML_SYNTAX_ERROR.raw(),
             c"XML encoding conflict: the byte-order mark and the encoding declaration disagree"
                 .as_ptr(),
         );
     }
     if !is_binary && !bom.is_null() && !compatible(bom, tag) {
         rb_raise(
-            EXC_XML_SYNTAX_ERROR,
+            EXC_XML_SYNTAX_ERROR.raw(),
             c"XML encoding conflict: the byte-order mark disagrees with the string's encoding"
                 .as_ptr(),
         );
@@ -248,7 +248,7 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
          * encoding="UTF-8") describes a self-inconsistent document, and that is
          * fatal rather than silently ignored. */
         rb_raise(
-            EXC_XML_SYNTAX_ERROR,
+            EXC_XML_SYNTAX_ERROR.raw(),
             c"XML encoding conflict: the encoding declaration disagrees with the string's encoding"
                 .as_ptr(),
         );
@@ -295,7 +295,7 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
             let mut msg = [0 as c_char; 256];
             ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
             rb_raise(
-                EXC_XML_SYNTAX_ERROR,
+                EXC_XML_SYNTAX_ERROR.raw(),
                 c"XML input could not be decoded to UTF-8: %s".as_ptr(),
                 msg.as_ptr(),
             );
@@ -319,7 +319,7 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * arena budget can never parse. */
     if max_bytes != 0 && len > max_bytes {
         rb_raise(
-            EXC_XML_LIMIT_EXCEEDED,
+            EXC_XML_LIMIT_EXCEEDED.raw(),
             c"XML input exceeds the byte budget".as_ptr(),
         );
     }
@@ -332,11 +332,11 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * validated are the suffix. */
     match text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
         TextVerdict::HasNul => rb_raise(
-            EXC_XML_SYNTAX_ERROR,
+            EXC_XML_SYNTAX_ERROR.raw(),
             c"XML input must not contain a NUL byte".as_ptr(),
         ),
         TextVerdict::InvalidUtf8 => rb_raise(
-            EXC_XML_SYNTAX_ERROR,
+            EXC_XML_SYNTAX_ERROR.raw(),
             c"XML input must be valid UTF-8".as_ptr(),
         ),
         TextVerdict::Ok => {}

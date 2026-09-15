@@ -109,8 +109,8 @@ const NODE_KIND_XML: c_int = 2;
 use super::abi::{doc_parsed, parsed_xml_doc, DataType, CLASS_DOCUMENT, CLASS_NODE};
 
 #[inline]
-unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
-    rb_obj_is_kind_of(v, klass) == rb_sys::Qtrue as VALUE
+unsafe fn is_kind_of(v: VALUE, klass: &crate::init::RbConst) -> bool {
+    rb_obj_is_kind_of(v, klass.raw()) == rb_sys::Qtrue as VALUE
 }
 
 /// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an
@@ -122,7 +122,7 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
 pub unsafe fn node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
-    if is_kind_of(rb_node, CLASS_DOCUMENT) {
+    if is_kind_of(rb_node, &CLASS_DOCUMENT) {
         let parsed = doc_parsed(rb_node)?;
         if (*parsed).is_xml() {
             let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
@@ -179,7 +179,7 @@ unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
 pub unsafe fn keepalive_document(rb_node: VALUE) -> Result<VALUE, magnus::Error> {
-    if is_kind_of(rb_node, CLASS_DOCUMENT) {
+    if is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
     let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
@@ -197,7 +197,7 @@ pub unsafe fn keepalive_document(rb_node: VALUE) -> Result<VALUE, magnus::Error>
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.
 pub unsafe extern "C" fn node_equals(self_: VALUE, other: VALUE) -> VALUE {
-    if !is_kind_of(other, CLASS_NODE) {
+    if !is_kind_of(other, &CLASS_NODE) {
         return rb_sys::Qfalse as VALUE;
     }
     if node_id_or_raise(self_) == node_id_or_raise(other) {

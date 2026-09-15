@@ -201,9 +201,9 @@ pub unsafe extern "C" fn wrap_document(
 ) -> VALUE {
     let is_xml = (*parsed).is_xml();
     let (klass, ty) = if is_xml {
-        (CLASS_XML_DOCUMENT, XML_DOC_TYPE.as_ptr())
+        (CLASS_XML_DOCUMENT.raw(), XML_DOC_TYPE.as_ptr())
     } else {
-        (CLASS_HTML_DOCUMENT, HTML_DOC_TYPE.as_ptr())
+        (CLASS_HTML_DOCUMENT.raw(), HTML_DOC_TYPE.as_ptr())
     };
     /* The errors array is created AFTER the wrap. Created before, it would sit
      * in this malloc'd struct - seen by no mark - across the wrap's allocation,
@@ -478,7 +478,10 @@ pub unsafe extern "C" fn node_clone_node(argc: c_int, argv: *const VALUE, self_:
     let doc = handle.owner_document();
 
     let Some(clone) = import_with_fixup(doc, node, deep) else {
-        super::abi::rb_raise(super::abi::EXC_ERROR, c"failed to clone node".as_ptr());
+        super::abi::rb_raise(
+            super::abi::EXC_ERROR.raw(),
+            c"failed to clone node".as_ptr(),
+        );
     };
     let document = match keepalive_document(self_) {
         Ok(document) => document,
@@ -495,7 +498,7 @@ pub unsafe extern "C" fn node_clone_node(argc: c_int, argv: *const VALUE, self_:
 /// Runs once, from `Init_makiri`, on the Ruby thread.
 pub unsafe extern "C" fn init_document() {
     let ruby = Ruby::get().expect("init_document runs on the Ruby thread");
-    let html_doc = magnus::RClass::from_value(Value::from_raw(CLASS_HTML_DOCUMENT))
+    let html_doc = magnus::RClass::from_value(CLASS_HTML_DOCUMENT.value())
         .expect("Makiri::HTML::Document is a class");
 
     html_doc
@@ -523,14 +526,14 @@ pub unsafe extern "C" fn init_document() {
         .define_method("import_node", method!(doc_import_node, -1))
         .expect("Document#import_node");
 
-    let frag = magnus::RClass::from_value(Value::from_raw(CLASS_DOCUMENT_FRAGMENT))
+    let frag = magnus::RClass::from_value(CLASS_DOCUMENT_FRAGMENT.value())
         .expect("Makiri::DocumentFragment is a class");
     frag.define_singleton_method("parse", method!(frag_s_parse, -1))
         .expect("DocumentFragment.parse");
 
     /* Node#parse(html): fragment-parse in this element's context. Defined here,
      * next to the fragment machinery it reuses. */
-    let node_methods = magnus::RModule::from_value(Value::from_raw(MOD_HTML_NODE_METHODS))
+    let node_methods = magnus::RModule::from_value(MOD_HTML_NODE_METHODS.value())
         .expect("Makiri::HTML::NodeMethods is a module");
     node_methods
         .define_method("parse", method!(node_parse, 1))
