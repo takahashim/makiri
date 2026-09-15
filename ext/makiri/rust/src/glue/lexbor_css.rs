@@ -37,7 +37,6 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::AsRawValue;
 use magnus::{function, prelude::*, Error, RArray, RHash, Ruby, Symbol, Value};
 
 use crate::falloc::{self, VecPush};
@@ -555,7 +554,7 @@ impl Drop for Engine {
 }
 
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    let tv = unsafe { ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr())? };
+    let tv = ruby_verified_text(text, c"CSS stylesheet")?;
     let css: &[u8] = unsafe { tv.bytes() };
 
     let eclass = error_class();

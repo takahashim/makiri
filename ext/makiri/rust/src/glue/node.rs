@@ -117,23 +117,27 @@ unsafe fn is_kind_of(v: VALUE, klass: &crate::init::RbConst) -> bool {
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
-pub unsafe fn node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
-    if is_kind_of(rb_node, &CLASS_DOCUMENT) {
+pub fn node_raw(rb_node: Value) -> Result<*mut c_void, magnus::Error> {
+    if crate::glue::abi::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         let parsed = doc_parsed(rb_node)?;
-        if (*parsed).is_xml() {
-            let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
-            return Ok(if xdoc.is_null() {
-                core::ptr::null_mut()
-            } else {
-                (*xdoc).doc_node().to_token() as *mut c_void
-            });
+        // SAFETY: a Document's handle lives as long as the Document, and an XML
+        // arena's document node is read, not written.
+        unsafe {
+            if (*parsed).is_xml() {
+                let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
+                return Ok(if xdoc.is_null() {
+                    core::ptr::null_mut()
+                } else {
+                    (*xdoc).doc_node().to_token() as *mut c_void
+                });
+            }
         }
         return Ok(super::abi::html_doc_unwrap(rb_node)? as *mut c_void);
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd = crate::bridge::ruby::typed_data(Value::from_raw(rb_node), &NODE_DATA_TYPE)?
-        as *mut NodeData;
-    Ok((*nd).node)
+    let nd = crate::bridge::ruby::typed_data(rb_node, &NODE_DATA_TYPE)? as *mut NodeData;
+    // SAFETY: the data pointer of a node wrapper, which lives with `rb_node`.
+    Ok(unsafe { (*nd).node })
 }
 
 /// Which representation a wrapped node is, by its TypedData type - the robust
@@ -160,14 +164,14 @@ pub unsafe extern "C" fn node_kind(v: VALUE) -> c_int {
 
 /// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
 /// kind-agnostic, and never dereferenced.
-pub unsafe fn node_identity(rb_node: VALUE) -> Result<usize, magnus::Error> {
+pub fn node_identity(rb_node: Value) -> Result<usize, magnus::Error> {
     Ok(node_raw(rb_node)? as usize)
 }
 
 /// [`node_identity`] for the C-convention identity methods below, which Ruby
 /// calls directly: a failure is raised from here, where nothing is owned.
 unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
-    match node_identity(rb_node) {
+    match node_identity(Value::from_raw(rb_node)) {
         Ok(id) => id,
         Err(e) => crate::bridge::ruby::raise(e),
     }
@@ -175,13 +179,14 @@ unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
 
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
-pub unsafe fn keepalive_document(rb_node: VALUE) -> Result<VALUE, magnus::Error> {
-    if is_kind_of(rb_node, &CLASS_DOCUMENT) {
+pub fn keepalive_document(rb_node: Value) -> Result<Value, magnus::Error> {
+    if crate::glue::abi::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
-    let nd = crate::bridge::ruby::typed_data(Value::from_raw(rb_node), &NODE_DATA_TYPE)?
-        as *mut NodeData;
-    Ok((*nd).document)
+    let nd = crate::bridge::ruby::typed_data(rb_node, &NODE_DATA_TYPE)? as *mut NodeData;
+    // SAFETY: the data of a node wrapper, whose Document it marks and so keeps
+    // alive.
+    Ok(unsafe { Value::from_raw((*nd).document) })
 }
 
 /* ------------------------------------------------------------------ */

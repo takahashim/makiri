@@ -702,7 +702,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         } else if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_NODE.raw())
             == rb_sys::Qtrue as VALUE
         {
-            keepalive_document(ctx.as_raw())?
+            keepalive_document(ctx)?.as_raw()
         } else {
             return Err(Error::new(
                 ruby.exception_type_error(),
@@ -727,7 +727,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     for item in arr.into_iter() {
         let ok = unsafe {
             rb_sys::rb_obj_is_kind_of(item.as_raw(), CLASS_NODE.raw()) == rb_sys::Qtrue as VALUE
-                && keepalive_document(item.as_raw())? == doc_raw
+                && keepalive_document(item)?.as_raw() == doc_raw
         };
         if !ok {
             return Err(Error::new(
@@ -735,7 +735,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
                 "every node must be a Makiri node belonging to the given document",
             ));
         }
-        w.push(unsafe { node_raw(item.as_raw())? })?;
+        w.push(node_raw(item)?)?;
     }
     drop(w);
     let _ = document;

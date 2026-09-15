@@ -333,7 +333,7 @@ unsafe fn with_compiled_selector(
     ctx: *mut c_void,
 ) -> Result<(), Error> {
     /* `Err` for a NUL byte or invalid UTF-8, naming the argument as the C did. */
-    verify_text(selector.as_raw(), c"CSS selector".as_ptr())?;
+    verify_text(selector, c"CSS selector")?;
     let e = engine()?;
     let g = globals();
 
@@ -485,8 +485,8 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
 /// `Node#css`: every matching descendant, in document order.
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = unsafe { html_node_unwrap(rb_self.as_raw())? };
-    let document = unsafe { Value::from_raw(keepalive_document(rb_self.as_raw())?) };
+    let root = html_node_unwrap(rb_self)?;
+    let document = keepalive_document(rb_self)?;
 
     let mut ctx = FindCtx {
         nodes: Vec::new(),
@@ -555,7 +555,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = unsafe { html_node_unwrap(rb_self.as_raw())? };
+    let root = html_node_unwrap(rb_self)?;
 
     let mut ctx = FirstCtx {
         root,
@@ -572,14 +572,14 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     if ctx.found.is_null() {
         return Ok(ruby.qnil().as_value());
     }
-    let document = unsafe { keepalive_document(rb_self.as_raw())? };
-    Ok(unsafe { Value::from_raw(wrap_html_node(ctx.found, document)) })
+    let document = keepalive_document(rb_self)?;
+    Ok(unsafe { Value::from_raw(wrap_html_node(ctx.found, document.as_raw())) })
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri.
 fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
-    let node = unsafe { html_node_unwrap(rb_self.as_raw())? };
+    let node = html_node_unwrap(rb_self)?;
     let mut matched = false;
     unsafe {
         with_compiled_selector(

@@ -241,7 +241,7 @@ pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, 
         if d.type_(id) != Some(NodeType::Element) {
             return Ok(ruby.qnil().as_value());
         }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let a = find_attr(d, id, nv.bytes());
         match a {
             None => Ok(ruby.qnil().as_value()),
@@ -262,7 +262,7 @@ pub fn attribute_by_qualified_name(
         if d.type_(id) != Some(NodeType::Element) {
             return Ok(ruby.qnil().as_value());
         }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name, c"attribute name")?;
         let a = find_attr(d, id, nv.bytes());
         Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
     }

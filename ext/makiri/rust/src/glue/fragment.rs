@@ -371,7 +371,7 @@ pub unsafe fn resolve_fragment_context(
 
     if is_kind_of(context, &CLASS_NODE) {
         /* Reject an XML node before any Lexbor use. */
-        let cn = html_node_unwrap(context.as_raw())?;
+        let cn = html_node_unwrap(context)?;
         if (*cn).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
             return Err(magnus::Error::new(
                 magnus::Ruby::get_unchecked().exception_arg_error(),
@@ -383,7 +383,7 @@ pub unsafe fn resolve_fragment_context(
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = ruby_verified_text(context.as_raw(), c"fragment context element".as_ptr())?;
+    let cv = ruby_verified_text(context, c"fragment context element")?;
     let name = if cv.as_ptr().is_null() || cv.len() == 0 {
         &[][..]
     } else {

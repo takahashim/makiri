@@ -364,12 +364,12 @@ mod agree {
     same_signature!(
         doc_parsed,
         crate::glue::doc::doc_parsed,
-        unsafe fn(VALUE) -> Result<*mut crate::dom_adapter::post_parse::Parsed, magnus::Error>
+        fn(Value) -> Result<*mut crate::dom_adapter::post_parse::Parsed, magnus::Error>
     );
     same_signature!(
         html_doc_unwrap,
         crate::glue::doc::html_doc_unwrap,
-        unsafe fn(VALUE) -> Result<*mut crate::lexbor_abi::LxbDoc, magnus::Error>
+        fn(Value) -> Result<*mut crate::lexbor_abi::LxbDoc, magnus::Error>
     );
     same_signature!(
         wrap_document,
@@ -380,12 +380,12 @@ mod agree {
     same_signature!(
         keepalive_document,
         crate::glue::node::keepalive_document,
-        unsafe fn(VALUE) -> Result<VALUE, magnus::Error>
+        fn(Value) -> Result<Value, magnus::Error>
     );
     same_signature!(
         node_raw,
         crate::glue::node::node_raw,
-        unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
+        fn(Value) -> Result<*mut c_void, magnus::Error>
     );
 
     same_signature!(
@@ -402,18 +402,18 @@ mod agree {
     same_signature!(
         verify_text,
         crate::bridge::string::verify_text,
-        unsafe fn(VALUE, *const c_char) -> Result<(), magnus::Error>
+        fn(Value, &core::ffi::CStr) -> Result<(), magnus::Error>
     );
     same_signature!(
         ruby_verified_text,
         crate::bridge::string::ruby_verified_text,
-        unsafe fn(VALUE, *const c_char) -> Result<RubyText, magnus::Error>
+        fn(Value, &core::ffi::CStr) -> Result<RubyText, magnus::Error>
     );
 
     same_signature!(
         xml_node_unwrap,
         crate::glue::xml_node::xml_node_unwrap,
-        unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
+        fn(Value) -> Result<*mut c_void, magnus::Error>
     );
 
     same_signature!(
@@ -424,6 +424,6 @@ mod agree {
     same_signature!(
         html_node_unwrap,
         crate::glue::html_node::html_node_unwrap,
-        unsafe fn(VALUE) -> Result<*mut LxbNode, magnus::Error>
+        fn(Value) -> Result<*mut LxbNode, magnus::Error>
     );
 }

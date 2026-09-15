@@ -123,27 +123,28 @@ pub unsafe extern "C" fn wrap_html_node(node: *mut LxbNode, document: VALUE) -> 
 /// `XML_NODE_TYPE` - does not satisfy. Every HTML-glue site that
 /// dereferences a node or hands its pointer to Lexbor goes through here, for
 /// `self` and arguments alike.
-pub unsafe fn html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::Error> {
-    if is_kind_of(Value::from_raw(rb_node), &CLASS_DOCUMENT) {
-        if is_kind_of(Value::from_raw(rb_node), &CLASS_XML_DOCUMENT) {
+pub fn html_node_unwrap(rb_node: Value) -> Result<*mut LxbNode, magnus::Error> {
+    if is_kind_of(rb_node, &CLASS_DOCUMENT) {
+        if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
             return Err(magnus::Error::new(
-                magnus::Ruby::get_unchecked().exception_type_error(),
+                magnus::Ruby::get()
+                    .expect("under the GVL")
+                    .exception_type_error(),
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
         }
         return Ok(html_doc_unwrap(rb_node)? as *mut LxbNode);
     }
-    let nd = crate::bridge::ruby::typed_data(Value::from_raw(rb_node), &HTML_NODE_TYPE)?
-        as *mut NodeData;
-    Ok((*nd).node as *mut LxbNode)
+    let nd = crate::bridge::ruby::typed_data(rb_node, &HTML_NODE_TYPE)? as *mut NodeData;
+    // SAFETY: the data of a live HTML node wrapper.
+    Ok(unsafe { (*nd).node } as *mut LxbNode)
 }
 
 /* ---- the Rust-side conveniences the reader module uses ---- */
 
-/// [`html_node_unwrap`] in Rust terms.
-pub unsafe fn unwrap(v: Value) -> Result<*mut LxbNode, magnus::Error> {
-    use magnus::rb_sys::AsRawValue;
-    html_node_unwrap(v.as_raw())
+/// [`html_node_unwrap`], under the name the reader modules use.
+pub fn unwrap(v: Value) -> Result<*mut LxbNode, magnus::Error> {
+    html_node_unwrap(v)
 }
 
 /// A method receiver already checked to be an HTML node or HTML Document.
@@ -161,17 +162,13 @@ pub struct HtmlSelf {
 
 impl magnus::TryConvert for HtmlSelf {
     fn try_convert(value: Value) -> Result<Self, magnus::Error> {
-        // SAFETY: magnus converts the receiver under the GVL.
-        unsafe {
-            use magnus::rb_sys::AsRawValue;
-            let raw = NonNull::new(unwrap(value)?).ok_or_else(uninitialized)?;
-            let document = Value::from_raw(super::abi::keepalive_document(value.as_raw())?);
-            Ok(HtmlSelf {
-                value,
-                raw,
-                document,
-            })
-        }
+        let raw = NonNull::new(unwrap(value)?).ok_or_else(uninitialized)?;
+        let document = super::abi::keepalive_document(value)?;
+        Ok(HtmlSelf {
+            value,
+            raw,
+            document,
+        })
     }
 }
 
@@ -233,9 +230,8 @@ pub unsafe fn wrap(node: *mut LxbNode, document: Value) -> Value {
 }
 
 /// The keepalive Document of a node, from the kind-agnostic accessor.
-pub unsafe fn node_document(v: Value) -> Result<Value, magnus::Error> {
-    use magnus::rb_sys::AsRawValue;
-    Ok(Value::from_raw(super::abi::keepalive_document(v.as_raw())?))
+pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
+    super::abi::keepalive_document(v)
 }
 
 /* ------------------------------------------------------------------ *

@@ -115,7 +115,7 @@ allows a single root element, and a sibling target must have a parent)",
 /// The arena behind a node's document.
 unsafe fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
     let document = node_document(v)?;
-    Ok(parsed_xml_doc(crate::glue::doc::doc_parsed_known(document.as_raw())) as *mut XmlDoc)
+    Ok(parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc)
 }
 
 /// A byte length as the arena's `uint32`, or an error.
@@ -138,7 +138,7 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 unsafe fn unwrap_mutable(this: super::XmlSelf) -> Result<NodeId, Error> {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
-    crate::glue::doc::ensure_document_mutable(this.document.as_raw())?;
+    crate::glue::doc::ensure_document_mutable(this.document)?;
     xml_name_index_invalidate(&mut *this.doc());
     Ok(this.id)
 }
@@ -151,7 +151,7 @@ unsafe fn verified(
     v: Value,
     what: &core::ffi::CStr,
 ) -> Result<(RubyText, u32), Error> {
-    let t = ruby_verified_text(v.as_raw(), what.as_ptr())?;
+    let t = ruby_verified_text(v, what)?;
     let n = u32_len(ruby, t.len())?;
     Ok((t, n))
 }
@@ -341,7 +341,7 @@ unsafe fn incoming_node(
     }
     /* Adopting takes the node out of the document it came from, so that
      * document changes too - refuse before anything is copied. */
-    crate::glue::doc::ensure_document_mutable(node_document(arg)?.as_raw())?;
+    crate::glue::doc::ensure_document_mutable(node_document(arg)?)?;
     let mut copy: NodeId = NodeId::INVALID;
     let src_doc = xdoc(arg)?;
     xml_mut_check(xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy));
@@ -699,7 +699,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
     unsafe {
-        let xd = parsed_xml_doc(doc_parsed(rb_self.as_raw())?) as *mut XmlDoc;
+        let xd = parsed_xml_doc(doc_parsed(rb_self)?) as *mut XmlDoc;
         let mut copy: NodeId = NodeId::INVALID;
         match node_kind(node_v.as_raw()) {
             KIND_XML => {
@@ -721,7 +721,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
             }
             KIND_HTML => xml_mut_check(cross_html_to_xml(
                 xd,
-                html_node_unwrap(node_v.as_raw())? as *mut _,
+                html_node_unwrap(node_v)? as *mut _,
                 deep,
                 &mut copy,
             )),

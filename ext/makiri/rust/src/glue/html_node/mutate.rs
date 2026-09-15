@@ -62,7 +62,7 @@ fn err(msg: &str) -> Error {
 
 /// Drop the DOM and text indexes so the next query rebuilds them.
 unsafe fn invalidate(document: Value) {
-    if let Some(p) = crate::glue::doc::doc_parsed_known(document.as_raw()).as_mut() {
+    if let Some(p) = crate::glue::doc::doc_parsed_known(document).as_mut() {
         p.invalidate_indexes();
     }
 }
@@ -74,7 +74,7 @@ unsafe fn invalidate(document: Value) {
 unsafe fn unwrap_mutable(this: super::HtmlSelf) -> Result<*mut LxbNode, Error> {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
-    crate::glue::doc::ensure_document_mutable(this.document.as_raw())?;
+    crate::glue::doc::ensure_document_mutable(this.document)?;
     Ok(this.raw())
 }
 
@@ -138,7 +138,7 @@ unsafe fn prepare_insert(
     if (*reference).owner_document != (*incoming).owner_document {
         /* Adopting takes the node out of the document it came from, so that
          * document changes too - refuse before anything is copied. */
-        crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?.as_raw())?;
+        crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?)?;
         return Ok((
             adopt_copy((*reference).owner_document, incoming),
             Some(rb_incoming),
@@ -400,8 +400,8 @@ pub fn aset(
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
-        let vv = ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr())?;
+        let nv = ruby_verified_text(rb_name, c"attribute name")?;
+        let vv = ruby_verified_data(rb_value, c"attribute value")?;
         let attr = lxb::lxb_dom_element_set_attribute(
             node as *mut LxbElement,
             nv.as_ptr() as *const u8,
@@ -496,13 +496,13 @@ pub fn set_attribute_ns(
         }
         let el = node as *mut LxbElement;
 
-        let qv = ruby_verified_text(rb_qname.as_raw(), c"attribute qualified name".as_ptr())?;
-        let vv = ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr())?;
+        let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
+        let vv = ruby_verified_data(rb_value, c"attribute value")?;
 
         let nv = if rb_ns.is_nil() {
             None
         } else {
-            Some(ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr())?)
+            Some(ruby_verified_text(rb_ns, c"namespace")?)
         };
         let ns_bytes: &[u8] = match &nv {
             Some(nv) => nv.bytes(),
@@ -592,11 +592,11 @@ pub fn remove_attribute_ns(
         }
         let el = node as *mut LxbElement;
 
-        let lv = ruby_verified_text(rb_local.as_raw(), c"attribute local name".as_ptr())?;
+        let lv = ruby_verified_text(rb_local, c"attribute local name")?;
 
         let mut want_ns = NS_UNDEF;
         if !rb_ns.is_nil() {
-            let nv = ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr())?;
+            let nv = ruby_verified_text(rb_ns, c"namespace")?;
             if nv.len() != 0 {
                 want_ns = intern_ns(node, nv.bytes());
             }
@@ -624,7 +624,7 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
         if (*node).type_ != ty::ELEMENT {
             return Err(err("name= is only supported on elements"));
         }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name, c"element name")?;
         let fresh = lxb::lxb_dom_document_create_element(
             (*node).owner_document,
             nv.as_ptr() as *const u8,
@@ -659,7 +659,7 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
 pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     unsafe {
         let node = unwrap_mutable(this)?;
-        let tv = ruby_verified_data(rb_text.as_raw(), c"node content".as_ptr())?;
+        let tv = ruby_verified_data(rb_text, c"node content")?;
         let st = lxb::lxb_dom_node_text_content_set(node, tv.as_ptr() as *const u8, tv.len());
         if st != STATUS_OK {
             return Err(err("failed to set node content"));
@@ -677,7 +677,7 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
         if (*node).type_ != ty::ELEMENT {
             return Ok(rb_self);
         }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name, c"attribute name")?;
         lxb::lxb_dom_element_remove_attribute(
             node as *mut LxbElement,
             nv.as_ptr() as *const u8,
@@ -806,8 +806,8 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 
 pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = html_doc_unwrap(rb_self.as_raw())?;
-        let nv = ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr())?;
+        let doc = html_doc_unwrap(rb_self)?;
+        let nv = ruby_verified_text(rb_name, c"element name")?;
         let el = lxb::lxb_dom_document_create_element(
             doc,
             nv.as_ptr() as *const u8,
@@ -823,8 +823,8 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = html_doc_unwrap(rb_self.as_raw())?;
-        let tv = ruby_verified_data(rb_text.as_raw(), c"text content".as_ptr())?;
+        let doc = html_doc_unwrap(rb_self)?;
+        let tv = ruby_verified_data(rb_text, c"text content")?;
         let t = lxb::lxb_dom_document_create_text_node(doc, tv.as_ptr() as *const u8, tv.len());
         if t.is_null() {
             return Err(err("failed to create text node"));
@@ -835,8 +835,8 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = html_doc_unwrap(rb_self.as_raw())?;
-        let tv = ruby_verified_data(rb_text.as_raw(), c"comment content".as_ptr())?;
+        let doc = html_doc_unwrap(rb_self)?;
+        let tv = ruby_verified_data(rb_text, c"comment content")?;
         let c = lxb::lxb_dom_document_create_comment(doc, tv.as_ptr() as *const u8, tv.len());
         if c.is_null() {
             return Err(err("failed to create comment"));
@@ -855,12 +855,9 @@ pub fn create_pi(
     rb_data: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let doc = html_doc_unwrap(rb_self.as_raw())?;
-        let tv = ruby_verified_text(
-            rb_target.as_raw(),
-            c"processing instruction target".as_ptr(),
-        )?;
-        let dv = ruby_verified_text(rb_data.as_raw(), c"processing instruction data".as_ptr())?;
+        let doc = html_doc_unwrap(rb_self)?;
+        let tv = ruby_verified_text(rb_target, c"processing instruction target")?;
+        let dv = ruby_verified_text(rb_data, c"processing instruction data")?;
         let pi = lxb::lxb_dom_document_create_processing_instruction(
             doc,
             tv.as_ptr() as *const u8,
@@ -889,8 +886,8 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let (rb_pub, rb_sys_) = args.optional;
 
     unsafe {
-        let doc = html_doc_unwrap(rb_self.as_raw())?;
-        let nv = ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr())?;
+        let doc = html_doc_unwrap(rb_self)?;
+        let nv = ruby_verified_text(rb_name, c"doctype name")?;
         if !lxb::lxb_dom_document_type_valid_name(nv.as_ptr() as *const u8, nv.len()) {
             return Err(Error::new(
                 ruby.exception_arg_error(),
@@ -900,11 +897,11 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 
         let zero = crate::glue::abi::RubyText::absent;
         let pv = match rb_pub.filter(|v| !v.is_nil()) {
-            Some(v) => ruby_verified_text(v.as_raw(), c"doctype public id".as_ptr())?,
+            Some(v) => ruby_verified_text(v, c"doctype public id")?,
             None => zero(),
         };
         let sv = match rb_sys_.filter(|v| !v.is_nil()) {
-            Some(v) => ruby_verified_text(v.as_raw(), c"doctype system id".as_ptr())?,
+            Some(v) => ruby_verified_text(v, c"doctype system id")?,
             None => zero(),
         };
         let pub_ptr = if pv.len() != 0 {
@@ -969,7 +966,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 /// `DocumentFragment.parse`, which parse HTML.
 pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self)?;
         let f = lxb::lxb_dom_document_create_document_fragment(doc);
         if f.is_null() {
             return Err(err("failed to create document fragment"));

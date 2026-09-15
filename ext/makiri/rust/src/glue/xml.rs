@@ -68,7 +68,9 @@ unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
 
 /// The XML node behind a wrapper, typed. `Err(TypeError)` for an HTML node.
 unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> Result<NodeId, Error> {
-    Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
+    Ok(NodeId::from_token(
+        xml_node_unwrap(Value::from_raw(rb_node))? as usize,
+    ))
 }
 
 pub use crate::bridge::string::ruby_copy_bytes;
@@ -320,7 +322,7 @@ unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
 unsafe fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
     /* `xml_node_unwrap` is kind-checked - `Err` for a non-XML node - and
      * resolves an XML Document to its document node. */
-    let document = Value::from_raw(keepalive_document(rb_self.as_raw())?);
+    let document = keepalive_document(rb_self)?;
     Ok((document, typed_xml_node_unwrap(rb_self.as_raw())?))
 }
 
@@ -384,10 +386,10 @@ unsafe fn build_ctx(
     context: Value,
     document: Value,
     rb_text: Value,
-    what: *const c_char,
+    what: &core::ffi::CStr,
     rb_ns: Option<Value>,
 ) -> Result<XPathContext<'static>, Error> {
-    verify_text(crate::bridge::ruby::string_of(rb_text)?.as_raw(), what)?;
+    verify_text(crate::bridge::ruby::string_of(rb_text)?.as_value(), what)?;
     let ctx = context_for(context, document)?;
     register_namespaces(ruby, &ctx, rb_ns)?; /* ctx drops on error */
     Ok(ctx)
@@ -432,14 +434,7 @@ fn xpath_run(
                 Value::from_raw(node_set_new(document.as_raw()))
             });
         }
-        let ctx = build_ctx(
-            ruby,
-            rb_self,
-            document,
-            expr,
-            c"XPath expression".as_ptr(),
-            ns,
-        )?;
+        let ctx = build_ctx(ruby, rb_self, document, expr, c"XPath expression", ns)?;
         /* Parse AFTER namespace registration: that step allocates Ruby objects
          * and may run a GC, and the borrowed expression bytes must not be live
          * across one. */
@@ -484,7 +479,7 @@ unsafe fn css_compile_or_raise(
     let cns = CssNs {
         default_namespace: css_default_namespace(rb_ns),
     };
-    let sv = ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
+    let sv = ruby_verified_text(selector, c"CSS selector")?;
     let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
     let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns, &mut budget);
     drop(sv);
@@ -521,14 +516,7 @@ fn css_run(
                 Value::from_raw(node_set_new(document.as_raw()))
             });
         }
-        let ctx = build_ctx(
-            ruby,
-            rb_self,
-            document,
-            selector,
-            c"CSS selector".as_ptr(),
-            Some(ns),
-        )?;
+        let ctx = build_ctx(ruby, rb_self, document, selector, c"CSS selector", Some(ns))?;
         let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
         run_ast(ruby, ctx, ast, first_only, document)
     }
@@ -560,7 +548,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
             document,
             document,
             selector,
-            c"CSS selector".as_ptr(),
+            c"CSS selector",
             Some(ns),
         )?;
         let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
@@ -580,7 +568,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 
 fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
-        let xdoc = parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self.as_raw()));
+        let xdoc = parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self));
         if xdoc.is_null() {
             return ruby.qnil().as_value();
         }
@@ -599,7 +587,7 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
 /// off the tree, so XPath never sees it (XPath 1.0 has no doctype node type).
 fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
-        let xdoc = parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self.as_raw()));
+        let xdoc = parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self));
         if xdoc.is_null() || (*xdoc).doctype.is_none() {
             return ruby.qnil().as_value();
         }
@@ -676,7 +664,7 @@ fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
 fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
     unsafe {
         let doc_obj = new_empty_document()?;
-        let xdoc = parsed_xml_doc(doc_parsed(doc_obj.as_raw())?);
+        let xdoc = parsed_xml_doc(doc_parsed(doc_obj)?);
         let frag = fragment_into(xdoc, source, false)?;
         Ok(Value::from_raw(wrap_typed_xml_node(frag, doc_obj.as_raw())))
     }
@@ -686,7 +674,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
     unsafe {
-        let xdoc = parsed_xml_doc(doc_parsed(rb_self.as_raw())?);
+        let xdoc = parsed_xml_doc(doc_parsed(rb_self)?);
         if xdoc.is_null() {
             return Err(Error::new(error_class(), "the document has no arena"));
         }

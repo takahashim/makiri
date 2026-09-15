@@ -289,7 +289,7 @@ fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Value {
     // SAFETY: `document` is the node's live Document, and the slices the index
     // hands back are copied into the String before anything can change it.
     unsafe {
-        let parsed = crate::glue::doc::doc_parsed_known(document.as_raw());
+        let parsed = crate::glue::doc::doc_parsed_known(document);
         if let Some((slices, total)) = parsed.as_mut().and_then(|p| p.text_slices(node.as_raw())) {
             return Value::from_raw(ruby_str_from_slices(slices.as_ptr(), slices.len(), total));
         }
@@ -335,9 +335,7 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         // SAFETY: `document` is the attribute's live Document; the owner the
         // index answers belongs to it.
         unsafe {
-            let index = doc_parsed(document.as_raw())?
-                .as_mut()
-                .and_then(|p| p.dom_index());
+            let index = doc_parsed(document)?.as_mut().and_then(|p| p.dom_index());
             let Some(index) = index else {
                 return Err(Error::new(
                     error_class(),
@@ -458,7 +456,7 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
     };
     // SAFETY: the guard keeps the name String reachable, and its bytes are only
     // read before the answer String is built.
-    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let name = unsafe { nv.bytes() };
     if !el.has_attribute(name) {
         return Ok(nil(ruby));
@@ -473,7 +471,7 @@ pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
         return Ok(ruby.qfalse().as_value());
     };
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
-    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let has = el.has_attribute(unsafe { nv.bytes() });
     Ok(if has {
         ruby.qtrue().as_value()
@@ -535,7 +533,7 @@ pub fn attribute_by_qualified_name(
         return Ok(nil(ruby));
     };
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
-    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
     // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
     let name = unsafe { nv.bytes() };
     let found = el.attrs().find(|at| at.qualified_name() == name);
@@ -564,7 +562,7 @@ pub fn attribute_value_by_qualified_name(
         return Ok(nil(ruby));
     };
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
-    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
     // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
     let name = unsafe { nv.bytes() };
     let value = el
@@ -593,7 +591,7 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: `this.document` is the node's live Document.
     let n = unsafe {
-        let p = crate::glue::doc::doc_parsed_known(this.document.as_raw());
+        let p = crate::glue::doc::doc_parsed_known(this.document);
         p.as_ref().map_or(0, |p| p.node_line(this.node().as_raw()))
     };
     if n == 0 {
@@ -620,15 +618,11 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
 
     /* A non-node, or an XML node - never order-comparable to an HTML one, and
      * asking is how we avoid arg_node's TypeError below. */
-    // SAFETY: the class VALUEs are set once at init; a Node has a keepalive
-    // Document.
-    let comparable = unsafe {
-        is_kind_of(other, &CLASS_NODE)
-            && !is_kind_of(
-                Value::from_raw(crate::glue::abi::keepalive_document(other.as_raw())?),
-                &CLASS_XML_DOCUMENT,
-            )
-    };
+    let comparable = is_kind_of(other, &CLASS_NODE)
+        && !is_kind_of(
+            crate::glue::abi::keepalive_document(other)?,
+            &CLASS_XML_DOCUMENT,
+        );
     if !comparable {
         return Ok(nil);
     }

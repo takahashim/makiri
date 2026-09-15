@@ -264,7 +264,7 @@ pub(crate) unsafe fn context_for(
     rb_node: Value,
     document: Value,
 ) -> Result<Context<'static>, Error> {
-    let parsed = doc_parsed(document.as_raw())?;
+    let parsed = doc_parsed(document)?;
 
     if (*parsed).is_xml() {
         let xdoc = parsed_xml_doc(parsed);
@@ -278,7 +278,7 @@ pub(crate) unsafe fn context_for(
                 .doc_node()
                 .to_token() as *mut c_void
         } else {
-            xml_node_unwrap(rb_node.as_raw())?
+            xml_node_unwrap(rb_node)?
         };
         let backend = Backend::Xml {
             doc: xdoc as *const crate::xml::model::Document,
@@ -286,9 +286,9 @@ pub(crate) unsafe fn context_for(
         return Ok(Context::new(backend, cnode));
     }
 
-    let node = html_node_unwrap(rb_node.as_raw())?;
+    let node = html_node_unwrap(rb_node)?;
     /* TypeError for a Document that is not HTML. */
-    crate::glue::abi::html_doc_unwrap(document.as_raw())?;
+    crate::glue::abi::html_doc_unwrap(document)?;
     /* Built up front, so an allocation failure raises here rather than on the
      * first evaluate. Each evaluate still reads the index afresh from the
      * handle, which rebuilds it after a mutation - the context must not keep
@@ -315,7 +315,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
             "expected a Makiri::Node",
         ));
     }
-    let document = unsafe { Value::from_raw(keepalive_document(rb_node.as_raw())?) };
+    let document = keepalive_document(rb_node)?;
     let mut ctx = unsafe { context_for(rb_node, document)? };
     ctx.set_lax(lax);
 
@@ -351,7 +351,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
         return Err(refused(ContextError::Evaluating, BUSY, BUSY));
     }
     unsafe {
-        if keepalive_document(rb_node.as_raw())? != ruby.get_inner(rb_self.document).as_raw() {
+        if keepalive_document(rb_node)?.as_raw() != ruby.get_inner(rb_self.document).as_raw() {
             return Err(Error::new(
                 error_class(),
                 "context node must belong to the same document",
@@ -362,7 +362,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
          * document. */
         rb_self
             .ctx
-            .set_context_node(node_raw(rb_node.as_raw())?)
+            .set_context_node(node_raw(rb_node)?)
             .map_err(|e| refused(e, BUSY, BUSY))?;
     }
     Ok(rb_node)
@@ -434,11 +434,12 @@ unsafe fn push_result_node(
     set: &mut NodeSet,
     err: &mut ErrBuf,
 ) -> bool {
+    let rb_node = Value::from_raw(rb_node);
     let Ok(node_document) = keepalive_document(rb_node) else {
         err.set("handler returned an unusable node");
         return false;
     };
-    if node_document != document {
+    if node_document.as_raw() != document {
         err.set("handler returned a node from a different document");
         return false;
     }
@@ -747,7 +748,7 @@ unsafe fn cached_ast(
 /// Parse `expr` for one query under `ctx`'s caps, on a budget of the query's
 /// own; a failure is that budget's error as the exception.
 pub(crate) unsafe fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>, Error> {
-    let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
+    let ev = ruby_verified_text(expr, c"XPath expression")?;
     let mut budget = Budget::with_limits(ctx.limits());
     let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
     /* No borrowed bytes across the exception's allocation. */
@@ -774,7 +775,7 @@ pub(crate) unsafe fn evaluate_query(
         Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
-            _reading: crate::glue::doc::DocumentEvaluation::enter(document.as_raw())?,
+            _reading: crate::glue::doc::DocumentEvaluation::enter(document)?,
         })
     };
     let resolver = bridge.as_ref().map(|b| b as &dyn Resolver);
@@ -819,7 +820,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
          * which may re-enter this context, and a borrow held across that would
          * turn the re-entry into "already in use". */
-        let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
+        let ev = ruby_verified_text(expr, c"XPath expression")?;
         let mut cache = rb_self.cache()?;
         let parsed = cached_ast(&mut cache, rb_self.ctx.limits(), ev);
         /* Release the borrow before building the exception: that allocates, and
@@ -848,8 +849,8 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
         return Err(refused(ContextError::Evaluating, BUSY, FAILED));
     }
     unsafe {
-        let pv = ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr())?;
-        let uv = ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr())?;
+        let pv = ruby_verified_text(prefix, c"namespace prefix")?;
+        let uv = ruby_verified_text(uri, c"namespace URI")?;
         rb_self
             .ctx
             .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) /* copies both */
@@ -877,7 +878,7 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
          * stricter engine-string check, which adds the byte cap on top of the
          * no-NUL / valid-UTF-8 contract. */
         let sv: Value = value.funcall("to_s", ())?;
-        let nv = ruby_verified_text(name.as_raw(), c"variable name".as_ptr())?;
+        let nv = ruby_verified_text(name, c"variable name")?;
         let vv = match ruby_try_verified_text(sv.as_raw(), rb_self.ctx.limits().max_string_bytes) {
             Ok(vv) => vv,
             Err(reason) => {
@@ -910,7 +911,7 @@ fn node_xpath_run(
     first_only: bool,
 ) -> Result<Value, Error> {
     unsafe {
-        let document = Value::from_raw(keepalive_document(rb_self.as_raw())?);
+        let document = keepalive_document(rb_self)?;
         let mut ctx = context_for(rb_self, document)?;
         ctx.set_lax(lax);
         let ast = parse_query(&ctx, expr)?;

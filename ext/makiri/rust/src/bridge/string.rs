@@ -20,10 +20,11 @@
 /* Every function takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_long};
+use core::ffi::{c_char, c_int, c_long, CStr};
 
 use magnus::encoding::Coderange;
 use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::value::ReprValue;
 use magnus::{Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
@@ -150,9 +151,14 @@ pub unsafe fn text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -
 
 /// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
 /// naming `what` in the `Makiri::Error`.
-pub unsafe fn verify_text(str: VALUE, what: *const c_char) -> Result<(), Error> {
-    let (_, ptr, len) = borrow(str);
-    let problem = match text_check(str, ptr, len) {
+pub fn verify_text(str: Value, what: &CStr) -> Result<(), Error> {
+    let str = str.as_raw();
+    // SAFETY: `str` is a live String, and the borrow ends with the check -
+    // before anything below can allocate.
+    let problem = match unsafe {
+        let (_, ptr, len) = borrow(str);
+        text_check(str, ptr, len)
+    } {
         TextVerdict::HasNul => "must not contain a NUL byte",
         TextVerdict::InvalidUtf8 => "must be valid UTF-8",
         TextVerdict::Ok => return Ok(()),
@@ -163,18 +169,22 @@ pub unsafe fn verify_text(str: VALUE, what: *const c_char) -> Result<(), Error> 
 }
 
 /// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
-unsafe fn text_error(what: *const c_char, problem: &str) -> Error {
-    let what = core::ffi::CStr::from_ptr(what).to_string_lossy();
+fn text_error(what: &CStr, problem: &str) -> Error {
+    let what = what.to_string_lossy();
     Error::new(error_class(), format!("{what} {problem}"))
 }
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
-pub unsafe fn ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<RubyText, Error> {
-    let s = string_of(Value::from_raw(in_))?.as_raw();
-    verify_text(s, what)?;
-    let (value, ptr, len) = borrow(s);
-    Ok(RubyText::from_raw_parts(value, ptr, len))
+pub fn ruby_verified_text(in_: Value, what: &CStr) -> Result<RubyText, Error> {
+    let s = string_of(in_)?;
+    verify_text(s.as_value(), what)?;
+    // SAFETY: `s` is a live String that has just passed the text contract; the
+    // view anchors it.
+    unsafe {
+        let (value, ptr, len) = borrow(s.as_raw());
+        Ok(RubyText::from_raw_parts(value, ptr, len))
+    }
 }
 
 /// Coerce to a String and enforce the DATA-family contract: invalid UTF-8 is
@@ -182,13 +192,17 @@ pub unsafe fn ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<Ruby
 ///
 /// `verify_text` is not reused because it rejects NUL. The check is
 /// allocation-free, so the borrow taken before it is not held across a GC point.
-pub unsafe fn ruby_verified_data(in_: VALUE, what: *const c_char) -> Result<RubyData, Error> {
-    let s = string_of(Value::from_raw(in_))?.as_raw();
-    let (value, ptr, len) = borrow(s);
-    if text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
-        return Err(text_error(what, "must be valid UTF-8"));
+pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
+    let s = string_of(in_)?.as_raw();
+    // SAFETY: `s` is a live String; the check reads its bytes without
+    // allocating, and the view anchors it.
+    unsafe {
+        let (value, ptr, len) = borrow(s);
+        if text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
+            return Err(text_error(what, "must be valid UTF-8"));
+        }
+        Ok(RubyData::from_raw_parts(value, ptr, len))
     }
-    Ok(RubyData::from_raw_parts(value, ptr, len))
 }
 
 /// A borrowed raw byte view. Deliberately enforces nothing: HTML parsing
