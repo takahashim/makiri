@@ -54,9 +54,9 @@ use crate::xpath::ctx::Context as XPathContext;
 use crate::css::CssNs;
 
 use super::abi::{
-    mkr_cDocument, mkr_cNodeSet, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed,
-    mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
-    mkr_mXmlNodeMethods, mkr_node_document, mkr_node_set_new, mkr_parsed_xml_doc as parsed_xml_doc,
+    mkr_cDocument, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed, mkr_eCSSSyntaxError,
+    mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML, mkr_mXmlNodeMethods,
+    mkr_node_document, mkr_node_set_new, mkr_parsed_xml_doc as parsed_xml_doc,
     mkr_ruby_verified_text, mkr_verify_text, mkr_wrap_xml_node as wrap_xml_node,
     mkr_xml_node_unwrap as xml_node_unwrap, OwnedBytes,
 };
@@ -82,15 +82,14 @@ pub use crate::bridge::xml_decode::mkr_xml_decode_input;
 pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
 pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
-use crate::glue::xpath::value_to_ruby;
 use crate::glue::xpath::xpath_error;
+use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};
 pub use crate::xml::api::mkr_xml_doc_new;
 pub use crate::xml::api::mkr_xml_parse_ex;
 pub use crate::xml::api::mkr_xml_parse_fragment;
 pub use crate::xpath::ctx::ctx_limits;
 pub use crate::xpath::ctx::xpath_register_ns;
-use crate::xpath::ctx::{evaluate, evaluate_first};
-use crate::xpath::ctx::{Backend, OwnedContext};
+use crate::xpath::ctx::OwnedContext;
 
 extern "C" {
 
@@ -378,40 +377,29 @@ unsafe fn register_namespaces(
     Ok(())
 }
 
-/// Build the query context every XML XPath/CSS entry point runs under.
+/// Build the query context every XML XPath/CSS entry point runs under, rooted at
+/// `context` (a node, or a Document for its document node), with `rb_ns`
+/// registered for this query alone.
 ///
-/// The query text's contract is verified FIRST - before any allocation - so a
-/// text-contract raise has no context to leak. The real borrowed view is minted
-/// later by the caller, so its bytes are never held across the GC points that
-/// namespace registration goes through.
+/// The query text's contract is verified FIRST, before the context exists. The
+/// borrowed view the parse reads is minted later, by `parse_query`, so its bytes
+/// are never held across the GC points namespace registration goes through.
 unsafe fn build_ctx(
     ruby: &Ruby,
-    xdoc: *mut XmlDoc,
-    context_node: NodeId,
+    context: Value,
+    document: Value,
     rb_text: Value,
     what: *const c_char,
     rb_ns: Option<Value>,
 ) -> Result<OwnedContext, Error> {
-    mkr_verify_text(rb_sys::rb_String(rb_text.as_raw()), what)?;
-    let Some(ctx) = OwnedContext::new(
-        xdoc as *mut c_void,
-        context_node.to_token() as *mut c_void,
-        Backend::Xml,
-    ) else {
-        return Err(Error::new(
-            error_class(),
-            "failed to allocate XPath context",
-        ));
-    };
+    mkr_verify_text(crate::bridge::ruby::string_of(rb_text.as_raw())?, what)?;
+    let ctx = context_for(context, document)?;
     register_namespaces(ruby, ctx.as_ptr(), rb_ns)?; /* ctx drops on error */
     Ok(ctx)
 }
 
-/// Evaluate a compiled AST and convert the result.
-///
-/// The AST is freed first; on success the context is freed BEFORE the value is
-/// converted, because the value owns its own data and never references the
-/// context, so a raise during conversion cannot leak it.
+/// Evaluate a compiled AST with no handler and convert the result, freeing the
+/// AST and the context first.
 unsafe fn run_ast(
     ruby: &Ruby,
     ctx: OwnedContext,
@@ -419,26 +407,11 @@ unsafe fn run_ast(
     first_only: bool,
     document: Value,
 ) -> Result<Value, Error> {
-    let result = if first_only {
-        evaluate_first(ctx.as_ptr(), ast.as_raw())
-    } else {
-        evaluate(ctx.as_ptr(), ast.as_raw())
-    };
+    let nil = ruby.qnil().as_value();
+    let value = evaluate_query(ctx.as_ptr(), ast.as_raw(), nil, document, first_only);
     drop(ast);
-    let value = result.map_err(|error| xpath_error(&error))?;
     drop(ctx);
-    /* Converting consumes the value, which frees it. */
-    let result = value_to_ruby(value, document)?;
-    if first_only && result.is_kind_of(node_set_class()) {
-        return result.funcall("first", ());
-    }
-    let _ = ruby;
-    Ok(result)
-}
-
-fn node_set_class() -> magnus::RClass {
-    magnus::RClass::from_value(unsafe { Value::from_raw(mkr_cNodeSet) })
-        .expect("Makiri::NodeSet is a Class")
+    query_result(value?, document, first_only)
 }
 
 /// `#xpath(expr, namespaces = nil)` / `#at_xpath(...)`.
@@ -464,21 +437,18 @@ fn xpath_run(
                 Value::from_raw(mkr_node_set_new(document.as_raw()))
             });
         }
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw())?);
-        let ctx = build_ctx(ruby, xdoc, context, expr, c"XPath expression".as_ptr(), ns)?;
-
-        /* Mint the borrowed view AFTER namespace registration: that step
-         * allocates Ruby objects and may run a GC, and the borrowed bytes must
-         * not be live across one. */
-        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
-        let budget = ctx_budget(ctx.as_ptr());
-        (*budget).limits.ast_nodes = 0;
-        let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
-        /* No borrowed bytes across the exception's allocation. */
-        drop(ev);
-        let Ok(ast) = parsed else {
-            return Err(xpath_error(&(*budget).take_error()));
-        };
+        let ctx = build_ctx(
+            ruby,
+            rb_self,
+            document,
+            expr,
+            c"XPath expression".as_ptr(),
+            ns,
+        )?;
+        /* Parse AFTER namespace registration: that step allocates Ruby objects
+         * and may run a GC, and the borrowed expression bytes must not be live
+         * across one. */
+        let ast = parse_query(ctx.as_ptr(), expr)?;
         run_ast(ruby, ctx, ast, first_only, document)
     }
 }
@@ -563,11 +533,10 @@ fn css_run(
                 Value::from_raw(mkr_node_set_new(document.as_raw()))
             });
         }
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw())?);
         let ctx = build_ctx(
             ruby,
-            xdoc,
-            context,
+            rb_self,
+            document,
             selector,
             c"CSS selector".as_ptr(),
             Some(ns),
@@ -597,20 +566,21 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         if node.is_invalid() {
             return Ok(false);
         }
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw())?);
+        /* Rooted at the document node: see above. */
         let ctx = build_ctx(
             ruby,
-            xdoc,
-            (*xdoc).doc_node(),
+            document,
+            document,
             selector,
             c"CSS selector".as_ptr(),
             Some(ns),
         )?;
         let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
 
-        let result = evaluate(ctx.as_ptr(), ast.as_raw());
+        let nil = ruby.qnil().as_value();
+        let value = evaluate_query(ctx.as_ptr(), ast.as_raw(), nil, document, false);
         drop(ast);
-        let value = result.map_err(|error| xpath_error(&error))?;
+        let value = value?;
         let target = node.to_token() as *mut c_void;
         Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
     }

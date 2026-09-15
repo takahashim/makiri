@@ -282,7 +282,7 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
 /// and hands over the element index so `//tag` is answered without a tree walk.
 /// The XML branch needs neither: the custom node links attributes to their owner
 /// directly, and `//tag` falls back to a walk.
-unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
+pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
     let parsed = mkr_doc_parsed(document.as_raw())?;
 
     if mkr_parsed_kind(parsed) == MKR_DOC_XML {
@@ -790,6 +790,65 @@ impl Drop for InstalledHandler {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* the query path every entry point shares                            */
+/* ------------------------------------------------------------------ */
+/* `Node#xpath` / `#at_xpath` for both representations, the XML `#css` family
+ * and `XPathContext#evaluate` all run parse -> evaluate -> convert through
+ * these three; they differ only in how the context is built and who owns it. */
+
+/// Parse `expr` for one query under `ctx`. The AST-node budget is per query, so
+/// it is reset first, and a failure is that budget's error as the exception.
+pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<OwnedAst, Error> {
+    let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
+    let budget = ctx_budget(ctx);
+    (*budget).limits.ast_nodes = 0;
+    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
+    /* No borrowed bytes across the exception's allocation. */
+    drop(ev);
+    parsed.map_err(|_| xpath_error(&(*budget).take_error()))
+}
+
+/// Evaluate `ast` under `ctx`, with `handler` (nil for none) answering unknown
+/// functions for this evaluation only. `first_only` takes the `at_xpath` fast
+/// path.
+pub(crate) unsafe fn evaluate_query(
+    ctx: *mut Ctx,
+    ast: *mut Ast,
+    handler: Value,
+    document: Value,
+    first_only: bool,
+) -> Result<XPathValue, Error> {
+    let bridge = Bridge {
+        handler: handler.as_raw(),
+        document: document.as_raw(),
+    };
+    let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
+    let result = if first_only {
+        evaluate_first(ctx, ast)
+    } else {
+        evaluate(ctx, ast)
+    };
+    drop(installed);
+    result.map_err(|error| xpath_error(&error))
+}
+
+/// A query's value as Ruby, and for `at_xpath` the first node of a node-set.
+///
+/// Callers free the AST and any context they own BEFORE this: the value owns
+/// its data and references neither.
+pub(crate) unsafe fn query_result(
+    value: XPathValue,
+    document: Value,
+    first_only: bool,
+) -> Result<Value, Error> {
+    let result = value_to_ruby(value, document)?;
+    if first_only && is_kind_of(result, mkr_cNodeSet) {
+        return result.funcall("first", ());
+    }
+    Ok(result)
+}
+
 fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
     let expr = a.required.0;
@@ -821,18 +880,9 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
     };
 
     unsafe {
-        let bridge = Bridge {
-            handler: handler.as_raw(),
-            document: document.as_raw(),
-        };
-        let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
-        let result = evaluate(ctx, ast);
-        drop(installed);
+        let value = evaluate_query(ctx, ast, handler, document, false);
         drop(owned);
-        match result {
-            Ok(value) => value_to_ruby(value, document),
-            Err(error) => Err(xpath_error(&error)),
-        }
+        query_result(value?, document, false)
     }
 }
 
@@ -910,37 +960,13 @@ fn node_xpath_run(
 ) -> Result<Value, Error> {
     unsafe {
         let document = Value::from_raw(mkr_node_document(rb_self.as_raw())?);
-        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
-
         let ctx = context_for(rb_self, document)?;
         ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
-
-        let budget = ctx_budget(ctx.as_ptr());
-        (*budget).limits.ast_nodes = 0;
-        let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
-        /* No borrowed bytes across the exception's allocation. */
-        drop(ev);
-        let Ok(ast) = parsed else {
-            return Err(xpath_error(&(*budget).take_error()));
-        };
-        let bridge = Bridge {
-            handler: handler.as_raw(),
-            document: document.as_raw(),
-        };
-        let installed = InstalledHandler::new(ctx.as_ptr(), &bridge, handler.as_raw());
-        let result = if first_only {
-            evaluate_first(ctx.as_ptr(), ast.as_raw())
-        } else {
-            evaluate(ctx.as_ptr(), ast.as_raw())
-        };
-        drop(installed);
+        let ast = parse_query(ctx.as_ptr(), expr)?;
+        let value = evaluate_query(ctx.as_ptr(), ast.as_raw(), handler, document, first_only);
         drop(ast);
-        let value = result.map_err(|error| xpath_error(&error))?;
-        /* Free the context BEFORE converting: the value owns its own data and
-         * never references the context, and a Ruby allocation failing inside
-         * the conversion longjmps past any destructor still pending. */
         drop(ctx);
-        value_to_ruby(value, document)
+        query_result(value?, document, first_only)
     }
 }
 
@@ -974,11 +1000,7 @@ fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Erro
 /// The first matching node for a node-set result, or the scalar otherwise.
 fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let (expr, handler, lax) = scan_query_args(ruby, args)?;
-    let result = node_xpath_run(rb_self, expr, handler, lax, true)?;
-    if unsafe { is_kind_of(result, mkr_cNodeSet) } {
-        return result.funcall("first", ());
-    }
-    Ok(result)
+    node_xpath_run(rb_self, expr, handler, lax, true)
 }
 
 /// # Safety
