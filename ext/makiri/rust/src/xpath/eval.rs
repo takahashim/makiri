@@ -87,7 +87,7 @@ impl<'e, D: Dom<'e>> Evaluation<'e, D> {
 
 /* ---------- predicates ---------- */
 
-unsafe fn apply_predicates<'e, D: Dom<'e>>(
+fn apply_predicates<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     preds: &[Expr],
     inout: &mut NodeSet<D::Node>,
@@ -164,7 +164,7 @@ fn resolve_test_prefix<'e, D: Dom<'e>>(
     }
 }
 
-unsafe fn eval_step<'e, D: Dom<'e>>(
+fn eval_step<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     step: &Step,
     context_set: &NodeSet<D::Node>,
@@ -283,7 +283,7 @@ unsafe fn eval_step<'e, D: Dom<'e>>(
     Ok(())
 }
 
-unsafe fn eval_steps<'e, D: Dom<'e>>(
+fn eval_steps<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     steps: &[Step],
     seed: &mut NodeSet<D::Node>,
@@ -311,7 +311,7 @@ unsafe fn eval_steps<'e, D: Dom<'e>>(
 /// §3.4 equality. A node-set on either side means "true iff SOME node satisfies
 /// it"; all node string-values go through the per-evaluate cache, so an M-by-N
 /// comparison costs O(M+N) string builds.
-unsafe fn compare_eq<'e, D: Dom<'e>>(
+fn compare_eq<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     l: &Val<D::Node>,
     r: &Val<D::Node>,
@@ -401,7 +401,7 @@ fn rel_hit(op: Op, a: f64, b: f64) -> bool {
 /// §3.4 relational. A node-set on either side is true iff SOME pair satisfies
 /// the relation on their numeric string-values - every pair, not just the first
 /// node of each side.
-unsafe fn compare_rel<'e, D: Dom<'e>>(
+fn compare_rel<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     l: &Val<D::Node>,
     r: &Val<D::Node>,
@@ -447,7 +447,7 @@ unsafe fn compare_rel<'e, D: Dom<'e>>(
 
 /* ---------- union ---------- */
 
-unsafe fn union_nodeset<'e, D: Dom<'e>>(
+fn union_nodeset<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     l: &Val<D::Node>,
     r: &Val<D::Node>,
@@ -558,7 +558,7 @@ pub unsafe fn try_first_match<'e, D: Dom<'e>>(
     }
 }
 
-unsafe fn first_match_walk<'e, D: Dom<'e>>(
+fn first_match_walk<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     ast: &Ast,
 ) -> EvalResult<Option<Option<D::Node>>> {
@@ -580,7 +580,8 @@ unsafe fn first_match_walk<'e, D: Dom<'e>>(
         Some(doc.document_node())
     } else {
         let p = ev.cx.context_node();
-        (!p.is_null()).then(|| doc.node(p))
+        // SAFETY: the glue sets the context node from a node of this document.
+        (!p.is_null()).then(|| unsafe { doc.node(p) })
     };
     let Some(start) = start else {
         return Ok(Some(None)); /* recognised; no context means no match */
@@ -619,7 +620,7 @@ unsafe fn first_match_walk<'e, D: Dom<'e>>(
 
 /* ---------- the expression evaluator ---------- */
 
-unsafe fn eval_path<'e, D: Dom<'e>>(
+fn eval_path<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     p: &Path,
     self_node: Option<D::Node>,
@@ -636,7 +637,7 @@ unsafe fn eval_path<'e, D: Dom<'e>>(
     eval_steps::<D>(ev, &p.steps, &mut seed)
 }
 
-unsafe fn eval_filter<'e, D: Dom<'e>>(
+fn eval_filter<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     expr: &Expr,
     predicates: &[Expr],
@@ -668,7 +669,7 @@ unsafe fn eval_filter<'e, D: Dom<'e>>(
     Ok(primary)
 }
 
-unsafe fn eval_fncall<'e, D: Dom<'e>>(
+fn eval_fncall<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     prefix: Option<&[u8]>,
     name: &[u8],
@@ -736,9 +737,13 @@ unsafe fn eval_fncall<'e, D: Dom<'e>>(
                 local: name,
                 args: &token_args,
             };
-            match (handler.resolve)(handler.data, &mut ev.budget, &site)? {
-                /* The glue took every node it returns from this document. */
-                Some(v) => match val_from_tokens::<D>(ev.doc, v) {
+            // SAFETY: the handler and its data were installed by the glue for
+            // this evaluate, and stay live for it.
+            let answer = unsafe { (handler.resolve)(handler.data, &mut ev.budget, &site)? };
+            match answer {
+                // SAFETY: the glue refuses a node from another document, so every
+                // token it answers with names a node of this one.
+                Some(v) => match unsafe { val_from_tokens::<D>(ev.doc, v) } {
                     Some(v) => Some(v),
                     None => return Err(handler_oom(&mut ev.budget)),
                 },
@@ -768,7 +773,7 @@ fn handler_oom(budget: &mut Budget) -> Reported {
     )
 }
 
-unsafe fn eval_binop<'e, D: Dom<'e>>(
+fn eval_binop<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     op: Op,
     lhs: &Expr,
@@ -803,7 +808,7 @@ unsafe fn eval_binop<'e, D: Dom<'e>>(
                 Op::Sub => a - c,
                 Op::Mul => a * c,
                 Op::Div => a / c,
-                _ => libm_fmod(a, c),
+                _ => a % c,
             }))
         }
         /* union_nodeset reports its own typed error; do not overwrite it. */
@@ -817,7 +822,7 @@ unsafe fn eval_binop<'e, D: Dom<'e>>(
 }
 
 /// Unary minus: the operand as a number, negated.
-unsafe fn eval_negate<'e, D: Dom<'e>>(
+fn eval_negate<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     x: &Expr,
     focus: &Focus<'e, D>,
@@ -829,11 +834,7 @@ unsafe fn eval_negate<'e, D: Dom<'e>>(
 }
 
 /// A string result copied from `bytes`.
-unsafe fn string_value<N>(
-    bytes: &[u8],
-    err: ErrSink,
-    what: &core::ffi::CStr,
-) -> EvalResult<Val<N>> {
+fn string_value<N>(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> EvalResult<Val<N>> {
     Ok(Val::string(owned_copy(bytes, err, what)?))
 }
 
@@ -841,7 +842,7 @@ unsafe fn string_value<N>(
 /// recursion is bounded": one op and one recursion level are charged on entry
 /// and the level is released at the single exit. Keeping it single-exit is what
 /// makes that balance locally checkable.
-unsafe fn eval_node<'e, D: Dom<'e>>(
+fn eval_node<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     e: &Expr,
     focus: &Focus<'e, D>,
@@ -854,7 +855,7 @@ unsafe fn eval_node<'e, D: Dom<'e>>(
     result
 }
 
-unsafe fn eval_node_inner<'e, D: Dom<'e>>(
+fn eval_node_inner<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     e: &Expr,
     focus: &Focus<'e, D>,
@@ -956,9 +957,4 @@ pub unsafe fn eval_ast<'e, D: Dom<'e>>(
         }
         Err(_) => Err(ev.budget.take_error()),
     }
-}
-
-extern "C" {
-    #[link_name = "fmod"]
-    fn libm_fmod(a: f64, b: f64) -> f64;
 }

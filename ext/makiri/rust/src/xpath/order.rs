@@ -6,6 +6,8 @@
 //! where the lifecycle hooks live (shared) versus the node-dereferencing halves
 //! (per-instance); here they are one module because they are one idea.
 
+#![forbid(unsafe_code)]
+
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;

@@ -438,10 +438,7 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
 
 /// The unchecked number coercion: no limits, no errors, NaN for anything that
 /// does not coerce.
-///
-/// # Safety
-/// `v` must be a valid value whose node pointers are live.
-pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val<D::Node>) -> f64 {
+pub fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val<D::Node>) -> f64 {
     match v.get() {
         ValRef::Number(d) => d,
         ValRef::Boolean(b) => {
@@ -463,8 +460,6 @@ pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val<D::Node>) 
     }
 }
 
-/// # Safety
-/// `v` must be a valid value whose node pointers are live.
 pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
     match v.get() {
         ValRef::Boolean(b) => b,
@@ -477,10 +472,7 @@ pub fn val_to_boolean<N>(v: &Val<N>) -> bool {
 }
 
 /// value -> string (§4.2), bounded by `budget`.
-///
-/// # Safety
-/// A node-set value must hold `doc`'s tokens.
-pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
+pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
     doc: D,
     v: &Val<D::Node>,
     budget: &mut Budget,
@@ -531,10 +523,7 @@ pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
 
 /// value -> number, bounded. Only the node-set case can fail (it builds a
 /// string-value first).
-///
-/// # Safety
-/// `v` must be valid.
-pub unsafe fn val_to_number_or_fail<'d, D: Dom<'d>>(
+pub fn val_to_number_or_fail<'d, D: Dom<'d>>(
     doc: D,
     v: &Val<D::Node>,
     budget: &mut Budget,
@@ -553,7 +542,7 @@ pub unsafe fn val_to_number_or_fail<'d, D: Dom<'d>>(
 /// best-effort form the NUMBER coercion wants, where an overrun yields "" and
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
-unsafe fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
+fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
     node_to_owned_text::<D>(doc, node, None).unwrap_or_default()
 }
 
@@ -561,10 +550,7 @@ unsafe fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
 
 /// The cached string-value of `node`, building and caching it on a miss. The
 /// text is `ev.str_cache.text(id)`.
-///
-/// # Safety
-/// `node` must be a live handle of the evaluation's document.
-pub unsafe fn cached_node_text<'d, D: Dom<'d>>(
+pub fn cached_node_text<'d, D: Dom<'d>>(
     ev: &mut super::eval::Evaluation<'d, D>,
     node: D::Node,
 ) -> Result<TextId, Reported> {
@@ -577,11 +563,8 @@ pub unsafe fn cached_node_text<'d, D: Dom<'d>>(
 }
 
 /// `number()` of `node`'s cached string-value.
-///
-/// # Safety
-/// As [`cached_node_text`].
 #[inline]
-pub unsafe fn cached_node_number<'d, D: Dom<'d>>(
+pub fn cached_node_number<'d, D: Dom<'d>>(
     ev: &mut super::eval::Evaluation<'d, D>,
     node: D::Node,
 ) -> Result<f64, Reported> {

@@ -26,10 +26,7 @@ fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet<D::Node>) -> bool {
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
 /// filled `result`, Ok(false) when the shape does not qualify.
-///
-/// # Safety
-/// `context_set` must hold this document's handles.
-pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
+pub fn try_descendant_index<'e, D: Dom<'e>>(
     doc: D,
     step: &Step,
     context_set: &NodeSet<D::Node>,
@@ -57,7 +54,9 @@ pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
     };
     for &p in bucket.nodes {
         budget.charge_op()?;
-        let n = doc.node(p);
+        // SAFETY: the element index was built from this document, and a mutation
+        // drops it, so every token in a bucket names one of its nodes.
+        let n = unsafe { doc.node(p) };
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, step.axis, b) {
             continue;
         }
@@ -111,10 +110,7 @@ fn nth_shape<'e, D: Dom<'e>>(
     Some(dn as usize)
 }
 
-///
-/// # Safety
-/// Same as `try_descendant_index`, for the two leading steps `s0` and `s1`.
-pub unsafe fn try_descendant_index_nth<'e, D: Dom<'e>>(
+pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     s0: &Step,
     s1: &Step,
@@ -170,7 +166,8 @@ pub unsafe fn try_descendant_index_nth<'e, D: Dom<'e>>(
 
     for &p in bucket.nodes {
         budget.charge_op()?;
-        let e = doc.node(p);
+        // SAFETY: as in `try_descendant_index`.
+        let e = unsafe { doc.node(p) };
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, s1.axis, &b) {
             continue;
         }

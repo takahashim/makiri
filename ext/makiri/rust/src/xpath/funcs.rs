@@ -10,6 +10,8 @@
 //!
 //! The host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
 
+#![forbid(unsafe_code)]
+
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
@@ -45,7 +47,7 @@ pub type Answer<N> = FnResult<Val<N>>;
 
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call.
-pub type FnImpl<'e, D> = unsafe fn(
+pub type FnImpl<'e, D> = fn(
     &mut Evaluation<'e, D>,
     &Focus<'e, D>,
     &[Val<<D as Dom<'e>>::Node>],
@@ -109,7 +111,7 @@ pub fn lookup<'e, D: Dom<'e>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnI
 
 /* ---------- shared helpers ---------- */
 
-unsafe fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) -> FnResult {
+fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) -> FnResult {
     if got < min || got > max {
         return Err(if min == max {
             err_setf!(
@@ -154,7 +156,7 @@ fn c_string(s: &[u8], err: ErrSink, what: &str) -> FnResult<Text> {
 }
 
 /// A string answer copied from `s`.
-unsafe fn string<N>(s: &[u8], err: ErrSink, what: &str) -> Answer<N> {
+fn string<N>(s: &[u8], err: ErrSink, what: &str) -> Answer<N> {
     Ok(Val::string(c_string(s, err, what)?))
 }
 
@@ -166,19 +168,19 @@ fn boolean<N>(b: bool) -> Answer<N> {
     Ok(Val::boolean(b))
 }
 
-unsafe fn to_text<'e, D: Dom<'e>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
+fn to_text<'e, D: Dom<'e>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
     let doc = ev.doc;
     val_to_owned_text_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
-unsafe fn to_number<'e, D: Dom<'e>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, D>) -> FnResult<f64> {
+fn to_number<'e, D: Dom<'e>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, D>) -> FnResult<f64> {
     let doc = ev.doc;
     val_to_number_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
 /// The string-value of `args[0]`, or of the context node when there is none -
 /// the idiom string() / string-length() / normalize-space() share.
-unsafe fn arg_or_self_text<'e, D: Dom<'e>>(
+fn arg_or_self_text<'e, D: Dom<'e>>(
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
     ev: &mut Evaluation<'e, D>,
@@ -190,10 +192,7 @@ unsafe fn arg_or_self_text<'e, D: Dom<'e>>(
 }
 
 /// The string-value of the context node, or "" when there is none.
-unsafe fn self_text<'e, D: Dom<'e>>(
-    focus: &Focus<'e, D>,
-    ev: &mut Evaluation<'e, D>,
-) -> FnResult<Text> {
+fn self_text<'e, D: Dom<'e>>(focus: &Focus<'e, D>, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
     match focus.node {
         Some(n) => node_to_owned_text::<D>(ev.doc, n, Some(&mut ev.budget)),
         None => owned_copy(
@@ -205,7 +204,7 @@ unsafe fn self_text<'e, D: Dom<'e>>(
 }
 
 /// Pull both string operands, then run `f`. The guards free them on every path.
-unsafe fn two<'e, D: Dom<'e>, F>(
+fn two<'e, D: Dom<'e>, F>(
     ev: &mut Evaluation<'e, D>,
     args: &[Val<D::Node>],
     f: F,
@@ -260,7 +259,7 @@ fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
 
 /* ---------- node-set functions ---------- */
 
-unsafe fn fn_last<'e, D: Dom<'e>>(
+fn fn_last<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -270,7 +269,7 @@ unsafe fn fn_last<'e, D: Dom<'e>>(
     number(focus.size as f64)
 }
 
-unsafe fn fn_position<'e, D: Dom<'e>>(
+fn fn_position<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -280,7 +279,7 @@ unsafe fn fn_position<'e, D: Dom<'e>>(
     number(focus.pos as f64)
 }
 
-unsafe fn fn_count<'e, D: Dom<'e>>(
+fn fn_count<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -296,7 +295,7 @@ unsafe fn fn_count<'e, D: Dom<'e>>(
 /// Every visited node is charged to the op budget: without it, id() over a large
 /// node-set - a token per node, a tree walk per token - drives quadratic work at
 /// no cost. Returns Err on an overrun, with the budget's slot set.
-unsafe fn find_by_id<'e, D: Dom<'e>>(
+fn find_by_id<'e, D: Dom<'e>>(
     doc: D,
     root: D::Node,
     id: &[u8],
@@ -335,7 +334,7 @@ unsafe fn find_by_id<'e, D: Dom<'e>>(
 ///
 /// Duplicates go in unconditionally: the caller dedups the whole result with one
 /// sort plus an adjacent pass, which beats a contains() check per insert.
-unsafe fn id_collect<'e, D: Dom<'e>>(
+fn id_collect<'e, D: Dom<'e>>(
     s: &[u8],
     root: D::Node,
     out: &mut NodeSet<D::Node>,
@@ -351,7 +350,7 @@ unsafe fn id_collect<'e, D: Dom<'e>>(
     Ok(())
 }
 
-unsafe fn fn_id<'e, D: Dom<'e>>(
+fn fn_id<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -395,7 +394,7 @@ unsafe fn fn_id<'e, D: Dom<'e>>(
 /// The first node of a node-set argument, or the context node when there is no
 /// argument. A type error sets `*err`; an empty node-set yields a null handle,
 /// which the callers render as "".
-unsafe fn name_target<'e, D: Dom<'e>>(
+fn name_target<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
     focus: &Focus<'e, D>,
     err: ErrSink,
@@ -416,7 +415,7 @@ unsafe fn name_target<'e, D: Dom<'e>>(
 /// element, attribute or PI yields "". A PI's name is its target either way (its
 /// expanded-name is (null, target)). In HTML the qualified name equals the local
 /// name, which also keeps the LXB_NS_HTML prefix out of the result.
-unsafe fn name_emit<'e, D: Dom<'e>>(
+fn name_emit<'e, D: Dom<'e>>(
     doc: D,
     n: Option<D::Node>,
     qualified: bool,
@@ -448,7 +447,7 @@ unsafe fn name_emit<'e, D: Dom<'e>>(
     string(name, err, fname)
 }
 
-unsafe fn fn_local_name<'e, D: Dom<'e>>(
+fn fn_local_name<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -460,7 +459,7 @@ unsafe fn fn_local_name<'e, D: Dom<'e>>(
     name_emit::<D>(doc, t, false, err, "local-name")
 }
 
-unsafe fn fn_name<'e, D: Dom<'e>>(
+fn fn_name<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -472,7 +471,7 @@ unsafe fn fn_name<'e, D: Dom<'e>>(
     name_emit::<D>(doc, t, true, err, "name")
 }
 
-unsafe fn fn_namespace_uri<'e, D: Dom<'e>>(
+fn fn_namespace_uri<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -492,7 +491,7 @@ unsafe fn fn_namespace_uri<'e, D: Dom<'e>>(
 
 /* ---------- string functions ---------- */
 
-unsafe fn fn_string<'e, D: Dom<'e>>(
+fn fn_string<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -502,7 +501,7 @@ unsafe fn fn_string<'e, D: Dom<'e>>(
     Ok(Val::string(arg_or_self_text::<D>(focus, args, ev)?))
 }
 
-unsafe fn fn_concat<'e, D: Dom<'e>>(
+fn fn_concat<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -541,7 +540,7 @@ unsafe fn fn_concat<'e, D: Dom<'e>>(
     Ok(Val::string(joined))
 }
 
-unsafe fn fn_starts_with<'e, D: Dom<'e>>(
+fn fn_starts_with<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -551,7 +550,7 @@ unsafe fn fn_starts_with<'e, D: Dom<'e>>(
     two::<D, _>(ev, args, |s, t| boolean(s.starts_with(t)))
 }
 
-unsafe fn fn_contains<'e, D: Dom<'e>>(
+fn fn_contains<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -561,7 +560,7 @@ unsafe fn fn_contains<'e, D: Dom<'e>>(
     two::<D, _>(ev, args, |s, t| boolean(find_bytes(s, t).is_some()))
 }
 
-unsafe fn fn_substring_before<'e, D: Dom<'e>>(
+fn fn_substring_before<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -579,7 +578,7 @@ unsafe fn fn_substring_before<'e, D: Dom<'e>>(
     })
 }
 
-unsafe fn fn_substring_after<'e, D: Dom<'e>>(
+fn fn_substring_after<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -601,7 +600,7 @@ unsafe fn fn_substring_after<'e, D: Dom<'e>>(
 
 /// substring(s, start[, length]). Positions are 1-based character offsets that
 /// round to nearest, and out-of-range positions clip silently.
-unsafe fn fn_substring<'e, D: Dom<'e>>(
+fn fn_substring<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -634,7 +633,7 @@ unsafe fn fn_substring<'e, D: Dom<'e>>(
     string(&bytes[from..to], err, "substring")
 }
 
-unsafe fn fn_string_length<'e, D: Dom<'e>>(
+fn fn_string_length<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -646,7 +645,7 @@ unsafe fn fn_string_length<'e, D: Dom<'e>>(
 }
 
 /// normalize-space: collapse runs of whitespace and trim the ends.
-unsafe fn fn_normalize_space<'e, D: Dom<'e>>(
+fn fn_normalize_space<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -692,7 +691,7 @@ unsafe fn fn_normalize_space<'e, D: Dom<'e>>(
 ///
 /// The input is valid UTF-8 (the literal lexer validates, and DOM string-values
 /// are valid), but a decode failure fails closed rather than truncating.
-unsafe fn fn_translate<'e, D: Dom<'e>>(
+fn fn_translate<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -764,7 +763,7 @@ unsafe fn fn_translate<'e, D: Dom<'e>>(
 
 /* ---------- boolean functions ---------- */
 
-unsafe fn fn_not<'e, D: Dom<'e>>(
+fn fn_not<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -774,7 +773,7 @@ unsafe fn fn_not<'e, D: Dom<'e>>(
     boolean(!val_to_boolean(&args[0]))
 }
 
-unsafe fn fn_true<'e, D: Dom<'e>>(
+fn fn_true<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -784,7 +783,7 @@ unsafe fn fn_true<'e, D: Dom<'e>>(
     boolean(true)
 }
 
-unsafe fn fn_false<'e, D: Dom<'e>>(
+fn fn_false<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -794,7 +793,7 @@ unsafe fn fn_false<'e, D: Dom<'e>>(
     boolean(false)
 }
 
-unsafe fn fn_boolean<'e, D: Dom<'e>>(
+fn fn_boolean<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -804,7 +803,7 @@ unsafe fn fn_boolean<'e, D: Dom<'e>>(
     boolean(val_to_boolean(&args[0]))
 }
 
-unsafe fn fn_lang<'e, D: Dom<'e>>(
+fn fn_lang<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -843,7 +842,7 @@ unsafe fn fn_lang<'e, D: Dom<'e>>(
 
 /* ---------- number functions ---------- */
 
-unsafe fn fn_number<'e, D: Dom<'e>>(
+fn fn_number<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -860,7 +859,7 @@ unsafe fn fn_number<'e, D: Dom<'e>>(
     }
 }
 
-unsafe fn fn_sum<'e, D: Dom<'e>>(
+fn fn_sum<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -876,7 +875,7 @@ unsafe fn fn_sum<'e, D: Dom<'e>>(
     number(total)
 }
 
-unsafe fn num1<'e, D: Dom<'e>, F>(
+fn num1<'e, D: Dom<'e>, F>(
     ev: &mut Evaluation<'e, D>,
     args: &[Val<D::Node>],
     name: &str,
@@ -890,7 +889,7 @@ where
     number(f(to_number::<D>(&args[0], ev)?))
 }
 
-unsafe fn fn_floor<'e, D: Dom<'e>>(
+fn fn_floor<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -898,7 +897,7 @@ unsafe fn fn_floor<'e, D: Dom<'e>>(
     num1::<D, _>(ev, args, "floor", f64::floor)
 }
 
-unsafe fn fn_ceiling<'e, D: Dom<'e>>(
+fn fn_ceiling<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -929,7 +928,7 @@ fn round_half_up(d: f64) -> f64 {
     }
 }
 
-unsafe fn fn_round<'e, D: Dom<'e>>(
+fn fn_round<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -954,7 +953,7 @@ fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
     hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
 }
 
-unsafe fn fn_css_class<'e, D: Dom<'e>>(
+fn fn_css_class<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     _focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -968,7 +967,7 @@ unsafe fn fn_css_class<'e, D: Dom<'e>>(
 
 /// local-name-is(name): true iff the context node's qualified name (for HTML the
 /// lowercase local name) equals the argument.
-unsafe fn fn_local_name_is<'e, D: Dom<'e>>(
+fn fn_local_name_is<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     args: &[Val<D::Node>],
@@ -1019,7 +1018,7 @@ fn of_type_pos<'e, D: Dom<'e>>(node: Option<D::Node>, forward: bool, doc: D) -> 
     pos as f64
 }
 
-unsafe fn fn_of_type_pos<'e, D: Dom<'e>>(
+fn fn_of_type_pos<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     _args: &[Val<D::Node>],
@@ -1028,7 +1027,7 @@ unsafe fn fn_of_type_pos<'e, D: Dom<'e>>(
     number(of_type_pos::<D>(focus.node, true, doc))
 }
 
-unsafe fn fn_of_type_pos_last<'e, D: Dom<'e>>(
+fn fn_of_type_pos_last<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     focus: &Focus<'e, D>,
     _args: &[Val<D::Node>],
