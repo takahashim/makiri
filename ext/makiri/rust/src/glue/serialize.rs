@@ -17,11 +17,11 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use super::abi::*;
-use crate::cbuf::{mkr_buf_append, Buf};
+use crate::cbuf::{buf_append, Buf};
 
 /// Lexbor's chunk sink. Must not panic: it is called from C.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
-    if mkr_buf_append(ctx as *mut Buf, data as *const c_void, len) == crate::cbuf::MKR_OK {
+    if buf_append(ctx as *mut Buf, data as *const c_void, len) == crate::cbuf::BUF_OK {
         LXB_STATUS_OK
     } else {
         LXB_STATUS_ERROR_MEMORY_ALLOCATION

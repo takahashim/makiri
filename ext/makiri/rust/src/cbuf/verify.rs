@@ -31,8 +31,7 @@
 #![cfg(kani)]
 
 use super::{
-    mkr_buf_append, mkr_buf_reserve, mkr_buf_steal, Buf, MKR_ERR_INVALID, MKR_ERR_LIMIT,
-    MKR_ERR_OOM, MKR_OK,
+    buf_append, buf_reserve, buf_steal, Buf, BUF_ERR_INVALID, BUF_ERR_LIMIT, BUF_ERR_OOM, BUF_OK,
 };
 
 /// The largest ceiling the proofs quantify over.
@@ -48,7 +47,7 @@ const NSRC: usize = 4;
 /// Constrain the two build-time limits to the regime these proofs are about.
 ///
 /// **This was load-bearing, and the reason it existed is worth keeping.** While
-/// the C was compiled, `mkr_buf_hard_max` and `mkr_buf_default_limit` were
+/// the C was compiled, `buf_hard_max` and `buf_default_limit` were
 /// `extern static`s defined in `core/mkr_core_abi.c` - and Kani does not link C,
 /// so without this assumption they were UNCONSTRAINED values. The first version
 /// of this file omitted it and the proof duly failed: `content_limit` took
@@ -63,8 +62,8 @@ const NSRC: usize = 4;
 /// large as the ceiling under test") and because the hazard returns the moment
 /// any constant crosses a language boundary again.
 unsafe fn assume_limits_are_sane() {
-    kani::assume(super::mkr_buf_hard_max >= MAXCAP);
-    kani::assume(super::mkr_buf_default_limit >= MAXCAP);
+    kani::assume(super::buf_hard_max >= MAXCAP);
+    kani::assume(super::buf_default_limit >= MAXCAP);
 }
 
 /// The effective ceiling for a buffer whose `max` is in the assumed range.
@@ -86,9 +85,9 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
 
     let len0 = b.len;
     let cap0 = b.cap;
-    let st = mkr_buf_append(b, src.as_ptr() as *const core::ffi::c_void, n);
+    let st = buf_append(b, src.as_ptr() as *const core::ffi::c_void, n);
 
-    if st == MKR_OK {
+    if st == BUF_OK {
         assert!(b.len == len0 + n, "append: len advances by n");
         assert!(b.len <= maxlim, "append: ceiling respected");
         assert!(b.cap <= maxlim + 1, "append: growth clamped to max+1");
@@ -104,11 +103,11 @@ unsafe fn step_append(b: &mut Buf, shadow: &mut [u8], slen: usize, maxlim: usize
         slen
     } else {
         assert!(
-            st == MKR_ERR_LIMIT || st == MKR_ERR_OOM,
+            st == BUF_ERR_LIMIT || st == BUF_ERR_OOM,
             "append: a non-NULL source fails only on limit or OOM"
         );
         assert!(
-            st != MKR_ERR_LIMIT || len0 + n > maxlim,
+            st != BUF_ERR_LIMIT || len0 + n > maxlim,
             "append: LIMIT only past the ceiling"
         );
         assert!(
@@ -154,7 +153,7 @@ fn append_matches_a_shadow_model() {
     unsafe {
         /* A NULL source with n > 0 is INVALID and touches nothing. */
         assert!(
-            mkr_buf_append(&mut b, core::ptr::null(), 3) == MKR_ERR_INVALID,
+            buf_append(&mut b, core::ptr::null(), 3) == BUF_ERR_INVALID,
             "append: a NULL source fails closed"
         );
         assert!(b.len == 0 && b.cap == 0, "append: INVALID touches nothing");
@@ -167,16 +166,16 @@ fn append_matches_a_shadow_model() {
         let cap0 = b.cap;
         let want: usize = kani::any();
         kani::assume(want <= 2 * NSRC);
-        let st = mkr_buf_reserve(&mut b, want);
+        let st = buf_reserve(&mut b, want);
         assert!(b.len == len0, "reserve: len untouched");
         assert!(
             b.cap <= maxlim + 1,
             "reserve: clamped to the buffer's ceiling"
         );
-        if st == MKR_OK {
+        if st == BUF_OK {
             assert!(b.cap >= cap0, "reserve: success does not shrink cap");
         } else {
-            assert!(st == MKR_ERR_OOM, "reserve: failure is OOM");
+            assert!(st == BUF_ERR_OOM, "reserve: failure is OOM");
             assert!(
                 b.len == len0 && b.cap == cap0,
                 "reserve: failure leaves len and cap"
@@ -192,7 +191,7 @@ fn append_matches_a_shadow_model() {
         /* Steal hands back exactly what went in, NUL-terminated, and leaves a
          * usable empty buffer. */
         let mut out_len = usize::MAX;
-        let p = mkr_buf_steal(&mut b, &mut out_len);
+        let p = buf_steal(&mut b, &mut out_len);
         if !p.is_null() {
             assert!(out_len == slen, "steal: the length is what was appended");
             let got = core::slice::from_raw_parts(p as *const u8, out_len);
@@ -221,7 +220,7 @@ fn steal_of_an_empty_buffer_is_an_owned_empty_string() {
     let mut b = Buf::new(0);
     unsafe {
         let mut out_len = usize::MAX;
-        let p = mkr_buf_steal(&mut b, &mut out_len);
+        let p = buf_steal(&mut b, &mut out_len);
         if p.is_null() {
             /* The only reason is allocation failure. */
         } else {

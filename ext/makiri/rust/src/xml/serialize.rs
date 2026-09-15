@@ -25,7 +25,7 @@
 use crate::falloc::Reserve;
 use core::ffi::c_void;
 
-use crate::cbuf::{mkr_buf_append, Buf, MKR_OK};
+use crate::cbuf::{buf_append, Buf, BUF_OK};
 use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
 
 /// Why serialization produced no output.
@@ -137,7 +137,7 @@ unsafe fn put(b: *mut Buf, bytes: &[u8]) -> W {
     if bytes.is_empty() {
         return Ok(());
     }
-    if mkr_buf_append(b, bytes.as_ptr() as *const c_void, bytes.len()) == MKR_OK {
+    if buf_append(b, bytes.as_ptr() as *const c_void, bytes.len()) == BUF_OK {
         Ok(())
     } else {
         Err(())

@@ -8,7 +8,7 @@
 
 use core::ffi::{c_int, c_void};
 
-use crate::cbuf::{MKR_ERR_OOM, MKR_OK};
+use crate::cbuf::{BUF_ERR_OOM, BUF_OK};
 
 extern "C" {
     #[link_name = "calloc"]
@@ -72,17 +72,17 @@ pub unsafe fn grow_reserve(
     elem: usize,
 ) -> c_int {
     if need <= *cap {
-        return MKR_OK;
+        return BUF_OK;
     }
     let new_cap = match crate::falloc::grow_capacity(*cap, need, elem) {
         Some(c) => c,
-        None => return MKR_ERR_OOM,
+        None => return BUF_ERR_OOM,
     };
     let p = reallocarray(*ptr, new_cap, elem);
     if p.is_null() {
-        return MKR_ERR_OOM;
+        return BUF_ERR_OOM;
     }
     *ptr = p;
     *cap = new_cap;
-    MKR_OK
+    BUF_OK
 }

@@ -15,7 +15,7 @@ pub use super::runtime_abi::cache::{ptr_hash, StrCache, StrCacheEntry};
 pub use super::value::{
     NodeSet, TextSlot, Val, ValRef, ValU, T_BOOLEAN, T_NODESET, T_NUMBER, T_STRING,
 };
-pub use crate::cbuf::MKR_OK;
+pub use crate::cbuf::BUF_OK;
 
 pub use super::ast_ops::apply_peephole;
 pub use super::ast_ops::mark_context_independent;
@@ -56,7 +56,7 @@ pub use super::runtime_abi::str_cache_index_put;
 pub use super::runtime_abi::str_cache_reindex;
 pub use super::runtime_abi::val_clear;
 pub use super::runtime_abi::val_set_owned_text;
-pub(crate) use crate::cbuf::{mkr_buf_append, Buf};
+pub(crate) use crate::cbuf::{buf_append, Buf};
 pub use crate::falloc::calloc::grow_reserve;
 pub use crate::falloc::calloc::strndup;
 pub use crate::text::{BorrowedText, VerifiedText};

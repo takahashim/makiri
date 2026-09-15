@@ -239,12 +239,12 @@ unsafe impl DomRaw for Xml {
     unsafe fn raw_append_own_text(doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
         let s = match nd(doc, n) {
             Some(x) => span(doc, x.value),
-            None => return MKR_OK,
+            None => return BUF_OK,
         };
         if s.is_empty() {
-            return MKR_OK;
+            return BUF_OK;
         }
-        mkr_buf_append(buf, s.as_ptr() as *const core::ffi::c_void, s.len())
+        buf_append(buf, s.as_ptr() as *const core::ffi::c_void, s.len())
     }
 
     /// The XML name index is keyed by (local name, namespace URI), so a bucket

@@ -197,9 +197,9 @@ pub unsafe extern "C" fn html_append_own_text(node: *mut Node, buf: *mut Buf) ->
         &mut tlen,
     );
     if t.is_null() {
-        return crate::xpath::abi::MKR_OK;
+        return crate::xpath::abi::BUF_OK;
     }
-    let st = crate::cbuf::mkr_buf_append(buf, t as *const c_void, tlen);
+    let st = crate::cbuf::buf_append(buf, t as *const c_void, tlen);
     crate::lexbor_abi::lxb_dom_document_destroy_text_noi(
         (*node).owner_document as *mut crate::lexbor_abi::LxbDoc,
         t,

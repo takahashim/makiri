@@ -29,7 +29,7 @@ pub unsafe fn nodeset_push(
         &raw mut (*ns).capacity,
         (*ns).count + 1,
         core::mem::size_of::<*mut c_void>(),
-    ) != MKR_OK
+    ) != BUF_OK
     {
         return Err(err_setf!(err, XP_ERR_OOM, "out of memory growing node-set"));
     }

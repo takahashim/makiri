@@ -332,7 +332,7 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
             if v.is_empty() {
                 ST_OK
             } else {
-                mkr_buf_append(buf, v.as_ptr() as *const c_void, v.len())
+                buf_append(buf, v.as_ptr() as *const c_void, v.len())
             }
         }
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
@@ -616,7 +616,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         &raw mut (*c).cap,
         (*c).count + 1,
         core::mem::size_of::<StrCacheEntry>(),
-    ) != MKR_OK
+    ) != BUF_OK
     {
         return Err(err_setf!(
             err,
