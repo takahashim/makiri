@@ -863,8 +863,11 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
      * the borrow across the walk would turn all four into one generic "already in
      * use", which is how the handler specs first caught this. */
     let (ctx, ast, owned) = unsafe {
-        let mut d = rb_self.borrow()?;
+        /* Verify BEFORE borrowing: the contract check raises with rb_raise, and
+         * a longjmp out of a live RefMut never releases it - every later call on
+         * this context would then report "already in use". */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
+        let mut d = rb_self.borrow()?;
         let mut error: XPathError = core::mem::zeroed();
         let parsed = cached_ast(&mut d, ev, &mut error);
         let ctx = d.ctx;

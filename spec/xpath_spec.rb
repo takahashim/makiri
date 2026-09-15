@@ -450,6 +450,15 @@ RSpec.describe "Makiri XPath" do
         .to raise_error(Makiri::Error)
     end
 
+    it "stays usable after rejecting an expression that breaks the text contract" do
+      ctx = Makiri::XPathContext.new(doc)
+      ["//p\u0000", "//p\xFF".dup.force_encoding("UTF-8")].each do |bad|
+        expect { ctx.evaluate(bad) }.to raise_error(Makiri::Error, /must/)
+        expect(ctx.evaluate("count(//p)")).to be > 0
+        expect { ctx.register_namespace("x", "urn:x") }.not_to raise_error
+      end
+    end
+
     it "caps the number of registered namespaces (fail closed)", :slow do
       ctx = Makiri::XPathContext.new(doc)
       expect do
