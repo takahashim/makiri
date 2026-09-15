@@ -398,7 +398,7 @@ unsafe fn build_ctx(
     let Some(ctx) = OwnedContext::new(
         xdoc as *mut c_void,
         context_node.to_token() as *mut c_void,
-        Backend::Xml { name_index: true },
+        Backend::Xml,
     ) else {
         return Err(Error::new(
             error_class(),

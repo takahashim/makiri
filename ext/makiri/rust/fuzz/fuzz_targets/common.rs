@@ -38,7 +38,7 @@ pub unsafe fn xml_context(doc: &mut Document) -> Option<*mut Context> {
     let ctx = xpath_context_new(
         doc as *mut Document as *mut c_void,
         node,
-        Backend::Xml { name_index: true },
+        Backend::Xml,
     );
     if ctx.is_null() {
         return None;

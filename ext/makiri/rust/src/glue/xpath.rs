@@ -292,7 +292,7 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, E
         } else {
             mkr_xml_node_unwrap(rb_node.as_raw())
         };
-        let Some(xctx) = OwnedContext::new(xdoc, cnode, Backend::Xml { name_index: false }) else {
+        let Some(xctx) = OwnedContext::new(xdoc, cnode, Backend::Xml) else {
             return Err(Error::new(
                 error_class(),
                 "failed to allocate XPath context",

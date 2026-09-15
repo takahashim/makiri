@@ -262,7 +262,7 @@ unsafe impl DomRaw for Xml {
             None if lax => return None,
             None => b"", /* strict unprefixed -> no namespace */
         };
-        if !matches!(ctx_backend(ctx), Some(Backend::Xml { name_index: true })) {
+        if !matches!(ctx_backend(ctx), Some(Backend::Xml)) {
             return None;
         }
         /* The XML storage owns the index. */

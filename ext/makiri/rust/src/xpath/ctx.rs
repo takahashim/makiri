@@ -40,9 +40,9 @@ pub enum Backend {
     /// borrowed - the document outlives the context - or null to walk instead.
     #[cfg(feature = "lexbor")]
     Html { index: *const c_void },
-    /// A Makiri XML arena. `name_index` enables the lazily built element-name
-    /// index that hangs off the document itself.
-    Xml { name_index: bool },
+    /// A Makiri XML arena. Its element-name index hangs off the document itself
+    /// and is built on first use.
+    Xml,
 }
 
 /// `struct mkr_xpath_context_s`, the real thing.
@@ -462,7 +462,7 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
     let order_was_built = (*ctx).order_index.built != 0;
 
     let result = match (*ctx).backend {
-        Backend::Xml { .. } => eval_ast_xml(handle(ctx), ast, ErrSink::new(&mut err)),
+        Backend::Xml => eval_ast_xml(handle(ctx), ast, ErrSink::new(&mut err)),
         #[cfg(feature = "lexbor")]
         Backend::Html { .. } => eval_ast_html(handle(ctx), ast, ErrSink::new(&mut err)),
     };
@@ -506,7 +506,7 @@ pub unsafe fn evaluate_first(ctx: *mut Context, ast: *mut Node) -> Result<XPathV
     (*ctx).limits.recursion_depth = 0;
 
     let matched = match (*ctx).backend {
-        Backend::Xml { .. } => try_first_match_xml(handle(ctx), ast, ErrSink::new(&mut err)),
+        Backend::Xml => try_first_match_xml(handle(ctx), ast, ErrSink::new(&mut err)),
         #[cfg(feature = "lexbor")]
         Backend::Html { .. } => try_first_match_html(handle(ctx), ast, ErrSink::new(&mut err)),
     };
