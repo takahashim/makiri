@@ -17,7 +17,6 @@ use super::msg::Bytes;
 use super::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::err_setf;
 use core::ffi::c_int;
-use core::ptr;
 
 struct Parser<'a> {
     lx: Lexer<'a>,
@@ -662,7 +661,7 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 ///
 /// # Safety
 /// `budget` must be null or live.
-pub(crate) unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Ast, Reported> {
+pub unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Ast, Reported> {
     let err = budget_sink(budget);
     if budget.is_null() {
         return Err(err_setf!(err, XP_ERR_INTERNAL, "parse: budget required"));
@@ -688,13 +687,4 @@ pub(crate) unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Res
     apply_peephole(root.as_raw());
     mark_context_independent(root.as_raw());
     Ok(root)
-}
-
-/// Parse an expression into a compiled AST; NULL on error with the budget's
-/// error slot filled.
-///
-/// # Safety
-/// As [`parse_owned`]; the caller frees the result with `node_free`.
-pub unsafe fn parse_raw(expr: VerifiedText, budget: *mut Budget) -> *mut Node {
-    parse_owned(expr, budget).map_or(ptr::null_mut(), Ast::into_raw)
 }

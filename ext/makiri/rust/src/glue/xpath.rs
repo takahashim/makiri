@@ -91,7 +91,6 @@ pub use crate::xpath::ctx::xpath_register_ns;
 pub use crate::xpath::ctx::xpath_register_variable_string;
 pub use crate::xpath::ctx::xpath_set_func_resolver;
 use crate::xpath::ctx::{evaluate, evaluate_first};
-pub use crate::xpath::parse::parse_raw;
 pub use crate::xpath::runtime_abi::nodeset_clear;
 pub use crate::xpath::runtime_abi::nodeset_init;
 pub use crate::xpath::runtime_abi::nodeset_push;

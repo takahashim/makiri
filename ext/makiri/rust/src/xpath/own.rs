@@ -20,7 +20,7 @@ use core::ptr::NonNull;
 /// The AST keeps its C layout so the evaluator can borrow it, but ownership is
 /// represented by Rust: dropping this frees the node and everything under it.
 /// Raw AST pointers cross this type only through `from_raw` or `into_raw`.
-pub(crate) struct Ast(NonNull<Node>);
+pub struct Ast(NonNull<Node>);
 
 impl Ast {
     /// # Safety
@@ -32,7 +32,7 @@ impl Ast {
 
     /// Borrow the AST for the evaluator. The evaluator mutates memo fields, so
     /// callers must keep the GVL/exclusive evaluation contract while using it.
-    pub(crate) fn as_raw(&self) -> *mut Node {
+    pub fn as_raw(&self) -> *mut Node {
         self.0.as_ptr()
     }
 

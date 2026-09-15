@@ -34,33 +34,27 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        // Compile-time budgets, tightened so a hostile expression fails fast
-        // instead of burning fuzzer time on a pathological AST. Same numbers
-        // the C harness used.
-        let mut budget = Budget::new();
-        budget.limits.max_ast_nodes = 10_000;
-        budget.limits.max_expr_bytes = 16 * 1024;
-
-        let ast = parse_raw(text, &mut budget);
-        if ast.is_null() {
+        let Some(ctx) = xml_context(&mut doc) else {
             return;
-        }
+        };
 
-        if let Some(ctx) = xml_context(&mut doc) {
-            // The evaluator reads the budgets off the CONTEXT, not off a local
-            // struct, so they have to be tightened through ctx_limits -
-            // otherwise the evaluation runs under the large defaults and one
-            // input can stall the fuzzer.
-            let l = ctx_limits(ctx);
-            (*l).max_eval_ops = 5_000_000;
-            (*l).max_nodeset_size = 10_000;
-            (*l).max_string_bytes = 1024 * 1024;
-            (*l).max_recursion_depth = 64;
+        // Budgets tightened so a hostile expression fails fast instead of
+        // burning fuzzer time. Same numbers the C harness used, and applied in
+        // the same order: the compile-time pair for the parse, the rest only for
+        // the evaluation.
+        let l = limits(ctx.as_ptr());
+        l.max_ast_nodes = 10_000;
+        l.max_expr_bytes = 16 * 1024;
+        let Some(ast) = parse(&ctx, text) else {
+            return;
+        };
 
-            let _ = evaluate(ctx, ast);
-            xpath_context_free(ctx);
-        }
+        let l = limits(ctx.as_ptr());
+        l.max_eval_ops = 5_000_000;
+        l.max_nodeset_size = 10_000;
+        l.max_string_bytes = 1024 * 1024;
+        l.max_recursion_depth = 64;
 
-        node_free(ast);
+        evaluate_both(&ctx, &ast);
     }
 });

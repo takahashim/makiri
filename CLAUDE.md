@@ -92,7 +92,11 @@ bundle exec rake invariants        # randomized property checks (spec/invariants
                                    # INVARIANT_COUNT tunes the sweep;
                                    # `invariants:sanitize` runs them under ASan
 bundle exec rake fuzz:sanitize     # fuzz under ASan - the engine's memory-safety net
-bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses (needs cargo-fuzz + nightly)
+bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses (needs cargo-fuzz + nightly);
+                                   # TARGETS=css,html_xpath narrows, FUZZ_TIME per
+                                   # target or FUZZ_BUDGET total. ASan on Linux only:
+                                   # an ASan harness deadlocks in dyld on macOS, so
+                                   # macOS runs `-s none` (see the Rakefile)
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
                                    # so this is the ONLY leak check; flags per-call
                                    # leak stacks through the ext incl. rescued raises)
@@ -290,7 +294,8 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     dom_adapter/           attr->owner index, text index, source location,
                            post-parse orchestration
     css/                   CSS selector lowering (Lexbor keeps the parser)
-  fuzz/                    cargo-fuzz harnesses (xml/xpath/xml_xpath; nightly CI)
+  fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
+                           html_xpath, css; built on PRs, run nightly)
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)

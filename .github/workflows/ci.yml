@@ -80,6 +80,15 @@ jobs:
         working-directory: ext/makiri/rust
         run: cargo fmt --all -- --check
 
+      # The cargo-fuzz crate is a separate crate that nothing else here builds,
+      # so an engine API change used to break it silently until the nightly
+      # run. Clippy on stable proves it still compiles against this commit;
+      # libFuzzer and the sanitizer stay nightly-only (libfuzzer.yml).
+      - name: Fuzz crate builds
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
+        working-directory: ext/makiri/rust/fuzz
+        run: cargo clippy --bins -- -D warnings
+
       # Fast, Ruby- and Lexbor-free checks for the Rust core. Kani proves the
       # bounded symbolic contracts in verify.yml; this executes exhaustive
       # small-domain and regression properties on every ordinary CI run.

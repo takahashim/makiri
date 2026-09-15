@@ -79,7 +79,6 @@ unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> NodeId {
 pub use crate::bridge::string::mkr_ruby_copy_bytes;
 pub use crate::bridge::string::mkr_ruby_try_verified_text;
 pub use crate::bridge::xml_decode::mkr_xml_decode_input;
-pub use crate::css::compile_raw;
 pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
 pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
@@ -92,7 +91,6 @@ pub use crate::xpath::ctx::ctx_limits;
 pub use crate::xpath::ctx::xpath_register_ns;
 use crate::xpath::ctx::{evaluate, evaluate_first};
 use crate::xpath::ctx::{Backend, OwnedContext};
-pub use crate::xpath::parse::parse_raw;
 
 extern "C" {
 

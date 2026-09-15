@@ -32,7 +32,7 @@ mod parser;
 use core::ffi::{c_char, c_int};
 
 use crate::xpath::own::Ast;
-use crate::xpath_abi::{budget_sink, Budget, ErrSink, Node, Reported, VerifiedText, OP_UNION};
+use crate::xpath_abi::{budget_sink, Budget, ErrSink, Reported, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -94,7 +94,7 @@ impl Build {
 ///
 /// # Safety
 /// From the XPath/CSS glue, under the GVL.
-pub(crate) unsafe fn compile_owned(
+pub unsafe fn compile_owned(
     selector: VerifiedText,
     ns: *const CssNs,
     budget: *mut Budget,
@@ -129,13 +129,4 @@ pub(crate) unsafe fn compile_owned(
     /* Lexbor rejects an empty selector list before it gets here; answering it
      * anyway keeps every failure reported. */
     acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector"))
-}
-
-/// [`compile_owned`] for a caller that holds the AST as a raw pointer.
-pub unsafe fn compile_raw(
-    selector: VerifiedText,
-    ns: *const CssNs,
-    budget: *mut Budget,
-) -> *mut Node {
-    compile_owned(selector, ns, budget).map_or(core::ptr::null_mut(), Ast::into_raw)
 }

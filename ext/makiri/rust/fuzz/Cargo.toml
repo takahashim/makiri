@@ -11,17 +11,10 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 
 # No Ruby: the glue needs magnus -> rb-sys -> a live Ruby, which a fuzz binary
-# has no business linking. These targets drive the surfaces the retired C
-# harnesses drove - the XML reader, the XPath front end, the XML engine
-# instance.
-#
-# `lexbor` is on even though the targets pin the context's engine kind to XML:
-# the dispatcher references BOTH monomorphizations, so the HTML instance has to
-# exist. It used to be stubbed out with abort()s in a verify/stub.c; building
-# the real one costs only compile time and removes a file whose whole job was to
-# never be called. (This crate also used to compile four C files of its own -
-# core/mkr_alloc.c, mkr_buf.c, mkr_utf8.c, xpath/mkr_xpath_err.c - because those
-# symbols had no Rust provider outside the full extension build. They do now.)
+# has no business linking. The targets drive the engine's front door the glue
+# drives - the XML reader, the HTML parse and its indexes, XPath over both
+# engine instances, and the CSS lowering - and so need `lexbor`, which is what
+# carries the HTML instance and `css`.
 [dependencies.makiri_rs]
 path = ".."
 default-features = false
@@ -51,6 +44,20 @@ bench = false
 [[bin]]
 name = "html"
 path = "fuzz_targets/html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "css"
+path = "fuzz_targets/css.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_xpath"
+path = "fuzz_targets/html_xpath.rs"
 test = false
 doc = false
 bench = false

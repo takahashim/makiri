@@ -822,7 +822,7 @@ unsafe fn eval_node_inner<D: Dom>(
 /// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` must be a live context and `ast` a live AST built by `parse_raw`.
+/// `ctx` must be a live context and `ast` a live AST built by `parse_owned`.
 pub unsafe fn eval_ast<D: Dom>(ctx: *mut Context, ast: *const Node) -> EvalResult<OwnedVal> {
     let focus = Focus::<D> {
         node: D::from_void(ctx_node(ctx)),

@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [xml, xpath, xml_xpath, html]
+        target: [xml, xpath, xml_xpath, css, html, html_xpath]
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
