@@ -61,19 +61,13 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
         _ => mkr_cXmlNode,
     };
 
-    /* Allocate zeroed, wrap, and only then store the Document. The wrap
-     * allocates, so it is a GC point, and a VALUE already sitting in this
-     * malloc'd struct is seen by no mark there: compaction can move it out from
-     * under the stored copy. Zeroed, the field reads as `false` to the mark
-     * until it is set, and `document` - used after the wrap - stays on the
-     * machine stack across it, where the conservative scan pins it. */
-    let nd = rb_sys::ruby_xcalloc(1, core::mem::size_of::<NodeData>() as rb_sys::size_t)
-        as *mut NodeData;
-    (*nd).node = node;
-    let obj =
-        rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, mkr_xml_node_type.as_ptr());
-    (*nd).document = document;
-    obj
+    /* The Document is stored after the wrap: see `wrap_zeroed`. */
+    crate::bridge::ruby::wrap_zeroed::<NodeData>(
+        klass,
+        mkr_xml_node_type.as_ptr(),
+        |nd| nd.node = node,
+        |nd| nd.document = document,
+    )
 }
 
 /// The arena node behind a wrapper.
@@ -85,7 +79,7 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
 pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Error> {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self)) as *mut XmlDoc;
+        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self)?) as *mut XmlDoc;
         return Ok((*xdoc).doc_node().to_token() as *mut c_void);
     }
     let nd = crate::bridge::ruby::typed_data(rb_self, mkr_xml_node_type.as_ptr())? as *mut NodeData;
@@ -93,33 +87,27 @@ pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus:
 }
 
 /// The XML document behind a Document or node wrapper (`Document` VALUE).
+///
+/// `document` must be a Document VALUE the caller has established - a node's
+/// keepalive Document or an XML Document receiver.
 pub unsafe fn mkr_doc_of(document: VALUE) -> *mut XmlDoc {
-    mkr_parsed_xml_doc(mkr_doc_parsed(document)) as *mut XmlDoc
+    mkr_parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node at
 /// the type boundary, like [`mkr_xml_node_unwrap`].
-pub unsafe extern "C" fn mkr_xml_node_document(rb_self: VALUE) -> VALUE {
+pub unsafe fn mkr_xml_node_document(rb_self: VALUE) -> Result<VALUE, magnus::Error> {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
-        return rb_self;
+        return Ok(rb_self);
     }
-    let nd = rb_sys::rb_check_typeddata(rb_self, mkr_xml_node_type.as_ptr()) as *mut NodeData;
-    (*nd).document
+    let nd = crate::bridge::ruby::typed_data(rb_self, mkr_xml_node_type.as_ptr())? as *mut NodeData;
+    Ok((*nd).document)
 }
 
-/// Wrap a node reached from `rb_self`, under `rb_self`'s Document. One of the
-/// two functions the still-C serialization half calls.
-pub unsafe fn mkr_xml_wrap_rel(rb_self: VALUE, rel: NodeId) -> VALUE {
-    mkr_wrap_xml_node(
-        rel.to_token() as *mut c_void,
-        mkr_xml_node_document(rb_self),
-    )
-}
-
-/// The same, in Rust terms.
-pub unsafe fn mkr_xml_wrap_rel_value(rb_self: Value, rel: NodeId) -> Value {
-    Value::from_raw(mkr_xml_wrap_rel(rb_self.as_raw(), rel))
+/// Wrap a node reached from a checked receiver, under its Document.
+pub unsafe fn mkr_xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
+    wrap(rel, this.document)
 }
 
 /* ---- the Rust-side conveniences the submodules use ---- */
@@ -135,23 +123,40 @@ pub unsafe fn unwrap(v: Value) -> Result<NodeId, magnus::Error> {
 pub struct XmlSelf {
     pub value: Value,
     pub id: NodeId,
+    /// The keepalive Document (the receiver itself for a Document).
+    pub document: Value,
 }
 
 impl magnus::TryConvert for XmlSelf {
     fn try_convert(value: Value) -> Result<Self, magnus::Error> {
         // SAFETY: magnus converts the receiver under the GVL.
-        let id = unsafe { unwrap(value)? };
-        Ok(XmlSelf { value, id })
+        unsafe {
+            let id = unwrap(value)?;
+            let document = Value::from_raw(mkr_xml_node_document(value.as_raw())?);
+            Ok(XmlSelf {
+                value,
+                id,
+                document,
+            })
+        }
     }
 }
 
-pub unsafe fn node_document(rb_self: Value) -> Value {
-    Value::from_raw(mkr_xml_node_document(rb_self.as_raw()))
+impl XmlSelf {
+    /// The arena behind the receiver's Document.
+    pub unsafe fn doc(self) -> *mut XmlDoc {
+        mkr_doc_of(self.document.as_raw())
+    }
 }
 
-/// The XML document behind `rb_self`'s wrapper.
-pub unsafe fn doc(rb_self: Value) -> *mut XmlDoc {
-    mkr_doc_of(mkr_xml_node_document(rb_self.as_raw()))
+/// The keepalive Document of an XML node. `Err(TypeError)` for an HTML node.
+pub unsafe fn node_document(v: Value) -> Result<Value, magnus::Error> {
+    Ok(Value::from_raw(mkr_xml_node_document(v.as_raw())?))
+}
+
+/// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
+pub unsafe fn doc(v: Value) -> Result<*mut XmlDoc, magnus::Error> {
+    Ok(mkr_doc_of(mkr_xml_node_document(v.as_raw())?))
 }
 
 pub unsafe fn wrap(node: NodeId, document: Value) -> Value {

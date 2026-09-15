@@ -487,7 +487,7 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
     let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
-    let document = unsafe { Value::from_raw(mkr_node_document(rb_self.as_raw())) };
+    let document = unsafe { Value::from_raw(mkr_node_document(rb_self.as_raw())?) };
 
     let mut ctx = FindCtx {
         nodes: Vec::new(),
@@ -573,7 +573,7 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     if ctx.found.is_null() {
         return Ok(ruby.qnil().as_value());
     }
-    let document = unsafe { mkr_node_document(rb_self.as_raw()) };
+    let document = unsafe { mkr_node_document(rb_self.as_raw())? };
     Ok(unsafe { Value::from_raw(mkr_wrap_html_node(ctx.found, document)) })
 }
 

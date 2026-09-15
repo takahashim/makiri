@@ -328,7 +328,7 @@ unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
 unsafe fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
     /* `mkr_xml_node_unwrap` is kind-checked - `Err` for a non-XML node - and
      * resolves an XML Document to its document node. */
-    let document = Value::from_raw(mkr_node_document(rb_self.as_raw()));
+    let document = Value::from_raw(mkr_node_document(rb_self.as_raw())?);
     Ok((document, typed_xml_node_unwrap(rb_self.as_raw())?))
 }
 
@@ -464,7 +464,7 @@ fn xpath_run(
                 Value::from_raw(mkr_node_set_new(document.as_raw()))
             });
         }
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw())?);
         let ctx = build_ctx(ruby, xdoc, context, expr, c"XPath expression".as_ptr(), ns)?;
 
         /* Mint the borrowed view AFTER namespace registration: that step
@@ -563,7 +563,7 @@ fn css_run(
                 Value::from_raw(mkr_node_set_new(document.as_raw()))
             });
         }
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw())?);
         let ctx = build_ctx(
             ruby,
             xdoc,
@@ -597,7 +597,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         if node.is_invalid() {
             return Ok(false);
         }
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(document.as_raw())?);
         let ctx = build_ctx(
             ruby,
             xdoc,
@@ -622,7 +622,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 
 fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self.as_raw()));
         if xdoc.is_null() {
             return ruby.qnil().as_value();
         }
@@ -641,7 +641,7 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
 /// off the tree, so XPath never sees it (XPath 1.0 has no doctype node type).
 fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
     unsafe {
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self.as_raw()));
         if xdoc.is_null() || (*xdoc).doctype.is_none() {
             return ruby.qnil().as_value();
         }
@@ -718,7 +718,7 @@ fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
 fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
     unsafe {
         let doc_obj = new_empty_document()?;
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(doc_obj.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(doc_obj.as_raw())?);
         let frag = fragment_into(xdoc, source, false)?;
         Ok(Value::from_raw(wrap_typed_xml_node(frag, doc_obj.as_raw())))
     }
@@ -728,7 +728,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
     unsafe {
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw()));
+        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())?);
         if xdoc.is_null() {
             return Err(Error::new(error_class(), "the document has no arena"));
         }

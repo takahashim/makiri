@@ -129,20 +129,37 @@ static MKR_HTML_DOC_TYPE: DataType =
 static MKR_XML_DOC_TYPE: DataType =
     doc_data_type(c"Makiri::XML::Document".as_ptr(), mkr_doc_type.as_ptr());
 
-/// The Lexbor document behind an HTML Document. **Raises** TypeError otherwise.
-pub unsafe extern "C" fn mkr_html_doc_unwrap(rb_doc: VALUE) -> *mut lxb::lxb_dom_document_t {
-    let d = rb_sys::rb_check_typeddata(rb_doc, MKR_HTML_DOC_TYPE.as_ptr()) as *mut DocData;
+/// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
+pub unsafe fn mkr_html_doc_unwrap(rb_doc: VALUE) -> Result<*mut lxb::lxb_dom_document_t, Error> {
+    let d = crate::bridge::ruby::typed_data(rb_doc, MKR_HTML_DOC_TYPE.as_ptr())? as *mut DocData;
+    Ok(html_doc_of(d))
+}
+
+/// [`mkr_html_doc_unwrap`] for a VALUE already known to be an HTML Document.
+pub unsafe fn html_doc_known(rb_doc: VALUE) -> *mut lxb::lxb_dom_document_t {
+    html_doc_of(
+        crate::bridge::ruby::typed_data_known(rb_doc, MKR_HTML_DOC_TYPE.as_ptr()) as *mut DocData,
+    )
+}
+
+unsafe fn html_doc_of(d: *mut DocData) -> *mut lxb::lxb_dom_document_t {
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
     mkr_parsed_html_doc((*d).parsed) as *mut lxb::lxb_dom_document_t
 }
 
-/// The parsed handle behind any Document. **Raises** TypeError for a non-Document.
-pub unsafe extern "C" fn mkr_doc_parsed(
+/// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
+pub unsafe fn mkr_doc_parsed(
     rb_doc: VALUE,
-) -> *mut crate::dom_adapter::post_parse::Parsed {
-    let d = rb_sys::rb_check_typeddata(rb_doc, mkr_doc_type.as_ptr()) as *mut DocData;
-    (*d).parsed
+) -> Result<*mut crate::dom_adapter::post_parse::Parsed, Error> {
+    let d = crate::bridge::ruby::typed_data(rb_doc, mkr_doc_type.as_ptr())? as *mut DocData;
+    Ok((*d).parsed)
+}
+
+/// [`mkr_doc_parsed`] for a VALUE already known to be a Document - a node's
+/// keepalive Document, or the receiver of a Document method.
+pub unsafe fn doc_parsed_known(rb_doc: VALUE) -> *mut crate::dom_adapter::post_parse::Parsed {
+    (*(crate::bridge::ruby::typed_data_known(rb_doc, mkr_doc_type.as_ptr()) as *mut DocData)).parsed
 }
 
 /// Wrap an owned handle as a Document; GC takes ownership. The leaf class is
@@ -157,17 +174,16 @@ pub unsafe extern "C" fn mkr_wrap_document(
     } else {
         (mkr_cHtmlDocument, MKR_HTML_DOC_TYPE.as_ptr())
     };
-    let d =
-        rb_sys::ruby_xcalloc(1, core::mem::size_of::<DocData>() as rb_sys::size_t) as *mut DocData;
-    (*d).parsed = parsed;
     /* The errors array is created AFTER the wrap. Created before, it would sit
      * in this malloc'd struct - seen by no mark - across the wrap's allocation,
      * and a GC there frees it; `doc_mark` then marks a dead slot ("try to mark
-     * T_NONE object" under GC_COMPACT_STRESS). Until it is set, the zeroed field
-     * reads as `false`. */
-    let obj = rb_sys::rb_data_typed_object_wrap(klass, d as *mut c_void, ty);
-    (*d).errors = rb_sys::rb_ary_new();
-    obj
+     * T_NONE object" under GC_COMPACT_STRESS). */
+    crate::bridge::ruby::wrap_zeroed::<DocData>(
+        klass,
+        ty,
+        |d| d.parsed = parsed,
+        |d| d.errors = rb_sys::rb_ary_new(),
+    )
 }
 
 /* ---- Document.parse ---- */
@@ -211,16 +227,17 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
         /* Allocate the wrapper with a null handle, so a failed parse still
          * frees cleanly through GC. This entry is defined on
          * Makiri::HTML::Document, so the result is always HTML. */
-        let d = rb_sys::ruby_xcalloc(1, core::mem::size_of::<DocData>() as rb_sys::size_t)
-            as *mut DocData;
-        (*d).parsed = core::ptr::null_mut();
+        let mut d: *mut DocData = core::ptr::null_mut();
         /* The errors array comes after the wrap, as in `mkr_wrap_document`. */
-        let obj = rb_sys::rb_data_typed_object_wrap(
+        let obj = crate::bridge::ruby::wrap_zeroed::<DocData>(
             klass.as_raw(),
-            d as *mut c_void,
             MKR_HTML_DOC_TYPE.as_ptr(),
+            |data| data.parsed = core::ptr::null_mut(),
+            |data| {
+                data.errors = rb_sys::rb_ary_new();
+                d = data;
+            },
         );
-        (*d).errors = rb_sys::rb_ary_new();
 
         let mut args = ParseArgs {
             src: owned.ptr as *const u8,
@@ -250,7 +267,7 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
 fn doc_root(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
-        let doc = mkr_html_doc_unwrap(self_.as_raw());
+        let doc = html_doc_known(self_.as_raw());
         Value::from_raw(mkr_wrap_html_node(
             lxb_dom_document_root(doc),
             self_.as_raw(),
@@ -262,7 +279,7 @@ fn doc_root(ruby: &Ruby, self_: Value) -> Value {
 fn doc_title(ruby: &Ruby, self_: Value) -> RString {
     unsafe {
         let mut len: usize = 0;
-        let doc = mkr_html_doc_unwrap(self_.as_raw());
+        let doc = html_doc_known(self_.as_raw());
         let s = lxb_html_document_title(doc as *mut c_void, &mut len);
         let bytes: &[u8] = if s.is_null() {
             &[]
@@ -277,7 +294,7 @@ fn doc_title(ruby: &Ruby, self_: Value) -> RString {
 /// child of the document node (typically first), so a short scan finds it.
 fn doc_internal_subset(ruby: &Ruby, self_: Value) -> Value {
     unsafe {
-        let doc = mkr_html_doc_unwrap(self_.as_raw()) as *mut LxbNode;
+        let doc = html_doc_known(self_.as_raw()) as *mut LxbNode;
         let mut c = (*doc).first_child;
         while !c.is_null() {
             if (*c).type_ == NODE_TYPE_DOCUMENT_TYPE {
@@ -294,7 +311,7 @@ fn doc_internal_subset(ruby: &Ruby, self_: Value) -> Value {
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
-        let doc = mkr_html_doc_unwrap(self_.as_raw());
+        let doc = html_doc_known(self_.as_raw());
         Value::from_raw(rb_sys::rb_int2inum((*doc).compat_mode as isize))
     }
 }
@@ -303,7 +320,9 @@ fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
 fn doc_errors(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
-        let d = rb_sys::rb_check_typeddata(self_.as_raw(), mkr_doc_type.as_ptr()) as *mut DocData;
+        /* A Document method, so the receiver is a Document. */
+        let d = crate::bridge::ruby::typed_data_known(self_.as_raw(), mkr_doc_type.as_ptr())
+            as *mut DocData;
         Value::from_raw((*d).errors)
     }
 }
@@ -348,7 +367,7 @@ fn fragment_in(
     let context = context_kwarg(ruby, Some(a.keywords));
     let document = document(ruby)?;
     unsafe {
-        let doc = mkr_html_doc_unwrap(document.as_raw());
+        let doc = mkr_html_doc_unwrap(document.as_raw())?;
         let (tag, ns) = resolve_fragment_context(doc, context)?;
         build_fragment_ctx(ruby, document, doc, html, tag, ns)
     }
@@ -366,8 +385,8 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
                 "Node#parse requires an element context",
             ));
         }
-        let document = Value::from_raw(mkr_node_document(self_.as_raw()));
-        let doc = mkr_html_doc_unwrap(document.as_raw());
+        let document = Value::from_raw(mkr_node_document(self_.as_raw())?);
+        let doc = mkr_html_doc_unwrap(document.as_raw())?;
         let frag =
             build_fragment_ctx(ruby, document, doc, rb_html, (*node).local_name, (*node).ns)?;
         frag.funcall("children", ())
@@ -386,14 +405,14 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
     let deep = a.optional.0.map(|v| v.to_bool()).unwrap_or(false);
     let _ = ruby;
     unsafe {
-        let doc = mkr_html_doc_unwrap(self_.as_raw());
+        let doc = mkr_html_doc_unwrap(self_.as_raw())?;
 
         /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
          * detached lxb subtree owned by this document. */
         if mkr_node_kind(node_v.as_raw()) == MKR_NODE_KIND_XML {
             let mut imp: *mut LxbNode = core::ptr::null_mut();
             let xdoc = crate::glue::xml_node::mkr_doc_of(
-                crate::glue::xml_node::mkr_xml_node_document(node_v.as_raw()),
+                crate::glue::xml_node::mkr_xml_node_document(node_v.as_raw())?,
             );
             let src = crate::xml::model::NodeId::from_token(
                 mkr_xml_node_unwrap(node_v.as_raw())? as usize
@@ -439,7 +458,11 @@ pub unsafe extern "C" fn mkr_node_clone_node(
     let Some(clone) = import_with_fixup(doc, node, deep) else {
         super::abi::rb_raise(super::abi::mkr_eError, c"failed to clone node".as_ptr());
     };
-    mkr_wrap_html_node(clone, mkr_node_document(self_))
+    let document = match mkr_node_document(self_) {
+        Ok(document) => document,
+        Err(e) => crate::bridge::ruby::raise(e),
+    };
+    mkr_wrap_html_node(clone, document)
 }
 
 /* ---- registration ---- */

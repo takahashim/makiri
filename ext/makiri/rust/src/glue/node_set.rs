@@ -699,7 +699,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), mkr_cDocument) == rb_sys::Qtrue as VALUE {
             ctx.as_raw()
         } else if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), mkr_cNode) == rb_sys::Qtrue as VALUE {
-            mkr_node_document(ctx.as_raw())
+            mkr_node_document(ctx.as_raw())?
         } else {
             return Err(Error::new(
                 ruby.exception_type_error(),
@@ -724,7 +724,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     for item in arr.into_iter() {
         let ok = unsafe {
             rb_sys::rb_obj_is_kind_of(item.as_raw(), mkr_cNode) == rb_sys::Qtrue as VALUE
-                && mkr_node_document(item.as_raw()) == doc_raw
+                && mkr_node_document(item.as_raw())? == doc_raw
         };
         if !ok {
             return Err(Error::new(

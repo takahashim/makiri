@@ -105,19 +105,13 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
         _ => mkr_cHtmlNode,
     };
 
-    /* Allocate zeroed, wrap, and only then store the Document. The wrap
-     * allocates, so it is a GC point, and a VALUE already sitting in this
-     * malloc'd struct is seen by no mark there: compaction can move it out from
-     * under the stored copy. Zeroed, the field reads as `false` to the mark
-     * until it is set, and `document` - used after the wrap - stays on the
-     * machine stack across it, where the conservative scan pins it. */
-    let nd = rb_sys::ruby_xcalloc(1, core::mem::size_of::<NodeData>() as rb_sys::size_t)
-        as *mut NodeData;
-    (*nd).node = node as *mut c_void;
-    let obj =
-        rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, mkr_html_node_type.as_ptr());
-    (*nd).document = document;
-    obj
+    /* The Document is stored after the wrap: see `wrap_zeroed`. */
+    crate::bridge::ruby::wrap_zeroed::<NodeData>(
+        klass,
+        mkr_html_node_type.as_ptr(),
+        |nd| nd.node = node as *mut c_void,
+        |nd| nd.document = document,
+    )
 }
 
 /// The `lxb_dom_node_t` behind an HTML node or HTML Document.
@@ -135,7 +129,7 @@ pub unsafe fn mkr_html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnu
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
         }
-        return Ok(mkr_html_doc_unwrap(rb_node) as *mut LxbNode);
+        return Ok(mkr_html_doc_unwrap(rb_node)? as *mut LxbNode);
     }
     let nd =
         crate::bridge::ruby::typed_data(rb_node, mkr_html_node_type.as_ptr())? as *mut NodeData;
@@ -159,13 +153,23 @@ pub unsafe fn unwrap(v: Value) -> Result<*mut LxbNode, magnus::Error> {
 pub struct HtmlSelf {
     pub value: Value,
     pub node: *mut LxbNode,
+    /// The keepalive Document (the receiver itself for a Document).
+    pub document: Value,
 }
 
 impl magnus::TryConvert for HtmlSelf {
     fn try_convert(value: Value) -> Result<Self, magnus::Error> {
         // SAFETY: magnus converts the receiver under the GVL.
-        let node = unsafe { unwrap(value)? };
-        Ok(HtmlSelf { value, node })
+        unsafe {
+            use magnus::rb_sys::AsRawValue;
+            let node = unwrap(value)?;
+            let document = Value::from_raw(super::abi::mkr_node_document(value.as_raw())?);
+            Ok(HtmlSelf {
+                value,
+                node,
+                document,
+            })
+        }
     }
 }
 
@@ -175,9 +179,9 @@ pub unsafe fn wrap(node: *mut LxbNode, document: Value) -> Value {
 }
 
 /// The keepalive Document of a node, from the kind-agnostic accessor.
-pub unsafe fn node_document(rb_self: Value) -> Value {
+pub unsafe fn node_document(v: Value) -> Result<Value, magnus::Error> {
     use magnus::rb_sys::AsRawValue;
-    Value::from_raw(super::abi::mkr_node_document(rb_self.as_raw()))
+    Ok(Value::from_raw(super::abi::mkr_node_document(v.as_raw())?))
 }
 
 /* ------------------------------------------------------------------ *

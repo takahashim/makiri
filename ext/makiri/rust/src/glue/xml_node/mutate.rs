@@ -113,8 +113,9 @@ allows a single root element, and a sibling target must have a parent)",
 /* ------------------------------------------------------------------ */
 
 /// The arena behind a node's document.
-unsafe fn xdoc(rb_self: Value) -> *mut XmlDoc {
-    mkr_parsed_xml_doc(mkr_doc_parsed(node_document(rb_self).as_raw())) as *mut XmlDoc
+unsafe fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
+    let document = node_document(v)?;
+    Ok(mkr_parsed_xml_doc(crate::glue::doc::doc_parsed_known(document.as_raw())) as *mut XmlDoc)
 }
 
 /// A byte length as the arena's `uint32`, or an error.
@@ -137,7 +138,7 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 unsafe fn unwrap_mutable(this: super::XmlSelf) -> NodeId {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
-    mkr_xml_name_index_invalidate(&mut *xdoc(rb_self));
+    mkr_xml_name_index_invalidate(&mut *this.doc());
     this.id
 }
 
@@ -180,16 +181,15 @@ pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
             return Err(Error::new(error_class(), "cannot remove the document node"));
         }
         let n = unwrap_mutable(this);
-        mkr_xml_remove(&mut *xdoc(rb_self), n); /* detach + refresh the root/doctype cache */
+        mkr_xml_remove(&mut *this.doc(), n); /* detach + refresh the root/doctype cache */
         Ok(rb_self)
     }
 }
 
 /// The element behind `rb_self`, or an error naming what was attempted.
 unsafe fn element_for(this: super::XmlSelf) -> Result<NodeId, Error> {
-    let rb_self = this.value;
     let n = unwrap_mutable(this);
-    if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
+    if (*this.doc()).type_(n) != Some(NodeType::Element) {
         return Err(Error::new(
             error_class(),
             "cannot set an attribute on a non-element node",
@@ -200,13 +200,12 @@ unsafe fn element_for(this: super::XmlSelf) -> Result<NodeId, Error> {
 
 /// `element[name] = value` -> value. Adds or replaces the attribute.
 pub fn aset(ruby: &Ruby, this: super::XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let n = element_for(this)?;
         let (nv, _) = verified(ruby, name, c"attribute name")?;
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let mut out = NodeId::INVALID;
-        let st = mkr_xml_set_attribute(&mut *xdoc(rb_self), n, nv.bytes(), vv.bytes(), &mut out);
+        let st = mkr_xml_set_attribute(&mut *this.doc(), n, nv.bytes(), vv.bytes(), &mut out);
         mkr_xml_mut_check(st);
         Ok(val)
     }
@@ -225,7 +224,6 @@ pub fn set_attribute_ns(
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let n = element_for(this)?;
         let (qv, _) = verified(ruby, qname, c"attribute qualified name")?;
@@ -233,7 +231,7 @@ pub fn set_attribute_ns(
         let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
         let mut out = NodeId::INVALID;
         let st = mkr_xml_set_attribute_ns(
-            &mut *xdoc(rb_self),
+            &mut *this.doc(),
             n,
             nv.bytes(),
             qv.bytes(),
@@ -255,12 +253,12 @@ pub fn remove_attribute_ns(
     let rb_self = this.value;
     unsafe {
         let n = unwrap_mutable(this);
-        if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
+        if (*this.doc()).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
         let (lv, _) = verified(ruby, local, c"attribute local name")?;
         let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
-        mkr_xml_remove_attribute_ns(&mut *xdoc(rb_self), n, nv.bytes(), lv.bytes());
+        mkr_xml_remove_attribute_ns(&mut *this.doc(), n, nv.bytes(), lv.bytes());
         Ok(rb_self)
     }
 }
@@ -270,11 +268,11 @@ pub fn delete(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, E
     let rb_self = this.value;
     unsafe {
         let n = unwrap_mutable(this);
-        if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
+        if (*this.doc()).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
         let (nv, _) = verified(ruby, name, c"attribute name")?;
-        mkr_xml_remove_attribute(&mut *xdoc(rb_self), n, nv.bytes());
+        mkr_xml_remove_attribute(&mut *this.doc(), n, nv.bytes());
         Ok(rb_self)
     }
 }
@@ -283,11 +281,10 @@ pub fn delete(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, E
 /// text node (stored verbatim, escaped on serialization); for a text, CDATA,
 /// comment or PI leaf, sets its data.
 pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let n = unwrap_mutable(this);
         let (tv, _) = verified(ruby, text, c"node content")?;
-        let st = mkr_xml_set_content(&mut *xdoc(rb_self), n, tv.bytes());
+        let st = mkr_xml_set_content(&mut *this.doc(), n, tv.bytes());
         mkr_xml_mut_check(st);
         Ok(text)
     }
@@ -297,11 +294,10 @@ pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Val
 /// preserving identity and tree position; the namespace is re-resolved against
 /// the node's in-scope declarations.
 pub fn set_name(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let n = unwrap_mutable(this);
         let (nv, _) = verified(ruby, name, c"node name")?;
-        let st = mkr_xml_rename(&mut *xdoc(rb_self), n, nv.bytes());
+        let st = mkr_xml_rename(&mut *this.doc(), n, nv.bytes());
         mkr_xml_mut_check(st);
         Ok(name)
     }
@@ -332,18 +328,18 @@ unsafe fn incoming_node(
     target_doc: Value,
     arg: Value,
 ) -> Result<(NodeId, Value), Error> {
-    if !is_a(arg, mkr_cNode) || !is_a(node_document(arg), mkr_cXmlDocument) {
+    if !is_a(arg, mkr_cNode) || !is_a(node_document(arg)?, mkr_cXmlDocument) {
         return Err(Error::new(
             ruby.exception_type_error(),
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
     let src = unwrap(arg)?;
-    if node_document(arg).as_raw() == target_doc.as_raw() {
+    if node_document(arg)?.as_raw() == target_doc.as_raw() {
         return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
     }
     let mut copy: NodeId = NodeId::INVALID;
-    let src_doc = xdoc(arg);
+    let src_doc = xdoc(arg)?;
     mkr_xml_mut_check(mkr_xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy));
     Ok((copy, arg))
 }
@@ -361,7 +357,9 @@ unsafe fn adopt_finish(arg: Value) {
     let Ok(src) = unwrap(arg) else {
         return;
     };
-    let sdoc = xdoc(arg);
+    let Ok(sdoc) = xdoc(arg) else {
+        return;
+    };
     if (*sdoc).type_(src) == Some(NodeType::Fragment) {
         while let Some(c) = (*sdoc).first_child(src) {
             mkr_xml_remove(&mut *sdoc, c);
@@ -409,11 +407,10 @@ unsafe fn splice_fragment(
 }
 
 fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let target = unwrap_mutable(this);
-        let doc_v = node_document(rb_self);
-        let xd = xdoc(rb_self);
+        let doc_v = this.document;
+        let xd = this.doc();
         let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;
 
         if (*xd).type_(node) == Some(NodeType::Fragment) {
@@ -458,18 +455,17 @@ pub fn lshift(ruby: &Ruby, this: super::XmlSelf, arg: Value) -> Result<Value, Er
 /// element/attribute name case, the namespaces and the CDATA node type
 /// preserved. Backs `#dup` / `#clone` and the DOM's cloneNode.
 pub fn clone_node(this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let rb_self = this.value;
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
     unsafe {
         let mut out: NodeId = NodeId::INVALID;
         mkr_xml_mut_check(mkr_xml_clone_node(
-            &mut *xdoc(rb_self),
+            &mut *this.doc(),
             this.id,
             deep,
             &mut out,
         ));
-        Ok(super::mkr_xml_wrap_rel_value(rb_self, out))
+        Ok(super::mkr_xml_wrap_rel_value(this, out))
     }
 }
 
@@ -555,7 +551,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     }
 
     unsafe {
-        let xd = xdoc(rb_self);
+        let xd = xdoc(rb_self)?;
         let (nv, _) = verified(ruby, name, c"element name")?;
         let mut el: NodeId = NodeId::INVALID;
         let st = mkr_xml_new_element(&mut *xd, nv.bytes(), &mut el);
@@ -604,7 +600,7 @@ pub fn create_loose_dom_element(
     ns: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let xd = xdoc(rb_self);
+        let xd = xdoc(rb_self)?;
         let (qv, _) = verified(ruby, qname, c"qualified name")?;
         let (lv, _) = verified(ruby, local, c"local name")?;
         let has_prefix = !prefix.is_nil();
@@ -643,7 +639,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let sys_v = a.optional.1.unwrap_or(nil);
 
     unsafe {
-        let xd = xdoc(rb_self);
+        let xd = xdoc(rb_self)?;
         let (nv, _) = verified(ruby, name, c"doctype name")?;
         let (pv, pl) = verified_opt(ruby, pub_v, c"doctype public id")?;
         let (sv, sl) = verified_opt(ruby, sys_v, c"doctype system id")?;
@@ -669,7 +665,7 @@ unsafe fn create_chardata(
     type_: NodeType,
     what: &core::ffi::CStr,
 ) -> Result<Value, Error> {
-    let xd = xdoc(rb_self);
+    let xd = xdoc(rb_self)?;
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
     let st = mkr_xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n);
@@ -689,7 +685,7 @@ pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Erro
 
 pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
     unsafe {
-        let xd = xdoc(rb_self);
+        let xd = xdoc(rb_self)?;
         let (tg, _) = verified(ruby, target, c"PI target")?;
         let (dt, _) = verified(ruby, data, c"PI data")?;
         let mut pi: NodeId = NodeId::INVALID;
@@ -711,11 +707,11 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
     unsafe {
-        let xd = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())) as *mut XmlDoc;
+        let xd = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())?) as *mut XmlDoc;
         let mut copy: NodeId = NodeId::INVALID;
         match mkr_node_kind(node_v.as_raw()) {
             KIND_XML => {
-                let src_doc = xdoc(node_v);
+                let src_doc = xdoc(node_v)?;
                 if src_doc == xd {
                     /* Same arena: the single-`&mut` clone path. Going through
                      * `mkr_xml_copy_node` would hand `&mut *xd` and `&*src_doc`

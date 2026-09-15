@@ -34,8 +34,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::ty;
 use super::{node_document, unwrap, wrap};
 use crate::glue::abi::{
-    error_class, mkr_doc_parsed, mkr_html_doc_unwrap, mkr_ruby_verified_text, LxbAttr, LxbDoc,
-    LxbElement, LxbNode,
+    error_class, mkr_html_doc_unwrap, mkr_ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
 };
 use crate::lexbor_abi as lxb;
 
@@ -64,8 +63,8 @@ fn err(msg: &str) -> Error {
 }
 
 /// Drop the DOM and text indexes so the next query rebuilds them.
-unsafe fn invalidate(rb_self: Value) {
-    let p = mkr_doc_parsed(node_document(rb_self).as_raw());
+unsafe fn invalidate(document: Value) {
+    let p = crate::glue::doc::doc_parsed_known(document.as_raw());
     mkr_parsed_dom_index_invalidate(p);
     mkr_parsed_text_index_invalidate(p);
 }
@@ -161,7 +160,7 @@ unsafe fn inserted_result(
         None => Ok(rb_arg),
         Some(src) => {
             adopt_release(arg_node(src)?);
-            Ok(wrap(inserted, node_document(rb_self)))
+            Ok(wrap(inserted, node_document(rb_self)?))
         }
     }
 }
@@ -291,7 +290,7 @@ pub fn add_child(_ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result
         )?;
         let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
         splice_or_insert(parent, ins, lxb::lxb_dom_node_insert_child, false);
-        invalidate(rb_self);
+        invalidate(this.document);
         inserted_result(rb_self, rb_child, ins, adopt_from)
     }
 }
@@ -318,7 +317,7 @@ pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Val
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
-        invalidate(rb_self);
+        invalidate(this.document);
         inserted_result(rb_self, rb_node, ins, adopt_from)
     }
 }
@@ -338,7 +337,7 @@ pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Valu
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_after, true);
-        invalidate(rb_self);
+        invalidate(this.document);
         inserted_result(rb_self, rb_node, ins, adopt_from)
     }
 }
@@ -354,7 +353,7 @@ pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         }
         if !(*node).parent.is_null() {
             lxb::lxb_dom_node_remove(node);
-            invalidate(rb_self);
+            invalidate(this.document);
         }
         Ok(rb_self)
     }
@@ -377,7 +376,7 @@ pub fn replace(_ruby: &Ruby, this: super::HtmlSelf, rb_other: Value) -> Result<V
         let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
         lxb::lxb_dom_node_remove(reference);
-        invalidate(rb_self);
+        invalidate(this.document);
         inserted_result(rb_self, rb_other, ins, adopt_from)
     }
 }
@@ -393,7 +392,6 @@ pub fn aset(
     rb_name: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
@@ -411,7 +409,7 @@ pub fn aset(
         if attr.is_null() {
             return Err(err("failed to set attribute"));
         }
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_value)
     }
 }
@@ -488,7 +486,6 @@ pub fn set_attribute_ns(
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
@@ -572,7 +569,7 @@ pub fn set_attribute_ns(
 
         outcome?;
 
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_value)
     }
 }
@@ -588,7 +585,6 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
@@ -611,7 +607,7 @@ pub fn remove_attribute_ns(
 
         if !attr.is_null() {
             lxb::lxb_dom_element_attr_remove(el, attr);
-            invalidate(rb_self);
+            invalidate(this.document);
         }
         Ok(ruby.qnil().as_value())
     }
@@ -623,7 +619,6 @@ pub fn remove_attribute_ns(
 /// new name so the document interns it, copy its name fields onto this node,
 /// then discard it.
 pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
@@ -653,7 +648,7 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
          * so a persisted index would miss the element under its new name - a
          * truncated, wrong //newtag result. Drop the indexes like every other
          * mutator. */
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_name)
     }
 }
@@ -662,7 +657,6 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
 /// this replaces all children with a single text node; for a character-data node
 /// it sets the data.
 pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"node content".as_ptr())?;
@@ -670,7 +664,7 @@ pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Resul
         if st != STATUS_OK {
             return Err(err("failed to set node content"));
         }
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_text)
     }
 }
@@ -689,7 +683,7 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
             nv.as_ptr() as *const u8,
             nv.len(),
         );
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_self)
     }
 }
@@ -755,7 +749,6 @@ unsafe fn parse_fragment_into(
 
 /// `element.inner_html = html` -> html. Replaces the element's children.
 pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
@@ -779,14 +772,13 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             mkr_emit_append,
             node as *mut c_void,
         )?;
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_html)
     }
 }
 
 /// `node.outer_html = html` -> html. Replaces the node itself with the parse.
 pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         let node = unwrap_mutable(this);
         let parent = (*node).parent;
@@ -803,7 +795,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             node as *mut c_void,
         )?;
         lxb::lxb_dom_node_remove(node);
-        invalidate(rb_self);
+        invalidate(this.document);
         Ok(rb_html)
     }
 }
@@ -814,7 +806,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 
 pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw());
+        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr())?;
         let el = lxb::lxb_dom_document_create_element(
             doc,
@@ -831,7 +823,7 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw());
+        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
         let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"text content".as_ptr())?;
         let t = lxb::lxb_dom_document_create_text_node(doc, tv.as_ptr() as *const u8, tv.len());
         if t.is_null() {
@@ -843,7 +835,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw());
+        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
         let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"comment content".as_ptr())?;
         let c = lxb::lxb_dom_document_create_comment(doc, tv.as_ptr() as *const u8, tv.len());
         if c.is_null() {
@@ -863,7 +855,7 @@ pub fn create_pi(
     rb_data: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw());
+        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
         let tv = mkr_ruby_verified_text(
             rb_target.as_raw(),
             c"processing instruction target".as_ptr(),
@@ -897,7 +889,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let (rb_pub, rb_sys_) = args.optional;
 
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw());
+        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr())?;
         if !lxb::lxb_dom_document_type_valid_name(nv.as_ptr() as *const u8, nv.len()) {
             return Err(Error::new(
@@ -977,7 +969,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 /// `DocumentFragment.parse`, which parse HTML.
 pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw());
+        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
         let f = lxb::lxb_dom_document_create_document_fragment(doc);
         if f.is_null() {
             return Err(err("failed to create document fragment"));

@@ -33,17 +33,11 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
 use super::abi::*;
-use super::node_document;
 use crate::cbuf::{mkr_buf_append, Buf, MKR_OK};
 use crate::glue::abi::is_kind_of;
 
 /* Taken from `crate::xml::model`, the XML engine's own declaration. */
 use crate::xml::model::{FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
-
-/// The XML document behind `rb_self`'s wrapper.
-unsafe fn xdoc(rb_self: Value) -> *mut XmlDoc {
-    crate::glue::xml_node::mkr_doc_of(node_document(rb_self).as_raw())
-}
 
 /* ------------------------------------------------------------------ */
 /* the output buffer                                                  */
@@ -462,8 +456,8 @@ unsafe fn write_node<'a>(
 /* #to_xml                                                            */
 /* ------------------------------------------------------------------ */
 
-unsafe fn serialize_cap(rb_self: Value) -> usize {
-    let xdoc = xdoc(rb_self);
+unsafe fn serialize_cap(this: super::XmlSelf) -> usize {
+    let xdoc = this.doc();
     let arena = if xdoc.is_null() {
         0
     } else {
@@ -509,7 +503,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             (e, name)
         };
 
-        let doc = &*xdoc(rb_self);
+        let doc = &*this.doc();
         let n = this.id;
         if has_dom_loose_name(doc, n) {
             return Err(Error::new(
@@ -518,7 +512,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             ));
         }
 
-        let mut buf = Buf::new(serialize_cap(rb_self));
+        let mut buf = Buf::new(serialize_cap(this));
         let b = &mut buf as *mut Buf;
         let rc = (|| -> W {
             if !is_kind_of(rb_self, mkr_cXmlDocument) {
@@ -783,7 +777,7 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
     };
 
     unsafe {
-        let doc = &*xdoc(rb_self);
+        let doc = &*this.doc();
         let n = this.id;
         if has_dom_loose_name(doc, n) {
             return Err(Error::new(
@@ -791,7 +785,7 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
                 "cannot canonicalize XML containing a DOM-loose element name",
             ));
         }
-        let mut buf = Buf::new(serialize_cap(rb_self));
+        let mut buf = Buf::new(serialize_cap(this));
         let b = &mut buf as *mut Buf;
         let rc = (|| -> W {
             if !is_kind_of(rb_self, mkr_cXmlDocument) {

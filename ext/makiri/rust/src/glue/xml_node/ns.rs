@@ -9,7 +9,6 @@ use magnus::{prelude::*, Error, RArray, RClass, RHash, RString, Ruby, Value};
 use std::sync::OnceLock;
 
 use super::abi::*;
-use super::doc;
 
 /// The `Makiri::XML::Namespace` class, stashed at init.
 static NAMESPACE_CLASS: OnceLock<rb_sys::VALUE> = OnceLock::new();
@@ -98,9 +97,8 @@ fn xmlns_decl(d: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
 
 /// `#namespace` - the node's own resolved namespace, or nil.
 pub fn namespace(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if !matches!(d.type_(id), Some(NodeType::Element | NodeType::Attribute))
             || d.node(id).ns_uri.len == 0
@@ -118,10 +116,9 @@ pub fn namespace(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, Error> {
 
 /// `#namespace_definitions` - the declarations made ON this element.
 pub fn namespace_definitions(ruby: &Ruby, this: super::XmlSelf) -> Result<RArray, Error> {
-    let rb_self = this.value;
     let arr = ruby.ary_new();
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
@@ -144,10 +141,9 @@ pub fn namespace_definitions(ruby: &Ruby, this: super::XmlSelf) -> Result<RArray
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
 /// attribute's name. The inner scope wins because the first binding seen is kept.
 pub fn namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
-    let rb_self = this.value;
     let h = ruby.hash_new();
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let mut e = Some(this.id);
         while let Some(id) = e {
             if d.type_(id) == Some(NodeType::Element) {
@@ -171,10 +167,9 @@ pub fn namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
 /// `#collect_namespaces` - every declaration anywhere in the document, pre-order
 /// through the tree (no recursion).
 pub fn collect_namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
-    let rb_self = this.value;
     let h = ruby.hash_new();
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let mut root = this.id;
         while let Some(p) = d.parent(root) {
             root = p;

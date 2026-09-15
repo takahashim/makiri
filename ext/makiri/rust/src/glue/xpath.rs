@@ -275,7 +275,7 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
 /// The XML branch needs neither: the custom node links attributes to their owner
 /// directly, and `//tag` falls back to a walk.
 unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
-    let parsed = mkr_doc_parsed(document.as_raw());
+    let parsed = mkr_doc_parsed(document.as_raw())?;
 
     if mkr_parsed_kind(parsed) == MKR_DOC_XML {
         let xdoc = mkr_parsed_xml_doc(parsed);
@@ -301,7 +301,7 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, E
     }
 
     let node = mkr_html_node_unwrap(rb_node.as_raw())?;
-    let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw()) as *mut c_void;
+    let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw())? as *mut c_void;
     if !mkr_parsed_dom_index_build(parsed) {
         return Err(Error::new(
             error_class(),
@@ -337,7 +337,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
             "expected a Makiri::Node",
         ));
     }
-    let document = unsafe { Value::from_raw(mkr_node_document(rb_node.as_raw())) };
+    let document = unsafe { Value::from_raw(mkr_node_document(rb_node.as_raw())?) };
     let ctx = unsafe { context_for(rb_node, document)? };
     unsafe { ctx_set_unprefixed_lax(ctx.as_ptr(), lax) };
 
@@ -377,7 +377,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
                 "cannot change the context node while evaluating (re-entrant mutation from a handler)",
             ));
         }
-        if mkr_node_document(rb_node.as_raw()) != ruby.get_inner(rb_self.document).as_raw() {
+        if mkr_node_document(rb_node.as_raw())? != ruby.get_inner(rb_self.document).as_raw() {
             return Err(Error::new(
                 error_class(),
                 "context node must belong to the same document",
@@ -438,7 +438,11 @@ unsafe fn push_result_node(
     set: *mut NodeSet,
     err: &mut ErrBuf,
 ) -> bool {
-    if mkr_node_document(rb_node) != document {
+    let Ok(node_document) = mkr_node_document(rb_node) else {
+        err.set("handler returned an unusable node");
+        return false;
+    };
+    if node_document != document {
         err.set("handler returned a node from a different document");
         return false;
     }
@@ -897,7 +901,7 @@ fn node_xpath_run(
     first_only: bool,
 ) -> Result<Value, Error> {
     unsafe {
-        let document = Value::from_raw(mkr_node_document(rb_self.as_raw()));
+        let document = Value::from_raw(mkr_node_document(rb_self.as_raw())?);
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
 
         let ctx = context_for(rb_self, document)?;

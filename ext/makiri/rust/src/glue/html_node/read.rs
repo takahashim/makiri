@@ -17,7 +17,7 @@ use magnus::rb_sys::FromRawValue;
 use magnus::{prelude::*, Error, RArray, Ruby, Value};
 
 use super::ty;
-use super::{node_document, unwrap, wrap};
+use super::{unwrap, wrap};
 use crate::glue::abi::{
     error_class, is_kind_of, lxb_dom_attr_local_name, lxb_dom_attr_qualified_name,
     lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_root,
@@ -328,7 +328,6 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
 pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         let node = this.node;
         if (*node).type_ != ty::ELEMENT
@@ -341,7 +340,7 @@ pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
         if content.is_null() {
             return ruby.qnil().as_value();
         }
-        wrap(content as *mut LxbNode, node_document(rb_self))
+        wrap(content as *mut LxbNode, this.document)
     }
 }
 
@@ -351,7 +350,6 @@ pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// The DOM makes a Document's textContent null; this returns the ROOT element's
 /// text instead, which is the intuitive, Nokogiri-like `Document#text`.
 pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         let mut node = this.node;
         if (*node).type_ == ty::DOCUMENT {
@@ -362,7 +360,7 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
         }
 
         if (*node).type_ == ty::ELEMENT || (*node).type_ == ty::FRAGMENT {
-            return element_text(ruby, rb_self, node);
+            return element_text(ruby, this.document, node);
         }
 
         /* Character data and the other kinds keep the general path. */
@@ -396,10 +394,10 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// a fragment - or a build OOM): an iterative pre-order walk that appends each
 /// text/CDATA node's data, stack-safe and skipping Lexbor's intermediate arena
 /// buffer and copy.
-unsafe fn element_text(ruby: &Ruby, rb_self: Value, node: *mut LxbNode) -> Value {
+unsafe fn element_text(ruby: &Ruby, document: Value, node: *mut LxbNode) -> Value {
     use magnus::rb_sys::AsRawValue;
 
-    let parsed = mkr_doc_parsed(node_document(rb_self).as_raw());
+    let parsed = crate::glue::doc::doc_parsed_known(document.as_raw());
     if !parsed.is_null() {
         let mut slices: *const BorrowedText = core::ptr::null();
         let mut n = 0usize;
@@ -439,8 +437,8 @@ unsafe fn element_text(ruby: &Ruby, rb_self: Value, node: *mut LxbNode) -> Value
  * tree navigation                                                    *
  * ------------------------------------------------------------------ */
 
-pub fn get_document(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { node_document(rb_self) }
+pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    this.document
 }
 
 /// `#parent`. An attribute has no `node.parent` - Lexbor never links one back to
@@ -454,13 +452,12 @@ pub fn get_document(_ruby: &Ruby, rb_self: Value) -> Value {
 /// raises here instead. (The OOM sweep found this: `Attr#parent` degraded from
 /// `"svg"` to `nil` under injection, in the C original as much as here.)
 pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
         use magnus::rb_sys::AsRawValue;
         let node = this.node;
-        let document = node_document(rb_self);
+        let document = this.document;
         if (*node).type_ == ty::ATTRIBUTE {
-            let parsed = mkr_doc_parsed(document.as_raw());
+            let parsed = mkr_doc_parsed(document.as_raw())?;
             if parsed.is_null() || !mkr_parsed_dom_index_build(parsed) {
                 return Err(Error::new(
                     error_class(),
@@ -476,75 +473,67 @@ pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
-    unsafe { wrap((*this.node).next, node_document(rb_self)) }
+    unsafe { wrap((*this.node).next, this.document) }
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
-    unsafe { wrap((*this.node).prev, node_document(rb_self)) }
+    unsafe { wrap((*this.node).prev, this.document) }
 }
 
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         let mut n = (*this.node).next;
         while !n.is_null() && (*n).type_ != ty::ELEMENT {
             n = (*n).next;
         }
-        wrap(n, node_document(rb_self))
+        wrap(n, this.document)
     }
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         let mut n = (*this.node).prev;
         while !n.is_null() && (*n).type_ != ty::ELEMENT {
             n = (*n).prev;
         }
-        wrap(n, node_document(rb_self))
+        wrap(n, this.document)
     }
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
-    unsafe { wrap((*this.node).first_child, node_document(rb_self)) }
+    unsafe { wrap((*this.node).first_child, this.document) }
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         let mut c = (*this.node).first_child;
         while !c.is_null() && (*c).type_ != ty::ELEMENT {
             c = (*c).next;
         }
-        wrap(c, node_document(rb_self))
+        wrap(c, this.document)
     }
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         let mut c = (*this.node).last_child;
         while !c.is_null() && (*c).type_ != ty::ELEMENT {
             c = (*c).prev;
         }
-        wrap(c, node_document(rb_self))
+        wrap(c, this.document)
     }
 }
 
 /// Collect a node chain into a NodeSet. The set is a live Ruby object across
 /// every push, so nothing borrowed is held here.
 unsafe fn set_of(
-    rb_self: Value,
+    document: Value,
     start: *mut LxbNode,
     step: unsafe fn(*mut LxbNode) -> *mut LxbNode,
     elements_only: bool,
 ) -> Value {
     use magnus::rb_sys::AsRawValue;
-    let document = node_document(rb_self);
     let set = mkr_node_set_new(document.as_raw());
     let mut n = start;
     while !n.is_null() {
@@ -566,20 +555,17 @@ unsafe fn step_parent(n: *mut LxbNode) -> *mut LxbNode {
 
 /// `#children`: every child node, as a NodeSet.
 pub fn children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
-    unsafe { set_of(rb_self, (*this.node).first_child, step_next, false) }
+    unsafe { set_of(this.document, (*this.node).first_child, step_next, false) }
 }
 
 /// `#element_children` / `#elements`: the child elements only.
 pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
-    unsafe { set_of(rb_self, (*this.node).first_child, step_next, true) }
+    unsafe { set_of(this.document, (*this.node).first_child, step_next, true) }
 }
 
 /// `#ancestors`: the ancestor elements, nearest first.
 pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
-    unsafe { set_of(rb_self, (*this.node).parent, step_parent, true) }
+    unsafe { set_of(this.document, (*this.node).parent, step_parent, true) }
 }
 
 /* ------------------------------------------------------------------ *
@@ -679,10 +665,9 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// Empty for a non-element. These wrap the bare `lxb_dom_attr_t`; navigating
 /// back with `Attribute#parent` goes through the compat attr->owner index.
 pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         use magnus::rb_sys::AsRawValue;
-        let set = mkr_node_set_new(node_document(rb_self).as_raw());
+        let set = mkr_node_set_new(this.document.as_raw());
         each_attr(this.node, |at| {
             mkr_node_set_push(set, at as *mut core::ffi::c_void);
             true
@@ -709,7 +694,6 @@ pub fn attribute_by_qualified_name(
     this: super::HtmlSelf,
     rb_name: Value,
 ) -> Result<Value, magnus::Error> {
-    let rb_self = this.value;
     Ok(unsafe {
         use magnus::rb_sys::AsRawValue;
         let node = this.node;
@@ -734,7 +718,7 @@ pub fn attribute_by_qualified_name(
         if found.is_null() {
             return Ok(ruby.qnil().as_value());
         }
-        wrap(found as *mut LxbNode, node_document(rb_self))
+        wrap(found as *mut LxbNode, this.document)
     })
 }
 
@@ -801,11 +785,10 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
         use magnus::rb_sys::AsRawValue;
         let node = this.node;
-        let p = mkr_doc_parsed(node_document(rb_self).as_raw());
+        let p = crate::glue::doc::doc_parsed_known(this.document.as_raw());
         let n = mkr_parsed_node_line(p, node);
         if n == 0 {
             ruby.qnil().as_value()
@@ -848,7 +831,7 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
         /* An XML node is never order-comparable to an HTML one, and asking is
          * how we avoid unwrap's TypeError below. */
         if is_kind_of(
-            Value::from_raw(crate::glue::abi::mkr_node_document(other.as_raw())),
+            Value::from_raw(crate::glue::abi::mkr_node_document(other.as_raw())?),
             mkr_cXmlDocument,
         ) {
             return Ok(nil);

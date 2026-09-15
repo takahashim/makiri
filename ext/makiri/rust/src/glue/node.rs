@@ -41,8 +41,8 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use rb_sys::{
-    rb_check_typeddata, rb_data_type_t, rb_gc_mark, rb_obj_is_kind_of, rb_typeddata_is_kind_of,
-    rb_ull2inum, ruby_xfree, VALUE,
+    rb_data_type_t, rb_gc_mark, rb_obj_is_kind_of, rb_typeddata_is_kind_of, rb_ull2inum,
+    ruby_xfree, VALUE,
 };
 
 use crate::xml::model::Doc as XmlDoc;
@@ -135,7 +135,7 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 /// document node, an HTML one to Lexbor's.
 pub unsafe fn mkr_node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
     if is_kind_of(rb_node, mkr_cDocument) {
-        let parsed = mkr_doc_parsed(rb_node);
+        let parsed = mkr_doc_parsed(rb_node)?;
         if mkr_parsed_kind(parsed) == MKR_DOC_XML {
             let xdoc = mkr_parsed_xml_doc(parsed) as *mut XmlDoc;
             return Ok(if xdoc.is_null() {
@@ -144,7 +144,7 @@ pub unsafe fn mkr_node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error>
                 (*xdoc).doc_node().to_token() as *mut c_void
             });
         }
-        return Ok(super::abi::mkr_html_doc_unwrap(rb_node) as *mut c_void);
+        return Ok(super::abi::mkr_html_doc_unwrap(rb_node)? as *mut c_void);
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
@@ -188,12 +188,14 @@ unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
     }
 }
 
-pub unsafe extern "C" fn mkr_node_document(rb_node: VALUE) -> VALUE {
+/// The keepalive Document of any node, or the Document itself.
+/// `Err(TypeError)` for a non-node.
+pub unsafe fn mkr_node_document(rb_node: VALUE) -> Result<VALUE, magnus::Error> {
     if is_kind_of(rb_node, mkr_cDocument) {
-        return rb_node;
+        return Ok(rb_node);
     }
-    let nd = rb_check_typeddata(rb_node, base_type()) as *mut NodeData;
-    (*nd).document
+    let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
+    Ok((*nd).document)
 }
 
 /* ------------------------------------------------------------------ */

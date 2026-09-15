@@ -9,19 +9,17 @@ use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::abi::*;
-use super::{doc, node_document};
 
 /// Wrap an optional reached node under `rb_self`'s Document (invalid -> nil).
-unsafe fn wrap_rel(rb_self: Value, rel: Option<NodeId>) -> Value {
-    super::wrap(rel.unwrap_or(NodeId::INVALID), node_document(rb_self))
+unsafe fn wrap_rel(this: super::XmlSelf, rel: Option<NodeId>) -> Value {
+    super::wrap(rel.unwrap_or(NodeId::INVALID), this.document)
 }
 
 /* ---- name ---- */
 
 pub fn name(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         match d.type_(id) {
             Some(NodeType::Element | NodeType::Attribute) => str_span(ruby, d, d.node(id).qname),
@@ -36,9 +34,8 @@ pub fn name(ruby: &Ruby, this: super::XmlSelf) -> Value {
 }
 
 pub fn local_name(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if d.type_(id) == Some(NodeType::Element) || d.type_(id) == Some(NodeType::Attribute) {
             return str_span(ruby, d, d.node(id).local);
@@ -50,9 +47,8 @@ pub fn local_name(ruby: &Ruby, this: super::XmlSelf) -> Value {
 /// `#prefix`. A zero-length prefix means unprefixed, which is nil rather than
 /// `""` - the distinction `#namespace` depends on.
 pub fn prefix(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if d.node(id).prefix.len == 0 {
             return ruby.qnil().as_value();
@@ -62,9 +58,8 @@ pub fn prefix(ruby: &Ruby, this: super::XmlSelf) -> Value {
 }
 
 pub fn namespace_uri(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if d.node(id).ns_uri.len == 0 {
             return ruby.qnil().as_value();
@@ -74,9 +69,8 @@ pub fn namespace_uri(ruby: &Ruby, this: super::XmlSelf) -> Value {
 }
 
 pub fn node_type(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
         ruby.integer_from_i64(ty as i64).as_value()
     }
@@ -90,17 +84,15 @@ pub fn node_type(ruby: &Ruby, this: super::XmlSelf) -> Value {
  * present zero-length span and answers `""`. */
 
 pub fn dtd_external_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         str_span_or_nil(ruby, d, d.node(this.id).prefix)
     }
 }
 
 pub fn dtd_system_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         str_span_or_nil(ruby, d, d.node(this.id).value)
     }
 }
@@ -108,9 +100,8 @@ pub fn dtd_system_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
 /* ---- content ---- */
 
 pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if matches!(
             d.type_(id),
@@ -153,9 +144,8 @@ pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Value {
 }
 
 pub fn value(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         str_span(ruby, d, d.node(this.id).value)
     }
 }
@@ -163,51 +153,45 @@ pub fn value(ruby: &Ruby, this: super::XmlSelf) -> Value {
 /* ---- navigation ---- */
 
 pub fn parent(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        wrap_rel(rb_self, d.parent(this.id))
+        let d = &*this.doc();
+        wrap_rel(this, d.parent(this.id))
     }
 }
 pub fn next(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        wrap_rel(rb_self, d.next(this.id))
+        let d = &*this.doc();
+        wrap_rel(this, d.next(this.id))
     }
 }
 pub fn previous(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        wrap_rel(rb_self, d.prev(this.id))
+        let d = &*this.doc();
+        wrap_rel(this, d.prev(this.id))
     }
 }
 pub fn first_child(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        wrap_rel(rb_self, d.first_child(this.id))
+        let d = &*this.doc();
+        wrap_rel(this, d.first_child(this.id))
     }
 }
 pub fn last_child(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        wrap_rel(rb_self, d.last_child(this.id))
+        let d = &*this.doc();
+        wrap_rel(this, d.last_child(this.id))
     }
 }
 
-pub fn get_document(rb_self: Value) -> Value {
-    unsafe { node_document(rb_self) }
+pub fn get_document(this: super::XmlSelf) -> Value {
+    this.document
 }
 
 /// `#element_children` - the child ELEMENT nodes only, in document order.
 pub fn element_children(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        let set = mkr_node_set_new(node_document(rb_self).as_raw());
+        let d = &*this.doc();
+        let set = mkr_node_set_new(this.document.as_raw());
         let mut c = d.first_child(this.id);
         while let Some(id) = c {
             if d.type_(id) == Some(NodeType::Element) {
@@ -220,10 +204,9 @@ pub fn element_children(this: super::XmlSelf) -> Value {
 }
 
 pub fn children(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        let set = mkr_node_set_new(node_document(rb_self).as_raw());
+        let d = &*this.doc();
+        let set = mkr_node_set_new(this.document.as_raw());
         let mut c = d.first_child(this.id);
         while let Some(id) = c {
             mkr_node_set_push(set, id.to_token() as *mut core::ffi::c_void);
@@ -252,9 +235,8 @@ unsafe fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 
 /// `#[]` - the attribute's value, or nil.
 pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if d.type_(id) != Some(NodeType::Element) {
             return Ok(ruby.qnil().as_value());
@@ -274,19 +256,15 @@ pub fn attribute_by_qualified_name(
     this: super::XmlSelf,
     rb_name: Value,
 ) -> Result<Value, Error> {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
+        let d = &*this.doc();
         let id = this.id;
         if d.type_(id) != Some(NodeType::Element) {
             return Ok(ruby.qnil().as_value());
         }
         let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let a = find_attr(d, id, nv.bytes());
-        Ok(super::wrap(
-            a.unwrap_or(NodeId::INVALID),
-            node_document(rb_self),
-        ))
+        Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
     }
 }
 
@@ -299,10 +277,9 @@ pub fn attribute_value_by_qualified_name(
 }
 
 pub fn attribute_nodes(this: super::XmlSelf) -> Value {
-    let rb_self = this.value;
     unsafe {
-        let d = &*doc(rb_self);
-        let set = mkr_node_set_new(node_document(rb_self).as_raw());
+        let d = &*this.doc();
+        let set = mkr_node_set_new(this.document.as_raw());
         let id = this.id;
         if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
