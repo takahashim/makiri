@@ -296,7 +296,7 @@ pub union NodeU {
     pub filter: Filter,
 }
 
-/// The compiled AST node. Allocated zeroed by `mkr_node_alloc` and freed by
+/// The compiled AST node. Allocated zeroed by `node_alloc` and freed by
 /// `mkr_node_free`, both in `xpath::ast_ops`.
 pub struct Node {
     pub kind: u32,
@@ -312,9 +312,9 @@ pub use crate::falloc::calloc::mkr_grow_reserve;
 pub use crate::falloc::calloc::mkr_strndup;
 pub use crate::xpath::ast_ops::mkr_apply_peephole;
 pub use crate::xpath::ast_ops::mkr_mark_context_independent;
-pub use crate::xpath::ast_ops::mkr_node_alloc;
 pub use crate::xpath::ast_ops::mkr_node_free;
 pub use crate::xpath::ast_ops::mkr_step_clear;
+pub(crate) use crate::xpath::ast_ops::node_alloc;
 pub use crate::xpath::limits::mkr_limit_ast_node;
 pub use crate::xpath::limits::mkr_limit_check_expr_bytes;
 pub use crate::xpath::limits::mkr_limit_check_func_args;

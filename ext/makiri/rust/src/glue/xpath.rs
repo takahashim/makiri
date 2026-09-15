@@ -784,7 +784,7 @@ unsafe fn cached_ast(
 
     let limits = mkr_ctx_limits(d.ctx);
     (*limits).ast_nodes = 0;
-    let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, limits, err)?;
+    let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, limits, err).ok()?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         let raw = ast.as_raw();
         return Some((raw, Some(ast)));
@@ -972,8 +972,7 @@ fn node_xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Some(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error)
-        else {
+        let Ok(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error) else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };

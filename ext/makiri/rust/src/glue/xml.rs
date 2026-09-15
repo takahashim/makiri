@@ -547,8 +547,7 @@ fn xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Some(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error)
-        else {
+        let Ok(ast) = crate::xpath::parse::parse_owned(ev.as_verified(), limits, &mut error) else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };

@@ -24,7 +24,7 @@ pub(crate) struct Ast(NonNull<Node>);
 
 impl Ast {
     /// # Safety
-    /// `ptr` must be a live root AST allocated by `mkr_node_alloc`, and no
+    /// `ptr` must be a live root AST allocated by `node_alloc`, and no
     /// other owner may free it after this call.
     pub(crate) unsafe fn from_raw(ptr: *mut Node) -> Option<Self> {
         NonNull::new(ptr).map(Self)
@@ -34,6 +34,14 @@ impl Ast {
     /// callers must keep the GVL/exclusive evaluation contract while using it.
     pub(crate) fn as_raw(&self) -> *mut Node {
         self.0.as_ptr()
+    }
+
+    /// Adopt a node the caller has just allocated.
+    ///
+    /// # Safety
+    /// As [`Self::from_raw`], for a pointer already known to be non-null.
+    pub(crate) unsafe fn from_non_null(ptr: NonNull<Node>) -> Self {
+        Self(ptr)
     }
 
     /// The node, for filling in its fields while it is being built.

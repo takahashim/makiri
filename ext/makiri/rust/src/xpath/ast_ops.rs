@@ -10,25 +10,36 @@
 
 use super::abi::*;
 use super::ast_view::{path_steps, step_preds};
+use super::own::Ast;
 use crate::err_setf;
 use crate::falloc::raw::mkr_callocarray;
 use core::ffi::c_void;
 use core::ptr;
+use core::ptr::NonNull;
 
 /// The one AST factory: charges the node budget, then hands back a zeroed node
 /// with its kind set. The XPath parser and the CSS lowering both go through it,
 /// which is what keeps `mkr_node_free` able to take apart whatever either built.
-pub unsafe fn mkr_node_alloc(limits: *mut Limits, err: *mut Error, kind: u32) -> *mut Node {
-    if mkr_limit_ast_node(limits, err).is_err() {
-        return ptr::null_mut();
-    }
-    let n = mkr_callocarray(1, core::mem::size_of::<Node>()) as *mut Node;
-    if n.is_null() {
-        err_setf!(err, XP_ERR_OOM, "out of memory allocating AST node");
-        return ptr::null_mut();
-    }
-    (*n).kind = kind;
-    n
+///
+/// # Safety
+/// `limits` must be live, and `err` null or a writable error slot.
+pub(crate) unsafe fn node_alloc(
+    limits: *mut Limits,
+    err: *mut Error,
+    kind: u32,
+) -> Result<Ast, Reported> {
+    mkr_limit_ast_node(limits, err)?;
+    let Some(n) = NonNull::new(mkr_callocarray(1, core::mem::size_of::<Node>()) as *mut Node)
+    else {
+        return Err(err_setf!(
+            err,
+            XP_ERR_OOM,
+            "out of memory allocating AST node"
+        ));
+    };
+    (*n.as_ptr()).kind = kind;
+    // SAFETY: a fresh zeroed node, owned by nothing else.
+    Ok(Ast::from_non_null(n))
 }
 
 pub unsafe fn mkr_step_clear(s: *mut Step) {

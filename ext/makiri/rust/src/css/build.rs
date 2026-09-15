@@ -7,14 +7,14 @@
 //! was doing, spelled once per builder instead of once per call.
 //!
 //! The allocations match the AST destructors exactly: nodes through
-//! `mkr_node_alloc`, owned text through `TextSlot::try_copy`, arrays through
+//! `node_alloc`, owned text through `TextSlot::try_copy`, arrays through
 //! `xpath::own`'s `NodeArray` / `StepArray`. That is why none of this uses a
 //! `Vec`: the destructors walk these C-layout fields and free them with libc.
 
 use super::Build;
 pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::xpath_abi::{
-    mkr_node_alloc, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR,
+    node_alloc, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR,
     NK_PATH, NT_NAME,
 };
 
@@ -29,7 +29,7 @@ fn borrowed(s: &[u8]) -> Option<VerifiedText> {
 
 /// A zeroed node of `kind`, charged against the AST budget.
 pub(crate) unsafe fn node(b: &Build, kind: u32) -> Built {
-    Ast::from_raw(mkr_node_alloc(b.limits, b.err, kind))
+    node_alloc(b.limits, b.err, kind).ok()
 }
 
 /// Copy `s` into an owned text slot. `false` on failure, with `*err` set.
