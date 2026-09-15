@@ -42,10 +42,9 @@ fuzz_target!(|data: &[u8]| {
         limits.max_ast_nodes = 10_000;
         limits.max_expr_bytes = 16 * 1024;
 
-        let mut err: XPathError = core::mem::zeroed();
+        let mut err = XPathError::new();
         let ast = parse_raw(text, &mut limits, &mut err);
         if ast.is_null() {
-            xpath_error_clear(&mut err);
             return;
         }
 
@@ -61,11 +60,9 @@ fuzz_target!(|data: &[u8]| {
             (*l).max_recursion_depth = 64;
 
             let mut out: XPathValue = core::mem::zeroed();
-            let mut eval_err: XPathError = core::mem::zeroed();
+            let mut eval_err = XPathError::new();
             if xpath_eval_compiled(ctx, ast, &mut out, &mut eval_err) == 0 {
                 xpath_value_clear(&mut out);
-            } else {
-                xpath_error_clear(&mut eval_err);
             }
             xpath_context_free(ctx);
         }

@@ -15,7 +15,7 @@ pub use makiri::text::VerifiedText;
 pub use makiri::xml::parse::mkr_xml_parse;
 pub use makiri::xml::Document;
 pub use makiri::xpath::ast_ops::node_free;
-pub use makiri::xpath::boundary::{xpath_error_clear, xpath_value_clear};
+pub use makiri::xpath::boundary::xpath_value_clear;
 pub use makiri::xpath::ctx::{
     ctx_limits, xpath_context_free, xpath_context_new, xpath_register_ns,
     xpath_set_engine_kind,

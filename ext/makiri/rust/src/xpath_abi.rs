@@ -160,11 +160,6 @@ impl TextSlot {
 
 /* ---- error / limits ---- */
 
-pub struct Error {
-    pub status: c_int,
-    pub message: *mut c_char,
-}
-
 pub struct Limits {
     pub max_expr_bytes: usize,
     pub max_ast_nodes: usize,
@@ -623,10 +618,10 @@ pub use crate::xpath::runtime_abi::val_clear;
 pub use crate::xpath::runtime_abi::val_set_owned_text;
 
 /* The cleanup entry points the glue calls live at the raw boundary. */
-pub use crate::xpath::boundary::{err_set_raw, xpath_error_clear, xpath_value_clear};
+pub use crate::xpath::boundary::xpath_value_clear;
 
 /// The proof a failure's message was written; see `xpath::msg`.
-pub use crate::xpath::msg::{ErrSink, Reported};
+pub use crate::xpath::msg::{err_set_raw, ErrSink, Error, Reported};
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///

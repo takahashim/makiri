@@ -61,7 +61,7 @@ fuzz_target!(|data: &[u8]| {
         }
 
         if let Some(text) = Expr::new(expr_bytes).as_ref().and_then(Expr::text) {
-            let mut err: XPathError = core::mem::zeroed();
+            let mut err = XPathError::new();
             let ast = parse_raw(text, l, &mut err);
             if !ast.is_null() {
                 let mut v: XPathValue = core::mem::zeroed();
@@ -69,7 +69,6 @@ fuzz_target!(|data: &[u8]| {
                 xpath_value_clear(&mut v);
                 node_free(ast);
             }
-            xpath_error_clear(&mut err);
         }
         xpath_context_free(ctx);
     }

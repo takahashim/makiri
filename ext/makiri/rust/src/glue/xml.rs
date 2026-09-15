@@ -101,7 +101,6 @@ use crate::xpath::ctx::OwnedContext;
 pub use crate::xpath::evaluate::xpath_eval_compiled;
 pub use crate::xpath::evaluate::xpath_eval_compiled_first;
 pub use crate::xpath::parse::parse_raw;
-pub use crate::xpath_abi::xpath_error_clear;
 pub use crate::xpath_abi::xpath_value_clear;
 
 extern "C" {
@@ -484,7 +483,7 @@ unsafe fn run_ast(
     document: Value,
 ) -> Result<Value, Error> {
     let mut value: XPathValue = core::mem::zeroed();
-    let mut error: XPathError = core::mem::zeroed();
+    let mut error = XPathError::new();
     let rc = if first_only {
         xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
     } else {
@@ -492,7 +491,7 @@ unsafe fn run_ast(
     };
     drop(ast);
     if rc != 0 {
-        return Err(xpath_error(&mut error));
+        return Err(xpath_error(&error));
     }
     drop(ctx);
     /* Converts AND clears the value. */
@@ -539,7 +538,7 @@ fn xpath_run(
          * allocates Ruby objects and may run a GC, and the borrowed bytes must
          * not be live across one. */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
-        let mut error: XPathError = core::mem::zeroed();
+        let mut error = XPathError::new();
         let limits = ctx_limits(ctx.as_ptr());
         (*limits).ast_nodes = 0;
         let parsed =
@@ -547,7 +546,7 @@ fn xpath_run(
         /* No borrowed bytes across the exception's allocation. */
         drop(ev);
         let Ok(ast) = parsed else {
-            return Err(xpath_error(&mut error));
+            return Err(xpath_error(&error));
         };
         run_ast(ruby, ctx, ast, first_only, document)
     }
@@ -596,7 +595,7 @@ unsafe fn css_compile_or_raise(
         default_prefix: css_default_prefix(rb_ns),
     };
     let sv = mkr_ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr());
-    let mut error: XPathError = core::mem::zeroed();
+    let mut error = XPathError::new();
     let limits = ctx_limits(ctx);
     (*limits).ast_nodes = 0;
     let ast = crate::css::compile_owned(
@@ -611,19 +610,15 @@ unsafe fn css_compile_or_raise(
     }
 
     if error.status == XP_ERR_SYNTAX {
-        let msg = if error.message.is_null() {
-            "invalid CSS selector".to_string()
-        } else {
-            core::ffi::CStr::from_ptr(error.message)
-                .to_string_lossy()
-                .into_owned()
-        };
-        xpath_error_clear(&mut error);
+        let msg = error.message().map_or_else(
+            || "invalid CSS selector".to_string(),
+            |m| m.to_string_lossy().into_owned(),
+        );
         let class = magnus::ExceptionClass::from_value(Value::from_raw(mkr_eCSSSyntaxError))
             .expect("Makiri::CSS::SyntaxError");
         return Err(Error::new(class, msg));
     }
-    Err(xpath_error(&mut error))
+    Err(xpath_error(&error))
 }
 
 fn css_run(
@@ -688,11 +683,11 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
 
         let mut value: XPathValue = core::mem::zeroed();
-        let mut error: XPathError = core::mem::zeroed();
+        let mut error = XPathError::new();
         let rc = xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error);
         drop(ast);
         if rc != 0 {
-            return Err(xpath_error(&mut error));
+            return Err(xpath_error(&error));
         }
 
         let mut found = false;

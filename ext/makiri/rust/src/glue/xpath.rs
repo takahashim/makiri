@@ -44,9 +44,8 @@ use rb_sys::VALUE;
 use crate::xpath::ctx::OwnedContext;
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
-    err_set_raw, xpath_error_clear, xpath_value_clear, ErrSink, Error as XPathError, Node as Ast,
-    NodeSet, TextSlot, Val, ValRef, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM,
-    XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+    err_set_raw, xpath_value_clear, ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot,
+    Val, ValRef, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
 
 use super::abi::{
@@ -109,24 +108,19 @@ pub use crate::xpath::runtime_abi::val_set_borrowed_text_copy;
 /* result + error mapping                                             */
 /* ------------------------------------------------------------------ */
 
-/// An engine error as the Ruby exception it maps to, clearing the native error.
+/// An engine error as the Ruby exception it maps to.
 ///
 /// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
 /// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
 /// magnus raises once its frames - and the context they own - are gone.
-pub(crate) unsafe fn xpath_error(err: &mut XPathError) -> Error {
+pub(crate) unsafe fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
         XP_ERR_SYNTAX => mkr_eXPathSyntaxError,
         XP_ERR_LIMIT => mkr_eXPathLimitExceeded,
         _ => error_class().as_raw(),
     };
-    /* Copy the message out before clearing the native error. */
-    let msg = if err.message.is_null() {
-        rb_sys::rb_utf8_str_new_cstr(c"XPath evaluation failed".as_ptr())
-    } else {
-        rb_sys::rb_utf8_str_new_cstr(err.message)
-    };
-    xpath_error_clear(err);
+    let msg =
+        rb_sys::rb_utf8_str_new_cstr(err.message().unwrap_or(c"XPath evaluation failed").as_ptr());
     let exc = rb_sys::rb_exc_new_str(class, msg);
     match magnus::Exception::from_value(Value::from_raw(exc)) {
         Some(e) => Error::from(e),
@@ -474,9 +468,8 @@ unsafe fn push_result_node(
         return false;
     }
     let n = mkr_node_raw(rb_node);
-    let mut ierr: XPathError = core::mem::zeroed();
+    let mut ierr = XPathError::new();
     if nodeset_push(set, n, ctx_limits(ctx), ErrSink::new(&mut ierr)).is_err() {
-        xpath_error_clear(&mut ierr);
         err.set("out of memory building handler result");
         return false;
     }
@@ -837,7 +830,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
          * this context would then report "already in use". */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
         let mut d = rb_self.borrow()?;
-        let mut error: XPathError = core::mem::zeroed();
+        let mut error = XPathError::new();
         let parsed = cached_ast(&mut d, ev, &mut error);
         let ctx = d.ctx.as_ptr();
         /* Release the borrow before building the exception: that allocates, and
@@ -845,7 +838,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         drop(d);
         match parsed {
             Some((ast, owned)) => (ctx, ast, owned),
-            None => return Err(xpath_error(&mut error)),
+            None => return Err(xpath_error(&error)),
         }
     };
 
@@ -856,12 +849,12 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         };
         let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
         let mut value: XPathValue = core::mem::zeroed();
-        let mut error: XPathError = core::mem::zeroed();
+        let mut error = XPathError::new();
         let rc = xpath_eval_compiled(ctx, ast, &mut value, &mut error);
         drop(installed);
         drop(owned);
         if rc != 0 {
-            return Err(xpath_error(&mut error));
+            return Err(xpath_error(&error));
         }
         Ok(Value::from_raw(mkr_xpath_value_to_ruby(
             &mut value,
@@ -949,7 +942,7 @@ fn node_xpath_run(
         let ctx = context_for(rb_self, document)?;
         ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
 
-        let mut error: XPathError = core::mem::zeroed();
+        let mut error = XPathError::new();
         let limits = ctx_limits(ctx.as_ptr());
         (*limits).ast_nodes = 0;
         let parsed =
@@ -957,7 +950,7 @@ fn node_xpath_run(
         /* No borrowed bytes across the exception's allocation. */
         drop(ev);
         let Ok(ast) = parsed else {
-            return Err(xpath_error(&mut error));
+            return Err(xpath_error(&error));
         };
         let bridge = Bridge {
             handler: handler.as_raw(),
@@ -973,7 +966,7 @@ fn node_xpath_run(
         drop(installed);
         drop(ast);
         if rc != 0 {
-            return Err(xpath_error(&mut error));
+            return Err(xpath_error(&error));
         }
         /* Free the context BEFORE converting: the value owns its own data and
          * never references the context, and a Ruby allocation failing inside

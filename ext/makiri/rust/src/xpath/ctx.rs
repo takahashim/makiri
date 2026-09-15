@@ -503,10 +503,7 @@ pub(crate) unsafe fn eval_compiled(
         }
         return -1;
     }
-    let mut err = Error {
-        status: XP_OK,
-        message: ptr::null_mut(),
-    };
+    let mut err = Error::new();
 
     /* Mark the context as evaluating for the duration of the walk, so a handler
      * that re-enters cannot mutate it out from under the evaluator. Nested
@@ -543,9 +540,7 @@ pub(crate) unsafe fn eval_compiled(
     (*ctx).evaluating -= 1;
 
     if rc != 0 {
-        if out_error.is_null() {
-            xpath_error_clear(&mut err);
-        } else {
+        if !out_error.is_null() {
             *out_error = err;
         }
         return -1;
@@ -579,10 +574,7 @@ pub(crate) unsafe fn eval_compiled_first(
     (*ctx).limits.recursion_depth = 0;
 
     let mut node: *mut c_void = ptr::null_mut();
-    let mut err = Error {
-        status: XP_OK,
-        message: ptr::null_mut(),
-    };
+    let mut err = Error::new();
     let matched = if (*ctx).engine_kind != 0 {
         try_first_match_xml(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
     } else {
@@ -591,9 +583,7 @@ pub(crate) unsafe fn eval_compiled_first(
     if matched < 0 {
         /* Op budget exceeded while walking: fail closed rather than falling back
          * to the full evaluator, which would hit the same wall. */
-        if out_error.is_null() {
-            xpath_error_clear(&mut err);
-        } else {
+        if !out_error.is_null() {
             *out_error = err;
         }
         return -1;

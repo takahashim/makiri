@@ -4,8 +4,8 @@
 //! allocate - one of them reports OOM - so every message is assembled in a
 //! fixed stack buffer and truncated rather than grown.
 
-use super::abi::{err_set_raw, Error};
-use core::ffi::{c_char, c_int};
+use super::abi::XP_OK;
+use core::ffi::{c_char, c_int, CStr};
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
 /// name echoed back into an error cannot carry control bytes into the message.
@@ -45,6 +45,36 @@ impl MsgBuf {
     pub fn as_ptr(&self) -> *const c_char {
         self.buf.as_ptr() as *const c_char
     }
+
+    fn clear(&mut self) {
+        self.len = 0;
+        self.buf[0] = 0;
+    }
+
+    /// The message, or None when nothing was written.
+    fn as_cstr(&self) -> Option<&CStr> {
+        if self.len == 0 {
+            return None;
+        }
+        CStr::from_bytes_until_nul(&self.buf).ok()
+    }
+
+    /// Append `b`, cut on a char boundary when it is UTF-8 and at the byte
+    /// otherwise.
+    fn push_bytes(&mut self, b: &[u8]) {
+        use core::fmt::Write;
+        match core::str::from_utf8(b) {
+            Ok(s) => {
+                let _ = self.write_str(s);
+            }
+            Err(_) => {
+                let n = b.len().min(self.buf.len() - 1 - self.len);
+                self.buf[self.len..self.len + n].copy_from_slice(&b[..n]);
+                self.len += n;
+                self.buf[self.len] = 0;
+            }
+        }
+    }
 }
 
 impl core::fmt::Write for MsgBuf {
@@ -57,7 +87,56 @@ impl core::fmt::Write for MsgBuf {
         }
         self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
         self.len += n;
+        self.buf[self.len] = 0;
         Ok(())
+    }
+}
+
+/// An engine error: its status and its message, held inline.
+///
+/// No heap: the message is formatted into a fixed buffer and truncated rather
+/// than grown, so every failure - running out of memory included - can say what
+/// went wrong, and there is nothing to free afterwards.
+pub struct Error {
+    pub status: c_int,
+    msg: MsgBuf,
+}
+
+impl Error {
+    /// No error yet: `XP_OK` and no message.
+    pub fn new() -> Error {
+        Error {
+            status: XP_OK,
+            msg: MsgBuf::default(),
+        }
+    }
+
+    /// The message, or None when none was written.
+    pub fn message(&self) -> Option<&CStr> {
+        self.msg.as_cstr()
+    }
+}
+
+impl Default for Error {
+    fn default() -> Self {
+        Error::new()
+    }
+}
+
+/// Replace `err`'s status and message - the C-shaped entry the handler resolver
+/// reports through. `msg` is copied, truncated to fit.
+///
+/// # Safety
+/// `err` is null or a live error; `msg` is null or NUL-terminated.
+pub unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
+    if err.is_null() {
+        return;
+    }
+    let e = &mut *err;
+    e.status = status;
+    e.msg.clear();
+    if !msg.is_null() {
+        e.msg.push_bytes(CStr::from_ptr(msg).to_bytes());
     }
 }
 
@@ -124,17 +203,18 @@ impl ErrSink {
     }
 }
 
-/// Set `err` from a formatted message. `err_set_raw` copies it (mkr_xpath.c),
-/// so the stack buffer does not outlive the call.
+/// Set `err` from a formatted message, formatted straight into the slot.
 ///
 /// Crate-internal, and the one place the front end writes an error. A silent
 /// sink skips the formatting as well as the write.
 pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Arguments<'_>) -> Reported {
     use core::fmt::Write;
     if !err.is_silent() {
-        let mut m = MsgBuf::default();
-        let _ = m.write_fmt(args);
-        unsafe { err_set_raw(err.as_raw(), status, m.as_ptr()) };
+        // SAFETY: a reporting sink names a live slot for every use.
+        let e = unsafe { &mut *err.as_raw() };
+        e.status = status;
+        e.msg.clear();
+        let _ = e.msg.write_fmt(args);
     }
     Reported(())
 }
