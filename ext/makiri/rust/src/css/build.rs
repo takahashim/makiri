@@ -31,8 +31,8 @@ pub(crate) unsafe fn node(b: &Build, kind: u32) -> Built {
     node_alloc(b.limits, b.err, kind)
 }
 
-/// Copy `s` into an owned text slot, or `Err` with `*err` set.
-pub(crate) unsafe fn set_text(b: &Build, out: *mut TextSlot, s: &[u8]) -> Result<(), Reported> {
+/// An owned copy of `s` for an AST text slot, or `Err` with `*err` set.
+pub(crate) unsafe fn copy_text(b: &Build, s: &[u8]) -> Result<TextSlot, Reported> {
     let Some(text) = borrowed(s) else {
         return Err(crate::err_setf!(
             b.err,
@@ -40,13 +40,12 @@ pub(crate) unsafe fn set_text(b: &Build, out: *mut TextSlot, s: &[u8]) -> Result
             "invalid internal CSS text"
         ));
     };
-    *out = crate::xpath_abi::TextSlot::try_copy(text.into(), b.err, Some(c"css name"))?;
-    Ok(())
+    crate::xpath_abi::TextSlot::try_copy(text.into(), b.err, Some(c"css name"))
 }
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
     let mut n = node(b, NK_LITERAL_STR)?;
-    set_text(b, &mut n.node_mut().u.literal, s)?;
+    n.node_mut().u.literal = copy_text(b, s)?;
     Ok(n)
 }
 
@@ -77,7 +76,7 @@ pub(crate) unsafe fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; 
         }
     }
     let mut n = node(b, NK_FNCALL)?;
-    set_text(b, &mut n.node_mut().u.fncall.name, name)?;
+    n.node_mut().u.fncall.name = copy_text(b, name)?;
     argv.install_as_args(n.as_raw());
     Ok(n)
 }
@@ -134,10 +133,10 @@ unsafe fn named_step_path_inner(
 
     if nt_kind == NT_NAME {
         if let Some(local) = local {
-            set_text(b, &mut step.test.local, local)?;
+            step.test.local = copy_text(b, local)?;
         }
         if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
-            set_text(b, &mut step.test.prefix, prefix)?;
+            step.test.prefix = copy_text(b, prefix)?;
         }
     }
 

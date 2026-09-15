@@ -165,17 +165,23 @@ unsafe fn lower_type(
     }
 
     (*step).test.kind = NT_NAME;
-    build::set_text(b, &mut (*step).test.local, name)?;
+    (*step).test.local = build::copy_text(b, name)?;
 
     match ns {
         /* `p|el` */
-        Some(p) if !p.is_empty() => build::set_text(b, &mut (*step).test.prefix, p),
+        Some(p) if !p.is_empty() => {
+            (*step).test.prefix = build::copy_text(b, p)?;
+            Ok(())
+        }
         /* `|el`: an explicit no-namespace, so leave the prefix unset. */
         Some(_) => Ok(()),
         /* A bare `el`. With a document default namespace in scope it binds to
          * the synthetic prefix, which is Nokogiri's behaviour. */
         None => match b.default_prefix() {
-            Some(dp) => build::set_text(b, &mut (*step).test.prefix, dp),
+            Some(dp) => {
+                (*step).test.prefix = build::copy_text(b, dp)?;
+                Ok(())
+            }
             None => Ok(()),
         },
     }

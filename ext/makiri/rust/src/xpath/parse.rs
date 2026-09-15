@@ -124,30 +124,10 @@ impl<'a> Parser<'a> {
     /// Copy `text` into an owned-text AST slot. A failure must be propagated: a
     /// null slot left in the AST would silently mis-compare at evaluation, so
     /// the parse fails closed instead.
-    fn fill_owned(&mut self, text: &[u8], out: *mut TextSlot) -> PResult {
-        // SAFETY: a null error slot is accepted; the parser reports its own.
-        let copied = unsafe { TextSlot::try_copy_bytes(text, ErrSink::silent(), None) };
-        let (slot, result) = match copied {
-            Ok(t) => (t, Ok(())),
-            Err(_) => (
-                TextSlot::empty(),
-                Err(err_setf!(self.err, XP_ERR_OOM, "out of memory in parser")),
-            ),
-        };
-        unsafe { *out = slot };
-        result
-    }
-
-    /// Split a QNAME token into prefix and local, and copy both.
-    fn fill_qname_split(
-        &mut self,
-        t: &Token,
-        prefix: *mut TextSlot,
-        local: *mut TextSlot,
-    ) -> PResult {
-        let (p, l) = split_qname(self.text(t));
-        self.fill_owned(p, prefix)?;
-        self.fill_owned(l, local)
+    fn fill_owned(&self, text: &[u8]) -> PResult<TextSlot> {
+        // SAFETY: a silent sink is accepted; the parser reports its own.
+        unsafe { TextSlot::try_copy_bytes(text, ErrSink::silent(), None) }
+            .map_err(|_| err_setf!(self.err, XP_ERR_OOM, "out of memory in parser"))
     }
 
     /// Charge the step budget, then append. A step that does not land is freed.
@@ -197,7 +177,7 @@ impl<'a> Parser<'a> {
                     if self.kind() == Tok::Literal {
                         let t = self.tok();
                         let s = self.text(&t);
-                        self.fill_owned(s, &mut out.pi_target)?;
+                        out.pi_target = self.fill_owned(s)?;
                         self.advance()?;
                     }
                 }
@@ -205,7 +185,8 @@ impl<'a> Parser<'a> {
             return self.eat(Tok::RParen, "')' after node type test");
         }
         out.kind = NT_NAME;
-        self.fill_owned(name, &mut out.local)
+        out.local = self.fill_owned(name)?;
+        Ok(())
     }
 
     /// Called with the current token at the first token of the node test; leaves
@@ -224,12 +205,12 @@ impl<'a> Parser<'a> {
             /* `prefix:local` or `prefix:*`. */
             let t = self.tok();
             let (prefix, local) = split_qname(self.text(&t));
-            self.fill_owned(prefix, &mut out.prefix)?;
+            out.prefix = self.fill_owned(prefix)?;
             if local == b"*" {
                 out.kind = NT_WILDCARD;
             } else {
                 out.kind = NT_NAME;
-                self.fill_owned(local, &mut out.local)?;
+                out.local = self.fill_owned(local)?;
             }
             return self.advance();
         }
@@ -381,10 +362,14 @@ impl<'a> Parser<'a> {
             // SAFETY: a fresh FNCALL node; only its name slots are written.
             let f = unsafe { &mut n.node_mut().u.fncall };
             if name_tok.kind == Tok::QName {
-                self.fill_qname_split(&name_tok, &mut f.prefix, &mut f.name)?;
+                /* Each copy lands in the node as it is made, so a failure on the
+                 * second leaves the first for the node's guard to free. */
+                let (p, l) = split_qname(self.text(&name_tok));
+                f.prefix = self.fill_owned(p)?;
+                f.name = self.fill_owned(l)?;
             } else {
                 let s = self.text(&name_tok);
-                self.fill_owned(s, &mut f.name)?;
+                f.name = self.fill_owned(s)?;
             }
         }
 
@@ -429,10 +414,12 @@ impl<'a> Parser<'a> {
                     // SAFETY: a fresh VARREF node; only its name slots are written.
                     let v = unsafe { &mut n.node_mut().u.varref };
                     if t.kind == Tok::QName {
-                        self.fill_qname_split(&t, &mut v.prefix, &mut v.name)?;
+                        let (p, l) = split_qname(self.text(&t));
+                        v.prefix = self.fill_owned(p)?;
+                        v.name = self.fill_owned(l)?;
                     } else {
                         let s = self.text(&t);
-                        self.fill_owned(s, &mut v.name)?;
+                        v.name = self.fill_owned(s)?;
                     }
                 }
                 self.advance()?;
@@ -448,8 +435,9 @@ impl<'a> Parser<'a> {
                 let mut n = self.new_node(NK_LITERAL_STR)?;
                 let t = self.tok();
                 let s = self.text(&t);
+                let text = self.fill_owned(s)?;
                 // SAFETY: a fresh LITERAL node; only its text slot is written.
-                self.fill_owned(s, unsafe { &mut n.node_mut().u.literal })?;
+                unsafe { n.node_mut().u.literal = text };
                 self.advance()?;
                 Ok(n)
             }

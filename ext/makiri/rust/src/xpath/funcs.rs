@@ -306,7 +306,7 @@ unsafe fn find_by_id<D: Dom>(
 unsafe fn id_collect<D: Dom>(
     s: &[u8],
     root: D::Node,
-    out: *mut NodeSet,
+    out: &mut Set,
     ctx: *mut Context,
     err: ErrSink,
 ) -> FnResult {
@@ -315,7 +315,7 @@ unsafe fn id_collect<D: Dom>(
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
         let hit = find_by_id::<D>(doc, root, tok, limits, err)?;
         if !D::is_null(hit) {
-            mkr_nodeset_push(out, D::to_void(hit), limits, err)?;
+            out.push::<D>(hit, limits, err)?;
         }
     }
     Ok(())
@@ -343,7 +343,6 @@ unsafe fn fn_id<D: Dom>(
     let root = D::document_node(D::doc_from_void(doc));
     /* Collected in a guard, so a failure part-way frees what was found. */
     let mut found = Set::new();
-    let ns_out = found.as_mut();
 
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
      * anything else is converted to a string and split the same way. */
@@ -355,11 +354,11 @@ unsafe fn fn_id<D: Dom>(
                 mkr_ctx_limits(ctx),
                 err,
             )?;
-            id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
+            id_collect::<D>(t.as_slice(), root, &mut found, ctx, err)
         })?;
     } else {
         let t = to_text::<D>(&args[0], ctx, err)?;
-        id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)?;
+        id_collect::<D>(t.as_slice(), root, &mut found, ctx, err)?;
     }
     /* §4.1: the result is in document order with duplicates removed. */
     nodeset_unique_sorted::<D>(ctx, found.as_mut());
