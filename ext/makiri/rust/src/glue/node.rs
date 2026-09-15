@@ -19,12 +19,9 @@
 //!
 //! # Who owns the TypedData
 //!
-//! Rust does, from here on. The three `rb_data_type_t` are plain data, so
-//! exporting them under the same symbols lets every C file that still wraps or
-//! unwraps a node (`TypedData_Make_Struct`, `TypedData_Get_Struct`,
-//! `rb_typeddata_is_kind_of`) keep working against the declarations already in
-//! glue.h, unchanged. It is the same seam the XPath front end uses when a Rust
-//! parser builds C AST nodes through the C allocator.
+//! Rust does: the three `rb_data_type_t` are statics here, and every wrap and
+//! unwrap names them - through `bridge::ruby::wrap_zeroed` and
+//! `bridge::ruby::typed_data`.
 //!
 //! HTML and XML nodes share the `mkr_node_data_t` layout and the same GC
 //! functions but are wrapped under DISTINCT types, so the representation is
@@ -34,8 +31,7 @@
 //! single source of HTML/XML node-pointer safety - there is deliberately no
 //! "return an lxb_dom_node_t for any node" unwrap.
 
-/* Every function here takes the `VALUE`s its C caller already holds; the
- * contract is the one at the declaration in glue.h. */
+/* Every function here takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_void};

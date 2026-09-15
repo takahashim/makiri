@@ -1,14 +1,9 @@
-//! The XML node's reading half (glue/ruby_xml_node_read.c).
+//! The XML node: wrapping and unwrapping an arena node, and every method that
+//! answers from the tree without writing to it - name and namespace, the DTD
+//! identifiers, namespace introspection, content, navigation and attributes.
 //!
-//! Wrapping and unwrapping an arena node, and every method that answers from the
-//! tree without writing to it: name and namespace, the DTD identifiers,
-//! namespace introspection, content, navigation and attributes.
-//!
-//! The writing half - serialization, canonicalization, mutation and the document
-//! factories - is still C (`glue/ruby_xml_node.c`). The boundary between them is
-//! one-directional: nothing here calls into it, and it reaches back for only two
-//! functions, [`mkr_xml_node_document`] and [`mkr_xml_wrap_rel`], which is why
-//! those two are exported under their C names.
+//! The writing half is in the submodules: `mutate` (mutation and the document
+//! factories) and `serialize` (`#to_xml`, `#canonicalize`).
 //!
 //! Nothing here touches Lexbor. The node layout comes from `crate::xml::model`,
 //! the XML engine's own declaration, so no offset or type constant is restated.
@@ -319,8 +314,7 @@ pub unsafe extern "C" fn mkr_init_xml_node_read() {
 /// # Safety
 /// From `Init_makiri`.
 pub unsafe extern "C" fn mkr_init_xml_node() {
-    /* Serialization (#to_xml / #canonicalize, and the refused HTML ones) is
-     * still C: ruby_xml_node_serialize.c. */
+    /* Serialization: #to_xml / #canonicalize, and the refused HTML ones. */
     mkr_init_xml_node_serialize();
     mkr_init_xml_node_read();
 

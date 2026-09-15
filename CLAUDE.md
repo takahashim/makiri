@@ -254,11 +254,19 @@ by the check that concluded "every undefined symbol is legitimate".
   reports it. It auto-activates under any address-sanitized build - no extra
   flag, unlike Lexbor - and is a no-op otherwise. So plain `rake sanitize` /
   `fuzz:sanitize --target xml,mutate` already cover the arena. Everything else
-  we write (XPath engine, CSS lowering, glue, core) allocates through `falloc`
-  onto the system allocator, which ASan red-zones per allocation - no arena, no
-  special handling. Keep the unpoison at exactly the requested `size` (not
+  we write allocates through `falloc` onto the system allocator, or - for the
+  glue's Ruby-side storage - through Ruby's xmalloc; ASan red-zones both per
+  allocation - no arena, no special handling. Keep the unpoison at exactly the requested `size` (not
   `need`); widening it to `need` would silence off-by-one-into-padding
   overflows.
+- **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
+  `dom_adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
+  each site in turn, so an OOM there raises instead of aborting. The glue's
+  Ruby-side storage - TypedData wrappers (`bridge::ruby::wrap_zeroed`) and
+  `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
+  is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
+  only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
@@ -276,15 +284,15 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            constants the crate reads (never transcribed by hand)
   src/
     init.rs                Init_makiri: the class hierarchy and the registration seam
-    falloc/                fallible allocation - EVERY heap allocation goes through
-                           here, so `rake oom` can fail it and OOM raises rather
-                           than aborting the host process
+    falloc/                fallible allocation - every engine allocation goes
+                           through here, so `rake oom` can fail it and OOM raises
+                           rather than aborting the host process (the glue's
+                           Ruby-side storage is Ruby's xmalloc; see the gotchas)
     cbuf.rs                mkr_buf_t: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     lexbor_abi.rs          the generated Lexbor layout, the `_noi` twins, and
                            `agree` - compile-time offset checks over the
                            hand-written views the engine's hot paths read
-    xpath_abi.rs           the XPath engine's shared types
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
                            raising C calls (rb_String, typed-data checks) and the

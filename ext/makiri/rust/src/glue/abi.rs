@@ -336,10 +336,9 @@ pub use crate::lexbor_abi::{
 
 /// A `rb_data_type_t` that can live in a `static`.
 ///
-/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; the C originals are
-/// `const` at file scope and are equally shared. `repr(transparent)` keeps the
-/// exported symbol's layout exactly `rb_data_type_t`, which is what the C
-/// `extern` declarations in glue.h expect.
+/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at
+/// compile time and never written. `repr(transparent)` keeps the layout exactly
+/// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
 #[repr(transparent)]
 pub struct DataType(rb_sys::rb_data_type_t);
 

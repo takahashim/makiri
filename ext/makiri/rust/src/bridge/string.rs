@@ -17,8 +17,7 @@
 //! exactly this reason, and its lifetime is tied to nothing. What it does give
 //! is a place to state the rule once, which is here.
 
-/* Every function takes the `VALUE`s its C caller already holds; the contract is
- * the one at the declaration in bridge/bridge.h. */
+/* Every function takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_long};
@@ -42,7 +41,7 @@ pub use crate::text::BorrowedText;
 use crate::bridge::ruby::string_of;
 use crate::glue::abi::{error_class, mkr_eError, rb_raise};
 
-/* ---- the C layouts (core/mkr_text.h, bridge/bridge.h) ----
+/* ---- the borrowed-text layouts ----
  *
  * `mkr_ruby_borrowed_text_t` / `_data_t` / `_bytes_t` share ONE layout and are
  * three C types. The distinction is the contract, not the shape: `text` has

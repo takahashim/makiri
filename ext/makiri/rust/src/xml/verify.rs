@@ -48,16 +48,13 @@ fn predicate_inclusions() {
 /// The load-bearing one: bytes `validate_chars` accepts are valid UTF-8
 /// according to an **independent** implementation.
 ///
-/// The C version cross-checked our strict one-codepoint decoder against our
+/// The C version cross-checked our strict one-codepoint decoder against a
 /// word-at-a-time table scan, and the value was in the two being written
-/// differently - agreement is evidence, not a restatement. Kani sees only Rust,
-/// and the word-at-a-time scan is still C (`core/mkr_utf8.c`), so the second
-/// implementation here is `core::str::from_utf8`.
+/// differently - agreement is evidence, not a restatement. The second
+/// implementation here is `core::str::from_utf8`, one we did not write at all.
 ///
-/// That preserves the property's character, and arguably improves it: the
-/// second implementation is now one we did not write at all. When `core/` moves
-/// to Rust (step 8), this proof is the reason not to route `validate_chars`
-/// through the same validator - doing so would turn it into a tautology.
+/// That is also the reason not to route `validate_chars` through the same
+/// validator: doing so would turn this proof into a tautology.
 #[kani::proof]
 #[kani::unwind(10)]
 fn accepted_is_utf8() {

@@ -5,16 +5,12 @@
 //!   `#import_node(node, deep = false)`
 //!   `DocumentFragment.parse(html, context:)`, `Node#parse(html)`
 //!
-//! # This file is mostly a C ABI, not a Ruby one
+//! # The Document wrapper, and what other glue modules share
 //!
-//! Ten methods, and eleven symbols other translation units call. The Document
-//! wrapper type and its `rb_data_type_t` chain, the parsed-handle accessors, and
-//! every piece of the fragment pipeline are consumed by `ruby_html_node.c`,
-//! `ruby_html_mutate.c` and `cross_import.c`, which are still C - so the port
-//! keeps each signature exactly, and `glue::abi` grew a compile-time check that
-//! the definitions here match the declarations there (rustc does not check a
-//! `#[no_mangle]` definition against an `extern` block, which is how one symbol
-//! could otherwise get two types again).
+//! Ten methods, plus the pieces the rest of the glue uses: the Document wrapper
+//! type and its `rb_data_type_t` chain, the parsed-handle accessors, and the
+//! fragment pipeline `html_node::mutate` and `dom_adapter::cross_import` run
+//! through. `glue::abi`'s compile-time check pins their signatures.
 //!
 //! # Parsing releases the GVL
 //!

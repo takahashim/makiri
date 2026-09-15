@@ -6,12 +6,11 @@
 //! representation-neutral node core - the `rb_data_type_t` chain and the
 //! kind-agnostic accessors - is `glue::node`.
 //!
-//! # Two symbols here are load-bearing for C
+//! # Two functions here are the HTML node's front door
 //!
-//! [`mkr_wrap_html_node`] and [`mkr_html_node_unwrap`] are called by four and
-//! eight other translation units, several still C, so their signatures are
-//! fixed. `glue::abi`'s `agree` module checks the definitions here against the
-//! declarations there.
+//! [`mkr_wrap_html_node`] and [`mkr_html_node_unwrap`] are how every other glue
+//! module wraps and unwraps an HTML node. `glue::abi`'s `agree` module pins their
+//! signatures, so a change to either is a visible one.
 //!
 //! # Nothing here is declared twice
 //!
@@ -192,8 +191,8 @@ pub unsafe fn node_document(v: Value) -> Result<Value, magnus::Error> {
 /// so every arity is reached through this one type.
 type RbMethod = unsafe extern "C" fn() -> VALUE;
 
-/// Bind a method implemented by a C-ABI function, for the four that must stay
-/// shared with the XML side or live in the still-C mutation half.
+/// Bind a method implemented with the C calling convention: the identity
+/// methods shared with the XML side, and `clone_node`.
 unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, arity: i32) {
     rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
 }
