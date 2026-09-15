@@ -1,40 +1,32 @@
 //! The HTML node's readers: name and namespace, the DTD identifiers, content,
 //! navigation, attributes, source line and document order.
 //!
-//! Every Lexbor accessor is imported from `glue::abi`, which has the crate's one
-//! declaration of each.
+//! Every read of the Lexbor tree goes through the typed handles of
+//! `dom_adapter::html`, which are safe to use; what stays `unsafe` here is the
+//! Ruby side - wrapping a node into an object, pushing onto a NodeSet, and the
+//! per-document indexes.
 //!
 //! # Where a GC may run
 //!
 //! Building any String or NodeSet is a GC point, so a view borrowed from a Ruby
 //! String must not be live across one. The attribute lookups take their name
 //! through `ruby_verified_text`, whose guard keeps the String reachable until
-//! it drops, and read the bytes before building anything.
+//! it drops, and read the bytes before building anything. Bytes borrowed from
+//! the document are arena memory, which a GC does not move.
 
 use core::ffi::c_char;
 
-use magnus::rb_sys::FromRawValue;
-use magnus::{prelude::*, Error, RArray, Ruby, Value};
+use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
-use super::{unwrap, wrap};
+use super::{arg_node, wrap, wrap_node};
+use crate::dom_adapter::html::HtmlNode;
 use crate::glue::abi::{
-    doc_parsed, error_class, is_kind_of, lxb_dom_attr_local_name, lxb_dom_attr_qualified_name,
-    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_root,
-    lxb_dom_document_type_public_id_noi, lxb_dom_document_type_system_id_noi,
-    lxb_dom_element_first_attribute_noi, lxb_dom_element_get_attribute,
-    lxb_dom_element_has_attribute, lxb_dom_element_local_name, lxb_dom_element_next_attribute_noi,
-    lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
-    lxb_dom_node_text_content, lxb_ns_by_id, node_set_new, node_set_push, ruby_str_from_borrowed,
-    ruby_str_from_slices, ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode, CLASS_NODE,
-    CLASS_XML_DOCUMENT,
+    doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_borrowed,
+    ruby_str_from_slices, ruby_verified_text, LxbAttr, CLASS_NODE, CLASS_XML_DOCUMENT,
 };
-use crate::lexbor_abi as lxb;
 use crate::text::BorrowedText;
-
-const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
-const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
-const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
 pub use crate::dom_adapter::dom_index::parsed_attr_owner;
 pub use crate::dom_adapter::dom_index::parsed_dom_index_build;
@@ -45,70 +37,47 @@ pub use crate::dom_adapter::text_index::parsed_text_slices;
  * small helpers                                                      *
  * ------------------------------------------------------------------ */
 
-#[inline]
-fn borrowed(p: *const u8, len: usize) -> BorrowedText {
-    unsafe { BorrowedText::from_raw_parts(p as *const c_char, len) }
-}
-
-/// A UTF-8 String over Lexbor's interned bytes. They live in the document arena
-/// and outlive the call, so there is nothing to anchor.
-#[inline]
-unsafe fn str_of(p: *const u8, len: usize) -> Value {
-    Value::from_raw(ruby_str_from_borrowed(borrowed(p, len)))
-}
-
-/// An Element's or Attribute's qualified name with the length of its local part,
-/// or `None` for any other kind. The one place the element-vs-attribute accessor
-/// pair is chosen.
-unsafe fn qname(node: *mut LxbNode) -> Option<(*const u8, usize, usize)> {
-    let (mut qlen, mut llen) = (0usize, 0usize);
-    match (*node).type_ {
-        ty::ELEMENT => {
-            let el = node as *mut LxbElement;
-            let q = lxb_dom_element_qualified_name(el, &mut qlen);
-            lxb_dom_element_local_name(el, &mut llen);
-            Some((q, qlen, llen))
-        }
-        ty::ATTRIBUTE => {
-            let at = node as *mut LxbAttr;
-            let q = lxb_dom_attr_qualified_name(at, &mut qlen);
-            lxb_dom_attr_local_name(at, &mut llen);
-            Some((q, qlen, llen))
-        }
-        _ => None,
+/// A UTF-8 String copied from bytes the document lends.
+fn dom_str(bytes: &[u8]) -> Value {
+    // SAFETY: the String copies the bytes. They are valid UTF-8 whenever they
+    // come from the document, by the text-input contract; bytes that were not
+    // would make a broken String, not a memory error.
+    unsafe {
+        Value::from_raw(ruby_str_from_borrowed(BorrowedText::from_raw_parts(
+            bytes.as_ptr() as *const c_char,
+            bytes.len(),
+        )))
     }
 }
 
-/// The prefix slice of a qualified name whose local part is `llen` bytes
+fn nil(ruby: &Ruby) -> Value {
+    ruby.qnil().as_value()
+}
+
+/// An Element's or Attribute's qualified name with its local name, or `None`
+/// for any other kind. The one place the element-vs-attribute accessor pair is
+/// chosen.
+fn qname(node: HtmlNode<'_>) -> Option<(&[u8], &[u8])> {
+    if let Some(el) = node.element() {
+        return Some((el.qualified_name(), el.local_name()));
+    }
+    node.attr().map(|at| (at.qualified_name(), at.local_name()))
+}
+
+/// The prefix of a qualified name whose local part is `local_len` bytes
 /// (qualified is `prefix:local` or a bare `local`).
 ///
-/// Centralises the `qlen`-vs-`llen + 1` boundary so [`prefix`] and
+/// Centralises the `len`-vs-`local_len + 1` boundary so [`prefix`] and
 /// [`namespace_uri`] cannot drift apart on it, and so a colon inside a local
 /// name is never mistaken for the separator.
-#[inline]
-unsafe fn qname_prefix<'a>(q: *const u8, qlen: usize, llen: usize) -> Option<&'a [u8]> {
-    if q.is_null() || qlen <= llen + 1 {
-        return None;
-    }
-    Some(core::slice::from_raw_parts(q, qlen - llen - 1))
+fn qname_prefix(q: &[u8], local_len: usize) -> Option<&[u8]> {
+    (q.len() > local_len + 1).then(|| &q[..q.len() - local_len - 1])
 }
 
-/// An interned namespace id as its URI String, or nil. The one place an lxb
-/// ns-id becomes a Ruby URI.
-unsafe fn ns_uri_of_id(ruby: &Ruby, node: *mut LxbNode) -> Value {
-    if (*node).ns == NS_UNDEF {
-        return ruby.qnil().as_value();
-    }
-    let doc = (*node).owner_document;
-    if doc.is_null() || (*doc).ns.is_null() {
-        return ruby.qnil().as_value();
-    }
-    let mut len = 0usize;
-    let uri = lxb_ns_by_id((*doc).ns, (*node).ns, &mut len);
-    if uri.is_null() || len == 0 {
-        return ruby.qnil().as_value();
-    }
-    str_of(uri, len)
+/// A node's namespace URI as a String, or nil. The one place an lxb ns-id
+/// becomes a Ruby URI.
+fn ns_uri_str(ruby: &Ruby, node: HtmlNode<'_>) -> Value {
+    node.ns_uri().map_or_else(|| nil(ruby), dom_str)
 }
 
 /// The fixed namespaces the HTML parser assigns to foreign-content attributes by
@@ -134,24 +103,19 @@ fn attr_ns_for_prefix(p: &[u8]) -> Option<&'static str> {
 /// (Lexbor lowercases during tokenization), and the un-prefixed DOM names
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
 pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        let mut len = 0usize;
-        match (*node).type_ {
-            ty::ELEMENT => {
-                let p = lxb_dom_element_qualified_name(node as *mut LxbElement, &mut len);
-                str_of(p, len)
-            }
-            ty::ATTRIBUTE => {
-                let p = lxb_dom_attr_qualified_name(node as *mut LxbAttr, &mut len);
-                str_of(p, len)
-            }
-            ty::TEXT => ruby.str_new("text").as_value(),
-            ty::COMMENT => ruby.str_new("comment").as_value(),
-            ty::CDATA => ruby.str_new("#cdata-section").as_value(),
-            ty::DOCUMENT => ruby.str_new("document").as_value(),
-            _ => str_of(lxb_dom_node_name(node, &mut len), len),
-        }
+    let node = this.node();
+    if let Some(el) = node.element() {
+        return dom_str(el.qualified_name());
+    }
+    if let Some(at) = node.attr() {
+        return dom_str(at.qualified_name());
+    }
+    match node.node_type() {
+        ty::TEXT => ruby.str_new("text").as_value(),
+        ty::COMMENT => ruby.str_new("comment").as_value(),
+        ty::CDATA => ruby.str_new("#cdata-section").as_value(),
+        ty::DOCUMENT => ruby.str_new("document").as_value(),
+        _ => dom_str(node.node_name()),
     }
 }
 
@@ -159,45 +123,30 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
 pub fn local_name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        let mut len = 0usize;
-        match (*node).type_ {
-            ty::ELEMENT => {
-                let p = lxb_dom_element_local_name(node as *mut LxbElement, &mut len);
-                str_of(p, len)
-            }
-            ty::ATTRIBUTE => {
-                /* The case-PRESERVED local name is the suffix of the qualified
-                 * name; Lexbor's stored local_name is lower-cased even when the
-                 * qualified name keeps its case (set_attribute_ns is
-                 * case-sensitive). */
-                let at = node as *mut LxbAttr;
-                let mut qlen = 0usize;
-                let mut llen = 0usize;
-                let q = lxb_dom_attr_qualified_name(at, &mut qlen);
-                lxb_dom_attr_local_name(at, &mut llen);
-                if !q.is_null() && qlen >= llen {
-                    str_of(q.add(qlen - llen), llen)
-                } else {
-                    let p = lxb_dom_attr_local_name(at, &mut len);
-                    str_of(p, len)
-                }
-            }
-            _ => ruby.qnil().as_value(),
-        }
+    let node = this.node();
+    if let Some(el) = node.element() {
+        return dom_str(el.local_name());
+    }
+    let Some(at) = node.attr() else {
+        return nil(ruby);
+    };
+    /* The case-PRESERVED local name is the suffix of the qualified name;
+     * Lexbor's stored local_name is lower-cased even when the qualified name
+     * keeps its case (set_attribute_ns is case-sensitive). */
+    let (q, local) = (at.qualified_name(), at.local_name());
+    if q.len() >= local.len() {
+        dom_str(&q[q.len() - local.len()..])
+    } else {
+        dom_str(local)
     }
 }
 
 /// `#prefix` (DOM `prefix`): nil unless the qualified name is `prefix:local` -
 /// typically nil for HTML5-parsed content. Element and Attribute only.
 pub fn prefix(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        match qname(node).and_then(|(q, ql, ll)| qname_prefix(q, ql, ll)) {
-            Some(p) => str_of(p.as_ptr(), p.len()),
-            None => ruby.qnil().as_value(),
-        }
+    match qname(this.node()).and_then(|(q, local)| qname_prefix(q, local.len())) {
+        Some(p) => dom_str(p),
+        None => nil(ruby),
     }
 }
 
@@ -213,34 +162,31 @@ pub fn prefix(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 ///
 /// Other kinds: nil.
 pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
+    let node = this.node();
+    if node.element().is_some() {
+        return ns_uri_str(ruby, node);
+    }
+    let Some(at) = node.attr() else {
+        return nil(ruby);
+    };
 
-        if (*node).type_ == ty::ELEMENT {
-            return ns_uri_of_id(ruby, node);
-        }
-        if (*node).type_ != ty::ATTRIBUTE {
-            return ruby.qnil().as_value();
-        }
+    /* An attribute set via set_attribute_ns records its OWN namespace on the
+     * attr node - distinguishable because it differs from the owner element's
+     * ns, which a parsed or normally-set attribute inherits. LXB_NS__UNDEF, set
+     * by set_attribute_ns(nil, ...), is the null namespace and has no URI. */
+    if at
+        .owner()
+        .is_some_and(|owner| owner.node().ns_id() != node.ns_id())
+    {
+        return ns_uri_str(ruby, node);
+    }
 
-        /* An attribute set via set_attribute_ns records its OWN namespace on
-         * the attr node - distinguishable because it differs from the owner
-         * element's ns, which a parsed or normally-set attribute inherits.
-         * LXB_NS__UNDEF, set by set_attribute_ns(nil, ...), is the null
-         * namespace and ns_uri_of_id answers nil for it. */
-        let at = node as *mut LxbAttr;
-        let owner = (*at).owner;
-        if !owner.is_null() && (*node).ns != (*owner).node.ns {
-            return ns_uri_of_id(ruby, node);
-        }
-
-        match qname(node).and_then(|(q, ql, ll)| qname_prefix(q, ql, ll)) {
-            None => ruby.qnil().as_value(),
-            Some(p) => match attr_ns_for_prefix(p) {
-                Some(uri) => ruby.str_new(uri).as_value(),
-                None => ruby.qnil().as_value(),
-            },
-        }
+    match qname(node).and_then(|(q, local)| qname_prefix(q, local.len())) {
+        None => nil(ruby),
+        Some(p) => match attr_ns_for_prefix(p) {
+            Some(uri) => ruby.str_new(uri).as_value(),
+            None => nil(ruby),
+        },
     }
 }
 
@@ -249,72 +195,41 @@ pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// `#name`, which is the lowercase qualified name. SVG/MathML elements keep
 /// their case. nil for a non-element.
 pub fn tag_name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        if (*node).type_ != ty::ELEMENT {
-            return ruby.qnil().as_value();
-        }
-        let mut len = 0usize;
-        let p = lxb_dom_element_tag_name(node as *mut LxbElement, &mut len);
-        if p.is_null() {
-            return ruby.qnil().as_value();
-        }
-        str_of(p, len)
-    }
+    this.node()
+        .element()
+        .and_then(|el| el.tag_name())
+        .map_or_else(|| nil(ruby), dom_str)
 }
 
 /// `ProcessingInstruction#target` (DOM `target`): the `xml` in `<?xml ...?>`.
 /// nil for a non-PI. The PI's data is read with `#content` like any
 /// character-data node.
 pub fn pi_target(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        if (*node).type_ != ty::PI {
-            return ruby.qnil().as_value();
-        }
-        let mut len = 0usize;
-        let p = lxb_dom_processing_instruction_target_noi(node as *mut _, &mut len);
-        str_of(p, len)
-    }
+    this.node().pi_target().map_or_else(|| nil(ruby), dom_str)
 }
-
-use crate::glue::abi::lxb_dom_processing_instruction_target_noi;
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
 pub fn node_type(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { ruby.integer_from_i64((*this.node).type_ as i64).as_value() }
+    ruby.integer_from_i64(this.node().node_type() as i64)
+        .as_value()
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
 ///
 /// Lexbor represents a missing id inconsistently - NULL after `SYSTEM`, but an
 /// empty string for a bare `<!DOCTYPE html>` - so empty is treated as absent and
-/// both answer nil, matching Nokogiri. Defined only on DocumentType, so the
-/// receiver is always a doctype; the guard is belt-and-braces.
-unsafe fn doctype_id(ruby: &Ruby, this: super::HtmlSelf, system: bool) -> Value {
-    let node = this.node;
-    if (*node).type_ != ty::DOCTYPE {
-        return ruby.qnil().as_value();
-    }
-    let mut len = 0usize;
-    let dt = node as *mut _;
-    let id = if system {
-        lxb_dom_document_type_system_id_noi(dt, &mut len)
-    } else {
-        lxb_dom_document_type_public_id_noi(dt, &mut len)
-    };
-    if id.is_null() || len == 0 {
-        return ruby.qnil().as_value();
-    }
-    str_of(id, len)
-}
-
+/// both answer nil, matching Nokogiri. Defined only on DocumentType; for any
+/// other receiver the handle answers None as well.
 pub fn doctype_public_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { doctype_id(ruby, this, false) }
+    this.node()
+        .doctype_public_id()
+        .map_or_else(|| nil(ruby), dom_str)
 }
 
 pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { doctype_id(ruby, this, true) }
+    this.node()
+        .doctype_system_id()
+        .map_or_else(|| nil(ruby), dom_str)
 }
 
 /// `Element#content_fragment`: a `<template>` element's "template contents" -
@@ -328,19 +243,10 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
 pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        if (*node).type_ != ty::ELEMENT
-            || (*node).local_name != TAG_TEMPLATE
-            || (*node).ns != NS_HTML
-        {
-            return ruby.qnil().as_value();
-        }
-        let content = (*(node as *mut lxb::lxb_html_template_element_t)).content;
-        if content.is_null() {
-            return ruby.qnil().as_value();
-        }
-        wrap(content as *mut LxbNode, this.document)
+    match this.node().template_content() {
+        // SAFETY: the contents fragment belongs to the receiver's document.
+        Some(content) => unsafe { wrap_node(Some(content), this.document) },
+        None => nil(ruby),
     }
 }
 
@@ -350,36 +256,26 @@ pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// The DOM makes a Document's textContent null; this returns the ROOT element's
 /// text instead, which is the intuitive, Nokogiri-like `Document#text`.
 pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let mut node = this.node;
-        if (*node).type_ == ty::DOCUMENT {
-            node = lxb_dom_document_root(node as *mut LxbDoc);
-            if node.is_null() {
-                return ruby.str_new("").as_value();
-            }
+    let mut node = this.node();
+    if node.node_type() == ty::DOCUMENT {
+        match node.document_root() {
+            Some(root) => node = root,
+            None => return ruby.str_new("").as_value(),
         }
-
-        if (*node).type_ == ty::ELEMENT || (*node).type_ == ty::FRAGMENT {
-            return element_text(ruby, this.document, node);
-        }
-
-        /* Character data and the other kinds keep the general path. */
-        let mut len = 0usize;
-        let text = lxb_dom_node_text_content(node, &mut len);
-        if text.is_null() {
-            return ruby.str_new("").as_value();
-        }
-        /* rb_utf8_str_new, not magnus's str_from_slice: that one tags the
-         * String ASCII-8BIT, and a binary Text#content poisons every UTF-8
-         * String it is appended to. The DOM is always valid UTF-8 by the
-         * text-input contract, so the tag is the whole difference. */
-        let s = Value::from_raw(rb_sys::rb_utf8_str_new(
-            text as *const c_char,
-            len as core::ffi::c_long,
-        ));
-        lxb_dom_document_destroy_text_noi((*node).owner_document, text);
-        s
     }
+
+    if matches!(node.node_type(), ty::ELEMENT | ty::FRAGMENT) {
+        return element_text(ruby, this.document, node);
+    }
+
+    /* Character data and the other kinds keep the general path. A UTF-8
+     * String, not magnus's str_from_slice: that one tags the String
+     * ASCII-8BIT, and a binary Text#content poisons every UTF-8 String it is
+     * appended to. */
+    node.with_text_content(|text| match text {
+        Some(bytes) => dom_str(bytes),
+        None => ruby.str_new("").as_value(),
+    })
 }
 
 /// The element/fragment half of [`content`], which is the common case and
@@ -394,41 +290,32 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// a fragment - or a build OOM): an iterative pre-order walk that appends each
 /// text/CDATA node's data, stack-safe and skipping Lexbor's intermediate arena
 /// buffer and copy.
-unsafe fn element_text(ruby: &Ruby, document: Value, node: *mut LxbNode) -> Value {
-    use magnus::rb_sys::AsRawValue;
-
-    let parsed = crate::glue::doc::doc_parsed_known(document.as_raw());
-    if !parsed.is_null() {
-        let mut slices: *const BorrowedText = core::ptr::null();
-        let mut n = 0usize;
-        let mut total = 0usize;
-        if parsed_text_slices(parsed, node, &mut slices, &mut n, &mut total) != 0 {
-            return Value::from_raw(ruby_str_from_slices(slices, n, total));
+fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Value {
+    // SAFETY: `document` is the node's live Document, and the slices the index
+    // hands back are copied into the String before anything can change it.
+    unsafe {
+        let parsed = crate::glue::doc::doc_parsed_known(document.as_raw());
+        if !parsed.is_null() {
+            let mut slices: *const BorrowedText = core::ptr::null();
+            let mut n = 0usize;
+            let mut total = 0usize;
+            if parsed_text_slices(parsed, node.as_raw(), &mut slices, &mut n, &mut total) != 0 {
+                return Value::from_raw(ruby_str_from_slices(slices, n, total));
+            }
         }
     }
 
     let str = ruby.str_new("");
-    let mut cur = (*node).first_child;
-    while !cur.is_null() {
-        if (*cur).type_ == ty::TEXT || (*cur).type_ == ty::CDATA {
-            let d = &(*(cur as *mut lxb::lxb_dom_character_data_t)).data;
-            if !d.data.is_null() && d.length != 0 {
-                /* `str` is a live local root, so growing it across this call is
-                 * fine; `d.data` is arena memory, not a Ruby buffer. */
-                rb_sys::rb_str_cat(str.as_raw(), d.data as *const c_char, d.length as _);
+    let mut cur = node.first_child();
+    while let Some(c) = cur {
+        if let Some(data) = c.char_data() {
+            if !data.is_empty() {
+                /* `str` is a live local root, so growing it here is fine; the
+                 * data is arena memory, not a Ruby buffer. */
+                str.cat(data);
             }
         }
-        if !(*cur).first_child.is_null() {
-            cur = (*cur).first_child;
-            continue;
-        }
-        while cur != node && (*cur).next.is_null() {
-            cur = (*cur).parent;
-        }
-        if cur == node {
-            break;
-        }
-        cur = (*cur).next;
+        cur = c.preorder_next(node);
     }
     str.as_value()
 }
@@ -451,12 +338,13 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// answer indistinguishable from the truthful one - so an allocation failure
 /// raises here instead. (The OOM sweep found this: `Attr#parent` degraded from
 /// `"svg"` to `nil` under injection, in the C original as much as here.)
-pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let node = this.node;
-        let document = this.document;
-        if (*node).type_ == ty::ATTRIBUTE {
+pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    let node = this.node();
+    let document = this.document;
+    if node.attr().is_some() {
+        // SAFETY: `document` is the attribute's live Document; the owner the
+        // index answers belongs to it.
+        unsafe {
             let parsed = doc_parsed(document.as_raw())?;
             if parsed.is_null() || !parsed_dom_index_build(parsed) {
                 return Err(Error::new(
@@ -464,108 +352,103 @@ pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
                     "could not build the attribute index (out of memory)",
                 ));
             }
-            let owner = parsed_attr_owner(parsed, node as *mut LxbAttr);
+            let owner = parsed_attr_owner(parsed, node.as_raw() as *mut LxbAttr);
             return Ok(wrap(owner, document));
         }
-        let _ = ruby;
-        Ok(wrap((*node).parent, document))
     }
+    // SAFETY: the parent is in the receiver's tree.
+    Ok(unsafe { wrap_node(node.parent(), document) })
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { wrap((*this.node).next, this.document) }
+    // SAFETY: a sibling is in the receiver's tree.
+    unsafe { wrap_node(this.node().next(), this.document) }
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { wrap((*this.node).prev, this.document) }
+    // SAFETY: a sibling is in the receiver's tree.
+    unsafe { wrap_node(this.node().prev(), this.document) }
+}
+
+/// The first node from `start` along `step` that is an element. `step` is a
+/// generic rather than a `fn` pointer, so each walk inlines its link read.
+#[inline]
+fn first_element<'d>(
+    start: Option<HtmlNode<'d>>,
+    step: impl Fn(HtmlNode<'d>) -> Option<HtmlNode<'d>>,
+) -> Option<HtmlNode<'d>> {
+    let mut n = start;
+    while let Some(x) = n {
+        if x.element().is_some() {
+            return Some(x);
+        }
+        n = step(x);
+    }
+    None
 }
 
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let mut n = (*this.node).next;
-        while !n.is_null() && (*n).type_ != ty::ELEMENT {
-            n = (*n).next;
-        }
-        wrap(n, this.document)
-    }
+    let found = first_element(this.node().next(), HtmlNode::next);
+    // SAFETY: a sibling is in the receiver's tree.
+    unsafe { wrap_node(found, this.document) }
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let mut n = (*this.node).prev;
-        while !n.is_null() && (*n).type_ != ty::ELEMENT {
-            n = (*n).prev;
-        }
-        wrap(n, this.document)
-    }
+    let found = first_element(this.node().prev(), HtmlNode::prev);
+    // SAFETY: a sibling is in the receiver's tree.
+    unsafe { wrap_node(found, this.document) }
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { wrap((*this.node).first_child, this.document) }
+    // SAFETY: a child is in the receiver's tree.
+    unsafe { wrap_node(this.node().first_child(), this.document) }
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let mut c = (*this.node).first_child;
-        while !c.is_null() && (*c).type_ != ty::ELEMENT {
-            c = (*c).next;
-        }
-        wrap(c, this.document)
-    }
+    let found = first_element(this.node().first_child(), HtmlNode::next);
+    // SAFETY: a child is in the receiver's tree.
+    unsafe { wrap_node(found, this.document) }
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let mut c = (*this.node).last_child;
-        while !c.is_null() && (*c).type_ != ty::ELEMENT {
-            c = (*c).prev;
-        }
-        wrap(c, this.document)
-    }
+    let found = first_element(this.node().last_child(), HtmlNode::prev);
+    // SAFETY: a child is in the receiver's tree.
+    unsafe { wrap_node(found, this.document) }
 }
 
-/// Collect a node chain into a NodeSet. The set is a live Ruby object across
-/// every push, so nothing borrowed is held here.
-unsafe fn set_of(
+/// Collect nodes into a NodeSet. The set is a live Ruby object across every
+/// push, so nothing borrowed from Ruby is held here.
+fn set_of<'d>(
     document: Value,
-    start: *mut LxbNode,
-    step: unsafe fn(*mut LxbNode) -> *mut LxbNode,
+    nodes: impl Iterator<Item = HtmlNode<'d>>,
     elements_only: bool,
 ) -> Value {
-    use magnus::rb_sys::AsRawValue;
-    let set = node_set_new(document.as_raw());
-    let mut n = start;
-    while !n.is_null() {
-        if !elements_only || (*n).type_ == ty::ELEMENT {
-            node_set_push(set, n as *mut core::ffi::c_void);
+    // SAFETY: every node is in the tree whose keepalive Document is `document`.
+    unsafe {
+        let set = node_set_new(document.as_raw());
+        for n in nodes {
+            if !elements_only || n.element().is_some() {
+                node_set_push(set, n.as_raw() as *mut core::ffi::c_void);
+            }
         }
-        n = step(n);
+        Value::from_raw(set)
     }
-    Value::from_raw(set)
-}
-
-unsafe fn step_next(n: *mut LxbNode) -> *mut LxbNode {
-    (*n).next
-}
-
-unsafe fn step_parent(n: *mut LxbNode) -> *mut LxbNode {
-    (*n).parent
 }
 
 /// `#children`: every child node, as a NodeSet.
 pub fn children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { set_of(this.document, (*this.node).first_child, step_next, false) }
+    set_of(this.document, this.node().children(), false)
 }
 
 /// `#element_children` / `#elements`: the child elements only.
 pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { set_of(this.document, (*this.node).first_child, step_next, true) }
+    set_of(this.document, this.node().children(), true)
 }
 
 /// `#ancestors`: the ancestor elements, nearest first.
 pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe { set_of(this.document, (*this.node).parent, step_parent, true) }
+    set_of(this.document, this.node().ancestors(), true)
 }
 
 /* ------------------------------------------------------------------ *
@@ -577,103 +460,65 @@ pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// This goes through Lexbor's attribute-name hash, which is keyed by LOCAL name
 /// and lower-cases the lookup - see [`attribute_by_qualified_name`] for the
 /// exact-match sibling and why both exist.
-pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, magnus::Error> {
-    Ok(unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let node = this.node;
-        if (*node).type_ != ty::ELEMENT {
-            return Ok(ruby.qnil().as_value());
-        }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
-        let el = node as *mut LxbElement;
-        if !lxb_dom_element_has_attribute(el, nv.as_ptr() as *const u8, nv.len()) {
-            ruby.qnil().as_value()
-        } else {
-            let mut vlen = 0usize;
-            let val =
-                lxb_dom_element_get_attribute(el, nv.as_ptr() as *const u8, nv.len(), &mut vlen);
-            str_of(val, vlen)
-        }
-    })
+pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let Some(el) = this.node().element() else {
+        return Ok(nil(ruby));
+    };
+    // SAFETY: the guard keeps the name String reachable, and its bytes are only
+    // read before the answer String is built.
+    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    let name = unsafe { nv.bytes() };
+    if !el.has_attribute(name) {
+        return Ok(nil(ruby));
+    }
+    let value = el.get_attribute(name).unwrap_or(&[]);
+    Ok(dom_str(value))
 }
 
 /// `node.key?(name)`.
-pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, magnus::Error> {
-    Ok(unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let node = this.node;
-        if (*node).type_ != ty::ELEMENT {
-            return Ok(ruby.qfalse().as_value());
-        }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
-        let has = lxb_dom_element_has_attribute(
-            node as *mut LxbElement,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-        );
-        if has {
-            ruby.qtrue().as_value()
-        } else {
-            ruby.qfalse().as_value()
-        }
+pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let Some(el) = this.node().element() else {
+        return Ok(ruby.qfalse().as_value());
+    };
+    // SAFETY: the guard keeps the name String reachable while its bytes are read.
+    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    let has = el.has_attribute(unsafe { nv.bytes() });
+    Ok(if has {
+        ruby.qtrue().as_value()
+    } else {
+        ruby.qfalse().as_value()
     })
-}
-
-/// Walk an element's own attribute list. Empty for a non-element.
-unsafe fn each_attr(node: *mut LxbNode, mut f: impl FnMut(*mut LxbAttr) -> bool) {
-    if (*node).type_ != ty::ELEMENT {
-        return;
-    }
-    let mut at = lxb_dom_element_first_attribute_noi(node as *mut LxbElement);
-    while !at.is_null() {
-        if !f(at) {
-            return;
-        }
-        at = lxb_dom_element_next_attribute_noi(at);
-    }
 }
 
 /// `node.keys` -> the attribute names, in document order.
 pub fn keys(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let ary = ruby.ary_new();
-        each_attr(this.node, |at| {
-            let mut len = 0usize;
-            let p = lxb_dom_attr_qualified_name(at, &mut len);
-            let _ = ary.push(str_of(p, len));
-            true
-        });
-        ary.as_value()
+    let ary = ruby.ary_new();
+    if let Some(el) = this.node().element() {
+        for at in el.attrs() {
+            let _ = ary.push(dom_str(at.qualified_name()));
+        }
     }
+    ary.as_value()
 }
 
 /// `node.values` -> the attribute values, in document order.
 pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let ary: RArray = ruby.ary_new();
-        each_attr(this.node, |at| {
-            let mut len = 0usize;
-            let p = lxb_dom_attr_value_noi(at, &mut len);
-            let _ = ary.push(str_of(p, len));
-            true
-        });
-        ary.as_value()
+    let ary = ruby.ary_new();
+    if let Some(el) = this.node().element() {
+        for at in el.attrs() {
+            let _ = ary.push(dom_str(at.value()));
+        }
     }
+    ary.as_value()
 }
 
 /// `element.attribute_nodes` -> a NodeSet of Attribute nodes, in document order.
 /// Empty for a non-element. These wrap the bare `lxb_dom_attr_t`; navigating
 /// back with `Attribute#parent` goes through the compat attr->owner index.
 pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let set = node_set_new(this.document.as_raw());
-        each_attr(this.node, |at| {
-            node_set_push(set, at as *mut core::ffi::c_void);
-            true
-        });
-        Value::from_raw(set)
-    }
+    let node = this.node();
+    let attrs = node.element().into_iter().flat_map(|el| el.attrs());
+    set_of(this.document, attrs.map(|at| at.node()), false)
 }
 
 /// `element.attribute_by_qualified_name(name)` -> the Attr whose QUALIFIED name
@@ -693,32 +538,21 @@ pub fn attribute_by_qualified_name(
     ruby: &Ruby,
     this: super::HtmlSelf,
     rb_name: Value,
-) -> Result<Value, magnus::Error> {
-    Ok(unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let node = this.node;
-        if (*node).type_ != ty::ELEMENT {
-            return Ok(ruby.qnil().as_value());
-        }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
-        let want = nv.bytes();
-
-        let mut found: *mut LxbAttr = core::ptr::null_mut();
-        each_attr(node, |at| {
-            let mut len = 0usize;
-            let q = lxb_dom_attr_qualified_name(at, &mut len);
-            if !q.is_null() && core::slice::from_raw_parts(q, len) == want {
-                found = at;
-                return false;
-            }
-            true
-        });
-        /* `want` is not read past here; wrapping allocates, so it happens after. */
-
-        if found.is_null() {
-            return Ok(ruby.qnil().as_value());
-        }
-        wrap(found as *mut LxbNode, this.document)
+) -> Result<Value, Error> {
+    let Some(el) = this.node().element() else {
+        return Ok(nil(ruby));
+    };
+    // SAFETY: the guard keeps the name String reachable while its bytes are read.
+    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
+    let name = unsafe { nv.bytes() };
+    let found = el.attrs().find(|at| at.qualified_name() == name);
+    /* The name is not read past here; wrapping allocates, so it happens after. */
+    drop(nv);
+    Ok(match found {
+        // SAFETY: the attribute is in the receiver's tree.
+        Some(at) => unsafe { wrap_node(Some(at.node()), this.document) },
+        None => nil(ruby),
     })
 }
 
@@ -733,48 +567,28 @@ pub fn attribute_value_by_qualified_name(
     ruby: &Ruby,
     this: super::HtmlSelf,
     rb_name: Value,
-) -> Result<Value, magnus::Error> {
-    Ok(unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let node = this.node;
-        if (*node).type_ != ty::ELEMENT {
-            return Ok(ruby.qnil().as_value());
-        }
-        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
-        let want = nv.bytes();
-
-        let mut val: *const u8 = core::ptr::null();
-        let mut vlen = 0usize;
-        let mut hit = false;
-        each_attr(node, |at| {
-            let mut len = 0usize;
-            let q = lxb_dom_attr_qualified_name(at, &mut len);
-            if !q.is_null() && core::slice::from_raw_parts(q, len) == want {
-                val = lxb_dom_attr_value_noi(at, &mut vlen);
-                hit = true;
-                return false;
-            }
-            true
-        });
-
-        if !hit {
-            return Ok(ruby.qnil().as_value());
-        }
-        str_of(val, vlen)
-    })
+) -> Result<Value, Error> {
+    let Some(el) = this.node().element() else {
+        return Ok(nil(ruby));
+    };
+    // SAFETY: the guard keeps the name String reachable while its bytes are read.
+    let nv = unsafe { ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())? };
+    // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
+    let name = unsafe { nv.bytes() };
+    let value = el
+        .attrs()
+        .find(|at| at.qualified_name() == name)
+        .map(|at| at.value());
+    drop(nv);
+    Ok(value.map_or_else(|| nil(ruby), dom_str))
 }
 
 /// `attr.value`. For a non-attribute node this falls back to text content,
 /// matching the loose Nokogiri-ish meaning of `#value`.
 pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        let node = this.node;
-        if (*node).type_ != ty::ATTRIBUTE {
-            return content(ruby, this);
-        }
-        let mut len = 0usize;
-        let p = lxb_dom_attr_value_noi(node as *mut LxbAttr, &mut len);
-        str_of(p, len)
+    match this.node().attr() {
+        Some(at) => dom_str(at.value()),
+        None => content(ruby, this),
     }
 }
 
@@ -785,33 +599,21 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let node = this.node;
+    // SAFETY: `this.document` is the node's live Document.
+    let n = unsafe {
         let p = crate::glue::doc::doc_parsed_known(this.document.as_raw());
-        let n = parsed_node_line(p, node);
-        if n == 0 {
-            ruby.qnil().as_value()
-        } else {
-            ruby.integer_from_u64(n as u64).as_value()
-        }
+        parsed_node_line(p, this.node().as_raw())
+    };
+    if n == 0 {
+        nil(ruby)
+    } else {
+        ruby.integer_from_u64(n as u64).as_value()
     }
 }
 
 /* ------------------------------------------------------------------ *
  * document order                                                     *
  * ------------------------------------------------------------------ */
-
-/// Distance from `n` to the root (a node with no parent).
-unsafe fn depth(n: *mut LxbNode) -> usize {
-    let mut d = 0usize;
-    let mut p = (*n).parent;
-    while !p.is_null() {
-        d += 1;
-        p = (*p).parent;
-    }
-    d
-}
 
 /// `#<=>`: document (pre-order) position, so an array of nodes can be sorted.
 ///
@@ -820,80 +622,81 @@ unsafe fn depth(n: *mut LxbNode) -> usize {
 /// attributes are not in the `first_child`/`next` chain, so their order is not
 /// defined here. Included via Comparable, which supplies `<`, `>`, `between?`
 /// and the rest.
-pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Value, magnus::Error> {
-    Ok(unsafe {
-        use magnus::rb_sys::AsRawValue;
-        let nil = ruby.qnil().as_value();
+pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Value, Error> {
+    let nil = nil(ruby);
+    let int = |i: i64| ruby.integer_from_i64(i).as_value();
 
-        if !is_kind_of(other, CLASS_NODE) {
+    /* A non-node, or an XML node - never order-comparable to an HTML one, and
+     * asking is how we avoid arg_node's TypeError below. */
+    // SAFETY: the class VALUEs are set once at init; a Node has a keepalive
+    // Document.
+    let comparable = unsafe {
+        is_kind_of(other, CLASS_NODE)
+            && !is_kind_of(
+                Value::from_raw(crate::glue::abi::keepalive_document(other.as_raw())?),
+                CLASS_XML_DOCUMENT,
+            )
+    };
+    if !comparable {
+        return Ok(nil);
+    }
+
+    let a = this.node();
+    let b = arg_node(&other)?;
+    if a == b {
+        return Ok(int(0));
+    }
+    if a.attr().is_some() || b.attr().is_some() || !a.same_document(b) {
+        return Ok(nil);
+    }
+
+    let (da, db) = (a.ancestors().count(), b.ancestors().count());
+    let (mut pa, mut pb) = (a, b);
+
+    /* Raise the deeper node to the other's depth; landing ON the other makes
+     * that other an ancestor, which comes first in pre-order. */
+    if da > db {
+        for _ in 0..(da - db) {
+            let Some(p) = pa.parent() else { return Ok(nil) };
+            pa = p;
+        }
+        if pa == b {
+            return Ok(int(1));
+        }
+    } else if db > da {
+        for _ in 0..(db - da) {
+            let Some(p) = pb.parent() else { return Ok(nil) };
+            pb = p;
+        }
+        if pb == a {
+            return Ok(int(-1));
+        }
+    }
+
+    /* Climb both until they share a parent (the lowest common ancestor). A
+     * missing parent on either side means different trees, or two roots. */
+    let parent = loop {
+        let (Some(qa), Some(qb)) = (pa.parent(), pb.parent()) else {
             return Ok(nil);
+        };
+        if qa == qb {
+            break qa;
         }
-        /* An XML node is never order-comparable to an HTML one, and asking is
-         * how we avoid unwrap's TypeError below. */
-        if is_kind_of(
-            Value::from_raw(crate::glue::abi::keepalive_document(other.as_raw())?),
-            CLASS_XML_DOCUMENT,
-        ) {
-            return Ok(nil);
-        }
+        pa = qa;
+        pb = qb;
+    };
 
-        let a = this.node;
-        let b = unwrap(other)?;
-        if a == b {
-            return Ok(ruby.integer_from_i64(0).as_value());
+    /* pa and pb are distinct siblings: earlier in the child list is first. A
+     * wide parent makes this the hot loop of a sort, so it is written out. */
+    let mut c = parent.first_child();
+    while let Some(x) = c {
+        if x == pa {
+            return Ok(int(-1));
         }
-        if (*a).type_ == ty::ATTRIBUTE
-            || (*b).type_ == ty::ATTRIBUTE
-            || (*a).owner_document != (*b).owner_document
-        {
-            return Ok(nil);
+        if x == pb {
+            return Ok(int(1));
         }
-
-        let (da, db) = (depth(a), depth(b));
-        let mut pa = a;
-        let mut pb = b;
-
-        /* Raise the deeper node to the other's depth; landing ON the other
-         * makes that other an ancestor, which comes first in pre-order. */
-        if da > db {
-            for _ in 0..(da - db) {
-                pa = (*pa).parent;
-            }
-            if pa == b {
-                return Ok(ruby.integer_from_i64(1).as_value());
-            }
-        } else if db > da {
-            for _ in 0..(db - da) {
-                pb = (*pb).parent;
-            }
-            if pb == a {
-                return Ok(ruby.integer_from_i64(-1).as_value());
-            }
-        }
-
-        /* Climb both until they share a parent (the lowest common ancestor). */
-        while (*pa).parent != (*pb).parent {
-            if (*pa).parent.is_null() || (*pb).parent.is_null() {
-                return Ok(nil); /* different trees */
-            }
-            pa = (*pa).parent;
-            pb = (*pb).parent;
-        }
-        if (*pa).parent.is_null() {
-            return Ok(nil); /* two distinct roots */
-        }
-
-        /* pa and pb are distinct siblings: earlier in the child list is first. */
-        let mut c = (*(*pa).parent).first_child;
-        while !c.is_null() {
-            if c == pa {
-                return Ok(ruby.integer_from_i64(-1).as_value());
-            }
-            if c == pb {
-                return Ok(ruby.integer_from_i64(1).as_value());
-            }
-            c = (*c).next;
-        }
-        nil /* unreachable for a well-formed tree */
-    })
+        c = x.next();
+    }
+    Ok(nil) /* unreachable for a well-formed tree */
 }

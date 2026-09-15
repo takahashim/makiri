@@ -28,6 +28,7 @@ pub mod read;
 pub mod mutate;
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use magnus::rb_sys::FromRawValue;
 use magnus::{method, prelude::*, RClass, Ruby, Value};
@@ -39,6 +40,7 @@ use super::abi::{
 };
 /* Only the mutation half registers on the Document class. */
 use super::abi::CLASS_HTML_DOCUMENT;
+use crate::dom_adapter::html::HtmlNode;
 
 /* ------------------------------------------------------------------ *
  * the DOM node types                                                 *
@@ -85,14 +87,15 @@ pub use crate::init::CLASS_HTML_TEXT;
 /// the generic `Makiri::HTML::Node` rather than being misclassified as an
 /// Element.
 pub unsafe extern "C" fn wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE {
-    if node.is_null() {
+    let Some(handle) = HtmlNode::from_raw(node) else {
         return rb_sys::Qnil as VALUE;
-    }
-    if (*node).type_ == ty::DOCUMENT {
+    };
+    let node_type = handle.node_type();
+    if node_type == ty::DOCUMENT {
         return document;
     }
 
-    let klass = match (*node).type_ {
+    let klass = match node_type {
         ty::ELEMENT => CLASS_HTML_ELEMENT,
         ty::ATTRIBUTE => CLASS_HTML_ATTR,
         ty::TEXT => CLASS_HTML_TEXT,
@@ -150,7 +153,7 @@ pub unsafe fn unwrap(v: Value) -> Result<*mut LxbNode, magnus::Error> {
 #[derive(Clone, Copy)]
 pub struct HtmlSelf {
     pub value: Value,
-    pub node: *mut LxbNode,
+    raw: NonNull<LxbNode>,
     /// The keepalive Document (the receiver itself for a Document).
     pub document: Value,
 }
@@ -160,15 +163,67 @@ impl magnus::TryConvert for HtmlSelf {
         // SAFETY: magnus converts the receiver under the GVL.
         unsafe {
             use magnus::rb_sys::AsRawValue;
-            let node = unwrap(value)?;
+            let raw = NonNull::new(unwrap(value)?).ok_or_else(uninitialized)?;
             let document = Value::from_raw(super::abi::keepalive_document(value.as_raw())?);
             Ok(HtmlSelf {
                 value,
-                node,
+                raw,
                 document,
             })
         }
     }
+}
+
+fn uninitialized() -> magnus::Error {
+    magnus::Error::new(
+        magnus::Ruby::get()
+            .expect("under the GVL")
+            .exception_type_error(),
+        "uninitialized HTML node",
+    )
+}
+
+impl HtmlSelf {
+    /// The receiver's node, for the length of this method call.
+    ///
+    /// The receiver is a method argument, which Ruby keeps reachable for the
+    /// call, and it keeps its document alive; the borrow of `self` ends the
+    /// handle with the call. Like a magnus `Value`, an `HtmlSelf` is only ever
+    /// held on the stack of the method it was converted for.
+    #[inline]
+    pub fn node(&self) -> HtmlNode<'_> {
+        // SAFETY: as above; the document is not restructured by a reader, and
+        // a mutator refuses while an XPath handler could be reading it.
+        unsafe { HtmlNode::from_raw(self.raw.as_ptr()) }.expect("non-null by construction")
+    }
+
+    /// The receiver's node as Lexbor's handle, for the mutators.
+    #[inline]
+    pub fn raw(&self) -> *mut LxbNode {
+        self.raw.as_ptr()
+    }
+}
+
+/// An HTML node argument, for the length of the borrow of `v`.
+///
+/// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
+/// The same reasoning as [`HtmlSelf::node`]: `v` is a method argument on the
+/// stack, which keeps its node's document alive.
+pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, magnus::Error> {
+    // SAFETY: as above.
+    unsafe { HtmlNode::from_raw(unwrap(*v)?) }.ok_or_else(uninitialized)
+}
+
+/// [`wrap`] for an optional handle: nil for None.
+///
+/// # Safety
+/// `document` must be the keepalive Document of `node`'s tree.
+#[inline]
+pub unsafe fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
+    wrap(
+        node.map_or(core::ptr::null_mut(), HtmlNode::as_raw),
+        document,
+    )
 }
 
 pub unsafe fn wrap(node: *mut LxbNode, document: Value) -> Value {

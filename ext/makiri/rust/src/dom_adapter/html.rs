@@ -14,6 +14,8 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_int, c_void};
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 use crate::cbuf::{buf_append, Buf, BUF_OK};
 use crate::lexbor_abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
@@ -226,4 +228,384 @@ pub unsafe fn append_own_text(node: *mut LxbNode, buf: *mut Buf) -> c_int {
     let st = buf_append(buf, t as *const c_void, tlen);
     lxb::lxb_dom_document_destroy_text_noi((*node).owner_document, t);
     st
+}
+
+/* ------------------------------------------------------------------ *
+ * typed handles                                                      *
+ * ------------------------------------------------------------------ */
+
+/* The readers above take raw handles and state their contract per call. The
+ * handles below state it once: holding one IS the proof that the node is live
+ * and that its document is neither freed nor restructured while `'doc` lasts.
+ * `HtmlNode::from_raw` is the only way to make one without already holding
+ * one, so it is the single place that contract is asserted, and every method
+ * is safe.
+ *
+ * "Not restructured" admits one write: building the attribute->owner index
+ * backfills an attribute's `parent` from null to its element. That is why the
+ * methods read fields through the raw pointer, place by place, rather than
+ * holding a `&LxbNode` - no reference to a Lexbor struct outlives the read. */
+
+/* The node types the handles branch on, generated. */
+pub const TYPE_ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
+pub const TYPE_ATTRIBUTE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE;
+pub const TYPE_TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
+pub const TYPE_CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
+pub const TYPE_PI: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION;
+pub const TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
+pub const TYPE_DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+
+/// `LXB_TAG_TEMPLATE`.
+pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
+
+/// A node of a live Lexbor document, borrowed for `'doc`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct HtmlNode<'doc> {
+    raw: NonNull<LxbNode>,
+    _doc: PhantomData<&'doc LxbNode>,
+}
+
+/// An element node.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct HtmlElement<'doc>(HtmlNode<'doc>);
+
+/// An attribute node.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct HtmlAttr<'doc>(HtmlNode<'doc>);
+
+impl<'doc> HtmlNode<'doc> {
+    /// # Safety
+    /// `raw` must be null or a live node whose document outlives `'doc` and is
+    /// not restructured (see the section note) while `'doc` lasts.
+    #[inline]
+    pub unsafe fn from_raw(raw: *mut LxbNode) -> Option<Self> {
+        NonNull::new(raw).map(|raw| HtmlNode {
+            raw,
+            _doc: PhantomData,
+        })
+    }
+
+    /// A link read out of a node held for `'doc` leads to a node of the same
+    /// tree, which lives as long.
+    #[inline]
+    fn link(p: *mut LxbNode) -> Option<Self> {
+        // SAFETY: `p` is a field of a node live for 'doc; Lexbor's tree links
+        // stay within the document, and a detached node's links are null.
+        unsafe { Self::from_raw(p) }
+    }
+
+    #[inline]
+    pub fn as_raw(self) -> *mut LxbNode {
+        self.raw.as_ptr()
+    }
+
+    /// The node's type (`lxb_dom_node_type_t`).
+    #[inline]
+    pub fn node_type(self) -> u32 {
+        // SAFETY: a live node (the handle's contract).
+        unsafe { (*self.as_raw()).type_ }
+    }
+
+    #[inline]
+    pub fn parent(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).parent })
+    }
+    #[inline]
+    pub fn first_child(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).first_child })
+    }
+    #[inline]
+    pub fn last_child(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).last_child })
+    }
+    #[inline]
+    pub fn next(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).next })
+    }
+    #[inline]
+    pub fn prev(self) -> Option<Self> {
+        // SAFETY: as `node_type`.
+        Self::link(unsafe { (*self.as_raw()).prev })
+    }
+
+    /// The children, first to last.
+    pub fn children(self) -> Siblings<'doc> {
+        Siblings(self.first_child())
+    }
+    /// The ancestors, nearest first.
+    pub fn ancestors(self) -> Ancestors<'doc> {
+        Ancestors(self.parent())
+    }
+
+    /// The node after this one in a pre-order walk of `root`'s subtree, or
+    /// None past the last. Climbs by parent links rather than recursing, so an
+    /// adversarially deep tree cannot exhaust the stack; a node outside
+    /// `root`'s subtree ends the walk instead of running off the tree.
+    pub fn preorder_next(self, root: Self) -> Option<Self> {
+        if let Some(c) = self.first_child() {
+            return Some(c);
+        }
+        let mut n = self;
+        loop {
+            if n == root {
+                return None;
+            }
+            if let Some(s) = n.next() {
+                return Some(s);
+            }
+            n = n.parent()?;
+        }
+    }
+
+    #[inline]
+    pub fn element(self) -> Option<HtmlElement<'doc>> {
+        (self.node_type() == TYPE_ELEMENT).then_some(HtmlElement(self))
+    }
+    #[inline]
+    pub fn attr(self) -> Option<HtmlAttr<'doc>> {
+        (self.node_type() == TYPE_ATTRIBUTE).then_some(HtmlAttr(self))
+    }
+
+    /// Lexbor's node name (DOM `nodeName`).
+    pub fn node_name(self) -> &'doc [u8] {
+        // SAFETY: a live node; the name is interned in its document.
+        unsafe { named_mut(self.as_raw(), lxb::lxb_dom_node_name) }
+    }
+
+    /// The interned namespace id; [`NS_UNDEF`] for none.
+    #[inline]
+    pub fn ns_id(self) -> usize {
+        // SAFETY: as `node_type`.
+        unsafe { (*self.as_raw()).ns }
+    }
+
+    /// The interned tag id (`local_name`).
+    #[inline]
+    pub fn tag_id(self) -> usize {
+        // SAFETY: as `node_type`.
+        unsafe { (*self.as_raw()).local_name }
+    }
+
+    /// The namespace URI, or None when the node has none.
+    pub fn ns_uri(self) -> Option<&'doc [u8]> {
+        // SAFETY: a live node; the URI is interned in its document.
+        let uri = unsafe { ns_uri(self.as_raw()) };
+        (!uri.is_empty()).then_some(uri)
+    }
+
+    /// Whether both nodes belong to the same document.
+    pub fn same_document(self, other: HtmlNode<'_>) -> bool {
+        // SAFETY: both are live nodes.
+        unsafe { (*self.as_raw()).owner_document == (*other.as_raw()).owner_document }
+    }
+
+    /// A processing instruction's target, or None for any other kind.
+    pub fn pi_target(self) -> Option<&'doc [u8]> {
+        (self.node_type() == TYPE_PI).then(|| {
+            // SAFETY: a live PI node, which Lexbor allocates as one.
+            unsafe {
+                named_mut(
+                    self.as_raw() as *mut lxb::lxb_dom_processing_instruction_t,
+                    lxb::lxb_dom_processing_instruction_target_noi,
+                )
+            }
+        })
+    }
+
+    /// A doctype's public id, or None for any other kind or an empty id.
+    pub fn doctype_public_id(self) -> Option<&'doc [u8]> {
+        self.doctype_id(lxb::lxb_dom_document_type_public_id_noi)
+    }
+    /// A doctype's system id, or None for any other kind or an empty id.
+    pub fn doctype_system_id(self) -> Option<&'doc [u8]> {
+        self.doctype_id(lxb::lxb_dom_document_type_system_id_noi)
+    }
+    fn doctype_id(
+        self,
+        f: unsafe extern "C" fn(*mut lxb::lxb_dom_document_type_t, *mut usize) -> *const u8,
+    ) -> Option<&'doc [u8]> {
+        if self.node_type() != TYPE_DOCTYPE {
+            return None;
+        }
+        // SAFETY: a live doctype node, which Lexbor allocates as one.
+        let id = unsafe { named_mut(self.as_raw() as *mut lxb::lxb_dom_document_type_t, f) };
+        (!id.is_empty()).then_some(id)
+    }
+
+    /// A text or CDATA node's data, or None for any other kind.
+    pub fn char_data(self) -> Option<&'doc [u8]> {
+        if !matches!(self.node_type(), TYPE_TEXT | TYPE_CDATA) {
+            return None;
+        }
+        // SAFETY: a live character-data node, which Lexbor allocates as one.
+        unsafe {
+            let cd = self.as_raw() as *mut lxb::lxb_dom_character_data_t;
+            Some(seen((*cd).data.data, (*cd).data.length))
+        }
+    }
+
+    /// Lexbor's text content of this node, lent to `f` - None when Lexbor has
+    /// none - and freed once `f` returns.
+    pub fn with_text_content<R>(self, f: impl FnOnce(Option<&[u8]>) -> R) -> R {
+        let mut len = 0usize;
+        // SAFETY: a live node.
+        let t = unsafe { lxb::lxb_dom_node_text_content(self.as_raw(), &mut len) };
+        if t.is_null() {
+            return f(None);
+        }
+        // SAFETY: Lexbor handed back `len` bytes it owns until destroyed below.
+        let r = f(Some(unsafe { core::slice::from_raw_parts(t, len) }));
+        // SAFETY: `t` came from this node's document and is released once.
+        unsafe { lxb::lxb_dom_document_destroy_text_noi((*self.as_raw()).owner_document, t) };
+        r
+    }
+
+    /// An HTML `<template>` element's contents fragment, or None.
+    pub fn template_content(self) -> Option<HtmlNode<'doc>> {
+        if self.node_type() != TYPE_ELEMENT
+            || self.tag_id() != TAG_TEMPLATE
+            || self.ns_id() != NS_HTML
+        {
+            return None;
+        }
+        // SAFETY: an HTML-namespace `template` element is allocated as a
+        // template element; its contents fragment is owned by the document.
+        Self::link(unsafe {
+            (*(self.as_raw() as *mut lxb::lxb_html_template_element_t)).content as *mut LxbNode
+        })
+    }
+
+    /// A document node's root element, or None.
+    pub fn document_root(self) -> Option<HtmlNode<'doc>> {
+        if self.node_type() != TYPE_DOCUMENT {
+            return None;
+        }
+        // SAFETY: a live document node, which leads its document struct.
+        Self::link(unsafe { lxb::lxb_dom_document_root(self.as_raw() as *mut LxbDoc) })
+    }
+}
+
+impl<'doc> HtmlElement<'doc> {
+    #[inline]
+    pub fn node(self) -> HtmlNode<'doc> {
+        self.0
+    }
+    #[inline]
+    fn raw(self) -> *mut LxbElement {
+        self.0.as_raw() as *mut LxbElement
+    }
+
+    pub fn qualified_name(self) -> &'doc [u8] {
+        // SAFETY: a live element.
+        unsafe { named(self.raw(), lxb::lxb_dom_element_qualified_name) }
+    }
+    pub fn local_name(self) -> &'doc [u8] {
+        // SAFETY: a live element.
+        unsafe { named_mut(self.raw(), lxb::lxb_dom_element_local_name) }
+    }
+    /// DOM `tagName`, or None when Lexbor has none.
+    pub fn tag_name(self) -> Option<&'doc [u8]> {
+        let mut len = 0usize;
+        // SAFETY: a live element.
+        let p = unsafe { lxb::lxb_dom_element_tag_name(self.raw(), &mut len) };
+        // SAFETY: Lexbor's interned name, `len` bytes.
+        (!p.is_null()).then(|| unsafe { seen(p, len) })
+    }
+
+    /// The attributes, in document order.
+    pub fn attrs(self) -> Attrs<'doc> {
+        // SAFETY: a live element.
+        let first = unsafe { lxb::lxb_dom_element_first_attribute_noi(self.raw()) };
+        Attrs(HtmlNode::link(first as *mut LxbNode).map(HtmlAttr))
+    }
+
+    /// Lexbor's attribute lookup (by local name, lower-cased for HTML).
+    pub fn has_attribute(self, name: &[u8]) -> bool {
+        // SAFETY: a live element; `name` is only read.
+        unsafe { lxb::lxb_dom_element_has_attribute(self.raw(), name.as_ptr(), name.len()) }
+    }
+    /// The value [`has_attribute`](Self::has_attribute) finds, or None.
+    pub fn get_attribute(self, name: &[u8]) -> Option<&'doc [u8]> {
+        // SAFETY: a live element; `name` is only read.
+        unsafe { get_attribute(self.0.as_raw(), name) }
+    }
+}
+
+impl<'doc> HtmlAttr<'doc> {
+    #[inline]
+    pub fn node(self) -> HtmlNode<'doc> {
+        self.0
+    }
+    #[inline]
+    fn raw(self) -> *mut LxbAttr {
+        self.0.as_raw() as *mut LxbAttr
+    }
+
+    pub fn qualified_name(self) -> &'doc [u8] {
+        // SAFETY: a live attribute.
+        unsafe { named(self.raw(), lxb::lxb_dom_attr_qualified_name) }
+    }
+    pub fn local_name(self) -> &'doc [u8] {
+        // SAFETY: a live attribute.
+        unsafe { named(self.raw(), lxb::lxb_dom_attr_local_name) }
+    }
+    pub fn value(self) -> &'doc [u8] {
+        // SAFETY: a live attribute; the value is only changed by a mutator,
+        // which the handle's contract rules out for 'doc.
+        unsafe { named_mut(self.raw(), lxb::lxb_dom_attr_value_noi) }
+    }
+    /// The element the attribute is set on, when Lexbor has linked it.
+    pub fn owner(self) -> Option<HtmlElement<'doc>> {
+        // SAFETY: a live attribute.
+        let owner = unsafe { (*self.raw()).owner };
+        HtmlNode::link(owner as *mut LxbNode).map(HtmlElement)
+    }
+}
+
+/// [`HtmlNode::children`].
+pub struct Siblings<'doc>(Option<HtmlNode<'doc>>);
+
+impl<'doc> Iterator for Siblings<'doc> {
+    type Item = HtmlNode<'doc>;
+    #[inline]
+    fn next(&mut self) -> Option<HtmlNode<'doc>> {
+        let n = self.0?;
+        self.0 = n.next();
+        Some(n)
+    }
+}
+
+/// [`HtmlNode::ancestors`].
+pub struct Ancestors<'doc>(Option<HtmlNode<'doc>>);
+
+impl<'doc> Iterator for Ancestors<'doc> {
+    type Item = HtmlNode<'doc>;
+    #[inline]
+    fn next(&mut self) -> Option<HtmlNode<'doc>> {
+        let n = self.0?;
+        self.0 = n.parent();
+        Some(n)
+    }
+}
+
+/// [`HtmlElement::attrs`].
+pub struct Attrs<'doc>(Option<HtmlAttr<'doc>>);
+
+impl<'doc> Iterator for Attrs<'doc> {
+    type Item = HtmlAttr<'doc>;
+    #[inline]
+    fn next(&mut self) -> Option<HtmlAttr<'doc>> {
+        let a = self.0?;
+        // SAFETY: a live attribute.
+        let next = unsafe { lxb::lxb_dom_element_next_attribute_noi(a.raw()) };
+        self.0 = HtmlNode::link(next as *mut LxbNode).map(HtmlAttr);
+        Some(a)
+    }
 }

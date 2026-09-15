@@ -45,7 +45,6 @@ RB_SYS_COUNTS = {
   "glue/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 3,
   "glue/html_node/mutate.rs" => 2,
-  "glue/html_node/read.rs" => 2,
   "glue/node.rs" => 7,
   "glue/node_set.rs" => 19,
   "glue/xml.rs" => 4,

@@ -77,7 +77,7 @@ unsafe fn unwrap_mutable(this: super::HtmlSelf) -> Result<*mut LxbNode, Error> {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
     crate::glue::doc::ensure_document_mutable(this.document.as_raw())?;
-    Ok(this.node)
+    Ok(this.raw())
 }
 
 /// An HTML node argument. Routes through the HTML unwrap so an XML node is
