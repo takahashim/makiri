@@ -46,8 +46,7 @@ pub const NTYPE_NOTATION: u32 = 12;
 /// every mutation until the evaluate returns (`glue::doc::DocumentEvaluation`).
 ///
 /// One entry is unsafe, and it is the boundary with the glue: reading an erased
-/// node token - the context node, a handler's answer, an index bucket - back as
-/// a node.
+/// node token - the context node, a handler's answer - back as a node.
 pub trait Dom<'d>: Copy {
     /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:
     /// `id()` is the empty node-set in XML (an ID is DTD-declared, and DTDs are
@@ -55,7 +54,7 @@ pub trait Dom<'d>: Copy {
     /// and the CSS-lowered of-type hooks exist only for XML.
     const IS_XML: bool;
 
-    type Node: Copy + Eq;
+    type Node: Copy + Eq + 'd;
 
     /// An attribute node, as its own type: holding one is the proof it is an
     /// attribute, so the attribute readers take it without checking again.
@@ -138,14 +137,12 @@ pub trait Dom<'d>: Copy {
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
-    ) -> Option<Bucket<'d>>;
+    ) -> Option<Bucket<'d, Self::Node>>;
 }
 
 /// What `Dom::name_bucket` found: the elements, in document order, and whether
-/// each still has to be re-checked against the name test before it counts. The
-/// index hands back `void *` (it is shared with the glue), so the handles are
-/// erased here too and converted one at a time.
-pub struct Bucket<'a> {
-    pub nodes: &'a [*mut c_void],
+/// each still has to be re-checked against the name test before it counts.
+pub struct Bucket<'a, N> {
+    pub nodes: &'a [N],
     pub recheck: bool,
 }

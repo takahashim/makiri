@@ -6,6 +6,8 @@
 //! the caller walks. Keeping them out of the step driver keeps that "never
 //! changes the answer, only the cost" property readable.
 
+#![forbid(unsafe_code)]
+
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
@@ -52,11 +54,8 @@ pub fn try_descendant_index<'e, D: Dom<'e>>(
         Some(bk) => bk,
         None => return Ok(false),
     };
-    for &p in bucket.nodes {
+    for &n in bucket.nodes {
         budget.charge_op()?;
-        // SAFETY: the element index was built from this document, and a mutation
-        // drops it, so every token in a bucket names one of its nodes.
-        let n = unsafe { doc.node(p) };
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, step.axis, b) {
             continue;
         }
@@ -165,10 +164,8 @@ pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
     let mask = cap - 1;
     let budget = &mut ev.budget;
 
-    for &p in bucket.nodes {
+    for &e in bucket.nodes {
         budget.charge_op()?;
-        // SAFETY: as in `try_descendant_index`.
-        let e = unsafe { doc.node(p) };
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, s1.axis, &b) {
             continue;
         }

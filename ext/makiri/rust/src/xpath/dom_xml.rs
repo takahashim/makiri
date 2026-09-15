@@ -172,7 +172,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
         local: &[u8],
         ns_uri: Option<&[u8]>,
         lax: bool,
-    ) -> Option<Bucket<'d>> {
+    ) -> Option<Bucket<'d, xml::NodeId>> {
         let uri = match ns_uri {
             Some(u) => u,
             None if lax => return None,
@@ -184,13 +184,8 @@ impl<'d> Dom<'d> for &'d xml::Document {
         /* Built lazily and cached on the document; None on OOM, and the caller
          * walks. */
         let idx = crate::xml::index::get(self)?;
-        let ids = crate::xml::index::lookup(idx, local, uri);
-        // SAFETY: `NodeId` is one transparent word, exactly the token the engine
-        // carries, and the slice lives as long as the document's index.
-        let nodes =
-            unsafe { core::slice::from_raw_parts(ids.as_ptr() as *const *mut c_void, ids.len()) };
         Some(Bucket {
-            nodes,
+            nodes: crate::xml::index::lookup(idx, local, uri),
             recheck: false,
         })
     }

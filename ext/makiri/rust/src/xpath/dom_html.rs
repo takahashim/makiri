@@ -150,7 +150,7 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
         local: &[u8],
         ns_uri: Option<&[u8]>,
         _lax: bool,
-    ) -> Option<Bucket<'d>> {
+    ) -> Option<Bucket<'d, HtmlNode<'d>>> {
         if ns_uri.is_some() {
             return None;
         }
@@ -170,12 +170,13 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
                 return None;
             }
             let mut cnt = 0usize;
-            let nodes = crate::dom_adapter::dom_index::element_index_tag(index, tag, &mut cnt)
-                as *const *mut c_void;
-            let nodes: &'d [*mut c_void] = if nodes.is_null() || cnt == 0 {
+            let nodes = crate::dom_adapter::dom_index::element_index_tag(index, tag, &mut cnt);
+            /* `HtmlNode` is a transparent non-null node pointer, and the index
+             * holds only live elements of this document, none null. */
+            let nodes: &'d [HtmlNode<'d>] = if nodes.is_null() || cnt == 0 {
                 &[]
             } else {
-                core::slice::from_raw_parts(nodes, cnt)
+                core::slice::from_raw_parts(nodes as *const HtmlNode<'d>, cnt)
             };
             Some(Bucket {
                 nodes,
