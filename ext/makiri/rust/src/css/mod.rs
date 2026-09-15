@@ -32,7 +32,7 @@ mod parser;
 use core::ffi::{c_char, c_int};
 
 use crate::xpath::own::Ast;
-use crate::xpath_abi::{ErrSink, Error, Limits, Node, Reported, VerifiedText, OP_UNION};
+use crate::xpath_abi::{budget_sink, Budget, ErrSink, Node, Reported, VerifiedText, OP_UNION};
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -61,7 +61,7 @@ pub const ERR_INTERNAL: c_int = crate::xpath_abi::XP_ERR_INTERNAL;
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.
 pub(crate) struct Build {
-    pub limits: *mut Limits,
+    pub budget: *mut Budget,
     pub err: ErrSink,
     pub ns: *const CssNs,
 }
@@ -87,7 +87,7 @@ impl Build {
 /// Compile `selector` into a freshly allocated AST, which the caller frees with
 /// `node_free`.
 ///
-/// `Err` with `*err` filled: SYNTAX for a malformed selector or an
+/// `Err` with the budget's error slot filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
 /// `ns` may be NULL, in which case a bare selector matches no namespace.
@@ -97,10 +97,10 @@ impl Build {
 pub(crate) unsafe fn compile_owned(
     selector: VerifiedText,
     ns: *const CssNs,
-    limits: *mut Limits,
-    err: ErrSink,
+    budget: *mut Budget,
 ) -> Result<Ast, Reported> {
-    let b = Build { limits, err, ns };
+    let err = budget_sink(budget);
+    let b = Build { budget, err, ns };
 
     let parsed = match parser::parse(selector) {
         Ok(p) => p,
@@ -135,9 +135,7 @@ pub(crate) unsafe fn compile_owned(
 pub unsafe fn compile_raw(
     selector: VerifiedText,
     ns: *const CssNs,
-    limits: *mut Limits,
-    err: *mut Error,
+    budget: *mut Budget,
 ) -> *mut Node {
-    compile_owned(selector, ns, limits, ErrSink::from_raw(err))
-        .map_or(core::ptr::null_mut(), Ast::into_raw)
+    compile_owned(selector, ns, budget).map_or(core::ptr::null_mut(), Ast::into_raw)
 }

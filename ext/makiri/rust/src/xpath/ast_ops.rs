@@ -22,13 +22,10 @@ use core::ptr::NonNull;
 /// which is what keeps `node_free` able to take apart whatever either built.
 ///
 /// # Safety
-/// `limits` must be live, and `err`'s slot too.
-pub(crate) unsafe fn node_alloc(
-    limits: *mut Limits,
-    err: ErrSink,
-    kind: u32,
-) -> Result<Ast, Reported> {
-    limit_ast_node(limits, err)?;
+/// `budget` must be live.
+pub(crate) unsafe fn node_alloc(budget: *mut Budget, kind: u32) -> Result<Ast, Reported> {
+    let err = budget_sink(budget);
+    limit_ast_node(budget)?;
     let Some(n) = NonNull::new(mkr_callocarray(1, core::mem::size_of::<Node>()) as *mut Node)
     else {
         return Err(err_setf!(

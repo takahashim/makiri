@@ -1,10 +1,11 @@
-//! The per-evaluate budgets (mkr_xpath.c's limits section).
+//! The per-evaluate budgets (mkr_xpath.c's limits section), and the error slot a
+//! run reports into, owned together as a [`Budget`].
 //!
-//! Every overrun is MKR_XPATH_ERR_LIMIT - never a truncated or empty result.
-//! The counters live in the context, and the glue reads the struct directly (it
+//! Every overrun is XP_ERR_LIMIT - never a truncated or empty result. The
+//! counters live in the context, and the glue reads the struct directly (it
 //! resets `ast_nodes` before each parse), so its fields are public.
 
-/* Each function here takes the `*mut Limits` the caller already holds, so the
+/* Each function here takes the `*mut Budget` the caller already holds, so the
  * contract is the pointer's, stated once. */
 #![allow(clippy::missing_safety_doc)]
 
@@ -26,6 +27,49 @@ use crate::err_setf;
  * provably below its cap at the add, and keeps the budget identical: the C
  * increments then rejects `> max`, which admits exactly `max` ops, and so does
  * this. */
+
+/// A run's budgets and the slot its failure is written to: what every charged
+/// or reported step needs, owned together by the context, the parser or the CSS
+/// lowering doing the run.
+pub struct Budget {
+    pub limits: Limits,
+    pub err: Error,
+}
+
+impl Budget {
+    /// Default budgets, and no error yet.
+    pub fn new() -> Budget {
+        let mut b = Budget {
+            // SAFETY: every field is an integer; init_defaults sets them all.
+            limits: unsafe { core::mem::zeroed() },
+            err: Error::new(),
+        };
+        unsafe { xpath_limits_init_defaults(&mut b.limits) };
+        b
+    }
+
+    /// The failure written so far, leaving the slot empty for the next run.
+    pub fn take_error(&mut self) -> Error {
+        core::mem::take(&mut self.err)
+    }
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Budget::new()
+    }
+}
+
+/// Where `b` reports: its error slot, or nowhere for a null budget - which is
+/// also unbounded, the pairing the best-effort paths want.
+#[inline]
+pub unsafe fn budget_sink(b: *mut Budget) -> ErrSink {
+    if b.is_null() {
+        ErrSink::silent()
+    } else {
+        ErrSink::new(&mut (*b).err)
+    }
+}
 
 #[cold]
 #[inline(never)]
@@ -110,7 +154,8 @@ pub unsafe fn xpath_limits_init_defaults(l: *mut Limits) {
     };
 }
 
-pub unsafe fn limit_ast_node(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
+pub unsafe fn limit_ast_node(b: *mut Budget) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     if (*l).ast_nodes >= (*l).max_ast_nodes {
         return Err(over_ast_nodes(l, err));
     }
@@ -129,7 +174,8 @@ pub unsafe fn limit_ast_node(l: *mut Limits, err: ErrSink) -> Result<(), Reporte
 /// Kept deliberately uniform, with no bulk variant: a bulk charge would only
 /// suit run-to-completion loops and would wrongly reject an early-exiting query
 /// if misapplied, trading one foot-gun-free rule for a conditional one.
-pub unsafe fn limit_eval_op(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
+pub unsafe fn limit_eval_op(b: *mut Budget) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     if (*l).eval_ops >= (*l).max_eval_ops {
         return Err(over_eval_ops(l, err));
     }
@@ -137,7 +183,8 @@ pub unsafe fn limit_eval_op(l: *mut Limits, err: ErrSink) -> Result<(), Reported
     Ok(())
 }
 
-pub unsafe fn limit_recurse_enter(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
+pub unsafe fn limit_recurse_enter(b: *mut Budget) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     if (*l).recursion_depth >= (*l).max_recursion_depth {
         /* The C increments, reports, then backs the failed entry out; comparing
          * first never counts it in the first place. */
@@ -147,7 +194,8 @@ pub unsafe fn limit_recurse_enter(l: *mut Limits, err: ErrSink) -> Result<(), Re
     Ok(())
 }
 
-pub unsafe fn limit_recurse_leave(l: *mut Limits) {
+pub unsafe fn limit_recurse_leave(b: *mut Budget) {
+    let l = &raw mut (*b).limits;
     if (*l).recursion_depth > 0 {
         (*l).recursion_depth -= 1;
     }
@@ -162,46 +210,31 @@ unsafe fn check(value: usize, max: usize, noun: &str, err: ErrSink) -> Result<()
     Ok(())
 }
 
-pub unsafe fn limit_check_nodeset_size(
-    l: *mut Limits,
-    new_count: usize,
-    err: ErrSink,
-) -> Result<(), Reported> {
+pub unsafe fn limit_check_nodeset_size(b: *mut Budget, new_count: usize) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     check(new_count, (*l).max_nodeset_size, "nodeset size", err)
 }
 
-pub unsafe fn limit_check_string_bytes(
-    l: *mut Limits,
-    bytes: usize,
-    err: ErrSink,
-) -> Result<(), Reported> {
+pub unsafe fn limit_check_string_bytes(b: *mut Budget, bytes: usize) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     if bytes > (*l).max_string_bytes {
         return Err(over_string_bytes((*l).max_string_bytes, err));
     }
     Ok(())
 }
 
-pub unsafe fn limit_check_steps(
-    l: *mut Limits,
-    nsteps: usize,
-    err: ErrSink,
-) -> Result<(), Reported> {
+pub unsafe fn limit_check_steps(b: *mut Budget, nsteps: usize) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     check(nsteps, (*l).max_steps, "path step count", err)
 }
 
-pub unsafe fn limit_check_predicates(
-    l: *mut Limits,
-    npreds: usize,
-    err: ErrSink,
-) -> Result<(), Reported> {
+pub unsafe fn limit_check_predicates(b: *mut Budget, npreds: usize) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     check(npreds, (*l).max_predicates, "predicate count", err)
 }
 
-pub unsafe fn limit_check_func_args(
-    l: *mut Limits,
-    nargs: usize,
-    err: ErrSink,
-) -> Result<(), Reported> {
+pub unsafe fn limit_check_func_args(b: *mut Budget, nargs: usize) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     check(
         nargs,
         (*l).max_function_args,
@@ -210,11 +243,8 @@ pub unsafe fn limit_check_func_args(
     )
 }
 
-pub unsafe fn limit_check_expr_bytes(
-    l: *mut Limits,
-    bytes: usize,
-    err: ErrSink,
-) -> Result<(), Reported> {
+pub unsafe fn limit_check_expr_bytes(b: *mut Budget, bytes: usize) -> Result<(), Reported> {
+    let (l, err) = (&raw mut (*b).limits, budget_sink(b));
     if bytes > (*l).max_expr_bytes {
         return Err(over_expr_bytes(bytes, (*l).max_expr_bytes, err));
     }

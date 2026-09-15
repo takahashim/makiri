@@ -15,14 +15,14 @@ pub unsafe fn nodeset_init(ns: *mut NodeSet) {
 pub unsafe fn nodeset_push(
     ns: *mut NodeSet,
     node: *mut c_void,
-    limits: *mut Limits,
-    err: ErrSink,
+    budget: *mut Budget,
 ) -> Result<(), Reported> {
+    let err = budget_sink(budget);
     if node.is_null() {
         return Ok(());
     }
-    if !limits.is_null() {
-        limit_check_nodeset_size(limits, (*ns).count + 1, err)?;
+    if !budget.is_null() {
+        limit_check_nodeset_size(budget, (*ns).count + 1)?;
     }
     if mkr_grow_reserve(
         &raw mut (*ns).items as *mut *mut c_void,

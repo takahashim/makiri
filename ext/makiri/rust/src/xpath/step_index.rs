@@ -44,7 +44,6 @@ pub unsafe fn try_descendant_index<D: Dom>(
     context_set: &Set,
     result: &mut Set,
     b: &Bindings<D>,
-    err: ErrSink,
 ) -> Result<bool, Reported> {
     let test = &raw const (*step).test;
     if (*step).axis != AXIS_DESCENDANT
@@ -66,14 +65,14 @@ pub unsafe fn try_descendant_index<D: Dom>(
         Some(bk) => bk,
         None => return Ok(false),
     };
-    let limits = ctx_limits(b.ctx);
+    let budget = ctx_budget(b.ctx);
     for &p in bucket.nodes {
-        limit_eval_op(limits, err)?;
+        limit_eval_op(budget)?;
         let n = D::from_void(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, (*step).axis, b) {
             continue;
         }
-        result.push::<D>(n, limits, err)?;
+        result.push::<D>(n, budget)?;
     }
     Ok(true)
 }
@@ -136,8 +135,8 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     s1: *const Step,
     seed: &Set,
     result: &mut Set,
-    err: ErrSink,
 ) -> Result<bool, Reported> {
+    let err = budget_sink(ctx_budget(ctx));
     let doc = D::doc_from_void(ctx_document(ctx));
     let need = match nth_shape::<D>(ctx, s0, s1, seed) {
         Some(n) => n,
@@ -181,10 +180,10 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     }
     tab.resize(cap, (ptr::null(), 0));
     let mask = cap - 1;
-    let limits = ctx_limits(ctx);
+    let budget = ctx_budget(ctx);
 
     for &p in bucket.nodes {
-        limit_eval_op(limits, err)?;
+        limit_eval_op(budget)?;
         let e = D::from_void(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, (*s1).axis, &b) {
             continue;
@@ -197,7 +196,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
         tab[h].0 = par;
         tab[h].1 += 1;
         if tab[h].1 == need {
-            result.push::<D>(e, limits, err)?;
+            result.push::<D>(e, budget)?;
         }
     }
     Ok(true)

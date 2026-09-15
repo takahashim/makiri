@@ -59,7 +59,7 @@ pub struct Context {
     ns: Vec<NsEntry>,
     vars: Vec<VarEntry>,
 
-    limits: Limits,
+    budget: Budget,
 
     /* The custom function resolver, set by the Ruby handler bridge for the
      * duration of one evaluate() and cleared after. */
@@ -159,7 +159,7 @@ pub unsafe fn xpath_context_new(
         node,
         ns: Vec::new(),
         vars: Vec::new(),
-        limits: core::mem::zeroed(),
+        budget: Budget::new(),
         user_data: ptr::null_mut(),
         func_resolver: None,
         str_cache: core::mem::zeroed(),
@@ -170,7 +170,6 @@ pub unsafe fn xpath_context_new(
     }) else {
         return ptr::null_mut();
     };
-    super::limits::xpath_limits_init_defaults(&mut ctx.limits);
     str_cache_init(&mut ctx.str_cache);
     doc_order_index_init(&mut ctx.order_index);
     Box::into_raw(ctx)
@@ -347,7 +346,15 @@ pub unsafe fn ctx_limits(ctx: *mut Context) -> *mut Limits {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
-        &raw mut (*ctx).limits
+        &raw mut (*ctx).budget.limits
+    }
+}
+
+pub unsafe fn ctx_budget(ctx: *mut Context) -> *mut Budget {
+    if ctx.is_null() {
+        ptr::null_mut()
+    } else {
+        &raw mut (*ctx).budget
     }
 }
 
@@ -449,8 +456,8 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
 
     /* Per-eval counters reset. ast_nodes is NOT reset: the AST is already built
      * and its budget was checked at parse time. */
-    (*ctx).limits.eval_ops = 0;
-    (*ctx).limits.recursion_depth = 0;
+    (*ctx).budget.limits.eval_ops = 0;
+    (*ctx).budget.limits.recursion_depth = 0;
 
     /* String-value cache snapshot. A nested eval - a handler calling back into
      * XPath on the same context - sees the outer entries, but anything it adds
@@ -462,9 +469,9 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
     let order_was_built = (*ctx).order_index.built != 0;
 
     let result = match (*ctx).backend {
-        Backend::Xml => eval_ast_xml(handle(ctx), ast, ErrSink::new(&mut err)),
+        Backend::Xml => eval_ast_xml(handle(ctx), ast),
         #[cfg(feature = "lexbor")]
-        Backend::Html { .. } => eval_ast_html(handle(ctx), ast, ErrSink::new(&mut err)),
+        Backend::Html { .. } => eval_ast_html(handle(ctx), ast),
     };
     str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
     if !order_was_built && (*ctx).order_index.built != 0 {
@@ -477,7 +484,7 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
 
     match result {
         Ok(v) => Ok(XPathValue::from_owned(v)),
-        Err(_) => Err(err),
+        Err(_) => Err((*ctx).budget.take_error()),
     }
 }
 
@@ -502,27 +509,24 @@ pub unsafe fn evaluate_first(ctx: *mut Context, ast: *mut Node) -> Result<XPathV
      * full evaluator (which resets these itself). The not-recognised fallback
      * resets them again; the walk only runs for recognised shapes, so nothing
      * double-counts. */
-    (*ctx).limits.eval_ops = 0;
-    (*ctx).limits.recursion_depth = 0;
+    (*ctx).budget.limits.eval_ops = 0;
+    (*ctx).budget.limits.recursion_depth = 0;
 
     let matched = match (*ctx).backend {
-        Backend::Xml => try_first_match_xml(handle(ctx), ast, ErrSink::new(&mut err)),
+        Backend::Xml => try_first_match_xml(handle(ctx), ast),
         #[cfg(feature = "lexbor")]
-        Backend::Html { .. } => try_first_match_html(handle(ctx), ast, ErrSink::new(&mut err)),
+        Backend::Html { .. } => try_first_match_html(handle(ctx), ast),
     };
     match matched {
         /* Op budget exceeded while walking: fail closed rather than falling back
          * to the full evaluator, which would hit the same wall. */
-        Err(_) => Err(err),
+        Err(_) => Err((*ctx).budget.take_error()),
         /* A recognised first-match shape: a 0-or-1-node node-set, without
          * building or sorting the full descendant set. */
         Ok(Some(node)) => {
             let mut set = Set::new();
-            if !node.is_null()
-                && nodeset_push(set.as_mut(), node, ptr::null_mut(), ErrSink::new(&mut err))
-                    .is_err()
-            {
-                return Err(err);
+            if !node.is_null() && nodeset_push(set.as_mut(), node, ctx_budget(ctx)).is_err() {
+                return Err((*ctx).budget.take_error());
             }
             Ok(XPathValue::NodeSet(set))
         }

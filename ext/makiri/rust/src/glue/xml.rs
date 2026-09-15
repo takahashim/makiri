@@ -32,7 +32,7 @@ use rb_sys::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath::own::Ast as OwnedAst;
-use crate::xpath_abi::{ErrSink, Error as XPathError, XPathValue, XP_ERR_SYNTAX};
+use crate::xpath_abi::{ctx_budget, XPathValue, XP_ERR_SYNTAX};
 
 use super::abi::error_class;
 
@@ -473,15 +473,13 @@ fn xpath_run(
          * allocates Ruby objects and may run a GC, and the borrowed bytes must
          * not be live across one. */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
-        let mut error = XPathError::new();
-        let limits = ctx_limits(ctx.as_ptr());
-        (*limits).ast_nodes = 0;
-        let parsed =
-            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error));
+        let budget = ctx_budget(ctx.as_ptr());
+        (*budget).limits.ast_nodes = 0;
+        let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
         /* No borrowed bytes across the exception's allocation. */
         drop(ev);
         let Ok(ast) = parsed else {
-            return Err(xpath_error(&error));
+            return Err(xpath_error(&(*budget).take_error()));
         };
         run_ast(ruby, ctx, ast, first_only, document)
     }
@@ -530,19 +528,14 @@ unsafe fn css_compile_or_raise(
         default_prefix: css_default_prefix(rb_ns),
     };
     let sv = mkr_ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr());
-    let mut error = XPathError::new();
-    let limits = ctx_limits(ctx);
-    (*limits).ast_nodes = 0;
-    let ast = crate::css::compile_owned(
-        unsafe { sv.as_verified() },
-        &cns as *const _,
-        limits,
-        ErrSink::new(&mut error),
-    );
+    let budget = ctx_budget(ctx);
+    (*budget).limits.ast_nodes = 0;
+    let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, budget);
     drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);
     }
+    let error = (*budget).take_error();
 
     if error.status == XP_ERR_SYNTAX {
         let msg = error.message().map_or_else(

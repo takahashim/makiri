@@ -487,7 +487,8 @@ pub use crate::xpath::limits::limit_recurse_leave;
 /// with no C ABI between them that is two types, so this IS the one type.
 pub use crate::xpath::ctx::Context;
 pub use crate::xpath::ctx::XPathValue;
-pub use crate::xpath::ctx::{ctx_backend, Backend};
+pub use crate::xpath::ctx::{ctx_backend, ctx_budget, Backend};
+pub use crate::xpath::limits::{budget_sink, Budget};
 
 /// `mkr_buf_t` - a growable byte buffer with a byte ceiling. Declared in
 /// `crate::cbuf`, which is where the C layout lives now that the glue writes
@@ -543,13 +544,12 @@ pub struct ResolverCall<'a> {
 ///
 /// `Ok(Some(value))` answers the call; `Ok(None)` means there is no such
 /// function, which the evaluator reports; `Err` is the function's own failure,
-/// already written to `err`.
+/// already written to the context's budget.
 pub type FuncResolver = Option<
     unsafe fn(
         user_data: *mut c_void,
         ctx: *mut Context,
         call: &ResolverCall<'_>,
-        err: ErrSink,
     ) -> Result<Option<crate::xpath::own::OwnedVal>, Reported>,
 >;
 

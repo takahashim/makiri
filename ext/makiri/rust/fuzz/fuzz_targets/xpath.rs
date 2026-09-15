@@ -37,13 +37,11 @@ fuzz_target!(|data: &[u8]| {
         // Compile-time budgets, tightened so a hostile expression fails fast
         // instead of burning fuzzer time on a pathological AST. Same numbers
         // the C harness used.
-        let mut limits: Limits = core::mem::zeroed();
-        xpath_limits_init_defaults(&mut limits);
-        limits.max_ast_nodes = 10_000;
-        limits.max_expr_bytes = 16 * 1024;
+        let mut budget = Budget::new();
+        budget.limits.max_ast_nodes = 10_000;
+        budget.limits.max_expr_bytes = 16 * 1024;
 
-        let mut err = XPathError::new();
-        let ast = parse_raw(text, &mut limits, &mut err);
+        let ast = parse_raw(text, &mut budget);
         if ast.is_null() {
             return;
         }

@@ -21,7 +21,7 @@ pub use makiri::xpath::ctx::{
 pub use makiri::xpath::ctx::evaluate;
 pub use makiri::xpath::limits::xpath_limits_init_defaults;
 pub use makiri::xpath::parse::parse_raw;
-pub use makiri::xpath_abi::{Context, Error as XPathError, Limits, XPathValue};
+pub use makiri::xpath_abi::{ctx_budget, Budget, Context, Error as XPathError, Limits, XPathValue};
 
 /// A context over `doc`, rooted at its document node and pinned to the XML
 /// engine - the same arguments the glue's `build_ctx` passes. `None` when the

@@ -61,8 +61,7 @@ fuzz_target!(|data: &[u8]| {
         }
 
         if let Some(text) = Expr::new(expr_bytes).as_ref().and_then(Expr::text) {
-            let mut err = XPathError::new();
-            let ast = parse_raw(text, l, &mut err);
+            let ast = parse_raw(text, ctx_budget(ctx));
             if !ast.is_null() {
                 let _ = evaluate(ctx, ast);
                 node_free(ast);

@@ -28,7 +28,7 @@ fn borrowed(s: &[u8]) -> Option<VerifiedText> {
 
 /// A zeroed node of `kind`, charged against the AST budget.
 pub(crate) unsafe fn node(b: &Build, kind: u32) -> Built {
-    node_alloc(b.limits, b.err, kind)
+    node_alloc(b.budget, kind)
 }
 
 /// An owned copy of `s` for an AST text slot, or `Err` with `*err` set.

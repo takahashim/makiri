@@ -398,13 +398,8 @@ impl Set {
     }
     /// # Safety
     /// `n` must be a live handle of the document being evaluated.
-    pub unsafe fn push<D: Dom>(
-        &mut self,
-        n: D::Node,
-        limits: *mut Limits,
-        err: ErrSink,
-    ) -> Result<(), Reported> {
-        nodeset_push(self.as_mut(), D::to_void(n), limits, err)
+    pub unsafe fn push<D: Dom>(&mut self, n: D::Node, budget: *mut Budget) -> Result<(), Reported> {
+        nodeset_push(self.as_mut(), D::to_void(n), budget)
     }
     /// # Safety
     /// `i` must be below `count()`, and the set must hold this backend's handles.

@@ -149,8 +149,8 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
 
 /// Build `node`'s XPath string-value - the one node string-value builder.
 ///
-/// With a reporting `err` the build is bounded by `limits.max_string_bytes` and
-/// any failure returns `Err` with the slot set. With a silent one it is
+/// With a budget the build is bounded by its `max_string_bytes` and any failure
+/// returns `Err` with its slot set. With a null one it is unbounded and
 /// best-effort: a failure yields an owned "" and returns `Ok`, because the sole
 /// such caller is the NUMBER coercion, and a node whose text overran the ceiling
 /// was never a valid number - "" coerces to NaN, which is the right answer
@@ -161,13 +161,13 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
 pub unsafe fn node_to_owned_text<D: Dom>(
     doc: D::Doc,
     node: D::Node,
-    limits: *mut Limits,
-    err: ErrSink,
+    budget: *mut Budget,
 ) -> Result<OwnedText, Reported> {
-    let mut buf = Buf::new(if limits.is_null() {
+    let err = budget_sink(budget);
+    let mut buf = Buf::new(if budget.is_null() {
         0
     } else {
-        (*limits).max_string_bytes
+        (*budget).limits.max_string_bytes
     });
     let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
@@ -189,7 +189,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
                     err,
                     XP_ERR_LIMIT,
                     "string size limit exceeded ({} bytes) while building node string-value",
-                    (*limits).max_string_bytes
+                    (*budget).limits.max_string_bytes
                 )
             } else {
                 err_setf!(err, XP_ERR_OOM, "out of memory building node string-value")
@@ -281,17 +281,17 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
 pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     doc: D::Doc,
     v: *const Val,
-    limits: *mut Limits,
-    err: ErrSink,
+    budget: *mut Budget,
 ) -> Result<OwnedText, Reported> {
+    let err = budget_sink(budget);
     if v.is_null() {
         return owned_copy(b"", err, c"out of memory converting value to string");
     }
     match (*v).get() {
         ValRef::String(s) => {
             let text = owned_bytes(s);
-            if !limits.is_null() {
-                limit_check_string_bytes(limits, text.len(), err)?;
+            if !budget.is_null() {
+                limit_check_string_bytes(budget, text.len())?;
             }
             owned_copy(text, err, c"out of memory copying string value")
         }
@@ -327,7 +327,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err)
+            node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), budget)
         }
     }
 }
@@ -340,14 +340,13 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
 pub unsafe fn val_to_number_or_fail<D: Dom>(
     doc: D::Doc,
     v: *const Val,
-    limits: *mut Limits,
-    err: ErrSink,
+    budget: *mut Budget,
 ) -> Result<f64, Reported> {
     if let Some(ns) = (*v).as_nodeset() {
         if ns.count == 0 {
             return Ok(f64::NAN);
         }
-        let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err)?;
+        let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), budget)?;
         return Ok(bytes_to_number(text.as_slice()));
     }
     Ok(val_to_number_unchecked::<D>(doc, v))
@@ -371,7 +370,7 @@ pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
 unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText {
-    node_to_owned_text::<D>(doc, node, ptr::null_mut(), ErrSink::silent()).unwrap_or_default()
+    node_to_owned_text::<D>(doc, node, ptr::null_mut()).unwrap_or_default()
 }
 
 /* ---------- the string-value cache's node-keyed insert ---------- */
@@ -386,8 +385,8 @@ unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText
 pub unsafe fn cached_node_text<'a, D: Dom>(
     ctx: *mut Context,
     node: D::Node,
-    err: ErrSink,
 ) -> Result<&'a [u8], Reported> {
+    let err = budget_sink(ctx_budget(ctx));
     let doc = D::doc_from_void(ctx_document(ctx));
     let c = ctx_str_cache(ctx);
     if c.is_null() {
@@ -412,10 +411,10 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         }
     }
 
-    let limits = ctx_limits(ctx);
+    let budget = ctx_budget(ctx);
     /* Held in its guard until the cache takes it, so every refusal below frees
      * it on the way out. */
-    let mut text = node_to_owned_text::<D>(doc, node, limits, err)?;
+    let mut text = node_to_owned_text::<D>(doc, node, budget)?;
 
     if mkr_grow_reserve(
         &raw mut (*c).entries as *mut *mut c_void,
@@ -443,7 +442,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             ));
         }
     };
-    limit_check_string_bytes(limits, new_total, err)?;
+    limit_check_string_bytes(budget, new_total)?;
 
     /* Grow the index FIRST. It rebuilds only from the already-committed
      * entries, so every fallible step happens while the slot at [count] is

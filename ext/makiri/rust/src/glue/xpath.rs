@@ -43,11 +43,11 @@ use rb_sys::VALUE;
 
 use crate::xpath::ctx::{Backend, OwnedContext};
 use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
+use crate::xpath_abi::{budget_sink, ctx_budget, Reported, ResolverCall};
 use crate::xpath_abi::{
     ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot, Val, ValRef, VerifiedText,
     XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
-use crate::xpath_abi::{Reported, ResolverCall};
 
 use super::abi::{
     error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,
@@ -444,8 +444,7 @@ unsafe fn push_result_node(
         return false;
     }
     let n = mkr_node_raw(rb_node);
-    let mut ierr = XPathError::new();
-    if nodeset_push(set, n, ctx_limits(ctx), ErrSink::new(&mut ierr)).is_err() {
+    if nodeset_push(set, n, ctx_budget(ctx)).is_err() {
         err.set("out of memory building handler result");
         return false;
     }
@@ -624,8 +623,8 @@ unsafe fn handler_resolver(
     user_data: *mut c_void,
     ctx: *mut Ctx,
     call: &ResolverCall<'_>,
-    err: ErrSink,
 ) -> Result<Option<OwnedVal>, Reported> {
+    let err = budget_sink(ctx_budget(ctx));
     if user_data.is_null() {
         return Ok(None);
     }
@@ -715,21 +714,15 @@ unsafe fn handler_resolver(
 /// The compiled AST for `expr`, parsing and caching it on first use.
 ///
 /// Returns the raw view plus an owner when the AST could not be cached.
-unsafe fn cached_ast(
-    d: &mut Inner,
-    expr: RubyText,
-    err: &mut XPathError,
-) -> Option<(*mut Ast, Option<OwnedAst>)> {
+unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*mut Ast, Option<OwnedAst>)> {
     let key = expr.bytes();
     if let Some(ast) = d.cache.0.get(key) {
         return Some((ast.as_raw(), None));
     }
 
-    let limits = ctx_limits(d.ctx.as_ptr());
-    (*limits).ast_nodes = 0;
-    let ast =
-        crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, limits, ErrSink::new(err))
-            .ok()?;
+    let budget = ctx_budget(d.ctx.as_ptr());
+    (*budget).limits.ast_nodes = 0;
+    let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, budget).ok()?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         let raw = ast.as_raw();
         return Some((raw, Some(ast)));
@@ -740,7 +733,7 @@ unsafe fn cached_ast(
     };
     if d.cache.0.mkr_insert(owned_key, ast).is_err() {
         crate::xpath::msg::err_set(
-            ErrSink::new(err),
+            budget_sink(budget),
             XP_ERR_OOM,
             c"out of memory caching XPath expression",
         );
@@ -801,15 +794,14 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
          * this context would then report "already in use". */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
         let mut d = rb_self.borrow()?;
-        let mut error = XPathError::new();
-        let parsed = cached_ast(&mut d, ev, &mut error);
+        let parsed = cached_ast(&mut d, ev);
         let ctx = d.ctx.as_ptr();
         /* Release the borrow before building the exception: that allocates, and
          * a NoMemoryError there would longjmp past the RefMut. */
         drop(d);
         match parsed {
             Some((ast, owned)) => (ctx, ast, owned),
-            None => return Err(xpath_error(&error)),
+            None => return Err(xpath_error(&(*ctx_budget(ctx)).take_error())),
         }
     };
 
@@ -908,15 +900,13 @@ fn node_xpath_run(
         let ctx = context_for(rb_self, document)?;
         ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
 
-        let mut error = XPathError::new();
-        let limits = ctx_limits(ctx.as_ptr());
-        (*limits).ast_nodes = 0;
-        let parsed =
-            crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error));
+        let budget = ctx_budget(ctx.as_ptr());
+        (*budget).limits.ast_nodes = 0;
+        let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
         /* No borrowed bytes across the exception's allocation. */
         drop(ev);
         let Ok(ast) = parsed else {
-            return Err(xpath_error(&error));
+            return Err(xpath_error(&(*budget).take_error()));
         };
         let bridge = Bridge {
             handler: handler.as_raw(),

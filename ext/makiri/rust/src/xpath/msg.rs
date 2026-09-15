@@ -173,12 +173,6 @@ impl ErrSink {
         ErrSink(core::ptr::null_mut())
     }
 
-    /// # Safety
-    /// `slot` must be null or a live error slot for every use of the sink.
-    pub unsafe fn from_raw(slot: *mut Error) -> Self {
-        ErrSink(slot)
-    }
-
     pub fn is_silent(self) -> bool {
         self.0.is_null()
     }

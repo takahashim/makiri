@@ -22,10 +22,10 @@ use core::ptr;
 struct Parser<'a> {
     lx: Lexer<'a>,
     err: ErrSink,
-    limits: *mut Limits,
+    budget: *mut Budget,
 }
 
-/// A parse step: the value, or proof its error was written to `err`.
+/// A parse step: the value, or proof its error was written to the budget.
 type PResult<T = ()> = Result<T, Reported>;
 
 /// Report a lexer failure as an `mkr_xpath_error_t`. A free function because
@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
 
     fn new_node(&mut self, kind: u32) -> PResult<Ast> {
         // SAFETY: the parser's limits and error slot are live for the parse.
-        unsafe { node_alloc(self.limits, self.err, kind) }
+        unsafe { node_alloc(self.budget, kind) }
     }
 
     /// Copy `text` into an owned-text AST slot. A failure must be propagated: a
@@ -132,7 +132,7 @@ impl<'a> Parser<'a> {
 
     /// Charge the step budget, then append. A step that does not land is freed.
     fn push_step(&mut self, steps: &mut StepArray, s: OwnedStep) -> PResult {
-        unsafe { limit_check_steps(self.limits, steps.len() + 1, self.err)? };
+        unsafe { limit_check_steps(self.budget, steps.len() + 1)? };
         if steps.try_push(s).is_err() {
             return Err(err_setf!(
                 self.err,
@@ -221,7 +221,7 @@ impl<'a> Parser<'a> {
 
     fn parse_predicates(&mut self, preds: &mut NodeArray) -> PResult {
         while self.kind() == Tok::LBracket {
-            unsafe { limit_check_predicates(self.limits, preds.len() + 1, self.err)? };
+            unsafe { limit_check_predicates(self.budget, preds.len() + 1)? };
             self.advance()?;
             let e = self.parse_expr()?;
             self.eat(Tok::RBracket, "']' to close predicate")?;
@@ -381,7 +381,7 @@ impl<'a> Parser<'a> {
         let mut args = NodeArray::new();
         if self.kind() != Tok::RParen {
             loop {
-                unsafe { limit_check_func_args(self.limits, args.len() + 1, self.err)? };
+                unsafe { limit_check_func_args(self.budget, args.len() + 1)? };
                 let arg = self.parse_expr()?;
                 if args.try_push(arg).is_err() {
                     return Err(err_setf!(
@@ -607,9 +607,9 @@ impl<'a> Parser<'a> {
 
     fn parse_expr(&mut self) -> PResult<Ast> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
-        unsafe { limit_recurse_enter(self.limits, self.err)? };
+        unsafe { limit_recurse_enter(self.budget)? };
         let n = self.parse_binary_level(BINOP_LEVELS.len() - 1);
-        unsafe { limit_recurse_leave(self.limits) };
+        unsafe { limit_recurse_leave(self.budget) };
         n
     }
 }
@@ -655,31 +655,24 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 
 /* ---- entry ---- */
 
-/// Parse an expression into a Rust-owned compiled AST; `Err` with `*err`
-/// filled on failure.
+/// Parse an expression into a Rust-owned compiled AST; `Err` with the budget's
+/// error slot filled on failure.
 ///
 /// `expr` is a verified text: NUL-free, valid UTF-8.
 ///
 /// # Safety
-/// `limits` must be null or live, and `err`'s slot live.
-pub(crate) unsafe fn parse_owned(
-    expr: VerifiedText,
-    limits: *mut Limits,
-    err: ErrSink,
-) -> Result<Ast, Reported> {
-    if limits.is_null() {
-        return Err(err_setf!(
-            err,
-            XP_ERR_INTERNAL,
-            "parse_raw: limits required"
-        ));
+/// `budget` must be null or live.
+pub(crate) unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Ast, Reported> {
+    let err = budget_sink(budget);
+    if budget.is_null() {
+        return Err(err_setf!(err, XP_ERR_INTERNAL, "parse: budget required"));
     }
-    limit_check_expr_bytes(limits, expr.len(), err)?;
+    limit_check_expr_bytes(budget, expr.len())?;
 
     let src: &[u8] = unsafe { expr.as_bytes() };
 
     let lx = Lexer::new(src).map_err(|e| lex_err(err, e))?;
-    let mut p = Parser { lx, err, limits };
+    let mut p = Parser { lx, err, budget };
 
     let root = p.parse_expr()?;
     if p.kind() != Tok::Eof {
@@ -697,11 +690,11 @@ pub(crate) unsafe fn parse_owned(
     Ok(root)
 }
 
-/// Parse an expression into a compiled AST; NULL on error with `*err` filled.
+/// Parse an expression into a compiled AST; NULL on error with the budget's
+/// error slot filled.
 ///
 /// # Safety
-/// As [`parse_owned`], with `err` null or a writable error slot; the caller
-/// frees the result with `node_free`.
-pub unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
-    parse_owned(expr, limits, ErrSink::from_raw(err)).map_or(ptr::null_mut(), Ast::into_raw)
+/// As [`parse_owned`]; the caller frees the result with `node_free`.
+pub unsafe fn parse_raw(expr: VerifiedText, budget: *mut Budget) -> *mut Node {
+    parse_owned(expr, budget).map_or(ptr::null_mut(), Ast::into_raw)
 }
