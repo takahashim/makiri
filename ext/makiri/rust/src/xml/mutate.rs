@@ -32,31 +32,27 @@ fn put_node(out: &mut NodeId, result: Result<NodeId, MutStatus>) -> MutStatus {
     }
 }
 
-pub fn mkr_xml_detach(doc: &mut Document, node: NodeId) {
+pub fn xml_detach(doc: &mut Document, node: NodeId) {
     if !node.is_invalid() {
         detach(doc, node);
     }
 }
 
-pub fn mkr_xml_remove(doc: &mut Document, node: NodeId) {
+pub fn xml_remove(doc: &mut Document, node: NodeId) {
     if !node.is_invalid() {
         remove(doc, node);
     }
 }
 
-pub fn mkr_xml_replace_with_fragment(
-    doc: &mut Document,
-    target: NodeId,
-    frag: NodeId,
-) -> MutStatus {
+pub fn xml_replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -> MutStatus {
     replace_with_fragment(doc, target, frag)
 }
 
-pub fn mkr_xml_rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
+pub fn xml_rename(doc: &mut Document, node: NodeId, name: &[u8]) -> MutStatus {
     rename(doc, node, name)
 }
 
-pub fn mkr_xml_set_attribute(
+pub fn xml_set_attribute(
     doc: &mut Document,
     el: NodeId,
     name: &[u8],
@@ -66,11 +62,11 @@ pub fn mkr_xml_set_attribute(
     put_node(out, set_attribute(doc, el, name, val))
 }
 
-pub fn mkr_xml_remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
+pub fn xml_remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
     remove_attribute(doc, el, name)
 }
 
-pub fn mkr_xml_set_attribute_ns(
+pub fn xml_set_attribute_ns(
     doc: &mut Document,
     el: NodeId,
     ns: &[u8],
@@ -81,24 +77,19 @@ pub fn mkr_xml_set_attribute_ns(
     put_node(out, set_attribute_ns(doc, el, ns, name, val))
 }
 
-pub fn mkr_xml_remove_attribute_ns(
-    doc: &mut Document,
-    el: NodeId,
-    ns: &[u8],
-    local: &[u8],
-) -> bool {
+pub fn xml_remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> bool {
     remove_attribute_ns(doc, el, ns, local)
 }
 
-pub fn mkr_xml_set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
+pub fn xml_set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStatus {
     set_content(doc, node, text)
 }
 
-pub fn mkr_xml_new_element(doc: &mut Document, name: &[u8], out: &mut NodeId) -> MutStatus {
+pub fn xml_new_element(doc: &mut Document, name: &[u8], out: &mut NodeId) -> MutStatus {
     put_node(out, new_element(doc, name))
 }
 
-pub fn mkr_xml_new_loose_dom_element(
+pub fn xml_new_loose_dom_element(
     doc: &mut Document,
     name: &[u8],
     prefix_len: u32,
@@ -113,7 +104,7 @@ pub fn mkr_xml_new_loose_dom_element(
     )
 }
 
-pub fn mkr_xml_new_document_type(
+pub fn xml_new_document_type(
     doc: &mut Document,
     name: &[u8],
     pub_id: Option<&[u8]>,
@@ -123,7 +114,7 @@ pub fn mkr_xml_new_document_type(
     put_node(out, new_document_type(doc, name, pub_id, sys_id))
 }
 
-pub fn mkr_xml_new_chardata(
+pub fn xml_new_chardata(
     doc: &mut Document,
     type_: NodeType,
     text: &[u8],
@@ -132,16 +123,11 @@ pub fn mkr_xml_new_chardata(
     put_node(out, new_chardata(doc, type_, text))
 }
 
-pub fn mkr_xml_new_pi(
-    doc: &mut Document,
-    target: &[u8],
-    data: &[u8],
-    out: &mut NodeId,
-) -> MutStatus {
+pub fn xml_new_pi(doc: &mut Document, target: &[u8], data: &[u8], out: &mut NodeId) -> MutStatus {
     put_node(out, new_pi(doc, target, data))
 }
 
-pub fn mkr_xml_import_subtree(
+pub fn xml_import_subtree(
     doc: &mut Document,
     src_doc: &Document,
     src: NodeId,
@@ -154,7 +140,7 @@ pub fn mkr_xml_import_subtree(
     put_node(out, import_subtree(doc, src_doc, src))
 }
 
-pub fn mkr_xml_copy_node(
+pub fn xml_copy_node(
     doc: &mut Document,
     src_doc: &Document,
     src: NodeId,
@@ -168,25 +154,20 @@ pub fn mkr_xml_copy_node(
     put_node(out, copy_node_from(doc, src_doc, src, deep))
 }
 
-pub fn mkr_xml_clone_node(
-    doc: &mut Document,
-    src: NodeId,
-    deep: bool,
-    out: &mut NodeId,
-) -> MutStatus {
+pub fn xml_clone_node(doc: &mut Document, src: NodeId, deep: bool, out: &mut NodeId) -> MutStatus {
     put_node(out, clone_node(doc, src, deep))
 }
 
-pub fn mkr_xml_insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
+pub fn xml_insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {
     insert_child(doc, parent, node)
 }
-pub fn mkr_xml_insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+pub fn xml_insert_before(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     insert_before(doc, r, node)
 }
-pub fn mkr_xml_insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+pub fn xml_insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     insert_after(doc, r, node)
 }
-pub fn mkr_xml_replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
+pub fn xml_replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     replace_node(doc, r, node)
 }
 

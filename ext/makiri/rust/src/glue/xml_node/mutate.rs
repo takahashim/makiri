@@ -29,27 +29,27 @@ const KIND_XML: core::ffi::c_int = 2;
 
 pub use crate::dom_adapter::cross_import::cross_html_to_xml;
 pub use crate::glue::node::mkr_node_kind;
-pub use crate::xml::api::mkr_xml_clone_node;
-pub use crate::xml::api::mkr_xml_copy_node;
-pub use crate::xml::api::mkr_xml_import_subtree;
-pub use crate::xml::api::mkr_xml_insert_after;
-pub use crate::xml::api::mkr_xml_insert_before;
-pub use crate::xml::api::mkr_xml_insert_child;
-pub use crate::xml::api::mkr_xml_name_index_invalidate;
-pub use crate::xml::api::mkr_xml_new_chardata;
-pub use crate::xml::api::mkr_xml_new_document_type;
-pub use crate::xml::api::mkr_xml_new_element;
-pub use crate::xml::api::mkr_xml_new_loose_dom_element;
-pub use crate::xml::api::mkr_xml_new_pi;
-pub use crate::xml::api::mkr_xml_remove;
-pub use crate::xml::api::mkr_xml_remove_attribute;
-pub use crate::xml::api::mkr_xml_remove_attribute_ns;
-pub use crate::xml::api::mkr_xml_rename;
-pub use crate::xml::api::mkr_xml_replace_node;
-pub use crate::xml::api::mkr_xml_replace_with_fragment;
-pub use crate::xml::api::mkr_xml_set_attribute;
-pub use crate::xml::api::mkr_xml_set_attribute_ns;
-pub use crate::xml::api::mkr_xml_set_content;
+pub use crate::xml::api::xml_clone_node;
+pub use crate::xml::api::xml_copy_node;
+pub use crate::xml::api::xml_import_subtree;
+pub use crate::xml::api::xml_insert_after;
+pub use crate::xml::api::xml_insert_before;
+pub use crate::xml::api::xml_insert_child;
+pub use crate::xml::api::xml_name_index_invalidate;
+pub use crate::xml::api::xml_new_chardata;
+pub use crate::xml::api::xml_new_document_type;
+pub use crate::xml::api::xml_new_element;
+pub use crate::xml::api::xml_new_loose_dom_element;
+pub use crate::xml::api::xml_new_pi;
+pub use crate::xml::api::xml_remove;
+pub use crate::xml::api::xml_remove_attribute;
+pub use crate::xml::api::xml_remove_attribute_ns;
+pub use crate::xml::api::xml_rename;
+pub use crate::xml::api::xml_replace_node;
+pub use crate::xml::api::xml_replace_with_fragment;
+pub use crate::xml::api::xml_set_attribute;
+pub use crate::xml::api::xml_set_attribute_ns;
+pub use crate::xml::api::xml_set_content;
 
 extern "C" {
 
@@ -138,7 +138,7 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 unsafe fn unwrap_mutable(this: super::XmlSelf) -> NodeId {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
-    mkr_xml_name_index_invalidate(&mut *this.doc());
+    xml_name_index_invalidate(&mut *this.doc());
     this.id
 }
 
@@ -181,7 +181,7 @@ pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
             return Err(Error::new(error_class(), "cannot remove the document node"));
         }
         let n = unwrap_mutable(this);
-        mkr_xml_remove(&mut *this.doc(), n); /* detach + refresh the root/doctype cache */
+        xml_remove(&mut *this.doc(), n); /* detach + refresh the root/doctype cache */
         Ok(rb_self)
     }
 }
@@ -205,7 +205,7 @@ pub fn aset(ruby: &Ruby, this: super::XmlSelf, name: Value, val: Value) -> Resul
         let (nv, _) = verified(ruby, name, c"attribute name")?;
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let mut out = NodeId::INVALID;
-        let st = mkr_xml_set_attribute(&mut *this.doc(), n, nv.bytes(), vv.bytes(), &mut out);
+        let st = xml_set_attribute(&mut *this.doc(), n, nv.bytes(), vv.bytes(), &mut out);
         mkr_xml_mut_check(st);
         Ok(val)
     }
@@ -230,7 +230,7 @@ pub fn set_attribute_ns(
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
         let mut out = NodeId::INVALID;
-        let st = mkr_xml_set_attribute_ns(
+        let st = xml_set_attribute_ns(
             &mut *this.doc(),
             n,
             nv.bytes(),
@@ -258,7 +258,7 @@ pub fn remove_attribute_ns(
         }
         let (lv, _) = verified(ruby, local, c"attribute local name")?;
         let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
-        mkr_xml_remove_attribute_ns(&mut *this.doc(), n, nv.bytes(), lv.bytes());
+        xml_remove_attribute_ns(&mut *this.doc(), n, nv.bytes(), lv.bytes());
         Ok(rb_self)
     }
 }
@@ -272,7 +272,7 @@ pub fn delete(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, E
             return Ok(rb_self);
         }
         let (nv, _) = verified(ruby, name, c"attribute name")?;
-        mkr_xml_remove_attribute(&mut *this.doc(), n, nv.bytes());
+        xml_remove_attribute(&mut *this.doc(), n, nv.bytes());
         Ok(rb_self)
     }
 }
@@ -284,7 +284,7 @@ pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Val
     unsafe {
         let n = unwrap_mutable(this);
         let (tv, _) = verified(ruby, text, c"node content")?;
-        let st = mkr_xml_set_content(&mut *this.doc(), n, tv.bytes());
+        let st = xml_set_content(&mut *this.doc(), n, tv.bytes());
         mkr_xml_mut_check(st);
         Ok(text)
     }
@@ -297,7 +297,7 @@ pub fn set_name(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value,
     unsafe {
         let n = unwrap_mutable(this);
         let (nv, _) = verified(ruby, name, c"node name")?;
-        let st = mkr_xml_rename(&mut *this.doc(), n, nv.bytes());
+        let st = xml_rename(&mut *this.doc(), n, nv.bytes());
         mkr_xml_mut_check(st);
         Ok(name)
     }
@@ -340,7 +340,7 @@ unsafe fn incoming_node(
     }
     let mut copy: NodeId = NodeId::INVALID;
     let src_doc = xdoc(arg)?;
-    mkr_xml_mut_check(mkr_xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy));
+    mkr_xml_mut_check(xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy));
     Ok((copy, arg))
 }
 
@@ -362,12 +362,12 @@ unsafe fn adopt_finish(arg: Value) {
     };
     if (*sdoc).type_(src) == Some(NodeType::Fragment) {
         while let Some(c) = (*sdoc).first_child(src) {
-            mkr_xml_remove(&mut *sdoc, c);
+            xml_remove(&mut *sdoc, c);
         }
     } else {
-        mkr_xml_remove(&mut *sdoc, src);
+        xml_remove(&mut *sdoc, src);
     }
-    mkr_xml_name_index_invalidate(&mut *sdoc);
+    xml_name_index_invalidate(&mut *sdoc);
 }
 
 /// A DOCUMENT_FRAGMENT contributes its CHILDREN, not itself, like Nokogiri and
@@ -386,20 +386,20 @@ unsafe fn splice_fragment(
         /* Whole-fragment replace is an engine primitive: it validates the
          * fragment before touching a link and keeps `target` until every child
          * is spliced in, so a rejected replace never destroys what it replaced. */
-        mkr_xml_mut_check(mkr_xml_replace_with_fragment(&mut *xd, target, frag));
+        mkr_xml_mut_check(xml_replace_with_fragment(&mut *xd, target, frag));
         return wrap(frag, doc_v);
     }
     let mut r = target; /* the moving insertion point, for AFTER */
     while let Some(c) = (*xd).first_child(frag) {
         /* each insert detaches c from frag */
         let st = match op {
-            Op::Child => mkr_xml_insert_child(&mut *xd, target, c),
+            Op::Child => xml_insert_child(&mut *xd, target, c),
             Op::After => {
-                let s = mkr_xml_insert_after(&mut *xd, r, c);
+                let s = xml_insert_after(&mut *xd, r, c);
                 r = c;
                 s
             }
-            _ => mkr_xml_insert_before(&mut *xd, target, c),
+            _ => xml_insert_before(&mut *xd, target, c),
         };
         mkr_xml_mut_check(st);
     }
@@ -420,10 +420,10 @@ fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value
         }
 
         let st = match op {
-            Op::Child => mkr_xml_insert_child(&mut *xd, target, node),
-            Op::Before => mkr_xml_insert_before(&mut *xd, target, node),
-            Op::After => mkr_xml_insert_after(&mut *xd, target, node),
-            Op::Replace => mkr_xml_replace_node(&mut *xd, target, node),
+            Op::Child => xml_insert_child(&mut *xd, target, node),
+            Op::Before => xml_insert_before(&mut *xd, target, node),
+            Op::After => xml_insert_after(&mut *xd, target, node),
+            Op::Replace => xml_replace_node(&mut *xd, target, node),
         };
         mkr_xml_mut_check(st);
         adopt_finish(adopt_from);
@@ -459,12 +459,7 @@ pub fn clone_node(this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> 
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
     unsafe {
         let mut out: NodeId = NodeId::INVALID;
-        mkr_xml_mut_check(mkr_xml_clone_node(
-            &mut *this.doc(),
-            this.id,
-            deep,
-            &mut out,
-        ));
+        mkr_xml_mut_check(xml_clone_node(&mut *this.doc(), this.id, deep, &mut out));
         Ok(super::mkr_xml_wrap_rel_value(this, out))
     }
 }
@@ -554,12 +549,12 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         let xd = xdoc(rb_self)?;
         let (nv, _) = verified(ruby, name, c"element name")?;
         let mut el: NodeId = NodeId::INVALID;
-        let st = mkr_xml_new_element(&mut *xd, nv.bytes(), &mut el);
+        let st = xml_new_element(&mut *xd, nv.bytes(), &mut el);
         mkr_xml_mut_check(st);
 
         if !content.is_nil() {
             let (tv, _) = verified(ruby, content, c"element content")?;
-            let st = mkr_xml_set_content(&mut *xd, el, tv.bytes());
+            let st = xml_set_content(&mut *xd, el, tv.bytes());
             mkr_xml_mut_check(st);
         }
         let rb_el = wrap(el, rb_self);
@@ -609,15 +604,8 @@ pub fn create_loose_dom_element(
 
         let (plen, loff, llen) = dom_name_consistency(ruby, &qv, &pv, has_prefix, &lv)?;
         let mut el: NodeId = NodeId::INVALID;
-        let st = mkr_xml_new_loose_dom_element(
-            &mut *xd,
-            qv.bytes(),
-            plen,
-            loff,
-            llen,
-            nv.bytes(),
-            &mut el,
-        );
+        let st =
+            xml_new_loose_dom_element(&mut *xd, qv.bytes(), plen, loff, llen, nv.bytes(), &mut el);
         mkr_xml_mut_check(st);
         Ok(wrap(el, rb_self))
     }
@@ -645,7 +633,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         let (sv, sl) = verified_opt(ruby, sys_v, c"doctype system id")?;
         /* An empty id is absent (NULL), matching the HTML factory and Nokogiri. */
         let mut dt: NodeId = NodeId::INVALID;
-        let st = mkr_xml_new_document_type(
+        let st = xml_new_document_type(
             &mut *xd,
             nv.bytes(),
             (pl != 0).then_some(pv.bytes()),
@@ -668,7 +656,7 @@ unsafe fn create_chardata(
     let xd = xdoc(rb_self)?;
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
-    let st = mkr_xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n);
+    let st = xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n);
     mkr_xml_mut_check(st);
     Ok(wrap(n, rb_self))
 }
@@ -689,7 +677,7 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
         let (tg, _) = verified(ruby, target, c"PI target")?;
         let (dt, _) = verified(ruby, data, c"PI data")?;
         let mut pi: NodeId = NodeId::INVALID;
-        let st = mkr_xml_new_pi(&mut *xd, tg.bytes(), dt.bytes(), &mut pi);
+        let st = xml_new_pi(&mut *xd, tg.bytes(), dt.bytes(), &mut pi);
         mkr_xml_mut_check(st);
         Ok(wrap(pi, rb_self))
     }
@@ -714,16 +702,11 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                 let src_doc = xdoc(node_v)?;
                 if src_doc == xd {
                     /* Same arena: the single-`&mut` clone path. Going through
-                     * `mkr_xml_copy_node` would hand `&mut *xd` and `&*src_doc`
+                     * `xml_copy_node` would hand `&mut *xd` and `&*src_doc`
                      * as the same document (aliasing UB). */
-                    mkr_xml_mut_check(mkr_xml_clone_node(
-                        &mut *xd,
-                        unwrap(node_v)?,
-                        deep,
-                        &mut copy,
-                    ))
+                    mkr_xml_mut_check(xml_clone_node(&mut *xd, unwrap(node_v)?, deep, &mut copy))
                 } else {
-                    mkr_xml_mut_check(mkr_xml_copy_node(
+                    mkr_xml_mut_check(xml_copy_node(
                         &mut *xd,
                         &*src_doc,
                         unwrap(node_v)?,

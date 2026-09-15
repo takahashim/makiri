@@ -51,7 +51,7 @@ pub use crate::dom_adapter::source_loc::pos_token_cb;
 pub use crate::dom_adapter::text_index::text_index_free;
 pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
-pub use crate::xml::api::mkr_xml_doc_destroy;
+pub use crate::xml::api::xml_doc_destroy;
 
 extern "C" {
 
@@ -244,7 +244,7 @@ pub unsafe fn parsed_destroy(p: *mut Parsed) {
 
     if !(*p).doc.is_null() {
         if (*p).kind == DOC_KIND_XML {
-            mkr_xml_doc_destroy(Box::from_raw((*p).doc as *mut _)); /* whole-arena free */
+            xml_doc_destroy(Box::from_raw((*p).doc as *mut _)); /* whole-arena free */
         } else {
             lxb_html_document_destroy((*p).doc as *mut HtmlDoc);
         }

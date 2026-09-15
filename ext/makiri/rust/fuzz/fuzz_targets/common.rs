@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 pub use makiri::text::VerifiedText;
-pub use makiri::xml::parse::mkr_xml_parse;
+pub use makiri::xml::parse::xml_parse;
 pub use makiri::xml::Document;
 pub use makiri::xpath::ctx::{
     evaluate, evaluate_first, xpath_register_ns, Backend, OwnedContext, XPathValue,

@@ -13,5 +13,5 @@ use common::*;
 
 fuzz_target!(|data: &[u8]| {
     // The document, if any, is dropped here.
-    let _ = mkr_xml_parse(data);
+    let _ = xml_parse(data);
 });

@@ -23,7 +23,7 @@ const FIXED_XML: &[u8] = b"<?xml version='1.0'?>\
 </root>";
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(mut doc) = mkr_xml_parse(FIXED_XML) else {
+    let Ok(mut doc) = xml_parse(FIXED_XML) else {
         return;
     };
     let Some(expr) = Expr::new(data) else {

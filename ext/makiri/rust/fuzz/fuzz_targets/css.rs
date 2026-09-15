@@ -28,7 +28,7 @@ fuzz_target!(|data: &[u8]| {
     let Some((&mode, selector)) = data.split_first() else {
         return;
     };
-    let Ok(mut doc) = mkr_xml_parse(FIXED_XML) else {
+    let Ok(mut doc) = xml_parse(FIXED_XML) else {
         return;
     };
     let Some(expr) = Expr::new(selector) else {

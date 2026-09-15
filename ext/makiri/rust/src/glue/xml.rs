@@ -85,9 +85,9 @@ pub use crate::dom_adapter::post_parse::parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
 use crate::glue::xpath::xpath_error;
 use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};
-pub use crate::xml::api::mkr_xml_doc_new;
-pub use crate::xml::api::mkr_xml_parse_ex;
-pub use crate::xml::api::mkr_xml_parse_fragment;
+pub use crate::xml::api::xml_doc_new;
+pub use crate::xml::api::xml_parse_ex;
+pub use crate::xml::api::xml_parse_fragment;
 pub use crate::xpath::ctx::ctx_limits;
 pub use crate::xpath::ctx::xpath_register_ns;
 use crate::xpath::ctx::OwnedContext;
@@ -123,7 +123,7 @@ unsafe extern "C" fn parse_nogvl(arg: *mut c_void) -> *mut c_void {
     } else {
         core::slice::from_raw_parts(w.src as *const u8, w.len)
     };
-    match mkr_xml_parse_ex(src, Some(&w.limits)) {
+    match xml_parse_ex(src, Some(&w.limits)) {
         Ok(doc) => {
             w.result = Box::into_raw(doc);
             w.status = Status::Ok;
@@ -647,7 +647,7 @@ unsafe fn fragment_into(
     } else {
         core::slice::from_raw_parts(src.ptr as *const u8, src.len)
     };
-    let frag = mkr_xml_parse_fragment(&mut *xdoc, bytes, inherit_doc_ns);
+    let frag = xml_parse_fragment(&mut *xdoc, bytes, inherit_doc_ns);
     free_owned(&mut src);
     frag.map_err(|status| parse_status_error(status, Unit::Fragment))
 }
@@ -662,7 +662,7 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
         ));
     }
     let doc_obj = mkr_wrap_document(parsed); /* GC owns `parsed` from here */
-    let xdoc = match mkr_xml_doc_new() {
+    let xdoc = match xml_doc_new() {
         Ok(doc) => Box::into_raw(doc),
         Err(_) => {
             return Err(Error::new(

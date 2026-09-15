@@ -36,7 +36,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let Ok(mut doc) = mkr_xml_parse(xml) else {
+    let Ok(mut doc) = xml_parse(xml) else {
         return;
     };
     let Some(expr) = Expr::new(expr_bytes) else {
