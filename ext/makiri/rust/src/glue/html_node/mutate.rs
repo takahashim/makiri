@@ -28,7 +28,7 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
@@ -84,8 +84,8 @@ unsafe fn arg_node(v: Value) -> Result<*mut LxbNode, Error> {
 }
 
 /// Copy `node` into `doc`, for a node that came from another document - this
-/// half of the DOM's adopt. **Raises** rather than returning a partial node.
-unsafe fn adopt_copy(doc: *mut LxbDoc, node: *mut LxbNode) -> *mut LxbNode {
+/// half of the DOM's adopt, or an error rather than a partial node.
+unsafe fn adopt_copy(doc: *mut LxbDoc, node: *mut LxbNode) -> Result<*mut LxbNode, Error> {
     html_import_deep(doc, node)
 }
 
@@ -139,7 +139,7 @@ unsafe fn prepare_insert(
          * document changes too - refuse before anything is copied. */
         crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?)?;
         return Ok((
-            adopt_copy((*reference).owner_document, incoming),
+            adopt_copy((*reference).owner_document, incoming)?,
             Some(rb_incoming),
         ));
     }
@@ -720,12 +720,13 @@ unsafe fn parse_fragment_into(
     emit: unsafe extern "C" fn(*mut LxbNode, *mut c_void),
     u: *mut c_void,
 ) -> Result<(), Error> {
-    let html = Value::from_raw(rb_sys::rb_String(rb_html.as_raw()));
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = crate::bridge::ruby::string_of(rb_html)?.as_value();
     let frag = run_fragment_parser(
         html.as_raw(),
         parse_fragment_by_context,
         context_el as *mut c_void,
-    );
+    )?;
 
     let imported = import_fragment_children(doc, frag, emit, u);
 

@@ -192,7 +192,8 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
          * over-large input is refused before its validation copy AND before the
          * copy below - a hostile document is never materialised twice for a
          * parse that cannot succeed. */
-        let decoded = xml_decode_input(rb_sys::rb_String(source.as_raw()), budget);
+        let source = crate::bridge::ruby::string_of(source)?;
+        let decoded = xml_decode_input(source.as_raw(), budget)?;
 
         /* Copy into a private buffer BEFORE allocating any Ruby object, so there
          * is no GC point between obtaining `decoded` and copying it. */
@@ -577,7 +578,9 @@ unsafe fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
-    let decoded = xml_decode_input(rb_sys::rb_String(source.as_raw()), (*xdoc).max_bytes);
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let source = crate::bridge::ruby::string_of(source)?;
+    let decoded = xml_decode_input(source.as_raw(), (*xdoc).max_bytes)?;
     let Some(src) = ruby_copy_bytes(decoded) else {
         return Err(Error::new(
             error_class(),

@@ -261,33 +261,30 @@ pub unsafe extern "C" fn import_fragment_children(
 type FragmentParseFn =
     unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut c_void) -> *mut LxbNode;
 
-/// Run a fragment parse with a fresh parser. **Raises** on failure.
+/// Run a fragment parse with a fresh parser, or the error that stopped it.
 ///
-/// The parser is destroyed before any raise: the fragment tree belongs to its
+/// The parser is destroyed on every path: the fragment tree belongs to its
 /// document, not the parser, so it survives - the caller may still read
 /// `root->owner_document` afterwards.
-pub unsafe extern "C" fn run_fragment_parser(
+pub unsafe fn run_fragment_parser(
     html: VALUE,
     parse: FragmentParseFn,
     ctx: *mut c_void,
-) -> *mut LxbNode {
+) -> Result<*mut LxbNode, Error> {
     let parser = lxb_html_parser_create();
     if parser.is_null() || lxb_html_parser_init(parser) != LXB_STATUS_OK {
         if !parser.is_null() {
             lxb_html_parser_destroy(parser);
         }
-        super::abi::rb_raise(
-            super::abi::EXC_ERROR.raw(),
-            c"failed to create HTML parser".as_ptr(),
-        );
+        return Err(Error::new(error_class(), "failed to create HTML parser"));
     }
 
     let Some(src) = sanitize_html_input(html) else {
         lxb_html_parser_destroy(parser);
-        super::abi::rb_raise(
-            super::abi::EXC_ERROR.raw(),
-            c"out of memory decoding fragment HTML".as_ptr(),
-        );
+        return Err(Error::new(
+            error_class(),
+            "out of memory decoding fragment HTML",
+        ));
     };
 
     /* The callback contract is representation-opaque (it is a C function
@@ -297,12 +294,9 @@ pub unsafe extern "C" fn run_fragment_parser(
     drop(src); /* the parse consumed it; the buffer goes on every path */
     lxb_html_parser_destroy(parser);
     if root.is_null() {
-        super::abi::rb_raise(
-            super::abi::EXC_ERROR.raw(),
-            c"failed to parse HTML fragment".as_ptr(),
-        );
+        return Err(Error::new(error_class(), "failed to parse HTML fragment"));
     }
-    root
+    Ok(root)
 }
 
 /// Copy `src` into `doc`, `<template>` contents included, or `None` on failure.
@@ -332,17 +326,10 @@ pub unsafe fn import_with_fixup(
     Some(imp)
 }
 
-/// Deep-import `src` into `doc`. **Raises** rather than returning a partial
-/// node. The C ABI face of [`import_with_fixup`], called by
-/// `ruby_html_mutate.c`.
-pub unsafe extern "C" fn html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> *mut LxbNode {
-    match import_with_fixup(doc, src, true) {
-        Some(imp) => imp,
-        None => super::abi::rb_raise(
-            super::abi::EXC_ERROR.raw(),
-            c"failed to import node".as_ptr(),
-        ),
-    }
+/// Deep-import `src` into `doc`, or an error rather than a partial node.
+pub unsafe fn html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> Result<*mut LxbNode, Error> {
+    import_with_fixup(doc, src, true)
+        .ok_or_else(|| Error::new(error_class(), "failed to import node"))
 }
 
 /* ------------------------------------------------------------------ *
@@ -465,7 +452,7 @@ pub unsafe fn build_fragment_ctx(
         html.as_raw(),
         parse_fragment_by_tag,
         &pctx as *const FragTagCtx as *mut c_void,
-    );
+    )?;
     if import_fragment_children(doc, root, emit_append, frag_node as *mut c_void) != 0 {
         return Err(Error::new(
             error_class(),

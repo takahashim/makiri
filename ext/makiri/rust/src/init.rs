@@ -160,15 +160,12 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
-fn xml_decode(ruby: &Ruby, str: Value) -> Value {
+fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     let _ = ruby;
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let s = crate::bridge::ruby::string_of(str)?;
     /* decode-only: no arena, no budget */
-    unsafe {
-        Value::from_raw(crate::bridge::xml_decode::xml_decode_input(
-            rb_sys::rb_String(str.as_raw()),
-            0,
-        ))
-    }
+    Ok(unsafe { Value::from_raw(crate::bridge::xml_decode::xml_decode_input(s.as_raw(), 0)?) })
 }
 
 /* ------------------------------------------------------------------ *

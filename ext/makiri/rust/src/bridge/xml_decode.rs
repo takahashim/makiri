@@ -26,11 +26,11 @@
 use core::ffi::{c_char, c_int, c_long};
 
 use magnus::rb_sys::FromRawValue;
-use magnus::{RString, Value};
+use magnus::{Error, RString, Value};
 use rb_sys::{rb_encoding, VALUE};
 
 use super::string::{text_check, TextVerdict};
-use crate::glue::abi::{rb_raise, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
+use crate::glue::abi::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 
 pub use crate::bridge::string::ruby_exception_message;
 
@@ -217,7 +217,7 @@ unsafe fn bytes_of(str: VALUE) -> &'static [u8] {
 /// encoding" and so is decoded by whatever was detected. Any disagreement
 /// between the three is a fatal `Makiri::XML::SyntaxError`, so the caller only
 /// ever sees one self-consistent answer.
-unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
+unsafe fn effective_encoding(str: VALUE) -> Result<*mut rb_encoding, Error> {
     let tag = rb_sys::rb_enc_get(str);
     let (bom, geo) = bom_encoding(bytes_of(str));
 
@@ -228,18 +228,14 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
     let is_binary = tag == rb_sys::rb_ascii8bit_encoding();
 
     if !bom.is_null() && !decl.is_null() && !compatible(bom, decl) {
-        rb_raise(
-            EXC_XML_SYNTAX_ERROR.raw(),
-            c"XML encoding conflict: the byte-order mark and the encoding declaration disagree"
-                .as_ptr(),
-        );
+        return Err(syntax_error(
+            "XML encoding conflict: the byte-order mark and the encoding declaration disagree",
+        ));
     }
     if !is_binary && !bom.is_null() && !compatible(bom, tag) {
-        rb_raise(
-            EXC_XML_SYNTAX_ERROR.raw(),
-            c"XML encoding conflict: the byte-order mark disagrees with the string's encoding"
-                .as_ptr(),
-        );
+        return Err(syntax_error(
+            "XML encoding conflict: the byte-order mark disagrees with the string's encoding",
+        ));
     }
     if !is_binary && !decl.is_null() && !compatible(decl, tag) {
         /* A concrete String encoding is authoritative for decoding, so the
@@ -247,29 +243,33 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
          * encoding than the String carries (a Shift_JIS String declaring
          * encoding="UTF-8") describes a self-inconsistent document, and that is
          * fatal rather than silently ignored. */
-        rb_raise(
-            EXC_XML_SYNTAX_ERROR.raw(),
-            c"XML encoding conflict: the encoding declaration disagrees with the string's encoding"
-                .as_ptr(),
-        );
+        return Err(syntax_error(
+            "XML encoding conflict: the encoding declaration disagrees with the string's encoding",
+        ));
     }
 
     if !is_binary {
-        return tag;
+        return Ok(tag);
     }
     if !bom.is_null() {
-        return bom;
+        return Ok(bom);
     }
     if !decl.is_null() {
-        return decl;
+        return Ok(decl);
     }
-    rb_sys::rb_utf8_encoding()
+    Ok(rb_sys::rb_utf8_encoding())
 }
 
-/// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or raise.
-/// `max_bytes` of 0 disables the budget check (the `__decode` test hook).
-pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
-    let eff = effective_encoding(str);
+/// A `Makiri::XML::SyntaxError` carrying `msg`.
+fn syntax_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
+    Error::new(EXC_XML_SYNTAX_ERROR.exception(), msg)
+}
+
+/// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or the
+/// error that rejects it. `max_bytes` of 0 disables the budget check (the
+/// `__decode` test hook).
+pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Error> {
+    let eff = effective_encoding(str)?;
 
     /* Phase 2: decode to UTF-8, strictly. UTF-8 / US-ASCII / ASCII-8BIT are
      * already UTF-8 bytes (validated below); anything else is transcoded in a
@@ -294,11 +294,10 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
             // aarch64-linux (see the same fix in glue/xpath.rs).
             let mut msg = [0 as c_char; 256];
             ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
-            rb_raise(
-                EXC_XML_SYNTAX_ERROR.raw(),
-                c"XML input could not be decoded to UTF-8: %s".as_ptr(),
-                msg.as_ptr(),
-            );
+            let msg = core::ffi::CStr::from_ptr(msg.as_ptr()).to_string_lossy();
+            return Err(syntax_error(format!(
+                "XML input could not be decoded to UTF-8: {msg}"
+            )));
         }
         out
     };
@@ -318,10 +317,10 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
      * arena budget can never parse. */
     if max_bytes != 0 && len > max_bytes {
-        rb_raise(
-            EXC_XML_LIMIT_EXCEEDED.raw(),
-            c"XML input exceeds the byte budget".as_ptr(),
-        );
+        return Err(Error::new(
+            EXC_XML_LIMIT_EXCEEDED.exception(),
+            "XML input exceeds the byte budget",
+        ));
     }
 
     /* Strict validation through the shared, allocation-free core - no GC point
@@ -331,14 +330,8 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * suffix too - the BOM is one complete UTF-8 character) while the bytes
      * validated are the suffix. */
     match text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
-        TextVerdict::HasNul => rb_raise(
-            EXC_XML_SYNTAX_ERROR.raw(),
-            c"XML input must not contain a NUL byte".as_ptr(),
-        ),
-        TextVerdict::InvalidUtf8 => rb_raise(
-            EXC_XML_SYNTAX_ERROR.raw(),
-            c"XML input must be valid UTF-8".as_ptr(),
-        ),
+        TextVerdict::HasNul => return Err(syntax_error("XML input must not contain a NUL byte")),
+        TextVerdict::InvalidUtf8 => return Err(syntax_error("XML input must be valid UTF-8")),
         TextVerdict::Ok => {}
     }
 
@@ -346,5 +339,5 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * so the borrowed pointer must not be what it copies from. */
     let u = rb_sys::rb_str_subseq(s, off as c_long, len as c_long);
     rb_sys::rb_enc_associate(u, rb_sys::rb_utf8_encoding());
-    u
+    Ok(u)
 }

@@ -52,20 +52,18 @@ RB_SYS_COUNTS = {
   "glue/doc.rs" => 9,
   "glue/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 2,
-  "glue/html_node/mutate.rs" => 1,
   "glue/node.rs" => 3,
   "glue/node_set.rs" => 19,
-  "glue/xml.rs" => 4,
+  "glue/xml.rs" => 2,
   "glue/xml_node/mod.rs" => 2,
   "glue/xml_node/serialize.rs" => 8,
   "glue/xpath.rs" => 26,
-  "init.rs" => 5,
+  "init.rs" => 4,
 }.freeze
 
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
 RAISING_COUNTS = {
   "glue/abi.rs" => 1,              # the rb_raise declaration
-  "glue/fragment.rs" => 4,         # fragment parse failures
   "glue/node_set.rs" => 4,         # push from the C-convention entry point
 }.freeze
 
