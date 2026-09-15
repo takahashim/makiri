@@ -201,12 +201,11 @@ pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Argument
 }
 
 /// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
-///
-/// # Safety
-/// `err`'s slot must still be live.
 #[cfg(feature = "lexbor")]
-pub(crate) unsafe fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Reported {
-    err_set_raw(err.as_raw(), status, msg.as_ptr());
+pub(crate) fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Reported {
+    // SAFETY: a reporting sink names a live slot for every use, as in
+    // `err_set_fmt`, and `msg` is NUL-terminated.
+    unsafe { err_set_raw(err.as_raw(), status, msg.as_ptr()) };
     Reported(())
 }
 

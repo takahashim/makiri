@@ -29,26 +29,24 @@ mod lower;
 mod parser;
 
 use crate::xpath::ast::{Ast, Expr, Op};
-use core::ffi::{c_char, c_int};
+use core::cell::RefCell;
+use core::ffi::c_int;
 
 use crate::falloc::try_box;
 use crate::text::VerifiedText;
 use crate::xpath::limits::Budget;
 use crate::xpath::msg::{ErrSink, Reported};
 
-/// `mkr_css_ns_t` - the namespace context the glue hands in.
+/// The namespace context the glue hands in.
 ///
-/// `default_prefix` is the synthetic prefix bound to the document's default
-/// namespace (Nokogiri's `"xmlns"` convention) when one is in scope, else NULL.
+/// `default_namespace` says the document has a default namespace in scope, which
+/// a bare type selector then binds to under the synthetic [`DEFAULT_NS_PREFIX`]
+/// (Nokogiri's `"xmlns"` convention).
 pub struct CssNs {
-    pub default_prefix: *const c_char,
+    pub default_namespace: bool,
 }
 
 /// The synthetic prefix bound to the document's default namespace.
-///
-/// The C reads `default_prefix` as a pointer but takes its LENGTH from this
-/// literal, because the glue only ever passes the sentinel. Keeping that here
-/// preserves the property that no `strlen` runs on a pointer nothing verified.
 pub const DEFAULT_NS_PREFIX: &[u8] = b"xmlns";
 
 /// The cap on compounds in one selector chain - a selector-complexity bound.
@@ -63,29 +61,26 @@ pub const ERR_INTERNAL: c_int = crate::xpath::msg::XP_ERR_INTERNAL;
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.
 ///
-/// The budget stays a pointer here: every builder takes the `Build` shared, and
-/// the lowering is reworked with the rest of the CSS front end.
-pub(crate) struct Build {
-    pub budget: *mut Budget,
+/// The builders take it shared - an operand is built in the argument list of the
+/// node that takes it - so the budget they all charge sits in a `RefCell`.
+pub(crate) struct Build<'a> {
+    pub budget: RefCell<&'a mut Budget>,
     pub err: ErrSink,
-    pub ns: *const CssNs,
+    pub default_namespace: bool,
 }
 
-impl Build {
-    pub(crate) unsafe fn fail(&self, status: c_int, msg: &core::ffi::CStr) -> Reported {
+impl Build<'_> {
+    pub(crate) fn fail(&self, status: c_int, msg: &core::ffi::CStr) -> Reported {
         crate::xpath::msg::err_set(self.err, status, msg)
     }
 
-    pub(crate) unsafe fn oom(&self) -> Reported {
+    pub(crate) fn oom(&self) -> Reported {
         self.fail(ERR_OOM, c"out of memory (css)")
     }
 
     /// The default-namespace prefix in scope, if any.
-    pub(crate) unsafe fn default_prefix(&self) -> Option<&'static [u8]> {
-        if self.ns.is_null() || (*self.ns).default_prefix.is_null() {
-            return None;
-        }
-        Some(DEFAULT_NS_PREFIX)
+    pub(crate) fn default_prefix(&self) -> Option<&'static [u8]> {
+        self.default_namespace.then_some(DEFAULT_NS_PREFIX)
     }
 }
 
@@ -94,17 +89,20 @@ impl Build {
 /// `Err` with the budget's error slot filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
-/// `ns` may be NULL, in which case a bare selector matches no namespace.
 ///
 /// # Safety
 /// From the XPath/CSS glue, under the GVL.
 pub unsafe fn compile_owned(
     selector: VerifiedText,
-    ns: *const CssNs,
+    ns: &CssNs,
     budget: &mut Budget,
 ) -> Result<Box<Ast>, Reported> {
     let err = budget.sink();
-    let b = Build { budget, err, ns };
+    let b = Build {
+        budget: RefCell::new(budget),
+        err,
+        default_namespace: ns.default_namespace,
+    };
 
     let parsed = match parser::parse(selector) {
         Ok(p) => p,

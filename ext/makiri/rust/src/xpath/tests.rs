@@ -79,7 +79,7 @@ fn run(
             #[cfg(feature = "lexbor")]
             Query::Css => {
                 let ns = crate::css::CssNs {
-                    default_prefix: core::ptr::null(),
+                    default_namespace: false,
                 };
                 crate::css::compile_owned(source, &ns, &mut parse_budget)
             }

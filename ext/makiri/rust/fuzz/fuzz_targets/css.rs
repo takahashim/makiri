@@ -56,12 +56,12 @@ fuzz_target!(|data: &[u8]| {
         register(b"ns", b"http://example.com/ns");
         let ns = if mode & 1 == 0 {
             CssNs {
-                default_prefix: core::ptr::null(),
+                default_namespace: false,
             }
         } else {
             register(b"xmlns", b"http://example.com/default");
             CssNs {
-                default_prefix: c"xmlns".as_ptr(),
+                default_namespace: true,
             }
         };
 

@@ -470,19 +470,13 @@ fn at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error>
  * normalised {prefix => uri} hash; a default namespace arrives under the
  * synthetic "xmlns" prefix, which a bare type selector binds to. */
 
-/// Present iff the (already prefix-normalised) namespace hash carries "xmlns".
-unsafe fn css_default_prefix(rb_ns: Option<Value>) -> *const c_char {
-    let Some(v) = rb_ns else {
-        return core::ptr::null();
-    };
-    let Some(h) = RHash::from_value(v) else {
-        return core::ptr::null();
+/// Whether the (already prefix-normalised) namespace hash carries "xmlns".
+unsafe fn css_default_namespace(rb_ns: Option<Value>) -> bool {
+    let Some(h) = rb_ns.and_then(RHash::from_value) else {
+        return false;
     };
     let ruby = Ruby::get_unchecked();
-    match h.get(ruby.str_new(CSS_DEFAULT_NS_PREFIX)) {
-        Some(found) if !found.is_nil() => c"xmlns".as_ptr(),
-        _ => core::ptr::null(),
-    }
+    matches!(h.get(ruby.str_new(CSS_DEFAULT_NS_PREFIX)), Some(found) if !found.is_nil())
 }
 
 /// Compile a selector under `ctx`, whose namespaces are already registered.
@@ -492,11 +486,11 @@ unsafe fn css_compile_or_raise(
     rb_ns: Option<Value>,
 ) -> Result<Box<Ast>, Error> {
     let cns = CssNs {
-        default_prefix: css_default_prefix(rb_ns),
+        default_namespace: css_default_namespace(rb_ns),
     };
     let sv = ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
     let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
-    let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, &mut budget);
+    let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns, &mut budget);
     drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);

@@ -13,6 +13,7 @@ ROOT = File.expand_path("..", __dir__)
 RUST = File.join(ROOT, "ext/makiri/rust/src")
 
 SAFE_FILES = %w[
+  css/build.rs
   xpath/attr_pred.rs
   xpath/axis.rs
   xpath/funcs.rs
