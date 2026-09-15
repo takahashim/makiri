@@ -378,7 +378,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let ctx = unsafe { context_for(rb_node, document)? };
     unsafe { mkr_ctx_set_unprefixed_lax(ctx, lax) };
 
-    Ok(ruby
+    let obj = ruby
         .wrap(XPathCtx {
             document: document.into(),
             node: Cell::new(rb_node.into()),
@@ -387,7 +387,13 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
                 cache: AstCache(HashMap::new()),
             }),
         })
-        .as_value())
+        .as_value();
+    /* While `wrap` allocates the object - a GC point - both values are held only
+     * by the boxed struct, where no mark sees them. Using them afterwards keeps
+     * them on the machine stack across that call, pinned by the conservative
+     * scan, so compaction cannot move them out from under the stored copies. */
+    core::hint::black_box((document, rb_node));
+    Ok(obj)
 }
 
 /// `#node=` - rebind the context node, so one context can evaluate relative

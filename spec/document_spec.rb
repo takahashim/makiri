@@ -51,6 +51,27 @@ RSpec.describe Makiri::Document do
     it "is an Array (empty for now)" do
       expect(doc.errors).to eq([])
     end
+
+    it "survives the wrapper's allocation under GC stress" do
+      # The array used to be created before the Document's wrapper, held only by
+      # native memory across that allocation, so a GC there freed it and #errors
+      # later read a dead slot. XML documents are wrapped the same way; they do
+      # not expose #errors, so the GC below is what walks their mark.
+      html = []
+      xml = []
+      GC.stress = true
+      begin
+        10.times do
+          html << Makiri::HTML("<p>x</p>")
+          xml << Makiri::XML("<r/>")
+        end
+      ensure
+        GC.stress = false
+      end
+      GC.start
+      expect(html.map(&:errors)).to all(eq([]))
+      expect(xml.map { |d| d.root.name }).to all(eq("r"))
+    end
   end
 
   describe "#internal_subset (doctype)" do

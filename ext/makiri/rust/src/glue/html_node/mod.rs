@@ -105,13 +105,19 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
         _ => mkr_cHtmlNode,
     };
 
-    /* Fill the struct BEFORE handing it to Ruby: once wrapped, the object is
-     * reachable and a GC would run the type's mark over whatever is there. */
-    let nd =
-        rb_sys::ruby_xmalloc(core::mem::size_of::<NodeData>() as rb_sys::size_t) as *mut NodeData;
+    /* Allocate zeroed, wrap, and only then store the Document. The wrap
+     * allocates, so it is a GC point, and a VALUE already sitting in this
+     * malloc'd struct is seen by no mark there: compaction can move it out from
+     * under the stored copy. Zeroed, the field reads as `false` to the mark
+     * until it is set, and `document` - used after the wrap - stays on the
+     * machine stack across it, where the conservative scan pins it. */
+    let nd = rb_sys::ruby_xcalloc(1, core::mem::size_of::<NodeData>() as rb_sys::size_t)
+        as *mut NodeData;
     (*nd).node = node as *mut c_void;
+    let obj =
+        rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, mkr_html_node_type.as_ptr());
     (*nd).document = document;
-    rb_sys::rb_data_typed_object_wrap(klass, nd as *mut c_void, mkr_html_node_type.as_ptr())
+    obj
 }
 
 /// The `lxb_dom_node_t` behind an HTML node or HTML Document.

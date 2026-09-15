@@ -160,8 +160,14 @@ pub unsafe extern "C" fn mkr_wrap_document(
     let d =
         rb_sys::ruby_xcalloc(1, core::mem::size_of::<DocData>() as rb_sys::size_t) as *mut DocData;
     (*d).parsed = parsed;
+    /* The errors array is created AFTER the wrap. Created before, it would sit
+     * in this malloc'd struct - seen by no mark - across the wrap's allocation,
+     * and a GC there frees it; `doc_mark` then marks a dead slot ("try to mark
+     * T_NONE object" under GC_COMPACT_STRESS). Until it is set, the zeroed field
+     * reads as `false`. */
+    let obj = rb_sys::rb_data_typed_object_wrap(klass, d as *mut c_void, ty);
     (*d).errors = rb_sys::rb_ary_new();
-    rb_sys::rb_data_typed_object_wrap(klass, d as *mut c_void, ty)
+    obj
 }
 
 /* ---- Document.parse ---- */
@@ -208,12 +214,13 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
         let d = rb_sys::ruby_xcalloc(1, core::mem::size_of::<DocData>() as rb_sys::size_t)
             as *mut DocData;
         (*d).parsed = core::ptr::null_mut();
-        (*d).errors = rb_sys::rb_ary_new();
+        /* The errors array comes after the wrap, as in `mkr_wrap_document`. */
         let obj = rb_sys::rb_data_typed_object_wrap(
             klass.as_raw(),
             d as *mut c_void,
             MKR_HTML_DOC_TYPE.as_ptr(),
         );
+        (*d).errors = rb_sys::rb_ary_new();
 
         let mut args = ParseArgs {
             src: owned.ptr as *const u8,

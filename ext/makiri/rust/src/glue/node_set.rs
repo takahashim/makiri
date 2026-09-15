@@ -269,12 +269,19 @@ pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
     let doc = Value::from_raw(document);
     let doc_is_xml =
         rb_sys::rb_obj_is_kind_of(document, mkr_cXmlDocument) == rb_sys::Qtrue as VALUE;
-    ruby.wrap(NodeSet {
-        document: doc.into(),
-        doc_is_xml,
-        nodes: RefCell::new(NodeVec::new()),
-    })
-    .as_raw()
+    let obj = ruby
+        .wrap(NodeSet {
+            document: doc.into(),
+            doc_is_xml,
+            nodes: RefCell::new(NodeVec::new()),
+        })
+        .as_raw();
+    /* While `wrap` allocates the object - a GC point - `document` is held only by
+     * the boxed struct, where no mark sees it. Using it afterwards keeps it on
+     * the machine stack across that call, pinned by the conservative scan, so
+     * compaction cannot move it out from under the stored copy. */
+    core::hint::black_box(document);
+    obj
 }
 
 /// # Safety
