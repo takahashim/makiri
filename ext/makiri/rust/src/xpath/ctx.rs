@@ -13,7 +13,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::own::Text;
+use super::own::OwnedText;
 use crate::falloc::Reserve;
 use core::ffi::{c_int, c_void};
 use core::ptr;
@@ -24,15 +24,15 @@ const MAX_NAMESPACES: usize = 65536;
 const MAX_VARIABLES: usize = 65536;
 
 struct NsEntry {
-    prefix: Text,
-    uri: Text,
+    prefix: OwnedText,
+    uri: OwnedText,
 }
 
 struct VarEntry {
     /// `ptr` null for the unprefixed (only supported) form.
-    prefix: Text,
-    name: Text,
-    value: Text,
+    prefix: OwnedText,
+    name: OwnedText,
+    value: OwnedText,
 }
 
 /// `struct mkr_xpath_context_s`, the real thing.
@@ -143,22 +143,23 @@ pub use crate::xpath::runtime_abi::mkr_str_cache_truncate;
 
 /* ---------- text slots ---------- */
 
-fn empty_text() -> Text {
-    Text::new()
+fn empty_text() -> OwnedText {
+    OwnedText::new()
 }
 
-fn text_eq(a: &Text, b: &[u8]) -> bool {
+fn text_eq(a: &OwnedText, b: &[u8]) -> bool {
     a.as_slice() == b
 }
 
 /// Copy `val` into a fresh owned text, or None on OOM.
-unsafe fn copy_text(val: VerifiedText) -> Option<Text> {
-    crate::xpath_abi::OwnedText::try_copy(val.into(), ptr::null_mut(), None).map(Text::from_owned)
+unsafe fn copy_text(val: VerifiedText) -> Option<OwnedText> {
+    crate::xpath_abi::TextSlot::try_copy(val.into(), ptr::null_mut(), None)
+        .map(OwnedText::from_slot)
 }
 
 /// Replace a slot's owned text with a fresh copy: copy FIRST, then clear the
 /// old, so an OOM leaves the slot intact.
-unsafe fn set_slot(slot: &mut Text, val: VerifiedText) -> c_int {
+unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
     match copy_text(val) {
         Some(nv) => {
             *slot = nv;

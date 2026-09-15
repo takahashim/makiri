@@ -52,9 +52,9 @@ fn zero_step() -> Step {
         axis: AXIS_CHILD,
         test: NodeTest {
             kind: NT_NAME,
-            prefix: OwnedText::empty(),
-            local: OwnedText::empty(),
-            pi_target: OwnedText::empty(),
+            prefix: TextSlot::empty(),
+            local: TextSlot::empty(),
+            pi_target: TextSlot::empty(),
         },
         predicates: ptr::null_mut(),
         npredicates: 0,
@@ -195,24 +195,19 @@ impl<'a> Parser<'a> {
     /// Copy `text` into an owned-text AST slot. A failure must be propagated: a
     /// null slot left in the AST would silently mis-compare at evaluation, so
     /// the parse fails closed instead.
-    fn fill_owned(&mut self, text: &[u8], out: *mut OwnedText) -> bool {
+    fn fill_owned(&mut self, text: &[u8], out: *mut TextSlot) -> bool {
         // SAFETY: a null error slot is accepted; the parser reports its own.
-        let copied = unsafe { OwnedText::try_copy_bytes(text, ptr::null_mut(), None) };
+        let copied = unsafe { TextSlot::try_copy_bytes(text, ptr::null_mut(), None) };
         let ok = copied.is_some();
         if !ok {
             err_setf!(self.err, XP_ERR_OOM, "out of memory in parser");
         }
-        unsafe { *out = copied.unwrap_or(OwnedText::empty()) };
+        unsafe { *out = copied.unwrap_or(TextSlot::empty()) };
         ok
     }
 
     /// Split a QNAME token into prefix and local, and copy both.
-    fn fill_qname_split(
-        &mut self,
-        t: &Token,
-        prefix: *mut OwnedText,
-        local: *mut OwnedText,
-    ) -> bool {
+    fn fill_qname_split(&mut self, t: &Token, prefix: *mut TextSlot, local: *mut TextSlot) -> bool {
         let (p, l) = split_qname(self.text(t));
         self.fill_owned(p, prefix) && self.fill_owned(l, local)
     }

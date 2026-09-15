@@ -97,20 +97,22 @@ pub const OP_UNION: u32 = 13;
 /// `super::abi::*` imports see them beside the owned slot.
 pub use crate::text::{BorrowedText, VerifiedText};
 
-/// An engine-owned UTF-8 byte string, NUL-terminated in its backing allocation.
+/// The raw slot for an engine-owned UTF-8 byte string, NUL-terminated in its
+/// backing allocation.
 ///
 /// Interior NULs are possible - DOM text may hold U+0000 - so it is read as
 /// `(ptr, len)` and borrowed as a [`BorrowedText`], never a [`VerifiedText`].
 ///
 /// This is a slot, not an owner: it is `Copy` because the AST and value unions
-/// hold it, and clearing one copy leaves the others dangling.
+/// hold it, and clearing one copy leaves the others dangling. Code that owns
+/// text outside those layouts holds a [`crate::xpath::own::OwnedText`].
 #[derive(Clone, Copy)]
-pub struct OwnedText {
+pub struct TextSlot {
     ptr: *mut c_char,
     len: usize,
 }
 
-impl OwnedText {
+impl TextSlot {
     pub(crate) const fn empty() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
@@ -194,7 +196,7 @@ pub struct NodeSet {
 #[derive(Clone, Copy)]
 pub union ValU {
     pub nodeset: NodeSet,
-    pub string: OwnedText,
+    pub string: TextSlot,
     pub number: f64,
     pub boolean: c_int,
 }
@@ -209,7 +211,7 @@ pub struct PublicNodeSet {
 #[derive(Clone, Copy)]
 pub union XPathValueU {
     pub nodeset: PublicNodeSet,
-    pub string: OwnedText,
+    pub string: TextSlot,
     pub number: f64,
     pub boolean: c_int,
 }
@@ -231,9 +233,9 @@ pub struct Val {
 #[derive(Clone, Copy)]
 pub struct NodeTest {
     pub kind: u32,
-    pub prefix: OwnedText,
-    pub local: OwnedText,
-    pub pi_target: OwnedText,
+    pub prefix: TextSlot,
+    pub local: TextSlot,
+    pub pi_target: TextSlot,
 }
 
 #[derive(Clone, Copy)]
@@ -246,14 +248,14 @@ pub struct Step {
 
 #[derive(Clone, Copy)]
 pub struct VarRef {
-    pub prefix: OwnedText,
-    pub name: OwnedText,
+    pub prefix: TextSlot,
+    pub name: TextSlot,
 }
 
 #[derive(Clone, Copy)]
 pub struct FnCall {
-    pub prefix: OwnedText,
-    pub name: OwnedText,
+    pub prefix: TextSlot,
+    pub name: TextSlot,
     pub args: *mut *mut Node,
     pub nargs: usize,
 }
@@ -288,7 +290,7 @@ pub struct Filter {
 
 #[derive(Clone, Copy)]
 pub union NodeU {
-    pub literal: OwnedText,
+    pub literal: TextSlot,
     pub literal_num: f64,
     pub varref: VarRef,
     pub fncall: FnCall,

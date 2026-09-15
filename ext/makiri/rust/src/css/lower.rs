@@ -306,7 +306,7 @@ unsafe fn not_named_axis(b: &Build, axis: u32, test: &crate::xpath_abi::NodeTest
 
 /// An owned-text slot as a slice, or `None` when unset.
 #[inline]
-unsafe fn owned_slice<'a>(t: &crate::xpath_abi::OwnedText) -> Option<&'a [u8]> {
+unsafe fn owned_slice<'a>(t: &crate::xpath_abi::TextSlot) -> Option<&'a [u8]> {
     if t.is_empty() {
         None
     } else {

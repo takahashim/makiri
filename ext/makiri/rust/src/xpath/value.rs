@@ -10,7 +10,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::number;
-use super::own::Text;
+use super::own::OwnedText;
 use crate::err_setf;
 use crate::falloc::raw::mkr_reallocarray;
 use core::ffi::{c_char, c_int, c_void};
@@ -71,7 +71,7 @@ pub fn val_boolean(b: bool) -> Val {
 ///
 /// # Safety
 /// `t` must name live bytes for `'a`.
-pub unsafe fn owned_bytes<'a>(t: OwnedText) -> &'a [u8] {
+pub unsafe fn owned_bytes<'a>(t: TextSlot) -> &'a [u8] {
     t.as_bytes()
 }
 
@@ -80,12 +80,12 @@ pub unsafe fn owned_bytes<'a>(t: OwnedText) -> &'a [u8] {
 /// # Safety
 /// `out` must be a writable `mkr_owned_text_t`.
 pub unsafe fn owned_copy(
-    out: *mut OwnedText,
+    out: *mut TextSlot,
     s: &[u8],
     err: *mut Error,
     what: &core::ffi::CStr,
 ) -> bool {
-    match crate::xpath_abi::OwnedText::try_copy_bytes(s, err, Some(what)) {
+    match crate::xpath_abi::TextSlot::try_copy_bytes(s, err, Some(what)) {
         Some(value) => {
             *out = value;
             true
@@ -106,7 +106,7 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> bool
     *dst = val_zero((*src).type_);
     match (*src).type_ {
         T_STRING => {
-            let mut text = OwnedText::empty();
+            let mut text = TextSlot::empty();
             if !owned_copy(
                 &mut text,
                 owned_bytes((*src).u.string),
@@ -224,9 +224,9 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     node: D::Node,
     limits: *mut Limits,
     err: *mut Error,
-    out: *mut OwnedText,
+    out: *mut TextSlot,
 ) -> bool {
-    *out = OwnedText::empty();
+    *out = TextSlot::empty();
     let mut buf = Buf::new(if limits.is_null() {
         0
     } else {
@@ -235,7 +235,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
         if let Ok(owned) = buf.steal() {
-            *out = OwnedText::from_buf(owned);
+            *out = TextSlot::from_buf(owned);
             return true;
         }
         if !err.is_null() {
@@ -347,9 +347,9 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     v: *const Val,
     limits: *mut Limits,
     err: *mut Error,
-    out: *mut OwnedText,
+    out: *mut TextSlot,
 ) -> bool {
-    *out = OwnedText::empty();
+    *out = TextSlot::empty();
     if v.is_null() {
         return owned_copy(out, b"", err, c"out of memory converting value to string");
     }
@@ -423,7 +423,7 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
             *out = f64::NAN;
             return true;
         }
-        let mut text = Text::new();
+        let mut text = OwnedText::new();
         if !node_to_owned_text::<D>(
             doc,
             nodeset_at::<D>(&(*v).u.nodeset, 0),
@@ -457,8 +457,8 @@ pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
 /// best-effort form the NUMBER coercion wants, where an overrun yields "" and
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
-unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> Text {
-    let mut t = Text::new();
+unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText {
+    let mut t = OwnedText::new();
     node_to_owned_text::<D>(doc, node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
     t
 }
@@ -503,7 +503,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     }
 
     let limits = mkr_ctx_limits(ctx);
-    let mut text = OwnedText::empty();
+    let mut text = TextSlot::empty();
     if !node_to_owned_text::<D>(doc, node, limits, err, &mut text) {
         return None;
     }

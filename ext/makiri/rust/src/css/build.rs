@@ -6,7 +6,7 @@
 //! doing, spelled once per builder instead of once per call.
 //!
 //! The allocations match the AST owner's contract exactly: nodes through
-//! `mkr_node_alloc`, owned text through `OwnedText::try_copy`, arrays through
+//! `mkr_node_alloc`, owned text through `TextSlot::try_copy`, arrays through
 //! the C allocator. That is why none of this uses `falloc` or a
 //! `Vec` - the AST owner eventually walks these C-layout fields.
 
@@ -16,7 +16,7 @@ use super::Build;
 use crate::falloc::raw::mkr_reallocarray;
 use crate::xpath::own::Ast;
 use crate::xpath_abi::{
-    mkr_node_alloc, Node, OwnedText, Step, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
+    mkr_node_alloc, Node, Step, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
     NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
 
@@ -39,7 +39,7 @@ pub(crate) unsafe fn node(b: &Build, kind: u32) -> *mut Node {
 }
 
 /// Copy `s` into an owned text slot. `false` on failure, with `*err` set.
-pub(crate) unsafe fn set_text(b: &Build, out: *mut OwnedText, s: &[u8]) -> bool {
+pub(crate) unsafe fn set_text(b: &Build, out: *mut TextSlot, s: &[u8]) -> bool {
     let Some(text) = borrowed(s) else {
         crate::err_setf!(
             b.err,
@@ -48,7 +48,7 @@ pub(crate) unsafe fn set_text(b: &Build, out: *mut OwnedText, s: &[u8]) -> bool 
         );
         return false;
     };
-    match crate::xpath_abi::OwnedText::try_copy(text.into(), b.err, Some(c"css name")) {
+    match crate::xpath_abi::TextSlot::try_copy(text.into(), b.err, Some(c"css name")) {
         Some(value) => {
             *out = value;
             true

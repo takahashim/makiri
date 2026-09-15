@@ -17,7 +17,7 @@ use super::funcs;
 use super::msg::Bytes;
 use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
-use super::own::{OwnedVal, Set, Text};
+use super::own::{OwnedText, OwnedVal, Set};
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
@@ -329,7 +329,7 @@ unsafe fn compare_eq<D: Dom>(
                 Some(if want_eq { eq } else { !eq })
             }
             _ => {
-                let mut target = Text::new();
+                let mut target = OwnedText::new();
                 if !val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut()) {
                     return None;
                 }
@@ -355,8 +355,8 @@ unsafe fn compare_eq<D: Dom>(
         let eq = val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r);
         Some(if want_eq { eq } else { !eq })
     } else {
-        let mut ls = Text::new();
-        let mut rs = Text::new();
+        let mut ls = OwnedText::new();
+        let mut rs = OwnedText::new();
         if !val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut())
             || !val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut())
         {
@@ -922,7 +922,7 @@ unsafe fn eval_node_inner<D: Dom>(
 
     let ok = match (*n).kind {
         NK_LITERAL_STR => {
-            let mut text = OwnedText::empty();
+            let mut text = TextSlot::empty();
             if owned_copy(
                 &mut text,
                 owned_bytes((*n).u.literal),
@@ -948,7 +948,7 @@ unsafe fn eval_node_inner<D: Dom>(
             };
             match mkr_ctx_lookup_variable_text(ctx, prefix, owned_bytes((*v).name)) {
                 Some(bytes) => {
-                    let mut text = OwnedText::empty();
+                    let mut text = TextSlot::empty();
                     if owned_copy(
                         &mut text,
                         bytes,

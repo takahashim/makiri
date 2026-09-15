@@ -1,11 +1,11 @@
-//! Owned engine text: allocation, copy and release of an `OwnedText` slot.
+//! Owned engine text: allocation, copy and release of an `TextSlot` slot.
 #![allow(clippy::missing_safety_doc)]
 use super::super::abi::*;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
 use core::ffi::{c_char, c_void, CStr};
 
-impl OwnedText {
+impl TextSlot {
     /// Release the backing allocation and return this slot to the absent state.
     pub(crate) unsafe fn clear(&mut self) {
         if !self.as_ptr().is_null() {
@@ -80,12 +80,12 @@ impl OwnedText {
     }
 }
 
-pub unsafe fn mkr_owned_text_init(t: *mut OwnedText) {
+pub unsafe fn mkr_owned_text_init(t: *mut TextSlot) {
     if !t.is_null() {
-        *t = OwnedText::empty();
+        *t = TextSlot::empty();
     }
 }
-pub unsafe fn mkr_owned_text_clear(t: *mut OwnedText) {
+pub unsafe fn mkr_owned_text_clear(t: *mut TextSlot) {
     if t.is_null() {
         return;
     }

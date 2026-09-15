@@ -62,38 +62,39 @@ impl Drop for Ast {
     }
 }
 
-/// An owned `mkr_owned_text_t`.
-pub struct Text(pub(crate) OwnedText);
+/// The owner of a [`TextSlot`]: it frees the allocation on drop. Rust code that
+/// holds engine text holds one of these; the slot is only the raw layout.
+pub struct OwnedText(pub(crate) TextSlot);
 
-impl Text {
-    pub fn new() -> Text {
-        Text(OwnedText::empty())
+impl OwnedText {
+    pub fn new() -> OwnedText {
+        OwnedText(TextSlot::empty())
     }
     pub fn as_slice(&self) -> &[u8] {
         unsafe { self.0.as_bytes() }
     }
-    pub(crate) fn from_owned(value: OwnedText) -> Self {
+    pub(crate) fn from_slot(value: TextSlot) -> Self {
         Self(value)
     }
     pub(crate) fn is_absent(&self) -> bool {
         self.0.is_absent()
     }
-    pub(crate) fn as_mut(&mut self) -> *mut OwnedText {
+    pub(crate) fn as_mut(&mut self) -> *mut TextSlot {
         &mut self.0
     }
     /// Hand the allocation to the caller; the guard is left empty.
-    pub fn take(&mut self) -> OwnedText {
-        core::mem::replace(&mut self.0, OwnedText::empty())
+    pub fn take(&mut self) -> TextSlot {
+        core::mem::replace(&mut self.0, TextSlot::empty())
     }
 }
 
-impl Default for Text {
-    fn default() -> Text {
-        Text::new()
+impl Default for OwnedText {
+    fn default() -> OwnedText {
+        OwnedText::new()
     }
 }
 
-impl Drop for Text {
+impl Drop for OwnedText {
     fn drop(&mut self) {
         unsafe { self.0.clear() }
     }

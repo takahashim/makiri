@@ -13,7 +13,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::order::nodeset_unique_sorted;
-use super::own::Text;
+use super::own::OwnedText;
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
@@ -129,8 +129,8 @@ unsafe fn require_nodeset(arg: *const Val, fname: &str, err: *mut Error) -> Opti
 }
 
 /// An owned copy of `s`, or None with `*err` naming `what` on OOM.
-unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> Option<OwnedText> {
-    let t = OwnedText::try_copy_bytes(s, ptr::null_mut(), None);
+unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> Option<TextSlot> {
+    let t = TextSlot::try_copy_bytes(s, ptr::null_mut(), None);
     if t.is_none() {
         err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what);
     }
@@ -157,9 +157,9 @@ unsafe fn set_bool(out: *mut Val, b: bool) -> bool {
     true
 }
 
-unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<Text> {
+unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<OwnedText> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let mut t = Text::new();
+    let mut t = OwnedText::new();
     if val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, t.as_mut()) {
         Some(t)
     } else {
@@ -184,12 +184,12 @@ unsafe fn arg_or_self_text<D: Dom>(
     args: &[Val],
     ctx: *mut Context,
     err: *mut Error,
-) -> Option<Text> {
+) -> Option<OwnedText> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     match args.first() {
         Some(a) => to_text::<D>(a, ctx, err),
         None => {
-            let mut t = Text::new();
+            let mut t = OwnedText::new();
             if node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
                 Some(t)
             } else {
@@ -389,7 +389,7 @@ unsafe fn fn_id<D: Dom>(
     let ok = if args[0].type_ == T_NODESET {
         let set = &raw const args[0].u.nodeset;
         (0..(*set).count).all(|i| {
-            let mut t = Text::new();
+            let mut t = OwnedText::new();
             node_to_owned_text::<D>(
                 D::doc_from_void(doc),
                 nodeset_at::<D>(set, i),
@@ -567,7 +567,7 @@ unsafe fn fn_concat<D: Dom>(
         return false;
     }
     let limits = mkr_ctx_limits(ctx);
-    let mut parts = match try_vec::<Text>(args.len(), err, "concat") {
+    let mut parts = match try_vec::<OwnedText>(args.len(), err, "concat") {
         Some(v) => v,
         None => return false,
     };
@@ -589,7 +589,7 @@ unsafe fn fn_concat<D: Dom>(
         }
         parts.push(t);
     }
-    let joined = OwnedText::try_fill(total, |dst| {
+    let joined = TextSlot::try_fill(total, |dst| {
         let mut off = 0usize;
         for p in &parts {
             let s = p.as_slice();
@@ -749,7 +749,7 @@ unsafe fn fn_normalize_space<D: Dom>(
         None => return false,
     };
     let src = s.as_slice();
-    let normalized = OwnedText::try_fill(src.len(), |dst| {
+    let normalized = TextSlot::try_fill(src.len(), |dst| {
         let mut w = 0usize;
         let mut in_space = true;
         for &c in src {
@@ -795,7 +795,7 @@ unsafe fn fn_translate<D: Dom>(
         return false;
     }
     let limits = mkr_ctx_limits(ctx);
-    let mut texts = match try_vec::<Text>(3, err, "translate") {
+    let mut texts = match try_vec::<OwnedText>(3, err, "translate") {
         Some(v) => v,
         None => return false,
     };
@@ -866,7 +866,7 @@ unsafe fn fn_translate<D: Dom>(
             return false;
         }
     };
-    mkr_val_set_owned_text(out, OwnedText::from_buf(owned));
+    mkr_val_set_owned_text(out, TextSlot::from_buf(owned));
     true
 }
 
@@ -976,7 +976,7 @@ unsafe fn fn_number<D: Dom>(
         },
         None => {
             /* number() with no argument is number(string(self)). */
-            let mut t = Text::new();
+            let mut t = OwnedText::new();
             if !node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
                 return false;
             }

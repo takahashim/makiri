@@ -45,7 +45,7 @@ use rb_sys::VALUE;
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
     mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, Error as XPathError, Node as Ast,
-    OwnedText, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME,
+    TextSlot, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME,
     XP_ERR_SYNTAX,
 };
 
@@ -161,7 +161,7 @@ pub unsafe extern "C" fn mkr_xpath_value_to_ruby(v: *mut XPathValue, document: V
 }
 
 /// An engine string as a UTF-8 Ruby String. A NULL pointer is `""`.
-unsafe fn owned_text_to_str(t: OwnedText) -> VALUE {
+unsafe fn owned_text_to_str(t: TextSlot) -> VALUE {
     let p = if t.is_absent() {
         c"".as_ptr()
     } else {

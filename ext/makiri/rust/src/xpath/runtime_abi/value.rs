@@ -25,7 +25,7 @@ pub unsafe fn mkr_val_clear(v: *mut Val) {
         },
     };
 }
-pub unsafe fn mkr_val_set_owned_text(v: *mut Val, owned: OwnedText) {
+pub unsafe fn mkr_val_set_owned_text(v: *mut Val, owned: TextSlot) {
     if !v.is_null() {
         (*v).type_ = 1;
         (*v).u.string = owned;
@@ -45,7 +45,7 @@ pub unsafe fn mkr_val_set_borrowed_text_copy(
         );
         return -1;
     }
-    let Some(owned) = OwnedText::try_copy(borrowed, err, what) else {
+    let Some(owned) = TextSlot::try_copy(borrowed, err, what) else {
         return -1;
     };
     mkr_val_set_owned_text(v, owned);

@@ -98,7 +98,7 @@ unsafe fn mark_step_predicates(s: *const Step) {
     }
 }
 
-unsafe fn text_bytes<'a>(t: OwnedText) -> &'a [u8] {
+unsafe fn text_bytes<'a>(t: TextSlot) -> &'a [u8] {
     t.as_bytes()
 }
 
