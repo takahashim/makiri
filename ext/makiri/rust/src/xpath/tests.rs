@@ -174,6 +174,11 @@ fn numbers_and_booleans_follow_the_xpath_rules() {
     assert_eq!(xpath("floor(-1.5)"), Answer::Num(-2.0));
     assert_eq!(xpath("ceiling(-1.5)"), Answer::Num(-1.0));
     assert_eq!(xpath("round(2.5)"), Answer::Num(3.0));
+    assert_eq!(xpath("round(-2.5)"), Answer::Num(-2.0));
+    assert_eq!(xpath("round(0.49999999999999994)"), Answer::Num(0.0));
+    // Negative zero compares equal to zero, so its sign shows through a division.
+    assert_eq!(xpath("1 div round(-0.5)"), Answer::Num(f64::NEG_INFINITY));
+    assert_eq!(xpath("1 div round(-0)"), Answer::Num(f64::NEG_INFINITY));
     assert_eq!(xpath("1 div 0"), Answer::Num(f64::INFINITY));
     assert_eq!(xpath("0 div 0"), Answer::Num(f64::NAN));
     assert_eq!(xpath("5 mod -2"), Answer::Num(1.0));

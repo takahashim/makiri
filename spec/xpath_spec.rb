@@ -309,6 +309,10 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("floor(1.7)")).to eq(1.0)
       expect(doc.xpath("ceiling(1.2)")).to eq(2.0)
       expect(doc.xpath("round(2.5)")).to eq(3.0)
+      expect(doc.xpath("round(-2.5)")).to eq(-2.0)
+      expect(doc.xpath("round(0.49999999999999994)")).to eq(0.0)
+      # XPath 1.0 §4.4: [-0.5, 0) rounds to negative zero, which a division shows.
+      expect(doc.xpath("1 div round(-0.5)")).to eq(-Float::INFINITY)
     end
 
     it "sum over a node-set" do

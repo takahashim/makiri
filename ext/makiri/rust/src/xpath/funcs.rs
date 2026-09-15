@@ -783,15 +783,31 @@ unsafe fn fn_ceiling<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val])
     num1::<D, _>(ctx, args, "ceiling", f64::ceil)
 }
 
-/// XPath round(): to the nearest integer, with .5 going toward +inf.
-unsafe fn fn_round<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
-    num1::<D, _>(ctx, args, "round", |d| {
-        if d.is_nan() {
-            d
+/// XPath round(): the integer closest to the argument, the one nearer +inf when
+/// two are equally close.
+///
+/// XPath 1.0 §4.4 also fixes the signed zeros: NaN, the infinities and either
+/// zero come back unchanged, and an argument in [-0.5, 0) rounds to negative
+/// zero. `(d + 0.5).floor()` got both wrong - -0.5 gave +0, and
+/// 0.49999999999999994 gave 1, because the addition rounds up to 1.0 - so the
+/// distance to the floor is measured instead, which is exact.
+fn round_half_up(d: f64) -> f64 {
+    if d.is_nan() || d.is_infinite() || d == 0.0 {
+        d
+    } else if (-0.5..0.0).contains(&d) {
+        -0.0
+    } else {
+        let floor = d.floor();
+        if d - floor >= 0.5 {
+            floor + 1.0
         } else {
-            (d + 0.5).floor()
+            floor
         }
-    })
+    }
+}
+
+unsafe fn fn_round<D: Dom>(ctx: *mut Context, _focus: &Focus<D>, args: &[Val]) -> Answer {
+    num1::<D, _>(ctx, args, "round", round_half_up)
 }
 
 /* ---------- the Nokogiri builtins ---------- */
