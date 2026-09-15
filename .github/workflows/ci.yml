@@ -173,8 +173,9 @@ jobs:
       - name: Build + test under AddressSanitizer
         run: bundle exec rake sanitize
 
-      # The Ruby-free engine tests under ASan too - among them the arena, tree
-      # and mutation self-checks, which reach states no public API can build and
+      # The Ruby-free engine tests under ASan too - the XPath and CSS evaluation
+      # cases, and the arena, tree and mutation self-checks, which reach states
+      # no public API can build and
       # ran under `rake sanitize` while they were a Ruby hook. `--target` keeps
       # the build scripts uninstrumented. Linux only: on macOS an ASan test
       # binary deadlocks in dyld before main (see the Rakefile's cargo-fuzz note).
@@ -182,4 +183,4 @@ jobs:
         working-directory: ext/makiri/rust
         env:
           RUSTFLAGS: -Zsanitizer=address
-        run: cargo test --no-default-features --target x86_64-unknown-linux-gnu
+        run: cargo test --no-default-features --features lexbor --target x86_64-unknown-linux-gnu

@@ -619,9 +619,15 @@ task :kani do
 end
 
 namespace :rust do
-  desc "Run Rust's Ruby- and Lexbor-free core tests"
+  # Two passes: the Ruby- and Lexbor-free core, then the same tests with the
+  # `lexbor` layers in, which adds the CSS lowering cases. The second needs the
+  # vendored Lexbor that `rake compile` builds.
+  desc "Run the Rust tests (the engine core, then with the Lexbor layers)"
   task :test do
-    Dir.chdir("ext/makiri/rust") { sh "cargo test --no-default-features" }
+    Dir.chdir("ext/makiri/rust") do
+      sh "cargo test --no-default-features"
+      sh "cargo test --no-default-features --features lexbor"
+    end
   end
 end
 

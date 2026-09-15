@@ -49,6 +49,9 @@ pub mod parse;
 #[cfg(kani)]
 mod verify;
 
+#[cfg(test)]
+mod tests;
+
 pub mod ctx;
 pub mod limits;
 
