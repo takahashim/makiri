@@ -42,11 +42,12 @@ use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedDa
 use rb_sys::VALUE;
 
 use crate::xpath::ctx::OwnedContext;
-use crate::xpath::own::Ast as OwnedAst;
+use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
 use crate::xpath_abi::{
-    err_set_raw, ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot, Val, ValRef,
-    VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+    ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot, Val, ValRef, VerifiedText,
+    XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
+use crate::xpath_abi::{Reported, ResolverCall};
 
 use super::abi::{
     error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,
@@ -630,68 +631,58 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
     rb_sys::Qnil as VALUE
 }
 
-/// The engine's resolver hook. 0 = handled, -1 = errored, +1 = not found.
-unsafe extern "C" fn handler_resolver(
+/// The engine's resolver hook: the Ruby handler's method for the call, or
+/// `Ok(None)` when the handler has no such method and the engine reports the
+/// function unknown.
+unsafe fn handler_resolver(
     user_data: *mut c_void,
     ctx: *mut Ctx,
-    _self_node: *mut c_void,
-    _self_pos: usize,
-    _self_size: usize,
-    _ns_uri: *const c_char,
-    local_name: *const c_char,
-    args: *mut c_void,
-    nargs: usize,
-    out: *mut c_void,
-    err: *mut XPathError,
-) -> c_int {
-    if user_data.is_null() || local_name.is_null() {
-        return 1;
+    call: &ResolverCall<'_>,
+    err: ErrSink,
+) -> Result<Option<OwnedVal>, Reported> {
+    if user_data.is_null() {
+        return Ok(None);
     }
     let bridge = &*(user_data as *const Bridge);
     if bridge.handler == rb_sys::Qnil as VALUE {
-        return 1;
+        return Ok(None);
     }
 
-    /* The method name: XPath uses '-', Ruby uses '_'. */
+    /* The method name: XPath uses '-', Ruby uses '_'. The buffer starts zeroed,
+     * so the copy stays NUL-terminated. */
     let mut name = [0u8; 128];
-    let mut n = 0usize;
-    while n + 1 < name.len() {
-        let b = *local_name.add(n) as u8;
-        if b == 0 {
-            break;
-        }
-        name[n] = if b == b'-' { b'_' } else { b };
-        n += 1;
+    let n = call.local.len();
+    if n >= name.len() {
+        return Ok(None); /* too long to map to a Ruby method name */
     }
-    if *local_name.add(n) as u8 != 0 {
-        return 1; /* too long to map to a Ruby method name */
+    for (dst, &b) in name.iter_mut().zip(call.local) {
+        *dst = if b == b'-' { b'_' } else { b };
     }
-    name[n] = 0;
 
     let method = rb_sys::rb_intern(name.as_ptr() as *const c_char);
     if rb_sys::rb_respond_to(bridge.handler, method) == 0 {
-        return 1; /* let the engine raise "unknown function" */
+        return Ok(None); /* let the engine raise "unknown function" */
     }
 
-    if nargs > HANDLER_MAX_ARGS {
-        let mut b = ErrBuf::new();
-        b.set_fmt(format_args!(
+    if call.args.len() > HANDLER_MAX_ARGS {
+        return Err(crate::err_setf!(
+            err,
+            XP_ERR_RUNTIME,
             "handler function '{}' called with too many arguments ({} > {})",
             core::str::from_utf8_unchecked(&name[..n]),
-            nargs,
+            call.args.len(),
             HANDLER_MAX_ARGS
         ));
-        err_set_raw(err, XP_ERR_RUNTIME, b.as_ptr());
-        return -1;
     }
 
-    let mut call = HandlerCall {
+    let mut out = Val::EMPTY;
+    let mut state_of_call = HandlerCall {
         bridge,
         ctx,
         method,
-        args: args as *const Val,
-        nargs,
-        out: out as *mut Val,
+        args: call.args.as_ptr(),
+        nargs: call.args.len(),
+        out: &mut out,
         ok: true,
         err: ErrBuf::new(),
         argv: [rb_sys::Qnil as VALUE; HANDLER_MAX_ARGS],
@@ -700,9 +691,12 @@ unsafe extern "C" fn handler_resolver(
     let mut state: c_int = 0;
     rb_sys::rb_protect(
         Some(handler_call_body),
-        &mut call as *mut HandlerCall as VALUE,
+        &mut state_of_call as *mut HandlerCall as VALUE,
         &mut state,
     );
+    /* Whatever the handler produced is owned from here, so every failure below
+     * frees it. */
+    let out = OwnedVal::from(out);
     if state != 0 {
         let exc = rb_sys::rb_errinfo();
         rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
@@ -711,19 +705,21 @@ unsafe extern "C" fn handler_resolver(
         // one release platform and fails on another.
         let mut msg = [0 as c_char; 200];
         mkr_ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
-        let mut b = ErrBuf::new();
-        b.set_fmt(format_args!(
+        return Err(crate::err_setf!(
+            err,
+            XP_ERR_RUNTIME,
             "handler raised: {}",
             core::ffi::CStr::from_ptr(msg.as_ptr()).to_string_lossy()
         ));
-        err_set_raw(err, XP_ERR_RUNTIME, b.as_ptr());
-        return -1;
     }
-    if !call.ok {
-        err_set_raw(err, XP_ERR_RUNTIME, call.err.as_ptr());
-        return -1;
+    if !state_of_call.ok {
+        return Err(crate::xpath::msg::err_set(
+            err,
+            XP_ERR_RUNTIME,
+            core::ffi::CStr::from_ptr(state_of_call.err.as_ptr()),
+        ));
     }
-    0
+    Ok(Some(out))
 }
 
 /* ------------------------------------------------------------------ */
@@ -757,10 +753,10 @@ unsafe fn cached_ast(
         return Some((raw, Some(ast)));
     };
     if d.cache.0.mkr_insert(owned_key, ast).is_err() {
-        err_set_raw(
-            err,
+        crate::xpath::msg::err_set(
+            ErrSink::new(err),
             XP_ERR_OOM,
-            c"out of memory caching XPath expression".as_ptr(),
+            c"out of memory caching XPath expression",
         );
         return None;
     }

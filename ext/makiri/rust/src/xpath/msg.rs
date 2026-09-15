@@ -123,12 +123,11 @@ impl Default for Error {
     }
 }
 
-/// Replace `err`'s status and message - the C-shaped entry the handler resolver
-/// reports through. `msg` is copied, truncated to fit.
+/// Replace `err`'s status and message. `msg` is copied, truncated to fit.
 ///
 /// # Safety
 /// `err` is null or a live error; `msg` is null or NUL-terminated.
-pub unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
+unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
     if err.is_null() {
         return;
     }
@@ -152,19 +151,6 @@ pub unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
 /// nothing outside this module can make one without writing an error.
 #[derive(Debug)]
 pub struct Reported(());
-
-impl Reported {
-    /// The proof, for a callee that reports through the error slot but answers
-    /// only a status - the Ruby handler resolver, whose C-shaped signature
-    /// returns a negative code after writing `*err`.
-    ///
-    /// # Safety
-    /// The callee must have written the slot (or been handed a null one) for
-    /// the failure this answers.
-    pub(crate) unsafe fn assume_written() -> Self {
-        Reported(())
-    }
-}
 
 /// Where a failure is reported: the caller's error slot, or nowhere.
 ///
@@ -197,7 +183,7 @@ impl ErrSink {
         self.0.is_null()
     }
 
-    /// The slot, for a C-shaped callee: the handler resolver, `err_set_raw`.
+    /// The slot, for a C-shaped callee.
     pub fn as_raw(self) -> *mut Error {
         self.0
     }

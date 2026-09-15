@@ -22,8 +22,6 @@ use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
-use core::ffi::{c_char, c_void};
-use core::ptr;
 
 /// An evaluation step: the value, or proof its error was written to `err`.
 type EvalResult<T = ()> = Result<T, Reported>;
@@ -671,45 +669,30 @@ unsafe fn eval_fncall<D: Dom>(
 
     /* No built-in. Delegate to the per-call resolver, which the Ruby handler
      * bridge installs for the duration of evaluate(). */
-    let mut out = OwnedVal::new();
-    let resolved = match ctx_func_resolver(ctx) {
-        Some(resolver) => resolver(
-            xpath_get_user_data(ctx),
-            ctx,
-            D::to_void(focus.node),
-            focus.pos,
-            focus.size,
-            ns_uri.map_or(ptr::null(), |u| u.as_ptr() as *const c_char),
-            call.name.as_ptr(),
-            /* NULL rather than a dangling pointer when there are none, which is
-             * what the C hands a resolver. `OwnedVal` is transparent over `Val`,
-             * so the array is the `mkr_val_t[]` the resolver reads. */
-            if nargs == 0 {
-                ptr::null_mut()
-            } else {
-                args.as_mut_ptr() as *mut c_void
-            },
-            nargs,
-            out.as_mut() as *mut c_void,
-            err.as_raw(),
-        ),
-        None => 1, /* not found */
+    let answer = match ctx_func_resolver(ctx) {
+        Some(resolver) => {
+            let site = ResolverCall {
+                node: D::to_void(focus.node),
+                pos: focus.pos,
+                size: focus.size,
+                ns_uri,
+                local: name,
+                args: OwnedVal::as_vals(&args),
+            };
+            resolver(xpath_get_user_data(ctx), ctx, &site, err)?
+        }
+        None => None,
     };
-    match resolved {
-        0 => Ok(out),
-        r if r > 0 => Err(err_setf!(
+    answer.ok_or_else(|| {
+        err_setf!(
             err,
             XP_ERR_RUNTIME,
             "unknown function {}{}{}",
             Bytes(prefix),
             if call.prefix.is_absent() { "" } else { ":" },
             Bytes(name)
-        )),
-        /* A negative answer is the resolver's failure, which it reports through
-         * `err` before returning - its status-only C signature is the one place
-         * the proof has to be taken on trust. */
-        _ => Err(Reported::assume_written()),
-    }
+        )
+    })
 }
 
 unsafe fn eval_binop<D: Dom>(

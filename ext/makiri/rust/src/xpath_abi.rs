@@ -525,21 +525,31 @@ pub struct OrderIndex {
     pub built: c_int,
 }
 
+/// One call the evaluator routes to the custom-function resolver.
+pub struct ResolverCall<'a> {
+    /// The focus: the context node as the engine's handle, and its position.
+    pub node: *mut c_void,
+    pub pos: usize,
+    pub size: usize,
+    /// The namespace URI of the call's prefix, when it had one.
+    pub ns_uri: Option<&'a [u8]>,
+    /// The function's local name.
+    pub local: &'a [u8],
+    pub args: &'a [Val],
+}
+
 /// The custom-function resolver the glue installs for a Ruby handler.
+///
+/// `Ok(Some(value))` answers the call; `Ok(None)` means there is no such
+/// function, which the evaluator reports; `Err` is the function's own failure,
+/// already written to `err`.
 pub type FuncResolver = Option<
-    unsafe extern "C" fn(
+    unsafe fn(
         user_data: *mut c_void,
         ctx: *mut Context,
-        self_node: *mut c_void,
-        self_pos: usize,
-        self_size: usize,
-        ns_uri: *const c_char,
-        local_name: *const c_char,
-        args: *mut c_void,
-        nargs: usize,
-        out: *mut c_void,
-        err: *mut Error,
-    ) -> c_int,
+        call: &ResolverCall<'_>,
+        err: ErrSink,
+    ) -> Result<Option<crate::xpath::own::OwnedVal>, Reported>,
 >;
 
 /// Tag-index hooks (HTML only): `lookup` returns the document-ordered bucket of
@@ -599,7 +609,7 @@ pub use crate::xpath::runtime_abi::val_set_owned_text;
 /* The cleanup entry points the glue calls live at the raw boundary. */
 
 /// The proof a failure's message was written; see `xpath::msg`.
-pub use crate::xpath::msg::{err_set_raw, ErrSink, Error, Reported};
+pub use crate::xpath::msg::{ErrSink, Error, Reported};
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
