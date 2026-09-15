@@ -16,7 +16,7 @@
 //! checker, so a long-lived Rust reference would assert a lifetime nothing
 //! enforces. What actually keeps a cached slice valid is a RUNTIME protocol:
 //! every mutation goes through one invalidation hook
-//! ([`parsed_text_index_invalidate`]), which drops the whole index, so a
+//! (`Parsed::invalidate_indexes`), which drops the whole index, so a
 //! slice can never outlive the storage it points into. The arena also never
 //! frees a node - detached, never destroyed - so only a mutation can reallocate
 //! the text a slice borrows. That protocol is the safety argument; the types
@@ -31,16 +31,10 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_void};
-
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use crate::lexbor_abi::{self as lxb, preorder_next, LxbDoc, LxbNode};
+use crate::lexbor_abi::{self as lxb, preorder_next, LxbNode};
 use crate::text::BorrowedText;
 use crate::xpath::runtime_abi::cache::ptr_hash;
-
-/// `Parsed` - the parse handle. Generated, so a field added ahead of `doc`
-/// cannot become a silent wrong read here.
-type Parsed = lxb::parsed::Parsed;
 
 mod ty {
     use crate::lexbor_abi as lxb;
@@ -48,10 +42,6 @@ mod ty {
     pub const TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
     pub const CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
     pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
-}
-
-extern "C" {
-    fn lxb_dom_document_root(doc: *mut LxbDoc) -> *mut LxbNode;
 }
 
 /// One container's slice run. `start`/`end` are INDICES into `slices`, not byte
@@ -71,7 +61,7 @@ const EMPTY_RANGE: Range = Range {
     end: 0,
 };
 
-struct TextIndex {
+pub struct TextIndex {
     /// Document-order TEXT/CDATA slices, borrowed from the arena.
     slices: Vec<BorrowedText>,
     /// `slices.len() + 1` entries; `prefix[i]` is the byte count before slice
@@ -178,7 +168,10 @@ struct Frame {
 impl TextIndex {
     /// Build over `root` (the document root element). `None` on OOM, which is
     /// fail-closed: the caller walks instead.
-    unsafe fn build(root: *mut LxbNode) -> Option<TextIndex> {
+    ///
+    /// # Safety
+    /// `root` must be the root element of a live Lexbor document.
+    pub(crate) unsafe fn build(root: *mut LxbNode) -> Option<TextIndex> {
         let (nslices, ncont) = count(root);
 
         /* Run bounds are u32 in the range table. A document with more than
@@ -286,65 +279,16 @@ impl TextIndex {
  * public surface                                                     *
  * ------------------------------------------------------------------ */
 
-/// Free an index. NULL-safe, so `parsed_destroy` can call it unconditionally.
-pub unsafe fn text_index_free(idx: *mut c_void) {
-    if !idx.is_null() {
-        drop(Box::from_raw(idx as *mut TextIndex));
+impl TextIndex {
+    /// The document-order run of text slices `node`'s subtree owns, with its
+    /// byte total; None for a node outside the indexed tree. Never a shorter
+    /// run than the truth.
+    pub fn slices_of(&self, node: *const LxbNode) -> Option<(&[BorrowedText], usize)> {
+        let r = self.range_lookup(node)?;
+        let (start, end) = (r.start as usize, r.end as usize);
+        Some((
+            &self.slices[start..end],
+            self.prefix[end] - self.prefix[start],
+        ))
     }
-}
-
-/// Drop the index so the next query rebuilds it.
-///
-/// This is the whole safety protocol for the borrowed slices: EVERY mutation
-/// reaches here, so no cached slice outlives the storage it points into.
-pub unsafe fn parsed_text_index_invalidate(p: *mut Parsed) {
-    if p.is_null() || (*p).text_index.is_null() {
-        return;
-    }
-    text_index_free((*p).text_index);
-    (*p).text_index = core::ptr::null_mut();
-}
-
-/// The document-order run of text slices `node`'s subtree owns.
-///
-/// Returns 1 with `*out_slices` / `*out_n` / `*out_bytes` set, or 0 - meaning
-/// "walk instead", for a node outside the indexed tree (a fragment) or a build
-/// that could not allocate. Never a shorter run than the truth.
-pub unsafe fn parsed_text_slices(
-    p: *mut Parsed,
-    node: *const LxbNode,
-    out_slices: *mut *const BorrowedText,
-    out_n: *mut usize,
-    out_bytes: *mut usize,
-) -> c_int {
-    if p.is_null() || (*p).doc.is_null() || node.is_null() {
-        return 0;
-    }
-
-    if (*p).text_index.is_null() {
-        let root = lxb_dom_document_root((*p).doc as *mut LxbDoc);
-        if root.is_null() {
-            return 0;
-        }
-        let built = match TextIndex::build(root) {
-            Some(t) => t,
-            None => return 0, /* OOM: the caller walks */
-        };
-        let boxed = match crate::falloc::try_box(built) {
-            Ok(b) => b,
-            Err(_) => return 0,
-        };
-        (*p).text_index = Box::into_raw(boxed) as *mut c_void;
-    }
-
-    let t = &*((*p).text_index as *const TextIndex);
-    let r = match t.range_lookup(node) {
-        Some(r) => r,
-        None => return 0, /* not in the indexed tree */
-    };
-
-    *out_slices = t.slices.as_ptr().add(r.start as usize);
-    *out_n = (r.end - r.start) as usize;
-    *out_bytes = t.prefix[r.end as usize] - t.prefix[r.start as usize];
-    1
 }

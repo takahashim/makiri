@@ -33,13 +33,9 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_void};
-
-use crate::falloc::{try_box, try_vec_with_capacity};
+use crate::falloc::try_vec_with_capacity;
 use crate::lexbor_abi::{self as lxb, preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
 use crate::xpath::runtime_abi::cache::ptr_hash;
-
-type Parsed = lxb::parsed::Parsed;
 
 const NODE_TYPE_ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
@@ -66,7 +62,7 @@ const EMPTY_SLOT: AttrSlot = AttrSlot {
     owner: core::ptr::null_mut(),
 };
 
-struct DomIndex {
+pub struct DomIndex {
     slots: Vec<AttrSlot>,
     /// A power of two, or 0 when the document has no attributes.
     cap: usize,
@@ -140,7 +136,10 @@ unsafe fn indexable_tag(node: *const LxbNode) -> Option<usize> {
 
 /// Build over `doc`. `None` on allocation failure, with nothing written to the
 /// tree yet - the backfill happens only in the fill pass, which cannot fail.
-unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
+///
+/// # Safety
+/// `doc` must be a live Lexbor document.
+pub(crate) unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
     let root = doc as *mut LxbNode;
 
     /* Pass 1: one walk to size everything. */
@@ -230,122 +229,32 @@ unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
     Some(idx)
 }
 
-/// The built index for `p`, building it if needed. NULL on allocation failure,
-/// which leaves the cache empty so a later call retries.
-unsafe fn ensure(p: *mut Parsed) -> *mut DomIndex {
-    if p.is_null() || (*p).doc.is_null() {
-        return core::ptr::null_mut();
-    }
-    if !(*p).dom_index.is_null() {
-        return (*p).dom_index as *mut DomIndex;
-    }
-    let built = match build((*p).doc as *mut LxbDoc) {
-        Some(i) => i,
-        None => return core::ptr::null_mut(),
-    };
-    let boxed = match try_box(built) {
-        Ok(b) => b,
-        Err(_) => return core::ptr::null_mut(),
-    };
-    let raw = Box::into_raw(boxed);
-    (*p).dom_index = raw as *mut c_void;
-    raw
-}
-
 /* ------------------------------------------------------------------ *
- * public compat API                                                  *
+ * lookups                                                            *
  * ------------------------------------------------------------------ */
 
-/// The element that owns `attr`, or NULL - both for "not in this document" and
-/// for "the index could not be built". A caller that must tell those apart calls
-/// [`parsed_dom_index_build`] first; `Attribute#parent` does exactly that,
-/// because a nil parent there would be a navigation answer, not an error.
-pub unsafe fn parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut LxbNode {
-    if attr.is_null() {
-        return core::ptr::null_mut();
+impl DomIndex {
+    /// The element that owns `attr`, or null when it is not in this document.
+    pub fn owner_of(&self, attr: *const LxbAttr) -> *mut LxbNode {
+        self.attr_owner(attr as *mut LxbAttr)
     }
-    let idx = ensure(p);
-    if idx.is_null() {
-        return core::ptr::null_mut();
-    }
-    (*idx).attr_owner(attr)
-}
 
-/// Build the index now (idempotent). `true` on success, `false` on allocation
-/// failure.
-pub unsafe fn parsed_dom_index_build(p: *mut Parsed) -> bool {
-    !ensure(p).is_null()
-}
-
-/// Drop the index so the next query rebuilds it. Called from the one mutation
-/// hook, beside the text index's.
-pub unsafe fn parsed_dom_index_invalidate(p: *mut Parsed) {
-    if p.is_null() {
-        return;
-    }
-    dom_index_free((*p).dom_index);
-    (*p).dom_index = core::ptr::null_mut();
-}
-
-/// NULL-safe, so `parsed_destroy` can call it unconditionally.
-pub unsafe fn dom_index_free(ptr: *mut c_void) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr as *mut DomIndex));
-    }
-}
-
-/// The element index - the same object as the attr->owner index.
-pub unsafe fn parsed_element_index(p: *mut Parsed) -> *mut c_void {
-    ensure(p) as *mut c_void
-}
-
-/// The elements with tag id `tag_id`, in document order, or NULL with
-/// `*count = 0`.
-///
-/// Taken as a FUNCTION POINTER by the XPath context, so the signature is fixed.
-pub unsafe extern "C" fn element_index_tag(
-    ptr: *const c_void,
-    tag_id: usize,
-    count: *mut usize,
-) -> *const *mut LxbNode {
-    let none = |count: *mut usize| -> *const *mut LxbNode {
-        if !count.is_null() {
-            *count = 0;
+    /// The elements with tag id `tag_id`, in document order; empty for a tag
+    /// this index does not bucket.
+    pub fn tag_bucket(&self, tag_id: usize) -> &[*mut LxbNode] {
+        if self.tag_nodes.is_empty()
+            || tag_id == TAG_UNDEF
+            || tag_id >= TAG_INDEX_CAP
+            || tag_id > self.tag_max
+        {
+            return &[];
         }
-        core::ptr::null()
-    };
-
-    if ptr.is_null() {
-        return none(count);
-    }
-    let idx = &*(ptr as *const DomIndex);
-    if idx.tag_nodes.is_empty()
-        || tag_id == TAG_UNDEF
-        || tag_id >= TAG_INDEX_CAP
-        || tag_id > idx.tag_max
-    {
-        return none(count);
+        &self.tag_nodes[self.tag_off[tag_id]..self.tag_off[tag_id + 1]]
     }
 
-    let start = idx.tag_off[tag_id];
-    let end = idx.tag_off[tag_id + 1];
-    if !count.is_null() {
-        *count = end - start;
+    /// Whether the document holds any non-HTML element. The `//tag` fast path is
+    /// only taken for a document known to be pure HTML.
+    pub fn has_foreign(&self) -> bool {
+        self.has_foreign
     }
-    if end > start {
-        idx.tag_nodes.as_ptr().add(start)
-    } else {
-        core::ptr::null()
-    }
-}
-
-/// Whether the document holds any non-HTML element.
-///
-/// NULL answers 1 - assume foreign - which is the fail-safe direction: the
-/// `//tag` fast path is only taken for a document known to be pure HTML.
-pub unsafe extern "C" fn element_index_has_foreign(ptr: *const c_void) -> c_int {
-    if ptr.is_null() {
-        return 1;
-    }
-    c_int::from((*(ptr as *const DomIndex)).has_foreign)
 }

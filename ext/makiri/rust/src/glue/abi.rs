@@ -6,7 +6,7 @@
 //! types, so a ported feature reads both from C. As more of the glue moves,
 //! entries leave this file rather than accumulate in it.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_void};
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{ExceptionClass, RModule, Value};
@@ -214,9 +214,7 @@ pub use crate::bridge::string::ruby_str_known_valid_utf8;
 pub use crate::bridge::string::ruby_to_utf8;
 pub use crate::bridge::string::ruby_verified_text;
 pub use crate::bridge::string::verify_text;
-pub use crate::dom_adapter::dom_index::element_index_has_foreign;
 pub use crate::dom_adapter::post_parse::lxb_document_bytes;
-pub use crate::dom_adapter::post_parse::parsed_xml_doc;
 pub use crate::glue::doc::doc_parsed;
 pub use crate::glue::doc::html_doc_unwrap;
 pub use crate::glue::html_node::html_node_unwrap;
@@ -243,13 +241,15 @@ pub use crate::init::MOD_LEXBOR;
 pub use crate::init::MOD_XML;
 pub use crate::init::MOD_XML_NODE_METHODS;
 
-/* The element index's tag hook. It was declared here as an `extern` C function
- * while the definition might be C; the two ends then had to be kept in step by
- * hand, and when they drifted - one symbol existing as both a static and a
- * function - rustc renamed one and left the extension with an undefined symbol
- * that `rake symbols` caught. Imported now, so there is one item and the
- * compiler checks the call. */
-pub use crate::dom_adapter::dom_index::element_index_tag;
+/// The XML arena behind a parsed handle, or null for an HTML one.
+///
+/// # Safety
+/// `p` must be a live handle.
+pub unsafe fn parsed_xml_doc(
+    p: *mut crate::dom_adapter::post_parse::Parsed,
+) -> *mut crate::xml::model::Document {
+    (*p).xml_doc()
+}
 
 extern "C" {
 
@@ -462,17 +462,6 @@ mod agree {
         xml_node_unwrap,
         crate::glue::xml_node::xml_node_unwrap,
         unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
-    );
-
-    same_signature!(
-        element_index_tag,
-        crate::dom_adapter::dom_index::element_index_tag,
-        unsafe extern "C" fn(*const c_void, usize, *mut usize) -> *const *mut LxbNode
-    );
-    same_signature!(
-        element_index_has_foreign,
-        crate::dom_adapter::dom_index::element_index_has_foreign,
-        unsafe extern "C" fn(*const c_void) -> c_int
     );
 
     same_signature!(

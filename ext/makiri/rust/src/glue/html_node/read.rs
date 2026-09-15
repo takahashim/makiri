@@ -28,11 +28,6 @@ use crate::glue::abi::{
 };
 use crate::text::BorrowedText;
 
-pub use crate::dom_adapter::dom_index::parsed_attr_owner;
-pub use crate::dom_adapter::dom_index::parsed_dom_index_build;
-pub use crate::dom_adapter::source_loc::parsed_node_line;
-pub use crate::dom_adapter::text_index::parsed_text_slices;
-
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
  * ------------------------------------------------------------------ */
@@ -295,13 +290,8 @@ fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Value {
     // hands back are copied into the String before anything can change it.
     unsafe {
         let parsed = crate::glue::doc::doc_parsed_known(document.as_raw());
-        if !parsed.is_null() {
-            let mut slices: *const BorrowedText = core::ptr::null();
-            let mut n = 0usize;
-            let mut total = 0usize;
-            if parsed_text_slices(parsed, node.as_raw(), &mut slices, &mut n, &mut total) != 0 {
-                return Value::from_raw(ruby_str_from_slices(slices, n, total));
-            }
+        if let Some((slices, total)) = parsed.as_mut().and_then(|p| p.text_slices(node.as_raw())) {
+            return Value::from_raw(ruby_str_from_slices(slices.as_ptr(), slices.len(), total));
         }
     }
 
@@ -331,8 +321,8 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// `#parent`. An attribute has no `node.parent` - Lexbor never links one back to
 /// its element - so it resolves through the compat attr->owner index.
 ///
-/// The index is built explicitly rather than left to `parsed_attr_owner`'s
-/// lazy build, because that function answers NULL for BOTH "this attribute is
+/// The index is built explicitly, and a failed build raises, because an owner
+/// lookup with no index would answer NULL for BOTH "this attribute is
 /// not in the document" and "the index could not be allocated". Taking the
 /// second as the first makes an owned attribute report no parent - a navigation
 /// answer indistinguishable from the truthful one - so an allocation failure
@@ -345,14 +335,16 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         // SAFETY: `document` is the attribute's live Document; the owner the
         // index answers belongs to it.
         unsafe {
-            let parsed = doc_parsed(document.as_raw())?;
-            if parsed.is_null() || !parsed_dom_index_build(parsed) {
+            let index = doc_parsed(document.as_raw())?
+                .as_mut()
+                .and_then(|p| p.dom_index());
+            let Some(index) = index else {
                 return Err(Error::new(
                     error_class(),
                     "could not build the attribute index (out of memory)",
                 ));
-            }
-            let owner = parsed_attr_owner(parsed, node.as_raw() as *mut LxbAttr);
+            };
+            let owner = index.owner_of(node.as_raw() as *const LxbAttr);
             return Ok(wrap(owner, document));
         }
     }
@@ -602,7 +594,7 @@ pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: `this.document` is the node's live Document.
     let n = unsafe {
         let p = crate::glue::doc::doc_parsed_known(this.document.as_raw());
-        parsed_node_line(p, this.node().as_raw())
+        p.as_ref().map_or(0, |p| p.node_line(this.node().as_raw()))
     };
     if n == 0 {
         nil(ruby)

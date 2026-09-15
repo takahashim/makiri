@@ -69,14 +69,8 @@ const AST_CACHE_MAX: usize = 1024;
 /// use stays independent of the runtime argument count.
 const HANDLER_MAX_ARGS: usize = 64;
 
-/// `DocKind`.
-const DOC_XML: u32 = 1;
-
 pub use crate::bridge::string::ruby_exception_message;
 pub use crate::bridge::string::ruby_try_verified_text;
-pub use crate::dom_adapter::dom_index::parsed_dom_index_build;
-pub use crate::dom_adapter::dom_index::parsed_element_index;
-pub use crate::dom_adapter::post_parse::parsed_kind;
 pub use crate::init::CLASS_XPATH_CONTEXT;
 pub use crate::init::EXC_XPATH_LIMIT_EXCEEDED;
 pub use crate::init::EXC_XPATH_SYNTAX_ERROR;
@@ -272,7 +266,7 @@ pub(crate) unsafe fn context_for(
 ) -> Result<Context<'static>, Error> {
     let parsed = doc_parsed(document.as_raw())?;
 
-    if parsed_kind(parsed) == DOC_XML {
+    if (*parsed).is_xml() {
         let xdoc = parsed_xml_doc(parsed);
         if xdoc.is_null() {
             return Err(Error::new(error_class(), "XPath context with no document"));
@@ -294,17 +288,18 @@ pub(crate) unsafe fn context_for(
 
     let node = html_node_unwrap(rb_node.as_raw())?;
     let doc = crate::glue::abi::html_doc_unwrap(document.as_raw())? as *mut c_void;
-    if !parsed_dom_index_build(parsed) {
+    let Some(index) = (*parsed).dom_index() else {
         return Err(Error::new(
             error_class(),
             "failed to build attribute index for XPath",
         ));
-    }
+    };
     /* The element index is borrowed: it lives on the parsed document, which
-     * outlives this context. */
+     * outlives this context, and a mutation - which drops it - cannot run while
+     * an evaluate reads it. */
     let backend = Backend::Html {
         doc: doc as *mut crate::lexbor_abi::LxbDoc,
-        index: parsed_element_index(parsed),
+        index,
     };
     Ok(Context::new(backend, node as *mut c_void))
 }

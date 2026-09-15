@@ -106,7 +106,7 @@ pub enum Backend {
     #[cfg(feature = "lexbor")]
     Html {
         doc: *mut crate::lexbor_abi::LxbDoc,
-        index: *const c_void,
+        index: *const crate::dom_adapter::dom_index::DomIndex,
     },
     /// A Makiri XML arena. Its element-name index hangs off the document itself
     /// and is built on first use.

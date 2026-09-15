@@ -159,29 +159,24 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
         };
         // SAFETY: the context's element index belongs to this document and is
         // dropped only by a mutation, which cannot happen while it is lent.
-        unsafe {
-            if index.is_null()
-                || crate::dom_adapter::dom_index::element_index_has_foreign(index) != 0
-            {
-                return None;
-            }
-            let tag = dom::tag_id_by_name(self.as_raw(), local);
-            if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
-                return None;
-            }
-            let mut cnt = 0usize;
-            let nodes = crate::dom_adapter::dom_index::element_index_tag(index, tag, &mut cnt);
-            /* `HtmlNode` is a transparent non-null node pointer, and the index
-             * holds only live elements of this document, none null. */
-            let nodes: &'d [HtmlNode<'d>] = if nodes.is_null() || cnt == 0 {
-                &[]
-            } else {
-                core::slice::from_raw_parts(nodes as *const HtmlNode<'d>, cnt)
-            };
-            Some(Bucket {
-                nodes,
-                recheck: true,
-            })
+        let index = unsafe { index.as_ref() }?;
+        if index.has_foreign() {
+            return None;
         }
+        // SAFETY: `self` is a live document.
+        let tag = unsafe { dom::tag_id_by_name(self.as_raw(), local) };
+        if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
+            return None;
+        }
+        let nodes = index.tag_bucket(tag);
+        // SAFETY: `HtmlNode` is a transparent non-null node pointer, and the
+        // index holds only live elements of this document, none null.
+        let nodes: &'d [HtmlNode<'d>] = unsafe {
+            core::slice::from_raw_parts(nodes.as_ptr() as *const HtmlNode<'d>, nodes.len())
+        };
+        Some(Bucket {
+            nodes,
+            recheck: true,
+        })
     }
 }

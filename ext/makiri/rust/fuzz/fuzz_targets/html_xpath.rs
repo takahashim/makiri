@@ -16,10 +16,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::dom_adapter::dom_index::{parsed_dom_index_build, parsed_element_index};
-use makiri::dom_adapter::post_parse::{
-    parse_html, parsed_destroy, parsed_html_doc, Parsed,
-};
+use makiri::dom_adapter::post_parse::{parse_html, Parsed};
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -37,30 +34,28 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let p = parse_html(html.as_ptr(), html.len(), false);
-        if p.is_null() {
+        let Some(mut p) = parse_html(html.as_ptr(), html.len(), false) else {
             return;
-        }
-        run(p, text, mode & 1 != 0);
-        parsed_destroy(p);
+        };
+        run(&mut p, text, mode & 1 != 0);
     }
 });
 
 /// Evaluate over `p` the way the glue's `context_for` does for a Document
 /// receiver. Every engine handle is dropped before the caller destroys `p`.
-unsafe fn run(p: *mut Parsed, text: VerifiedText, lax: bool) {
-    if !parsed_dom_index_build(p) {
-        return;
-    }
+unsafe fn run(p: &mut Parsed, text: VerifiedText, lax: bool) {
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
-    let doc = parsed_html_doc(p) as *mut makiri::lexbor_abi::LxbDoc;
+    let doc = p.html_doc() as *mut makiri::lexbor_abi::LxbDoc;
+    let Some(index) = p.dom_index() else {
+        return;
+    };
     // SAFETY: the caller destroys `p` only after the context is dropped, and
     // nothing changes the document in between.
     let mut ctx = Context::new(
         Backend::Html {
             doc,
-            index: parsed_element_index(p),
+            index,
         },
         doc as *mut c_void,
     );

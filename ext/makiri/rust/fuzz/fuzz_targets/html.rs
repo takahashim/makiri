@@ -9,21 +9,16 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use makiri::dom_adapter::dom_index::parsed_dom_index_build;
-use makiri::dom_adapter::post_parse::{parse_html, parsed_destroy};
+use makiri::dom_adapter::post_parse::parse_html;
 
 fuzz_target!(|data: &[u8]| {
-    unsafe {
-        let p = parse_html(data.as_ptr(), data.len(), false);
-        if p.is_null() {
-            return;
-        }
+    // SAFETY: `data` is a live slice for the whole call.
+    let Some(mut p) = (unsafe { parse_html(data.as_ptr(), data.len(), false) }) else {
+        return;
+    };
 
-        // Force the lazy attr->owner and tag CSR index to build. This is where
-        // most of the compat-layer allocation happens, so it is the memory-safety
-        // surface we want under the fuzzer.
-        let _ = parsed_dom_index_build(p);
-
-        parsed_destroy(p);
-    }
+    // Force the lazy attr->owner and tag CSR index to build. This is where
+    // most of the compat-layer allocation happens, so it is the memory-safety
+    // surface we want under the fuzzer.
+    let _ = p.dom_index();
 });

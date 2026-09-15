@@ -101,17 +101,12 @@ fn base_type() -> *const rb_data_type_t {
 /* kind-agnostic accessors (identity / document)                      */
 /* ------------------------------------------------------------------ */
 
-/// `DocKind`.
-const DOC_XML: u32 = 1;
-
 /// `NodeKind`.
 const NODE_KIND_OTHER: c_int = 0;
 const NODE_KIND_HTML: c_int = 1;
 const NODE_KIND_XML: c_int = 2;
 
 use super::abi::{doc_parsed, parsed_xml_doc, DataType, CLASS_DOCUMENT, CLASS_NODE};
-
-pub use crate::dom_adapter::post_parse::parsed_kind;
 
 #[inline]
 unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
@@ -129,7 +124,7 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 pub unsafe fn node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
     if is_kind_of(rb_node, CLASS_DOCUMENT) {
         let parsed = doc_parsed(rb_node)?;
-        if parsed_kind(parsed) == DOC_XML {
+        if (*parsed).is_xml() {
             let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
             return Ok(if xdoc.is_null() {
                 core::ptr::null_mut()

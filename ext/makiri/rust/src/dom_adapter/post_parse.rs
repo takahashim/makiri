@@ -27,31 +27,25 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::cbuf::OwnedBuf;
-use crate::falloc::try_box_raw;
-use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
-
-pub type Parsed = lxb::parsed::Parsed;
-type HtmlDoc = lxb::lxb_html_document_t;
-
-const DOC_KIND_HTML: u32 = lxb::parsed::DOC_HTML;
-const DOC_KIND_XML: u32 = lxb::parsed::DOC_XML;
-const NODE_TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
-const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
-
-pub use crate::dom_adapter::dom_index::dom_index_free;
-pub use crate::dom_adapter::source_loc::lines_build;
-pub use crate::dom_adapter::source_loc::lines_free;
-pub use crate::dom_adapter::source_loc::pos_assign_to_dom;
-pub use crate::dom_adapter::source_loc::pos_recorder_create;
-pub use crate::dom_adapter::source_loc::pos_recorder_destroy;
-pub use crate::dom_adapter::source_loc::pos_recorder_set_delegate;
-pub use crate::dom_adapter::source_loc::pos_token_cb;
-pub use crate::dom_adapter::text_index::text_index_free;
+use crate::dom_adapter::dom_index::DomIndex;
+use crate::dom_adapter::source_loc::{
+    lines_build, pos_assign_to_dom, pos_token_cb, Lines, Recorder,
+};
+use crate::dom_adapter::text_index::TextIndex;
 pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
-pub use crate::xml::api::xml_doc_destroy;
+use crate::falloc::try_box;
+use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
+use crate::text::BorrowedText;
+use crate::xml::model::Document as XmlDocument;
+
+type HtmlDoc = lxb::lxb_html_document_t;
+
+const NODE_TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
+const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
 extern "C" {
 
@@ -63,8 +57,171 @@ extern "C" {
         size: usize,
     ) -> u32;
     fn lxb_html_parse_chunk_end(parser: *mut lxb::lxb_html_parser_t) -> u32;
+    fn lxb_dom_document_root(doc: *mut LxbDoc) -> *mut LxbNode;
 
 }
+
+/* ---- the parsed document ---- */
+
+/// The document a parse produced.
+enum Doc {
+    /// A Lexbor document, destroyed with the handle.
+    Html(NonNull<HtmlDoc>),
+    /// An XML arena. None until the parse that fills it has finished, so a
+    /// handle wrapped before that parse still frees cleanly.
+    Xml(Option<Box<XmlDocument>>),
+}
+
+/// The result of a parse: the document, and the HTML indices built over it on
+/// demand.
+///
+/// The indices point into the document's nodes and text, so every change to the
+/// document goes through [`invalidate_indexes`](Parsed::invalidate_indexes),
+/// which drops them; the next query rebuilds.
+pub struct Parsed {
+    doc: Doc,
+    /// attr->owner map + the tag->elements index.
+    dom_index: Option<Box<DomIndex>>,
+    /// byte offset -> source line.
+    lines: Option<Box<Lines>>,
+    /// node -> descendant-text slice run.
+    text_index: Option<Box<TextIndex>>,
+    /// How many XPath evaluations that can run Ruby (ones with a handler)
+    /// are reading this document right now. Every mutator refuses while it
+    /// is non-zero - see `glue::doc::DocumentEvaluation`.
+    pub evaluating: usize,
+}
+
+impl Drop for Parsed {
+    fn drop(&mut self) {
+        /* The indices point into the document, so they go first. */
+        self.invalidate_indexes();
+        if let Doc::Html(doc) = &self.doc {
+            // SAFETY: the handle owns the document, and nothing reads it once
+            // the handle is gone.
+            unsafe { lxb_html_document_destroy(doc.as_ptr()) };
+        }
+    }
+}
+
+impl Parsed {
+    fn with(doc: Doc) -> Parsed {
+        Parsed {
+            doc,
+            dom_index: None,
+            lines: None,
+            text_index: None,
+            evaluating: 0,
+        }
+    }
+
+    /// A handle for an XML document still to be parsed. None on OOM.
+    pub fn new_xml() -> Option<Box<Parsed>> {
+        try_box(Parsed::with(Doc::Xml(None))).ok()
+    }
+
+    pub fn is_xml(&self) -> bool {
+        matches!(self.doc, Doc::Xml(_))
+    }
+
+    /// The Lexbor document, or null for an XML handle.
+    pub fn html_doc(&self) -> *mut HtmlDoc {
+        match &self.doc {
+            Doc::Html(doc) => doc.as_ptr(),
+            Doc::Xml(_) => core::ptr::null_mut(),
+        }
+    }
+
+    /// The XML arena, or null for an HTML handle or one not yet filled.
+    pub fn xml_doc(&mut self) -> *mut XmlDocument {
+        match &mut self.doc {
+            Doc::Xml(Some(doc)) => &mut **doc,
+            _ => core::ptr::null_mut(),
+        }
+    }
+
+    /// The XML arena, for reading.
+    pub fn xml_doc_ref(&self) -> Option<&XmlDocument> {
+        match &self.doc {
+            Doc::Xml(Some(doc)) => Some(doc),
+            _ => None,
+        }
+    }
+
+    /// Fill an XML handle with its parsed arena.
+    pub fn set_xml_doc(&mut self, doc: Box<XmlDocument>) {
+        debug_assert!(self.is_xml());
+        self.doc = Doc::Xml(Some(doc));
+    }
+
+    /// The attr->owner and tag index, built on first use. None for an XML
+    /// handle, or when the build cannot allocate - which caches nothing, so a
+    /// later call retries.
+    pub fn dom_index(&mut self) -> Option<&DomIndex> {
+        let Doc::Html(doc) = &self.doc else {
+            return None;
+        };
+        if self.dom_index.is_none() {
+            // SAFETY: the handle owns a live document.
+            let built =
+                unsafe { crate::dom_adapter::dom_index::build(doc.as_ptr() as *mut LxbDoc) }?;
+            self.dom_index = Some(try_box(built).ok()?);
+        }
+        self.dom_index.as_deref()
+    }
+
+    /// The run of text slices `node`'s subtree owns, and its byte total.
+    ///
+    /// None means "walk instead": a node outside the indexed tree (a
+    /// fragment), an XML handle, or a build that could not allocate.
+    pub fn text_slices(&mut self, node: *const LxbNode) -> Option<(&[BorrowedText], usize)> {
+        let Doc::Html(doc) = &self.doc else {
+            return None;
+        };
+        if self.text_index.is_none() {
+            // SAFETY: the handle owns a live document.
+            let root = unsafe { lxb_dom_document_root(doc.as_ptr() as *mut LxbDoc) };
+            if root.is_null() {
+                return None;
+            }
+            // SAFETY: `root` is the live document's root element.
+            let built = unsafe { TextIndex::build(root) }?;
+            self.text_index = Some(try_box(built).ok()?);
+        }
+        self.text_index.as_deref()?.slices_of(node)
+    }
+
+    /// Drop the indices so the next query rebuilds them.
+    ///
+    /// This is the whole safety protocol for what they borrow: EVERY mutation
+    /// reaches here, so no cached node or text slice outlives the storage it
+    /// points into.
+    pub fn invalidate_indexes(&mut self) {
+        self.dom_index = None;
+        self.text_index = None;
+    }
+
+    /// The 1-based source line for `node`, or 0 when unknown.
+    ///
+    /// 0 covers both "the tracker could not place this node" and "the line table
+    /// could not be allocated". The two are deliberately not distinguished: the
+    /// Ruby contract for `#line` is an Integer or nil, and the table's
+    /// allocation is an allowed degradation - see `parse_tracked`.
+    ///
+    /// # Safety
+    /// `node` must be null or a live node of this document.
+    pub unsafe fn node_line(&self, node: *const LxbNode) -> usize {
+        let Some(lines) = self.lines.as_deref() else {
+            return 0;
+        };
+        if node.is_null() || (*node).user.is_null() {
+            return 0;
+        }
+        lines.lookup((*node).user as usize - 1)
+    }
+}
+
+/* ---- parsing ---- */
 
 /// The sanitiser's replacement buffer, freed however the parse exits.
 struct CleanBuf {
@@ -86,62 +243,42 @@ impl Drop for Parser {
     }
 }
 
-/// The position recorder, destroyed however the parse exits unless consumed.
-struct RecorderHandle {
-    r: *mut crate::dom_adapter::source_loc::Recorder,
-}
-
-impl Drop for RecorderHandle {
-    fn drop(&mut self) {
-        if !self.r.is_null() {
-            unsafe { pos_recorder_destroy(self.r) };
-        }
-    }
-}
-
 /// Drive the low-level pipeline so element offsets can be captured, then build
 /// the line table.
 ///
-/// Returns the document, or NULL on failure with everything it allocated
-/// released. `out_lines` receives the line table - possibly NULL if THAT
-/// allocation failed, in which case line information degrades to nil rather than
-/// failing the parse. That degradation is deliberate and is what
+/// Returns the document, or None on failure with everything it allocated
+/// released, together with the line table - itself None if THAT allocation
+/// failed, in which case line information degrades to nil rather than failing
+/// the parse. That degradation is deliberate and is what
 /// `spec/html_line_spec.rb`'s contract ("an Integer, or nil") allows.
-unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc {
-    *out_lines = core::ptr::null_mut();
-
+unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Lines>>)> {
     let parser = Parser {
         p: lxb::lxb_html_parser_create(),
     };
     if parser.p.is_null() || lxb::lxb_html_parser_init(parser.p) != LXB_STATUS_OK {
-        return core::ptr::null_mut();
+        return None;
     }
 
-    let doc = lxb_html_parse_chunk_begin(parser.p);
-    if doc.is_null() {
-        return core::ptr::null_mut();
-    }
+    let doc = NonNull::new(lxb_html_parse_chunk_begin(parser.p))?;
 
     /* Install the recorder, CHAINING the parser's own tree-building callback
      * (which chunk_begin has just set). If the recorder cannot be allocated we
-     * simply parse without source tracking. */
-    let mut rec = RecorderHandle {
-        r: pos_recorder_create(src.as_ptr()),
-    };
-    if !rec.r.is_null() {
+     * simply parse without source tracking. It is declared after the parser,
+     * so it outlives nothing that can still call it. */
+    let mut rec = try_box(Recorder::new(src.as_ptr())).ok();
+    if let Some(r) = rec.as_deref_mut() {
         let tkz = lxb::lxb_html_parser_tokenizer_noi(parser.p);
         /* Lexbor has a setter and a ctx getter for the token-done callback but
          * no getter for the callback FUNCTION, so that one field is read from
          * the struct directly; the ctx uses the public accessor. */
-        pos_recorder_set_delegate(
-            rec.r,
+        r.set_delegate(
             (*tkz).callback_token_done,
             lxb::lxb_html_tokenizer_callback_token_done_ctx_noi(tkz),
         );
         lxb::lxb_html_tokenizer_callback_token_done_set_noi(
             tkz,
             Some(pos_token_cb),
-            rec.r as *mut c_void,
+            r as *mut Recorder as *mut c_void,
         );
     }
 
@@ -150,42 +287,33 @@ unsafe fn parse_tracked(src: &[u8], out_lines: *mut *mut c_void) -> *mut HtmlDoc
         st = lxb_html_parse_chunk_end(parser.p);
     }
     if st != LXB_STATUS_OK {
-        lxb_html_document_destroy(doc);
-        return core::ptr::null_mut();
+        lxb_html_document_destroy(doc.as_ptr());
+        return None;
     }
 
-    if !rec.r.is_null() {
-        pos_assign_to_dom(rec.r, doc as *mut LxbNode);
-        /* Consumed: destroy it now rather than at the end of the scope, because
+    let mut lines = None;
+    if let Some(r) = rec.take() {
+        pos_assign_to_dom(&r, doc.as_ptr() as *mut LxbNode);
+        /* Consumed: dropped now rather than at the end of the scope, because
          * the line table below is the last thing that needs the input. */
-        pos_recorder_destroy(rec.r);
-        rec.r = core::ptr::null_mut();
-        *out_lines = lines_build(src.as_ptr(), src.len());
+        drop(r);
+        lines = lines_build(src).and_then(|l| try_box(l).ok());
     }
 
-    doc
+    Some((doc, lines))
 }
 
 /// Parse `src` as an HTML document.
 ///
 /// `assume_valid` skips the UTF-8 validation scan entirely - the caller has
 /// already proved the bytes valid, typically from a Ruby String's cached
-/// coderange. NULL on failure.
-pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> *mut Parsed {
+/// coderange. None on failure.
+///
+/// # Safety
+/// `src` must name `len` readable bytes, or be null with `len == 0`.
+pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> Option<Box<Parsed>> {
     if src.is_null() && len != 0 {
-        return core::ptr::null_mut();
-    }
-
-    let p = try_box_raw(Parsed {
-        doc: core::ptr::null_mut(),
-        kind: DOC_KIND_HTML,
-        dom_index: core::ptr::null_mut(),
-        newline_idx: core::ptr::null_mut(),
-        text_index: core::ptr::null_mut(),
-        evaluating: 0,
-    });
-    if p.is_null() {
-        return core::ptr::null_mut();
+        return None;
     }
 
     /* Browser-compatible decoding: invalid UTF-8 becomes U+FFFD (WHATWG
@@ -200,96 +328,25 @@ pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> *mut
             Some(Sanitized::Replaced(r)) => {
                 clean._owned = Some(r);
             }
-            None => {
-                drop(Box::from_raw(p));
-                return core::ptr::null_mut(); /* OOM */
-            }
+            None => return None, /* OOM */
         }
     }
 
     let bytes: &[u8] = if let Some(owned) = clean._owned.as_ref() {
         owned.as_slice()
+    } else if src.is_null() {
+        &[]
     } else {
-        if src.is_null() {
-            &[]
-        } else {
-            core::slice::from_raw_parts(src, len)
-        }
+        core::slice::from_raw_parts(src, len)
     };
 
-    (*p).doc = parse_tracked(bytes, &mut (*p).newline_idx) as *mut c_void;
+    let (doc, lines) = parse_tracked(bytes)?;
     drop(clean); /* the parse is done with the buffer, on every path */
 
-    if (*p).doc.is_null() {
-        /* parse_tracked left no line table when it failed, so nothing to free. */
-        drop(Box::from_raw(p));
-        return core::ptr::null_mut();
-    }
-    p
-}
-
-/// Free a parse handle and everything it owns.
-pub unsafe fn parsed_destroy(p: *mut Parsed) {
-    if p.is_null() {
-        return;
-    }
-
-    /* The compat indices are HTML-only and built lazily; each free is a no-op
-     * on NULL, so this is safe for an XML handle, which never sets them. */
-    dom_index_free((*p).dom_index);
-    (*p).dom_index = core::ptr::null_mut();
-    lines_free((*p).newline_idx);
-    (*p).newline_idx = core::ptr::null_mut();
-    text_index_free((*p).text_index);
-    (*p).text_index = core::ptr::null_mut();
-
-    if !(*p).doc.is_null() {
-        if (*p).kind == DOC_KIND_XML {
-            xml_doc_destroy(Box::from_raw((*p).doc as *mut _)); /* whole-arena free */
-        } else {
-            lxb_html_document_destroy((*p).doc as *mut HtmlDoc);
-        }
-        (*p).doc = core::ptr::null_mut();
-    }
-
-    drop(Box::from_raw(p));
-}
-
-/* ---- document-kind accessors ---- */
-
-pub unsafe fn parsed_kind(p: *const Parsed) -> u32 {
-    (*p).kind
-}
-
-/// The HTML document. The C asserted the kind; here the assert is a debug one
-/// for the same reason - a caller that gets this wrong has a bug the release
-/// build cannot usefully recover from, and every caller checks `kind` first.
-pub unsafe fn parsed_html_doc(p: *const Parsed) -> *mut HtmlDoc {
-    debug_assert_eq!((*p).kind, DOC_KIND_HTML);
-    (*p).doc as *mut HtmlDoc
-}
-
-/// Wrap an owned XML arena in a `kind = XML` handle. `xdoc` may be NULL
-/// initially and set later, so a mid-parse failure still frees cleanly.
-pub unsafe fn parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
-    try_box_raw(Parsed {
-        doc: xdoc,
-        kind: DOC_KIND_XML,
-        dom_index: core::ptr::null_mut(),
-        newline_idx: core::ptr::null_mut(),
-        text_index: core::ptr::null_mut(),
-        evaluating: 0,
-    })
-}
-
-pub unsafe fn parsed_xml_doc(p: *const Parsed) -> *mut c_void {
-    debug_assert_eq!((*p).kind, DOC_KIND_XML);
-    (*p).doc
-}
-
-pub unsafe fn parsed_set_xml_doc(p: *mut Parsed, xdoc: *mut c_void) {
-    debug_assert_eq!((*p).kind, DOC_KIND_XML);
-    (*p).doc = xdoc;
+    let mut parsed = Parsed::with(Doc::Html(doc));
+    parsed.lines = lines;
+    /* On OOM the handle drops, and with it the document. */
+    try_box(parsed).ok()
 }
 
 /* ---- live bytes, for sizing a serialization buffer ---- */

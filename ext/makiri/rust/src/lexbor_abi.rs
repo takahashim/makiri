@@ -22,17 +22,16 @@ mod sys {
 
 pub use sys::*;
 
-/// Makiri's own constants, and the layout of the handle a parse returns.
+/// Makiri's own constants.
 ///
 /// Unlike everything above, these are NOT generated. They were, from
 /// `ext/makiri/*.h` - added after a transcribed `NODE_KIND_XML = 1` (it is
 /// 2) made `Document#import_node` treat every HTML node as an XML one. Those
 /// headers went with the rest of the C, so there is no second reading of them
-/// left to check against: this module is now the definition. That is why the
-/// field order below is spelled out rather than left to be noticed.
+/// left to check against: this module is now the definition.
 pub mod parsed {
     #![allow(dead_code)]
-    use core::ffi::{c_uint, c_void};
+    use core::ffi::c_uint;
 
     /// Which representation a wrapped Ruby node is, by its TypedData type (NOT
     /// by Ruby class). A Document, a NodeSet, or any non-node is OTHER.
@@ -40,38 +39,6 @@ pub mod parsed {
     pub const NODE_KIND_OTHER: NodeKind = 0;
     pub const NODE_KIND_HTML: NodeKind = 1;
     pub const NODE_KIND_XML: NodeKind = 2;
-
-    /// The document kind a `Parsed` holds. HTML points `doc` at a Lexbor
-    /// `lxb_html_document_t`; XML points it at our own arena.
-    pub type DocKind = c_uint;
-    pub const DOC_HTML: DocKind = 0;
-    pub const DOC_XML: DocKind = 1;
-
-    /// The result of a parse. Owns the document arena (Lexbor for HTML, ours
-    /// for XML). The three indices are HTML-only, created lazily and null until
-    /// then; the destroy path frees whatever is set.
-    ///
-    /// The field ORDER is load-bearing - `doc` first, `kind` second - because
-    /// four `dom_adapter` modules read the first two by offset. It was
-    /// generated for exactly that reason; keeping the layout stated once, here,
-    /// is what replaces the generation.
-    #[repr(C)]
-    #[derive(Debug, Copy, Clone)]
-    pub struct Parsed {
-        /// HTML: `lxb_html_document_t*` / XML: `mkr_xml_doc_t*`.
-        pub doc: *mut c_void,
-        pub kind: DocKind,
-        /// attr->owner map + the tag->elements index.
-        pub dom_index: *mut c_void,
-        /// byte offset -> source line.
-        pub newline_idx: *mut c_void,
-        /// node -> descendant-text slice run.
-        pub text_index: *mut c_void,
-        /// How many XPath evaluations that can run Ruby (ones with a handler)
-        /// are reading this document right now. Every mutator refuses while it
-        /// is non-zero - see `glue::doc::DocumentEvaluation`.
-        pub evaluating: usize,
-    }
 }
 
 /* ------------------------------------------------------------------ *

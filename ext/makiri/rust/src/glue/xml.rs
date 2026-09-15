@@ -55,16 +55,11 @@ use crate::xpath::ctx::Context as XPathContext;
 use crate::css::CssNs;
 
 use super::abi::{
-    doc_parsed, keepalive_document, node_set_new, parsed_xml_doc as raw_parsed_xml_doc,
-    ruby_verified_text, verify_text, wrap_xml_node, xml_node_unwrap, OwnedBytes, CLASS_DOCUMENT,
-    CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, EXC_ERROR,
-    EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
+    doc_parsed, keepalive_document, node_set_new, parsed_xml_doc, ruby_verified_text, verify_text,
+    wrap_xml_node, xml_node_unwrap, OwnedBytes, CLASS_DOCUMENT, CLASS_XML_DOCUMENT,
+    CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED,
+    EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
 };
-
-/// The XML arena behind a document handle, typed.
-unsafe fn parsed_xml_doc(p: *const crate::dom_adapter::post_parse::Parsed) -> *mut XmlDoc {
-    raw_parsed_xml_doc(p) as *mut XmlDoc
-}
 
 /// Wrap an XML node, typed.
 unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
@@ -79,8 +74,7 @@ unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> Result<NodeId, Error> {
 pub use crate::bridge::string::ruby_copy_bytes;
 pub use crate::bridge::string::ruby_try_verified_text;
 pub use crate::bridge::xml_decode::xml_decode_input;
-pub use crate::dom_adapter::post_parse::parsed_new_xml;
-pub use crate::dom_adapter::post_parse::parsed_set_xml_doc;
+use crate::dom_adapter::post_parse::Parsed;
 pub use crate::glue::doc::wrap_document;
 use crate::glue::xpath::xpath_error;
 use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};
@@ -221,14 +215,14 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         /* Wrap an empty handle first, so a failure mid-parse still frees
          * cleanly through the GC. The source is already copied, so this Ruby
          * allocation cannot disturb it. */
-        let parsed = parsed_new_xml(core::ptr::null_mut());
-        if parsed.is_null() {
+        let Some(parsed) = Parsed::new_xml() else {
             free_owned(&mut src);
             return Err(Error::new(
                 error_class(),
                 "out of memory allocating XML document",
             ));
-        }
+        };
+        let parsed = Box::into_raw(parsed);
         let obj = wrap_document(parsed); /* GC owns `parsed` from here */
 
         let mut work = ParseWork {
@@ -249,7 +243,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         if work.result.is_null() {
             return Err(parse_status_error(work.status, Unit::Document));
         }
-        parsed_set_xml_doc(parsed, work.result as *mut c_void);
+        (*parsed).set_xml_doc(Box::from_raw(work.result));
         Ok(Value::from_raw(obj))
     }
 }
@@ -645,16 +639,16 @@ unsafe fn fragment_into(
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 unsafe fn new_empty_document() -> Result<Value, Error> {
-    let parsed = parsed_new_xml(core::ptr::null_mut());
-    if parsed.is_null() {
+    let Some(parsed) = Parsed::new_xml() else {
         return Err(Error::new(
             error_class(),
             "out of memory allocating XML document",
         ));
-    }
+    };
+    let parsed = Box::into_raw(parsed);
     let doc_obj = wrap_document(parsed); /* GC owns `parsed` from here */
     let xdoc = match xml_doc_new() {
-        Ok(doc) => Box::into_raw(doc),
+        Ok(doc) => doc,
         Err(_) => {
             return Err(Error::new(
                 error_class(),
@@ -662,7 +656,7 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
             ));
         }
     };
-    parsed_set_xml_doc(parsed, xdoc as *mut c_void); /* GC now frees `xdoc` via `parsed` */
+    (*parsed).set_xml_doc(xdoc); /* GC now frees `xdoc` via `parsed` */
     Ok(Value::from_raw(doc_obj))
 }
 

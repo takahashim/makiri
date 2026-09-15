@@ -31,7 +31,7 @@
 
 use core::ffi::c_void;
 
-use crate::falloc::{try_box_raw, try_vec_with_capacity, Reserve};
+use crate::falloc::{try_vec_with_capacity, Reserve};
 
 use crate::lexbor_abi::{self as lxb, preorder_next, LxbNode};
 
@@ -41,7 +41,6 @@ extern "C" {
     fn libc_memchr(s: *const c_void, c: core::ffi::c_int, n: usize) -> *const c_void;
 }
 
-pub type Parsed = lxb::parsed::Parsed;
 type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
@@ -56,7 +55,7 @@ const TOKEN_TYPE_CLOSE: i32 = lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE
  * line table                                                         *
  * ------------------------------------------------------------------ */
 
-struct Lines {
+pub struct Lines {
     /// `starts[i]` is the byte offset of line `i + 1`; `starts[0] == 0`.
     starts: Vec<usize>,
 }
@@ -66,7 +65,7 @@ impl Lines {
     ///
     /// `partition_point` is the same binary search the C wrote out: the count of
     /// starts at or below the offset IS the 1-based line.
-    fn lookup(&self, offset: usize) -> usize {
+    pub fn lookup(&self, offset: usize) -> usize {
         self.starts.partition_point(|&s| s <= offset)
     }
 }
@@ -79,15 +78,16 @@ impl Lines {
 /// difference between a vectorised scan and a byte loop is the difference
 /// between this subsystem being free and being visible.
 #[inline]
-unsafe fn next_newline(bytes: &[u8], from: usize) -> Option<usize> {
-    if from >= bytes.len() {
-        return None;
-    }
-    let p = libc_memchr(
-        bytes.as_ptr().add(from) as *const c_void,
-        b'\n' as core::ffi::c_int,
-        bytes.len() - from,
-    );
+fn next_newline(bytes: &[u8], from: usize) -> Option<usize> {
+    let rest = bytes.get(from..).filter(|r| !r.is_empty())?;
+    // SAFETY: `rest` is `rest.len()` readable bytes.
+    let p = unsafe {
+        libc_memchr(
+            rest.as_ptr() as *const c_void,
+            b'\n' as core::ffi::c_int,
+            rest.len(),
+        )
+    };
     if p.is_null() {
         None
     } else {
@@ -95,15 +95,9 @@ unsafe fn next_newline(bytes: &[u8], from: usize) -> Option<usize> {
     }
 }
 
-/// Build the line table over the input. NULL on allocation failure, which the
+/// Build the line table over the input. None on allocation failure, which the
 /// caller treats as "no line information" rather than as a parse failure.
-pub unsafe fn lines_build(src: *const u8, len: usize) -> *mut c_void {
-    let bytes: &[u8] = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src, len)
-    };
-
+pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
     /* Count first, so the array is sized exactly once. Both passes go through
      * `next_newline`, so they cannot disagree about which bytes start a line. */
     let mut nl = 0usize;
@@ -113,10 +107,7 @@ pub unsafe fn lines_build(src: *const u8, len: usize) -> *mut c_void {
         at = i + 1;
     }
 
-    let mut starts: Vec<usize> = match try_vec_with_capacity(nl + 1) {
-        Some(v) => v,
-        None => return core::ptr::null_mut(),
-    };
+    let mut starts: Vec<usize> = try_vec_with_capacity(nl + 1)?;
 
     starts.push(0); /* reserved above; cannot allocate */
     let mut at = 0usize;
@@ -125,16 +116,7 @@ pub unsafe fn lines_build(src: *const u8, len: usize) -> *mut c_void {
         at = i + 1;
     }
 
-    match try_box_raw(Lines { starts }) {
-        p if p.is_null() => core::ptr::null_mut(),
-        p => p as *mut c_void,
-    }
-}
-
-pub unsafe fn lines_free(lines: *mut c_void) {
-    if !lines.is_null() {
-        drop(Box::from_raw(lines as *mut Lines));
-    }
+    Some(Lines { starts })
 }
 
 /* ------------------------------------------------------------------ *
@@ -169,28 +151,23 @@ pub struct Recorder {
     orig_ctx: *mut c_void,
 }
 
-pub unsafe fn pos_recorder_create(src: *const u8) -> *mut Recorder {
-    try_box_raw(Recorder {
-        items: Vec::new(),
-        first: src,
-        overflow: false,
-        orig: None,
-        orig_ctx: core::ptr::null_mut(),
-    })
-}
-
-pub unsafe fn pos_recorder_destroy(rec: *mut Recorder) {
-    if !rec.is_null() {
-        drop(Box::from_raw(rec));
+impl Recorder {
+    /// A recorder for the tokens of the input that starts at `src`.
+    pub fn new(src: *const u8) -> Recorder {
+        Recorder {
+            items: Vec::new(),
+            first: src,
+            overflow: false,
+            orig: None,
+            orig_ctx: core::ptr::null_mut(),
+        }
     }
-}
 
-pub unsafe fn pos_recorder_set_delegate(rec: *mut Recorder, orig: TokenFn, orig_ctx: *mut c_void) {
-    if rec.is_null() {
-        return;
+    /// The parser's own token-done callback, which every token is passed on to.
+    pub fn set_delegate(&mut self, orig: TokenFn, orig_ctx: *mut c_void) {
+        self.orig = orig;
+        self.orig_ctx = orig_ctx;
     }
-    (*rec).orig = orig;
-    (*rec).orig_ctx = orig_ctx;
 }
 
 /// Record one token, if it is an element start-tag.
@@ -268,11 +245,10 @@ pub unsafe extern "C" fn pos_token_cb(
 /// tag id within a bounded lookahead. An element with no match in that window is
 /// left unstamped; `#line` then answers nil, which is the whole point - never a
 /// wrong line.
-pub unsafe fn pos_assign_to_dom(rec: *mut Recorder, root: *mut LxbNode) {
-    if rec.is_null() || (*rec).overflow || root.is_null() {
+pub unsafe fn pos_assign_to_dom(rec: &Recorder, root: *mut LxbNode) {
+    if rec.overflow || root.is_null() {
         return;
     }
-    let rec = &*rec;
 
     let mut cursor = 0usize;
     let mut node = root;
@@ -294,23 +270,4 @@ pub unsafe fn pos_assign_to_dom(rec: *mut Recorder, root: *mut LxbNode) {
         }
         node = preorder_next(node, root);
     }
-}
-
-/* ------------------------------------------------------------------ *
- * line lookup for Node#line                                          *
- * ------------------------------------------------------------------ */
-
-/// The 1-based source line for `node`, or 0 when unknown.
-///
-/// 0 covers both "the tracker could not place this node" and "the line table
-/// could not be allocated". The two are deliberately not distinguished: the
-/// Ruby contract for `#line` is an Integer or nil, and post_parse documents the
-/// table's allocation as an allowed degradation - see the note in the
-/// html_node_read OOM scenario.
-pub unsafe fn parsed_node_line(p: *mut Parsed, node: *const LxbNode) -> usize {
-    if p.is_null() || node.is_null() || (*node).user.is_null() || (*p).newline_idx.is_null() {
-        return 0;
-    }
-    let offset = (*node).user as usize - 1;
-    (*((*p).newline_idx as *const Lines)).lookup(offset)
 }
