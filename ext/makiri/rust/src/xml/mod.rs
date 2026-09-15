@@ -16,6 +16,7 @@ pub mod parse;
 pub mod qname;
 #[cfg(feature = "ruby")]
 pub mod selftest;
+pub mod serialize;
 pub mod tree;
 
 #[cfg(kani)]

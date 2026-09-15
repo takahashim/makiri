@@ -445,3 +445,65 @@ fn owned_text_fill_terminates_at_the_length_written() {
     assert!(e.is_present() && e.is_empty());
     unsafe { e.clear() };
 }
+
+#[test]
+fn xml_serialization_answers_what_the_ruby_methods_did_and_round_trips() {
+    use crate::xml::parse::mkr_xml_parse;
+    use crate::xml::serialize::{canonicalize, to_xml};
+
+    // The expected bytes are what `#to_xml` and `#canonicalize` answered before
+    // the serializer moved out of the glue.
+    let src = br#"<?xml version="1.0"?><r xmlns:p="urn:p" b="2" a="1"><p:x>t &amp; u</p:x><!--c--><e/></r>"#;
+    let doc = mkr_xml_parse(src).expect("well-formed");
+    let top = doc.doc_node();
+    let root = doc.root.expect("a root element");
+
+    let whole = to_xml(&doc, top, 0, None).expect("serializes");
+    assert_eq!(
+        whole.as_slice(),
+        b"<?xml version=\"1.0\"?>\n<r xmlns:p=\"urn:p\" b=\"2\" a=\"1\"><p:x>t &amp; u</p:x><!--c--><e/></r>\n"
+    );
+    assert_eq!(
+        to_xml(&doc, root, 2, None).expect("serializes").as_slice(),
+        b"<r xmlns:p=\"urn:p\" b=\"2\" a=\"1\">\n  <p:x>t &amp; u</p:x>\n  <!--c-->\n  <e/>\n</r>"
+    );
+    assert_eq!(
+        canonicalize(&doc, top, false)
+            .expect("canonicalizes")
+            .as_slice(),
+        b"<r xmlns:p=\"urn:p\" a=\"1\" b=\"2\"><p:x>t &amp; u</p:x><e></e></r>"
+    );
+    assert_eq!(
+        canonicalize(&doc, top, true)
+            .expect("canonicalizes")
+            .as_slice(),
+        b"<r xmlns:p=\"urn:p\" a=\"1\" b=\"2\"><p:x>t &amp; u</p:x><!--c--><e></e></r>"
+    );
+
+    // The output re-parses to a tree that serializes to the same bytes.
+    let again = mkr_xml_parse(whole.as_slice()).expect("output re-parses");
+    assert_eq!(
+        to_xml(&again, again.doc_node(), 0, None)
+            .expect("serializes")
+            .as_slice(),
+        whole.as_slice()
+    );
+
+    // A declared encoding is kept, and a requested one is declared.
+    let declared =
+        mkr_xml_parse(br#"<?xml version="1.0" encoding="UTF-8"?><a/>"#).expect("well-formed");
+    let expected: &[u8] = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a/>\n";
+    assert_eq!(
+        to_xml(&declared, declared.doc_node(), 0, None)
+            .expect("serializes")
+            .as_slice(),
+        expected
+    );
+    let plain = mkr_xml_parse(b"<a/>").expect("well-formed");
+    assert_eq!(
+        to_xml(&plain, plain.doc_node(), 0, Some(b"UTF-8"))
+            .expect("serializes")
+            .as_slice(),
+        expected
+    );
+}
