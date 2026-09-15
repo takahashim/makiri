@@ -19,10 +19,12 @@ pub unsafe fn mkr_eval_ast_html(
     out: *mut Val,
     err: ErrSink,
 ) -> c_int {
-    if eval::eval_ast::<Html>(ctx, ast, out, err).is_ok() {
-        0
-    } else {
-        -1
+    match eval::eval_ast::<Html>(ctx, ast, err) {
+        Ok(mut v) => {
+            *out = v.take();
+            0
+        }
+        Err(_) => -1,
     }
 }
 

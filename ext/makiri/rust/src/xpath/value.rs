@@ -10,7 +10,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::number;
-use super::own::OwnedText;
+use super::own::{OwnedText, OwnedVal};
 use crate::err_setf;
 use crate::falloc::raw::mkr_reallocarray;
 use core::ffi::{c_char, c_int, c_void};
@@ -58,16 +58,13 @@ pub unsafe fn owned_copy(
 
 /* ---------- value clone ---------- */
 
-/// Deep-copy `src` into `dst`. The node-set case copies the pointer array only:
-/// the nodes belong to the document, not to the value.
+/// Deep-copy `src`. The node-set case copies the pointer array only: the nodes
+/// belong to the document, not to the value.
 ///
 /// # Safety
-/// Both must point at valid `mkr_val_t`; `dst` is overwritten without being
-/// cleared first, so the caller owns whatever was in it.
-pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: ErrSink) -> Result<(), Reported> {
-    /* Empty first, so a failure leaves `dst` a valid value. */
-    *dst = Val::EMPTY;
-    *dst = match (*src).get() {
+/// `src` must be a valid value.
+pub unsafe fn val_clone(src: &Val, err: ErrSink) -> Result<OwnedVal, Reported> {
+    let copy = match src.get() {
         ValRef::String(s) => {
             let mut text = TextSlot::empty();
             owned_copy(
@@ -83,7 +80,7 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: ErrSink) -> Result<
         ValRef::NodeSet(ns) => {
             let n = ns.count;
             if n == 0 {
-                return Ok(());
+                return Ok(OwnedVal::new());
             }
             let items = mkr_reallocarray(ptr::null_mut(), n, core::mem::size_of::<*mut c_void>())
                 as *mut *mut c_void;
@@ -98,7 +95,7 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: ErrSink) -> Result<
             })
         }
     };
-    Ok(())
+    Ok(copy.into())
 }
 
 /* ---------- node string-value (XPath 1.0 §5) ----------

@@ -408,7 +408,10 @@ impl Drop for Set {
     }
 }
 
-/// An owned `mkr_val_t`.
+/// An owned `mkr_val_t`: dropping it clears the value.
+///
+/// Transparent, so a `[OwnedVal]` is the `mkr_val_t[]` a resolver reads.
+#[repr(transparent)]
 pub struct OwnedVal(pub(crate) Val);
 
 impl OwnedVal {
@@ -435,5 +438,34 @@ impl Default for OwnedVal {
 impl Drop for OwnedVal {
     fn drop(&mut self) {
         unsafe { mkr_val_clear(&mut self.0) }
+    }
+}
+
+impl From<Val> for OwnedVal {
+    /// Own `v`: dropping the owner clears it.
+    fn from(v: Val) -> OwnedVal {
+        OwnedVal(v)
+    }
+}
+
+/// Read-only: a `DerefMut` would let a caller overwrite the value without
+/// clearing it.
+impl core::ops::Deref for OwnedVal {
+    type Target = Val;
+    fn deref(&self) -> &Val {
+        &self.0
+    }
+}
+
+impl OwnedVal {
+    /// The node-set inside, for taking or replacing its array in place.
+    pub fn as_nodeset_mut(&mut self) -> Option<&mut NodeSet> {
+        self.0.as_nodeset_mut()
+    }
+
+    /// The values a slice of owners holds, for a callee that reads `&[Val]`.
+    pub fn as_vals(owners: &[OwnedVal]) -> &[Val] {
+        // SAFETY: `OwnedVal` is `repr(transparent)` over `Val`.
+        unsafe { core::slice::from_raw_parts(owners.as_ptr() as *const Val, owners.len()) }
     }
 }

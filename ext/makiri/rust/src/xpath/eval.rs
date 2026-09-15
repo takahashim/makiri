@@ -5,7 +5,8 @@
 //! did by `#include`-ing this file twice behind different macros.
 
 /* A failure is `Err(Reported)`: the detail lives in the `*mut Error` the caller
- * owns, exactly as it does in the C, and the proof says it was written. */
+ * owns, exactly as it does in the C, and the proof says it was written. A value
+ * comes back as an `OwnedVal`, so one dropped on an error path is cleared. */
 
 use super::abi::*;
 use super::ast_view::{path_steps, step_preds};
@@ -60,17 +61,16 @@ unsafe fn apply_predicates<D: Dom>(
         let size = inout.count();
         for i in 0..size {
             let n = inout.get::<D>(i);
-            let mut v = OwnedVal::new();
             let pf = Focus::<D> {
                 node: n,
                 pos: i + 1,
                 size,
             };
-            eval_node::<D>(ctx, pred, &pf, v.as_mut(), err)?;
+            let v = eval_node::<D>(ctx, pred, &pf, err)?;
             /* A bare number predicate means position() = that number. */
-            let keep = match (*v.as_ptr()).get() {
+            let keep = match v.get() {
                 ValRef::Number(d) => d == (i + 1) as f64,
-                _ => val_to_boolean(v.as_ptr()),
+                _ => val_to_boolean(&*v),
             };
             if keep {
                 kept.push::<D>(n, limits, err)?;
@@ -228,9 +228,8 @@ unsafe fn eval_steps<D: Dom>(
     ctx: *mut Context,
     steps: &[Step],
     seed: &mut Set,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let mut current = Set::adopt(seed.take());
     let mut rest = steps;
 
@@ -246,8 +245,7 @@ unsafe fn eval_steps<D: Dom>(
         eval_step::<D>(ctx, step, &current, &mut next, err)?;
         current = Set::adopt(next.take());
     }
-    *out = Val::nodeset(current.take());
-    Ok(())
+    Ok(Val::nodeset(current.take()).into())
 }
 
 /* ---------- comparisons ---------- */
@@ -257,15 +255,14 @@ unsafe fn eval_steps<D: Dom>(
 /// comparison costs O(M+N) string builds.
 unsafe fn compare_eq<D: Dom>(
     ctx: *mut Context,
-    l: *const Val,
-    r: *const Val,
+    l: &Val,
+    r: &Val,
     op: u32,
     err: ErrSink,
 ) -> EvalResult<bool> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     let want_eq = op == OP_EQ;
-    let (l, r) = (&*l, &*r);
 
     let (set, sc) = match (l.as_nodeset(), r.as_nodeset()) {
         (Some(ls), Some(rs)) => {
@@ -353,14 +350,13 @@ fn rel_hit(op: u32, a: f64, b: f64) -> bool {
 /// node of each side.
 unsafe fn compare_rel<D: Dom>(
     ctx: *mut Context,
-    l: *const Val,
-    r: *const Val,
+    l: &Val,
+    r: &Val,
     op: u32,
     err: ErrSink,
 ) -> EvalResult<bool> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
-    let (l, r) = (&*l, &*r);
 
     /* `swap` records that the node-set is the right operand, so each pair is
      * compared in source order. */
@@ -405,12 +401,11 @@ unsafe fn compare_rel<D: Dom>(
 
 unsafe fn union_nodeset<D: Dom>(
     ctx: *mut Context,
-    l: *const Val,
-    r: *const Val,
-    out: *mut Val,
+    l: &Val,
+    r: &Val,
     err: ErrSink,
-) -> EvalResult {
-    let (Some(ls), Some(rs)) = ((*l).as_nodeset(), (*r).as_nodeset()) else {
+) -> EvalResult<OwnedVal> {
+    let (Some(ls), Some(rs)) = (l.as_nodeset(), r.as_nodeset()) else {
         return Err(err_setf!(
             err,
             XP_ERR_TYPE,
@@ -429,8 +424,7 @@ unsafe fn union_nodeset<D: Dom>(
     /* §3.3: the result of '|' is a node-set in document order, which the
      * downstream string() / number() / positional predicates assume. */
     nodeset_unique_sorted::<D>(ctx, merged.as_mut());
-    *out = Val::nodeset(merged.take());
-    Ok(())
+    Ok(Val::nodeset(merged.take()).into())
 }
 
 /* ---------- the at_xpath first-match short-circuit ---------- */
@@ -577,9 +571,8 @@ unsafe fn eval_path<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     self_node: D::Node,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let limits = mkr_ctx_limits(ctx);
     let mut seed = Set::new();
     if (*n).u.path.absolute != 0 {
@@ -600,7 +593,6 @@ unsafe fn eval_path<D: Dom>(
         ctx,
         path_steps((*n).u.path.steps, (*n).u.path.nsteps),
         &mut seed,
-        out,
         err,
     )
 }
@@ -609,14 +601,12 @@ unsafe fn eval_filter<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     focus: &Focus<D>,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let f = &raw const (*n).u.filter;
-    let mut primary = OwnedVal::new();
-    eval_node::<D>(ctx, (*f).expr, focus, primary.as_mut(), err)?;
+    let mut primary = eval_node::<D>(ctx, (*f).expr, focus, err)?;
     if (*f).npreds > 0 {
-        let Some(ns) = (*primary.as_mut()).as_nodeset_mut() else {
+        let Some(ns) = primary.as_nodeset_mut() else {
             return Err(err_setf!(
                 err,
                 XP_ERR_TYPE,
@@ -630,29 +620,21 @@ unsafe fn eval_filter<D: Dom>(
         *ns = set.take();
     }
     if (*f).npath > 0 {
-        let Some(ns) = (*primary.as_mut()).as_nodeset_mut() else {
+        let Some(ns) = primary.as_nodeset_mut() else {
             return Err(err_setf!(err, XP_ERR_TYPE, "path applied to non-node-set"));
         };
         let mut seed = Set::adopt(core::mem::replace(ns, NodeSet::EMPTY));
-        return eval_steps::<D>(
-            ctx,
-            path_steps((*f).path_steps, (*f).npath),
-            &mut seed,
-            out,
-            err,
-        );
+        return eval_steps::<D>(ctx, path_steps((*f).path_steps, (*f).npath), &mut seed, err);
     }
-    *out = primary.take();
-    Ok(())
+    Ok(primary)
 }
 
 unsafe fn eval_fncall<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     focus: &Focus<D>,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let call = &raw const (*n).u.fncall;
     let prefix = owned_bytes((*call).prefix);
     let name = owned_bytes((*call).name);
@@ -674,10 +656,11 @@ unsafe fn eval_fncall<D: Dom>(
     };
     let builtin = funcs::lookup::<D>(ns_uri, name);
 
-    /* The arguments are evaluated once and reused by either path. Their values
-     * are owned here and cleared on the way out. */
+    /* The arguments are evaluated once and reused by either path. They are owned
+     * here, so every way out - an argument failing part-way included - clears
+     * them when `args` drops. */
     let nargs = (*call).nargs;
-    let mut args: Vec<Val> = Vec::new();
+    let mut args: Vec<OwnedVal> = Vec::new();
     if nargs > 0 {
         if args.mkr_reserve_exact(nargs).is_err() {
             return Err(err_setf!(
@@ -687,77 +670,63 @@ unsafe fn eval_fncall<D: Dom>(
             ));
         }
         for i in 0..nargs {
-            let mut v = Val::EMPTY;
-            if let Err(e) = eval_node::<D>(ctx, *(*call).args.add(i), focus, &mut v, err) {
-                mkr_val_clear(&mut v);
-                clear_args(&mut args);
-                return Err(e);
-            }
-            args.push(v);
+            args.push(eval_node::<D>(ctx, *(*call).args.add(i), focus, err)?);
         }
     }
 
-    let result = if let Some(f) = builtin {
-        f(ctx, focus, &args, out, err)
-    } else {
-        /* No built-in. Delegate to the per-call resolver, which the Ruby handler
-         * bridge installs for the duration of evaluate(). */
-        let resolved = match mkr_ctx_func_resolver(ctx) {
-            Some(resolver) => resolver(
-                mkr_xpath_get_user_data(ctx),
-                ctx,
-                D::to_void(focus.node),
-                focus.pos,
-                focus.size,
-                ns_uri.map_or(ptr::null(), |u| u.as_ptr() as *const c_char),
-                (*call).name.as_ptr(),
-                /* NULL rather than a dangling pointer when there are none,
-                 * which is what the C hands a resolver. */
-                if nargs == 0 {
-                    ptr::null_mut()
-                } else {
-                    args.as_mut_ptr() as *mut c_void
-                },
-                nargs,
-                out as *mut c_void,
-                err.as_raw(),
-            ),
-            None => 1, /* not found */
-        };
-        match resolved {
-            0 => Ok(()),
-            r if r > 0 => Err(err_setf!(
-                err,
-                XP_ERR_RUNTIME,
-                "unknown function {}{}{}",
-                Bytes(prefix),
-                if (*call).prefix.is_absent() { "" } else { ":" },
-                Bytes(name)
-            )),
-            /* A negative answer is the resolver's failure, which it reports
-             * through `err` before returning - its status-only C signature is
-             * the one place the proof has to be taken on trust. */
-            _ => Err(Reported::assume_written()),
-        }
+    if let Some(f) = builtin {
+        return f(ctx, focus, OwnedVal::as_vals(&args), err);
+    }
+
+    /* No built-in. Delegate to the per-call resolver, which the Ruby handler
+     * bridge installs for the duration of evaluate(). */
+    let mut out = OwnedVal::new();
+    let resolved = match mkr_ctx_func_resolver(ctx) {
+        Some(resolver) => resolver(
+            mkr_xpath_get_user_data(ctx),
+            ctx,
+            D::to_void(focus.node),
+            focus.pos,
+            focus.size,
+            ns_uri.map_or(ptr::null(), |u| u.as_ptr() as *const c_char),
+            (*call).name.as_ptr(),
+            /* NULL rather than a dangling pointer when there are none, which is
+             * what the C hands a resolver. `OwnedVal` is transparent over `Val`,
+             * so the array is the `mkr_val_t[]` the resolver reads. */
+            if nargs == 0 {
+                ptr::null_mut()
+            } else {
+                args.as_mut_ptr() as *mut c_void
+            },
+            nargs,
+            out.as_mut() as *mut c_void,
+            err.as_raw(),
+        ),
+        None => 1, /* not found */
     };
-    clear_args(&mut args);
-    result
-}
-
-unsafe fn clear_args(args: &mut Vec<Val>) {
-    for v in args.iter_mut() {
-        mkr_val_clear(v);
+    match resolved {
+        0 => Ok(out),
+        r if r > 0 => Err(err_setf!(
+            err,
+            XP_ERR_RUNTIME,
+            "unknown function {}{}{}",
+            Bytes(prefix),
+            if (*call).prefix.is_absent() { "" } else { ":" },
+            Bytes(name)
+        )),
+        /* A negative answer is the resolver's failure, which it reports through
+         * `err` before returning - its status-only C signature is the one place
+         * the proof has to be taken on trust. */
+        _ => Err(Reported::assume_written()),
     }
-    args.clear();
 }
 
 unsafe fn eval_binop<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     focus: &Focus<D>,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let b = &raw const (*n).u.binop;
     let op = (*b).op;
@@ -765,49 +734,39 @@ unsafe fn eval_binop<D: Dom>(
 
     /* and / or short-circuit. */
     if op == OP_OR || op == OP_AND {
-        let mut l = OwnedVal::new();
-        eval_node::<D>(ctx, (*b).lhs, focus, l.as_mut(), err)?;
-        let lb = val_to_boolean(l.as_ptr());
+        let l = eval_node::<D>(ctx, (*b).lhs, focus, err)?;
+        let lb = val_to_boolean(&*l);
         if (op == OP_OR && lb) || (op == OP_AND && !lb) {
-            *out = Val::boolean(lb);
-            return Ok(());
+            return Ok(Val::boolean(lb).into());
         }
-        let mut r = OwnedVal::new();
-        eval_node::<D>(ctx, (*b).rhs, focus, r.as_mut(), err)?;
-        *out = Val::boolean(val_to_boolean(r.as_ptr()));
-        return Ok(());
+        let r = eval_node::<D>(ctx, (*b).rhs, focus, err)?;
+        return Ok(Val::boolean(val_to_boolean(&*r)).into());
     }
 
-    let mut l = OwnedVal::new();
-    let mut r = OwnedVal::new();
-    eval_node::<D>(ctx, (*b).lhs, focus, l.as_mut(), err)?;
-    eval_node::<D>(ctx, (*b).rhs, focus, r.as_mut(), err)?;
-    let (lp, rp) = (l.as_ptr(), r.as_ptr());
+    let l = eval_node::<D>(ctx, (*b).lhs, focus, err)?;
+    let r = eval_node::<D>(ctx, (*b).rhs, focus, err)?;
+    let (l, r): (&Val, &Val) = (&l, &r);
 
     match op {
-        OP_EQ | OP_NE => {
-            *out = Val::boolean(compare_eq::<D>(ctx, lp, rp, op, err)?);
-            Ok(())
-        }
+        OP_EQ | OP_NE => Ok(Val::boolean(compare_eq::<D>(ctx, l, r, op, err)?).into()),
         OP_LT | OP_LE | OP_GT | OP_GE => {
-            *out = Val::boolean(compare_rel::<D>(ctx, lp, rp, op, err)?);
-            Ok(())
+            Ok(Val::boolean(compare_rel::<D>(ctx, l, r, op, err)?).into())
         }
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MOD => {
             let (mut a, mut c) = (0.0, 0.0);
-            val_to_number_or_fail::<D>(doc, lp, limits, err, &mut a)?;
-            val_to_number_or_fail::<D>(doc, rp, limits, err, &mut c)?;
-            *out = Val::number(match op {
+            val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)?;
+            val_to_number_or_fail::<D>(doc, r, limits, err, &mut c)?;
+            Ok(Val::number(match op {
                 OP_ADD => a + c,
                 OP_SUB => a - c,
                 OP_MUL => a * c,
                 OP_DIV => a / c,
                 _ => libm_fmod(a, c),
-            });
-            Ok(())
+            })
+            .into())
         }
         /* union_nodeset reports its own typed error; do not overwrite it. */
-        OP_UNION => union_nodeset::<D>(ctx, lp, rp, out, err),
+        OP_UNION => union_nodeset::<D>(ctx, l, r, err),
         _ => Err(err_setf!(err, XP_ERR_INTERNAL, "unexpected binop")),
     }
 }
@@ -817,30 +776,21 @@ unsafe fn eval_negate<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     focus: &Focus<D>,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
-    let mut v = OwnedVal::new();
-    eval_node::<D>(ctx, (*n).u.unary.expr, focus, v.as_mut(), err)?;
+    let v = eval_node::<D>(ctx, (*n).u.unary.expr, focus, err)?;
     let mut d = 0.0;
-    val_to_number_or_fail::<D>(doc, v.as_ptr(), limits, err, &mut d)?;
-    *out = Val::number(-d);
-    Ok(())
+    val_to_number_or_fail::<D>(doc, &*v, limits, err, &mut d)?;
+    Ok(Val::number(-d).into())
 }
 
 /// A string result copied from `bytes`.
-unsafe fn string_value(
-    out: *mut Val,
-    bytes: &[u8],
-    err: ErrSink,
-    what: &core::ffi::CStr,
-) -> EvalResult {
+unsafe fn string_value(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> EvalResult<OwnedVal> {
     let mut text = TextSlot::empty();
     owned_copy(&mut text, bytes, err, what)?;
-    mkr_val_set_owned_text(out, text);
-    Ok(())
+    Ok(Val::string(text).into())
 }
 
 /// The evaluator's only recursive function, and therefore the whole of "AST
@@ -851,14 +801,13 @@ unsafe fn eval_node<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     focus: &Focus<D>,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let limits = mkr_ctx_limits(ctx);
     mkr_limit_eval_op(limits, err)?;
     /* A refused entry is not counted, so returning here needs no release. */
     mkr_limit_recurse_enter(limits, err)?;
-    let result = eval_node_inner::<D>(ctx, n, focus, out, err);
+    let result = eval_node_inner::<D>(ctx, n, focus, err);
     mkr_limit_recurse_leave(limits);
     result
 }
@@ -867,27 +816,22 @@ unsafe fn eval_node_inner<D: Dom>(
     ctx: *mut Context,
     n: *const Node,
     focus: &Focus<D>,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     /* Hoisting: a context-independent subtree already computed in this evaluate
      * comes back as a clone, which keeps ownership clean - clearing either copy
      * is safe. */
     if (*n).is_context_independent != 0 && (*n).memoized != 0 {
-        return val_clone(&raw const (*n).memo_value, out, err);
+        return val_clone(&(*n).memo_value, err);
     }
 
-    let result = match (*n).kind {
+    let value = match (*n).kind {
         NK_LITERAL_STR => string_value(
-            out,
             owned_bytes((*n).u.literal),
             err,
             c"out of memory copying literal",
         ),
-        NK_LITERAL_NUM => {
-            *out = Val::number((*n).u.literal_num);
-            Ok(())
-        }
+        NK_LITERAL_NUM => Ok(Val::number((*n).u.literal_num).into()),
         NK_VARREF => {
             let v = &raw const (*n).u.varref;
             let prefix = if (*v).prefix.is_absent() {
@@ -896,9 +840,7 @@ unsafe fn eval_node_inner<D: Dom>(
                 Some(owned_bytes((*v).prefix))
             };
             match mkr_ctx_lookup_variable_text(ctx, prefix, owned_bytes((*v).name)) {
-                Some(bytes) => {
-                    string_value(out, bytes, err, c"out of memory copying variable value")
-                }
+                Some(bytes) => string_value(bytes, err, c"out of memory copying variable value"),
                 None => Err(err_setf!(
                     err,
                     XP_ERR_RUNTIME,
@@ -909,28 +851,27 @@ unsafe fn eval_node_inner<D: Dom>(
                 )),
             }
         }
-        NK_FNCALL => eval_fncall::<D>(ctx, n, focus, out, err),
-        NK_UNARY => eval_negate::<D>(ctx, n, focus, out, err),
-        NK_BINOP => eval_binop::<D>(ctx, n, focus, out, err),
-        NK_PATH => eval_path::<D>(ctx, n, focus.node, out, err),
-        NK_FILTER => eval_filter::<D>(ctx, n, focus, out, err),
+        NK_FNCALL => eval_fncall::<D>(ctx, n, focus, err),
+        NK_UNARY => eval_negate::<D>(ctx, n, focus, err),
+        NK_BINOP => eval_binop::<D>(ctx, n, focus, err),
+        NK_PATH => eval_path::<D>(ctx, n, focus.node, err),
+        NK_FILTER => eval_filter::<D>(ctx, n, focus, err),
         _ => Err(err_setf!(err, XP_ERR_INTERNAL, "unknown AST node")),
-    };
+    }?;
 
     /* Memoize a context-independent subtree on success. The clone keeps the
      * caller's value independent of the cached one, which matters because the
      * caller is free to consume theirs. */
-    if result.is_ok() && (*n).is_context_independent != 0 && (*n).memoized == 0 {
-        let mut memo = Val::EMPTY;
-        /* OOM during the clone: the caller's `out` is still valid, so leave the
-         * node unmemoized and surface the error. */
-        val_clone(out, &mut memo, err)?;
+    if (*n).is_context_independent != 0 && (*n).memoized == 0 {
+        /* OOM during the clone drops `value` with the error and leaves the node
+         * unmemoized. */
+        let mut memo = val_clone(&value, err)?;
         /* The AST is read-only at eval time apart from these memo slots. */
         let mut_n = n as *mut Node;
-        (*mut_n).memo_value = memo;
+        (*mut_n).memo_value = memo.take();
         (*mut_n).memoized = 1;
     }
-    result
+    Ok(value)
 }
 
 /// Evaluate an AST against the context, with the context node as the focus.
@@ -940,15 +881,14 @@ unsafe fn eval_node_inner<D: Dom>(
 pub unsafe fn eval_ast<D: Dom>(
     ctx: *mut Context,
     ast: *const Node,
-    out: *mut Val,
     err: ErrSink,
-) -> EvalResult {
+) -> EvalResult<OwnedVal> {
     let focus = Focus::<D> {
         node: D::from_void(mkr_ctx_node(ctx)),
         pos: 1,
         size: 1,
     };
-    eval_node::<D>(ctx, ast, &focus, out, err)
+    eval_node::<D>(ctx, ast, &focus, err)
 }
 
 extern "C" {
