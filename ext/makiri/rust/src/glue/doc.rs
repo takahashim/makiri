@@ -448,39 +448,41 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
 ///
-/// Exported with the C method signature because `ruby_html_node.c` registers it.
 /// Built on the same import + `<template>`-content fixup as the fragment parser,
 /// so a deep-cloned `<template>` carries its contents (which `import_node` alone
-/// omits). Fails closed: a null import raises rather than returning a partial
-/// node.
-pub unsafe extern "C" fn node_clone_node(argc: c_int, argv: *const VALUE, self_: VALUE) -> VALUE {
-    let mut deep_v: VALUE = rb_sys::Qnil as VALUE;
-    rb_sys::rb_scan_args(argc, argv, c"01".as_ptr(), &mut deep_v);
-    /* RTEST: anything but nil and false. */
-    let deep = deep_v != rb_sys::Qnil as VALUE && deep_v != rb_sys::Qfalse as VALUE;
-
-    /* Ruby calls this with the C convention, so a failure is raised here,
-     * before anything is owned. */
-    let node = match html_node_unwrap(Value::from_raw(self_)) {
-        Ok(node) => node,
-        Err(e) => crate::bridge::ruby::raise(e),
+/// omits). Fails closed: a null import is an error rather than a partial node.
+pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
+     * clone. The message is the one `rb_scan_args` gives. */
+    let deep = match args {
+        [] => false,
+        /* RTEST: anything but nil and false. */
+        [v] => v.to_bool(),
+        _ => {
+            return Err(Error::new(
+                Ruby::get_with(rb_self).exception_arg_error(),
+                format!(
+                    "wrong number of arguments (given {}, expected 0..1)",
+                    args.len()
+                ),
+            ))
+        }
     };
-    let Some(handle) = crate::dom_adapter::html::HtmlNode::from_raw(node) else {
-        crate::bridge::ruby::raise(Error::new(error_class(), "uninitialized HTML node"));
+
+    let node = html_node_unwrap(rb_self)?;
+    // SAFETY: the node of a live wrapper, which keeps its document alive.
+    let Some(handle) = (unsafe { crate::dom_adapter::html::HtmlNode::from_raw(node) }) else {
+        return Err(Error::new(error_class(), "uninitialized HTML node"));
     };
     let doc = handle.owner_document();
 
-    let Some(clone) = import_with_fixup(doc, node, deep) else {
-        super::abi::rb_raise(
-            super::abi::EXC_ERROR.raw(),
-            c"failed to clone node".as_ptr(),
-        );
+    // SAFETY: `node` belongs to `doc`, the document the copy is imported into.
+    let Some(clone) = (unsafe { import_with_fixup(doc, node, deep) }) else {
+        return Err(Error::new(error_class(), "failed to clone node"));
     };
-    let document = match keepalive_document(Value::from_raw(self_)) {
-        Ok(document) => document,
-        Err(e) => crate::bridge::ruby::raise(e),
-    };
-    wrap_html_node(clone, document.as_raw())
+    let document = keepalive_document(rb_self)?;
+    // SAFETY: `clone` is a detached node of `document`'s arena.
+    Ok(unsafe { Value::from_raw(wrap_html_node(clone, document.as_raw())) })
 }
 
 /* ---- registration ---- */

@@ -238,15 +238,6 @@ pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
  * registration                                                       *
  * ------------------------------------------------------------------ */
 
-/// The shape `rb_define_method` wants. Ruby dispatches on the declared arity,
-/// so every arity is reached through this one type.
-type RbMethod = unsafe extern "C" fn() -> VALUE;
-
-/// Bind a method implemented with the C calling convention: `clone_node`.
-unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, arity: i32) {
-    rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
-}
-
 /// `init_node` - the HTML node surface.
 ///
 /// # Safety
@@ -339,10 +330,8 @@ pub unsafe extern "C" fn init_node() {
         .expect("#hash");
     m.define_method("pointer_id", method!(node_pointer_id, 0))
         .expect("#pointer_id");
-    let clone: RbMethod = core::mem::transmute(
-        node_clone_node as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
-    );
-    define_c_method(m.as_raw(), c"clone_node", clone, -1);
+    m.define_method("clone_node", method!(node_clone_node, -1))
+        .expect("#clone_node");
 
     m.define_method("<=>", method!(read::spaceship, 1))
         .expect("#<=>");
@@ -363,8 +352,6 @@ pub unsafe extern "C" fn init_node() {
     el.define_method("content_fragment", method!(read::content_fragment, 0))
         .expect("#content_fragment");
 }
-
-use magnus::rb_sys::AsRawValue;
 
 /// `init_mutate` - the HTML node's mutators and the Document factories.
 ///

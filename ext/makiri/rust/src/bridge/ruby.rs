@@ -8,9 +8,8 @@
 //! normally. [`raise`] is the one exit for an entry point Ruby calls with the C
 //! convention, which has no `Result` to return.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
-use magnus::error::ErrorType;
 use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
 use magnus::{Error, RString, Value};
 use rb_sys::{rb_data_type_t, VALUE};
@@ -184,28 +183,4 @@ pub unsafe fn wrap_zeroed<T>(
     let obj = rb_sys::rb_data_typed_object_wrap(klass, data as *mut c_void, ty);
     store(&mut *data);
     obj
-}
-
-/// Raise `e` from an entry point Ruby calls with the C convention.
-///
-/// Only for the frame Ruby itself called: it unwinds with `longjmp`, so nothing
-/// between Ruby and this call may own a resource. The error is turned into
-/// Ruby objects and dropped before the jump, so it does not leak either.
-///
-/// # Safety
-/// Under the GVL, from a frame whose callers own nothing that needs dropping.
-pub unsafe fn raise(e: Error) -> ! {
-    let jump = match e.error_type() {
-        ErrorType::Exception(x) => Err(x.as_raw()),
-        ErrorType::Error(class, msg) => {
-            let s = rb_sys::rb_utf8_str_new(msg.as_ptr() as *const _, msg.len() as _);
-            Err(rb_sys::rb_exc_new_str(class.as_raw(), s))
-        }
-        ErrorType::Jump(tag) => Ok(*tag as c_int),
-    };
-    drop(e);
-    match jump {
-        Err(exc) => rb_sys::rb_exc_raise(exc),
-        Ok(tag) => rb_sys::rb_jump_tag(tag),
-    }
 }

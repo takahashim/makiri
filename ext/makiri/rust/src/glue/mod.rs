@@ -20,9 +20,10 @@
 //! frames have returned normally. The node unwraps and the text checks return
 //! `Err` for exactly that reason, and a Ruby C function that can raise is called
 //! through `bridge::ruby`, which catches the raise and hands it back the same
-//! way. The one exception is an entry point Ruby calls with the C convention
-//! (`==`, `hash`, `clone_node`): it has no `Result` to return, so it raises
-//! through `bridge::ruby::raise` from its own frame, where nothing is owned.
+//! way. The exceptions left are the few entry points called with the C
+//! convention (`node_set_push`, the fragment parser's failures): they have no
+//! `Result` to return, so they raise from their own frame, where nothing is
+//! owned.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
 //! `Ruby` handle. The C glue already works this way (parse copies its input to a
