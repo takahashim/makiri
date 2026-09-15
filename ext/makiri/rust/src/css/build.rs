@@ -13,9 +13,8 @@
 
 use super::Build;
 use crate::text::VerifiedText;
-use crate::xpath::ast::{
-    NodeMut, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM, NK_LITERAL_STR, NK_PATH, NT_NAME,
-};
+use crate::xpath::ast::NodeMut;
+use crate::xpath::ast::{Axis, NodeKind, Op, TestKind};
 use crate::xpath::ast_ops::node_alloc;
 use crate::xpath::msg::Reported;
 pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
@@ -30,7 +29,7 @@ fn borrowed(s: &[u8]) -> Option<VerifiedText> {
 }
 
 /// A zeroed node of `kind`, charged against the AST budget.
-pub(crate) unsafe fn node(b: &Build, kind: u32) -> Built {
+pub(crate) unsafe fn node(b: &Build, kind: NodeKind) -> Built {
     node_alloc(b.budget, kind)
 }
 
@@ -47,7 +46,7 @@ pub(crate) unsafe fn copy_text(b: &Build, s: &[u8]) -> Result<TextSlot, Reported
 }
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
-    let mut n = node(b, NK_LITERAL_STR)?;
+    let mut n = node(b, NodeKind::LiteralStr)?;
     let text = copy_text(b, s)?;
     let NodeMut::LiteralStr(slot) = n.payload_mut() else {
         unreachable!("a fresh LITERAL node")
@@ -57,7 +56,7 @@ pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
 }
 
 pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
-    let mut n = node(b, NK_LITERAL_NUM)?;
+    let mut n = node(b, NodeKind::LiteralNum)?;
     let NodeMut::LiteralNum(slot) = n.payload_mut() else {
         unreachable!("a fresh number LITERAL node")
     };
@@ -66,9 +65,9 @@ pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
 }
 
 /// `lhs op rhs`. A `None` operand fails without allocating, dropping the other.
-pub(crate) unsafe fn binop(b: &Build, op: u32, lhs: Built, rhs: Built) -> Built {
+pub(crate) unsafe fn binop(b: &Build, op: Op, lhs: Built, rhs: Built) -> Built {
     let (lhs, rhs) = (lhs?, rhs?);
-    let mut n = node(b, NK_BINOP)?;
+    let mut n = node(b, NodeKind::BinOp)?;
     let NodeMut::BinOp(bin) = n.payload_mut() else {
         unreachable!("a fresh BINOP node")
     };
@@ -87,7 +86,7 @@ pub(crate) unsafe fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; 
             return Err(b.oom());
         }
     }
-    let mut n = node(b, NK_FNCALL)?;
+    let mut n = node(b, NodeKind::FnCall)?;
     let text = copy_text(b, name)?;
     let NodeMut::FnCall(f) = n.payload_mut() else {
         unreachable!("a fresh FNCALL node")
@@ -109,7 +108,7 @@ pub(crate) unsafe fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Buil
 
 /// A relative PATH node over an already-built step array.
 pub(crate) unsafe fn path(b: &Build, steps: StepArray) -> Built {
-    let n = node(b, NK_PATH)?;
+    let n = node(b, NodeKind::Path)?;
     /* Zeroed at allocation, so the path is already relative. */
     steps.install_into_path(n.as_raw());
     Ok(n)
@@ -119,7 +118,12 @@ pub(crate) unsafe fn path(b: &Build, steps: StepArray) -> Built {
 ///
 /// `local` is `None` for a wildcard or a kind test. Used for `@attr`,
 /// `preceding-sibling::*`, `child::node()` and the rest.
-pub(crate) unsafe fn step_path(b: &Build, axis: u32, nt_kind: u32, local: Option<&[u8]>) -> Built {
+pub(crate) unsafe fn step_path(
+    b: &Build,
+    axis: Axis,
+    nt_kind: TestKind,
+    local: Option<&[u8]>,
+) -> Built {
     named_step_path_inner(b, axis, None, local, nt_kind)
 }
 
@@ -130,24 +134,24 @@ pub(crate) unsafe fn step_path(b: &Build, axis: u32, nt_kind: u32, local: Option
 /// sets and the partial-free on failure exist once.
 pub(crate) unsafe fn named_step_path(
     b: &Build,
-    axis: u32,
+    axis: Axis,
     prefix: Option<&[u8]>,
     name: &[u8],
 ) -> Built {
-    named_step_path_inner(b, axis, prefix, Some(name), NT_NAME)
+    named_step_path_inner(b, axis, prefix, Some(name), TestKind::Name)
 }
 
 unsafe fn named_step_path_inner(
     b: &Build,
-    axis: u32,
+    axis: Axis,
     prefix: Option<&[u8]>,
     local: Option<&[u8]>,
-    nt_kind: u32,
+    nt_kind: TestKind,
 ) -> Built {
-    let n = node(b, NK_PATH)?;
+    let n = node(b, NodeKind::Path)?;
     let mut step = OwnedStep::new(axis, nt_kind);
 
-    if nt_kind == NT_NAME {
+    if nt_kind == TestKind::Name {
         if let Some(local) = local {
             step.test.local = copy_text(b, local)?;
         }
@@ -167,7 +171,7 @@ unsafe fn named_step_path_inner(
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.
 pub(crate) unsafe fn attr_ns(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    named_step_path(b, crate::xpath::ast::AXIS_ATTRIBUTE, prefix, name)
+    named_step_path(b, crate::xpath::ast::Axis::Attribute, prefix, name)
 }
 
 /// `@name` with no namespace.

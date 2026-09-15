@@ -9,58 +9,74 @@ use core::ffi::c_int;
 
 use super::value::{TextSlot, Val};
 
-/* mkr_nk_t */
-pub const NK_LITERAL_STR: u32 = 0;
-pub const NK_LITERAL_NUM: u32 = 1;
-pub const NK_VARREF: u32 = 2;
-pub const NK_FNCALL: u32 = 3;
-pub const NK_UNARY: u32 = 4;
-pub const NK_BINOP: u32 = 5;
-pub const NK_PATH: u32 = 6;
-pub const NK_FILTER: u32 = 7;
+/// What an AST node is. Discriminant 0 is a real kind, so a zeroed node is valid.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeKind {
+    LiteralStr = 0,
+    LiteralNum,
+    VarRef,
+    FnCall,
+    Unary,
+    BinOp,
+    Path,
+    Filter,
+}
 
-/* mkr_axis_t */
-pub const AXIS_CHILD: u32 = 0;
-pub const AXIS_DESCENDANT: u32 = 1;
-pub const AXIS_PARENT: u32 = 2;
-pub const AXIS_ANCESTOR: u32 = 3;
-pub const AXIS_FOLLOWING_SIBLING: u32 = 4;
-pub const AXIS_PRECEDING_SIBLING: u32 = 5;
-pub const AXIS_FOLLOWING: u32 = 6;
-pub const AXIS_PRECEDING: u32 = 7;
-pub const AXIS_ATTRIBUTE: u32 = 8;
-pub const AXIS_NAMESPACE: u32 = 9;
-pub const AXIS_SELF: u32 = 10;
-pub const AXIS_DESCENDANT_OR_SELF: u32 = 11;
-pub const AXIS_ANCESTOR_OR_SELF: u32 = 12;
+/// A location step's axis (XPath 1.0 section 2.2).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    Child = 0,
+    Descendant,
+    Parent,
+    Ancestor,
+    FollowingSibling,
+    PrecedingSibling,
+    Following,
+    Preceding,
+    Attribute,
+    Namespace,
+    SelfAxis,
+    DescendantOrSelf,
+    AncestorOrSelf,
+}
 
-/* mkr_nt_kind_t */
-pub const NT_NAME: u32 = 0;
-pub const NT_WILDCARD: u32 = 1;
-pub const NT_NODE: u32 = 2;
-pub const NT_TEXT: u32 = 3;
-pub const NT_COMMENT: u32 = 4;
-pub const NT_PI: u32 = 5;
+/// What a node test tests (XPath 1.0 section 2.3).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TestKind {
+    Name = 0,
+    Wildcard,
+    Node,
+    Text,
+    Comment,
+    Pi,
+}
 
-/* mkr_op_t */
-pub const OP_OR: u32 = 0;
-pub const OP_AND: u32 = 1;
-pub const OP_EQ: u32 = 2;
-pub const OP_NE: u32 = 3;
-pub const OP_LT: u32 = 4;
-pub const OP_GT: u32 = 5;
-pub const OP_LE: u32 = 6;
-pub const OP_GE: u32 = 7;
-pub const OP_ADD: u32 = 8;
-pub const OP_SUB: u32 = 9;
-pub const OP_MUL: u32 = 10;
-pub const OP_DIV: u32 = 11;
-pub const OP_MOD: u32 = 12;
-pub const OP_UNION: u32 = 13;
+/// A binary operator.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Op {
+    Or = 0,
+    And,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Union,
+}
 
 #[derive(Clone, Copy)]
 pub struct NodeTest {
-    pub kind: u32,
+    pub kind: TestKind,
     pub prefix: TextSlot,
     pub local: TextSlot,
     pub pi_target: TextSlot,
@@ -68,7 +84,7 @@ pub struct NodeTest {
 
 #[derive(Clone, Copy)]
 pub struct Step {
-    pub axis: u32,
+    pub axis: Axis,
     pub test: NodeTest,
     pub predicates: *mut *mut Node,
     pub npredicates: usize,
@@ -95,7 +111,7 @@ pub struct Unary {
 
 #[derive(Clone, Copy)]
 pub struct BinOp {
-    pub op: u32,
+    pub op: Op,
     pub lhs: *mut Node,
     pub rhs: *mut Node,
 }
@@ -136,7 +152,7 @@ pub union NodeU {
 /// is calloc'd, so whichever arm is read, its bytes are initialised; `kind` is
 /// set once, by `node_alloc`.
 pub struct Node {
-    pub kind: u32,
+    pub kind: NodeKind,
     pub is_context_independent: u8,
     pub memoized: u8,
     pub memo_value: Val,
@@ -154,8 +170,6 @@ pub enum NodeRef<'a> {
     BinOp(&'a BinOp),
     Path(&'a Path),
     Filter(&'a Filter),
-    /// A kind no builder makes; the walkers treat it as a leaf.
-    Unknown,
 }
 
 /// A node's payload by kind, writable: for the builders, the peephole and the
@@ -169,7 +183,6 @@ pub enum NodeMut<'a> {
     BinOp(&'a mut BinOp),
     Path(&'a mut Path),
     Filter(&'a mut Filter),
-    Unknown,
 }
 
 impl Node {
@@ -183,15 +196,14 @@ impl Node {
     /// `n` must be a live node for `'a`.
     pub unsafe fn view<'a>(n: *const Node) -> NodeRef<'a> {
         match (*n).kind {
-            NK_LITERAL_STR => NodeRef::LiteralStr((*n).u.literal),
-            NK_LITERAL_NUM => NodeRef::LiteralNum((*n).u.literal_num),
-            NK_VARREF => NodeRef::VarRef(&(*n).u.varref),
-            NK_FNCALL => NodeRef::FnCall(&(*n).u.fncall),
-            NK_UNARY => NodeRef::Unary(&(*n).u.unary),
-            NK_BINOP => NodeRef::BinOp(&(*n).u.binop),
-            NK_PATH => NodeRef::Path(&(*n).u.path),
-            NK_FILTER => NodeRef::Filter(&(*n).u.filter),
-            _ => NodeRef::Unknown,
+            NodeKind::LiteralStr => NodeRef::LiteralStr((*n).u.literal),
+            NodeKind::LiteralNum => NodeRef::LiteralNum((*n).u.literal_num),
+            NodeKind::VarRef => NodeRef::VarRef(&(*n).u.varref),
+            NodeKind::FnCall => NodeRef::FnCall(&(*n).u.fncall),
+            NodeKind::Unary => NodeRef::Unary(&(*n).u.unary),
+            NodeKind::BinOp => NodeRef::BinOp(&(*n).u.binop),
+            NodeKind::Path => NodeRef::Path(&(*n).u.path),
+            NodeKind::Filter => NodeRef::Filter(&(*n).u.filter),
         }
     }
 
@@ -203,15 +215,14 @@ impl Node {
     /// apart: an owned child pointer is null or owned by this node alone.
     pub unsafe fn view_mut<'a>(n: *mut Node) -> NodeMut<'a> {
         match (*n).kind {
-            NK_LITERAL_STR => NodeMut::LiteralStr(&mut (*n).u.literal),
-            NK_LITERAL_NUM => NodeMut::LiteralNum(&mut (*n).u.literal_num),
-            NK_VARREF => NodeMut::VarRef(&mut (*n).u.varref),
-            NK_FNCALL => NodeMut::FnCall(&mut (*n).u.fncall),
-            NK_UNARY => NodeMut::Unary(&mut (*n).u.unary),
-            NK_BINOP => NodeMut::BinOp(&mut (*n).u.binop),
-            NK_PATH => NodeMut::Path(&mut (*n).u.path),
-            NK_FILTER => NodeMut::Filter(&mut (*n).u.filter),
-            _ => NodeMut::Unknown,
+            NodeKind::LiteralStr => NodeMut::LiteralStr(&mut (*n).u.literal),
+            NodeKind::LiteralNum => NodeMut::LiteralNum(&mut (*n).u.literal_num),
+            NodeKind::VarRef => NodeMut::VarRef(&mut (*n).u.varref),
+            NodeKind::FnCall => NodeMut::FnCall(&mut (*n).u.fncall),
+            NodeKind::Unary => NodeMut::Unary(&mut (*n).u.unary),
+            NodeKind::BinOp => NodeMut::BinOp(&mut (*n).u.binop),
+            NodeKind::Path => NodeMut::Path(&mut (*n).u.path),
+            NodeKind::Filter => NodeMut::Filter(&mut (*n).u.filter),
         }
     }
 }

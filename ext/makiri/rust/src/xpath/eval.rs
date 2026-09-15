@@ -137,7 +137,7 @@ unsafe fn eval_step<D: Dom>(
      * and attribute stay in order under concatenation. */
     let need_post_pass = is_reverse_axis(axis)
         || (axis_can_alias(axis) && context_set.count() > 1)
-        || (context_set.count() > 1 && axis != AXIS_SELF && axis != AXIS_ATTRIBUTE);
+        || (context_set.count() > 1 && axis != Axis::SelfAxis && axis != Axis::Attribute);
 
     let mut result = Set::new();
 
@@ -250,10 +250,10 @@ unsafe fn eval_steps<D: Dom>(
 /// §3.4 equality. A node-set on either side means "true iff SOME node satisfies
 /// it"; all node string-values go through the per-evaluate cache, so an M-by-N
 /// comparison costs O(M+N) string builds.
-unsafe fn compare_eq<D: Dom>(ctx: *mut Context, l: &Val, r: &Val, op: u32) -> EvalResult<bool> {
+unsafe fn compare_eq<D: Dom>(ctx: *mut Context, l: &Val, r: &Val, op: Op) -> EvalResult<bool> {
     let doc = D::doc_from_void(ctx_document(ctx));
     let budget = ctx_budget(ctx);
-    let want_eq = op == OP_EQ;
+    let want_eq = op == Op::Eq;
 
     let (set, sc) = match (l.as_nodeset(), r.as_nodeset()) {
         (Some(ls), Some(rs)) => {
@@ -323,12 +323,12 @@ unsafe fn compare_eq<D: Dom>(ctx: *mut Context, l: &Val, r: &Val, op: u32) -> Ev
     }
 }
 
-fn rel_hit(op: u32, a: f64, b: f64) -> bool {
+fn rel_hit(op: Op, a: f64, b: f64) -> bool {
     match op {
-        OP_LT => a < b,
-        OP_LE => a <= b,
-        OP_GT => a > b,
-        OP_GE => a >= b,
+        Op::Lt => a < b,
+        Op::Le => a <= b,
+        Op::Gt => a > b,
+        Op::Ge => a >= b,
         _ => false,
     }
 }
@@ -336,7 +336,7 @@ fn rel_hit(op: u32, a: f64, b: f64) -> bool {
 /// §3.4 relational. A node-set on either side is true iff SOME pair satisfies
 /// the relation on their numeric string-values - every pair, not just the first
 /// node of each side.
-unsafe fn compare_rel<D: Dom>(ctx: *mut Context, l: &Val, r: &Val, op: u32) -> EvalResult<bool> {
+unsafe fn compare_rel<D: Dom>(ctx: *mut Context, l: &Val, r: &Val, op: Op) -> EvalResult<bool> {
     let doc = D::doc_from_void(ctx_document(ctx));
     let budget = ctx_budget(ctx);
 
@@ -431,13 +431,13 @@ unsafe fn first_recognise(ast: *const Node) -> Option<*const Step> {
         return None;
     };
     let (steps, nsteps) = (path.steps, path.nsteps);
-    let nt: *const Step = if nsteps == 1 && (*steps).axis == AXIS_DESCENDANT {
+    let nt: *const Step = if nsteps == 1 && (*steps).axis == Axis::Descendant {
         steps
     } else if nsteps == 2
-        && (*steps).axis == AXIS_DESCENDANT_OR_SELF
-        && (*steps).test.kind == NT_NODE
+        && (*steps).axis == Axis::DescendantOrSelf
+        && (*steps).test.kind == TestKind::Node
         && (*steps).npredicates == 0
-        && (*steps.add(1)).axis == AXIS_CHILD
+        && (*steps.add(1)).axis == Axis::Child
     {
         steps.add(1)
     } else {
@@ -688,10 +688,10 @@ unsafe fn eval_binop<D: Dom>(
     let budget = ctx_budget(ctx);
 
     /* and / or short-circuit. */
-    if op == OP_OR || op == OP_AND {
+    if op == Op::Or || op == Op::And {
         let l = eval_node::<D>(ctx, b.lhs, focus)?;
         let lb = val_to_boolean(&*l);
-        if (op == OP_OR && lb) || (op == OP_AND && !lb) {
+        if (op == Op::Or && lb) || (op == Op::And && !lb) {
             return Ok(Val::boolean(lb).into());
         }
         let r = eval_node::<D>(ctx, b.rhs, focus)?;
@@ -703,22 +703,24 @@ unsafe fn eval_binop<D: Dom>(
     let (l, r): (&Val, &Val) = (&l, &r);
 
     match op {
-        OP_EQ | OP_NE => Ok(Val::boolean(compare_eq::<D>(ctx, l, r, op)?).into()),
-        OP_LT | OP_LE | OP_GT | OP_GE => Ok(Val::boolean(compare_rel::<D>(ctx, l, r, op)?).into()),
-        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MOD => {
+        Op::Eq | Op::Ne => Ok(Val::boolean(compare_eq::<D>(ctx, l, r, op)?).into()),
+        Op::Lt | Op::Le | Op::Gt | Op::Ge => {
+            Ok(Val::boolean(compare_rel::<D>(ctx, l, r, op)?).into())
+        }
+        Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Mod => {
             let a = val_to_number_or_fail::<D>(doc, l, budget)?;
             let c = val_to_number_or_fail::<D>(doc, r, budget)?;
             Ok(Val::number(match op {
-                OP_ADD => a + c,
-                OP_SUB => a - c,
-                OP_MUL => a * c,
-                OP_DIV => a / c,
+                Op::Add => a + c,
+                Op::Sub => a - c,
+                Op::Mul => a * c,
+                Op::Div => a / c,
                 _ => libm_fmod(a, c),
             })
             .into())
         }
         /* union_nodeset reports its own typed error; do not overwrite it. */
-        OP_UNION => union_nodeset::<D>(ctx, l, r),
+        Op::Union => union_nodeset::<D>(ctx, l, r),
         _ => Err(err_setf!(err, XP_ERR_INTERNAL, "unexpected binop")),
     }
 }
@@ -801,7 +803,6 @@ unsafe fn eval_node_inner<D: Dom>(
         NodeRef::BinOp(b) => eval_binop::<D>(ctx, b, focus),
         NodeRef::Path(p) => eval_path::<D>(ctx, p, focus.node),
         NodeRef::Filter(f) => eval_filter::<D>(ctx, f, focus),
-        NodeRef::Unknown => Err(err_setf!(err, XP_ERR_INTERNAL, "unknown AST node")),
     }?;
 
     /* Memoize a context-independent subtree on success. The clone keeps the

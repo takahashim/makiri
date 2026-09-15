@@ -46,8 +46,8 @@ pub unsafe fn try_descendant_index<D: Dom>(
     b: &Bindings<D>,
 ) -> Result<bool, Reported> {
     let test = &raw const (*step).test;
-    if (*step).axis != AXIS_DESCENDANT
-        || (*test).kind != NT_NAME
+    if (*step).axis != Axis::Descendant
+        || (*test).kind != TestKind::Name
         || (*test).local.is_absent()
         || !context_is_document::<D>(b.ctx, context_set)
     {
@@ -91,15 +91,15 @@ unsafe fn nth_shape<D: Dom>(
     s1: *const Step,
     seed: &Set,
 ) -> Option<usize> {
-    if (*s0).axis != AXIS_DESCENDANT_OR_SELF
-        || (*s0).test.kind != NT_NODE
+    if (*s0).axis != Axis::DescendantOrSelf
+        || (*s0).test.kind != TestKind::Node
         || (*s0).test.prefix.is_present()
         || (*s0).npredicates != 0
     {
         return None;
     }
-    if (*s1).axis != AXIS_CHILD
-        || (*s1).test.kind != NT_NAME
+    if (*s1).axis != Axis::Child
+        || (*s1).test.kind != TestKind::Name
         || (*s1).test.local.is_absent()
         || (*s1).npredicates != 1
     {

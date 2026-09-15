@@ -86,7 +86,7 @@ pub(crate) struct OwnedStep(Step);
 
 impl OwnedStep {
     /// An empty step: no name texts, no predicates.
-    pub(crate) fn new(axis: u32, kind: u32) -> Self {
+    pub(crate) fn new(axis: Axis, kind: TestKind) -> Self {
         Self(Step {
             axis,
             test: NodeTest {
@@ -202,7 +202,7 @@ impl StepArray {
     }
 
     /// # Safety
-    /// `path` must be a live `NK_PATH` node with no steps yet.
+    /// `path` must be a live `NodeKind::Path` node with no steps yet.
     pub(crate) unsafe fn install_into_path(self, path: *mut Node) {
         let NodeMut::Path(p) = Node::view_mut(path) else {
             unreachable!("install_into_path on a non-PATH node")
@@ -213,7 +213,7 @@ impl StepArray {
     }
 
     /// # Safety
-    /// `filter` must be a live `NK_FILTER` node with no trailing path yet.
+    /// `filter` must be a live `NodeKind::Filter` node with no trailing path yet.
     pub(crate) unsafe fn install_as_filter_path(self, filter: *mut Node) {
         let NodeMut::Filter(f) = Node::view_mut(filter) else {
             unreachable!("install_as_filter_path on a non-FILTER node")
@@ -272,7 +272,7 @@ impl NodeArray {
     }
 
     /// # Safety
-    /// `call` must be a live `NK_FNCALL` node with no arguments yet.
+    /// `call` must be a live `NodeKind::FnCall` node with no arguments yet.
     pub(crate) unsafe fn install_as_args(self, call: *mut Node) {
         let NodeMut::FnCall(c) = Node::view_mut(call) else {
             unreachable!("install_as_args on a non-FNCALL node")
@@ -283,7 +283,7 @@ impl NodeArray {
     }
 
     /// # Safety
-    /// `filter` must be a live `NK_FILTER` node with no predicates yet.
+    /// `filter` must be a live `NodeKind::Filter` node with no predicates yet.
     pub(crate) unsafe fn install_as_filter_preds(self, filter: *mut Node) {
         let NodeMut::Filter(f) = Node::view_mut(filter) else {
             unreachable!("install_as_filter_preds on a non-FILTER node")

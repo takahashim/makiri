@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 ///
 /// # Safety
 /// `budget` must be live.
-pub(crate) unsafe fn node_alloc(budget: *mut Budget, kind: u32) -> Result<Ast, Reported> {
+pub(crate) unsafe fn node_alloc(budget: *mut Budget, kind: NodeKind) -> Result<Ast, Reported> {
     let err = budget_sink(budget);
     limit_ast_node(budget)?;
     let Some(n) = NonNull::new(callocarray(1, core::mem::size_of::<Node>()) as *mut Node) else {
@@ -174,7 +174,6 @@ pub unsafe fn mark_context_independent(n: *mut Node) {
             }
             false
         }
-        NodeRef::Unknown => false,
     };
     (*n).is_context_independent = u8::from(ci);
 }
@@ -203,18 +202,18 @@ unsafe fn fuse_descendant_or_self(steps: *mut Step, nsteps: *mut usize) {
     let (mut w, mut r) = (0usize, 0usize);
     while r < n {
         let fusable = r + 1 < n
-            && all[r].axis == AXIS_DESCENDANT_OR_SELF
-            && all[r].test.kind == NT_NODE
+            && all[r].axis == Axis::DescendantOrSelf
+            && all[r].test.kind == TestKind::Node
             && all[r].test.prefix.is_absent()
             && all[r].npredicates == 0
-            && all[r + 1].axis == AXIS_CHILD
+            && all[r + 1].axis == Axis::Child
             && all[r + 1].npredicates == 0;
         if fusable {
             /* Drop the descendant-or-self step and promote the child step. */
             step_clear(&mut all[r]);
             all[w] = all[r + 1];
             ptr::write_bytes(&mut all[r + 1], 0, 1);
-            all[w].axis = AXIS_DESCENDANT;
+            all[w].axis = Axis::Descendant;
             w += 1;
             r += 2;
         } else {
@@ -326,7 +325,7 @@ pub unsafe fn node_free(n: *mut Node) {
     }
     match Node::view_mut(n) {
         NodeMut::LiteralStr(t) => t.clear(),
-        NodeMut::LiteralNum(_) | NodeMut::Unknown => {}
+        NodeMut::LiteralNum(_) => {}
         NodeMut::VarRef(v) => {
             v.prefix.clear();
             v.name.clear();

@@ -66,17 +66,17 @@ pub unsafe fn axis_base<D: Dom>(doc: D::Doc, context: D::Node) -> D::Node {
 /// Same as `walk_descendants`: a live context, and no mutation while it runs.
 pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
     doc: D::Doc,
-    axis: u32,
+    axis: Axis,
     context: D::Node,
     visit: &mut F,
 ) -> bool {
     match axis {
-        AXIS_SELF => visit(context),
-        AXIS_PARENT => {
+        Axis::SelfAxis => visit(context),
+        Axis::Parent => {
             let p = D::parent(doc, context);
             !D::is_null(p) && visit(p)
         }
-        AXIS_CHILD => {
+        Axis::Child => {
             let mut c = D::first_child(doc, context);
             while !D::is_null(c) {
                 if visit(c) {
@@ -86,7 +86,7 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
             }
             false
         }
-        AXIS_ATTRIBUTE => {
+        Axis::Attribute => {
             if D::node_type(doc, context) != NTYPE_ELEMENT {
                 return false;
             }
@@ -99,9 +99,9 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
             }
             false
         }
-        AXIS_DESCENDANT_OR_SELF => visit(context) || walk_descendants::<D, F>(doc, context, visit),
-        AXIS_DESCENDANT => walk_descendants::<D, F>(doc, context, visit),
-        AXIS_ANCESTOR => {
+        Axis::DescendantOrSelf => visit(context) || walk_descendants::<D, F>(doc, context, visit),
+        Axis::Descendant => walk_descendants::<D, F>(doc, context, visit),
+        Axis::Ancestor => {
             let mut p = D::parent(doc, context);
             while !D::is_null(p) {
                 if visit(p) {
@@ -111,7 +111,7 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
             }
             false
         }
-        AXIS_ANCESTOR_OR_SELF => {
+        Axis::AncestorOrSelf => {
             let mut p = context;
             while !D::is_null(p) {
                 if visit(p) {
@@ -123,7 +123,7 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
         }
         /* §2.2: both sibling axes are empty for an attribute context node - an
          * attribute is not a sibling of anything. */
-        AXIS_FOLLOWING_SIBLING => {
+        Axis::FollowingSibling => {
             if D::node_type(doc, context) == NTYPE_ATTRIBUTE {
                 return false;
             }
@@ -136,7 +136,7 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
             }
             false
         }
-        AXIS_PRECEDING_SIBLING => {
+        Axis::PrecedingSibling => {
             if D::node_type(doc, context) == NTYPE_ATTRIBUTE {
                 return false;
             }
@@ -149,7 +149,7 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
             }
             false
         }
-        AXIS_FOLLOWING => {
+        Axis::Following => {
             /* Start at the next node in document order after the base's subtree. */
             let mut cur = axis_base::<D>(doc, context);
             while !D::is_null(cur) && D::is_null(D::next(doc, cur)) {
@@ -176,7 +176,7 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
             }
             false
         }
-        AXIS_PRECEDING => {
+        Axis::Preceding => {
             /* Backward in document order, skipping the context's ancestors, so
              * the closest preceding node comes first.
              *
@@ -227,23 +227,23 @@ pub unsafe fn walk_axis<D: Dom, F: FnMut(D::Node) -> bool>(
 /// child, attribute and self each anchor a result to one starting node, so
 /// distinct contexts give distinct results. Everything else can overlap: two
 /// contexts share a parent, or sit in an ancestor-descendant relation.
-pub fn axis_can_alias(a: u32) -> bool {
-    !matches!(a, AXIS_CHILD | AXIS_ATTRIBUTE | AXIS_SELF)
+pub fn axis_can_alias(a: Axis) -> bool {
+    !matches!(a, Axis::Child | Axis::Attribute | Axis::SelfAxis)
 }
 
-pub fn axis_is_implemented(a: u32) -> bool {
-    a != AXIS_NAMESPACE && a <= AXIS_ANCESTOR_OR_SELF
+pub fn axis_is_implemented(a: Axis) -> bool {
+    a != Axis::Namespace
 }
 
-pub fn axis_name(a: u32) -> &'static str {
+pub fn axis_name(a: Axis) -> &'static str {
     match a {
-        AXIS_ANCESTOR => "ancestor",
-        AXIS_ANCESTOR_OR_SELF => "ancestor-or-self",
-        AXIS_FOLLOWING => "following",
-        AXIS_PRECEDING => "preceding",
-        AXIS_FOLLOWING_SIBLING => "following-sibling",
-        AXIS_PRECEDING_SIBLING => "preceding-sibling",
-        AXIS_NAMESPACE => "namespace",
+        Axis::Ancestor => "ancestor",
+        Axis::AncestorOrSelf => "ancestor-or-self",
+        Axis::Following => "following",
+        Axis::Preceding => "preceding",
+        Axis::FollowingSibling => "following-sibling",
+        Axis::PrecedingSibling => "preceding-sibling",
+        Axis::Namespace => "namespace",
         _ => "axis",
     }
 }
@@ -252,9 +252,9 @@ pub fn axis_name(a: u32) -> &'static str {
 /// and proximity position() counts outward from the context node. The step
 /// driver applies predicates in that axis-natural order (so `[1]` is the
 /// closest), then sorts the merged result into document order.
-pub fn is_reverse_axis(a: u32) -> bool {
+pub fn is_reverse_axis(a: Axis) -> bool {
     matches!(
         a,
-        AXIS_ANCESTOR | AXIS_ANCESTOR_OR_SELF | AXIS_PRECEDING | AXIS_PRECEDING_SIBLING
+        Axis::Ancestor | Axis::AncestorOrSelf | Axis::Preceding | Axis::PrecedingSibling
     )
 }

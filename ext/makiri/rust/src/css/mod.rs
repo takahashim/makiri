@@ -29,10 +29,10 @@ mod build;
 mod lower;
 mod parser;
 
+use crate::xpath::ast::Op;
 use core::ffi::{c_char, c_int};
 
 use crate::text::VerifiedText;
-use crate::xpath::ast::OP_UNION;
 use crate::xpath::limits::{budget_sink, Budget};
 use crate::xpath::msg::{ErrSink, Reported};
 use crate::xpath::own::Ast;
@@ -125,7 +125,7 @@ pub unsafe fn compile_owned(
         let path = lower::complex(&b, (*g).first, false)?;
         acc = Some(match acc {
             None => path,
-            Some(lhs) => build::binop(&b, OP_UNION, Ok(lhs), Ok(path))?,
+            Some(lhs) => build::binop(&b, Op::Union, Ok(lhs), Ok(path))?,
         });
         g = (*g).next;
     }

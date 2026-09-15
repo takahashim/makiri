@@ -50,21 +50,21 @@ fn lex_err(err: ErrSink, e: LexErr) -> Reported {
 
 /* ---- axis and node-type keywords ---- */
 
-fn axis_by_name(s: &[u8]) -> Option<u32> {
+fn axis_by_name(s: &[u8]) -> Option<Axis> {
     Some(match s {
-        b"child" => AXIS_CHILD,
-        b"descendant" => AXIS_DESCENDANT,
-        b"parent" => AXIS_PARENT,
-        b"ancestor" => AXIS_ANCESTOR,
-        b"following-sibling" => AXIS_FOLLOWING_SIBLING,
-        b"preceding-sibling" => AXIS_PRECEDING_SIBLING,
-        b"following" => AXIS_FOLLOWING,
-        b"preceding" => AXIS_PRECEDING,
-        b"attribute" => AXIS_ATTRIBUTE,
-        b"namespace" => AXIS_NAMESPACE,
-        b"self" => AXIS_SELF,
-        b"descendant-or-self" => AXIS_DESCENDANT_OR_SELF,
-        b"ancestor-or-self" => AXIS_ANCESTOR_OR_SELF,
+        b"child" => Axis::Child,
+        b"descendant" => Axis::Descendant,
+        b"parent" => Axis::Parent,
+        b"ancestor" => Axis::Ancestor,
+        b"following-sibling" => Axis::FollowingSibling,
+        b"preceding-sibling" => Axis::PrecedingSibling,
+        b"following" => Axis::Following,
+        b"preceding" => Axis::Preceding,
+        b"attribute" => Axis::Attribute,
+        b"namespace" => Axis::Namespace,
+        b"self" => Axis::SelfAxis,
+        b"descendant-or-self" => Axis::DescendantOrSelf,
+        b"ancestor-or-self" => Axis::AncestorOrSelf,
         _ => return None,
     })
 }
@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
         self.advance()
     }
 
-    fn new_node(&mut self, kind: u32) -> PResult<Ast> {
+    fn new_node(&mut self, kind: NodeKind) -> PResult<Ast> {
         // SAFETY: the parser's limits and error slot are live for the parse.
         unsafe { node_alloc(self.budget, kind) }
     }
@@ -150,7 +150,10 @@ impl<'a> Parser<'a> {
             let dslash = self.kind() == Tok::DSlash;
             self.advance()?;
             if dslash {
-                self.push_step(steps, OwnedStep::new(AXIS_DESCENDANT_OR_SELF, NT_NODE))?;
+                self.push_step(
+                    steps,
+                    OwnedStep::new(Axis::DescendantOrSelf, TestKind::Node),
+                )?;
             }
             let next = self.parse_step()?;
             self.push_step(steps, next)?;
@@ -168,11 +171,11 @@ impl<'a> Parser<'a> {
         if is_nodetype_name(name) && self.kind() == Tok::LParen {
             self.advance()?;
             match name {
-                b"node" => out.kind = NT_NODE,
-                b"text" => out.kind = NT_TEXT,
-                b"comment" => out.kind = NT_COMMENT,
+                b"node" => out.kind = TestKind::Node,
+                b"text" => out.kind = TestKind::Text,
+                b"comment" => out.kind = TestKind::Comment,
                 _ => {
-                    out.kind = NT_PI;
+                    out.kind = TestKind::Pi;
                     if self.kind() == Tok::Literal {
                         let t = self.tok();
                         let s = self.text(&t);
@@ -183,7 +186,7 @@ impl<'a> Parser<'a> {
             }
             return self.eat(Tok::RParen, "')' after node type test");
         }
-        out.kind = NT_NAME;
+        out.kind = TestKind::Name;
         out.local = self.fill_owned(name)?;
         Ok(())
     }
@@ -192,7 +195,7 @@ impl<'a> Parser<'a> {
     /// it at the token after. `out` is a fresh test with no texts yet.
     fn parse_node_test(&mut self, out: &mut NodeTest) -> PResult {
         if self.kind() == Tok::Star {
-            out.kind = NT_WILDCARD;
+            out.kind = TestKind::Wildcard;
             return self.advance();
         }
         if self.kind() == Tok::Name {
@@ -206,9 +209,9 @@ impl<'a> Parser<'a> {
             let (prefix, local) = split_qname(self.text(&t));
             out.prefix = self.fill_owned(prefix)?;
             if local == b"*" {
-                out.kind = NT_WILDCARD;
+                out.kind = TestKind::Wildcard;
             } else {
-                out.kind = NT_NAME;
+                out.kind = TestKind::Name;
                 out.local = self.fill_owned(local)?;
             }
             return self.advance();
@@ -240,7 +243,7 @@ impl<'a> Parser<'a> {
     /// Parse one step. A failure partway leaves an owned name or predicates
     /// behind; the guards free them, so every caller just bails.
     fn parse_step(&mut self) -> PResult<OwnedStep> {
-        let mut step = OwnedStep::new(AXIS_CHILD, NT_NAME);
+        let mut step = OwnedStep::new(Axis::Child, TestKind::Name);
         let mut preds = NodeArray::new();
         self.parse_step_inner(&mut step, &mut preds)?;
         preds.install_into_step(&mut step);
@@ -251,20 +254,20 @@ impl<'a> Parser<'a> {
         /* Abbreviated steps. */
         if self.kind() == Tok::Dot {
             self.advance()?;
-            out.axis = AXIS_SELF;
-            out.test.kind = NT_NODE;
+            out.axis = Axis::SelfAxis;
+            out.test.kind = TestKind::Node;
             return Ok(());
         }
         if self.kind() == Tok::DotDot {
             self.advance()?;
-            out.axis = AXIS_PARENT;
-            out.test.kind = NT_NODE;
+            out.axis = Axis::Parent;
+            out.test.kind = TestKind::Node;
             return Ok(());
         }
 
         /* AxisSpecifier: '@' or NAME '::'. */
         if self.kind() == Tok::At {
-            out.axis = AXIS_ATTRIBUTE;
+            out.axis = Axis::Attribute;
             self.advance()?;
         } else if self.kind() == Tok::Name {
             /* Axis or NameTest - decided by the token after, so peek by
@@ -288,12 +291,12 @@ impl<'a> Parser<'a> {
             } else {
                 /* It was a NameTest, and the NAME is already consumed, so replay
                  * it through the shared node-type grammar. */
-                out.axis = AXIS_CHILD;
+                out.axis = Axis::Child;
                 self.parse_nodetype_or_name(saved, &mut out.test)?;
                 return self.parse_predicates(preds);
             }
         } else {
-            out.axis = AXIS_CHILD;
+            out.axis = Axis::Child;
         }
 
         self.parse_node_test(&mut out.test)?;
@@ -316,7 +319,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_location_path(&mut self) -> PResult<Ast> {
-        let mut n = self.new_node(NK_PATH)?;
+        let mut n = self.new_node(NodeKind::Path)?;
         let mut steps = StepArray::new();
         let absolute = match self.kind() {
             Tok::Slash => {
@@ -359,7 +362,7 @@ impl<'a> Parser<'a> {
             ));
         }
         self.advance()?;
-        let mut n = self.new_node(NK_FNCALL)?;
+        let mut n = self.new_node(NodeKind::FnCall)?;
         {
             // SAFETY: a fresh FNCALL node; only its name slots are written.
             let NodeMut::FnCall(f) = (unsafe { n.payload_mut() }) else {
@@ -412,7 +415,7 @@ impl<'a> Parser<'a> {
                         "expected name after '$'"
                     ));
                 }
-                let mut n = self.new_node(NK_VARREF)?;
+                let mut n = self.new_node(NodeKind::VarRef)?;
                 let t = self.tok();
                 {
                     // SAFETY: a fresh VARREF node; only its name slots are written.
@@ -438,7 +441,7 @@ impl<'a> Parser<'a> {
                 Ok(n)
             }
             Tok::Literal => {
-                let mut n = self.new_node(NK_LITERAL_STR)?;
+                let mut n = self.new_node(NodeKind::LiteralStr)?;
                 let t = self.tok();
                 let s = self.text(&t);
                 let text = self.fill_owned(s)?;
@@ -451,7 +454,7 @@ impl<'a> Parser<'a> {
                 Ok(n)
             }
             Tok::Number => {
-                let mut n = self.new_node(NK_LITERAL_NUM)?;
+                let mut n = self.new_node(NodeKind::LiteralNum)?;
                 // SAFETY: a fresh number LITERAL node.
                 let num = self.tok().num;
                 let NodeMut::LiteralNum(slot) = (unsafe { n.payload_mut() }) else {
@@ -486,7 +489,7 @@ impl<'a> Parser<'a> {
         if !matches!(self.kind(), Tok::LBracket | Tok::Slash | Tok::DSlash) {
             return Ok(primary);
         }
-        let mut f = self.new_node(NK_FILTER)?;
+        let mut f = self.new_node(NodeKind::Filter)?;
         // SAFETY: a fresh FILTER node takes sole ownership of `primary`.
         let NodeMut::Filter(filter) = (unsafe { f.payload_mut() }) else {
             unreachable!("a fresh FILTER node")
@@ -536,8 +539,8 @@ impl<'a> Parser<'a> {
     /* ---- the operator ladder ---- */
 
     /// `lhs op rhs`, owning both; they are freed if the node cannot be made.
-    fn make_binop(&mut self, op: u32, lhs: Ast, rhs: Ast) -> PResult<Ast> {
-        let mut n = self.new_node(NK_BINOP)?;
+    fn make_binop(&mut self, op: Op, lhs: Ast, rhs: Ast) -> PResult<Ast> {
+        let mut n = self.new_node(NodeKind::BinOp)?;
         // SAFETY: a fresh BINOP node takes sole ownership of both operands.
         unsafe {
             let NodeMut::BinOp(b) = n.payload_mut() else {
@@ -555,7 +558,7 @@ impl<'a> Parser<'a> {
         while self.kind() == Tok::Pipe {
             self.advance()?;
             let r = self.parse_path_expr()?;
-            l = self.make_binop(OP_UNION, l, r)?;
+            l = self.make_binop(Op::Union, l, r)?;
         }
         Ok(l)
     }
@@ -570,7 +573,7 @@ impl<'a> Parser<'a> {
         if !neg {
             return Ok(e);
         }
-        let mut u = self.new_node(NK_UNARY)?;
+        let mut u = self.new_node(NodeKind::Unary)?;
         // SAFETY: a fresh UNARY node takes sole ownership of `e`.
         let NodeMut::Unary(un) = (unsafe { u.payload_mut() }) else {
             unreachable!("a fresh UNARY node")
@@ -619,17 +622,17 @@ struct BinMatch {
     /// Some: match a word token ("div", "and", ...); None: match `kind`.
     word: Option<&'static [u8]>,
     kind: Tok,
-    op: u32,
+    op: Op,
 }
 
-const fn w(word: &'static [u8], op: u32) -> BinMatch {
+const fn w(word: &'static [u8], op: Op) -> BinMatch {
     BinMatch {
         word: Some(word),
         kind: Tok::Eof,
         op,
     }
 }
-const fn k(kind: Tok, op: u32) -> BinMatch {
+const fn k(kind: Tok, op: Op) -> BinMatch {
     BinMatch {
         word: None,
         kind,
@@ -639,17 +642,21 @@ const fn k(kind: Tok, op: u32) -> BinMatch {
 
 /// Tightest-binding level first.
 static BINOP_LEVELS: &[&[BinMatch]] = &[
-    &[k(Tok::Star, OP_MUL), w(b"div", OP_DIV), w(b"mod", OP_MOD)],
-    &[k(Tok::Plus, OP_ADD), k(Tok::Minus, OP_SUB)],
     &[
-        k(Tok::Lt, OP_LT),
-        k(Tok::Gt, OP_GT),
-        k(Tok::Le, OP_LE),
-        k(Tok::Ge, OP_GE),
+        k(Tok::Star, Op::Mul),
+        w(b"div", Op::Div),
+        w(b"mod", Op::Mod),
     ],
-    &[k(Tok::Eq, OP_EQ), k(Tok::Ne, OP_NE)],
-    &[w(b"and", OP_AND)],
-    &[w(b"or", OP_OR)],
+    &[k(Tok::Plus, Op::Add), k(Tok::Minus, Op::Sub)],
+    &[
+        k(Tok::Lt, Op::Lt),
+        k(Tok::Gt, Op::Gt),
+        k(Tok::Le, Op::Le),
+        k(Tok::Ge, Op::Ge),
+    ],
+    &[k(Tok::Eq, Op::Eq), k(Tok::Ne, Op::Ne)],
+    &[w(b"and", Op::And)],
+    &[w(b"or", Op::Or)],
 ];
 
 /* ---- entry ---- */

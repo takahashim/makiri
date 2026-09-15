@@ -20,11 +20,8 @@
 use super::build::{self, Built, NodeArray, OwnedStep, StepArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
 use crate::lexbor_abi as lxb;
-use crate::xpath::ast::{
-    Step, AXIS_ANCESTOR, AXIS_CHILD, AXIS_DESCENDANT, AXIS_FOLLOWING_SIBLING, AXIS_PARENT,
-    AXIS_PRECEDING_SIBLING, AXIS_SELF, NK_PATH, NT_NAME, NT_NODE, NT_TEXT, NT_WILDCARD, OP_ADD,
-    OP_AND, OP_DIV, OP_EQ, OP_GE, OP_MOD, OP_OR, OP_SUB,
-};
+use crate::xpath::ast::Step;
+use crate::xpath::ast::{Axis, NodeKind, Op, TestKind};
 use crate::xpath::msg::Reported;
 use crate::xpath::own::Ast;
 
@@ -150,7 +147,7 @@ unsafe fn lower_type(
 
     if (*s).type_ == k::ANY {
         /* `*` or `ns|*` */
-        (*step).test.kind = NT_WILDCARD;
+        (*step).test.kind = TestKind::Wildcard;
         return Ok(());
     }
 
@@ -159,13 +156,13 @@ unsafe fn lower_type(
     if ns == Some(b"*") {
         /* `*|el`: any namespace with a specific local name. XPath has no such
          * test, so it becomes a wildcard plus a local-name() predicate. */
-        (*step).test.kind = NT_WILDCARD;
+        (*step).test.kind = TestKind::Wildcard;
         let ln = build::call(b, b"local-name", []);
         let lit = build::literal(b, name);
-        return push_pred(b, preds, build::binop(b, OP_EQ, ln, lit));
+        return push_pred(b, preds, build::binop(b, Op::Eq, ln, lit));
     }
 
-    (*step).test.kind = NT_NAME;
+    (*step).test.kind = TestKind::Name;
     (*step).test.local = build::copy_text(b, name)?;
 
     match ns {
@@ -223,7 +220,7 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
         /* [a=v] -> @a = 'v' */
         m::EQUAL => build::binop(
             b,
-            OP_EQ,
+            Op::Eq,
             build::attr_ns(b, prefix, name),
             build::literal(b, value),
         ),
@@ -248,18 +245,18 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
             let slen = build::call1(b, b"string-length", build::attr_ns(b, prefix, name));
             let start = build::binop(
                 b,
-                OP_ADD,
-                build::binop(b, OP_SUB, slen, build::num(b, value.len() as f64)),
+                Op::Add,
+                build::binop(b, Op::Sub, slen, build::num(b, value.len() as f64)),
                 build::num(b, 1.0),
             );
             let sub = build::call2(b, b"substring", build::attr_ns(b, prefix, name), start);
-            build::binop(b, OP_EQ, sub, build::literal(b, value))
+            build::binop(b, Op::Eq, sub, build::literal(b, value))
         }
         /* [a|=v] -> @a = 'v' or starts-with(@a, 'v-') */
         m::DASH => {
             let eq = build::binop(
                 b,
-                OP_EQ,
+                Op::Eq,
                 build::attr_ns(b, prefix, name),
                 build::literal(b, value),
             );
@@ -277,19 +274,19 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
                 build::attr_ns(b, prefix, name),
                 build::literal(b, &dashed),
             );
-            build::binop(b, OP_OR, eq, pre)
+            build::binop(b, Op::Or, eq, pre)
         }
         _ => Err(b.fail(ERR_SYNTAX, c"unsupported CSS attribute operator")),
     }
 }
 
 /// `not(axis::*)` - "no sibling or child on that axis".
-unsafe fn not_axis(b: &Build, axis: u32, nt: u32) -> Built {
+unsafe fn not_axis(b: &Build, axis: Axis, nt: TestKind) -> Built {
     build::call1(b, b"not", build::step_path(b, axis, nt, None))
 }
 
 /// `not([prefix:]name on axis)` - "no same-named sibling on that axis".
-unsafe fn not_named_axis(b: &Build, axis: u32, test: &crate::xpath::ast::NodeTest) -> Built {
+unsafe fn not_named_axis(b: &Build, axis: Axis, test: &crate::xpath::ast::NodeTest) -> Built {
     let prefix = owned_slice(&test.prefix);
     let local = owned_slice(&test.local);
     build::call1(
@@ -310,9 +307,9 @@ unsafe fn owned_slice<'a>(t: &crate::xpath::value::TextSlot) -> Option<&'a [u8]>
 }
 
 /// `count(axis::test) + 1` - the 1-based position among matched siblings.
-unsafe fn pos(b: &Build, axis: u32, named: Option<&crate::xpath::ast::NodeTest>) -> Built {
+unsafe fn pos(b: &Build, axis: Axis, named: Option<&crate::xpath::ast::NodeTest>) -> Built {
     let path = match named {
-        None => build::step_path(b, axis, NT_WILDCARD, None),
+        None => build::step_path(b, axis, TestKind::Wildcard, None),
         Some(t) => build::named_step_path(
             b,
             axis,
@@ -322,7 +319,7 @@ unsafe fn pos(b: &Build, axis: u32, named: Option<&crate::xpath::ast::NodeTest>)
     };
     build::binop(
         b,
-        OP_ADD,
+        Op::Add,
         build::call1(b, b"count", path),
         build::num(b, 1.0),
     )
@@ -346,12 +343,12 @@ unsafe fn of_type_pos(b: &Build, forward: bool) -> Built {
 /// The 1-based position expression for `:nth-*`.
 unsafe fn pos_expr(
     b: &Build,
-    axis: u32,
+    axis: Axis,
     named: Option<&crate::xpath::ast::NodeTest>,
     oftype_untyped: bool,
 ) -> Built {
     if oftype_untyped {
-        return of_type_pos(b, axis == AXIS_PRECEDING_SIBLING);
+        return of_type_pos(b, axis == Axis::PrecedingSibling);
     }
     pos(b, axis, named)
 }
@@ -359,7 +356,7 @@ unsafe fn pos_expr(
 /// The `:nth-*(an+b)` match condition over the position expression on `axis`.
 unsafe fn nth(
     b: &Build,
-    axis: u32,
+    axis: Axis,
     named: Option<&crate::xpath::ast::NodeTest>,
     oftype_untyped: bool,
     /* `c_long`, not i64: these come straight from Lexbor's
@@ -374,7 +371,7 @@ unsafe fn nth(
         /* position = b */
         return build::binop(
             b,
-            OP_EQ,
+            Op::Eq,
             pos_expr(b, axis, named, oftype_untyped),
             build::num(b, bb as f64),
         );
@@ -383,29 +380,29 @@ unsafe fn nth(
      * negative index, which the modulo alone would accept. */
     let d1 = build::binop(
         b,
-        OP_SUB,
+        Op::Sub,
         pos_expr(b, axis, named, oftype_untyped),
         build::num(b, bb as f64),
     );
     let modz = build::binop(
         b,
-        OP_EQ,
-        build::binop(b, OP_MOD, d1, build::num(b, a as f64)),
+        Op::Eq,
+        build::binop(b, Op::Mod, d1, build::num(b, a as f64)),
         build::num(b, 0.0),
     );
     let d2 = build::binop(
         b,
-        OP_SUB,
+        Op::Sub,
         pos_expr(b, axis, named, oftype_untyped),
         build::num(b, bb as f64),
     );
     let qge = build::binop(
         b,
-        OP_GE,
-        build::binop(b, OP_DIV, d2, build::num(b, a as f64)),
+        Op::Ge,
+        build::binop(b, Op::Div, d2, build::num(b, a as f64)),
         build::num(b, 0.0),
     );
-    build::binop(b, OP_AND, modz, qge)
+    build::binop(b, Op::And, modz, qge)
 }
 
 /// The non-functional structural pseudo-classes. `step` supplies the element
@@ -413,41 +410,41 @@ unsafe fn nth(
 unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, step: *const Step) -> Built {
     let pt = (*s).u.pseudo.type_;
     match pt {
-        pc::FIRST_CHILD => not_axis(b, AXIS_PRECEDING_SIBLING, NT_WILDCARD),
-        pc::LAST_CHILD => not_axis(b, AXIS_FOLLOWING_SIBLING, NT_WILDCARD),
+        pc::FIRST_CHILD => not_axis(b, Axis::PrecedingSibling, TestKind::Wildcard),
+        pc::LAST_CHILD => not_axis(b, Axis::FollowingSibling, TestKind::Wildcard),
         pc::ONLY_CHILD => build::binop(
             b,
-            OP_AND,
-            not_axis(b, AXIS_PRECEDING_SIBLING, NT_WILDCARD),
-            not_axis(b, AXIS_FOLLOWING_SIBLING, NT_WILDCARD),
+            Op::And,
+            not_axis(b, Axis::PrecedingSibling, TestKind::Wildcard),
+            not_axis(b, Axis::FollowingSibling, TestKind::Wildcard),
         ),
         /* not(node()) */
-        pc::EMPTY => not_axis(b, AXIS_CHILD, NT_NODE),
+        pc::EMPTY => not_axis(b, Axis::Child, TestKind::Node),
         /* not(parent::*) */
-        pc::ROOT => not_axis(b, AXIS_PARENT, NT_WILDCARD),
+        pc::ROOT => not_axis(b, Axis::Parent, TestKind::Wildcard),
 
         pc::FIRST_OF_TYPE | pc::LAST_OF_TYPE | pc::ONLY_OF_TYPE => {
             /* Typed (`a:first-of-type`) becomes not(preceding-sibling::a);
              * untyped (`:first-of-type`) becomes of-type-pos() = 1, where the
              * type is the element's own expanded name, compared at eval time. */
-            if (*step).test.kind != NT_NAME {
+            if (*step).test.kind != TestKind::Name {
                 let first_is_one = |b: &Build, fwd: bool| {
-                    build::binop(b, OP_EQ, of_type_pos(b, fwd), build::num(b, 1.0))
+                    build::binop(b, Op::Eq, of_type_pos(b, fwd), build::num(b, 1.0))
                 };
                 return match pt {
                     pc::FIRST_OF_TYPE => first_is_one(b, true),
                     pc::LAST_OF_TYPE => first_is_one(b, false),
-                    _ => build::binop(b, OP_AND, first_is_one(b, true), first_is_one(b, false)),
+                    _ => build::binop(b, Op::And, first_is_one(b, true), first_is_one(b, false)),
                 };
             }
             match pt {
-                pc::FIRST_OF_TYPE => not_named_axis(b, AXIS_PRECEDING_SIBLING, &(*step).test),
-                pc::LAST_OF_TYPE => not_named_axis(b, AXIS_FOLLOWING_SIBLING, &(*step).test),
+                pc::FIRST_OF_TYPE => not_named_axis(b, Axis::PrecedingSibling, &(*step).test),
+                pc::LAST_OF_TYPE => not_named_axis(b, Axis::FollowingSibling, &(*step).test),
                 _ => build::binop(
                     b,
-                    OP_AND,
-                    not_named_axis(b, AXIS_PRECEDING_SIBLING, &(*step).test),
-                    not_named_axis(b, AXIS_FOLLOWING_SIBLING, &(*step).test),
+                    Op::And,
+                    not_named_axis(b, Axis::PrecedingSibling, &(*step).test),
+                    not_named_axis(b, Axis::FollowingSibling, &(*step).test),
                 ),
             }
         }
@@ -465,7 +462,7 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built 
         let one = complex_selftest(b, (*g).first)?;
         acc = Some(match acc {
             None => one,
-            Some(lhs) => build::binop(b, OP_OR, Ok(lhs), Ok(one))?,
+            Some(lhs) => build::binop(b, Op::Or, Ok(lhs), Ok(one))?,
         });
         g = (*g).next;
     }
@@ -484,12 +481,12 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built 
 /// the HTML one.
 unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
     let pred = pred?;
-    let n = build::node(b, NK_PATH)?;
+    let n = build::node(b, NodeKind::Path)?;
     let mut preds = NodeArray::new();
     if preds.try_push(pred).is_err() {
         return Err(b.oom());
     }
-    let mut step = OwnedStep::new(AXIS_CHILD, NT_TEXT);
+    let mut step = OwnedStep::new(Axis::Child, TestKind::Text);
     preds.install_into_step(&mut step);
     let mut steps = StepArray::new();
     if steps.try_push(step).is_err() {
@@ -518,9 +515,9 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             let last = ty == pf::NTH_LAST_CHILD || ty == pf::NTH_LAST_OF_TYPE;
             let of_type = ty == pf::NTH_OF_TYPE || ty == pf::NTH_LAST_OF_TYPE;
             let axis = if last {
-                AXIS_FOLLOWING_SIBLING
+                Axis::FollowingSibling
             } else {
-                AXIS_PRECEDING_SIBLING
+                Axis::PrecedingSibling
             };
 
             /* Typed of-type counts same-name siblings through a literal name;
@@ -528,7 +525,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             let mut named = None;
             let mut untyped = false;
             if of_type {
-                if (*step).test.kind == NT_NAME {
+                if (*step).test.kind == TestKind::Name {
                     named = Some(&(*step).test);
                 } else {
                     untyped = true;
@@ -553,7 +550,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
                 let path = complex(b, (*g).first, true)?;
                 acc = Some(match acc {
                     None => path,
-                    Some(lhs) => build::binop(b, OP_OR, Ok(lhs), Ok(path))?,
+                    Some(lhs) => build::binop(b, Op::Or, Ok(lhs), Ok(path))?,
                 });
                 g = (*g).next;
             }
@@ -568,7 +565,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             let needle = str_or_empty(&(*c).str_);
 
             if !(*c).insensitive {
-                let dot = build::step_path(b, AXIS_SELF, NT_NODE, None); /* "." */
+                let dot = build::step_path(b, Axis::SelfAxis, TestKind::Node, None); /* "." */
                 return child_text_pred(
                     b,
                     build::call2(b, b"contains", dot, build::literal(b, needle)),
@@ -591,7 +588,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
                 b,
                 b"translate",
                 [
-                    build::step_path(b, AXIS_SELF, NT_NODE, None),
+                    build::step_path(b, Axis::SelfAxis, TestKind::Node, None),
                     build::literal(b, UPPER),
                     build::literal(b, LOWER),
                 ],
@@ -630,7 +627,11 @@ unsafe fn fold_simple(
         /* #id -> @id = 'id' */
         k::ID => {
             let lit = build::literal(b, str_or_empty(&(*s).name));
-            push_pred(b, preds, build::binop(b, OP_EQ, build::attr(b, b"id"), lit))
+            push_pred(
+                b,
+                preds,
+                build::binop(b, Op::Eq, build::attr(b, b"id"), lit),
+            )
         }
 
         /* .class -> a token match on @class */
@@ -660,24 +661,24 @@ unsafe fn fold_simple(
 /// The first compound of a top-level query is a DESCENDANT of the context node
 /// whatever it carries, which is what makes `css("p")` find every `p` below the
 /// receiver rather than only its children.
-fn axis_for_combinator(c: u32, is_first: bool) -> u32 {
+fn axis_for_combinator(c: u32, is_first: bool) -> Axis {
     if is_first {
-        return AXIS_DESCENDANT;
+        return Axis::Descendant;
     }
     match c {
-        comb::CHILD => AXIS_CHILD,
-        comb::FOLLOWING => AXIS_FOLLOWING_SIBLING, /* ~ */
-        _ => AXIS_DESCENDANT,
+        comb::CHILD => Axis::Child,
+        comb::FOLLOWING => Axis::FollowingSibling, /* ~ */
+        _ => Axis::Descendant,
     }
 }
 
 /// The reverse of a forward combinator, for walking from the subject back to the
 /// preceding compound. Adjacent (`+`) is handled separately, as two steps.
-fn reverse_axis(c: u32) -> u32 {
+fn reverse_axis(c: u32) -> Axis {
     match c {
-        comb::CHILD => AXIS_PARENT,
-        comb::FOLLOWING => AXIS_PRECEDING_SIBLING, /* ~ */
-        _ => AXIS_ANCESTOR,
+        comb::CHILD => Axis::Parent,
+        comb::FOLLOWING => Axis::PrecedingSibling, /* ~ */
+        _ => Axis::Ancestor,
     }
 }
 
@@ -685,12 +686,12 @@ fn reverse_axis(c: u32) -> u32 {
 unsafe fn emit_compound_step(
     b: &Build,
     steps: &mut StepArray,
-    axis: u32,
+    axis: Axis,
     first: *const Selector,
     last: *const Selector,
 ) -> Result<(), Reported> {
     /* A type selector overrides the wildcard test. */
-    let mut step = OwnedStep::new(axis, NT_WILDCARD);
+    let mut step = OwnedStep::new(axis, TestKind::Wildcard);
     let mut preds = NodeArray::new();
 
     let mut s = first;
@@ -775,7 +776,7 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
              * no adjacent-sibling axis, so "the next sibling" is the first one
              * on the following-sibling axis. */
             emit_adjacent(b, &mut steps)?;
-            emit_compound_step(b, &mut steps, AXIS_SELF, comp.first, comp.last)?;
+            emit_compound_step(b, &mut steps, Axis::SelfAxis, comp.first, comp.last)?;
         } else {
             let axis = axis_for_combinator(comp.comb, is_first);
             emit_compound_step(b, &mut steps, axis, comp.first, comp.last)?;
@@ -787,16 +788,16 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
 
 /// The `following-sibling::*[1]` step of an adjacent combinator.
 unsafe fn emit_adjacent(b: &Build, steps: &mut StepArray) -> Result<(), Reported> {
-    emit_positional_sibling(b, steps, AXIS_FOLLOWING_SIBLING)
+    emit_positional_sibling(b, steps, Axis::FollowingSibling)
 }
 
 /// `axis::*[1]` - the immediately adjacent sibling in either direction.
 unsafe fn emit_positional_sibling(
     b: &Build,
     steps: &mut StepArray,
-    axis: u32,
+    axis: Axis,
 ) -> Result<(), Reported> {
-    let mut st = OwnedStep::new(axis, NT_WILDCARD);
+    let mut st = OwnedStep::new(axis, TestKind::Wildcard);
     let p = build::num(b, 1.0)?;
     let mut preds = NodeArray::new();
     if preds.try_push(p).is_err() {
@@ -848,7 +849,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> Built 
     emit_compound_step(
         b,
         &mut steps,
-        AXIS_SELF,
+        Axis::SelfAxis,
         comps[nc - 1].first,
         comps[nc - 1].last,
     )?;
@@ -857,11 +858,11 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> Built 
         /* comps[i].comb connects comps[i] to comps[i - 1]. */
         if comps[i].comb == comb::SIBLING {
             /* Reverse adjacent: the immediately preceding sibling must match. */
-            emit_positional_sibling(b, &mut steps, AXIS_PRECEDING_SIBLING)?;
+            emit_positional_sibling(b, &mut steps, Axis::PrecedingSibling)?;
             emit_compound_step(
                 b,
                 &mut steps,
-                AXIS_SELF,
+                Axis::SelfAxis,
                 comps[i - 1].first,
                 comps[i - 1].last,
             )?;

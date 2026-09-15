@@ -36,9 +36,9 @@ pub unsafe fn match_attr_step<'a>(n: *const Node) -> Option<&'a [u8]> {
         return None;
     }
     let s = &*p.steps;
-    if s.axis != AXIS_ATTRIBUTE
+    if s.axis != Axis::Attribute
         || s.npredicates != 0
-        || s.test.kind != NT_NAME
+        || s.test.kind != TestKind::Name
         || s.test.prefix.is_present()
         || s.test.local.is_absent()
     {
@@ -61,7 +61,7 @@ pub unsafe fn match_attr_pred<'a>(p: *const Node) -> Option<AttrPred<'a>> {
     let NodeRef::BinOp(b) = Node::view(p) else {
         return None;
     };
-    if b.op != OP_EQ {
+    if b.op != Op::Eq {
         return None;
     }
     let (lit, attr) = match string_literal(b.lhs) {

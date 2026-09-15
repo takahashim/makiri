@@ -57,14 +57,14 @@ unsafe fn name_test_match<D: Dom>(
     doc: D::Doc,
     test: *const NodeTest,
     node: D::Node,
-    axis: u32,
+    axis: Axis,
     b: &Bindings<D>,
 ) -> bool {
     let want_local = owned_bytes((*test).local);
     if (*test).local.is_absent() {
         return false;
     }
-    let is_attr = axis == AXIS_ATTRIBUTE;
+    let is_attr = axis == Axis::Attribute;
     let prefixed = (*test).prefix.is_present();
 
     let got: &[u8] = if D::IS_XML || prefixed {
@@ -132,11 +132,11 @@ pub unsafe fn node_principal_match<D: Dom>(
     doc: D::Doc,
     test: *const NodeTest,
     node: D::Node,
-    axis: u32,
+    axis: Axis,
     b: &Bindings<D>,
 ) -> bool {
     match (*test).kind {
-        NT_NODE => {
+        TestKind::Node => {
             /* §5's data model has only element, attribute, text, namespace, PI,
              * comment and the root. Both representations additionally carry
              * DOCUMENT_TYPE / ENTITY / ENTITY_REFERENCE / NOTATION nodes, which
@@ -148,9 +148,9 @@ pub unsafe fn node_principal_match<D: Dom>(
                 NTYPE_DOCUMENT_TYPE | NTYPE_ENTITY | NTYPE_ENTITY_REFERENCE | NTYPE_NOTATION
             )
         }
-        NT_TEXT => matches!(D::node_type(doc, node), NTYPE_TEXT | NTYPE_CDATA_SECTION),
-        NT_COMMENT => D::node_type(doc, node) == NTYPE_COMMENT,
-        NT_PI => {
+        TestKind::Text => matches!(D::node_type(doc, node), NTYPE_TEXT | NTYPE_CDATA_SECTION),
+        TestKind::Comment => D::node_type(doc, node) == NTYPE_COMMENT,
+        TestKind::Pi => {
             if D::node_type(doc, node) != NTYPE_PI {
                 return false;
             }
@@ -159,12 +159,12 @@ pub unsafe fn node_principal_match<D: Dom>(
             }
             D::pi_name(doc, node) == owned_bytes((*test).pi_target)
         }
-        NT_WILDCARD => {
-            if axis == AXIS_NAMESPACE {
+        TestKind::Wildcard => {
+            if axis == Axis::Namespace {
                 return false;
             }
             /* the principal node type of the axis */
-            if axis == AXIS_ATTRIBUTE {
+            if axis == Axis::Attribute {
                 if D::node_type(doc, node) != NTYPE_ATTRIBUTE {
                     return false;
                 }
@@ -182,8 +182,8 @@ pub unsafe fn node_principal_match<D: Dom>(
                 None => false,
             }
         }
-        NT_NAME => {
-            if axis == AXIS_ATTRIBUTE {
+        TestKind::Name => {
+            if axis == Axis::Attribute {
                 if D::node_type(doc, node) != NTYPE_ATTRIBUTE {
                     return false;
                 }
@@ -192,6 +192,5 @@ pub unsafe fn node_principal_match<D: Dom>(
             }
             name_test_match::<D>(doc, test, node, axis, b)
         }
-        _ => false,
     }
 }
