@@ -10,23 +10,12 @@
 //! the C allocator. That is why none of this uses `falloc` or a
 //! `Vec` - the AST owner eventually walks these C-layout fields.
 
-use core::ffi::c_void;
-
 use super::Build;
-use crate::falloc::raw::mkr_reallocarray;
-use crate::xpath::own::Ast;
+pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::xpath_abi::{
-    mkr_node_alloc, Node, Step, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
+    mkr_node_alloc, Node, TextSlot, VerifiedText, NK_BINOP, NK_FNCALL, NK_LITERAL_NUM,
     NK_LITERAL_STR, NK_PATH, NT_NAME,
 };
-
-use crate::falloc::raw::mkr_callocarray;
-pub use crate::xpath::ast_ops::mkr_step_clear;
-
-extern "C" {
-    #[link_name = "free"]
-    fn libc_free(p: *mut c_void);
-}
 
 #[inline]
 fn borrowed(s: &[u8]) -> Option<VerifiedText> {
@@ -102,7 +91,11 @@ pub(crate) unsafe fn binop(b: &Build, op: u32, lhs: *mut Node, rhs: *mut Node) -
 /// Zero slots still allocates one, because `mkr_callocarray(0, _)` answers NULL
 /// and a NULL array would be indistinguishable from a failure.
 pub(crate) unsafe fn args(b: &Build, n: usize) -> Option<NodeArray> {
-    NodeArray::with_slots(b, n)
+    let a = NodeArray::with_slots(n);
+    if a.is_none() {
+        b.oom();
+    }
+    a
 }
 
 /// A call to an internal, compile-time-known function name, taking ownership of
@@ -125,8 +118,7 @@ pub(crate) unsafe fn fncall(b: &Build, name: &[u8], argv: NodeArray) -> *mut Nod
         Ast::drop_raw(n);
         return core::ptr::null_mut();
     }
-    (*n).u.fncall.args = argv.into_raw_parts().0;
-    (*n).u.fncall.nargs = nargs;
+    argv.install_as_args(n);
     n
 }
 
@@ -168,21 +160,17 @@ unsafe fn named_step_path_inner(
     if n.is_null() {
         return n;
     }
-    let mut step: Step = core::mem::zeroed();
-    step.axis = axis;
-    step.test.kind = nt_kind;
+    let mut step = OwnedStep::new(axis, nt_kind);
 
     if nt_kind == NT_NAME {
         if let Some(local) = local {
             if !set_text(b, &mut step.test.local, local) {
-                mkr_step_clear(&mut step);
                 Ast::drop_raw(n);
                 return core::ptr::null_mut();
             }
         }
         if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
             if !set_text(b, &mut step.test.prefix, prefix) {
-                mkr_step_clear(&mut step);
                 Ast::drop_raw(n);
                 return core::ptr::null_mut();
             }
@@ -190,8 +178,8 @@ unsafe fn named_step_path_inner(
     }
 
     let mut steps = StepArray::new();
-    if let Err(mut step) = steps.push(b, step) {
-        mkr_step_clear(&mut step);
+    if steps.try_push(step).is_err() {
+        b.oom();
         Ast::drop_raw(n);
         return core::ptr::null_mut();
     }
@@ -280,177 +268,4 @@ pub(crate) unsafe fn token_match(
         padded_tokens(b, prefix, attr_name),
         literal(b, &padded),
     )
-}
-
-/// A growable array of `T` in the C allocator, so `mkr_step_clear` /
-/// `mkr_node_free` can own the result.
-struct CArray<T> {
-    v: *mut T,
-    n: usize,
-    cap: usize,
-}
-
-impl<T> CArray<T> {
-    const fn new() -> CArray<T> {
-        CArray {
-            v: core::ptr::null_mut(),
-            n: 0,
-            cap: 0,
-        }
-    }
-
-    /// Transfer the C allocation to an AST field or a matching destructor.
-    ///
-    /// `CArray` deliberately has no `Drop`: the element cleanup depends on
-    /// the AST field receiving it (`mkr_step_clear` vs `mkr_node_free`).
-    /// Consuming the array makes that ownership transfer explicit at the two
-    /// boundaries where raw pointers are unavoidable.
-    fn into_raw_parts(self) -> (*mut T, usize) {
-        (self.v, self.n)
-    }
-
-    /// Append, growing geometrically. `false` on failure, with `*err` set and
-    /// the array unchanged.
-    unsafe fn push(&mut self, b: &Build, item: T) -> Result<(), T> {
-        if self.n == self.cap {
-            let want =
-                match crate::falloc::grow_capacity(self.cap, self.n + 1, core::mem::size_of::<T>())
-                {
-                    Some(w) => w,
-                    None => {
-                        b.oom();
-                        return Err(item);
-                    }
-                };
-            let p =
-                mkr_reallocarray(self.v as *mut c_void, want, core::mem::size_of::<T>()) as *mut T;
-            if p.is_null() {
-                b.oom();
-                return Err(item);
-            }
-            self.v = p;
-            self.cap = want;
-        }
-        core::ptr::write(self.v.add(self.n), item);
-        self.n += 1;
-        Ok(())
-    }
-}
-
-/// A growable C-owned array of AST steps. Its contents are cleared with
-/// `mkr_step_clear` before the allocation is released.
-pub(crate) struct StepArray(CArray<Step>);
-
-impl Drop for StepArray {
-    fn drop(&mut self) {
-        // SAFETY: every initialized entry is a zeroed or fully-owned `Step`.
-        unsafe {
-            for i in 0..self.0.n {
-                mkr_step_clear(self.0.v.add(i));
-            }
-            libc_free(self.0.v as *mut c_void);
-        }
-    }
-}
-
-impl StepArray {
-    pub(crate) const fn new() -> Self {
-        Self(CArray::new())
-    }
-
-    /// Append `item`, returning it unchanged when allocation fails.
-    pub(crate) unsafe fn push(&mut self, b: &Build, item: Step) -> Result<(), Step> {
-        self.0.push(b, item)
-    }
-
-    pub(crate) unsafe fn install_into_path(self, path: *mut Node) {
-        let (steps, nsteps) = self.into_raw_parts();
-        (*path).u.path.steps = steps;
-        (*path).u.path.nsteps = nsteps;
-    }
-
-    /// Transfer the allocation to the C-layout path field without running
-    /// `Drop` for this array.
-    unsafe fn into_raw_parts(self) -> (*mut Step, usize) {
-        let this = core::mem::ManuallyDrop::new(self);
-        core::ptr::read(&this.0).into_raw_parts()
-    }
-}
-
-/// A growable C-owned array of owned AST node pointers. Its contents are
-/// recursively freed with `mkr_node_free` before the allocation is released.
-pub(crate) struct NodeArray(CArray<*mut Node>);
-
-impl Drop for NodeArray {
-    fn drop(&mut self) {
-        // SAFETY: entries are either null (calloc/unused slots) or owned ASTs.
-        unsafe {
-            for i in 0..self.0.n {
-                Ast::drop_raw(*self.0.v.add(i));
-            }
-            libc_free(self.0.v as *mut c_void);
-        }
-    }
-}
-
-impl NodeArray {
-    pub(crate) const fn new() -> Self {
-        Self(CArray::new())
-    }
-
-    pub(crate) unsafe fn with_slots(b: &Build, n: usize) -> Option<Self> {
-        let capacity = if n == 0 { 1 } else { n };
-        let v = mkr_callocarray(capacity, core::mem::size_of::<*mut Node>()) as *mut *mut Node;
-        if v.is_null() {
-            b.oom();
-            return None;
-        }
-        Some(Self(CArray {
-            v,
-            n,
-            cap: capacity,
-        }))
-    }
-
-    /// Create a one-element predicate array, taking ownership of `item` on
-    /// success. The caller retains ownership when allocation fails.
-    pub(crate) unsafe fn single(b: &Build, item: *mut Node) -> Option<Self> {
-        let mut array = Self::new();
-        if array.push(b, item) {
-            Some(array)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) unsafe fn push(&mut self, b: &Build, item: *mut Node) -> bool {
-        self.0.push(b, item).is_ok()
-    }
-
-    pub(crate) unsafe fn set(&mut self, index: usize, item: *mut Node) {
-        debug_assert!(index < self.0.n);
-        *self.0.v.add(index) = item;
-    }
-
-    unsafe fn get(&self, index: usize) -> *mut Node {
-        debug_assert!(index < self.0.n);
-        *self.0.v.add(index)
-    }
-
-    fn len(&self) -> usize {
-        self.0.n
-    }
-
-    pub(crate) unsafe fn install_into_step(self, step: *mut Step) {
-        let (predicates, npredicates) = self.into_raw_parts();
-        (*step).predicates = predicates;
-        (*step).npredicates = npredicates;
-    }
-
-    /// Transfer the allocation to the C-layout step field without running
-    /// `Drop` for this array.
-    unsafe fn into_raw_parts(self) -> (*mut *mut Node, usize) {
-        let this = core::mem::ManuallyDrop::new(self);
-        core::ptr::read(&this.0).into_raw_parts()
-    }
 }

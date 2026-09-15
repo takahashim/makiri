@@ -17,7 +17,7 @@
 //! reverse axes. The path it builds is non-empty - hence truthy - exactly when
 //! self matches the selector.
 
-use super::build::{self, NodeArray, StepArray};
+use super::build::{self, NodeArray, OwnedStep, StepArray};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
 use crate::lexbor_abi as lxb;
 use crate::xpath::own::Ast;
@@ -508,18 +508,17 @@ unsafe fn child_text_pred(b: &Build, pred: *mut Node) -> *mut Node {
         Ast::drop_raw(pred);
         return core::ptr::null_mut();
     }
-    let Some(preds) = NodeArray::single(b, pred) else {
+    let Some(preds) = NodeArray::single_raw(pred) else {
+        b.oom();
         Ast::drop_raw(pred);
         Ast::drop_raw(n);
         return core::ptr::null_mut();
     };
-    let mut step: Step = core::mem::zeroed();
-    step.axis = AXIS_CHILD;
-    step.test.kind = NT_TEXT;
+    let mut step = OwnedStep::new(AXIS_CHILD, NT_TEXT);
     preds.install_into_step(&mut step);
     let mut steps = StepArray::new();
-    if let Err(mut step) = steps.push(b, step) {
-        build::mkr_step_clear(&mut step);
+    if steps.try_push(step).is_err() {
+        b.oom();
         Ast::drop_raw(n);
         return core::ptr::null_mut();
     }
@@ -656,7 +655,8 @@ unsafe fn push_pred(b: &Build, preds: &mut NodeArray, p: *mut Node) -> bool {
     if p.is_null() {
         return false;
     }
-    if !preds.push(b, p) {
+    if !preds.push_raw(p) {
+        b.oom();
         Ast::drop_raw(p);
         return false;
     }
@@ -740,16 +740,13 @@ unsafe fn emit_compound_step(
     first: *const Selector,
     last: *const Selector,
 ) -> bool {
-    let mut step: Step = core::mem::zeroed();
-    step.axis = axis;
-    step.test.kind = NT_WILDCARD; /* a type selector overrides this */
+    /* A type selector overrides the wildcard test. */
+    let mut step = OwnedStep::new(axis, NT_WILDCARD);
     let mut preds = NodeArray::new();
 
     let mut s = first;
     loop {
-        if !fold_simple(b, s, &mut step, &mut preds) {
-            drop(preds);
-            build::mkr_step_clear(&mut step);
+        if !fold_simple(b, s, &mut *step, &mut preds) {
             return false;
         }
         if s == last {
@@ -759,8 +756,8 @@ unsafe fn emit_compound_step(
     }
 
     preds.install_into_step(&mut step);
-    if let Err(mut step) = steps.push(b, step) {
-        build::mkr_step_clear(&mut step);
+    if steps.try_push(step).is_err() {
+        b.oom();
         return false;
     }
     true
@@ -855,20 +852,19 @@ unsafe fn emit_adjacent(b: &Build, steps: &mut StepArray) -> bool {
 
 /// `axis::*[1]` - the immediately adjacent sibling in either direction.
 unsafe fn emit_positional_sibling(b: &Build, steps: &mut StepArray, axis: u32) -> bool {
-    let mut st: Step = core::mem::zeroed();
-    st.axis = axis;
-    st.test.kind = NT_WILDCARD;
+    let mut st = OwnedStep::new(axis, NT_WILDCARD);
     let p = build::num(b, 1.0);
     if p.is_null() {
         return false;
     }
-    let Some(preds) = NodeArray::single(b, p) else {
+    let Some(preds) = NodeArray::single_raw(p) else {
+        b.oom();
         Ast::drop_raw(p);
         return false;
     };
     preds.install_into_step(&mut st);
-    if let Err(mut st) = steps.push(b, st) {
-        build::mkr_step_clear(&mut st);
+    if steps.try_push(st).is_err() {
+        b.oom();
         return false;
     }
     true

@@ -7,20 +7,21 @@
 //! visibly the odd one out.
 
 use super::abi::*;
-use super::ast_ops::mkr_node_free;
+use super::ast_ops::{mkr_node_free, mkr_step_clear};
 use super::dom::Dom;
+use crate::falloc::raw::mkr_reallocarray;
+use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr;
 use core::ptr::NonNull;
 
-/// An owned compiled XPath AST.
+/// An owned AST node: a compiled root, or a subtree still being built.
 ///
-/// The AST still uses the stable C layout internally so the evaluator and the
-/// ABI adapters can borrow it, but ownership is represented by Rust. Raw AST
-/// pointers must cross this type only through `from_raw` or `into_raw`.
-#[allow(dead_code)]
+/// The AST keeps its C layout so the evaluator can borrow it, but ownership is
+/// represented by Rust: dropping this frees the node and everything under it.
+/// Raw AST pointers cross this type only through `from_raw` or `into_raw`.
 pub(crate) struct Ast(NonNull<Node>);
 
-#[allow(dead_code)]
 impl Ast {
     /// # Safety
     /// `ptr` must be a live root AST allocated by `mkr_node_alloc`, and no
@@ -33,6 +34,15 @@ impl Ast {
     /// callers must keep the GVL/exclusive evaluation contract while using it.
     pub(crate) fn as_raw(&self) -> *mut Node {
         self.0.as_ptr()
+    }
+
+    /// The node, for filling in its fields while it is being built.
+    ///
+    /// # Safety
+    /// Writes must keep the node in a state `mkr_node_free` can take apart: an
+    /// owned child pointer is null or owned by this node alone.
+    pub(crate) unsafe fn node_mut(&mut self) -> &mut Node {
+        &mut *self.0.as_ptr()
     }
 
     /// Transfer ownership to the legacy raw-pointer ABI.
@@ -60,6 +70,291 @@ impl Drop for Ast {
         // SAFETY: `Ast` is constructed only from an owned live AST root.
         unsafe { mkr_node_free(self.0.as_ptr()) }
     }
+}
+
+/// A step under construction. Dropping it clears the step - its name texts and
+/// predicates - the way the AST destructor would.
+pub(crate) struct OwnedStep(Step);
+
+impl OwnedStep {
+    /// An empty step: no name texts, no predicates.
+    pub(crate) fn new(axis: u32, kind: u32) -> Self {
+        Self(Step {
+            axis,
+            test: NodeTest {
+                kind,
+                prefix: TextSlot::empty(),
+                local: TextSlot::empty(),
+                pi_target: TextSlot::empty(),
+            },
+            predicates: ptr::null_mut(),
+            npredicates: 0,
+        })
+    }
+
+    fn into_raw(self) -> Step {
+        ManuallyDrop::new(self).0
+    }
+}
+
+impl core::ops::Deref for OwnedStep {
+    type Target = Step;
+    fn deref(&self) -> &Step {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for OwnedStep {
+    fn deref_mut(&mut self) -> &mut Step {
+        &mut self.0
+    }
+}
+
+impl Drop for OwnedStep {
+    fn drop(&mut self) {
+        // SAFETY: an `OwnedStep` owns every text and predicate it holds.
+        unsafe { mkr_step_clear(&mut self.0) }
+    }
+}
+
+/// A growable array in the C allocator, which is what the AST destructors free.
+///
+/// No `Drop` of its own: freeing an element means something different for a
+/// step and for a node, so [`StepArray`] and [`NodeArray`] each supply it.
+struct RawArray<T> {
+    v: *mut T,
+    n: usize,
+    cap: usize,
+}
+
+impl<T> RawArray<T> {
+    const fn new() -> Self {
+        Self {
+            v: ptr::null_mut(),
+            n: 0,
+            cap: 0,
+        }
+    }
+
+    /// Make room for one more element, growing geometrically. `false` on OOM,
+    /// with the array unchanged.
+    fn reserve_one(&mut self) -> bool {
+        if self.n < self.cap {
+            return true;
+        }
+        let Some(want) =
+            crate::falloc::grow_capacity(self.cap, self.n + 1, core::mem::size_of::<T>())
+        else {
+            return false;
+        };
+        // SAFETY: `v` is null or this array's own C allocation.
+        let p = unsafe {
+            mkr_reallocarray(self.v as *mut c_void, want, core::mem::size_of::<T>()) as *mut T
+        };
+        if p.is_null() {
+            return false;
+        }
+        self.v = p;
+        self.cap = want;
+        true
+    }
+
+    /// # Safety
+    /// `reserve_one` must have succeeded since the last push.
+    unsafe fn push_reserved(&mut self, item: T) {
+        debug_assert!(self.n < self.cap);
+        ptr::write(self.v.add(self.n), item);
+        self.n += 1;
+    }
+}
+
+/// The steps of a path under construction. Dropping it clears each step and
+/// frees the array; installing hands both to the node.
+pub(crate) struct StepArray(RawArray<Step>);
+
+impl StepArray {
+    pub(crate) const fn new() -> Self {
+        Self(RawArray::new())
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.n
+    }
+
+    /// Append a finished step. On OOM the step comes back, and clears when it
+    /// is dropped.
+    pub(crate) fn try_push(&mut self, step: OwnedStep) -> Result<(), OwnedStep> {
+        if !self.0.reserve_one() {
+            return Err(step);
+        }
+        // SAFETY: reserved just above.
+        unsafe { self.0.push_reserved(step.into_raw()) };
+        Ok(())
+    }
+
+    /// # Safety
+    /// `path` must be a live `NK_PATH` node with no steps yet.
+    pub(crate) unsafe fn install_into_path(self, path: *mut Node) {
+        let (steps, nsteps) = self.into_raw_parts();
+        (*path).u.path.steps = steps;
+        (*path).u.path.nsteps = nsteps;
+    }
+
+    /// # Safety
+    /// `filter` must be a live `NK_FILTER` node with no trailing path yet.
+    pub(crate) unsafe fn install_as_filter_path(self, filter: *mut Node) {
+        let (steps, nsteps) = self.into_raw_parts();
+        (*filter).u.filter.path_steps = steps;
+        (*filter).u.filter.npath = nsteps;
+    }
+
+    fn into_raw_parts(self) -> (*mut Step, usize) {
+        let this = ManuallyDrop::new(self);
+        (this.0.v, this.0.n)
+    }
+}
+
+impl Drop for StepArray {
+    fn drop(&mut self) {
+        // SAFETY: every entry below `n` is an owned step; `v` is the array's own.
+        unsafe {
+            for i in 0..self.0.n {
+                mkr_step_clear(self.0.v.add(i));
+            }
+            free_c(self.0.v as *mut c_void);
+        }
+    }
+}
+
+/// Owned node pointers under construction - predicates or call arguments.
+/// Dropping it frees each node and the array; installing hands both over.
+pub(crate) struct NodeArray(RawArray<*mut Node>);
+
+impl NodeArray {
+    pub(crate) const fn new() -> Self {
+        Self(RawArray::new())
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.n
+    }
+
+    /// Append a finished node. On OOM the node comes back, and frees when it is
+    /// dropped.
+    pub(crate) fn try_push(&mut self, node: Ast) -> Result<(), Ast> {
+        if !self.0.reserve_one() {
+            return Err(node);
+        }
+        // SAFETY: reserved just above.
+        unsafe { self.0.push_reserved(node.into_raw()) };
+        Ok(())
+    }
+
+    pub(crate) fn install_into_step(self, step: &mut Step) {
+        let (predicates, npredicates) = self.into_raw_parts();
+        step.predicates = predicates;
+        step.npredicates = npredicates;
+    }
+
+    /// # Safety
+    /// `call` must be a live `NK_FNCALL` node with no arguments yet.
+    pub(crate) unsafe fn install_as_args(self, call: *mut Node) {
+        let (args, nargs) = self.into_raw_parts();
+        (*call).u.fncall.args = args;
+        (*call).u.fncall.nargs = nargs;
+    }
+
+    /// # Safety
+    /// `filter` must be a live `NK_FILTER` node with no predicates yet.
+    pub(crate) unsafe fn install_as_filter_preds(self, filter: *mut Node) {
+        let (preds, npreds) = self.into_raw_parts();
+        (*filter).u.filter.preds = preds;
+        (*filter).u.filter.npreds = npreds;
+    }
+
+    fn into_raw_parts(self) -> (*mut *mut Node, usize) {
+        let this = ManuallyDrop::new(self);
+        (this.0.v, this.0.n)
+    }
+}
+
+/// The raw-pointer side of [`NodeArray`], for the CSS lowering, whose builders
+/// still pass nodes as pointers.
+#[cfg(feature = "lexbor")]
+impl NodeArray {
+    /// `n` null slots, to be filled with `set`. Zero slots still allocates one,
+    /// because `mkr_callocarray(0, _)` answers NULL and a NULL array would be
+    /// indistinguishable from a failure. `None` on OOM.
+    pub(crate) fn with_slots(n: usize) -> Option<Self> {
+        let capacity = n.max(1);
+        // SAFETY: a fresh zeroed allocation; null slots are valid entries.
+        let v = unsafe {
+            crate::falloc::raw::mkr_callocarray(capacity, core::mem::size_of::<*mut Node>())
+                as *mut *mut Node
+        };
+        if v.is_null() {
+            return None;
+        }
+        Some(Self(RawArray {
+            v,
+            n,
+            cap: capacity,
+        }))
+    }
+
+    /// Append a raw node, taking ownership only on success: on OOM the caller
+    /// still owns it.
+    ///
+    /// # Safety
+    /// `node` must be null or an owned AST node.
+    pub(crate) unsafe fn push_raw(&mut self, node: *mut Node) -> bool {
+        if !self.0.reserve_one() {
+            return false;
+        }
+        self.0.push_reserved(node);
+        true
+    }
+
+    /// A one-element array holding `node`, owned on success only.
+    ///
+    /// # Safety
+    /// As [`Self::push_raw`].
+    pub(crate) unsafe fn single_raw(node: *mut Node) -> Option<Self> {
+        let mut array = Self::new();
+        array.push_raw(node).then_some(array)
+    }
+
+    /// # Safety
+    /// `index < len()`, and `node` is null or an owned AST node; a node already
+    /// in the slot is overwritten, not freed.
+    pub(crate) unsafe fn set(&mut self, index: usize, node: *mut Node) {
+        debug_assert!(index < self.0.n);
+        *self.0.v.add(index) = node;
+    }
+
+    /// # Safety
+    /// `index < len()`.
+    pub(crate) unsafe fn get(&self, index: usize) -> *mut Node {
+        debug_assert!(index < self.0.n);
+        *self.0.v.add(index)
+    }
+}
+
+impl Drop for NodeArray {
+    fn drop(&mut self) {
+        // SAFETY: entries are null or owned nodes; `v` is the array's own.
+        unsafe {
+            for i in 0..self.0.n {
+                Ast::drop_raw(*self.0.v.add(i));
+            }
+            free_c(self.0.v as *mut c_void);
+        }
+    }
+}
+
+extern "C" {
+    #[link_name = "free"]
+    fn free_c(p: *mut c_void);
 }
 
 /// The owner of a [`TextSlot`]: it frees the allocation on drop. Rust code that

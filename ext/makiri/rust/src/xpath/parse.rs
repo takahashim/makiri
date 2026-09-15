@@ -1,11 +1,11 @@
 //! XPath 1.0 recursive-descent parser (mkr_xpath_parse.c).
 //!
-//! It builds the C AST directly, through the C allocator, so the C evaluator
-//! runs what it produces and the CSS lowering keeps sharing one node factory.
-//! That is what the `unsafe` here is: writing C-layout nodes and the arrays
-//! hanging off them. The ownership discipline is the C one unchanged - a
-//! half-built node is always in a state `mkr_node_free` / `mkr_step_clear` can
-//! take apart, so every error path bails without cleanup of its own.
+//! It builds the C-layout AST through the same node factory and arrays as the
+//! CSS lowering, so the evaluator runs what either produces. Everything under
+//! construction is held by a guard - a node by `own::Ast`, a step by
+//! `OwnedStep`, an array by `NodeArray` / `StepArray` - and a finished part is
+//! installed into its parent's field. An error path simply returns: the drops
+//! free what was built.
 //!
 //! Lookahead is one token, except where the grammar needs two (a NAME that may
 //! be an axis, a node-type keyword, or a function name), which is done by
@@ -14,8 +14,9 @@
 use super::abi::*;
 use super::lex::{LexErr, Lexer, Tok, Token};
 use super::msg::Bytes;
+use super::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::err_setf;
-use core::ffi::c_void;
+use core::ffi::c_int;
 use core::ptr;
 
 struct Parser<'a> {
@@ -42,22 +43,6 @@ fn lex_err(err: *mut Error, e: LexErr) {
                 err_setf!(err, XP_ERR_SYNTAX, "unexpected byte 0x{:02x}", c)
             }
         }
-    }
-}
-
-/// A step under construction. Mirrors the C `mkr_step_t {0}` local: zeroed, and
-/// cleared through `mkr_step_clear` if the parse of it fails.
-fn zero_step() -> Step {
-    Step {
-        axis: AXIS_CHILD,
-        test: NodeTest {
-            kind: NT_NAME,
-            prefix: TextSlot::empty(),
-            local: TextSlot::empty(),
-            pi_target: TextSlot::empty(),
-        },
-        predicates: ptr::null_mut(),
-        npredicates: 0,
     }
 }
 
@@ -103,60 +88,6 @@ fn is_nodetype_name(s: &[u8]) -> bool {
     )
 }
 
-/// A growable array living in an AST node's (pointer, count) slots.
-///
-/// It writes through to the node on every push rather than holding the array
-/// until it is complete, because that is the ownership contract: a parse that
-/// fails partway leaves the elements already pushed reachable from the node,
-/// and `mkr_node_free` is what frees them. The capacity is the only part the
-/// node does not store, so it rides here.
-///
-/// The three arrays an AST carries - a path's steps, a step's predicates, a
-/// call's arguments - differ only in element type and in which budget they
-/// charge, so the growing itself lives here once.
-struct Slots<T> {
-    ptr: *mut *mut T,
-    len: *mut usize,
-    /// What this value knows it has reserved - a lower bound on the real
-    /// capacity, not the capacity itself. A fresh `Slots` over a populated pair
-    /// starts at 0 and simply reallocates once more than it had to; the grower
-    /// reallocates from the existing pointer, so nothing is lost.
-    cap: usize,
-}
-
-impl<T> Slots<T> {
-    /// Take over a node's slots, which are already empty - `mkr_node_alloc`
-    /// zeroes a new node, and `zero_step` a new step.
-    ///
-    /// # Safety
-    /// Both must point into a live AST node that outlives this value.
-    unsafe fn at(ptr: *mut *mut T, len: *mut usize) -> Slots<T> {
-        Slots { ptr, len, cap: 0 }
-    }
-
-    unsafe fn len(&self) -> usize {
-        *self.len
-    }
-
-    /// Append, growing through the C grower so `mkr_node_free` can free it.
-    /// False on OOM, with `*err` naming the array.
-    unsafe fn push(&mut self, v: T, err: *mut Error, what: &str) -> bool {
-        if mkr_grow_reserve(
-            self.ptr as *mut *mut c_void,
-            &mut self.cap,
-            *self.len + 1,
-            core::mem::size_of::<T>(),
-        ) != MKR_OK
-        {
-            err_setf!(err, XP_ERR_OOM, "out of memory growing {} array", what);
-            return false;
-        }
-        *(*self.ptr).add(*self.len) = v;
-        *self.len += 1;
-        true
-    }
-}
-
 impl<'a> Parser<'a> {
     fn tok(&self) -> Token {
         self.lx.tok
@@ -188,8 +119,9 @@ impl<'a> Parser<'a> {
         self.advance()
     }
 
-    fn new_node(&mut self, kind: u32) -> *mut Node {
-        unsafe { mkr_node_alloc(self.limits, self.err, kind) }
+    fn new_node(&mut self, kind: u32) -> Option<Ast> {
+        // SAFETY: `mkr_node_alloc` returns an owned zeroed node or NULL.
+        unsafe { Ast::from_raw(mkr_node_alloc(self.limits, self.err, kind)) }
     }
 
     /// Copy `text` into an owned-text AST slot. A failure must be propagated: a
@@ -212,37 +144,36 @@ impl<'a> Parser<'a> {
         self.fill_owned(p, prefix) && self.fill_owned(l, local)
     }
 
-    fn push_step(&mut self, steps: &mut Slots<Step>, s: Step) -> bool {
+    /// Charge the step budget, then append. A step that does not land is freed.
+    fn push_step(&mut self, steps: &mut StepArray, s: OwnedStep) -> bool {
         unsafe {
-            mkr_limit_check_steps(self.limits, steps.len() + 1, self.err) == 0
-                && steps.push(s, self.err, "step")
+            if mkr_limit_check_steps(self.limits, steps.len() + 1, self.err) != 0 {
+                return false;
+            }
         }
+        if steps.try_push(s).is_err() {
+            err_setf!(self.err, XP_ERR_OOM, "out of memory growing step array");
+            return false;
+        }
+        true
     }
 
     /// Parse a run of `('/' | '//') Step`, expanding each `//` into an implicit
     /// `descendant-or-self::node()` step. A non-separator token makes this a
-    /// no-op. Steps pushed before a failure stay in the array - the owning node
-    /// frees them.
-    fn parse_step_tail(&mut self, steps: &mut Slots<Step>) -> bool {
+    /// no-op. On failure the caller drops `steps`, freeing what was pushed.
+    fn parse_step_tail(&mut self, steps: &mut StepArray) -> bool {
         while self.kind() == Tok::Slash || self.kind() == Tok::DSlash {
             let dslash = self.kind() == Tok::DSlash;
             if !self.advance() {
                 return false;
             }
-            if dslash {
-                let mut implicit = zero_step();
-                implicit.axis = AXIS_DESCENDANT_OR_SELF;
-                implicit.test.kind = NT_NODE;
-                if !self.push_step(steps, implicit) {
-                    return false;
-                }
-            }
-            let mut next = zero_step();
-            if !self.parse_step(&mut next) {
+            if dslash && !self.push_step(steps, OwnedStep::new(AXIS_DESCENDANT_OR_SELF, NT_NODE)) {
                 return false;
             }
+            let Some(next) = self.parse_step() else {
+                return false;
+            };
             if !self.push_step(steps, next) {
-                unsafe { mkr_step_clear(&mut next) };
                 return false;
             }
         }
@@ -254,22 +185,22 @@ impl<'a> Parser<'a> {
     /// `saved` is an already-consumed NAME; the current token is the one after
     /// it. A node-type keyword immediately followed by '(' is a node-type test
     /// (with an optional PI target literal); anything else is an NCName test.
-    fn parse_nodetype_or_name(&mut self, saved: Token, out: *mut NodeTest) -> bool {
+    fn parse_nodetype_or_name(&mut self, saved: Token, out: &mut NodeTest) -> bool {
         let name = self.text(&saved);
         if is_nodetype_name(name) && self.kind() == Tok::LParen {
             if !self.advance() {
                 return false;
             }
             match name {
-                b"node" => unsafe { (*out).kind = NT_NODE },
-                b"text" => unsafe { (*out).kind = NT_TEXT },
-                b"comment" => unsafe { (*out).kind = NT_COMMENT },
+                b"node" => out.kind = NT_NODE,
+                b"text" => out.kind = NT_TEXT,
+                b"comment" => out.kind = NT_COMMENT,
                 _ => {
-                    unsafe { (*out).kind = NT_PI };
+                    out.kind = NT_PI;
                     if self.kind() == Tok::Literal {
                         let t = self.tok();
                         let s = self.text(&t);
-                        if !self.fill_owned(s, unsafe { &raw mut (*out).pi_target }) {
+                        if !self.fill_owned(s, &mut out.pi_target) {
                             return false;
                         }
                         if !self.advance() {
@@ -280,17 +211,15 @@ impl<'a> Parser<'a> {
             }
             return self.eat(Tok::RParen, "')' after node type test");
         }
-        unsafe { (*out).kind = NT_NAME };
-        self.fill_owned(name, unsafe { &raw mut (*out).local })
+        out.kind = NT_NAME;
+        self.fill_owned(name, &mut out.local)
     }
 
     /// Called with the current token at the first token of the node test; leaves
-    /// it at the token after.
-    fn parse_node_test(&mut self, out: *mut NodeTest) -> bool {
-        unsafe { *out = zero_step().test };
-
+    /// it at the token after. `out` is a fresh test with no texts yet.
+    fn parse_node_test(&mut self, out: &mut NodeTest) -> bool {
         if self.kind() == Tok::Star {
-            unsafe { (*out).kind = NT_WILDCARD };
+            out.kind = NT_WILDCARD;
             return self.advance();
         }
         if self.kind() == Tok::Name {
@@ -304,14 +233,14 @@ impl<'a> Parser<'a> {
             /* `prefix:local` or `prefix:*`. */
             let t = self.tok();
             let (prefix, local) = split_qname(self.text(&t));
-            if !self.fill_owned(prefix, unsafe { &raw mut (*out).prefix }) {
+            if !self.fill_owned(prefix, &mut out.prefix) {
                 return false;
             }
             if local == b"*" {
-                unsafe { (*out).kind = NT_WILDCARD };
+                out.kind = NT_WILDCARD;
             } else {
-                unsafe { (*out).kind = NT_NAME };
-                if !self.fill_owned(local, unsafe { &raw mut (*out).local }) {
+                out.kind = NT_NAME;
+                if !self.fill_owned(local, &mut out.local) {
                     return false;
                 }
             }
@@ -323,7 +252,7 @@ impl<'a> Parser<'a> {
 
     /* ---- predicates ---- */
 
-    fn parse_predicates(&mut self, preds: &mut Slots<*mut Node>) -> bool {
+    fn parse_predicates(&mut self, preds: &mut NodeArray) -> bool {
         while self.kind() == Tok::LBracket {
             unsafe {
                 if mkr_limit_check_predicates(self.limits, preds.len() + 1, self.err) != 0 {
@@ -333,19 +262,19 @@ impl<'a> Parser<'a> {
             if !self.advance() {
                 return false;
             }
-            let e = self.parse_expr();
-            if e.is_null() {
+            let Some(e) = self.parse_expr() else {
                 return false;
-            }
+            };
             if !self.eat(Tok::RBracket, "']' to close predicate") {
-                unsafe { mkr_node_free(e) };
                 return false;
             }
-            unsafe {
-                if !preds.push(e, self.err, "predicate") {
-                    mkr_node_free(e);
-                    return false;
-                }
+            if preds.try_push(e).is_err() {
+                err_setf!(
+                    self.err,
+                    XP_ERR_OOM,
+                    "out of memory growing predicate array"
+                );
+                return false;
             }
         }
         true
@@ -353,46 +282,40 @@ impl<'a> Parser<'a> {
 
     /* ---- steps ---- */
 
-    /// On failure the step is cleared here: `parse_step_inner` can leave a
-    /// partly-built step behind (an owned name already copied, predicates
-    /// already pushed) and every caller just bails, so freeing it in one place
-    /// keeps the error paths leak-free without per-site cleanup.
-    fn parse_step(&mut self, out: *mut Step) -> bool {
-        if self.parse_step_inner(out) {
-            return true;
+    /// Parse one step. A failure partway leaves an owned name or predicates
+    /// behind; the guards free them, so every caller just bails.
+    fn parse_step(&mut self) -> Option<OwnedStep> {
+        let mut step = OwnedStep::new(AXIS_CHILD, NT_NAME);
+        let mut preds = NodeArray::new();
+        if !self.parse_step_inner(&mut step, &mut preds) {
+            return None;
         }
-        unsafe { mkr_step_clear(out) };
-        false
+        preds.install_into_step(&mut step);
+        Some(step)
     }
 
-    fn parse_step_inner(&mut self, out: *mut Step) -> bool {
-        unsafe { *out = zero_step() };
-
+    fn parse_step_inner(&mut self, out: &mut Step, preds: &mut NodeArray) -> bool {
         /* Abbreviated steps. */
         if self.kind() == Tok::Dot {
             if !self.advance() {
                 return false;
             }
-            unsafe {
-                (*out).axis = AXIS_SELF;
-                (*out).test.kind = NT_NODE;
-            }
+            out.axis = AXIS_SELF;
+            out.test.kind = NT_NODE;
             return true;
         }
         if self.kind() == Tok::DotDot {
             if !self.advance() {
                 return false;
             }
-            unsafe {
-                (*out).axis = AXIS_PARENT;
-                (*out).test.kind = NT_NODE;
-            }
+            out.axis = AXIS_PARENT;
+            out.test.kind = NT_NODE;
             return true;
         }
 
         /* AxisSpecifier: '@' or NAME '::'. */
         if self.kind() == Tok::At {
-            unsafe { (*out).axis = AXIS_ATTRIBUTE };
+            out.axis = AXIS_ATTRIBUTE;
             if !self.advance() {
                 return false;
             }
@@ -406,7 +329,7 @@ impl<'a> Parser<'a> {
             if self.kind() == Tok::ColonColon {
                 let name = self.text(&saved);
                 match axis_by_name(name) {
-                    Some(ax) => unsafe { (*out).axis = ax },
+                    Some(ax) => out.axis = ax,
                     None => {
                         err_setf!(self.err, XP_ERR_SYNTAX, "unknown axis '{}'", Bytes(name));
                         return false;
@@ -418,38 +341,29 @@ impl<'a> Parser<'a> {
             } else {
                 /* It was a NameTest, and the NAME is already consumed, so replay
                  * it through the shared node-type grammar. */
-                unsafe { (*out).axis = AXIS_CHILD };
-                if !self.parse_nodetype_or_name(saved, unsafe { &raw mut (*out).test }) {
+                out.axis = AXIS_CHILD;
+                if !self.parse_nodetype_or_name(saved, &mut out.test) {
                     return false;
                 }
-                return self.parse_predicates(&mut unsafe {
-                    Slots::at(&raw mut (*out).predicates, &raw mut (*out).npredicates)
-                });
+                return self.parse_predicates(preds);
             }
         } else {
-            unsafe { (*out).axis = AXIS_CHILD };
+            out.axis = AXIS_CHILD;
         }
 
-        if !self.parse_node_test(unsafe { &raw mut (*out).test }) {
+        if !self.parse_node_test(&mut out.test) {
             return false;
         }
-        self.parse_predicates(&mut unsafe {
-            Slots::at(&raw mut (*out).predicates, &raw mut (*out).npredicates)
-        })
+        self.parse_predicates(preds)
     }
 
     /* ---- location paths ---- */
 
-    fn parse_relative_path(&mut self, steps: &mut Slots<Step>) -> bool {
-        let mut s = zero_step();
-        if !self.parse_step(&mut s) {
+    fn parse_relative_path(&mut self, steps: &mut StepArray) -> bool {
+        let Some(s) = self.parse_step() else {
             return false;
-        }
-        if !self.push_step(steps, s) {
-            unsafe { mkr_step_clear(&mut s) };
-            return false;
-        }
-        self.parse_step_tail(steps)
+        };
+        self.push_step(steps, s) && self.parse_step_tail(steps)
     }
 
     fn can_start_step(&self) -> bool {
@@ -459,227 +373,197 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn parse_location_path(&mut self) -> *mut Node {
-        let n = self.new_node(NK_PATH);
-        if n.is_null() {
-            return n;
-        }
-        let path = unsafe { &raw mut (*n).u.path };
-        let mut steps = unsafe { Slots::at(&raw mut (*path).steps, &raw mut (*path).nsteps) };
-
-        if self.kind() == Tok::Slash {
-            unsafe { (*path).absolute = 1 };
-            if !self.advance() {
-                unsafe { mkr_node_free(n) };
-                return ptr::null_mut();
+    fn parse_location_path(&mut self) -> Option<Ast> {
+        let mut n = self.new_node(NK_PATH)?;
+        let mut steps = StepArray::new();
+        let absolute = match self.kind() {
+            Tok::Slash => {
+                if !self.advance()
+                    || (self.can_start_step() && !self.parse_relative_path(&mut steps))
+                {
+                    return None;
+                }
+                true
             }
-            if self.can_start_step() && !self.parse_relative_path(&mut steps) {
-                unsafe { mkr_node_free(n) };
-                return ptr::null_mut();
+            Tok::DSlash => {
+                /* '//' = '/descendant-or-self::node()/'. Leave the token where it
+                 * is so the shared loop expands it itself. */
+                if !self.parse_step_tail(&mut steps) {
+                    return None;
+                }
+                true
             }
-            return n;
-        }
-        if self.kind() == Tok::DSlash {
-            /* '//' = '/descendant-or-self::node()/'. Leave the token where it is
-             * so the shared loop expands it itself. */
-            unsafe { (*path).absolute = 1 };
-            if !self.parse_step_tail(&mut steps) {
-                unsafe { mkr_node_free(n) };
-                return ptr::null_mut();
+            _ => {
+                if !self.parse_relative_path(&mut steps) {
+                    return None;
+                }
+                false
             }
-            return n;
+        };
+        // SAFETY: a fresh PATH node with no steps yet.
+        unsafe {
+            n.node_mut().u.path.absolute = c_int::from(absolute);
+            steps.install_into_path(n.as_raw());
         }
-        unsafe { (*path).absolute = 0 };
-        if !self.parse_relative_path(&mut steps) {
-            unsafe { mkr_node_free(n) };
-            return ptr::null_mut();
-        }
-        n
+        Some(n)
     }
 
     /* ---- primaries, function calls, filters ---- */
 
-    fn parse_function_call(&mut self, name_tok: Token) -> *mut Node {
+    fn parse_function_call(&mut self, name_tok: Token) -> Option<Ast> {
         if self.kind() != Tok::LParen {
             err_setf!(self.err, XP_ERR_SYNTAX, "expected '(' in function call");
-            return ptr::null_mut();
+            return None;
         }
         if !self.advance() {
-            return ptr::null_mut();
+            return None;
         }
-        let n = self.new_node(NK_FNCALL);
-        if n.is_null() {
-            return n;
-        }
-        let f = unsafe { &raw mut (*n).u.fncall };
-
-        let named = if name_tok.kind == Tok::QName {
-            self.fill_qname_split(&name_tok, unsafe { &raw mut (*f).prefix }, unsafe {
-                &raw mut (*f).name
-            })
-        } else {
-            let s = self.text(&name_tok);
-            self.fill_owned(s, unsafe { &raw mut (*f).name })
+        let mut n = self.new_node(NK_FNCALL)?;
+        let named = {
+            // SAFETY: a fresh FNCALL node; only its name slots are written.
+            let f = unsafe { &mut n.node_mut().u.fncall };
+            if name_tok.kind == Tok::QName {
+                self.fill_qname_split(&name_tok, &mut f.prefix, &mut f.name)
+            } else {
+                let s = self.text(&name_tok);
+                self.fill_owned(s, &mut f.name)
+            }
         };
         if !named {
-            unsafe { mkr_node_free(n) };
-            return ptr::null_mut();
+            return None;
         }
 
-        let mut args = unsafe { Slots::at(&raw mut (*f).args, &raw mut (*f).nargs) };
+        let mut args = NodeArray::new();
         if self.kind() != Tok::RParen {
             loop {
                 unsafe {
                     if mkr_limit_check_func_args(self.limits, args.len() + 1, self.err) != 0 {
-                        mkr_node_free(n);
-                        return ptr::null_mut();
+                        return None;
                     }
                 }
-                let arg = self.parse_expr();
-                if arg.is_null() {
-                    unsafe { mkr_node_free(n) };
-                    return ptr::null_mut();
-                }
-                unsafe {
-                    if !args.push(arg, self.err, "function argument") {
-                        mkr_node_free(arg);
-                        mkr_node_free(n);
-                        return ptr::null_mut();
-                    }
+                let arg = self.parse_expr()?;
+                if args.try_push(arg).is_err() {
+                    err_setf!(
+                        self.err,
+                        XP_ERR_OOM,
+                        "out of memory growing function argument array"
+                    );
+                    return None;
                 }
                 if self.kind() != Tok::Comma {
                     break;
                 }
                 if !self.advance() {
-                    unsafe { mkr_node_free(n) };
-                    return ptr::null_mut();
+                    return None;
                 }
             }
         }
         if !self.eat(Tok::RParen, "')' after function arguments") {
-            unsafe { mkr_node_free(n) };
-            return ptr::null_mut();
+            return None;
         }
-        n
+        // SAFETY: the FNCALL node has no arguments yet.
+        unsafe { args.install_as_args(n.as_raw()) };
+        Some(n)
     }
 
-    fn parse_primary(&mut self) -> *mut Node {
+    fn parse_primary(&mut self) -> Option<Ast> {
         match self.kind() {
             Tok::Dollar => {
                 if !self.advance() {
-                    return ptr::null_mut();
+                    return None;
                 }
                 if self.kind() != Tok::Name && self.kind() != Tok::QName {
                     err_setf!(self.err, XP_ERR_SYNTAX, "expected name after '$'");
-                    return ptr::null_mut();
+                    return None;
                 }
-                let n = self.new_node(NK_VARREF);
-                if n.is_null() {
-                    return n;
-                }
-                let v = unsafe { &raw mut (*n).u.varref };
+                let mut n = self.new_node(NK_VARREF)?;
                 let t = self.tok();
-                let named = if t.kind == Tok::QName {
-                    self.fill_qname_split(&t, unsafe { &raw mut (*v).prefix }, unsafe {
-                        &raw mut (*v).name
-                    })
-                } else {
-                    let s = self.text(&t);
-                    self.fill_owned(s, unsafe { &raw mut (*v).name })
+                let named = {
+                    // SAFETY: a fresh VARREF node; only its name slots are written.
+                    let v = unsafe { &mut n.node_mut().u.varref };
+                    if t.kind == Tok::QName {
+                        self.fill_qname_split(&t, &mut v.prefix, &mut v.name)
+                    } else {
+                        let s = self.text(&t);
+                        self.fill_owned(s, &mut v.name)
+                    }
                 };
                 if !named || !self.advance() {
-                    unsafe { mkr_node_free(n) };
-                    return ptr::null_mut();
+                    return None;
                 }
-                n
+                Some(n)
             }
             Tok::LParen => {
                 if !self.advance() {
-                    return ptr::null_mut();
+                    return None;
                 }
-                let n = self.parse_expr();
-                if n.is_null() {
-                    return n;
-                }
+                let n = self.parse_expr()?;
                 if !self.eat(Tok::RParen, "')' after parenthesised expr") {
-                    unsafe { mkr_node_free(n) };
-                    return ptr::null_mut();
+                    return None;
                 }
-                n
+                Some(n)
             }
             Tok::Literal => {
-                let n = self.new_node(NK_LITERAL_STR);
-                if n.is_null() {
-                    return n;
-                }
+                let mut n = self.new_node(NK_LITERAL_STR)?;
                 let t = self.tok();
                 let s = self.text(&t);
-                if !self.fill_owned(s, unsafe { &raw mut (*n).u.literal }) || !self.advance() {
-                    unsafe { mkr_node_free(n) };
-                    return ptr::null_mut();
+                // SAFETY: a fresh LITERAL node; only its text slot is written.
+                if !self.fill_owned(s, unsafe { &mut n.node_mut().u.literal }) || !self.advance() {
+                    return None;
                 }
-                n
+                Some(n)
             }
             Tok::Number => {
-                let n = self.new_node(NK_LITERAL_NUM);
-                if n.is_null() {
-                    return n;
-                }
-                unsafe { (*n).u.literal_num = self.tok().num };
+                let mut n = self.new_node(NK_LITERAL_NUM)?;
+                // SAFETY: a fresh number LITERAL node.
+                unsafe { n.node_mut().u.literal_num = self.tok().num };
                 if !self.advance() {
-                    unsafe { mkr_node_free(n) };
-                    return ptr::null_mut();
+                    return None;
                 }
-                n
+                Some(n)
             }
             Tok::Name | Tok::QName => {
                 let name_tok = self.tok();
                 if !self.advance() {
-                    return ptr::null_mut();
+                    return None;
                 }
                 if self.kind() == Tok::LParen {
                     return self.parse_function_call(name_tok);
                 }
                 err_setf!(self.err, XP_ERR_SYNTAX, "expected '(' after function name");
-                ptr::null_mut()
+                None
             }
             _ => {
                 err_setf!(self.err, XP_ERR_SYNTAX, "expected primary expression");
-                ptr::null_mut()
+                None
             }
         }
     }
 
-    fn parse_filter_expr(&mut self) -> *mut Node {
-        let primary = self.parse_primary();
-        if primary.is_null() {
-            return primary;
-        }
+    fn parse_filter_expr(&mut self) -> Option<Ast> {
+        let primary = self.parse_primary()?;
         if !matches!(self.kind(), Tok::LBracket | Tok::Slash | Tok::DSlash) {
-            return primary;
+            return Some(primary);
         }
-        let f = self.new_node(NK_FILTER);
-        if f.is_null() {
-            unsafe { mkr_node_free(primary) };
-            return ptr::null_mut();
-        }
-        let fl = unsafe { &raw mut (*f).u.filter };
-        unsafe { (*fl).expr = primary };
-        if !self.parse_predicates(&mut unsafe {
-            Slots::at(&raw mut (*fl).preds, &raw mut (*fl).npreds)
-        }) {
-            unsafe { mkr_node_free(f) };
-            return ptr::null_mut();
+        let mut f = self.new_node(NK_FILTER)?;
+        // SAFETY: a fresh FILTER node takes sole ownership of `primary`.
+        unsafe { f.node_mut().u.filter.expr = primary.into_raw() };
+        let mut preds = NodeArray::new();
+        if !self.parse_predicates(&mut preds) {
+            return None;
         }
         /* Optional trailing location path (`$x/foo`, `(expr)//bar`). The shared
          * loop is a no-op when no separator follows. */
-        if !self.parse_step_tail(&mut unsafe {
-            Slots::at(&raw mut (*fl).path_steps, &raw mut (*fl).npath)
-        }) {
-            unsafe { mkr_node_free(f) };
-            return ptr::null_mut();
+        let mut steps = StepArray::new();
+        if !self.parse_step_tail(&mut steps) {
+            return None;
         }
-        f
+        // SAFETY: the FILTER node has neither predicates nor a path yet.
+        unsafe {
+            preds.install_as_filter_preds(f.as_raw());
+            steps.install_as_filter_path(f.as_raw());
+        }
+        Some(f)
     }
 
     /// LocationPath or FilterExpr?
@@ -699,7 +583,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_path_expr(&mut self) -> *mut Node {
+    fn parse_path_expr(&mut self) -> Option<Ast> {
         if self.kind() == Tok::Slash || self.kind() == Tok::DSlash {
             return self.parse_location_path();
         }
@@ -711,69 +595,52 @@ impl<'a> Parser<'a> {
 
     /* ---- the operator ladder ---- */
 
-    fn make_binop(&mut self, op: u32, lhs: *mut Node, rhs: *mut Node) -> *mut Node {
-        let n = self.new_node(NK_BINOP);
-        if n.is_null() {
-            /* The caller owns lhs/rhs and frees them on a null return. */
-            return n;
-        }
+    /// `lhs op rhs`, owning both; they are freed if the node cannot be made.
+    fn make_binop(&mut self, op: u32, lhs: Ast, rhs: Ast) -> Option<Ast> {
+        let mut n = self.new_node(NK_BINOP)?;
+        // SAFETY: a fresh BINOP node takes sole ownership of both operands.
         unsafe {
-            (*n).u.binop.op = op;
-            (*n).u.binop.lhs = lhs;
-            (*n).u.binop.rhs = rhs;
+            let b = &mut n.node_mut().u.binop;
+            b.op = op;
+            b.lhs = lhs.into_raw();
+            b.rhs = rhs.into_raw();
         }
-        n
+        Some(n)
     }
 
-    fn parse_union(&mut self) -> *mut Node {
-        let mut l = self.parse_path_expr();
-        while !l.is_null() && self.kind() == Tok::Pipe {
+    fn parse_union(&mut self) -> Option<Ast> {
+        let mut l = self.parse_path_expr()?;
+        while self.kind() == Tok::Pipe {
             if !self.advance() {
-                unsafe { mkr_node_free(l) };
-                return ptr::null_mut();
+                return None;
             }
-            let r = self.parse_path_expr();
-            if r.is_null() {
-                unsafe { mkr_node_free(l) };
-                return ptr::null_mut();
-            }
-            let u = self.make_binop(OP_UNION, l, r);
-            if u.is_null() {
-                unsafe {
-                    mkr_node_free(l);
-                    mkr_node_free(r);
-                }
-                return ptr::null_mut();
-            }
-            l = u;
+            let r = self.parse_path_expr()?;
+            l = self.make_binop(OP_UNION, l, r)?;
         }
-        l
+        Some(l)
     }
 
-    fn parse_unary(&mut self) -> *mut Node {
+    fn parse_unary(&mut self) -> Option<Ast> {
         let mut neg = false;
         while self.kind() == Tok::Minus {
             neg = !neg;
             if !self.advance() {
-                return ptr::null_mut();
+                return None;
             }
         }
-        let e = self.parse_union();
-        if e.is_null() || !neg {
-            return e;
+        let e = self.parse_union()?;
+        if !neg {
+            return Some(e);
         }
-        let u = self.new_node(NK_UNARY);
-        if u.is_null() {
-            unsafe { mkr_node_free(e) };
-            return ptr::null_mut();
-        }
-        unsafe { (*u).u.unary.expr = e };
-        u
+        let mut u = self.new_node(NK_UNARY)?;
+        // SAFETY: a fresh UNARY node takes sole ownership of `e`.
+        unsafe { u.node_mut().u.unary.expr = e.into_raw() };
+        Some(u)
     }
 
     /// Parse binary level `li`, recursing into the tighter levels; the tightest
     /// level's operand is `parse_unary` (prefix '-'). Left-associative.
-    fn parse_binary_level(&mut self, li: usize) -> *mut Node {
+    fn parse_binary_level(&mut self, li: usize) -> Option<Ast> {
         let operand = |p: &mut Self| {
             if li == 0 {
                 p.parse_unary()
@@ -781,44 +648,28 @@ impl<'a> Parser<'a> {
                 p.parse_binary_level(li - 1)
             }
         };
-        let mut l = operand(self);
-        while !l.is_null() {
-            let Some(op) = BINOP_LEVELS[li].iter().find_map(|m| {
-                let hit = match m.word {
-                    Some(w) => self.lx.tok_is_word(w),
-                    None => self.kind() == m.kind,
-                };
-                hit.then_some(m.op)
-            }) else {
-                break;
+        let mut l = operand(self)?;
+        while let Some(op) = BINOP_LEVELS[li].iter().find_map(|m| {
+            let hit = match m.word {
+                Some(w) => self.lx.tok_is_word(w),
+                None => self.kind() == m.kind,
             };
+            hit.then_some(m.op)
+        }) {
             if !self.advance() {
-                unsafe { mkr_node_free(l) };
-                return ptr::null_mut();
+                return None;
             }
-            let r = operand(self);
-            if r.is_null() {
-                unsafe { mkr_node_free(l) };
-                return ptr::null_mut();
-            }
-            let b = self.make_binop(op, l, r);
-            if b.is_null() {
-                unsafe {
-                    mkr_node_free(l);
-                    mkr_node_free(r);
-                }
-                return ptr::null_mut();
-            }
-            l = b;
+            let r = operand(self)?;
+            l = self.make_binop(op, l, r)?;
         }
-        l
+        Some(l)
     }
 
-    fn parse_expr(&mut self) -> *mut Node {
+    fn parse_expr(&mut self) -> Option<Ast> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
         unsafe {
             if mkr_limit_recurse_enter(self.limits, self.err) != 0 {
-                return ptr::null_mut();
+                return None;
             }
         }
         let n = self.parse_binary_level(BINOP_LEVELS.len() - 1);
@@ -868,35 +719,24 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 
 /* ---- entry ---- */
 
-/// Parse an expression into a Rust-owned compiled AST.
-#[allow(dead_code)]
+/// Parse an expression into a Rust-owned compiled AST; `None` on error with
+/// `*err` filled.
+///
+/// `expr` is a verified text: NUL-free, valid UTF-8.
+///
+/// # Safety
+/// `limits` must be null or live, and `err` null or a writable error slot.
 pub(crate) unsafe fn parse_owned(
     expr: VerifiedText,
     limits: *mut Limits,
     err: *mut Error,
-) -> Option<super::own::Ast> {
-    let root = parse_raw(expr, limits, err);
-    // SAFETY: `parse_raw` returns an owned root or NULL.
-    unsafe { super::own::Ast::from_raw(root) }
-}
-
-/// Parse an expression into a compiled AST; NULL on error with `*err` filled.
-///
-/// `expr` is a verified text: NUL-free, NUL-terminated, valid UTF-8.
-/// # Safety
-/// A C entry point: the contract is the one at its declaration in
-/// ext/makiri/xpath/mkr_xpath*.h.
-pub unsafe fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
-    parse_raw(expr, limits, err)
-}
-
-unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
+) -> Option<Ast> {
     if limits.is_null() {
         err_setf!(err, XP_ERR_INTERNAL, "mkr_parse: limits required");
-        return ptr::null_mut();
+        return None;
     }
     if mkr_limit_check_expr_bytes(limits, expr.len(), err) != 0 {
-        return ptr::null_mut();
+        return None;
     }
 
     let src: &[u8] = unsafe { expr.as_bytes() };
@@ -905,15 +745,12 @@ unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) ->
         Ok(lx) => lx,
         Err(e) => {
             lex_err(err, e);
-            return ptr::null_mut();
+            return None;
         }
     };
     let mut p = Parser { lx, err, limits };
 
-    let root = p.parse_expr();
-    if root.is_null() {
-        return ptr::null_mut();
-    }
+    let root = p.parse_expr()?;
     if p.kind() != Tok::Eof {
         let t = p.tok();
         err_setf!(
@@ -922,11 +759,18 @@ unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) ->
             "trailing input at '{}'",
             Bytes(p.text(&t))
         );
-        mkr_node_free(root);
-        return ptr::null_mut();
+        return None;
     }
     /* Peephole first, so the hoisting pass sees the rewritten step structure. */
-    mkr_apply_peephole(root);
-    mkr_mark_context_independent(root);
-    root
+    mkr_apply_peephole(root.as_raw());
+    mkr_mark_context_independent(root.as_raw());
+    Some(root)
+}
+
+/// Parse an expression into a compiled AST; NULL on error with `*err` filled.
+///
+/// # Safety
+/// As [`parse_owned`]; the caller frees the result with `mkr_node_free`.
+pub unsafe fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
+    parse_owned(expr, limits, err).map_or(ptr::null_mut(), Ast::into_raw)
 }
