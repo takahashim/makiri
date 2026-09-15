@@ -413,10 +413,7 @@ pub struct OwnedVal(pub(crate) Val);
 
 impl OwnedVal {
     pub fn new() -> OwnedVal {
-        OwnedVal(Val {
-            type_: 0,
-            u: ValU { nodeset: EMPTY_SET },
-        })
+        OwnedVal(Val::EMPTY)
     }
     pub fn as_mut(&mut self) -> *mut Val {
         &mut self.0
@@ -425,13 +422,7 @@ impl OwnedVal {
         &self.0
     }
     pub fn take(&mut self) -> Val {
-        core::mem::replace(
-            &mut self.0,
-            Val {
-                type_: 0,
-                u: ValU { nodeset: EMPTY_SET },
-            },
-        )
+        core::mem::replace(&mut self.0, Val::EMPTY)
     }
 }
 

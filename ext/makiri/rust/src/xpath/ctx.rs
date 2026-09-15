@@ -485,15 +485,15 @@ pub unsafe fn mkr_ctx_is_evaluating(ctx: *mut Context) -> c_int {
 /// different name on each side; ownership of the items array and the string
 /// transfers.
 unsafe fn to_public(v: &Val, out: *mut XPathValue) {
-    (*out).type_ = v.type_;
-    match v.type_ {
-        0 /* nodeset */ => {
-            (*out).u.nodeset.nodes = v.u.nodeset.items;
-            (*out).u.nodeset.count = v.u.nodeset.count;
+    (*out).type_ = v.type_tag();
+    match v.get() {
+        ValRef::NodeSet(ns) => {
+            (*out).u.nodeset.nodes = ns.items;
+            (*out).u.nodeset.count = ns.count;
         }
-        1 /* string */ => (*out).u.string = v.u.string,
-        2 /* number */ => (*out).u.number = v.u.number,
-        _ /* boolean */ => (*out).u.boolean = v.u.boolean,
+        ValRef::String(t) => (*out).u.string = t,
+        ValRef::Number(d) => (*out).u.number = d,
+        ValRef::Boolean(b) => (*out).u.boolean = c_int::from(b),
     }
 }
 
@@ -537,16 +537,7 @@ pub(crate) unsafe fn eval_compiled(
      * outer HAD built it, leave it so the outer's sorts still see it. */
     let order_was_built = (*ctx).order_index.built != 0;
 
-    let mut v = Val {
-        type_: 0,
-        u: ValU {
-            nodeset: NodeSet {
-                items: ptr::null_mut(),
-                count: 0,
-                capacity: 0,
-            },
-        },
-    };
+    let mut v = Val::EMPTY;
     let rc = if (*ctx).engine_kind != 0 {
         mkr_eval_ast_xml(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
     } else {
@@ -620,30 +611,20 @@ pub(crate) unsafe fn eval_compiled_first(
     if matched != 0 {
         /* A recognised first-match shape: a 0-or-1-node node-set, without
          * building or sorting the full descendant set. */
-        let mut v = Val {
-            type_: 0,
-            u: ValU {
-                nodeset: NodeSet {
-                    items: ptr::null_mut(),
-                    count: 0,
-                    capacity: 0,
-                },
-            },
-        };
-        mkr_nodeset_init(&raw mut v.u.nodeset);
+        let mut set = NodeSet::EMPTY;
         if !node.is_null()
             && mkr_nodeset_push(
-                &raw mut v.u.nodeset,
+                &mut set,
                 node,
                 ptr::null_mut(),
                 ErrSink::from_raw(out_error),
             )
             .is_err()
         {
-            mkr_nodeset_clear(&raw mut v.u.nodeset);
+            mkr_nodeset_clear(&mut set);
             return -1;
         }
-        to_public(&v, out_value);
+        to_public(&Val::nodeset(set), out_value);
         return 0;
     }
     eval_compiled(ctx, ast, out_value, out_error)

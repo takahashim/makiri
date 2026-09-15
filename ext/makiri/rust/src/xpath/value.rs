@@ -29,43 +29,10 @@ pub struct Focus<D: Dom> {
     pub size: usize,
 }
 
-/* mkr_xpath_type_t */
-pub const T_NODESET: u32 = 0;
-pub const T_STRING: u32 = 1;
-pub const T_NUMBER: u32 = 2;
-pub const T_BOOLEAN: u32 = 3;
-
 /* mkr_status_t */
 pub const ST_OK: c_int = 0;
 pub const ST_ERR_OOM: c_int = 1;
 pub const ST_ERR_LIMIT: c_int = 2;
-
-/// An empty `mkr_val_t` of the given type; the union starts zeroed, which is a
-/// valid empty node-set, a 0.0, a false, and a NULL string.
-pub fn val_zero(type_: u32) -> Val {
-    Val {
-        type_,
-        u: ValU {
-            nodeset: NodeSet {
-                items: ptr::null_mut(),
-                count: 0,
-                capacity: 0,
-            },
-        },
-    }
-}
-
-pub fn val_number(d: f64) -> Val {
-    let mut v = val_zero(T_NUMBER);
-    v.u.number = d;
-    v
-}
-
-pub fn val_boolean(b: bool) -> Val {
-    let mut v = val_zero(T_BOOLEAN);
-    v.u.boolean = c_int::from(b);
-    v
-}
 
 /// A borrowed view of a `mkr_owned_text_t`, empty when the pointer is NULL.
 ///
@@ -98,30 +65,23 @@ pub unsafe fn owned_copy(
 /// Both must point at valid `mkr_val_t`; `dst` is overwritten without being
 /// cleared first, so the caller owns whatever was in it.
 pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: ErrSink) -> Result<(), Reported> {
-    *dst = val_zero((*src).type_);
-    match (*src).type_ {
-        T_STRING => {
+    /* Empty first, so a failure leaves `dst` a valid value. */
+    *dst = Val::EMPTY;
+    *dst = match (*src).get() {
+        ValRef::String(s) => {
             let mut text = TextSlot::empty();
             owned_copy(
                 &mut text,
-                owned_bytes((*src).u.string),
+                owned_bytes(s),
                 err,
                 c"out of memory cloning string value",
             )?;
-            mkr_val_set_owned_text(dst, text);
-            Ok(())
+            Val::string(text)
         }
-        T_NUMBER => {
-            (*dst).u.number = (*src).u.number;
-            Ok(())
-        }
-        T_BOOLEAN => {
-            (*dst).u.boolean = (*src).u.boolean;
-            Ok(())
-        }
-        T_NODESET => {
-            let n = (*src).u.nodeset.count;
-            mkr_nodeset_init(&raw mut (*dst).u.nodeset);
+        ValRef::Number(d) => Val::number(d),
+        ValRef::Boolean(b) => Val::boolean(b),
+        ValRef::NodeSet(ns) => {
+            let n = ns.count;
             if n == 0 {
                 return Ok(());
             }
@@ -130,18 +90,15 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: ErrSink) -> Result<
             if items.is_null() {
                 return Err(err_setf!(err, XP_ERR_OOM, "out of memory cloning node-set"));
             }
-            ptr::copy_nonoverlapping((*src).u.nodeset.items, items, n);
-            (*dst).u.nodeset.items = items;
-            (*dst).u.nodeset.count = n;
-            (*dst).u.nodeset.capacity = n;
-            Ok(())
+            ptr::copy_nonoverlapping(ns.items, items, n);
+            Val::nodeset(NodeSet {
+                items,
+                count: n,
+                capacity: n,
+            })
         }
-        _ => Err(err_setf!(
-            err,
-            XP_ERR_INTERNAL,
-            "mkr_val_clone: unknown value type"
-        )),
-    }
+    };
+    Ok(())
 }
 
 /* ---------- node string-value (XPath 1.0 §5) ----------
@@ -301,37 +258,35 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
 pub unsafe fn val_to_number_unchecked<D: Dom>(doc: D::Doc, v: *const Val) -> f64 {
-    match (*v).type_ {
-        T_NUMBER => (*v).u.number,
-        T_BOOLEAN => {
-            if (*v).u.boolean != 0 {
+    match (*v).get() {
+        ValRef::Number(d) => d,
+        ValRef::Boolean(b) => {
+            if b {
                 1.0
             } else {
                 0.0
             }
         }
-        T_STRING => bytes_to_number(owned_bytes((*v).u.string)),
-        T_NODESET => {
-            if (*v).u.nodeset.count == 0 {
+        ValRef::String(s) => bytes_to_number(owned_bytes(s)),
+        ValRef::NodeSet(ns) => {
+            if ns.count == 0 {
                 return f64::NAN;
             }
             /* string-value of the first node in document order */
-            let text = node_text_best_effort::<D>(doc, nodeset_at::<D>(&(*v).u.nodeset, 0));
+            let text = node_text_best_effort::<D>(doc, nodeset_at::<D>(ns, 0));
             bytes_to_number(text.as_slice())
         }
-        _ => f64::NAN,
     }
 }
 
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
 pub unsafe fn val_to_boolean(v: *const Val) -> bool {
-    match (*v).type_ {
-        T_BOOLEAN => (*v).u.boolean != 0,
-        T_NUMBER => !((*v).u.number == 0.0 || (*v).u.number.is_nan()),
-        T_STRING => (*v).u.string.is_present() && *(*v).u.string.as_ptr() != 0,
-        T_NODESET => (*v).u.nodeset.count > 0,
-        _ => false,
+    match (*v).get() {
+        ValRef::Boolean(b) => b,
+        ValRef::Number(d) => !(d == 0.0 || d.is_nan()),
+        ValRef::String(s) => s.is_present() && *s.as_ptr() != 0,
+        ValRef::NodeSet(ns) => ns.count > 0,
     }
 }
 
@@ -350,24 +305,19 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     if v.is_null() {
         return owned_copy(out, b"", err, c"out of memory converting value to string");
     }
-    match (*v).type_ {
-        T_STRING => {
-            let text = owned_bytes((*v).u.string);
+    match (*v).get() {
+        ValRef::String(s) => {
+            let text = owned_bytes(s);
             if !limits.is_null() {
                 mkr_limit_check_string_bytes(limits, text.len(), err)?;
             }
             owned_copy(out, text, err, c"out of memory copying string value")
         }
-        T_BOOLEAN => {
-            let s: &[u8] = if (*v).u.boolean != 0 {
-                b"true"
-            } else {
-                b"false"
-            };
+        ValRef::Boolean(b) => {
+            let s: &[u8] = if b { b"true" } else { b"false" };
             owned_copy(out, s, err, c"out of memory converting boolean to string")
         }
-        T_NUMBER => {
-            let d = (*v).u.number;
+        ValRef::Number(d) => {
             let what = c"out of memory converting number to string";
             if d.is_nan() {
                 return owned_copy(out, b"NaN", err, what);
@@ -389,15 +339,14 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
                 )),
             }
         }
-        T_NODESET => {
-            if (*v).u.nodeset.count == 0 {
+        ValRef::NodeSet(ns) => {
+            if ns.count == 0 {
                 return owned_copy(out, b"", err, c"out of memory");
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, out)
+            node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err, out)
         }
-        _ => Err(err_setf!(err, XP_ERR_INTERNAL, "unknown value type")),
     }
 }
 
@@ -413,19 +362,13 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
     err: ErrSink,
     out: *mut f64,
 ) -> Result<(), Reported> {
-    if (*v).type_ == T_NODESET {
-        if (*v).u.nodeset.count == 0 {
+    if let Some(ns) = (*v).as_nodeset() {
+        if ns.count == 0 {
             *out = f64::NAN;
             return Ok(());
         }
         let mut text = OwnedText::new();
-        node_to_owned_text::<D>(
-            doc,
-            nodeset_at::<D>(&(*v).u.nodeset, 0),
-            limits,
-            err,
-            text.as_mut(),
-        )?;
+        node_to_owned_text::<D>(doc, nodeset_at::<D>(ns, 0), limits, err, text.as_mut())?;
         *out = bytes_to_number(text.as_slice());
         return Ok(());
     }

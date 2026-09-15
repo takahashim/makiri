@@ -3,32 +3,20 @@
 use super::super::abi::*;
 use super::{nodeset, text};
 use crate::err_setf;
-use core::ptr;
 
 pub unsafe fn mkr_val_clear(v: *mut Val) {
     if v.is_null() {
         return;
     }
-    match (*v).type_ {
-        0 => nodeset::mkr_nodeset_clear(&raw mut (*v).u.nodeset),
-        1 => text::mkr_owned_text_clear(&raw mut (*v).u.string),
+    match core::mem::replace(&mut *v, Val::EMPTY).get() {
+        ValRef::NodeSet(ns) => nodeset::mkr_nodeset_clear(&mut { *ns }),
+        ValRef::String(mut s) => text::mkr_owned_text_clear(&mut s),
         _ => {}
     }
-    *v = Val {
-        type_: 0,
-        u: ValU {
-            nodeset: NodeSet {
-                items: ptr::null_mut(),
-                count: 0,
-                capacity: 0,
-            },
-        },
-    };
 }
 pub unsafe fn mkr_val_set_owned_text(v: *mut Val, owned: TextSlot) {
     if !v.is_null() {
-        (*v).type_ = 1;
-        (*v).u.string = owned;
+        *v = Val::string(owned);
     }
 }
 pub unsafe fn mkr_val_set_borrowed_text_copy(

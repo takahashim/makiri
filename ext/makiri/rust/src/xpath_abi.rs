@@ -189,6 +189,15 @@ pub struct NodeSet {
     pub capacity: usize,
 }
 
+impl NodeSet {
+    /// No nodes and no array.
+    pub const EMPTY: NodeSet = NodeSet {
+        items: core::ptr::null_mut(),
+        count: 0,
+        capacity: 0,
+    };
+}
+
 #[derive(Clone, Copy)]
 pub union ValU {
     pub nodeset: NodeSet,
@@ -219,11 +228,108 @@ pub struct XPathValue {
     pub u: XPathValueU,
 }
 
+/* mkr_xpath_type_t */
+pub const T_NODESET: u32 = 0;
+pub const T_STRING: u32 = 1;
+pub const T_NUMBER: u32 = 2;
+pub const T_BOOLEAN: u32 = 3;
+
 /// mkr_val_t - the engine's internal value, embedded in a node's memo slot.
+///
+/// The tag and the union are private, so they cannot disagree: a value is made
+/// by one of the constructors and read through [`Val::get`]. Every constructor
+/// starts from the all-zero empty node-set, so all of the union's bytes are
+/// initialised whichever arm is written - which is also why a calloc'd memo slot
+/// is a valid value.
 #[derive(Clone, Copy)]
 pub struct Val {
-    pub type_: u32,
-    pub u: ValU,
+    type_: u32,
+    u: ValU,
+}
+
+/// A value's contents by type: matching on the tag and reading the field it
+/// names, as one step that cannot pick the wrong field.
+#[derive(Clone, Copy)]
+pub enum ValRef<'a> {
+    NodeSet(&'a NodeSet),
+    /// Borrowed: the value still owns the bytes.
+    String(TextSlot),
+    Number(f64),
+    Boolean(bool),
+}
+
+impl Val {
+    /// The empty node-set - what every slot starts as.
+    pub const EMPTY: Val = Val {
+        type_: T_NODESET,
+        u: ValU {
+            nodeset: NodeSet::EMPTY,
+        },
+    };
+
+    /// A node-set value, owning `ns`'s array. The node-set is the union's
+    /// largest arm, so writing it initialises every byte.
+    pub fn nodeset(ns: NodeSet) -> Val {
+        Val {
+            type_: T_NODESET,
+            u: ValU { nodeset: ns },
+        }
+    }
+
+    /// A string value, owning `text`.
+    pub fn string(text: TextSlot) -> Val {
+        let mut v = Val::EMPTY;
+        v.type_ = T_STRING;
+        v.u.string = text;
+        v
+    }
+
+    pub fn number(d: f64) -> Val {
+        let mut v = Val::EMPTY;
+        v.type_ = T_NUMBER;
+        v.u.number = d;
+        v
+    }
+
+    pub fn boolean(b: bool) -> Val {
+        let mut v = Val::EMPTY;
+        v.type_ = T_BOOLEAN;
+        v.u.boolean = c_int::from(b);
+        v
+    }
+
+    /// The tag as `mkr_xpath_type_t` numbers it, for the public value.
+    pub fn type_tag(&self) -> u32 {
+        self.type_
+    }
+
+    pub fn get(&self) -> ValRef<'_> {
+        // SAFETY: only the constructors set the tag, each together with the
+        // field it names, over a fully initialised union.
+        unsafe {
+            match self.type_ {
+                T_STRING => ValRef::String(self.u.string),
+                T_NUMBER => ValRef::Number(self.u.number),
+                T_BOOLEAN => ValRef::Boolean(self.u.boolean != 0),
+                _ => ValRef::NodeSet(&self.u.nodeset),
+            }
+        }
+    }
+
+    pub fn as_nodeset(&self) -> Option<&NodeSet> {
+        match self.get() {
+            ValRef::NodeSet(ns) => Some(ns),
+            _ => None,
+        }
+    }
+
+    pub fn as_nodeset_mut(&mut self) -> Option<&mut NodeSet> {
+        match self.type_ {
+            T_STRING | T_NUMBER | T_BOOLEAN => None,
+            // SAFETY: as in `get`.
+            _ => Some(unsafe { &mut self.u.nodeset }),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

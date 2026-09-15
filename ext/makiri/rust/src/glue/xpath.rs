@@ -45,8 +45,8 @@ use crate::xpath::ctx::OwnedContext;
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
     mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear, ErrSink, Error as XPathError,
-    Node as Ast, TextSlot, Val, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME,
-    XP_ERR_SYNTAX,
+    Node as Ast, NodeSet, TextSlot, Val, ValRef, VerifiedText, XPathValue, XP_ERR_LIMIT,
+    XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
 
 use super::abi::{
@@ -441,25 +441,18 @@ struct Bridge {
 
 /// engine value -> Ruby.
 unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
-    match v.type_ {
-        MKR_XPATH_TYPE_NODESET => {
+    match v.get() {
+        ValRef::NodeSet(ns) => {
             let set = mkr_node_set_new(b.document);
-            let ns = v.u.nodeset;
             for i in 0..ns.count {
                 mkr_node_set_push(set, *ns.items.add(i));
             }
             set
         }
-        MKR_XPATH_TYPE_STRING => owned_text_to_str(v.u.string),
-        MKR_XPATH_TYPE_NUMBER => rb_sys::rb_float_new(v.u.number),
-        MKR_XPATH_TYPE_BOOLEAN => {
-            if v.u.boolean != 0 {
-                rb_sys::Qtrue as VALUE
-            } else {
-                rb_sys::Qfalse as VALUE
-            }
-        }
-        _ => rb_sys::Qnil as VALUE,
+        ValRef::String(t) => owned_text_to_str(t),
+        ValRef::Number(d) => rb_sys::rb_float_new(d),
+        ValRef::Boolean(true) => rb_sys::Qtrue as VALUE,
+        ValRef::Boolean(false) => rb_sys::Qfalse as VALUE,
     }
 }
 
@@ -473,7 +466,7 @@ unsafe fn push_result_node(
     ctx: *mut Ctx,
     document: VALUE,
     rb_node: VALUE,
-    out: *mut Val,
+    set: *mut NodeSet,
     err: &mut ErrBuf,
 ) -> bool {
     if mkr_node_document(rb_node) != document {
@@ -482,14 +475,7 @@ unsafe fn push_result_node(
     }
     let n = mkr_node_raw(rb_node);
     let mut ierr: XPathError = core::mem::zeroed();
-    if mkr_nodeset_push(
-        &mut (*out).u.nodeset,
-        n,
-        mkr_ctx_limits(ctx),
-        ErrSink::new(&mut ierr),
-    )
-    .is_err()
-    {
+    if mkr_nodeset_push(set, n, mkr_ctx_limits(ctx), ErrSink::new(&mut ierr)).is_err() {
         mkr_xpath_error_clear(&mut ierr);
         err.set("out of memory building handler result");
         return false;
@@ -548,8 +534,7 @@ unsafe fn ruby_to_out(
 ) -> bool {
     let rv = Value::from_raw(r);
     if r == rb_sys::Qtrue as VALUE || r == rb_sys::Qfalse as VALUE {
-        (*out).type_ = MKR_XPATH_TYPE_BOOLEAN;
-        (*out).u.boolean = c_int::from(r == rb_sys::Qtrue as VALUE);
+        *out = Val::boolean(r == rb_sys::Qtrue as VALUE);
         return true;
     }
     let ruby = Ruby::get_unchecked();
@@ -558,22 +543,19 @@ unsafe fn ruby_to_out(
             err.set("handler returned a number that could not be read");
             return false;
         };
-        (*out).type_ = MKR_XPATH_TYPE_NUMBER;
-        (*out).u.number = f;
+        *out = Val::number(f);
         return true;
     }
     let is_node = is_kind_of(rv, mkr_cNode);
     if is_node || is_kind_of(rv, mkr_cNodeSet) {
-        (*out).type_ = MKR_XPATH_TYPE_NODESET;
-        mkr_nodeset_init(&mut (*out).u.nodeset);
+        let mut set = NodeSet::EMPTY;
         if is_node {
-            if !push_result_node(ctx, document, r, out, err) {
-                mkr_nodeset_clear(&mut (*out).u.nodeset);
+            if !push_result_node(ctx, document, r, &mut set, err) {
+                mkr_nodeset_clear(&mut set);
                 return false;
             }
         } else {
             let Ok(n) = rv.funcall::<_, _, i64>("length", ()) else {
-                mkr_nodeset_clear(&mut (*out).u.nodeset);
                 err.set("handler result could not be read");
                 return false;
             };
@@ -584,12 +566,13 @@ unsafe fn ruby_to_out(
                 if !is_kind_of(node, mkr_cNode) {
                     continue;
                 }
-                if !push_result_node(ctx, document, node.as_raw(), out, err) {
-                    mkr_nodeset_clear(&mut (*out).u.nodeset);
+                if !push_result_node(ctx, document, node.as_raw(), &mut set, err) {
+                    mkr_nodeset_clear(&mut set);
                     return false;
                 }
             }
         }
+        *out = Val::nodeset(set);
         return true;
     }
 
@@ -626,7 +609,7 @@ unsafe fn ruby_to_out(
         ErrSink::silent(),
         None,
     );
-    if rc != 0 || (*out).u.string.is_absent() {
+    if rc != 0 || !matches!((*out).get(), ValRef::String(t) if t.is_present()) {
         err.set("out of memory converting handler result");
         return false;
     }

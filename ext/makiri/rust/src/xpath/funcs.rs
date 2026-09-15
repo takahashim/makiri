@@ -13,7 +13,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::order::nodeset_unique_sorted;
-use super::own::OwnedText;
+use super::own::{OwnedText, Set};
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
@@ -122,15 +122,15 @@ unsafe fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) ->
 
 /// The shared "argument must be a node-set" check.
 unsafe fn require_nodeset(arg: *const Val, fname: &str, err: ErrSink) -> FnResult<*const NodeSet> {
-    if (*arg).type_ != T_NODESET {
-        return Err(err_setf!(
+    match (*arg).as_nodeset() {
+        Some(ns) => Ok(ns as *const NodeSet),
+        None => Err(err_setf!(
             err,
             XP_ERR_TYPE,
             "{}(): argument must be a node-set",
             fname
-        ));
+        )),
     }
-    Ok(&raw const (*arg).u.nodeset)
 }
 
 /// An owned copy of `s`, or `Err` with `*err` naming `what` on OOM.
@@ -145,12 +145,12 @@ unsafe fn set_string(out: *mut Val, s: &[u8], err: ErrSink, what: &str) -> FnRes
 }
 
 unsafe fn set_num(out: *mut Val, d: f64) -> FnResult {
-    *out = val_number(d);
+    *out = Val::number(d);
     Ok(())
 }
 
 unsafe fn set_bool(out: *mut Val, b: bool) -> FnResult {
-    *out = val_boolean(b);
+    *out = Val::boolean(b);
     Ok(())
 }
 
@@ -339,8 +339,7 @@ unsafe fn fn_id<D: Dom>(
     err: ErrSink,
 ) -> FnResult {
     arity(args.len(), 1, 1, err, "id")?;
-    (*out).type_ = T_NODESET;
-    mkr_nodeset_init(&raw mut (*out).u.nodeset);
+    *out = Val::EMPTY;
 
     if D::IS_XML {
         /* Host policy: in XML an ID is an attribute DECLARED ID-typed by the
@@ -354,13 +353,14 @@ unsafe fn fn_id<D: Dom>(
         return Ok(());
     }
     let root = D::document_node(D::doc_from_void(doc));
-    let ns_out = &raw mut (*out).u.nodeset;
+    /* Collected in a guard, so a failure part-way frees what was found. */
+    let mut found = Set::new();
+    let ns_out = found.as_mut();
 
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
      * anything else is converted to a string and split the same way. */
-    let collected = if args[0].type_ == T_NODESET {
-        let set = &raw const args[0].u.nodeset;
-        (0..(*set).count).try_for_each(|i| {
+    let collected = if let Some(set) = args[0].as_nodeset() {
+        (0..set.count).try_for_each(|i| {
             let mut t = OwnedText::new();
             node_to_owned_text::<D>(
                 D::doc_from_void(doc),
@@ -375,12 +375,10 @@ unsafe fn fn_id<D: Dom>(
         to_text::<D>(&args[0], ctx, err)
             .and_then(|t| id_collect::<D>(t.as_slice(), root, ns_out, ctx, err))
     };
-    if let Err(e) = collected {
-        mkr_nodeset_clear(ns_out);
-        return Err(e);
-    }
+    collected?;
     /* §4.1: the result is in document order with duplicates removed. */
-    nodeset_unique_sorted::<D>(ctx, ns_out);
+    nodeset_unique_sorted::<D>(ctx, found.as_mut());
+    *out = Val::nodeset(found.take());
     Ok(())
 }
 
@@ -498,8 +496,7 @@ unsafe fn fn_string<D: Dom>(
 ) -> FnResult {
     arity(args.len(), 0, 1, err, "string")?;
     let mut t = arg_or_self_text::<D>(focus, args, ctx, err)?;
-    (*out).type_ = T_STRING;
-    mkr_val_set_owned_text(out, t.take());
+    *out = Val::string(t.take());
     Ok(())
 }
 
@@ -836,7 +833,7 @@ unsafe fn fn_lang<D: Dom>(
     arity(args.len(), 1, 1, err, "lang")?;
     let want = to_text::<D>(&args[0], ctx, err)?;
     let want = want.as_slice();
-    *out = val_boolean(false);
+    let mut hit = false;
     /* Walk the ancestors for the host's language attribute. Host policy: XPath
      * 1.0 lang() is xml:lang based; HTML uses `lang`, accepting xml:lang as a
      * fallback. */
@@ -854,13 +851,14 @@ unsafe fn fn_lang<D: Dom>(
                     && v[..want.len()].eq_ignore_ascii_case(want)
                     && (v.len() == want.len() || v[want.len()] == b'-')
                 {
-                    (*out).u.boolean = 1;
+                    hit = true;
                     break;
                 }
             }
         }
         p = D::parent(doc, p);
     }
+    *out = Val::boolean(hit);
     Ok(())
 }
 

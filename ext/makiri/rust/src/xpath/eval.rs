@@ -68,10 +68,9 @@ unsafe fn apply_predicates<D: Dom>(
             };
             eval_node::<D>(ctx, pred, &pf, v.as_mut(), err)?;
             /* A bare number predicate means position() = that number. */
-            let keep = if (*v.as_ptr()).type_ == T_NUMBER {
-                (*v.as_ptr()).u.number == (i + 1) as f64
-            } else {
-                val_to_boolean(v.as_ptr())
+            let keep = match (*v.as_ptr()).get() {
+                ValRef::Number(d) => d == (i + 1) as f64,
+                _ => val_to_boolean(v.as_ptr()),
             };
             if keep {
                 kept.push::<D>(n, limits, err)?;
@@ -247,8 +246,7 @@ unsafe fn eval_steps<D: Dom>(
         eval_step::<D>(ctx, step, &current, &mut next, err)?;
         current = Set::adopt(next.take());
     }
-    (*out).type_ = T_NODESET;
-    (*out).u.nodeset = current.take();
+    *out = Val::nodeset(current.take());
     Ok(())
 }
 
@@ -267,73 +265,76 @@ unsafe fn compare_eq<D: Dom>(
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
     let want_eq = op == OP_EQ;
-    let (lt, rt) = ((*l).type_, (*r).type_);
+    let (l, r) = (&*l, &*r);
 
-    if lt == T_NODESET && rt == T_NODESET {
-        /* The pair scan itself is M*N even though the string builds are O(M+N),
-         * so charge each pair: otherwise an all-pairs node-set equality drives
-         * up to ~1e14 comparisons as a handful of ops. */
-        let (ls, rs) = (&raw const (*l).u.nodeset, &raw const (*r).u.nodeset);
-        for i in 0..(*ls).count {
-            let a = cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?;
-            for j in 0..(*rs).count {
+    let (set, sc) = match (l.as_nodeset(), r.as_nodeset()) {
+        (Some(ls), Some(rs)) => {
+            /* The pair scan itself is M*N even though the string builds are
+             * O(M+N), so charge each pair: otherwise an all-pairs node-set
+             * equality drives up to ~1e14 comparisons as a handful of ops. */
+            for i in 0..ls.count {
+                let a = cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?;
+                for j in 0..rs.count {
+                    mkr_limit_eval_op(limits, err)?;
+                    let b = cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?;
+                    if (a == b) == want_eq {
+                        return Ok(true);
+                    }
+                }
+            }
+            return Ok(false);
+        }
+        (Some(set), None) => (set, r),
+        (None, Some(set)) => (set, l),
+        (None, None) => {
+            let eq = match (l.get(), r.get()) {
+                (ValRef::Boolean(_), _) | (_, ValRef::Boolean(_)) => {
+                    val_to_boolean(l) == val_to_boolean(r)
+                }
+                /* Both operands are non-node-sets here, so the unchecked
+                 * coercion is the right entry - it cannot allocate. */
+                (ValRef::Number(_), _) | (_, ValRef::Number(_)) => {
+                    val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r)
+                }
+                _ => {
+                    let mut ls = OwnedText::new();
+                    let mut rs = OwnedText::new();
+                    val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut())?;
+                    val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut())?;
+                    ls.as_slice() == rs.as_slice()
+                }
+            };
+            return Ok(if want_eq { eq } else { !eq });
+        }
+    };
+    match sc.get() {
+        ValRef::Number(target) => {
+            for i in 0..set.count {
                 mkr_limit_eval_op(limits, err)?;
-                let b = cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?;
-                if (a == b) == want_eq {
+                let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
+                if (bytes_to_number(s) == target) == want_eq {
                     return Ok(true);
                 }
             }
+            Ok(false)
         }
-        return Ok(false);
-    }
-    if lt == T_NODESET || rt == T_NODESET {
-        let (ns, sc) = if lt == T_NODESET { (l, r) } else { (r, l) };
-        let set = &raw const (*ns).u.nodeset;
-        match (*sc).type_ {
-            T_NUMBER => {
-                let target = (*sc).u.number;
-                for i in 0..(*set).count {
-                    mkr_limit_eval_op(limits, err)?;
-                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
-                    if (bytes_to_number(s) == target) == want_eq {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            T_BOOLEAN => {
-                let eq = ((*set).count > 0) == ((*sc).u.boolean != 0);
-                Ok(if want_eq { eq } else { !eq })
-            }
-            _ => {
-                let mut target = OwnedText::new();
-                val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut())?;
-                let want = target.as_slice();
-                for i in 0..(*set).count {
-                    mkr_limit_eval_op(limits, err)?;
-                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
-                    if (s == want) == want_eq {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
+        ValRef::Boolean(b) => {
+            let eq = (set.count > 0) == b;
+            Ok(if want_eq { eq } else { !eq })
         }
-    } else if lt == T_BOOLEAN || rt == T_BOOLEAN {
-        let eq = val_to_boolean(l) == val_to_boolean(r);
-        Ok(if want_eq { eq } else { !eq })
-    } else if lt == T_NUMBER || rt == T_NUMBER {
-        /* Both operands are non-node-sets here, so the unchecked coercion is the
-         * right entry - it cannot allocate. */
-        let eq = val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r);
-        Ok(if want_eq { eq } else { !eq })
-    } else {
-        let mut ls = OwnedText::new();
-        let mut rs = OwnedText::new();
-        val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut())?;
-        val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut())?;
-        let eq = ls.as_slice() == rs.as_slice();
-        Ok(if want_eq { eq } else { !eq })
+        _ => {
+            let mut target = OwnedText::new();
+            val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut())?;
+            let want = target.as_slice();
+            for i in 0..set.count {
+                mkr_limit_eval_op(limits, err)?;
+                let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
+                if (s == want) == want_eq {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
     }
 }
 
@@ -359,42 +360,45 @@ unsafe fn compare_rel<D: Dom>(
 ) -> EvalResult<bool> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let limits = mkr_ctx_limits(ctx);
-    let (lt, rt) = ((*l).type_, (*r).type_);
+    let (l, r) = (&*l, &*r);
 
-    if lt == T_NODESET && rt == T_NODESET {
-        let (ls, rs) = (&raw const (*l).u.nodeset, &raw const (*r).u.nodeset);
-        for i in 0..(*ls).count {
-            let a = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?);
-            for j in 0..(*rs).count {
-                mkr_limit_eval_op(limits, err)?;
-                let b = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?);
-                if rel_hit(op, a, b) {
-                    return Ok(true);
+    /* `swap` records that the node-set is the right operand, so each pair is
+     * compared in source order. */
+    let (set, sc, swap) = match (l.as_nodeset(), r.as_nodeset()) {
+        (Some(ls), Some(rs)) => {
+            for i in 0..ls.count {
+                let a = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?);
+                for j in 0..rs.count {
+                    mkr_limit_eval_op(limits, err)?;
+                    let b =
+                        bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?);
+                    if rel_hit(op, a, b) {
+                        return Ok(true);
+                    }
                 }
             }
+            return Ok(false);
         }
-        return Ok(false);
-    }
-    if lt == T_NODESET || rt == T_NODESET {
-        let (ns, sc) = if lt == T_NODESET { (l, r) } else { (r, l) };
-        let swap = lt != T_NODESET;
-        let mut scn = 0.0;
-        val_to_number_or_fail::<D>(doc, sc, limits, err, &mut scn)?;
-        let set = &raw const (*ns).u.nodeset;
-        for i in 0..(*set).count {
-            mkr_limit_eval_op(limits, err)?;
-            let nv = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?);
-            let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
-            if rel_hit(op, a, b) {
-                return Ok(true);
-            }
+        (Some(set), None) => (set, r, false),
+        (None, Some(set)) => (set, l, true),
+        (None, None) => {
+            let (mut a, mut b) = (0.0, 0.0);
+            val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)?;
+            val_to_number_or_fail::<D>(doc, r, limits, err, &mut b)?;
+            return Ok(rel_hit(op, a, b));
         }
-        return Ok(false);
+    };
+    let mut scn = 0.0;
+    val_to_number_or_fail::<D>(doc, sc, limits, err, &mut scn)?;
+    for i in 0..set.count {
+        mkr_limit_eval_op(limits, err)?;
+        let nv = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?);
+        let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
+        if rel_hit(op, a, b) {
+            return Ok(true);
+        }
     }
-    let (mut a, mut b) = (0.0, 0.0);
-    val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)?;
-    val_to_number_or_fail::<D>(doc, r, limits, err, &mut b)?;
-    Ok(rel_hit(op, a, b))
+    Ok(false)
 }
 
 /* ---------- union ---------- */
@@ -406,28 +410,26 @@ unsafe fn union_nodeset<D: Dom>(
     out: *mut Val,
     err: ErrSink,
 ) -> EvalResult {
-    if (*l).type_ != T_NODESET || (*r).type_ != T_NODESET {
+    let (Some(ls), Some(rs)) = ((*l).as_nodeset(), (*r).as_nodeset()) else {
         return Err(err_setf!(
             err,
             XP_ERR_TYPE,
             "operands of '|' must be node-sets"
         ));
-    }
+    };
     let limits = mkr_ctx_limits(ctx);
     /* Push both sides without deduplicating per insert - that was quadratic -
      * then sort once and collapse adjacent duplicates. */
     let mut merged = Set::new();
-    for side in [l, r] {
-        let set = &raw const (*side).u.nodeset;
-        for i in 0..(*set).count {
+    for set in [ls, rs] {
+        for i in 0..set.count {
             merged.push::<D>(nodeset_at::<D>(set, i), limits, err)?;
         }
     }
     /* §3.3: the result of '|' is a node-set in document order, which the
      * downstream string() / number() / positional predicates assume. */
     nodeset_unique_sorted::<D>(ctx, merged.as_mut());
-    (*out).type_ = T_NODESET;
-    (*out).u.nodeset = merged.take();
+    *out = Val::nodeset(merged.take());
     Ok(())
 }
 
@@ -614,33 +616,24 @@ unsafe fn eval_filter<D: Dom>(
     let mut primary = OwnedVal::new();
     eval_node::<D>(ctx, (*f).expr, focus, primary.as_mut(), err)?;
     if (*f).npreds > 0 {
-        if (*primary.as_ptr()).type_ != T_NODESET {
+        let Some(ns) = (*primary.as_mut()).as_nodeset_mut() else {
             return Err(err_setf!(
                 err,
                 XP_ERR_TYPE,
                 "predicate applied to non-node-set"
             ));
-        }
-        let mut set = Set::adopt((*primary.as_ptr()).u.nodeset);
-        (*primary.as_mut()).u.nodeset = NodeSet {
-            items: ptr::null_mut(),
-            count: 0,
-            capacity: 0,
         };
+        /* Filtered in a guard, so a failing predicate frees the set. */
+        let mut set = Set::adopt(core::mem::replace(ns, NodeSet::EMPTY));
         let preds = core::slice::from_raw_parts((*f).preds, (*f).npreds);
         apply_predicates::<D>(ctx, preds, &mut set, err)?;
-        (*primary.as_mut()).u.nodeset = set.take();
+        *ns = set.take();
     }
     if (*f).npath > 0 {
-        if (*primary.as_ptr()).type_ != T_NODESET {
+        let Some(ns) = (*primary.as_mut()).as_nodeset_mut() else {
             return Err(err_setf!(err, XP_ERR_TYPE, "path applied to non-node-set"));
-        }
-        let mut seed = Set::adopt((*primary.as_ptr()).u.nodeset);
-        (*primary.as_mut()).u.nodeset = NodeSet {
-            items: ptr::null_mut(),
-            count: 0,
-            capacity: 0,
         };
+        let mut seed = Set::adopt(core::mem::replace(ns, NodeSet::EMPTY));
         return eval_steps::<D>(
             ctx,
             path_steps((*f).path_steps, (*f).npath),
@@ -694,7 +687,7 @@ unsafe fn eval_fncall<D: Dom>(
             ));
         }
         for i in 0..nargs {
-            let mut v = val_zero(T_NODESET);
+            let mut v = Val::EMPTY;
             if let Err(e) = eval_node::<D>(ctx, *(*call).args.add(i), focus, &mut v, err) {
                 mkr_val_clear(&mut v);
                 clear_args(&mut args);
@@ -776,12 +769,12 @@ unsafe fn eval_binop<D: Dom>(
         eval_node::<D>(ctx, (*b).lhs, focus, l.as_mut(), err)?;
         let lb = val_to_boolean(l.as_ptr());
         if (op == OP_OR && lb) || (op == OP_AND && !lb) {
-            *out = val_boolean(lb);
+            *out = Val::boolean(lb);
             return Ok(());
         }
         let mut r = OwnedVal::new();
         eval_node::<D>(ctx, (*b).rhs, focus, r.as_mut(), err)?;
-        *out = val_boolean(val_to_boolean(r.as_ptr()));
+        *out = Val::boolean(val_to_boolean(r.as_ptr()));
         return Ok(());
     }
 
@@ -793,18 +786,18 @@ unsafe fn eval_binop<D: Dom>(
 
     match op {
         OP_EQ | OP_NE => {
-            *out = val_boolean(compare_eq::<D>(ctx, lp, rp, op, err)?);
+            *out = Val::boolean(compare_eq::<D>(ctx, lp, rp, op, err)?);
             Ok(())
         }
         OP_LT | OP_LE | OP_GT | OP_GE => {
-            *out = val_boolean(compare_rel::<D>(ctx, lp, rp, op, err)?);
+            *out = Val::boolean(compare_rel::<D>(ctx, lp, rp, op, err)?);
             Ok(())
         }
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MOD => {
             let (mut a, mut c) = (0.0, 0.0);
             val_to_number_or_fail::<D>(doc, lp, limits, err, &mut a)?;
             val_to_number_or_fail::<D>(doc, rp, limits, err, &mut c)?;
-            *out = val_number(match op {
+            *out = Val::number(match op {
                 OP_ADD => a + c,
                 OP_SUB => a - c,
                 OP_MUL => a * c,
@@ -833,7 +826,7 @@ unsafe fn eval_negate<D: Dom>(
     eval_node::<D>(ctx, (*n).u.unary.expr, focus, v.as_mut(), err)?;
     let mut d = 0.0;
     val_to_number_or_fail::<D>(doc, v.as_ptr(), limits, err, &mut d)?;
-    *out = val_number(-d);
+    *out = Val::number(-d);
     Ok(())
 }
 
@@ -892,7 +885,7 @@ unsafe fn eval_node_inner<D: Dom>(
             c"out of memory copying literal",
         ),
         NK_LITERAL_NUM => {
-            *out = val_number((*n).u.literal_num);
+            *out = Val::number((*n).u.literal_num);
             Ok(())
         }
         NK_VARREF => {
@@ -928,7 +921,7 @@ unsafe fn eval_node_inner<D: Dom>(
      * caller's value independent of the cached one, which matters because the
      * caller is free to consume theirs. */
     if result.is_ok() && (*n).is_context_independent != 0 && (*n).memoized == 0 {
-        let mut memo = val_zero(T_NODESET);
+        let mut memo = Val::EMPTY;
         /* OOM during the clone: the caller's `out` is still valid, so leave the
          * node unmemoized and surface the error. */
         val_clone(out, &mut memo, err)?;
