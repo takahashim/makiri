@@ -84,7 +84,7 @@ impl VerifiedText {
     ///
     /// The caller keeps `bytes` alive, at the same address, for as long as the
     /// view is used.
-    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if crate::cutf8::text_verdict(bytes, false) != crate::cutf8::TextVerdict::Ok {
             return None;
         }

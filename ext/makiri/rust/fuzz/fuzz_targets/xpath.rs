@@ -23,21 +23,17 @@ const FIXED_XML: &[u8] = b"<?xml version='1.0'?>\
 </root>";
 
 fuzz_target!(|data: &[u8]| {
+    let Ok(mut doc) = mkr_xml_parse(FIXED_XML) else {
+        return;
+    };
+    let Some(expr) = Expr::new(data) else {
+        return;
+    };
+    let Some(text) = expr.text() else {
+        return;
+    };
+
     unsafe {
-        let mut status: i32 = 0;
-        let doc = mkr_xml_parse(FIXED_XML.as_ptr() as *const _, FIXED_XML.len(), &mut status);
-        if doc.is_null() || (*doc).doc_node.is_null() {
-            if !doc.is_null() {
-                mkr_xml_doc_destroy(doc);
-            }
-            return;
-        }
-
-        let Some(expr) = Expr::new(data) else {
-            mkr_xml_doc_destroy(doc);
-            return;
-        };
-
         // Compile-time budgets, tightened so a hostile expression fails fast
         // instead of burning fuzzer time on a pathological AST. Same numbers
         // the C harness used.
@@ -47,16 +43,13 @@ fuzz_target!(|data: &[u8]| {
         limits.max_expr_bytes = 16 * 1024;
 
         let mut err: XPathError = core::mem::zeroed();
-        let ast = mkr_parse(expr.text(), &mut limits, &mut err);
+        let ast = mkr_parse(text, &mut limits, &mut err);
         if ast.is_null() {
             mkr_xpath_error_clear(&mut err);
-            mkr_xml_doc_destroy(doc);
             return;
         }
 
-        let ctx = mkr_xpath_context_new((*doc).doc_node as *mut _, (*doc).doc_node as *mut _);
-        if !ctx.is_null() {
-            mkr_xpath_set_engine_kind(ctx, ENGINE_XML);
+        if let Some(ctx) = xml_context(&mut doc) {
             // The evaluator reads the budgets off the CONTEXT, not off a local
             // struct, so they have to be tightened through mkr_ctx_limits -
             // otherwise the evaluation runs under the large defaults and one
@@ -78,6 +71,5 @@ fuzz_target!(|data: &[u8]| {
         }
 
         mkr_node_free(ast);
-        mkr_xml_doc_destroy(doc);
     }
 });

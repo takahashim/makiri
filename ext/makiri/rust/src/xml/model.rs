@@ -215,7 +215,7 @@ impl NodeId {
 
     /// The opaque token the engine carries in node-sets (identity here).
     #[inline]
-    pub(crate) fn to_token(self) -> usize {
+    pub fn to_token(self) -> usize {
         self.0
     }
     #[inline]
