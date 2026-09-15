@@ -18,14 +18,15 @@
 //! # Reading the arena
 //!
 //! The node is an index-arena `NodeId` and its bytes live in the document, so
-//! these readers carry the document. [`field`] takes a span and extends the
-//! borrow to `'static`: the public entry points borrow the document for the
-//! whole call, so nothing can drop or mutate it underneath.
+//! these readers carry the document, and every name, value and prefix they
+//! hand out borrows it for `'d`: the public entry points borrow the document
+//! for the whole call.
+
+#![forbid(unsafe_code)]
 
 use crate::falloc::Reserve;
-use core::ffi::c_void;
 
-use crate::cbuf::{buf_append, Buf, BUF_OK};
+use crate::cbuf::Buf;
 use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType, Span, FLAG_DOM_LOOSE_NAME, MAX_DEPTH};
 
 /// Why serialization produced no output.
@@ -55,36 +56,31 @@ pub fn to_xml(
     indent: i32,
     encoding: Option<&[u8]>,
 ) -> Result<Buf, Failure> {
-    // SAFETY: `doc` is borrowed for the whole call, which is what `field`'s
-    // lifetime extension and the scope chain rely on; `b` points at the local
-    // buffer and is not used after it.
-    unsafe {
-        if has_dom_loose_name(doc, n) {
-            return Err(Failure::DomLooseName);
-        }
-        let mut buf = Buf::new(output_cap(doc));
-        let b = &mut buf as *mut Buf;
-        let rc = (|| -> W {
-            if doc.type_(n) != Some(NodeType::Document) {
-                return write_node(b, doc, n, 0, indent, None, 0);
-            }
-            if encoding.is_some() || doc.has_encoding_decl {
-                put(b, b"<?xml version=\"1.0\" encoding=\"")?;
-                put(b, encoding.unwrap_or(b"UTF-8"))?;
-                put(b, b"\"?>\n")?;
-            } else {
-                put(b, b"<?xml version=\"1.0\"?>\n")?;
-            }
-            let mut c = doc.first_child(n);
-            while let Some(cid) = c {
-                write_node(b, doc, cid, 0, indent, None, 0)?;
-                put(b, b"\n")?;
-                c = doc.next(cid);
-            }
-            Ok(())
-        })();
-        rc.map(|()| buf).map_err(|()| Failure::Output)
+    if has_dom_loose_name(doc, n) {
+        return Err(Failure::DomLooseName);
     }
+    let mut buf = Buf::new(output_cap(doc));
+    let b = &mut buf;
+    let rc = (|| -> W {
+        if doc.type_(n) != Some(NodeType::Document) {
+            return write_node(b, doc, n, 0, indent, None, 0);
+        }
+        if encoding.is_some() || doc.has_encoding_decl {
+            put(b, b"<?xml version=\"1.0\" encoding=\"")?;
+            put(b, encoding.unwrap_or(b"UTF-8"))?;
+            put(b, b"\"?>\n")?;
+        } else {
+            put(b, b"<?xml version=\"1.0\"?>\n")?;
+        }
+        let mut c = doc.first_child(n);
+        while let Some(cid) = c {
+            write_node(b, doc, cid, 0, indent, None, 0)?;
+            put(b, b"\n")?;
+            c = doc.next(cid);
+        }
+        Ok(())
+    })();
+    rc.map(|()| buf).map_err(|()| Failure::Output)
 }
 
 /// `n` as Inclusive Canonical XML 1.0, with or without comments.
@@ -92,39 +88,36 @@ pub fn to_xml(
 /// For the Document node that is the root element, plus the top-level PIs (and
 /// comments, when asked for) on their own lines before and after it.
 pub fn canonicalize(doc: &XmlDoc, n: NodeId, comments: bool) -> Result<Buf, Failure> {
-    // SAFETY: as in `to_xml`.
-    unsafe {
-        if has_dom_loose_name(doc, n) {
-            return Err(Failure::DomLooseName);
-        }
-        let mut buf = Buf::new(output_cap(doc));
-        let b = &mut buf as *mut Buf;
-        let rc = (|| -> W {
-            if doc.type_(n) != Some(NodeType::Document) {
-                return c14n_node(b, doc, n, true, comments, 0);
-            }
-            let mut seen_root = false;
-            let mut c = doc.first_child(n);
-            while let Some(cid) = c {
-                let ty = doc.type_(cid);
-                if ty == Some(NodeType::Element) {
-                    c14n_node(b, doc, cid, true, comments, 0)?;
-                    seen_root = true;
-                } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
-                    if seen_root {
-                        put(b, b"\n")?;
-                    }
-                    c14n_node(b, doc, cid, false, comments, 0)?;
-                    if !seen_root {
-                        put(b, b"\n")?;
-                    }
-                }
-                c = doc.next(cid);
-            }
-            Ok(())
-        })();
-        rc.map(|()| buf).map_err(|()| Failure::Output)
+    if has_dom_loose_name(doc, n) {
+        return Err(Failure::DomLooseName);
     }
+    let mut buf = Buf::new(output_cap(doc));
+    let b = &mut buf;
+    let rc = (|| -> W {
+        if doc.type_(n) != Some(NodeType::Document) {
+            return c14n_node(b, doc, n, true, comments, 0);
+        }
+        let mut seen_root = false;
+        let mut c = doc.first_child(n);
+        while let Some(cid) = c {
+            let ty = doc.type_(cid);
+            if ty == Some(NodeType::Element) {
+                c14n_node(b, doc, cid, true, comments, 0)?;
+                seen_root = true;
+            } else if ty == Some(NodeType::Pi) || (ty == Some(NodeType::Comment) && comments) {
+                if seen_root {
+                    put(b, b"\n")?;
+                }
+                c14n_node(b, doc, cid, false, comments, 0)?;
+                if !seen_root {
+                    put(b, b"\n")?;
+                }
+            }
+            c = doc.next(cid);
+        }
+        Ok(())
+    })();
+    rc.map(|()| buf).map_err(|()| Failure::Output)
 }
 
 /* ------------------------------------------------------------------ */
@@ -133,29 +126,20 @@ pub fn canonicalize(doc: &XmlDoc, n: NodeId, comments: bool) -> Result<Buf, Fail
 
 type W = Result<(), ()>;
 
-unsafe fn put(b: *mut Buf, bytes: &[u8]) -> W {
-    if bytes.is_empty() {
-        return Ok(());
-    }
-    if buf_append(b, bytes.as_ptr() as *const c_void, bytes.len()) == BUF_OK {
-        Ok(())
-    } else {
-        Err(())
-    }
+fn put(b: &mut Buf, bytes: &[u8]) -> W {
+    b.append(bytes).map_err(|_| ())
 }
 
-/// A node span as a slice with a `'static` lifetime claim. The caller must keep
-/// the document alive for the reference's use; serialization does, for the whole
-/// call.
-unsafe fn field<'a>(doc: &XmlDoc, s: Span) -> &'a [u8] {
-    core::mem::transmute::<&[u8], &'a [u8]>(doc.span(s))
+/// A node span's bytes, borrowed from the document.
+fn field(doc: &XmlDoc, s: Span) -> &[u8] {
+    doc.span(s)
 }
 
 /* ------------------------------------------------------------------ */
 /* XML escaping                                                       */
 /* ------------------------------------------------------------------ */
 
-unsafe fn escaped(b: *mut Buf, s: &[u8], attr: bool) -> W {
+fn escaped(b: &mut Buf, s: &[u8], attr: bool) -> W {
     let mut start = 0usize;
     for (i, &c) in s.iter().enumerate() {
         let rep: &[u8] = match c {
@@ -187,12 +171,12 @@ unsafe fn escaped(b: *mut Buf, s: &[u8], attr: bool) -> W {
 const PREFIX_CAP: usize = 8;
 
 #[derive(Clone)]
-enum Prefix {
-    Own(&'static [u8]),
+enum Prefix<'d> {
+    Own(&'d [u8]),
     Invented([u8; PREFIX_CAP], usize),
 }
 
-impl Prefix {
+impl Prefix<'_> {
     fn bytes(&self) -> &[u8] {
         match self {
             Prefix::Own(s) => s,
@@ -210,11 +194,11 @@ struct Scope<'a> {
     /// Its xmlns attributes bind at this level.
     el: NodeId,
     /// The declaration synthesized for this element's own name, if any.
-    syn: Option<(Prefix, &'static [u8])>,
+    syn: Option<(Prefix<'a>, &'a [u8])>,
 }
 
 /// The declaration for `prefix` on `el` itself, or None.
-unsafe fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
+fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     let mut a = doc.attrs(el);
     while let Some(at) = a {
         if let Some(p) = crate::xml::qname::xmlns_prefix(doc.qname(at)) {
@@ -227,7 +211,7 @@ unsafe fn own_decl(doc: &XmlDoc, el: NodeId, prefix: &[u8]) -> Option<NodeId> {
     None
 }
 
-unsafe fn lookup<'a>(scope: Option<&'a Scope<'a>>, prefix: &[u8]) -> Option<&'a [u8]> {
+fn lookup<'a>(scope: Option<&'a Scope<'a>>, prefix: &[u8]) -> Option<&'a [u8]> {
     let mut s = scope;
     while let Some(cur) = s {
         if let Some(d) = own_decl(cur.doc, cur.el, prefix) {
@@ -247,7 +231,7 @@ fn is_xml_prefix(prefix: &[u8]) -> bool {
     prefix == b"xml"
 }
 
-unsafe fn bound_to(scope: Option<&Scope>, prefix: &[u8], uri: &[u8]) -> bool {
+fn bound_to(scope: Option<&Scope>, prefix: &[u8], uri: &[u8]) -> bool {
     if is_xml_prefix(prefix) {
         return true;
     }
@@ -257,11 +241,11 @@ unsafe fn bound_to(scope: Option<&Scope>, prefix: &[u8], uri: &[u8]) -> bool {
     }
 }
 
-unsafe fn is_bound(scope: Option<&Scope>, prefix: &[u8]) -> bool {
+fn is_bound(scope: Option<&Scope>, prefix: &[u8]) -> bool {
     is_xml_prefix(prefix) || lookup(scope, prefix).is_some()
 }
 
-unsafe fn declare(b: *mut Buf, prefix: &[u8], uri: &[u8]) -> W {
+fn declare(b: &mut Buf, prefix: &[u8], uri: &[u8]) -> W {
     put(b, b" xmlns")?;
     if !prefix.is_empty() {
         put(b, b":")?;
@@ -276,7 +260,7 @@ struct Gen {
     seq: u32,
 }
 
-unsafe fn gen_prefix(scope: Option<&Scope>, gen: &mut Gen) -> Option<Prefix> {
+fn gen_prefix<'d>(scope: Option<&Scope>, gen: &mut Gen) -> Option<Prefix<'d>> {
     const GEN_MAX: u32 = 100_000;
     while gen.seq < GEN_MAX {
         let mut buf = [0u8; PREFIX_CAP];
@@ -304,7 +288,7 @@ unsafe fn gen_prefix(scope: Option<&Scope>, gen: &mut Gen) -> Option<Prefix> {
 }
 
 /// The first attribute of `el` before `stop` that carries `prefix`, or None.
-unsafe fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> Option<NodeId> {
+fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> Option<NodeId> {
     let mut a = doc.attrs(el);
     while let Some(at) = a {
         if at == stop {
@@ -321,12 +305,12 @@ unsafe fn prefix_seen(doc: &XmlDoc, el: NodeId, stop: NodeId, prefix: &[u8]) -> 
     None
 }
 
-struct Plan {
-    prefix: Prefix,
+struct Plan<'d> {
+    prefix: Prefix<'d>,
     declare: bool,
 }
 
-impl Plan {
+impl Plan<'_> {
     fn bytes(&self) -> &[u8] {
         self.prefix.bytes()
     }
@@ -335,7 +319,7 @@ impl Plan {
     }
 }
 
-unsafe fn plan_element(here: &Scope, gen: &mut Gen) -> Option<Plan> {
+fn plan_element<'a>(here: &Scope<'a>, gen: &mut Gen) -> Option<Plan<'a>> {
     let doc = here.doc;
     let n = here.el;
     let own_prefix = field(doc, doc.node(n).prefix);
@@ -350,7 +334,7 @@ unsafe fn plan_element(here: &Scope, gen: &mut Gen) -> Option<Plan> {
     Some(plan)
 }
 
-unsafe fn plan_attr(here: &Scope, a: NodeId, gen: &mut Gen) -> Option<Plan> {
+fn plan_attr<'a>(here: &Scope<'a>, a: NodeId, gen: &mut Gen) -> Option<Plan<'a>> {
     let doc = here.doc;
     let own_prefix = field(doc, doc.node(a).prefix);
     let mut plan = Plan {
@@ -383,7 +367,7 @@ unsafe fn plan_attr(here: &Scope, a: NodeId, gen: &mut Gen) -> Option<Plan> {
     Some(plan)
 }
 
-unsafe fn write_name(b: *mut Buf, doc: &XmlDoc, n: NodeId, plan: &Plan) -> W {
+fn write_name(b: &mut Buf, doc: &XmlDoc, n: NodeId, plan: &Plan) -> W {
     if !plan.renamed() {
         return put(b, field(doc, doc.node(n).qname));
     }
@@ -392,7 +376,7 @@ unsafe fn write_name(b: *mut Buf, doc: &XmlDoc, n: NodeId, plan: &Plan) -> W {
     put(b, field(doc, doc.node(n).local))
 }
 
-unsafe fn indent(b: *mut Buf, level: i32, width: i32) -> W {
+fn indent(b: &mut Buf, level: i32, width: i32) -> W {
     put(b, b"\n")?;
     for _ in 0..level * width {
         put(b, b" ")?;
@@ -400,7 +384,7 @@ unsafe fn indent(b: *mut Buf, level: i32, width: i32) -> W {
     Ok(())
 }
 
-unsafe fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
+fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
     let mut c = doc.first_child(e);
     while let Some(id) = c {
         if matches!(doc.type_(id), Some(NodeType::Text | NodeType::CData)) {
@@ -411,7 +395,7 @@ unsafe fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
     false
 }
 
-unsafe fn has_dom_loose_name(doc: &XmlDoc, root: NodeId) -> bool {
+fn has_dom_loose_name(doc: &XmlDoc, root: NodeId) -> bool {
     let mut cur = Some(root);
     while let Some(id) = cur {
         if doc.type_(id) == Some(NodeType::Element) && doc.node(id).flags & FLAG_DOM_LOOSE_NAME != 0
@@ -423,7 +407,7 @@ unsafe fn has_dom_loose_name(doc: &XmlDoc, root: NodeId) -> bool {
     false
 }
 
-unsafe fn write_doctype(b: *mut Buf, doc: &XmlDoc, dt: NodeId) -> W {
+fn write_doctype(b: &mut Buf, doc: &XmlDoc, dt: NodeId) -> W {
     put(b, b"<!DOCTYPE ")?;
     put(b, field(doc, doc.node(dt).local))?;
     let prefix = doc.node(dt).prefix;
@@ -442,8 +426,8 @@ unsafe fn write_doctype(b: *mut Buf, doc: &XmlDoc, dt: NodeId) -> W {
     put(b, b">")
 }
 
-unsafe fn write_node<'a>(
-    b: *mut Buf,
+fn write_node<'a>(
+    b: &mut Buf,
     doc: &'a XmlDoc,
     n: NodeId,
     level: i32,
@@ -544,7 +528,7 @@ unsafe fn write_node<'a>(
 /* Canonical XML 1.0                                                  */
 /* ------------------------------------------------------------------ */
 
-unsafe fn c14n_escaped(b: *mut Buf, s: &[u8], attr: bool) -> W {
+fn c14n_escaped(b: &mut Buf, s: &[u8], attr: bool) -> W {
     let mut start = 0usize;
     for (i, &c) in s.iter().enumerate() {
         let rep: &[u8] = match c {
@@ -569,18 +553,17 @@ unsafe fn c14n_escaped(b: *mut Buf, s: &[u8], attr: bool) -> W {
     Ok(())
 }
 
-unsafe fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&'static [u8], &'static [u8])> {
+fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
     let p = crate::xml::qname::xmlns_prefix(doc.qname(a))?;
-    let p: &'static [u8] = core::mem::transmute::<&[u8], &'static [u8]>(p);
     Some((p, field(doc, doc.node(a).value)))
 }
 
-struct C14nNs {
-    prefix: &'static [u8],
-    uri: &'static [u8],
+struct C14nNs<'d> {
+    prefix: &'d [u8],
+    uri: &'d [u8],
 }
 
-unsafe fn c14n_nearest(doc: &XmlDoc, node: NodeId, prefix: &[u8]) -> Option<&'static [u8]> {
+fn c14n_nearest<'d>(doc: &'d XmlDoc, node: NodeId, prefix: &[u8]) -> Option<&'d [u8]> {
     let mut e = Some(node);
     while let Some(id) = e {
         if doc.type_(id) == Some(NodeType::Element) {
@@ -599,7 +582,7 @@ unsafe fn c14n_nearest(doc: &XmlDoc, node: NodeId, prefix: &[u8]) -> Option<&'st
     None
 }
 
-unsafe fn c14n_namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<C14nNs>, ()> {
+fn c14n_namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<C14nNs<'_>>, ()> {
     let mut out: Vec<C14nNs> = Vec::new();
     let mut default_seen = false;
     let mut e = Some(n);
@@ -644,14 +627,7 @@ unsafe fn c14n_namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<
     Ok(out)
 }
 
-unsafe fn c14n_node(
-    b: *mut Buf,
-    doc: &XmlDoc,
-    n: NodeId,
-    is_apex: bool,
-    comments: bool,
-    depth: u32,
-) -> W {
+fn c14n_node(b: &mut Buf, doc: &XmlDoc, n: NodeId, is_apex: bool, comments: bool, depth: u32) -> W {
     match doc.type_(n) {
         Some(NodeType::Element) => {
             if depth as usize >= MAX_DEPTH {

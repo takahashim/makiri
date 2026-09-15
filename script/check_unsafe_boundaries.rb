@@ -27,6 +27,8 @@ SAFE_FILES = %w[
   xml/index.rs
   xml/mutate.rs
   xml/qname.rs
+  xml/selftest.rs
+  xml/serialize.rs
   xml/tree.rs
 ].freeze
 

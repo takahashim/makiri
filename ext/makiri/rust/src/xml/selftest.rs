@@ -6,7 +6,7 @@
 //! of the check that failed. The tree is an index arena, so the checks address
 //! nodes by `NodeId` through the `Document`.
 
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use crate::xml::mutate;
 use crate::xml::qname;
@@ -14,32 +14,30 @@ use crate::xml::tree::{parse_ex, parse_fragment};
 use crate::xml::{
     Document, Link, MutStatus, NodeId, NodeType, Status, MAX_BYTES, XMLNS_NS_URI, XML_NS_URI,
 };
-use core::ffi::c_char;
-use core::ptr;
 
-unsafe fn name_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
+fn name_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
     !n.is_invalid() && d.local(n) == s
 }
-unsafe fn val_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
+fn val_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
     !n.is_invalid() && d.value(n) == s
 }
-unsafe fn ns_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
+fn ns_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
     !n.is_invalid() && d.ns(n) == s
 }
-unsafe fn pfx_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
+fn pfx_is(d: &Document, n: NodeId, s: &[u8]) -> bool {
     !n.is_invalid() && d.prefix(n) == s
 }
-unsafe fn ns_none(d: &Document, n: NodeId) -> bool {
+fn ns_none(d: &Document, n: NodeId) -> bool {
     !n.is_invalid() && d.node(n).ns_uri.len == 0
 }
-unsafe fn next(d: &Document, n: NodeId) -> Option<NodeId> {
+fn next(d: &Document, n: NodeId) -> Option<NodeId> {
     if n.is_invalid() {
         None
     } else {
         d.next(n)
     }
 }
-unsafe fn first(d: &Document, n: NodeId) -> Option<NodeId> {
+fn first(d: &Document, n: NodeId) -> Option<NodeId> {
     if n.is_invalid() {
         None
     } else {
@@ -47,84 +45,59 @@ unsafe fn first(d: &Document, n: NodeId) -> Option<NodeId> {
     }
 }
 
-unsafe fn doc_new() -> *mut Document {
-    match Document::create(None, 0) {
-        Ok(d) => Box::into_raw(d),
-        Err(_) => ptr::null_mut(),
-    }
+fn doc_new() -> Option<Box<Document>> {
+    Document::create(None, 0).ok()
 }
 
-unsafe fn destroy_doc(doc: *mut Document) {
-    if !doc.is_null() {
-        drop(Box::from_raw(doc));
-    }
-}
-
-unsafe fn parse_lit(s: &[u8], st: &mut Status) -> *mut Document {
+fn parse_lit(s: &[u8], st: &mut Status) -> Option<Box<Document>> {
     match parse_ex(s, None) {
         Ok(d) => {
             *st = Status::Ok;
-            Box::into_raw(d)
+            Some(d)
         }
         Err(e) => {
             *st = e;
-            ptr::null_mut()
+            None
         }
     }
 }
 
-unsafe fn parse_ex_raw(
-    src: *const c_char,
-    len: usize,
-    limits: Option<usize>,
-) -> Result<*mut Document, Status> {
+/// Parse the first `len` bytes of `src`, checking `len` against the byte
+/// budget BEFORE the bytes are touched - the C entry's guard, which a caller
+/// can reach with a length longer than the buffer it holds.
+fn parse_ex_len(src: &[u8], len: usize, limits: Option<usize>) -> Result<Box<Document>, Status> {
     let max = limits.filter(|&n| n != 0).unwrap_or(MAX_BYTES);
     if len > max {
         return Err(Status::Limit);
     }
-    let src = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src as *const u8, len)
-    };
-    parse_ex(src, limits).map(Box::into_raw)
+    parse_ex(&src[..len], limits)
 }
 
-unsafe fn parse_fragment_raw(
-    doc: *mut Document,
-    src: *const c_char,
-    len: usize,
+/// A fragment of `src` into `doc`, refused past the document's byte budget.
+fn parse_fragment_checked(
+    doc: &mut Document,
+    src: &[u8],
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Status> {
-    if doc.is_null() || len > (*doc).max_bytes {
+    if src.len() > doc.max_bytes {
         return Err(Status::Limit);
     }
-    let src = if src.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src as *const u8, len)
-    };
-    parse_fragment(&mut *doc, src, inherit_doc_ns)
+    parse_fragment(doc, src, inherit_doc_ns)
 }
 
 /// `s` must be rejected with status `want`.
-unsafe fn rejects(s: &[u8], want: Status) -> bool {
+fn rejects(s: &[u8], want: Status) -> bool {
     let mut st = Status::Ok;
-    let e = parse_lit(s, &mut st);
-    if !e.is_null() {
-        destroy_doc(e);
-        return false;
-    }
-    st == want
+    parse_lit(s, &mut st).is_none() && st == want
 }
 
 /* ---- mkr_xml_node_selftest ---- */
 
 fn node_selftest() -> i32 {
-    unsafe { node_selftest_impl() }
+    node_selftest_impl()
 }
 
-unsafe fn node_selftest_impl() -> i32 {
+fn node_selftest_impl() -> i32 {
     let mut idx = 0;
     let doc = Document::create(None, 0);
     idx += 1; /* 1 */
@@ -217,21 +190,18 @@ unsafe fn node_selftest_impl() -> i32 {
 /* ---- mkr_xml_parse_selftest ---- */
 
 fn parse_selftest() -> i32 {
-    unsafe { parse_selftest_impl() }
+    parse_selftest_impl()
 }
 
-unsafe fn parse_selftest_impl() -> i32 {
+fn parse_selftest_impl() -> i32 {
     let mut st = Status::Ok;
     let mut i = 0;
 
     i += 1; /* 1 */
     let d = parse_lit(b"<Feed x='1' y='two'>hi<b/>z</Feed>", &mut st);
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     i += 1; /* 2 */
     let doc = &*d;
     let root = doc.root().unwrap_or(NodeId::INVALID);
@@ -239,7 +209,6 @@ unsafe fn parse_selftest_impl() -> i32 {
         || doc.type_(root) != Some(NodeType::Element)
         || doc.node(root).line != 1
     {
-        destroy_doc(d);
         return i;
     }
     i += 1; /* 3 */
@@ -254,7 +223,6 @@ unsafe fn parse_selftest_impl() -> i32 {
         || !val_is(doc, a1, b"two")
         || doc.next(a1).is_some()
     {
-        destroy_doc(d);
         return i;
     }
     i += 1; /* 4 */
@@ -273,29 +241,24 @@ unsafe fn parse_selftest_impl() -> i32 {
         || !val_is(doc, c2, b"z")
         || doc.next(c2).is_some()
     {
-        destroy_doc(d);
         return i;
     }
     i += 1; /* 5 */
     if doc.parent(c1) != Some(root) || doc.prev(c1) != Some(c0) || doc.prev(c2) != Some(c1) {
-        destroy_doc(d);
         return i;
     }
-    destroy_doc(d);
 
     i += 1; /* 6: case sensitivity */
     let d = parse_lit(b"<X><x/></X>", &mut st);
-    if d.is_null() {
+    let Some(d) = d else {
         return i;
-    }
+    };
     let doc = &*d;
     let root = doc.root().unwrap_or(NodeId::INVALID);
     let f = doc.first_child(root).unwrap_or(NodeId::INVALID);
     if !name_is(doc, root, b"X") || !name_is(doc, f, b"x") {
-        destroy_doc(d);
         return i;
     }
-    destroy_doc(d);
 
     i += 1; /* 7: well-formedness errors fail closed */
     for s in [
@@ -316,12 +279,9 @@ unsafe fn parse_selftest_impl() -> i32 {
         b"<a x='p&amp;q' y='&#65;&#x42;'>1&lt;2&gt;3&amp;4&apos;5&quot;6</a>",
         &mut st,
     );
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
@@ -334,11 +294,9 @@ unsafe fn parse_selftest_impl() -> i32 {
             || doc.type_(tx) != Some(NodeType::Text)
             || !val_is(doc, tx, b"1<2>3&4'5\"6")
         {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 9: bad references fail closed */
     for s in [
@@ -358,22 +316,17 @@ unsafe fn parse_selftest_impl() -> i32 {
         b"<a:e xmlns:a='urn:a' xmlns='urn:d' a:x='1' y='2'><c/></a:e>",
         &mut st,
     );
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
         if !name_is(doc, r, b"e") || !pfx_is(doc, r, b"a") || !ns_is(doc, r, b"urn:a") {
-            destroy_doc(d);
             return i;
         }
         let c = doc.first_child(r).unwrap_or(NodeId::INVALID);
         if !name_is(doc, c, b"c") || !ns_is(doc, c, b"urn:d") {
-            destroy_doc(d);
             return i;
         }
         let a = doc.attrs(r).unwrap_or(NodeId::INVALID);
@@ -382,12 +335,10 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !pfx_is(doc, a, b"xmlns")
             || !ns_is(doc, a, XMLNS_NS_URI)
         {
-            destroy_doc(d);
             return i;
         }
         let a = next(doc, a).unwrap_or(NodeId::INVALID);
         if a.is_invalid() || !name_is(doc, a, b"xmlns") || doc.node(a).prefix.len != 0 {
-            destroy_doc(d);
             return i;
         }
         let a = next(doc, a).unwrap_or(NodeId::INVALID);
@@ -397,7 +348,6 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !ns_is(doc, a, b"urn:a")
             || !val_is(doc, a, b"1")
         {
-            destroy_doc(d);
             return i;
         }
         let a = next(doc, a).unwrap_or(NodeId::INVALID);
@@ -407,11 +357,9 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !ns_none(doc, a)
             || !val_is(doc, a, b"2")
         {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 11: namespace errors fail closed */
     for s in [
@@ -427,12 +375,9 @@ unsafe fn parse_selftest_impl() -> i32 {
 
     i += 1; /* 12: attribute-value normalization */
     let d = parse_lit(b"<a x=\"p\tq\nr\" y=\"p&#9;q&#10;r\">u\tv\nw</a>", &mut st);
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
@@ -445,28 +390,22 @@ unsafe fn parse_selftest_impl() -> i32 {
             || doc.type_(tx) != Some(NodeType::Text)
             || !val_is(doc, tx, b"u\tv\nw")
         {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 13: comment / CDATA / PI nodes; prolog PI + comment retained */
     let d = parse_lit(
         b"<?xml version=\"1.0\"?><?xml-stylesheet href=\"x\"?><!--top--><r><!--c--><![CDATA[a<b]]><?pi dat?></r><?tail t?>",
         &mut st,
     );
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
         if !name_is(doc, r, b"r") {
-            destroy_doc(d);
             return i;
         }
         let cm = doc.first_child(r).unwrap_or(NodeId::INVALID);
@@ -484,7 +423,6 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !val_is(doc, pi, b"dat")
             || doc.next(pi).is_some()
         {
-            destroy_doc(d);
             return i;
         }
         let dn = doc.doc_node();
@@ -505,11 +443,9 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !name_is(doc, p4, b"tail")
             || doc.next(p4).is_some()
         {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 14: §9 fail-closed cases */
     for s in [
@@ -530,17 +466,13 @@ unsafe fn parse_selftest_impl() -> i32 {
         b"<!DOCTYPE r SYSTEM \"a>b\" [ <!ELEMENT r (#PCDATA)> ]><r>ok</r>",
         &mut st,
     );
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
         if !name_is(doc, r, b"r") || !val_is(doc, first(doc, r).unwrap_or(NodeId::INVALID), b"ok") {
-            destroy_doc(d);
             return i;
         }
         let dt = doc.doctype().unwrap_or(NodeId::INVALID);
@@ -554,20 +486,15 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !doc.node(dt).prefix.is_absent()
             || doc.value(dt) != b"a>b"
         {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 15: line-ending normalization */
     let d = parse_lit(b"<a x=\"p\r\nq\r\">m\r\nn\ro</a>", &mut st);
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
@@ -578,11 +505,9 @@ unsafe fn parse_selftest_impl() -> i32 {
             || doc.type_(tx) != Some(NodeType::Text)
             || !val_is(doc, tx, b"m\nn\no")
         {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 16: strict names + duplicate attributes + "]]>" */
     for s in [
@@ -597,21 +522,16 @@ unsafe fn parse_selftest_impl() -> i32 {
         }
     }
     let d = parse_lit(b"<a>1]2]]3</a>", &mut st);
-    if d.is_null() || st != Status::Ok {
-        if !d.is_null() {
-            destroy_doc(d);
-        }
+    let Some(d) = d.filter(|_| st == Status::Ok) else {
         return i;
-    }
+    };
     {
         let doc = &*d;
         let r = doc.root().unwrap_or(NodeId::INVALID);
         if !val_is(doc, first(doc, r).unwrap_or(NodeId::INVALID), b"1]2]]3") {
-            destroy_doc(d);
             return i;
         }
     }
-    destroy_doc(d);
 
     i += 1; /* 17: XML declaration grammar + reserved / colon PI targets */
     {
@@ -619,13 +539,9 @@ unsafe fn parse_selftest_impl() -> i32 {
             b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><r/>",
             &mut st,
         );
-        if d.is_null() || st != Status::Ok {
-            if !d.is_null() {
-                destroy_doc(d);
-            }
+        if d.is_none() || st != Status::Ok {
             return i;
         }
-        destroy_doc(d);
         for s in [
             &b"<?xml VERSION=\"1.0\"?><r/>"[..],
             b"<?xml version=\"1.0\" standalone=\"YES\"?><r/>",
@@ -654,56 +570,40 @@ unsafe fn parse_selftest_impl() -> i32 {
     i += 1; /* 18: byte-budget entry guard (src not dereferenced) */
     {
         let tiny = b"<r/>";
-        match parse_ex_raw(tiny.as_ptr() as *const c_char, MAX_BYTES + 1, None) {
+        match parse_ex_len(tiny, MAX_BYTES + 1, None) {
             Err(Status::Limit) => {}
-            Ok(d) => {
-                destroy_doc(d);
-                return i;
-            }
+            Ok(_) => return i,
             Err(_) => return i,
         }
         let d = parse_lit(tiny, &mut st);
-        if d.is_null() || st != Status::Ok {
-            if !d.is_null() {
-                destroy_doc(d);
-            }
+        if d.is_none() || st != Status::Ok {
             return i;
         }
-        destroy_doc(d);
     }
 
     i += 1; /* 19: per-parse override */
     {
         let src = b"<root><a/><b/><c/></root>";
-        let p = src.as_ptr() as *const c_char;
-        match parse_ex_raw(p, src.len(), Some(2)) {
+        match parse_ex_len(src, src.len(), Some(2)) {
             Err(Status::Limit) => {}
-            Ok(d) => {
-                destroy_doc(d);
-                return i;
-            }
+            Ok(_) => return i,
             Err(_) => return i,
         }
-        match parse_ex_raw(p, src.len(), Some(64)) {
+        match parse_ex_len(src, src.len(), Some(64)) {
             Err(Status::Limit) => {}
-            Ok(d) => {
-                destroy_doc(d);
-                return i;
-            }
+            Ok(_) => return i,
             Err(_) => return i,
         }
-        match parse_ex_raw(p, src.len(), Some(1024 * 1024)) {
+        match parse_ex_len(src, src.len(), Some(1024 * 1024)) {
             Ok(d) => {
-                if !name_is(&*d, (*d).root().unwrap_or(NodeId::INVALID), b"root") {
-                    destroy_doc(d);
+                if !name_is(&d, d.root().unwrap_or(NodeId::INVALID), b"root") {
                     return i;
                 }
-                destroy_doc(d);
             }
             Err(_) => return i,
         }
-        match parse_ex_raw(p, src.len(), Some(0)) {
-            Ok(d) => destroy_doc(d),
+        match parse_ex_len(src, src.len(), Some(0)) {
+            Ok(_) => {}
             Err(_) => return i,
         }
     }
@@ -712,19 +612,17 @@ unsafe fn parse_selftest_impl() -> i32 {
     {
         let fsrc = b"<a/>txt<p:b xmlns:p='urn:p'>x</p:b>";
         let fd = doc_new();
-        if fd.is_null() {
+        let Some(mut fd) = fd else {
             return i;
-        }
-        let frag = match parse_fragment_raw(fd, fsrc.as_ptr() as *const c_char, fsrc.len(), false) {
+        };
+        let frag = match parse_fragment_checked(&mut fd, fsrc, false) {
             Ok(f) => f,
             Err(_) => {
-                destroy_doc(fd);
                 return i;
             }
         };
-        let d = &*fd;
+        let d = &fd;
         if d.type_(frag) != Some(NodeType::Fragment) {
-            destroy_doc(fd);
             return i;
         }
         let c0 = d.first_child(frag).unwrap_or(NodeId::INVALID);
@@ -739,18 +637,16 @@ unsafe fn parse_selftest_impl() -> i32 {
             || !ns_is(d, c2, b"urn:p")
             || d.next(c2).is_some()
         {
-            destroy_doc(fd);
             return i;
         }
-        destroy_doc(fd);
     }
 
     i += 1; /* 21: a fragment fails closed */
     {
         let fd = doc_new();
-        if fd.is_null() {
+        let Some(mut fd) = fd else {
             return i;
-        }
+        };
         for s in [
             &b"<?xml version='1.0'?>"[..],
             b"<!DOCTYPE r>",
@@ -758,34 +654,26 @@ unsafe fn parse_selftest_impl() -> i32 {
             b"<a>",
             b"<p:a/>",
         ] {
-            if parse_fragment_raw(fd, s.as_ptr() as *const c_char, s.len(), false).is_ok() {
-                destroy_doc(fd);
+            if parse_fragment_checked(&mut fd, s, false).is_ok() {
                 return i;
             }
         }
-        destroy_doc(fd);
     }
 
     i += 1; /* 22: inherit_doc_ns */
     {
         let fsrc = b"<p:a/><plain/>";
         let fd = parse_lit(b"<r xmlns:p='urn:p' xmlns='urn:d'/>", &mut st);
-        if fd.is_null() || st != Status::Ok {
-            if !fd.is_null() {
-                destroy_doc(fd);
-            }
+        let Some(mut fd) = fd.filter(|_| st == Status::Ok) else {
             return i;
-        }
-        let frag = parse_fragment_raw(fd, fsrc.as_ptr() as *const c_char, fsrc.len(), true)
-            .unwrap_or(NodeId::INVALID);
-        let d = &*fd;
+        };
+        let frag = parse_fragment_checked(&mut fd, fsrc, true).unwrap_or(NodeId::INVALID);
+        let d = &fd;
         let a = first(d, frag).unwrap_or(NodeId::INVALID);
         let plain = next(d, a).unwrap_or(NodeId::INVALID);
         if frag.is_invalid() || !ns_is(d, a, b"urn:p") || !ns_is(d, plain, b"urn:d") {
-            destroy_doc(fd);
             return i;
         }
-        destroy_doc(fd);
     }
 
     0
@@ -794,20 +682,17 @@ unsafe fn parse_selftest_impl() -> i32 {
 /* ---- mkr_xml_mutate_selftest ---- */
 
 fn mutate_selftest() -> i32 {
-    unsafe { mutate_selftest_impl() }
+    mutate_selftest_impl()
 }
 
-unsafe fn mutate_selftest_impl() -> i32 {
-    let doc = doc_new();
-    if doc.is_null() {
+fn mutate_selftest_impl() -> i32 {
+    let Some(mut doc) = doc_new() else {
         return 1;
-    }
-    let rc = mutate_selftest_body(&mut *doc);
-    destroy_doc(doc);
-    rc
+    };
+    mutate_selftest_body(&mut doc)
 }
 
-unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
+fn mutate_selftest_body(doc: &mut Document) -> i32 {
     let invalid = NodeId::INVALID;
 
     /* 1. QName validation + split */
@@ -1106,19 +991,18 @@ unsafe fn mutate_selftest_body(doc: &mut Document) -> i32 {
 
     /* 17. cross-document import */
     let doc2 = doc_new();
-    if doc2.is_null() {
+    let Some(mut doc2) = doc2 else {
         return 45;
-    }
+    };
     let mut rc = 0;
-    match mutate::import_subtree(&mut *doc2, &*doc, pr) {
+    match mutate::import_subtree(&mut doc2, doc, pr) {
         Ok(imp) => {
-            if doc2.is_null() || (*doc2).qname(imp) != b"pr" || (*doc2).first_child(imp).is_none() {
+            if doc2.qname(imp) != b"pr" || doc2.first_child(imp).is_none() {
                 rc = 46;
             }
         }
         Err(_) => rc = 46,
     }
-    destroy_doc(doc2);
     if rc != 0 {
         return rc;
     }
