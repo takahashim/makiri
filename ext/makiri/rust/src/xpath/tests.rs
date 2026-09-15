@@ -269,7 +269,7 @@ fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
             .expect("a context");
         let budget = ctx_budget(ctx.as_ptr());
         let parse = |text: &str| {
-            (*budget).limits.ast_nodes = 0;
+            (*budget).ast_nodes = 0;
             match parse_owned(VerifiedText::from_bytes(text.as_bytes()).unwrap(), budget) {
                 Ok(ast) => ast,
                 Err(_) => panic!("{text} parses"),

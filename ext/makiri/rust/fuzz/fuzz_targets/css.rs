@@ -71,7 +71,7 @@ fuzz_target!(|data: &[u8]| {
         };
 
         let budget = ctx_budget(ctx.as_ptr());
-        (*budget).limits.ast_nodes = 0;
+        (*budget).ast_nodes = 0;
         let Ok(ast) = compile_owned(text, &ns, budget) else {
             return;
         };

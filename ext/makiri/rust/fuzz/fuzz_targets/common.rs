@@ -53,7 +53,7 @@ pub unsafe fn limits<'a>(ctx: *mut Context) -> &'a mut Limits {
 /// `ctx` must be live.
 pub unsafe fn parse(ctx: &OwnedContext, text: VerifiedText) -> Option<Box<Ast>> {
     let budget = ctx_budget(ctx.as_ptr());
-    (*budget).limits.ast_nodes = 0;
+    (*budget).ast_nodes = 0;
     parse_owned(text, budget).ok()
 }
 

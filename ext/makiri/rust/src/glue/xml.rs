@@ -497,7 +497,7 @@ unsafe fn css_compile_or_raise(
     };
     let sv = ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
     let budget = ctx_budget(ctx);
-    (*budget).limits.ast_nodes = 0;
+    (*budget).ast_nodes = 0;
     let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, budget);
     drop(sv);
     if let Ok(ast) = ast {

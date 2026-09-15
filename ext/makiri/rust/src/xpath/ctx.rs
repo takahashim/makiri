@@ -459,15 +459,15 @@ impl XPathValue {
 
 /// The per-evaluate counters, as an evaluate found them.
 unsafe fn save_counters(ctx: *mut Context) -> (usize, usize) {
-    let l = &(*ctx).budget.limits;
-    (l.eval_ops, l.recursion_depth)
+    let b = &(*ctx).budget;
+    (b.eval_ops, b.recursion_depth)
 }
 
 /// Put back what [`save_counters`] found, for the walk this one ran inside.
 unsafe fn restore_counters(ctx: *mut Context, (eval_ops, recursion_depth): (usize, usize)) {
-    let l = &mut (*ctx).budget.limits;
-    l.eval_ops = eval_ops;
-    l.recursion_depth = recursion_depth;
+    let b = &mut (*ctx).budget;
+    b.eval_ops = eval_ops;
+    b.recursion_depth = recursion_depth;
 }
 
 /// Evaluate `ast` against the context, with the context node as the focus.
@@ -500,8 +500,8 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error
      * at its own values would refill the outer walk's op budget on every
      * handler call - and leave its recursion depth wrong. */
     let outer_counters = save_counters(ctx);
-    (*ctx).budget.limits.eval_ops = 0;
-    (*ctx).budget.limits.recursion_depth = 0;
+    (*ctx).budget.eval_ops = 0;
+    (*ctx).budget.recursion_depth = 0;
 
     /* String-value cache snapshot. A nested eval - a handler calling back into
      * XPath on the same context - sees the outer entries, but anything it adds
@@ -552,8 +552,8 @@ pub unsafe fn evaluate_first(ctx: *mut Context, ast: &Ast) -> Result<XPathValue,
      * resets them again; the walk only runs for recognised shapes, so nothing
      * double-counts. */
     let outer_counters = save_counters(ctx);
-    (*ctx).budget.limits.eval_ops = 0;
-    (*ctx).budget.limits.recursion_depth = 0;
+    (*ctx).budget.eval_ops = 0;
+    (*ctx).budget.recursion_depth = 0;
 
     let matched = match (*ctx).backend {
         Backend::Xml => try_first_match_xml(handle(ctx), ast),

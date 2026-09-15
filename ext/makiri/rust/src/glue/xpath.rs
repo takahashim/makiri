@@ -745,7 +745,7 @@ unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*const Ast, Optio
     }
 
     let budget = ctx_budget(d.ctx.as_ptr());
-    (*budget).limits.ast_nodes = 0;
+    (*budget).ast_nodes = 0;
     let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, budget).ok()?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         return Some((&*ast as *const Ast, Some(ast)));
@@ -821,7 +821,7 @@ impl Drop for InstalledHandler {
 pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
     let budget = ctx_budget(ctx);
-    (*budget).limits.ast_nodes = 0;
+    (*budget).ast_nodes = 0;
     let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
