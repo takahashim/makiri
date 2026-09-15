@@ -62,6 +62,9 @@ ITERATIONS.times do |i|
   ctx.evaluate("//d:a[@id=$v]"); ctx.evaluate("//d:a[@id=$v]")
   begin ctx.evaluate("//(") rescue Makiri::XPath::SyntaxError; end
   begin ctx.evaluate("//a\0") rescue Makiri::Error; end                 # text-contract raise
+  begin ctx.evaluate(RAISING_TO_S) rescue RuntimeError; end             # expression coercion raises
+  begin x.root[RAISING_TO_S] rescue RuntimeError; end                   # attribute-name coercion raises
+  begin Makiri::HTML::NodeMethods.instance_method(:name).bind(x.root).call rescue TypeError; end # wrong-kind receiver
 
   # --- Lexbor CSS stylesheet parser (per-call parser+stylesheet lifetime,
   # freed under rb_ensure) including the NUL-reject raise path ---

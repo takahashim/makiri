@@ -14,12 +14,15 @@
 //!
 //! **Never let C longjmp through a Rust frame.** `rb_raise` unwinds with
 //! `longjmp`, which skips Rust destructors: a raise crossing a frame that owns a
-//! `Vec`, an [`mkr_buf_t`](crate::cbuf::Buf) or any other resource leaks it. So a
-//! raising C accessor - `mkr_html_node_unwrap` and its kind - is called only
-//! where nothing needs dropping, which in practice means first, before any
-//! buffer exists. Everything Rust itself reports travels back as
+//! `Vec`, an [`mkr_buf_t`](crate::cbuf::Buf), a `RefCell` borrow or any other
+//! resource leaks it or leaves it held. So a failure travels back as
 //! `Result<_, magnus::Error>`, which magnus turns into a raise after the Rust
-//! frames have returned normally.
+//! frames have returned normally. The node unwraps and the text checks return
+//! `Err` for exactly that reason, and a Ruby C function that can raise is called
+//! through `bridge::ruby`, which catches the raise and hands it back the same
+//! way. The one exception is an entry point Ruby calls with the C convention
+//! (`==`, `hash`, `clone_node`): it has no `Result` to return, so it raises
+//! through `bridge::ruby::raise` from its own frame, where nothing is owned.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
 //! `Ruby` handle. The C glue already works this way (parse copies its input to a

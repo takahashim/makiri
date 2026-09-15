@@ -354,40 +354,43 @@ pub unsafe extern "C" fn mkr_html_import_deep(doc: *mut LxbDoc, src: *mut LxbNod
 /// non-root context such as SVG `<desc>`); a String names an HTML-namespace tag,
 /// except "svg" / "math" which name the foreign roots.
 ///
-/// **Raises** on an unusable context.
-pub unsafe fn resolve_fragment_context(doc: *mut LxbDoc, context: Option<Value>) -> (usize, usize) {
+/// `Err` for an unusable context.
+pub unsafe fn resolve_fragment_context(
+    doc: *mut LxbDoc,
+    context: Option<Value>,
+) -> Result<(usize, usize), magnus::Error> {
     let Some(context) = context else {
-        return (lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML);
+        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML));
     };
     if context.is_nil() {
-        return (lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML);
+        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML));
     }
 
     if is_kind_of(context, mkr_cNode) {
         /* Reject an XML node before any Lexbor use. */
-        let cn = mkr_html_node_unwrap(context.as_raw());
+        let cn = mkr_html_node_unwrap(context.as_raw())?;
         if (*cn).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
-            rb_sys::rb_raise(
-                rb_sys::rb_eArgError,
-                c"fragment context node must be an element".as_ptr(),
-            );
+            return Err(magnus::Error::new(
+                magnus::Ruby::get_unchecked().exception_arg_error(),
+                "fragment context node must be an element",
+            ));
         }
-        return ((*cn).local_name, (*cn).ns);
+        return Ok(((*cn).local_name, (*cn).ns));
     }
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = mkr_ruby_verified_text(context.as_raw(), c"fragment context element".as_ptr());
+    let cv = mkr_ruby_verified_text(context.as_raw(), c"fragment context element".as_ptr())?;
     let name = if cv.as_ptr().is_null() || cv.len() == 0 {
         &[][..]
     } else {
         core::slice::from_raw_parts(cv.as_ptr() as *const u8, cv.len())
     };
     if name == b"svg" {
-        return (lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize, NS_SVG);
+        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize, NS_SVG));
     }
     if name == b"math" {
-        return (lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize, NS_MATH);
+        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize, NS_MATH));
     }
     let tid = lxb_tag_id_by_name_noi((*doc).tags, name.as_ptr(), name.len());
     if tid == lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize {
@@ -396,14 +399,16 @@ pub unsafe fn resolve_fragment_context(doc: *mut LxbDoc, context: Option<Value>)
         // line over verbatim produced the literal `%" PRIsVALUE` in the
         // message; the differential caught it. `%.*s` over the verified bytes
         // prints what PRIsVALUE printed for a String: its content.
-        rb_sys::rb_raise(
-            rb_sys::rb_eArgError,
-            c"unknown fragment context element: %.*s".as_ptr(),
-            name.len() as c_int,
-            name.as_ptr(),
-        );
+        /* The name is verified UTF-8, so the lossy view is its content. */
+        return Err(magnus::Error::new(
+            magnus::Ruby::get_unchecked().exception_arg_error(),
+            format!(
+                "unknown fragment context element: {}",
+                String::from_utf8_lossy(name)
+            ),
+        ));
     }
-    (tid, NS_HTML)
+    Ok((tid, NS_HTML))
 }
 
 /// Parse callback for `mkr_run_fragment_parser`: Lexbor's by-tag-id parser,

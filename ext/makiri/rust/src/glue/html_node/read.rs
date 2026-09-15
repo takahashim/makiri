@@ -133,9 +133,9 @@ fn attr_ns_for_prefix(p: &[u8]) -> Option<&'static str> {
 /// `#name`. Matches Nokogiri: the lowercase tag name for an HTML element
 /// (Lexbor lowercases during tokenization), and the un-prefixed DOM names
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
-pub fn name(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         let mut len = 0usize;
         match (*node).type_ {
             ty::ELEMENT => {
@@ -158,9 +158,9 @@ pub fn name(ruby: &Ruby, rb_self: Value) -> Value {
 /// `#local_name` (DOM `localName`): the name without any prefix - `div` for
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
-pub fn local_name(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn local_name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         let mut len = 0usize;
         match (*node).type_ {
             ty::ELEMENT => {
@@ -191,9 +191,9 @@ pub fn local_name(ruby: &Ruby, rb_self: Value) -> Value {
 
 /// `#prefix` (DOM `prefix`): nil unless the qualified name is `prefix:local` -
 /// typically nil for HTML5-parsed content. Element and Attribute only.
-pub fn prefix(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn prefix(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         match qname(node).and_then(|(q, ql, ll)| qname_prefix(q, ql, ll)) {
             Some(p) => str_of(p.as_ptr(), p.len()),
             None => ruby.qnil().as_value(),
@@ -212,9 +212,9 @@ pub fn prefix(ruby: &Ruby, rb_self: Value) -> Value {
 /// parser-assigned foreign-content namespace keyed on the prefix.
 ///
 /// Other kinds: nil.
-pub fn namespace_uri(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
 
         if (*node).type_ == ty::ELEMENT {
             return ns_uri_of_id(ruby, node);
@@ -248,9 +248,9 @@ pub fn namespace_uri(ruby: &Ruby, rb_self: Value) -> Value {
 /// HTML element in an HTML document (`DIV`), as the DOM specifies - unlike
 /// `#name`, which is the lowercase qualified name. SVG/MathML elements keep
 /// their case. nil for a non-element.
-pub fn tag_name(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn tag_name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ELEMENT {
             return ruby.qnil().as_value();
         }
@@ -266,9 +266,9 @@ pub fn tag_name(ruby: &Ruby, rb_self: Value) -> Value {
 /// `ProcessingInstruction#target` (DOM `target`): the `xml` in `<?xml ...?>`.
 /// nil for a non-PI. The PI's data is read with `#content` like any
 /// character-data node.
-pub fn pi_target(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn pi_target(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::PI {
             return ruby.qnil().as_value();
         }
@@ -281,11 +281,8 @@ pub fn pi_target(ruby: &Ruby, rb_self: Value) -> Value {
 use crate::glue::abi::lxb_dom_processing_instruction_target_noi;
 
 /// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
-pub fn node_type(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe {
-        ruby.integer_from_i64((*unwrap(rb_self)).type_ as i64)
-            .as_value()
-    }
+pub fn node_type(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    unsafe { ruby.integer_from_i64((*this.node).type_ as i64).as_value() }
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
@@ -294,8 +291,8 @@ pub fn node_type(ruby: &Ruby, rb_self: Value) -> Value {
 /// empty string for a bare `<!DOCTYPE html>` - so empty is treated as absent and
 /// both answer nil, matching Nokogiri. Defined only on DocumentType, so the
 /// receiver is always a doctype; the guard is belt-and-braces.
-unsafe fn doctype_id(ruby: &Ruby, rb_self: Value, system: bool) -> Value {
-    let node = unwrap(rb_self);
+unsafe fn doctype_id(ruby: &Ruby, this: super::HtmlSelf, system: bool) -> Value {
+    let node = this.node;
     if (*node).type_ != ty::DOCTYPE {
         return ruby.qnil().as_value();
     }
@@ -312,12 +309,12 @@ unsafe fn doctype_id(ruby: &Ruby, rb_self: Value, system: bool) -> Value {
     str_of(id, len)
 }
 
-pub fn doctype_public_id(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { doctype_id(ruby, rb_self, false) }
+pub fn doctype_public_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    unsafe { doctype_id(ruby, this, false) }
 }
 
-pub fn doctype_system_id(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { doctype_id(ruby, rb_self, true) }
+pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    unsafe { doctype_id(ruby, this, true) }
 }
 
 /// `Element#content_fragment`: a `<template>` element's "template contents" -
@@ -330,9 +327,10 @@ pub fn doctype_system_id(ruby: &Ruby, rb_self: Value) -> Value {
 /// template ELEMENT deliberately do not descend into the content - matching the
 /// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
 /// real tree - so query the fragment instead.
-pub fn content_fragment(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ELEMENT
             || (*node).local_name != TAG_TEMPLATE
             || (*node).ns != NS_HTML
@@ -352,9 +350,10 @@ pub fn content_fragment(ruby: &Ruby, rb_self: Value) -> Value {
 ///
 /// The DOM makes a Document's textContent null; this returns the ROOT element's
 /// text instead, which is the intuitive, Nokogiri-like `Document#text`.
-pub fn content(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
-        let mut node = unwrap(rb_self);
+        let mut node = this.node;
         if (*node).type_ == ty::DOCUMENT {
             node = lxb_dom_document_root(node as *mut LxbDoc);
             if node.is_null() {
@@ -454,10 +453,11 @@ pub fn get_document(_ruby: &Ruby, rb_self: Value) -> Value {
 /// answer indistinguishable from the truthful one - so an allocation failure
 /// raises here instead. (The OOM sweep found this: `Attr#parent` degraded from
 /// `"svg"` to `nil` under injection, in the C original as much as here.)
-pub fn parent(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
+pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
         use magnus::rb_sys::AsRawValue;
-        let node = unwrap(rb_self);
+        let node = this.node;
         let document = node_document(rb_self);
         if (*node).type_ == ty::ATTRIBUTE {
             let parsed = mkr_doc_parsed(document.as_raw());
@@ -475,17 +475,20 @@ pub fn parent(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     }
 }
 
-pub fn next(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { wrap((*unwrap(rb_self)).next, node_document(rb_self)) }
+pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
+    unsafe { wrap((*this.node).next, node_document(rb_self)) }
 }
 
-pub fn previous(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { wrap((*unwrap(rb_self)).prev, node_document(rb_self)) }
+pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
+    unsafe { wrap((*this.node).prev, node_document(rb_self)) }
 }
 
-pub fn next_element(_ruby: &Ruby, rb_self: Value) -> Value {
+pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
-        let mut n = (*unwrap(rb_self)).next;
+        let mut n = (*this.node).next;
         while !n.is_null() && (*n).type_ != ty::ELEMENT {
             n = (*n).next;
         }
@@ -493,9 +496,10 @@ pub fn next_element(_ruby: &Ruby, rb_self: Value) -> Value {
     }
 }
 
-pub fn previous_element(_ruby: &Ruby, rb_self: Value) -> Value {
+pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
-        let mut n = (*unwrap(rb_self)).prev;
+        let mut n = (*this.node).prev;
         while !n.is_null() && (*n).type_ != ty::ELEMENT {
             n = (*n).prev;
         }
@@ -504,13 +508,15 @@ pub fn previous_element(_ruby: &Ruby, rb_self: Value) -> Value {
 }
 
 /// `#child`: the first child node of any type, or nil.
-pub fn child(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { wrap((*unwrap(rb_self)).first_child, node_document(rb_self)) }
+pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
+    unsafe { wrap((*this.node).first_child, node_document(rb_self)) }
 }
 
-pub fn first_element_child(_ruby: &Ruby, rb_self: Value) -> Value {
+pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
-        let mut c = (*unwrap(rb_self)).first_child;
+        let mut c = (*this.node).first_child;
         while !c.is_null() && (*c).type_ != ty::ELEMENT {
             c = (*c).next;
         }
@@ -518,9 +524,10 @@ pub fn first_element_child(_ruby: &Ruby, rb_self: Value) -> Value {
     }
 }
 
-pub fn last_element_child(_ruby: &Ruby, rb_self: Value) -> Value {
+pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
-        let mut c = (*unwrap(rb_self)).last_child;
+        let mut c = (*this.node).last_child;
         while !c.is_null() && (*c).type_ != ty::ELEMENT {
             c = (*c).prev;
         }
@@ -558,18 +565,21 @@ unsafe fn step_parent(n: *mut LxbNode) -> *mut LxbNode {
 }
 
 /// `#children`: every child node, as a NodeSet.
-pub fn children(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { set_of(rb_self, (*unwrap(rb_self)).first_child, step_next, false) }
+pub fn children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
+    unsafe { set_of(rb_self, (*this.node).first_child, step_next, false) }
 }
 
 /// `#element_children` / `#elements`: the child elements only.
-pub fn element_children(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { set_of(rb_self, (*unwrap(rb_self)).first_child, step_next, true) }
+pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
+    unsafe { set_of(rb_self, (*this.node).first_child, step_next, true) }
 }
 
 /// `#ancestors`: the ancestor elements, nearest first.
-pub fn ancestors(_ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe { set_of(rb_self, (*unwrap(rb_self)).parent, step_parent, true) }
+pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
+    unsafe { set_of(rb_self, (*this.node).parent, step_parent, true) }
 }
 
 /* ------------------------------------------------------------------ *
@@ -581,14 +591,14 @@ pub fn ancestors(_ruby: &Ruby, rb_self: Value) -> Value {
 /// This goes through Lexbor's attribute-name hash, which is keyed by LOCAL name
 /// and lower-cases the lookup - see [`attribute_by_qualified_name`] for the
 /// exact-match sibling and why both exist.
-pub fn aref(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
-    unsafe {
+pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, magnus::Error> {
+    Ok(unsafe {
         use magnus::rb_sys::AsRawValue;
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ELEMENT {
-            return ruby.qnil().as_value();
+            return Ok(ruby.qnil().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let el = node as *mut LxbElement;
         if !lxb_dom_element_has_attribute(el, nv.as_ptr() as *const u8, nv.len()) {
             ruby.qnil().as_value()
@@ -598,18 +608,18 @@ pub fn aref(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
                 lxb_dom_element_get_attribute(el, nv.as_ptr() as *const u8, nv.len(), &mut vlen);
             str_of(val, vlen)
         }
-    }
+    })
 }
 
 /// `node.key?(name)`.
-pub fn has_key(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
-    unsafe {
+pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, magnus::Error> {
+    Ok(unsafe {
         use magnus::rb_sys::AsRawValue;
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ELEMENT {
-            return ruby.qfalse().as_value();
+            return Ok(ruby.qfalse().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let has = lxb_dom_element_has_attribute(
             node as *mut LxbElement,
             nv.as_ptr() as *const u8,
@@ -620,7 +630,7 @@ pub fn has_key(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
         } else {
             ruby.qfalse().as_value()
         }
-    }
+    })
 }
 
 /// Walk an element's own attribute list. Empty for a non-element.
@@ -638,10 +648,10 @@ unsafe fn each_attr(node: *mut LxbNode, mut f: impl FnMut(*mut LxbAttr) -> bool)
 }
 
 /// `node.keys` -> the attribute names, in document order.
-pub fn keys(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn keys(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
         let ary = ruby.ary_new();
-        each_attr(unwrap(rb_self), |at| {
+        each_attr(this.node, |at| {
             let mut len = 0usize;
             let p = lxb_dom_attr_qualified_name(at, &mut len);
             let _ = ary.push(str_of(p, len));
@@ -652,10 +662,10 @@ pub fn keys(ruby: &Ruby, rb_self: Value) -> Value {
 }
 
 /// `node.values` -> the attribute values, in document order.
-pub fn values(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
         let ary: RArray = ruby.ary_new();
-        each_attr(unwrap(rb_self), |at| {
+        each_attr(this.node, |at| {
             let mut len = 0usize;
             let p = lxb_dom_attr_value_noi(at, &mut len);
             let _ = ary.push(str_of(p, len));
@@ -668,11 +678,12 @@ pub fn values(ruby: &Ruby, rb_self: Value) -> Value {
 /// `element.attribute_nodes` -> a NodeSet of Attribute nodes, in document order.
 /// Empty for a non-element. These wrap the bare `lxb_dom_attr_t`; navigating
 /// back with `Attribute#parent` goes through the compat attr->owner index.
-pub fn attribute_nodes(_ruby: &Ruby, rb_self: Value) -> Value {
+pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
         use magnus::rb_sys::AsRawValue;
         let set = mkr_node_set_new(node_document(rb_self).as_raw());
-        each_attr(unwrap(rb_self), |at| {
+        each_attr(this.node, |at| {
             mkr_node_set_push(set, at as *mut core::ffi::c_void);
             true
         });
@@ -693,14 +704,19 @@ pub fn attribute_nodes(_ruby: &Ruby, rb_self: Value) -> Value {
 /// The match is also BYTE-exact, where `#[]` lower-cases what it looks up.
 /// getAttribute's ASCII-lowercasing applies only to an HTML element in an HTML
 /// document, so the caller does that step.
-pub fn attribute_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
-    unsafe {
+pub fn attribute_by_qualified_name(
+    ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_name: Value,
+) -> Result<Value, magnus::Error> {
+    let rb_self = this.value;
+    Ok(unsafe {
         use magnus::rb_sys::AsRawValue;
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ELEMENT {
-            return ruby.qnil().as_value();
+            return Ok(ruby.qnil().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let want = nv.bytes();
 
         let mut found: *mut LxbAttr = core::ptr::null_mut();
@@ -716,10 +732,10 @@ pub fn attribute_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: Value) 
         /* `want` is not read past here; wrapping allocates, so it happens after. */
 
         if found.is_null() {
-            return ruby.qnil().as_value();
+            return Ok(ruby.qnil().as_value());
         }
         wrap(found as *mut LxbNode, node_document(rb_self))
-    }
+    })
 }
 
 /// `element.attribute_value_by_qualified_name(name)` -> that attribute's value
@@ -729,14 +745,18 @@ pub fn attribute_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: Value) 
 /// this is the shape a DOM `getAttribute` / `hasAttribute` wants, and those run
 /// often enough for the wrapper to show up. An empty value answers `""`, which
 /// is how `hasAttribute` tells it from an absent attribute.
-pub fn attribute_value_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Value {
-    unsafe {
+pub fn attribute_value_by_qualified_name(
+    ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_name: Value,
+) -> Result<Value, magnus::Error> {
+    Ok(unsafe {
         use magnus::rb_sys::AsRawValue;
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ELEMENT {
-            return ruby.qnil().as_value();
+            return Ok(ruby.qnil().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let want = nv.bytes();
 
         let mut val: *const u8 = core::ptr::null();
@@ -754,19 +774,19 @@ pub fn attribute_value_by_qualified_name(ruby: &Ruby, rb_self: Value, rb_name: V
         });
 
         if !hit {
-            return ruby.qnil().as_value();
+            return Ok(ruby.qnil().as_value());
         }
         str_of(val, vlen)
-    }
+    })
 }
 
 /// `attr.value`. For a non-attribute node this falls back to text content,
 /// matching the loose Nokogiri-ish meaning of `#value`.
-pub fn value(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
-        let node = unwrap(rb_self);
+        let node = this.node;
         if (*node).type_ != ty::ATTRIBUTE {
-            return content(ruby, rb_self);
+            return content(ruby, this);
         }
         let mut len = 0usize;
         let p = lxb_dom_attr_value_noi(node as *mut LxbAttr, &mut len);
@@ -780,10 +800,11 @@ pub fn value(ruby: &Ruby, rb_self: Value) -> Value {
 /// resolved against the document's line table. nil for a node the tracker could
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
-pub fn line(ruby: &Ruby, rb_self: Value) -> Value {
+pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    let rb_self = this.value;
     unsafe {
         use magnus::rb_sys::AsRawValue;
-        let node = unwrap(rb_self);
+        let node = this.node;
         let p = mkr_doc_parsed(node_document(rb_self).as_raw());
         let n = mkr_parsed_node_line(p, node);
         if n == 0 {
@@ -816,13 +837,13 @@ unsafe fn depth(n: *mut LxbNode) -> usize {
 /// attributes are not in the `first_child`/`next` chain, so their order is not
 /// defined here. Included via Comparable, which supplies `<`, `>`, `between?`
 /// and the rest.
-pub fn spaceship(ruby: &Ruby, rb_self: Value, other: Value) -> Value {
-    unsafe {
+pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Value, magnus::Error> {
+    Ok(unsafe {
         use magnus::rb_sys::AsRawValue;
         let nil = ruby.qnil().as_value();
 
         if !is_kind_of(other, mkr_cNode) {
-            return nil;
+            return Ok(nil);
         }
         /* An XML node is never order-comparable to an HTML one, and asking is
          * how we avoid unwrap's TypeError below. */
@@ -830,19 +851,19 @@ pub fn spaceship(ruby: &Ruby, rb_self: Value, other: Value) -> Value {
             Value::from_raw(crate::glue::abi::mkr_node_document(other.as_raw())),
             mkr_cXmlDocument,
         ) {
-            return nil;
+            return Ok(nil);
         }
 
-        let a = unwrap(rb_self);
-        let b = unwrap(other);
+        let a = this.node;
+        let b = unwrap(other)?;
         if a == b {
-            return ruby.integer_from_i64(0).as_value();
+            return Ok(ruby.integer_from_i64(0).as_value());
         }
         if (*a).type_ == ty::ATTRIBUTE
             || (*b).type_ == ty::ATTRIBUTE
             || (*a).owner_document != (*b).owner_document
         {
-            return nil;
+            return Ok(nil);
         }
 
         let (da, db) = (depth(a), depth(b));
@@ -856,40 +877,40 @@ pub fn spaceship(ruby: &Ruby, rb_self: Value, other: Value) -> Value {
                 pa = (*pa).parent;
             }
             if pa == b {
-                return ruby.integer_from_i64(1).as_value();
+                return Ok(ruby.integer_from_i64(1).as_value());
             }
         } else if db > da {
             for _ in 0..(db - da) {
                 pb = (*pb).parent;
             }
             if pb == a {
-                return ruby.integer_from_i64(-1).as_value();
+                return Ok(ruby.integer_from_i64(-1).as_value());
             }
         }
 
         /* Climb both until they share a parent (the lowest common ancestor). */
         while (*pa).parent != (*pb).parent {
             if (*pa).parent.is_null() || (*pb).parent.is_null() {
-                return nil; /* different trees */
+                return Ok(nil); /* different trees */
             }
             pa = (*pa).parent;
             pb = (*pb).parent;
         }
         if (*pa).parent.is_null() {
-            return nil; /* two distinct roots */
+            return Ok(nil); /* two distinct roots */
         }
 
         /* pa and pb are distinct siblings: earlier in the child list is first. */
         let mut c = (*(*pa).parent).first_child;
         while !c.is_null() {
             if c == pa {
-                return ruby.integer_from_i64(-1).as_value();
+                return Ok(ruby.integer_from_i64(-1).as_value());
             }
             if c == pb {
-                return ruby.integer_from_i64(1).as_value();
+                return Ok(ruby.integer_from_i64(1).as_value());
             }
             c = (*c).next;
         }
         nil /* unreachable for a well-formed tree */
-    }
+    })
 }

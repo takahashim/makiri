@@ -33,7 +33,7 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
 use super::abi::*;
-use super::{node_document, unwrap};
+use super::node_document;
 use crate::cbuf::{mkr_buf_append, Buf, MKR_OK};
 use crate::glue::abi::is_kind_of;
 
@@ -497,7 +497,8 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
     Ok((width, enc))
 }
 
-fn to_xml(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
+    let rb_self = this.value;
     let (width, enc_opt) = to_xml_opts(ruby, args)?;
     unsafe {
         let (to_enc, enc_name) = if enc_opt.is_nil() {
@@ -509,7 +510,7 @@ fn to_xml(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
         };
 
         let doc = &*xdoc(rb_self);
-        let n = unwrap(rb_self);
+        let n = this.id;
         if has_dom_loose_name(doc, n) {
             return Err(Error::new(
                 error_class(),
@@ -769,7 +770,8 @@ unsafe fn c14n_node(
     }
 }
 
-fn canonicalize(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
+    let rb_self = this.value;
     let comments = if args.is_empty() {
         false
     } else {
@@ -782,7 +784,7 @@ fn canonicalize(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Er
 
     unsafe {
         let doc = &*xdoc(rb_self);
-        let n = unwrap(rb_self);
+        let n = this.id;
         if has_dom_loose_name(doc, n) {
             return Err(Error::new(
                 error_class(),

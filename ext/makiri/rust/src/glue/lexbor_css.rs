@@ -555,7 +555,7 @@ impl Drop for Engine {
 }
 
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    let tv = unsafe { mkr_ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr()) };
+    let tv = unsafe { mkr_ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr())? };
     let css: &[u8] = unsafe { tv.bytes() };
 
     // SAFETY: `error_class` reads a VALUE that Init_makiri set before any Ruby

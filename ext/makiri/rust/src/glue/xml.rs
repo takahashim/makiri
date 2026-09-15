@@ -71,9 +71,9 @@ unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
     wrap_xml_node(node.to_token() as *mut c_void, document)
 }
 
-/// The XML node behind a wrapper, typed. Raises for an HTML node.
-unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> NodeId {
-    NodeId::from_token(xml_node_unwrap(rb_node) as usize)
+/// The XML node behind a wrapper, typed. `Err(TypeError)` for an HTML node.
+unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> Result<NodeId, Error> {
+    Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
 }
 
 pub use crate::bridge::string::mkr_ruby_copy_bytes;
@@ -325,11 +325,11 @@ unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
 
 /// The (Document VALUE, context node) a query runs against: for a Document the
 /// context is the arena's document node, for a node it is that node.
-unsafe fn query_context(rb_self: Value) -> (Value, NodeId) {
-    /* `mkr_xml_node_unwrap` is kind-checked - it raises on a non-XML node - and
+unsafe fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
+    /* `mkr_xml_node_unwrap` is kind-checked - `Err` for a non-XML node - and
      * resolves an XML Document to its document node. */
     let document = Value::from_raw(mkr_node_document(rb_self.as_raw()));
-    (document, typed_xml_node_unwrap(rb_self.as_raw()))
+    Ok((document, typed_xml_node_unwrap(rb_self.as_raw())?))
 }
 
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.
@@ -392,7 +392,7 @@ unsafe fn build_ctx(
     what: *const c_char,
     rb_ns: Option<Value>,
 ) -> Result<OwnedContext, Error> {
-    mkr_verify_text(rb_sys::rb_String(rb_text.as_raw()), what);
+    mkr_verify_text(rb_sys::rb_String(rb_text.as_raw()), what)?;
     let Some(ctx) = OwnedContext::new(
         xdoc as *mut c_void,
         context_node.to_token() as *mut c_void,
@@ -456,7 +456,7 @@ fn xpath_run(
     first_only: bool,
 ) -> Result<Value, Error> {
     unsafe {
-        let (document, context) = query_context(rb_self);
+        let (document, context) = query_context(rb_self)?;
         if context.is_invalid() {
             return Ok(if first_only {
                 ruby.qnil().as_value()
@@ -470,7 +470,7 @@ fn xpath_run(
         /* Mint the borrowed view AFTER namespace registration: that step
          * allocates Ruby objects and may run a GC, and the borrowed bytes must
          * not be live across one. */
-        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
+        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
         let budget = ctx_budget(ctx.as_ptr());
         (*budget).limits.ast_nodes = 0;
         let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
@@ -525,7 +525,7 @@ unsafe fn css_compile_or_raise(
     let cns = CssNs {
         default_prefix: css_default_prefix(rb_ns),
     };
-    let sv = mkr_ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr());
+    let sv = mkr_ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
     let budget = ctx_budget(ctx);
     (*budget).limits.ast_nodes = 0;
     let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, budget);
@@ -555,7 +555,7 @@ fn css_run(
     first_only: bool,
 ) -> Result<Value, Error> {
     unsafe {
-        let (document, context) = query_context(rb_self);
+        let (document, context) = query_context(rb_self)?;
         if context.is_invalid() {
             return Ok(if first_only {
                 ruby.qnil().as_value()
@@ -593,7 +593,7 @@ fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Val
 /// with every combinator.
 fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<bool, Error> {
     unsafe {
-        let (document, node) = query_context(rb_self);
+        let (document, node) = query_context(rb_self)?;
         if node.is_invalid() {
             return Ok(false);
         }

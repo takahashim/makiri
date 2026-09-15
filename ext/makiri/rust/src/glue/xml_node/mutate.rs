@@ -134,10 +134,11 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 /// it, the same contract HTML nodes have. It is also the single mutation choke
 /// point: every mutator comes through here, and here is where the cached
 /// element-name index is dropped so the next query rebuilds it.
-unsafe fn unwrap_mutable(rb_self: Value) -> NodeId {
+unsafe fn unwrap_mutable(this: super::XmlSelf) -> NodeId {
+    let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
     mkr_xml_name_index_invalidate(&mut *xdoc(rb_self));
-    unwrap(rb_self)
+    this.id
 }
 
 /// Verify a String argument and hand back its bytes plus the length the arena
@@ -148,7 +149,7 @@ unsafe fn verified(
     v: Value,
     what: &core::ffi::CStr,
 ) -> Result<(RubyText, u32), Error> {
-    let t = mkr_ruby_verified_text(v.as_raw(), what.as_ptr());
+    let t = mkr_ruby_verified_text(v.as_raw(), what.as_ptr())?;
     let n = u32_len(ruby, t.len())?;
     Ok((t, n))
 }
@@ -172,20 +173,22 @@ unsafe fn verified_opt(
 
 /// `#remove` / `#unlink` -> self. Detaches from the tree (or, for an attribute,
 /// from its owner); the node stays usable.
-pub fn remove(rb_self: Value) -> Result<Value, Error> {
+pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
         if is_a(rb_self, mkr_cXmlDocument) {
             return Err(Error::new(error_class(), "cannot remove the document node"));
         }
-        let n = unwrap_mutable(rb_self);
+        let n = unwrap_mutable(this);
         mkr_xml_remove(&mut *xdoc(rb_self), n); /* detach + refresh the root/doctype cache */
         Ok(rb_self)
     }
 }
 
 /// The element behind `rb_self`, or an error naming what was attempted.
-unsafe fn element_for(rb_self: Value) -> Result<NodeId, Error> {
-    let n = unwrap_mutable(rb_self);
+unsafe fn element_for(this: super::XmlSelf) -> Result<NodeId, Error> {
+    let rb_self = this.value;
+    let n = unwrap_mutable(this);
     if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
         return Err(Error::new(
             error_class(),
@@ -196,9 +199,10 @@ unsafe fn element_for(rb_self: Value) -> Result<NodeId, Error> {
 }
 
 /// `element[name] = value` -> value. Adds or replaces the attribute.
-pub fn aset(ruby: &Ruby, rb_self: Value, name: Value, val: Value) -> Result<Value, Error> {
+pub fn aset(ruby: &Ruby, this: super::XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let n = element_for(rb_self)?;
+        let n = element_for(this)?;
         let (nv, _) = verified(ruby, name, c"attribute name")?;
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let mut out = NodeId::INVALID;
@@ -216,13 +220,14 @@ pub fn aset(ruby: &Ruby, rb_self: Value, name: Value, val: Value) -> Result<Valu
 /// xmlns namespace.
 pub fn set_attribute_ns(
     ruby: &Ruby,
-    rb_self: Value,
+    this: super::XmlSelf,
     ns: Value,
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let n = element_for(rb_self)?;
+        let n = element_for(this)?;
         let (qv, _) = verified(ruby, qname, c"attribute qualified name")?;
         let (vv, _) = verified(ruby, val, c"attribute value")?;
         let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
@@ -243,12 +248,13 @@ pub fn set_attribute_ns(
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
 pub fn remove_attribute_ns(
     ruby: &Ruby,
-    rb_self: Value,
+    this: super::XmlSelf,
     ns: Value,
     local: Value,
 ) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let n = unwrap_mutable(rb_self);
+        let n = unwrap_mutable(this);
         if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
@@ -260,9 +266,10 @@ pub fn remove_attribute_ns(
 }
 
 /// `element.delete(name)` / `#remove_attribute` -> self. A no-op when absent.
-pub fn delete(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> {
+pub fn delete(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let n = unwrap_mutable(rb_self);
+        let n = unwrap_mutable(this);
         if (*xdoc(rb_self)).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
@@ -275,9 +282,10 @@ pub fn delete(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> 
 /// `node.content = text` -> text. For an element, replaces its children with one
 /// text node (stored verbatim, escaped on serialization); for a text, CDATA,
 /// comment or PI leaf, sets its data.
-pub fn set_content(ruby: &Ruby, rb_self: Value, text: Value) -> Result<Value, Error> {
+pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let n = unwrap_mutable(rb_self);
+        let n = unwrap_mutable(this);
         let (tv, _) = verified(ruby, text, c"node content")?;
         let st = mkr_xml_set_content(&mut *xdoc(rb_self), n, tv.bytes());
         mkr_xml_mut_check(st);
@@ -288,9 +296,10 @@ pub fn set_content(ruby: &Ruby, rb_self: Value, text: Value) -> Result<Value, Er
 /// `node.name = new_name` -> new_name. Renames an element or attribute in place,
 /// preserving identity and tree position; the namespace is re-resolved against
 /// the node's in-scope declarations.
-pub fn set_name(ruby: &Ruby, rb_self: Value, name: Value) -> Result<Value, Error> {
+pub fn set_name(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let n = unwrap_mutable(rb_self);
+        let n = unwrap_mutable(this);
         let (nv, _) = verified(ruby, name, c"node name")?;
         let st = mkr_xml_rename(&mut *xdoc(rb_self), n, nv.bytes());
         mkr_xml_mut_check(st);
@@ -329,7 +338,7 @@ unsafe fn incoming_node(
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
-    let src = unwrap(arg);
+    let src = unwrap(arg)?;
     if node_document(arg).as_raw() == target_doc.as_raw() {
         return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
     }
@@ -348,7 +357,10 @@ unsafe fn adopt_finish(arg: Value) {
     if arg.is_nil() {
         return;
     }
-    let src = unwrap(arg);
+    /* The adopt step already unwrapped `arg`, so this cannot fail. */
+    let Ok(src) = unwrap(arg) else {
+        return;
+    };
     let sdoc = xdoc(arg);
     if (*sdoc).type_(src) == Some(NodeType::Fragment) {
         while let Some(c) = (*sdoc).first_child(src) {
@@ -396,9 +408,10 @@ unsafe fn splice_fragment(
     wrap(frag, doc_v)
 }
 
-fn insert(ruby: &Ruby, rb_self: Value, arg: Value, op: Op) -> Result<Value, Error> {
+fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let target = unwrap_mutable(rb_self);
+        let target = unwrap_mutable(this);
         let doc_v = node_document(rb_self);
         let xd = xdoc(rb_self);
         let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;
@@ -421,36 +434,38 @@ fn insert(ruby: &Ruby, rb_self: Value, arg: Value, op: Op) -> Result<Value, Erro
     }
 }
 
-pub fn add_child(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
-    insert(ruby, rb_self, arg, Op::Child)
+pub fn add_child(ruby: &Ruby, this: super::XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Op::Child)
 }
-pub fn before(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
-    insert(ruby, rb_self, arg, Op::Before)
+pub fn before(ruby: &Ruby, this: super::XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Op::Before)
 }
-pub fn after(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
-    insert(ruby, rb_self, arg, Op::After)
+pub fn after(ruby: &Ruby, this: super::XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Op::After)
 }
-pub fn replace(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
-    insert(ruby, rb_self, arg, Op::Replace)
+pub fn replace(ruby: &Ruby, this: super::XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Op::Replace)
 }
 
 /// `element << node` -> self. Nokogiri's `<<` appends and returns the receiver.
-pub fn lshift(ruby: &Ruby, rb_self: Value, arg: Value) -> Result<Value, Error> {
-    insert(ruby, rb_self, arg, Op::Child)?;
+pub fn lshift(ruby: &Ruby, this: super::XmlSelf, arg: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    insert(ruby, this, arg, Op::Child)?;
     Ok(rb_self)
 }
 
 /// `clone_node(deep = false)` -> a detached copy in the same document, with the
 /// element/attribute name case, the namespaces and the CDATA node type
 /// preserved. Backs `#dup` / `#clone` and the DOM's cloneNode.
-pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+pub fn clone_node(this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
+    let rb_self = this.value;
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
     unsafe {
         let mut out: NodeId = NodeId::INVALID;
         mkr_xml_mut_check(mkr_xml_clone_node(
             &mut *xdoc(rb_self),
-            unwrap(rb_self),
+            this.id,
             deep,
             &mut out,
         ));
@@ -560,7 +575,14 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
                 let entry = RArray::from_value(pair).expect("Hash#to_a yields pairs");
                 let k: Value = entry.entry(0)?;
                 let v: Value = entry.entry(1)?;
-                aset(ruby, rb_el, k.funcall("to_s", ())?, v.funcall("to_s", ())?)?;
+                /* `rb_el` was wrapped just above, so it converts. */
+                let el_self = <super::XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
+                aset(
+                    ruby,
+                    el_self,
+                    k.funcall("to_s", ())?,
+                    v.funcall("to_s", ())?,
+                )?;
             }
         }
         Ok(rb_el)
@@ -700,7 +722,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                      * as the same document (aliasing UB). */
                     mkr_xml_mut_check(mkr_xml_clone_node(
                         &mut *xd,
-                        unwrap(node_v),
+                        unwrap(node_v)?,
                         deep,
                         &mut copy,
                     ))
@@ -708,7 +730,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                     mkr_xml_mut_check(mkr_xml_copy_node(
                         &mut *xd,
                         &*src_doc,
-                        unwrap(node_v),
+                        unwrap(node_v)?,
                         deep,
                         &mut copy,
                     ))
@@ -716,7 +738,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
             }
             KIND_HTML => mkr_xml_mut_check(mkr_cross_html_to_xml(
                 xd,
-                mkr_html_node_unwrap(node_v.as_raw()) as *mut _,
+                mkr_html_node_unwrap(node_v.as_raw())? as *mut _,
                 deep,
                 &mut copy,
             )),

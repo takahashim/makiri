@@ -289,7 +289,7 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, E
                 .doc_node()
                 .to_token() as *mut c_void
         } else {
-            mkr_xml_node_unwrap(rb_node.as_raw())
+            mkr_xml_node_unwrap(rb_node.as_raw())?
         };
         let Some(xctx) = OwnedContext::new(xdoc, cnode, Backend::Xml) else {
             return Err(Error::new(
@@ -300,7 +300,7 @@ unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, E
         return Ok(xctx);
     }
 
-    let node = mkr_html_node_unwrap(rb_node.as_raw());
+    let node = mkr_html_node_unwrap(rb_node.as_raw())?;
     let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw()) as *mut c_void;
     if !mkr_parsed_dom_index_build(parsed) {
         return Err(Error::new(
@@ -386,7 +386,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
         rb_self.node.set(rb_node.into()); /* keepalive; marked above */
         /* Same-document is verified, so rb_node is the context's representation
          * and the engine - monomorphized per kind - takes the raw pointer. */
-        ctx_set_context_node(ctx, mkr_node_raw(rb_node.as_raw()));
+        ctx_set_context_node(ctx, mkr_node_raw(rb_node.as_raw())?);
     }
     Ok(rb_node)
 }
@@ -442,7 +442,11 @@ unsafe fn push_result_node(
         err.set("handler returned a node from a different document");
         return false;
     }
-    let n = mkr_node_raw(rb_node);
+    /* Same-document is checked above, so this is a node of the context's kind. */
+    let Ok(n) = mkr_node_raw(rb_node) else {
+        err.set("handler returned an unusable node");
+        return false;
+    };
     if nodeset_push(set, n, ctx_budget(ctx)).is_err() {
         err.set("out of memory building handler result");
         return false;
@@ -788,10 +792,10 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
      * the borrow across the walk would turn all four into one generic "already in
      * use", which is how the handler specs first caught this. */
     let (ctx, ast, owned) = unsafe {
-        /* Verify BEFORE borrowing: the contract check raises with rb_raise, and
-         * a longjmp out of a live RefMut never releases it - every later call on
-         * this context would then report "already in use". */
-        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
+        /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
+         * which may re-enter this context, and a borrow held across that would
+         * turn the re-entry into "already in use". */
+        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
         let mut d = rb_self.borrow()?;
         let parsed = cached_ast(&mut d, ev);
         let ctx = d.ctx.as_ptr();
@@ -829,8 +833,8 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
                 "cannot register a namespace while evaluating (re-entrant mutation from a handler)",
             ));
         }
-        let pv = mkr_ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr());
-        let uv = mkr_ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr());
+        let pv = mkr_ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr())?;
+        let uv = mkr_ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr())?;
         let rc = xpath_register_ns(ctx, pv.as_verified(), uv.as_verified()); /* copies both */
         if rc != 0 {
             return Err(Error::new(error_class(), "failed to register namespace"));
@@ -859,7 +863,7 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
          * stricter engine-string check, which adds the byte cap on top of the
          * no-NUL / valid-UTF-8 contract. */
         let sv: Value = value.funcall("to_s", ())?;
-        let nv = mkr_ruby_verified_text(name.as_raw(), c"variable name".as_ptr());
+        let nv = mkr_ruby_verified_text(name.as_raw(), c"variable name".as_ptr())?;
         let vv = match mkr_ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes)
         {
             Ok(vv) => vv,
@@ -894,7 +898,7 @@ fn node_xpath_run(
 ) -> Result<Value, Error> {
     unsafe {
         let document = Value::from_raw(mkr_node_document(rb_self.as_raw()));
-        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
+        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
 
         let ctx = context_for(rb_self, document)?;
         ctx_set_unprefixed_lax(ctx.as_ptr(), lax);

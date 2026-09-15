@@ -732,7 +732,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
                 "every node must be a Makiri node belonging to the given document",
             ));
         }
-        w.push(unsafe { mkr_node_raw(item.as_raw()) })?;
+        w.push(unsafe { mkr_node_raw(item.as_raw())? })?;
     }
     drop(w);
     let _ = document;

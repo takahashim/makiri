@@ -133,23 +133,22 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to Lexbor's.
-pub unsafe extern "C" fn mkr_node_raw(rb_node: VALUE) -> *mut c_void {
+pub unsafe fn mkr_node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
     if is_kind_of(rb_node, mkr_cDocument) {
         let parsed = mkr_doc_parsed(rb_node);
         if mkr_parsed_kind(parsed) == MKR_DOC_XML {
             let xdoc = mkr_parsed_xml_doc(parsed) as *mut XmlDoc;
-            return if xdoc.is_null() {
+            return Ok(if xdoc.is_null() {
                 core::ptr::null_mut()
             } else {
                 (*xdoc).doc_node().to_token() as *mut c_void
-            };
+            });
         }
-        return super::abi::mkr_html_doc_unwrap(rb_node) as *mut c_void;
+        return Ok(super::abi::mkr_html_doc_unwrap(rb_node) as *mut c_void);
     }
-    /* Raises TypeError for a non-node, as TypedData_Get_Struct did. Nothing in
-     * this frame needs dropping, so the longjmp is safe here (glue/mod.rs). */
-    let nd = rb_check_typeddata(rb_node, base_type()) as *mut NodeData;
-    (*nd).node
+    /* TypeError for a non-node, as TypedData_Get_Struct raised. */
+    let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
+    Ok((*nd).node)
 }
 
 /// Which representation a wrapped node is, by its TypedData type - the robust
@@ -176,8 +175,17 @@ pub unsafe extern "C" fn mkr_node_kind(v: VALUE) -> c_int {
 
 /// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
 /// kind-agnostic, and never dereferenced.
-pub unsafe extern "C" fn mkr_node_id(rb_node: VALUE) -> usize {
-    mkr_node_raw(rb_node) as usize
+pub unsafe fn mkr_node_id(rb_node: VALUE) -> Result<usize, magnus::Error> {
+    Ok(mkr_node_raw(rb_node)? as usize)
+}
+
+/// [`mkr_node_id`] for the C-convention identity methods below, which Ruby
+/// calls directly: a failure is raised from here, where nothing is owned.
+unsafe fn node_id_or_raise(rb_node: VALUE) -> usize {
+    match mkr_node_id(rb_node) {
+        Ok(id) => id,
+        Err(e) => crate::bridge::ruby::raise(e),
+    }
 }
 
 pub unsafe extern "C" fn mkr_node_document(rb_node: VALUE) -> VALUE {
@@ -202,7 +210,7 @@ pub unsafe extern "C" fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE {
     if !is_kind_of(other, mkr_cNode) {
         return rb_sys::Qfalse as VALUE;
     }
-    if mkr_node_id(self_) == mkr_node_id(other) {
+    if node_id_or_raise(self_) == node_id_or_raise(other) {
         rb_sys::Qtrue as VALUE
     } else {
         rb_sys::Qfalse as VALUE
@@ -215,7 +223,7 @@ pub unsafe extern "C" fn mkr_node_equals(self_: VALUE, other: VALUE) -> VALUE {
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
 pub unsafe extern "C" fn mkr_node_pointer_id(self_: VALUE) -> VALUE {
-    rb_ull2inum(mkr_node_id(self_) as core::ffi::c_ulonglong)
+    rb_ull2inum(node_id_or_raise(self_) as core::ffi::c_ulonglong)
 }
 
 /// A stable hash from the node pointer, so `a == b` implies `a.hash == b.hash`

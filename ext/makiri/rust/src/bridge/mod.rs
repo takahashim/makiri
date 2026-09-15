@@ -5,12 +5,12 @@
 //! docs/string_types.md for the type lattice these functions move values
 //! through, and CLAUDE.md's "Text-input contract" for the rules they enforce.
 //!
-//! Like `glue::node` and unlike `glue::serialize`, nothing here defines a Ruby
-//! method - these are C-ABI functions the rest of the extension calls, several
-//! of which raise as part of their contract. So the port keeps the C ABI
-//! exactly. magnus appears only where it owns a read that has no plain C
-//! function behind it (the cached coderange, the byte slice); rb-sys does the
-//! rest.
+//! Nothing here defines a Ruby method - these are functions the rest of the
+//! extension calls. A failure comes back as `Err(magnus::Error)` rather than
+//! as a raise: `ruby` holds the few places a raising C function is still
+//! called, and turns each raise into an `Err` there.
+
+pub mod ruby;
 
 pub mod string;
 

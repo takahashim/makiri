@@ -154,7 +154,7 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     let ruby = Ruby::get_with(rb_self);
     let pretty = pretty_opt(&ruby, args)?;
     // The raising accessor, called while nothing is live (see the module docs).
-    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
+    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
 
     // A document fragment has no tag of its own, so its "outer" is its
     // children: the deep serializer is the right one (the tree serializer
@@ -167,7 +167,7 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
 fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     let ruby = Ruby::get_with(rb_self);
     let pretty = pretty_opt(&ruby, args)?;
-    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
+    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
     serialize(&ruby, node, true, pretty)
 }
 

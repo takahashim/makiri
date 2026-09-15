@@ -122,34 +122,51 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
 
 /// The `lxb_dom_node_t` behind an HTML node or HTML Document.
 ///
-/// **Raises** TypeError for an XML node or Document: the typed-data check is
+/// `Err(TypeError)` for an XML node or Document: the typed-data check is
 /// against `mkr_html_node_type`, which an XML node - wrapped under
 /// `mkr_xml_node_type` - does not satisfy. Every HTML-glue site that
 /// dereferences a node or hands its pointer to Lexbor goes through here, for
 /// `self` and arguments alike.
-pub unsafe extern "C" fn mkr_html_node_unwrap(rb_node: VALUE) -> *mut LxbNode {
+pub unsafe fn mkr_html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::Error> {
     if is_kind_of(Value::from_raw(rb_node), mkr_cDocument) {
         if is_kind_of(Value::from_raw(rb_node), mkr_cXmlDocument) {
-            rb_sys::rb_raise(
-                rb_sys::rb_eTypeError,
-                c"expected an HTML node, got a Makiri::XML::Document".as_ptr(),
-            );
+            return Err(magnus::Error::new(
+                magnus::Ruby::get_unchecked().exception_type_error(),
+                "expected an HTML node, got a Makiri::XML::Document",
+            ));
         }
-        return mkr_html_doc_unwrap(rb_node) as *mut LxbNode;
+        return Ok(mkr_html_doc_unwrap(rb_node) as *mut LxbNode);
     }
-    let nd = rb_sys::rb_check_typeddata(rb_node, mkr_html_node_type.as_ptr()) as *mut NodeData;
-    (*nd).node as *mut LxbNode
+    let nd =
+        crate::bridge::ruby::typed_data(rb_node, mkr_html_node_type.as_ptr())? as *mut NodeData;
+    Ok((*nd).node as *mut LxbNode)
 }
 
 /* ---- the Rust-side conveniences the reader module uses ---- */
 
 /// [`mkr_html_node_unwrap`] in Rust terms.
-///
-/// It raises, so it is called where nothing needs dropping - which in these
-/// readers means first, before any Ruby object or buffer exists.
-pub unsafe fn unwrap(rb_self: Value) -> *mut LxbNode {
+pub unsafe fn unwrap(v: Value) -> Result<*mut LxbNode, magnus::Error> {
     use magnus::rb_sys::AsRawValue;
-    mkr_html_node_unwrap(rb_self.as_raw())
+    mkr_html_node_unwrap(v.as_raw())
+}
+
+/// A method receiver already checked to be an HTML node or HTML Document.
+///
+/// The check runs as magnus converts the receiver, so a reader bound onto the
+/// wrong kind of node (the differential's `html_reader_on_xml`) fails with the
+/// same TypeError before the method body starts.
+#[derive(Clone, Copy)]
+pub struct HtmlSelf {
+    pub value: Value,
+    pub node: *mut LxbNode,
+}
+
+impl magnus::TryConvert for HtmlSelf {
+    fn try_convert(value: Value) -> Result<Self, magnus::Error> {
+        // SAFETY: magnus converts the receiver under the GVL.
+        let node = unsafe { unwrap(value)? };
+        Ok(HtmlSelf { value, node })
+    }
 }
 
 pub unsafe fn wrap(node: *mut LxbNode, document: Value) -> Value {

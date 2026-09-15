@@ -73,14 +73,15 @@ unsafe fn invalidate(rb_self: Value) {
 /// Every mutator unwraps `self` through here: a node the caller has frozen is
 /// immutable, so raise FrozenError rather than silently editing it. The readers
 /// use [`unwrap`] directly.
-unsafe fn unwrap_mutable(rb_self: Value) -> *mut LxbNode {
+unsafe fn unwrap_mutable(this: super::HtmlSelf) -> *mut LxbNode {
+    let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
-    unwrap(rb_self)
+    this.node
 }
 
 /// An HTML node argument. Routes through the HTML unwrap so an XML node is
 /// rejected before its arena pointer reaches Lexbor.
-unsafe fn arg_node(v: Value) -> *mut LxbNode {
+unsafe fn arg_node(v: Value) -> Result<*mut LxbNode, Error> {
     unwrap(v)
 }
 
@@ -122,7 +123,7 @@ unsafe fn prepare_insert(
     reference: *mut LxbNode,
     rb_incoming: Value,
 ) -> Result<(*mut LxbNode, Option<Value>), Error> {
-    let incoming = arg_node(rb_incoming);
+    let incoming = arg_node(rb_incoming)?;
 
     if (*incoming).type_ == ty::ATTRIBUTE {
         return Err(err("an attribute node cannot be inserted into the tree"));
@@ -155,12 +156,12 @@ unsafe fn inserted_result(
     rb_arg: Value,
     inserted: *mut LxbNode,
     adopt_from: Option<Value>,
-) -> Value {
+) -> Result<Value, Error> {
     match adopt_from {
-        None => rb_arg,
+        None => Ok(rb_arg),
         Some(src) => {
-            adopt_release(arg_node(src));
-            wrap(inserted, node_document(rb_self))
+            adopt_release(arg_node(src)?);
+            Ok(wrap(inserted, node_document(rb_self)))
         }
     }
 }
@@ -278,31 +279,34 @@ unsafe fn splice_or_insert(
 
 /// `node.add_child(child)` -> child. Appends as the last child; a document
 /// fragment contributes its children rather than itself.
-pub fn add_child(_ruby: &Ruby, rb_self: Value, rb_child: Value) -> Result<Value, Error> {
+pub fn add_child(_ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let parent = unwrap_mutable(rb_self);
+        let parent = unwrap_mutable(this);
         guard_doc_child_order(
             parent,
             core::ptr::null(),
             core::ptr::null(),
-            arg_node(rb_child),
+            arg_node(rb_child)?,
         )?;
         let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
         splice_or_insert(parent, ins, lxb::lxb_dom_node_insert_child, false);
         invalidate(rb_self);
-        Ok(inserted_result(rb_self, rb_child, ins, adopt_from))
+        inserted_result(rb_self, rb_child, ins, adopt_from)
     }
 }
 
 /// `node << child` -> node (chainable).
-pub fn lshift(ruby: &Ruby, rb_self: Value, rb_child: Value) -> Result<Value, Error> {
-    add_child(ruby, rb_self, rb_child)?;
+pub fn lshift(ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    add_child(ruby, this, rb_child)?;
     Ok(rb_self)
 }
 
-pub fn before(_ruby: &Ruby, rb_self: Value, rb_node: Value) -> Result<Value, Error> {
+pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(rb_self);
+        let reference = unwrap_mutable(this);
         if (*reference).parent.is_null() {
             return Err(err("cannot add a sibling to a node with no parent"));
         }
@@ -310,18 +314,19 @@ pub fn before(_ruby: &Ruby, rb_self: Value, rb_node: Value) -> Result<Value, Err
             (*reference).parent,
             reference,
             core::ptr::null(),
-            arg_node(rb_node),
+            arg_node(rb_node)?,
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
         invalidate(rb_self);
-        Ok(inserted_result(rb_self, rb_node, ins, adopt_from))
+        inserted_result(rb_self, rb_node, ins, adopt_from)
     }
 }
 
-pub fn after(_ruby: &Ruby, rb_self: Value, rb_node: Value) -> Result<Value, Error> {
+pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(rb_self);
+        let reference = unwrap_mutable(this);
         if (*reference).parent.is_null() {
             return Err(err("cannot add a sibling to a node with no parent"));
         }
@@ -329,20 +334,21 @@ pub fn after(_ruby: &Ruby, rb_self: Value, rb_node: Value) -> Result<Value, Erro
             (*reference).parent,
             (*reference).next,
             core::ptr::null(),
-            arg_node(rb_node),
+            arg_node(rb_node)?,
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_after, true);
         invalidate(rb_self);
-        Ok(inserted_result(rb_self, rb_node, ins, adopt_from))
+        inserted_result(rb_self, rb_node, ins, adopt_from)
     }
 }
 
 /// `node.remove` / `node.unlink` -> node. Detaches from the tree; the node stays
 /// usable, because the arena owns it.
-pub fn remove(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
+pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ == ty::ATTRIBUTE {
             return Err(err("use delete(name) to remove an attribute"));
         }
@@ -355,9 +361,10 @@ pub fn remove(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
 }
 
 /// `node.replace(other)` -> other. Puts `other` where `node` is, detaches node.
-pub fn replace(_ruby: &Ruby, rb_self: Value, rb_other: Value) -> Result<Value, Error> {
+pub fn replace(_ruby: &Ruby, this: super::HtmlSelf, rb_other: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(rb_self);
+        let reference = unwrap_mutable(this);
         if (*reference).parent.is_null() {
             return Err(err("cannot replace a node with no parent"));
         }
@@ -365,13 +372,13 @@ pub fn replace(_ruby: &Ruby, rb_self: Value, rb_other: Value) -> Result<Value, E
             (*reference).parent,
             reference,
             reference,
-            arg_node(rb_other),
+            arg_node(rb_other)?,
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
         splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
         lxb::lxb_dom_node_remove(reference);
         invalidate(rb_self);
-        Ok(inserted_result(rb_self, rb_other, ins, adopt_from))
+        inserted_result(rb_self, rb_other, ins, adopt_from)
     }
 }
 
@@ -380,14 +387,20 @@ pub fn replace(_ruby: &Ruby, rb_self: Value, rb_other: Value) -> Result<Value, E
  * ------------------------------------------------------------------ */
 
 /// `element[name] = value` -> value.
-pub fn aset(_ruby: &Ruby, rb_self: Value, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
+pub fn aset(
+    _ruby: &Ruby,
+    this: super::HtmlSelf,
+    rb_name: Value,
+    rb_value: Value,
+) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
-        let vv = mkr_ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let vv = mkr_ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr())?;
         let attr = lxb::lxb_dom_element_set_attribute(
             node as *mut LxbElement,
             nv.as_ptr() as *const u8,
@@ -470,23 +483,30 @@ unsafe fn intern_ns(node: *mut LxbNode, uri: &[u8]) -> usize {
 /// getAttributeNS resolve it. nil or `""` stores the null namespace.
 pub fn set_attribute_ns(
     _ruby: &Ruby,
-    rb_self: Value,
+    this: super::HtmlSelf,
     rb_ns: Value,
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
         let el = node as *mut LxbElement;
 
-        let qv = mkr_ruby_verified_text(rb_qname.as_raw(), c"attribute qualified name".as_ptr());
-        let vv = mkr_ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr());
+        let qv = mkr_ruby_verified_text(rb_qname.as_raw(), c"attribute qualified name".as_ptr())?;
+        let vv = mkr_ruby_verified_data(rb_value.as_raw(), c"attribute value".as_ptr())?;
 
-        let nv = (!rb_ns.is_nil())
-            .then(|| mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr()));
+        let nv = if rb_ns.is_nil() {
+            None
+        } else {
+            Some(mkr_ruby_verified_text(
+                rb_ns.as_raw(),
+                c"namespace".as_ptr(),
+            )?)
+        };
         let ns_bytes: &[u8] = match &nv {
             Some(nv) => nv.bytes(),
             None => &[],
@@ -564,22 +584,23 @@ pub fn set_attribute_ns(
 /// another namespace, which removal by qualified name would.
 pub fn remove_attribute_ns(
     ruby: &Ruby,
-    rb_self: Value,
+    this: super::HtmlSelf,
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
         let el = node as *mut LxbElement;
 
-        let lv = mkr_ruby_verified_text(rb_local.as_raw(), c"attribute local name".as_ptr());
+        let lv = mkr_ruby_verified_text(rb_local.as_raw(), c"attribute local name".as_ptr())?;
 
         let mut want_ns = NS_UNDEF;
         if !rb_ns.is_nil() {
-            let nv = mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr());
+            let nv = mkr_ruby_verified_text(rb_ns.as_raw(), c"namespace".as_ptr())?;
             if nv.len() != 0 {
                 want_ns = intern_ns(node, nv.bytes());
             }
@@ -601,13 +622,14 @@ pub fn remove_attribute_ns(
 /// Renames in place with identity preserved: create a throwaway element with the
 /// new name so the document interns it, copy its name fields onto this node,
 /// then discard it.
-pub fn set_name(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
+pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
             return Err(err("name= is only supported on elements"));
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr())?;
         let fresh = lxb::lxb_dom_document_create_element(
             (*node).owner_document,
             nv.as_ptr() as *const u8,
@@ -639,10 +661,11 @@ pub fn set_name(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, E
 /// `node.content = text` -> text. The DOM textContent setter: for an element
 /// this replaces all children with a single text node; for a character-data node
 /// it sets the data.
-pub fn set_content(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
+pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
-        let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"node content".as_ptr());
+        let node = unwrap_mutable(this);
+        let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"node content".as_ptr())?;
         let st = lxb::lxb_dom_node_text_content_set(node, tv.as_ptr() as *const u8, tv.len());
         if st != STATUS_OK {
             return Err(err("failed to set node content"));
@@ -653,13 +676,14 @@ pub fn set_content(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value
 }
 
 /// `element.delete(name)` -> self. Removes the attribute if present.
-pub fn delete(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
+pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
             return Ok(rb_self);
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         lxb::lxb_dom_element_remove_attribute(
             node as *mut LxbElement,
             nv.as_ptr() as *const u8,
@@ -730,9 +754,10 @@ unsafe fn parse_fragment_into(
 }
 
 /// `element.inner_html = html` -> html. Replaces the element's children.
-pub fn set_inner_html(_ruby: &Ruby, rb_self: Value, rb_html: Value) -> Result<Value, Error> {
+pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         if (*node).type_ != ty::ELEMENT {
             return Err(err("inner_html= requires an element"));
         }
@@ -760,9 +785,10 @@ pub fn set_inner_html(_ruby: &Ruby, rb_self: Value, rb_html: Value) -> Result<Va
 }
 
 /// `node.outer_html = html` -> html. Replaces the node itself with the parse.
-pub fn set_outer_html(_ruby: &Ruby, rb_self: Value, rb_html: Value) -> Result<Value, Error> {
+pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(rb_self);
+        let node = unwrap_mutable(this);
         let parent = (*node).parent;
         if parent.is_null() || (*parent).type_ != ty::ELEMENT {
             return Err(err("outer_html= requires a node with a parent element"));
@@ -789,7 +815,7 @@ pub fn set_outer_html(_ruby: &Ruby, rb_self: Value, rb_html: Value) -> Result<Va
 pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr())?;
         let el = lxb::lxb_dom_document_create_element(
             doc,
             nv.as_ptr() as *const u8,
@@ -806,7 +832,7 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
-        let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"text content".as_ptr());
+        let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"text content".as_ptr())?;
         let t = lxb::lxb_dom_document_create_text_node(doc, tv.as_ptr() as *const u8, tv.len());
         if t.is_null() {
             return Err(err("failed to create text node"));
@@ -818,7 +844,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
-        let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"comment content".as_ptr());
+        let tv = mkr_ruby_verified_data(rb_text.as_raw(), c"comment content".as_ptr())?;
         let c = lxb::lxb_dom_document_create_comment(doc, tv.as_ptr() as *const u8, tv.len());
         if c.is_null() {
             return Err(err("failed to create comment"));
@@ -841,8 +867,8 @@ pub fn create_pi(
         let tv = mkr_ruby_verified_text(
             rb_target.as_raw(),
             c"processing instruction target".as_ptr(),
-        );
-        let dv = mkr_ruby_verified_text(rb_data.as_raw(), c"processing instruction data".as_ptr());
+        )?;
+        let dv = mkr_ruby_verified_text(rb_data.as_raw(), c"processing instruction data".as_ptr())?;
         let pi = lxb::lxb_dom_document_create_processing_instruction(
             doc,
             tv.as_ptr() as *const u8,
@@ -872,7 +898,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 
     unsafe {
         let doc = mkr_html_doc_unwrap(rb_self.as_raw());
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr());
+        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr())?;
         if !lxb::lxb_dom_document_type_valid_name(nv.as_ptr() as *const u8, nv.len()) {
             return Err(Error::new(
                 ruby.exception_arg_error(),
@@ -882,11 +908,11 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 
         let zero = crate::glue::abi::RubyText::absent;
         let pv = match rb_pub.filter(|v| !v.is_nil()) {
-            Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype public id".as_ptr()),
+            Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype public id".as_ptr())?,
             None => zero(),
         };
         let sv = match rb_sys_.filter(|v| !v.is_nil()) {
-            Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype system id".as_ptr()),
+            Some(v) => mkr_ruby_verified_text(v.as_raw(), c"doctype system id".as_ptr())?,
             None => zero(),
         };
         let pub_ptr = if pv.len() != 0 {

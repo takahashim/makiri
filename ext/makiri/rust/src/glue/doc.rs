@@ -349,7 +349,7 @@ fn fragment_in(
     let document = document(ruby)?;
     unsafe {
         let doc = mkr_html_doc_unwrap(document.as_raw());
-        let (tag, ns) = resolve_fragment_context(doc, context);
+        let (tag, ns) = resolve_fragment_context(doc, context)?;
         build_fragment_ctx(ruby, document, doc, html, tag, ns)
     }
 }
@@ -359,7 +359,7 @@ fn fragment_in(
 /// (SVG/MathML) fragment context.
 fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = mkr_html_node_unwrap(self_.as_raw());
+        let node = mkr_html_node_unwrap(self_.as_raw())?;
         if (*node).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
             return Err(Error::new(
                 ruby.exception_arg_error(),
@@ -396,13 +396,13 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
                 crate::glue::xml_node::mkr_xml_node_document(node_v.as_raw()),
             );
             let src = crate::xml::model::NodeId::from_token(
-                mkr_xml_node_unwrap(node_v.as_raw()) as usize
+                mkr_xml_node_unwrap(node_v.as_raw())? as usize
             );
             mkr_xml_mut_check(mkr_cross_xml_to_html(doc, xdoc, src, deep, &mut imp));
             return Ok(Value::from_raw(mkr_wrap_html_node(imp, self_.as_raw())));
         }
 
-        let src = mkr_html_node_unwrap(node_v.as_raw()); /* raises on a non-node */
+        let src = mkr_html_node_unwrap(node_v.as_raw())?; /* Err on a non-node */
         let Some(imp) = import_with_fixup(doc, src, deep) else {
             return Err(Error::new(error_class(), "failed to import node"));
         };
@@ -428,7 +428,12 @@ pub unsafe extern "C" fn mkr_node_clone_node(
     /* RTEST: anything but nil and false. */
     let deep = deep_v != rb_sys::Qnil as VALUE && deep_v != rb_sys::Qfalse as VALUE;
 
-    let node = mkr_html_node_unwrap(self_);
+    /* Ruby calls this with the C convention, so a failure is raised here,
+     * before anything is owned. */
+    let node = match mkr_html_node_unwrap(self_) {
+        Ok(node) => node,
+        Err(e) => crate::bridge::ruby::raise(e),
+    };
     let doc = (*node).owner_document;
 
     let Some(clone) = import_with_fixup(doc, node, deep) else {

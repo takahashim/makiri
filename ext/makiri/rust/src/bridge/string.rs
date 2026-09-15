@@ -25,7 +25,7 @@ use core::ffi::{c_char, c_int, c_long};
 
 use magnus::encoding::Coderange;
 use magnus::rb_sys::FromRawValue;
-use magnus::{RString, Value};
+use magnus::{Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
 /// The shared owned buffer.
@@ -39,7 +39,8 @@ pub use crate::glue::abi::{RubyBytes, RubyData, RubyText};
 /// Text-index slices and Lexbor-interned names reach Ruby through it.
 pub use crate::text::BorrowedText;
 
-use crate::glue::abi::{mkr_eError, rb_raise};
+use crate::bridge::ruby::string_of;
+use crate::glue::abi::{error_class, mkr_eError, rb_raise};
 
 /* ---- the C layouts (core/mkr_text.h, bridge/bridge.h) ----
  *
@@ -70,12 +71,6 @@ unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
     let r = RString::from_value(Value::from_raw(s)).expect("a T_STRING");
     let bytes = r.as_slice();
     (s, bytes.as_ptr() as *const c_char, bytes.len())
-}
-
-/// Coerce to a String the way `rb_String` does (`to_str`, else `to_s`).
-#[inline]
-unsafe fn to_string(v: VALUE) -> VALUE {
-    rb_sys::rb_String(v)
 }
 
 /* ---- assembling Ruby Strings ---- */
@@ -158,53 +153,65 @@ pub unsafe fn mkr_text_check(coderange_str: VALUE, ptr: *const c_char, len: usiz
     crate::cutf8::text_verdict(bytes, mkr_ruby_str_known_valid_utf8(coderange_str))
 }
 
-pub unsafe fn mkr_verify_text(str: VALUE, what: *const c_char) {
+/// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
+/// naming `what` in the `Makiri::Error`.
+pub unsafe fn mkr_verify_text(str: VALUE, what: *const c_char) -> Result<(), Error> {
     let (_, ptr, len) = borrow(str);
-    match mkr_text_check(str, ptr, len) {
-        TextVerdict::HasNul => {
-            rb_raise(mkr_eError, c"%s must not contain a NUL byte".as_ptr(), what)
-        }
-        TextVerdict::InvalidUtf8 => rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what),
-        TextVerdict::Ok => {}
-    }
+    let problem = match mkr_text_check(str, ptr, len) {
+        TextVerdict::HasNul => "must not contain a NUL byte",
+        TextVerdict::InvalidUtf8 => "must be valid UTF-8",
+        TextVerdict::Ok => return Ok(()),
+    };
+    /* The borrow is not used past the check, so building the message may
+     * allocate. */
+    Err(text_error(what, problem))
+}
+
+/// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
+unsafe fn text_error(what: *const c_char, problem: &str) -> Error {
+    let what = core::ffi::CStr::from_ptr(what).to_string_lossy();
+    Error::new(error_class(), format!("{what} {problem}"))
 }
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
-pub unsafe fn mkr_ruby_verified_text(in_: VALUE, what: *const c_char) -> RubyText {
-    let s = to_string(in_);
-    mkr_verify_text(s, what);
+pub unsafe fn mkr_ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<RubyText, Error> {
+    let s = string_of(in_)?;
+    mkr_verify_text(s, what)?;
     let (value, ptr, len) = borrow(s);
-    RubyText::from_raw_parts(value, ptr, len)
+    Ok(RubyText::from_raw_parts(value, ptr, len))
 }
 
 /// Coerce to a String and enforce the DATA-family contract: invalid UTF-8 is
 /// fatal, an interior NUL is not, so DOM data can hold U+0000 like browsers.
 ///
-/// `mkr_verify_text` is not reused because it raises on NUL. The check is
+/// `mkr_verify_text` is not reused because it rejects NUL. The check is
 /// allocation-free, so the borrow taken before it is not held across a GC point.
-pub unsafe fn mkr_ruby_verified_data(in_: VALUE, what: *const c_char) -> RubyData {
-    let s = to_string(in_);
+pub unsafe fn mkr_ruby_verified_data(in_: VALUE, what: *const c_char) -> Result<RubyData, Error> {
+    let s = string_of(in_)?;
     let (value, ptr, len) = borrow(s);
     if mkr_text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
-        rb_raise(mkr_eError, c"%s must be valid UTF-8".as_ptr(), what);
+        return Err(text_error(what, "must be valid UTF-8"));
     }
-    RubyData::from_raw_parts(value, ptr, len)
+    Ok(RubyData::from_raw_parts(value, ptr, len))
 }
 
 /// A borrowed raw byte view. Deliberately enforces nothing: HTML parsing
 /// consumes raw bytes and decodes invalid UTF-8 leniently, like a browser.
-pub unsafe fn mkr_ruby_bytes_view(in_: VALUE) -> RubyBytes {
-    let s = to_string(in_);
+///
+/// `s` must already be a String - every caller passes one it has just coerced,
+/// transcoded or decoded - so there is nothing to convert, and nothing here can
+/// raise.
+pub unsafe fn mkr_ruby_bytes_view(s: VALUE) -> RubyBytes {
     let (value, ptr, len) = borrow(s);
     RubyBytes::from_raw_parts(value, ptr, len)
 }
 
 /// Copy a String's raw bytes into owned C storage, at least one byte even for
 /// an empty input, so the result is usable while the GVL is released. `None` on
-/// OOM, with nothing allocated.
-pub unsafe fn mkr_ruby_copy_bytes(in_: VALUE) -> Option<OwnedBytes> {
-    let v = mkr_ruby_bytes_view(in_);
+/// OOM, with nothing allocated. `s` must already be a String.
+pub unsafe fn mkr_ruby_copy_bytes(s: VALUE) -> Option<OwnedBytes> {
+    let v = mkr_ruby_bytes_view(s);
     let alloc_len = if v.len() > 0 { v.len() } else { 1 };
     let buf = mkr_reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
     if buf.is_null() {

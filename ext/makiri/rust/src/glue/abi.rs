@@ -455,7 +455,7 @@ mod agree {
     same_signature!(
         mkr_node_raw,
         crate::glue::node::mkr_node_raw,
-        unsafe extern "C" fn(VALUE) -> *mut c_void
+        unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
     );
 
     same_signature!(
@@ -472,18 +472,18 @@ mod agree {
     same_signature!(
         mkr_verify_text,
         crate::bridge::string::mkr_verify_text,
-        unsafe fn(VALUE, *const c_char)
+        unsafe fn(VALUE, *const c_char) -> Result<(), magnus::Error>
     );
     same_signature!(
         mkr_ruby_verified_text,
         crate::bridge::string::mkr_ruby_verified_text,
-        unsafe fn(VALUE, *const c_char) -> RubyText
+        unsafe fn(VALUE, *const c_char) -> Result<RubyText, magnus::Error>
     );
 
     same_signature!(
         mkr_xml_node_unwrap,
         crate::glue::xml_node::mkr_xml_node_unwrap,
-        unsafe extern "C" fn(VALUE) -> *mut c_void
+        unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
     );
 
     same_signature!(
@@ -505,6 +505,6 @@ mod agree {
     same_signature!(
         mkr_html_node_unwrap,
         crate::glue::html_node::mkr_html_node_unwrap,
-        unsafe extern "C" fn(VALUE) -> *mut LxbNode
+        unsafe fn(VALUE) -> Result<*mut LxbNode, magnus::Error>
     );
 }

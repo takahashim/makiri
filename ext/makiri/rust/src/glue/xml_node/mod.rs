@@ -79,17 +79,17 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
 /// The arena node behind a wrapper.
 ///
 /// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
-/// through the XML TypedData type, which **raises** TypeError for an HTML node -
+/// through the XML TypedData type, which fails with TypeError for an HTML node -
 /// the representation check is Ruby's own type machinery, not a flag we could
 /// forget to test.
-pub unsafe extern "C" fn mkr_xml_node_unwrap(rb_self: VALUE) -> *mut c_void {
+pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Error> {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
         let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self)) as *mut XmlDoc;
-        return (*xdoc).doc_node().to_token() as *mut c_void;
+        return Ok((*xdoc).doc_node().to_token() as *mut c_void);
     }
-    let nd = rb_sys::rb_check_typeddata(rb_self, mkr_xml_node_type.as_ptr()) as *mut NodeData;
-    (*nd).node
+    let nd = crate::bridge::ruby::typed_data(rb_self, mkr_xml_node_type.as_ptr())? as *mut NodeData;
+    Ok((*nd).node)
 }
 
 /// The XML document behind a Document or node wrapper (`Document` VALUE).
@@ -125,8 +125,24 @@ pub unsafe fn mkr_xml_wrap_rel_value(rb_self: Value, rel: NodeId) -> Value {
 /* ---- the Rust-side conveniences the submodules use ---- */
 
 /// [`mkr_xml_node_unwrap`] with the node id typed.
-pub unsafe fn unwrap(rb_self: Value) -> NodeId {
-    NodeId::from_token(mkr_xml_node_unwrap(rb_self.as_raw()) as usize)
+pub unsafe fn unwrap(v: Value) -> Result<NodeId, magnus::Error> {
+    Ok(NodeId::from_token(mkr_xml_node_unwrap(v.as_raw())? as usize))
+}
+
+/// A method receiver already checked to be an XML node or XML Document; see
+/// the HTML twin, `html_node::HtmlSelf`.
+#[derive(Clone, Copy)]
+pub struct XmlSelf {
+    pub value: Value,
+    pub id: NodeId,
+}
+
+impl magnus::TryConvert for XmlSelf {
+    fn try_convert(value: Value) -> Result<Self, magnus::Error> {
+        // SAFETY: magnus converts the receiver under the GVL.
+        let id = unsafe { unwrap(value)? };
+        Ok(XmlSelf { value, id })
+    }
 }
 
 pub unsafe fn node_document(rb_self: Value) -> Value {

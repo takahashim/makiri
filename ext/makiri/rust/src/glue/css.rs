@@ -333,9 +333,8 @@ unsafe fn with_compiled_selector(
     run: Run,
     ctx: *mut c_void,
 ) -> Result<(), Error> {
-    /* Raises for a NUL byte or invalid UTF-8, naming the argument as the C did.
-     * Called before anything is live, so the longjmp skips no destructor. */
-    mkr_verify_text(selector.as_raw(), c"CSS selector".as_ptr());
+    /* `Err` for a NUL byte or invalid UTF-8, naming the argument as the C did. */
+    mkr_verify_text(selector.as_raw(), c"CSS selector".as_ptr())?;
     let e = engine()?;
     let g = globals();
 
@@ -487,7 +486,7 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
 /// `Node#css`: every matching descendant, in document order.
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
+    let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
     let document = unsafe { Value::from_raw(mkr_node_document(rb_self.as_raw())) };
 
     let mut ctx = FindCtx {
@@ -557,7 +556,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
+    let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
 
     let mut ctx = FirstCtx {
         root,
@@ -581,7 +580,7 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri.
 fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
-    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw()) };
+    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
     let mut matched = false;
     unsafe {
         with_compiled_selector(

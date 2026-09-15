@@ -9,7 +9,7 @@ use magnus::{prelude::*, Error, RArray, RClass, RHash, RString, Ruby, Value};
 use std::sync::OnceLock;
 
 use super::abi::*;
-use super::{doc, unwrap};
+use super::doc;
 
 /// The `Makiri::XML::Namespace` class, stashed at init.
 static NAMESPACE_CLASS: OnceLock<rb_sys::VALUE> = OnceLock::new();
@@ -97,10 +97,11 @@ fn xmlns_decl(d: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
 }
 
 /// `#namespace` - the node's own resolved namespace, or nil.
-pub fn namespace(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
+pub fn namespace(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, Error> {
+    let rb_self = this.value;
     unsafe {
         let d = &*doc(rb_self);
-        let id = unwrap(rb_self);
+        let id = this.id;
         if !matches!(d.type_(id), Some(NodeType::Element | NodeType::Attribute))
             || d.node(id).ns_uri.len == 0
         {
@@ -116,11 +117,12 @@ pub fn namespace(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
 }
 
 /// `#namespace_definitions` - the declarations made ON this element.
-pub fn namespace_definitions(ruby: &Ruby, rb_self: Value) -> Result<RArray, Error> {
+pub fn namespace_definitions(ruby: &Ruby, this: super::XmlSelf) -> Result<RArray, Error> {
+    let rb_self = this.value;
     let arr = ruby.ary_new();
     unsafe {
         let d = &*doc(rb_self);
-        let id = unwrap(rb_self);
+        let id = this.id;
         if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
             while let Some(at) = a {
@@ -141,11 +143,12 @@ pub fn namespace_definitions(ruby: &Ruby, rb_self: Value) -> Result<RArray, Erro
 
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
 /// attribute's name. The inner scope wins because the first binding seen is kept.
-pub fn namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
+pub fn namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
+    let rb_self = this.value;
     let h = ruby.hash_new();
     unsafe {
         let d = &*doc(rb_self);
-        let mut e = Some(unwrap(rb_self));
+        let mut e = Some(this.id);
         while let Some(id) = e {
             if d.type_(id) == Some(NodeType::Element) {
                 let mut a = d.attrs(id);
@@ -167,11 +170,12 @@ pub fn namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
 
 /// `#collect_namespaces` - every declaration anywhere in the document, pre-order
 /// through the tree (no recursion).
-pub fn collect_namespaces(ruby: &Ruby, rb_self: Value) -> Result<RHash, Error> {
+pub fn collect_namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
+    let rb_self = this.value;
     let h = ruby.hash_new();
     unsafe {
         let d = &*doc(rb_self);
-        let mut root = unwrap(rb_self);
+        let mut root = this.id;
         while let Some(p) = d.parent(root) {
             root = p;
         }
