@@ -607,6 +607,15 @@ RSpec.describe "Makiri XPath" do
         .to raise_error(Makiri::XPath::LimitExceeded, /recursion depth/i)
     end
 
+    it "rejects an operator chain nested past the AST depth cap instead of overflowing the stack" do
+      # A binary-operator chain is parsed in a loop, so parser recursion does not
+      # bound it; without the cap `1+1+...` built a tree deep enough that taking
+      # it apart overflowed a thread's native stack.
+      expr = "1#{"+1" * 20_000}"
+      expect { Thread.new { small.xpath(expr) }.value }
+        .to raise_error(Makiri::XPath::LimitExceeded, /nesting depth/i)
+    end
+
     it "charges a low-selectivity axis walk to the op budget" do
       # A descendant walk that visits the whole subtree but matches NOTHING must
       # be bounded by the op budget - the node-set cap only bounds matched/pushed

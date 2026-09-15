@@ -472,10 +472,13 @@ unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
     build::push(b, &mut step.predicates, pred)?;
     let mut steps = Vec::new();
     build::push(b, &mut steps, step)?;
-    Ok(Expr::new(ExprKind::Path(Path {
-        absolute: false,
-        steps,
-    })))
+    build::expr(
+        b,
+        ExprKind::Path(Path {
+            absolute: false,
+            steps,
+        }),
+    )
 }
 
 /// The functional pseudo-classes: `:nth-*(an+b)`, `:not()`, `:is()`/`:where()`,

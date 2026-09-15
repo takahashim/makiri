@@ -119,6 +119,41 @@ unsafe fn over_recursion(l: *mut Limits, err: ErrSink) -> Reported {
     )
 }
 
+/// The deepest AST the parser and the CSS lowering build.
+///
+/// Every pass over an AST, its `Drop` included, recurses once per level, so the
+/// depth is what decides how much native stack an expression can make them use.
+/// Parser recursion is already bounded, but a chain of binary operators is read
+/// in a loop, so without this `1+1+...` within the expression-length cap built a
+/// tree tens of thousands of levels deep - enough to overflow a thread's stack.
+///
+/// It is not the evaluation limit: `max_recursion_depth` (256 by default) still
+/// decides what evaluates, and a tree deeper than that fails there as before.
+/// This is a fixed, generous bound on what may be built at all.
+pub const MAX_AST_DEPTH: u32 = 1024;
+
+/// Refuse a node that would make the AST deeper than [`MAX_AST_DEPTH`]. The
+/// builders check each node as they make it, so a tree over the bound is never
+/// finished - and never has to be taken apart at that depth.
+pub fn check_ast_depth(e: &Expr, err: ErrSink) -> Result<(), Reported> {
+    if e.depth() <= MAX_AST_DEPTH {
+        Ok(())
+    } else {
+        Err(over_ast_depth(err))
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn over_ast_depth(err: ErrSink) -> Reported {
+    err_setf!(
+        err,
+        XP_ERR_LIMIT,
+        "expression nesting depth limit exceeded ({})",
+        MAX_AST_DEPTH
+    )
+}
+
 #[cold]
 #[inline(never)]
 unsafe fn over_check(max: usize, noun: &str, err: ErrSink) -> Reported {

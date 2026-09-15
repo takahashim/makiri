@@ -13,7 +13,7 @@ use super::Build;
 use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
-use crate::xpath::limits::limit_ast_node;
+use crate::xpath::limits::{check_ast_depth, limit_ast_node};
 use crate::xpath::msg::Reported;
 
 /// A node under construction, or the proof its build failed with `*err` set.
@@ -22,6 +22,13 @@ pub(crate) type Built = Result<Expr, Reported>;
 /// Charge one expression node against the AST budget.
 pub(crate) unsafe fn charge(b: &Build) -> Result<(), Reported> {
     limit_ast_node(b.budget)
+}
+
+/// `kind` as a node, refused if it would nest the AST too deeply.
+pub(crate) unsafe fn expr(b: &Build, kind: ExprKind) -> Built {
+    let e = Expr::new(kind);
+    check_ast_depth(&e, b.err)?;
+    Ok(e)
 }
 
 /// An owned copy of `s` for an AST name, or `Err` with `*err` set.
@@ -48,23 +55,26 @@ pub(crate) unsafe fn push<T>(b: &Build, list: &mut Vec<T>, item: T) -> Result<()
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
     charge(b)?;
-    Ok(Expr::new(ExprKind::LiteralStr(copy_text(b, s)?)))
+    expr(b, ExprKind::LiteralStr(copy_text(b, s)?))
 }
 
 pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
     charge(b)?;
-    Ok(Expr::new(ExprKind::LiteralNum(v)))
+    expr(b, ExprKind::LiteralNum(v))
 }
 
 /// `lhs op rhs`. An `Err` operand fails without charging, dropping the other.
 pub(crate) unsafe fn binop(b: &Build, op: Op, lhs: Built, rhs: Built) -> Built {
     let (lhs, rhs) = (lhs?, rhs?);
     charge(b)?;
-    Ok(Expr::new(ExprKind::BinOp {
-        op,
-        lhs: boxed(b, lhs)?,
-        rhs: boxed(b, rhs)?,
-    }))
+    expr(
+        b,
+        ExprKind::BinOp {
+            op,
+            lhs: boxed(b, lhs)?,
+            rhs: boxed(b, rhs)?,
+        },
+    )
 }
 
 /// A call to an internal, compile-time-known function name. Any `Err` argument
@@ -75,11 +85,14 @@ pub(crate) unsafe fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; 
         push(b, &mut argv, arg?)?;
     }
     charge(b)?;
-    Ok(Expr::new(ExprKind::FnCall {
-        prefix: None,
-        name: copy_text(b, name)?,
-        args: argv,
-    }))
+    expr(
+        b,
+        ExprKind::FnCall {
+            prefix: None,
+            name: copy_text(b, name)?,
+            args: argv,
+        },
+    )
 }
 
 /// A one-argument call, the shape most of the lowering wants.
@@ -95,10 +108,13 @@ pub(crate) unsafe fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Buil
 /// A relative PATH node over already-built steps.
 pub(crate) unsafe fn path(b: &Build, steps: Vec<Step>) -> Built {
     charge(b)?;
-    Ok(Expr::new(ExprKind::Path(Path {
-        absolute: false,
-        steps,
-    })))
+    expr(
+        b,
+        ExprKind::Path(Path {
+            absolute: false,
+            steps,
+        }),
+    )
 }
 
 /// A one-step relative PATH with no predicates: `axis::nodetest`.
@@ -149,10 +165,13 @@ unsafe fn named_step_path_inner(
 
     let mut steps = Vec::new();
     push(b, &mut steps, step)?;
-    Ok(Expr::new(ExprKind::Path(Path {
-        absolute: false,
-        steps,
-    })))
+    expr(
+        b,
+        ExprKind::Path(Path {
+            absolute: false,
+            steps,
+        }),
+    )
 }
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.

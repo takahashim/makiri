@@ -133,15 +133,50 @@ pub struct Expr {
     /// value can save work: it is context-independent and may be evaluated
     /// more than once in one evaluate. Assigned by the same pass.
     pub memo: Option<u32>,
+    /// Levels from this node down to its deepest leaf, itself included.
+    depth: u32,
 }
 
 impl Expr {
+    /// A node over already-built children. Its depth comes from theirs, so it
+    /// is known without walking the subtree; the builders check it against
+    /// `limits::MAX_AST_DEPTH`.
     pub fn new(kind: ExprKind) -> Expr {
+        fn deepest(exprs: &[Expr]) -> u32 {
+            exprs.iter().map(|e| e.depth).max().unwrap_or(0)
+        }
+        fn deepest_predicate(steps: &[Step]) -> u32 {
+            steps
+                .iter()
+                .map(|s| deepest(&s.predicates))
+                .max()
+                .unwrap_or(0)
+        }
+        let below = match &kind {
+            ExprKind::LiteralStr(_) | ExprKind::LiteralNum(_) | ExprKind::VarRef { .. } => 0,
+            ExprKind::FnCall { args, .. } => deepest(args),
+            ExprKind::Negate(x) => x.depth,
+            ExprKind::BinOp { lhs, rhs, .. } => lhs.depth.max(rhs.depth),
+            ExprKind::Path(p) => deepest_predicate(&p.steps),
+            ExprKind::Filter {
+                expr,
+                predicates,
+                steps,
+            } => expr
+                .depth
+                .max(deepest(predicates))
+                .max(deepest_predicate(steps)),
+        };
         Expr {
             kind,
             context_independent: false,
             memo: None,
+            depth: below.saturating_add(1),
         }
+    }
+
+    pub fn depth(&self) -> u32 {
+        self.depth
     }
 }
 

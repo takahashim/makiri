@@ -7,7 +7,7 @@
 //!
 //! Each expression node is charged against the AST budget where the C allocated
 //! it, so a query over the limit fails at the same point, with the same error, as
-//! it always has.
+//! it always has. Each is also held to `limits::MAX_AST_DEPTH` as it is made.
 //!
 //! Lookahead is one token, except where the grammar needs two (a NAME that may
 //! be an axis, a node-type keyword, or a function name), which is done by
@@ -16,6 +16,7 @@
 use super::abi::*;
 use super::ast_ops;
 use super::lex::{LexErr, Lexer, Tok, Token};
+use super::limits::check_ast_depth;
 use super::msg::Bytes;
 use crate::err_setf;
 use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
@@ -132,6 +133,13 @@ impl<'a> Parser<'a> {
     fn fill_owned(&self, text: &[u8]) -> PResult<Box<[u8]>> {
         try_to_boxed_slice(text)
             .ok_or_else(|| err_setf!(self.err, XP_ERR_OOM, "out of memory in parser"))
+    }
+
+    /// `kind` as a node, refused if it would nest the AST too deeply.
+    fn node(&self, kind: ExprKind) -> PResult<Expr> {
+        let e = Expr::new(kind);
+        check_ast_depth(&e, self.err)?;
+        Ok(e)
     }
 
     /// `e` on the heap, for an operand slot.
@@ -354,7 +362,7 @@ impl<'a> Parser<'a> {
                 false
             }
         };
-        Ok(Expr::new(ExprKind::Path(Path { absolute, steps })))
+        self.node(ExprKind::Path(Path { absolute, steps }))
     }
 
     /* ---- primaries, function calls, filters ---- */
@@ -390,7 +398,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.eat(Tok::RParen, "')' after function arguments")?;
-        Ok(Expr::new(ExprKind::FnCall { prefix, name, args }))
+        self.node(ExprKind::FnCall { prefix, name, args })
     }
 
     fn parse_primary(&mut self) -> PResult<Expr> {
@@ -407,7 +415,7 @@ impl<'a> Parser<'a> {
                 self.charge()?;
                 let (prefix, name) = self.names(&self.tok())?;
                 self.advance()?;
-                Ok(Expr::new(ExprKind::VarRef { prefix, name }))
+                self.node(ExprKind::VarRef { prefix, name })
             }
             Tok::LParen => {
                 self.advance()?;
@@ -420,13 +428,13 @@ impl<'a> Parser<'a> {
                 let t = self.tok();
                 let text = self.fill_owned(self.text(&t))?;
                 self.advance()?;
-                Ok(Expr::new(ExprKind::LiteralStr(text)))
+                self.node(ExprKind::LiteralStr(text))
             }
             Tok::Number => {
                 self.charge()?;
                 let num = self.tok().num;
                 self.advance()?;
-                Ok(Expr::new(ExprKind::LiteralNum(num)))
+                self.node(ExprKind::LiteralNum(num))
             }
             Tok::Name | Tok::QName => {
                 let name_tok = self.tok();
@@ -461,11 +469,11 @@ impl<'a> Parser<'a> {
          * loop is a no-op when no separator follows. */
         let mut steps = Vec::new();
         self.parse_step_tail(&mut steps)?;
-        Ok(Expr::new(ExprKind::Filter {
+        self.node(ExprKind::Filter {
             expr,
             predicates,
             steps,
-        }))
+        })
     }
 
     /// LocationPath or FilterExpr?
@@ -500,11 +508,11 @@ impl<'a> Parser<'a> {
     /// `lhs op rhs`, owning both; they are freed if the node cannot be made.
     fn make_binop(&mut self, op: Op, lhs: Expr, rhs: Expr) -> PResult<Expr> {
         self.charge()?;
-        Ok(Expr::new(ExprKind::BinOp {
+        self.node(ExprKind::BinOp {
             op,
             lhs: self.boxed(lhs)?,
             rhs: self.boxed(rhs)?,
-        }))
+        })
     }
 
     fn parse_union(&mut self) -> PResult<Expr> {
@@ -528,7 +536,7 @@ impl<'a> Parser<'a> {
             return Ok(e);
         }
         self.charge()?;
-        Ok(Expr::new(ExprKind::Negate(self.boxed(e)?)))
+        self.node(ExprKind::Negate(self.boxed(e)?))
     }
 
     /// The binary operator at the current token and its level in

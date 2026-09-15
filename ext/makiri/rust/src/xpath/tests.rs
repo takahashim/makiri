@@ -196,6 +196,45 @@ fn failures_come_back_with_their_status() {
     assert_eq!(capped, Answer::Err(XP_ERR_LIMIT));
 }
 
+/// `1+1+...+1` with `ops` operators: a left-leaning tree `ops + 1` levels deep.
+fn chain(ops: usize) -> String {
+    let mut e = String::from("1");
+    e.push_str(&"+1".repeat(ops));
+    e
+}
+
+/// Whether `expr` parses under the default limits, or the status it fails with.
+///
+/// Parse only: evaluating a tree this deep takes more stack than a debug build's
+/// test thread has, and what is being tested is where the tree stops being built.
+fn parse_status(expr: &str) -> Result<(), c_int> {
+    let mut doc = xml_parse(DOC).expect("the fixture parses");
+    // SAFETY: as in `run` - the document outlives the context.
+    unsafe {
+        let node = doc.doc_node().to_token() as *mut c_void;
+        let ctx = OwnedContext::new(&mut *doc as *mut _ as *mut c_void, node, Backend::Xml)
+            .expect("a context");
+        let budget = ctx_budget(ctx.as_ptr());
+        let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
+        match parse_owned(source, budget) {
+            Ok(_) => Ok(()),
+            Err(_) => Err((*budget).take_error().status),
+        }
+    }
+}
+
+#[test]
+fn nesting_depth_is_bounded_where_the_tree_is_built() {
+    // At the cap the tree is built; one level past it the parse refuses.
+    assert_eq!(parse_status(&chain(1023)), Ok(()));
+    assert_eq!(parse_status(&chain(1024)), Err(XP_ERR_LIMIT));
+    // Under the cap the parse succeeds and the evaluation limit decides, as before.
+    assert_eq!(parse_status(&chain(300)), Ok(()));
+    // A chain that used to build tens of thousands of levels stops at the cap
+    // instead of taking the stack with it.
+    assert_eq!(parse_status(&chain(30_000)), Err(XP_ERR_LIMIT));
+}
+
 #[cfg(feature = "lexbor")]
 fn css(selector: &str) -> Answer {
     run(Query::Css, selector, |_| {})
@@ -215,4 +254,6 @@ fn css_selectors_lower_to_the_same_answers_as_xml_css() {
     assert_eq!(css("a:last-of-type"), nodes(&["a"]));
     assert_eq!(css("c[n]"), nodes(&["c"]));
     assert_eq!(css("a["), Answer::Err(XP_ERR_SYNTAX));
+    // A selector list lowers to a chain of unions, held to the same depth cap.
+    assert_eq!(css(&vec!["a"; 1100].join(",")), Answer::Err(XP_ERR_LIMIT));
 }
