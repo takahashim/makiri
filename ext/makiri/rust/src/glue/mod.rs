@@ -20,9 +20,11 @@
 //! frames have returned normally. The node unwraps and the text checks return
 //! `Err` for exactly that reason, and a Ruby C function that can raise is called
 //! through `bridge::ruby`, which catches the raise and hands it back the same
-//! way. What still raises directly is `node_set_push`, an entry point called
-//! with the C convention that has no `Result` to return. It longjmps, so its
-//! callers must not own anything that needs dropping.
+//! way. No function in this layer calls `rb_raise` or `rb_exc_raise` any more
+//! (`rake unsafe:boundaries` holds that at zero). What can still unwind is Ruby
+//! itself - its allocator's `NoMemoryError`, or Ruby code a C call reaches -
+//! which is why the loops that push into a NodeSet while owning a collection
+//! run under `protect`.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
 //! `Ruby` handle. The C glue already works this way (parse copies its input to a

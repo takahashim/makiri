@@ -413,31 +413,31 @@ fn set_of<'d>(
     document: Value,
     nodes: impl Iterator<Item = HtmlNode<'d>>,
     elements_only: bool,
-) -> Value {
+) -> Result<Value, Error> {
     // SAFETY: every node is in the tree whose keepalive Document is `document`.
     unsafe {
         let set = node_set_new(document.as_raw());
         for n in nodes {
             if !elements_only || n.element().is_some() {
-                node_set_push(set, n.as_raw() as *mut core::ffi::c_void);
+                node_set_push(set, n.as_raw() as *mut core::ffi::c_void)?;
             }
         }
-        Value::from_raw(set)
+        Ok(Value::from_raw(set))
     }
 }
 
 /// `#children`: every child node, as a NodeSet.
-pub fn children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+pub fn children(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     set_of(this.document, this.node().children(), false)
 }
 
 /// `#element_children` / `#elements`: the child elements only.
-pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+pub fn element_children(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     set_of(this.document, this.node().children(), true)
 }
 
 /// `#ancestors`: the ancestor elements, nearest first.
-pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+pub fn ancestors(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     set_of(this.document, this.node().ancestors(), true)
 }
 
@@ -505,7 +505,7 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// `element.attribute_nodes` -> a NodeSet of Attribute nodes, in document order.
 /// Empty for a non-element. These wrap the bare `lxb_dom_attr_t`; navigating
 /// back with `Attribute#parent` goes through the compat attr->owner index.
-pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
+pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let node = this.node();
     let attrs = node.element().into_iter().flat_map(|el| el.attrs());
     set_of(this.document, attrs.map(|at| at.node()), false)

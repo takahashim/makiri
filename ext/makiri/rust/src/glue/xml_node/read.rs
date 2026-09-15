@@ -188,31 +188,31 @@ pub fn get_document(this: super::XmlSelf) -> Value {
 }
 
 /// `#element_children` - the child ELEMENT nodes only, in document order.
-pub fn element_children(this: super::XmlSelf) -> Value {
+pub fn element_children(this: super::XmlSelf) -> Result<Value, Error> {
     unsafe {
         let d = &*this.doc();
         let set = node_set_new(this.document.as_raw());
         let mut c = d.first_child(this.id);
         while let Some(id) = c {
             if d.type_(id) == Some(NodeType::Element) {
-                node_set_push(set, id.to_token() as *mut core::ffi::c_void);
+                node_set_push(set, id.to_token() as *mut core::ffi::c_void)?;
             }
             c = d.next(id);
         }
-        Value::from_raw(set)
+        Ok(Value::from_raw(set))
     }
 }
 
-pub fn children(this: super::XmlSelf) -> Value {
+pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
     unsafe {
         let d = &*this.doc();
         let set = node_set_new(this.document.as_raw());
         let mut c = d.first_child(this.id);
         while let Some(id) = c {
-            node_set_push(set, id.to_token() as *mut core::ffi::c_void);
+            node_set_push(set, id.to_token() as *mut core::ffi::c_void)?;
             c = d.next(id);
         }
-        Value::from_raw(set)
+        Ok(Value::from_raw(set))
     }
 }
 
@@ -280,7 +280,7 @@ pub fn attribute_value_by_qualified_name(
     aref(ruby, this, rb_name)
 }
 
-pub fn attribute_nodes(this: super::XmlSelf) -> Value {
+pub fn attribute_nodes(this: super::XmlSelf) -> Result<Value, Error> {
     unsafe {
         let d = &*this.doc();
         let set = node_set_new(this.document.as_raw());
@@ -288,10 +288,10 @@ pub fn attribute_nodes(this: super::XmlSelf) -> Value {
         if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
             while let Some(at) = a {
-                node_set_push(set, at.to_token() as *mut core::ffi::c_void);
+                node_set_push(set, at.to_token() as *mut core::ffi::c_void)?;
                 a = d.next(at);
             }
         }
-        Value::from_raw(set)
+        Ok(Value::from_raw(set))
     }
 }

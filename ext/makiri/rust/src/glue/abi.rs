@@ -352,12 +352,12 @@ mod agree {
     same_signature!(
         node_set_new,
         crate::glue::node_set::node_set_new,
-        unsafe extern "C" fn(VALUE) -> VALUE
+        unsafe fn(VALUE) -> VALUE
     );
     same_signature!(
         node_set_push,
         crate::glue::node_set::node_set_push,
-        unsafe extern "C" fn(VALUE, *mut c_void)
+        unsafe fn(VALUE, *mut c_void) -> Result<(), crate::glue::node_set::PushError>
     );
 
     same_signature!(

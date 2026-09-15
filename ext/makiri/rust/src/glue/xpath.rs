@@ -115,11 +115,16 @@ pub(crate) fn xpath_error(err: &XPathError) -> Error {
 ///
 /// Shared with the XML query glue, like [`xpath_error`].
 pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
+    /* A refused push cannot leave `protect` through `?`, so it is carried out. */
+    let mut refused = None;
     let converted = magnus::rb_sys::protect(|| match &v {
         XPathValue::NodeSet(set) => {
             let rb = node_set_new(document.as_raw());
             for &n in set.as_slice() {
-                node_set_push(rb, n);
+                if let Err(e) = node_set_push(rb, n) {
+                    refused = Some(e);
+                    break;
+                }
             }
             rb
         }
@@ -132,7 +137,11 @@ pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Val
         XPathValue::Boolean(false) => rb_sys::Qfalse as VALUE,
     });
     drop(v);
-    Ok(Value::from_raw(converted?))
+    let converted = converted?;
+    if let Some(e) = refused {
+        return Err(e.into());
+    }
+    Ok(Value::from_raw(converted))
 }
 
 /* ------------------------------------------------------------------ */
@@ -406,12 +415,12 @@ unsafe impl Resolver for Bridge {
 }
 
 /// engine value -> Ruby.
-unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
-    match v.get() {
+unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
+    Ok(match v.get() {
         ValRef::NodeSet(ns) => {
             let set = node_set_new(b.document);
             for &n in ns.as_slice() {
-                node_set_push(set, n);
+                node_set_push(set, n)?;
             }
             set
         }
@@ -422,7 +431,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
         ValRef::Number(d) => rb_sys::rb_float_new(d),
         ValRef::Boolean(true) => rb_sys::Qtrue as VALUE,
         ValRef::Boolean(false) => rb_sys::Qfalse as VALUE,
-    }
+    })
 }
 
 /// Validate a handler-returned node and push it into the result node-set.
@@ -600,7 +609,15 @@ struct HandlerCall {
 unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
     let c = &mut *(p as *mut HandlerCall);
     for i in 0..c.nargs {
-        c.argv[i] = arg_to_ruby(&*c.bridge, &*c.args.add(i));
+        match arg_to_ruby(&*c.bridge, &*c.args.add(i)) {
+            Ok(v) => c.argv[i] = v,
+            Err(_) => {
+                /* Only the size cap or a busy set refuses a push. */
+                c.ok = false;
+                c.err.set("handler argument node-set could not be built");
+                return rb_sys::Qnil as VALUE;
+            }
+        }
     }
     let r = rb_sys::rb_funcallv(
         (*c.bridge).handler,

@@ -53,18 +53,16 @@ RB_SYS_COUNTS = {
   "glue/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 2,
   "glue/node.rs" => 3,
-  "glue/node_set.rs" => 19,
+  "glue/node_set.rs" => 17,
   "glue/xml.rs" => 2,
   "glue/xml_node/mod.rs" => 2,
   "glue/xml_node/serialize.rs" => 8,
-  "glue/xpath.rs" => 26,
+  "glue/xpath.rs" => 27,
   "init.rs" => 4,
 }.freeze
 
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
-RAISING_COUNTS = {
-  "glue/node_set.rs" => 4,         # push from the C-convention entry point
-}.freeze
+RAISING_COUNTS = {}.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join

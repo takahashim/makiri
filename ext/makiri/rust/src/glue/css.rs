@@ -469,15 +469,20 @@ fn syntax_error(selector: Value) -> Error {
 struct Fill<'a> {
     set: VALUE,
     nodes: &'a [*mut LxbNode],
+    /// A push the set refused, carried out of `rb_protect` for the caller.
+    refused: Option<crate::glue::node_set::PushError>,
 }
 
 /// Move the collected matches into the NodeSet. Runs under `rb_protect`: a push
 /// can raise (Ruby's allocator), and a longjmp straight out of here would skip
 /// the collection Vec's drop in the caller.
 unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
-    let f = &*(arg as *const Fill);
+    let f = &mut *(arg as *mut Fill);
     for n in f.nodes {
-        node_set_push(f.set, *n as *mut c_void);
+        if let Err(e) = node_set_push(f.set, *n as *mut c_void) {
+            f.refused = Some(e);
+            break;
+        }
     }
     rb_sys::Qnil as VALUE
 }
@@ -523,6 +528,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let mut fill = Fill {
         set: set.as_raw(),
         nodes: &ctx.nodes,
+        refused: None,
     };
     let mut state: c_int = 0;
     unsafe {
@@ -545,6 +551,9 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
             Some(e) => Error::from(e),
             None => Error::new(error_class(), "CSS result could not be built"),
         });
+    }
+    if let Some(e) = fill.refused.take() {
+        return Err(e.into());
     }
     Ok(set)
 }

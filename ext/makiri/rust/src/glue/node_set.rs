@@ -68,13 +68,18 @@ struct NodeVec {
     cap: usize,
 }
 
-/// Why a push was refused. Deliberately not a `magnus::Error`: this type is
-/// also driven from the C entry point, which raises directly, so the two
-/// failures are named here and each caller phrases them for its own surface.
+/// Why a push was refused.
+///
+/// Deliberately small rather than a `magnus::Error`: a push runs once per node
+/// of every result, and returning the large error type from each successful
+/// push measured about 2ns a node (a handler's node-set argument ran ~17%
+/// slower). Callers convert through `From` on the failure path only.
 #[derive(Clone, Copy)]
-enum PushError {
+pub enum PushError {
     SizeLimit,
     CapacityOverflow,
+    /// The set is borrowed elsewhere - a push from inside its own iteration.
+    Busy,
 }
 
 impl PushError {
@@ -84,6 +89,7 @@ impl PushError {
                 format!("node set size limit exceeded ({NODE_SET_MAX} nodes)")
             }
             PushError::CapacityOverflow => "node set capacity overflow".to_string(),
+            PushError::Busy => "node set is already in use".to_string(),
         }
     }
 }
@@ -261,7 +267,7 @@ fn node_set_class() -> RClass {
 
 /// # Safety
 /// `document` must be a live `Makiri::Document`.
-pub unsafe extern "C" fn node_set_new(document: VALUE) -> VALUE {
+pub unsafe fn node_set_new(document: VALUE) -> VALUE {
     let ruby = Ruby::get_unchecked();
     let doc = Value::from_raw(document);
     let doc_is_xml =
@@ -284,56 +290,20 @@ pub unsafe extern "C" fn node_set_new(document: VALUE) -> VALUE {
 /// # Safety
 /// `rb_set` must be a `Makiri::NodeSet`; `node` a node of its document.
 ///
-/// This raises - the size cap, a busy set, `NoMemoryError` from the array's
-/// growth - so it is called only under `rb_protect` or from a frame that owns
-/// nothing a longjmp would skip (the tree readers, which push raw pointers).
-pub unsafe extern "C" fn node_set_push(rb_set: VALUE, node: *mut c_void) {
+/// `Err` for the fail-closed refusals: the size cap, a capacity overflow, a busy
+/// set. Growing the array can still raise `NoMemoryError` from Ruby's allocator,
+/// so a caller that owns something needing a drop pushes under `protect`.
+#[inline]
+pub unsafe fn node_set_push(rb_set: VALUE, node: *mut c_void) -> Result<(), PushError> {
     /* The hot path: one call per node of every CSS and XPath result. It uses
      * the unprotected accessor deliberately - magnus's `try_convert` costs an
      * rb_protect (a setjmp) per call, which measured ~26% off `Node#css`. See
      * the note on `typed_data_unprotected`. */
     let s: &NodeSet = typed_data_unprotected(rb_set);
-    /* A C caller cannot receive a Result, so the two fail-closed refusals (the
-     * size cap, a capacity overflow) become the raise the C did. */
-    match s.write() {
-        Err(_) => raise("node set is already in use"),
-        Ok(mut w) => {
-            if let Err(e) = w.push(node) {
-                /* Drop the borrow first: rb_raise longjmps, which would
-                 * otherwise skip the RefMut's release and leave the cell
-                 * permanently borrowed (see glue/mod.rs). */
-                drop(w);
-                raise_owned(e.message());
-            }
-        }
-    }
-}
-
-/// Raise `Makiri::Error` from a C-ABI entry point.
-///
-/// `rb_raise` longjmps, so no Rust destructor may be live at the call - the
-/// callers above drop their borrows first.
-fn raise(msg: &str) -> ! {
-    raise_owned(msg.to_string())
-}
-
-fn raise_owned(msg: String) -> ! {
-    let c = std::ffi::CString::new(msg).unwrap_or_else(|_| c"node set error".to_owned());
-    let ptr = c.as_ptr();
-    /* rb_exc_new_str + rb_exc_raise rather than rb_raise's format string: the
-     * message is already formatted, and this way it is never re-interpreted as
-     * one. The CString must outlive the exception's construction, which it
-     * does - rb_exc_new copies. */
-    unsafe {
-        let exc = rb_sys::rb_exc_new_cstr(error_class().as_raw(), ptr);
-        drop_before_raise(c);
-        rb_sys::rb_exc_raise(exc)
-    }
-}
-
-/// Release the formatted message before the longjmp that never returns.
-fn drop_before_raise<T>(v: T) {
-    drop(v);
+    let Ok(mut nodes) = s.nodes.try_borrow_mut() else {
+        return Err(PushError::Busy);
+    };
+    nodes.push(node)
 }
 
 /* ------------------------------------------------------------------ */
