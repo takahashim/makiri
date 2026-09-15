@@ -13,11 +13,9 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use crate::cbuf::{buf_append, Buf, BUF_OK};
 use crate::lexbor_abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
@@ -213,22 +211,6 @@ pub unsafe fn tag_id_by_name(doc: *const LxbDoc, local: &[u8]) -> usize {
 }
 
 /* ---------- text ---------- */
-
-/// Append a node's own text content to `buf`, returning a `cbuf` status.
-///
-/// Lexbor builds the content on demand and hands back an allocation, so the
-/// append and the free stay together: the append copies, then the allocation
-/// goes back, on every path.
-pub unsafe fn append_own_text(node: *mut LxbNode, buf: *mut Buf) -> c_int {
-    let mut tlen: usize = 0;
-    let t = lxb::lxb_dom_node_text_content(node, &mut tlen);
-    if t.is_null() {
-        return BUF_OK;
-    }
-    let st = buf_append(buf, t as *const c_void, tlen);
-    lxb::lxb_dom_document_destroy_text_noi((*node).owner_document, t);
-    st
-}
 
 /* ------------------------------------------------------------------ *
  * typed handles                                                      *

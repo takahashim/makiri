@@ -13,7 +13,7 @@ use super::number;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 /* ---- the values ---- */
 
@@ -262,11 +262,6 @@ pub struct Focus<'e, D: Dom<'e>> {
     pub size: usize,
 }
 
-/* mkr_status_t */
-pub const ST_OK: c_int = 0;
-pub const ST_ERR_OOM: c_int = 1;
-pub const ST_ERR_LIMIT: c_int = 2;
-
 /// Copy `s` into a fresh text, or `Err` with `err` set to `what` on OOM.
 pub fn owned_copy(s: &[u8], err: ErrSink, what: &core::ffi::CStr) -> Result<Text, Reported> {
     Text::try_copy(s).ok_or_else(|| err_setf!(err, XP_ERR_OOM, "{}", what.to_string_lossy()))
@@ -304,15 +299,17 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
 /// text, not a distinct node type). The walk is iterative through parent
 /// pointers rather than recursive, so an adversarially deep tree cannot
 /// overflow the stack; it descends only into elements.
-unsafe fn append_text_descendants<'d, D: Dom<'d>>(doc: D, node: D::Node, buf: &mut Buf) -> c_int {
+fn append_text_descendants<'d, D: Dom<'d>>(
+    doc: D,
+    node: D::Node,
+    buf: &mut Buf,
+) -> Result<(), BufError> {
     let mut cur = doc.first_child(node);
     while let Some(n) = cur {
         let t = doc.node_type(n);
         if t == NTYPE_TEXT || t == NTYPE_CDATA_SECTION {
-            let st = doc.append_own_text(n, buf);
-            if st != ST_OK {
-                return st; /* LIMIT or OOM - the caller fails closed */
-            }
+            /* LIMIT or OOM - the caller fails closed */
+            doc.append_own_text(n, buf)?;
         }
         if t == NTYPE_ELEMENT {
             if let Some(c) = doc.first_child(n) {
@@ -335,17 +332,17 @@ unsafe fn append_text_descendants<'d, D: Dom<'d>>(doc: D, node: D::Node, buf: &m
             }
         };
     }
-    ST_OK
+    Ok(())
 }
 
-unsafe fn build_string_value<'d, D: Dom<'d>>(doc: D, node: D::Node, buf: &mut Buf) -> c_int {
+fn build_string_value<'d, D: Dom<'d>>(
+    doc: D,
+    node: D::Node,
+    buf: &mut Buf,
+) -> Result<(), BufError> {
     if let Some(a) = doc.as_attr(node) {
         let v = doc.attr_value(a);
-        return if v.is_empty() {
-            ST_OK
-        } else {
-            buf_append(buf, v.as_ptr() as *const c_void, v.len())
-        };
+        return if v.is_empty() { Ok(()) } else { buf.append(v) };
     }
     match doc.node_type(node) {
         NTYPE_TEXT | NTYPE_CDATA_SECTION | NTYPE_COMMENT | NTYPE_PI => {
@@ -363,10 +360,7 @@ unsafe fn build_string_value<'d, D: Dom<'d>>(doc: D, node: D::Node, buf: &mut Bu
 /// such caller is the NUMBER coercion, and a node whose text overran the ceiling
 /// was never a valid number - "" coerces to NaN, which is the right answer
 /// anyway.
-///
-/// # Safety
-/// `node` must be live.
-pub unsafe fn node_to_owned_text<'d, D: Dom<'d>>(
+pub fn node_to_owned_text<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
     budget: Option<&mut Budget>,
@@ -374,31 +368,33 @@ pub unsafe fn node_to_owned_text<'d, D: Dom<'d>>(
     let max = budget.as_ref().map_or(0, |b| b.limits.max_string_bytes);
     let err = budget.map_or(ErrSink::silent(), |b| b.sink());
     let mut buf = Buf::new(max);
-    let st = build_string_value::<D>(doc, node, &mut buf);
-    if st == ST_OK {
-        if let Ok(owned) = buf.steal() {
-            return Ok(Text::from_buf(owned));
-        }
-        if !err.is_silent() {
-            return Err(err_setf!(
-                err,
-                XP_ERR_OOM,
-                "out of memory building node string-value"
-            ));
-        }
-    } else {
-        buf.free();
-        if !err.is_silent() {
-            return Err(if st == ST_ERR_LIMIT {
-                err_setf!(
+    match build_string_value::<D>(doc, node, &mut buf) {
+        Ok(()) => {
+            if let Ok(owned) = buf.steal() {
+                return Ok(Text::from_buf(owned));
+            }
+            if !err.is_silent() {
+                return Err(err_setf!(
                     err,
-                    XP_ERR_LIMIT,
-                    "string size limit exceeded ({} bytes) while building node string-value",
-                    max
-                )
-            } else {
-                err_setf!(err, XP_ERR_OOM, "out of memory building node string-value")
-            });
+                    XP_ERR_OOM,
+                    "out of memory building node string-value"
+                ));
+            }
+        }
+        Err(e) => {
+            buf.free();
+            if !err.is_silent() {
+                return Err(if e == BufError::Limit {
+                    err_setf!(
+                        err,
+                        XP_ERR_LIMIT,
+                        "string size limit exceeded ({} bytes) while building node string-value",
+                        max
+                    )
+                } else {
+                    err_setf!(err, XP_ERR_OOM, "out of memory building node string-value")
+                });
+            }
         }
     }
     /* best-effort: never fail - yield "", which allocates nothing. */

@@ -13,7 +13,7 @@
 use super::abi::*;
 use super::dom::{Bucket, Dom};
 use crate::xml::model as xml;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
 /// so it must not appear on the attribute axis. The reader still keeps it as a
@@ -158,16 +158,12 @@ impl<'d> Dom<'d> for &'d xml::Document {
 
     /// The node owns its value, so this is an append of a borrowed slice.
     #[inline]
-    fn append_own_text(self, n: xml::NodeId, buf: &mut Buf) -> c_int {
-        let s = match self.try_node(n) {
-            Some(x) => self.span(x.value),
-            None => return BUF_OK,
-        };
+    fn append_own_text(self, n: xml::NodeId, buf: &mut Buf) -> Result<(), BufError> {
+        let s = self.try_node(n).map_or(&[][..], |x| self.span(x.value));
         if s.is_empty() {
-            return BUF_OK;
+            return Ok(());
         }
-        // SAFETY: `s` is `s.len()` readable bytes, copied before this returns.
-        unsafe { buf_append(buf, s.as_ptr() as *const c_void, s.len()) }
+        buf.append(s)
     }
 
     /// The XML name index is keyed by (local name, namespace URI), so a bucket

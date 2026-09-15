@@ -8,7 +8,7 @@
 //! element-only or attribute-only read of another kind of node answers empty
 //! rather than reading it as the wrong struct.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use super::abi::*;
 use super::dom::*;
@@ -144,9 +144,8 @@ impl<'d> Dom<'d> for HtmlDoc<'d> {
         n.ns_id() != dom::NS_UNDEF
     }
     #[inline]
-    fn append_own_text(self, n: HtmlNode<'d>, buf: &mut Buf) -> c_int {
-        // SAFETY: a live node; the text Lexbor builds is freed inside.
-        unsafe { dom::append_own_text(n.as_raw(), buf) }
+    fn append_own_text(self, n: HtmlNode<'d>, buf: &mut Buf) -> Result<(), BufError> {
+        n.with_text_content(|text| text.map_or(Ok(()), |t| buf.append(t)))
     }
 
     fn name_bucket(

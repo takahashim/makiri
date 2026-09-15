@@ -13,7 +13,7 @@
 //! the wrong type, does not build.
 
 use super::abi::*;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 /* ---- node types (shared numeric encoding) ----
  *
@@ -122,7 +122,7 @@ pub trait Dom<'d>: Copy {
     fn has_ns(self, n: Self::Node) -> bool;
 
     /// Append the node's own text - the bytes it contributes to a string-value -
-    /// to `buf`, returning an `mkr_status_t`.
+    /// to `buf`; the error is the buffer's (its cap, or OOM).
     ///
     /// It appends rather than returning a slice because only one backend can
     /// lend those bytes. The XML node owns its value, but Lexbor builds a node's
@@ -131,7 +131,7 @@ pub trait Dom<'d>: Copy {
     /// shape both can satisfy - and it is what the C contract says
     /// (`MKR_NODE_APPEND_OWN_TEXT`, which is a statement, not an expression, for
     /// exactly this reason).
-    fn append_own_text(self, n: Self::Node, buf: &mut Buf) -> c_int;
+    fn append_own_text(self, n: Self::Node, buf: &mut Buf) -> Result<(), BufError>;
 
     /// The document-level element index's answer for a document-rooted,
     /// predicate-free descendant name test, or None when it cannot serve one.

@@ -24,6 +24,6 @@ pub use super::ctx::XPathValue;
 pub use super::ctx::{ctx_backend, Backend};
 pub use super::limits::Budget;
 pub use super::msg::{ErrSink, Error, Reported};
-pub(crate) use crate::cbuf::{buf_append, Buf};
+pub(crate) use crate::cbuf::{Buf, BufError};
 pub use crate::falloc::calloc::grow_reserve;
 pub use crate::text::{BorrowedText, VerifiedText};
