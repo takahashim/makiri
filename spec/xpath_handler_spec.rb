@@ -246,6 +246,25 @@ RSpec.describe "Makiri XPath custom function handler" do
       expect(c.evaluate("ng:inner()", reg)).to eq(3.0)
     end
 
+    it "keeps the outer walk's handler across a nested evaluate that has its own" do
+      # The nested evaluate installs a handler too. Taking it off used to clear
+      # the context's resolver outright, so the outer walk's next call - the
+      # second <p> - failed as an unknown function.
+      c = Makiri::XPathContext.new(multi)
+      h = Object.new
+      h.instance_variable_set(:@ctx, c)
+      h.instance_variable_set(:@calls, 0)
+      def h.touch
+        @calls += 1
+        @ctx.evaluate("count(//p[inner()])", self) if @calls == 1
+        true
+      end
+      def h.inner = true
+      def h.calls = @calls
+      expect(c.evaluate("//p[touch()]", h).length).to eq(3)
+      expect(h.calls).to eq(3)
+    end
+
     # The engine borrows names, values and index slices from the document for
     # the whole walk, and Lexbor frees an attribute's old value when a new one is
     # set, so a handler must not edit the document it is evaluated over: every

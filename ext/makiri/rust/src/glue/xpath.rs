@@ -765,33 +765,45 @@ unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*const Ast, Optio
     Some((&**ast as *const Ast, None))
 }
 
-/// Install the handler bridge for one evaluation, and take it back off.
+/// Install the handler bridge for one evaluation, and put back what was there.
 ///
 /// It has to come off: the bridge lives on the caller's stack, and the context
-/// outlives the call.
+/// outlives the call. And it has to be put BACK rather than cleared: a handler
+/// can evaluate on this same context with a handler of its own, and clearing
+/// on the way out of that nested evaluate left the outer walk with no resolver,
+/// so its next handler call failed as an unknown function.
 struct InstalledHandler {
     ctx: *mut Ctx,
     installed: bool,
+    previous_resolver: crate::xpath::ctx::FuncResolver,
+    previous_data: *mut c_void,
 }
 
 impl InstalledHandler {
     unsafe fn new(ctx: *mut Ctx, bridge: *const Bridge, handler: VALUE) -> Self {
         let installed = handler != rb_sys::Qnil as VALUE;
+        let previous_resolver = crate::xpath::ctx::ctx_func_resolver(ctx);
+        let previous_data = crate::xpath::ctx::xpath_get_user_data(ctx);
         if installed {
             xpath_context_set_user_data(ctx, bridge as *mut c_void);
             xpath_set_func_resolver(ctx, Some(handler_resolver));
         }
-        InstalledHandler { ctx, installed }
+        InstalledHandler {
+            ctx,
+            installed,
+            previous_resolver,
+            previous_data,
+        }
     }
 }
 
 impl Drop for InstalledHandler {
     fn drop(&mut self) {
         if self.installed {
-            // SAFETY: undoes exactly what new() did.
+            // SAFETY: restores exactly what new() found.
             unsafe {
-                xpath_set_func_resolver(self.ctx, None);
-                xpath_context_set_user_data(self.ctx, core::ptr::null_mut());
+                xpath_set_func_resolver(self.ctx, self.previous_resolver);
+                xpath_context_set_user_data(self.ctx, self.previous_data);
             }
         }
     }

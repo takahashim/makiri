@@ -235,6 +235,77 @@ fn nesting_depth_is_bounded_where_the_tree_is_built() {
     assert_eq!(parse_status(&chain(30_000)), Err(XP_ERR_LIMIT));
 }
 
+/// What [`nesting_resolver`] reads through `user_data`.
+struct Nesting {
+    inner: Box<Ast>,
+    nest: bool,
+}
+
+/// `f()` answers true, first running `inner` on the same context when `nest`
+/// is set - the shape of a Ruby handler that evaluates again mid-walk.
+unsafe fn nesting_resolver(
+    user_data: *mut c_void,
+    ctx: *mut crate::xpath::ctx::Context,
+    call: &crate::xpath::ctx::ResolverCall<'_>,
+) -> Result<Option<crate::xpath::own::OwnedVal>, crate::xpath::msg::Reported> {
+    let n = &*(user_data as *const Nesting);
+    if call.local != b"f" {
+        return Ok(None);
+    }
+    if n.nest {
+        let _ = evaluate(ctx, &n.inner);
+    }
+    Ok(Some(crate::xpath::value::Val::boolean(true).into()))
+}
+
+/// `//node()[f()]` against [`DOC`] under `max_eval_ops`, with or without the
+/// nested evaluate inside `f()`.
+fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
+    let mut doc = xml_parse(DOC).expect("the fixture parses");
+    // SAFETY: as in `run`; `nesting` outlives the evaluate that reads it.
+    unsafe {
+        let node = doc.doc_node().to_token() as *mut c_void;
+        let ctx = OwnedContext::new(&mut *doc as *mut _ as *mut c_void, node, Backend::Xml)
+            .expect("a context");
+        let budget = ctx_budget(ctx.as_ptr());
+        let parse = |text: &str| {
+            (*budget).limits.ast_nodes = 0;
+            match parse_owned(VerifiedText::from_bytes(text.as_bytes()).unwrap(), budget) {
+                Ok(ast) => ast,
+                Err(_) => panic!("{text} parses"),
+            }
+        };
+        let outer = parse("//node()[f()]");
+        let nesting = Nesting {
+            inner: parse("true()"),
+            nest,
+        };
+        crate::xpath::ctx::xpath_context_set_user_data(
+            ctx.as_ptr(),
+            &nesting as *const Nesting as *mut c_void,
+        );
+        crate::xpath::ctx::xpath_set_func_resolver(ctx.as_ptr(), Some(nesting_resolver));
+        (*ctx_limits(ctx.as_ptr())).max_eval_ops = max_eval_ops;
+        match evaluate(ctx.as_ptr(), &outer) {
+            Ok(XPathValue::NodeSet(set)) => Answer::Num(set.count() as f64),
+            Ok(_) => Answer::Err(-1),
+            Err(e) => Answer::Err(e.status),
+        }
+    }
+}
+
+#[test]
+fn a_nested_evaluate_does_not_refill_the_outer_budget() {
+    /* With room to spare, the handler's nested evaluate changes nothing. */
+    let all = walk_with_handler(false, 1000);
+    assert!(matches!(all, Answer::Num(n) if n > 0.0), "{all:?}");
+    assert_eq!(walk_with_handler(true, 1000), all);
+    /* A budget the walk overruns stays overrun when every predicate call
+     * evaluates again - the nested run must not reset the outer's count. */
+    assert_eq!(walk_with_handler(false, 30), Answer::Err(XP_ERR_LIMIT));
+    assert_eq!(walk_with_handler(true, 30), Answer::Err(XP_ERR_LIMIT));
+}
+
 #[cfg(feature = "lexbor")]
 fn css(selector: &str) -> Answer {
     run(Query::Css, selector, |_| {})

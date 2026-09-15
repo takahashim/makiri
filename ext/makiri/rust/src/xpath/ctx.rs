@@ -457,6 +457,19 @@ impl XPathValue {
     }
 }
 
+/// The per-evaluate counters, as an evaluate found them.
+unsafe fn save_counters(ctx: *mut Context) -> (usize, usize) {
+    let l = &(*ctx).budget.limits;
+    (l.eval_ops, l.recursion_depth)
+}
+
+/// Put back what [`save_counters`] found, for the walk this one ran inside.
+unsafe fn restore_counters(ctx: *mut Context, (eval_ops, recursion_depth): (usize, usize)) {
+    let l = &mut (*ctx).budget.limits;
+    l.eval_ops = eval_ops;
+    l.recursion_depth = recursion_depth;
+}
+
 /// Evaluate `ast` against the context, with the context node as the focus.
 ///
 /// # Safety
@@ -479,8 +492,14 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error
      * evaluates just stack the depth. */
     (*ctx).evaluating += 1;
 
-    /* Per-eval counters reset. ast_nodes is NOT reset: the AST is already built
-     * and its budget was checked at parse time. */
+    /* Per-eval counters reset, and restored on the way out. ast_nodes is NOT
+     * reset: the AST is already built and its budget was checked at parse time.
+     *
+     * The restore is what keeps a budget a budget: a handler can evaluate on
+     * this same context mid-walk, and a nested evaluate that left the counters
+     * at its own values would refill the outer walk's op budget on every
+     * handler call - and leave its recursion depth wrong. */
+    let outer_counters = save_counters(ctx);
     (*ctx).budget.limits.eval_ops = 0;
     (*ctx).budget.limits.recursion_depth = 0;
 
@@ -502,6 +521,7 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error
     if !order_was_built && (*ctx).order_index.built != 0 {
         doc_order_index_clear(&raw mut (*ctx).order_index);
     }
+    restore_counters(ctx, outer_counters);
     (*ctx).evaluating -= 1;
 
     match result {
@@ -531,6 +551,7 @@ pub unsafe fn evaluate_first(ctx: *mut Context, ast: &Ast) -> Result<XPathValue,
      * full evaluator (which resets these itself). The not-recognised fallback
      * resets them again; the walk only runs for recognised shapes, so nothing
      * double-counts. */
+    let outer_counters = save_counters(ctx);
     (*ctx).budget.limits.eval_ops = 0;
     (*ctx).budget.limits.recursion_depth = 0;
 
@@ -539,6 +560,7 @@ pub unsafe fn evaluate_first(ctx: *mut Context, ast: &Ast) -> Result<XPathValue,
         #[cfg(feature = "lexbor")]
         Backend::Html { .. } => try_first_match_html(handle(ctx), ast),
     };
+    restore_counters(ctx, outer_counters);
     match matched {
         /* Op budget exceeded while walking: fail closed rather than falling back
          * to the full evaluator, which would hit the same wall. */

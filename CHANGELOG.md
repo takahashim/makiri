@@ -13,6 +13,15 @@
   it. Other documents stay editable, and the document is editable again as soon
   as the evaluation returns.
 
+### Fixed
+
+* **A handler that evaluates again on its own `XPathContext` no longer breaks
+  the outer walk.** When that nested `evaluate` passed a handler, finishing it
+  cleared the context's handler, so the outer walk's next function call failed
+  as `unknown function`. It also reset the per-evaluate counters, which let an
+  outer walk exceed its operation budget by evaluating again from a handler.
+  Each evaluate now restores what the walk around it had.
+
 ## [0.9.0] - 2026-09-11
 
 ### Added
