@@ -23,7 +23,7 @@
 use core::ffi::{c_char, c_int, c_long};
 
 use magnus::encoding::Coderange;
-use magnus::rb_sys::FromRawValue;
+use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
@@ -171,7 +171,7 @@ unsafe fn text_error(what: *const c_char, problem: &str) -> Error {
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
 pub unsafe fn ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<RubyText, Error> {
-    let s = string_of(in_)?;
+    let s = string_of(Value::from_raw(in_))?.as_raw();
     verify_text(s, what)?;
     let (value, ptr, len) = borrow(s);
     Ok(RubyText::from_raw_parts(value, ptr, len))
@@ -183,7 +183,7 @@ pub unsafe fn ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<Ruby
 /// `verify_text` is not reused because it rejects NUL. The check is
 /// allocation-free, so the borrow taken before it is not held across a GC point.
 pub unsafe fn ruby_verified_data(in_: VALUE, what: *const c_char) -> Result<RubyData, Error> {
-    let s = string_of(in_)?;
+    let s = string_of(Value::from_raw(in_))?.as_raw();
     let (value, ptr, len) = borrow(s);
     if text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
         return Err(text_error(what, "must be valid UTF-8"));

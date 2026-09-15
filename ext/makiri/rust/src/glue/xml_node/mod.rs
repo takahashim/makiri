@@ -77,7 +77,8 @@ pub unsafe fn xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Err
         let xdoc = parsed_xml_doc(doc_parsed(rb_self)?) as *mut XmlDoc;
         return Ok((*xdoc).doc_node().to_token() as *mut c_void);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, XML_NODE_TYPE.as_ptr())? as *mut NodeData;
+    let nd =
+        crate::bridge::ruby::typed_data(Value::from_raw(rb_self), &XML_NODE_TYPE)? as *mut NodeData;
     Ok((*nd).node)
 }
 
@@ -96,7 +97,8 @@ pub unsafe fn xml_node_document(rb_self: VALUE) -> Result<VALUE, magnus::Error> 
     if is_a(v, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, XML_NODE_TYPE.as_ptr())? as *mut NodeData;
+    let nd =
+        crate::bridge::ruby::typed_data(Value::from_raw(rb_self), &XML_NODE_TYPE)? as *mut NodeData;
     Ok((*nd).document)
 }
 

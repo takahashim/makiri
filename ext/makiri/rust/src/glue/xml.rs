@@ -387,7 +387,7 @@ unsafe fn build_ctx(
     what: *const c_char,
     rb_ns: Option<Value>,
 ) -> Result<XPathContext<'static>, Error> {
-    verify_text(crate::bridge::ruby::string_of(rb_text.as_raw())?, what)?;
+    verify_text(crate::bridge::ruby::string_of(rb_text)?.as_raw(), what)?;
     let ctx = context_for(context, document)?;
     register_namespaces(ruby, &ctx, rb_ns)?; /* ctx drops on error */
     Ok(ctx)

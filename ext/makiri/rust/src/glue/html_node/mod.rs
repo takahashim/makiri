@@ -133,7 +133,8 @@ pub unsafe fn html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::E
         }
         return Ok(html_doc_unwrap(rb_node)? as *mut LxbNode);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_node, HTML_NODE_TYPE.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(Value::from_raw(rb_node), &HTML_NODE_TYPE)?
+        as *mut NodeData;
     Ok((*nd).node as *mut LxbNode)
 }
 

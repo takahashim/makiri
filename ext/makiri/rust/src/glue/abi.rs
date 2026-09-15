@@ -327,48 +327,7 @@ pub use crate::lexbor_abi::{
  * rb_data_type_t in a static                                         *
  * ------------------------------------------------------------------ */
 
-/// A `rb_data_type_t` that can live in a `static`.
-///
-/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at
-/// compile time and never written. `repr(transparent)` keeps the layout exactly
-/// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
-#[repr(transparent)]
-pub struct DataType(rb_sys::rb_data_type_t);
-
-// SAFETY: the contents are set once at compile time and never mutated. Ruby
-// reads them from whichever thread holds the GVL.
-unsafe impl Sync for DataType {}
-
-impl DataType {
-    /// `parent` is null for a base type.
-    pub const fn new(
-        name: *const core::ffi::c_char,
-        parent: *const rb_sys::rb_data_type_t,
-        dmark: rb_sys::RUBY_DATA_FUNC,
-        dfree: rb_sys::RUBY_DATA_FUNC,
-        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
-    ) -> DataType {
-        DataType(rb_sys::rb_data_type_t {
-            wrap_struct_name: name,
-            function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
-                dmark,
-                dfree,
-                dsize,
-                dcompact: None,
-                reserved: [core::ptr::null_mut(); 1],
-            },
-            parent,
-            data: core::ptr::null_mut(),
-            flags: rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE,
-        })
-    }
-
-    /// The raw pointer the Ruby API wants.
-    #[inline]
-    pub const fn as_ptr(&self) -> *const rb_sys::rb_data_type_t {
-        self as *const DataType as *const rb_sys::rb_data_type_t
-    }
-}
+pub use crate::bridge::ruby::DataType;
 
 /* ------------------------------------------------------------------ *
  * declaration/definition agreement                                   *

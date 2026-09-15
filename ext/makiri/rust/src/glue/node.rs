@@ -36,6 +36,8 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
+use magnus::rb_sys::FromRawValue;
+use magnus::Value;
 use rb_sys::{
     rb_data_type_t, rb_gc_mark, rb_obj_is_kind_of, rb_typeddata_is_kind_of, rb_ull2inum,
     ruby_xfree, VALUE,
@@ -91,12 +93,6 @@ pub static HTML_NODE_TYPE: DataType =
 pub static XML_NODE_TYPE: DataType =
     node_type(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
 
-/// The base type as the raw pointer the Ruby API wants.
-#[inline]
-fn base_type() -> *const rb_data_type_t {
-    NODE_DATA_TYPE.as_ptr()
-}
-
 /* ------------------------------------------------------------------ */
 /* kind-agnostic accessors (identity / document)                      */
 /* ------------------------------------------------------------------ */
@@ -135,7 +131,8 @@ pub unsafe fn node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
         return Ok(super::abi::html_doc_unwrap(rb_node)? as *mut c_void);
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(Value::from_raw(rb_node), &NODE_DATA_TYPE)?
+        as *mut NodeData;
     Ok((*nd).node)
 }
 
@@ -182,7 +179,8 @@ pub unsafe fn keepalive_document(rb_node: VALUE) -> Result<VALUE, magnus::Error>
     if is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_node, base_type())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(Value::from_raw(rb_node), &NODE_DATA_TYPE)?
+        as *mut NodeData;
     Ok((*nd).document)
 }
 

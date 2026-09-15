@@ -118,14 +118,16 @@ static XML_DOC_TYPE: DataType = doc_data_type(c"Makiri::XML::Document".as_ptr(),
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
 pub unsafe fn html_doc_unwrap(rb_doc: VALUE) -> Result<*mut lxb::lxb_dom_document_t, Error> {
-    let d = crate::bridge::ruby::typed_data(rb_doc, HTML_DOC_TYPE.as_ptr())? as *mut DocData;
+    let d =
+        crate::bridge::ruby::typed_data(Value::from_raw(rb_doc), &HTML_DOC_TYPE)? as *mut DocData;
     Ok(html_doc_of(d))
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
 pub unsafe fn html_doc_known(rb_doc: VALUE) -> *mut lxb::lxb_dom_document_t {
     html_doc_of(
-        crate::bridge::ruby::typed_data_known(rb_doc, HTML_DOC_TYPE.as_ptr()) as *mut DocData,
+        crate::bridge::ruby::typed_data_known(Value::from_raw(rb_doc), &HTML_DOC_TYPE)
+            as *mut DocData,
     )
 }
 
@@ -139,7 +141,7 @@ unsafe fn html_doc_of(d: *mut DocData) -> *mut lxb::lxb_dom_document_t {
 pub unsafe fn doc_parsed(
     rb_doc: VALUE,
 ) -> Result<*mut crate::dom_adapter::post_parse::Parsed, Error> {
-    let d = crate::bridge::ruby::typed_data(rb_doc, DOC_TYPE.as_ptr())? as *mut DocData;
+    let d = crate::bridge::ruby::typed_data(Value::from_raw(rb_doc), &DOC_TYPE)? as *mut DocData;
     Ok((*d).parsed)
 }
 
@@ -190,7 +192,8 @@ pub unsafe fn ensure_document_mutable(rb_doc: VALUE) -> Result<(), Error> {
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
 pub unsafe fn doc_parsed_known(rb_doc: VALUE) -> *mut crate::dom_adapter::post_parse::Parsed {
-    (*(crate::bridge::ruby::typed_data_known(rb_doc, DOC_TYPE.as_ptr()) as *mut DocData)).parsed
+    (*(crate::bridge::ruby::typed_data_known(Value::from_raw(rb_doc), &DOC_TYPE) as *mut DocData))
+        .parsed
 }
 
 /// Wrap an owned handle as a Document; GC takes ownership. The leaf class is
@@ -345,8 +348,7 @@ fn doc_errors(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
         /* A Document method, so the receiver is a Document. */
-        let d = crate::bridge::ruby::typed_data_known(self_.as_raw(), DOC_TYPE.as_ptr())
-            as *mut DocData;
+        let d = crate::bridge::ruby::typed_data_known(self_, &DOC_TYPE) as *mut DocData;
         Value::from_raw((*d).errors)
     }
 }

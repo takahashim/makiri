@@ -15,19 +15,62 @@ use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
 use magnus::{Error, RString, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
+/// A `rb_data_type_t` that can live in a `static`.
+///
+/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at
+/// compile time and never written. `repr(transparent)` keeps the layout exactly
+/// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
+#[repr(transparent)]
+pub struct DataType(rb_sys::rb_data_type_t);
+
+// SAFETY: the contents are set once at compile time and never mutated. Ruby
+// reads them from whichever thread holds the GVL.
+unsafe impl Sync for DataType {}
+
+impl DataType {
+    /// `parent` is null for a base type.
+    pub const fn new(
+        name: *const core::ffi::c_char,
+        parent: *const rb_sys::rb_data_type_t,
+        dmark: rb_sys::RUBY_DATA_FUNC,
+        dfree: rb_sys::RUBY_DATA_FUNC,
+        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
+    ) -> DataType {
+        DataType(rb_sys::rb_data_type_t {
+            wrap_struct_name: name,
+            function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
+                dmark,
+                dfree,
+                dsize,
+                dcompact: None,
+                reserved: [core::ptr::null_mut(); 1],
+            },
+            parent,
+            data: core::ptr::null_mut(),
+            flags: rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE,
+        })
+    }
+
+    /// The raw pointer the Ruby API wants.
+    #[inline]
+    pub const fn as_ptr(&self) -> *const rb_sys::rb_data_type_t {
+        self as *const DataType as *const rb_sys::rb_data_type_t
+    }
+}
+
 /// `v` as a String, coerced the way `rb_String` does (`to_str`, else `to_s`).
 ///
 /// A String passes straight through, so the common case is one type check.
 /// Anything else runs its conversion under `protect`: a `to_s` that raises
 /// comes back as `Err` rather than unwinding through the caller.
-///
-/// # Safety
-/// Under the GVL, with `v` a live VALUE.
-pub unsafe fn string_of(v: VALUE) -> Result<VALUE, Error> {
-    if RString::from_value(Value::from_raw(v)).is_some() {
-        return Ok(v);
+pub fn string_of(v: Value) -> Result<RString, Error> {
+    if let Some(s) = RString::from_value(v) {
+        return Ok(s);
     }
-    protect(|| rb_sys::rb_String(v))
+    // SAFETY: `v` is a live value; `protect` turns a raising `to_s` into `Err`.
+    let s = protect(|| unsafe { rb_sys::rb_String(v.as_raw()) })?;
+    // SAFETY: `rb_String` returned a live String.
+    Ok(RString::from_value(unsafe { Value::from_raw(s) }).expect("rb_String returns a String"))
 }
 
 /// The data pointer of a TypedData object of type `ty` (or a type deriving
@@ -37,20 +80,23 @@ pub unsafe fn string_of(v: VALUE) -> Result<VALUE, Error> {
 /// path - never enters `protect`. Only a mismatch runs `rb_check_typeddata`
 /// under it, which is what keeps the error message Ruby's own, word for word,
 /// on every supported Ruby.
-///
-/// # Safety
-/// Under the GVL, with `v` a live VALUE and `ty` a registered data type.
-pub unsafe fn typed_data(v: VALUE, ty: *const rb_data_type_t) -> Result<*mut c_void, Error> {
-    if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
-        return Ok(rb_sys::rb_check_typeddata(v, ty));
-    }
-    match protect(|| rb_sys::rb_check_typeddata(v, ty) as VALUE) {
-        Err(e) => Err(e),
-        /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-        Ok(_) => Err(Error::new(
-            magnus::Ruby::get_unchecked().exception_type_error(),
-            "wrong argument type",
-        )),
+pub fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
+    let (v, ty) = (v.as_raw(), ty.as_ptr());
+    // SAFETY: `v` is a live value and `ty` a registered data type. The check
+    // runs unprotected only once the type is known to match, so it cannot
+    // raise there; a mismatch runs it under `protect`.
+    unsafe {
+        if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
+            return Ok(rb_sys::rb_check_typeddata(v, ty));
+        }
+        match protect(|| rb_sys::rb_check_typeddata(v, ty) as VALUE) {
+            Err(e) => Err(e),
+            /* rb_typeddata_is_kind_of said no, so the check should have raised. */
+            Ok(_) => Err(Error::new(
+                magnus::Ruby::get_unchecked().exception_type_error(),
+                "wrong argument type",
+            )),
+        }
     }
 }
 
@@ -61,15 +107,17 @@ pub unsafe fn typed_data(v: VALUE, ty: *const rb_data_type_t) -> Result<*mut c_v
 /// A mismatch here is a bug in that reasoning, not a user error, so it panics:
 /// the panic unwinds through the Rust frames (running their destructors) and
 /// magnus turns it into a fatal error, where a raise would longjmp past them.
-///
-/// # Safety
-/// Under the GVL, with `v` a live VALUE and `ty` a registered data type.
-pub unsafe fn typed_data_known(v: VALUE, ty: *const rb_data_type_t) -> *mut c_void {
-    assert!(
-        rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
-        "a VALUE of an established type had a different one"
-    );
-    rb_sys::rb_check_typeddata(v, ty)
+pub fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
+    let (v, ty) = (v.as_raw(), ty.as_ptr());
+    // SAFETY: as in `typed_data`; the assert makes the check that follows one
+    // that cannot raise.
+    unsafe {
+        assert!(
+            rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
+            "a VALUE of an established type had a different one"
+        );
+        rb_sys::rb_check_typeddata(v, ty)
+    }
 }
 
 /// The wrapped Rust value behind a TypedData object, without magnus's

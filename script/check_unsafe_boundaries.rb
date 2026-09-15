@@ -47,7 +47,7 @@ STATIC_MUT_COUNTS = {}.freeze
 # calls means lowering the count. `magnus::rb_sys` is magnus's own module and is
 # not counted, and neither are comment lines.
 RB_SYS_COUNTS = {
-  "glue/abi.rs" => 14,
+  "glue/abi.rs" => 4,
   "glue/css.rs" => 6,
   "glue/doc.rs" => 13,
   "glue/fragment.rs" => 1,
