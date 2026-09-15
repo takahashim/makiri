@@ -286,7 +286,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            hand-written views the engine's hot paths read
     xpath_abi.rs           the XPath engine's shared types
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
-                           access (RSTRING) and verified-string minting
+                           access (RSTRING) and verified-string minting, and where
+                           raising C calls (rb_String, typed-data checks) and the
+                           wrap-then-store constructor live; a raise becomes `Err`
+                           there. `rake unsafe:boundaries` pins the glue's
+                           remaining direct `rb_sys::` and raising calls per file
     glue/                  Ruby <-> engine surface, one module per feature
                            (node/doc/node_set/xpath/css/serialize/mutate)
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait

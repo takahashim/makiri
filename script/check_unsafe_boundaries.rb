@@ -29,6 +29,47 @@ STATIC_MUT_COUNTS = {
   "init.rs" => 1,
 }.freeze
 
+# Ruby's C API outside `bridge/` is a ratchet. The bridge is where raw VALUEs,
+# typed data and the C calls that raise are meant to live (glue/mod.rs): a raise
+# there becomes an `Err` before it can longjmp past a Rust destructor. The glue
+# still calls `rb_sys::` directly for method registration, constants and the
+# per-node hot paths that must not pay for magnus's `protect`, so each file's
+# count is pinned here. A new direct call - above all a new raising one - fails
+# until it moves behind the bridge or the count is raised in review; removing
+# calls means lowering the count. `magnus::rb_sys` is magnus's own module and is
+# not counted, and neither are comment lines.
+RB_SYS_COUNTS = {
+  "glue/abi.rs" => 14,
+  "glue/css.rs" => 6,
+  "glue/doc.rs" => 13,
+  "glue/fragment.rs" => 1,
+  "glue/html_node/mod.rs" => 3,
+  "glue/html_node/mutate.rs" => 2,
+  "glue/html_node/read.rs" => 2,
+  "glue/node.rs" => 7,
+  "glue/node_set.rs" => 19,
+  "glue/xml.rs" => 5,
+  "glue/xml_node/mod.rs" => 3,
+  "glue/xml_node/mutate.rs" => 2,
+  "glue/xml_node/ns.rs" => 12,
+  "glue/xml_node/serialize.rs" => 8,
+  "glue/xpath.rs" => 29,
+  "init.rs" => 5,
+}.freeze
+
+RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
+RAISING_COUNTS = {
+  "glue/abi.rs" => 1,              # the rb_raise declaration
+  "glue/doc.rs" => 1,              # clone_node, a C-convention entry point
+  "glue/fragment.rs" => 4,         # fragment parse failures
+  "glue/node_set.rs" => 4,         # push from the C-convention entry point
+  "glue/xml_node/mutate.rs" => 1,  # mkr_xml_mut_check
+}.freeze
+
+def rust_code(path)
+  File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
+end
+
 errors = []
 
 SAFE_FILES.each do |relative|
@@ -53,6 +94,27 @@ if actual != STATIC_MUT_COUNTS
   errors << "static mut boundary changed: expected #{STATIC_MUT_COUNTS.inspect}, got #{actual.inspect}"
 end
 
+rb_sys = Hash.new(0)
+raising = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative.start_with?("bridge/")
+
+  code = rust_code(path)
+  count = code.scan(/(?<!magnus::)\brb_sys::/).length
+  rb_sys[relative] = count unless count.zero?
+  count = code.scan(RAISING_API).length
+  raising[relative] = count unless count.zero?
+end
+
+if rb_sys != RB_SYS_COUNTS
+  errors << "rb_sys:: outside bridge/ changed: expected #{RB_SYS_COUNTS.inspect}, got #{rb_sys.inspect}"
+end
+if raising != RAISING_COUNTS
+  errors << "raising C API outside bridge/ changed: expected #{RAISING_COUNTS.inspect}, got #{raising.inspect}"
+end
+
 abort "unsafe-boundaries: #{errors.join("\nunsafe-boundaries: ")}" unless errors.empty?
 
-puts "unsafe-boundaries: #{SAFE_FILES.length} safe modules; #{actual.values.sum} reviewed static mut declarations"
+puts "unsafe-boundaries: #{SAFE_FILES.length} safe modules; #{actual.values.sum} reviewed static mut declarations; " \
+     "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/"
