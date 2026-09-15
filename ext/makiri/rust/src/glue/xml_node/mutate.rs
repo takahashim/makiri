@@ -135,11 +135,15 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 /// it, the same contract HTML nodes have. It is also the single mutation choke
 /// point: every mutator comes through here, and here is where the cached
 /// element-name index is dropped so the next query rebuilds it.
-unsafe fn unwrap_mutable(this: super::XmlSelf) -> NodeId {
+///
+/// A document an XPath handler is being evaluated over refuses to change, so
+/// that check comes before the index is dropped.
+unsafe fn unwrap_mutable(this: super::XmlSelf) -> Result<NodeId, Error> {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
+    crate::glue::doc::ensure_document_mutable(this.document.as_raw())?;
     xml_name_index_invalidate(&mut *this.doc());
-    this.id
+    Ok(this.id)
 }
 
 /// Verify a String argument and hand back its bytes plus the length the arena
@@ -180,7 +184,7 @@ pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
         if is_a(rb_self, CLASS_XML_DOCUMENT) {
             return Err(Error::new(error_class(), "cannot remove the document node"));
         }
-        let n = unwrap_mutable(this);
+        let n = unwrap_mutable(this)?;
         xml_remove(&mut *this.doc(), n); /* detach + refresh the root/doctype cache */
         Ok(rb_self)
     }
@@ -188,7 +192,7 @@ pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
 
 /// The element behind `rb_self`, or an error naming what was attempted.
 unsafe fn element_for(this: super::XmlSelf) -> Result<NodeId, Error> {
-    let n = unwrap_mutable(this);
+    let n = unwrap_mutable(this)?;
     if (*this.doc()).type_(n) != Some(NodeType::Element) {
         return Err(Error::new(
             error_class(),
@@ -252,7 +256,7 @@ pub fn remove_attribute_ns(
 ) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let n = unwrap_mutable(this);
+        let n = unwrap_mutable(this)?;
         if (*this.doc()).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
@@ -267,7 +271,7 @@ pub fn remove_attribute_ns(
 pub fn delete(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let n = unwrap_mutable(this);
+        let n = unwrap_mutable(this)?;
         if (*this.doc()).type_(n) != Some(NodeType::Element) {
             return Ok(rb_self);
         }
@@ -282,7 +286,7 @@ pub fn delete(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, E
 /// comment or PI leaf, sets its data.
 pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Value, Error> {
     unsafe {
-        let n = unwrap_mutable(this);
+        let n = unwrap_mutable(this)?;
         let (tv, _) = verified(ruby, text, c"node content")?;
         let st = xml_set_content(&mut *this.doc(), n, tv.bytes());
         xml_mut_check(st);
@@ -295,7 +299,7 @@ pub fn set_content(ruby: &Ruby, this: super::XmlSelf, text: Value) -> Result<Val
 /// the node's in-scope declarations.
 pub fn set_name(ruby: &Ruby, this: super::XmlSelf, name: Value) -> Result<Value, Error> {
     unsafe {
-        let n = unwrap_mutable(this);
+        let n = unwrap_mutable(this)?;
         let (nv, _) = verified(ruby, name, c"node name")?;
         let st = xml_rename(&mut *this.doc(), n, nv.bytes());
         xml_mut_check(st);
@@ -338,6 +342,9 @@ unsafe fn incoming_node(
     if node_document(arg)?.as_raw() == target_doc.as_raw() {
         return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
     }
+    /* Adopting takes the node out of the document it came from, so that
+     * document changes too - refuse before anything is copied. */
+    crate::glue::doc::ensure_document_mutable(node_document(arg)?.as_raw())?;
     let mut copy: NodeId = NodeId::INVALID;
     let src_doc = xdoc(arg)?;
     xml_mut_check(xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy));
@@ -408,7 +415,7 @@ unsafe fn splice_fragment(
 
 fn insert(ruby: &Ruby, this: super::XmlSelf, arg: Value, op: Op) -> Result<Value, Error> {
     unsafe {
-        let target = unwrap_mutable(this);
+        let target = unwrap_mutable(this)?;
         let doc_v = this.document;
         let xd = this.doc();
         let (node, adopt_from) = incoming_node(ruby, xd, doc_v, arg)?;

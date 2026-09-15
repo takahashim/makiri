@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+* **An XPath handler may not modify the document being evaluated.** While
+  `Node#xpath` / `#at_xpath` / `XPathContext#evaluate` runs with a handler,
+  every mutator on that document — attribute and content edits, renames,
+  insertion, removal, `inner_html=`, and moving a node out of it into another
+  document — raises `Makiri::Error`. The evaluator reads names and values out
+  of the document for the whole walk, and an edit could free them underneath
+  it. Other documents stay editable, and the document is editable again as soon
+  as the evaluation returns.
+
 ## [0.9.0] - 2026-09-11
 
 ### Added

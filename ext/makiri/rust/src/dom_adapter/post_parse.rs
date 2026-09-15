@@ -182,6 +182,7 @@ pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> *mut
         dom_index: core::ptr::null_mut(),
         newline_idx: core::ptr::null_mut(),
         text_index: core::ptr::null_mut(),
+        evaluating: 0,
     });
     if p.is_null() {
         return core::ptr::null_mut();
@@ -277,6 +278,7 @@ pub unsafe fn parsed_new_xml(xdoc: *mut c_void) -> *mut Parsed {
         dom_index: core::ptr::null_mut(),
         newline_idx: core::ptr::null_mut(),
         text_index: core::ptr::null_mut(),
+        evaluating: 0,
     })
 }
 

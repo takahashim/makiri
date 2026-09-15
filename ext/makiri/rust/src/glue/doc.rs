@@ -150,6 +150,50 @@ pub unsafe fn doc_parsed(
     Ok((*d).parsed)
 }
 
+/// Marks a document as read by an XPath evaluation that can run Ruby - one with
+/// a handler - for as long as it lives. Nested evaluations stack.
+///
+/// The engine borrows names, attribute values and index slices out of the
+/// document for the whole walk, and a handler runs arbitrary Ruby in the middle
+/// of it. Lexbor frees an attribute's old value when a new one is set
+/// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
+/// that edited the same document could leave the evaluator reading freed
+/// memory. Every mutator checks [`ensure_document_mutable`] first, so that
+/// borrow is never invalidated under a suspended walk.
+pub(crate) struct DocumentEvaluation(*mut crate::dom_adapter::post_parse::Parsed);
+
+impl DocumentEvaluation {
+    /// # Safety
+    /// The caller keeps `rb_doc` reachable for as long as the guard lives.
+    pub(crate) unsafe fn enter(rb_doc: VALUE) -> Result<Self, Error> {
+        let p = doc_parsed(rb_doc)?;
+        (*p).evaluating += 1;
+        Ok(DocumentEvaluation(p))
+    }
+}
+
+impl Drop for DocumentEvaluation {
+    fn drop(&mut self) {
+        // SAFETY: `enter` counted this handle, and its document is still alive.
+        unsafe { (*self.0).evaluating -= 1 }
+    }
+}
+
+/// `Err(Makiri::Error)` while an evaluation with a handler is reading
+/// `rb_doc`. Every mutator calls this before it changes anything.
+///
+/// # Safety
+/// `rb_doc` must be a Document.
+pub unsafe fn ensure_document_mutable(rb_doc: VALUE) -> Result<(), Error> {
+    if (*doc_parsed_known(rb_doc)).evaluating != 0 {
+        return Err(Error::new(
+            error_class(),
+            "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
+        ));
+    }
+    Ok(())
+}
+
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
 pub unsafe fn doc_parsed_known(rb_doc: VALUE) -> *mut crate::dom_adapter::post_parse::Parsed {

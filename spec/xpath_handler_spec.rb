@@ -245,5 +245,69 @@ RSpec.describe "Makiri XPath custom function handler" do
       def reg.inner(*) = @ctx.evaluate("count(//p)")
       expect(c.evaluate("ng:inner()", reg)).to eq(3.0)
     end
+
+    # The engine borrows names, values and index slices from the document for
+    # the whole walk, and Lexbor frees an attribute's old value when a new one is
+    # set, so a handler must not edit the document it is evaluated over: every
+    # mutator refuses while such an evaluation runs.
+    describe "a handler editing the document under evaluation" do
+      editor_class = Class.new do
+        def initialize(&edit) = @edit = edit
+
+        def touch
+          @edit.call
+          true
+        end
+      end
+
+      {
+        "sets an attribute" => ->(d) { d.at_css("p")["class"] = "x" },
+        "removes an attribute" => ->(d) { d.at_css("p").delete("class") },
+        "sets content" => ->(d) { d.at_css("p").content = "y" },
+        "renames a node" => ->(d) { d.at_css("div").name = "span" },
+        "removes a node" => ->(d) { d.at_css("div").remove },
+        "inserts a node" => ->(d) { d.at_css("body").add_child(d.create_element("hr")) },
+        "sets inner_html" => ->(d) { d.at_css("div").inner_html = "<b>z</b>" },
+      }.each do |what, edit|
+        it "fails closed when it #{what}" do
+          h = editor_class.new { edit.call(doc) }
+          expect { doc.xpath("//p[touch()]", h) }
+            .to raise_error(Makiri::Error, /while evaluating/)
+          expect { ctx.evaluate("//p[ng:touch()]", h) }
+            .to raise_error(Makiri::Error, /while evaluating/)
+        end
+      end
+
+      it "leaves the document unchanged, and editable again once the walk is over" do
+        h = editor_class.new { doc.at_css("p")["class"] = "x" }
+        expect { doc.xpath("//p[touch()]", h) }.to raise_error(Makiri::Error)
+        expect(doc.at_css("p")["class"]).to be_nil
+        doc.at_css("p")["class"] = "x"
+        expect(doc.at_css("p")["class"]).to eq("x")
+      end
+
+      it "still lets a handler edit a different document" do
+        other = Makiri::HTML("<p>o</p>")
+        h = editor_class.new { other.at_css("p")["class"] = "x" }
+        expect(doc.xpath("//p[touch()]", h).length).to eq(2)
+        expect(other.at_css("p")["class"]).to eq("x")
+      end
+
+      it "fails closed when it moves a node out of the document into another" do
+        other = Makiri::HTML("<p>o</p>")
+        h = editor_class.new { other.at_css("body").add_child(doc.at_css("div")) }
+        expect { doc.xpath("//p[touch()]", h) }
+          .to raise_error(Makiri::Error, /while evaluating/)
+        expect(doc.at_css("div")).not_to be_nil
+      end
+
+      it "fails closed for an XML document too" do
+        xml = Makiri::XML(%(<r><a k="1"/><a/></r>))
+        h = editor_class.new { xml.at_xpath("//a")["k"] = "2" }
+        expect { Makiri::XPathContext.new(xml).evaluate("//a[touch()]", h) }
+          .to raise_error(Makiri::Error, /while evaluating/)
+        expect(xml.at_xpath("//a")["k"]).to eq("1")
+      end
+    end
   end
 end

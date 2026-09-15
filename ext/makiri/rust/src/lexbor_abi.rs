@@ -67,6 +67,10 @@ pub mod parsed {
         pub newline_idx: *mut c_void,
         /// node -> descendant-text slice run.
         pub text_index: *mut c_void,
+        /// How many XPath evaluations that can run Ruby (ones with a handler)
+        /// are reading this document right now. Every mutator refuses while it
+        /// is non-zero - see `glue::doc::DocumentEvaluation`.
+        pub evaluating: usize,
     }
 }
 

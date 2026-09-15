@@ -826,6 +826,15 @@ pub(crate) unsafe fn evaluate_query(
     document: Value,
     first_only: bool,
 ) -> Result<XPathValue, Error> {
+    /* A handler runs Ruby mid-walk, so for as long as one can, the document
+     * refuses to be changed. Declared first, so it is released last. */
+    let _reading = if handler.as_raw() == rb_sys::Qnil as VALUE {
+        None
+    } else {
+        Some(crate::glue::doc::DocumentEvaluation::enter(
+            document.as_raw(),
+        )?)
+    };
     let bridge = Bridge {
         handler: handler.as_raw(),
         document: document.as_raw(),

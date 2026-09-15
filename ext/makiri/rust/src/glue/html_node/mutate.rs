@@ -70,12 +70,14 @@ unsafe fn invalidate(document: Value) {
 }
 
 /// Every mutator unwraps `self` through here: a node the caller has frozen is
-/// immutable, so raise FrozenError rather than silently editing it. The readers
-/// use [`unwrap`] directly.
-unsafe fn unwrap_mutable(this: super::HtmlSelf) -> *mut LxbNode {
+/// immutable, so raise FrozenError rather than silently editing it, and a
+/// document an XPath handler is being evaluated over refuses to change. The
+/// readers use [`unwrap`] directly.
+unsafe fn unwrap_mutable(this: super::HtmlSelf) -> Result<*mut LxbNode, Error> {
     let rb_self = this.value;
     rb_sys::rb_check_frozen(rb_self.as_raw());
-    this.node
+    crate::glue::doc::ensure_document_mutable(this.document.as_raw())?;
+    Ok(this.node)
 }
 
 /// An HTML node argument. Routes through the HTML unwrap so an XML node is
@@ -136,6 +138,9 @@ unsafe fn prepare_insert(
         p = (*p).parent;
     }
     if (*reference).owner_document != (*incoming).owner_document {
+        /* Adopting takes the node out of the document it came from, so that
+         * document changes too - refuse before anything is copied. */
+        crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?.as_raw())?;
         return Ok((
             adopt_copy((*reference).owner_document, incoming),
             Some(rb_incoming),
@@ -281,7 +286,7 @@ unsafe fn splice_or_insert(
 pub fn add_child(_ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let parent = unwrap_mutable(this);
+        let parent = unwrap_mutable(this)?;
         guard_doc_child_order(
             parent,
             core::ptr::null(),
@@ -305,7 +310,7 @@ pub fn lshift(ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Val
 pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(this);
+        let reference = unwrap_mutable(this)?;
         if (*reference).parent.is_null() {
             return Err(err("cannot add a sibling to a node with no parent"));
         }
@@ -325,7 +330,7 @@ pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Val
 pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(this);
+        let reference = unwrap_mutable(this)?;
         if (*reference).parent.is_null() {
             return Err(err("cannot add a sibling to a node with no parent"));
         }
@@ -347,7 +352,7 @@ pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Valu
 pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ == ty::ATTRIBUTE {
             return Err(err("use delete(name) to remove an attribute"));
         }
@@ -363,7 +368,7 @@ pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 pub fn replace(_ruby: &Ruby, this: super::HtmlSelf, rb_other: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(this);
+        let reference = unwrap_mutable(this)?;
         if (*reference).parent.is_null() {
             return Err(err("cannot replace a node with no parent"));
         }
@@ -393,7 +398,7 @@ pub fn aset(
     rb_value: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
@@ -487,7 +492,7 @@ pub fn set_attribute_ns(
     rb_value: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
@@ -583,7 +588,7 @@ pub fn remove_attribute_ns(
     rb_local: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
@@ -617,7 +622,7 @@ pub fn remove_attribute_ns(
 /// then discard it.
 pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ != ty::ELEMENT {
             return Err(err("name= is only supported on elements"));
         }
@@ -655,7 +660,7 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
 /// it sets the data.
 pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         let tv = ruby_verified_data(rb_text.as_raw(), c"node content".as_ptr())?;
         let st = lxb::lxb_dom_node_text_content_set(node, tv.as_ptr() as *const u8, tv.len());
         if st != STATUS_OK {
@@ -670,7 +675,7 @@ pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Resul
 pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ != ty::ELEMENT {
             return Ok(rb_self);
         }
@@ -747,7 +752,7 @@ unsafe fn parse_fragment_into(
 /// `element.inner_html = html` -> html. Replaces the element's children.
 pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         if (*node).type_ != ty::ELEMENT {
             return Err(err("inner_html= requires an element"));
         }
@@ -777,7 +782,7 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 /// `node.outer_html = html` -> html. Replaces the node itself with the parse.
 pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this);
+        let node = unwrap_mutable(this)?;
         let parent = (*node).parent;
         if parent.is_null() || (*parent).type_ != ty::ELEMENT {
             return Err(err("outer_html= requires a node with a parent element"));
