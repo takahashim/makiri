@@ -206,14 +206,14 @@ impl OwnedBytes {
  * Node pointers cross this boundary as `c_void`: at the boundary a node IS
  * representation-opaque (the C calls it `mkr_raw_node_t`), and each caller casts
  * to the representation it has already established. */
-pub use crate::bridge::string::mkr_ruby_bytes_view;
-pub use crate::bridge::string::mkr_ruby_copy_bytes;
-pub use crate::bridge::string::mkr_ruby_str_from_borrowed;
-pub use crate::bridge::string::mkr_ruby_str_from_slices;
-pub use crate::bridge::string::mkr_ruby_str_known_valid_utf8;
-pub use crate::bridge::string::mkr_ruby_to_utf8;
-pub use crate::bridge::string::mkr_ruby_verified_text;
-pub use crate::bridge::string::mkr_verify_text;
+pub use crate::bridge::string::ruby_bytes_view;
+pub use crate::bridge::string::ruby_copy_bytes;
+pub use crate::bridge::string::ruby_str_from_borrowed;
+pub use crate::bridge::string::ruby_str_from_slices;
+pub use crate::bridge::string::ruby_str_known_valid_utf8;
+pub use crate::bridge::string::ruby_to_utf8;
+pub use crate::bridge::string::ruby_verified_text;
+pub use crate::bridge::string::verify_text;
 pub use crate::dom_adapter::dom_index::mkr_element_index_has_foreign;
 pub use crate::dom_adapter::post_parse::mkr_lxb_document_bytes;
 pub use crate::dom_adapter::post_parse::mkr_parsed_xml_doc;
@@ -448,13 +448,13 @@ mod agree {
     );
 
     same_signature!(
-        mkr_verify_text,
-        crate::bridge::string::mkr_verify_text,
+        verify_text,
+        crate::bridge::string::verify_text,
         unsafe fn(VALUE, *const c_char) -> Result<(), magnus::Error>
     );
     same_signature!(
-        mkr_ruby_verified_text,
-        crate::bridge::string::mkr_ruby_verified_text,
+        ruby_verified_text,
+        crate::bridge::string::ruby_verified_text,
         unsafe fn(VALUE, *const c_char) -> Result<RubyText, magnus::Error>
     );
 

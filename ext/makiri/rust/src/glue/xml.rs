@@ -58,8 +58,8 @@ use super::abi::{
     mkr_cDocument, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed, mkr_eCSSSyntaxError,
     mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML, mkr_mXmlNodeMethods,
     mkr_node_document, mkr_node_set_new, mkr_parsed_xml_doc as parsed_xml_doc,
-    mkr_ruby_verified_text, mkr_verify_text, mkr_wrap_xml_node as wrap_xml_node,
-    mkr_xml_node_unwrap as xml_node_unwrap, OwnedBytes,
+    mkr_wrap_xml_node as wrap_xml_node, mkr_xml_node_unwrap as xml_node_unwrap, ruby_verified_text,
+    verify_text, OwnedBytes,
 };
 
 /// The XML arena behind a document handle, typed.
@@ -77,9 +77,9 @@ unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
 }
 
-pub use crate::bridge::string::mkr_ruby_copy_bytes;
-pub use crate::bridge::string::mkr_ruby_try_verified_text;
-pub use crate::bridge::xml_decode::mkr_xml_decode_input;
+pub use crate::bridge::string::ruby_copy_bytes;
+pub use crate::bridge::string::ruby_try_verified_text;
+pub use crate::bridge::xml_decode::xml_decode_input;
 pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
 pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
@@ -208,11 +208,11 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
          * over-large input is refused before its validation copy AND before the
          * copy below - a hostile document is never materialised twice for a
          * parse that cannot succeed. */
-        let decoded = mkr_xml_decode_input(rb_sys::rb_String(source.as_raw()), budget);
+        let decoded = xml_decode_input(rb_sys::rb_String(source.as_raw()), budget);
 
         /* Copy into a private buffer BEFORE allocating any Ruby object, so there
          * is no GC point between obtaining `decoded` and copying it. */
-        let mut src = match mkr_ruby_copy_bytes(decoded) {
+        let mut src = match ruby_copy_bytes(decoded) {
             Some(src) => src,
             None => {
                 return Err(Error::new(
@@ -359,8 +359,8 @@ unsafe fn register_namespaces(
         let v = h.get(k).unwrap_or_else(|| ruby.qnil().as_value());
         let vs: RString = v.funcall("to_s", ())?;
 
-        let pair = mkr_ruby_try_verified_text(ks.as_raw(), cap)
-            .and_then(|pv| Ok((pv, mkr_ruby_try_verified_text(vs.as_raw(), cap)?)));
+        let pair = ruby_try_verified_text(ks.as_raw(), cap)
+            .and_then(|pv| Ok((pv, ruby_try_verified_text(vs.as_raw(), cap)?)));
         let (pv, uv) = match pair {
             Ok(pair) => pair,
             Err(reason) => {
@@ -393,7 +393,7 @@ unsafe fn build_ctx(
     what: *const c_char,
     rb_ns: Option<Value>,
 ) -> Result<OwnedContext, Error> {
-    mkr_verify_text(crate::bridge::ruby::string_of(rb_text.as_raw())?, what)?;
+    verify_text(crate::bridge::ruby::string_of(rb_text.as_raw())?, what)?;
     let ctx = context_for(context, document)?;
     register_namespaces(ruby, ctx.as_ptr(), rb_ns)?; /* ctx drops on error */
     Ok(ctx)
@@ -496,7 +496,7 @@ unsafe fn css_compile_or_raise(
     let cns = CssNs {
         default_prefix: css_default_prefix(rb_ns),
     };
-    let sv = mkr_ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
+    let sv = ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr())?;
     let budget = ctx_budget(ctx);
     (*budget).limits.ast_nodes = 0;
     let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns as *const _, budget);
@@ -632,8 +632,8 @@ unsafe fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
-    let decoded = mkr_xml_decode_input(rb_sys::rb_String(source.as_raw()), (*xdoc).max_bytes);
-    let mut src = match mkr_ruby_copy_bytes(decoded) {
+    let decoded = xml_decode_input(rb_sys::rb_String(source.as_raw()), (*xdoc).max_bytes);
+    let mut src = match ruby_copy_bytes(decoded) {
         Some(src) => src,
         None => {
             return Err(Error::new(

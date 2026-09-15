@@ -46,7 +46,7 @@ use crate::lexbor_abi::consts as k;
 
 use super::abi::{
     error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, mkr_mLexbor,
-    mkr_ruby_verified_text, CssParser,
+    ruby_verified_text, CssParser,
 };
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
@@ -555,7 +555,7 @@ impl Drop for Engine {
 }
 
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    let tv = unsafe { mkr_ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr())? };
+    let tv = unsafe { ruby_verified_text(text.as_raw(), c"CSS stylesheet".as_ptr())? };
     let css: &[u8] = unsafe { tv.bytes() };
 
     // SAFETY: `error_class` reads a VALUE that Init_makiri set before any Ruby

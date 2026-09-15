@@ -55,7 +55,7 @@ use crate::xpath::value::{NodeSet, TextSlot, Val, ValRef};
 use super::abi::{
     error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,
     mkr_html_node_unwrap, mkr_mHtmlNodeMethods, mkr_node_document, mkr_node_raw, mkr_node_set_new,
-    mkr_node_set_push, mkr_parsed_xml_doc, mkr_ruby_verified_text, mkr_xml_node_unwrap, RubyText,
+    mkr_node_set_push, mkr_parsed_xml_doc, mkr_xml_node_unwrap, ruby_verified_text, RubyText,
 };
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
@@ -77,8 +77,8 @@ const MKR_DOC_XML: u32 = 1;
 /// The engine context. Opaque here while C held it; now the real type.
 use crate::xpath::ctx::Context as Ctx;
 
-pub use crate::bridge::string::mkr_ruby_exception_message;
-pub use crate::bridge::string::mkr_ruby_try_verified_text;
+pub use crate::bridge::string::ruby_exception_message;
+pub use crate::bridge::string::ruby_try_verified_text;
 pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_build;
 pub use crate::dom_adapter::dom_index::mkr_parsed_element_index;
 pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
@@ -576,7 +576,7 @@ unsafe fn ruby_to_out(
         err.set("handler result could not be converted to a string");
         return false;
     };
-    let vv = match mkr_ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes) {
+    let vv = match ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes) {
         Ok(vv) => vv,
         Err(reason) => {
             let reason = reason.to_string_lossy();
@@ -707,7 +707,7 @@ unsafe fn handler_resolver(
         // aarch64-linux, so spelling the element type concretely compiles on
         // one release platform and fails on another.
         let mut msg = [0 as c_char; 200];
-        mkr_ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
+        ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
         return Err(crate::err_setf!(
             err,
             XP_ERR_RUNTIME,
@@ -803,7 +803,7 @@ impl Drop for InstalledHandler {
 /// Parse `expr` for one query under `ctx`. The AST-node budget is per query, so
 /// it is reset first, and a failure is that budget's error as the exception.
 pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<OwnedAst, Error> {
-    let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
+    let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
     let budget = ctx_budget(ctx);
     (*budget).limits.ast_nodes = 0;
     let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), budget);
@@ -869,7 +869,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
          * which may re-enter this context, and a borrow held across that would
          * turn the re-entry into "already in use". */
-        let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
+        let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
         let mut d = rb_self.borrow()?;
         let parsed = cached_ast(&mut d, ev);
         let ctx = d.ctx.as_ptr();
@@ -898,8 +898,8 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
                 "cannot register a namespace while evaluating (re-entrant mutation from a handler)",
             ));
         }
-        let pv = mkr_ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr())?;
-        let uv = mkr_ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr())?;
+        let pv = ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr())?;
+        let uv = ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr())?;
         let rc = xpath_register_ns(ctx, pv.as_verified(), uv.as_verified()); /* copies both */
         if rc != 0 {
             return Err(Error::new(error_class(), "failed to register namespace"));
@@ -928,9 +928,8 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
          * stricter engine-string check, which adds the byte cap on top of the
          * no-NUL / valid-UTF-8 contract. */
         let sv: Value = value.funcall("to_s", ())?;
-        let nv = mkr_ruby_verified_text(name.as_raw(), c"variable name".as_ptr())?;
-        let vv = match mkr_ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes)
-        {
+        let nv = ruby_verified_text(name.as_raw(), c"variable name".as_ptr())?;
+        let vv = match ruby_try_verified_text(sv.as_raw(), (*ctx_limits(ctx)).max_string_bytes) {
             Ok(vv) => vv,
             Err(reason) => {
                 return Err(Error::new(

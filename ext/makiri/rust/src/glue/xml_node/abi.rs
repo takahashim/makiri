@@ -16,7 +16,7 @@ pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, St
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
 /// whole crate. Not `crate::text::BorrowedText`, which has no Ruby anchor.
-pub use crate::glue::abi::{mkr_ruby_verified_text, RubyText};
+pub use crate::glue::abi::{ruby_verified_text, RubyText};
 
 pub use crate::glue::node::mkr_xml_node_type;
 pub use crate::init::mkr_cXmlAttr;

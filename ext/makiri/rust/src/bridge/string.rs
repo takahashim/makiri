@@ -4,7 +4,7 @@
 //!
 //! Several functions hand back a pointer *into* a Ruby String. That borrow is
 //! only valid until Ruby is allowed to run: a GC can move or free the backing
-//! buffer. So the verdict check in [`mkr_text_check`] is **allocation-free by
+//! buffer. So the verdict check in [`text_check`] is **allocation-free by
 //! design**, and every caller relies on that - it runs between a caller taking
 //! the pointer and using it, so it must not be a GC point.
 //!
@@ -81,11 +81,7 @@ unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
 /// intermediate. The bounds checks are not redundant with the caller's
 /// bookkeeping - a wrong `total` would otherwise run past the allocation, so
 /// both a long slice and a short sum fail closed.
-pub unsafe fn mkr_ruby_str_from_slices(
-    slices: *const BorrowedText,
-    n: usize,
-    total: usize,
-) -> VALUE {
+pub unsafe fn ruby_str_from_slices(slices: *const BorrowedText, n: usize, total: usize) -> VALUE {
     if total > c_long::MAX as usize {
         rb_raise(mkr_eError, c"text too large to assemble".as_ptr());
     }
@@ -116,7 +112,7 @@ pub unsafe fn mkr_ruby_str_from_slices(
 
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
 /// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
-pub unsafe fn mkr_ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
+pub unsafe fn ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
     if text.is_absent() {
         return rb_sys::rb_utf8_str_new(c"".as_ptr(), 0);
     }
@@ -142,21 +138,21 @@ pub unsafe fn mkr_ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
 /// # Safety
 /// `ptr` must be readable for `len` bytes (or null), and `coderange_str` must be
 /// a valid `T_STRING`. Both borrows must not be held across a Ruby allocation.
-pub unsafe fn mkr_text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -> TextVerdict {
+pub unsafe fn text_check(coderange_str: VALUE, ptr: *const c_char, len: usize) -> TextVerdict {
     let bytes = if ptr.is_null() || len == 0 {
         &[][..]
     } else {
         core::slice::from_raw_parts(ptr as *const u8, len)
     };
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::cutf8::text_verdict(bytes, mkr_ruby_str_known_valid_utf8(coderange_str))
+    crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(coderange_str))
 }
 
 /// Enforce the strict contract (valid UTF-8, no NUL) on the String `str`,
 /// naming `what` in the `Makiri::Error`.
-pub unsafe fn mkr_verify_text(str: VALUE, what: *const c_char) -> Result<(), Error> {
+pub unsafe fn verify_text(str: VALUE, what: *const c_char) -> Result<(), Error> {
     let (_, ptr, len) = borrow(str);
-    let problem = match mkr_text_check(str, ptr, len) {
+    let problem = match text_check(str, ptr, len) {
         TextVerdict::HasNul => "must not contain a NUL byte",
         TextVerdict::InvalidUtf8 => "must be valid UTF-8",
         TextVerdict::Ok => return Ok(()),
@@ -174,9 +170,9 @@ unsafe fn text_error(what: *const c_char, problem: &str) -> Error {
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
-pub unsafe fn mkr_ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<RubyText, Error> {
+pub unsafe fn ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<RubyText, Error> {
     let s = string_of(in_)?;
-    mkr_verify_text(s, what)?;
+    verify_text(s, what)?;
     let (value, ptr, len) = borrow(s);
     Ok(RubyText::from_raw_parts(value, ptr, len))
 }
@@ -184,12 +180,12 @@ pub unsafe fn mkr_ruby_verified_text(in_: VALUE, what: *const c_char) -> Result<
 /// Coerce to a String and enforce the DATA-family contract: invalid UTF-8 is
 /// fatal, an interior NUL is not, so DOM data can hold U+0000 like browsers.
 ///
-/// `mkr_verify_text` is not reused because it rejects NUL. The check is
+/// `verify_text` is not reused because it rejects NUL. The check is
 /// allocation-free, so the borrow taken before it is not held across a GC point.
-pub unsafe fn mkr_ruby_verified_data(in_: VALUE, what: *const c_char) -> Result<RubyData, Error> {
+pub unsafe fn ruby_verified_data(in_: VALUE, what: *const c_char) -> Result<RubyData, Error> {
     let s = string_of(in_)?;
     let (value, ptr, len) = borrow(s);
-    if mkr_text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
+    if text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
         return Err(text_error(what, "must be valid UTF-8"));
     }
     Ok(RubyData::from_raw_parts(value, ptr, len))
@@ -201,7 +197,7 @@ pub unsafe fn mkr_ruby_verified_data(in_: VALUE, what: *const c_char) -> Result<
 /// `s` must already be a String - every caller passes one it has just coerced,
 /// transcoded or decoded - so there is nothing to convert, and nothing here can
 /// raise.
-pub unsafe fn mkr_ruby_bytes_view(s: VALUE) -> RubyBytes {
+pub unsafe fn ruby_bytes_view(s: VALUE) -> RubyBytes {
     let (value, ptr, len) = borrow(s);
     RubyBytes::from_raw_parts(value, ptr, len)
 }
@@ -209,8 +205,8 @@ pub unsafe fn mkr_ruby_bytes_view(s: VALUE) -> RubyBytes {
 /// Copy a String's raw bytes into owned C storage, at least one byte even for
 /// an empty input, so the result is usable while the GVL is released. `None` on
 /// OOM, with nothing allocated. `s` must already be a String.
-pub unsafe fn mkr_ruby_copy_bytes(s: VALUE) -> Option<OwnedBytes> {
-    let v = mkr_ruby_bytes_view(s);
+pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBytes> {
+    let v = ruby_bytes_view(s);
     let alloc_len = if v.len() > 0 { v.len() } else { 1 };
     let buf = mkr_reallocarray(core::ptr::null_mut(), alloc_len, 1) as *mut u8;
     if buf.is_null() {
@@ -238,7 +234,7 @@ pub unsafe fn mkr_ruby_copy_bytes(s: VALUE) -> Option<OwnedBytes> {
 ///    transcoded with invalid/undef -> U+FFFD, so the text becomes the right
 ///    characters instead of being read as raw UTF-8 and mangled. Only
 ///    non-UTF-8 input pays for this.
-pub unsafe fn mkr_ruby_to_utf8(str: VALUE) -> VALUE {
+pub unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
     let enc = rb_sys::rb_enc_get(str);
     let utf8 = rb_sys::rb_utf8_encoding();
     if enc == utf8 || enc == rb_sys::rb_usascii_encoding() || enc == rb_sys::rb_ascii8bit_encoding()
@@ -261,7 +257,7 @@ pub unsafe fn mkr_ruby_to_utf8(str: VALUE) -> VALUE {
 /// scan (a scan would cost as much as running our own validator), so it only
 /// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
 /// the caller validates or sanitises.
-pub unsafe fn mkr_ruby_str_known_valid_utf8(str: VALUE) -> bool {
+pub unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
     let Some(r) = RString::from_value(Value::from_raw(str)) else {
         return false;
     };
@@ -276,9 +272,9 @@ pub unsafe fn mkr_ruby_str_known_valid_utf8(str: VALUE) -> bool {
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
-/// Allocation-free, like `mkr_verify_text`, so the borrow it hands back has not
+/// Allocation-free, like `verify_text`, so the borrow it hands back has not
 /// crossed a Ruby allocation. `sv` must already be a String; nothing is coerced.
-pub unsafe fn mkr_ruby_try_verified_text(
+pub unsafe fn ruby_try_verified_text(
     sv: VALUE,
     max_bytes: usize,
 ) -> Result<RubyText, &'static core::ffi::CStr> {
@@ -286,7 +282,7 @@ pub unsafe fn mkr_ruby_try_verified_text(
     if len > max_bytes {
         return Err(c"string exceeds the maximum length");
     }
-    match mkr_text_check(sv, ptr, len) {
+    match text_check(sv, ptr, len) {
         TextVerdict::HasNul => Err(c"string contains a NUL byte"),
         TextVerdict::InvalidUtf8 => Err(c"string is not valid UTF-8"),
         TextVerdict::Ok => Ok(RubyText::from_raw_parts(value, ptr, len)),
@@ -306,7 +302,7 @@ unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
 /// Write `exc`'s message into `buf` as a NUL-terminated C string, truncating to
 /// fit. Falls back to "error" if asking for the message raises or answers with
 /// a non-String - this runs on error paths, so it must not raise itself.
-pub unsafe fn mkr_ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize) {
+pub unsafe fn ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize) {
     if buf.is_null() || len == 0 {
         return;
     }

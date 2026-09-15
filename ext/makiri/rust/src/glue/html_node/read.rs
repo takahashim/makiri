@@ -8,7 +8,7 @@
 //!
 //! Building any String or NodeSet is a GC point, so a view borrowed from a Ruby
 //! String must not be live across one. The attribute lookups take their name
-//! through `mkr_ruby_verified_text`, whose guard keeps the String reachable until
+//! through `ruby_verified_text`, whose guard keeps the String reachable until
 //! it drops, and read the bytes before building anything.
 
 use core::ffi::c_char;
@@ -26,8 +26,8 @@ use crate::glue::abi::{
     lxb_dom_element_has_attribute, lxb_dom_element_local_name, lxb_dom_element_next_attribute_noi,
     lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
     lxb_dom_node_text_content, lxb_ns_by_id, mkr_cNode, mkr_cXmlDocument, mkr_doc_parsed,
-    mkr_node_set_new, mkr_node_set_push, mkr_ruby_str_from_borrowed, mkr_ruby_str_from_slices,
-    mkr_ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
+    mkr_node_set_new, mkr_node_set_push, ruby_str_from_borrowed, ruby_str_from_slices,
+    ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
 };
 use crate::lexbor_abi as lxb;
 use crate::text::BorrowedText;
@@ -54,7 +54,7 @@ fn borrowed(p: *const u8, len: usize) -> BorrowedText {
 /// and outlive the call, so there is nothing to anchor.
 #[inline]
 unsafe fn str_of(p: *const u8, len: usize) -> Value {
-    Value::from_raw(mkr_ruby_str_from_borrowed(borrowed(p, len)))
+    Value::from_raw(ruby_str_from_borrowed(borrowed(p, len)))
 }
 
 /// An Element's or Attribute's qualified name with the length of its local part,
@@ -403,7 +403,7 @@ unsafe fn element_text(ruby: &Ruby, document: Value, node: *mut LxbNode) -> Valu
         let mut n = 0usize;
         let mut total = 0usize;
         if mkr_parsed_text_slices(parsed, node, &mut slices, &mut n, &mut total) != 0 {
-            return Value::from_raw(mkr_ruby_str_from_slices(slices, n, total));
+            return Value::from_raw(ruby_str_from_slices(slices, n, total));
         }
     }
 
@@ -584,7 +584,7 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let el = node as *mut LxbElement;
         if !lxb_dom_element_has_attribute(el, nv.as_ptr() as *const u8, nv.len()) {
             ruby.qnil().as_value()
@@ -605,7 +605,7 @@ pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qfalse().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let has = lxb_dom_element_has_attribute(
             node as *mut LxbElement,
             nv.as_ptr() as *const u8,
@@ -700,7 +700,7 @@ pub fn attribute_by_qualified_name(
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let want = nv.bytes();
 
         let mut found: *mut LxbAttr = core::ptr::null_mut();
@@ -740,7 +740,7 @@ pub fn attribute_value_by_qualified_name(
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
-        let nv = mkr_ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
+        let nv = ruby_verified_text(rb_name.as_raw(), c"attribute name".as_ptr())?;
         let want = nv.bytes();
 
         let mut val: *const u8 = core::ptr::null();

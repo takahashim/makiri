@@ -48,7 +48,7 @@ use rb_sys::{StableApiDefinition, VALUE};
 
 use super::abi::{
     error_class, mkr_eCSSSyntaxError, mkr_html_node_unwrap, mkr_mHtmlNodeMethods,
-    mkr_node_document, mkr_node_set_new, mkr_node_set_push, mkr_verify_text, mkr_wrap_html_node,
+    mkr_node_document, mkr_node_set_new, mkr_node_set_push, mkr_wrap_html_node, verify_text,
     LxbNode, LXB_STATUS_OK,
 };
 
@@ -334,7 +334,7 @@ unsafe fn with_compiled_selector(
     ctx: *mut c_void,
 ) -> Result<(), Error> {
     /* `Err` for a NUL byte or invalid UTF-8, naming the argument as the C did. */
-    mkr_verify_text(selector.as_raw(), c"CSS selector".as_ptr())?;
+    verify_text(selector.as_raw(), c"CSS selector".as_ptr())?;
     let e = engine()?;
     let g = globals();
 
@@ -437,7 +437,7 @@ unsafe fn with_compiled_selector(
     Ok(())
 }
 
-/// The selector's bytes. Only called right after `mkr_verify_text`, which has
+/// The selector's bytes. Only called right after `verify_text`, which has
 /// already coerced and validated it, and the `Value` stays live in the caller's
 /// frame - so the borrow cannot outlive its String.
 unsafe fn str_bytes(v: Value) -> (*const u8, usize) {

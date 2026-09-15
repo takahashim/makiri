@@ -32,8 +32,8 @@ use crate::lexbor_abi as lxb;
 
 use super::abi::{
     error_class, mkr_cDocumentFragment, mkr_cHtmlDocument, mkr_cXmlDocument, mkr_html_node_unwrap,
-    mkr_mHtmlNodeMethods, mkr_node_document, mkr_ruby_copy_bytes, mkr_ruby_str_known_valid_utf8,
-    mkr_ruby_to_utf8, mkr_wrap_html_node, mkr_xml_node_unwrap, DataType, LxbDoc, LxbNode,
+    mkr_mHtmlNodeMethods, mkr_node_document, mkr_wrap_html_node, mkr_xml_node_unwrap,
+    ruby_copy_bytes, ruby_str_known_valid_utf8, ruby_to_utf8, DataType, LxbDoc, LxbNode,
     LXB_DOM_NODE_TYPE_ELEMENT,
 };
 use super::fragment::{
@@ -207,15 +207,15 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
         let s = source.to_r_string()?;
         /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
          * anything else is transcoded so its content survives. */
-        let src = mkr_ruby_to_utf8(s.as_raw());
+        let src = ruby_to_utf8(s.as_raw());
 
         /* Copy the source out BEFORE allocating the wrapper. Allocating is a GC
          * point, and a borrowed pointer into a Ruby String's backing store must
          * not straddle one - nor be held while the GVL is released. The
          * coderange is read first (no scan): a source Ruby already knows is
          * valid UTF-8 lets the parse skip its sanitisation. */
-        let assume_valid = mkr_ruby_str_known_valid_utf8(src);
-        let mut owned = match mkr_ruby_copy_bytes(src) {
+        let assume_valid = ruby_str_known_valid_utf8(src);
+        let mut owned = match ruby_copy_bytes(src) {
             Some(owned) => owned,
             None => return Err(Error::new(error_class(), "out of memory copying source")),
         };

@@ -3,7 +3,7 @@
 //!
 //! Split from [`super::string`] because it is an XML-specific charset
 //! subsystem rather than a generic Ruby String helper. It borrows bytes only
-//! through `mkr_ruby_bytes_view`, and shares that module's allocation-free
+//! through `ruby_bytes_view`, and shares that module's allocation-free
 //! strict-text check.
 //!
 //! # Where the borrows are fragile
@@ -29,10 +29,10 @@ use magnus::rb_sys::FromRawValue;
 use magnus::{RString, Value};
 use rb_sys::{rb_encoding, VALUE};
 
-use super::string::{mkr_text_check, TextVerdict};
+use super::string::{text_check, TextVerdict};
 use crate::glue::abi::{mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, rb_raise};
 
-pub use crate::bridge::string::mkr_ruby_exception_message;
+pub use crate::bridge::string::ruby_exception_message;
 
 /// `rb_str_encode` with no replacement flags, so an undefined conversion or an
 /// invalid byte sequence RAISES rather than substituting U+FFFD. Run under
@@ -268,7 +268,7 @@ unsafe fn effective_encoding(str: VALUE) -> *mut rb_encoding {
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or raise.
 /// `max_bytes` of 0 disables the budget check (the `__decode` test hook).
-pub unsafe fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
+pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
     let eff = effective_encoding(str);
 
     /* Phase 2: decode to UTF-8, strictly. UTF-8 / US-ASCII / ASCII-8BIT are
@@ -293,7 +293,7 @@ pub unsafe fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
             // c_char, not i8 - signed on aarch64-darwin, unsigned on
             // aarch64-linux (see the same fix in glue/xpath.rs).
             let mut msg = [0 as c_char; 256];
-            mkr_ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
+            ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
             rb_raise(
                 mkr_eXmlSyntaxError,
                 c"XML input could not be decoded to UTF-8: %s".as_ptr(),
@@ -330,7 +330,7 @@ pub unsafe fn mkr_xml_decode_input(str: VALUE, max_bytes: usize) -> VALUE {
      * String is consulted for its cached coderange (which covers the stripped
      * suffix too - the BOM is one complete UTF-8 character) while the bytes
      * validated are the suffix. */
-    match mkr_text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
+    match text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
         TextVerdict::HasNul => rb_raise(
             mkr_eXmlSyntaxError,
             c"XML input must not contain a NUL byte".as_ptr(),

@@ -25,9 +25,9 @@ use crate::falloc::VecPush;
 use crate::lexbor_abi as lxb;
 
 use super::abi::{
-    error_class, is_kind_of, mkr_cNode, mkr_html_node_unwrap, mkr_ruby_bytes_view,
-    mkr_ruby_str_known_valid_utf8, mkr_ruby_to_utf8, mkr_ruby_verified_text, mkr_wrap_html_node,
-    LxbDoc, LxbNode, LXB_DOM_NODE_TYPE_ELEMENT,
+    error_class, is_kind_of, mkr_cNode, mkr_html_node_unwrap, mkr_wrap_html_node, ruby_bytes_view,
+    ruby_str_known_valid_utf8, ruby_to_utf8, ruby_verified_text, LxbDoc, LxbNode,
+    LXB_DOM_NODE_TYPE_ELEMENT,
 };
 
 /* ------------------------------------------------------------------ *
@@ -169,8 +169,8 @@ pub struct SanitizedHtml {
 /// expects; in Rust the ownership is in the type and `Drop` frees it, so no
 /// caller has to remember.
 pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
-    let u8v = mkr_ruby_to_utf8(html);
-    let hv = mkr_ruby_bytes_view(u8v);
+    let u8v = ruby_to_utf8(html);
+    let hv = ruby_bytes_view(u8v);
 
     if u8v != html {
         // Transcoded: a fresh String nothing keeps alive past this return, so
@@ -195,7 +195,7 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
 
     // Not transcoded: input Ruby already knows is valid UTF-8 is borrowed in
     // place (the caller keeps `html` alive); anything else is sanitised.
-    if mkr_ruby_str_known_valid_utf8(html) {
+    if ruby_str_known_valid_utf8(html) {
         return Some(SanitizedHtml {
             ptr: hv.as_ptr() as *const u8,
             len: hv.len(),
@@ -380,7 +380,7 @@ pub unsafe fn resolve_fragment_context(
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = mkr_ruby_verified_text(context.as_raw(), c"fragment context element".as_ptr())?;
+    let cv = ruby_verified_text(context.as_raw(), c"fragment context element".as_ptr())?;
     let name = if cv.as_ptr().is_null() || cv.len() == 0 {
         &[][..]
     } else {

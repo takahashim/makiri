@@ -116,7 +116,7 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Value {
     let _ = ruby;
     /* decode-only: no arena, no budget */
     unsafe {
-        Value::from_raw(crate::bridge::xml_decode::mkr_xml_decode_input(
+        Value::from_raw(crate::bridge::xml_decode::xml_decode_input(
             rb_sys::rb_String(str.as_raw()),
             0,
         ))

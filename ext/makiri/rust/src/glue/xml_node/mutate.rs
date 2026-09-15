@@ -150,7 +150,7 @@ unsafe fn verified(
     v: Value,
     what: &core::ffi::CStr,
 ) -> Result<(RubyText, u32), Error> {
-    let t = mkr_ruby_verified_text(v.as_raw(), what.as_ptr())?;
+    let t = ruby_verified_text(v.as_raw(), what.as_ptr())?;
     let n = u32_len(ruby, t.len())?;
     Ok((t, n))
 }

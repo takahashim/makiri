@@ -89,7 +89,7 @@ pub fn valid(s: &[u8]) -> bool {
 /// The strict-text verdict the name/engine boundary enforces over already-
 /// resolved bytes: NUL, then well-formed UTF-8.
 ///
-/// This is the whole check behind `bridge::string::mkr_text_check`, lifted here
+/// This is the whole check behind `bridge::string::text_check`, lifted here
 /// (Ruby-free, Lexbor-free) so the logic is a plain function rather than an
 /// `unsafe` one and is testable under the always-compiled core - the
 /// `cargo test --no-default-features` set. The bridge keeps a thin `unsafe`
