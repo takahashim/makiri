@@ -31,8 +31,8 @@
 //!   eval.rs       node tests, predicates, steps, operators
 //!
 //! An instance binds the contract to one representation:
-//!   dom_xml.rs / ffi_xml.rs                    the XML reader's nodes
-//!   dom_html.rs / ffi_html.rs / lexbor_abi.rs    Lexbor's nodes (`lexbor`)
+//!   dom_xml.rs / ffi_xml.rs     the XML reader's nodes
+//!   dom_html.rs / ffi_html.rs   Lexbor's nodes, through `dom_adapter::html` (`lexbor`)
 
 #![allow(private_bounds)]
 
@@ -77,5 +77,3 @@ pub mod ffi_xml;
 pub mod dom_html;
 #[cfg(feature = "lexbor")]
 pub mod ffi_html;
-#[cfg(feature = "lexbor")]
-pub mod lexbor_abi;

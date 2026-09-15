@@ -290,9 +290,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            Ruby-side storage is Ruby's xmalloc; see the gotchas)
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
-    lexbor_abi.rs          the generated Lexbor layout, the `_noi` twins, and
-                           `agree` - compile-time offset checks over the
-                           hand-written views the engine's hot paths read
+    lexbor_abi.rs          the generated Lexbor layout and the `_noi` twins
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
                            raising C calls (rb_String, typed-data checks) and the
@@ -303,8 +301,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (node/doc/node_set/xpath/css/serialize/mutate)
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait
     xml/                   native XML reader (Ruby/Lexbor-free; own arena)
-    dom_adapter/           attr->owner index, text index, source location,
-                           post-parse orchestration
+    dom_adapter/           `html` - the one reader of Lexbor's DOM structs -
+                           plus the attr->owner index, text index, source
+                           location, post-parse orchestration
     css/                   CSS selector lowering (Lexbor keeps the parser)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css; built on PRs, run nightly)
