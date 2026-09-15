@@ -9,10 +9,16 @@ on:
   # regressions within ~30 min without adding ~20 min to every PR. (It is gated to
   # main only, not pull_request, to keep PR latency low.)
   #
-  # The GC.stress job stays nightly-only (see its `if:` below): it is heavy and
-  # checks structural properties that do not vary by day-to-day churn.
+  # The GC.stress job also runs on pull requests (see its `if:` below). It was
+  # nightly-only on the reasoning that it checks structural properties that do
+  # not vary with day-to-day churn, but a schedule runs on the default branch
+  # only, so a branch could carry a GC-graph bug it never saw: the Rust port did
+  # (a VALUE stored in a wrapper struct before the wrap, freed by the GC there).
+  # It runs only the :gc_compact examples, so it is cheap enough for a PR.
+  # Valgrind memcheck stays off pull requests, as above.
   push:
     branches: [main, master]
+  pull_request:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -24,6 +30,8 @@ jobs:
   # (intra-arena overflows).  Runs on Linux because Valgrind is x86_64/amd64
   # Linux only.
   valgrind-memcheck:
+    # Post-merge and nightly; not on pull requests (see the note under `on:`).
+    if: github.event_name != 'pull_request'
     name: Valgrind memcheck (Ruby ${{ matrix.ruby }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -112,8 +120,8 @@ jobs:
   # of iterations; it runs in ci.yml and its GC-sensitive examples opt into
   # GC.stress themselves, so cross-thread interactions are covered there.
   gc-compact-stress:
-    # Nightly / on-demand only - not on push (the valgrind job is the post-merge
-    # gate; GC.stress is heavy and structural, so it does not need per-push runs).
+    # Pull requests, nightly and on demand - not on push (the valgrind job is the
+    # post-merge gate). See the note under `on:` for why pull requests.
     if: github.event_name != 'push'
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
