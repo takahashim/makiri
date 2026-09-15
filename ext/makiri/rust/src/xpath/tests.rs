@@ -249,7 +249,7 @@ unsafe fn nesting_resolver(
     data: *mut c_void,
     _budget: &mut crate::xpath::limits::Budget,
     call: &crate::xpath::ctx::ResolverCall<'_>,
-) -> Result<Option<crate::xpath::own::OwnedVal>, crate::xpath::msg::Reported> {
+) -> Result<Option<crate::xpath::value::Val>, crate::xpath::msg::Reported> {
     let n = &*(data as *const Nesting);
     if call.local != b"f" {
         return Ok(None);
@@ -257,7 +257,7 @@ unsafe fn nesting_resolver(
     if n.nest {
         let _ = evaluate(n.ctx, &n.inner, None);
     }
-    Ok(Some(crate::xpath::value::Val::boolean(true).into()))
+    Ok(Some(crate::xpath::value::Val::boolean(true)))
 }
 
 /// `//node()[f()]` against [`DOC`] under `max_eval_ops`, with or without the
@@ -291,7 +291,7 @@ fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
         };
         (*ctx_limits(ctx.as_ptr())).max_eval_ops = max_eval_ops;
         match evaluate(ctx.as_ptr(), &outer, Some(handler)) {
-            Ok(XPathValue::NodeSet(set)) => Answer::Num(set.count() as f64),
+            Ok(XPathValue::NodeSet(set)) => Answer::Num(set.len() as f64),
             Ok(_) => Answer::Err(-1),
             Err(e) => Answer::Err(e.status),
         }

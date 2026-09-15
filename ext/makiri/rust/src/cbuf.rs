@@ -62,6 +62,38 @@ impl OwnedBuf {
     }
 }
 
+impl OwnedBuf {
+    /// A fresh allocation holding a copy of `bytes`, NUL-terminated, or None on
+    /// OOM.
+    pub fn copy_from(bytes: &[u8]) -> Option<OwnedBuf> {
+        let len = bytes.len();
+        // SAFETY: `str_alloc` returns null or `len + 1` writable bytes from libc,
+        // which `Drop` frees; the copy and the terminator stay inside them.
+        unsafe {
+            let p = NonNull::new(crate::falloc::cstr::str_alloc(len) as *mut u8)?;
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), len);
+            *p.as_ptr().add(len) = 0;
+            Some(OwnedBuf { ptr: p, len })
+        }
+    }
+
+    /// Room for `cap` bytes, zeroed, that `fill` writes and reports how many it
+    /// used; NUL-terminated there. None on OOM.
+    pub fn fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<OwnedBuf> {
+        // SAFETY: as in `copy_from`; the room is zeroed before `fill` sees it.
+        let p = unsafe { NonNull::new(crate::falloc::cstr::str_alloc(cap) as *mut u8)? };
+        let dst = unsafe {
+            core::ptr::write_bytes(p.as_ptr(), 0, cap);
+            core::slice::from_raw_parts_mut(p.as_ptr(), cap)
+        };
+        let len = fill(dst);
+        assert!(len <= cap, "OwnedBuf::fill: wrote past its reservation");
+        // SAFETY: `len <= cap`, and byte `cap` exists.
+        unsafe { *p.as_ptr().add(len) = 0 };
+        Some(OwnedBuf { ptr: p, len })
+    }
+}
+
 impl Drop for OwnedBuf {
     fn drop(&mut self) {
         unsafe { libc_free(self.ptr.as_ptr() as *mut c_void) };

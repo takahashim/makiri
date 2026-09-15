@@ -60,6 +60,7 @@ impl MsgBuf {
 
     /// Append `b`, cut on a char boundary when it is UTF-8 and at the byte
     /// otherwise.
+    #[cfg(feature = "lexbor")]
     fn push_bytes(&mut self, b: &[u8]) {
         use core::fmt::Write;
         match core::str::from_utf8(b) {
@@ -126,6 +127,7 @@ impl Default for Error {
 ///
 /// # Safety
 /// `err` is null or a live error; `msg` is null or NUL-terminated.
+#[cfg(feature = "lexbor")]
 unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
     if err.is_null() {
         return;
@@ -202,6 +204,7 @@ pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Argument
 ///
 /// # Safety
 /// `err`'s slot must still be live.
+#[cfg(feature = "lexbor")]
 pub(crate) unsafe fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Reported {
     err_set_raw(err.as_raw(), status, msg.as_ptr());
     Reported(())

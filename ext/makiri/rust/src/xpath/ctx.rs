@@ -9,7 +9,6 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::own::{OwnedText, OwnedVal, Set};
 use crate::falloc::Reserve;
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
@@ -41,7 +40,7 @@ pub struct Handler {
         data: *mut c_void,
         budget: &mut Budget,
         call: &ResolverCall<'_>,
-    ) -> Result<Option<OwnedVal>, Reported>,
+    ) -> Result<Option<Val>, Reported>,
     pub data: *mut c_void,
 }
 
@@ -51,15 +50,15 @@ const MAX_NAMESPACES: usize = 65536;
 const MAX_VARIABLES: usize = 65536;
 
 struct NsEntry {
-    prefix: OwnedText,
-    uri: OwnedText,
+    prefix: Text,
+    uri: Text,
 }
 
 struct VarEntry {
-    /// `ptr` null for the unprefixed (only supported) form.
-    prefix: OwnedText,
-    name: OwnedText,
-    value: OwnedText,
+    /// None for the unprefixed (only supported) form.
+    prefix: Option<Text>,
+    name: Text,
+    value: Text,
 }
 
 /// Which representation a context walks, and the index its `//name` fast path
@@ -155,8 +154,8 @@ impl Context {
             .iter()
             .find(|e| {
                 let prefix_match = match prefix {
-                    None => e.prefix.is_absent(),
-                    Some(p) => text_eq(&e.prefix, p),
+                    None => e.prefix.is_none(),
+                    Some(p) => e.prefix.as_ref().is_some_and(|t| t.as_slice() == p),
                 };
                 prefix_match && text_eq(&e.name, name)
             })
@@ -179,27 +178,21 @@ pub use crate::xpath::ffi_xml::try_first_match_xml;
 
 /* ---------- text slots ---------- */
 
-fn empty_text() -> OwnedText {
-    OwnedText::new()
-}
-
-fn text_eq(a: &OwnedText, b: &[u8]) -> bool {
+fn text_eq(a: &Text, b: &[u8]) -> bool {
     a.as_slice() == b
 }
 
 /// Copy `val` into a fresh owned text, or None on OOM.
-unsafe fn copy_text(val: VerifiedText) -> Option<OwnedText> {
-    crate::xpath::abi::TextSlot::try_copy(val.into(), ErrSink::silent(), None)
-        .ok()
-        .map(OwnedText::from_slot)
+unsafe fn copy_text(val: VerifiedText) -> Option<Text> {
+    Text::try_copy(val.as_bytes())
 }
 
-/// Replace a slot's owned text with a fresh copy: copy FIRST, then clear the
-/// old, so an OOM leaves the slot intact.
-unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
+/// Replace a slot's text with a fresh copy: copy FIRST, then drop the old, so
+/// an OOM leaves the slot intact.
+unsafe fn set_slot(slot: &mut Text, val: VerifiedText) -> c_int {
     match copy_text(val) {
-        Some(nv) => {
-            *slot = nv;
+        Some(text) => {
+            *slot = text;
             0
         }
         None => -1,
@@ -307,7 +300,7 @@ pub unsafe fn xpath_register_variable_string(
     /* Only unprefixed string variables are supported. A null `value` means the
      * variable is set to empty, which the copy maps to "". */
     for e in ctx.vars.iter_mut() {
-        if e.prefix.is_absent() && text_eq(&e.name, name.as_bytes()) {
+        if e.prefix.is_none() && text_eq(&e.name, name.as_bytes()) {
             return set_slot(&mut e.value, value);
         }
     }
@@ -319,7 +312,7 @@ pub unsafe fn xpath_register_variable_string(
         _ => return -1,
     };
     ctx.vars.push(VarEntry {
-        prefix: empty_text(),
+        prefix: None,
         name: n,
         value: v,
     });
@@ -387,24 +380,7 @@ pub unsafe fn ctx_is_evaluating(ctx: *mut Context) -> c_int {
 
 /// The result of an evaluate, owned: dropping it frees the node-set's array or
 /// the string.
-pub enum XPathValue {
-    NodeSet(Set),
-    String(OwnedText),
-    Number(f64),
-    Boolean(bool),
-}
-
-impl XPathValue {
-    fn from_owned(mut v: OwnedVal) -> XPathValue {
-        let val = v.take();
-        match val.get() {
-            ValRef::NodeSet(ns) => XPathValue::NodeSet(Set::adopt(*ns)),
-            ValRef::String(t) => XPathValue::String(OwnedText::from_slot(t)),
-            ValRef::Number(d) => XPathValue::Number(d),
-            ValRef::Boolean(b) => XPathValue::Boolean(b),
-        }
-    }
-}
+pub type XPathValue = Val;
 
 /// Evaluate `ast` against the context, with the context node as the focus;
 /// `handler` answers the function calls there is no built-in for.
@@ -442,7 +418,7 @@ pub unsafe fn evaluate(
         Backend::Html { .. } => eval_ast_html(cx, ast, handler),
     };
     cx.evaluating.set(cx.evaluating.get() - 1);
-    result.map(XPathValue::from_owned)
+    result
 }
 
 /// [`evaluate`] through the `at_xpath` first-match fast path when the shape
@@ -477,9 +453,9 @@ pub unsafe fn evaluate_first(
         /* A recognised first-match shape: a 0-or-1-node node-set, without
          * building or sorting the full descendant set. */
         Some(node) => {
-            let mut set = Set::new();
+            let mut set = NodeSet::new();
             let mut budget = Budget::with_limits(cx.limits);
-            if !node.is_null() && nodeset_push(set.as_mut(), node, &mut budget).is_err() {
+            if set.push_token(node, &mut budget).is_err() {
                 return Err(budget.take_error());
             }
             Ok(XPathValue::NodeSet(set))

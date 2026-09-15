@@ -220,18 +220,6 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> i32 {
     }
 }
 
-/// The stored pointers, for the passes that reorder a set in place.
-///
-/// # Safety
-/// `ns` must be a live node-set.
-unsafe fn nodeset_items<'a>(ns: *mut NodeSet) -> &'a mut [*mut c_void] {
-    if (*ns).count == 0 {
-        &mut []
-    } else {
-        core::slice::from_raw_parts_mut((*ns).items, (*ns).count)
-    }
-}
-
 /* ---- the index ---- */
 
 /// Pre-order DFS assigning ordinals: the node, then its attributes (before any
@@ -313,13 +301,13 @@ const INDEX_BUILD_MIN: usize = 200;
 /// Sort a node-set into document order.
 ///
 /// # Safety
-/// `ns` must be null or a live node-set holding this document's handles.
-pub unsafe fn nodeset_sort_doc_order<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, ns: *mut NodeSet) {
+/// `ns` must hold this document's tokens.
+pub unsafe fn nodeset_sort_doc_order<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, ns: &mut NodeSet) {
     let doc = ev.doc;
-    if ns.is_null() || (*ns).count < 2 {
+    if ns.len() < 2 {
         return;
     }
-    let items = nodeset_items(ns);
+    let items = ns.as_mut_slice();
 
     /* Already-sorted fast path. A relative step over a multi-node context
      * (//li/a) collects its forward-axis results context by context, so when the
@@ -356,12 +344,12 @@ pub unsafe fn nodeset_sort_doc_order<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>,
 ///
 /// # Safety
 /// See `nodeset_sort_doc_order`.
-pub unsafe fn nodeset_unique_sorted<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, ns: *mut NodeSet) {
-    if ns.is_null() || (*ns).count < 2 {
+pub unsafe fn nodeset_unique_sorted<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, ns: &mut NodeSet) {
+    if ns.len() < 2 {
         return;
     }
     nodeset_sort_doc_order::<D>(ev, ns);
-    let items = nodeset_items(ns);
+    let items = ns.as_mut_slice();
     let mut w = 1;
     for r in 1..items.len() {
         if items[r] != items[r - 1] {
@@ -369,5 +357,5 @@ pub unsafe fn nodeset_unique_sorted<'e, D: Dom<'e>>(ev: &mut Evaluation<'e, D>, 
             w += 1;
         }
     }
-    (*ns).count = w;
+    ns.truncate(w);
 }

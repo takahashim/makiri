@@ -14,7 +14,6 @@ use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
 use super::order::nodeset_unique_sorted;
-use super::own::{OwnedText, OwnedVal, Set};
 use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
@@ -42,7 +41,7 @@ pub type FnResult<T = ()> = Result<T, Reported>;
 
 /// What a builtin returns: its result, owned, so a caller that fails after
 /// receiving it still clears it.
-pub type Answer = FnResult<OwnedVal>;
+pub type Answer = FnResult<Val>;
 
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call.
@@ -133,9 +132,9 @@ unsafe fn arity(got: usize, min: usize, max: usize, err: ErrSink, name: &str) ->
 }
 
 /// The shared "argument must be a node-set" check.
-unsafe fn require_nodeset(arg: *const Val, fname: &str, err: ErrSink) -> FnResult<*const NodeSet> {
-    match (*arg).as_nodeset() {
-        Some(ns) => Ok(ns as *const NodeSet),
+fn require_nodeset<'v>(arg: &'v Val, fname: &str, err: ErrSink) -> FnResult<&'v NodeSet> {
+    match arg.as_nodeset() {
+        Some(ns) => Ok(ns),
         None => Err(err_setf!(
             err,
             XP_ERR_TYPE,
@@ -146,33 +145,29 @@ unsafe fn require_nodeset(arg: *const Val, fname: &str, err: ErrSink) -> FnResul
 }
 
 /// An owned copy of `s`, or `Err` with `*err` naming `what` on OOM.
-unsafe fn c_string(s: &[u8], err: ErrSink, what: &str) -> FnResult<TextSlot> {
-    TextSlot::try_copy_bytes(s, ErrSink::silent(), None)
-        .map_err(|_| err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what))
+fn c_string(s: &[u8], err: ErrSink, what: &str) -> FnResult<Text> {
+    Text::try_copy(s).ok_or_else(|| err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what))
 }
 
 /// A string answer copied from `s`.
 unsafe fn string(s: &[u8], err: ErrSink, what: &str) -> Answer {
-    Ok(Val::string(c_string(s, err, what)?).into())
+    Ok(Val::string(c_string(s, err, what)?))
 }
 
 fn number(d: f64) -> Answer {
-    Ok(Val::number(d).into())
+    Ok(Val::number(d))
 }
 
 fn boolean(b: bool) -> Answer {
-    Ok(Val::boolean(b).into())
+    Ok(Val::boolean(b))
 }
 
-unsafe fn to_text<'e, D: Dom<'e>>(
-    v: *const Val,
-    ev: &mut Evaluation<'e, D>,
-) -> FnResult<OwnedText> {
+unsafe fn to_text<'e, D: Dom<'e>>(v: &Val, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
     let doc = ev.doc;
     val_to_owned_text_or_fail::<D>(doc, v, &raw mut ev.budget)
 }
 
-unsafe fn to_number<'e, D: Dom<'e>>(v: *const Val, ev: &mut Evaluation<'e, D>) -> FnResult<f64> {
+unsafe fn to_number<'e, D: Dom<'e>>(v: &Val, ev: &mut Evaluation<'e, D>) -> FnResult<f64> {
     let doc = ev.doc;
     val_to_number_or_fail::<D>(doc, v, &raw mut ev.budget)
 }
@@ -183,7 +178,7 @@ unsafe fn arg_or_self_text<'e, D: Dom<'e>>(
     focus: &Focus<'e, D>,
     args: &[Val],
     ev: &mut Evaluation<'e, D>,
-) -> FnResult<OwnedText> {
+) -> FnResult<Text> {
     match args.first() {
         Some(a) => to_text::<D>(a, ev),
         None => self_text::<D>(focus, ev),
@@ -194,7 +189,7 @@ unsafe fn arg_or_self_text<'e, D: Dom<'e>>(
 unsafe fn self_text<'e, D: Dom<'e>>(
     focus: &Focus<'e, D>,
     ev: &mut Evaluation<'e, D>,
-) -> FnResult<OwnedText> {
+) -> FnResult<Text> {
     match focus.node {
         Some(n) => node_to_owned_text::<D>(ev.doc, n, &raw mut ev.budget),
         None => owned_copy(
@@ -285,7 +280,7 @@ unsafe fn fn_count<'e, D: Dom<'e>>(
     let err = ev.budget.sink();
     arity(args.len(), 1, 1, err, "count")?;
     let ns = require_nodeset(&args[0], "count", err)?;
-    number((*ns).count as f64)
+    number(ns.len() as f64)
 }
 
 /// Walk the tree for an element whose `id` attribute is `id`.
@@ -335,7 +330,7 @@ unsafe fn find_by_id<'e, D: Dom<'e>>(
 unsafe fn id_collect<'e, D: Dom<'e>>(
     s: &[u8],
     root: D::Node,
-    out: &mut Set,
+    out: &mut NodeSet,
     ev: &mut Evaluation<'e, D>,
 ) -> FnResult {
     let doc = ev.doc;
@@ -361,20 +356,20 @@ unsafe fn fn_id<'e, D: Dom<'e>>(
          * DTD, not any attribute named "id". DTDs are rejected at parse, so a
          * document read here carries no ID-typed attributes and id() is the
          * empty node-set. (xml:id is a separate, optional spec.) */
-        return Ok(OwnedVal::new());
+        return Ok(Val::default());
     }
     if ev.cx.document().is_null() {
-        return Ok(OwnedVal::new());
+        return Ok(Val::default());
     }
     let doc = ev.doc;
     let root = doc.document_node();
     /* Collected in a guard, so a failure part-way frees what was found. */
-    let mut found = Set::new();
+    let mut found = NodeSet::new();
 
     /* §4.1: a node-set argument treats each node's string-value as IDREFS;
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
-        (0..set.count).try_for_each(|i| {
+        (0..set.len()).try_for_each(|i| {
             let t = node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, set, i), &raw mut ev.budget)?;
             id_collect::<D>(t.as_slice(), root, &mut found, ev)
         })?;
@@ -383,8 +378,8 @@ unsafe fn fn_id<'e, D: Dom<'e>>(
         id_collect::<D>(t.as_slice(), root, &mut found, ev)?;
     }
     /* §4.1: the result is in document order with duplicates removed. */
-    nodeset_unique_sorted::<D>(ev, found.as_mut());
-    Ok(Val::nodeset(found.take()).into())
+    nodeset_unique_sorted::<D>(ev, &mut found);
+    Ok(Val::nodeset(found))
 }
 
 /* ---------- name functions ---------- */
@@ -403,7 +398,7 @@ unsafe fn name_target<'e, D: Dom<'e>>(
         return Ok(focus.node);
     }
     let ns = require_nodeset(&args[0], fname, err)?;
-    if (*ns).count == 0 {
+    if ns.is_empty() {
         Ok(None)
     } else {
         Ok(Some(nodeset_at::<D>(doc, ns, 0)))
@@ -497,8 +492,7 @@ unsafe fn fn_string<'e, D: Dom<'e>>(
 ) -> Answer {
     let err = ev.budget.sink();
     arity(args.len(), 0, 1, err, "string")?;
-    let mut t = arg_or_self_text::<D>(focus, args, ev)?;
-    Ok(Val::string(t.take()).into())
+    Ok(Val::string(arg_or_self_text::<D>(focus, args, ev)?))
 }
 
 unsafe fn fn_concat<'e, D: Dom<'e>>(
@@ -515,7 +509,7 @@ unsafe fn fn_concat<'e, D: Dom<'e>>(
         ));
     }
     let budget = &raw mut ev.budget;
-    let mut parts = try_vec::<OwnedText>(args.len(), err, "concat")?;
+    let mut parts = try_vec::<Text>(args.len(), err, "concat")?;
     let mut total = 0usize;
     for a in args {
         let t = to_text::<D>(a, ev)?;
@@ -526,7 +520,7 @@ unsafe fn fn_concat<'e, D: Dom<'e>>(
         limit_check_string_bytes(budget, total)?;
         parts.push(t);
     }
-    let joined = TextSlot::try_fill(total, |dst| {
+    let joined = Text::try_fill(total, |dst| {
         let mut off = 0usize;
         for p in &parts {
             let s = p.as_slice();
@@ -538,7 +532,7 @@ unsafe fn fn_concat<'e, D: Dom<'e>>(
     let Some(joined) = joined else {
         return Err(err_setf!(err, XP_ERR_OOM, "out of memory in concat()"));
     };
-    Ok(Val::string(joined).into())
+    Ok(Val::string(joined))
 }
 
 unsafe fn fn_starts_with<'e, D: Dom<'e>>(
@@ -655,7 +649,7 @@ unsafe fn fn_normalize_space<'e, D: Dom<'e>>(
     arity(args.len(), 0, 1, err, "normalize-space")?;
     let s = arg_or_self_text::<D>(focus, args, ev)?;
     let src = s.as_slice();
-    let normalized = TextSlot::try_fill(src.len(), |dst| {
+    let normalized = Text::try_fill(src.len(), |dst| {
         let mut w = 0usize;
         let mut in_space = true;
         for &c in src {
@@ -683,7 +677,7 @@ unsafe fn fn_normalize_space<'e, D: Dom<'e>>(
             "out of memory in normalize-space()"
         ));
     };
-    Ok(Val::string(normalized).into())
+    Ok(Val::string(normalized))
 }
 
 /// translate(s, from, to) works on CHARACTERS, not bytes: each code point of `s`
@@ -700,7 +694,7 @@ unsafe fn fn_translate<'e, D: Dom<'e>>(
     let err = ev.budget.sink();
     arity(args.len(), 3, 3, err, "translate")?;
     let budget = &raw mut ev.budget;
-    let mut texts = try_vec::<OwnedText>(3, err, "translate")?;
+    let mut texts = try_vec::<Text>(3, err, "translate")?;
     for a in args {
         texts.push(to_text::<D>(a, ev)?);
     }
@@ -760,7 +754,7 @@ unsafe fn fn_translate<'e, D: Dom<'e>>(
             return Err(err_setf!(err, XP_ERR_OOM, "out of memory in translate()"));
         }
     };
-    Ok(Val::string(TextSlot::from_buf(owned)).into())
+    Ok(Val::string(Text::from_buf(owned)))
 }
 
 /* ---------- boolean functions ---------- */
@@ -872,7 +866,7 @@ unsafe fn fn_sum<'e, D: Dom<'e>>(
     let doc = ev.doc;
     let budget = &raw mut ev.budget;
     let mut total = 0.0;
-    for i in 0..(*ns).count {
+    for i in 0..ns.len() {
         limit_eval_op(budget)?;
         total += cached_node_number::<D>(ev, nodeset_at::<D>(doc, ns, i))?;
     }

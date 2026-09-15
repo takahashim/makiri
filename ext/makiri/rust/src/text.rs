@@ -16,7 +16,7 @@
 //!
 //! Neither is NUL-terminated in general, so both are consumed as `(ptr, len)`,
 //! never as a C string. Neither carries a lifetime either: the owner - a Ruby
-//! String, Lexbor's arena, an `OwnedText` - must outlive every use, which is why
+//! String, Lexbor's arena, a `Text` - must outlive every use, which is why
 //! reading the bytes is `unsafe`. A null pointer is the "absent" sentinel (an
 //! omitted prefix, say), distinct from a present empty string.
 
@@ -73,6 +73,7 @@ impl VerifiedText {
     view_accessors!();
 
     /// A present, zero-length view, backed by a static empty C string.
+    #[cfg(test)]
     pub(crate) const fn empty() -> Self {
         Self {
             ptr: c"".as_ptr(),
@@ -112,8 +113,9 @@ pub struct BorrowedText {
 }
 
 // Built by the text index and read by the Ruby glue, so the Ruby-free builds
-// see most of it unused.
-#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
+// see most of it unused - and no build reads its `as_bytes` outside the tests
+// since the engine's own strings became `xpath::value::Text`.
+#[allow(dead_code)]
 impl BorrowedText {
     view_accessors!();
 

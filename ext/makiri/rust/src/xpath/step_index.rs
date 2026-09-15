@@ -11,7 +11,6 @@ use super::dom::*;
 use super::eval::Evaluation;
 use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
-use super::own::Set;
 use crate::err_setf;
 use crate::falloc::Reserve;
 use core::ffi::c_void;
@@ -23,8 +22,8 @@ use core::ptr;
 ///
 /// # Safety
 /// `set` must hold this document's handles.
-unsafe fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &Set) -> bool {
-    set.count() == 1 && set.get::<D>(doc, 0) == doc.document_node()
+unsafe fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet) -> bool {
+    set.len() == 1 && set.get::<D>(doc, 0) == doc.document_node()
 }
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
@@ -35,8 +34,8 @@ unsafe fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &Set) -> bool {
 pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
     doc: D,
     step: &Step,
-    context_set: &Set,
-    result: &mut Set,
+    context_set: &NodeSet,
+    result: &mut NodeSet,
     b: &Bindings<'e, D>,
     budget: *mut Budget,
 ) -> Result<bool, Reported> {
@@ -80,7 +79,7 @@ pub unsafe fn try_descendant_index<'e, D: Dom<'e>>(
 ///
 /// # Safety
 /// `seed` must hold this document's handles.
-unsafe fn nth_shape<'e, D: Dom<'e>>(doc: D, s0: &Step, s1: &Step, seed: &Set) -> Option<usize> {
+unsafe fn nth_shape<'e, D: Dom<'e>>(doc: D, s0: &Step, s1: &Step, seed: &NodeSet) -> Option<usize> {
     if s0.axis != Axis::DescendantOrSelf
         || s0.test.kind != TestKind::Node
         || s0.test.prefix.is_some()
@@ -118,8 +117,8 @@ pub unsafe fn try_descendant_index_nth<'e, D: Dom<'e>>(
     ev: &mut Evaluation<'e, D>,
     s0: &Step,
     s1: &Step,
-    seed: &Set,
-    result: &mut Set,
+    seed: &NodeSet,
+    result: &mut NodeSet,
 ) -> Result<bool, Reported> {
     let err = ev.budget.sink();
     let doc = ev.doc;

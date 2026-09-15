@@ -3,211 +3,194 @@
 //! order, and the cached string-value lookup.
 //!
 //! Generic over `Dom`, where the C compiled the same body once per
-//! representation. The values themselves (`Val`, `NodeSet`) keep their C
-//! layout: they cross into the glue's custom-function bridge and out as the
-//! evaluate result.
+//! representation. The values themselves (`Val`, `NodeSet`, `Text`) are owned
+//! Rust types: they cross into the glue's custom-function bridge and out as the
+//! evaluate result, and dropping one frees what it holds.
 
 use super::abi::*;
 use super::dom::*;
 use super::number;
-use super::own::{OwnedText, OwnedVal};
+use crate::cbuf::OwnedBuf;
 use crate::err_setf;
-use crate::falloc::raw::reallocarray;
-use core::ffi::{c_char, c_int, c_void};
+use crate::falloc::Reserve;
+use core::ffi::{c_int, c_void};
 use core::ptr;
 
-/* ---- the value layouts ---- */
+/* ---- the values ---- */
 
-/// The raw slot for an engine-owned UTF-8 byte string, NUL-terminated in its
-/// backing allocation.
+/// An engine-owned string: UTF-8 bytes in a libc allocation, or no allocation
+/// at all for the empty string.
 ///
-/// Interior NULs are possible - DOM text may hold U+0000 - so it is read as
-/// `(ptr, len)` and borrowed as a [`BorrowedText`], never a [`VerifiedText`].
+/// Interior NULs are possible - DOM text may hold U+0000 - so it is only ever
+/// read as a slice.
+#[derive(Default)]
+pub struct Text(Option<OwnedBuf>);
+
+impl Text {
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_ref().map_or(&[], |b| b.as_slice())
+    }
+
+    /// The bytes a `Buf` collected.
+    pub fn from_buf(buf: OwnedBuf) -> Text {
+        Text(Some(buf))
+    }
+
+    /// A copy of `bytes`, or None on OOM. The empty string allocates nothing.
+    pub fn try_copy(bytes: &[u8]) -> Option<Text> {
+        if bytes.is_empty() {
+            return Some(Text(None));
+        }
+        OwnedBuf::copy_from(bytes).map(|b| Text(Some(b)))
+    }
+
+    /// Room for `cap` bytes, zeroed, that `fill` writes and reports how many it
+    /// used, or None on OOM.
+    pub fn try_fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<Text> {
+        if cap == 0 {
+            return Some(Text(None));
+        }
+        OwnedBuf::fill(cap, fill).map(|b| Text(Some(b)))
+    }
+}
+
+/// A node-set: node tokens in the order the engine collected them.
 ///
-/// This is a slot, not an owner: it is `Copy` because the AST and value unions
-/// hold it, and clearing one copy leaves the others dangling. Code that owns
-/// text outside those layouts holds a [`crate::xpath::own::OwnedText`].
-#[derive(Clone, Copy)]
-pub struct TextSlot {
-    ptr: *mut c_char,
-    len: usize,
-}
-
-impl TextSlot {
-    pub(crate) const fn empty() -> Self {
-        Self {
-            ptr: core::ptr::null_mut(),
-            len: 0,
-        }
-    }
-
-    /// Construct a raw-owned value at the allocator/runtime boundary.
-    ///
-    /// # Safety
-    /// `ptr` must be null or point to `len` live bytes followed by a NUL byte,
-    /// allocated by the allocator used by `owned_text_clear`.
-    pub(crate) unsafe fn from_raw_parts(ptr: *mut c_char, len: usize) -> Self {
-        Self { ptr, len }
-    }
-
-    pub(crate) const fn as_ptr(self) -> *mut c_char {
-        self.ptr
-    }
-
-    #[cfg(any(test, feature = "ruby"))]
-    pub(crate) const fn len(self) -> usize {
-        self.len
-    }
-
-    /// Whether this slot represents an omitted value rather than an empty
-    /// allocated string.
-    pub(crate) const fn is_absent(self) -> bool {
-        self.ptr.is_null()
-    }
-
-    pub(crate) const fn is_present(self) -> bool {
-        !self.is_absent()
-    }
-
-    /// Whether the string has no content. An absent slot is empty by content,
-    /// but remains distinguishable through [`Self::is_absent`].
-    pub(crate) const fn is_empty(self) -> bool {
-        self.is_absent() || self.len == 0
-    }
-
-    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
-        if self.is_empty() {
-            &[]
-        } else {
-            core::slice::from_raw_parts(self.ptr as *const u8, self.len)
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct NodeSet {
-    pub items: *mut *mut c_void,
-    pub count: usize,
-    pub capacity: usize,
-}
+/// It grows only through [`push_token`](Self::push_token), which holds it to
+/// the budget's node-set cap and fails closed on OOM.
+#[derive(Default)]
+pub struct NodeSet(Vec<*mut c_void>);
 
 impl NodeSet {
-    /// No nodes and no array.
-    pub const EMPTY: NodeSet = NodeSet {
-        items: core::ptr::null_mut(),
-        count: 0,
-        capacity: 0,
-    };
+    pub const fn new() -> NodeSet {
+        NodeSet(Vec::new())
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// The node tokens, in order.
+    pub fn as_slice(&self) -> &[*mut c_void] {
+        &self.0
+    }
+    /// The node tokens, for the passes that reorder a set in place.
+    pub fn as_mut_slice(&mut self) -> &mut [*mut c_void] {
+        &mut self.0
+    }
+    /// Drop the nodes, keeping the allocation for reuse.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+    pub fn truncate(&mut self, len: usize) {
+        self.0.truncate(len);
+    }
+
+    /// Append a node token within `budget`'s node-set cap. A null token names no
+    /// node and is not pushed.
+    pub fn push_token(&mut self, token: *mut c_void, budget: &mut Budget) -> Result<(), Reported> {
+        if token.is_null() {
+            return Ok(());
+        }
+        budget.check_nodeset_size(self.0.len() + 1)?;
+        if self.0.mkr_reserve(1).is_err() {
+            return Err(err_setf!(
+                budget.sink(),
+                XP_ERR_OOM,
+                "out of memory growing node-set"
+            ));
+        }
+        self.0.push(token);
+        Ok(())
+    }
+
+    /// Append `n`.
+    ///
+    /// # Safety
+    /// `budget` must be live.
+    pub unsafe fn push<'d, D: Dom<'d>>(
+        &mut self,
+        n: D::Node,
+        budget: *mut Budget,
+    ) -> Result<(), Reported> {
+        self.push_token(D::token(n), &mut *budget)
+    }
+
+    /// Node `i`.
+    ///
+    /// # Safety
+    /// The set must hold `doc`'s tokens.
+    pub unsafe fn get<'d, D: Dom<'d>>(&self, doc: D, i: usize) -> D::Node {
+        doc.node(self.0[i])
+    }
+
+    /// A copy, or None on OOM. The nodes belong to the document, so only the
+    /// tokens are copied.
+    pub fn try_clone(&self) -> Option<NodeSet> {
+        crate::falloc::try_to_vec(&self.0).map(NodeSet)
+    }
 }
 
-#[derive(Clone, Copy)]
-pub union ValU {
-    pub nodeset: NodeSet,
-    pub string: TextSlot,
-    pub number: f64,
-    pub boolean: c_int,
-}
-
-/* mkr_xpath_type_t */
-pub const T_NODESET: u32 = 0;
-pub const T_STRING: u32 = 1;
-pub const T_NUMBER: u32 = 2;
-pub const T_BOOLEAN: u32 = 3;
-
-/// mkr_val_t - the engine's internal value.
-///
-/// The tag and the union are private, so they cannot disagree: a value is made
-/// by one of the constructors and read through [`Val::get`]. Every constructor
-/// starts from the all-zero empty node-set, so all of the union's bytes are
-/// initialised whichever arm is written - which is also why zeroed memory is a
-/// valid value.
-#[derive(Clone, Copy)]
-pub struct Val {
-    type_: u32,
-    u: ValU,
-}
-
-/// A value's contents by type: matching on the tag and reading the field it
-/// names, as one step that cannot pick the wrong field.
-#[derive(Clone, Copy)]
-pub enum ValRef<'a> {
-    NodeSet(&'a NodeSet),
-    /// Borrowed: the value still owns the bytes.
-    String(TextSlot),
+/// An XPath value (§1): a node-set, a string, a number or a boolean. It owns
+/// what it holds.
+pub enum Val {
+    NodeSet(NodeSet),
+    String(Text),
     Number(f64),
     Boolean(bool),
 }
 
+/// A value's contents, borrowed.
+#[derive(Clone, Copy)]
+pub enum ValRef<'a> {
+    NodeSet(&'a NodeSet),
+    String(&'a Text),
+    Number(f64),
+    Boolean(bool),
+}
+
+impl Default for Val {
+    /// The empty node-set.
+    fn default() -> Val {
+        Val::NodeSet(NodeSet::new())
+    }
+}
+
 impl Val {
-    /// The empty node-set - what every slot starts as.
-    pub const EMPTY: Val = Val {
-        type_: T_NODESET,
-        u: ValU {
-            nodeset: NodeSet::EMPTY,
-        },
-    };
-
-    /// A node-set value, owning `ns`'s array. The node-set is the union's
-    /// largest arm, so writing it initialises every byte.
     pub fn nodeset(ns: NodeSet) -> Val {
-        Val {
-            type_: T_NODESET,
-            u: ValU { nodeset: ns },
-        }
+        Val::NodeSet(ns)
     }
-
-    /// A string value, owning `text`.
-    pub fn string(text: TextSlot) -> Val {
-        let mut v = Val::EMPTY;
-        v.type_ = T_STRING;
-        v.u.string = text;
-        v
+    pub fn string(text: Text) -> Val {
+        Val::String(text)
     }
-
     pub fn number(d: f64) -> Val {
-        let mut v = Val::EMPTY;
-        v.type_ = T_NUMBER;
-        v.u.number = d;
-        v
+        Val::Number(d)
     }
-
     pub fn boolean(b: bool) -> Val {
-        let mut v = Val::EMPTY;
-        v.type_ = T_BOOLEAN;
-        v.u.boolean = c_int::from(b);
-        v
-    }
-
-    /// The tag as `mkr_xpath_type_t` numbers it, for the public value.
-    pub fn type_tag(&self) -> u32 {
-        self.type_
+        Val::Boolean(b)
     }
 
     pub fn get(&self) -> ValRef<'_> {
-        // SAFETY: only the constructors set the tag, each together with the
-        // field it names, over a fully initialised union.
-        unsafe {
-            match self.type_ {
-                T_STRING => ValRef::String(self.u.string),
-                T_NUMBER => ValRef::Number(self.u.number),
-                T_BOOLEAN => ValRef::Boolean(self.u.boolean != 0),
-                _ => ValRef::NodeSet(&self.u.nodeset),
-            }
+        match self {
+            Val::NodeSet(ns) => ValRef::NodeSet(ns),
+            Val::String(t) => ValRef::String(t),
+            Val::Number(d) => ValRef::Number(*d),
+            Val::Boolean(b) => ValRef::Boolean(*b),
         }
     }
 
     pub fn as_nodeset(&self) -> Option<&NodeSet> {
-        match self.get() {
-            ValRef::NodeSet(ns) => Some(ns),
+        match self {
+            Val::NodeSet(ns) => Some(ns),
             _ => None,
         }
     }
 
     pub fn as_nodeset_mut(&mut self) -> Option<&mut NodeSet> {
-        match self.type_ {
-            T_STRING | T_NUMBER | T_BOOLEAN => None,
-            // SAFETY: as in `get`.
-            _ => Some(unsafe { &mut self.u.nodeset }),
+        match self {
+            Val::NodeSet(ns) => Some(ns),
+            _ => None,
         }
     }
 }
@@ -231,60 +214,29 @@ pub const ST_OK: c_int = 0;
 pub const ST_ERR_OOM: c_int = 1;
 pub const ST_ERR_LIMIT: c_int = 2;
 
-/// A borrowed view of a `mkr_owned_text_t`, empty when the pointer is NULL.
-///
-/// # Safety
-/// `t` must name live bytes for `'a`.
-pub unsafe fn owned_bytes<'a>(t: TextSlot) -> &'a [u8] {
-    t.as_bytes()
-}
-
-/// Copy `s` into a fresh owned text, or `Err` with `err` set to `what` on OOM.
-///
-/// # Safety
-/// None beyond `TextSlot::try_copy_bytes`'s.
-pub unsafe fn owned_copy(
-    s: &[u8],
-    err: ErrSink,
-    what: &core::ffi::CStr,
-) -> Result<OwnedText, Reported> {
-    Ok(OwnedText(TextSlot::try_copy_bytes(s, err, Some(what))?))
+/// Copy `s` into a fresh text, or `Err` with `err` set to `what` on OOM.
+pub fn owned_copy(s: &[u8], err: ErrSink, what: &core::ffi::CStr) -> Result<Text, Reported> {
+    Text::try_copy(s).ok_or_else(|| err_setf!(err, XP_ERR_OOM, "{}", what.to_string_lossy()))
 }
 
 /* ---------- value clone ---------- */
 
-/// Deep-copy `src`. The node-set case copies the pointer array only: the nodes
-/// belong to the document, not to the value.
-///
-/// # Safety
-/// `src` must be a valid value.
-pub unsafe fn val_clone(src: &Val, err: ErrSink) -> Result<OwnedVal, Reported> {
-    let copy = match src.get() {
-        ValRef::String(s) => {
-            let mut text = owned_copy(owned_bytes(s), err, c"out of memory cloning string value")?;
-            Val::string(text.take())
-        }
-        ValRef::Number(d) => Val::number(d),
-        ValRef::Boolean(b) => Val::boolean(b),
-        ValRef::NodeSet(ns) => {
-            let n = ns.count;
-            if n == 0 {
-                return Ok(OwnedVal::new());
-            }
-            let items = reallocarray(ptr::null_mut(), n, core::mem::size_of::<*mut c_void>())
-                as *mut *mut c_void;
-            if items.is_null() {
-                return Err(err_setf!(err, XP_ERR_OOM, "out of memory cloning node-set"));
-            }
-            ptr::copy_nonoverlapping(ns.items, items, n);
-            Val::nodeset(NodeSet {
-                items,
-                count: n,
-                capacity: n,
-            })
-        }
-    };
-    Ok(copy.into())
+/// Deep-copy `src`. The node-set case copies the tokens only: the nodes belong
+/// to the document, not to the value.
+pub fn val_clone(src: &Val, err: ErrSink) -> Result<Val, Reported> {
+    Ok(match src {
+        Val::String(s) => Val::String(owned_copy(
+            s.as_slice(),
+            err,
+            c"out of memory cloning string value",
+        )?),
+        Val::Number(d) => Val::Number(*d),
+        Val::Boolean(b) => Val::Boolean(*b),
+        Val::NodeSet(ns) => match ns.try_clone() {
+            Some(copy) => Val::NodeSet(copy),
+            None => return Err(err_setf!(err, XP_ERR_OOM, "out of memory cloning node-set")),
+        },
+    })
 }
 
 /* ---------- node string-value (XPath 1.0 §5) ----------
@@ -365,7 +317,7 @@ pub unsafe fn node_to_owned_text<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
     budget: *mut Budget,
-) -> Result<OwnedText, Reported> {
+) -> Result<Text, Reported> {
     let err = budget_sink(budget);
     let mut buf = Buf::new(if budget.is_null() {
         0
@@ -375,7 +327,7 @@ pub unsafe fn node_to_owned_text<'d, D: Dom<'d>>(
     let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
         if let Ok(owned) = buf.steal() {
-            return Ok(OwnedText(TextSlot::from_buf(owned)));
+            return Ok(Text::from_buf(owned));
         }
         if !err.is_silent() {
             return Err(err_setf!(
@@ -399,9 +351,8 @@ pub unsafe fn node_to_owned_text<'d, D: Dom<'d>>(
             });
         }
     }
-    /* best-effort: never fail - yield an owned "". An OOM here leaves the text
-     * absent, which reads as "" too. */
-    Ok(owned_copy(b"", ErrSink::silent(), c"").unwrap_or_default())
+    /* best-effort: never fail - yield "", which allocates nothing. */
+    Ok(Text::default())
 }
 
 /* ---------- coercions ---------- */
@@ -444,8 +395,8 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
 ///
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
-pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: *const Val) -> f64 {
-    match (*v).get() {
+pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val) -> f64 {
+    match v.get() {
         ValRef::Number(d) => d,
         ValRef::Boolean(b) => {
             if b {
@@ -454,9 +405,9 @@ pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: *const Val) -> 
                 0.0
             }
         }
-        ValRef::String(s) => bytes_to_number(owned_bytes(s)),
+        ValRef::String(s) => bytes_to_number(s.as_slice()),
         ValRef::NodeSet(ns) => {
-            if ns.count == 0 {
+            if ns.is_empty() {
                 return f64::NAN;
             }
             /* string-value of the first node in document order */
@@ -468,12 +419,14 @@ pub unsafe fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: *const Val) -> 
 
 /// # Safety
 /// `v` must be a valid value whose node pointers are live.
-pub unsafe fn val_to_boolean(v: *const Val) -> bool {
-    match (*v).get() {
+pub fn val_to_boolean(v: &Val) -> bool {
+    match v.get() {
         ValRef::Boolean(b) => b,
         ValRef::Number(d) => !(d == 0.0 || d.is_nan()),
-        ValRef::String(s) => s.is_present() && *s.as_ptr() != 0,
-        ValRef::NodeSet(ns) => ns.count > 0,
+        /* A string that starts with U+0000 is false, as it was when it was read
+         * as a C string. */
+        ValRef::String(s) => s.as_slice().first().is_some_and(|&b| b != 0),
+        ValRef::NodeSet(ns) => !ns.is_empty(),
     }
 }
 
@@ -483,16 +436,13 @@ pub unsafe fn val_to_boolean(v: *const Val) -> bool {
 /// `v` may be null (yields "").
 pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
     doc: D,
-    v: *const Val,
+    v: &Val,
     budget: *mut Budget,
-) -> Result<OwnedText, Reported> {
+) -> Result<Text, Reported> {
     let err = budget_sink(budget);
-    if v.is_null() {
-        return owned_copy(b"", err, c"out of memory converting value to string");
-    }
-    match (*v).get() {
+    match v.get() {
         ValRef::String(s) => {
-            let text = owned_bytes(s);
+            let text = s.as_slice();
             if !budget.is_null() {
                 limit_check_string_bytes(budget, text.len())?;
             }
@@ -525,7 +475,7 @@ pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
             }
         }
         ValRef::NodeSet(ns) => {
-            if ns.count == 0 {
+            if ns.is_empty() {
                 return owned_copy(b"", err, c"out of memory");
             }
             /* §4.2: string(node-set) is the string-value of its first node in
@@ -542,11 +492,11 @@ pub unsafe fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
 /// `v` must be valid.
 pub unsafe fn val_to_number_or_fail<'d, D: Dom<'d>>(
     doc: D,
-    v: *const Val,
+    v: &Val,
     budget: *mut Budget,
 ) -> Result<f64, Reported> {
-    if let Some(ns) = (*v).as_nodeset() {
-        if ns.count == 0 {
+    if let Some(ns) = v.as_nodeset() {
+        if ns.is_empty() {
             return Ok(f64::NAN);
         }
         let text = node_to_owned_text::<D>(doc, nodeset_at::<D>(doc, ns, 0), budget)?;
@@ -563,16 +513,15 @@ pub unsafe fn val_to_number_or_fail<'d, D: Dom<'d>>(
 /// `i` must be within `ns.count`, and the set must hold handles of this
 /// backend's representation - which the engine kind selects.
 #[inline]
-pub unsafe fn nodeset_at<'d, D: Dom<'d>>(doc: D, ns: *const NodeSet, i: usize) -> D::Node {
-    debug_assert!(i < (*ns).count);
-    doc.node(*(*ns).items.add(i))
+pub unsafe fn nodeset_at<'d, D: Dom<'d>>(doc: D, ns: &NodeSet, i: usize) -> D::Node {
+    ns.get::<D>(doc, i)
 }
 
 /// Build `node`'s string-value with no limit and no error reporting - the
 /// best-effort form the NUMBER coercion wants, where an overrun yields "" and
 /// "" coerces to NaN, which is the right answer anyway.
 #[inline]
-unsafe fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> OwnedText {
+unsafe fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
     node_to_owned_text::<D>(doc, node, ptr::null_mut()).unwrap_or_default()
 }
 

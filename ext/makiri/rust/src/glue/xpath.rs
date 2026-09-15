@@ -41,16 +41,14 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use rb_sys::VALUE;
 
-use crate::text::VerifiedText;
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Backend, OwnedContext};
 use crate::xpath::ctx::{ResolverCall, XPathValue};
 use crate::xpath::limits::Budget;
 use crate::xpath::msg::{
-    ErrSink, Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+    Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
-use crate::xpath::own::OwnedVal;
-use crate::xpath::value::{NodeSet, TextSlot, Val, ValRef};
+use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 use super::abi::{
     doc_parsed, error_class, html_node_unwrap, is_kind_of, keepalive_document, node_raw,
@@ -92,10 +90,6 @@ pub use crate::xpath::ctx::ctx_set_unprefixed_lax;
 pub use crate::xpath::ctx::xpath_register_ns;
 pub use crate::xpath::ctx::xpath_register_variable_string;
 use crate::xpath::ctx::{evaluate, evaluate_first};
-pub use crate::xpath::runtime_abi::nodeset_clear;
-pub use crate::xpath::runtime_abi::nodeset_init;
-pub use crate::xpath::runtime_abi::nodeset_push;
-pub use crate::xpath::runtime_abi::val_set_borrowed_text_copy;
 
 /* ------------------------------------------------------------------ */
 /* result + error mapping                                             */
@@ -151,17 +145,6 @@ pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Val
     });
     drop(v);
     Ok(Value::from_raw(converted?))
-}
-
-/// An engine string as a UTF-8 Ruby String. A NULL pointer is `""`.
-unsafe fn owned_text_to_str(t: TextSlot) -> VALUE {
-    let p = if t.is_absent() {
-        c"".as_ptr()
-    } else {
-        t.as_ptr()
-    };
-    let n = if t.is_absent() { 0 } else { t.len() };
-    rb_sys::rb_utf8_str_new(p, n as core::ffi::c_long)
 }
 
 /* ------------------------------------------------------------------ */
@@ -427,12 +410,15 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
     match v.get() {
         ValRef::NodeSet(ns) => {
             let set = node_set_new(b.document);
-            for i in 0..ns.count {
-                node_set_push(set, *ns.items.add(i));
+            for &n in ns.as_slice() {
+                node_set_push(set, n);
             }
             set
         }
-        ValRef::String(t) => owned_text_to_str(t),
+        ValRef::String(t) => {
+            let s = t.as_slice();
+            rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
+        }
         ValRef::Number(d) => rb_sys::rb_float_new(d),
         ValRef::Boolean(true) => rb_sys::Qtrue as VALUE,
         ValRef::Boolean(false) => rb_sys::Qfalse as VALUE,
@@ -449,7 +435,7 @@ unsafe fn push_result_node(
     budget: *mut Budget,
     document: VALUE,
     rb_node: VALUE,
-    set: *mut NodeSet,
+    set: &mut NodeSet,
     err: &mut ErrBuf,
 ) -> bool {
     let Ok(node_document) = keepalive_document(rb_node) else {
@@ -465,7 +451,7 @@ unsafe fn push_result_node(
         err.set("handler returned an unusable node");
         return false;
     };
-    if nodeset_push(set, n, budget).is_err() {
+    if set.push_token(n, &mut *budget).is_err() {
         err.set("out of memory building handler result");
         return false;
     }
@@ -537,10 +523,9 @@ unsafe fn ruby_to_out(
     }
     let is_node = is_kind_of(rv, CLASS_NODE);
     if is_node || is_kind_of(rv, CLASS_NODE_SET) {
-        let mut set = NodeSet::EMPTY;
+        let mut set = NodeSet::new();
         if is_node {
             if !push_result_node(budget, document, r, &mut set, err) {
-                nodeset_clear(&mut set);
                 return false;
             }
         } else {
@@ -556,7 +541,6 @@ unsafe fn ruby_to_out(
                     continue;
                 }
                 if !push_result_node(budget, document, node.as_raw(), &mut set, err) {
-                    nodeset_clear(&mut set);
                     return false;
                 }
             }
@@ -567,12 +551,7 @@ unsafe fn ruby_to_out(
 
     /* nil and everything else: coerce to a string (nil -> ""). */
     if rv.is_nil() {
-        if val_set_borrowed_text_copy(out, VerifiedText::empty().into(), ErrSink::silent(), None)
-            != 0
-        {
-            err.set("out of memory converting handler result");
-            return false;
-        }
+        *out = Val::string(Text::default());
         return true;
     }
     let Ok(sv) = rv.funcall::<_, _, Value>("to_s", ()) else {
@@ -587,16 +566,11 @@ unsafe fn ruby_to_out(
             return false;
         }
     };
-    let rc = val_set_borrowed_text_copy(
-        out,
-        unsafe { vv.as_verified() }.into(),
-        ErrSink::silent(),
-        None,
-    );
-    if rc != 0 || !matches!((*out).get(), ValRef::String(t) if t.is_present()) {
+    let Some(text) = Text::try_copy(unsafe { vv.as_verified() }.as_bytes()) else {
         err.set("out of memory converting handler result");
         return false;
-    }
+    };
+    *out = Val::string(text);
     true
 }
 
@@ -644,7 +618,7 @@ unsafe fn handler_resolver(
     data: *mut c_void,
     budget: &mut Budget,
     call: &ResolverCall<'_>,
-) -> Result<Option<OwnedVal>, Reported> {
+) -> Result<Option<Val>, Reported> {
     let err = budget.sink();
     let budget: *mut Budget = budget;
     if data.is_null() {
@@ -682,7 +656,7 @@ unsafe fn handler_resolver(
         ));
     }
 
-    let mut out = Val::EMPTY;
+    let mut out = Val::default();
     let mut state_of_call = HandlerCall {
         bridge,
         budget,
@@ -701,9 +675,8 @@ unsafe fn handler_resolver(
         &mut state_of_call as *mut HandlerCall as VALUE,
         &mut state,
     );
-    /* Whatever the handler produced is owned from here, so every failure below
-     * frees it. */
-    let out = OwnedVal::from(out);
+    /* `out` owns whatever the handler produced, so every failure below frees
+     * it. */
     if state != 0 {
         let exc = rb_sys::rb_errinfo();
         rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);

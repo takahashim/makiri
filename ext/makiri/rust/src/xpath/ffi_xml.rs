@@ -7,7 +7,6 @@
 
 use super::abi::*;
 use super::eval;
-use super::own::OwnedVal;
 use crate::xml::model as xml;
 use core::ffi::c_void;
 
@@ -21,7 +20,7 @@ pub unsafe fn eval_ast_xml(
     cx: &Context,
     ast: &Ast,
     handler: Option<Handler>,
-) -> Result<OwnedVal, Error> {
+) -> Result<Val, Error> {
     eval::eval_ast::<&xml::Document>(cx, ast, handler)
 }
 

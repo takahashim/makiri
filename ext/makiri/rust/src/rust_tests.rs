@@ -386,65 +386,40 @@ fn borrowed_text_carries_an_interior_nul() {
 }
 
 #[test]
-fn owned_text_copy_keeps_interior_nul_and_terminates() {
-    use crate::text::BorrowedText;
-    use crate::xpath::msg::ErrSink;
-    use crate::xpath::value::TextSlot;
-    use core::ptr;
+fn text_copy_keeps_interior_nul() {
+    use crate::xpath::value::Text;
 
-    let mut t =
-        unsafe { TextSlot::try_copy_bytes(b"a\0b", ErrSink::silent(), None) }.expect("allocation");
-    assert_eq!(t.len(), 3);
-    assert_eq!(unsafe { t.as_bytes() }, b"a\0b");
-    assert_eq!(unsafe { *t.as_ptr().add(3) }, 0);
-    unsafe { t.clear() };
-    assert!(t.is_absent());
-
-    // An absent view copies to a present empty string, not to another absent.
-    let mut e = unsafe {
-        TextSlot::try_copy(
-            BorrowedText::from_raw_parts(ptr::null(), 0),
-            ErrSink::silent(),
-            None,
-        )
-    }
-    .expect("allocation");
-    assert!(e.is_present() && e.is_empty());
-    assert_eq!(unsafe { *e.as_ptr() }, 0);
-    unsafe { e.clear() };
+    let t = Text::try_copy(b"a\0b").expect("allocation");
+    assert_eq!(t.as_slice(), b"a\0b");
+    let e = Text::try_copy(b"").expect("the empty string allocates nothing");
+    assert!(e.as_slice().is_empty());
 }
 
 #[test]
-fn owned_text_adopts_a_detached_buffer() {
+fn text_adopts_a_detached_buffer() {
     use crate::cbuf::Buf;
-    use crate::xpath::value::TextSlot;
+    use crate::xpath::value::Text;
 
     let mut buf = Buf::new(0);
     buf.append(b"a\0b").expect("append");
-    let mut t = TextSlot::from_buf(buf.steal().expect("steal"));
-    assert_eq!(unsafe { t.as_bytes() }, b"a\0b");
-    assert_eq!(unsafe { *t.as_ptr().add(3) }, 0);
-    unsafe { t.clear() };
+    let t = Text::from_buf(buf.steal().expect("steal"));
+    assert_eq!(t.as_slice(), b"a\0b");
 }
 
 #[test]
-fn owned_text_fill_terminates_at_the_length_written() {
-    use crate::xpath::value::TextSlot;
+fn text_fill_keeps_the_length_written() {
+    use crate::xpath::value::Text;
 
-    let mut t = TextSlot::try_fill(5, |dst| {
+    let t = Text::try_fill(5, |dst| {
         // The reservation arrives zeroed.
         assert!(dst.iter().all(|&b| b == 0));
         dst[..2].copy_from_slice(b"ab");
         2
     })
     .expect("allocation");
-    assert_eq!(unsafe { t.as_bytes() }, b"ab");
-    assert_eq!(unsafe { *t.as_ptr().add(2) }, 0);
-    unsafe { t.clear() };
-
-    let mut e = TextSlot::try_fill(0, |_| 0).expect("allocation");
-    assert!(e.is_present() && e.is_empty());
-    unsafe { e.clear() };
+    assert_eq!(t.as_slice(), b"ab");
+    let e = Text::try_fill(0, |_| 0).expect("allocation");
+    assert!(e.as_slice().is_empty());
 }
 
 #[test]

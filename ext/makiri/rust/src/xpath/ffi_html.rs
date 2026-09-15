@@ -4,7 +4,6 @@
 
 use super::abi::*;
 use super::eval;
-use super::own::OwnedVal;
 use crate::dom_adapter::html::HtmlDoc;
 use core::ffi::c_void;
 
@@ -18,7 +17,7 @@ pub unsafe fn eval_ast_html(
     cx: &Context,
     ast: &Ast,
     handler: Option<Handler>,
-) -> Result<OwnedVal, Error> {
+) -> Result<Val, Error> {
     eval::eval_ast::<HtmlDoc<'_>>(cx, ast, handler)
 }
 

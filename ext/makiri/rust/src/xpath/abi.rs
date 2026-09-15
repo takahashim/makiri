@@ -12,9 +12,7 @@ pub use super::msg::{
 };
 pub use super::order::OrderIndex;
 pub use super::runtime_abi::cache::{ptr_hash, StrCache, TextId};
-pub use super::value::{
-    NodeSet, TextSlot, Val, ValRef, ValU, T_BOOLEAN, T_NODESET, T_NUMBER, T_STRING,
-};
+pub use super::value::{NodeSet, Text, Val, ValRef};
 pub use crate::cbuf::BUF_OK;
 
 pub use super::ctx::ctx_document;
@@ -36,13 +34,6 @@ pub use super::limits::limit_recurse_enter;
 pub use super::limits::limit_recurse_leave;
 pub use super::limits::{budget_sink, Budget};
 pub use super::msg::{ErrSink, Error, Reported};
-pub use super::runtime_abi::nodeset_clear;
-pub use super::runtime_abi::nodeset_init;
-pub use super::runtime_abi::nodeset_push;
-pub use super::runtime_abi::owned_text_clear;
-pub use super::runtime_abi::val_clear;
-pub use super::runtime_abi::val_set_owned_text;
 pub(crate) use crate::cbuf::{buf_append, Buf};
 pub use crate::falloc::calloc::grow_reserve;
-pub use crate::falloc::calloc::strndup;
 pub use crate::text::{BorrowedText, VerifiedText};

@@ -1,7 +1,7 @@
 //! The per-evaluation string-value cache, and the pointer hash every
 //! pointer-keyed table shares.
 use super::super::abi::*;
-use super::super::own::OwnedText;
+use super::super::value::Text;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use core::ffi::c_void;
@@ -35,7 +35,7 @@ pub struct TextId(usize);
 /// It owns every text it holds, and they go with it - there is nothing to
 /// clear by hand.
 pub struct StrCache {
-    entries: Vec<(*const c_void, OwnedText)>,
+    entries: Vec<(*const c_void, Text)>,
     /// node pointer -> entry index + 1; 0 is an empty slot. Empty, or a power
     /// of two at most half full.
     buckets: Vec<usize>,
@@ -91,7 +91,7 @@ impl StrCache {
     pub fn insert(
         &mut self,
         node: *const c_void,
-        text: OwnedText,
+        text: Text,
         budget: &mut Budget,
     ) -> Result<TextId, Reported> {
         if self.entries.mkr_reserve(1).is_err() {

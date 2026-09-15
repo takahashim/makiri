@@ -16,13 +16,12 @@
 //!
 //! The engine, generic over `Dom`:
 //!   dom.rs        the node-access contract, as a trait
-//!   own.rs        guards over the allocations the engine passes around
 //!   ast.rs        the compiled AST
 //!   ast_ops.rs    the peephole and hoisting pass over a parsed one
-//!   runtime_abi.rs raw node-sets, owned text, values and per-evaluate caches
+//!   runtime_abi.rs the per-evaluate string-value cache
 //!   axis.rs       the thirteen axes, as orders over the tree
 //!   order.rs      document order and its per-evaluate index
-//!   value.rs      string-values, coercions, the string-value cache
+//!   value.rs      the values, string-values and coercions
 //!   nodetest.rs   does a node match a step's test?
 //!   attr_pred.rs  the [@name] / [@name='lit'] predicate shapes
 //!   step_index.rs the //tag and //tag[N] index fast paths
@@ -62,7 +61,6 @@ pub mod eval;
 pub mod funcs;
 pub mod nodetest;
 pub mod order;
-pub mod own;
 pub mod step_index;
 pub mod value;
 
