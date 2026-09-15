@@ -1,6 +1,6 @@
 //! The per-backend value model (mkr_xpath_value_body.h): node string-values
 //! (XPath 1.0 §5), the coercions that read a node-set's first node, document
-//! order, and the string-value cache's node-keyed insert.
+//! order, and the cached string-value lookup.
 //!
 //! Generic over `Dom`, where the C compiled the same body once per
 //! representation. The values themselves (`Val`, `NodeSet`) keep their C
@@ -54,6 +54,7 @@ impl TextSlot {
         self.ptr
     }
 
+    #[cfg(any(test, feature = "ruby"))]
     pub(crate) const fn len(self) -> usize {
         self.len
     }
@@ -568,126 +569,34 @@ unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText
     node_to_owned_text::<D>(doc, node, ptr::null_mut()).unwrap_or_default()
 }
 
-/* ---------- the string-value cache's node-keyed insert ---------- */
+/* ---------- the cached string-value of a node ---------- */
 
-/// The cached string-value of `node`, building and caching it on a miss.
-///
-/// The returned bytes are borrowed: the cache owns them until the evaluation
-/// that built them is dropped.
+/// The cached string-value of `node`, building and caching it on a miss. The
+/// text is `ev.str_cache.text(id)`.
 ///
 /// # Safety
 /// `node` must be a live handle of the evaluation's document.
-pub unsafe fn cached_node_text<'a, D: Dom>(
+pub unsafe fn cached_node_text<D: Dom>(
     ev: &mut super::eval::Evaluation<'_, D>,
     node: D::Node,
-) -> Result<&'a [u8], Reported> {
-    let err = ev.budget.sink();
-    let doc = ev.doc;
-    let c: *mut StrCache = &raw mut ev.str_cache;
-    if c.is_null() {
-        return Err(err_setf!(
-            err,
-            XP_ERR_INTERNAL,
-            "cached_node_text called without a context"
-        ));
-    }
+) -> Result<TextId, Reported> {
     let key = D::to_void(node) as *const c_void;
-
-    /* O(1) lookup through the pointer-keyed index. */
-    if (*c).bucket_cap != 0 {
-        let mask = (*c).bucket_cap - 1;
-        let mut j = (ptr_hash(key) as usize) & mask;
-        while *(*c).buckets.add(j) != 0 {
-            let e = &*(*c).entries.add(*(*c).buckets.add(j) - 1);
-            if ptr::eq(e.node, key) {
-                return Ok(borrow(e.str_, e.len));
-            }
-            j = (j + 1) & mask;
-        }
+    if let Some(id) = ev.str_cache.find(key) {
+        return Ok(id);
     }
-
-    let budget: *mut Budget = &raw mut ev.budget;
-    /* Held in its guard until the cache takes it, so every refusal below frees
-     * it on the way out. */
-    let mut text = node_to_owned_text::<D>(doc, node, budget)?;
-
-    if grow_reserve(
-        &raw mut (*c).entries as *mut *mut c_void,
-        &raw mut (*c).cap,
-        (*c).count + 1,
-        core::mem::size_of::<StrCacheEntry>(),
-    ) != BUF_OK
-    {
-        return Err(err_setf!(
-            err,
-            XP_ERR_OOM,
-            "out of memory in node string cache"
-        ));
-    }
-
-    /* A total cap on the cached bytes, so one evaluate cannot grow the cache
-     * without bound. */
-    let new_total = match (*c).total_bytes.checked_add(text.as_slice().len()) {
-        Some(t) => t,
-        None => {
-            return Err(err_setf!(
-                err,
-                XP_ERR_OOM,
-                "node string cache size overflow"
-            ));
-        }
-    };
-    limit_check_string_bytes(budget, new_total)?;
-
-    /* Grow the index FIRST. It rebuilds only from the already-committed
-     * entries, so every fallible step happens while the slot at [count] is
-     * still untouched, and the entry is committed once nothing can fail - no
-     * tentative write to roll back. Load factor stays at or below 1/2. */
-    if (*c).bucket_cap == 0 || ((*c).count + 1) * 2 > (*c).bucket_cap {
-        let new_bucket_cap = if (*c).bucket_cap == 0 {
-            64
-        } else {
-            match (*c).bucket_cap.checked_mul(2) {
-                Some(b) => b,
-                None => {
-                    return Err(err_setf!(
-                        err,
-                        XP_ERR_OOM,
-                        "node string cache index overflow"
-                    ));
-                }
-            }
-        };
-        if str_cache_reindex(c, new_bucket_cap) != 0 {
-            return Err(err_setf!(
-                err,
-                XP_ERR_OOM,
-                "out of memory indexing node string cache"
-            ));
-        }
-    }
-
-    /* The cache owns the bytes from here. */
-    let text = text.take();
-
-    /* Commit. str_cache_index_put reads entries[count].node, so the write
-     * has to come first. */
-    let slot = (*c).entries.add((*c).count);
-    (*slot).node = key as *mut c_void;
-    (*slot).str_ = text.as_ptr();
-    (*slot).len = text.len();
-    str_cache_index_put(c, (*c).count);
-    (*c).total_bytes += text.len();
-    (*c).count += 1;
-
-    Ok(borrow(text.as_ptr(), text.len()))
+    let text = node_to_owned_text::<D>(ev.doc, node, &raw mut ev.budget)?;
+    ev.str_cache.insert(key, text, &mut ev.budget)
 }
 
+/// `number()` of `node`'s cached string-value.
+///
+/// # Safety
+/// As [`cached_node_text`].
 #[inline]
-unsafe fn borrow<'a>(p: *const c_char, len: usize) -> &'a [u8] {
-    if p.is_null() || len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(p as *const u8, len)
-    }
+pub unsafe fn cached_node_number<D: Dom>(
+    ev: &mut super::eval::Evaluation<'_, D>,
+    node: D::Node,
+) -> Result<f64, Reported> {
+    let id = cached_node_text::<D>(ev, node)?;
+    Ok(bytes_to_number(ev.str_cache.text(id)))
 }

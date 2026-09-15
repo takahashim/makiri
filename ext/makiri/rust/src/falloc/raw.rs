@@ -11,6 +11,7 @@ use core::ffi::{c_int, c_void};
 use crate::cbuf::{BUF_ERR_OOM, BUF_OK};
 
 extern "C" {
+    #[cfg(kani)]
     #[link_name = "calloc"]
     fn libc_calloc(count: usize, elem: usize) -> *mut c_void;
     #[link_name = "realloc"]
@@ -55,6 +56,9 @@ pub(crate) unsafe fn free_and_null(ptr: *mut c_void) -> *mut c_void {
     core::ptr::null_mut()
 }
 
+/// A zeroed `count * elem`-byte allocation. Only the allocator proofs still
+/// allocate this way.
+#[cfg(kani)]
 pub(crate) unsafe fn callocarray(count: usize, elem: usize) -> *mut c_void {
     if count == 0 || elem == 0 || count.checked_mul(elem).is_none() {
         return core::ptr::null_mut();

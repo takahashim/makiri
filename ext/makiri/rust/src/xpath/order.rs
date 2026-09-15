@@ -9,21 +9,103 @@
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
-use crate::falloc::raw::callocarray;
-use core::ffi::{c_int, c_void};
+use crate::falloc::try_vec_with_capacity;
+use core::ffi::c_void;
 
-pub struct OrderBucket {
+#[derive(Clone, Copy)]
+struct OrderBucket {
     /// NULL is an empty slot.
-    pub node: *const c_void,
-    pub ord: usize,
+    node: *const c_void,
+    ord: usize,
 }
 
-/// `mkr_doc_order_index_t` - the per-evaluate document-order index.
+const EMPTY_BUCKET: OrderBucket = OrderBucket {
+    node: core::ptr::null(),
+    ord: 0,
+};
+
+/// One evaluate's document-order index: node pointer -> its ordinal in a
+/// pre-order walk of the document, built at most once, the first time a sort
+/// is large enough to pay for the walk.
+#[derive(Default)]
 pub struct OrderIndex {
-    pub buckets: *mut OrderBucket,
-    pub cap: usize,
-    pub count: usize,
-    pub built: c_int,
+    /// Empty, or a power of two at most 3/4 full.
+    buckets: Vec<OrderBucket>,
+    count: usize,
+    built: bool,
+}
+
+impl OrderIndex {
+    pub const fn new() -> OrderIndex {
+        OrderIndex {
+            buckets: Vec::new(),
+            count: 0,
+            built: false,
+        }
+    }
+
+    /// Insert `(node, ord)`, growing past a 3/4 load factor. False on OOM.
+    fn insert(&mut self, node: *const c_void, ord: usize) -> bool {
+        if self.buckets.is_empty() || self.count * 4 >= self.buckets.len() * 3 {
+            let new_cap = if self.buckets.is_empty() {
+                256
+            } else {
+                match self.buckets.len().checked_mul(2) {
+                    Some(c) => c,
+                    None => return false,
+                }
+            };
+            let Some(mut new_buckets) = try_vec_with_capacity(new_cap) else {
+                return false;
+            };
+            new_buckets.resize(new_cap, EMPTY_BUCKET);
+            let old = core::mem::replace(&mut self.buckets, new_buckets);
+            self.count = 0;
+            for b in old.iter().filter(|b| !b.node.is_null()) {
+                self.put(*b);
+            }
+        }
+        self.put(OrderBucket { node, ord });
+        true
+    }
+
+    /// Place `b` in its probe run, unless its node is already there. The table
+    /// has a free slot.
+    fn put(&mut self, b: OrderBucket) {
+        let mask = self.buckets.len() - 1;
+        let mut j = (ptr_hash(b.node) as usize) & mask;
+        loop {
+            let slot = &mut self.buckets[j];
+            if slot.node.is_null() {
+                *slot = b;
+                self.count += 1;
+                return;
+            }
+            if slot.node == b.node {
+                return; /* already present */
+            }
+            j = (j + 1) & mask;
+        }
+    }
+
+    #[inline]
+    fn lookup(&self, node: *const c_void) -> Option<usize> {
+        if self.buckets.is_empty() {
+            return None;
+        }
+        let mask = self.buckets.len() - 1;
+        let mut j = (ptr_hash(node) as usize) & mask;
+        loop {
+            let slot = &self.buckets[j];
+            if slot.node.is_null() {
+                return None;
+            }
+            if slot.node == node {
+                return Some(slot.ord);
+            }
+            j = (j + 1) & mask;
+        }
+    }
 }
 
 /// An attribute sits "with" its owner element for cross-subtree comparisons;
@@ -152,97 +234,22 @@ unsafe fn nodeset_items<'a>(ns: *mut NodeSet) -> &'a mut [*mut c_void] {
 
 /* ---- the index ---- */
 
-/// Insert `(node, ord)`, growing past a 3/4 load factor. False on OOM.
-unsafe fn order_index_insert<D: Dom>(idx: *mut OrderIndex, node: D::Node, ord: usize) -> bool {
-    if (*idx).cap == 0 || (*idx).count * 4 >= (*idx).cap * 3 {
-        let new_cap = if (*idx).cap == 0 {
-            256
-        } else {
-            match (*idx).cap.checked_mul(2) {
-                Some(c) => c,
-                None => return false,
-            }
-        };
-        let new_buckets =
-            callocarray(new_cap, core::mem::size_of::<OrderBucket>()) as *mut OrderBucket;
-        if new_buckets.is_null() {
-            return false;
-        }
-        let (old_buckets, old_cap) = ((*idx).buckets, (*idx).cap);
-        (*idx).buckets = new_buckets;
-        (*idx).cap = new_cap;
-        (*idx).count = 0;
-        for i in 0..old_cap {
-            let b = &*old_buckets.add(i);
-            if !b.node.is_null() {
-                let mask = new_cap - 1;
-                let mut j = (ptr_hash(b.node) as usize) & mask;
-                while !(*(*idx).buckets.add(j)).node.is_null() {
-                    j = (j + 1) & mask;
-                }
-                *(*idx).buckets.add(j) = OrderBucket {
-                    node: b.node,
-                    ord: b.ord,
-                };
-                (*idx).count += 1;
-            }
-        }
-        if !old_buckets.is_null() {
-            free_c(old_buckets as *mut c_void);
-        }
-    }
-    let key = D::to_void(node) as *const c_void;
-    let mask = (*idx).cap - 1;
-    let mut j = (ptr_hash(key) as usize) & mask;
-    loop {
-        let slot = (*idx).buckets.add(j);
-        if (*slot).node.is_null() {
-            *slot = OrderBucket { node: key, ord };
-            (*idx).count += 1;
-            return true;
-        }
-        if (*slot).node == key {
-            return true; /* already present */
-        }
-        j = (j + 1) & mask;
-    }
-}
-
-unsafe fn order_index_lookup<D: Dom>(idx: *const OrderIndex, node: D::Node) -> Option<usize> {
-    if (*idx).cap == 0 {
-        return None;
-    }
-    let key = D::to_void(node) as *const c_void;
-    let mask = (*idx).cap - 1;
-    let mut j = (ptr_hash(key) as usize) & mask;
-    loop {
-        let slot = &*(*idx).buckets.add(j);
-        if slot.node.is_null() {
-            return None;
-        }
-        if slot.node == key {
-            return Some(slot.ord);
-        }
-        j = (j + 1) & mask;
-    }
-}
-
 /// Pre-order DFS assigning ordinals: the node, then its attributes (before any
 /// child), then its descendants - matching `doc_order_cmp`'s placement.
 /// Iterative through parent pointers, so a deep tree cannot overflow the stack,
 /// and it stays inside the subtree (it never follows `root`'s next).
-unsafe fn order_index_walk<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::Node) -> bool {
+unsafe fn order_index_walk<D: Dom>(doc: D::Doc, idx: &mut OrderIndex, root: D::Node) -> bool {
     let mut cur = root;
     let mut ord = 0usize;
     while !D::is_null(cur) {
-        if !order_index_insert::<D>(idx, cur, ord) {
+        if !idx.insert(D::to_void(cur), ord) {
             return false;
         }
         ord += 1;
         if D::node_type(doc, cur) == NTYPE_ELEMENT {
             let mut a = D::first_attr(doc, cur);
             while !D::is_null(a) {
-                if !order_index_insert::<D>(idx, a, ord) {
+                if !idx.insert(D::to_void(a), ord) {
                     return false;
                 }
                 ord += 1;
@@ -264,18 +271,18 @@ unsafe fn order_index_walk<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::N
     true
 }
 
-unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::Node) -> bool {
-    if (*idx).built != 0 {
+unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: &mut OrderIndex, root: D::Node) -> bool {
+    if idx.built {
         return true;
     }
     if D::is_null(root) {
         return false;
     }
     if !order_index_walk::<D>(doc, idx, root) {
-        doc_order_index_clear(idx);
+        *idx = OrderIndex::new();
         return false;
     }
-    (*idx).built = 1;
+    idx.built = true;
     true
 }
 
@@ -283,20 +290,17 @@ unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::
 /// (a synthesised node, or a cross-document compare).
 unsafe fn doc_order_cmp_indexed<D: Dom>(
     doc: D::Doc,
-    idx: *const OrderIndex,
+    idx: &OrderIndex,
     a: D::Node,
     b: D::Node,
 ) -> i32 {
     if a == b {
         return 0;
     }
-    if idx.is_null() || (*idx).built == 0 {
+    if !idx.built {
         return doc_order_cmp::<D>(doc, a, b);
     }
-    match (
-        order_index_lookup::<D>(idx, a),
-        order_index_lookup::<D>(idx, b),
-    ) {
+    match (idx.lookup(D::to_void(a)), idx.lookup(D::to_void(b))) {
         (Some(oa), Some(ob)) => oa.cmp(&ob) as i32,
         _ => doc_order_cmp::<D>(doc, a, b),
     }
@@ -315,7 +319,6 @@ const INDEX_BUILD_MIN: usize = 200;
 /// The set must hold live handles of this backend.
 pub unsafe fn nodeset_sort_doc_order<D: Dom>(ev: &mut Evaluation<'_, D>, ns: *mut NodeSet) {
     let doc = ev.doc;
-    let idx: *mut OrderIndex = &raw mut ev.order_index;
     if ns.is_null() || (*ns).count < 2 {
         return;
     }
@@ -327,25 +330,29 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ev: &mut Evaluation<'_, D>, ns: *mu
      * the sort is pure waste. One O(n) scan with the same comparator confirms
      * it, so this can only skip work, never change the result. Reverse axes and
      * interleaved results fail the scan early. */
-    let cmp = |a: &*mut c_void, b: &*mut c_void| {
-        doc_order_cmp_indexed::<D>(doc, idx, D::from_void(*a), D::from_void(*b))
+    let cmp = |idx: &OrderIndex, a: *mut c_void, b: *mut c_void| {
+        doc_order_cmp_indexed::<D>(doc, idx, D::from_void(a), D::from_void(b))
     };
-    if items.windows(2).all(|w| cmp(&w[0], &w[1]) <= 0) {
+    if items
+        .windows(2)
+        .all(|w| cmp(&ev.order_index, w[0], w[1]) <= 0)
+    {
         return;
     }
 
     /* Build the index lazily, and only when the sort is large enough to
      * amortise the full-document walk. */
-    if (*idx).built == 0 && items.len() >= INDEX_BUILD_MIN && !ev.cx.document().is_null() {
+    if !ev.order_index.built && items.len() >= INDEX_BUILD_MIN && !ev.cx.document().is_null() {
         /* Best-effort: on OOM the parent-chain comparator still serves. */
-        order_index_build::<D>(doc, idx, D::document_node(doc));
+        order_index_build::<D>(doc, &mut ev.order_index, D::document_node(doc));
     }
 
     /* A stable merge sort, so ties - possible only for synthesised nodes that
      * are not in the index - keep insertion order. Rust's sort_by is exactly
      * that, and it falls back to an in-place merge if it cannot allocate,
      * which is the C's qsort fallback without the loss of stability. */
-    items.sort_by(|x, y| cmp(x, y).cmp(&0));
+    let idx = &ev.order_index;
+    items.sort_by(|x, y| cmp(idx, *x, *y).cmp(&0));
 }
 
 /// Sort into document order and drop duplicates.
@@ -366,9 +373,4 @@ pub unsafe fn nodeset_unique_sorted<D: Dom>(ev: &mut Evaluation<'_, D>, ns: *mut
         }
     }
     (*ns).count = w;
-}
-
-extern "C" {
-    #[link_name = "free"]
-    fn free_c(p: *mut c_void);
 }

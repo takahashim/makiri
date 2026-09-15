@@ -17,9 +17,6 @@ use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
 use super::own::{OwnedVal, Set};
-use super::runtime_abi::{
-    doc_order_index_clear, doc_order_index_init, str_cache_clear, str_cache_init,
-};
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
@@ -74,28 +71,14 @@ impl<'cx, D: Dom> Evaluation<'cx, D> {
     /// # Safety
     /// `cx` must be a context whose document is this backend's.
     pub(crate) unsafe fn new(cx: &'cx Context, handler: Option<Handler>) -> Self {
-        let mut ev = Evaluation {
+        Evaluation {
             cx,
             doc: D::doc_from_void(cx.document()),
             budget: Budget::with_limits(cx.limits()),
-            str_cache: core::mem::zeroed(),
-            order_index: core::mem::zeroed(),
+            str_cache: StrCache::new(),
+            order_index: OrderIndex::new(),
             memo: Memo(Vec::new()),
             handler,
-        };
-        str_cache_init(&mut ev.str_cache);
-        doc_order_index_init(&mut ev.order_index);
-        ev
-    }
-}
-
-impl<D: Dom> Drop for Evaluation<'_, D> {
-    fn drop(&mut self) {
-        // SAFETY: both caches are this evaluation's own, and nothing borrows
-        // from them once it is being dropped.
-        unsafe {
-            str_cache_clear(&mut self.str_cache);
-            doc_order_index_clear(&mut self.order_index);
         }
     }
 }
@@ -346,7 +329,7 @@ unsafe fn compare_eq<D: Dom>(
                 for j in 0..rs.count {
                     limit_eval_op(&raw mut ev.budget)?;
                     let b = cached_node_text::<D>(ev, nodeset_at::<D>(rs, j))?;
-                    if (a == b) == want_eq {
+                    if (ev.str_cache.text(a) == ev.str_cache.text(b)) == want_eq {
                         return Ok(true);
                     }
                 }
@@ -378,8 +361,8 @@ unsafe fn compare_eq<D: Dom>(
         ValRef::Number(target) => {
             for i in 0..set.count {
                 limit_eval_op(&raw mut ev.budget)?;
-                let s = cached_node_text::<D>(ev, nodeset_at::<D>(set, i))?;
-                if (bytes_to_number(s) == target) == want_eq {
+                let s = cached_node_number::<D>(ev, nodeset_at::<D>(set, i))?;
+                if (s == target) == want_eq {
                     return Ok(true);
                 }
             }
@@ -395,7 +378,7 @@ unsafe fn compare_eq<D: Dom>(
             for i in 0..set.count {
                 limit_eval_op(&raw mut ev.budget)?;
                 let s = cached_node_text::<D>(ev, nodeset_at::<D>(set, i))?;
-                if (s == want) == want_eq {
+                if (ev.str_cache.text(s) == want) == want_eq {
                     return Ok(true);
                 }
             }
@@ -430,10 +413,10 @@ unsafe fn compare_rel<D: Dom>(
     let (set, sc, swap) = match (l.as_nodeset(), r.as_nodeset()) {
         (Some(ls), Some(rs)) => {
             for i in 0..ls.count {
-                let a = bytes_to_number(cached_node_text::<D>(ev, nodeset_at::<D>(ls, i))?);
+                let a = cached_node_number::<D>(ev, nodeset_at::<D>(ls, i))?;
                 for j in 0..rs.count {
                     limit_eval_op(&raw mut ev.budget)?;
-                    let b = bytes_to_number(cached_node_text::<D>(ev, nodeset_at::<D>(rs, j))?);
+                    let b = cached_node_number::<D>(ev, nodeset_at::<D>(rs, j))?;
                     if rel_hit(op, a, b) {
                         return Ok(true);
                     }
@@ -452,7 +435,7 @@ unsafe fn compare_rel<D: Dom>(
     let scn = val_to_number_or_fail::<D>(doc, sc, &raw mut ev.budget)?;
     for i in 0..set.count {
         limit_eval_op(&raw mut ev.budget)?;
-        let nv = bytes_to_number(cached_node_text::<D>(ev, nodeset_at::<D>(set, i))?);
+        let nv = cached_node_number::<D>(ev, nodeset_at::<D>(set, i))?;
         let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
         if rel_hit(op, a, b) {
             return Ok(true);

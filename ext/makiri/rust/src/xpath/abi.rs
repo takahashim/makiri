@@ -10,8 +10,8 @@ pub use super::msg::{
     XP_ERR_INTERNAL, XP_ERR_LIMIT, XP_ERR_NOT_IMPLEMENTED, XP_ERR_OOM, XP_ERR_RUNTIME,
     XP_ERR_SYNTAX, XP_ERR_TYPE, XP_OK,
 };
-pub use super::order::{OrderBucket, OrderIndex};
-pub use super::runtime_abi::cache::{ptr_hash, StrCache, StrCacheEntry};
+pub use super::order::OrderIndex;
+pub use super::runtime_abi::cache::{ptr_hash, StrCache, TextId};
 pub use super::value::{
     NodeSet, TextSlot, Val, ValRef, ValU, T_BOOLEAN, T_NODESET, T_NUMBER, T_STRING,
 };
@@ -36,13 +36,10 @@ pub use super::limits::limit_recurse_enter;
 pub use super::limits::limit_recurse_leave;
 pub use super::limits::{budget_sink, Budget};
 pub use super::msg::{ErrSink, Error, Reported};
-pub use super::runtime_abi::doc_order_index_clear;
 pub use super::runtime_abi::nodeset_clear;
 pub use super::runtime_abi::nodeset_init;
 pub use super::runtime_abi::nodeset_push;
 pub use super::runtime_abi::owned_text_clear;
-pub use super::runtime_abi::str_cache_index_put;
-pub use super::runtime_abi::str_cache_reindex;
 pub use super::runtime_abi::val_clear;
 pub use super::runtime_abi::val_set_owned_text;
 pub(crate) use crate::cbuf::{buf_append, Buf};

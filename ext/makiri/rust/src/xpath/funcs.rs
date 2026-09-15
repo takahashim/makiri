@@ -802,7 +802,7 @@ unsafe fn fn_sum<D: Dom>(ev: &mut Evaluation<'_, D>, _focus: &Focus<D>, args: &[
     let mut total = 0.0;
     for i in 0..(*ns).count {
         limit_eval_op(budget)?;
-        total += bytes_to_number(cached_node_text::<D>(ev, nodeset_at::<D>(ns, i))?);
+        total += cached_node_number::<D>(ev, nodeset_at::<D>(ns, i))?;
     }
     number(total)
 }

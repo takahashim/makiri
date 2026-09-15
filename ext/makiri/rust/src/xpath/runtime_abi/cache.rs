@@ -1,33 +1,15 @@
-//! Per-evaluation order and string-cache storage.
-#![allow(clippy::missing_safety_doc)]
+//! The per-evaluation string-value cache, and the pointer hash every
+//! pointer-keyed table shares.
 use super::super::abi::*;
-use crate::falloc::raw::callocarray;
-use core::ffi::{c_char, c_void};
-use core::ptr;
-
-pub struct StrCacheEntry {
-    pub node: *mut c_void,
-    pub str_: *mut c_char,
-    pub len: usize,
-}
-
-/// `mkr_str_cache_t` - the per-evaluate node string-value cache: an ordered
-/// store plus a pointer-keyed open-addressing index into it.
-pub struct StrCache {
-    pub entries: *mut StrCacheEntry,
-    pub count: usize,
-    pub cap: usize,
-    /// node pointer -> entry index + 1; 0 is an empty slot.
-    pub buckets: *mut usize,
-    pub bucket_cap: usize,
-    pub total_bytes: usize,
-}
+use super::super::own::OwnedText;
+use crate::err_setf;
+use crate::falloc::{try_vec_with_capacity, Reserve};
+use core::ffi::c_void;
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
-/// One definition for every pointer-keyed table: the string-value cache's index
-/// is filled by `str_cache_index_put` and probed by its readers, and the
-/// text index uses it too, so all of them must hash the same way.
+/// One definition for every pointer-keyed table: the string-value cache, the
+/// document-order index and the DOM indexes all hash the same way.
 #[inline]
 pub fn ptr_hash<T>(p: *const T) -> u64 {
     let mut h = p as usize as u64;
@@ -39,75 +21,149 @@ pub fn ptr_hash<T>(p: *const T) -> u64 {
     h
 }
 
-pub unsafe fn doc_order_index_init(idx: *mut OrderIndex) {
-    *idx = OrderIndex {
-        buckets: ptr::null_mut(),
-        cap: 0,
-        count: 0,
-        built: 0,
-    };
+/// Where a string-value sits in the cache that returned it.
+///
+/// An index rather than a borrow, so a caller can hold one string-value while
+/// asking the cache for the next - the node-set comparisons hold one side's
+/// value across the whole scan of the other.
+#[derive(Clone, Copy, Debug)]
+pub struct TextId(usize);
+
+/// One evaluate's node string-value cache: an ordered store of the texts it
+/// built, plus a pointer-keyed open-addressing index into it.
+///
+/// It owns every text it holds, and they go with it - there is nothing to
+/// clear by hand.
+pub struct StrCache {
+    entries: Vec<(*const c_void, OwnedText)>,
+    /// node pointer -> entry index + 1; 0 is an empty slot. Empty, or a power
+    /// of two at most half full.
+    buckets: Vec<usize>,
+    total_bytes: usize,
 }
-pub unsafe fn doc_order_index_clear(idx: *mut OrderIndex) {
-    if idx.is_null() {
-        return;
+
+impl Default for StrCache {
+    fn default() -> Self {
+        StrCache::new()
     }
-    if !(*idx).buckets.is_null() {
-        free_c((*idx).buckets as *mut c_void);
-    }
-    doc_order_index_init(idx);
 }
-pub unsafe fn str_cache_init(c: *mut StrCache) {
-    *c = StrCache {
-        entries: ptr::null_mut(),
-        count: 0,
-        cap: 0,
-        buckets: ptr::null_mut(),
-        bucket_cap: 0,
-        total_bytes: 0,
-    };
-}
-pub unsafe fn str_cache_index_put(c: *mut StrCache, idx: usize) {
-    let mask = (*c).bucket_cap - 1;
-    let mut j = (ptr_hash((*(*c).entries.add(idx)).node as *const c_void) as usize) & mask;
-    while *(*c).buckets.add(j) != 0 {
-        j = (j + 1) & mask;
-    }
-    *(*c).buckets.add(j) = idx + 1;
-}
-pub unsafe fn str_cache_reindex(c: *mut StrCache, bucket_cap: usize) -> i32 {
-    let buckets = callocarray(bucket_cap, core::mem::size_of::<usize>()) as *mut usize;
-    if buckets.is_null() {
-        return -1;
-    }
-    if !(*c).buckets.is_null() {
-        free_c((*c).buckets as *mut c_void);
-    }
-    (*c).buckets = buckets;
-    (*c).bucket_cap = bucket_cap;
-    for i in 0..(*c).count {
-        str_cache_index_put(c, i);
-    }
-    0
-}
-pub unsafe fn str_cache_clear(c: *mut StrCache) {
-    if c.is_null() {
-        return;
-    }
-    for i in 0..(*c).count {
-        let e = &*(*c).entries.add(i);
-        if !e.str_.is_null() {
-            free_c(e.str_ as *mut c_void);
+
+impl StrCache {
+    pub const fn new() -> StrCache {
+        StrCache {
+            entries: Vec::new(),
+            buckets: Vec::new(),
+            total_bytes: 0,
         }
     }
-    if !(*c).entries.is_null() {
-        free_c((*c).entries as *mut c_void);
+
+    /// The cached text of `node`, if one is.
+    #[inline]
+    pub fn find(&self, node: *const c_void) -> Option<TextId> {
+        if self.buckets.is_empty() {
+            return None;
+        }
+        let mask = self.buckets.len() - 1;
+        let mut j = (ptr_hash(node) as usize) & mask;
+        loop {
+            let slot = self.buckets[j];
+            if slot == 0 {
+                return None;
+            }
+            if core::ptr::eq(self.entries[slot - 1].0, node) {
+                return Some(TextId(slot - 1));
+            }
+            j = (j + 1) & mask;
+        }
     }
-    if !(*c).buckets.is_null() {
-        free_c((*c).buckets as *mut c_void);
+
+    /// The text `id` names.
+    #[inline]
+    pub fn text(&self, id: TextId) -> &[u8] {
+        self.entries[id.0].1.as_slice()
     }
-    str_cache_init(c);
-}
-extern "C" {
-    #[link_name = "free"]
-    fn free_c(p: *mut c_void);
+
+    /// Cache `text` as `node`'s string-value, within `budget`'s string cap on
+    /// the total cached bytes.
+    ///
+    /// Every refusal happens before anything is committed, so a failed insert
+    /// leaves the cache as it was (and drops `text`).
+    pub fn insert(
+        &mut self,
+        node: *const c_void,
+        text: OwnedText,
+        budget: &mut Budget,
+    ) -> Result<TextId, Reported> {
+        if self.entries.mkr_reserve(1).is_err() {
+            return Err(err_setf!(
+                budget.sink(),
+                XP_ERR_OOM,
+                "out of memory in node string cache"
+            ));
+        }
+
+        /* A total cap on the cached bytes, so one evaluate cannot grow the cache
+         * without bound. */
+        let Some(new_total) = self.total_bytes.checked_add(text.as_slice().len()) else {
+            return Err(err_setf!(
+                budget.sink(),
+                XP_ERR_OOM,
+                "node string cache size overflow"
+            ));
+        };
+        budget.check_string_bytes(new_total)?;
+
+        /* Grow the index before committing. It rebuilds only from the entries
+         * already there, so the new entry goes in once nothing can fail. Load
+         * factor stays at or below 1/2. */
+        if self.buckets.is_empty() || (self.entries.len() + 1) * 2 > self.buckets.len() {
+            let new_cap = if self.buckets.is_empty() {
+                64
+            } else {
+                let Some(cap) = self.buckets.len().checked_mul(2) else {
+                    return Err(err_setf!(
+                        budget.sink(),
+                        XP_ERR_OOM,
+                        "node string cache index overflow"
+                    ));
+                };
+                cap
+            };
+            if self.reindex(new_cap).is_err() {
+                return Err(err_setf!(
+                    budget.sink(),
+                    XP_ERR_OOM,
+                    "out of memory indexing node string cache"
+                ));
+            }
+        }
+
+        let id = self.entries.len();
+        self.total_bytes = new_total;
+        self.entries.push((node, text));
+        self.index_put(id);
+        Ok(TextId(id))
+    }
+
+    /// Replace the index with one of `cap` slots over the current entries.
+    fn reindex(&mut self, cap: usize) -> Result<(), ()> {
+        let mut buckets = try_vec_with_capacity(cap).ok_or(())?;
+        buckets.resize(cap, 0);
+        self.buckets = buckets;
+        for i in 0..self.entries.len() {
+            self.index_put(i);
+        }
+        Ok(())
+    }
+
+    /// Point a free slot at entry `i`. The index has room: it is at most half
+    /// full before this.
+    fn index_put(&mut self, i: usize) {
+        let mask = self.buckets.len() - 1;
+        let mut j = (ptr_hash(self.entries[i].0) as usize) & mask;
+        while self.buckets[j] != 0 {
+            j = (j + 1) & mask;
+        }
+        self.buckets[j] = i + 1;
+    }
 }
