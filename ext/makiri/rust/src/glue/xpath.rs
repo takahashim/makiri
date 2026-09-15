@@ -124,9 +124,15 @@ pub(crate) unsafe fn xpath_error(err: &XPathError) -> Error {
 /// frees its node-set array or string; `document` is the keepalive for a
 /// node-set.
 ///
+/// The conversion allocates - the NodeSet, its array, a String - and any of
+/// those can raise `NoMemoryError`. So it runs under `protect`, reading `v` by
+/// reference: a raise comes back as `Err`, and `v` is still freed on the way
+/// out rather than skipped by the longjmp. One `protect` per result, not per
+/// node.
+///
 /// Shared with the XML query glue, like [`xpath_error`].
-pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Value {
-    Value::from_raw(match v {
+pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
+    let converted = magnus::rb_sys::protect(|| match &v {
         XPathValue::NodeSet(set) => {
             let rb = mkr_node_set_new(document.as_raw());
             for &n in set.as_slice() {
@@ -138,10 +144,12 @@ pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Value {
             let s = t.as_slice();
             rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
         }
-        XPathValue::Number(d) => rb_sys::rb_float_new(d),
+        XPathValue::Number(d) => rb_sys::rb_float_new(*d),
         XPathValue::Boolean(true) => rb_sys::Qtrue as VALUE,
         XPathValue::Boolean(false) => rb_sys::Qfalse as VALUE,
-    })
+    });
+    drop(v);
+    Ok(Value::from_raw(converted?))
 }
 
 /// An engine string as a UTF-8 Ruby String. A NULL pointer is `""`.
@@ -822,7 +830,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         drop(installed);
         drop(owned);
         match result {
-            Ok(value) => Ok(value_to_ruby(value, document)),
+            Ok(value) => value_to_ruby(value, document),
             Err(error) => Err(xpath_error(&error)),
         }
     }
@@ -932,7 +940,7 @@ fn node_xpath_run(
          * never references the context, and a Ruby allocation failing inside
          * the conversion longjmps past any destructor still pending. */
         drop(ctx);
-        Ok(value_to_ruby(value, document))
+        value_to_ruby(value, document)
     }
 }
 

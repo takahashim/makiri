@@ -286,6 +286,10 @@ pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
 
 /// # Safety
 /// `rb_set` must be a `Makiri::NodeSet`; `node` a node of its document.
+///
+/// This raises - the size cap, a busy set, `NoMemoryError` from the array's
+/// growth - so it is called only under `rb_protect` or from a frame that owns
+/// nothing a longjmp would skip (the tree readers, which push raw pointers).
 pub unsafe extern "C" fn mkr_node_set_push(rb_set: VALUE, node: *mut c_void) {
     /* The hot path: one call per node of every CSS and XPath result. It uses
      * the unprotected accessor deliberately - magnus's `try_convert` costs an

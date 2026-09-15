@@ -428,7 +428,7 @@ unsafe fn run_ast(
     let value = result.map_err(|error| xpath_error(&error))?;
     drop(ctx);
     /* Converting consumes the value, which frees it. */
-    let result = value_to_ruby(value, document);
+    let result = value_to_ruby(value, document)?;
     if first_only && result.is_kind_of(node_set_class()) {
         return result.funcall("first", ());
     }
