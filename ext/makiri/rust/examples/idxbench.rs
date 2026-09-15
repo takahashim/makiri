@@ -44,7 +44,7 @@ fn main() {
             let t = Instant::now();
             let rc = unsafe { makiri::dom_adapter::dom_index::mkr_parsed_dom_index_build(p) };
             build_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            assert_eq!(rc, 0);
+            assert!(rc);
             unsafe { makiri::dom_adapter::post_parse::mkr_parsed_destroy(p) };
         }
         println!("{articles} articles ({} bytes)", src.len());

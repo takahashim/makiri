@@ -4,7 +4,7 @@
 //! the id/class extraction riding along inside the attribute loop that already
 //! runs for the attr->owner table. So the measured delta is the extraction and
 //! bucketing only, not an extra traversal.
-use makiri::falloc::{MapInsert, Reserve, VecPush};
+use makiri::falloc::{MapInsert, VecPush};
 use makiri::lexbor_abi as lxb;
 use makiri::lexbor_abi::{preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
 use makiri::xml::index::Fnv;
