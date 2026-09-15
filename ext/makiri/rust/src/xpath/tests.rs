@@ -11,12 +11,12 @@ use core::ffi::{c_int, c_void};
 use crate::text::VerifiedText;
 use crate::xml::parse::xml_parse;
 use crate::xml::{NodeId, NodeType};
+use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{
     ctx_budget, ctx_limits, evaluate, evaluate_first, xpath_register_ns, Backend, OwnedContext,
     XPathValue,
 };
 use crate::xpath::msg::{XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
-use crate::xpath::own::Ast;
 use crate::xpath::parse::parse_owned;
 
 const DOC: &[u8] = br#"<r xmlns:d="urn:d"><a k="1">x</a><a k="2"> y  z </a><b><c/><c n="3"/><d:e>ne</d:e></b><!--cm--><?pi data?></r>"#;
@@ -82,7 +82,7 @@ fn run(
 
         let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
         let budget = ctx_budget(ctx.as_ptr());
-        let compiled: Result<Ast, _> = match query {
+        let compiled: Result<Box<Ast>, _> = match query {
             Query::XPath => parse_owned(source, budget),
             #[cfg(feature = "lexbor")]
             Query::Css => {
@@ -106,11 +106,11 @@ fn run(
                 _ => String::from_utf8_lossy(doc.qname(id)).into_owned(),
             }
         };
-        match evaluate(ctx.as_ptr(), ast.as_raw()) {
+        match evaluate(ctx.as_ptr(), &ast) {
             Err(e) => Answer::Err(e.status),
             Ok(XPathValue::NodeSet(set)) => {
                 let all: Vec<String> = set.as_slice().iter().map(describe).collect();
-                if let Ok(XPathValue::NodeSet(one)) = evaluate_first(ctx.as_ptr(), ast.as_raw()) {
+                if let Ok(XPathValue::NodeSet(one)) = evaluate_first(ctx.as_ptr(), &ast) {
                     assert_eq!(
                         one.as_slice().first().map(describe),
                         all.first().cloned(),

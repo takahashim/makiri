@@ -17,13 +17,11 @@
 //! reverse axes. The path it builds is non-empty - hence truthy - exactly when
 //! self matches the selector.
 
-use super::build::{self, Built, NodeArray, OwnedStep, StepArray};
+use super::build::{self, Built};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
 use crate::lexbor_abi as lxb;
-use crate::xpath::ast::Step;
-use crate::xpath::ast::{Axis, NodeKind, Op, TestKind};
+use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step, TestKind};
 use crate::xpath::msg::Reported;
-use crate::xpath::own::Ast;
 
 type Selector = lxb::lxb_css_selector_t;
 type SelectorList = lxb::lxb_css_selector_list_t;
@@ -140,14 +138,14 @@ unsafe fn str_or_empty<'a>(s: &lxb::lexbor_str_t) -> &'a [u8] {
 unsafe fn lower_type(
     b: &Build,
     s: *const Selector,
-    step: *mut Step,
-    preds: &mut NodeArray,
+    step: &mut Step,
+    preds: &mut Vec<Expr>,
 ) -> Result<(), Reported> {
     let name = str_or_empty(&(*s).name);
 
     if (*s).type_ == k::ANY {
         /* `*` or `ns|*` */
-        (*step).test.kind = TestKind::Wildcard;
+        step.test.kind = TestKind::Wildcard;
         return Ok(());
     }
 
@@ -156,19 +154,19 @@ unsafe fn lower_type(
     if ns == Some(b"*") {
         /* `*|el`: any namespace with a specific local name. XPath has no such
          * test, so it becomes a wildcard plus a local-name() predicate. */
-        (*step).test.kind = TestKind::Wildcard;
+        step.test.kind = TestKind::Wildcard;
         let ln = build::call(b, b"local-name", []);
         let lit = build::literal(b, name);
         return push_pred(b, preds, build::binop(b, Op::Eq, ln, lit));
     }
 
-    (*step).test.kind = TestKind::Name;
-    (*step).test.local = build::copy_text(b, name)?;
+    step.test.kind = TestKind::Name;
+    step.test.local = Some(build::copy_text(b, name)?);
 
     match ns {
         /* `p|el` */
         Some(p) if !p.is_empty() => {
-            (*step).test.prefix = build::copy_text(b, p)?;
+            step.test.prefix = Some(build::copy_text(b, p)?);
             Ok(())
         }
         /* `|el`: an explicit no-namespace, so leave the prefix unset. */
@@ -177,7 +175,7 @@ unsafe fn lower_type(
          * the synthetic prefix, which is Nokogiri's behaviour. */
         None => match b.default_prefix() {
             Some(dp) => {
-                (*step).test.prefix = build::copy_text(b, dp)?;
+                step.test.prefix = Some(build::copy_text(b, dp)?);
                 Ok(())
             }
             None => Ok(()),
@@ -286,35 +284,28 @@ unsafe fn not_axis(b: &Build, axis: Axis, nt: TestKind) -> Built {
 }
 
 /// `not([prefix:]name on axis)` - "no same-named sibling on that axis".
-unsafe fn not_named_axis(b: &Build, axis: Axis, test: &crate::xpath::ast::NodeTest) -> Built {
-    let prefix = owned_slice(&test.prefix);
-    let local = owned_slice(&test.local);
+unsafe fn not_named_axis(b: &Build, axis: Axis, test: &NodeTest) -> Built {
     build::call1(
         b,
         b"not",
-        build::named_step_path(b, axis, prefix, local.unwrap_or(&[])),
+        build::named_step_path(
+            b,
+            axis,
+            test.prefix.as_deref(),
+            test.local.as_deref().unwrap_or(&[]),
+        ),
     )
 }
 
-/// An owned-text slot as a slice, or `None` when unset.
-#[inline]
-unsafe fn owned_slice<'a>(t: &crate::xpath::value::TextSlot) -> Option<&'a [u8]> {
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.as_bytes())
-    }
-}
-
 /// `count(axis::test) + 1` - the 1-based position among matched siblings.
-unsafe fn pos(b: &Build, axis: Axis, named: Option<&crate::xpath::ast::NodeTest>) -> Built {
+unsafe fn pos(b: &Build, axis: Axis, named: Option<&NodeTest>) -> Built {
     let path = match named {
         None => build::step_path(b, axis, TestKind::Wildcard, None),
         Some(t) => build::named_step_path(
             b,
             axis,
-            owned_slice(&t.prefix),
-            owned_slice(&t.local).unwrap_or(&[]),
+            t.prefix.as_deref(),
+            t.local.as_deref().unwrap_or(&[]),
         ),
     };
     build::binop(
@@ -341,12 +332,7 @@ unsafe fn of_type_pos(b: &Build, forward: bool) -> Built {
 }
 
 /// The 1-based position expression for `:nth-*`.
-unsafe fn pos_expr(
-    b: &Build,
-    axis: Axis,
-    named: Option<&crate::xpath::ast::NodeTest>,
-    oftype_untyped: bool,
-) -> Built {
+unsafe fn pos_expr(b: &Build, axis: Axis, named: Option<&NodeTest>, oftype_untyped: bool) -> Built {
     if oftype_untyped {
         return of_type_pos(b, axis == Axis::PrecedingSibling);
     }
@@ -357,7 +343,7 @@ unsafe fn pos_expr(
 unsafe fn nth(
     b: &Build,
     axis: Axis,
-    named: Option<&crate::xpath::ast::NodeTest>,
+    named: Option<&NodeTest>,
     oftype_untyped: bool,
     /* `c_long`, not i64: these come straight from Lexbor's
      * `lxb_css_syntax_anb_t`, whose fields are C `long` - 64-bit on LP64 and
@@ -405,9 +391,9 @@ unsafe fn nth(
     build::binop(b, Op::And, modz, qge)
 }
 
-/// The non-functional structural pseudo-classes. `step` supplies the element
-/// name for the of-type family.
-unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, step: *const Step) -> Built {
+/// The non-functional structural pseudo-classes. `test` - the compound's node
+/// test so far - supplies the element name for the of-type family.
+unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, test: &NodeTest) -> Built {
     let pt = (*s).u.pseudo.type_;
     match pt {
         pc::FIRST_CHILD => not_axis(b, Axis::PrecedingSibling, TestKind::Wildcard),
@@ -427,7 +413,7 @@ unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, step: *const Step) 
             /* Typed (`a:first-of-type`) becomes not(preceding-sibling::a);
              * untyped (`:first-of-type`) becomes of-type-pos() = 1, where the
              * type is the element's own expanded name, compared at eval time. */
-            if (*step).test.kind != TestKind::Name {
+            if test.kind != TestKind::Name {
                 let first_is_one = |b: &Build, fwd: bool| {
                     build::binop(b, Op::Eq, of_type_pos(b, fwd), build::num(b, 1.0))
                 };
@@ -438,13 +424,13 @@ unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, step: *const Step) 
                 };
             }
             match pt {
-                pc::FIRST_OF_TYPE => not_named_axis(b, Axis::PrecedingSibling, &(*step).test),
-                pc::LAST_OF_TYPE => not_named_axis(b, Axis::FollowingSibling, &(*step).test),
+                pc::FIRST_OF_TYPE => not_named_axis(b, Axis::PrecedingSibling, test),
+                pc::LAST_OF_TYPE => not_named_axis(b, Axis::FollowingSibling, test),
                 _ => build::binop(
                     b,
                     Op::And,
-                    not_named_axis(b, Axis::PrecedingSibling, &(*step).test),
-                    not_named_axis(b, Axis::FollowingSibling, &(*step).test),
+                    not_named_axis(b, Axis::PrecedingSibling, test),
+                    not_named_axis(b, Axis::FollowingSibling, test),
                 ),
             }
         }
@@ -456,7 +442,7 @@ unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, step: *const Step) 
 /// OR of the compound self-tests over each comma-argument of a selector list,
 /// for `:is` / `:where` / `:not`.
 unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built {
-    let mut acc: Option<Ast> = None;
+    let mut acc: Option<Expr> = None;
     let mut g = list;
     while !g.is_null() {
         let one = complex_selftest(b, (*g).first)?;
@@ -481,25 +467,20 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built 
 /// the HTML one.
 unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
     let pred = pred?;
-    let n = build::node(b, NodeKind::Path)?;
-    let mut preds = NodeArray::new();
-    if preds.try_push(pred).is_err() {
-        return Err(b.oom());
-    }
-    let mut step = OwnedStep::new(Axis::Child, TestKind::Text);
-    preds.install_into_step(&mut step);
-    let mut steps = StepArray::new();
-    if steps.try_push(step).is_err() {
-        return Err(b.oom());
-    }
-    /* Zeroed at allocation, so the path is already relative. */
-    steps.install_into_path(n.as_raw());
-    Ok(n)
+    build::charge(b)?;
+    let mut step = Step::new(Axis::Child, TestKind::Text);
+    build::push(b, &mut step.predicates, pred)?;
+    let mut steps = Vec::new();
+    build::push(b, &mut steps, step)?;
+    Ok(Expr::new(ExprKind::Path(Path {
+        absolute: false,
+        steps,
+    })))
 }
 
 /// The functional pseudo-classes: `:nth-*(an+b)`, `:not()`, `:is()`/`:where()`,
 /// `:has()`, `:lexbor-contains()`.
-unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) -> Built {
+unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, test: &NodeTest) -> Built {
     let ty = (*s).u.pseudo.type_;
     let data = (*s).u.pseudo.data;
 
@@ -525,8 +506,8 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
             let mut named = None;
             let mut untyped = false;
             if of_type {
-                if (*step).test.kind == TestKind::Name {
-                    named = Some(&(*step).test);
+                if test.kind == TestKind::Name {
+                    named = Some(test);
                 } else {
                     untyped = true;
                 }
@@ -543,7 +524,7 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
 
         pf::HAS => {
             /* OR of relative descendant/child paths; truthy when any matches. */
-            let mut acc: Option<Ast> = None;
+            let mut acc: Option<Expr> = None;
             let mut g = data as *const SelectorList;
             while !g.is_null() {
                 /* Relative to self, so a leading >, + or ~ is honoured. */
@@ -603,14 +584,10 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, step: *const Step) ->
     }
 }
 
-/// Push a predicate, freeing it if the array cannot grow. An `Err` predicate
+/// Push a predicate, freeing it if the list cannot grow. An `Err` predicate
 /// means the builder that made it already failed.
-unsafe fn push_pred(b: &Build, preds: &mut NodeArray, p: Built) -> Result<(), Reported> {
-    let p = p?;
-    if preds.try_push(p).is_err() {
-        return Err(b.oom());
-    }
-    Ok(())
+unsafe fn push_pred(b: &Build, preds: &mut Vec<Expr>, p: Built) -> Result<(), Reported> {
+    build::push(b, preds, p?)
 }
 
 /// Fold one simple selector into the current step: a type sets the node test,
@@ -618,8 +595,8 @@ unsafe fn push_pred(b: &Build, preds: &mut NodeArray, p: Built) -> Result<(), Re
 unsafe fn fold_simple(
     b: &Build,
     s: *const Selector,
-    step: *mut Step,
-    preds: &mut NodeArray,
+    step: &mut Step,
+    preds: &mut Vec<Expr>,
 ) -> Result<(), Reported> {
     match (*s).type_ {
         k::ANY | k::ELEMENT => lower_type(b, s, step, preds),
@@ -642,8 +619,8 @@ unsafe fn fold_simple(
         ),
 
         k::ATTRIBUTE => push_pred(b, preds, lower_attribute(b, s)),
-        k::PSEUDO_CLASS => push_pred(b, preds, lower_pseudo_simple(b, s, step)),
-        k::PSEUDO_CLASS_FUNCTION => push_pred(b, preds, lower_pseudo_func(b, s, step)),
+        k::PSEUDO_CLASS => push_pred(b, preds, lower_pseudo_simple(b, s, &step.test)),
+        k::PSEUDO_CLASS_FUNCTION => push_pred(b, preds, lower_pseudo_func(b, s, &step.test)),
 
         k::PSEUDO_ELEMENT | k::PSEUDO_ELEMENT_FUNCTION => {
             Err(b.fail(ERR_SYNTAX, c"CSS pseudo-elements are not selectable"))
@@ -685,29 +662,26 @@ fn reverse_axis(c: u32) -> Axis {
 /// Build one step for the compound `[first ..= last]` and append it.
 unsafe fn emit_compound_step(
     b: &Build,
-    steps: &mut StepArray,
+    steps: &mut Vec<Step>,
     axis: Axis,
     first: *const Selector,
     last: *const Selector,
 ) -> Result<(), Reported> {
     /* A type selector overrides the wildcard test. */
-    let mut step = OwnedStep::new(axis, TestKind::Wildcard);
-    let mut preds = NodeArray::new();
+    let mut step = Step::new(axis, TestKind::Wildcard);
+    let mut preds = Vec::new();
 
     let mut s = first;
     loop {
-        fold_simple(b, s, &mut *step, &mut preds)?;
+        fold_simple(b, s, &mut step, &mut preds)?;
         if s == last {
             break;
         }
         s = (*s).next;
     }
 
-    preds.install_into_step(&mut step);
-    if steps.try_push(step).is_err() {
-        return Err(b.oom());
-    }
-    Ok(())
+    step.predicates = preds;
+    build::push(b, steps, step)
 }
 
 /// A compound - a CLOSE-linked run of simple selectors - and the combinator
@@ -763,7 +737,7 @@ impl Iterator for Compounds {
 /// than being forced to a descendant - which is what `:has(> a)`, `:has(+ a)`
 /// and `:has(~ a)` need, since there the combinator is relative to self.
 pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bool) -> Built {
-    let mut steps = StepArray::new();
+    let mut steps = Vec::new();
 
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
         if nc >= MAX_COMPOUNDS {
@@ -787,31 +761,24 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
 }
 
 /// The `following-sibling::*[1]` step of an adjacent combinator.
-unsafe fn emit_adjacent(b: &Build, steps: &mut StepArray) -> Result<(), Reported> {
+unsafe fn emit_adjacent(b: &Build, steps: &mut Vec<Step>) -> Result<(), Reported> {
     emit_positional_sibling(b, steps, Axis::FollowingSibling)
 }
 
 /// `axis::*[1]` - the immediately adjacent sibling in either direction.
 unsafe fn emit_positional_sibling(
     b: &Build,
-    steps: &mut StepArray,
+    steps: &mut Vec<Step>,
     axis: Axis,
 ) -> Result<(), Reported> {
-    let mut st = OwnedStep::new(axis, TestKind::Wildcard);
+    let mut st = Step::new(axis, TestKind::Wildcard);
     let p = build::num(b, 1.0)?;
-    let mut preds = NodeArray::new();
-    if preds.try_push(p).is_err() {
-        return Err(b.oom());
-    }
-    preds.install_into_step(&mut st);
-    if steps.try_push(st).is_err() {
-        return Err(b.oom());
-    }
-    Ok(())
+    build::push(b, &mut st.predicates, p)?;
+    build::push(b, steps, st)
 }
 
-/// Wrap a built step array in a relative PATH node, or free it on failure.
-unsafe fn finish_path(b: &Build, steps: StepArray) -> Built {
+/// Wrap built steps in a relative PATH node, or free them on failure.
+unsafe fn finish_path(b: &Build, steps: Vec<Step>) -> Built {
     build::path(b, steps)
 }
 
@@ -845,7 +812,7 @@ pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> Built 
         return Err(b.fail(ERR_SYNTAX, c"empty CSS selector"));
     }
 
-    let mut steps = StepArray::new();
+    let mut steps = Vec::new();
     emit_compound_step(
         b,
         &mut steps,

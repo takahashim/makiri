@@ -1,75 +1,77 @@
-//! Building, destroying and rewriting the AST: the one node factory, the
-//! destructors, the hoisting pass that marks context-independent subtrees, and
-//! the `//` peephole.
-//!
-//! Separate from `ast_view.rs`, whose views only borrow: everything here
-//! allocates, frees or rewrites.
+//! The passes run over a freshly parsed AST: the `//` peephole, then the
+//! hoisting analysis that finds context-independent subtrees and gives the ones
+//! worth remembering a memo slot.
 
-/* Each takes AST pointers its caller already holds. */
-#![allow(clippy::missing_safety_doc)]
+use super::ast::{Ast, Axis, Expr, ExprKind, Step, TestKind};
 
-use super::abi::*;
-use super::ast_view::{path_steps, step_preds};
-use super::own::Ast;
-use crate::err_setf;
-use crate::falloc::raw::callocarray;
-use core::ffi::c_void;
-use core::ptr;
-use core::ptr::NonNull;
+/* ---------- the peephole: // fusion ---------- */
 
-/// The one AST factory: charges the node budget, then hands back a zeroed node
-/// with its kind set. The XPath parser and the CSS lowering both go through it,
-/// which is what keeps `node_free` able to take apart whatever either built.
+/// Collapse each pair of consecutive steps
 ///
-/// # Safety
-/// `budget` must be live.
-pub(crate) unsafe fn node_alloc(budget: *mut Budget, kind: NodeKind) -> Result<Ast, Reported> {
-    let err = budget_sink(budget);
-    limit_ast_node(budget)?;
-    let Some(n) = NonNull::new(callocarray(1, core::mem::size_of::<Node>()) as *mut Node) else {
-        return Err(err_setf!(
-            err,
-            XP_ERR_OOM,
-            "out of memory allocating AST node"
-        ));
-    };
-    (*n.as_ptr()).kind = kind;
-    // SAFETY: a fresh zeroed node, owned by nothing else.
-    Ok(Ast::from_non_null(n))
-}
-
-pub unsafe fn step_clear(s: *mut Step) {
-    if s.is_null() {
-        return;
-    }
-    (*s).test.prefix.clear();
-    (*s).test.local.clear();
-    (*s).test.pi_target.clear();
-    for &p in step_preds(s) {
-        node_free(p);
-    }
-    if !(*s).predicates.is_null() {
-        free_c((*s).predicates as *mut c_void);
-    }
-    ptr::write_bytes(s, 0, 1);
-}
-
-/// Every step of a path, as a mutable slice. Separate from `path_steps` because
-/// the peephole rewrites in place.
-unsafe fn steps_mut<'a>(steps: *mut Step, n: usize) -> &'a mut [Step] {
-    if n == 0 {
-        &mut []
-    } else {
-        core::slice::from_raw_parts_mut(steps, n)
+/// ```text
+/// (descendant-or-self, node(), no predicates)
+/// (child,             X,       no predicates)
+/// ```
+///
+/// into one `(descendant, X, no predicates)`.
+///
+/// Safe per §2.5 only when the child step has no predicates: otherwise `//X[1]`
+/// would change meaning, from "the first X of each parent" to "the first X in
+/// document order". The synthesised `//` step never has predicates by
+/// construction, so only the child step's list has to be checked.
+fn fuse_descendant_or_self(steps: &mut Vec<Step>) {
+    let mut i = 0;
+    while i + 1 < steps.len() {
+        let (s, next) = (&steps[i], &steps[i + 1]);
+        let fusable = s.axis == Axis::DescendantOrSelf
+            && s.test.kind == TestKind::Node
+            && s.test.prefix.is_none()
+            && s.predicates.is_empty()
+            && next.axis == Axis::Child
+            && next.predicates.is_empty();
+        if fusable {
+            /* Drop the descendant-or-self step and promote the child step. */
+            steps.remove(i);
+            steps[i].axis = Axis::Descendant;
+        }
+        i += 1;
     }
 }
 
-/// A node-pointer array as a slice; empty when there are none.
-unsafe fn node_list<'a>(p: *mut *mut Node, n: usize) -> &'a [*mut Node] {
-    if n == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(p, n)
+fn peephole_steps(steps: &mut Vec<Step>) {
+    fuse_descendant_or_self(steps);
+    for s in steps {
+        for p in &mut s.predicates {
+            apply_peephole(p);
+        }
+    }
+}
+
+pub fn apply_peephole(e: &mut Expr) {
+    match &mut e.kind {
+        ExprKind::FnCall { args, .. } => {
+            for a in args {
+                apply_peephole(a);
+            }
+        }
+        ExprKind::Negate(x) => apply_peephole(x),
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            apply_peephole(lhs);
+            apply_peephole(rhs);
+        }
+        ExprKind::Path(p) => peephole_steps(&mut p.steps),
+        ExprKind::Filter {
+            expr,
+            predicates,
+            steps,
+        } => {
+            apply_peephole(expr);
+            for p in predicates {
+                apply_peephole(p);
+            }
+            peephole_steps(steps);
+        }
+        ExprKind::LiteralStr(_) | ExprKind::LiteralNum(_) | ExprKind::VarRef { .. } => {}
     }
 }
 
@@ -106,273 +108,139 @@ fn is_pure_builtin(name: &[u8], nargs: usize) -> bool {
     )
 }
 
-unsafe fn mark_step_predicates(s: *const Step) {
-    for &p in step_preds(s) {
-        mark_context_independent(p);
-    }
-}
-
-unsafe fn text_bytes<'a>(t: TextSlot) -> &'a [u8] {
-    t.as_bytes()
-}
-
-unsafe fn is_ci(n: *const Node) -> bool {
-    !n.is_null() && (*n).is_context_independent != 0
-}
-
-pub unsafe fn mark_context_independent(n: *mut Node) {
-    if n.is_null() {
-        return;
-    }
-    let ci = match Node::view(n) {
-        NodeRef::LiteralStr(_) | NodeRef::LiteralNum(_) => true,
+/// Record on every subtree whether it evaluates to the same value wherever it
+/// appears in one evaluate, and return the answer for `e`.
+///
+/// Bottom-up in one walk, so each node is visited once however deep the tree.
+fn mark_context_independent(e: &mut Expr) -> bool {
+    let ci = match &mut e.kind {
+        ExprKind::LiteralStr(_) | ExprKind::LiteralNum(_) => true,
         /* Conservative: a variable is not hoisted even though §1 fixes it per
          * evaluation. */
-        NodeRef::VarRef(_) => false,
-        NodeRef::FnCall(call) => {
-            let args = node_list(call.args, call.nargs);
-            /* Recurse first, so subtrees get their own marks even when this call
-             * is not itself hoistable. */
-            for &a in args {
-                mark_context_independent(a);
+        ExprKind::VarRef { .. } => false,
+        ExprKind::FnCall { prefix, name, args } => {
+            let mut all = true;
+            for a in args.iter_mut() {
+                all &= mark_context_independent(a);
             }
             /* A prefix means handler-routed or a namespaced builtin, neither
              * of which is hoistable. */
-            call.prefix.is_absent()
-                && is_pure_builtin(text_bytes(call.name), args.len())
-                && args.iter().all(|&a| is_ci(a))
+            prefix.is_none() && is_pure_builtin(name, args.len()) && all
         }
-        NodeRef::Unary(u) => {
-            mark_context_independent(u.expr);
-            is_ci(u.expr)
+        ExprKind::Negate(x) => mark_context_independent(x),
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            let l = mark_context_independent(lhs);
+            let r = mark_context_independent(rhs);
+            l && r
         }
-        NodeRef::BinOp(b) => {
-            mark_context_independent(b.lhs);
-            mark_context_independent(b.rhs);
-            is_ci(b.lhs) && is_ci(b.rhs)
+        /* An absolute path is context-independent: its seed is the document root
+         * whatever the outer context. A relative one uses the outer context node
+         * and is not hoistable. Predicates inside a path are evaluated against the
+         * path's own context, so their position() and last() do not leak -
+         * recurse so pure sub-expressions still get marked. */
+        ExprKind::Path(p) => {
+            mark_step_predicates(&mut p.steps);
+            p.absolute
         }
-        NodeRef::Path(p) => {
-            /* An absolute path is context-independent: its seed is the document
-             * root whatever the outer context. A relative one uses the outer
-             * context node and is not hoistable. Predicates inside a path are
-             * evaluated against the path's own context, so their position() and
-             * last() do not leak - recurse so pure sub-expressions still get
-             * marked. */
-            for s in path_steps(p.steps, p.nsteps) {
-                mark_step_predicates(s);
-            }
-            p.absolute != 0
-        }
-        NodeRef::Filter(f) => {
-            /* Conservative: filter expressions are not hoisted. */
-            mark_context_independent(f.expr);
-            for &p in node_list(f.preds, f.npreds) {
+        /* Conservative: filter expressions are not hoisted. */
+        ExprKind::Filter {
+            expr,
+            predicates,
+            steps,
+        } => {
+            mark_context_independent(expr);
+            for p in predicates {
                 mark_context_independent(p);
             }
-            for s in path_steps(f.path_steps, f.npath) {
-                mark_step_predicates(s);
-            }
+            mark_step_predicates(steps);
             false
         }
     };
-    (*n).is_context_independent = u8::from(ci);
+    e.context_independent = ci;
+    ci
 }
 
-/* ---------- the peephole: // fusion ---------- */
+fn mark_step_predicates(steps: &mut [Step]) {
+    for s in steps {
+        for p in &mut s.predicates {
+            mark_context_independent(p);
+        }
+    }
+}
 
-/// Collapse each pair of consecutive steps
+/// Give a memo slot to every subtree for which remembering the value can save
+/// work, and return how many were given. `mark_context_independent` must have
+/// run over `root`.
 ///
-/// ```text
-/// (descendant-or-self, node(), no predicates)
-/// (child,             X,       no predicates)
-/// ```
+/// That is a context-independent subtree that
 ///
-/// into one `(descendant, X, no predicates)`.
+/// - sits inside a predicate, the only place an expression is evaluated more
+///   than once in one evaluate (once per candidate node) - outside one, the
+///   remembered value would never be read;
+/// - is not a literal, which costs no more to evaluate than to copy back; and
+/// - is the largest such subtree: under a remembered parent, a child is never
+///   evaluated a second time.
 ///
-/// Safe per §2.5 only when the child step has no predicates: otherwise `//X[1]`
-/// would change meaning, from "the first X of each parent" to "the first X in
-/// document order". The synthesised `//` step never has predicates by
-/// construction, so only the child step's list has to be checked.
-unsafe fn fuse_descendant_or_self(steps: *mut Step, nsteps: *mut usize) {
-    if steps.is_null() || *nsteps < 2 {
-        return;
-    }
-    let n = *nsteps;
-    let all = steps_mut(steps, n);
-    let (mut w, mut r) = (0usize, 0usize);
-    while r < n {
-        let fusable = r + 1 < n
-            && all[r].axis == Axis::DescendantOrSelf
-            && all[r].test.kind == TestKind::Node
-            && all[r].test.prefix.is_absent()
-            && all[r].npredicates == 0
-            && all[r + 1].axis == Axis::Child
-            && all[r + 1].npredicates == 0;
-        if fusable {
-            /* Drop the descendant-or-self step and promote the child step. */
-            step_clear(&mut all[r]);
-            all[w] = all[r + 1];
-            ptr::write_bytes(&mut all[r + 1], 0, 1);
-            all[w].axis = Axis::Descendant;
-            w += 1;
-            r += 2;
-        } else {
-            if w != r {
-                all[w] = all[r];
-                ptr::write_bytes(&mut all[r], 0, 1);
-            }
-            w += 1;
-            r += 1;
-        }
-    }
-    *nsteps = w;
+/// None of this changes an answer or the budget charged: `eval_node` charges
+/// its op before consulting the table, and a subtree that is left out is one
+/// whose remembered value would not have been read.
+fn assign_memo_slots(root: &mut Expr) -> u32 {
+    let mut next = 0u32;
+    assign(root, false, true, &mut next);
+    next
 }
 
-unsafe fn peephole_step_predicates(s: *const Step) {
-    for &p in step_preds(s) {
-        apply_peephole(p);
+fn assign(e: &mut Expr, in_predicate: bool, parent_ci: bool, next: &mut u32) {
+    let ci = e.context_independent;
+    let literal = matches!(e.kind, ExprKind::LiteralStr(_) | ExprKind::LiteralNum(_));
+    if in_predicate && ci && !parent_ci && !literal {
+        if let Some(following) = next.checked_add(1) {
+            e.memo = Some(*next);
+            *next = following;
+        }
     }
-}
-
-pub unsafe fn apply_peephole(n: *mut Node) {
-    if n.is_null() {
-        return;
-    }
-    match Node::view_mut(n) {
-        NodeMut::FnCall(call) => {
-            for &a in node_list(call.args, call.nargs) {
-                apply_peephole(a);
+    match &mut e.kind {
+        ExprKind::FnCall { args, .. } => {
+            for a in args {
+                assign(a, in_predicate, ci, next);
             }
         }
-        NodeMut::Unary(u) => apply_peephole(u.expr),
-        NodeMut::BinOp(b) => {
-            apply_peephole(b.lhs);
-            apply_peephole(b.rhs);
+        ExprKind::Negate(x) => assign(x, in_predicate, ci, next),
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            assign(lhs, in_predicate, ci, next);
+            assign(rhs, in_predicate, ci, next);
         }
-        NodeMut::Path(p) => {
-            fuse_descendant_or_self(p.steps, &mut p.nsteps);
-            for s in path_steps(p.steps, p.nsteps) {
-                peephole_step_predicates(s);
+        ExprKind::Path(p) => assign_step_predicates(&mut p.steps, next),
+        ExprKind::Filter {
+            expr,
+            predicates,
+            steps,
+        } => {
+            assign(expr, in_predicate, false, next);
+            for p in predicates {
+                assign(p, true, false, next);
             }
+            assign_step_predicates(steps, next);
         }
-        NodeMut::Filter(f) => {
-            apply_peephole(f.expr);
-            for &p in node_list(f.preds, f.npreds) {
-                apply_peephole(p);
-            }
-            fuse_descendant_or_self(f.path_steps, &mut f.npath);
-            for s in path_steps(f.path_steps, f.npath) {
-                peephole_step_predicates(s);
-            }
-        }
-        _ => {}
+        ExprKind::LiteralStr(_) | ExprKind::LiteralNum(_) | ExprKind::VarRef { .. } => {}
     }
 }
 
-/* ---------- memos and destruction ---------- */
-
-unsafe fn clear_memos_step(s: *const Step) {
-    for &p in step_preds(s) {
-        node_clear_memos(p);
+/// A predicate is evaluated once per candidate node, and its parent is a step,
+/// not an expression - so its root is always the largest subtree there.
+fn assign_step_predicates(steps: &mut [Step], next: &mut u32) {
+    for s in steps {
+        for p in &mut s.predicates {
+            assign(p, true, false, next);
+        }
     }
 }
 
-pub unsafe fn node_clear_memos(n: *mut Node) {
-    if n.is_null() {
-        return;
-    }
-    if (*n).memoized != 0 {
-        val_clear(&raw mut (*n).memo_value);
-        (*n).memoized = 0;
-    }
-    match Node::view(n) {
-        NodeRef::FnCall(call) => {
-            for &a in node_list(call.args, call.nargs) {
-                node_clear_memos(a);
-            }
-        }
-        NodeRef::Unary(u) => node_clear_memos(u.expr),
-        NodeRef::BinOp(b) => {
-            node_clear_memos(b.lhs);
-            node_clear_memos(b.rhs);
-        }
-        NodeRef::Path(p) => {
-            for s in path_steps(p.steps, p.nsteps) {
-                clear_memos_step(s);
-            }
-        }
-        NodeRef::Filter(f) => {
-            node_clear_memos(f.expr);
-            for &p in node_list(f.preds, f.npreds) {
-                node_clear_memos(p);
-            }
-            for s in path_steps(f.path_steps, f.npath) {
-                clear_memos_step(s);
-            }
-        }
-        _ => {}
-    }
-}
-
-pub unsafe fn node_free(n: *mut Node) {
-    if n.is_null() {
-        return;
-    }
-    /* Free any memoized value first; the clear is idempotent. */
-    if (*n).memoized != 0 {
-        val_clear(&raw mut (*n).memo_value);
-        (*n).memoized = 0;
-    }
-    match Node::view_mut(n) {
-        NodeMut::LiteralStr(t) => t.clear(),
-        NodeMut::LiteralNum(_) => {}
-        NodeMut::VarRef(v) => {
-            v.prefix.clear();
-            v.name.clear();
-        }
-        NodeMut::FnCall(call) => {
-            call.prefix.clear();
-            call.name.clear();
-            for &a in node_list(call.args, call.nargs) {
-                node_free(a);
-            }
-            if !call.args.is_null() {
-                free_c(call.args as *mut c_void);
-            }
-        }
-        NodeMut::Unary(u) => node_free(u.expr),
-        NodeMut::BinOp(b) => {
-            node_free(b.lhs);
-            node_free(b.rhs);
-        }
-        NodeMut::Path(p) => {
-            for s in steps_mut(p.steps, p.nsteps) {
-                step_clear(s);
-            }
-            if !p.steps.is_null() {
-                free_c(p.steps as *mut c_void);
-            }
-        }
-        NodeMut::Filter(f) => {
-            node_free(f.expr);
-            for &p in node_list(f.preds, f.npreds) {
-                node_free(p);
-            }
-            if !f.preds.is_null() {
-                free_c(f.preds as *mut c_void);
-            }
-            for s in steps_mut(f.path_steps, f.npath) {
-                step_clear(s);
-            }
-            if !f.path_steps.is_null() {
-                free_c(f.path_steps as *mut c_void);
-            }
-        }
-    }
-    free_c(n as *mut c_void);
-}
-
-extern "C" {
-    #[link_name = "free"]
-    fn free_c(p: *mut c_void);
+/// Run the passes over a parsed root and wrap it.
+pub fn finish(mut root: Expr) -> Ast {
+    /* Peephole first, so the hoisting pass sees the rewritten step structure. */
+    apply_peephole(&mut root);
+    mark_context_independent(&mut root);
+    let slots = assign_memo_slots(&mut root);
+    Ast::with_memo_slots(root, slots)
 }

@@ -1,22 +1,24 @@
 //! XPath 1.0 recursive-descent parser (mkr_xpath_parse.c).
 //!
-//! It builds the C-layout AST through the same node factory and arrays as the
-//! CSS lowering, so the evaluator runs what either produces. Everything under
-//! construction is held by a guard - a node by `own::Ast`, a step by
-//! `OwnedStep`, an array by `NodeArray` / `StepArray` - and a finished part is
-//! installed into its parent's field. An error path simply returns: the drops
-//! free what was built.
+//! It builds the same AST as the CSS lowering, so the evaluator runs what either
+//! produces. A part under construction is ordinary owned data - a boxed operand,
+//! a step, a list - so an error path simply returns and the drops free what was
+//! built.
+//!
+//! Each expression node is charged against the AST budget where the C allocated
+//! it, so a query over the limit fails at the same point, with the same error, as
+//! it always has.
 //!
 //! Lookahead is one token, except where the grammar needs two (a NAME that may
 //! be an axis, a node-type keyword, or a function name), which is done by
 //! advancing and keeping the token that was there.
 
 use super::abi::*;
+use super::ast_ops;
 use super::lex::{LexErr, Lexer, Tok, Token};
 use super::msg::Bytes;
-use super::own::{Ast, NodeArray, OwnedStep, StepArray};
 use crate::err_setf;
-use core::ffi::c_int;
+use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 
 struct Parser<'a> {
     lx: Lexer<'a>,
@@ -26,6 +28,9 @@ struct Parser<'a> {
 
 /// A parse step: the value, or proof its error was written to the budget.
 type PResult<T = ()> = Result<T, Reported>;
+
+/// A name's optional prefix and its local part.
+type QualifiedName = (Option<Box<[u8]>>, Box<[u8]>);
 
 /// Report a lexer failure as an `mkr_xpath_error_t`. A free function because
 /// the very first token is lexed before there is a parser to hold it.
@@ -115,24 +120,39 @@ impl<'a> Parser<'a> {
         self.advance()
     }
 
-    fn new_node(&mut self, kind: NodeKind) -> PResult<Ast> {
-        // SAFETY: the parser's limits and error slot are live for the parse.
-        unsafe { node_alloc(self.budget, kind) }
+    /// Charge one expression node against the AST budget.
+    fn charge(&mut self) -> PResult {
+        // SAFETY: the parser's budget is live for the parse.
+        unsafe { limit_ast_node(self.budget) }
     }
 
-    /// Copy `text` into an owned-text AST slot. A failure must be propagated: a
-    /// null slot left in the AST would silently mis-compare at evaluation, so
-    /// the parse fails closed instead.
-    fn fill_owned(&self, text: &[u8]) -> PResult<TextSlot> {
-        // SAFETY: a silent sink is accepted; the parser reports its own.
-        unsafe { TextSlot::try_copy_bytes(text, ErrSink::silent(), None) }
-            .map_err(|_| err_setf!(self.err, XP_ERR_OOM, "out of memory in parser"))
+    /// Copy `text` into an AST name. A failure must be propagated: a missing
+    /// name would silently mis-compare at evaluation, so the parse fails closed
+    /// instead.
+    fn fill_owned(&self, text: &[u8]) -> PResult<Box<[u8]>> {
+        try_to_boxed_slice(text)
+            .ok_or_else(|| err_setf!(self.err, XP_ERR_OOM, "out of memory in parser"))
+    }
+
+    /// `e` on the heap, for an operand slot.
+    fn boxed(&self, e: Expr) -> PResult<Box<Expr>> {
+        try_box(e).map_err(|_| err_setf!(self.err, XP_ERR_OOM, "out of memory allocating AST node"))
+    }
+
+    /// A name token's optional prefix and local part, copied.
+    fn names(&self, t: &Token) -> PResult<QualifiedName> {
+        if t.kind == Tok::QName {
+            let (p, l) = split_qname(self.text(t));
+            Ok((Some(self.fill_owned(p)?), self.fill_owned(l)?))
+        } else {
+            Ok((None, self.fill_owned(self.text(t))?))
+        }
     }
 
     /// Charge the step budget, then append. A step that does not land is freed.
-    fn push_step(&mut self, steps: &mut StepArray, s: OwnedStep) -> PResult {
+    fn push_step(&mut self, steps: &mut Vec<Step>, s: Step) -> PResult {
         unsafe { limit_check_steps(self.budget, steps.len() + 1)? };
-        if steps.try_push(s).is_err() {
+        if steps.mkr_push(s).is_err() {
             return Err(err_setf!(
                 self.err,
                 XP_ERR_OOM,
@@ -145,15 +165,12 @@ impl<'a> Parser<'a> {
     /// Parse a run of `('/' | '//') Step`, expanding each `//` into an implicit
     /// `descendant-or-self::node()` step. A non-separator token makes this a
     /// no-op. On failure the caller drops `steps`, freeing what was pushed.
-    fn parse_step_tail(&mut self, steps: &mut StepArray) -> PResult {
+    fn parse_step_tail(&mut self, steps: &mut Vec<Step>) -> PResult {
         while self.kind() == Tok::Slash || self.kind() == Tok::DSlash {
             let dslash = self.kind() == Tok::DSlash;
             self.advance()?;
             if dslash {
-                self.push_step(
-                    steps,
-                    OwnedStep::new(Axis::DescendantOrSelf, TestKind::Node),
-                )?;
+                self.push_step(steps, Step::new(Axis::DescendantOrSelf, TestKind::Node))?;
             }
             let next = self.parse_step()?;
             self.push_step(steps, next)?;
@@ -178,8 +195,7 @@ impl<'a> Parser<'a> {
                     out.kind = TestKind::Pi;
                     if self.kind() == Tok::Literal {
                         let t = self.tok();
-                        let s = self.text(&t);
-                        out.pi_target = self.fill_owned(s)?;
+                        out.pi_target = Some(self.fill_owned(self.text(&t))?);
                         self.advance()?;
                     }
                 }
@@ -187,12 +203,12 @@ impl<'a> Parser<'a> {
             return self.eat(Tok::RParen, "')' after node type test");
         }
         out.kind = TestKind::Name;
-        out.local = self.fill_owned(name)?;
+        out.local = Some(self.fill_owned(name)?);
         Ok(())
     }
 
     /// Called with the current token at the first token of the node test; leaves
-    /// it at the token after. `out` is a fresh test with no texts yet.
+    /// it at the token after. `out` is a fresh test with no names yet.
     fn parse_node_test(&mut self, out: &mut NodeTest) -> PResult {
         if self.kind() == Tok::Star {
             out.kind = TestKind::Wildcard;
@@ -207,12 +223,12 @@ impl<'a> Parser<'a> {
             /* `prefix:local` or `prefix:*`. */
             let t = self.tok();
             let (prefix, local) = split_qname(self.text(&t));
-            out.prefix = self.fill_owned(prefix)?;
+            out.prefix = Some(self.fill_owned(prefix)?);
             if local == b"*" {
                 out.kind = TestKind::Wildcard;
             } else {
                 out.kind = TestKind::Name;
-                out.local = self.fill_owned(local)?;
+                out.local = Some(self.fill_owned(local)?);
             }
             return self.advance();
         }
@@ -221,13 +237,13 @@ impl<'a> Parser<'a> {
 
     /* ---- predicates ---- */
 
-    fn parse_predicates(&mut self, preds: &mut NodeArray) -> PResult {
+    fn parse_predicates(&mut self, preds: &mut Vec<Expr>) -> PResult {
         while self.kind() == Tok::LBracket {
             unsafe { limit_check_predicates(self.budget, preds.len() + 1)? };
             self.advance()?;
             let e = self.parse_expr()?;
             self.eat(Tok::RBracket, "']' to close predicate")?;
-            if preds.try_push(e).is_err() {
+            if preds.mkr_push(e).is_err() {
                 return Err(err_setf!(
                     self.err,
                     XP_ERR_OOM,
@@ -241,16 +257,14 @@ impl<'a> Parser<'a> {
     /* ---- steps ---- */
 
     /// Parse one step. A failure partway leaves an owned name or predicates
-    /// behind; the guards free them, so every caller just bails.
-    fn parse_step(&mut self) -> PResult<OwnedStep> {
-        let mut step = OwnedStep::new(Axis::Child, TestKind::Name);
-        let mut preds = NodeArray::new();
-        self.parse_step_inner(&mut step, &mut preds)?;
-        preds.install_into_step(&mut step);
+    /// behind in the step, which is freed as the error returns.
+    fn parse_step(&mut self) -> PResult<Step> {
+        let mut step = Step::new(Axis::Child, TestKind::Name);
+        self.parse_step_inner(&mut step)?;
         Ok(step)
     }
 
-    fn parse_step_inner(&mut self, out: &mut Step, preds: &mut NodeArray) -> PResult {
+    fn parse_step_inner(&mut self, out: &mut Step) -> PResult {
         /* Abbreviated steps. */
         if self.kind() == Tok::Dot {
             self.advance()?;
@@ -293,19 +307,19 @@ impl<'a> Parser<'a> {
                  * it through the shared node-type grammar. */
                 out.axis = Axis::Child;
                 self.parse_nodetype_or_name(saved, &mut out.test)?;
-                return self.parse_predicates(preds);
+                return self.parse_predicates(&mut out.predicates);
             }
         } else {
             out.axis = Axis::Child;
         }
 
         self.parse_node_test(&mut out.test)?;
-        self.parse_predicates(preds)
+        self.parse_predicates(&mut out.predicates)
     }
 
     /* ---- location paths ---- */
 
-    fn parse_relative_path(&mut self, steps: &mut StepArray) -> PResult {
+    fn parse_relative_path(&mut self, steps: &mut Vec<Step>) -> PResult {
         let s = self.parse_step()?;
         self.push_step(steps, s)?;
         self.parse_step_tail(steps)
@@ -318,9 +332,9 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn parse_location_path(&mut self) -> PResult<Ast> {
-        let mut n = self.new_node(NodeKind::Path)?;
-        let mut steps = StepArray::new();
+    fn parse_location_path(&mut self) -> PResult<Expr> {
+        self.charge()?;
+        let mut steps = Vec::new();
         let absolute = match self.kind() {
             Tok::Slash => {
                 self.advance()?;
@@ -340,20 +354,12 @@ impl<'a> Parser<'a> {
                 false
             }
         };
-        // SAFETY: a fresh PATH node with no steps yet.
-        unsafe {
-            let NodeMut::Path(p) = n.payload_mut() else {
-                unreachable!("a fresh PATH node")
-            };
-            p.absolute = c_int::from(absolute);
-            steps.install_into_path(n.as_raw());
-        }
-        Ok(n)
+        Ok(Expr::new(ExprKind::Path(Path { absolute, steps })))
     }
 
     /* ---- primaries, function calls, filters ---- */
 
-    fn parse_function_call(&mut self, name_tok: Token) -> PResult<Ast> {
+    fn parse_function_call(&mut self, name_tok: Token) -> PResult<Expr> {
         if self.kind() != Tok::LParen {
             return Err(err_setf!(
                 self.err,
@@ -362,30 +368,15 @@ impl<'a> Parser<'a> {
             ));
         }
         self.advance()?;
-        let mut n = self.new_node(NodeKind::FnCall)?;
-        {
-            // SAFETY: a fresh FNCALL node; only its name slots are written.
-            let NodeMut::FnCall(f) = (unsafe { n.payload_mut() }) else {
-                unreachable!("a fresh FNCALL node")
-            };
-            if name_tok.kind == Tok::QName {
-                /* Each copy lands in the node as it is made, so a failure on the
-                 * second leaves the first for the node's guard to free. */
-                let (p, l) = split_qname(self.text(&name_tok));
-                f.prefix = self.fill_owned(p)?;
-                f.name = self.fill_owned(l)?;
-            } else {
-                let s = self.text(&name_tok);
-                f.name = self.fill_owned(s)?;
-            }
-        }
+        self.charge()?;
+        let (prefix, name) = self.names(&name_tok)?;
 
-        let mut args = NodeArray::new();
+        let mut args = Vec::new();
         if self.kind() != Tok::RParen {
             loop {
                 unsafe { limit_check_func_args(self.budget, args.len() + 1)? };
                 let arg = self.parse_expr()?;
-                if args.try_push(arg).is_err() {
+                if args.mkr_push(arg).is_err() {
                     return Err(err_setf!(
                         self.err,
                         XP_ERR_OOM,
@@ -399,12 +390,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.eat(Tok::RParen, "')' after function arguments")?;
-        // SAFETY: the FNCALL node has no arguments yet.
-        unsafe { args.install_as_args(n.as_raw()) };
-        Ok(n)
+        Ok(Expr::new(ExprKind::FnCall { prefix, name, args }))
     }
 
-    fn parse_primary(&mut self) -> PResult<Ast> {
+    fn parse_primary(&mut self) -> PResult<Expr> {
         match self.kind() {
             Tok::Dollar => {
                 self.advance()?;
@@ -415,24 +404,10 @@ impl<'a> Parser<'a> {
                         "expected name after '$'"
                     ));
                 }
-                let mut n = self.new_node(NodeKind::VarRef)?;
-                let t = self.tok();
-                {
-                    // SAFETY: a fresh VARREF node; only its name slots are written.
-                    let NodeMut::VarRef(v) = (unsafe { n.payload_mut() }) else {
-                        unreachable!("a fresh VARREF node")
-                    };
-                    if t.kind == Tok::QName {
-                        let (p, l) = split_qname(self.text(&t));
-                        v.prefix = self.fill_owned(p)?;
-                        v.name = self.fill_owned(l)?;
-                    } else {
-                        let s = self.text(&t);
-                        v.name = self.fill_owned(s)?;
-                    }
-                }
+                self.charge()?;
+                let (prefix, name) = self.names(&self.tok())?;
                 self.advance()?;
-                Ok(n)
+                Ok(Expr::new(ExprKind::VarRef { prefix, name }))
             }
             Tok::LParen => {
                 self.advance()?;
@@ -441,28 +416,17 @@ impl<'a> Parser<'a> {
                 Ok(n)
             }
             Tok::Literal => {
-                let mut n = self.new_node(NodeKind::LiteralStr)?;
+                self.charge()?;
                 let t = self.tok();
-                let s = self.text(&t);
-                let text = self.fill_owned(s)?;
-                // SAFETY: a fresh LITERAL node; only its text slot is written.
-                let NodeMut::LiteralStr(slot) = (unsafe { n.payload_mut() }) else {
-                    unreachable!("a fresh LITERAL node")
-                };
-                *slot = text;
+                let text = self.fill_owned(self.text(&t))?;
                 self.advance()?;
-                Ok(n)
+                Ok(Expr::new(ExprKind::LiteralStr(text)))
             }
             Tok::Number => {
-                let mut n = self.new_node(NodeKind::LiteralNum)?;
-                // SAFETY: a fresh number LITERAL node.
+                self.charge()?;
                 let num = self.tok().num;
-                let NodeMut::LiteralNum(slot) = (unsafe { n.payload_mut() }) else {
-                    unreachable!("a fresh number LITERAL node")
-                };
-                *slot = num;
                 self.advance()?;
-                Ok(n)
+                Ok(Expr::new(ExprKind::LiteralNum(num)))
             }
             Tok::Name | Tok::QName => {
                 let name_tok = self.tok();
@@ -484,29 +448,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_filter_expr(&mut self) -> PResult<Ast> {
+    fn parse_filter_expr(&mut self) -> PResult<Expr> {
         let primary = self.parse_primary()?;
         if !matches!(self.kind(), Tok::LBracket | Tok::Slash | Tok::DSlash) {
             return Ok(primary);
         }
-        let mut f = self.new_node(NodeKind::Filter)?;
-        // SAFETY: a fresh FILTER node takes sole ownership of `primary`.
-        let NodeMut::Filter(filter) = (unsafe { f.payload_mut() }) else {
-            unreachable!("a fresh FILTER node")
-        };
-        filter.expr = primary.into_raw();
-        let mut preds = NodeArray::new();
-        self.parse_predicates(&mut preds)?;
+        self.charge()?;
+        let expr = self.boxed(primary)?;
+        let mut predicates = Vec::new();
+        self.parse_predicates(&mut predicates)?;
         /* Optional trailing location path (`$x/foo`, `(expr)//bar`). The shared
          * loop is a no-op when no separator follows. */
-        let mut steps = StepArray::new();
+        let mut steps = Vec::new();
         self.parse_step_tail(&mut steps)?;
-        // SAFETY: the FILTER node has neither predicates nor a path yet.
-        unsafe {
-            preds.install_as_filter_preds(f.as_raw());
-            steps.install_as_filter_path(f.as_raw());
-        }
-        Ok(f)
+        Ok(Expr::new(ExprKind::Filter {
+            expr,
+            predicates,
+            steps,
+        }))
     }
 
     /// LocationPath or FilterExpr?
@@ -526,7 +485,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_path_expr(&mut self) -> PResult<Ast> {
+    fn parse_path_expr(&mut self) -> PResult<Expr> {
         if self.kind() == Tok::Slash || self.kind() == Tok::DSlash {
             return self.parse_location_path();
         }
@@ -539,21 +498,16 @@ impl<'a> Parser<'a> {
     /* ---- the operator ladder ---- */
 
     /// `lhs op rhs`, owning both; they are freed if the node cannot be made.
-    fn make_binop(&mut self, op: Op, lhs: Ast, rhs: Ast) -> PResult<Ast> {
-        let mut n = self.new_node(NodeKind::BinOp)?;
-        // SAFETY: a fresh BINOP node takes sole ownership of both operands.
-        unsafe {
-            let NodeMut::BinOp(b) = n.payload_mut() else {
-                unreachable!("a fresh BINOP node")
-            };
-            b.op = op;
-            b.lhs = lhs.into_raw();
-            b.rhs = rhs.into_raw();
-        }
-        Ok(n)
+    fn make_binop(&mut self, op: Op, lhs: Expr, rhs: Expr) -> PResult<Expr> {
+        self.charge()?;
+        Ok(Expr::new(ExprKind::BinOp {
+            op,
+            lhs: self.boxed(lhs)?,
+            rhs: self.boxed(rhs)?,
+        }))
     }
 
-    fn parse_union(&mut self) -> PResult<Ast> {
+    fn parse_union(&mut self) -> PResult<Expr> {
         let mut l = self.parse_path_expr()?;
         while self.kind() == Tok::Pipe {
             self.advance()?;
@@ -563,7 +517,7 @@ impl<'a> Parser<'a> {
         Ok(l)
     }
 
-    fn parse_unary(&mut self) -> PResult<Ast> {
+    fn parse_unary(&mut self) -> PResult<Expr> {
         let mut neg = false;
         while self.kind() == Tok::Minus {
             neg = !neg;
@@ -573,18 +527,13 @@ impl<'a> Parser<'a> {
         if !neg {
             return Ok(e);
         }
-        let mut u = self.new_node(NodeKind::Unary)?;
-        // SAFETY: a fresh UNARY node takes sole ownership of `e`.
-        let NodeMut::Unary(un) = (unsafe { u.payload_mut() }) else {
-            unreachable!("a fresh UNARY node")
-        };
-        un.expr = e.into_raw();
-        Ok(u)
+        self.charge()?;
+        Ok(Expr::new(ExprKind::Negate(self.boxed(e)?)))
     }
 
     /// Parse binary level `li`, recursing into the tighter levels; the tightest
     /// level's operand is `parse_unary` (prefix '-'). Left-associative.
-    fn parse_binary_level(&mut self, li: usize) -> PResult<Ast> {
+    fn parse_binary_level(&mut self, li: usize) -> PResult<Expr> {
         let operand = |p: &mut Self| {
             if li == 0 {
                 p.parse_unary()
@@ -607,7 +556,7 @@ impl<'a> Parser<'a> {
         Ok(l)
     }
 
-    fn parse_expr(&mut self) -> PResult<Ast> {
+    fn parse_expr(&mut self) -> PResult<Expr> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
         unsafe { limit_recurse_enter(self.budget)? };
         let n = self.parse_binary_level(BINOP_LEVELS.len() - 1);
@@ -661,14 +610,14 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 
 /* ---- entry ---- */
 
-/// Parse an expression into a Rust-owned compiled AST; `Err` with the budget's
-/// error slot filled on failure.
+/// Parse an expression into a compiled AST; `Err` with the budget's error slot
+/// filled on failure.
 ///
 /// `expr` is a verified text: NUL-free, valid UTF-8.
 ///
 /// # Safety
 /// `budget` must be null or live.
-pub unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Ast, Reported> {
+pub unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Box<Ast>, Reported> {
     let err = budget_sink(budget);
     if budget.is_null() {
         return Err(err_setf!(err, XP_ERR_INTERNAL, "parse: budget required"));
@@ -690,8 +639,6 @@ pub unsafe fn parse_owned(expr: VerifiedText, budget: *mut Budget) -> Result<Ast
             Bytes(p.text(&t))
         ));
     }
-    /* Peephole first, so the hoisting pass sees the rewritten step structure. */
-    apply_peephole(root.as_raw());
-    mark_context_independent(root.as_raw());
-    Ok(root)
+    try_box(ast_ops::finish(root))
+        .map_err(|_| err_setf!(err, XP_ERR_OOM, "out of memory allocating AST node"))
 }

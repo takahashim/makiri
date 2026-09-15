@@ -17,7 +17,7 @@ pub use makiri::xpath::ctx::{
     evaluate, evaluate_first, xpath_register_ns, Backend, OwnedContext, XPathValue,
 };
 pub use makiri::xpath::limits::Budget;
-pub use makiri::xpath::own::Ast;
+pub use makiri::xpath::ast::Ast;
 pub use makiri::xpath::parse::parse_owned;
 pub use makiri::xpath::ctx::{ctx_budget, Context};
 pub use makiri::xpath::limits::Limits;
@@ -51,7 +51,7 @@ pub unsafe fn limits<'a>(ctx: *mut Context) -> &'a mut Limits {
 ///
 /// # Safety
 /// `ctx` must be live.
-pub unsafe fn parse(ctx: &OwnedContext, text: VerifiedText) -> Option<Ast> {
+pub unsafe fn parse(ctx: &OwnedContext, text: VerifiedText) -> Option<Box<Ast>> {
     let budget = ctx_budget(ctx.as_ptr());
     (*budget).limits.ast_nodes = 0;
     parse_owned(text, budget).ok()
@@ -66,8 +66,8 @@ pub unsafe fn parse(ctx: &OwnedContext, text: VerifiedText) -> Option<Ast> {
 /// # Safety
 /// `ctx` must be live and `ast` parsed for it.
 pub unsafe fn evaluate_both(ctx: &OwnedContext, ast: &Ast) {
-    let full = evaluate(ctx.as_ptr(), ast.as_raw());
-    let first = evaluate_first(ctx.as_ptr(), ast.as_raw());
+    let full = evaluate(ctx.as_ptr(), ast);
+    let first = evaluate_first(ctx.as_ptr(), ast);
     if let (Ok(XPathValue::NodeSet(all)), Ok(XPathValue::NodeSet(one))) = (&full, &first) {
         assert_eq!(
             all.as_slice().first(),

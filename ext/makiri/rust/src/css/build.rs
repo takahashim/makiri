@@ -6,94 +6,80 @@
 //! which is what the C's cascade of `if (x == NULL) { free(...); return NULL; }`
 //! was doing, spelled once per builder instead of once per call.
 //!
-//! The allocations match the AST destructors exactly: nodes through
-//! `node_alloc`, owned text through `TextSlot::try_copy`, arrays through
-//! `xpath::own`'s `NodeArray` / `StepArray`. That is why none of this uses a
-//! `Vec`: the destructors walk these C-layout fields and free them with libc.
+//! Each expression node is charged against the AST budget where the builder
+//! makes it, as the parser does, and every allocation goes through `falloc`.
 
 use super::Build;
+use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
-use crate::xpath::ast::NodeMut;
-use crate::xpath::ast::{Axis, NodeKind, Op, TestKind};
-use crate::xpath::ast_ops::node_alloc;
+use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
+use crate::xpath::limits::limit_ast_node;
 use crate::xpath::msg::Reported;
-pub(crate) use crate::xpath::own::{Ast, NodeArray, OwnedStep, StepArray};
-use crate::xpath::value::TextSlot;
 
 /// A node under construction, or the proof its build failed with `*err` set.
-pub(crate) type Built = Result<Ast, Reported>;
+pub(crate) type Built = Result<Expr, Reported>;
 
-#[inline]
-fn borrowed(s: &[u8]) -> Option<VerifiedText> {
-    VerifiedText::from_bytes(s)
+/// Charge one expression node against the AST budget.
+pub(crate) unsafe fn charge(b: &Build) -> Result<(), Reported> {
+    limit_ast_node(b.budget)
 }
 
-/// A zeroed node of `kind`, charged against the AST budget.
-pub(crate) unsafe fn node(b: &Build, kind: NodeKind) -> Built {
-    node_alloc(b.budget, kind)
-}
-
-/// An owned copy of `s` for an AST text slot, or `Err` with `*err` set.
-pub(crate) unsafe fn copy_text(b: &Build, s: &[u8]) -> Result<TextSlot, Reported> {
-    let Some(text) = borrowed(s) else {
+/// An owned copy of `s` for an AST name, or `Err` with `*err` set.
+pub(crate) unsafe fn copy_text(b: &Build, s: &[u8]) -> Result<Box<[u8]>, Reported> {
+    if VerifiedText::from_bytes(s).is_none() {
         return Err(crate::err_setf!(
             b.err,
             crate::xpath::msg::XP_ERR_INTERNAL,
             "invalid internal CSS text"
         ));
-    };
-    TextSlot::try_copy(text.into(), b.err, Some(c"css name"))
+    }
+    try_to_boxed_slice(s).ok_or_else(|| b.fail(super::ERR_OOM, c"css name"))
+}
+
+/// `e` on the heap, for an operand slot.
+pub(crate) unsafe fn boxed(b: &Build, e: Expr) -> Result<Box<Expr>, Reported> {
+    try_box(e).map_err(|_| b.oom())
+}
+
+/// Append to a list the AST owns; `item` is dropped if it cannot grow.
+pub(crate) unsafe fn push<T>(b: &Build, list: &mut Vec<T>, item: T) -> Result<(), Reported> {
+    list.mkr_push(item).map_err(|_| b.oom())
 }
 
 pub(crate) unsafe fn literal(b: &Build, s: &[u8]) -> Built {
-    let mut n = node(b, NodeKind::LiteralStr)?;
-    let text = copy_text(b, s)?;
-    let NodeMut::LiteralStr(slot) = n.payload_mut() else {
-        unreachable!("a fresh LITERAL node")
-    };
-    *slot = text;
-    Ok(n)
+    charge(b)?;
+    Ok(Expr::new(ExprKind::LiteralStr(copy_text(b, s)?)))
 }
 
 pub(crate) unsafe fn num(b: &Build, v: f64) -> Built {
-    let mut n = node(b, NodeKind::LiteralNum)?;
-    let NodeMut::LiteralNum(slot) = n.payload_mut() else {
-        unreachable!("a fresh number LITERAL node")
-    };
-    *slot = v;
-    Ok(n)
+    charge(b)?;
+    Ok(Expr::new(ExprKind::LiteralNum(v)))
 }
 
-/// `lhs op rhs`. A `None` operand fails without allocating, dropping the other.
+/// `lhs op rhs`. An `Err` operand fails without charging, dropping the other.
 pub(crate) unsafe fn binop(b: &Build, op: Op, lhs: Built, rhs: Built) -> Built {
     let (lhs, rhs) = (lhs?, rhs?);
-    let mut n = node(b, NodeKind::BinOp)?;
-    let NodeMut::BinOp(bin) = n.payload_mut() else {
-        unreachable!("a fresh BINOP node")
-    };
-    bin.op = op;
-    bin.lhs = lhs.into_raw();
-    bin.rhs = rhs.into_raw();
-    Ok(n)
+    charge(b)?;
+    Ok(Expr::new(ExprKind::BinOp {
+        op,
+        lhs: boxed(b, lhs)?,
+        rhs: boxed(b, rhs)?,
+    }))
 }
 
-/// A call to an internal, compile-time-known function name. Any `None` argument
-/// fails the call; the arguments already collected are dropped with the array.
+/// A call to an internal, compile-time-known function name. Any `Err` argument
+/// fails the call; the arguments already collected are dropped with the list.
 pub(crate) unsafe fn call<const N: usize>(b: &Build, name: &[u8], args: [Built; N]) -> Built {
-    let mut argv = NodeArray::new();
+    let mut argv = Vec::new();
     for arg in args {
-        if argv.try_push(arg?).is_err() {
-            return Err(b.oom());
-        }
+        push(b, &mut argv, arg?)?;
     }
-    let mut n = node(b, NodeKind::FnCall)?;
-    let text = copy_text(b, name)?;
-    let NodeMut::FnCall(f) = n.payload_mut() else {
-        unreachable!("a fresh FNCALL node")
-    };
-    f.name = text;
-    argv.install_as_args(n.as_raw());
-    Ok(n)
+    charge(b)?;
+    Ok(Expr::new(ExprKind::FnCall {
+        prefix: None,
+        name: copy_text(b, name)?,
+        args: argv,
+    }))
 }
 
 /// A one-argument call, the shape most of the lowering wants.
@@ -106,12 +92,13 @@ pub(crate) unsafe fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Buil
     call(b, name, [a0, a1])
 }
 
-/// A relative PATH node over an already-built step array.
-pub(crate) unsafe fn path(b: &Build, steps: StepArray) -> Built {
-    let n = node(b, NodeKind::Path)?;
-    /* Zeroed at allocation, so the path is already relative. */
-    steps.install_into_path(n.as_raw());
-    Ok(n)
+/// A relative PATH node over already-built steps.
+pub(crate) unsafe fn path(b: &Build, steps: Vec<Step>) -> Built {
+    charge(b)?;
+    Ok(Expr::new(ExprKind::Path(Path {
+        absolute: false,
+        steps,
+    })))
 }
 
 /// A one-step relative PATH with no predicates: `axis::nodetest`.
@@ -130,8 +117,8 @@ pub(crate) unsafe fn step_path(
 /// A one-step relative PATH with a NAME test: `axis::[prefix:]local`.
 ///
 /// The shared builder for every named single-step path - `@prefix:name`, the
-/// of-type `not()`, the nth-of-type position - so the step alloc, the two text
-/// sets and the partial-free on failure exist once.
+/// of-type `not()`, the nth-of-type position - so the step, its two names and
+/// the charge exist once.
 pub(crate) unsafe fn named_step_path(
     b: &Build,
     axis: Axis,
@@ -148,30 +135,29 @@ unsafe fn named_step_path_inner(
     local: Option<&[u8]>,
     nt_kind: TestKind,
 ) -> Built {
-    let n = node(b, NodeKind::Path)?;
-    let mut step = OwnedStep::new(axis, nt_kind);
+    charge(b)?;
+    let mut step = Step::new(axis, nt_kind);
 
     if nt_kind == TestKind::Name {
         if let Some(local) = local {
-            step.test.local = copy_text(b, local)?;
+            step.test.local = Some(copy_text(b, local)?);
         }
         if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
-            step.test.prefix = copy_text(b, prefix)?;
+            step.test.prefix = Some(copy_text(b, prefix)?);
         }
     }
 
-    let mut steps = StepArray::new();
-    if steps.try_push(step).is_err() {
-        return Err(b.oom());
-    }
-    /* Zeroed at allocation, so the path is already relative. */
-    steps.install_into_path(n.as_raw());
-    Ok(n)
+    let mut steps = Vec::new();
+    push(b, &mut steps, step)?;
+    Ok(Expr::new(ExprKind::Path(Path {
+        absolute: false,
+        steps,
+    })))
 }
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.
 pub(crate) unsafe fn attr_ns(b: &Build, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    named_step_path(b, crate::xpath::ast::Axis::Attribute, prefix, name)
+    named_step_path(b, Axis::Attribute, prefix, name)
 }
 
 /// `@name` with no namespace.
@@ -208,10 +194,8 @@ pub(crate) unsafe fn token_match(
     attr_name: &[u8],
     value: &[u8],
 ) -> Built {
-    /* The padded literal is built on the Rust stack rather than in a C
-     * allocation: it is copied into the AST by `literal`, so it needs to live
-     * only until then. The C malloc'd it because it had no other way to
-     * concatenate. */
+    /* The padded literal needs to live only until `literal` copies it into the
+     * AST. */
     let Some(mut padded) = crate::falloc::try_vec_with_capacity::<u8>(value.len() + 2) else {
         return Err(b.oom());
     };

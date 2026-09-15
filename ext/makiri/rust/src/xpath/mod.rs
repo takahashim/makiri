@@ -18,9 +18,8 @@
 //!   dom.rs        the node-access contract, as a trait
 //!   dom_handle.rs raw handle conversion
 //!   own.rs        guards over the allocations the engine passes around
-//!   ast.rs        the compiled AST's kinds and node layout
-//!   ast_view.rs   the AST's arrays, viewed as slices
-//!   ast_ops.rs    building, destroying and rewriting one
+//!   ast.rs        the compiled AST
+//!   ast_ops.rs    the peephole and hoisting passes over a parsed one
 //!   runtime_abi.rs raw node-sets, owned text, values and per-evaluate caches
 //!   axis.rs       the thirteen axes, as orders over the tree
 //!   order.rs      document order and its per-evaluate index
@@ -41,7 +40,6 @@ pub mod abi;
 pub mod msg;
 
 pub mod ast;
-pub mod ast_view;
 pub mod lex;
 pub mod number;
 pub mod parse;

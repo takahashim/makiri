@@ -7,7 +7,6 @@
 
 use super::abi::*;
 use super::dom::*;
-use super::value::owned_bytes;
 
 /// What a name test needs from the context, resolved ONCE per step rather than
 /// per visited node.
@@ -55,17 +54,16 @@ impl<'a, D: Dom> Bindings<'a, D> {
 /// resolves it once in `eval_step` rather than per node.
 unsafe fn name_test_match<D: Dom>(
     doc: D::Doc,
-    test: *const NodeTest,
+    test: &NodeTest,
     node: D::Node,
     axis: Axis,
     b: &Bindings<D>,
 ) -> bool {
-    let want_local = owned_bytes((*test).local);
-    if (*test).local.is_absent() {
+    let Some(want_local) = test.local.as_deref() else {
         return false;
-    }
+    };
     let is_attr = axis == Axis::Attribute;
-    let prefixed = (*test).prefix.is_present();
+    let prefixed = test.prefix.is_some();
 
     let got: &[u8] = if D::IS_XML || prefixed {
         if is_attr {
@@ -105,13 +103,10 @@ unsafe fn name_test_match<D: Dom>(
     }
 }
 
-unsafe fn resolved_prefix<'a, D: Dom>(
-    b: &Bindings<'a, D>,
-    test: *const NodeTest,
-) -> Option<&'a [u8]> {
+unsafe fn resolved_prefix<'a, D: Dom>(b: &Bindings<'a, D>, test: &NodeTest) -> Option<&'a [u8]> {
     match b.pre {
         Some(u) => Some(u),
-        None => lookup_ns(b.ctx, owned_bytes((*test).prefix)),
+        None => lookup_ns(b.ctx, test.prefix.as_deref().unwrap_or(&[])),
     }
 }
 
@@ -126,16 +121,16 @@ pub unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]
 
 ///
 /// # Safety
-/// `test` must be a live node test in the AST being evaluated, `node` a live
-/// handle, and `b` bindings built for this same context.
+/// `node` must be a live handle, and `b` bindings built for the evaluating
+/// context.
 pub unsafe fn node_principal_match<D: Dom>(
     doc: D::Doc,
-    test: *const NodeTest,
+    test: &NodeTest,
     node: D::Node,
     axis: Axis,
     b: &Bindings<D>,
 ) -> bool {
-    match (*test).kind {
+    match test.kind {
         TestKind::Node => {
             /* §5's data model has only element, attribute, text, namespace, PI,
              * comment and the root. Both representations additionally carry
@@ -154,10 +149,10 @@ pub unsafe fn node_principal_match<D: Dom>(
             if D::node_type(doc, node) != NTYPE_PI {
                 return false;
             }
-            if (*test).pi_target.is_absent() {
-                return true;
+            match test.pi_target.as_deref() {
+                None => true,
+                Some(target) => D::pi_name(doc, node) == target,
             }
-            D::pi_name(doc, node) == owned_bytes((*test).pi_target)
         }
         TestKind::Wildcard => {
             if axis == Axis::Namespace {
@@ -174,7 +169,7 @@ pub unsafe fn node_principal_match<D: Dom>(
             /* `*` matches any namespace; `prefix:*` only the one bound to the
              * prefix. An unknown prefix is reported up front by the step driver;
              * here it is a non-match. */
-            if (*test).prefix.is_absent() {
+            if test.prefix.is_none() {
                 return true;
             }
             match resolved_prefix(b, test) {

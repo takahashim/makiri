@@ -17,11 +17,6 @@ pub use super::value::{
 };
 pub use crate::cbuf::BUF_OK;
 
-pub use super::ast_ops::apply_peephole;
-pub use super::ast_ops::mark_context_independent;
-pub(crate) use super::ast_ops::node_alloc;
-pub use super::ast_ops::node_free;
-pub use super::ast_ops::step_clear;
 pub use super::ctx::ctx_document;
 pub use super::ctx::ctx_func_resolver;
 pub use super::ctx::ctx_limits;

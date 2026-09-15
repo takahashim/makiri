@@ -7,12 +7,10 @@
 //! changes the answer, only the cost" property readable.
 
 use super::abi::*;
-use super::ast_view::step_preds;
 use super::dom::*;
 use super::msg::Bytes;
 use super::nodetest::{lookup_ns, node_principal_match, Bindings};
 use super::own::Set;
-use super::value::owned_bytes;
 use crate::err_setf;
 use crate::falloc::Reserve;
 use core::ffi::c_void;
@@ -36,32 +34,30 @@ unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
 /// filled `result`, Ok(false) when the shape does not qualify.
 ///
 /// # Safety
-/// `step` must be a live step of the AST being evaluated, `context_set` hold
-/// live handles, and `b` be bindings built for this context.
+/// `context_set` must hold live handles, and `b` be bindings built for this
+/// context.
 pub unsafe fn try_descendant_index<D: Dom>(
     doc: D::Doc,
-    step: *const Step,
+    step: &Step,
     context_set: &Set,
     result: &mut Set,
     b: &Bindings<D>,
 ) -> Result<bool, Reported> {
-    let test = &raw const (*step).test;
-    if (*step).axis != Axis::Descendant
-        || (*test).kind != TestKind::Name
-        || (*test).local.is_absent()
+    let test = &step.test;
+    let Some(local) = test.local.as_deref() else {
+        return Ok(false);
+    };
+    if step.axis != Axis::Descendant
+        || test.kind != TestKind::Name
         || !context_is_document::<D>(b.ctx, context_set)
     {
         return Ok(false);
     }
-    let ns_uri = if (*test).prefix.is_absent() {
-        None
-    } else {
-        b.pre
-    };
-    if (*test).prefix.is_present() && ns_uri.is_none() {
+    let ns_uri = if test.prefix.is_none() { None } else { b.pre };
+    if test.prefix.is_some() && ns_uri.is_none() {
         return Ok(false); /* eval_step pre-resolves, so this should not happen */
     }
-    let bucket = match D::name_bucket(b.ctx, owned_bytes((*test).local), ns_uri, b.lax) {
+    let bucket = match D::name_bucket(b.ctx, local, ns_uri, b.lax) {
         Some(bk) => bk,
         None => return Ok(false),
     };
@@ -69,7 +65,7 @@ pub unsafe fn try_descendant_index<D: Dom>(
     for &p in bucket.nodes {
         limit_eval_op(budget)?;
         let n = D::from_void(p);
-        if bucket.recheck && !node_principal_match::<D>(doc, test, n, (*step).axis, b) {
+        if bucket.recheck && !node_principal_match::<D>(doc, test, n, step.axis, b) {
             continue;
         }
         result.push::<D>(n, budget)?;
@@ -85,34 +81,24 @@ pub unsafe fn try_descendant_index<D: Dom>(
 /// name-children appear among them in child order: one sweep with a
 /// pointer-keyed parent -> count map emits exactly those whose running count
 /// reaches N, already in document order, with no sort or dedup.
-unsafe fn nth_shape<D: Dom>(
-    ctx: *mut Context,
-    s0: *const Step,
-    s1: *const Step,
-    seed: &Set,
-) -> Option<usize> {
-    if (*s0).axis != Axis::DescendantOrSelf
-        || (*s0).test.kind != TestKind::Node
-        || (*s0).test.prefix.is_present()
-        || (*s0).npredicates != 0
+unsafe fn nth_shape<D: Dom>(ctx: *mut Context, s0: &Step, s1: &Step, seed: &Set) -> Option<usize> {
+    if s0.axis != Axis::DescendantOrSelf
+        || s0.test.kind != TestKind::Node
+        || s0.test.prefix.is_some()
+        || !s0.predicates.is_empty()
     {
         return None;
     }
-    if (*s1).axis != Axis::Child
-        || (*s1).test.kind != TestKind::Name
-        || (*s1).test.local.is_absent()
-        || (*s1).npredicates != 1
-    {
+    if s1.axis != Axis::Child || s1.test.kind != TestKind::Name || s1.test.local.is_none() {
         return None;
     }
     /* The sole predicate must be a bare positive-integer literal, which is
      * position() == N. `[position()=N]` and `[last()]` are binops or calls and
      * fall back. */
-    let pred = step_preds(s1)[0];
-    if pred.is_null() {
+    let [pred] = s1.predicates.as_slice() else {
         return None;
-    }
-    let NodeRef::LiteralNum(dn) = Node::view(pred) else {
+    };
+    let ExprKind::LiteralNum(dn) = pred.kind else {
         return None;
     };
     /* NaN is spelled out rather than left to a negated comparison: `[NaN]`
@@ -131,8 +117,8 @@ unsafe fn nth_shape<D: Dom>(
 /// Same as `try_descendant_index`, for the two leading steps `s0` and `s1`.
 pub unsafe fn try_descendant_index_nth<D: Dom>(
     ctx: *mut Context,
-    s0: *const Step,
-    s1: *const Step,
+    s0: &Step,
+    s1: &Step,
     seed: &Set,
     result: &mut Set,
 ) -> Result<bool, Reported> {
@@ -142,24 +128,24 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
         Some(n) => n,
         None => return Ok(false),
     };
-    let test = &raw const (*s1).test;
-    let ns_uri: Option<&[u8]> = if (*test).prefix.is_absent() {
-        None
-    } else {
-        match lookup_ns(ctx, owned_bytes((*test).prefix)) {
+    let test = &s1.test;
+    let ns_uri: Option<&[u8]> = match test.prefix.as_deref() {
+        None => None,
+        Some(prefix) => match lookup_ns(ctx, prefix) {
             Some(u) => Some(u),
             None => {
                 return Err(err_setf!(
                     err,
                     XP_ERR_RUNTIME,
                     "unknown namespace prefix '{}' in name test",
-                    Bytes(owned_bytes((*test).prefix))
+                    Bytes(prefix)
                 ));
             }
-        }
+        },
     };
     let b = Bindings::<D>::new(ctx, ns_uri);
-    let bucket = match D::name_bucket(ctx, owned_bytes((*test).local), ns_uri, b.lax) {
+    let local = test.local.as_deref().unwrap_or(&[]);
+    let bucket = match D::name_bucket(ctx, local, ns_uri, b.lax) {
         Some(bk) => bk,
         None => return Ok(false),
     };
@@ -185,7 +171,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     for &p in bucket.nodes {
         limit_eval_op(budget)?;
         let e = D::from_void(p);
-        if bucket.recheck && !node_principal_match::<D>(doc, test, e, (*s1).axis, &b) {
+        if bucket.recheck && !node_principal_match::<D>(doc, test, e, s1.axis, &b) {
             continue;
         }
         let par = D::to_void(D::parent(doc, e)) as *const c_void;

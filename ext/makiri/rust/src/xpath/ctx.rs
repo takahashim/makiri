@@ -127,7 +127,6 @@ fn handle(ctx: *mut Context) -> *mut Context {
  * each is a build-time choice: either C instance can still be in the build while
  * the other is Rust. The signatures are node-pointer-only, hence ABI-identical
  * across the two. */
-pub use crate::xpath::ast_ops::node_clear_memos;
 #[cfg(feature = "lexbor")]
 pub use crate::xpath::ffi_html::eval_ast_html;
 #[cfg(feature = "lexbor")]
@@ -461,12 +460,12 @@ impl XPathValue {
 /// Evaluate `ast` against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` and `ast` must be live, `ast` parsed for this context's host; the
-/// caller holds the GVL.
+/// `ctx` must be live and `ast` parsed for this context's host; the caller holds
+/// the GVL.
 #[allow(clippy::result_large_err)]
-pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, Error> {
+pub unsafe fn evaluate(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error> {
     let mut err = Error::new();
-    if ctx.is_null() || ast.is_null() {
+    if ctx.is_null() {
         crate::err_setf!(
             ErrSink::new(&mut err),
             XP_ERR_INTERNAL,
@@ -503,9 +502,6 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
     if !order_was_built && (*ctx).order_index.built != 0 {
         doc_order_index_clear(&raw mut (*ctx).order_index);
     }
-    /* Memoized values are valid only within one evaluate scope, so clear them
-     * whether it succeeded or not. */
-    node_clear_memos(ast);
     (*ctx).evaluating -= 1;
 
     match result {
@@ -520,9 +516,9 @@ pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, 
 /// # Safety
 /// As [`evaluate`].
 #[allow(clippy::result_large_err)]
-pub unsafe fn evaluate_first(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, Error> {
+pub unsafe fn evaluate_first(ctx: *mut Context, ast: &Ast) -> Result<XPathValue, Error> {
     let mut err = Error::new();
-    if ctx.is_null() || ast.is_null() {
+    if ctx.is_null() {
         crate::err_setf!(
             ErrSink::new(&mut err),
             XP_ERR_INTERNAL,

@@ -11,9 +11,9 @@ use core::ffi::c_void;
 /// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` and `ast` must be live and `ast` parsed for this context's host; the
-/// caller holds the GVL.
-pub unsafe fn eval_ast_html(ctx: *mut Context, ast: *const Node) -> Result<OwnedVal, Reported> {
+/// `ctx` must be live and `ast` parsed for this context's host; the caller holds
+/// the GVL.
+pub unsafe fn eval_ast_html(ctx: *mut Context, ast: &Ast) -> Result<OwnedVal, Reported> {
     eval::eval_ast::<Html>(ctx, ast)
 }
 
@@ -25,7 +25,7 @@ pub unsafe fn eval_ast_html(ctx: *mut Context, ast: *const Node) -> Result<Owned
 /// As [`eval_ast_html`].
 pub unsafe fn try_first_match_html(
     ctx: *mut Context,
-    ast: *const Node,
+    ast: &Ast,
 ) -> Result<Option<*mut c_void>, Reported> {
     Ok(eval::try_first_match::<Html>(ctx, ast)?.map(|n| n as *mut c_void))
 }

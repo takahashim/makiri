@@ -42,14 +42,14 @@ use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedDa
 use rb_sys::VALUE;
 
 use crate::text::VerifiedText;
-use crate::xpath::ast::Node as Ast;
+use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{ctx_budget, ResolverCall, XPathValue};
 use crate::xpath::ctx::{Backend, OwnedContext};
 use crate::xpath::limits::budget_sink;
 use crate::xpath::msg::{
     ErrSink, Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
-use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
+use crate::xpath::own::OwnedVal;
 use crate::xpath::value::{NodeSet, TextSlot, Val, ValRef};
 
 use super::abi::{
@@ -60,8 +60,8 @@ use super::abi::{
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
 /// many times, so each is parsed once and the AST re-evaluated (the evaluator
-/// resets the per-eval counters and memo slots, so a cached AST is safely
-/// reusable). Bounded, so a context fed unbounded distinct expressions cannot
+/// resets the per-eval counters and keeps its per-evaluate state off the AST,
+/// so a cached AST is safely reusable). Bounded, so a context fed unbounded distinct expressions cannot
 /// grow without limit.
 const AST_CACHE_MAX: usize = 1024;
 
@@ -176,7 +176,12 @@ unsafe fn owned_text_to_str(t: TextSlot) -> VALUE {
 /// without the scan. The bound and the fallback are unchanged: past
 /// [`AST_CACHE_MAX`] nothing more is cached and the caller frees the AST it was
 /// handed.
-struct AstCache(HashMap<Box<[u8]>, OwnedAst>);
+///
+/// Each AST is boxed, so a pointer to one survives the map growing: a handler
+/// can evaluate a new expression on this context mid-walk, inserting into the
+/// map while the outer evaluate still reads its AST. Nothing is ever removed
+/// before the context itself is freed.
+struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
 struct Inner {
     /* Fields drop in declaration order, so the cached ASTs go before the
@@ -731,23 +736,22 @@ unsafe fn handler_resolver(
 
 /// The compiled AST for `expr`, parsing and caching it on first use.
 ///
-/// Returns the raw view plus an owner when the AST could not be cached.
-unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*mut Ast, Option<OwnedAst>)> {
+/// Returns a pointer to the AST plus its owner when it could not be cached. A
+/// cached AST lives as long as the context (see [`AstCache`]).
+unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*const Ast, Option<Box<Ast>>)> {
     let key = expr.bytes();
     if let Some(ast) = d.cache.0.get(key) {
-        return Some((ast.as_raw(), None));
+        return Some((&**ast as *const Ast, None));
     }
 
     let budget = ctx_budget(d.ctx.as_ptr());
     (*budget).limits.ast_nodes = 0;
     let ast = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, budget).ok()?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
-        let raw = ast.as_raw();
-        return Some((raw, Some(ast)));
+        return Some((&*ast as *const Ast, Some(ast)));
     }
     let Some(owned_key) = try_to_boxed_slice(key) else {
-        let raw = ast.as_raw();
-        return Some((raw, Some(ast)));
+        return Some((&*ast as *const Ast, Some(ast)));
     };
     if d.cache.0.mkr_insert(owned_key, ast).is_err() {
         crate::xpath::msg::err_set(
@@ -758,7 +762,7 @@ unsafe fn cached_ast(d: &mut Inner, expr: RubyText) -> Option<(*mut Ast, Option<
         return None;
     }
     let ast = d.cache.0.get(key).expect("inserted AST");
-    Some((ast.as_raw(), None))
+    Some((&**ast as *const Ast, None))
 }
 
 /// Install the handler bridge for one evaluation, and take it back off.
@@ -802,7 +806,7 @@ impl Drop for InstalledHandler {
 
 /// Parse `expr` for one query under `ctx`. The AST-node budget is per query, so
 /// it is reset first, and a failure is that budget's error as the exception.
-pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<OwnedAst, Error> {
+pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr())?;
     let budget = ctx_budget(ctx);
     (*budget).limits.ast_nodes = 0;
@@ -817,7 +821,7 @@ pub(crate) unsafe fn parse_query(ctx: *mut Ctx, expr: Value) -> Result<OwnedAst,
 /// path.
 pub(crate) unsafe fn evaluate_query(
     ctx: *mut Ctx,
-    ast: *mut Ast,
+    ast: &Ast,
     handler: Value,
     document: Value,
     first_only: bool,
@@ -883,7 +887,9 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
     };
 
     unsafe {
-        let value = evaluate_query(ctx, ast, handler, document, false);
+        /* A cached AST outlives this call: the context is live (it is
+         * `rb_self`), and its cache frees nothing before the context goes. */
+        let value = evaluate_query(ctx, &*ast, handler, document, false);
         drop(owned);
         query_result(value?, document, false)
     }
@@ -965,7 +971,7 @@ fn node_xpath_run(
         let ctx = context_for(rb_self, document)?;
         ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
         let ast = parse_query(ctx.as_ptr(), expr)?;
-        let value = evaluate_query(ctx.as_ptr(), ast.as_raw(), handler, document, first_only);
+        let value = evaluate_query(ctx.as_ptr(), &ast, handler, document, first_only);
         drop(ast);
         drop(ctx);
         query_result(value?, document, first_only)

@@ -31,9 +31,9 @@ use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 use rb_sys::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
+use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{ctx_budget, XPathValue};
 use crate::xpath::msg::XP_ERR_SYNTAX;
-use crate::xpath::own::Ast as OwnedAst;
 
 use super::abi::error_class;
 
@@ -403,12 +403,12 @@ unsafe fn build_ctx(
 unsafe fn run_ast(
     ruby: &Ruby,
     ctx: OwnedContext,
-    ast: OwnedAst,
+    ast: Box<Ast>,
     first_only: bool,
     document: Value,
 ) -> Result<Value, Error> {
     let nil = ruby.qnil().as_value();
-    let value = evaluate_query(ctx.as_ptr(), ast.as_raw(), nil, document, first_only);
+    let value = evaluate_query(ctx.as_ptr(), &ast, nil, document, first_only);
     drop(ast);
     drop(ctx);
     query_result(value?, document, first_only)
@@ -491,7 +491,7 @@ unsafe fn css_compile_or_raise(
     ctx: *mut XPathContext,
     selector: Value,
     rb_ns: Option<Value>,
-) -> Result<OwnedAst, Error> {
+) -> Result<Box<Ast>, Error> {
     let cns = CssNs {
         default_prefix: css_default_prefix(rb_ns),
     };
@@ -578,7 +578,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
 
         let nil = ruby.qnil().as_value();
-        let value = evaluate_query(ctx.as_ptr(), ast.as_raw(), nil, document, false);
+        let value = evaluate_query(ctx.as_ptr(), &ast, nil, document, false);
         drop(ast);
         let value = value?;
         let target = node.to_token() as *mut c_void;

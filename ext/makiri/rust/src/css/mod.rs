@@ -18,10 +18,9 @@
 //!
 //! # Ownership
 //!
-//! The lowering builds C-layout nodes through `build`. Every node under
-//! construction is an `xpath::own::Ast` (as `build::Built`), and steps and arrays
-//! are `xpath::own`'s guards, so a failure anywhere drops - frees - what was built
-//! and the recursive `node_free` contract lives in one place.
+//! The lowering builds ordinary `xpath::ast` values through `build`: a node under
+//! construction is a `build::Built`, and steps and lists are plain owned data, so
+//! a failure anywhere drops - frees - what was built.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -29,13 +28,13 @@ mod build;
 mod lower;
 mod parser;
 
-use crate::xpath::ast::Op;
+use crate::xpath::ast::{Ast, Expr, Op};
 use core::ffi::{c_char, c_int};
 
+use crate::falloc::try_box;
 use crate::text::VerifiedText;
 use crate::xpath::limits::{budget_sink, Budget};
 use crate::xpath::msg::{ErrSink, Reported};
-use crate::xpath::own::Ast;
 
 /// `mkr_css_ns_t` - the namespace context the glue hands in.
 ///
@@ -87,8 +86,7 @@ impl Build {
     }
 }
 
-/// Compile `selector` into a freshly allocated AST, which the caller frees with
-/// `node_free`.
+/// Compile `selector` into a freshly allocated AST.
 ///
 /// `Err` with the budget's error slot filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
@@ -101,7 +99,7 @@ pub unsafe fn compile_owned(
     selector: VerifiedText,
     ns: *const CssNs,
     budget: *mut Budget,
-) -> Result<Ast, Reported> {
+) -> Result<Box<Ast>, Reported> {
     let err = budget_sink(budget);
     let b = Build { budget, err, ns };
 
@@ -118,7 +116,7 @@ pub unsafe fn compile_owned(
     /* Lower each comma-group to a PATH and union them. `parsed` cleans the
      * parser's arena when it drops, on every path out of this function - the C
      * spelled that out at each return instead. */
-    let mut acc: Option<Ast> = None;
+    let mut acc: Option<Expr> = None;
     let mut g = parsed.first;
     while !g.is_null() {
         /* Top level: the first compound is a descendant of the context node. */
@@ -131,5 +129,8 @@ pub unsafe fn compile_owned(
     }
     /* Lexbor rejects an empty selector list before it gets here; answering it
      * anyway keeps every failure reported. */
-    acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector"))
+    let root = acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector"))?;
+    /* No peephole or hoisting pass: the lowering emits no `//` pair to fuse and
+     * no subtree worth remembering, so its AST is used as built. */
+    try_box(Ast::new(root)).map_err(|_| b.oom())
 }

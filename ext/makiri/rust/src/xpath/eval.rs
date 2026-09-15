@@ -9,7 +9,6 @@
  * comes back as an `OwnedVal`, so one dropped on an error path is cleared. */
 
 use super::abi::*;
-use super::ast_view::{path_steps, step_preds};
 use super::attr_pred::{attr_pred_matches, match_attr_pred};
 use super::axis::{axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis};
 use super::dom::*;
@@ -21,22 +20,44 @@ use super::own::{OwnedVal, Set};
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
-use crate::falloc::Reserve;
+use crate::falloc::{try_vec_with_capacity, Reserve};
 
 /// An evaluation step: the value, or proof its error was written to the
 /// context's budget.
 type EvalResult<T = ()> = Result<T, Reported>;
 
+/// The per-evaluate memo table: slot `i` holds the value of the subtree whose
+/// `Expr::memo` is `Some(i)`, once it has been computed in this evaluate.
+///
+/// Kept off the AST so a compiled expression is never written during an
+/// evaluate, and dropped with the evaluate, so nothing is left to clear.
+pub(crate) struct Memo(Vec<Option<OwnedVal>>);
+
+impl Memo {
+    fn new(slots: usize, err: ErrSink) -> EvalResult<Memo> {
+        let Some(mut table) = try_vec_with_capacity(slots) else {
+            return Err(err_setf!(
+                err,
+                XP_ERR_OOM,
+                "out of memory allocating the memo table"
+            ));
+        };
+        table.resize_with(slots, || None);
+        Ok(Memo(table))
+    }
+}
+
 /* ---------- predicates ---------- */
 
 unsafe fn apply_predicates<D: Dom>(
     ctx: *mut Context,
-    preds: &[*mut Node],
+    memo: &mut Memo,
+    preds: &[Expr],
     inout: &mut Set,
 ) -> EvalResult {
     let doc = D::doc_from_void(ctx_document(ctx));
     let budget = ctx_budget(ctx);
-    for &pred in preds {
+    for pred in preds {
         let mut kept = Set::new();
 
         /* Specialise [@name] / [@name='lit'] - position-independent, so applying
@@ -64,7 +85,7 @@ unsafe fn apply_predicates<D: Dom>(
                 pos: i + 1,
                 size,
             };
-            let v = eval_node::<D>(ctx, pred, &pf)?;
+            let v = eval_node::<D>(ctx, memo, pred, &pf)?;
             /* A bare number predicate means position() = that number. */
             let keep = match v.get() {
                 ValRef::Number(d) => d == (i + 1) as f64,
@@ -81,15 +102,42 @@ unsafe fn apply_predicates<D: Dom>(
 
 /* ---------- steps ---------- */
 
+/// The URI a name test's prefix is bound to, or the RUNTIME error a step reports
+/// for an unknown one.
+///
+/// The borrow lives in the context's registry and cannot be freed mid-evaluate:
+/// the only path that frees it is re-registering the same prefix, and the glue
+/// refuses register_namespace (and register_variable, node=) while an evaluate
+/// is in progress on this context - which is exactly when a predicate handler
+/// could re-enter.
+unsafe fn resolve_test_prefix<'a>(
+    ctx: *mut Context,
+    test: &NodeTest,
+) -> EvalResult<Option<&'a [u8]>> {
+    let Some(prefix) = test.prefix.as_deref() else {
+        return Ok(None);
+    };
+    match lookup_ns(ctx, prefix) {
+        Some(u) => Ok(Some(u)),
+        None => Err(err_setf!(
+            budget_sink(ctx_budget(ctx)),
+            XP_ERR_RUNTIME,
+            "unknown namespace prefix '{}' in name test",
+            Bytes(prefix)
+        )),
+    }
+}
+
 unsafe fn eval_step<D: Dom>(
     ctx: *mut Context,
-    step: *const Step,
+    memo: &mut Memo,
+    step: &Step,
     context_set: &Set,
     out: &mut Set,
 ) -> EvalResult {
     let err = budget_sink(ctx_budget(ctx));
     let doc = D::doc_from_void(ctx_document(ctx));
-    let axis = (*step).axis;
+    let axis = step.axis;
     if !axis_is_implemented(axis) {
         return Err(err_setf!(
             err,
@@ -98,33 +146,13 @@ unsafe fn eval_step<D: Dom>(
             axis_name(axis)
         ));
     }
-    let test = &raw const (*step).test;
+    let test = &step.test;
     let budget = ctx_budget(ctx);
 
     /* Resolve the namespace prefix once up front (covering `prefix:local` and
      * `prefix:*`): a uniform RUNTIME error rather than a silently empty match,
-     * and every per-node match then reuses the URI instead of re-resolving.
-     *
-     * The borrow lives in the context's registry and cannot be freed mid-
-     * evaluate: the only path that frees it is re-registering the same prefix,
-     * and the glue refuses register_namespace (and register_variable, node=)
-     * while an evaluate is in progress on this context - which is exactly when a
-     * predicate handler could re-enter. */
-    let pre: Option<&[u8]> = if (*test).prefix.is_absent() {
-        None
-    } else {
-        match lookup_ns(ctx, owned_bytes((*test).prefix)) {
-            Some(u) => Some(u),
-            None => {
-                return Err(err_setf!(
-                    err,
-                    XP_ERR_RUNTIME,
-                    "unknown namespace prefix '{}' in name test",
-                    Bytes(owned_bytes((*test).prefix))
-                ));
-            }
-        }
-    };
+     * and every per-node match then reuses the URI instead of re-resolving. */
+    let pre = resolve_test_prefix(ctx, test)?;
 
     let b = Bindings::<D>::new(ctx, pre);
 
@@ -141,7 +169,7 @@ unsafe fn eval_step<D: Dom>(
 
     let mut result = Set::new();
 
-    let preds = step_preds(step);
+    let preds = step.predicates.as_slice();
     if preds.is_empty() {
         if !try_descendant_index::<D>(doc, step, context_set, &mut result, &b)? {
             /* No-predicate walk: every context goes straight into the result
@@ -208,7 +236,7 @@ unsafe fn eval_step<D: Dom>(
              * (§2.4). For a reverse axis the fragment is in reverse-document
              * order, so [1] is the closest to the context - the intended
              * meaning. */
-            apply_predicates::<D>(ctx, preds, &mut fragment)?;
+            apply_predicates::<D>(ctx, memo, preds, &mut fragment)?;
             for i in 0..fragment.count() {
                 result.push::<D>(fragment.get::<D>(i), budget)?;
             }
@@ -224,6 +252,7 @@ unsafe fn eval_step<D: Dom>(
 
 unsafe fn eval_steps<D: Dom>(
     ctx: *mut Context,
+    memo: &mut Memo,
     steps: &[Step],
     seed: &mut Set,
 ) -> EvalResult<OwnedVal> {
@@ -239,7 +268,7 @@ unsafe fn eval_steps<D: Dom>(
     }
     for step in rest {
         let mut next = Set::new();
-        eval_step::<D>(ctx, step, &current, &mut next)?;
+        eval_step::<D>(ctx, memo, step, &current, &mut next)?;
         current = Set::adopt(next.take());
     }
     Ok(Val::nodeset(current.take()).into())
@@ -423,39 +452,35 @@ unsafe fn union_nodeset<D: Dom>(ctx: *mut Context, l: &Val, r: &Val) -> EvalResu
 /// predicates, in document order", so the first node the pre-order walk reaches
 /// IS node-set[0] of the full evaluation - identical, just without building the
 /// rest. Anything else returns None and the caller runs the full evaluator.
-unsafe fn first_recognise(ast: *const Node) -> Option<*const Step> {
-    if ast.is_null() {
-        return None;
-    }
-    let NodeRef::Path(path) = Node::view(ast) else {
+fn first_recognise(root: &Expr) -> Option<&Step> {
+    let ExprKind::Path(path) = &root.kind else {
         return None;
     };
-    let (steps, nsteps) = (path.steps, path.nsteps);
-    let nt: *const Step = if nsteps == 1 && (*steps).axis == Axis::Descendant {
-        steps
-    } else if nsteps == 2
-        && (*steps).axis == Axis::DescendantOrSelf
-        && (*steps).test.kind == TestKind::Node
-        && (*steps).npredicates == 0
-        && (*steps.add(1)).axis == Axis::Child
-    {
-        steps.add(1)
-    } else {
-        return None;
+    let nt = match path.steps.as_slice() {
+        [s] if s.axis == Axis::Descendant => s,
+        [s0, s1]
+            if s0.axis == Axis::DescendantOrSelf
+                && s0.test.kind == TestKind::Node
+                && s0.predicates.is_empty()
+                && s1.axis == Axis::Child =>
+        {
+            s1
+        }
+        _ => return None,
     };
     /* A prefixed name test is allowed - the caller reproduces the step driver's
      * "unknown prefix is a RUNTIME error" first, and the name match resolves the
      * prefix exactly as the full evaluator does. A prefixed ATTRIBUTE predicate
      * still falls back: match_attr_step requires an unprefixed @name. */
-    for &p in step_preds(nt) {
+    for p in &nt.predicates {
         match_attr_pred(p)?;
     }
     Some(nt)
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
-unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: *const Step, n: D::Node) -> bool {
-    for &p in step_preds(step) {
+unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: &Step, n: D::Node) -> bool {
+    for p in &step.predicates {
         /* The recogniser already confirmed the shape. */
         let ap = match match_attr_pred(p) {
             Some(ap) => ap,
@@ -476,39 +501,25 @@ unsafe fn first_node_ok<D: Dom>(doc: D::Doc, step: *const Step, n: D::Node) -> b
 /// fails closed here exactly as it would in the full evaluator.
 ///
 /// # Safety
-/// `ctx` must be the evaluating context and `ast` a live AST.
+/// `ctx` must be the evaluating context.
 pub unsafe fn try_first_match<D: Dom>(
     ctx: *mut Context,
-    ast: *const Node,
+    ast: &Ast,
 ) -> Result<Option<D::Node>, Reported> {
-    let err = budget_sink(ctx_budget(ctx));
     let doc = D::doc_from_void(ctx_document(ctx));
-    let step = match first_recognise(ast) {
+    let root = ast.root();
+    let step = match first_recognise(root) {
         Some(s) => s,
         None => return Ok(None),
     };
-    let test = &raw const (*step).test;
+    let test = &step.test;
 
     /* Reproduce the step driver's prefix validation, so the fast path stays
      * identical to the full evaluator down to the errors - and keep what it
      * resolved, so the walk below does not look the prefix up again per node. */
-    let pre = if (*test).prefix.is_absent() {
-        None
-    } else {
-        match lookup_ns(ctx, owned_bytes((*test).prefix)) {
-            Some(u) => Some(u),
-            None => {
-                return Err(err_setf!(
-                    err,
-                    XP_ERR_RUNTIME,
-                    "unknown namespace prefix '{}' in name test",
-                    Bytes(owned_bytes((*test).prefix))
-                ));
-            }
-        }
-    };
+    let pre = resolve_test_prefix(ctx, test)?;
 
-    let absolute = matches!(Node::view(ast), NodeRef::Path(p) if p.absolute != 0);
+    let absolute = matches!(&root.kind, ExprKind::Path(p) if p.absolute);
     let start: D::Node = if absolute {
         D::document_node(D::doc_from_void(ctx_document(ctx)))
     } else {
@@ -523,7 +534,7 @@ pub unsafe fn try_first_match<D: Dom>(
     let mut n = D::first_child(doc, start);
     while !D::is_null(n) {
         limit_eval_op(budget)?;
-        if node_principal_match::<D>(doc, test, n, (*step).axis, &b)
+        if node_principal_match::<D>(doc, test, n, step.axis, &b)
             && first_node_ok::<D>(doc, step, n)
         {
             return Ok(Some(n));
@@ -547,13 +558,14 @@ pub unsafe fn try_first_match<D: Dom>(
 
 unsafe fn eval_path<D: Dom>(
     ctx: *mut Context,
+    memo: &mut Memo,
     p: &Path,
     self_node: D::Node,
 ) -> EvalResult<OwnedVal> {
     let err = budget_sink(ctx_budget(ctx));
     let budget = ctx_budget(ctx);
     let mut seed = Set::new();
-    if p.absolute != 0 {
+    if p.absolute {
         let root_h = ctx_document(ctx);
         if root_h.is_null() {
             return Err(err_setf!(
@@ -567,17 +579,20 @@ unsafe fn eval_path<D: Dom>(
     } else {
         seed.push::<D>(self_node, budget)?;
     }
-    eval_steps::<D>(ctx, path_steps(p.steps, p.nsteps), &mut seed)
+    eval_steps::<D>(ctx, memo, &p.steps, &mut seed)
 }
 
 unsafe fn eval_filter<D: Dom>(
     ctx: *mut Context,
-    f: &Filter,
+    memo: &mut Memo,
+    expr: &Expr,
+    predicates: &[Expr],
+    steps: &[Step],
     focus: &Focus<D>,
 ) -> EvalResult<OwnedVal> {
     let err = budget_sink(ctx_budget(ctx));
-    let mut primary = eval_node::<D>(ctx, f.expr, focus)?;
-    if f.npreds > 0 {
+    let mut primary = eval_node::<D>(ctx, memo, expr, focus)?;
+    if !predicates.is_empty() {
         let Some(ns) = primary.as_nodeset_mut() else {
             return Err(err_setf!(
                 err,
@@ -587,33 +602,32 @@ unsafe fn eval_filter<D: Dom>(
         };
         /* Filtered in a guard, so a failing predicate frees the set. */
         let mut set = Set::adopt(core::mem::replace(ns, NodeSet::EMPTY));
-        let preds = core::slice::from_raw_parts(f.preds, f.npreds);
-        apply_predicates::<D>(ctx, preds, &mut set)?;
+        apply_predicates::<D>(ctx, memo, predicates, &mut set)?;
         *ns = set.take();
     }
-    if f.npath > 0 {
+    if !steps.is_empty() {
         let Some(ns) = primary.as_nodeset_mut() else {
             return Err(err_setf!(err, XP_ERR_TYPE, "path applied to non-node-set"));
         };
         let mut seed = Set::adopt(core::mem::replace(ns, NodeSet::EMPTY));
-        return eval_steps::<D>(ctx, path_steps(f.path_steps, f.npath), &mut seed);
+        return eval_steps::<D>(ctx, memo, steps, &mut seed);
     }
     Ok(primary)
 }
 
 unsafe fn eval_fncall<D: Dom>(
     ctx: *mut Context,
-    call: &FnCall,
+    memo: &mut Memo,
+    prefix: Option<&[u8]>,
+    name: &[u8],
+    args: &[Expr],
     focus: &Focus<D>,
 ) -> EvalResult<OwnedVal> {
     let err = budget_sink(ctx_budget(ctx));
-    let prefix = owned_bytes(call.prefix);
-    let name = owned_bytes(call.name);
 
-    let ns_uri: Option<&[u8]> = if call.prefix.is_absent() {
-        None
-    } else {
-        match lookup_ns(ctx, prefix) {
+    let ns_uri: Option<&[u8]> = match prefix {
+        None => None,
+        Some(prefix) => match lookup_ns(ctx, prefix) {
             Some(u) => Some(u),
             None => {
                 return Err(err_setf!(
@@ -623,30 +637,29 @@ unsafe fn eval_fncall<D: Dom>(
                     Bytes(prefix)
                 ));
             }
-        }
+        },
     };
     let builtin = funcs::lookup::<D>(ns_uri, name);
 
     /* The arguments are evaluated once and reused by either path. They are owned
      * here, so every way out - an argument failing part-way included - clears
-     * them when `args` drops. */
-    let nargs = call.nargs;
-    let mut args: Vec<OwnedVal> = Vec::new();
-    if nargs > 0 {
-        if args.mkr_reserve_exact(nargs).is_err() {
+     * them when `vals` drops. */
+    let mut vals: Vec<OwnedVal> = Vec::new();
+    if !args.is_empty() {
+        if vals.mkr_reserve_exact(args.len()).is_err() {
             return Err(err_setf!(
                 err,
                 XP_ERR_OOM,
                 "out of memory allocating function arguments"
             ));
         }
-        for i in 0..nargs {
-            args.push(eval_node::<D>(ctx, *call.args.add(i), focus)?);
+        for a in args {
+            vals.push(eval_node::<D>(ctx, memo, a, focus)?);
         }
     }
 
     if let Some(f) = builtin {
-        return f(ctx, focus, OwnedVal::as_vals(&args));
+        return f(ctx, focus, OwnedVal::as_vals(&vals));
     }
 
     /* No built-in. Delegate to the per-call resolver, which the Ruby handler
@@ -659,7 +672,7 @@ unsafe fn eval_fncall<D: Dom>(
                 size: focus.size,
                 ns_uri,
                 local: name,
-                args: OwnedVal::as_vals(&args),
+                args: OwnedVal::as_vals(&vals),
             };
             resolver(xpath_get_user_data(ctx), ctx, &site)?
         }
@@ -670,8 +683,8 @@ unsafe fn eval_fncall<D: Dom>(
             err,
             XP_ERR_RUNTIME,
             "unknown function {}{}{}",
-            Bytes(prefix),
-            if call.prefix.is_absent() { "" } else { ":" },
+            Bytes(prefix.unwrap_or(&[])),
+            if prefix.is_none() { "" } else { ":" },
             Bytes(name)
         )
     })
@@ -679,27 +692,29 @@ unsafe fn eval_fncall<D: Dom>(
 
 unsafe fn eval_binop<D: Dom>(
     ctx: *mut Context,
-    b: &BinOp,
+    memo: &mut Memo,
+    op: Op,
+    lhs: &Expr,
+    rhs: &Expr,
     focus: &Focus<D>,
 ) -> EvalResult<OwnedVal> {
     let err = budget_sink(ctx_budget(ctx));
     let doc = D::doc_from_void(ctx_document(ctx));
-    let op = b.op;
     let budget = ctx_budget(ctx);
 
     /* and / or short-circuit. */
     if op == Op::Or || op == Op::And {
-        let l = eval_node::<D>(ctx, b.lhs, focus)?;
+        let l = eval_node::<D>(ctx, memo, lhs, focus)?;
         let lb = val_to_boolean(&*l);
         if (op == Op::Or && lb) || (op == Op::And && !lb) {
             return Ok(Val::boolean(lb).into());
         }
-        let r = eval_node::<D>(ctx, b.rhs, focus)?;
+        let r = eval_node::<D>(ctx, memo, rhs, focus)?;
         return Ok(Val::boolean(val_to_boolean(&*r)).into());
     }
 
-    let l = eval_node::<D>(ctx, b.lhs, focus)?;
-    let r = eval_node::<D>(ctx, b.rhs, focus)?;
+    let l = eval_node::<D>(ctx, memo, lhs, focus)?;
+    let r = eval_node::<D>(ctx, memo, rhs, focus)?;
     let (l, r): (&Val, &Val) = (&l, &r);
 
     match op {
@@ -728,12 +743,13 @@ unsafe fn eval_binop<D: Dom>(
 /// Unary minus: the operand as a number, negated.
 unsafe fn eval_negate<D: Dom>(
     ctx: *mut Context,
-    u: &Unary,
+    memo: &mut Memo,
+    x: &Expr,
     focus: &Focus<D>,
 ) -> EvalResult<OwnedVal> {
     let doc = D::doc_from_void(ctx_document(ctx));
     let budget = ctx_budget(ctx);
-    let v = eval_node::<D>(ctx, u.expr, focus)?;
+    let v = eval_node::<D>(ctx, memo, x, focus)?;
     let d = val_to_number_or_fail::<D>(doc, &*v, budget)?;
     Ok(Val::number(-d).into())
 }
@@ -750,72 +766,73 @@ unsafe fn string_value(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> Ev
 /// makes that balance locally checkable.
 unsafe fn eval_node<D: Dom>(
     ctx: *mut Context,
-    n: *const Node,
+    memo: &mut Memo,
+    e: &Expr,
     focus: &Focus<D>,
 ) -> EvalResult<OwnedVal> {
     let budget = ctx_budget(ctx);
     limit_eval_op(budget)?;
     /* A refused entry is not counted, so returning here needs no release. */
     limit_recurse_enter(budget)?;
-    let result = eval_node_inner::<D>(ctx, n, focus);
+    let result = eval_node_inner::<D>(ctx, memo, e, focus);
     limit_recurse_leave(budget);
     result
 }
 
 unsafe fn eval_node_inner<D: Dom>(
     ctx: *mut Context,
-    n: *const Node,
+    memo: &mut Memo,
+    e: &Expr,
     focus: &Focus<D>,
 ) -> EvalResult<OwnedVal> {
     let err = budget_sink(ctx_budget(ctx));
     /* Hoisting: a context-independent subtree already computed in this evaluate
      * comes back as a clone, which keeps ownership clean - clearing either copy
      * is safe. */
-    if (*n).is_context_independent != 0 && (*n).memoized != 0 {
-        return val_clone(&(*n).memo_value, err);
+    if let Some(slot) = e.memo {
+        if let Some(v) = &memo.0[slot as usize] {
+            return val_clone(v, err);
+        }
     }
 
-    let value = match Node::view(n) {
-        NodeRef::LiteralStr(t) => {
-            string_value(owned_bytes(t), err, c"out of memory copying literal")
-        }
-        NodeRef::LiteralNum(d) => Ok(Val::number(d).into()),
-        NodeRef::VarRef(v) => {
-            let prefix = if v.prefix.is_absent() {
-                None
-            } else {
-                Some(owned_bytes(v.prefix))
-            };
-            match ctx_lookup_variable_text(ctx, prefix, owned_bytes(v.name)) {
+    let value = match &e.kind {
+        ExprKind::LiteralStr(t) => string_value(t, err, c"out of memory copying literal"),
+        ExprKind::LiteralNum(d) => Ok(Val::number(*d).into()),
+        ExprKind::VarRef { prefix, name } => {
+            match ctx_lookup_variable_text(ctx, prefix.as_deref(), name) {
                 Some(bytes) => string_value(bytes, err, c"out of memory copying variable value"),
                 None => Err(err_setf!(
                     err,
                     XP_ERR_RUNTIME,
                     "undefined variable ${}{}{}",
-                    Bytes(owned_bytes(v.prefix)),
-                    if v.prefix.is_absent() { "" } else { ":" },
-                    Bytes(owned_bytes(v.name))
+                    Bytes(prefix.as_deref().unwrap_or(&[])),
+                    if prefix.is_none() { "" } else { ":" },
+                    Bytes(name)
                 )),
             }
         }
-        NodeRef::FnCall(call) => eval_fncall::<D>(ctx, call, focus),
-        NodeRef::Unary(u) => eval_negate::<D>(ctx, u, focus),
-        NodeRef::BinOp(b) => eval_binop::<D>(ctx, b, focus),
-        NodeRef::Path(p) => eval_path::<D>(ctx, p, focus.node),
-        NodeRef::Filter(f) => eval_filter::<D>(ctx, f, focus),
+        ExprKind::FnCall { prefix, name, args } => {
+            eval_fncall::<D>(ctx, memo, prefix.as_deref(), name, args, focus)
+        }
+        ExprKind::Negate(x) => eval_negate::<D>(ctx, memo, x, focus),
+        ExprKind::BinOp { op, lhs, rhs } => eval_binop::<D>(ctx, memo, *op, lhs, rhs, focus),
+        ExprKind::Path(p) => eval_path::<D>(ctx, memo, p, focus.node),
+        ExprKind::Filter {
+            expr,
+            predicates,
+            steps,
+        } => eval_filter::<D>(ctx, memo, expr, predicates, steps, focus),
     }?;
 
-    /* Memoize a context-independent subtree on success. The clone keeps the
-     * caller's value independent of the cached one, which matters because the
-     * caller is free to consume theirs. */
-    if (*n).is_context_independent != 0 && (*n).memoized == 0 {
-        /* OOM during the clone drops `value` with the error and leaves the node
-         * unmemoized. */
-        let mut memo = val_clone(&value, err)?;
-        /* The AST is read-only at eval time apart from these memo slots. */
-        let mut_n = n as *mut Node;
-        (*mut_n).memo_value = memo.take();
-        (*mut_n).memoized = 1;
+    /* Remember a context-independent subtree on success. The clone keeps the
+     * caller's value independent of the remembered one, which matters because
+     * the caller is free to consume theirs. */
+    if let Some(slot) = e.memo {
+        let entry = &mut memo.0[slot as usize];
+        if entry.is_none() {
+            /* OOM during the clone drops `value` with the error. */
+            *entry = Some(val_clone(&value, err)?);
+        }
     }
     Ok(value)
 }
@@ -823,14 +840,15 @@ unsafe fn eval_node_inner<D: Dom>(
 /// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` must be a live context and `ast` a live AST built by `parse_owned`.
-pub unsafe fn eval_ast<D: Dom>(ctx: *mut Context, ast: *const Node) -> EvalResult<OwnedVal> {
+/// `ctx` must be a live context and `ast` built for its host.
+pub unsafe fn eval_ast<D: Dom>(ctx: *mut Context, ast: &Ast) -> EvalResult<OwnedVal> {
+    let mut memo = Memo::new(ast.memo_slots(), budget_sink(ctx_budget(ctx)))?;
     let focus = Focus::<D> {
         node: D::from_void(ctx_node(ctx)),
         pos: 1,
         size: 1,
     };
-    eval_node::<D>(ctx, ast, &focus)
+    eval_node::<D>(ctx, &mut memo, ast.root(), &focus)
 }
 
 extern "C" {
