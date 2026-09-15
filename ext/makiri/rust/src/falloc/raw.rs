@@ -15,6 +15,7 @@ extern "C" {
     fn libc_calloc(count: usize, elem: usize) -> *mut c_void;
     #[link_name = "realloc"]
     fn libc_realloc(p: *mut c_void, n: usize) -> *mut c_void;
+    #[cfg(kani)]
     #[link_name = "free"]
     fn libc_free(p: *mut c_void);
 }
@@ -27,7 +28,7 @@ fn allocation_should_fail() -> bool {
 /// Reallocate `ptr` for `count * elem` bytes.
 ///
 /// A zero count is rejected without touching `ptr`. Releasing an existing
-/// allocation is a separate operation, [`free_and_null`], so a NULL result
+/// allocation is a separate operation, `free_and_null`, so a NULL result
 /// from this function always means that the caller still owns the old block.
 pub(crate) unsafe fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usize) -> *mut c_void {
     if count == 0 {
@@ -47,6 +48,8 @@ pub(crate) unsafe fn mkr_reallocarray(ptr: *mut c_void, count: usize, elem: usiz
 }
 
 /// Release a libc allocation and return a null pointer for slot replacement.
+/// Only the allocator proofs still release this way.
+#[cfg(kani)]
 pub(crate) unsafe fn free_and_null(ptr: *mut c_void) -> *mut c_void {
     libc_free(ptr);
     core::ptr::null_mut()

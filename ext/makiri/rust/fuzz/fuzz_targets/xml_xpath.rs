@@ -64,9 +64,7 @@ fuzz_target!(|data: &[u8]| {
             let mut err = XPathError::new();
             let ast = parse_raw(text, l, &mut err);
             if !ast.is_null() {
-                let mut v: XPathValue = core::mem::zeroed();
-                let _ = xpath_eval_compiled(ctx, ast, &mut v, &mut err);
-                xpath_value_clear(&mut v);
+                let _ = evaluate(ctx, ast);
                 node_free(ast);
             }
         }

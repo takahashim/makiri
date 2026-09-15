@@ -379,6 +379,15 @@ impl Set {
     pub fn count(&self) -> usize {
         self.0.count
     }
+    /// The node handles, in order.
+    pub fn as_slice(&self) -> &[*mut c_void] {
+        if self.0.count == 0 {
+            &[]
+        } else {
+            // SAFETY: `items` holds `count` initialised handles.
+            unsafe { core::slice::from_raw_parts(self.0.items, self.0.count) }
+        }
+    }
     pub fn take(&mut self) -> NodeSet {
         core::mem::replace(&mut self.0, EMPTY_SET)
     }

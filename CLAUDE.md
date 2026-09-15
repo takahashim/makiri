@@ -508,7 +508,7 @@ Key decisions that got there, worth not regressing:
   `glue/xpath.rs`): parse copies the source to a C buffer then runs
   `mkr_parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. **XPath holds
-  the GVL for the whole evaluation by design** (`mkr_eval_compiled` is a plain
+  the GVL for the whole evaluation by design** (`xpath::ctx::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL
   serialises all Ruby-thread C code, so an XPath walk never runs in parallel
@@ -556,7 +556,7 @@ Key decisions that got there, worth not regressing:
   instead of building a throwaway node-set per candidate; anything else falls
   through to the generic evaluator.
 - **`Node#at_xpath` first-match short-circuit** (`xpath/eval.rs`
-  `try_first_match`, entered via `xpath_eval_compiled_first`): `at_xpath`
+  `try_first_match`, entered via `evaluate_first`): `at_xpath`
   wants only node-set[0], so for the common "first descendant by name (+ a
   position-independent `[@a]`/`[@a='v']` predicate)" shapes - `//x`, `//x[@a]`,
   `//*[@a='v']`, `.//x`, `descendant::x[...]` (after the `//` peephole; one or two

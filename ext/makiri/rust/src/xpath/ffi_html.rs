@@ -5,52 +5,32 @@
 use super::abi::*;
 use super::dom_html::Html;
 use super::eval;
-use core::ffi::{c_int, c_void};
+use super::own::OwnedVal;
+use core::ffi::c_void;
 
-/// Evaluate an AST against the context. 0 on success (filling `out`), -1 with
-/// `*err` set otherwise.
+/// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
-/// out-pointers writable; the caller holds the GVL.
+/// `ctx` and `ast` must be live and `ast` parsed for this context's host; the
+/// caller holds the GVL.
 pub unsafe fn eval_ast_html(
     ctx: *mut Context,
     ast: *const Node,
-    out: *mut Val,
     err: ErrSink,
-) -> c_int {
-    match eval::eval_ast::<Html>(ctx, ast, err) {
-        Ok(mut v) => {
-            *out = v.take();
-            0
-        }
-        Err(_) => -1,
-    }
+) -> Result<OwnedVal, Reported> {
+    eval::eval_ast::<Html>(ctx, ast, err)
 }
 
-/// The `at_xpath` first-match short-circuit. Returns 1 when it handled the
-/// expression (`*out_node` is the match or NULL), 0 when the shape is not
-/// recognised and the caller should run the full evaluator, -1 on a budget
-/// overrun with `*err` set.
+/// The `at_xpath` first-match short-circuit: `Some(node)` when it handled the
+/// expression (a null node for no match), `None` when the shape is not
+/// recognised and the caller should run the full evaluator.
 ///
 /// # Safety
-/// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
-/// out-pointers writable; the caller holds the GVL.
+/// As [`eval_ast_html`].
 pub unsafe fn try_first_match_html(
     ctx: *mut Context,
     ast: *const Node,
-    out_node: *mut *mut c_void,
     err: ErrSink,
-) -> c_int {
-    if out_node.is_null() {
-        return 0;
-    }
-    match eval::try_first_match::<Html>(ctx, ast, err) {
-        Ok(None) => 0,
-        Ok(Some(n)) => {
-            *out_node = n as *mut c_void;
-            1
-        }
-        Err(_) => -1,
-    }
+) -> Result<Option<*mut c_void>, Reported> {
+    Ok(eval::try_first_match::<Html>(ctx, ast, err)?.map(|n| n as *mut c_void))
 }

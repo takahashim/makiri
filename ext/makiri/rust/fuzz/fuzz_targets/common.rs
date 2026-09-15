@@ -15,12 +15,11 @@ pub use makiri::text::VerifiedText;
 pub use makiri::xml::parse::mkr_xml_parse;
 pub use makiri::xml::Document;
 pub use makiri::xpath::ast_ops::node_free;
-pub use makiri::xpath::boundary::xpath_value_clear;
 pub use makiri::xpath::ctx::{
     ctx_limits, xpath_context_free, xpath_context_new, xpath_register_ns,
     xpath_set_engine_kind,
 };
-pub use makiri::xpath::evaluate::xpath_eval_compiled;
+pub use makiri::xpath::ctx::evaluate;
 pub use makiri::xpath::limits::xpath_limits_init_defaults;
 pub use makiri::xpath::parse::parse_raw;
 pub use makiri::xpath_abi::{Context, Error as XPathError, Limits, XPathValue};

@@ -23,7 +23,7 @@
 //!
 //! # Shared with the XML query glue
 //!
-//! [`xpath_error`] and [`mkr_xpath_value_to_ruby`] are used by the XML query
+//! [`xpath_error`] and [`value_to_ruby`] are used by the XML query
 //! glue as well, so an engine failure or value maps to the same Ruby object
 //! whichever entry point produced it.
 
@@ -44,8 +44,8 @@ use rb_sys::VALUE;
 use crate::xpath::ctx::OwnedContext;
 use crate::xpath::own::Ast as OwnedAst;
 use crate::xpath_abi::{
-    err_set_raw, xpath_value_clear, ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot,
-    Val, ValRef, VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+    err_set_raw, ErrSink, Error as XPathError, Node as Ast, NodeSet, TextSlot, Val, ValRef,
+    VerifiedText, XPathValue, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
 
 use super::abi::{
@@ -66,11 +66,6 @@ const AST_CACHE_MAX: usize = 1024;
 /// argv array below cannot overflow however the limit is tuned - and the stack
 /// use stays independent of the runtime argument count.
 const HANDLER_MAX_ARGS: usize = 64;
-
-const MKR_XPATH_TYPE_NODESET: u32 = 0;
-const MKR_XPATH_TYPE_STRING: u32 = 1;
-const MKR_XPATH_TYPE_NUMBER: u32 = 2;
-const MKR_XPATH_TYPE_BOOLEAN: u32 = 3;
 
 /// `mkr_doc_kind_t`.
 const MKR_DOC_XML: u32 = 1;
@@ -96,8 +91,7 @@ pub use crate::xpath::ctx::xpath_register_ns;
 pub use crate::xpath::ctx::xpath_register_variable_string;
 pub use crate::xpath::ctx::xpath_set_engine_kind;
 pub use crate::xpath::ctx::xpath_set_func_resolver;
-pub use crate::xpath::evaluate::xpath_eval_compiled;
-pub use crate::xpath::evaluate::xpath_eval_compiled_first;
+use crate::xpath::ctx::{evaluate, evaluate_first};
 pub use crate::xpath::parse::parse_raw;
 pub use crate::xpath::runtime_abi::nodeset_clear;
 pub use crate::xpath::runtime_abi::nodeset_init;
@@ -128,33 +122,28 @@ pub(crate) unsafe fn xpath_error(err: &XPathError) -> Error {
     }
 }
 
-/// Convert a just-produced engine value into a Ruby object, then release the
-/// heap the engine handed us. `document` is the keepalive for a node-set.
+/// An evaluation result as a Ruby object. Converting consumes the value, which
+/// frees its node-set array or string; `document` is the keepalive for a
+/// node-set.
 ///
 /// Shared with the XML query glue, like [`xpath_error`].
-pub unsafe extern "C" fn mkr_xpath_value_to_ruby(v: *mut XPathValue, document: VALUE) -> VALUE {
-    let result = match (*v).type_ {
-        MKR_XPATH_TYPE_NODESET => {
-            let set = mkr_node_set_new(document);
-            let ns = (*v).u.nodeset;
-            for i in 0..ns.count {
-                mkr_node_set_push(set, *ns.nodes.add(i));
+pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Value {
+    Value::from_raw(match v {
+        XPathValue::NodeSet(set) => {
+            let rb = mkr_node_set_new(document.as_raw());
+            for &n in set.as_slice() {
+                mkr_node_set_push(rb, n);
             }
-            set
+            rb
         }
-        MKR_XPATH_TYPE_STRING => owned_text_to_str((*v).u.string),
-        MKR_XPATH_TYPE_NUMBER => rb_sys::rb_float_new((*v).u.number),
-        MKR_XPATH_TYPE_BOOLEAN => {
-            if (*v).u.boolean != 0 {
-                rb_sys::Qtrue as VALUE
-            } else {
-                rb_sys::Qfalse as VALUE
-            }
+        XPathValue::String(t) => {
+            let s = t.as_slice();
+            rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
         }
-        _ => rb_sys::Qnil as VALUE,
-    };
-    xpath_value_clear(v);
-    result
+        XPathValue::Number(d) => rb_sys::rb_float_new(d),
+        XPathValue::Boolean(true) => rb_sys::Qtrue as VALUE,
+        XPathValue::Boolean(false) => rb_sys::Qfalse as VALUE,
+    })
 }
 
 /// An engine string as a UTF-8 Ruby String. A NULL pointer is `""`.
@@ -848,18 +837,13 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
             document: document.as_raw(),
         };
         let installed = InstalledHandler::new(ctx, &bridge, handler.as_raw());
-        let mut value: XPathValue = core::mem::zeroed();
-        let mut error = XPathError::new();
-        let rc = xpath_eval_compiled(ctx, ast, &mut value, &mut error);
+        let result = evaluate(ctx, ast);
         drop(installed);
         drop(owned);
-        if rc != 0 {
-            return Err(xpath_error(&error));
+        match result {
+            Ok(value) => Ok(value_to_ruby(value, document)),
+            Err(error) => Err(xpath_error(&error)),
         }
-        Ok(Value::from_raw(mkr_xpath_value_to_ruby(
-            &mut value,
-            document.as_raw(),
-        )))
     }
 }
 
@@ -957,25 +941,19 @@ fn node_xpath_run(
             document: document.as_raw(),
         };
         let installed = InstalledHandler::new(ctx.as_ptr(), &bridge, handler.as_raw());
-        let mut value: XPathValue = core::mem::zeroed();
-        let rc = if first_only {
-            xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
+        let result = if first_only {
+            evaluate_first(ctx.as_ptr(), ast.as_raw())
         } else {
-            xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
+            evaluate(ctx.as_ptr(), ast.as_raw())
         };
         drop(installed);
         drop(ast);
-        if rc != 0 {
-            return Err(xpath_error(&error));
-        }
+        let value = result.map_err(|error| xpath_error(&error))?;
         /* Free the context BEFORE converting: the value owns its own data and
          * never references the context, and a Ruby allocation failing inside
          * the conversion longjmps past any destructor still pending. */
         drop(ctx);
-        Ok(Value::from_raw(mkr_xpath_value_to_ruby(
-            &mut value,
-            document.as_raw(),
-        )))
+        Ok(value_to_ruby(value, document))
     }
 }
 

@@ -49,11 +49,9 @@ pub mod parse;
 mod verify;
 
 pub mod ctx;
-pub mod evaluate;
 pub mod limits;
 
 pub mod ast_ops;
-pub mod boundary;
 pub mod runtime_abi;
 
 pub mod attr_pred;

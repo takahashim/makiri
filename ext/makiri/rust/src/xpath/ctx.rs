@@ -9,7 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use super::abi::*;
-use super::own::OwnedText;
+use super::own::{OwnedText, OwnedVal, Set};
 use crate::falloc::Reserve;
 use core::ffi::{c_int, c_void};
 use core::ptr;
@@ -115,20 +115,22 @@ pub use crate::xpath::ffi_html::try_first_match_html;
 unsafe fn eval_ast_html(
     _ctx: *mut Context,
     _ast: *const Node,
-    _out: *mut Val,
-    _err: ErrSink,
-) -> c_int {
-    XP_ERR_INTERNAL
+    err: ErrSink,
+) -> Result<OwnedVal, Reported> {
+    Err(crate::err_setf!(
+        err,
+        XP_ERR_INTERNAL,
+        "no HTML engine in this build"
+    ))
 }
 
 #[cfg(not(feature = "lexbor"))]
 unsafe fn try_first_match_html(
     _ctx: *mut Context,
     _ast: *const Node,
-    _out_node: *mut *mut c_void,
     _err: ErrSink,
-) -> c_int {
-    0
+) -> Result<Option<*mut c_void>, Reported> {
+    Ok(None)
 }
 pub use crate::xpath::ffi_xml::eval_ast_xml;
 pub use crate::xpath::ffi_xml::try_first_match_xml;
@@ -471,39 +473,46 @@ pub unsafe fn ctx_is_evaluating(ctx: *mut Context) -> c_int {
 
 /* ---------- evaluate ---------- */
 
-/// Move an internal value into the public one. The node-set field has a
-/// different name on each side; ownership of the items array and the string
-/// transfers.
-unsafe fn to_public(v: &Val, out: *mut XPathValue) {
-    (*out).type_ = v.type_tag();
-    match v.get() {
-        ValRef::NodeSet(ns) => {
-            (*out).u.nodeset.nodes = ns.items;
-            (*out).u.nodeset.count = ns.count;
+/* The error is returned by value on purpose: it holds its message inline so a
+ * failure never allocates, and these run once per query, not per node. */
+
+/// The result of an evaluate, owned: dropping it frees the node-set's array or
+/// the string.
+pub enum XPathValue {
+    NodeSet(Set),
+    String(OwnedText),
+    Number(f64),
+    Boolean(bool),
+}
+
+impl XPathValue {
+    fn from_owned(mut v: OwnedVal) -> XPathValue {
+        let val = v.take();
+        match val.get() {
+            ValRef::NodeSet(ns) => XPathValue::NodeSet(Set::adopt(*ns)),
+            ValRef::String(t) => XPathValue::String(OwnedText::from_slot(t)),
+            ValRef::Number(d) => XPathValue::Number(d),
+            ValRef::Boolean(b) => XPathValue::Boolean(b),
         }
-        ValRef::String(t) => (*out).u.string = t,
-        ValRef::Number(d) => (*out).u.number = d,
-        ValRef::Boolean(b) => (*out).u.boolean = c_int::from(b),
     }
 }
 
-pub(crate) unsafe fn eval_compiled(
-    ctx: *mut Context,
-    ast: *mut Node,
-    out_value: *mut XPathValue,
-    out_error: *mut Error,
-) -> c_int {
-    if ctx.is_null() || ast.is_null() || out_value.is_null() {
-        if !out_error.is_null() {
-            crate::err_setf!(
-                ErrSink::from_raw(out_error),
-                XP_ERR_INTERNAL,
-                "xpath_eval_compiled: bad arguments"
-            );
-        }
-        return -1;
-    }
+/// Evaluate `ast` against the context, with the context node as the focus.
+///
+/// # Safety
+/// `ctx` and `ast` must be live, `ast` parsed for this context's host; the
+/// caller holds the GVL.
+#[allow(clippy::result_large_err)]
+pub unsafe fn evaluate(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, Error> {
     let mut err = Error::new();
+    if ctx.is_null() || ast.is_null() {
+        crate::err_setf!(
+            ErrSink::new(&mut err),
+            XP_ERR_INTERNAL,
+            "evaluate: bad arguments"
+        );
+        return Err(err);
+    }
 
     /* Mark the context as evaluating for the duration of the walk, so a handler
      * that re-enters cannot mutate it out from under the evaluator. Nested
@@ -524,11 +533,10 @@ pub(crate) unsafe fn eval_compiled(
      * outer HAD built it, leave it so the outer's sorts still see it. */
     let order_was_built = (*ctx).order_index.built != 0;
 
-    let mut v = Val::EMPTY;
-    let rc = if (*ctx).engine_kind != 0 {
-        eval_ast_xml(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
+    let result = if (*ctx).engine_kind != 0 {
+        eval_ast_xml(handle(ctx), ast, ErrSink::new(&mut err))
     } else {
-        eval_ast_html(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
+        eval_ast_html(handle(ctx), ast, ErrSink::new(&mut err))
     };
     str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
     if !order_was_built && (*ctx).order_index.built != 0 {
@@ -539,31 +547,27 @@ pub(crate) unsafe fn eval_compiled(
     node_clear_memos(ast);
     (*ctx).evaluating -= 1;
 
-    if rc != 0 {
-        if !out_error.is_null() {
-            *out_error = err;
-        }
-        return -1;
+    match result {
+        Ok(v) => Ok(XPathValue::from_owned(v)),
+        Err(_) => Err(err),
     }
-    to_public(&v, out_value);
-    0
 }
 
-pub(crate) unsafe fn eval_compiled_first(
-    ctx: *mut Context,
-    ast: *mut Node,
-    out_value: *mut XPathValue,
-    out_error: *mut Error,
-) -> c_int {
-    if ctx.is_null() || ast.is_null() || out_value.is_null() {
-        if !out_error.is_null() {
-            crate::err_setf!(
-                ErrSink::from_raw(out_error),
-                XP_ERR_INTERNAL,
-                "xpath_eval_compiled_first: bad arguments"
-            );
-        }
-        return -1;
+/// [`evaluate`] through the `at_xpath` first-match fast path when the shape
+/// allows it, and the full evaluator otherwise.
+///
+/// # Safety
+/// As [`evaluate`].
+#[allow(clippy::result_large_err)]
+pub unsafe fn evaluate_first(ctx: *mut Context, ast: *mut Node) -> Result<XPathValue, Error> {
+    let mut err = Error::new();
+    if ctx.is_null() || ast.is_null() {
+        crate::err_setf!(
+            ErrSink::new(&mut err),
+            XP_ERR_INTERNAL,
+            "evaluate_first: bad arguments"
+        );
+        return Err(err);
     }
     /* Reset the per-evaluate counters before the fast path: its descendant walk
      * charges every visited node, so it is bounded fail-closed exactly like the
@@ -573,39 +577,27 @@ pub(crate) unsafe fn eval_compiled_first(
     (*ctx).limits.eval_ops = 0;
     (*ctx).limits.recursion_depth = 0;
 
-    let mut node: *mut c_void = ptr::null_mut();
-    let mut err = Error::new();
     let matched = if (*ctx).engine_kind != 0 {
-        try_first_match_xml(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
+        try_first_match_xml(handle(ctx), ast, ErrSink::new(&mut err))
     } else {
-        try_first_match_html(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
+        try_first_match_html(handle(ctx), ast, ErrSink::new(&mut err))
     };
-    if matched < 0 {
+    match matched {
         /* Op budget exceeded while walking: fail closed rather than falling back
          * to the full evaluator, which would hit the same wall. */
-        if !out_error.is_null() {
-            *out_error = err;
-        }
-        return -1;
-    }
-    if matched != 0 {
+        Err(_) => Err(err),
         /* A recognised first-match shape: a 0-or-1-node node-set, without
          * building or sorting the full descendant set. */
-        let mut set = NodeSet::EMPTY;
-        if !node.is_null()
-            && nodeset_push(
-                &mut set,
-                node,
-                ptr::null_mut(),
-                ErrSink::from_raw(out_error),
-            )
-            .is_err()
-        {
-            nodeset_clear(&mut set);
-            return -1;
+        Ok(Some(node)) => {
+            let mut set = Set::new();
+            if !node.is_null()
+                && nodeset_push(set.as_mut(), node, ptr::null_mut(), ErrSink::new(&mut err))
+                    .is_err()
+            {
+                return Err(err);
+            }
+            Ok(XPathValue::NodeSet(set))
         }
-        to_public(&Val::nodeset(set), out_value);
-        return 0;
+        Ok(None) => evaluate(ctx, ast),
     }
-    eval_compiled(ctx, ast, out_value, out_error)
 }

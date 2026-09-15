@@ -42,9 +42,6 @@ use super::abi::error_class;
  * together. */
 use crate::xml::model::{Status, MAX_BYTES};
 
-/// `MKR_XPATH_TYPE_NODESET`.
-const MKR_XPATH_TYPE_NODESET: u32 = 0;
-
 /// `MKR_CSS_DEFAULT_NS_PREFIX` - the synthetic prefix a default namespace
 /// arrives under, Nokogiri's convention, so a bare type selector binds to it.
 const CSS_DEFAULT_NS_PREFIX: &str = "xmlns";
@@ -86,7 +83,7 @@ pub use crate::css::compile_raw;
 pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
 pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
-pub use crate::glue::xpath::mkr_xpath_value_to_ruby;
+use crate::glue::xpath::value_to_ruby;
 use crate::glue::xpath::xpath_error;
 pub use crate::xml::api::mkr_xml_doc_new;
 pub use crate::xml::api::mkr_xml_name_index_get;
@@ -98,10 +95,8 @@ pub use crate::xpath::ctx::xpath_context_set_name_index;
 pub use crate::xpath::ctx::xpath_register_ns;
 pub use crate::xpath::ctx::xpath_set_engine_kind;
 use crate::xpath::ctx::OwnedContext;
-pub use crate::xpath::evaluate::xpath_eval_compiled;
-pub use crate::xpath::evaluate::xpath_eval_compiled_first;
+use crate::xpath::ctx::{evaluate, evaluate_first};
 pub use crate::xpath::parse::parse_raw;
-pub use crate::xpath_abi::xpath_value_clear;
 
 extern "C" {
 
@@ -482,20 +477,16 @@ unsafe fn run_ast(
     first_only: bool,
     document: Value,
 ) -> Result<Value, Error> {
-    let mut value: XPathValue = core::mem::zeroed();
-    let mut error = XPathError::new();
-    let rc = if first_only {
-        xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
+    let result = if first_only {
+        evaluate_first(ctx.as_ptr(), ast.as_raw())
     } else {
-        xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
+        evaluate(ctx.as_ptr(), ast.as_raw())
     };
     drop(ast);
-    if rc != 0 {
-        return Err(xpath_error(&error));
-    }
+    let value = result.map_err(|error| xpath_error(&error))?;
     drop(ctx);
-    /* Converts AND clears the value. */
-    let result = Value::from_raw(mkr_xpath_value_to_ruby(&mut value, document.as_raw()));
+    /* Converting consumes the value, which frees it. */
+    let result = value_to_ruby(value, document);
     if first_only && result.is_kind_of(node_set_class()) {
         return result.funcall("first", ());
     }
@@ -682,26 +673,11 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         )?;
         let ast = css_compile_or_raise(ctx.as_ptr(), selector, Some(ns))?;
 
-        let mut value: XPathValue = core::mem::zeroed();
-        let mut error = XPathError::new();
-        let rc = xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error);
+        let result = evaluate(ctx.as_ptr(), ast.as_raw());
         drop(ast);
-        if rc != 0 {
-            return Err(xpath_error(&error));
-        }
-
-        let mut found = false;
-        if value.type_ == MKR_XPATH_TYPE_NODESET {
-            let ns_ = value.u.nodeset;
-            for i in 0..ns_.count {
-                if *ns_.nodes.add(i) == node.to_token() as *mut c_void {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        xpath_value_clear(&mut value);
-        Ok(found)
+        let value = result.map_err(|error| xpath_error(&error))?;
+        let target = node.to_token() as *mut c_void;
+        Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
     }
 }
 

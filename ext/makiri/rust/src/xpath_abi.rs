@@ -201,28 +201,6 @@ pub union ValU {
     pub boolean: c_int,
 }
 
-#[derive(Clone, Copy)]
-pub struct PublicNodeSet {
-    /// The same array as `NodeSet.items`; the public type names it `nodes`.
-    pub nodes: *mut *mut c_void,
-    pub count: usize,
-}
-
-#[derive(Clone, Copy)]
-pub union XPathValueU {
-    pub nodeset: PublicNodeSet,
-    pub string: TextSlot,
-    pub number: f64,
-    pub boolean: c_int,
-}
-
-/// `mkr_xpath_value_t` - the result the glue receives. Distinct from `Val`: the
-/// node-set arm carries no capacity, because ownership of the array transfers.
-pub struct XPathValue {
-    pub type_: u32,
-    pub u: XPathValueU,
-}
-
 /* mkr_xpath_type_t */
 pub const T_NODESET: u32 = 0;
 pub const T_STRING: u32 = 1;
@@ -508,6 +486,7 @@ pub use crate::xpath::limits::limit_recurse_leave;
 /// real struct in `xpath::ctx`, reconciled only by the linker seeing one C name;
 /// with no C ABI between them that is two types, so this IS the one type.
 pub use crate::xpath::ctx::Context;
+pub use crate::xpath::ctx::XPathValue;
 
 /// `mkr_buf_t` - a growable byte buffer with a byte ceiling. Declared in
 /// `crate::cbuf`, which is where the C layout lives now that the glue writes
@@ -618,7 +597,6 @@ pub use crate::xpath::runtime_abi::val_clear;
 pub use crate::xpath::runtime_abi::val_set_owned_text;
 
 /* The cleanup entry points the glue calls live at the raw boundary. */
-pub use crate::xpath::boundary::xpath_value_clear;
 
 /// The proof a failure's message was written; see `xpath::msg`.
 pub use crate::xpath::msg::{err_set_raw, ErrSink, Error, Reported};
