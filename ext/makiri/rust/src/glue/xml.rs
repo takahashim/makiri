@@ -445,7 +445,9 @@ unsafe fn register_namespaces(
                 format!("invalid namespace mapping: {reason}"),
             ));
         }
-        let rc = mkr_xpath_register_ns(ctx, pv.into(), uv.into());
+        let rc = mkr_xpath_register_ns(ctx, unsafe { pv.into_verified() }, unsafe {
+            uv.into_verified()
+        });
         /* Keep both Strings reachable until the copy inside register_ns is done. */
         core::hint::black_box((ks, vs));
         if rc != 0 {
@@ -561,7 +563,8 @@ fn xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Some(ast) = crate::xpath::parse::parse_owned(ev.into(), limits, &mut error) else {
+        let Some(ast) = crate::xpath::parse::parse_owned(ev.into_verified(), limits, &mut error)
+        else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };
@@ -617,7 +620,12 @@ unsafe fn css_compile_or_raise(
     let mut error: XPathError = core::mem::zeroed();
     let limits = mkr_ctx_limits(ctx);
     (*limits).ast_nodes = 0;
-    let ast = crate::css::compile_owned(sv.into(), &cns as *const _, limits, &mut error);
+    let ast = crate::css::compile_owned(
+        unsafe { sv.into_verified() },
+        &cns as *const _,
+        limits,
+        &mut error,
+    );
     core::hint::black_box(selector);
     if let Some(ast) = ast {
         return Ok(ast);

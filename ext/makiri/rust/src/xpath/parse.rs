@@ -903,15 +903,11 @@ unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) ->
         err_setf!(err, XP_ERR_INTERNAL, "mkr_parse: limits required");
         return ptr::null_mut();
     }
-    if mkr_limit_check_expr_bytes(limits, expr.len, err) != 0 {
+    if mkr_limit_check_expr_bytes(limits, expr.len(), err) != 0 {
         return ptr::null_mut();
     }
 
-    let src: &[u8] = if expr.ptr.is_null() || expr.len == 0 {
-        &[]
-    } else {
-        core::slice::from_raw_parts(expr.ptr as *const u8, expr.len)
-    };
+    let src: &[u8] = unsafe { expr.as_bytes() };
 
     let lx = match Lexer::new(src) {
         Ok(lx) => lx,

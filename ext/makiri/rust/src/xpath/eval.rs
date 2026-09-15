@@ -941,10 +941,7 @@ unsafe fn eval_node_inner<D: Dom>(
         }
         NK_VARREF => {
             let v = &raw const (*n).u.varref;
-            let mut got = VerifiedText {
-                ptr: ptr::null(),
-                len: 0,
-            };
+            let mut got = VerifiedText::absent();
             if mkr_ctx_lookup_variable_text(
                 ctx,
                 (*v).prefix.as_ptr(),
@@ -964,11 +961,7 @@ unsafe fn eval_node_inner<D: Dom>(
                 );
                 false
             } else {
-                let bytes = if got.ptr.is_null() || got.len == 0 {
-                    &[][..]
-                } else {
-                    core::slice::from_raw_parts(got.ptr as *const u8, got.len)
-                };
+                let bytes = got.as_bytes();
                 let mut text = OwnedText::empty();
                 if owned_copy(
                     &mut text,

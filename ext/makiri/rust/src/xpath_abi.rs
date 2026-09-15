@@ -170,8 +170,85 @@ impl OwnedText {
 /// mkr_verified_text_t / mkr_borrowed_text_t - same layout, different contract.
 #[derive(Clone, Copy)]
 pub struct VerifiedText {
-    pub ptr: *const c_char,
-    pub len: usize,
+    raw: RawText,
+}
+
+impl VerifiedText {
+    /// An omitted value, represented by the null sentinel used by the C ABI.
+    pub(crate) const fn absent() -> Self {
+        Self {
+            raw: RawText {
+                ptr: core::ptr::null_mut(),
+                len: 0,
+            },
+        }
+    }
+
+    /// A present, zero-length view backed by a static empty C string.
+    pub(crate) const fn empty() -> Self {
+        Self {
+            raw: RawText {
+                ptr: c"".as_ptr() as *mut c_char,
+                len: 0,
+            },
+        }
+    }
+
+    /// Create a verified view after checking the byte slice's text contract.
+    ///
+    /// The returned view borrows `bytes`; the caller must keep it alive and
+    /// must not let the backing storage move while the view is used.
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if crate::cutf8::text_verdict(bytes, false) != crate::cutf8::TextVerdict::Ok {
+            return None;
+        }
+        // SAFETY: `bytes.as_ptr()` is valid for `bytes.len()` bytes, and the
+        // preceding check establishes VerifiedText's UTF-8/NUL invariant.
+        Some(unsafe { Self::from_verified_bytes(bytes) })
+    }
+
+    /// Create a view from bytes whose UTF-8/no-NUL invariant is already known.
+    ///
+    /// # Safety
+    /// `bytes` must contain valid UTF-8 and no NUL byte. The returned view is
+    /// valid only while `bytes` remains alive at the same address.
+    pub(crate) unsafe fn from_verified_bytes(bytes: &[u8]) -> Self {
+        // SAFETY: forwarded by this function's contract.
+        unsafe { Self::from_raw_parts(bytes.as_ptr() as *const c_char, bytes.len()) }
+    }
+
+    pub(crate) const unsafe fn from_raw_parts(ptr: *const c_char, len: usize) -> Self {
+        Self {
+            raw: RawText {
+                ptr: ptr as *mut c_char,
+                len,
+            },
+        }
+    }
+
+    pub(crate) const fn as_ptr(self) -> *const c_char {
+        self.raw.ptr as *const c_char
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.raw.len
+    }
+
+    pub(crate) const fn is_absent(self) -> bool {
+        self.as_ptr().is_null()
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.is_absent() || self.raw.len == 0
+    }
+
+    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
+        if self.is_empty() {
+            &[]
+        } else {
+            core::slice::from_raw_parts(self.as_ptr() as *const u8, self.raw.len)
+        }
+    }
 }
 
 /* ---- error / limits (mkr_xpath.h) ---- */

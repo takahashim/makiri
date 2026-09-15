@@ -95,14 +95,16 @@ impl RubyText {
     }
 }
 
-/// Dropping the Ruby anchor: the engine takes the unanchored form, and the
-/// caller is responsible for keeping the String alive across the call.
-impl From<RubyText> for crate::xpath_abi::VerifiedText {
-    fn from(b: RubyText) -> Self {
-        crate::xpath_abi::VerifiedText {
-            ptr: b.ptr,
-            len: b.len,
-        }
+impl RubyText {
+    /// Drop the Ruby anchor and pass the bytes to the engine as a borrowed view.
+    ///
+    /// # Safety
+    /// The Ruby String represented by `value` must remain reachable and must
+    /// not be allowed to move or be collected until the returned view is no
+    /// longer used.
+    pub(crate) unsafe fn into_verified(self) -> crate::xpath_abi::VerifiedText {
+        // SAFETY: forwarded by this function's contract.
+        unsafe { crate::xpath_abi::VerifiedText::from_raw_parts(self.ptr, self.len) }
     }
 }
 

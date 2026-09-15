@@ -29,11 +29,8 @@ extern "C" {
 }
 
 #[inline]
-fn borrowed(s: &[u8]) -> VerifiedText {
-    VerifiedText {
-        ptr: s.as_ptr() as *const core::ffi::c_char,
-        len: s.len(),
-    }
+fn borrowed(s: &[u8]) -> Option<VerifiedText> {
+    VerifiedText::from_bytes(s)
 }
 
 /// A zeroed node of `kind`, charged against the AST budget.
@@ -43,7 +40,15 @@ pub(crate) unsafe fn node(b: &Build, kind: u32) -> *mut Node {
 
 /// Copy `s` into an owned text slot. `false` on failure, with `*err` set.
 pub(crate) unsafe fn set_text(b: &Build, out: *mut OwnedText, s: &[u8]) -> bool {
-    match crate::xpath_abi::OwnedText::try_copy(borrowed(s), b.err, c"css name".as_ptr()) {
+    let Some(text) = borrowed(s) else {
+        crate::err_setf!(
+            b.err,
+            crate::xpath_abi::XP_ERR_INTERNAL,
+            "invalid internal CSS text"
+        );
+        return false;
+    };
+    match crate::xpath_abi::OwnedText::try_copy(text, b.err, c"css name".as_ptr()) {
         Some(value) => {
             *out = value;
             true

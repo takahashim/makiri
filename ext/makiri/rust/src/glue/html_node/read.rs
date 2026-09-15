@@ -49,10 +49,7 @@ pub use crate::dom_adapter::text_index::mkr_parsed_text_slices;
 
 #[inline]
 fn borrowed(p: *const u8, len: usize) -> BorrowedText {
-    BorrowedText {
-        ptr: p as *const c_char,
-        len,
-    }
+    unsafe { BorrowedText::from_raw_parts(p as *const c_char, len) }
 }
 
 /// A UTF-8 String over Lexbor's interned bytes. They live in the document arena

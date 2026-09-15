@@ -79,10 +79,7 @@ impl Text {
         self.0.is_absent()
     }
     pub(crate) unsafe fn as_verified(&self) -> VerifiedText {
-        VerifiedText {
-            ptr: self.0.as_ptr(),
-            len: self.0.len(),
-        }
+        VerifiedText::from_raw_parts(self.0.as_ptr(), self.0.len())
     }
     pub(crate) fn as_mut(&mut self) -> *mut OwnedText {
         &mut self.0

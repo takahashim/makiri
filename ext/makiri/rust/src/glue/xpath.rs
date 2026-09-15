@@ -590,10 +590,7 @@ unsafe fn ruby_to_out(
     if rv.is_nil() {
         if mkr_val_set_borrowed_text_copy(
             out,
-            VerifiedText {
-                ptr: c"".as_ptr(),
-                len: 0,
-            },
+            VerifiedText::empty(),
             core::ptr::null_mut(),
             core::ptr::null(),
         ) != 0
@@ -618,8 +615,12 @@ unsafe fn ruby_to_out(
         err.set_fmt(format_args!("handler returned an invalid string: {reason}"));
         return false;
     }
-    let rc =
-        mkr_val_set_borrowed_text_copy(out, vv.into(), core::ptr::null_mut(), core::ptr::null());
+    let rc = mkr_val_set_borrowed_text_copy(
+        out,
+        unsafe { vv.into_verified() },
+        core::ptr::null_mut(),
+        core::ptr::null(),
+    );
     core::hint::black_box(sv);
     if rc != 0 || (*out).u.string.is_absent() {
         err.set("out of memory converting handler result");
@@ -784,7 +785,7 @@ unsafe fn cached_ast(
 
     let limits = mkr_ctx_limits(d.ctx);
     (*limits).ast_nodes = 0;
-    let ast = crate::xpath::parse::parse_owned(expr.into(), limits, err)?;
+    let ast = crate::xpath::parse::parse_owned(unsafe { expr.into_verified() }, limits, err)?;
     if d.cache.0.len() >= AST_CACHE_MAX || d.cache.0.mkr_reserve(1).is_err() {
         let raw = ast.as_raw();
         return Some((raw, Some(ast)));
@@ -900,7 +901,7 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
         }
         let pv = mkr_ruby_verified_text(prefix.as_raw(), c"namespace prefix".as_ptr());
         let uv = mkr_ruby_verified_text(uri.as_raw(), c"namespace URI".as_ptr());
-        let rc = mkr_xpath_register_ns(ctx, pv.into(), uv.into()); /* copies both */
+        let rc = mkr_xpath_register_ns(ctx, pv.into_verified(), uv.into_verified()); /* copies both */
         core::hint::black_box((prefix, uri));
         if rc != 0 {
             return Err(Error::new(error_class(), "failed to register namespace"));
@@ -945,7 +946,7 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
                 format!("invalid variable value: {reason}"),
             ));
         }
-        let rc = mkr_xpath_register_variable_string(ctx, nv.into(), vv.into()); /* copies both */
+        let rc = mkr_xpath_register_variable_string(ctx, nv.into_verified(), vv.into_verified()); /* copies both */
         core::hint::black_box((name, sv));
         if rc != 0 {
             return Err(Error::new(error_class(), "failed to register variable"));
@@ -978,7 +979,8 @@ fn node_xpath_run(
         let mut error: XPathError = core::mem::zeroed();
         let limits = mkr_ctx_limits(ctx);
         (*limits).ast_nodes = 0;
-        let Some(ast) = crate::xpath::parse::parse_owned(ev.into(), limits, &mut error) else {
+        let Some(ast) = crate::xpath::parse::parse_owned(ev.into_verified(), limits, &mut error)
+        else {
             mkr_xpath_context_free(ctx);
             mkr_xpath_raise(&mut error);
         };

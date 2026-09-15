@@ -225,7 +225,7 @@ pub unsafe fn mkr_xpath_register_ns(
     prefix: VerifiedText,
     uri: VerifiedText,
 ) -> c_int {
-    if ctx.is_null() || prefix.ptr.is_null() || uri.ptr.is_null() {
+    if ctx.is_null() || prefix.is_absent() || uri.is_absent() {
         return -1;
     }
     let ctx = &mut *ctx;
@@ -251,7 +251,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
     name: VerifiedText,
     value: VerifiedText,
 ) -> c_int {
-    if ctx.is_null() || name.ptr.is_null() {
+    if ctx.is_null() || name.is_absent() {
         return -1;
     }
     let ctx = &mut *ctx;
@@ -289,17 +289,14 @@ pub unsafe fn mkr_ctx_lookup_ns(
     if ctx.is_null() || prefix.is_null() {
         return ptr::null();
     }
-    let want = VerifiedText {
-        ptr: prefix,
-        len: prefix_len,
-    };
+    let want = VerifiedText::from_raw_parts(prefix, prefix_len);
     for e in (*ctx).ns.iter() {
         if text_eq(&e.prefix, want) {
             let uri = borrowed(&e.uri);
             if !out_uri_len.is_null() {
-                *out_uri_len = uri.len;
+                *out_uri_len = uri.len();
             }
-            return uri.ptr;
+            return uri.as_ptr();
         }
     }
     ptr::null()
@@ -314,22 +311,13 @@ pub unsafe fn mkr_ctx_lookup_variable_text(
     out: *mut VerifiedText,
 ) -> c_int {
     if !out.is_null() {
-        *out = VerifiedText {
-            ptr: ptr::null(),
-            len: 0,
-        };
+        *out = VerifiedText::absent();
     }
     if ctx.is_null() || name.is_null() || out.is_null() {
         return 0;
     }
-    let want_prefix = VerifiedText {
-        ptr: prefix,
-        len: prefix_len,
-    };
-    let want_name = VerifiedText {
-        ptr: name,
-        len: name_len,
-    };
+    let want_prefix = VerifiedText::from_raw_parts(prefix, prefix_len);
+    let want_name = VerifiedText::from_raw_parts(name, name_len);
     for e in (*ctx).vars.iter() {
         let prefix_match = if prefix.is_null() {
             e.prefix.is_absent()

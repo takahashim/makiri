@@ -171,8 +171,9 @@ pub unsafe fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
     let e = unsafe { ENGINE.ready() }.ok_or(ParseError::NotReady)?;
 
     // SAFETY: selector is a live verified slice and `e.parser` is initialized.
-    let list =
-        unsafe { lxb_css_selectors_parse(e.parser, selector.ptr as *const u8, selector.len) };
+    let list = unsafe {
+        lxb_css_selectors_parse(e.parser, selector.as_ptr() as *const u8, selector.len())
+    };
     /* Both conditions matter: Lexbor can hand back a list AND a non-OK status
      * for a partially-recovered parse, and a recovered selector is not the one
      * the caller wrote. */

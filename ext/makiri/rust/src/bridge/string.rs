@@ -118,15 +118,15 @@ pub unsafe fn mkr_ruby_str_from_slices(
     let mut off = 0usize;
     for i in 0..n {
         let s = &*slices.add(i);
-        if s.len == 0 {
+        if s.is_empty() {
             continue;
         }
-        if s.len > total - off {
+        if s.len() > total - off {
             /* off <= total holds, so the subtraction cannot underflow. */
             rb_raise(mkr_eError, c"text slice length inconsistency".as_ptr());
         }
-        core::ptr::copy_nonoverlapping(s.ptr as *const u8, dst.add(off), s.len);
-        off += s.len;
+        core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, dst.add(off), s.len());
+        off += s.len();
     }
     if off != total {
         /* A short sum would leave the tail of the uninitialised String unwritten. */
@@ -138,10 +138,10 @@ pub unsafe fn mkr_ruby_str_from_slices(
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
 /// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
 pub unsafe fn mkr_ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
-    if text.ptr.is_null() {
+    if text.is_absent() {
         return rb_sys::rb_utf8_str_new(c"".as_ptr(), 0);
     }
-    rb_sys::rb_utf8_str_new(text.ptr, text.len as c_long)
+    rb_sys::rb_utf8_str_new(text.as_ptr(), text.len() as c_long)
 }
 
 /* ---- the strict text contract ---- */

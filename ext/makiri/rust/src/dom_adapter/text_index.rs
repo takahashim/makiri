@@ -248,9 +248,8 @@ impl TextIndex {
                  * smaller than the bytes actually present, which is a short read
                  * into a pre-sized String. */
                 let total = t.prefix[t.slices.len()].checked_add(len)?;
-                t.slices.push(BorrowedText {
-                    ptr: ptr as *const core::ffi::c_char,
-                    len,
+                t.slices.push(unsafe {
+                    BorrowedText::from_raw_parts(ptr as *const core::ffi::c_char, len)
                 });
                 t.prefix.push(total);
             } else if is_container(child) {
