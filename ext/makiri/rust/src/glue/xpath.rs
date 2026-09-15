@@ -53,9 +53,9 @@ use crate::xpath::own::{Ast as OwnedAst, OwnedVal};
 use crate::xpath::value::{NodeSet, TextSlot, Val, ValRef};
 
 use super::abi::{
-    error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,
-    mkr_html_node_unwrap, mkr_mHtmlNodeMethods, mkr_node_document, mkr_node_raw, mkr_node_set_new,
-    mkr_node_set_push, mkr_xml_node_unwrap, parsed_xml_doc, ruby_verified_text, RubyText,
+    cXmlDocument, doc_parsed, error_class, html_node_unwrap, is_kind_of, keepalive_document,
+    mkr_cNode, mkr_cNodeSet, mkr_mHtmlNodeMethods, node_raw, node_set_new, node_set_push,
+    parsed_xml_doc, ruby_verified_text, xml_node_unwrap, RubyText,
 };
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
@@ -72,7 +72,7 @@ const AST_CACHE_MAX: usize = 1024;
 const HANDLER_MAX_ARGS: usize = 64;
 
 /// `mkr_doc_kind_t`.
-const MKR_DOC_XML: u32 = 1;
+const DOC_XML: u32 = 1;
 
 /// The engine context. Opaque here while C held it; now the real type.
 use crate::xpath::ctx::Context as Ctx;
@@ -137,9 +137,9 @@ pub(crate) unsafe fn xpath_error(err: &XPathError) -> Error {
 pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
     let converted = magnus::rb_sys::protect(|| match &v {
         XPathValue::NodeSet(set) => {
-            let rb = mkr_node_set_new(document.as_raw());
+            let rb = node_set_new(document.as_raw());
             for &n in set.as_slice() {
-                mkr_node_set_push(rb, n);
+                node_set_push(rb, n);
             }
             rb
         }
@@ -286,21 +286,21 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
 /// The XML branch needs neither: the custom node links attributes to their owner
 /// directly, and `//tag` falls back to a walk.
 pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
-    let parsed = mkr_doc_parsed(document.as_raw())?;
+    let parsed = doc_parsed(document.as_raw())?;
 
-    if parsed_kind(parsed) == MKR_DOC_XML {
+    if parsed_kind(parsed) == DOC_XML {
         let xdoc = parsed_xml_doc(parsed);
         if xdoc.is_null() {
             return Err(Error::new(error_class(), "XPath context with no document"));
         }
         /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
          * document node for a Document receiver, else the node itself. */
-        let cnode = if is_kind_of(rb_node, mkr_cXmlDocument) {
+        let cnode = if is_kind_of(rb_node, cXmlDocument) {
             (*(xdoc as *mut crate::xml::model::Doc))
                 .doc_node()
                 .to_token() as *mut c_void
         } else {
-            mkr_xml_node_unwrap(rb_node.as_raw())?
+            xml_node_unwrap(rb_node.as_raw())?
         };
         let Some(xctx) = OwnedContext::new(xdoc, cnode, Backend::Xml) else {
             return Err(Error::new(
@@ -311,8 +311,8 @@ pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<Owne
         return Ok(xctx);
     }
 
-    let node = mkr_html_node_unwrap(rb_node.as_raw())?;
-    let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw())? as *mut c_void;
+    let node = html_node_unwrap(rb_node.as_raw())?;
+    let doc = crate::glue::abi::html_doc_unwrap(document.as_raw())? as *mut c_void;
     if !parsed_dom_index_build(parsed) {
         return Err(Error::new(
             error_class(),
@@ -348,7 +348,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
             "expected a Makiri::Node",
         ));
     }
-    let document = unsafe { Value::from_raw(mkr_node_document(rb_node.as_raw())?) };
+    let document = unsafe { Value::from_raw(keepalive_document(rb_node.as_raw())?) };
     let ctx = unsafe { context_for(rb_node, document)? };
     unsafe { ctx_set_unprefixed_lax(ctx.as_ptr(), lax) };
 
@@ -388,7 +388,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
                 "cannot change the context node while evaluating (re-entrant mutation from a handler)",
             ));
         }
-        if mkr_node_document(rb_node.as_raw())? != ruby.get_inner(rb_self.document).as_raw() {
+        if keepalive_document(rb_node.as_raw())? != ruby.get_inner(rb_self.document).as_raw() {
             return Err(Error::new(
                 error_class(),
                 "context node must belong to the same document",
@@ -397,7 +397,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
         rb_self.node.set(rb_node.into()); /* keepalive; marked above */
         /* Same-document is verified, so rb_node is the context's representation
          * and the engine - monomorphized per kind - takes the raw pointer. */
-        ctx_set_context_node(ctx, mkr_node_raw(rb_node.as_raw())?);
+        ctx_set_context_node(ctx, node_raw(rb_node.as_raw())?);
     }
     Ok(rb_node)
 }
@@ -423,9 +423,9 @@ struct Bridge {
 unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> VALUE {
     match v.get() {
         ValRef::NodeSet(ns) => {
-            let set = mkr_node_set_new(b.document);
+            let set = node_set_new(b.document);
             for i in 0..ns.count {
-                mkr_node_set_push(set, *ns.items.add(i));
+                node_set_push(set, *ns.items.add(i));
             }
             set
         }
@@ -449,7 +449,7 @@ unsafe fn push_result_node(
     set: *mut NodeSet,
     err: &mut ErrBuf,
 ) -> bool {
-    let Ok(node_document) = mkr_node_document(rb_node) else {
+    let Ok(node_document) = keepalive_document(rb_node) else {
         err.set("handler returned an unusable node");
         return false;
     };
@@ -458,7 +458,7 @@ unsafe fn push_result_node(
         return false;
     }
     /* Same-document is checked above, so this is a node of the context's kind. */
-    let Ok(n) = mkr_node_raw(rb_node) else {
+    let Ok(n) = node_raw(rb_node) else {
         err.set("handler returned an unusable node");
         return false;
     };
@@ -961,7 +961,7 @@ fn node_xpath_run(
     first_only: bool,
 ) -> Result<Value, Error> {
     unsafe {
-        let document = Value::from_raw(mkr_node_document(rb_self.as_raw())?);
+        let document = Value::from_raw(keepalive_document(rb_self.as_raw())?);
         let ctx = context_for(rb_self, document)?;
         ctx_set_unprefixed_lax(ctx.as_ptr(), lax);
         let ast = parse_query(ctx.as_ptr(), expr)?;
@@ -1007,7 +1007,7 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
 
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn mkr_init_xpath() {
+pub unsafe extern "C" fn init_xpath() {
     let klass = RClass::from_value(Value::from_raw(mkr_cXPathContext))
         .expect("Makiri::XPathContext is a Class");
     klass

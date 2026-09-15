@@ -16,7 +16,7 @@
 //! `glue::node` exports its `rb_data_type_t` because C still wraps and unwraps
 //! nodes. Nothing outside this file touches the NodeSet's, so it uses magnus's
 //! own [`TypedData`] instead, and the struct layout becomes private - the C API
-//! other files call (`mkr_node_set_new` / `mkr_node_set_push`) is just two
+//! other files call (`node_set_new` / `node_set_push`) is just two
 //! functions over an opaque `VALUE`. That is the shape the rest of the wrapper
 //! types should reach.
 //!
@@ -38,14 +38,14 @@ use magnus::{
 use rb_sys::VALUE;
 
 use super::abi::{
-    error_class, mkr_cDocument, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_node_document,
-    mkr_node_raw, mkr_wrap_html_node, mkr_wrap_xml_node, typed_data_unprotected, LxbNode,
+    cXmlDocument, error_class, keepalive_document, mkr_cDocument, mkr_cNode, mkr_cNodeSet,
+    node_raw, typed_data_unprotected, wrap_html_node, wrap_xml_node, LxbNode,
 };
 
 /// The per-set node cap, shared with the CSS and XPath glue: every
 /// node-collecting path fails closed at the same bound instead of growing
 /// without limit.
-const MKR_NODE_SET_MAX: usize = 10 * 1000 * 1000;
+const NODE_SET_MAX: usize = 10 * 1000 * 1000;
 
 /// Below this operand size a linear scan beats building a hash set.
 const HASH_MIN: usize = 64;
@@ -81,7 +81,7 @@ impl PushError {
     fn message(self) -> String {
         match self {
             PushError::SizeLimit => {
-                format!("node set size limit exceeded ({MKR_NODE_SET_MAX} nodes)")
+                format!("node set size limit exceeded ({NODE_SET_MAX} nodes)")
             }
             PushError::CapacityOverflow => "node set capacity overflow".to_string(),
         }
@@ -126,7 +126,7 @@ impl NodeVec {
     /// it covers `need`, falling back to exactly `need` when doubling would
     /// overshoot what the element size allows. So the only failure is `need`
     /// itself not fitting, which the caller has already bounded by
-    /// `MKR_NODE_SET_MAX`.
+    /// `NODE_SET_MAX`.
     fn grow_capacity(cap: usize, need: usize) -> Option<usize> {
         crate::falloc::grow_capacity(cap, need, core::mem::size_of::<*mut c_void>())
     }
@@ -134,7 +134,7 @@ impl NodeVec {
     /// Append one node. `Err` only for the size cap or a capacity overflow -
     /// allocation failure raises inside Ruby.
     fn push(&mut self, node: *mut c_void) -> Result<(), PushError> {
-        if self.len >= MKR_NODE_SET_MAX {
+        if self.len >= NODE_SET_MAX {
             return Err(PushError::SizeLimit);
         }
         if self.len == self.cap {
@@ -244,9 +244,9 @@ impl NodeSet {
 /// and `doc_is_xml` is what justifies the cast.
 unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
     let raw = if doc_is_xml {
-        mkr_wrap_xml_node(node, document.as_raw())
+        wrap_xml_node(node, document.as_raw())
     } else {
-        mkr_wrap_html_node(node as *mut LxbNode, document.as_raw())
+        wrap_html_node(node as *mut LxbNode, document.as_raw())
     };
     Value::from_raw(raw)
 }
@@ -264,11 +264,10 @@ fn node_set_class() -> RClass {
 
 /// # Safety
 /// `document` must be a live `Makiri::Document`.
-pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
+pub unsafe extern "C" fn node_set_new(document: VALUE) -> VALUE {
     let ruby = Ruby::get_unchecked();
     let doc = Value::from_raw(document);
-    let doc_is_xml =
-        rb_sys::rb_obj_is_kind_of(document, mkr_cXmlDocument) == rb_sys::Qtrue as VALUE;
+    let doc_is_xml = rb_sys::rb_obj_is_kind_of(document, cXmlDocument) == rb_sys::Qtrue as VALUE;
     let obj = ruby
         .wrap(NodeSet {
             document: doc.into(),
@@ -290,7 +289,7 @@ pub unsafe extern "C" fn mkr_node_set_new(document: VALUE) -> VALUE {
 /// This raises - the size cap, a busy set, `NoMemoryError` from the array's
 /// growth - so it is called only under `rb_protect` or from a frame that owns
 /// nothing a longjmp would skip (the tree readers, which push raw pointers).
-pub unsafe extern "C" fn mkr_node_set_push(rb_set: VALUE, node: *mut c_void) {
+pub unsafe extern "C" fn node_set_push(rb_set: VALUE, node: *mut c_void) {
     /* The hot path: one call per node of every CSS and XPath result. It uses
      * the unprotected accessor deliberately - magnus's `try_convert` costs an
      * rb_protect (a setjmp) per call, which measured ~26% off `Node#css`. See
@@ -606,7 +605,7 @@ fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSe
 /// a wrapped type gives: the data lives as long as the Ruby object, which the
 /// returned `Value` keeps rooted on the caller's stack.
 fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
-    let raw = unsafe { mkr_node_set_new(document.as_raw()) };
+    let raw = unsafe { node_set_new(document.as_raw()) };
     /* Just built by the line above, so the type is known - no need to pay for
      * the checked conversion. */
     Ok((unsafe { Value::from_raw(raw) }, unsafe {
@@ -703,7 +702,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), mkr_cDocument) == rb_sys::Qtrue as VALUE {
             ctx.as_raw()
         } else if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), mkr_cNode) == rb_sys::Qtrue as VALUE {
-            mkr_node_document(ctx.as_raw())?
+            keepalive_document(ctx.as_raw())?
         } else {
             return Err(Error::new(
                 ruby.exception_type_error(),
@@ -728,7 +727,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     for item in arr.into_iter() {
         let ok = unsafe {
             rb_sys::rb_obj_is_kind_of(item.as_raw(), mkr_cNode) == rb_sys::Qtrue as VALUE
-                && mkr_node_document(item.as_raw())? == doc_raw
+                && keepalive_document(item.as_raw())? == doc_raw
         };
         if !ok {
             return Err(Error::new(
@@ -736,7 +735,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
                 "every node must be a Makiri node belonging to the given document",
             ));
         }
-        w.push(unsafe { mkr_node_raw(item.as_raw())? })?;
+        w.push(unsafe { node_raw(item.as_raw())? })?;
     }
     drop(w);
     let _ = document;
@@ -745,7 +744,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`, with the classes already defined.
-pub unsafe extern "C" fn mkr_init_node_set() {
+pub unsafe extern "C" fn init_node_set() {
     let klass = node_set_class();
 
     /* Nodes come only from C; `.new` seeds through the factory below. */

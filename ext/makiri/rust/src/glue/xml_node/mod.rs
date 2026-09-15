@@ -23,7 +23,7 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use self::abi::*;
-use super::abi::{mkr_cDocument, mkr_cNodeSet, mkr_doc_parsed, parsed_xml_doc, NodeData};
+use super::abi::{doc_parsed, mkr_cDocument, mkr_cNodeSet, parsed_xml_doc, NodeData};
 
 /// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///
@@ -34,12 +34,12 @@ use super::abi::{mkr_cDocument, mkr_cNodeSet, mkr_doc_parsed, parsed_xml_doc, No
 /// The signature is the representation-opaque one every caller shares (see
 /// `glue::abi`); the cast to the XML node is justified by this being the XML
 /// wrap path.
-pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE {
+pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE {
     let id = NodeId::from_token(node as usize);
     if id.is_invalid() {
         return rb_sys::Qnil as VALUE;
     }
-    let xdoc = mkr_doc_of(document);
+    let xdoc = doc_of(document);
     let ty = (*xdoc).type_(id);
     if ty == Some(NodeType::Document) {
         return document;
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
     /* The Document is stored after the wrap: see `wrap_zeroed`. */
     crate::bridge::ruby::wrap_zeroed::<NodeData>(
         klass,
-        mkr_xml_node_type.as_ptr(),
+        xml_node_type.as_ptr(),
         |nd| nd.node = node,
         |nd| nd.document = document,
     )
@@ -71,13 +71,13 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
 /// through the XML TypedData type, which fails with TypeError for an HTML node -
 /// the representation check is Ruby's own type machinery, not a flag we could
 /// forget to test.
-pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Error> {
+pub unsafe fn xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Error> {
     let v = Value::from_raw(rb_self);
-    if is_a(v, mkr_cXmlDocument) {
-        let xdoc = parsed_xml_doc(mkr_doc_parsed(rb_self)?) as *mut XmlDoc;
+    if is_a(v, cXmlDocument) {
+        let xdoc = parsed_xml_doc(doc_parsed(rb_self)?) as *mut XmlDoc;
         return Ok((*xdoc).doc_node().to_token() as *mut c_void);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, mkr_xml_node_type.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(rb_self, xml_node_type.as_ptr())? as *mut NodeData;
     Ok((*nd).node)
 }
 
@@ -85,31 +85,31 @@ pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus:
 ///
 /// `document` must be a Document VALUE the caller has established - a node's
 /// keepalive Document or an XML Document receiver.
-pub unsafe fn mkr_doc_of(document: VALUE) -> *mut XmlDoc {
+pub unsafe fn doc_of(document: VALUE) -> *mut XmlDoc {
     parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node at
-/// the type boundary, like [`mkr_xml_node_unwrap`].
-pub unsafe fn mkr_xml_node_document(rb_self: VALUE) -> Result<VALUE, magnus::Error> {
+/// the type boundary, like [`xml_node_unwrap`].
+pub unsafe fn xml_node_document(rb_self: VALUE) -> Result<VALUE, magnus::Error> {
     let v = Value::from_raw(rb_self);
-    if is_a(v, mkr_cXmlDocument) {
+    if is_a(v, cXmlDocument) {
         return Ok(rb_self);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, mkr_xml_node_type.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(rb_self, xml_node_type.as_ptr())? as *mut NodeData;
     Ok((*nd).document)
 }
 
 /// Wrap a node reached from a checked receiver, under its Document.
-pub unsafe fn mkr_xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
+pub unsafe fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
     wrap(rel, this.document)
 }
 
 /* ---- the Rust-side conveniences the submodules use ---- */
 
-/// [`mkr_xml_node_unwrap`] with the node id typed.
+/// [`xml_node_unwrap`] with the node id typed.
 pub unsafe fn unwrap(v: Value) -> Result<NodeId, magnus::Error> {
-    Ok(NodeId::from_token(mkr_xml_node_unwrap(v.as_raw())? as usize))
+    Ok(NodeId::from_token(xml_node_unwrap(v.as_raw())? as usize))
 }
 
 /// A method receiver already checked to be an XML node or XML Document; see
@@ -127,7 +127,7 @@ impl magnus::TryConvert for XmlSelf {
         // SAFETY: magnus converts the receiver under the GVL.
         unsafe {
             let id = unwrap(value)?;
-            let document = Value::from_raw(mkr_xml_node_document(value.as_raw())?);
+            let document = Value::from_raw(xml_node_document(value.as_raw())?);
             Ok(XmlSelf {
                 value,
                 id,
@@ -140,30 +140,30 @@ impl magnus::TryConvert for XmlSelf {
 impl XmlSelf {
     /// The arena behind the receiver's Document.
     pub unsafe fn doc(self) -> *mut XmlDoc {
-        mkr_doc_of(self.document.as_raw())
+        doc_of(self.document.as_raw())
     }
 }
 
 /// The keepalive Document of an XML node. `Err(TypeError)` for an HTML node.
 pub unsafe fn node_document(v: Value) -> Result<Value, magnus::Error> {
-    Ok(Value::from_raw(mkr_xml_node_document(v.as_raw())?))
+    Ok(Value::from_raw(xml_node_document(v.as_raw())?))
 }
 
 /// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
 pub unsafe fn doc(v: Value) -> Result<*mut XmlDoc, magnus::Error> {
-    Ok(mkr_doc_of(mkr_xml_node_document(v.as_raw())?))
+    Ok(doc_of(xml_node_document(v.as_raw())?))
 }
 
 pub unsafe fn wrap(node: NodeId, document: Value) -> Value {
-    Value::from_raw(mkr_wrap_xml_node(
+    Value::from_raw(wrap_xml_node(
         node.to_token() as *mut c_void,
         document.as_raw(),
     ))
 }
 
-pub use crate::glue::node::mkr_node_equals;
-pub use crate::glue::node::mkr_node_hash;
-pub use crate::glue::node::mkr_node_pointer_id;
+pub use crate::glue::node::node_equals;
+pub use crate::glue::node::node_hash;
+pub use crate::glue::node::node_pointer_id;
 
 /// The shape `rb_define_method` wants. Ruby dispatches on the declared arity, so
 /// a 0- and a 1-argument method are both reached through this one type.
@@ -178,11 +178,11 @@ unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, ar
     rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
 }
 
-/// `mkr_init_xml_node_read` - the same entry point `mkr_init_xml_node` calls.
+/// `init_xml_node_read` - the same entry point `init_xml_node` calls.
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn mkr_init_xml_node_read() {
+pub unsafe extern "C" fn init_xml_node_read() {
     let ruby = Ruby::get_unchecked();
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
         .expect("Makiri::XML::NodeMethods");
@@ -283,11 +283,10 @@ pub unsafe extern "C" fn mkr_init_xml_node_read() {
     /* Node identity by the underlying pointer, so #path, NodeSet dedup, Set and
      * Hash all work - the same contract HTML nodes have, from the same code. */
     let equals: RbMethod =
-        core::mem::transmute(mkr_node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
-    let hash: RbMethod =
-        core::mem::transmute(mkr_node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
+        core::mem::transmute(node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
+    let hash: RbMethod = core::mem::transmute(node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
     let ptr_id: RbMethod =
-        core::mem::transmute(mkr_node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
+        core::mem::transmute(node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
     define_c_method(mkr_mXmlNodeMethods, c"==", equals, 1);
     define_c_method(mkr_mXmlNodeMethods, c"eql?", equals, 1);
     define_c_method(mkr_mXmlNodeMethods, c"hash", hash, 0);
@@ -307,20 +306,20 @@ pub unsafe extern "C" fn mkr_init_xml_node_read() {
     let _ = (mkr_cDocument, mkr_cNodeSet);
 }
 
-/// `mkr_init_xml_node` - the whole XML node surface, once the mutation half is
+/// `init_xml_node` - the whole XML node surface, once the mutation half is
 /// Rust too. Until then `glue/ruby_xml_node.c` provides it and calls the reader
 /// half's entry point above.
 ///
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn mkr_init_xml_node() {
+pub unsafe extern "C" fn init_xml_node() {
     /* Serialization: #to_xml / #canonicalize, and the refused HTML ones. */
-    mkr_init_xml_node_serialize();
-    mkr_init_xml_node_read();
+    init_xml_node_serialize();
+    init_xml_node_read();
 
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
         .expect("Makiri::XML::NodeMethods");
-    let doc = RClass::from_value(Value::from_raw(mkr_cXmlDocument)).expect("XML::Document");
+    let doc = RClass::from_value(Value::from_raw(cXmlDocument)).expect("XML::Document");
 
     /* In-place edits. Detach-never-destroy; the primitives live in
      * xml/mkr_xml_mutate.c. */
@@ -397,4 +396,4 @@ pub unsafe extern "C" fn mkr_init_xml_node() {
         .expect("#clone_node");
 }
 
-use self::serialize::mkr_init_xml_node_serialize;
+use self::serialize::init_xml_node_serialize;

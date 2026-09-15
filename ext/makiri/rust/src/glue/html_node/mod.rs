@@ -8,7 +8,7 @@
 //!
 //! # Two functions here are the HTML node's front door
 //!
-//! [`mkr_wrap_html_node`] and [`mkr_html_node_unwrap`] are how every other glue
+//! [`wrap_html_node`] and [`html_node_unwrap`] are how every other glue
 //! module wraps and unwraps an HTML node. `glue::abi`'s `agree` module pins their
 //! signatures, so a change to either is a visible one.
 //!
@@ -34,8 +34,7 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use super::abi::{
-    html_node_methods, is_kind_of, mkr_cDocument, mkr_cXmlDocument, mkr_html_doc_unwrap, LxbNode,
-    NodeData,
+    cXmlDocument, html_doc_unwrap, html_node_methods, is_kind_of, mkr_cDocument, LxbNode, NodeData,
 };
 /* Only the mutation half registers on the Document class. */
 use super::abi::mkr_cHtmlDocument;
@@ -58,11 +57,11 @@ pub mod ty {
     pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 }
 
-pub use crate::glue::doc::mkr_node_clone_node;
-pub use crate::glue::node::mkr_html_node_type;
-pub use crate::glue::node::mkr_node_equals;
-pub use crate::glue::node::mkr_node_hash;
-pub use crate::glue::node::mkr_node_pointer_id;
+pub use crate::glue::doc::node_clone_node;
+pub use crate::glue::node::html_node_type;
+pub use crate::glue::node::node_equals;
+pub use crate::glue::node::node_hash;
+pub use crate::glue::node::node_pointer_id;
 pub use crate::init::mkr_cHtmlAttr;
 pub use crate::init::mkr_cHtmlCDATASection;
 pub use crate::init::mkr_cHtmlComment;
@@ -84,7 +83,7 @@ pub use crate::init::mkr_cHtmlText;
 /// (entity/notation - Lexbor's HTML parser does not produce these) falls back to
 /// the generic `Makiri::HTML::Node` rather than being misclassified as an
 /// Element.
-pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE {
+pub unsafe extern "C" fn wrap_html_node(node: *mut LxbNode, document: VALUE) -> VALUE {
     if node.is_null() {
         return rb_sys::Qnil as VALUE;
     }
@@ -107,7 +106,7 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
     /* The Document is stored after the wrap: see `wrap_zeroed`. */
     crate::bridge::ruby::wrap_zeroed::<NodeData>(
         klass,
-        mkr_html_node_type.as_ptr(),
+        html_node_type.as_ptr(),
         |nd| nd.node = node as *mut c_void,
         |nd| nd.document = document,
     )
@@ -116,31 +115,30 @@ pub unsafe extern "C" fn mkr_wrap_html_node(node: *mut LxbNode, document: VALUE)
 /// The `lxb_dom_node_t` behind an HTML node or HTML Document.
 ///
 /// `Err(TypeError)` for an XML node or Document: the typed-data check is
-/// against `mkr_html_node_type`, which an XML node - wrapped under
-/// `mkr_xml_node_type` - does not satisfy. Every HTML-glue site that
+/// against `html_node_type`, which an XML node - wrapped under
+/// `xml_node_type` - does not satisfy. Every HTML-glue site that
 /// dereferences a node or hands its pointer to Lexbor goes through here, for
 /// `self` and arguments alike.
-pub unsafe fn mkr_html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::Error> {
+pub unsafe fn html_node_unwrap(rb_node: VALUE) -> Result<*mut LxbNode, magnus::Error> {
     if is_kind_of(Value::from_raw(rb_node), mkr_cDocument) {
-        if is_kind_of(Value::from_raw(rb_node), mkr_cXmlDocument) {
+        if is_kind_of(Value::from_raw(rb_node), cXmlDocument) {
             return Err(magnus::Error::new(
                 magnus::Ruby::get_unchecked().exception_type_error(),
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
         }
-        return Ok(mkr_html_doc_unwrap(rb_node)? as *mut LxbNode);
+        return Ok(html_doc_unwrap(rb_node)? as *mut LxbNode);
     }
-    let nd =
-        crate::bridge::ruby::typed_data(rb_node, mkr_html_node_type.as_ptr())? as *mut NodeData;
+    let nd = crate::bridge::ruby::typed_data(rb_node, html_node_type.as_ptr())? as *mut NodeData;
     Ok((*nd).node as *mut LxbNode)
 }
 
 /* ---- the Rust-side conveniences the reader module uses ---- */
 
-/// [`mkr_html_node_unwrap`] in Rust terms.
+/// [`html_node_unwrap`] in Rust terms.
 pub unsafe fn unwrap(v: Value) -> Result<*mut LxbNode, magnus::Error> {
     use magnus::rb_sys::AsRawValue;
-    mkr_html_node_unwrap(v.as_raw())
+    html_node_unwrap(v.as_raw())
 }
 
 /// A method receiver already checked to be an HTML node or HTML Document.
@@ -162,7 +160,7 @@ impl magnus::TryConvert for HtmlSelf {
         unsafe {
             use magnus::rb_sys::AsRawValue;
             let node = unwrap(value)?;
-            let document = Value::from_raw(super::abi::mkr_node_document(value.as_raw())?);
+            let document = Value::from_raw(super::abi::keepalive_document(value.as_raw())?);
             Ok(HtmlSelf {
                 value,
                 node,
@@ -174,13 +172,13 @@ impl magnus::TryConvert for HtmlSelf {
 
 pub unsafe fn wrap(node: *mut LxbNode, document: Value) -> Value {
     use magnus::rb_sys::AsRawValue;
-    Value::from_raw(mkr_wrap_html_node(node, document.as_raw()))
+    Value::from_raw(wrap_html_node(node, document.as_raw()))
 }
 
 /// The keepalive Document of a node, from the kind-agnostic accessor.
 pub unsafe fn node_document(v: Value) -> Result<Value, magnus::Error> {
     use magnus::rb_sys::AsRawValue;
-    Ok(Value::from_raw(super::abi::mkr_node_document(v.as_raw())?))
+    Ok(Value::from_raw(super::abi::keepalive_document(v.as_raw())?))
 }
 
 /* ------------------------------------------------------------------ *
@@ -197,11 +195,11 @@ unsafe fn define_c_method(module: VALUE, name: &core::ffi::CStr, f: RbMethod, ar
     rb_sys::rb_define_method(module, name.as_ptr(), Some(f), arity);
 }
 
-/// `mkr_init_node` - the HTML node surface.
+/// `init_node` - the HTML node surface.
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn mkr_init_node() {
+pub unsafe extern "C" fn init_node() {
     let _ = Ruby::get_unchecked();
     let m = html_node_methods();
 
@@ -284,13 +282,12 @@ pub unsafe extern "C" fn mkr_init_node() {
      * order is HTML-only and lives in read.rs. */
     let methods = m.as_raw();
     let equals: RbMethod =
-        core::mem::transmute(mkr_node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
-    let hash: RbMethod =
-        core::mem::transmute(mkr_node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
+        core::mem::transmute(node_equals as unsafe extern "C" fn(VALUE, VALUE) -> VALUE);
+    let hash: RbMethod = core::mem::transmute(node_hash as unsafe extern "C" fn(VALUE) -> VALUE);
     let ptr_id: RbMethod =
-        core::mem::transmute(mkr_node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
+        core::mem::transmute(node_pointer_id as unsafe extern "C" fn(VALUE) -> VALUE);
     let clone: RbMethod = core::mem::transmute(
-        mkr_node_clone_node as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
+        node_clone_node as unsafe extern "C" fn(core::ffi::c_int, *const VALUE, VALUE) -> VALUE,
     );
     define_c_method(methods, c"==", equals, 1);
     define_c_method(methods, c"eql?", equals, 1);
@@ -320,11 +317,11 @@ pub unsafe extern "C" fn mkr_init_node() {
 
 use magnus::rb_sys::AsRawValue;
 
-/// `mkr_init_mutate` - the HTML node's mutators and the Document factories.
+/// `init_mutate` - the HTML node's mutators and the Document factories.
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn mkr_init_mutate() {
+pub unsafe extern "C" fn init_mutate() {
     let m = html_node_methods();
     let doc = RClass::from_value(Value::from_raw(mkr_cHtmlDocument)).expect("HTML::Document");
 

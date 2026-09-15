@@ -197,7 +197,7 @@ impl OwnedBytes {
 /* Every symbol the glue shares with C is declared HERE, once.
  *
  * It used to be declared wherever it was needed, and that let two modules give
- * one symbol different types - `mkr_wrap_xml_node` as `*mut c_void` in one and
+ * one symbol different types - `wrap_xml_node` as `*mut c_void` in one and
  * `*mut mkr_xml_node_t` in another. Rust rejects that, but only in a build where
  * both modules are present, so every single-feature CI leg passed and only the
  * "everything" leg failed. One declaration removes the possibility rather than
@@ -217,22 +217,22 @@ pub use crate::bridge::string::verify_text;
 pub use crate::dom_adapter::dom_index::element_index_has_foreign;
 pub use crate::dom_adapter::post_parse::lxb_document_bytes;
 pub use crate::dom_adapter::post_parse::parsed_xml_doc;
-pub use crate::glue::doc::mkr_doc_parsed;
-pub use crate::glue::doc::mkr_html_doc_unwrap;
-pub use crate::glue::html_node::mkr_html_node_unwrap;
-pub use crate::glue::html_node::mkr_wrap_html_node;
-pub use crate::glue::node::mkr_node_document;
-pub use crate::glue::node::mkr_node_raw;
-pub use crate::glue::node_set::mkr_node_set_new;
-pub use crate::glue::node_set::mkr_node_set_push;
-pub use crate::glue::xml_node::mkr_wrap_xml_node;
-pub use crate::glue::xml_node::mkr_xml_node_unwrap;
+pub use crate::glue::doc::doc_parsed;
+pub use crate::glue::doc::html_doc_unwrap;
+pub use crate::glue::html_node::html_node_unwrap;
+pub use crate::glue::html_node::wrap_html_node;
+pub use crate::glue::node::keepalive_document;
+pub use crate::glue::node::node_raw;
+pub use crate::glue::node_set::node_set_new;
+pub use crate::glue::node_set::node_set_push;
+pub use crate::glue::xml_node::wrap_xml_node;
+pub use crate::glue::xml_node::xml_node_unwrap;
+pub use crate::init::cXmlDocument;
 pub use crate::init::mkr_cDocument;
 pub use crate::init::mkr_cDocumentFragment;
 pub use crate::init::mkr_cHtmlDocument;
 pub use crate::init::mkr_cNode;
 pub use crate::init::mkr_cNodeSet;
-pub use crate::init::mkr_cXmlDocument;
 pub use crate::init::mkr_cXmlDocumentFragment;
 pub use crate::init::mkr_eCSSSyntaxError;
 pub use crate::init::mkr_eError;
@@ -320,7 +320,7 @@ pub unsafe fn error_class() -> ExceptionClass {
 /// and the CSS lowering, which is Ruby-free and so needs it without magnus. The
 /// declaration lives in `lexbor_abi` and all three re-export it from there.
 /// Giving one C symbol two Rust types is the failure this file exists to
-/// prevent; it has happened twice (mkr_wrap_xml_node, and again while the
+/// prevent; it has happened twice (wrap_xml_node, and again while the
 /// stylesheet binding was written). Both escaped until an "everything" build
 /// compiled the two definitions together - which every build now is, so a
 /// second definition is a build error rather than something a feature
@@ -394,7 +394,7 @@ mod agree {
     use super::*;
 
     /// The constant is NAMED after the symbol, so a mismatch reads
-    /// `const mkr_doc_parsed: unsafe extern "C" fn(...)` and says which one.
+    /// `const doc_parsed: unsafe extern "C" fn(...)` and says which one.
     /// The first version took the name and never used it: the check was real,
     /// the message was a line number, and the commit that added it claimed the
     /// symbol was named. Naming it is the whole point of having the check say
@@ -410,40 +410,40 @@ mod agree {
     }
 
     same_signature!(
-        mkr_doc_parsed,
-        crate::glue::doc::mkr_doc_parsed,
+        doc_parsed,
+        crate::glue::doc::doc_parsed,
         unsafe fn(VALUE) -> Result<*mut crate::dom_adapter::post_parse::Parsed, magnus::Error>
     );
     same_signature!(
-        mkr_html_doc_unwrap,
-        crate::glue::doc::mkr_html_doc_unwrap,
+        html_doc_unwrap,
+        crate::glue::doc::html_doc_unwrap,
         unsafe fn(VALUE) -> Result<*mut crate::lexbor_abi::LxbDoc, magnus::Error>
     );
     same_signature!(
-        mkr_wrap_document,
-        crate::glue::doc::mkr_wrap_document,
+        wrap_document,
+        crate::glue::doc::wrap_document,
         unsafe extern "C" fn(*mut crate::dom_adapter::post_parse::Parsed) -> VALUE
     );
 
     same_signature!(
-        mkr_node_document,
-        crate::glue::node::mkr_node_document,
+        keepalive_document,
+        crate::glue::node::keepalive_document,
         unsafe fn(VALUE) -> Result<VALUE, magnus::Error>
     );
     same_signature!(
-        mkr_node_raw,
-        crate::glue::node::mkr_node_raw,
+        node_raw,
+        crate::glue::node::node_raw,
         unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
     );
 
     same_signature!(
-        mkr_node_set_new,
-        crate::glue::node_set::mkr_node_set_new,
+        node_set_new,
+        crate::glue::node_set::node_set_new,
         unsafe extern "C" fn(VALUE) -> VALUE
     );
     same_signature!(
-        mkr_node_set_push,
-        crate::glue::node_set::mkr_node_set_push,
+        node_set_push,
+        crate::glue::node_set::node_set_push,
         unsafe extern "C" fn(VALUE, *mut c_void)
     );
 
@@ -459,8 +459,8 @@ mod agree {
     );
 
     same_signature!(
-        mkr_xml_node_unwrap,
-        crate::glue::xml_node::mkr_xml_node_unwrap,
+        xml_node_unwrap,
+        crate::glue::xml_node::xml_node_unwrap,
         unsafe fn(VALUE) -> Result<*mut c_void, magnus::Error>
     );
 
@@ -476,13 +476,13 @@ mod agree {
     );
 
     same_signature!(
-        mkr_wrap_html_node,
-        crate::glue::html_node::mkr_wrap_html_node,
+        wrap_html_node,
+        crate::glue::html_node::wrap_html_node,
         unsafe extern "C" fn(*mut LxbNode, VALUE) -> VALUE
     );
     same_signature!(
-        mkr_html_node_unwrap,
-        crate::glue::html_node::mkr_html_node_unwrap,
+        html_node_unwrap,
+        crate::glue::html_node::html_node_unwrap,
         unsafe fn(VALUE) -> Result<*mut LxbNode, magnus::Error>
     );
 }

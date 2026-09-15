@@ -47,14 +47,13 @@ use magnus::{method, prelude::*, Error, Exception, Ruby, Value};
 use rb_sys::{StableApiDefinition, VALUE};
 
 use super::abi::{
-    error_class, mkr_eCSSSyntaxError, mkr_html_node_unwrap, mkr_mHtmlNodeMethods,
-    mkr_node_document, mkr_node_set_new, mkr_node_set_push, mkr_wrap_html_node, verify_text,
-    LxbNode, LXB_STATUS_OK,
+    error_class, html_node_unwrap, keepalive_document, mkr_eCSSSyntaxError, mkr_mHtmlNodeMethods,
+    node_set_new, node_set_push, verify_text, wrap_html_node, LxbNode, LXB_STATUS_OK,
 };
 
-/// Mirrors `MKR_NODE_SET_MAX`: every node-collecting path fails closed at the
+/// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
 /// same bound.
-const MKR_NODE_SET_MAX: usize = 10 * 1000 * 1000;
+const NODE_SET_MAX: usize = 10 * 1000 * 1000;
 
 const CACHE_CAP: usize = 256;
 /// Re-evaluate the hit rate every N lookups.
@@ -254,7 +253,7 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
     if node == c.root {
         return LXB_STATUS_OK;
     }
-    if c.nodes.len() >= MKR_NODE_SET_MAX {
+    if c.nodes.len() >= NODE_SET_MAX {
         c.overflow = true;
         return LXB_STATUS_STOP;
     }
@@ -478,7 +477,7 @@ struct Fill<'a> {
 unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
     let f = &*(arg as *const Fill);
     for n in f.nodes {
-        mkr_node_set_push(f.set, *n as *mut c_void);
+        node_set_push(f.set, *n as *mut c_void);
     }
     rb_sys::Qnil as VALUE
 }
@@ -486,8 +485,8 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
 /// `Node#css`: every matching descendant, in document order.
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
-    let document = unsafe { Value::from_raw(mkr_node_document(rb_self.as_raw())?) };
+    let root = unsafe { html_node_unwrap(rb_self.as_raw())? };
+    let document = unsafe { Value::from_raw(keepalive_document(rb_self.as_raw())?) };
 
     let mut ctx = FindCtx {
         nodes: Vec::new(),
@@ -506,7 +505,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     if ctx.overflow {
         return Err(Error::new(
             unsafe { error_class() },
-            format!("CSS result set exceeded the node limit ({MKR_NODE_SET_MAX})"),
+            format!("CSS result set exceeded the node limit ({NODE_SET_MAX})"),
         ));
     }
     if ctx.oom {
@@ -516,7 +515,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         ));
     }
 
-    let set = unsafe { Value::from_raw(mkr_node_set_new(document.as_raw())) };
+    let set = unsafe { Value::from_raw(node_set_new(document.as_raw())) };
     /* Each push can raise (NoMemoryError from Ruby's allocator), and a longjmp
      * would skip `ctx.nodes`'s drop. `protect` turns that into an Err, the Vec
      * drops on the way out, and magnus raises afterwards - the Rust form of the
@@ -556,7 +555,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
+    let root = unsafe { html_node_unwrap(rb_self.as_raw())? };
 
     let mut ctx = FirstCtx {
         root,
@@ -573,14 +572,14 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     if ctx.found.is_null() {
         return Ok(ruby.qnil().as_value());
     }
-    let document = unsafe { mkr_node_document(rb_self.as_raw())? };
-    Ok(unsafe { Value::from_raw(mkr_wrap_html_node(ctx.found, document)) })
+    let document = unsafe { keepalive_document(rb_self.as_raw())? };
+    Ok(unsafe { Value::from_raw(wrap_html_node(ctx.found, document)) })
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri.
 fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
-    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
+    let node = unsafe { html_node_unwrap(rb_self.as_raw())? };
     let mut matched = false;
     unsafe {
         with_compiled_selector(
@@ -595,7 +594,7 @@ fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`.
-pub unsafe extern "C" fn mkr_init_css() {
+pub unsafe extern "C" fn init_css() {
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mHtmlNodeMethods))
         .expect("Makiri::HTML::NodeMethods");
     m.define_method("css", method!(css, 1)).expect("Node#css");

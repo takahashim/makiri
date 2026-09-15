@@ -25,8 +25,8 @@ use crate::falloc::VecPush;
 use crate::lexbor_abi as lxb;
 
 use super::abi::{
-    error_class, is_kind_of, mkr_cNode, mkr_html_node_unwrap, mkr_wrap_html_node, ruby_bytes_view,
-    ruby_str_known_valid_utf8, ruby_to_utf8, ruby_verified_text, LxbDoc, LxbNode,
+    error_class, html_node_unwrap, is_kind_of, mkr_cNode, ruby_bytes_view,
+    ruby_str_known_valid_utf8, ruby_to_utf8, ruby_verified_text, wrap_html_node, LxbDoc, LxbNode,
     LXB_DOM_NODE_TYPE_ELEMENT,
 };
 
@@ -225,11 +225,11 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
     }
 }
 
-pub unsafe extern "C" fn mkr_emit_append(imported: *mut LxbNode, u: *mut c_void) {
+pub unsafe extern "C" fn emit_append(imported: *mut LxbNode, u: *mut c_void) {
     lxb_dom_node_insert_child(u as *mut LxbNode, imported);
 }
 
-pub unsafe extern "C" fn mkr_emit_before(imported: *mut LxbNode, u: *mut c_void) {
+pub unsafe extern "C" fn emit_before(imported: *mut LxbNode, u: *mut c_void) {
     lxb_dom_node_insert_before(u as *mut LxbNode, imported);
 }
 
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn mkr_emit_before(imported: *mut LxbNode, u: *mut c_void)
 /// `ruby_html_mutate.c` destroys a transient fragment document after this call,
 /// and a longjmp past that free leaks one Lexbor document per failure - the leak
 /// that free was added to fix. The caller raises once its own cleanup has run.
-pub unsafe extern "C" fn mkr_import_fragment_children(
+pub unsafe extern "C" fn import_fragment_children(
     doc: *mut LxbDoc,
     root: *mut LxbNode,
     emit: unsafe extern "C" fn(*mut LxbNode, *mut c_void),
@@ -266,7 +266,7 @@ type FragmentParseFn =
 /// The parser is destroyed before any raise: the fragment tree belongs to its
 /// document, not the parser, so it survives - the caller may still read
 /// `root->owner_document` afterwards.
-pub unsafe extern "C" fn mkr_run_fragment_parser(
+pub unsafe extern "C" fn run_fragment_parser(
     html: VALUE,
     parse: FragmentParseFn,
     ctx: *mut c_void,
@@ -335,7 +335,7 @@ pub unsafe fn import_with_fixup(
 /// Deep-import `src` into `doc`. **Raises** rather than returning a partial
 /// node. The C ABI face of [`import_with_fixup`], called by
 /// `ruby_html_mutate.c`.
-pub unsafe extern "C" fn mkr_html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> *mut LxbNode {
+pub unsafe extern "C" fn html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> *mut LxbNode {
     match import_with_fixup(doc, src, true) {
         Some(imp) => imp,
         None => super::abi::rb_raise(super::abi::mkr_eError, c"failed to import node".as_ptr()),
@@ -368,7 +368,7 @@ pub unsafe fn resolve_fragment_context(
 
     if is_kind_of(context, mkr_cNode) {
         /* Reject an XML node before any Lexbor use. */
-        let cn = mkr_html_node_unwrap(context.as_raw())?;
+        let cn = html_node_unwrap(context.as_raw())?;
         if (*cn).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
             return Err(magnus::Error::new(
                 magnus::Ruby::get_unchecked().exception_arg_error(),
@@ -411,7 +411,7 @@ pub unsafe fn resolve_fragment_context(
     Ok((tid, NS_HTML))
 }
 
-/// Parse callback for `mkr_run_fragment_parser`: Lexbor's by-tag-id parser,
+/// Parse callback for `run_fragment_parser`: Lexbor's by-tag-id parser,
 /// which implements the full algorithm for the context (tokenizer state for
 /// rawtext/rcdata, foreign-content adjustment, the form pointer).
 struct FragTagCtx {
@@ -458,18 +458,18 @@ pub unsafe fn build_fragment_ctx(
     let frag_node = frag as *mut LxbNode;
 
     let pctx = FragTagCtx { doc, tag, ns };
-    let root = mkr_run_fragment_parser(
+    let root = run_fragment_parser(
         html.as_raw(),
         parse_fragment_by_tag,
         &pctx as *const FragTagCtx as *mut c_void,
     );
-    if mkr_import_fragment_children(doc, root, mkr_emit_append, frag_node as *mut c_void) != 0 {
+    if import_fragment_children(doc, root, emit_append, frag_node as *mut c_void) != 0 {
         return Err(Error::new(
             error_class(),
             "failed to import a fragment child",
         ));
     }
-    let out = mkr_wrap_html_node(frag_node, document.as_raw());
+    let out = wrap_html_node(frag_node, document.as_raw());
     Ok(Value::from_raw(out))
 }
 

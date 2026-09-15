@@ -55,11 +55,10 @@ use crate::xpath::ctx::Context as XPathContext;
 use crate::css::CssNs;
 
 use super::abi::{
-    mkr_cDocument, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed, mkr_eCSSSyntaxError,
-    mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML, mkr_mXmlNodeMethods,
-    mkr_node_document, mkr_node_set_new, mkr_wrap_xml_node as wrap_xml_node,
-    mkr_xml_node_unwrap as xml_node_unwrap, parsed_xml_doc as raw_parsed_xml_doc,
-    ruby_verified_text, verify_text, OwnedBytes,
+    cXmlDocument, doc_parsed, keepalive_document, mkr_cDocument, mkr_cXmlDocumentFragment,
+    mkr_eCSSSyntaxError, mkr_eError, mkr_eXmlLimitExceeded, mkr_eXmlSyntaxError, mkr_mXML,
+    mkr_mXmlNodeMethods, node_set_new, parsed_xml_doc as raw_parsed_xml_doc, ruby_verified_text,
+    verify_text, wrap_xml_node, xml_node_unwrap, OwnedBytes,
 };
 
 /// The XML arena behind a document handle, typed.
@@ -82,7 +81,7 @@ pub use crate::bridge::string::ruby_try_verified_text;
 pub use crate::bridge::xml_decode::xml_decode_input;
 pub use crate::dom_adapter::post_parse::parsed_new_xml;
 pub use crate::dom_adapter::post_parse::parsed_set_xml_doc;
-pub use crate::glue::doc::mkr_wrap_document;
+pub use crate::glue::doc::wrap_document;
 use crate::glue::xpath::xpath_error;
 use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};
 pub use crate::xml::api::xml_doc_new;
@@ -233,7 +232,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
                 "out of memory allocating XML document",
             ));
         }
-        let obj = mkr_wrap_document(parsed); /* GC owns `parsed` from here */
+        let obj = wrap_document(parsed); /* GC owns `parsed` from here */
 
         let mut work = ParseWork {
             src: src.ptr,
@@ -326,9 +325,9 @@ unsafe fn parse_status_error(status: Status, unit: Unit) -> Error {
 /// The (Document VALUE, context node) a query runs against: for a Document the
 /// context is the arena's document node, for a node it is that node.
 unsafe fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
-    /* `mkr_xml_node_unwrap` is kind-checked - `Err` for a non-XML node - and
+    /* `xml_node_unwrap` is kind-checked - `Err` for a non-XML node - and
      * resolves an XML Document to its document node. */
-    let document = Value::from_raw(mkr_node_document(rb_self.as_raw())?);
+    let document = Value::from_raw(keepalive_document(rb_self.as_raw())?);
     Ok((document, typed_xml_node_unwrap(rb_self.as_raw())?))
 }
 
@@ -435,7 +434,7 @@ fn xpath_run(
             return Ok(if first_only {
                 ruby.qnil().as_value()
             } else {
-                Value::from_raw(mkr_node_set_new(document.as_raw()))
+                Value::from_raw(node_set_new(document.as_raw()))
             });
         }
         let ctx = build_ctx(
@@ -531,7 +530,7 @@ fn css_run(
             return Ok(if first_only {
                 ruby.qnil().as_value()
             } else {
-                Value::from_raw(mkr_node_set_new(document.as_raw()))
+                Value::from_raw(node_set_new(document.as_raw()))
             });
         }
         let ctx = build_ctx(
@@ -661,7 +660,7 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
             "out of memory allocating XML document",
         ));
     }
-    let doc_obj = mkr_wrap_document(parsed); /* GC owns `parsed` from here */
+    let doc_obj = wrap_document(parsed); /* GC owns `parsed` from here */
     let xdoc = match xml_doc_new() {
         Ok(doc) => Box::into_raw(doc),
         Err(_) => {
@@ -689,7 +688,7 @@ fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
 fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
     unsafe {
         let doc_obj = new_empty_document()?;
-        let xdoc = parsed_xml_doc(mkr_doc_parsed(doc_obj.as_raw())?);
+        let xdoc = parsed_xml_doc(doc_parsed(doc_obj.as_raw())?);
         let frag = fragment_into(xdoc, source, false)?;
         Ok(Value::from_raw(wrap_typed_xml_node(frag, doc_obj.as_raw())))
     }
@@ -699,7 +698,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
     unsafe {
-        let xdoc = parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())?);
+        let xdoc = parsed_xml_doc(doc_parsed(rb_self.as_raw())?);
         if xdoc.is_null() {
             return Err(Error::new(error_class(), "the document has no arena"));
         }
@@ -710,7 +709,7 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`.
-pub unsafe extern "C" fn mkr_init_xml() {
+pub unsafe extern "C" fn init_xml() {
     let ruby = Ruby::get_unchecked();
     let m_xml = magnus::RModule::from_value(Value::from_raw(mkr_mXML)).expect("Makiri::XML");
     let base =
@@ -728,7 +727,7 @@ pub unsafe extern "C" fn mkr_init_xml() {
     doc.include_module(node_methods)
         .expect("include NodeMethods");
     /* Init_makiri's global, which the rest of the extension reads. */
-    let slot = &raw const mkr_cXmlDocument as *mut VALUE;
+    let slot = &raw const cXmlDocument as *mut VALUE;
     *slot = doc.as_raw();
 
     doc.define_method("root", method!(doc_root, 0))

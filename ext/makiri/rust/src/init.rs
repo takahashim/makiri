@@ -56,7 +56,7 @@ exported! {
     mkr_mHtmlNodeMethods, mkr_cHtmlNode, mkr_cHtmlDocument, mkr_cHtmlElement,
     mkr_cHtmlAttr, mkr_cHtmlText, mkr_cHtmlComment, mkr_cHtmlCDATASection,
     mkr_cHtmlProcessingInstruction, mkr_cHtmlDocumentType, mkr_cHtmlDocumentFragment,
-    mkr_mXmlNodeMethods, mkr_cXmlNode, mkr_cXmlDocument, mkr_cXmlElement,
+    mkr_mXmlNodeMethods, mkr_cXmlNode, cXmlDocument, mkr_cXmlElement,
     mkr_cXmlAttr, mkr_cXmlText, mkr_cXmlComment, mkr_cXmlCDATASection,
     mkr_cXmlProcessingInstruction, mkr_cXmlDocumentType, mkr_cXmlDocumentFragment,
     mkr_eError, mkr_eXPathSyntaxError, mkr_eXPathLimitExceeded,
@@ -183,7 +183,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let h_fragment = m_html.define_class("DocumentFragment", fragment)?;
 
     /* Makiri::XML - the arena-backed leaves. XML::Document is defined by
-     * mkr_init_xml, because it backs a parse handle rather than a node. */
+     * init_xml, because it backs a parse handle rather than a node. */
     let xml_methods = m_xml.define_module("NodeMethods")?;
     let x_node = m_xml.define_class("Node", node)?;
     let x_element = m_xml.define_class("Element", element)?;
@@ -283,7 +283,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         /* The abstract bases are never constructed directly either: an instance
          * always wraps a live node, and `.new` would hand back one wrapping
          * nothing. XPathContext.new exists, but it is defined by
-         * mkr_init_xpath and wraps a native context. */
+         * init_xpath and wraps a native context. */
         for base in [
             mkr_cNode,
             mkr_cDocument,
@@ -303,16 +303,16 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
         /* The per-feature registrations, in the order the C called them: each
          * defines the methods of one subsystem onto the classes above. */
-        crate::glue::html_node::mkr_init_node();
-        crate::glue::doc::mkr_init_document();
-        crate::glue::node_set::mkr_init_node_set();
-        crate::glue::xpath::mkr_init_xpath();
-        crate::glue::css::mkr_init_css();
-        crate::glue::lexbor_css::mkr_init_lexbor_css();
-        crate::glue::serialize::mkr_init_serialize();
-        crate::glue::html_node::mkr_init_mutate();
-        crate::glue::xml::mkr_init_xml();
-        crate::glue::xml_node::mkr_init_xml_node();
+        crate::glue::html_node::init_node();
+        crate::glue::doc::init_document();
+        crate::glue::node_set::init_node_set();
+        crate::glue::xpath::init_xpath();
+        crate::glue::css::init_css();
+        crate::glue::lexbor_css::init_lexbor_css();
+        crate::glue::serialize::init_serialize();
+        crate::glue::html_node::init_mutate();
+        crate::glue::xml::init_xml();
+        crate::glue::xml_node::init_xml_node();
     }
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;

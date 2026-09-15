@@ -25,7 +25,7 @@ pub use sys::*;
 /// Makiri's own constants, and the layout of the handle a parse returns.
 ///
 /// Unlike everything above, these are NOT generated. They were, from
-/// `ext/makiri/*.h` - added after a transcribed `MKR_NODE_KIND_XML = 1` (it is
+/// `ext/makiri/*.h` - added after a transcribed `NODE_KIND_XML = 1` (it is
 /// 2) made `Document#import_node` treat every HTML node as an XML one. Those
 /// headers went with the rest of the C, so there is no second reading of them
 /// left to check against: this module is now the definition. That is why the

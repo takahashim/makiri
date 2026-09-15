@@ -34,7 +34,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::ty;
 use super::{node_document, unwrap, wrap};
 use crate::glue::abi::{
-    error_class, mkr_html_doc_unwrap, ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
+    error_class, html_doc_unwrap, ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
 };
 use crate::lexbor_abi as lxb;
 
@@ -48,11 +48,11 @@ type InsertFn = unsafe extern "C" fn(*mut LxbNode, *mut LxbNode);
 pub use crate::bridge::string::ruby_verified_data;
 pub use crate::dom_adapter::dom_index::parsed_dom_index_invalidate;
 pub use crate::dom_adapter::text_index::parsed_text_index_invalidate;
-pub use crate::glue::fragment::mkr_emit_append;
-pub use crate::glue::fragment::mkr_emit_before;
-pub use crate::glue::fragment::mkr_html_import_deep;
-pub use crate::glue::fragment::mkr_import_fragment_children;
-pub use crate::glue::fragment::mkr_run_fragment_parser;
+pub use crate::glue::fragment::emit_append;
+pub use crate::glue::fragment::emit_before;
+pub use crate::glue::fragment::html_import_deep;
+pub use crate::glue::fragment::import_fragment_children;
+pub use crate::glue::fragment::run_fragment_parser;
 
 /* ------------------------------------------------------------------ *
  * shared helpers                                                     *
@@ -87,7 +87,7 @@ unsafe fn arg_node(v: Value) -> Result<*mut LxbNode, Error> {
 /// Copy `node` into `doc`, for a node that came from another document - this
 /// half of the DOM's adopt. **Raises** rather than returning a partial node.
 unsafe fn adopt_copy(doc: *mut LxbDoc, node: *mut LxbNode) -> *mut LxbNode {
-    mkr_html_import_deep(doc, node)
+    html_import_deep(doc, node)
 }
 
 /// The other half: take `node` out of the document it came from, so the whole
@@ -689,7 +689,7 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
  * inner_html= / outer_html=                                          *
  * ------------------------------------------------------------------ */
 
-/// Parse callback for `mkr_run_fragment_parser`: Lexbor's element-context
+/// Parse callback for `run_fragment_parser`: Lexbor's element-context
 /// fragment parser, which is what `inner_html=`/`outer_html=` need. `ctx` is the
 /// context element.
 unsafe extern "C" fn parse_fragment_by_context(
@@ -699,7 +699,7 @@ unsafe extern "C" fn parse_fragment_by_context(
     ctx: *mut c_void,
 ) -> *mut LxbNode {
     /* The generated declaration is typed to Lexbor's parser and element
-     * interfaces; the callback contract `mkr_run_fragment_parser` passes is
+     * interfaces; the callback contract `run_fragment_parser` passes is
      * representation-opaque, so the casts happen here rather than in a second
      * declaration of the same symbol. */
     lxb::lxb_html_parse_fragment(parser as *mut _, ctx as *mut _, src, len)
@@ -719,13 +719,13 @@ unsafe fn parse_fragment_into(
     u: *mut c_void,
 ) -> Result<(), Error> {
     let html = Value::from_raw(rb_sys::rb_String(rb_html.as_raw()));
-    let frag = mkr_run_fragment_parser(
+    let frag = run_fragment_parser(
         html.as_raw(),
         parse_fragment_by_context,
         context_el as *mut c_void,
     );
 
-    let imported = mkr_import_fragment_children(doc, frag, emit, u);
+    let imported = import_fragment_children(doc, frag, emit, u);
 
     /* lxb_html_parse_fragment built the fragment in a TRANSIENT document that
      * destroying the parser does NOT free (measured: one document leaked per
@@ -766,7 +766,7 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             node,
             rb_html,
             (*node).owner_document,
-            mkr_emit_append,
+            emit_append,
             node as *mut c_void,
         )?;
         invalidate(this.document);
@@ -788,7 +788,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             parent,
             rb_html,
             (*node).owner_document,
-            mkr_emit_before,
+            emit_before,
             node as *mut c_void,
         )?;
         lxb::lxb_dom_node_remove(node);
@@ -803,7 +803,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 
 pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self.as_raw())?;
         let nv = ruby_verified_text(rb_name.as_raw(), c"element name".as_ptr())?;
         let el = lxb::lxb_dom_document_create_element(
             doc,
@@ -820,7 +820,7 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self.as_raw())?;
         let tv = ruby_verified_data(rb_text.as_raw(), c"text content".as_ptr())?;
         let t = lxb::lxb_dom_document_create_text_node(doc, tv.as_ptr() as *const u8, tv.len());
         if t.is_null() {
@@ -832,7 +832,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self.as_raw())?;
         let tv = ruby_verified_data(rb_text.as_raw(), c"comment content".as_ptr())?;
         let c = lxb::lxb_dom_document_create_comment(doc, tv.as_ptr() as *const u8, tv.len());
         if c.is_null() {
@@ -852,7 +852,7 @@ pub fn create_pi(
     rb_data: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self.as_raw())?;
         let tv = ruby_verified_text(
             rb_target.as_raw(),
             c"processing instruction target".as_ptr(),
@@ -886,7 +886,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let (rb_pub, rb_sys_) = args.optional;
 
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self.as_raw())?;
         let nv = ruby_verified_text(rb_name.as_raw(), c"doctype name".as_ptr())?;
         if !lxb::lxb_dom_document_type_valid_name(nv.as_ptr() as *const u8, nv.len()) {
             return Err(Error::new(
@@ -966,7 +966,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 /// `DocumentFragment.parse`, which parse HTML.
 pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     unsafe {
-        let doc = mkr_html_doc_unwrap(rb_self.as_raw())?;
+        let doc = html_doc_unwrap(rb_self.as_raw())?;
         let f = lxb::lxb_dom_document_create_document_fragment(doc);
         if f.is_null() {
             return Err(err("failed to create document fragment"));

@@ -19,15 +19,15 @@ use magnus::{prelude::*, Error, RArray, Ruby, Value};
 use super::ty;
 use super::{unwrap, wrap};
 use crate::glue::abi::{
-    error_class, is_kind_of, lxb_dom_attr_local_name, lxb_dom_attr_qualified_name,
-    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_root,
-    lxb_dom_document_type_public_id_noi, lxb_dom_document_type_system_id_noi,
-    lxb_dom_element_first_attribute_noi, lxb_dom_element_get_attribute,
-    lxb_dom_element_has_attribute, lxb_dom_element_local_name, lxb_dom_element_next_attribute_noi,
-    lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
-    lxb_dom_node_text_content, lxb_ns_by_id, mkr_cNode, mkr_cXmlDocument, mkr_doc_parsed,
-    mkr_node_set_new, mkr_node_set_push, ruby_str_from_borrowed, ruby_str_from_slices,
-    ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
+    cXmlDocument, doc_parsed, error_class, is_kind_of, lxb_dom_attr_local_name,
+    lxb_dom_attr_qualified_name, lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi,
+    lxb_dom_document_root, lxb_dom_document_type_public_id_noi,
+    lxb_dom_document_type_system_id_noi, lxb_dom_element_first_attribute_noi,
+    lxb_dom_element_get_attribute, lxb_dom_element_has_attribute, lxb_dom_element_local_name,
+    lxb_dom_element_next_attribute_noi, lxb_dom_element_qualified_name, lxb_dom_element_tag_name,
+    lxb_dom_node_name, lxb_dom_node_text_content, lxb_ns_by_id, mkr_cNode, node_set_new,
+    node_set_push, ruby_str_from_borrowed, ruby_str_from_slices, ruby_verified_text, LxbAttr,
+    LxbDoc, LxbElement, LxbNode,
 };
 use crate::lexbor_abi as lxb;
 use crate::text::BorrowedText;
@@ -457,7 +457,7 @@ pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let node = this.node;
         let document = this.document;
         if (*node).type_ == ty::ATTRIBUTE {
-            let parsed = mkr_doc_parsed(document.as_raw())?;
+            let parsed = doc_parsed(document.as_raw())?;
             if parsed.is_null() || !parsed_dom_index_build(parsed) {
                 return Err(Error::new(
                     error_class(),
@@ -534,11 +534,11 @@ unsafe fn set_of(
     elements_only: bool,
 ) -> Value {
     use magnus::rb_sys::AsRawValue;
-    let set = mkr_node_set_new(document.as_raw());
+    let set = node_set_new(document.as_raw());
     let mut n = start;
     while !n.is_null() {
         if !elements_only || (*n).type_ == ty::ELEMENT {
-            mkr_node_set_push(set, n as *mut core::ffi::c_void);
+            node_set_push(set, n as *mut core::ffi::c_void);
         }
         n = step(n);
     }
@@ -667,9 +667,9 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 pub fn attribute_nodes(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     unsafe {
         use magnus::rb_sys::AsRawValue;
-        let set = mkr_node_set_new(this.document.as_raw());
+        let set = node_set_new(this.document.as_raw());
         each_attr(this.node, |at| {
-            mkr_node_set_push(set, at as *mut core::ffi::c_void);
+            node_set_push(set, at as *mut core::ffi::c_void);
             true
         });
         Value::from_raw(set)
@@ -831,8 +831,8 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
         /* An XML node is never order-comparable to an HTML one, and asking is
          * how we avoid unwrap's TypeError below. */
         if is_kind_of(
-            Value::from_raw(crate::glue::abi::mkr_node_document(other.as_raw())?),
-            mkr_cXmlDocument,
+            Value::from_raw(crate::glue::abi::keepalive_document(other.as_raw())?),
+            cXmlDocument,
         ) {
             return Ok(nil);
         }

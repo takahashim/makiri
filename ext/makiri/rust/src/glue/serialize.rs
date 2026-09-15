@@ -154,7 +154,7 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     let ruby = Ruby::get_with(rb_self);
     let pretty = pretty_opt(&ruby, args)?;
     // The raising accessor, called while nothing is live (see the module docs).
-    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
+    let node = unsafe { html_node_unwrap(rb_self.as_raw())? };
 
     // A document fragment has no tag of its own, so its "outer" is its
     // children: the deep serializer is the right one (the tree serializer
@@ -167,16 +167,16 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
 fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     let ruby = Ruby::get_with(rb_self);
     let pretty = pretty_opt(&ruby, args)?;
-    let node = unsafe { mkr_html_node_unwrap(rb_self.as_raw())? };
+    let node = unsafe { html_node_unwrap(rb_self.as_raw())? };
     serialize(&ruby, node, true, pretty)
 }
 
-/// `mkr_init_serialize` - the same entry point Init_makiri already calls.
+/// `init_serialize` - the same entry point Init_makiri already calls.
 ///
 /// # Safety
 /// Called from `Init_makiri`, on the Ruby thread with the GVL held, after the
 /// classes and modules exist.
-pub unsafe extern "C" fn mkr_init_serialize() {
+pub unsafe extern "C" fn init_serialize() {
     let m = html_node_methods();
     for name in ["to_html", "to_s", "outer_html"] {
         m.define_method(name, method!(to_html, -1))

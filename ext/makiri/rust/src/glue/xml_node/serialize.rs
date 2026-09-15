@@ -119,7 +119,7 @@ fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, 
 
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn mkr_init_xml_node_serialize() {
+pub unsafe extern "C" fn init_xml_node_serialize() {
     let m = magnus::RModule::from_value(Value::from_raw(mkr_mXmlNodeMethods))
         .expect("Makiri::XML::NodeMethods");
     for name in ["to_xml", "to_s"] {
