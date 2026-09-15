@@ -16,118 +16,21 @@
 //! through [`complex_selftest`], which walks the chain right to left using the
 //! reverse axes. The path it builds is non-empty - hence truthy - exactly when
 //! self matches the selector.
+//!
+//! The parsed selectors are read only through `parser`'s typed views, so this
+//! module holds no pointer into Lexbor's arena and forbids unsafe.
+
+#![forbid(unsafe_code)]
 
 use super::build::{self, Built};
+use super::parser::{comb, k, m, pc, pf, FunctionArg, Lists, Selector};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
-use crate::lexbor_abi as lxb;
 use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step, TestKind};
 use crate::xpath::msg::Reported;
-
-type Selector = lxb::lxb_css_selector_t;
-type SelectorList = lxb::lxb_css_selector_list_t;
-
-/* The selector kinds, combinators, match operators and pseudo ids, generated. */
-mod k {
-    use crate::lexbor_abi as l;
-    pub const ANY: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ANY;
-    pub const ELEMENT: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ELEMENT;
-    pub const ID: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ID;
-    pub const CLASS: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_CLASS;
-    pub const ATTRIBUTE: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ATTRIBUTE;
-    pub const PSEUDO_CLASS: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS;
-    pub const PSEUDO_CLASS_FUNCTION: u32 =
-        l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS_FUNCTION;
-    pub const PSEUDO_ELEMENT: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_ELEMENT;
-    pub const PSEUDO_ELEMENT_FUNCTION: u32 =
-        l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_ELEMENT_FUNCTION;
-}
-
-mod comb {
-    use crate::lexbor_abi as l;
-    pub const CLOSE: u32 = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CLOSE;
-    pub const CHILD: u32 = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CHILD;
-    pub const SIBLING: u32 = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_SIBLING;
-    pub const FOLLOWING: u32 =
-        l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_FOLLOWING;
-}
-
-mod m {
-    use crate::lexbor_abi as l;
-    pub const EQUAL: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_EQUAL;
-    pub const INCLUDE: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_INCLUDE;
-    pub const PREFIX: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_PREFIX;
-    pub const SUBSTRING: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_SUBSTRING;
-    pub const SUFFIX: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_SUFFIX;
-    pub const DASH: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_DASH;
-    pub const MOD_I: u32 = l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_I;
-    pub const MOD_S: u32 = l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_S;
-}
-
-mod pc {
-    use crate::lexbor_abi as l;
-    pub const FIRST_CHILD: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_CHILD;
-    pub const LAST_CHILD: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_CHILD;
-    pub const ONLY_CHILD: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_CHILD;
-    pub const EMPTY: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_EMPTY;
-    pub const ROOT: u32 = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ROOT;
-    pub const FIRST_OF_TYPE: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE;
-    pub const LAST_OF_TYPE: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
-    pub const ONLY_OF_TYPE: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
-}
-
-mod pf {
-    use crate::lexbor_abi as l;
-    type T = l::lxb_css_selector_pseudo_class_function_id_t;
-    pub const NTH_CHILD: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_CHILD;
-    pub const NTH_LAST_CHILD: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_LAST_CHILD;
-    pub const NTH_OF_TYPE: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_OF_TYPE;
-    pub const NTH_LAST_OF_TYPE: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_LAST_OF_TYPE;
-    pub const NOT: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NOT;
-    pub const IS: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_IS;
-    pub const WHERE: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_WHERE;
-    pub const HAS: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_HAS;
-    pub const LEXBOR_CONTAINS: T =
-        l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_LEXBOR_CONTAINS;
-}
 
 /// The internal of-type position functions, whose names carry a leading \x01 so
 /// no user expression can name them.
 use crate::xpath::funcs::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
-
-/// A `lexbor_str_t` as a slice, or `None` when its data pointer is NULL.
-///
-/// The NULL-vs-empty distinction is load-bearing throughout: for a namespace,
-/// NULL means "no pipe was written" and empty means "an explicit no-namespace".
-#[inline]
-unsafe fn str_opt<'a>(s: &lxb::lexbor_str_t) -> Option<&'a [u8]> {
-    if s.data.is_null() {
-        None
-    } else {
-        Some(core::slice::from_raw_parts(s.data, s.length))
-    }
-}
-
-/// The same, treating NULL as empty - for fields where the distinction does not
-/// arise.
-#[inline]
-unsafe fn str_or_empty<'a>(s: &lxb::lexbor_str_t) -> &'a [u8] {
-    str_opt(s).unwrap_or(&[])
-}
 
 /* ------------------------------------------------------------------ *
  * simple selectors                                                   *
@@ -135,21 +38,21 @@ unsafe fn str_or_empty<'a>(s: &lxb::lexbor_str_t) -> &'a [u8] {
 
 /// Set the step's name test from a type selector, honouring the CSS namespace
 /// rules and the Nokogiri default-namespace binding.
-unsafe fn lower_type(
+fn lower_type(
     b: &Build,
-    s: *const Selector,
+    s: Selector<'_>,
     step: &mut Step,
     preds: &mut Vec<Expr>,
 ) -> Result<(), Reported> {
-    let name = str_or_empty(&(*s).name);
+    let name = s.name();
 
-    if (*s).type_ == k::ANY {
+    if s.kind() == k::ANY {
         /* `*` or `ns|*` */
         step.test.kind = TestKind::Wildcard;
         return Ok(());
     }
 
-    let ns = str_opt(&(*s).ns);
+    let ns = s.ns();
 
     if ns == Some(b"*") {
         /* `*|el`: any namespace with a specific local name. XPath has no such
@@ -184,9 +87,11 @@ unsafe fn lower_type(
 }
 
 /// `[name op value]` as an expression.
-unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
-    let name = str_or_empty(&(*s).name);
-    let at = &(*s).u.attribute;
+fn lower_attribute(b: &Build, s: Selector<'_>) -> Built {
+    let name = s.name();
+    let Some(at) = s.attribute() else {
+        return Err(b.fail(ERR_SYNTAX, c"unsupported CSS selector component"));
+    };
 
     if at.modifier == m::MOD_I || at.modifier == m::MOD_S {
         return Err(b.fail(
@@ -199,7 +104,7 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
      * case), `*` is any (unsupported), anything else is a prefix. An unprefixed
      * CSS attribute selector matches the no-namespace attribute, per CSS and
      * XPath alike. */
-    let prefix = match str_opt(&(*s).ns) {
+    let prefix = match s.ns() {
         Some(p) if p == b"*" => {
             return Err(b.fail(
                 ERR_SYNTAX,
@@ -209,7 +114,7 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
         other => other, /* a zero-length one (|a) means no namespace */
     };
 
-    let Some(value) = str_opt(&at.value) else {
+    let Some(value) = at.value else {
         /* `[name]` - existence */
         return build::attr_ns(b, prefix, name);
     };
@@ -279,12 +184,12 @@ unsafe fn lower_attribute(b: &Build, s: *const Selector) -> Built {
 }
 
 /// `not(axis::*)` - "no sibling or child on that axis".
-unsafe fn not_axis(b: &Build, axis: Axis, nt: TestKind) -> Built {
+fn not_axis(b: &Build, axis: Axis, nt: TestKind) -> Built {
     build::call1(b, b"not", build::step_path(b, axis, nt, None))
 }
 
 /// `not([prefix:]name on axis)` - "no same-named sibling on that axis".
-unsafe fn not_named_axis(b: &Build, axis: Axis, test: &NodeTest) -> Built {
+fn not_named_axis(b: &Build, axis: Axis, test: &NodeTest) -> Built {
     build::call1(
         b,
         b"not",
@@ -298,7 +203,7 @@ unsafe fn not_named_axis(b: &Build, axis: Axis, test: &NodeTest) -> Built {
 }
 
 /// `count(axis::test) + 1` - the 1-based position among matched siblings.
-unsafe fn pos(b: &Build, axis: Axis, named: Option<&NodeTest>) -> Built {
+fn pos(b: &Build, axis: Axis, named: Option<&NodeTest>) -> Built {
     let path = match named {
         None => build::step_path(b, axis, TestKind::Wildcard, None),
         Some(t) => build::named_step_path(
@@ -322,7 +227,7 @@ unsafe fn pos(b: &Build, axis: Axis, named: Option<&NodeTest>) -> Built {
 /// This exists because an UNTYPED of-type compares the element's own expanded
 /// name against its siblings', which pure XPath 1.0 cannot express - there is no
 /// way to say "same name as self".
-unsafe fn of_type_pos(b: &Build, forward: bool) -> Built {
+fn of_type_pos(b: &Build, forward: bool) -> Built {
     let name = if forward {
         FN_OF_TYPE_POS
     } else {
@@ -332,7 +237,7 @@ unsafe fn of_type_pos(b: &Build, forward: bool) -> Built {
 }
 
 /// The 1-based position expression for `:nth-*`.
-unsafe fn pos_expr(b: &Build, axis: Axis, named: Option<&NodeTest>, oftype_untyped: bool) -> Built {
+fn pos_expr(b: &Build, axis: Axis, named: Option<&NodeTest>, oftype_untyped: bool) -> Built {
     if oftype_untyped {
         return of_type_pos(b, axis == Axis::PrecedingSibling);
     }
@@ -340,7 +245,7 @@ unsafe fn pos_expr(b: &Build, axis: Axis, named: Option<&NodeTest>, oftype_untyp
 }
 
 /// The `:nth-*(an+b)` match condition over the position expression on `axis`.
-unsafe fn nth(
+fn nth(
     b: &Build,
     axis: Axis,
     named: Option<&NodeTest>,
@@ -393,8 +298,10 @@ unsafe fn nth(
 
 /// The non-functional structural pseudo-classes. `test` - the compound's node
 /// test so far - supplies the element name for the of-type family.
-unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, test: &NodeTest) -> Built {
-    let pt = (*s).u.pseudo.type_;
+fn lower_pseudo_simple(b: &Build, s: Selector<'_>, test: &NodeTest) -> Built {
+    let Some(pt) = s.pseudo_id() else {
+        return Err(b.fail(ERR_SYNTAX, c"unsupported CSS pseudo-class"));
+    };
     match pt {
         pc::FIRST_CHILD => not_axis(b, Axis::PrecedingSibling, TestKind::Wildcard),
         pc::LAST_CHILD => not_axis(b, Axis::FollowingSibling, TestKind::Wildcard),
@@ -441,16 +348,14 @@ unsafe fn lower_pseudo_simple(b: &Build, s: *const Selector, test: &NodeTest) ->
 
 /// OR of the compound self-tests over each comma-argument of a selector list,
 /// for `:is` / `:where` / `:not`.
-unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built {
+fn selector_list_selftest(b: &Build, lists: Lists<'_>) -> Built {
     let mut acc: Option<Expr> = None;
-    let mut g = list;
-    while !g.is_null() {
-        let one = complex_selftest(b, (*g).first)?;
+    for g in lists {
+        let one = complex_selftest(b, g.first())?;
         acc = Some(match acc {
             None => one,
             Some(lhs) => build::binop(b, Op::Or, Ok(lhs), Ok(one))?,
         });
-        g = (*g).next;
     }
     /* Lexbor rejects an empty list (`:is()`) before it gets here; answering it
      * anyway keeps every failure reported. */
@@ -465,7 +370,7 @@ unsafe fn selector_list_selftest(b: &Build, list: *const SelectorList) -> Built 
 /// matcher scans, which looks at immediate child TEXT nodes only and not at the
 /// deep string value. Matching that is what keeps the XML path's answer equal to
 /// the HTML one.
-unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
+fn child_text_pred(b: &Build, pred: Built) -> Built {
     let pred = pred?;
     build::charge(b)?;
     let mut step = Step::new(Axis::Child, TestKind::Text);
@@ -483,17 +388,15 @@ unsafe fn child_text_pred(b: &Build, pred: Built) -> Built {
 
 /// The functional pseudo-classes: `:nth-*(an+b)`, `:not()`, `:is()`/`:where()`,
 /// `:has()`, `:lexbor-contains()`.
-unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, test: &NodeTest) -> Built {
-    let ty = (*s).u.pseudo.type_;
-    let data = (*s).u.pseudo.data;
+fn lower_pseudo_func(b: &Build, s: Selector<'_>, test: &NodeTest) -> Built {
+    let ty = s.pseudo_id().unwrap_or(0);
 
-    match ty {
-        pf::NTH_CHILD | pf::NTH_LAST_CHILD | pf::NTH_OF_TYPE | pf::NTH_LAST_OF_TYPE => {
-            let anb = data as *const lxb::lxb_css_selector_anb_of_t;
-            if anb.is_null() {
+    match s.function_arg() {
+        FunctionArg::Nth(anb) => {
+            let Some(anb) = anb else {
                 return Err(b.fail(ERR_SYNTAX, c"malformed :nth-*()"));
-            }
-            if !(*anb).of.is_null() {
+            };
+            if anb.of {
                 return Err(b.fail(ERR_SYNTAX, c":nth-*(... of S) is not supported"));
             }
             let last = ty == pf::NTH_LAST_CHILD || ty == pf::NTH_LAST_OF_TYPE;
@@ -515,40 +418,38 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, test: &NodeTest) -> B
                     untyped = true;
                 }
             }
-            nth(b, axis, named, untyped, (*anb).anb.a, (*anb).anb.b)
+            nth(b, axis, named, untyped, anb.a, anb.b)
         }
 
-        pf::NOT => {
-            let inner = selector_list_selftest(b, data as *const SelectorList)?;
-            build::call1(b, b"not", Ok(inner))
-        }
-
-        pf::IS | pf::WHERE => selector_list_selftest(b, data as *const SelectorList),
-
-        pf::HAS => {
-            /* OR of relative descendant/child paths; truthy when any matches. */
-            let mut acc: Option<Expr> = None;
-            let mut g = data as *const SelectorList;
-            while !g.is_null() {
-                /* Relative to self, so a leading >, + or ~ is honoured. */
-                let path = complex(b, (*g).first, true)?;
-                acc = Some(match acc {
-                    None => path,
-                    Some(lhs) => build::binop(b, Op::Or, Ok(lhs), Ok(path))?,
-                });
-                g = (*g).next;
+        FunctionArg::Selectors(lists) => match ty {
+            pf::NOT => {
+                let inner = selector_list_selftest(b, lists)?;
+                build::call1(b, b"not", Ok(inner))
             }
-            acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector list"))
-        }
+            pf::HAS => {
+                /* OR of relative descendant/child paths; truthy when any matches. */
+                let mut acc: Option<Expr> = None;
+                for g in lists {
+                    /* Relative to self, so a leading >, + or ~ is honoured. */
+                    let path = complex(b, g.first(), true)?;
+                    acc = Some(match acc {
+                        None => path,
+                        Some(lhs) => build::binop(b, Op::Or, Ok(lhs), Ok(path))?,
+                    });
+                }
+                acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector list"))
+            }
+            /* :is / :where */
+            _ => selector_list_selftest(b, lists),
+        },
 
-        pf::LEXBOR_CONTAINS => {
-            let c = data as *const lxb::lxb_css_selector_contains_t;
-            if c.is_null() {
+        FunctionArg::Contains(c) => {
+            let Some(c) = c else {
                 return Err(b.fail(ERR_SYNTAX, c"malformed :lexbor-contains()"));
-            }
-            let needle = str_or_empty(&(*c).str_);
+            };
+            let needle = c.needle;
 
-            if !(*c).insensitive {
+            if !c.insensitive {
                 let dot = build::step_path(b, Axis::SelfAxis, TestKind::Node, None); /* "." */
                 return child_text_pred(
                     b,
@@ -583,30 +484,30 @@ unsafe fn lower_pseudo_func(b: &Build, s: *const Selector, test: &NodeTest) -> B
             )
         }
 
-        _ => Err(b.fail(ERR_SYNTAX, c"unsupported functional CSS pseudo-class")),
+        FunctionArg::Other => Err(b.fail(ERR_SYNTAX, c"unsupported functional CSS pseudo-class")),
     }
 }
 
 /// Push a predicate, freeing it if the list cannot grow. An `Err` predicate
 /// means the builder that made it already failed.
-unsafe fn push_pred(b: &Build, preds: &mut Vec<Expr>, p: Built) -> Result<(), Reported> {
+fn push_pred(b: &Build, preds: &mut Vec<Expr>, p: Built) -> Result<(), Reported> {
     build::push(b, preds, p?)
 }
 
 /// Fold one simple selector into the current step: a type sets the node test,
 /// everything else appends a predicate.
-unsafe fn fold_simple(
+fn fold_simple(
     b: &Build,
-    s: *const Selector,
+    s: Selector<'_>,
     step: &mut Step,
     preds: &mut Vec<Expr>,
 ) -> Result<(), Reported> {
-    match (*s).type_ {
+    match s.kind() {
         k::ANY | k::ELEMENT => lower_type(b, s, step, preds),
 
         /* #id -> @id = 'id' */
         k::ID => {
-            let lit = build::literal(b, str_or_empty(&(*s).name));
+            let lit = build::literal(b, s.name());
             push_pred(
                 b,
                 preds,
@@ -615,11 +516,7 @@ unsafe fn fold_simple(
         }
 
         /* .class -> a token match on @class */
-        k::CLASS => push_pred(
-            b,
-            preds,
-            build::token_match(b, None, b"class", str_or_empty(&(*s).name)),
-        ),
+        k::CLASS => push_pred(b, preds, build::token_match(b, None, b"class", s.name())),
 
         k::ATTRIBUTE => push_pred(b, preds, lower_attribute(b, s)),
         k::PSEUDO_CLASS => push_pred(b, preds, lower_pseudo_simple(b, s, &step.test)),
@@ -663,24 +560,24 @@ fn reverse_axis(c: u32) -> Axis {
 }
 
 /// Build one step for the compound `[first ..= last]` and append it.
-unsafe fn emit_compound_step(
+fn emit_compound_step(
     b: &Build,
     steps: &mut Vec<Step>,
     axis: Axis,
-    first: *const Selector,
-    last: *const Selector,
+    first: Selector<'_>,
+    last: Selector<'_>,
 ) -> Result<(), Reported> {
     /* A type selector overrides the wildcard test. */
     let mut step = Step::new(axis, TestKind::Wildcard);
     let mut preds = Vec::new();
 
-    let mut s = first;
-    loop {
+    let mut cur = Some(first);
+    while let Some(s) = cur {
         fold_simple(b, s, &mut step, &mut preds)?;
         if s == last {
             break;
         }
-        s = (*s).next;
+        cur = s.next();
     }
 
     step.predicates = preds;
@@ -690,9 +587,9 @@ unsafe fn emit_compound_step(
 /// A compound - a CLOSE-linked run of simple selectors - and the combinator
 /// connecting it to its left neighbour.
 #[derive(Clone, Copy)]
-struct Compound {
-    first: *const Selector,
-    last: *const Selector,
+struct Compound<'p> {
+    first: Selector<'p>,
+    last: Selector<'p>,
     comb: u32,
 }
 
@@ -701,36 +598,26 @@ struct Compound {
 /// The single splitter, shared by [`complex`] (forward) and [`complex_selftest`]
 /// (right to left), so the boundary rule and the complexity cap the callers
 /// apply live in one place rather than being written twice and drifting.
-struct Compounds {
-    cursor: *const Selector,
+struct Compounds<'p> {
+    cursor: Option<Selector<'p>>,
 }
 
-impl Iterator for Compounds {
-    type Item = Compound;
+impl<'p> Iterator for Compounds<'p> {
+    type Item = Compound<'p>;
 
-    fn next(&mut self) -> Option<Compound> {
-        unsafe {
-            let start = self.cursor;
-            if start.is_null() {
-                return None;
-            }
-            let mut s = start;
-            while !s.is_null() {
-                let nxt = (*s).next as *const Selector;
-                if !nxt.is_null() && (*nxt).combinator == comb::CLOSE {
-                    s = nxt;
-                    continue;
-                }
-                self.cursor = nxt;
-                return Some(Compound {
-                    first: start,
-                    last: s,
-                    comb: (*start).combinator,
-                });
-            }
-            self.cursor = core::ptr::null();
-            None
+    fn next(&mut self) -> Option<Compound<'p>> {
+        let start = self.cursor?;
+        /* A CLOSE combinator continues the compound. */
+        let mut last = start;
+        while let Some(nxt) = last.next().filter(|n| n.combinator() == comb::CLOSE) {
+            last = nxt;
         }
+        self.cursor = last.next();
+        Some(Compound {
+            first: start,
+            last,
+            comb: start.combinator(),
+        })
     }
 }
 
@@ -739,7 +626,7 @@ impl Iterator for Compounds {
 /// `relative_first` makes the FIRST compound honour its own combinator rather
 /// than being forced to a descendant - which is what `:has(> a)`, `:has(+ a)`
 /// and `:has(~ a)` need, since there the combinator is relative to self.
-pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bool) -> Built {
+pub(crate) fn complex(b: &Build, first: Option<Selector<'_>>, relative_first: bool) -> Built {
     let mut steps = Vec::new();
 
     for (nc, comp) in (Compounds { cursor: first }).enumerate() {
@@ -764,16 +651,12 @@ pub(crate) unsafe fn complex(b: &Build, first: *mut Selector, relative_first: bo
 }
 
 /// The `following-sibling::*[1]` step of an adjacent combinator.
-unsafe fn emit_adjacent(b: &Build, steps: &mut Vec<Step>) -> Result<(), Reported> {
+fn emit_adjacent(b: &Build, steps: &mut Vec<Step>) -> Result<(), Reported> {
     emit_positional_sibling(b, steps, Axis::FollowingSibling)
 }
 
 /// `axis::*[1]` - the immediately adjacent sibling in either direction.
-unsafe fn emit_positional_sibling(
-    b: &Build,
-    steps: &mut Vec<Step>,
-    axis: Axis,
-) -> Result<(), Reported> {
+fn emit_positional_sibling(b: &Build, steps: &mut Vec<Step>, axis: Axis) -> Result<(), Reported> {
     let mut st = Step::new(axis, TestKind::Wildcard);
     let p = build::num(b, 1.0)?;
     build::push(b, &mut st.predicates, p)?;
@@ -781,7 +664,7 @@ unsafe fn emit_positional_sibling(
 }
 
 /// Wrap built steps in a relative PATH node, or free them on failure.
-unsafe fn finish_path(b: &Build, steps: Vec<Step>) -> Built {
+fn finish_path(b: &Build, steps: Vec<Step>) -> Built {
     build::path(b, steps)
 }
 
@@ -797,54 +680,43 @@ unsafe fn finish_path(b: &Build, steps: Vec<Step>) -> Built {
 /// - `a ~ b` -> `self::b/preceding-sibling::a`
 ///
 /// The path is non-empty - hence truthy - exactly when self matches.
-pub(crate) unsafe fn complex_selftest(b: &Build, first: *mut Selector) -> Built {
-    let mut comps: [Compound; MAX_COMPOUNDS] = [Compound {
-        first: core::ptr::null(),
-        last: core::ptr::null(),
-        comb: 0,
-    }; MAX_COMPOUNDS];
+pub(crate) fn complex_selftest(b: &Build, first: Option<Selector<'_>>) -> Built {
+    let mut comps: [Option<Compound<'_>>; MAX_COMPOUNDS] = [None; MAX_COMPOUNDS];
     let mut nc = 0usize;
     for comp in (Compounds { cursor: first }) {
         if nc >= MAX_COMPOUNDS {
             return Err(b.fail(ERR_LIMIT, c"CSS selector too complex"));
         }
-        comps[nc] = comp;
+        comps[nc] = Some(comp);
         nc += 1;
     }
-    if nc == 0 {
+
+    /* Right to left: the subject first, then each compound to its left, joined
+     * by the combinator that sits on its right neighbour. */
+    let mut leftward = comps[..nc].iter().rev().flatten();
+    let Some(&subject) = leftward.next() else {
         return Err(b.fail(ERR_SYNTAX, c"empty CSS selector"));
-    }
+    };
 
     let mut steps = Vec::new();
-    emit_compound_step(
-        b,
-        &mut steps,
-        Axis::SelfAxis,
-        comps[nc - 1].first,
-        comps[nc - 1].last,
-    )?;
+    emit_compound_step(b, &mut steps, Axis::SelfAxis, subject.first, subject.last)?;
 
-    for i in (1..nc).rev() {
-        /* comps[i].comb connects comps[i] to comps[i - 1]. */
-        if comps[i].comb == comb::SIBLING {
+    let mut right = subject;
+    for &left in leftward {
+        if right.comb == comb::SIBLING {
             /* Reverse adjacent: the immediately preceding sibling must match. */
             emit_positional_sibling(b, &mut steps, Axis::PrecedingSibling)?;
-            emit_compound_step(
-                b,
-                &mut steps,
-                Axis::SelfAxis,
-                comps[i - 1].first,
-                comps[i - 1].last,
-            )?;
+            emit_compound_step(b, &mut steps, Axis::SelfAxis, left.first, left.last)?;
         } else {
             emit_compound_step(
                 b,
                 &mut steps,
-                reverse_axis(comps[i].comb),
-                comps[i - 1].first,
-                comps[i - 1].last,
+                reverse_axis(right.comb),
+                left.first,
+                left.last,
             )?;
         }
+        right = left;
     }
 
     finish_path(b, steps)

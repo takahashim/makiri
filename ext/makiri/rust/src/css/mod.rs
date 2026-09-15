@@ -118,15 +118,13 @@ pub unsafe fn compile_owned(
      * parser's arena when it drops, on every path out of this function - the C
      * spelled that out at each return instead. */
     let mut acc: Option<Expr> = None;
-    let mut g = parsed.first;
-    while !g.is_null() {
+    for g in parsed.groups() {
         /* Top level: the first compound is a descendant of the context node. */
-        let path = lower::complex(&b, (*g).first, false)?;
+        let path = lower::complex(&b, g.first(), false)?;
         acc = Some(match acc {
             None => path,
             Some(lhs) => build::binop(&b, Op::Union, Ok(lhs), Ok(path))?,
         });
-        g = (*g).next;
     }
     /* Lexbor rejects an empty selector list before it gets here; answering it
      * anyway keeps every failure reported. */

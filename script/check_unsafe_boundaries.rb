@@ -14,6 +14,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 
 SAFE_FILES = %w[
   css/build.rs
+  css/lower.rs
   xpath/attr_pred.rs
   xpath/axis.rs
   xpath/funcs.rs
