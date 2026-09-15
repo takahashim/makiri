@@ -15,7 +15,7 @@
 use super::abi::*;
 use super::own::Text;
 use crate::falloc::Reserve;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 
 /// Per-context registration caps. These bound an abusive Ruby loop that calls
@@ -136,7 +136,6 @@ unsafe fn mkr_try_first_match_html(
 }
 pub use crate::xpath::ffi_xml::mkr_eval_ast_xml;
 pub use crate::xpath::ffi_xml::mkr_try_first_match_xml;
-pub use crate::xpath::runtime_abi::mkr_borrowed_text_eq;
 pub use crate::xpath::runtime_abi::mkr_doc_order_index_init;
 pub use crate::xpath::runtime_abi::mkr_str_cache_clear;
 pub use crate::xpath::runtime_abi::mkr_str_cache_init;
@@ -148,18 +147,13 @@ fn empty_text() -> Text {
     Text::new()
 }
 
-unsafe fn borrowed(t: &Text) -> BorrowedText {
-    t.as_borrowed()
-}
-
-unsafe fn text_eq(a: &Text, b: BorrowedText) -> bool {
-    mkr_borrowed_text_eq(borrowed(a), b) != 0
+fn text_eq(a: &Text, b: &[u8]) -> bool {
+    a.as_slice() == b
 }
 
 /// Copy `val` into a fresh owned text, or None on OOM.
 unsafe fn copy_text(val: VerifiedText) -> Option<Text> {
-    crate::xpath_abi::OwnedText::try_copy(val.into(), ptr::null_mut(), ptr::null())
-        .map(Text::from_owned)
+    crate::xpath_abi::OwnedText::try_copy(val.into(), ptr::null_mut(), None).map(Text::from_owned)
 }
 
 /// Replace a slot's owned text with a fresh copy: copy FIRST, then clear the
@@ -232,7 +226,7 @@ pub unsafe fn mkr_xpath_register_ns(
     let ctx = &mut *ctx;
     /* Replace when the prefix is already registered. */
     for e in ctx.ns.iter_mut() {
-        if text_eq(&e.prefix, prefix.into()) {
+        if text_eq(&e.prefix, prefix.as_bytes()) {
             return set_slot(&mut e.uri, uri);
         }
     }
@@ -259,7 +253,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
     /* Only unprefixed string variables are supported. A null `value` means the
      * variable is set to empty, which the copy maps to "". */
     for e in ctx.vars.iter_mut() {
-        if e.prefix.is_absent() && text_eq(&e.name, name.into()) {
+        if e.prefix.is_absent() && text_eq(&e.name, name.as_bytes()) {
             return set_slot(&mut e.value, value);
         }
     }
@@ -278,59 +272,47 @@ pub unsafe fn mkr_xpath_register_variable_string(
     0
 }
 
-pub unsafe fn mkr_ctx_lookup_ns(
-    ctx: *mut Context,
-    prefix: *const c_char,
-    prefix_len: usize,
-    out_uri_len: *mut usize,
-) -> *const c_char {
-    if !out_uri_len.is_null() {
-        *out_uri_len = 0;
+/// The URI registered for `prefix`, borrowed from the registry.
+///
+/// # Safety
+/// `ctx` must be null or live. The bytes belong to its namespace registry, which
+/// the glue refuses to change during an evaluate: valid for the call, not past it.
+pub unsafe fn mkr_ctx_lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
+    if ctx.is_null() {
+        return None;
     }
-    if ctx.is_null() || prefix.is_null() {
-        return ptr::null();
-    }
-    let want = BorrowedText::from_raw_parts(prefix, prefix_len);
-    for e in (*ctx).ns.iter() {
-        if text_eq(&e.prefix, want) {
-            let uri = borrowed(&e.uri);
-            if !out_uri_len.is_null() {
-                *out_uri_len = uri.len();
-            }
-            return uri.as_ptr();
-        }
-    }
-    ptr::null()
+    (*ctx)
+        .ns
+        .iter()
+        .find(|e| text_eq(&e.prefix, prefix))
+        .map(|e| e.uri.as_slice())
 }
 
-pub unsafe fn mkr_ctx_lookup_variable_text(
+/// The string bound to `$prefix:name` (`prefix` is `None` when unprefixed),
+/// borrowed from the registry.
+///
+/// # Safety
+/// `ctx` must be null or live. The bytes are valid until the variable is
+/// registered again, which the glue refuses during an evaluate.
+pub unsafe fn mkr_ctx_lookup_variable_text<'a>(
     ctx: *mut Context,
-    prefix: *const c_char,
-    prefix_len: usize,
-    name: *const c_char,
-    name_len: usize,
-    out: *mut BorrowedText,
-) -> c_int {
-    if !out.is_null() {
-        *out = BorrowedText::absent();
+    prefix: Option<&[u8]>,
+    name: &[u8],
+) -> Option<&'a [u8]> {
+    if ctx.is_null() {
+        return None;
     }
-    if ctx.is_null() || name.is_null() || out.is_null() {
-        return 0;
-    }
-    let want_prefix = BorrowedText::from_raw_parts(prefix, prefix_len);
-    let want_name = BorrowedText::from_raw_parts(name, name_len);
-    for e in (*ctx).vars.iter() {
-        let prefix_match = if prefix.is_null() {
-            e.prefix.is_absent()
-        } else {
-            text_eq(&e.prefix, want_prefix)
-        };
-        if prefix_match && text_eq(&e.name, want_name) {
-            *out = borrowed(&e.value);
-            return 1;
-        }
-    }
-    0
+    (*ctx)
+        .vars
+        .iter()
+        .find(|e| {
+            let prefix_match = match prefix {
+                None => e.prefix.is_absent(),
+                Some(p) => text_eq(&e.prefix, p),
+            };
+            prefix_match && text_eq(&e.name, name)
+        })
+        .map(|e| e.value.as_slice())
 }
 
 /* ---------- accessors ---------- */

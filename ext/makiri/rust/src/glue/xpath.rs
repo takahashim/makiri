@@ -592,7 +592,7 @@ unsafe fn ruby_to_out(
             out,
             VerifiedText::empty().into(),
             core::ptr::null_mut(),
-            core::ptr::null(),
+            None,
         ) != 0
         {
             err.set("out of memory converting handler result");
@@ -619,7 +619,7 @@ unsafe fn ruby_to_out(
         out,
         unsafe { vv.into_verified() }.into(),
         core::ptr::null_mut(),
-        core::ptr::null(),
+        None,
     );
     core::hint::black_box(sv);
     if rc != 0 || (*out).u.string.is_absent() {

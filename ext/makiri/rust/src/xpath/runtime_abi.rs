@@ -17,5 +17,5 @@ pub use cache::{
     mkr_str_cache_index_put, mkr_str_cache_init, mkr_str_cache_reindex, mkr_str_cache_truncate,
 };
 pub use nodeset::{mkr_nodeset_clear, mkr_nodeset_init, mkr_nodeset_push};
-pub use text::{mkr_borrowed_text_eq, mkr_owned_text_clear, mkr_owned_text_init};
+pub use text::{mkr_owned_text_clear, mkr_owned_text_init};
 pub use value::{mkr_val_clear, mkr_val_set_borrowed_text_copy, mkr_val_set_owned_text};

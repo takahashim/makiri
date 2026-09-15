@@ -48,7 +48,7 @@ pub(crate) unsafe fn set_text(b: &Build, out: *mut OwnedText, s: &[u8]) -> bool 
         );
         return false;
     };
-    match crate::xpath_abi::OwnedText::try_copy(text.into(), b.err, c"css name".as_ptr()) {
+    match crate::xpath_abi::OwnedText::try_copy(text.into(), b.err, Some(c"css name")) {
         Some(value) => {
             *out = value;
             true

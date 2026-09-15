@@ -8,7 +8,6 @@
 use super::abi::*;
 use super::dom::*;
 use super::value::owned_bytes;
-use core::ffi::c_char;
 
 /// What a name test needs from the context, resolved ONCE per step rather than
 /// per visited node.
@@ -122,20 +121,7 @@ unsafe fn resolved_prefix<'a, D: Dom>(
 /// namespace registry, which the glue refuses to re-register during an
 /// evaluate - so they stay valid for the call, but not past it.
 pub unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
-    let mut len = 0usize;
-    let p = mkr_ctx_lookup_ns(
-        ctx,
-        prefix.as_ptr() as *const c_char,
-        prefix.len(),
-        &mut len,
-    );
-    if p.is_null() {
-        None
-    } else if len == 0 {
-        Some(&[])
-    } else {
-        Some(core::slice::from_raw_parts(p as *const u8, len))
-    }
+    mkr_ctx_lookup_ns(ctx, prefix)
 }
 
 ///

@@ -79,8 +79,13 @@ pub unsafe fn owned_bytes<'a>(t: OwnedText) -> &'a [u8] {
 ///
 /// # Safety
 /// `out` must be a writable `mkr_owned_text_t`.
-pub unsafe fn owned_copy(out: *mut OwnedText, s: &[u8], err: *mut Error, what: &[u8]) -> bool {
-    match crate::xpath_abi::OwnedText::try_copy_bytes(s, err, what.as_ptr() as *const c_char) {
+pub unsafe fn owned_copy(
+    out: *mut OwnedText,
+    s: &[u8],
+    err: *mut Error,
+    what: &core::ffi::CStr,
+) -> bool {
+    match crate::xpath_abi::OwnedText::try_copy_bytes(s, err, Some(what)) {
         Some(value) => {
             *out = value;
             true
@@ -106,7 +111,7 @@ pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> bool
                 &mut text,
                 owned_bytes((*src).u.string),
                 err,
-                b"out of memory cloning string value\0",
+                c"out of memory cloning string value",
             ) {
                 return false;
             }
@@ -230,8 +235,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     let st = build_string_value::<D>(doc, node, &mut buf);
     if st == ST_OK {
         if let Ok(owned) = buf.steal() {
-            let (ptr, len) = owned.into_raw_parts();
-            *out = OwnedText::from_raw_parts(ptr as *mut c_char, len);
+            *out = OwnedText::from_buf(owned);
             return true;
         }
         if !err.is_null() {
@@ -255,7 +259,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
         }
     }
     /* best-effort: never fail - yield an owned "". */
-    owned_copy(out, b"", ptr::null_mut(), b"\0");
+    owned_copy(out, b"", ptr::null_mut(), c"");
     true
 }
 
@@ -347,7 +351,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
 ) -> bool {
     *out = OwnedText::empty();
     if v.is_null() {
-        return owned_copy(out, b"", err, b"out of memory converting value to string\0");
+        return owned_copy(out, b"", err, c"out of memory converting value to string");
     }
     match (*v).type_ {
         T_STRING => {
@@ -355,7 +359,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             if !limits.is_null() && mkr_limit_check_string_bytes(limits, text.len(), err) != 0 {
                 return false;
             }
-            owned_copy(out, text, err, b"out of memory copying string value\0")
+            owned_copy(out, text, err, c"out of memory copying string value")
         }
         T_BOOLEAN => {
             let s: &[u8] = if (*v).u.boolean != 0 {
@@ -363,11 +367,11 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             } else {
                 b"false"
             };
-            owned_copy(out, s, err, b"out of memory converting boolean to string\0")
+            owned_copy(out, s, err, c"out of memory converting boolean to string")
         }
         T_NUMBER => {
             let d = (*v).u.number;
-            let what = b"out of memory converting number to string\0";
+            let what = c"out of memory converting number to string";
             if d.is_nan() {
                 return owned_copy(out, b"NaN", err, what);
             }
@@ -389,7 +393,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
         }
         T_NODESET => {
             if (*v).u.nodeset.count == 0 {
-                return owned_copy(out, b"", err, b"out of memory\0");
+                return owned_copy(out, b"", err, c"out of memory");
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */

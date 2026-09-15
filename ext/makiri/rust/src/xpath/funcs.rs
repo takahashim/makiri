@@ -18,7 +18,6 @@ use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
-use core::ffi::c_char;
 use core::ptr;
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
@@ -129,19 +128,13 @@ unsafe fn require_nodeset(arg: *const Val, fname: &str, err: *mut Error) -> Opti
     Some(&raw const (*arg).u.nodeset)
 }
 
-/// An owned C string holding `s`, or None on OOM. The result is freed by C, so
-/// it comes from the C allocator.
+/// An owned copy of `s`, or None with `*err` naming `what` on OOM.
 unsafe fn c_string(s: &[u8], err: *mut Error, what: &str) -> Option<OwnedText> {
-    let p = mkr_str_alloc(s.len());
-    if p.is_null() {
+    let t = OwnedText::try_copy_bytes(s, ptr::null_mut(), None);
+    if t.is_none() {
         err_setf!(err, XP_ERR_OOM, "out of memory in {}()", what);
-        return None;
     }
-    if !s.is_empty() {
-        ptr::copy_nonoverlapping(s.as_ptr(), p as *mut u8, s.len());
-    }
-    *p.add(s.len()) = 0;
-    Some(OwnedText::from_raw_parts(p, s.len()))
+    t
 }
 
 unsafe fn set_string(out: *mut Val, s: &[u8], err: *mut Error, what: &str) -> bool {
@@ -596,19 +589,20 @@ unsafe fn fn_concat<D: Dom>(
         }
         parts.push(t);
     }
-    let buf = mkr_str_alloc(total);
-    if buf.is_null() {
+    let joined = OwnedText::try_fill(total, |dst| {
+        let mut off = 0usize;
+        for p in &parts {
+            let s = p.as_slice();
+            dst[off..off + s.len()].copy_from_slice(s);
+            off += s.len();
+        }
+        off
+    });
+    let Some(joined) = joined else {
         err_setf!(err, XP_ERR_OOM, "out of memory in concat()");
         return false;
-    }
-    let mut off = 0usize;
-    for p in &parts {
-        let s = p.as_slice();
-        ptr::copy_nonoverlapping(s.as_ptr(), (buf as *mut u8).add(off), s.len());
-        off += s.len();
-    }
-    *buf.add(total) = 0;
-    mkr_val_set_owned_text(out, OwnedText::from_raw_parts(buf, total));
+    };
+    mkr_val_set_owned_text(out, joined);
     true
 }
 
@@ -755,32 +749,32 @@ unsafe fn fn_normalize_space<D: Dom>(
         None => return false,
     };
     let src = s.as_slice();
-    let buf = mkr_str_alloc(src.len());
-    if buf.is_null() {
+    let normalized = OwnedText::try_fill(src.len(), |dst| {
+        let mut w = 0usize;
+        let mut in_space = true;
+        for &c in src {
+            if super::lex::is_ws(c) {
+                if !in_space && w > 0 {
+                    dst[w] = b' ';
+                    w += 1;
+                }
+                in_space = true;
+            } else {
+                dst[w] = c;
+                w += 1;
+                in_space = false;
+            }
+        }
+        if w > 0 && dst[w - 1] == b' ' {
+            w -= 1;
+        }
+        w
+    });
+    let Some(normalized) = normalized else {
         err_setf!(err, XP_ERR_OOM, "out of memory in normalize-space()");
         return false;
-    }
-    let dst = core::slice::from_raw_parts_mut(buf as *mut u8, src.len() + 1);
-    let mut w = 0usize;
-    let mut in_space = true;
-    for &c in src {
-        if super::lex::is_ws(c) {
-            if !in_space && w > 0 {
-                dst[w] = b' ';
-                w += 1;
-            }
-            in_space = true;
-        } else {
-            dst[w] = c;
-            w += 1;
-            in_space = false;
-        }
-    }
-    if w > 0 && dst[w - 1] == b' ' {
-        w -= 1;
-    }
-    dst[w] = 0;
-    mkr_val_set_owned_text(out, OwnedText::from_raw_parts(buf, w));
+    };
+    mkr_val_set_owned_text(out, normalized);
     true
 }
 
@@ -872,8 +866,7 @@ unsafe fn fn_translate<D: Dom>(
             return false;
         }
     };
-    let (ptr, len) = owned.into_raw_parts();
-    mkr_val_set_owned_text(out, OwnedText::from_raw_parts(ptr as *mut c_char, len));
+    mkr_val_set_owned_text(out, OwnedText::from_buf(owned));
     true
 }
 

@@ -355,7 +355,7 @@ fn verified_text_rejects_nul_and_invalid_utf8() {
 fn text_views_distinguish_absent_from_empty() {
     use crate::text::{BorrowedText, VerifiedText};
 
-    let absent = BorrowedText::absent();
+    let absent = unsafe { BorrowedText::from_raw_parts(core::ptr::null(), 0) };
     assert!(absent.is_absent() && absent.is_empty());
     assert!(unsafe { absent.as_bytes() }.is_empty());
 
@@ -391,8 +391,8 @@ fn owned_text_copy_keeps_interior_nul_and_terminates() {
     use crate::xpath_abi::OwnedText;
     use core::ptr;
 
-    let mut t = unsafe { OwnedText::try_copy_bytes(b"a\0b", ptr::null_mut(), ptr::null()) }
-        .expect("allocation");
+    let mut t =
+        unsafe { OwnedText::try_copy_bytes(b"a\0b", ptr::null_mut(), None) }.expect("allocation");
     assert_eq!(t.len(), 3);
     assert_eq!(unsafe { t.as_bytes() }, b"a\0b");
     assert_eq!(unsafe { *t.as_ptr().add(3) }, 0);
@@ -400,10 +400,48 @@ fn owned_text_copy_keeps_interior_nul_and_terminates() {
     assert!(t.is_absent());
 
     // An absent view copies to a present empty string, not to another absent.
-    let mut e =
-        unsafe { OwnedText::try_copy(BorrowedText::absent(), ptr::null_mut(), ptr::null()) }
-            .expect("allocation");
+    let mut e = unsafe {
+        OwnedText::try_copy(
+            BorrowedText::from_raw_parts(ptr::null(), 0),
+            ptr::null_mut(),
+            None,
+        )
+    }
+    .expect("allocation");
     assert!(e.is_present() && e.is_empty());
     assert_eq!(unsafe { *e.as_ptr() }, 0);
+    unsafe { e.clear() };
+}
+
+#[test]
+fn owned_text_adopts_a_detached_buffer() {
+    use crate::cbuf::Buf;
+    use crate::xpath_abi::OwnedText;
+
+    let mut buf = Buf::new(0);
+    buf.append(b"a\0b").expect("append");
+    let mut t = OwnedText::from_buf(buf.steal().expect("steal"));
+    assert_eq!(unsafe { t.as_bytes() }, b"a\0b");
+    assert_eq!(unsafe { *t.as_ptr().add(3) }, 0);
+    unsafe { t.clear() };
+}
+
+#[test]
+fn owned_text_fill_terminates_at_the_length_written() {
+    use crate::xpath_abi::OwnedText;
+
+    let mut t = OwnedText::try_fill(5, |dst| {
+        // The reservation arrives zeroed.
+        assert!(dst.iter().all(|&b| b == 0));
+        dst[..2].copy_from_slice(b"ab");
+        2
+    })
+    .expect("allocation");
+    assert_eq!(unsafe { t.as_bytes() }, b"ab");
+    assert_eq!(unsafe { *t.as_ptr().add(2) }, 0);
+    unsafe { t.clear() };
+
+    let mut e = OwnedText::try_fill(0, |_| 0).expect("allocation");
+    assert!(e.is_present() && e.is_empty());
     unsafe { e.clear() };
 }

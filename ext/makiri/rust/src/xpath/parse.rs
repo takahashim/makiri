@@ -15,8 +15,7 @@ use super::abi::*;
 use super::lex::{LexErr, Lexer, Tok, Token};
 use super::msg::Bytes;
 use crate::err_setf;
-use crate::falloc::cstr::mkr_strndup;
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 struct Parser<'a> {
@@ -197,16 +196,14 @@ impl<'a> Parser<'a> {
     /// null slot left in the AST would silently mis-compare at evaluation, so
     /// the parse fails closed instead.
     fn fill_owned(&mut self, text: &[u8], out: *mut OwnedText) -> bool {
-        let p = unsafe { mkr_strndup(text.as_ptr() as *const c_char, text.len()) };
-        if p.is_null() {
+        // SAFETY: a null error slot is accepted; the parser reports its own.
+        let copied = unsafe { OwnedText::try_copy_bytes(text, ptr::null_mut(), None) };
+        let ok = copied.is_some();
+        if !ok {
             err_setf!(self.err, XP_ERR_OOM, "out of memory in parser");
-            unsafe { *out = OwnedText::empty() };
-            return false;
         }
-        unsafe {
-            *out = OwnedText::from_raw_parts(p, text.len());
-        }
-        true
+        unsafe { *out = copied.unwrap_or(OwnedText::empty()) };
+        ok
     }
 
     /// Split a QNAME token into prefix and local, and copy both.

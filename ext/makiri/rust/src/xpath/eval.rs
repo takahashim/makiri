@@ -927,7 +927,7 @@ unsafe fn eval_node_inner<D: Dom>(
                 &mut text,
                 owned_bytes((*n).u.literal),
                 err,
-                b"out of memory copying literal\0",
+                c"out of memory copying literal",
             ) {
                 mkr_val_set_owned_text(out, text);
                 true
@@ -941,37 +941,35 @@ unsafe fn eval_node_inner<D: Dom>(
         }
         NK_VARREF => {
             let v = &raw const (*n).u.varref;
-            let mut got = BorrowedText::absent();
-            if mkr_ctx_lookup_variable_text(
-                ctx,
-                (*v).prefix.as_ptr(),
-                (*v).prefix.len(),
-                (*v).name.as_ptr(),
-                (*v).name.len(),
-                &mut got,
-            ) == 0
-            {
-                err_setf!(
-                    err,
-                    XP_ERR_RUNTIME,
-                    "undefined variable ${}{}{}",
-                    Bytes(owned_bytes((*v).prefix)),
-                    if (*v).prefix.is_absent() { "" } else { ":" },
-                    Bytes(owned_bytes((*v).name))
-                );
-                false
+            let prefix = if (*v).prefix.is_absent() {
+                None
             } else {
-                let bytes = got.as_bytes();
-                let mut text = OwnedText::empty();
-                if owned_copy(
-                    &mut text,
-                    bytes,
-                    err,
-                    b"out of memory copying variable value\0",
-                ) {
-                    mkr_val_set_owned_text(out, text);
-                    true
-                } else {
+                Some(owned_bytes((*v).prefix))
+            };
+            match mkr_ctx_lookup_variable_text(ctx, prefix, owned_bytes((*v).name)) {
+                Some(bytes) => {
+                    let mut text = OwnedText::empty();
+                    if owned_copy(
+                        &mut text,
+                        bytes,
+                        err,
+                        c"out of memory copying variable value",
+                    ) {
+                        mkr_val_set_owned_text(out, text);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => {
+                    err_setf!(
+                        err,
+                        XP_ERR_RUNTIME,
+                        "undefined variable ${}{}{}",
+                        Bytes(owned_bytes((*v).prefix)),
+                        if (*v).prefix.is_absent() { "" } else { ":" },
+                        Bytes(owned_bytes((*v).name))
+                    );
                     false
                 }
             }

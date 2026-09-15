@@ -111,16 +111,11 @@ pub struct BorrowedText {
     len: usize,
 }
 
+// Built by the text index and read by the Ruby glue, so the Ruby-free builds
+// see most of it unused.
+#[cfg_attr(not(feature = "ruby"), allow(dead_code))]
 impl BorrowedText {
     view_accessors!();
-
-    /// An omitted value: the null sentinel.
-    pub(crate) const fn absent() -> Self {
-        Self {
-            ptr: core::ptr::null(),
-            len: 0,
-        }
-    }
 
     /// Borrow bytes from Lexbor's arena or an engine-owned slot.
     ///
