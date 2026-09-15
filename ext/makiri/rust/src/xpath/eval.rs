@@ -294,12 +294,12 @@ unsafe fn compare_eq<D: Dom>(
          * up to ~1e14 comparisons as a handful of ops. */
         let (ls, rs) = (&raw const (*l).u.nodeset, &raw const (*r).u.nodeset);
         for i in 0..(*ls).count {
-            let a = cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?;
+            let a = cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err).ok()?;
             for j in 0..(*rs).count {
                 if mkr_limit_eval_op(limits, err).is_err() {
                     return None;
                 }
-                let b = cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?;
+                let b = cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err).ok()?;
                 if (a == b) == want_eq {
                     return Some(true);
                 }
@@ -317,7 +317,7 @@ unsafe fn compare_eq<D: Dom>(
                     if mkr_limit_eval_op(limits, err).is_err() {
                         return None;
                     }
-                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
+                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err).ok()?;
                     if (bytes_to_number(s) == target) == want_eq {
                         return Some(true);
                     }
@@ -330,7 +330,7 @@ unsafe fn compare_eq<D: Dom>(
             }
             _ => {
                 let mut target = OwnedText::new();
-                if !val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut()) {
+                if val_to_owned_text_or_fail::<D>(doc, sc, limits, err, target.as_mut()).is_err() {
                     return None;
                 }
                 let want = target.as_slice();
@@ -338,7 +338,7 @@ unsafe fn compare_eq<D: Dom>(
                     if mkr_limit_eval_op(limits, err).is_err() {
                         return None;
                     }
-                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
+                    let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err).ok()?;
                     if (s == want) == want_eq {
                         return Some(true);
                     }
@@ -357,8 +357,8 @@ unsafe fn compare_eq<D: Dom>(
     } else {
         let mut ls = OwnedText::new();
         let mut rs = OwnedText::new();
-        if !val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut())
-            || !val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut())
+        if val_to_owned_text_or_fail::<D>(doc, l, limits, err, ls.as_mut()).is_err()
+            || val_to_owned_text_or_fail::<D>(doc, r, limits, err, rs.as_mut()).is_err()
         {
             return None;
         }
@@ -394,12 +394,13 @@ unsafe fn compare_rel<D: Dom>(
     if lt == T_NODESET && rt == T_NODESET {
         let (ls, rs) = (&raw const (*l).u.nodeset, &raw const (*r).u.nodeset);
         for i in 0..(*ls).count {
-            let a = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?);
+            let a = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err).ok()?);
             for j in 0..(*rs).count {
                 if mkr_limit_eval_op(limits, err).is_err() {
                     return None;
                 }
-                let b = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?);
+                let b =
+                    bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err).ok()?);
                 if rel_hit(op, a, b) {
                     return Some(true);
                 }
@@ -411,7 +412,7 @@ unsafe fn compare_rel<D: Dom>(
         let (ns, sc) = if lt == T_NODESET { (l, r) } else { (r, l) };
         let swap = lt != T_NODESET;
         let mut scn = 0.0;
-        if !val_to_number_or_fail::<D>(doc, sc, limits, err, &mut scn) {
+        if val_to_number_or_fail::<D>(doc, sc, limits, err, &mut scn).is_err() {
             return None;
         }
         let set = &raw const (*ns).u.nodeset;
@@ -419,7 +420,8 @@ unsafe fn compare_rel<D: Dom>(
             if mkr_limit_eval_op(limits, err).is_err() {
                 return None;
             }
-            let nv = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?);
+            let nv =
+                bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err).ok()?);
             let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
             if rel_hit(op, a, b) {
                 return Some(true);
@@ -428,8 +430,8 @@ unsafe fn compare_rel<D: Dom>(
         return Some(false);
     }
     let (mut a, mut b) = (0.0, 0.0);
-    if !val_to_number_or_fail::<D>(doc, l, limits, err, &mut a)
-        || !val_to_number_or_fail::<D>(doc, r, limits, err, &mut b)
+    if val_to_number_or_fail::<D>(doc, l, limits, err, &mut a).is_err()
+        || val_to_number_or_fail::<D>(doc, r, limits, err, &mut b).is_err()
     {
         return None;
     }
@@ -857,8 +859,8 @@ unsafe fn eval_binop<D: Dom>(
         },
         OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MOD => {
             let (mut a, mut c) = (0.0, 0.0);
-            if !val_to_number_or_fail::<D>(doc, lp, limits, err, &mut a)
-                || !val_to_number_or_fail::<D>(doc, rp, limits, err, &mut c)
+            if val_to_number_or_fail::<D>(doc, lp, limits, err, &mut a).is_err()
+                || val_to_number_or_fail::<D>(doc, rp, limits, err, &mut c).is_err()
             {
                 return false;
             }
@@ -917,7 +919,7 @@ unsafe fn eval_node_inner<D: Dom>(
      * comes back as a clone, which keeps ownership clean - clearing either copy
      * is safe. */
     if (*n).is_context_independent != 0 && (*n).memoized != 0 {
-        return val_clone(&raw const (*n).memo_value, out, err);
+        return val_clone(&raw const (*n).memo_value, out, err).is_ok();
     }
 
     let ok = match (*n).kind {
@@ -928,7 +930,9 @@ unsafe fn eval_node_inner<D: Dom>(
                 owned_bytes((*n).u.literal),
                 err,
                 c"out of memory copying literal",
-            ) {
+            )
+            .is_ok()
+            {
                 mkr_val_set_owned_text(out, text);
                 true
             } else {
@@ -954,7 +958,9 @@ unsafe fn eval_node_inner<D: Dom>(
                         bytes,
                         err,
                         c"out of memory copying variable value",
-                    ) {
+                    )
+                    .is_ok()
+                    {
                         mkr_val_set_owned_text(out, text);
                         true
                     } else {
@@ -981,7 +987,7 @@ unsafe fn eval_node_inner<D: Dom>(
                 false
             } else {
                 let mut d = 0.0;
-                if val_to_number_or_fail::<D>(doc, v.as_ptr(), limits, err, &mut d) {
+                if val_to_number_or_fail::<D>(doc, v.as_ptr(), limits, err, &mut d).is_ok() {
                     *out = val_number(-d);
                     true
                 } else {
@@ -1003,7 +1009,7 @@ unsafe fn eval_node_inner<D: Dom>(
      * caller is free to consume theirs. */
     if ok && (*n).is_context_independent != 0 && (*n).memoized == 0 {
         let mut memo = val_zero(T_NODESET);
-        if val_clone(out, &mut memo, err) {
+        if val_clone(out, &mut memo, err).is_ok() {
             /* The AST is read-only at eval time apart from these memo slots. */
             let mut_n = n as *mut Node;
             (*mut_n).memo_value = memo;

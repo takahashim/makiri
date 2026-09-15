@@ -160,7 +160,7 @@ unsafe fn set_bool(out: *mut Val, b: bool) -> bool {
 unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<OwnedText> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let mut t = OwnedText::new();
-    if val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, t.as_mut()) {
+    if val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, t.as_mut()).is_ok() {
         Some(t)
     } else {
         None
@@ -170,7 +170,7 @@ unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> 
 unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context, err: *mut Error) -> Option<f64> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let mut d = 0.0;
-    if val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, &mut d) {
+    if val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err, &mut d).is_ok() {
         Some(d)
     } else {
         None
@@ -190,7 +190,9 @@ unsafe fn arg_or_self_text<D: Dom>(
         Some(a) => to_text::<D>(a, ctx, err),
         None => {
             let mut t = OwnedText::new();
-            if node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
+            if node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut())
+                .is_ok()
+            {
                 Some(t)
             } else {
                 None
@@ -394,7 +396,9 @@ unsafe fn fn_id<D: Dom>(
                 mkr_ctx_limits(ctx),
                 err,
                 t.as_mut(),
-            ) && id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
+            )
+            .is_ok()
+                && id_collect::<D>(t.as_slice(), root, ns_out, ctx, err)
         })
     } else {
         match to_text::<D>(&args[0], ctx, err) {
@@ -975,7 +979,9 @@ unsafe fn fn_number<D: Dom>(
         None => {
             /* number() with no argument is number(string(self)). */
             let mut t = OwnedText::new();
-            if !node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut()) {
+            if node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err, t.as_mut())
+                .is_err()
+            {
                 return false;
             }
             set_num(out, bytes_to_number(t.as_slice()))
@@ -1004,8 +1010,8 @@ unsafe fn fn_sum<D: Dom>(
             return false;
         }
         match cached_node_text::<D>(ctx, nodeset_at::<D>(ns, i), err) {
-            Some(s) => total += bytes_to_number(s),
-            None => return false,
+            Ok(s) => total += bytes_to_number(s),
+            Err(_) => return false,
         }
     }
     set_num(out, total)

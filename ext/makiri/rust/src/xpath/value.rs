@@ -75,7 +75,7 @@ pub unsafe fn owned_bytes<'a>(t: TextSlot) -> &'a [u8] {
     t.as_bytes()
 }
 
-/// Copy `s` into a fresh owned text. Returns false with `*err` set on OOM.
+/// Copy `s` into a fresh owned text, or `Err` with `*err` set on OOM.
 ///
 /// # Safety
 /// `out` must be a writable `mkr_owned_text_t`.
@@ -84,14 +84,9 @@ pub unsafe fn owned_copy(
     s: &[u8],
     err: *mut Error,
     what: &core::ffi::CStr,
-) -> bool {
-    match crate::xpath_abi::TextSlot::try_copy_bytes(s, err, Some(what)) {
-        Ok(value) => {
-            *out = value;
-            true
-        }
-        Err(_) => false,
-    }
+) -> Result<(), Reported> {
+    *out = crate::xpath_abi::TextSlot::try_copy_bytes(s, err, Some(what))?;
+    Ok(())
 }
 
 /* ---------- value clone ---------- */
@@ -102,52 +97,50 @@ pub unsafe fn owned_copy(
 /// # Safety
 /// Both must point at valid `mkr_val_t`; `dst` is overwritten without being
 /// cleared first, so the caller owns whatever was in it.
-pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> bool {
+pub unsafe fn val_clone(src: *const Val, dst: *mut Val, err: *mut Error) -> Result<(), Reported> {
     *dst = val_zero((*src).type_);
     match (*src).type_ {
         T_STRING => {
             let mut text = TextSlot::empty();
-            if !owned_copy(
+            owned_copy(
                 &mut text,
                 owned_bytes((*src).u.string),
                 err,
                 c"out of memory cloning string value",
-            ) {
-                return false;
-            }
+            )?;
             mkr_val_set_owned_text(dst, text);
-            true
+            Ok(())
         }
         T_NUMBER => {
             (*dst).u.number = (*src).u.number;
-            true
+            Ok(())
         }
         T_BOOLEAN => {
             (*dst).u.boolean = (*src).u.boolean;
-            true
+            Ok(())
         }
         T_NODESET => {
             let n = (*src).u.nodeset.count;
             mkr_nodeset_init(&raw mut (*dst).u.nodeset);
             if n == 0 {
-                return true;
+                return Ok(());
             }
             let items = mkr_reallocarray(ptr::null_mut(), n, core::mem::size_of::<*mut c_void>())
                 as *mut *mut c_void;
             if items.is_null() {
-                err_setf!(err, XP_ERR_OOM, "out of memory cloning node-set");
-                return false;
+                return Err(err_setf!(err, XP_ERR_OOM, "out of memory cloning node-set"));
             }
             ptr::copy_nonoverlapping((*src).u.nodeset.items, items, n);
             (*dst).u.nodeset.items = items;
             (*dst).u.nodeset.count = n;
             (*dst).u.nodeset.capacity = n;
-            true
+            Ok(())
         }
-        _ => {
-            err_setf!(err, XP_ERR_INTERNAL, "mkr_val_clone: unknown value type");
-            false
-        }
+        _ => Err(err_setf!(
+            err,
+            XP_ERR_INTERNAL,
+            "mkr_val_clone: unknown value type"
+        )),
     }
 }
 
@@ -212,8 +205,8 @@ unsafe fn build_string_value<D: Dom>(doc: D::Doc, node: D::Node, buf: *mut Buf) 
 /// builder.
 ///
 /// With `err` non-null the build is bounded by `limits.max_string_bytes` and any
-/// failure returns false with `*err` set. With `err` null it is best-effort: a
-/// failure yields an owned "" and returns true, because the sole such caller is
+/// failure returns `Err` with `*err` set. With `err` null it is best-effort: a
+/// failure yields an owned "" and returns `Ok`, because the sole such caller is
 /// the NUMBER coercion, and a node whose text overran the ceiling was never a
 /// valid number - "" coerces to NaN, which is the right answer anyway.
 ///
@@ -225,7 +218,7 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     limits: *mut Limits,
     err: *mut Error,
     out: *mut TextSlot,
-) -> bool {
+) -> Result<(), Reported> {
     *out = TextSlot::empty();
     let mut buf = Buf::new(if limits.is_null() {
         0
@@ -236,31 +229,34 @@ pub unsafe fn node_to_owned_text<D: Dom>(
     if st == ST_OK {
         if let Ok(owned) = buf.steal() {
             *out = TextSlot::from_buf(owned);
-            return true;
+            return Ok(());
         }
         if !err.is_null() {
-            err_setf!(err, XP_ERR_OOM, "out of memory building node string-value");
-            return false;
+            return Err(err_setf!(
+                err,
+                XP_ERR_OOM,
+                "out of memory building node string-value"
+            ));
         }
     } else {
         buf.free();
         if !err.is_null() {
-            if st == ST_ERR_LIMIT {
+            return Err(if st == ST_ERR_LIMIT {
                 err_setf!(
                     err,
                     XP_ERR_LIMIT,
                     "string size limit exceeded ({} bytes) while building node string-value",
                     (*limits).max_string_bytes
-                );
+                )
             } else {
-                err_setf!(err, XP_ERR_OOM, "out of memory building node string-value");
-            }
-            return false;
+                err_setf!(err, XP_ERR_OOM, "out of memory building node string-value")
+            });
         }
     }
-    /* best-effort: never fail - yield an owned "". */
-    owned_copy(out, b"", ptr::null_mut(), c"");
-    true
+    /* best-effort: never fail - yield an owned "". An OOM here leaves the slot
+     * absent, which reads as "" too. */
+    let _ = owned_copy(out, b"", ptr::null_mut(), c"");
+    Ok(())
 }
 
 /* ---------- coercions ---------- */
@@ -348,7 +344,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     limits: *mut Limits,
     err: *mut Error,
     out: *mut TextSlot,
-) -> bool {
+) -> Result<(), Reported> {
     *out = TextSlot::empty();
     if v.is_null() {
         return owned_copy(out, b"", err, c"out of memory converting value to string");
@@ -356,8 +352,8 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
     match (*v).type_ {
         T_STRING => {
             let text = owned_bytes((*v).u.string);
-            if !limits.is_null() && mkr_limit_check_string_bytes(limits, text.len(), err).is_err() {
-                return false;
+            if !limits.is_null() {
+                mkr_limit_check_string_bytes(limits, text.len(), err)?;
             }
             owned_copy(out, text, err, c"out of memory copying string value")
         }
@@ -385,10 +381,11 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
             let mut buf = [0u8; 64];
             match number::to_text(d, &mut buf) {
                 Some(n) => owned_copy(out, &buf[..n], err, what),
-                None => {
-                    err_setf!(err, XP_ERR_INTERNAL, "number string conversion overflow");
-                    false
-                }
+                None => Err(err_setf!(
+                    err,
+                    XP_ERR_INTERNAL,
+                    "number string conversion overflow"
+                )),
             }
         }
         T_NODESET => {
@@ -399,10 +396,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
              * document order. */
             node_to_owned_text::<D>(doc, nodeset_at::<D>(&(*v).u.nodeset, 0), limits, err, out)
         }
-        _ => {
-            err_setf!(err, XP_ERR_INTERNAL, "unknown value type");
-            false
-        }
+        _ => Err(err_setf!(err, XP_ERR_INTERNAL, "unknown value type")),
     }
 }
 
@@ -417,27 +411,25 @@ pub unsafe fn val_to_number_or_fail<D: Dom>(
     limits: *mut Limits,
     err: *mut Error,
     out: *mut f64,
-) -> bool {
+) -> Result<(), Reported> {
     if (*v).type_ == T_NODESET {
         if (*v).u.nodeset.count == 0 {
             *out = f64::NAN;
-            return true;
+            return Ok(());
         }
         let mut text = OwnedText::new();
-        if !node_to_owned_text::<D>(
+        node_to_owned_text::<D>(
             doc,
             nodeset_at::<D>(&(*v).u.nodeset, 0),
             limits,
             err,
             text.as_mut(),
-        ) {
-            return false;
-        }
+        )?;
         *out = bytes_to_number(text.as_slice());
-        return true;
+        return Ok(());
     }
     *out = val_to_number_unchecked::<D>(doc, v);
-    true
+    Ok(())
 }
 
 /* ---------- node-set element access ---------- */
@@ -459,7 +451,7 @@ pub unsafe fn nodeset_at<D: Dom>(ns: *const NodeSet, i: usize) -> D::Node {
 #[inline]
 unsafe fn node_text_best_effort<D: Dom>(doc: D::Doc, node: D::Node) -> OwnedText {
     let mut t = OwnedText::new();
-    node_to_owned_text::<D>(doc, node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
+    let _ = node_to_owned_text::<D>(doc, node, ptr::null_mut(), ptr::null_mut(), t.as_mut());
     t
 }
 
@@ -476,16 +468,15 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     ctx: *mut Context,
     node: D::Node,
     err: *mut Error,
-) -> Option<&'a [u8]> {
+) -> Result<&'a [u8], Reported> {
     let doc = D::doc_from_void(mkr_ctx_document(ctx));
     let c = mkr_ctx_str_cache(ctx);
     if c.is_null() {
-        err_setf!(
+        return Err(err_setf!(
             err,
             XP_ERR_INTERNAL,
             "cached_node_text called without a context"
-        );
-        return None;
+        ));
     }
     let key = D::to_void(node) as *const c_void;
 
@@ -496,7 +487,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         while *(*c).buckets.add(j) != 0 {
             let e = &*(*c).entries.add(*(*c).buckets.add(j) - 1);
             if ptr::eq(e.node, key) {
-                return Some(borrow(e.str_, e.len));
+                return Ok(borrow(e.str_, e.len));
             }
             j = (j + 1) & mask;
         }
@@ -504,9 +495,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
 
     let limits = mkr_ctx_limits(ctx);
     let mut text = TextSlot::empty();
-    if !node_to_owned_text::<D>(doc, node, limits, err, &mut text) {
-        return None;
-    }
+    node_to_owned_text::<D>(doc, node, limits, err, &mut text)?;
 
     if mkr_grow_reserve(
         &raw mut (*c).entries as *mut *mut c_void,
@@ -516,8 +505,11 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     ) != MKR_OK
     {
         text.clear();
-        err_setf!(err, XP_ERR_OOM, "out of memory in node string cache");
-        return None;
+        return Err(err_setf!(
+            err,
+            XP_ERR_OOM,
+            "out of memory in node string cache"
+        ));
     }
 
     /* A total cap on the cached bytes, so one evaluate cannot grow the cache
@@ -526,13 +518,16 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         Some(t) => t,
         None => {
             text.clear();
-            err_setf!(err, XP_ERR_OOM, "node string cache size overflow");
-            return None;
+            return Err(err_setf!(
+                err,
+                XP_ERR_OOM,
+                "node string cache size overflow"
+            ));
         }
     };
-    if mkr_limit_check_string_bytes(limits, new_total, err).is_err() {
+    if let Err(reported) = mkr_limit_check_string_bytes(limits, new_total, err) {
         text.clear();
-        return None;
+        return Err(reported);
     }
 
     /* Grow the index FIRST. It rebuilds only from the already-committed
@@ -547,15 +542,21 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
                 Some(b) => b,
                 None => {
                     text.clear();
-                    err_setf!(err, XP_ERR_OOM, "node string cache index overflow");
-                    return None;
+                    return Err(err_setf!(
+                        err,
+                        XP_ERR_OOM,
+                        "node string cache index overflow"
+                    ));
                 }
             }
         };
         if mkr_str_cache_reindex(c, new_bucket_cap) != 0 {
             text.clear();
-            err_setf!(err, XP_ERR_OOM, "out of memory indexing node string cache");
-            return None;
+            return Err(err_setf!(
+                err,
+                XP_ERR_OOM,
+                "out of memory indexing node string cache"
+            ));
         }
     }
 
@@ -569,7 +570,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     (*c).total_bytes += text.len();
     (*c).count += 1;
 
-    Some(borrow(text.as_ptr(), text.len()))
+    Ok(borrow(text.as_ptr(), text.len()))
 }
 
 #[inline]
