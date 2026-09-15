@@ -14,9 +14,9 @@ pub mod text;
 pub mod value;
 
 pub use cache::{
-    mkr_doc_order_index_clear, mkr_doc_order_index_init, mkr_str_cache_clear,
-    mkr_str_cache_index_put, mkr_str_cache_init, mkr_str_cache_reindex, mkr_str_cache_truncate,
+    doc_order_index_clear, doc_order_index_init, str_cache_clear, str_cache_index_put,
+    str_cache_init, str_cache_reindex, str_cache_truncate,
 };
-pub use nodeset::{mkr_nodeset_clear, mkr_nodeset_init, mkr_nodeset_push};
-pub use text::{mkr_owned_text_clear, mkr_owned_text_init};
-pub use value::{mkr_val_clear, mkr_val_set_borrowed_text_copy, mkr_val_set_owned_text};
+pub use nodeset::{nodeset_clear, nodeset_init, nodeset_push};
+pub use text::{owned_text_clear, owned_text_init};
+pub use value::{val_clear, val_set_borrowed_text_copy, val_set_owned_text};

@@ -93,7 +93,7 @@ unsafe fn over_expr_bytes(bytes: usize, max: usize, err: ErrSink) -> Reported {
 ///
 /// # Safety
 /// `l` must point to a writable `mkr_xpath_limits_t`.
-pub unsafe fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
+pub unsafe fn xpath_limits_init_defaults(l: *mut Limits) {
     *l = Limits {
         max_expr_bytes: 64 * 1024, /* 64 KB XPath string */
         max_ast_nodes: 100_000,
@@ -110,7 +110,7 @@ pub unsafe fn mkr_xpath_limits_init_defaults(l: *mut Limits) {
     };
 }
 
-pub unsafe fn mkr_limit_ast_node(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
+pub unsafe fn limit_ast_node(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
     if (*l).ast_nodes >= (*l).max_ast_nodes {
         return Err(over_ast_nodes(l, err));
     }
@@ -129,7 +129,7 @@ pub unsafe fn mkr_limit_ast_node(l: *mut Limits, err: ErrSink) -> Result<(), Rep
 /// Kept deliberately uniform, with no bulk variant: a bulk charge would only
 /// suit run-to-completion loops and would wrongly reject an early-exiting query
 /// if misapplied, trading one foot-gun-free rule for a conditional one.
-pub unsafe fn mkr_limit_eval_op(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
+pub unsafe fn limit_eval_op(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
     if (*l).eval_ops >= (*l).max_eval_ops {
         return Err(over_eval_ops(l, err));
     }
@@ -137,7 +137,7 @@ pub unsafe fn mkr_limit_eval_op(l: *mut Limits, err: ErrSink) -> Result<(), Repo
     Ok(())
 }
 
-pub unsafe fn mkr_limit_recurse_enter(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
+pub unsafe fn limit_recurse_enter(l: *mut Limits, err: ErrSink) -> Result<(), Reported> {
     if (*l).recursion_depth >= (*l).max_recursion_depth {
         /* The C increments, reports, then backs the failed entry out; comparing
          * first never counts it in the first place. */
@@ -147,7 +147,7 @@ pub unsafe fn mkr_limit_recurse_enter(l: *mut Limits, err: ErrSink) -> Result<()
     Ok(())
 }
 
-pub unsafe fn mkr_limit_recurse_leave(l: *mut Limits) {
+pub unsafe fn limit_recurse_leave(l: *mut Limits) {
     if (*l).recursion_depth > 0 {
         (*l).recursion_depth -= 1;
     }
@@ -162,7 +162,7 @@ unsafe fn check(value: usize, max: usize, noun: &str, err: ErrSink) -> Result<()
     Ok(())
 }
 
-pub unsafe fn mkr_limit_check_nodeset_size(
+pub unsafe fn limit_check_nodeset_size(
     l: *mut Limits,
     new_count: usize,
     err: ErrSink,
@@ -170,7 +170,7 @@ pub unsafe fn mkr_limit_check_nodeset_size(
     check(new_count, (*l).max_nodeset_size, "nodeset size", err)
 }
 
-pub unsafe fn mkr_limit_check_string_bytes(
+pub unsafe fn limit_check_string_bytes(
     l: *mut Limits,
     bytes: usize,
     err: ErrSink,
@@ -181,7 +181,7 @@ pub unsafe fn mkr_limit_check_string_bytes(
     Ok(())
 }
 
-pub unsafe fn mkr_limit_check_steps(
+pub unsafe fn limit_check_steps(
     l: *mut Limits,
     nsteps: usize,
     err: ErrSink,
@@ -189,7 +189,7 @@ pub unsafe fn mkr_limit_check_steps(
     check(nsteps, (*l).max_steps, "path step count", err)
 }
 
-pub unsafe fn mkr_limit_check_predicates(
+pub unsafe fn limit_check_predicates(
     l: *mut Limits,
     npreds: usize,
     err: ErrSink,
@@ -197,7 +197,7 @@ pub unsafe fn mkr_limit_check_predicates(
     check(npreds, (*l).max_predicates, "predicate count", err)
 }
 
-pub unsafe fn mkr_limit_check_func_args(
+pub unsafe fn limit_check_func_args(
     l: *mut Limits,
     nargs: usize,
     err: ErrSink,
@@ -210,7 +210,7 @@ pub unsafe fn mkr_limit_check_func_args(
     )
 }
 
-pub unsafe fn mkr_limit_check_expr_bytes(
+pub unsafe fn limit_check_expr_bytes(
     l: *mut Limits,
     bytes: usize,
     err: ErrSink,

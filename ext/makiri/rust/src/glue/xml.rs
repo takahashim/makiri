@@ -82,7 +82,7 @@ unsafe fn typed_xml_node_unwrap(rb_node: VALUE) -> NodeId {
 pub use crate::bridge::string::mkr_ruby_copy_bytes;
 pub use crate::bridge::string::mkr_ruby_try_verified_text;
 pub use crate::bridge::xml_decode::mkr_xml_decode_input;
-pub use crate::css::mkr_css_compile;
+pub use crate::css::compile_raw;
 pub use crate::dom_adapter::post_parse::mkr_parsed_new_xml;
 pub use crate::dom_adapter::post_parse::mkr_parsed_set_xml_doc;
 pub use crate::glue::doc::mkr_wrap_document;
@@ -93,16 +93,16 @@ pub use crate::xml::api::mkr_xml_name_index_get;
 pub use crate::xml::api::mkr_xml_name_index_lookup;
 pub use crate::xml::api::mkr_xml_parse_ex;
 pub use crate::xml::api::mkr_xml_parse_fragment;
-pub use crate::xpath::ctx::mkr_ctx_limits;
-pub use crate::xpath::ctx::mkr_xpath_context_set_name_index;
-pub use crate::xpath::ctx::mkr_xpath_register_ns;
-pub use crate::xpath::ctx::mkr_xpath_set_engine_kind;
+pub use crate::xpath::ctx::ctx_limits;
+pub use crate::xpath::ctx::xpath_context_set_name_index;
+pub use crate::xpath::ctx::xpath_register_ns;
+pub use crate::xpath::ctx::xpath_set_engine_kind;
 use crate::xpath::ctx::OwnedContext;
-pub use crate::xpath::evaluate::mkr_xpath_eval_compiled;
-pub use crate::xpath::evaluate::mkr_xpath_eval_compiled_first;
-pub use crate::xpath::parse::mkr_parse;
-pub use crate::xpath_abi::mkr_xpath_error_clear;
-pub use crate::xpath_abi::mkr_xpath_value_clear;
+pub use crate::xpath::evaluate::xpath_eval_compiled;
+pub use crate::xpath::evaluate::xpath_eval_compiled_first;
+pub use crate::xpath::parse::parse_raw;
+pub use crate::xpath_abi::xpath_error_clear;
+pub use crate::xpath_abi::xpath_value_clear;
 
 extern "C" {
 
@@ -411,7 +411,7 @@ unsafe fn register_namespaces(
             "namespaces must be a Hash of prefix => uri",
         ));
     };
-    let cap = (*mkr_ctx_limits(ctx)).max_string_bytes;
+    let cap = (*ctx_limits(ctx)).max_string_bytes;
 
     let keys: RArray = h.funcall("keys", ())?;
     for k in keys.into_iter() {
@@ -430,7 +430,7 @@ unsafe fn register_namespaces(
                 ));
             }
         };
-        let rc = mkr_xpath_register_ns(ctx, pv.as_verified(), uv.as_verified());
+        let rc = xpath_register_ns(ctx, pv.as_verified(), uv.as_verified());
         if rc != 0 {
             return Err(Error::new(error_class(), "failed to register namespace"));
         }
@@ -460,8 +460,8 @@ unsafe fn build_ctx(
             "failed to allocate XPath context",
         ));
     };
-    mkr_xpath_set_engine_kind(ctx.as_ptr(), 1);
-    mkr_xpath_context_set_name_index(
+    xpath_set_engine_kind(ctx.as_ptr(), 1);
+    xpath_context_set_name_index(
         ctx.as_ptr(),
         xdoc as *mut c_void,
         Some(name_index_get),
@@ -486,9 +486,9 @@ unsafe fn run_ast(
     let mut value: XPathValue = core::mem::zeroed();
     let mut error: XPathError = core::mem::zeroed();
     let rc = if first_only {
-        mkr_xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
+        xpath_eval_compiled_first(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
     } else {
-        mkr_xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
+        xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error)
     };
     drop(ast);
     if rc != 0 {
@@ -540,7 +540,7 @@ fn xpath_run(
          * not be live across one. */
         let ev = mkr_ruby_verified_text(expr.as_raw(), c"XPath expression".as_ptr());
         let mut error: XPathError = core::mem::zeroed();
-        let limits = mkr_ctx_limits(ctx.as_ptr());
+        let limits = ctx_limits(ctx.as_ptr());
         (*limits).ast_nodes = 0;
         let parsed =
             crate::xpath::parse::parse_owned(ev.as_verified(), limits, ErrSink::new(&mut error));
@@ -597,7 +597,7 @@ unsafe fn css_compile_or_raise(
     };
     let sv = mkr_ruby_verified_text(selector.as_raw(), c"CSS selector".as_ptr());
     let mut error: XPathError = core::mem::zeroed();
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     (*limits).ast_nodes = 0;
     let ast = crate::css::compile_owned(
         unsafe { sv.as_verified() },
@@ -618,7 +618,7 @@ unsafe fn css_compile_or_raise(
                 .to_string_lossy()
                 .into_owned()
         };
-        mkr_xpath_error_clear(&mut error);
+        xpath_error_clear(&mut error);
         let class = magnus::ExceptionClass::from_value(Value::from_raw(mkr_eCSSSyntaxError))
             .expect("Makiri::CSS::SyntaxError");
         return Err(Error::new(class, msg));
@@ -689,7 +689,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 
         let mut value: XPathValue = core::mem::zeroed();
         let mut error: XPathError = core::mem::zeroed();
-        let rc = mkr_xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error);
+        let rc = xpath_eval_compiled(ctx.as_ptr(), ast.as_raw(), &mut value, &mut error);
         drop(ast);
         if rc != 0 {
             return Err(xpath_error(&mut error));
@@ -705,7 +705,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
                 }
             }
         }
-        mkr_xpath_value_clear(&mut value);
+        xpath_value_clear(&mut value);
         Ok(found)
     }
 }

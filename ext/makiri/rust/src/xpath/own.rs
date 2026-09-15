@@ -1,13 +1,13 @@
 //! Guards over the three C allocations the engine passes around.
 //!
-//! The C frees each of these by hand at every bail - a `mkr_nodeset_clear` per
-//! early return, a `mkr_owned_text_clear` per error path. That is where a leak
+//! The C frees each of these by hand at every bail - a `nodeset_clear` per
+//! early return, a `owned_text_clear` per error path. That is where a leak
 //! comes from, and it is what `Drop` exists to stop having to get right. One
 //! module for all three, so a site that hand-writes the cleanup instead is
 //! visibly the odd one out.
 
 use super::abi::*;
-use super::ast_ops::{mkr_node_free, mkr_step_clear};
+use super::ast_ops::{node_free, step_clear};
 use super::dom::Dom;
 use crate::falloc::raw::mkr_reallocarray;
 use core::ffi::c_void;
@@ -47,7 +47,7 @@ impl Ast {
     /// The node's payload by kind, for filling it in while it is being built.
     ///
     /// # Safety
-    /// Writes must keep the node in a state `mkr_node_free` can take apart: an
+    /// Writes must keep the node in a state `node_free` can take apart: an
     /// owned child pointer is null or owned by this node alone.
     pub(crate) unsafe fn payload_mut(&mut self) -> NodeMut<'_> {
         Node::view_mut(self.0.as_ptr())
@@ -64,7 +64,7 @@ impl Ast {
     ///
     /// This is the only operation CSS/XPath construction code should need when
     /// it still has a legacy raw pointer. Keeping it beside `Ast::Drop` makes
-    /// the C ownership rule explicit without spreading `mkr_node_free` calls
+    /// the C ownership rule explicit without spreading `node_free` calls
     /// across the builders.
     pub(crate) unsafe fn drop_raw(ptr: *mut Node) {
         if let Some(ast) = Self::from_raw(ptr) {
@@ -76,7 +76,7 @@ impl Ast {
 impl Drop for Ast {
     fn drop(&mut self) {
         // SAFETY: `Ast` is constructed only from an owned live AST root.
-        unsafe { mkr_node_free(self.0.as_ptr()) }
+        unsafe { node_free(self.0.as_ptr()) }
     }
 }
 
@@ -121,7 +121,7 @@ impl core::ops::DerefMut for OwnedStep {
 impl Drop for OwnedStep {
     fn drop(&mut self) {
         // SAFETY: an `OwnedStep` owns every text and predicate it holds.
-        unsafe { mkr_step_clear(&mut self.0) }
+        unsafe { step_clear(&mut self.0) }
     }
 }
 
@@ -234,7 +234,7 @@ impl Drop for StepArray {
         // SAFETY: every entry below `n` is an owned step; `v` is the array's own.
         unsafe {
             for i in 0..self.0.n {
-                mkr_step_clear(self.0.v.add(i));
+                step_clear(self.0.v.add(i));
             }
             free_c(self.0.v as *mut c_void);
         }
@@ -363,7 +363,7 @@ const EMPTY_SET: NodeSet = NodeSet {
 impl Set {
     pub fn new() -> Set {
         let mut ns = EMPTY_SET;
-        unsafe { mkr_nodeset_init(&mut ns) };
+        unsafe { nodeset_init(&mut ns) };
         Set(ns)
     }
     /// Adopt a node-set the caller is handing over.
@@ -384,7 +384,7 @@ impl Set {
     }
     /// Replace the contents, freeing what was there.
     pub fn replace(&mut self, ns: NodeSet) {
-        unsafe { mkr_nodeset_clear(&mut self.0) };
+        unsafe { nodeset_clear(&mut self.0) };
         self.0 = ns;
     }
     /// # Safety
@@ -395,7 +395,7 @@ impl Set {
         limits: *mut Limits,
         err: ErrSink,
     ) -> Result<(), Reported> {
-        mkr_nodeset_push(self.as_mut(), D::to_void(n), limits, err)
+        nodeset_push(self.as_mut(), D::to_void(n), limits, err)
     }
     /// # Safety
     /// `i` must be below `count()`, and the set must hold this backend's handles.
@@ -413,7 +413,7 @@ impl Default for Set {
 
 impl Drop for Set {
     fn drop(&mut self) {
-        unsafe { mkr_nodeset_clear(&mut self.0) }
+        unsafe { nodeset_clear(&mut self.0) }
     }
 }
 
@@ -446,7 +446,7 @@ impl Default for OwnedVal {
 
 impl Drop for OwnedVal {
     fn drop(&mut self) {
-        unsafe { mkr_val_clear(&mut self.0) }
+        unsafe { val_clear(&mut self.0) }
     }
 }
 

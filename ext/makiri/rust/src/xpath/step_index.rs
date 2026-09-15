@@ -25,7 +25,7 @@ unsafe fn context_is_document<D: Dom>(ctx: *mut Context, set: &Set) -> bool {
     if set.count() != 1 {
         return false;
     }
-    let dh = mkr_ctx_document(ctx);
+    let dh = ctx_document(ctx);
     if dh.is_null() {
         return false;
     }
@@ -66,9 +66,9 @@ pub unsafe fn try_descendant_index<D: Dom>(
         Some(bk) => bk,
         None => return Ok(false),
     };
-    let limits = mkr_ctx_limits(b.ctx);
+    let limits = ctx_limits(b.ctx);
     for &p in bucket.nodes {
-        mkr_limit_eval_op(limits, err)?;
+        limit_eval_op(limits, err)?;
         let n = D::from_void(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, n, (*step).axis, b) {
             continue;
@@ -138,7 +138,7 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     result: &mut Set,
     err: ErrSink,
 ) -> Result<bool, Reported> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     let need = match nth_shape::<D>(ctx, s0, s1, seed) {
         Some(n) => n,
         None => return Ok(false),
@@ -181,10 +181,10 @@ pub unsafe fn try_descendant_index_nth<D: Dom>(
     }
     tab.resize(cap, (ptr::null(), 0));
     let mask = cap - 1;
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
 
     for &p in bucket.nodes {
-        mkr_limit_eval_op(limits, err)?;
+        limit_eval_op(limits, err)?;
         let e = D::from_void(p);
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, (*s1).axis, &b) {
             continue;

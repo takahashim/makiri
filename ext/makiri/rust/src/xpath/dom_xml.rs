@@ -262,9 +262,9 @@ unsafe impl DomRaw for Xml {
             None if lax => return None,
             None => b"", /* strict unprefixed -> no namespace */
         };
-        let owner = mkr_ctx_document(ctx); /* the XML storage == the name index owner */
-        let get = mkr_ctx_name_index_get(ctx)?;
-        let lookup = mkr_ctx_name_index_lookup(ctx)?;
+        let owner = ctx_document(ctx); /* the XML storage == the name index owner */
+        let get = ctx_name_index_get(ctx)?;
+        let lookup = ctx_name_index_lookup(ctx)?;
         if owner.is_null() {
             return None;
         }

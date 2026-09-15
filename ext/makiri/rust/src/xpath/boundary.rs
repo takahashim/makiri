@@ -15,7 +15,7 @@ const MKR_XPATH_TYPE_STRING: u32 = 1;
 ///
 /// # Safety
 /// `err` is null or a live error; `msg` is null or NUL-terminated.
-pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const c_char) {
+pub unsafe extern "C" fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
     if err.is_null() {
         return;
     }
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn mkr_err_set(err: *mut Error, status: c_int, msg: *const
 ///
 /// # Safety
 /// `e` is null or a live error.
-pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
+pub unsafe extern "C" fn xpath_error_clear(e: *mut Error) {
     if e.is_null() {
         return;
     }
@@ -47,7 +47,7 @@ pub unsafe extern "C" fn mkr_xpath_error_clear(e: *mut Error) {
 ///
 /// # Safety
 /// `v` is null or a live value whose `type_` identifies its active arm.
-pub unsafe extern "C" fn mkr_xpath_value_clear(v: *mut XPathValue) {
+pub unsafe extern "C" fn xpath_value_clear(v: *mut XPathValue) {
     if v.is_null() {
         return;
     }

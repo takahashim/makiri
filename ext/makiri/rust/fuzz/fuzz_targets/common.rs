@@ -14,15 +14,15 @@ use core::ffi::{c_int, c_void};
 pub use makiri::text::VerifiedText;
 pub use makiri::xml::parse::mkr_xml_parse;
 pub use makiri::xml::Document;
-pub use makiri::xpath::ast_ops::mkr_node_free;
-pub use makiri::xpath::boundary::{mkr_xpath_error_clear, mkr_xpath_value_clear};
+pub use makiri::xpath::ast_ops::node_free;
+pub use makiri::xpath::boundary::{xpath_error_clear, xpath_value_clear};
 pub use makiri::xpath::ctx::{
-    mkr_ctx_limits, mkr_xpath_context_free, mkr_xpath_context_new, mkr_xpath_register_ns,
-    mkr_xpath_set_engine_kind,
+    ctx_limits, xpath_context_free, xpath_context_new, xpath_register_ns,
+    xpath_set_engine_kind,
 };
-pub use makiri::xpath::evaluate::mkr_xpath_eval_compiled;
-pub use makiri::xpath::limits::mkr_xpath_limits_init_defaults;
-pub use makiri::xpath::parse::mkr_parse;
+pub use makiri::xpath::evaluate::xpath_eval_compiled;
+pub use makiri::xpath::limits::xpath_limits_init_defaults;
+pub use makiri::xpath::parse::parse_raw;
 pub use makiri::xpath_abi::{Context, Error as XPathError, Limits, XPathValue};
 
 /// The engine kind the XML monomorphization answers to. Every target pins it.
@@ -40,11 +40,11 @@ pub unsafe fn xml_context(doc: &mut Document) -> Option<*mut Context> {
         return None;
     }
     let node = doc.doc_node.to_token() as *mut c_void;
-    let ctx = mkr_xpath_context_new(doc as *mut Document as *mut c_void, node);
+    let ctx = xpath_context_new(doc as *mut Document as *mut c_void, node);
     if ctx.is_null() {
         return None;
     }
-    mkr_xpath_set_engine_kind(ctx, ENGINE_XML);
+    xpath_set_engine_kind(ctx, ENGINE_XML);
     Some(ctx)
 }
 

@@ -48,7 +48,7 @@ fuzz_target!(|data: &[u8]| {
         // Much tighter than the `xpath` target's: here the fuzzer controls the
         // document too, so a single input could otherwise build a large tree
         // AND walk it. An overrun fails closed, which is the point.
-        let l = mkr_ctx_limits(ctx);
+        let l = ctx_limits(ctx);
         (*l).max_eval_ops = 20_000;
         (*l).max_nodeset_size = 1024;
         (*l).max_string_bytes = 4096;
@@ -57,20 +57,20 @@ fuzz_target!(|data: &[u8]| {
             VerifiedText::from_bytes(b"d"),
             VerifiedText::from_bytes(b"urn:d"),
         ) {
-            mkr_xpath_register_ns(ctx, prefix, uri);
+            xpath_register_ns(ctx, prefix, uri);
         }
 
         if let Some(text) = Expr::new(expr_bytes).as_ref().and_then(Expr::text) {
             let mut err: XPathError = core::mem::zeroed();
-            let ast = mkr_parse(text, l, &mut err);
+            let ast = parse_raw(text, l, &mut err);
             if !ast.is_null() {
                 let mut v: XPathValue = core::mem::zeroed();
-                let _ = mkr_xpath_eval_compiled(ctx, ast, &mut v, &mut err);
-                mkr_xpath_value_clear(&mut v);
-                mkr_node_free(ast);
+                let _ = xpath_eval_compiled(ctx, ast, &mut v, &mut err);
+                xpath_value_clear(&mut v);
+                node_free(ast);
             }
-            mkr_xpath_error_clear(&mut err);
+            xpath_error_clear(&mut err);
         }
-        mkr_xpath_context_free(ctx);
+        xpath_context_free(ctx);
     }
 });

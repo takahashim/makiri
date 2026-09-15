@@ -4,7 +4,7 @@
 //! allocate - one of them reports OOM - so every message is assembled in a
 //! fixed stack buffer and truncated rather than grown.
 
-use super::abi::{mkr_err_set, Error};
+use super::abi::{err_set_raw, Error};
 use core::ffi::{c_char, c_int};
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
@@ -118,13 +118,13 @@ impl ErrSink {
         self.0.is_null()
     }
 
-    /// The slot, for a C-shaped callee: the handler resolver, `mkr_err_set`.
+    /// The slot, for a C-shaped callee: the handler resolver, `err_set_raw`.
     pub fn as_raw(self) -> *mut Error {
         self.0
     }
 }
 
-/// Set `err` from a formatted message. `mkr_err_set` copies it (mkr_xpath.c),
+/// Set `err` from a formatted message. `err_set_raw` copies it (mkr_xpath.c),
 /// so the stack buffer does not outlive the call.
 ///
 /// Crate-internal, and the one place the front end writes an error. A silent
@@ -134,7 +134,7 @@ pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Argument
     if !err.is_silent() {
         let mut m = MsgBuf::default();
         let _ = m.write_fmt(args);
-        unsafe { mkr_err_set(err.as_raw(), status, m.as_ptr()) };
+        unsafe { err_set_raw(err.as_raw(), status, m.as_ptr()) };
     }
     Reported(())
 }
@@ -144,7 +144,7 @@ pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Argument
 /// # Safety
 /// `err`'s slot must still be live.
 pub(crate) unsafe fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Reported {
-    mkr_err_set(err.as_raw(), status, msg.as_ptr());
+    err_set_raw(err.as_raw(), status, msg.as_ptr());
     Reported(())
 }
 

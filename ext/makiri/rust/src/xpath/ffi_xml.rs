@@ -15,7 +15,7 @@ use core::ffi::{c_int, c_void};
 /// # Safety
 /// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
 /// out-pointers writable; the caller holds the GVL.
-pub unsafe fn mkr_eval_ast_xml(
+pub unsafe fn eval_ast_xml(
     ctx: *mut Context,
     ast: *const Node,
     out: *mut Val,
@@ -37,7 +37,7 @@ pub unsafe fn mkr_eval_ast_xml(
 /// # Safety
 /// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
 /// out-pointers writable; the caller holds the GVL.
-pub unsafe fn mkr_try_first_match_xml(
+pub unsafe fn try_first_match_xml(
     ctx: *mut Context,
     ast: *const Node,
     out_node: *mut *mut c_void,

@@ -146,7 +146,7 @@ pub const TAG_LAST_ENTRY: usize = crate::lexbor_abi::lxb_tag_id_enum_t_LXB_TAG__
 ///
 /// # Safety
 /// `node` and `doc` are NULL or live; `len` is writable.
-pub unsafe extern "C" fn mkr_html_ns_uri(
+pub unsafe extern "C" fn html_ns_uri(
     node: *const Node,
     doc: *const Document,
     len: *mut usize,
@@ -167,7 +167,7 @@ pub unsafe extern "C" fn mkr_html_ns_uri(
 ///
 /// # Safety
 /// `doc` is NULL or live; `p` is NULL or names `len` readable bytes.
-pub unsafe extern "C" fn mkr_html_tag_id_by_name(
+pub unsafe extern "C" fn html_tag_id_by_name(
     doc: *const Document,
     p: *const c_char,
     len: usize,
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn mkr_html_tag_id_by_name(
 ///
 /// # Safety
 /// `node` is a live node; `buf` is a live buffer.
-pub unsafe extern "C" fn mkr_html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int {
+pub unsafe extern "C" fn html_append_own_text(node: *mut Node, buf: *mut Buf) -> c_int {
     let mut tlen: usize = 0;
     let t = crate::lexbor_abi::lxb_dom_node_text_content(
         node as *mut crate::lexbor_abi::LxbNode,
@@ -367,7 +367,7 @@ pub unsafe fn pi_name<'a>(node: *mut Node) -> &'a [u8] {
 #[inline]
 pub unsafe fn ns_uri<'a>(node: *mut Node, doc: *mut Document) -> &'a [u8] {
     let mut len = 0;
-    seen(mkr_html_ns_uri(node, doc, &mut len) as *const u8, len)
+    seen(html_ns_uri(node, doc, &mut len) as *const u8, len)
 }
 /// # Safety
 /// `node` must be a live Lexbor element node.
@@ -386,7 +386,7 @@ pub unsafe fn has_ns(node: *mut Node) -> bool {
 /// `doc` must be a live Lexbor document.
 #[inline]
 pub unsafe fn tag_id_by_name(doc: *const Document, local: &[u8]) -> usize {
-    mkr_html_tag_id_by_name(doc, local.as_ptr() as *const c_char, local.len())
+    html_tag_id_by_name(doc, local.as_ptr() as *const c_char, local.len())
 }
 /// # Safety
 /// `nodes` must name `count` live handles (or be null when `count == 0`), and
@@ -491,7 +491,7 @@ unsafe impl DomRaw for Html {
         has_ns(n)
     }
     unsafe fn raw_append_own_text(_doc: Self::Doc, n: Self::Node, buf: *mut Buf) -> c_int {
-        mkr_html_append_own_text(n, buf)
+        html_append_own_text(n, buf)
     }
 
     unsafe fn raw_name_bucket<'a>(
@@ -503,13 +503,13 @@ unsafe impl DomRaw for Html {
         if ns_uri.is_some() {
             return None;
         }
-        let index = mkr_ctx_element_index(ctx);
-        let lookup = mkr_ctx_tag_lookup(ctx)?;
-        let has_foreign = mkr_ctx_tag_has_foreign(ctx)?;
+        let index = ctx_element_index(ctx);
+        let lookup = ctx_tag_lookup(ctx)?;
+        let has_foreign = ctx_tag_has_foreign(ctx)?;
         if index.is_null() || has_foreign(index) != 0 {
             return None;
         }
-        let doc = mkr_ctx_document(ctx) as *const Document;
+        let doc = ctx_document(ctx) as *const Document;
         if doc.is_null() {
             return None;
         }

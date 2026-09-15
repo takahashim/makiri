@@ -291,7 +291,7 @@ pub unsafe fn val_to_owned_text_or_fail<D: Dom>(
         ValRef::String(s) => {
             let text = owned_bytes(s);
             if !limits.is_null() {
-                mkr_limit_check_string_bytes(limits, text.len(), err)?;
+                limit_check_string_bytes(limits, text.len(), err)?;
             }
             owned_copy(text, err, c"out of memory copying string value")
         }
@@ -388,8 +388,8 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     node: D::Node,
     err: ErrSink,
 ) -> Result<&'a [u8], Reported> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let c = mkr_ctx_str_cache(ctx);
+    let doc = D::doc_from_void(ctx_document(ctx));
+    let c = ctx_str_cache(ctx);
     if c.is_null() {
         return Err(err_setf!(
             err,
@@ -412,7 +412,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
         }
     }
 
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     /* Held in its guard until the cache takes it, so every refusal below frees
      * it on the way out. */
     let mut text = node_to_owned_text::<D>(doc, node, limits, err)?;
@@ -443,7 +443,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
             ));
         }
     };
-    mkr_limit_check_string_bytes(limits, new_total, err)?;
+    limit_check_string_bytes(limits, new_total, err)?;
 
     /* Grow the index FIRST. It rebuilds only from the already-committed
      * entries, so every fallible step happens while the slot at [count] is
@@ -464,7 +464,7 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
                 }
             }
         };
-        if mkr_str_cache_reindex(c, new_bucket_cap) != 0 {
+        if str_cache_reindex(c, new_bucket_cap) != 0 {
             return Err(err_setf!(
                 err,
                 XP_ERR_OOM,
@@ -476,13 +476,13 @@ pub unsafe fn cached_node_text<'a, D: Dom>(
     /* The cache owns the bytes from here. */
     let text = text.take();
 
-    /* Commit. mkr_str_cache_index_put reads entries[count].node, so the write
+    /* Commit. str_cache_index_put reads entries[count].node, so the write
      * has to come first. */
     let slot = (*c).entries.add((*c).count);
     (*slot).node = key as *mut c_void;
     (*slot).str_ = text.as_ptr();
     (*slot).len = text.len();
-    mkr_str_cache_index_put(c, (*c).count);
+    str_cache_index_put(c, (*c).count);
     (*c).total_bytes += text.len();
     (*c).count += 1;
 

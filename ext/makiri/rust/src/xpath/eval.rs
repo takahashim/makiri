@@ -36,8 +36,8 @@ unsafe fn apply_predicates<D: Dom>(
     inout: &mut Set,
     err: ErrSink,
 ) -> EvalResult {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let limits = mkr_ctx_limits(ctx);
+    let doc = D::doc_from_void(ctx_document(ctx));
+    let limits = ctx_limits(ctx);
     for &pred in preds {
         let mut kept = Set::new();
 
@@ -48,7 +48,7 @@ unsafe fn apply_predicates<D: Dom>(
                 /* Charge per candidate: this replaces a per-node generic
                  * predicate eval, which would tick through eval_node, so the
                  * shortcut stays under the same budget as the path it skips. */
-                mkr_limit_eval_op(limits, err)?;
+                limit_eval_op(limits, err)?;
                 let n = inout.get::<D>(i);
                 if attr_pred_matches::<D>(doc, &ap, n) {
                     kept.push::<D>(n, limits, err)?;
@@ -90,7 +90,7 @@ unsafe fn eval_step<D: Dom>(
     out: &mut Set,
     err: ErrSink,
 ) -> EvalResult {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     let axis = (*step).axis;
     if !axis_is_implemented(axis) {
         return Err(err_setf!(
@@ -101,7 +101,7 @@ unsafe fn eval_step<D: Dom>(
         ));
     }
     let test = &raw const (*step).test;
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
 
     /* Resolve the namespace prefix once up front (covering `prefix:local` and
      * `prefix:*`): a uniform RUNTIME error rather than a silently empty match,
@@ -158,7 +158,7 @@ unsafe fn eval_step<D: Dom>(
                      * cap, which bounds only what is pushed, leaves the walk
                      * itself bounded by document size, defeating max_eval_ops on
                      * a descendant walk that matches nothing. */
-                    if let Err(e) = mkr_limit_eval_op(limits, err) {
+                    if let Err(e) = limit_eval_op(limits, err) {
                         failure = Some(e);
                         return true;
                     }
@@ -188,7 +188,7 @@ unsafe fn eval_step<D: Dom>(
             {
                 let frag = &mut fragment;
                 let mut visit = |n: D::Node| -> bool {
-                    if let Err(e) = mkr_limit_eval_op(limits, err) {
+                    if let Err(e) = limit_eval_op(limits, err) {
                         failure = Some(e);
                         return true;
                     }
@@ -260,8 +260,8 @@ unsafe fn compare_eq<D: Dom>(
     op: u32,
     err: ErrSink,
 ) -> EvalResult<bool> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let limits = mkr_ctx_limits(ctx);
+    let doc = D::doc_from_void(ctx_document(ctx));
+    let limits = ctx_limits(ctx);
     let want_eq = op == OP_EQ;
 
     let (set, sc) = match (l.as_nodeset(), r.as_nodeset()) {
@@ -272,7 +272,7 @@ unsafe fn compare_eq<D: Dom>(
             for i in 0..ls.count {
                 let a = cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?;
                 for j in 0..rs.count {
-                    mkr_limit_eval_op(limits, err)?;
+                    limit_eval_op(limits, err)?;
                     let b = cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?;
                     if (a == b) == want_eq {
                         return Ok(true);
@@ -305,7 +305,7 @@ unsafe fn compare_eq<D: Dom>(
     match sc.get() {
         ValRef::Number(target) => {
             for i in 0..set.count {
-                mkr_limit_eval_op(limits, err)?;
+                limit_eval_op(limits, err)?;
                 let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
                 if (bytes_to_number(s) == target) == want_eq {
                     return Ok(true);
@@ -321,7 +321,7 @@ unsafe fn compare_eq<D: Dom>(
             let target = val_to_owned_text_or_fail::<D>(doc, sc, limits, err)?;
             let want = target.as_slice();
             for i in 0..set.count {
-                mkr_limit_eval_op(limits, err)?;
+                limit_eval_op(limits, err)?;
                 let s = cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?;
                 if (s == want) == want_eq {
                     return Ok(true);
@@ -352,8 +352,8 @@ unsafe fn compare_rel<D: Dom>(
     op: u32,
     err: ErrSink,
 ) -> EvalResult<bool> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let limits = mkr_ctx_limits(ctx);
+    let doc = D::doc_from_void(ctx_document(ctx));
+    let limits = ctx_limits(ctx);
 
     /* `swap` records that the node-set is the right operand, so each pair is
      * compared in source order. */
@@ -362,7 +362,7 @@ unsafe fn compare_rel<D: Dom>(
             for i in 0..ls.count {
                 let a = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ls, i), err)?);
                 for j in 0..rs.count {
-                    mkr_limit_eval_op(limits, err)?;
+                    limit_eval_op(limits, err)?;
                     let b =
                         bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(rs, j), err)?);
                     if rel_hit(op, a, b) {
@@ -382,7 +382,7 @@ unsafe fn compare_rel<D: Dom>(
     };
     let scn = val_to_number_or_fail::<D>(doc, sc, limits, err)?;
     for i in 0..set.count {
-        mkr_limit_eval_op(limits, err)?;
+        limit_eval_op(limits, err)?;
         let nv = bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(set, i), err)?);
         let (a, b) = if swap { (scn, nv) } else { (nv, scn) };
         if rel_hit(op, a, b) {
@@ -407,7 +407,7 @@ unsafe fn union_nodeset<D: Dom>(
             "operands of '|' must be node-sets"
         ));
     };
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     /* Push both sides without deduplicating per insert - that was quadratic -
      * then sort once and collapse adjacent duplicates. */
     let mut merged = Set::new();
@@ -502,7 +502,7 @@ pub unsafe fn try_first_match<D: Dom>(
     ast: *const Node,
     err: ErrSink,
 ) -> Result<Option<D::Node>, Reported> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     let step = match first_recognise(ast) {
         Some(s) => s,
         None => return Ok(None),
@@ -530,19 +530,19 @@ pub unsafe fn try_first_match<D: Dom>(
 
     let absolute = matches!(Node::view(ast), NodeRef::Path(p) if p.absolute != 0);
     let start: D::Node = if absolute {
-        D::document_node(D::doc_from_void(mkr_ctx_document(ctx)))
+        D::document_node(D::doc_from_void(ctx_document(ctx)))
     } else {
-        D::from_void(mkr_ctx_node(ctx))
+        D::from_void(ctx_node(ctx))
     };
     if D::is_null(start) {
         return Ok(Some(D::null())); /* recognised; no context means no match */
     }
 
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     let b = Bindings::<D>::new(ctx, pre);
     let mut n = D::first_child(doc, start);
     while !D::is_null(n) {
-        mkr_limit_eval_op(limits, err)?;
+        limit_eval_op(limits, err)?;
         if node_principal_match::<D>(doc, test, n, (*step).axis, &b)
             && first_node_ok::<D>(doc, step, n)
         {
@@ -571,10 +571,10 @@ unsafe fn eval_path<D: Dom>(
     self_node: D::Node,
     err: ErrSink,
 ) -> EvalResult<OwnedVal> {
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     let mut seed = Set::new();
     if p.absolute != 0 {
-        let root_h = mkr_ctx_document(ctx);
+        let root_h = ctx_document(ctx);
         if root_h.is_null() {
             return Err(err_setf!(
                 err,
@@ -672,9 +672,9 @@ unsafe fn eval_fncall<D: Dom>(
     /* No built-in. Delegate to the per-call resolver, which the Ruby handler
      * bridge installs for the duration of evaluate(). */
     let mut out = OwnedVal::new();
-    let resolved = match mkr_ctx_func_resolver(ctx) {
+    let resolved = match ctx_func_resolver(ctx) {
         Some(resolver) => resolver(
-            mkr_xpath_get_user_data(ctx),
+            xpath_get_user_data(ctx),
             ctx,
             D::to_void(focus.node),
             focus.pos,
@@ -718,9 +718,9 @@ unsafe fn eval_binop<D: Dom>(
     focus: &Focus<D>,
     err: ErrSink,
 ) -> EvalResult<OwnedVal> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     let op = b.op;
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
 
     /* and / or short-circuit. */
     if op == OP_OR || op == OP_AND {
@@ -767,8 +767,8 @@ unsafe fn eval_negate<D: Dom>(
     focus: &Focus<D>,
     err: ErrSink,
 ) -> EvalResult<OwnedVal> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let limits = mkr_ctx_limits(ctx);
+    let doc = D::doc_from_void(ctx_document(ctx));
+    let limits = ctx_limits(ctx);
     let v = eval_node::<D>(ctx, u.expr, focus, err)?;
     let d = val_to_number_or_fail::<D>(doc, &*v, limits, err)?;
     Ok(Val::number(-d).into())
@@ -790,12 +790,12 @@ unsafe fn eval_node<D: Dom>(
     focus: &Focus<D>,
     err: ErrSink,
 ) -> EvalResult<OwnedVal> {
-    let limits = mkr_ctx_limits(ctx);
-    mkr_limit_eval_op(limits, err)?;
+    let limits = ctx_limits(ctx);
+    limit_eval_op(limits, err)?;
     /* A refused entry is not counted, so returning here needs no release. */
-    mkr_limit_recurse_enter(limits, err)?;
+    limit_recurse_enter(limits, err)?;
     let result = eval_node_inner::<D>(ctx, n, focus, err);
-    mkr_limit_recurse_leave(limits);
+    limit_recurse_leave(limits);
     result
 }
 
@@ -823,7 +823,7 @@ unsafe fn eval_node_inner<D: Dom>(
             } else {
                 Some(owned_bytes(v.prefix))
             };
-            match mkr_ctx_lookup_variable_text(ctx, prefix, owned_bytes(v.name)) {
+            match ctx_lookup_variable_text(ctx, prefix, owned_bytes(v.name)) {
                 Some(bytes) => string_value(bytes, err, c"out of memory copying variable value"),
                 None => Err(err_setf!(
                     err,
@@ -861,14 +861,14 @@ unsafe fn eval_node_inner<D: Dom>(
 /// Evaluate an AST against the context, with the context node as the focus.
 ///
 /// # Safety
-/// `ctx` must be a live context and `ast` a live AST built by `mkr_parse`.
+/// `ctx` must be a live context and `ast` a live AST built by `parse_raw`.
 pub unsafe fn eval_ast<D: Dom>(
     ctx: *mut Context,
     ast: *const Node,
     err: ErrSink,
 ) -> EvalResult<OwnedVal> {
     let focus = Focus::<D> {
-        node: D::from_void(mkr_ctx_node(ctx)),
+        node: D::from_void(ctx_node(ctx)),
         pos: 1,
         size: 1,
     };

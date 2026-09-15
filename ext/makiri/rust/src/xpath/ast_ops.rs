@@ -19,7 +19,7 @@ use core::ptr::NonNull;
 
 /// The one AST factory: charges the node budget, then hands back a zeroed node
 /// with its kind set. The XPath parser and the CSS lowering both go through it,
-/// which is what keeps `mkr_node_free` able to take apart whatever either built.
+/// which is what keeps `node_free` able to take apart whatever either built.
 ///
 /// # Safety
 /// `limits` must be live, and `err`'s slot too.
@@ -28,7 +28,7 @@ pub(crate) unsafe fn node_alloc(
     err: ErrSink,
     kind: u32,
 ) -> Result<Ast, Reported> {
-    mkr_limit_ast_node(limits, err)?;
+    limit_ast_node(limits, err)?;
     let Some(n) = NonNull::new(mkr_callocarray(1, core::mem::size_of::<Node>()) as *mut Node)
     else {
         return Err(err_setf!(
@@ -42,7 +42,7 @@ pub(crate) unsafe fn node_alloc(
     Ok(Ast::from_non_null(n))
 }
 
-pub unsafe fn mkr_step_clear(s: *mut Step) {
+pub unsafe fn step_clear(s: *mut Step) {
     if s.is_null() {
         return;
     }
@@ -50,7 +50,7 @@ pub unsafe fn mkr_step_clear(s: *mut Step) {
     (*s).test.local.clear();
     (*s).test.pi_target.clear();
     for &p in step_preds(s) {
-        mkr_node_free(p);
+        node_free(p);
     }
     if !(*s).predicates.is_null() {
         free_c((*s).predicates as *mut c_void);
@@ -112,7 +112,7 @@ fn is_pure_builtin(name: &[u8], nargs: usize) -> bool {
 
 unsafe fn mark_step_predicates(s: *const Step) {
     for &p in step_preds(s) {
-        mkr_mark_context_independent(p);
+        mark_context_independent(p);
     }
 }
 
@@ -124,7 +124,7 @@ unsafe fn is_ci(n: *const Node) -> bool {
     !n.is_null() && (*n).is_context_independent != 0
 }
 
-pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
+pub unsafe fn mark_context_independent(n: *mut Node) {
     if n.is_null() {
         return;
     }
@@ -138,7 +138,7 @@ pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
             /* Recurse first, so subtrees get their own marks even when this call
              * is not itself hoistable. */
             for &a in args {
-                mkr_mark_context_independent(a);
+                mark_context_independent(a);
             }
             /* A prefix means handler-routed or a namespaced builtin, neither
              * of which is hoistable. */
@@ -147,12 +147,12 @@ pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
                 && args.iter().all(|&a| is_ci(a))
         }
         NodeRef::Unary(u) => {
-            mkr_mark_context_independent(u.expr);
+            mark_context_independent(u.expr);
             is_ci(u.expr)
         }
         NodeRef::BinOp(b) => {
-            mkr_mark_context_independent(b.lhs);
-            mkr_mark_context_independent(b.rhs);
+            mark_context_independent(b.lhs);
+            mark_context_independent(b.rhs);
             is_ci(b.lhs) && is_ci(b.rhs)
         }
         NodeRef::Path(p) => {
@@ -169,9 +169,9 @@ pub unsafe fn mkr_mark_context_independent(n: *mut Node) {
         }
         NodeRef::Filter(f) => {
             /* Conservative: filter expressions are not hoisted. */
-            mkr_mark_context_independent(f.expr);
+            mark_context_independent(f.expr);
             for &p in node_list(f.preds, f.npreds) {
-                mkr_mark_context_independent(p);
+                mark_context_independent(p);
             }
             for s in path_steps(f.path_steps, f.npath) {
                 mark_step_predicates(s);
@@ -215,7 +215,7 @@ unsafe fn fuse_descendant_or_self(steps: *mut Step, nsteps: *mut usize) {
             && all[r + 1].npredicates == 0;
         if fusable {
             /* Drop the descendant-or-self step and promote the child step. */
-            mkr_step_clear(&mut all[r]);
+            step_clear(&mut all[r]);
             all[w] = all[r + 1];
             ptr::write_bytes(&mut all[r + 1], 0, 1);
             all[w].axis = AXIS_DESCENDANT;
@@ -235,24 +235,24 @@ unsafe fn fuse_descendant_or_self(steps: *mut Step, nsteps: *mut usize) {
 
 unsafe fn peephole_step_predicates(s: *const Step) {
     for &p in step_preds(s) {
-        mkr_apply_peephole(p);
+        apply_peephole(p);
     }
 }
 
-pub unsafe fn mkr_apply_peephole(n: *mut Node) {
+pub unsafe fn apply_peephole(n: *mut Node) {
     if n.is_null() {
         return;
     }
     match Node::view_mut(n) {
         NodeMut::FnCall(call) => {
             for &a in node_list(call.args, call.nargs) {
-                mkr_apply_peephole(a);
+                apply_peephole(a);
             }
         }
-        NodeMut::Unary(u) => mkr_apply_peephole(u.expr),
+        NodeMut::Unary(u) => apply_peephole(u.expr),
         NodeMut::BinOp(b) => {
-            mkr_apply_peephole(b.lhs);
-            mkr_apply_peephole(b.rhs);
+            apply_peephole(b.lhs);
+            apply_peephole(b.rhs);
         }
         NodeMut::Path(p) => {
             fuse_descendant_or_self(p.steps, &mut p.nsteps);
@@ -261,9 +261,9 @@ pub unsafe fn mkr_apply_peephole(n: *mut Node) {
             }
         }
         NodeMut::Filter(f) => {
-            mkr_apply_peephole(f.expr);
+            apply_peephole(f.expr);
             for &p in node_list(f.preds, f.npreds) {
-                mkr_apply_peephole(p);
+                apply_peephole(p);
             }
             fuse_descendant_or_self(f.path_steps, &mut f.npath);
             for s in path_steps(f.path_steps, f.npath) {
@@ -278,28 +278,28 @@ pub unsafe fn mkr_apply_peephole(n: *mut Node) {
 
 unsafe fn clear_memos_step(s: *const Step) {
     for &p in step_preds(s) {
-        mkr_node_clear_memos(p);
+        node_clear_memos(p);
     }
 }
 
-pub unsafe fn mkr_node_clear_memos(n: *mut Node) {
+pub unsafe fn node_clear_memos(n: *mut Node) {
     if n.is_null() {
         return;
     }
     if (*n).memoized != 0 {
-        mkr_val_clear(&raw mut (*n).memo_value);
+        val_clear(&raw mut (*n).memo_value);
         (*n).memoized = 0;
     }
     match Node::view(n) {
         NodeRef::FnCall(call) => {
             for &a in node_list(call.args, call.nargs) {
-                mkr_node_clear_memos(a);
+                node_clear_memos(a);
             }
         }
-        NodeRef::Unary(u) => mkr_node_clear_memos(u.expr),
+        NodeRef::Unary(u) => node_clear_memos(u.expr),
         NodeRef::BinOp(b) => {
-            mkr_node_clear_memos(b.lhs);
-            mkr_node_clear_memos(b.rhs);
+            node_clear_memos(b.lhs);
+            node_clear_memos(b.rhs);
         }
         NodeRef::Path(p) => {
             for s in path_steps(p.steps, p.nsteps) {
@@ -307,9 +307,9 @@ pub unsafe fn mkr_node_clear_memos(n: *mut Node) {
             }
         }
         NodeRef::Filter(f) => {
-            mkr_node_clear_memos(f.expr);
+            node_clear_memos(f.expr);
             for &p in node_list(f.preds, f.npreds) {
-                mkr_node_clear_memos(p);
+                node_clear_memos(p);
             }
             for s in path_steps(f.path_steps, f.npath) {
                 clear_memos_step(s);
@@ -319,13 +319,13 @@ pub unsafe fn mkr_node_clear_memos(n: *mut Node) {
     }
 }
 
-pub unsafe fn mkr_node_free(n: *mut Node) {
+pub unsafe fn node_free(n: *mut Node) {
     if n.is_null() {
         return;
     }
     /* Free any memoized value first; the clear is idempotent. */
     if (*n).memoized != 0 {
-        mkr_val_clear(&raw mut (*n).memo_value);
+        val_clear(&raw mut (*n).memo_value);
         (*n).memoized = 0;
     }
     match Node::view_mut(n) {
@@ -339,35 +339,35 @@ pub unsafe fn mkr_node_free(n: *mut Node) {
             call.prefix.clear();
             call.name.clear();
             for &a in node_list(call.args, call.nargs) {
-                mkr_node_free(a);
+                node_free(a);
             }
             if !call.args.is_null() {
                 free_c(call.args as *mut c_void);
             }
         }
-        NodeMut::Unary(u) => mkr_node_free(u.expr),
+        NodeMut::Unary(u) => node_free(u.expr),
         NodeMut::BinOp(b) => {
-            mkr_node_free(b.lhs);
-            mkr_node_free(b.rhs);
+            node_free(b.lhs);
+            node_free(b.rhs);
         }
         NodeMut::Path(p) => {
             for s in steps_mut(p.steps, p.nsteps) {
-                mkr_step_clear(s);
+                step_clear(s);
             }
             if !p.steps.is_null() {
                 free_c(p.steps as *mut c_void);
             }
         }
         NodeMut::Filter(f) => {
-            mkr_node_free(f.expr);
+            node_free(f.expr);
             for &p in node_list(f.preds, f.npreds) {
-                mkr_node_free(p);
+                node_free(p);
             }
             if !f.preds.is_null() {
                 free_c(f.preds as *mut c_void);
             }
             for s in steps_mut(f.path_steps, f.npath) {
-                mkr_step_clear(s);
+                step_clear(s);
             }
             if !f.path_steps.is_null() {
                 free_c(f.path_steps as *mut c_void);

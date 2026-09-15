@@ -555,8 +555,8 @@ Key decisions that got there, worth not regressing:
   position-independent filter via `lxb_dom_element_has_attribute`/`get_attribute`
   instead of building a throwaway node-set per candidate; anything else falls
   through to the generic evaluator.
-- **`Node#at_xpath` first-match short-circuit** (`xpath/ctx.rs`
-  `mkr_try_first_match`, entered via `mkr_xpath_eval_compiled_first`): `at_xpath`
+- **`Node#at_xpath` first-match short-circuit** (`xpath/eval.rs`
+  `try_first_match`, entered via `xpath_eval_compiled_first`): `at_xpath`
   wants only node-set[0], so for the common "first descendant by name (+ a
   position-independent `[@a]`/`[@a='v']` predicate)" shapes - `//x`, `//x[@a]`,
   `//*[@a='v']`, `.//x`, `descendant::x[...]` (after the `//` peephole; one or two

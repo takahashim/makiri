@@ -120,7 +120,7 @@ impl TextSlot {
     ///
     /// # Safety
     /// `ptr` must be null or point to `len` live bytes followed by a NUL byte,
-    /// allocated by the allocator used by `mkr_owned_text_clear`.
+    /// allocated by the allocator used by `owned_text_clear`.
     pub(crate) unsafe fn from_raw_parts(ptr: *mut c_char, len: usize) -> Self {
         Self { ptr, len }
     }
@@ -403,7 +403,7 @@ pub union NodeU {
 }
 
 /// The compiled AST node. Allocated zeroed by `node_alloc` and freed by
-/// `mkr_node_free`, both in `xpath::ast_ops`.
+/// `node_free`, both in `xpath::ast_ops`.
 ///
 /// The payload union is private and read by kind through [`Node::view`] and
 /// [`Node::view_mut`], so no caller picks an arm the kind does not name. The node
@@ -473,7 +473,7 @@ impl Node {
     ///
     /// # Safety
     /// `n` must be a live node for `'a` whose payload nothing else uses
-    /// meanwhile, and writes must leave it in a state `mkr_node_free` can take
+    /// meanwhile, and writes must leave it in a state `node_free` can take
     /// apart: an owned child pointer is null or owned by this node alone.
     pub unsafe fn view_mut<'a>(n: *mut Node) -> NodeMut<'a> {
         match (*n).kind {
@@ -494,18 +494,18 @@ impl Node {
 
 pub use crate::falloc::calloc::mkr_grow_reserve;
 pub use crate::falloc::calloc::mkr_strndup;
-pub use crate::xpath::ast_ops::mkr_apply_peephole;
-pub use crate::xpath::ast_ops::mkr_mark_context_independent;
-pub use crate::xpath::ast_ops::mkr_node_free;
-pub use crate::xpath::ast_ops::mkr_step_clear;
+pub use crate::xpath::ast_ops::apply_peephole;
+pub use crate::xpath::ast_ops::mark_context_independent;
 pub(crate) use crate::xpath::ast_ops::node_alloc;
-pub use crate::xpath::limits::mkr_limit_ast_node;
-pub use crate::xpath::limits::mkr_limit_check_expr_bytes;
-pub use crate::xpath::limits::mkr_limit_check_func_args;
-pub use crate::xpath::limits::mkr_limit_check_predicates;
-pub use crate::xpath::limits::mkr_limit_check_steps;
-pub use crate::xpath::limits::mkr_limit_recurse_enter;
-pub use crate::xpath::limits::mkr_limit_recurse_leave;
+pub use crate::xpath::ast_ops::node_free;
+pub use crate::xpath::ast_ops::step_clear;
+pub use crate::xpath::limits::limit_ast_node;
+pub use crate::xpath::limits::limit_check_expr_bytes;
+pub use crate::xpath::limits::limit_check_func_args;
+pub use crate::xpath::limits::limit_check_predicates;
+pub use crate::xpath::limits::limit_check_steps;
+pub use crate::xpath::limits::limit_recurse_enter;
+pub use crate::xpath::limits::limit_recurse_leave;
 
 /* ---- the engine's runtime structures ---- */
 
@@ -593,37 +593,37 @@ pub type NameIndexLookup = Option<
     ) -> *const *mut c_void,
 >;
 
-pub use crate::xpath::ctx::mkr_ctx_document;
-pub use crate::xpath::ctx::mkr_ctx_element_index;
-pub use crate::xpath::ctx::mkr_ctx_func_resolver;
-pub use crate::xpath::ctx::mkr_ctx_limits;
-pub use crate::xpath::ctx::mkr_ctx_lookup_ns;
-pub use crate::xpath::ctx::mkr_ctx_lookup_variable_text;
-pub use crate::xpath::ctx::mkr_ctx_name_index_get;
-pub use crate::xpath::ctx::mkr_ctx_name_index_lookup;
-pub use crate::xpath::ctx::mkr_ctx_name_index_owner;
-pub use crate::xpath::ctx::mkr_ctx_node;
-pub use crate::xpath::ctx::mkr_ctx_order_index;
-pub use crate::xpath::ctx::mkr_ctx_str_cache;
-pub use crate::xpath::ctx::mkr_ctx_tag_has_foreign;
-pub use crate::xpath::ctx::mkr_ctx_tag_lookup;
-pub use crate::xpath::ctx::mkr_ctx_unprefixed_lax;
-pub use crate::xpath::ctx::mkr_xpath_get_user_data;
-pub use crate::xpath::limits::mkr_limit_check_nodeset_size;
-pub use crate::xpath::limits::mkr_limit_check_string_bytes;
-pub use crate::xpath::limits::mkr_limit_eval_op;
-pub use crate::xpath::runtime_abi::mkr_doc_order_index_clear;
-pub use crate::xpath::runtime_abi::mkr_nodeset_clear;
-pub use crate::xpath::runtime_abi::mkr_nodeset_init;
-pub use crate::xpath::runtime_abi::mkr_nodeset_push;
-pub use crate::xpath::runtime_abi::mkr_owned_text_clear;
-pub use crate::xpath::runtime_abi::mkr_str_cache_index_put;
-pub use crate::xpath::runtime_abi::mkr_str_cache_reindex;
-pub use crate::xpath::runtime_abi::mkr_val_clear;
-pub use crate::xpath::runtime_abi::mkr_val_set_owned_text;
+pub use crate::xpath::ctx::ctx_document;
+pub use crate::xpath::ctx::ctx_element_index;
+pub use crate::xpath::ctx::ctx_func_resolver;
+pub use crate::xpath::ctx::ctx_limits;
+pub use crate::xpath::ctx::ctx_lookup_ns;
+pub use crate::xpath::ctx::ctx_lookup_variable_text;
+pub use crate::xpath::ctx::ctx_name_index_get;
+pub use crate::xpath::ctx::ctx_name_index_lookup;
+pub use crate::xpath::ctx::ctx_name_index_owner;
+pub use crate::xpath::ctx::ctx_node;
+pub use crate::xpath::ctx::ctx_order_index;
+pub use crate::xpath::ctx::ctx_str_cache;
+pub use crate::xpath::ctx::ctx_tag_has_foreign;
+pub use crate::xpath::ctx::ctx_tag_lookup;
+pub use crate::xpath::ctx::ctx_unprefixed_lax;
+pub use crate::xpath::ctx::xpath_get_user_data;
+pub use crate::xpath::limits::limit_check_nodeset_size;
+pub use crate::xpath::limits::limit_check_string_bytes;
+pub use crate::xpath::limits::limit_eval_op;
+pub use crate::xpath::runtime_abi::doc_order_index_clear;
+pub use crate::xpath::runtime_abi::nodeset_clear;
+pub use crate::xpath::runtime_abi::nodeset_init;
+pub use crate::xpath::runtime_abi::nodeset_push;
+pub use crate::xpath::runtime_abi::owned_text_clear;
+pub use crate::xpath::runtime_abi::str_cache_index_put;
+pub use crate::xpath::runtime_abi::str_cache_reindex;
+pub use crate::xpath::runtime_abi::val_clear;
+pub use crate::xpath::runtime_abi::val_set_owned_text;
 
 /* The cleanup entry points the glue calls live at the raw boundary. */
-pub use crate::xpath::boundary::{mkr_err_set, mkr_xpath_error_clear, mkr_xpath_value_clear};
+pub use crate::xpath::boundary::{err_set_raw, xpath_error_clear, xpath_value_clear};
 
 /// The proof a failure's message was written; see `xpath::msg`.
 pub use crate::xpath::msg::{ErrSink, Reported};
@@ -631,7 +631,7 @@ pub use crate::xpath::msg::{ErrSink, Reported};
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
 /// One definition for every pointer-keyed table: the string-value cache's index
-/// is filled by `mkr_str_cache_index_put` and probed by its readers, and the
+/// is filled by `str_cache_index_put` and probed by its readers, and the
 /// text index uses it too, so all of them must hash the same way.
 #[inline]
 pub fn ptr_hash<T>(p: *const T) -> u64 {

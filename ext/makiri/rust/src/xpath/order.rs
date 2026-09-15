@@ -258,7 +258,7 @@ unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::
         return false;
     }
     if !order_index_walk::<D>(doc, idx, root) {
-        mkr_doc_order_index_clear(idx);
+        doc_order_index_clear(idx);
         return false;
     }
     (*idx).built = 1;
@@ -268,14 +268,14 @@ unsafe fn order_index_build<D: Dom>(doc: D::Doc, idx: *mut OrderIndex, root: D::
 /// The indexed comparator, falling back to the parent-chain walk on any miss
 /// (a synthesised node, or a cross-document compare).
 unsafe fn doc_order_cmp_ctx<D: Dom>(ctx: *mut Context, a: D::Node, b: D::Node) -> i32 {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     if a == b {
         return 0;
     }
     if ctx.is_null() {
         return doc_order_cmp::<D>(doc, a, b);
     }
-    let idx = mkr_ctx_order_index(ctx);
+    let idx = ctx_order_index(ctx);
     if idx.is_null() || (*idx).built == 0 {
         return doc_order_cmp::<D>(doc, a, b);
     }
@@ -300,7 +300,7 @@ const INDEX_BUILD_MIN: usize = 200;
 /// # Safety
 /// The set must hold live handles of this backend.
 pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet) {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     if ns.is_null() || (*ns).count < 2 {
         return;
     }
@@ -324,10 +324,10 @@ pub unsafe fn nodeset_sort_doc_order<D: Dom>(ctx: *mut Context, ns: *mut NodeSet
     let idx = if ctx.is_null() {
         ptr::null_mut()
     } else {
-        mkr_ctx_order_index(ctx)
+        ctx_order_index(ctx)
     };
     if !idx.is_null() && (*idx).built == 0 && items.len() >= INDEX_BUILD_MIN {
-        let root_h = mkr_ctx_document(ctx);
+        let root_h = ctx_document(ctx);
         if !root_h.is_null() {
             /* Best-effort: on OOM the parent-chain comparator still serves. */
             order_index_build::<D>(doc, idx, D::document_node(D::doc_from_void(root_h)));

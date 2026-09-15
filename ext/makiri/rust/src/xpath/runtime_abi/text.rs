@@ -80,12 +80,12 @@ impl TextSlot {
     }
 }
 
-pub unsafe fn mkr_owned_text_init(t: *mut TextSlot) {
+pub unsafe fn owned_text_init(t: *mut TextSlot) {
     if !t.is_null() {
         *t = TextSlot::empty();
     }
 }
-pub unsafe fn mkr_owned_text_clear(t: *mut TextSlot) {
+pub unsafe fn owned_text_clear(t: *mut TextSlot) {
     if t.is_null() {
         return;
     }

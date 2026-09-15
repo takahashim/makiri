@@ -21,7 +21,7 @@
 //! The lowering builds C-layout nodes through `build`. Every node under
 //! construction is an `xpath::own::Ast` (as `build::Built`), and steps and arrays
 //! are `xpath::own`'s guards, so a failure anywhere drops - frees - what was built
-//! and the recursive `mkr_node_free` contract lives in one place.
+//! and the recursive `node_free` contract lives in one place.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -85,7 +85,7 @@ impl Build {
 }
 
 /// Compile `selector` into a freshly allocated AST, which the caller frees with
-/// `mkr_node_free`.
+/// `node_free`.
 ///
 /// `Err` with `*err` filled: SYNTAX for a malformed selector or an
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
@@ -132,7 +132,7 @@ pub(crate) unsafe fn compile_owned(
 }
 
 /// [`compile_owned`] for a caller that holds the AST as a raw pointer.
-pub unsafe fn mkr_css_compile(
+pub unsafe fn compile_raw(
     selector: VerifiedText,
     ns: *const CssNs,
     limits: *mut Limits,

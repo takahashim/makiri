@@ -34,8 +34,8 @@ impl<'a, D: Dom> Bindings<'a, D> {
     pub unsafe fn new(ctx: *mut Context, pre: Option<&'a [u8]>) -> Bindings<'a, D> {
         Bindings {
             ctx,
-            doc: D::doc_from_void(mkr_ctx_document(ctx)),
-            lax: mkr_ctx_unprefixed_lax(ctx) != 0,
+            doc: D::doc_from_void(ctx_document(ctx)),
+            lax: ctx_unprefixed_lax(ctx) != 0,
             pre,
         }
     }
@@ -121,7 +121,7 @@ unsafe fn resolved_prefix<'a, D: Dom>(
 /// namespace registry, which the glue refuses to re-register during an
 /// evaluate - so they stay valid for the call, but not past it.
 pub unsafe fn lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
-    mkr_ctx_lookup_ns(ctx, prefix)
+    ctx_lookup_ns(ctx, prefix)
 }
 
 ///

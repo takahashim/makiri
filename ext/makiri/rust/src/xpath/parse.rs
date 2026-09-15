@@ -132,7 +132,7 @@ impl<'a> Parser<'a> {
 
     /// Charge the step budget, then append. A step that does not land is freed.
     fn push_step(&mut self, steps: &mut StepArray, s: OwnedStep) -> PResult {
-        unsafe { mkr_limit_check_steps(self.limits, steps.len() + 1, self.err)? };
+        unsafe { limit_check_steps(self.limits, steps.len() + 1, self.err)? };
         if steps.try_push(s).is_err() {
             return Err(err_setf!(
                 self.err,
@@ -221,7 +221,7 @@ impl<'a> Parser<'a> {
 
     fn parse_predicates(&mut self, preds: &mut NodeArray) -> PResult {
         while self.kind() == Tok::LBracket {
-            unsafe { mkr_limit_check_predicates(self.limits, preds.len() + 1, self.err)? };
+            unsafe { limit_check_predicates(self.limits, preds.len() + 1, self.err)? };
             self.advance()?;
             let e = self.parse_expr()?;
             self.eat(Tok::RBracket, "']' to close predicate")?;
@@ -381,7 +381,7 @@ impl<'a> Parser<'a> {
         let mut args = NodeArray::new();
         if self.kind() != Tok::RParen {
             loop {
-                unsafe { mkr_limit_check_func_args(self.limits, args.len() + 1, self.err)? };
+                unsafe { limit_check_func_args(self.limits, args.len() + 1, self.err)? };
                 let arg = self.parse_expr()?;
                 if args.try_push(arg).is_err() {
                     return Err(err_setf!(
@@ -607,9 +607,9 @@ impl<'a> Parser<'a> {
 
     fn parse_expr(&mut self) -> PResult<Ast> {
         /* Bound parser recursion so '((((...))))' cannot blow the stack. */
-        unsafe { mkr_limit_recurse_enter(self.limits, self.err)? };
+        unsafe { limit_recurse_enter(self.limits, self.err)? };
         let n = self.parse_binary_level(BINOP_LEVELS.len() - 1);
-        unsafe { mkr_limit_recurse_leave(self.limits) };
+        unsafe { limit_recurse_leave(self.limits) };
         n
     }
 }
@@ -671,10 +671,10 @@ pub(crate) unsafe fn parse_owned(
         return Err(err_setf!(
             err,
             XP_ERR_INTERNAL,
-            "mkr_parse: limits required"
+            "parse_raw: limits required"
         ));
     }
-    mkr_limit_check_expr_bytes(limits, expr.len(), err)?;
+    limit_check_expr_bytes(limits, expr.len(), err)?;
 
     let src: &[u8] = unsafe { expr.as_bytes() };
 
@@ -692,8 +692,8 @@ pub(crate) unsafe fn parse_owned(
         ));
     }
     /* Peephole first, so the hoisting pass sees the rewritten step structure. */
-    mkr_apply_peephole(root.as_raw());
-    mkr_mark_context_independent(root.as_raw());
+    apply_peephole(root.as_raw());
+    mark_context_independent(root.as_raw());
     Ok(root)
 }
 
@@ -701,7 +701,7 @@ pub(crate) unsafe fn parse_owned(
 ///
 /// # Safety
 /// As [`parse_owned`], with `err` null or a writable error slot; the caller
-/// frees the result with `mkr_node_free`.
-pub unsafe fn mkr_parse(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
+/// frees the result with `node_free`.
+pub unsafe fn parse_raw(expr: VerifiedText, limits: *mut Limits, err: *mut Error) -> *mut Node {
     parse_owned(expr, limits, ErrSink::from_raw(err)).map_or(ptr::null_mut(), Ast::into_raw)
 }

@@ -13,7 +13,7 @@ use core::ffi::{c_int, c_void};
 /// # Safety
 /// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
 /// out-pointers writable; the caller holds the GVL.
-pub unsafe fn mkr_eval_ast_html(
+pub unsafe fn eval_ast_html(
     ctx: *mut Context,
     ast: *const Node,
     out: *mut Val,
@@ -36,7 +36,7 @@ pub unsafe fn mkr_eval_ast_html(
 /// # Safety
 /// `ctx` and `ast` must be live, `ast` parsed for this context's host, and the
 /// out-pointers writable; the caller holds the GVL.
-pub unsafe fn mkr_try_first_match_html(
+pub unsafe fn try_first_match_html(
     ctx: *mut Context,
     ast: *const Node,
     out_node: *mut *mut c_void,

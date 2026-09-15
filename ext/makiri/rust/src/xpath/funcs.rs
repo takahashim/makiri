@@ -156,13 +156,13 @@ fn boolean(b: bool) -> Answer {
 }
 
 unsafe fn to_text<D: Dom>(v: *const Val, ctx: *mut Context, err: ErrSink) -> FnResult<OwnedText> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    val_to_owned_text_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err)
+    let doc = D::doc_from_void(ctx_document(ctx));
+    val_to_owned_text_or_fail::<D>(doc, v, ctx_limits(ctx), err)
 }
 
 unsafe fn to_number<D: Dom>(v: *const Val, ctx: *mut Context, err: ErrSink) -> FnResult<f64> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    val_to_number_or_fail::<D>(doc, v, mkr_ctx_limits(ctx), err)
+    let doc = D::doc_from_void(ctx_document(ctx));
+    val_to_number_or_fail::<D>(doc, v, ctx_limits(ctx), err)
 }
 
 /// The string-value of `args[0]`, or of the context node when there is none -
@@ -173,10 +173,10 @@ unsafe fn arg_or_self_text<D: Dom>(
     ctx: *mut Context,
     err: ErrSink,
 ) -> FnResult<OwnedText> {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     match args.first() {
         Some(a) => to_text::<D>(a, ctx, err),
-        None => node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err),
+        None => node_to_owned_text::<D>(doc, focus.node, ctx_limits(ctx), err),
     }
 }
 
@@ -280,7 +280,7 @@ unsafe fn find_by_id<D: Dom>(
     }
     let mut n = root;
     while !D::is_null(n) {
-        mkr_limit_eval_op(limits, err)?;
+        limit_eval_op(limits, err)?;
         if D::node_type(doc, n) == NTYPE_ELEMENT && D::get_attribute(doc, n, b"id") == Some(id) {
             return Ok(n);
         }
@@ -310,8 +310,8 @@ unsafe fn id_collect<D: Dom>(
     ctx: *mut Context,
     err: ErrSink,
 ) -> FnResult {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
-    let limits = mkr_ctx_limits(ctx);
+    let doc = D::doc_from_void(ctx_document(ctx));
+    let limits = ctx_limits(ctx);
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
         let hit = find_by_id::<D>(doc, root, tok, limits, err)?;
         if !D::is_null(hit) {
@@ -336,7 +336,7 @@ unsafe fn fn_id<D: Dom>(
          * empty node-set. (xml:id is a separate, optional spec.) */
         return Ok(OwnedVal::new());
     }
-    let doc = mkr_ctx_document(ctx);
+    let doc = ctx_document(ctx);
     if doc.is_null() {
         return Ok(OwnedVal::new());
     }
@@ -351,7 +351,7 @@ unsafe fn fn_id<D: Dom>(
             let t = node_to_owned_text::<D>(
                 D::doc_from_void(doc),
                 nodeset_at::<D>(set, i),
-                mkr_ctx_limits(ctx),
+                ctx_limits(ctx),
                 err,
             )?;
             id_collect::<D>(t.as_slice(), root, &mut found, ctx, err)
@@ -428,7 +428,7 @@ unsafe fn fn_local_name<D: Dom>(
     args: &[Val],
     err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     arity(args.len(), 0, 1, err, "local-name")?;
     let t = name_target::<D>(args, focus, err, "local-name")?;
     name_emit::<D>(doc, t, false, err, "local-name")
@@ -440,7 +440,7 @@ unsafe fn fn_name<D: Dom>(
     args: &[Val],
     err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     arity(args.len(), 0, 1, err, "name")?;
     let t = name_target::<D>(args, focus, err, "name")?;
     name_emit::<D>(doc, t, true, err, "name")
@@ -453,7 +453,7 @@ unsafe fn fn_namespace_uri<D: Dom>(
     err: ErrSink,
 ) -> Answer {
     arity(args.len(), 0, 1, err, "namespace-uri")?;
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     let t = name_target::<D>(args, focus, err, "namespace-uri")?;
     if D::is_null(t)
         || (D::node_type(doc, t) != NTYPE_ELEMENT && D::node_type(doc, t) != NTYPE_ATTRIBUTE)
@@ -490,7 +490,7 @@ unsafe fn fn_concat<D: Dom>(
             "concat(): expected at least 2 arguments"
         ));
     }
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     let mut parts = try_vec::<OwnedText>(args.len(), err, "concat")?;
     let mut total = 0usize;
     for a in args {
@@ -499,7 +499,7 @@ unsafe fn fn_concat<D: Dom>(
             Some(n) => n,
             None => return Err(err_setf!(err, XP_ERR_OOM, "concat() size overflow")),
         };
-        mkr_limit_check_string_bytes(limits, total, err)?;
+        limit_check_string_bytes(limits, total, err)?;
         parts.push(t);
     }
     let joined = TextSlot::try_fill(total, |dst| {
@@ -675,7 +675,7 @@ unsafe fn fn_translate<D: Dom>(
     err: ErrSink,
 ) -> Answer {
     arity(args.len(), 3, 3, err, "translate")?;
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     let mut texts = try_vec::<OwnedText>(3, err, "translate")?;
     for a in args {
         texts.push(to_text::<D>(a, ctx, err)?);
@@ -787,7 +787,7 @@ unsafe fn fn_lang<D: Dom>(
     args: &[Val],
     err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     arity(args.len(), 1, 1, err, "lang")?;
     let want = to_text::<D>(&args[0], ctx, err)?;
     let want = want.as_slice();
@@ -825,13 +825,13 @@ unsafe fn fn_number<D: Dom>(
     args: &[Val],
     err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     arity(args.len(), 0, 1, err, "number")?;
     match args.first() {
         Some(a) => number(to_number::<D>(a, ctx, err)?),
         None => {
             /* number() with no argument is number(string(self)). */
-            let t = node_to_owned_text::<D>(doc, focus.node, mkr_ctx_limits(ctx), err)?;
+            let t = node_to_owned_text::<D>(doc, focus.node, ctx_limits(ctx), err)?;
             number(bytes_to_number(t.as_slice()))
         }
     }
@@ -845,10 +845,10 @@ unsafe fn fn_sum<D: Dom>(
 ) -> Answer {
     arity(args.len(), 1, 1, err, "sum")?;
     let ns = require_nodeset(&args[0], "sum", err)?;
-    let limits = mkr_ctx_limits(ctx);
+    let limits = ctx_limits(ctx);
     let mut total = 0.0;
     for i in 0..(*ns).count {
-        mkr_limit_eval_op(limits, err)?;
+        limit_eval_op(limits, err)?;
         total += bytes_to_number(cached_node_text::<D>(ctx, nodeset_at::<D>(ns, i), err)?);
     }
     number(total)
@@ -933,7 +933,7 @@ unsafe fn fn_local_name_is<D: Dom>(
     args: &[Val],
     err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     arity(args.len(), 1, 1, err, "nokogiri-builtin:local-name-is")?;
     let want = to_text::<D>(&args[0], ctx, err)?;
     boolean(!D::is_null(focus.node) && D::qualified_name(doc, focus.node) == want.as_slice())
@@ -977,7 +977,7 @@ unsafe fn fn_of_type_pos<D: Dom>(
     _args: &[Val],
     _err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     number(of_type_pos::<D>(focus.node, true, doc))
 }
 
@@ -987,7 +987,7 @@ unsafe fn fn_of_type_pos_last<D: Dom>(
     _args: &[Val],
     _err: ErrSink,
 ) -> Answer {
-    let doc = D::doc_from_void(mkr_ctx_document(ctx));
+    let doc = D::doc_from_void(ctx_document(ctx));
     number(of_type_pos::<D>(focus.node, false, doc))
 }
 

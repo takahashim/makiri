@@ -53,7 +53,7 @@ pub struct Context {
     func_resolver: FuncResolver,
 
     /* Per-evaluate caches. Both stay C layouts: the value body fills the string
-     * cache through mkr_str_cache_index_put, and the document-order index is
+     * cache through str_cache_index_put, and the document-order index is
      * built and cleared by C helpers. */
     str_cache: StrCache,
     order_index: OrderIndex,
@@ -101,18 +101,18 @@ fn handle(ctx: *mut Context) -> *mut Context {
  * each is a build-time choice: either C instance can still be in the build while
  * the other is Rust. The signatures are node-pointer-only, hence ABI-identical
  * across the two. */
-pub use crate::xpath::ast_ops::mkr_node_clear_memos;
+pub use crate::xpath::ast_ops::node_clear_memos;
 #[cfg(feature = "lexbor")]
-pub use crate::xpath::ffi_html::mkr_eval_ast_html;
+pub use crate::xpath::ffi_html::eval_ast_html;
 #[cfg(feature = "lexbor")]
-pub use crate::xpath::ffi_html::mkr_try_first_match_html;
+pub use crate::xpath::ffi_html::try_first_match_html;
 
 /* Without `lexbor` there is no HTML instance, and no HTML context can be built
  * either - `engine_kind` is always XML - so the HTML arm of the two dispatches
  * below is unreachable. These stand in for it and FAIL CLOSED rather than being
  * a second implementation: reaching them would be a bug, not a slow path. */
 #[cfg(not(feature = "lexbor"))]
-unsafe fn mkr_eval_ast_html(
+unsafe fn eval_ast_html(
     _ctx: *mut Context,
     _ast: *const Node,
     _out: *mut Val,
@@ -122,7 +122,7 @@ unsafe fn mkr_eval_ast_html(
 }
 
 #[cfg(not(feature = "lexbor"))]
-unsafe fn mkr_try_first_match_html(
+unsafe fn try_first_match_html(
     _ctx: *mut Context,
     _ast: *const Node,
     _out_node: *mut *mut c_void,
@@ -130,12 +130,12 @@ unsafe fn mkr_try_first_match_html(
 ) -> c_int {
     0
 }
-pub use crate::xpath::ffi_xml::mkr_eval_ast_xml;
-pub use crate::xpath::ffi_xml::mkr_try_first_match_xml;
-pub use crate::xpath::runtime_abi::mkr_doc_order_index_init;
-pub use crate::xpath::runtime_abi::mkr_str_cache_clear;
-pub use crate::xpath::runtime_abi::mkr_str_cache_init;
-pub use crate::xpath::runtime_abi::mkr_str_cache_truncate;
+pub use crate::xpath::ffi_xml::eval_ast_xml;
+pub use crate::xpath::ffi_xml::try_first_match_xml;
+pub use crate::xpath::runtime_abi::doc_order_index_init;
+pub use crate::xpath::runtime_abi::str_cache_clear;
+pub use crate::xpath::runtime_abi::str_cache_init;
+pub use crate::xpath::runtime_abi::str_cache_truncate;
 
 /* ---------- text slots ---------- */
 
@@ -168,8 +168,8 @@ unsafe fn set_slot(slot: &mut OwnedText, val: VerifiedText) -> c_int {
 
 /* ---------- lifetime ---------- */
 
-pub unsafe fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut Context {
-    // Null on failure: `mkr_xpath_context_new` already documents null as its
+pub unsafe fn xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut Context {
+    // Null on failure: `xpath_context_new` already documents null as its
     // OOM answer (the C version returned it from mkr_callocarray), and every
     // caller checks. Aborting here would take the host process down for a
     // failure the API can already express.
@@ -195,23 +195,23 @@ pub unsafe fn mkr_xpath_context_new(doc: *mut c_void, node: *mut c_void) -> *mut
     }) else {
         return ptr::null_mut();
     };
-    super::limits::mkr_xpath_limits_init_defaults(&mut ctx.limits);
-    mkr_str_cache_init(&mut ctx.str_cache);
-    mkr_doc_order_index_init(&mut ctx.order_index);
+    super::limits::xpath_limits_init_defaults(&mut ctx.limits);
+    str_cache_init(&mut ctx.str_cache);
+    doc_order_index_init(&mut ctx.order_index);
     Box::into_raw(ctx)
 }
 
-pub unsafe fn mkr_xpath_context_free(ctx: *mut Context) {
+pub unsafe fn xpath_context_free(ctx: *mut Context) {
     if ctx.is_null() {
         return;
     }
     let mut ctx = Box::from_raw(ctx);
-    mkr_str_cache_clear(&mut ctx.str_cache);
-    mkr_doc_order_index_clear(&mut ctx.order_index);
+    str_cache_clear(&mut ctx.str_cache);
+    doc_order_index_clear(&mut ctx.order_index);
     /* The Vecs and the box go with the drop. */
 }
 
-/// Owner of a context from [`mkr_xpath_context_new`]: dropping it frees the
+/// Owner of a context from [`xpath_context_new`]: dropping it frees the
 /// context, so no early return or `?` can leak one.
 pub struct OwnedContext(ptr::NonNull<Context>);
 
@@ -219,9 +219,9 @@ impl OwnedContext {
     /// A fresh context, or None when it could not be allocated.
     ///
     /// # Safety
-    /// As [`mkr_xpath_context_new`]: `doc` and `node` must outlive the context.
+    /// As [`xpath_context_new`]: `doc` and `node` must outlive the context.
     pub unsafe fn new(doc: *mut c_void, node: *mut c_void) -> Option<Self> {
-        ptr::NonNull::new(mkr_xpath_context_new(doc, node)).map(OwnedContext)
+        ptr::NonNull::new(xpath_context_new(doc, node)).map(OwnedContext)
     }
 
     /// The context, for the engine calls that take it raw. Valid while `self` is.
@@ -232,15 +232,15 @@ impl OwnedContext {
 
 impl Drop for OwnedContext {
     fn drop(&mut self) {
-        // SAFETY: the pointer came from mkr_xpath_context_new, and only this
+        // SAFETY: the pointer came from xpath_context_new, and only this
         // owner frees it.
-        unsafe { mkr_xpath_context_free(self.0.as_ptr()) }
+        unsafe { xpath_context_free(self.0.as_ptr()) }
     }
 }
 
 /* ---------- registries ---------- */
 
-pub unsafe fn mkr_xpath_register_ns(
+pub unsafe fn xpath_register_ns(
     ctx: *mut Context,
     prefix: VerifiedText,
     uri: VerifiedText,
@@ -266,7 +266,7 @@ pub unsafe fn mkr_xpath_register_ns(
     0
 }
 
-pub unsafe fn mkr_xpath_register_variable_string(
+pub unsafe fn xpath_register_variable_string(
     ctx: *mut Context,
     name: VerifiedText,
     value: VerifiedText,
@@ -302,7 +302,7 @@ pub unsafe fn mkr_xpath_register_variable_string(
 /// # Safety
 /// `ctx` must be null or live. The bytes belong to its namespace registry, which
 /// the glue refuses to change during an evaluate: valid for the call, not past it.
-pub unsafe fn mkr_ctx_lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
+pub unsafe fn ctx_lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<&'a [u8]> {
     if ctx.is_null() {
         return None;
     }
@@ -319,7 +319,7 @@ pub unsafe fn mkr_ctx_lookup_ns<'a>(ctx: *mut Context, prefix: &[u8]) -> Option<
 /// # Safety
 /// `ctx` must be null or live. The bytes are valid until the variable is
 /// registered again, which the glue refuses during an evaluate.
-pub unsafe fn mkr_ctx_lookup_variable_text<'a>(
+pub unsafe fn ctx_lookup_variable_text<'a>(
     ctx: *mut Context,
     prefix: Option<&[u8]>,
     name: &[u8],
@@ -354,44 +354,34 @@ macro_rules! getter {
     };
 }
 
-getter!(mkr_ctx_document, *mut c_void, doc, ptr::null_mut());
-getter!(mkr_ctx_node, *mut c_void, node, ptr::null_mut());
+getter!(ctx_document, *mut c_void, doc, ptr::null_mut());
+getter!(ctx_node, *mut c_void, node, ptr::null_mut());
 getter!(
-    mkr_ctx_element_index,
+    ctx_element_index,
     *mut c_void,
     element_index,
     ptr::null_mut()
 );
-getter!(mkr_ctx_tag_lookup, TagIndexLookup, tag_lookup, None);
+getter!(ctx_tag_lookup, TagIndexLookup, tag_lookup, None);
+getter!(ctx_tag_has_foreign, TagIndexForeign, tag_has_foreign, None);
 getter!(
-    mkr_ctx_tag_has_foreign,
-    TagIndexForeign,
-    tag_has_foreign,
-    None
-);
-getter!(
-    mkr_ctx_name_index_owner,
+    ctx_name_index_owner,
     *mut c_void,
     name_index_owner,
     ptr::null_mut()
 );
-getter!(mkr_ctx_name_index_get, NameIndexGet, name_index_get, None);
+getter!(ctx_name_index_get, NameIndexGet, name_index_get, None);
 getter!(
-    mkr_ctx_name_index_lookup,
+    ctx_name_index_lookup,
     NameIndexLookup,
     name_index_lookup,
     None
 );
-getter!(mkr_ctx_func_resolver, FuncResolver, func_resolver, None);
-getter!(
-    mkr_xpath_get_user_data,
-    *mut c_void,
-    user_data,
-    ptr::null_mut()
-);
-getter!(mkr_ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
+getter!(ctx_func_resolver, FuncResolver, func_resolver, None);
+getter!(xpath_get_user_data, *mut c_void, user_data, ptr::null_mut());
+getter!(ctx_unprefixed_lax, c_int, unprefixed_lax, 0);
 
-pub unsafe fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
+pub unsafe fn ctx_limits(ctx: *mut Context) -> *mut Limits {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
@@ -399,7 +389,7 @@ pub unsafe fn mkr_ctx_limits(ctx: *mut Context) -> *mut Limits {
     }
 }
 
-pub unsafe fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
+pub unsafe fn ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
@@ -407,7 +397,7 @@ pub unsafe fn mkr_ctx_str_cache(ctx: *mut Context) -> *mut StrCache {
     }
 }
 
-pub unsafe fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
+pub unsafe fn ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
     if ctx.is_null() {
         ptr::null_mut()
     } else {
@@ -415,37 +405,37 @@ pub unsafe fn mkr_ctx_order_index(ctx: *mut Context) -> *mut OrderIndex {
     }
 }
 
-pub unsafe fn mkr_ctx_set_node(ctx: *mut Context, node: *mut c_void) {
+pub unsafe fn ctx_set_context_node(ctx: *mut Context, node: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).node = node;
     }
 }
 
-pub unsafe fn mkr_ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
+pub unsafe fn ctx_set_unprefixed_lax(ctx: *mut Context, lax: c_int) {
     if !ctx.is_null() {
         (*ctx).unprefixed_lax = c_int::from(lax != 0);
     }
 }
 
-pub unsafe fn mkr_xpath_set_engine_kind(ctx: *mut Context, kind: c_int) {
+pub unsafe fn xpath_set_engine_kind(ctx: *mut Context, kind: c_int) {
     if !ctx.is_null() {
         (*ctx).engine_kind = c_int::from(kind != 0);
     }
 }
 
-pub unsafe fn mkr_xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
+pub unsafe fn xpath_context_set_user_data(ctx: *mut Context, user_data: *mut c_void) {
     if !ctx.is_null() {
         (*ctx).user_data = user_data;
     }
 }
 
-pub unsafe fn mkr_xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
+pub unsafe fn xpath_set_func_resolver(ctx: *mut Context, resolver: FuncResolver) {
     if !ctx.is_null() {
         (*ctx).func_resolver = resolver;
     }
 }
 
-pub unsafe fn mkr_xpath_context_set_element_index(
+pub unsafe fn xpath_context_set_element_index(
     ctx: *mut Context,
     index: *mut c_void,
     lookup: TagIndexLookup,
@@ -458,7 +448,7 @@ pub unsafe fn mkr_xpath_context_set_element_index(
     }
 }
 
-pub unsafe fn mkr_xpath_context_set_name_index(
+pub unsafe fn xpath_context_set_name_index(
     ctx: *mut Context,
     owner: *mut c_void,
     get: NameIndexGet,
@@ -475,7 +465,7 @@ pub unsafe fn mkr_xpath_context_set_name_index(
 /// included. The glue uses it to refuse register_namespace / register_variable /
 /// node= re-entered from a handler mid-walk: those mutate the live registration
 /// tables or the context node the suspended evaluator still borrows.
-pub unsafe fn mkr_ctx_is_evaluating(ctx: *mut Context) -> c_int {
+pub unsafe fn ctx_is_evaluating(ctx: *mut Context) -> c_int {
     c_int::from(!ctx.is_null() && (*ctx).evaluating > 0)
 }
 
@@ -508,7 +498,7 @@ pub(crate) unsafe fn eval_compiled(
             crate::err_setf!(
                 ErrSink::from_raw(out_error),
                 XP_ERR_INTERNAL,
-                "mkr_xpath_eval_compiled: bad arguments"
+                "xpath_eval_compiled: bad arguments"
             );
         }
         return -1;
@@ -539,22 +529,22 @@ pub(crate) unsafe fn eval_compiled(
 
     let mut v = Val::EMPTY;
     let rc = if (*ctx).engine_kind != 0 {
-        mkr_eval_ast_xml(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
+        eval_ast_xml(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
     } else {
-        mkr_eval_ast_html(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
+        eval_ast_html(handle(ctx), ast, &mut v, ErrSink::new(&mut err))
     };
-    mkr_str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
+    str_cache_truncate(&raw mut (*ctx).str_cache, snapshot);
     if !order_was_built && (*ctx).order_index.built != 0 {
-        mkr_doc_order_index_clear(&raw mut (*ctx).order_index);
+        doc_order_index_clear(&raw mut (*ctx).order_index);
     }
     /* Memoized values are valid only within one evaluate scope, so clear them
      * whether it succeeded or not. */
-    mkr_node_clear_memos(ast);
+    node_clear_memos(ast);
     (*ctx).evaluating -= 1;
 
     if rc != 0 {
         if out_error.is_null() {
-            mkr_xpath_error_clear(&mut err);
+            xpath_error_clear(&mut err);
         } else {
             *out_error = err;
         }
@@ -575,7 +565,7 @@ pub(crate) unsafe fn eval_compiled_first(
             crate::err_setf!(
                 ErrSink::from_raw(out_error),
                 XP_ERR_INTERNAL,
-                "mkr_xpath_eval_compiled_first: bad arguments"
+                "xpath_eval_compiled_first: bad arguments"
             );
         }
         return -1;
@@ -594,15 +584,15 @@ pub(crate) unsafe fn eval_compiled_first(
         message: ptr::null_mut(),
     };
     let matched = if (*ctx).engine_kind != 0 {
-        mkr_try_first_match_xml(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
+        try_first_match_xml(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
     } else {
-        mkr_try_first_match_html(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
+        try_first_match_html(handle(ctx), ast, &mut node, ErrSink::new(&mut err))
     };
     if matched < 0 {
         /* Op budget exceeded while walking: fail closed rather than falling back
          * to the full evaluator, which would hit the same wall. */
         if out_error.is_null() {
-            mkr_xpath_error_clear(&mut err);
+            xpath_error_clear(&mut err);
         } else {
             *out_error = err;
         }
@@ -613,7 +603,7 @@ pub(crate) unsafe fn eval_compiled_first(
          * building or sorting the full descendant set. */
         let mut set = NodeSet::EMPTY;
         if !node.is_null()
-            && mkr_nodeset_push(
+            && nodeset_push(
                 &mut set,
                 node,
                 ptr::null_mut(),
@@ -621,7 +611,7 @@ pub(crate) unsafe fn eval_compiled_first(
             )
             .is_err()
         {
-            mkr_nodeset_clear(&mut set);
+            nodeset_clear(&mut set);
             return -1;
         }
         to_public(&Val::nodeset(set), out_value);
