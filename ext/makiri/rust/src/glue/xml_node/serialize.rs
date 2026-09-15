@@ -42,7 +42,7 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
 }
 
 /// A serialization failure as `Makiri::Error`, worded for `verb`.
-unsafe fn failure_error(f: Failure, verb: &str) -> Error {
+fn failure_error(f: Failure, verb: &str) -> Error {
     let msg = match f {
         Failure::DomLooseName => format!("cannot {verb} XML containing a DOM-loose element name"),
         Failure::Output => {

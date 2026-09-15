@@ -111,8 +111,7 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 /// A document an XPath handler is being evaluated over refuses to change, so
 /// that check comes before the index is dropped.
 unsafe fn unwrap_mutable(this: super::XmlSelf) -> Result<NodeId, Error> {
-    let rb_self = this.value;
-    rb_sys::rb_check_frozen(rb_self.as_raw());
+    crate::bridge::ruby::check_frozen(this.value)?;
     crate::glue::doc::ensure_document_mutable(this.document)?;
     xml_name_index_invalidate(&mut *this.doc());
     Ok(this.id)
@@ -121,11 +120,7 @@ unsafe fn unwrap_mutable(this: super::XmlSelf) -> Result<NodeId, Error> {
 /// Verify a String argument and hand back its bytes plus the length the arena
 /// wants. The `Value` is returned so the caller keeps it rooted: the pointer
 /// borrows it.
-unsafe fn verified(
-    ruby: &Ruby,
-    v: Value,
-    what: &core::ffi::CStr,
-) -> Result<(RubyText, u32), Error> {
+fn verified(ruby: &Ruby, v: Value, what: &core::ffi::CStr) -> Result<(RubyText, u32), Error> {
     let t = ruby_verified_text(v, what)?;
     let n = u32_len(ruby, t.len())?;
     Ok((t, n))
@@ -133,11 +128,7 @@ unsafe fn verified(
 
 /// The same for an optional argument: nil is (NULL, 0), which every primitive
 /// reads as "absent".
-unsafe fn verified_opt(
-    ruby: &Ruby,
-    v: Value,
-    what: &core::ffi::CStr,
-) -> Result<(RubyText, u32), Error> {
+fn verified_opt(ruby: &Ruby, v: Value, what: &core::ffi::CStr) -> Result<(RubyText, u32), Error> {
     if v.is_nil() {
         return Ok((RubyText::absent(), 0));
     }

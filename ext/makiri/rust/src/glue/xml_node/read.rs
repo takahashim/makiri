@@ -219,7 +219,7 @@ pub fn children(this: super::XmlSelf) -> Value {
 /* ---- attributes ---- */
 
 /// The attribute of `el` whose qualified name is exactly `name`.
-unsafe fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
+fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
     if d.type_(el) != Some(NodeType::Element) {
         return None;
     }

@@ -71,9 +71,8 @@ unsafe fn invalidate(document: Value) {
 /// immutable, so raise FrozenError rather than silently editing it, and a
 /// document an XPath handler is being evaluated over refuses to change. The
 /// readers use [`unwrap`] directly.
-unsafe fn unwrap_mutable(this: super::HtmlSelf) -> Result<*mut LxbNode, Error> {
-    let rb_self = this.value;
-    rb_sys::rb_check_frozen(rb_self.as_raw());
+fn unwrap_mutable(this: super::HtmlSelf) -> Result<*mut LxbNode, Error> {
+    crate::bridge::ruby::check_frozen(this.value)?;
     crate::glue::doc::ensure_document_mutable(this.document)?;
     Ok(this.raw())
 }

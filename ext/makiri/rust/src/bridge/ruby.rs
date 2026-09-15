@@ -73,6 +73,23 @@ pub fn string_of(v: Value) -> Result<RString, Error> {
     Ok(RString::from_value(unsafe { Value::from_raw(s) }).expect("rb_String returns a String"))
 }
 
+/// `rb_check_frozen` returning its FrozenError rather than raising it.
+///
+/// The error is Ruby's own - the message naming the receiver and `#receiver`
+/// set - because the check still runs, under `protect`. An unfrozen value, every
+/// mutator's normal case, never enters `protect`.
+pub fn check_frozen(v: Value) -> Result<(), Error> {
+    if !magnus::value::ReprValue::is_frozen(v) {
+        return Ok(());
+    }
+    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
+    protect(|| unsafe {
+        rb_sys::rb_check_frozen(v.as_raw());
+        rb_sys::Qnil as VALUE
+    })
+    .map(|_| ())
+}
+
 /// The data pointer of a TypedData object of type `ty` (or a type deriving
 /// from it), or the `TypeError` Ruby's own check raises.
 ///
