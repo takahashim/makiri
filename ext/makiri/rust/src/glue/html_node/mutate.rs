@@ -46,8 +46,8 @@ const STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 type InsertFn = unsafe extern "C" fn(*mut LxbNode, *mut LxbNode);
 
 pub use crate::bridge::string::ruby_verified_data;
-pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_invalidate;
-pub use crate::dom_adapter::text_index::mkr_parsed_text_index_invalidate;
+pub use crate::dom_adapter::dom_index::parsed_dom_index_invalidate;
+pub use crate::dom_adapter::text_index::parsed_text_index_invalidate;
 pub use crate::glue::fragment::mkr_emit_append;
 pub use crate::glue::fragment::mkr_emit_before;
 pub use crate::glue::fragment::mkr_html_import_deep;
@@ -65,8 +65,8 @@ fn err(msg: &str) -> Error {
 /// Drop the DOM and text indexes so the next query rebuilds them.
 unsafe fn invalidate(document: Value) {
     let p = crate::glue::doc::doc_parsed_known(document.as_raw());
-    mkr_parsed_dom_index_invalidate(p);
-    mkr_parsed_text_index_invalidate(p);
+    parsed_dom_index_invalidate(p);
+    parsed_text_index_invalidate(p);
 }
 
 /// Every mutator unwraps `self` through here: a node the caller has frozen is

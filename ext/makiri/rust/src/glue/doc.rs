@@ -14,7 +14,7 @@
 //!
 //! # Parsing releases the GVL
 //!
-//! `mkr_parse_html` and everything under it is Ruby-free, and a freshly parsed
+//! `parse_html` and everything under it is Ruby-free, and a freshly parsed
 //! document is not yet shared, so nothing can race it. The source is copied into
 //! a C buffer BEFORE the wrapper is allocated: allocating the wrapper is a GC
 //! point, and the copy must not straddle one while holding a borrowed pointer
@@ -55,11 +55,11 @@ struct DocData {
 /// `import_node` treat every HTML node as an XML one.
 const MKR_NODE_KIND_XML: c_int = lxb::mkr::mkr_node_kind_t_MKR_NODE_KIND_XML as c_int;
 
-pub use crate::dom_adapter::cross_import::mkr_cross_xml_to_html;
-pub use crate::dom_adapter::post_parse::mkr_parse_html;
-pub use crate::dom_adapter::post_parse::mkr_parsed_destroy;
-pub use crate::dom_adapter::post_parse::mkr_parsed_html_doc;
-pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
+pub use crate::dom_adapter::cross_import::cross_xml_to_html;
+pub use crate::dom_adapter::post_parse::parse_html;
+pub use crate::dom_adapter::post_parse::parsed_destroy;
+pub use crate::dom_adapter::post_parse::parsed_html_doc;
+pub use crate::dom_adapter::post_parse::parsed_kind;
 pub use crate::glue::node::mkr_node_kind;
 pub use crate::glue::xml_node::mutate::mkr_xml_mut_check;
 pub use crate::xml::api::mkr_xml_doc_memsize;
@@ -84,7 +84,7 @@ unsafe extern "C" fn doc_mark(ptr: *mut c_void) {
 unsafe extern "C" fn doc_free(ptr: *mut c_void) {
     let d = ptr as *mut DocData;
     if !(*d).parsed.is_null() {
-        mkr_parsed_destroy((*d).parsed);
+        parsed_destroy((*d).parsed);
     }
     rb_sys::ruby_xfree(ptr);
 }
@@ -94,8 +94,8 @@ unsafe extern "C" fn doc_memsize(ptr: *const c_void) -> rb_sys::size_t {
     let mut total = core::mem::size_of::<DocData>();
     // Lexbor's arena size is not cheaply queryable, so an HTML document reports
     // the wrapper only; the XML arena tracks its own byte total.
-    if !d.parsed.is_null() && mkr_parsed_kind(d.parsed) == MKR_DOC_XML {
-        total += mkr_xml_doc_memsize(&*(super::abi::mkr_parsed_xml_doc(d.parsed) as *const _));
+    if !d.parsed.is_null() && parsed_kind(d.parsed) == MKR_DOC_XML {
+        total += mkr_xml_doc_memsize(&*(super::abi::parsed_xml_doc(d.parsed) as *const _));
     }
     total as rb_sys::size_t
 }
@@ -141,7 +141,7 @@ pub unsafe fn html_doc_known(rb_doc: VALUE) -> *mut lxb::lxb_dom_document_t {
 unsafe fn html_doc_of(d: *mut DocData) -> *mut lxb::lxb_dom_document_t {
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
-    mkr_parsed_html_doc((*d).parsed) as *mut lxb::lxb_dom_document_t
+    parsed_html_doc((*d).parsed) as *mut lxb::lxb_dom_document_t
 }
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
@@ -164,7 +164,7 @@ pub unsafe fn doc_parsed_known(rb_doc: VALUE) -> *mut crate::dom_adapter::post_p
 pub unsafe extern "C" fn mkr_wrap_document(
     parsed: *mut crate::dom_adapter::post_parse::Parsed,
 ) -> VALUE {
-    let is_xml = mkr_parsed_kind(parsed) == MKR_DOC_XML;
+    let is_xml = parsed_kind(parsed) == MKR_DOC_XML;
     let (klass, ty) = if is_xml {
         (mkr_cXmlDocument, MKR_XML_DOC_TYPE.as_ptr())
     } else {
@@ -195,7 +195,7 @@ struct ParseArgs {
 /// Runs with the GVL released: pure C (Lexbor + libc), touching no Ruby state.
 unsafe extern "C" fn parse_nogvl(p: *mut c_void) -> *mut c_void {
     let a = &mut *(p as *mut ParseArgs);
-    a.result = mkr_parse_html(a.src, a.len, a.assume_valid);
+    a.result = parse_html(a.src, a.len, a.assume_valid);
     core::ptr::null_mut()
 }
 
@@ -336,7 +336,7 @@ fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Erro
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
     fragment_in(ruby, args, |_| unsafe {
         const SHELL: &[u8] = b"<html><body></body></html>";
-        let parsed = mkr_parse_html(SHELL.as_ptr(), SHELL.len(), true);
+        let parsed = parse_html(SHELL.as_ptr(), SHELL.len(), true);
         if parsed.is_null() {
             return Err(Error::new(
                 error_class(),
@@ -413,7 +413,7 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
             let src = crate::xml::model::NodeId::from_token(
                 mkr_xml_node_unwrap(node_v.as_raw())? as usize
             );
-            mkr_xml_mut_check(mkr_cross_xml_to_html(doc, xdoc, src, deep, &mut imp));
+            mkr_xml_mut_check(cross_xml_to_html(doc, xdoc, src, deep, &mut imp));
             return Ok(Value::from_raw(mkr_wrap_html_node(imp, self_.as_raw())));
         }
 

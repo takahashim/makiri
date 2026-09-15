@@ -85,7 +85,7 @@ fn serialize_sizes(live: usize) -> (usize, usize) {
 fn serialize(ruby: &Ruby, node: *mut LxbNode, deep: bool, pretty: bool) -> Result<RString, Error> {
     let utf8 = ruby.utf8_encoding();
     // SAFETY: `node` came from a live wrapper, so its document is live too.
-    let (cap, reserve) = serialize_sizes(unsafe { mkr_lxb_document_bytes(node) });
+    let (cap, reserve) = serialize_sizes(unsafe { lxb_document_bytes(node) });
 
     let mut buf = Buf::new(cap);
     // SAFETY: `buf` is freed on both paths below, and nothing between here and

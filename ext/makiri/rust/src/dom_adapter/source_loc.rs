@@ -5,10 +5,10 @@
 //!
 //! 1. [`Recorder`] CHAINS the tokenizer's token-done callback and logs
 //!    `(tag_id, byte offset)` for every element start-tag, in token order.
-//! 2. After the tree is built, [`mkr_pos_assign_to_dom`] walks the DOM
+//! 2. After the tree is built, [`pos_assign_to_dom`] walks the DOM
 //!    pre-order and matches each element to the next compatible recorded token,
 //!    stamping the byte offset into `node.user`.
-//! 3. [`mkr_lines_build`] maps a byte offset to a 1-based line for `Node#line`.
+//! 3. [`lines_build`] maps a byte offset to a 1-based line for `Node#line`.
 //!
 //! Precision is about the HTML5 tree-construction reorderings (foster
 //! parenting, the adoption agency) away from perfect. On a mismatch the node is
@@ -21,7 +21,7 @@
 //!
 //! # The callback runs inside Lexbor
 //!
-//! [`mkr_pos_token_cb`] is called by the tokenizer, from C, once per token. It
+//! [`pos_token_cb`] is called by the tokenizer, from C, once per token. It
 //! must not unwind and must always delegate, or the parser stops building the
 //! tree. Both are structural here: it has no failure path of its own - a
 //! recording failure only sets the overflow flag - and the delegation is the
@@ -97,7 +97,7 @@ unsafe fn next_newline(bytes: &[u8], from: usize) -> Option<usize> {
 
 /// Build the line table over the input. NULL on allocation failure, which the
 /// caller treats as "no line information" rather than as a parse failure.
-pub unsafe fn mkr_lines_build(src: *const u8, len: usize) -> *mut c_void {
+pub unsafe fn lines_build(src: *const u8, len: usize) -> *mut c_void {
     let bytes: &[u8] = if src.is_null() || len == 0 {
         &[]
     } else {
@@ -131,7 +131,7 @@ pub unsafe fn mkr_lines_build(src: *const u8, len: usize) -> *mut c_void {
     }
 }
 
-pub unsafe fn mkr_lines_free(lines: *mut c_void) {
+pub unsafe fn lines_free(lines: *mut c_void) {
     if !lines.is_null() {
         drop(Box::from_raw(lines as *mut Lines));
     }
@@ -169,7 +169,7 @@ pub struct Recorder {
     orig_ctx: *mut c_void,
 }
 
-pub unsafe fn mkr_pos_recorder_create(src: *const u8) -> *mut Recorder {
+pub unsafe fn pos_recorder_create(src: *const u8) -> *mut Recorder {
     try_box_raw(Recorder {
         items: Vec::new(),
         first: src,
@@ -179,17 +179,13 @@ pub unsafe fn mkr_pos_recorder_create(src: *const u8) -> *mut Recorder {
     })
 }
 
-pub unsafe fn mkr_pos_recorder_destroy(rec: *mut Recorder) {
+pub unsafe fn pos_recorder_destroy(rec: *mut Recorder) {
     if !rec.is_null() {
         drop(Box::from_raw(rec));
     }
 }
 
-pub unsafe fn mkr_pos_recorder_set_delegate(
-    rec: *mut Recorder,
-    orig: TokenFn,
-    orig_ctx: *mut c_void,
-) {
+pub unsafe fn pos_recorder_set_delegate(rec: *mut Recorder, orig: TokenFn, orig_ctx: *mut c_void) {
     if rec.is_null() {
         return;
     }
@@ -244,7 +240,7 @@ unsafe fn record(rec: &mut Recorder, token: *const Token) {
 ///
 /// Always delegates, so the parser still builds the tree; a recording failure
 /// only sets the overflow flag, which later suppresses assignment.
-pub unsafe extern "C" fn mkr_pos_token_cb(
+pub unsafe extern "C" fn pos_token_cb(
     tkz: *mut Tokenizer,
     token: *mut Token,
     ctx: *mut c_void,
@@ -272,7 +268,7 @@ pub unsafe extern "C" fn mkr_pos_token_cb(
 /// tag id within a bounded lookahead. An element with no match in that window is
 /// left unstamped; `#line` then answers nil, which is the whole point - never a
 /// wrong line.
-pub unsafe fn mkr_pos_assign_to_dom(rec: *mut Recorder, root: *mut LxbNode) {
+pub unsafe fn pos_assign_to_dom(rec: *mut Recorder, root: *mut LxbNode) {
     if rec.is_null() || (*rec).overflow || root.is_null() {
         return;
     }
@@ -311,7 +307,7 @@ pub unsafe fn mkr_pos_assign_to_dom(rec: *mut Recorder, root: *mut LxbNode) {
 /// Ruby contract for `#line` is an Integer or nil, and post_parse documents the
 /// table's allocation as an allowed degradation - see the note in the
 /// html_node_read OOM scenario.
-pub unsafe fn mkr_parsed_node_line(p: *mut Parsed, node: *const LxbNode) -> usize {
+pub unsafe fn parsed_node_line(p: *mut Parsed, node: *const LxbNode) -> usize {
     if p.is_null() || node.is_null() || (*node).user.is_null() || (*p).newline_idx.is_null() {
         return 0;
     }

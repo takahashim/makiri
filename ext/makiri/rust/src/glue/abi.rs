@@ -214,9 +214,9 @@ pub use crate::bridge::string::ruby_str_known_valid_utf8;
 pub use crate::bridge::string::ruby_to_utf8;
 pub use crate::bridge::string::ruby_verified_text;
 pub use crate::bridge::string::verify_text;
-pub use crate::dom_adapter::dom_index::mkr_element_index_has_foreign;
-pub use crate::dom_adapter::post_parse::mkr_lxb_document_bytes;
-pub use crate::dom_adapter::post_parse::mkr_parsed_xml_doc;
+pub use crate::dom_adapter::dom_index::element_index_has_foreign;
+pub use crate::dom_adapter::post_parse::lxb_document_bytes;
+pub use crate::dom_adapter::post_parse::parsed_xml_doc;
 pub use crate::glue::doc::mkr_doc_parsed;
 pub use crate::glue::doc::mkr_html_doc_unwrap;
 pub use crate::glue::html_node::mkr_html_node_unwrap;
@@ -249,7 +249,7 @@ pub use crate::init::mkr_mXmlNodeMethods;
  * function - rustc renamed one and left the extension with an undefined symbol
  * that `rake symbols` caught. Imported now, so there is one item and the
  * compiler checks the call. */
-pub use crate::dom_adapter::dom_index::mkr_element_index_tag;
+pub use crate::dom_adapter::dom_index::element_index_tag;
 
 extern "C" {
 
@@ -465,13 +465,13 @@ mod agree {
     );
 
     same_signature!(
-        mkr_element_index_tag,
-        crate::dom_adapter::dom_index::mkr_element_index_tag,
+        element_index_tag,
+        crate::dom_adapter::dom_index::element_index_tag,
         unsafe extern "C" fn(*const c_void, usize, *mut usize) -> *const *mut LxbNode
     );
     same_signature!(
-        mkr_element_index_has_foreign,
-        crate::dom_adapter::dom_index::mkr_element_index_has_foreign,
+        element_index_has_foreign,
+        crate::dom_adapter::dom_index::element_index_has_foreign,
         unsafe extern "C" fn(*const c_void) -> c_int
     );
 

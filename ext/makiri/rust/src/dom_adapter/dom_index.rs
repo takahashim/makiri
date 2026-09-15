@@ -258,9 +258,9 @@ unsafe fn ensure(p: *mut Parsed) -> *mut DomIndex {
 
 /// The element that owns `attr`, or NULL - both for "not in this document" and
 /// for "the index could not be built". A caller that must tell those apart calls
-/// [`mkr_parsed_dom_index_build`] first; `Attribute#parent` does exactly that,
+/// [`parsed_dom_index_build`] first; `Attribute#parent` does exactly that,
 /// because a nil parent there would be a navigation answer, not an error.
-pub unsafe fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut LxbNode {
+pub unsafe fn parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut LxbNode {
     if attr.is_null() {
         return core::ptr::null_mut();
     }
@@ -273,29 +273,29 @@ pub unsafe fn mkr_parsed_attr_owner(p: *mut Parsed, attr: *mut LxbAttr) -> *mut 
 
 /// Build the index now (idempotent). `true` on success, `false` on allocation
 /// failure.
-pub unsafe fn mkr_parsed_dom_index_build(p: *mut Parsed) -> bool {
+pub unsafe fn parsed_dom_index_build(p: *mut Parsed) -> bool {
     !ensure(p).is_null()
 }
 
 /// Drop the index so the next query rebuilds it. Called from the one mutation
 /// hook, beside the text index's.
-pub unsafe fn mkr_parsed_dom_index_invalidate(p: *mut Parsed) {
+pub unsafe fn parsed_dom_index_invalidate(p: *mut Parsed) {
     if p.is_null() {
         return;
     }
-    mkr_dom_index_free((*p).dom_index);
+    dom_index_free((*p).dom_index);
     (*p).dom_index = core::ptr::null_mut();
 }
 
-/// NULL-safe, so `mkr_parsed_destroy` can call it unconditionally.
-pub unsafe fn mkr_dom_index_free(ptr: *mut c_void) {
+/// NULL-safe, so `parsed_destroy` can call it unconditionally.
+pub unsafe fn dom_index_free(ptr: *mut c_void) {
     if !ptr.is_null() {
         drop(Box::from_raw(ptr as *mut DomIndex));
     }
 }
 
 /// The element index - the same object as the attr->owner index.
-pub unsafe fn mkr_parsed_element_index(p: *mut Parsed) -> *mut c_void {
+pub unsafe fn parsed_element_index(p: *mut Parsed) -> *mut c_void {
     ensure(p) as *mut c_void
 }
 
@@ -303,7 +303,7 @@ pub unsafe fn mkr_parsed_element_index(p: *mut Parsed) -> *mut c_void {
 /// `*count = 0`.
 ///
 /// Taken as a FUNCTION POINTER by the XPath context, so the signature is fixed.
-pub unsafe extern "C" fn mkr_element_index_tag(
+pub unsafe extern "C" fn element_index_tag(
     ptr: *const c_void,
     tag_id: usize,
     count: *mut usize,
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn mkr_element_index_tag(
 ///
 /// NULL answers 1 - assume foreign - which is the fail-safe direction: the
 /// `//tag` fast path is only taken for a document known to be pure HTML.
-pub unsafe extern "C" fn mkr_element_index_has_foreign(ptr: *const c_void) -> c_int {
+pub unsafe extern "C" fn element_index_has_foreign(ptr: *const c_void) -> c_int {
     if ptr.is_null() {
         return 1;
     }

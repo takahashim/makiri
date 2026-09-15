@@ -112,9 +112,9 @@ const MKR_NODE_KIND_OTHER: c_int = 0;
 const MKR_NODE_KIND_HTML: c_int = 1;
 const MKR_NODE_KIND_XML: c_int = 2;
 
-use super::abi::{mkr_cDocument, mkr_cNode, mkr_doc_parsed, mkr_parsed_xml_doc, DataType};
+use super::abi::{mkr_cDocument, mkr_cNode, mkr_doc_parsed, parsed_xml_doc, DataType};
 
-pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
+pub use crate::dom_adapter::post_parse::parsed_kind;
 
 #[inline]
 unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
@@ -132,8 +132,8 @@ unsafe fn is_kind_of(v: VALUE, klass: VALUE) -> bool {
 pub unsafe fn mkr_node_raw(rb_node: VALUE) -> Result<*mut c_void, magnus::Error> {
     if is_kind_of(rb_node, mkr_cDocument) {
         let parsed = mkr_doc_parsed(rb_node)?;
-        if mkr_parsed_kind(parsed) == MKR_DOC_XML {
-            let xdoc = mkr_parsed_xml_doc(parsed) as *mut XmlDoc;
+        if parsed_kind(parsed) == MKR_DOC_XML {
+            let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
             return Ok(if xdoc.is_null() {
                 core::ptr::null_mut()
             } else {

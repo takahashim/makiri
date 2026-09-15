@@ -4,7 +4,7 @@
 //! every invalid sequence becomes U+FFFD, per WHATWG byte-stream decoding, so
 //! parsing never fails on bad bytes and the DOM is always valid UTF-8. Used by
 //! the document parse driver and the fragment paths through
-//! [`mkr_utf8_sanitize`].
+//! [`utf8_sanitize`].
 //!
 //! # Lexbor's encoder is gone from this path
 //!
@@ -47,7 +47,7 @@ use crate::cutf8::valid;
 
 /// The sanitiser's replacement buffer: `malloc`'d, NUL-terminated, and owned by
 /// the caller, who frees it with libc `free`.
-/// What [`mkr_utf8_sanitize`] decided about the input.
+/// What [`utf8_sanitize`] decided about the input.
 pub enum Sanitized {
     /// Already valid UTF-8: the caller parses the input in place, no copy.
     Unchanged,
@@ -124,7 +124,7 @@ fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
 /// caller parses `src` as-is with no copy. `Replaced` carries a freshly
 /// `malloc`'d, NUL-terminated replacement the caller owns. `None` on OOM, with
 /// nothing allocated.
-pub unsafe fn mkr_utf8_sanitize(src: *const u8, len: usize) -> Option<Sanitized> {
+pub unsafe fn utf8_sanitize(src: *const u8, len: usize) -> Option<Sanitized> {
     if src.is_null() || len == 0 || valid(core::slice::from_raw_parts(src, len)) {
         return Some(Sanitized::Unchanged);
     }

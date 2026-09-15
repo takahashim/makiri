@@ -35,7 +35,7 @@ use super::abi::{
  * ------------------------------------------------------------------ */
 
 use crate::cbuf::{Buf, OwnedBuf};
-pub use crate::dom_adapter::utf8_input::mkr_utf8_sanitize;
+pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
 
 extern "C" {
@@ -202,7 +202,7 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
             _owned: None,
         });
     }
-    let clean = match mkr_utf8_sanitize(hv.as_ptr() as *const u8, hv.len()) {
+    let clean = match utf8_sanitize(hv.as_ptr() as *const u8, hv.len()) {
         Some(Sanitized::Unchanged) => None,
         Some(Sanitized::Replaced(r)) => Some(r),
         None => return None,

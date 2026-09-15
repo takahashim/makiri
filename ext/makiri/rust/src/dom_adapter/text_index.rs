@@ -16,7 +16,7 @@
 //! checker, so a long-lived Rust reference would assert a lifetime nothing
 //! enforces. What actually keeps a cached slice valid is a RUNTIME protocol:
 //! every mutation goes through one invalidation hook
-//! ([`mkr_parsed_text_index_invalidate`]), which drops the whole index, so a
+//! ([`parsed_text_index_invalidate`]), which drops the whole index, so a
 //! slice can never outlive the storage it points into. The arena also never
 //! frees a node - detached, never destroyed - so only a mutation can reallocate
 //! the text a slice borrows. That protocol is the safety argument; the types
@@ -286,8 +286,8 @@ impl TextIndex {
  * public surface                                                     *
  * ------------------------------------------------------------------ */
 
-/// Free an index. NULL-safe, so `mkr_parsed_destroy` can call it unconditionally.
-pub unsafe fn mkr_text_index_free(idx: *mut c_void) {
+/// Free an index. NULL-safe, so `parsed_destroy` can call it unconditionally.
+pub unsafe fn text_index_free(idx: *mut c_void) {
     if !idx.is_null() {
         drop(Box::from_raw(idx as *mut TextIndex));
     }
@@ -297,11 +297,11 @@ pub unsafe fn mkr_text_index_free(idx: *mut c_void) {
 ///
 /// This is the whole safety protocol for the borrowed slices: EVERY mutation
 /// reaches here, so no cached slice outlives the storage it points into.
-pub unsafe fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
+pub unsafe fn parsed_text_index_invalidate(p: *mut Parsed) {
     if p.is_null() || (*p).text_index.is_null() {
         return;
     }
-    mkr_text_index_free((*p).text_index);
+    text_index_free((*p).text_index);
     (*p).text_index = core::ptr::null_mut();
 }
 
@@ -310,7 +310,7 @@ pub unsafe fn mkr_parsed_text_index_invalidate(p: *mut Parsed) {
 /// Returns 1 with `*out_slices` / `*out_n` / `*out_bytes` set, or 0 - meaning
 /// "walk instead", for a node outside the indexed tree (a fragment) or a build
 /// that could not allocate. Never a shorter run than the truth.
-pub unsafe fn mkr_parsed_text_slices(
+pub unsafe fn parsed_text_slices(
     p: *mut Parsed,
     node: *const LxbNode,
     out_slices: *mut *const BorrowedText,

@@ -23,7 +23,7 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use self::abi::*;
-use super::abi::{mkr_cDocument, mkr_cNodeSet, mkr_doc_parsed, mkr_parsed_xml_doc, NodeData};
+use super::abi::{mkr_cDocument, mkr_cNodeSet, mkr_doc_parsed, parsed_xml_doc, NodeData};
 
 /// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn mkr_wrap_xml_node(node: *mut c_void, document: VALUE) -
 pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus::Error> {
     let v = Value::from_raw(rb_self);
     if is_a(v, mkr_cXmlDocument) {
-        let xdoc = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self)?) as *mut XmlDoc;
+        let xdoc = parsed_xml_doc(mkr_doc_parsed(rb_self)?) as *mut XmlDoc;
         return Ok((*xdoc).doc_node().to_token() as *mut c_void);
     }
     let nd = crate::bridge::ruby::typed_data(rb_self, mkr_xml_node_type.as_ptr())? as *mut NodeData;
@@ -86,7 +86,7 @@ pub unsafe fn mkr_xml_node_unwrap(rb_self: VALUE) -> Result<*mut c_void, magnus:
 /// `document` must be a Document VALUE the caller has established - a node's
 /// keepalive Document or an XML Document receiver.
 pub unsafe fn mkr_doc_of(document: VALUE) -> *mut XmlDoc {
-    mkr_parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc
+    parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node at

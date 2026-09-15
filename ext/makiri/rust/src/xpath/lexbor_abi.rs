@@ -506,9 +506,7 @@ unsafe impl DomRaw for Html {
         let Some(Backend::Html { index }) = ctx_backend(ctx) else {
             return None;
         };
-        if index.is_null()
-            || crate::dom_adapter::dom_index::mkr_element_index_has_foreign(index) != 0
-        {
+        if index.is_null() || crate::dom_adapter::dom_index::element_index_has_foreign(index) != 0 {
             return None;
         }
         let doc = ctx_document(ctx) as *const Document;
@@ -521,7 +519,7 @@ unsafe impl DomRaw for Html {
         }
         let mut cnt = 0usize;
         let nodes = bucket(
-            crate::dom_adapter::dom_index::mkr_element_index_tag(index, tag, &mut cnt)
+            crate::dom_adapter::dom_index::element_index_tag(index, tag, &mut cnt)
                 as *const *mut c_void,
             cnt,
         );

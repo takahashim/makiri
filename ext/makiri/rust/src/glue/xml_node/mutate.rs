@@ -21,13 +21,13 @@ use rb_sys::VALUE;
 
 use super::abi::*;
 use super::{node_document, unwrap, wrap};
-use crate::glue::abi::{mkr_cNode, mkr_doc_parsed, mkr_html_node_unwrap, mkr_parsed_xml_doc};
+use crate::glue::abi::{mkr_cNode, mkr_doc_parsed, mkr_html_node_unwrap, parsed_xml_doc};
 
 /// `mkr_node_kind_t`.
 const KIND_HTML: core::ffi::c_int = 1;
 const KIND_XML: core::ffi::c_int = 2;
 
-pub use crate::dom_adapter::cross_import::mkr_cross_html_to_xml;
+pub use crate::dom_adapter::cross_import::cross_html_to_xml;
 pub use crate::glue::node::mkr_node_kind;
 pub use crate::xml::api::mkr_xml_clone_node;
 pub use crate::xml::api::mkr_xml_copy_node;
@@ -115,7 +115,7 @@ allows a single root element, and a sibling target must have a parent)",
 /// The arena behind a node's document.
 unsafe fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
     let document = node_document(v)?;
-    Ok(mkr_parsed_xml_doc(crate::glue::doc::doc_parsed_known(document.as_raw())) as *mut XmlDoc)
+    Ok(parsed_xml_doc(crate::glue::doc::doc_parsed_known(document.as_raw())) as *mut XmlDoc)
 }
 
 /// A byte length as the arena's `uint32`, or an error.
@@ -707,7 +707,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
     unsafe {
-        let xd = mkr_parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())?) as *mut XmlDoc;
+        let xd = parsed_xml_doc(mkr_doc_parsed(rb_self.as_raw())?) as *mut XmlDoc;
         let mut copy: NodeId = NodeId::INVALID;
         match mkr_node_kind(node_v.as_raw()) {
             KIND_XML => {
@@ -732,7 +732,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                     ))
                 }
             }
-            KIND_HTML => mkr_xml_mut_check(mkr_cross_html_to_xml(
+            KIND_HTML => mkr_xml_mut_check(cross_html_to_xml(
                 xd,
                 mkr_html_node_unwrap(node_v.as_raw())? as *mut _,
                 deep,

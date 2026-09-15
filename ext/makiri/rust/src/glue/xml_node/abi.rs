@@ -10,7 +10,7 @@ use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 pub use super::super::abi::{
     error_class, mkr_cDocument, mkr_cXmlDocument, mkr_cXmlDocumentFragment, mkr_doc_parsed,
     mkr_eError, mkr_eXmlSyntaxError, mkr_mXML, mkr_mXmlNodeMethods, mkr_node_set_new,
-    mkr_node_set_push, mkr_parsed_xml_doc,
+    mkr_node_set_push, parsed_xml_doc,
 };
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 

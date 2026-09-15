@@ -36,10 +36,10 @@ const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
-pub use crate::dom_adapter::dom_index::mkr_parsed_attr_owner;
-pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_build;
-pub use crate::dom_adapter::source_loc::mkr_parsed_node_line;
-pub use crate::dom_adapter::text_index::mkr_parsed_text_slices;
+pub use crate::dom_adapter::dom_index::parsed_attr_owner;
+pub use crate::dom_adapter::dom_index::parsed_dom_index_build;
+pub use crate::dom_adapter::source_loc::parsed_node_line;
+pub use crate::dom_adapter::text_index::parsed_text_slices;
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -402,7 +402,7 @@ unsafe fn element_text(ruby: &Ruby, document: Value, node: *mut LxbNode) -> Valu
         let mut slices: *const BorrowedText = core::ptr::null();
         let mut n = 0usize;
         let mut total = 0usize;
-        if mkr_parsed_text_slices(parsed, node, &mut slices, &mut n, &mut total) != 0 {
+        if parsed_text_slices(parsed, node, &mut slices, &mut n, &mut total) != 0 {
             return Value::from_raw(ruby_str_from_slices(slices, n, total));
         }
     }
@@ -444,7 +444,7 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// `#parent`. An attribute has no `node.parent` - Lexbor never links one back to
 /// its element - so it resolves through the compat attr->owner index.
 ///
-/// The index is built explicitly rather than left to `mkr_parsed_attr_owner`'s
+/// The index is built explicitly rather than left to `parsed_attr_owner`'s
 /// lazy build, because that function answers NULL for BOTH "this attribute is
 /// not in the document" and "the index could not be allocated". Taking the
 /// second as the first makes an owned attribute report no parent - a navigation
@@ -458,13 +458,13 @@ pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let document = this.document;
         if (*node).type_ == ty::ATTRIBUTE {
             let parsed = mkr_doc_parsed(document.as_raw())?;
-            if parsed.is_null() || !mkr_parsed_dom_index_build(parsed) {
+            if parsed.is_null() || !parsed_dom_index_build(parsed) {
                 return Err(Error::new(
                     error_class(),
                     "could not build the attribute index (out of memory)",
                 ));
             }
-            let owner = mkr_parsed_attr_owner(parsed, node as *mut LxbAttr);
+            let owner = parsed_attr_owner(parsed, node as *mut LxbAttr);
             return Ok(wrap(owner, document));
         }
         let _ = ruby;
@@ -789,7 +789,7 @@ pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
         use magnus::rb_sys::AsRawValue;
         let node = this.node;
         let p = crate::glue::doc::doc_parsed_known(this.document.as_raw());
-        let n = mkr_parsed_node_line(p, node);
+        let n = parsed_node_line(p, node);
         if n == 0 {
             ruby.qnil().as_value()
         } else {

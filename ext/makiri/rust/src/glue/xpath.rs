@@ -55,7 +55,7 @@ use crate::xpath::value::{NodeSet, TextSlot, Val, ValRef};
 use super::abi::{
     error_class, is_kind_of, mkr_cNode, mkr_cNodeSet, mkr_cXmlDocument, mkr_doc_parsed,
     mkr_html_node_unwrap, mkr_mHtmlNodeMethods, mkr_node_document, mkr_node_raw, mkr_node_set_new,
-    mkr_node_set_push, mkr_parsed_xml_doc, mkr_xml_node_unwrap, ruby_verified_text, RubyText,
+    mkr_node_set_push, mkr_xml_node_unwrap, parsed_xml_doc, ruby_verified_text, RubyText,
 };
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
@@ -79,9 +79,9 @@ use crate::xpath::ctx::Context as Ctx;
 
 pub use crate::bridge::string::ruby_exception_message;
 pub use crate::bridge::string::ruby_try_verified_text;
-pub use crate::dom_adapter::dom_index::mkr_parsed_dom_index_build;
-pub use crate::dom_adapter::dom_index::mkr_parsed_element_index;
-pub use crate::dom_adapter::post_parse::mkr_parsed_kind;
+pub use crate::dom_adapter::dom_index::parsed_dom_index_build;
+pub use crate::dom_adapter::dom_index::parsed_element_index;
+pub use crate::dom_adapter::post_parse::parsed_kind;
 pub use crate::init::mkr_cXPathContext;
 pub use crate::init::mkr_eXPathLimitExceeded;
 pub use crate::init::mkr_eXPathSyntaxError;
@@ -288,8 +288,8 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<c_int, Error> {
 pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<OwnedContext, Error> {
     let parsed = mkr_doc_parsed(document.as_raw())?;
 
-    if mkr_parsed_kind(parsed) == MKR_DOC_XML {
-        let xdoc = mkr_parsed_xml_doc(parsed);
+    if parsed_kind(parsed) == MKR_DOC_XML {
+        let xdoc = parsed_xml_doc(parsed);
         if xdoc.is_null() {
             return Err(Error::new(error_class(), "XPath context with no document"));
         }
@@ -313,7 +313,7 @@ pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<Owne
 
     let node = mkr_html_node_unwrap(rb_node.as_raw())?;
     let doc = crate::glue::abi::mkr_html_doc_unwrap(document.as_raw())? as *mut c_void;
-    if !mkr_parsed_dom_index_build(parsed) {
+    if !parsed_dom_index_build(parsed) {
         return Err(Error::new(
             error_class(),
             "failed to build attribute index for XPath",
@@ -325,7 +325,7 @@ pub(crate) unsafe fn context_for(rb_node: Value, document: Value) -> Result<Owne
         doc,
         node as *mut c_void,
         Backend::Html {
-            index: mkr_parsed_element_index(parsed),
+            index: parsed_element_index(parsed),
         },
     ) else {
         return Err(Error::new(

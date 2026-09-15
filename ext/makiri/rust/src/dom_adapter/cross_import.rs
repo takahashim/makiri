@@ -315,7 +315,7 @@ unsafe fn h2x_children_of(s: *mut LxbNode) -> *mut LxbNode {
 }
 
 /// Deep- or shallow-copy an HTML subtree into the XML arena, detached.
-pub unsafe fn mkr_cross_html_to_xml(
+pub unsafe fn cross_html_to_xml(
     xdoc: *mut XmlDoc,
     src: *mut LxbNode,
     deep: bool,
@@ -524,7 +524,7 @@ unsafe fn x2h_link_target(el: *mut LxbNode) -> *mut LxbNode {
 }
 
 /// Deep- or shallow-copy an XML subtree into the Lexbor arena, detached.
-pub unsafe fn mkr_cross_xml_to_html(
+pub unsafe fn cross_xml_to_html(
     hdoc: *mut LxbDoc,
     xdoc: *const XmlDoc,
     src: NodeId,

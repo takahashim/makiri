@@ -16,9 +16,9 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::dom_adapter::dom_index::{mkr_parsed_dom_index_build, mkr_parsed_element_index};
+use makiri::dom_adapter::dom_index::{parsed_dom_index_build, parsed_element_index};
 use makiri::dom_adapter::post_parse::{
-    mkr_parse_html, mkr_parsed_destroy, mkr_parsed_html_doc, Parsed,
+    parse_html, parsed_destroy, parsed_html_doc, Parsed,
 };
 use makiri::xpath::ctx::ctx_set_unprefixed_lax;
 
@@ -38,29 +38,29 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let p = mkr_parse_html(html.as_ptr(), html.len(), false);
+        let p = parse_html(html.as_ptr(), html.len(), false);
         if p.is_null() {
             return;
         }
         run(p, text, mode & 1 != 0);
-        mkr_parsed_destroy(p);
+        parsed_destroy(p);
     }
 });
 
 /// Evaluate over `p` the way the glue's `context_for` does for a Document
 /// receiver. Every engine handle is dropped before the caller destroys `p`.
 unsafe fn run(p: *mut Parsed, text: VerifiedText, lax: bool) {
-    if !mkr_parsed_dom_index_build(p) {
+    if !parsed_dom_index_build(p) {
         return;
     }
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
-    let doc = mkr_parsed_html_doc(p) as *mut c_void;
+    let doc = parsed_html_doc(p) as *mut c_void;
     let Some(ctx) = OwnedContext::new(
         doc,
         doc,
         Backend::Html {
-            index: mkr_parsed_element_index(p),
+            index: parsed_element_index(p),
         },
     ) else {
         return;
