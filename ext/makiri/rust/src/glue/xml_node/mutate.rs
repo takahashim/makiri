@@ -88,9 +88,10 @@ allows a single root element, and a sibling target must have a parent)"
 /* ------------------------------------------------------------------ */
 
 /// The arena behind a node's document.
-unsafe fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
+fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
     let document = node_document(v)?;
-    Ok(parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc)
+    // SAFETY: the handle of `v`'s own Document, which `v` keeps alive.
+    Ok(unsafe { parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) } as *mut XmlDoc)
 }
 
 /// A byte length as the arena's `uint32`, or an error.
@@ -110,10 +111,12 @@ fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
 ///
 /// A document an XPath handler is being evaluated over refuses to change, so
 /// that check comes before the index is dropped.
-unsafe fn unwrap_mutable(this: super::XmlSelf) -> Result<NodeId, Error> {
+fn unwrap_mutable(this: super::XmlSelf) -> Result<NodeId, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     crate::glue::doc::ensure_document_mutable(this.document)?;
-    xml_name_index_invalidate(&mut *this.doc());
+    // SAFETY: the receiver's own arena, which the receiver keeps alive, and
+    // nothing else holds a borrow of it here.
+    unsafe { xml_name_index_invalidate(&mut *this.doc()) };
     Ok(this.id)
 }
 
@@ -154,9 +157,10 @@ pub fn remove(this: super::XmlSelf) -> Result<Value, Error> {
 }
 
 /// The element behind `rb_self`, or an error naming what was attempted.
-unsafe fn element_for(this: super::XmlSelf) -> Result<NodeId, Error> {
+fn element_for(this: super::XmlSelf) -> Result<NodeId, Error> {
     let n = unwrap_mutable(this)?;
-    if (*this.doc()).type_(n) != Some(NodeType::Element) {
+    // SAFETY: the receiver's arena, read for this statement only.
+    if unsafe { (*this.doc()).type_(n) } != Some(NodeType::Element) {
         return Err(Error::new(
             error_class(),
             "cannot set an attribute on a non-element node",
@@ -319,7 +323,7 @@ unsafe fn incoming_node(
 /// Only called after the insert succeeded, so a rejected one leaves the source
 /// document alone. A fragment is emptied rather than detached: it contributed
 /// its children, and the DOM leaves a spliced fragment empty.
-unsafe fn adopt_finish(arg: Value) {
+fn adopt_finish(arg: Value) {
     if arg.is_nil() {
         return;
     }
@@ -330,14 +334,18 @@ unsafe fn adopt_finish(arg: Value) {
     let Ok(sdoc) = xdoc(arg) else {
         return;
     };
-    if (*sdoc).type_(src) == Some(NodeType::Fragment) {
-        while let Some(c) = (*sdoc).first_child(src) {
-            xml_remove(&mut *sdoc, c);
+    // SAFETY: `sdoc` is the arena of `arg`'s Document, which `arg` keeps alive,
+    // and `src` is its own node. No Ruby runs in the detaching below.
+    unsafe {
+        if (*sdoc).type_(src) == Some(NodeType::Fragment) {
+            while let Some(c) = (*sdoc).first_child(src) {
+                xml_remove(&mut *sdoc, c);
+            }
+        } else {
+            xml_remove(&mut *sdoc, src);
         }
-    } else {
-        xml_remove(&mut *sdoc, src);
+        xml_name_index_invalidate(&mut *sdoc);
     }
-    xml_name_index_invalidate(&mut *sdoc);
 }
 
 /// A DOCUMENT_FRAGMENT contributes its CHILDREN, not itself, like Nokogiri and
@@ -463,14 +471,16 @@ fn dom_local_ok(p: &[u8]) -> bool {
 /// Check that the three name pieces describe the same name, and build the split
 /// form the engine takes. Fails closed rather than storing a name whose parts
 /// disagree.
-unsafe fn dom_name_consistency(
+fn dom_name_consistency(
     ruby: &Ruby,
     qv: &RubyText,
     pv: &RubyText,
     has_prefix: bool,
     lv: &RubyText,
 ) -> Result<(u32, u32, u32), Error> {
-    let (q, p, l) = (qv.bytes(), pv.bytes(), lv.bytes());
+    /* SAFETY: the three views are the caller's, live for this call, and only
+     * their bytes are compared - nothing here runs Ruby. */
+    let (q, p, l) = unsafe { (qv.bytes(), pv.bytes(), lv.bytes()) };
     let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());
 
     if !dom_local_ok(l) {
@@ -616,7 +626,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 }
 
 /// The shared body of the leaf-data factories.
-unsafe fn create_chardata(
+fn create_chardata(
     ruby: &Ruby,
     rb_self: Value,
     text: Value,
@@ -626,19 +636,21 @@ unsafe fn create_chardata(
     let xd = xdoc(rb_self)?;
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
-    let st = xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n);
+    /* SAFETY: the receiver's own arena, and `tv`'s bytes, which it holds rooted
+     * for the copy the arena makes. */
+    let st = unsafe { xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n) };
     xml_mut_check(st)?;
     Ok(wrap(n, rb_self))
 }
 
 pub fn create_text_node(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    unsafe { create_chardata(ruby, rb_self, t, NodeType::Text, c"text content") }
+    create_chardata(ruby, rb_self, t, NodeType::Text, c"text content")
 }
 pub fn create_comment(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    unsafe { create_chardata(ruby, rb_self, t, NodeType::Comment, c"comment content") }
+    create_chardata(ruby, rb_self, t, NodeType::Comment, c"comment content")
 }
 pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    unsafe { create_chardata(ruby, rb_self, t, NodeType::CData, c"CDATA content") }
+    create_chardata(ruby, rb_self, t, NodeType::CData, c"CDATA content")
 }
 
 pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
