@@ -33,7 +33,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{node_document, unwrap, wrap};
-use crate::dom_adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, NS_UNDEF};
+use crate::dom_adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, ScratchElement, NS_UNDEF};
 use crate::glue::abi::{
     error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbElement, LxbNode,
 };
@@ -578,60 +578,42 @@ pub fn remove_attribute_ns(
 /// new name so the document interns it, copy its name fields onto this node,
 /// then discard it.
 pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
-    unsafe {
-        /* The attribute mutators still work in raw handles; this step is the
-         * tree edits. The clearance is the same, so the node comes back down
-         * to a pointer here. */
-        let node = unwrap_mutable(&this)?.as_raw();
-        if (*node).type_ != ty::ELEMENT {
-            return Err(err("name= is only supported on elements"));
-        }
-        let nv = ruby_verified_text(rb_name, c"element name")?;
-        let fresh = lxb::lxb_dom_document_create_element(
-            (*node).owner_document,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-            core::ptr::null_mut(),
-        );
-        if fresh.is_null() {
-            return Err(err("failed to rename element"));
-        }
+    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+        return Err(err("name= is only supported on elements"));
+    };
+    let nv = ruby_verified_text(rb_name, c"element name")?;
 
-        let el = node as *mut LxbElement;
-        (*el).node.local_name = (*fresh).node.local_name;
-        (*el).node.prefix = (*fresh).node.prefix;
-        (*el).node.ns = (*fresh).node.ns;
-        (*el).upper_name = (*fresh).upper_name;
-        (*el).qualified_name = (*fresh).qualified_name;
+    /* SAFETY: the element's own Document, and the view is live for this call.
+     * The scratch element is destroyed however this returns. */
+    let scratch =
+        unsafe { ScratchElement::create(el.element().node().owner_document(), nv.bytes()) };
+    let Some(scratch) = scratch else {
+        return Err(err("failed to rename element"));
+    };
+    scratch.rename(el);
 
-        lxb::lxb_dom_node_destroy(fresh as *mut LxbNode);
-        /* The element's tag id (local_name) is the key the element-by-tag index
-         * buckets on and the //tag fast path serves from; renaming changes it,
-         * so a persisted index would miss the element under its new name - a
-         * truncated, wrong //newtag result. Drop the indexes like every other
-         * mutator. */
-        invalidate(this.document);
-        Ok(rb_name)
-    }
+    /* The element's tag id (local_name) is the key the element-by-tag index
+     * buckets on and the //tag fast path serves from; renaming changes it, so a
+     * persisted index would miss the element under its new name - a truncated,
+     * wrong //newtag result. Drop the indexes like every other mutator. */
+    // SAFETY: `this.document` is the element's live Document.
+    unsafe { invalidate(this.document) };
+    Ok(rb_name)
 }
 
 /// `node.content = text` -> text. The DOM textContent setter: for an element
 /// this replaces all children with a single text node; for a character-data node
 /// it sets the data.
 pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
-    unsafe {
-        /* The attribute mutators still work in raw handles; this step is the
-         * tree edits. The clearance is the same, so the node comes back down
-         * to a pointer here. */
-        let node = unwrap_mutable(&this)?.as_raw();
-        let tv = ruby_verified_data(rb_text, c"node content")?;
-        let st = lxb::lxb_dom_node_text_content_set(node, tv.as_ptr() as *const u8, tv.len());
-        if st != STATUS_OK {
-            return Err(err("failed to set node content"));
-        }
-        invalidate(this.document);
-        Ok(rb_text)
+    let node = unwrap_mutable(&this)?;
+    let tv = ruby_verified_data(rb_text, c"node content")?;
+    /* SAFETY: the view is the caller's, live for this call. */
+    if !node.set_text_content(unsafe { tv.bytes() }) {
+        return Err(err("failed to set node content"));
     }
+    // SAFETY: `this.document` is the node's live Document.
+    unsafe { invalidate(this.document) };
+    Ok(rb_text)
 }
 
 /// `element.delete(name)` -> self. Removes the attribute if present.

@@ -596,6 +596,18 @@ impl<'doc> HtmlNodeMut<'doc> {
         self.0.next().map(HtmlNodeMut)
     }
 
+    /// Replace the node's descendants with `text`, DOM `textContent=`.
+    ///
+    /// `false` when Lexbor could not store it, in which case the node keeps
+    /// what it had.
+    pub fn set_text_content(self, text: &[u8]) -> bool {
+        // SAFETY: a live node the caller may change; Lexbor copies the bytes
+        // into the document before anything else runs.
+        let st =
+            unsafe { lxb::lxb_dom_node_text_content_set(self.as_raw(), text.as_ptr(), text.len()) };
+        st == lxb::lexbor_status_t_LXB_STATUS_OK
+    }
+
     /// The node as an element cleared for editing, when it is one.
     #[inline]
     pub fn element_mut(self) -> Option<HtmlElementMut<'doc>> {
@@ -629,6 +641,60 @@ impl<'doc> HtmlNodeMut<'doc> {
     pub fn insert_after(self, node: HtmlNodeMut<'doc>) {
         // SAFETY: as above.
         unsafe { lxb::lxb_dom_node_insert_after(self.as_raw(), node.as_raw()) };
+    }
+}
+
+/// An element made only to be read from and thrown away, destroyed when it
+/// goes out of scope.
+///
+/// Renaming an element is done by creating one under the new name, copying the
+/// names the document interned for it, and discarding the source: the five
+/// fields copied out (`local_name`, `prefix`, `ns`, `upper_name`,
+/// `qualified_name`) are the DOCUMENT's interned strings and tag ids, not the
+/// element's own storage, so they outlive it.
+///
+/// This is the one place Makiri destroys rather than detaches, and it is sound
+/// for the same reason: the throwaway was never in a tree and no Ruby wrapper
+/// ever saw it. Owning it keeps the destroy off the success path, where it used
+/// to sit between the copies and the index drop.
+pub struct ScratchElement<'doc>(HtmlElement<'doc>);
+
+impl<'doc> ScratchElement<'doc> {
+    /// A detached element named `local_name`, or `None` when Lexbor could not
+    /// make one.
+    ///
+    /// # Safety
+    /// `doc` must be a live document that outlives `'doc`.
+    pub unsafe fn create(doc: *mut LxbDoc, local_name: &[u8]) -> Option<Self> {
+        let el = lxb::lxb_dom_document_create_element(
+            doc,
+            local_name.as_ptr(),
+            local_name.len(),
+            core::ptr::null_mut(),
+        );
+        HtmlNode::from_raw(el as *mut LxbNode).map(|n| ScratchElement(HtmlElement(n)))
+    }
+
+    /// Give `target` this element's interned name, in place, so a Ruby wrapper
+    /// pointing at `target` keeps pointing at the same element.
+    pub fn rename(&self, target: HtmlElementMut<'doc>) {
+        // SAFETY: two live elements of one document; the names copied are the
+        // document's interned storage, which outlives this scratch element.
+        unsafe {
+            let (to, from) = (target.element().raw(), self.0.raw());
+            (*to).node.local_name = (*from).node.local_name;
+            (*to).node.prefix = (*from).node.prefix;
+            (*to).node.ns = (*from).node.ns;
+            (*to).upper_name = (*from).upper_name;
+            (*to).qualified_name = (*from).qualified_name;
+        }
+    }
+}
+
+impl Drop for ScratchElement<'_> {
+    fn drop(&mut self) {
+        // SAFETY: this type owns the element, which was never in a tree.
+        unsafe { lxb::lxb_dom_node_destroy(self.0.node().as_raw()) };
     }
 }
 
