@@ -20,7 +20,7 @@
 
 use core::ffi::c_void;
 
-use crate::dom_adapter::html::BuildingElement;
+use crate::dom_adapter::html::{BuildingElement, BuildingNode, HtmlDoc, NS_UNDEF};
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
@@ -38,7 +38,6 @@ mod h {
     pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 }
 
-const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const NS_XML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize;
 const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
@@ -47,7 +46,7 @@ const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 use lxb::{
     lxb_dom_document_create_comment, lxb_dom_document_create_document_fragment,
     lxb_dom_document_create_element, lxb_dom_document_create_processing_instruction,
-    lxb_dom_document_create_text_node, lxb_dom_node_insert_child, lxb_ns_by_id,
+    lxb_dom_document_create_text_node, lxb_ns_by_id,
 };
 
 /// A DOM name or value slice must fit `u32` - the mkr store's per-slice cap.
@@ -73,20 +72,6 @@ unsafe fn html_ns_uri<'a>(n: *const LxbNode) -> Option<&'a [u8]> {
         return None;
     }
     Some(core::slice::from_raw_parts(u, len))
-}
-
-/// Intern `uri` in the DESTINATION document's namespace table and return its
-/// Lexbor id, so an element's namespace survives translation for any URI.
-unsafe fn intern_ns(hdoc: *mut LxbDoc, uri: &[u8]) -> usize {
-    if uri.is_empty() || (*hdoc).ns.is_null() {
-        return NS_UNDEF;
-    }
-    let d = lxb::lxb_ns_append((*hdoc).ns as *mut c_void, uri.as_ptr(), uri.len());
-    if d.is_null() {
-        NS_UNDEF
-    } else {
-        (*d).ns_id
-    }
 }
 
 /* ---- the work stack, shared by both directions ---- */
@@ -410,85 +395,86 @@ fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> MutStatus
 
 /// Translate ONE mkr node into a fresh, detached Lexbor node.
 ///
-/// Null to SKIP an unsupported type. An XML CDATA section has no HTML
-/// counterpart, so it fails closed rather than degrading to a text node.
-unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut LxbNode, MutStatus> {
+/// `None` to SKIP an unsupported type - an ordinary outcome, which is why it is
+/// not an `Err`. An XML CDATA section has no HTML counterpart, so that one fails
+/// closed rather than degrading to a text node.
+fn x2h_make<'doc>(
+    hdoc: HtmlDoc<'doc>,
+    doc: &XmlDoc,
+    s: NodeId,
+) -> Result<Option<BuildingNode<'doc>>, MutStatus> {
     let value = || doc.value(s);
+    /* Every `create_*` below returns a fresh, detached node of `hdoc` - which
+     * outlives 'doc - or null when the arena could not take it.
+     * SAFETY: that is exactly this type's contract, and `from_raw` turns the
+     * null into the Oom. */
+    let made = |n: *mut LxbNode| unsafe { BuildingNode::from_raw(n) }.ok_or(MutStatus::Oom);
 
     match doc.type_(s) {
         Some(NodeType::Element) => {
             let qname = doc.qname(s);
-            let el = lxb_dom_document_create_element(
-                hdoc,
-                qname.as_ptr(),
-                qname.len(),
-                core::ptr::null_mut(),
-            );
-            let Some(building) = BuildingElement::from_raw(el) else {
+            /* SAFETY: a live document, and Lexbor copies the name. */
+            let el = unsafe {
+                lxb_dom_document_create_element(
+                    hdoc.as_raw(),
+                    qname.as_ptr(),
+                    qname.len(),
+                    core::ptr::null_mut(),
+                )
+            };
+            /* SAFETY: as `made` - a fresh, detached element, or null. */
+            let Some(el) = (unsafe { BuildingElement::from_raw(el) }) else {
                 return Err(MutStatus::Oom);
             };
-            (*(el as *mut LxbNode)).ns = intern_ns(hdoc, doc.ns(s));
+            el.set_ns(hdoc.intern_ns(doc.ns(s)));
 
-            let st = x2h_copy_attrs(doc, s, building);
+            let st = x2h_copy_attrs(doc, s, el);
             if st != MutStatus::Ok {
                 return Err(st);
             }
-            Ok(el as *mut LxbNode)
+            Ok(Some(el.as_node()))
         }
 
         Some(NodeType::Text) => {
             let v = value();
-            let t = lxb_dom_document_create_text_node(hdoc, v.as_ptr(), v.len());
-            if t.is_null() {
-                return Err(MutStatus::Oom);
-            }
-            Ok(t as *mut LxbNode)
+            /* SAFETY: see `made`. */
+            let t =
+                unsafe { lxb_dom_document_create_text_node(hdoc.as_raw(), v.as_ptr(), v.len()) };
+            made(t as *mut LxbNode).map(Some)
         }
 
         Some(NodeType::Comment) => {
             let v = value();
-            let c = lxb_dom_document_create_comment(hdoc, v.as_ptr(), v.len());
-            if c.is_null() {
-                return Err(MutStatus::Oom);
-            }
-            Ok(c as *mut LxbNode)
+            /* SAFETY: see `made`. */
+            let c = unsafe { lxb_dom_document_create_comment(hdoc.as_raw(), v.as_ptr(), v.len()) };
+            made(c as *mut LxbNode).map(Some)
         }
 
         Some(NodeType::Pi) => {
             let target = doc.local(s);
             let v = value();
-            let pi = lxb_dom_document_create_processing_instruction(
-                hdoc,
-                target.as_ptr(),
-                target.len(),
-                v.as_ptr(),
-                v.len(),
-            );
-            if pi.is_null() {
-                return Err(MutStatus::Oom);
-            }
-            Ok(pi as *mut LxbNode)
+            /* SAFETY: see `made`. */
+            let pi = unsafe {
+                lxb_dom_document_create_processing_instruction(
+                    hdoc.as_raw(),
+                    target.as_ptr(),
+                    target.len(),
+                    v.as_ptr(),
+                    v.len(),
+                )
+            };
+            made(pi as *mut LxbNode).map(Some)
         }
 
         Some(NodeType::CData) => Err(MutStatus::Type), /* HTML has no CDATA section */
 
         Some(NodeType::Fragment) => {
-            let f = lxb_dom_document_create_document_fragment(hdoc);
-            if f.is_null() {
-                return Err(MutStatus::Oom);
-            }
-            Ok(f as *mut LxbNode)
+            /* SAFETY: see `made`. */
+            let f = unsafe { lxb_dom_document_create_document_fragment(hdoc.as_raw()) };
+            made(f as *mut LxbNode).map(Some)
         }
 
-        _ => Ok(core::ptr::null_mut()), /* unsupported descendant type: skip */
-    }
-}
-
-/// Where a translated element's CHILDREN attach (a `<template>`'s content).
-unsafe fn x2h_link_target(el: *mut LxbNode) -> *mut LxbNode {
-    match template_content(el) {
-        Some(content) if !content.is_null() => content as *mut LxbNode,
-        _ => el,
+        _ => Ok(None), /* unsupported descendant type: skip */
     }
 }
 
@@ -501,18 +487,19 @@ pub unsafe fn cross_xml_to_html(
     out: *mut *mut LxbNode,
 ) -> MutStatus {
     *out = core::ptr::null_mut();
+    let Some(hdoc) = HtmlDoc::from_raw(hdoc) else {
+        return MutStatus::Internal; /* a null destination document */
+    };
     let doc = &*xdoc;
 
     let root = match x2h_make(hdoc, doc, src) {
-        Ok(n) => n,
+        Ok(Some(n)) => n,
+        Ok(None) => return MutStatus::Type, /* the root's type has no HTML counterpart */
         Err(st) => return st,
     };
-    if root.is_null() {
-        return MutStatus::Type; /* the root's type has no HTML counterpart */
-    }
 
     if deep {
-        let mut stack: Vec<Frame<NodeId, *mut LxbNode>> = match try_vec_with_capacity(1) {
+        let mut stack: Vec<Frame<NodeId, BuildingNode<'_>>> = match try_vec_with_capacity(1) {
             Some(v) => v,
             None => return MutStatus::Oom,
         };
@@ -520,7 +507,7 @@ pub unsafe fn cross_xml_to_html(
             &mut stack,
             Frame {
                 s: src,
-                d: x2h_link_target(root),
+                d: root.link_target(),
                 def: None,
             },
         )
@@ -536,14 +523,14 @@ pub unsafe fn cross_xml_to_html(
                     Ok(n) => n,
                     Err(st) => return st, /* partial subtree abandoned in mraw */
                 };
-                if !dc.is_null() {
-                    lxb_dom_node_insert_child(f.d, dc);
+                if let Some(dc) = dc {
+                    f.d.insert_child(dc);
                     if doc.first_child(cid).is_some()
                         && push(
                             &mut stack,
                             Frame {
                                 s: cid,
-                                d: x2h_link_target(dc),
+                                d: dc.link_target(),
                                 def: None,
                             },
                         )
@@ -557,6 +544,6 @@ pub unsafe fn cross_xml_to_html(
         }
     }
 
-    *out = root;
+    *out = root.as_raw();
     MutStatus::Ok
 }

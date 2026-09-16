@@ -644,6 +644,59 @@ impl<'doc> HtmlNodeMut<'doc> {
     }
 }
 
+/// A node being built, before anything links it into the destination tree.
+///
+/// Cross-document translation makes one node at a time and inserts it under a
+/// node it made a moment earlier. Neither the frozen check nor the evaluation
+/// check behind [`HtmlNodeMut`] applies, because no wrapper has seen these
+/// nodes and no query can reach them yet.
+///
+/// Neither this type nor [`BuildingElement`] has a `Drop`, and that is the
+/// contract rather than an omission: a translation that fails part-way leaves
+/// the half-built subtree for the document's arena to reclaim wholesale, and a
+/// `Drop` here would instead destroy nodes already linked under their parent.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct BuildingNode<'doc>(HtmlNode<'doc>);
+
+impl<'doc> BuildingNode<'doc> {
+    /// # Safety
+    /// `raw` must be null, or a live node that outlives `'doc` and belongs to a
+    /// subtree still being built - nothing outside that subtree points at it.
+    #[inline]
+    pub unsafe fn from_raw(raw: *mut LxbNode) -> Option<Self> {
+        HtmlNode::from_raw(raw).map(BuildingNode)
+    }
+
+    /// The node as an ordinary handle, for reading.
+    #[inline]
+    pub fn node(self) -> HtmlNode<'doc> {
+        self.0
+    }
+
+    #[inline]
+    pub fn as_raw(self) -> *mut LxbNode {
+        self.0.as_raw()
+    }
+
+    /// Where this node's CHILDREN attach: a `<template>`'s content fragment,
+    /// the node itself otherwise.
+    #[inline]
+    pub fn link_target(self) -> Self {
+        match self.0.template_content() {
+            Some(content) => BuildingNode(content),
+            None => self,
+        }
+    }
+
+    /// Link `child` in as the last child.
+    #[inline]
+    pub fn insert_child(self, child: Self) {
+        // SAFETY: two live nodes of one document, both still being built.
+        unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), child.as_raw()) };
+    }
+}
+
 /// An element being filled in before anything links it into a tree.
 ///
 /// Cross-document translation creates an element, copies the source's
@@ -665,6 +718,20 @@ impl<'doc> BuildingElement<'doc> {
     #[inline]
     pub unsafe fn from_raw(el: *mut LxbElement) -> Option<Self> {
         HtmlNode::from_raw(el as *mut LxbNode).map(|n| BuildingElement(HtmlElement(n)))
+    }
+
+    /// The element as a node being built, for linking and for reading.
+    #[inline]
+    pub fn as_node(self) -> BuildingNode<'doc> {
+        BuildingNode(self.0.node())
+    }
+
+    /// Put the element in the interned namespace `ns_id`.
+    #[inline]
+    pub fn set_ns(self, ns_id: usize) {
+        // SAFETY: an element nothing else holds; `ns_id` is an id this
+        // document's own namespace table handed out.
+        unsafe { (*self.0.raw()).node.ns = ns_id };
     }
 
     /// Set a plain, namespaceless attribute. `false` when Lexbor could not
