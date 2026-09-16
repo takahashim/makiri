@@ -33,13 +33,12 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{node_document, unwrap, wrap};
-use crate::dom_adapter::html::{HtmlNode, HtmlNodeMut};
+use crate::dom_adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, NS_UNDEF};
 use crate::glue::abi::{
-    error_class, html_doc_unwrap, ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
+    error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbElement, LxbNode,
 };
 use crate::lexbor_abi as lxb;
 
-const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
 /// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
@@ -432,65 +431,6 @@ pub fn aset(
     Ok(rb_value)
 }
 
-/// An attribute's OWN namespace id: the one recorded by `set_attribute_ns`
-/// (which differs from the owner element's), else the null namespace - a
-/// normally-set or parsed attribute inherits the element's ns, which for
-/// matching purposes is null (an unprefixed attribute is namespaceless).
-unsafe fn attr_own_ns(at: *const LxbAttr) -> usize {
-    let owner = (*at).owner;
-    if !owner.is_null() && (*at).node.ns != (*owner).node.ns {
-        return (*at).node.ns;
-    }
-    NS_UNDEF
-}
-
-/// Find the attribute on `el` matching (ns_id, local_name) case-sensitively.
-///
-/// The DOM keys attributes on (namespace, local name), so two with the same
-/// qualified name in different namespaces coexist - which Lexbor's
-/// by-qualified-name, case-insensitive-for-HTML lookup cannot express.
-unsafe fn attr_find_ns(el: *mut LxbElement, ns_id: usize, local: &[u8]) -> *mut LxbAttr {
-    let mut at = (*el).first_attr;
-    while !at.is_null() {
-        if attr_own_ns(at) == ns_id {
-            /* Compare the case-PRESERVED local name (the suffix of the
-             * qualified name): Lexbor lower-cases the stored local_name even
-             * when the qualified name keeps its case, but setAttributeNS is
-             * case-sensitive. */
-            let mut qlen = 0usize;
-            let mut llen = 0usize;
-            let q = lxb::lxb_dom_attr_qualified_name(at, &mut qlen);
-            lxb::lxb_dom_attr_local_name(at, &mut llen);
-            if !q.is_null()
-                && qlen >= llen
-                && core::slice::from_raw_parts(q.add(qlen - llen), llen) == local
-            {
-                return at;
-            }
-        }
-        at = (*at).next;
-    }
-    core::ptr::null_mut()
-}
-
-/// Intern `uri` in the document's namespace table, or the null namespace for an
-/// empty one.
-unsafe fn intern_ns(node: *mut LxbNode, uri: &[u8]) -> usize {
-    if uri.is_empty() {
-        return NS_UNDEF;
-    }
-    let doc = (*node).owner_document;
-    if doc.is_null() || (*doc).ns.is_null() {
-        return NS_UNDEF;
-    }
-    let d = lxb::lxb_ns_append((*doc).ns as *mut c_void, uri.as_ptr(), uri.len());
-    if d.is_null() {
-        NS_UNDEF
-    } else {
-        (*d).ns_id
-    }
-}
-
 /// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
 ///
 /// Stores the attribute under its qualified name (case-preserved -
@@ -531,7 +471,8 @@ pub fn set_attribute_ns(
         /* Intern the wanted namespace so the existing attribute is matched on
          * (namespace, local name) - the DOM key - rather than on the qualified
          * name. */
-        let want_ns = intern_ns(node, ns_bytes);
+        let want_ns =
+            HtmlDoc::from_raw((*node).owner_document).map_or(NS_UNDEF, |d| d.intern_ns(ns_bytes));
 
         let qname = core::slice::from_raw_parts(qv.as_ptr() as *const u8, qv.len());
         let local = match qname.iter().position(|&b| b == b':') {
@@ -543,9 +484,11 @@ pub fn set_attribute_ns(
          * prefix leaves the prefix unchanged); only the value updates. A miss
          * appends a new attribute, even when its qualified name collides with an
          * existing one in a different namespace. */
-        let existing = attr_find_ns(el, want_ns, local);
-        let outcome = if !existing.is_null() {
-            if lxb::lxb_dom_attr_set_value(existing, vv.as_ptr() as *const u8, vv.len())
+        let existing = HtmlNode::from_raw(node)
+            .and_then(|n| n.element())
+            .and_then(|e| e.find_attr_ns(want_ns, local));
+        let outcome = if let Some(existing) = existing {
+            if lxb::lxb_dom_attr_set_value(existing.raw(), vv.as_ptr() as *const u8, vv.len())
                 != STATUS_OK
             {
                 Err(err("failed to set attribute value"))
@@ -603,35 +546,30 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    unsafe {
-        /* The attribute mutators still work in raw handles; this step is the
-         * tree edits. The clearance is the same, so the node comes back down
-         * to a pointer here. */
-        let node = unwrap_mutable(&this)?.as_raw();
-        if (*node).type_ != ty::ELEMENT {
-            return Ok(ruby.qnil().as_value());
+    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+        return Ok(ruby.qnil().as_value());
+    };
+    let lv = ruby_verified_text(rb_local, c"attribute local name")?;
+
+    let mut want_ns = NS_UNDEF;
+    if !rb_ns.is_nil() {
+        let nv = ruby_verified_text(rb_ns, c"namespace")?;
+        if nv.len() != 0 {
+            let doc = el.element().node().owner_document();
+            /* SAFETY: the element's own Document, and the view is live here. */
+            want_ns = unsafe { HtmlDoc::from_raw(doc) }
+                .map_or(NS_UNDEF, |d| d.intern_ns(unsafe { nv.bytes() }));
         }
-        let el = node as *mut LxbElement;
-
-        let lv = ruby_verified_text(rb_local, c"attribute local name")?;
-
-        let mut want_ns = NS_UNDEF;
-        if !rb_ns.is_nil() {
-            let nv = ruby_verified_text(rb_ns, c"namespace")?;
-            if nv.len() != 0 {
-                want_ns = intern_ns(node, nv.bytes());
-            }
-        }
-
-        let local = lv.bytes();
-        let attr = attr_find_ns(el, want_ns, local);
-
-        if !attr.is_null() {
-            lxb::lxb_dom_element_attr_remove(el, attr);
-            invalidate(this.document);
-        }
-        Ok(ruby.qnil().as_value())
     }
+
+    /* SAFETY: the view is the caller's, live for this call. */
+    let found = el.element().find_attr_ns(want_ns, unsafe { lv.bytes() });
+    if let Some(attr) = found {
+        el.attr_remove(attr);
+        // SAFETY: `this.document` is the element's live Document.
+        unsafe { invalidate(this.document) };
+    }
+    Ok(ruby.qnil().as_value())
 }
 
 /// `element.name = new_name` -> new_name.

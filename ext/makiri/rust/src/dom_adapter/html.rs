@@ -292,6 +292,32 @@ impl<'doc> HtmlDoc<'doc> {
             _doc: PhantomData,
         }
     }
+
+    /// Intern `uri` in the document's namespace table and give back its id -
+    /// the half of the key the DOM matches a namespaced attribute on.
+    ///
+    /// [`NS_UNDEF`] for an empty URI, and for a document with no table or one
+    /// that could not take another entry: a miss then simply finds nothing,
+    /// rather than matching the wrong attribute.
+    pub fn intern_ns(self, uri: &[u8]) -> usize {
+        if uri.is_empty() {
+            return NS_UNDEF;
+        }
+        // SAFETY: a live document; the table and the URI are only read, and
+        // Lexbor copies the URI into its own storage.
+        unsafe {
+            let table = (*self.as_raw()).ns;
+            if table.is_null() {
+                return NS_UNDEF;
+            }
+            let d = lxb::lxb_ns_append(table as *mut core::ffi::c_void, uri.as_ptr(), uri.len());
+            if d.is_null() {
+                NS_UNDEF
+            } else {
+                (*d).ns_id
+            }
+        }
+    }
 }
 
 impl<'doc> HtmlNode<'doc> {
@@ -641,6 +667,12 @@ impl<'doc> HtmlElementMut<'doc> {
         HtmlNode::link(at as *mut LxbNode).map(HtmlAttr)
     }
 
+    /// Take `attr` off the element. The arena keeps it, like a detached node.
+    pub fn attr_remove(self, attr: HtmlAttr<'doc>) {
+        // SAFETY: a live element the caller may change, and an attribute of it.
+        unsafe { lxb::lxb_dom_element_attr_remove(self.0.raw(), attr.raw()) };
+    }
+
     /// Remove the attribute Lexbor's lookup finds for `name`; no-op when there
     /// is none.
     pub fn remove_attribute(self, name: &[u8]) {
@@ -692,6 +724,29 @@ impl<'doc> HtmlElement<'doc> {
         Attrs(HtmlNode::link(first as *mut LxbNode).map(HtmlAttr))
     }
 
+    /// The attribute with this (namespace, local name) - the DOM's key for a
+    /// namespaced attribute, as against [`get_attribute`](Self::get_attribute),
+    /// which is Lexbor's lookup by local name alone.
+    ///
+    /// The local name compared is the CASE-PRESERVED tail of the qualified
+    /// name, not Lexbor's stored `local_name`: Lexbor lower-cases that even when
+    /// the qualified name keeps its case, and `setAttributeNS` is
+    /// case-sensitive.
+    pub fn find_attr_ns(self, ns_id: usize, local: &[u8]) -> Option<HtmlAttr<'doc>> {
+        let mut at = self.first_attr();
+        while let Some(a) = at {
+            if a.own_ns() == ns_id {
+                let q = a.qualified_name();
+                let l = a.local_name();
+                if q.len() >= l.len() && &q[q.len() - l.len()..] == local {
+                    return Some(a);
+                }
+            }
+            at = a.next_attr();
+        }
+        None
+    }
+
     /// Lexbor's attribute lookup (by local name, lower-cased for HTML).
     pub fn has_attribute(self, name: &[u8]) -> bool {
         // SAFETY: a live element; `name` is only read.
@@ -710,7 +765,7 @@ impl<'doc> HtmlAttr<'doc> {
         self.0
     }
     #[inline]
-    fn raw(self) -> *mut LxbAttr {
+    pub(crate) fn raw(self) -> *mut LxbAttr {
         self.0.as_raw() as *mut LxbAttr
     }
 
@@ -737,6 +792,18 @@ impl<'doc> HtmlAttr<'doc> {
         // which the handle's contract rules out for 'doc.
         unsafe { named_mut(self.raw(), lxb::lxb_dom_attr_value_noi) }
     }
+    /// The attribute's OWN namespace id, the one `setAttributeNS` recorded.
+    ///
+    /// An attribute with no namespace of its own reports its element's, so the
+    /// two are compared: only a difference is the attribute's own. [`NS_UNDEF`]
+    /// for an attribute Lexbor has not linked to an element yet.
+    pub fn own_ns(self) -> usize {
+        match self.owner() {
+            Some(owner) if owner.node().ns_id() != self.node().ns_id() => self.node().ns_id(),
+            _ => NS_UNDEF,
+        }
+    }
+
     /// The element the attribute is set on, when Lexbor has linked it.
     pub fn owner(self) -> Option<HtmlElement<'doc>> {
         // SAFETY: a live attribute.
