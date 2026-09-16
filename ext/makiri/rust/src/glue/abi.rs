@@ -14,7 +14,7 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{ExceptionClass, RModule, Value};
 use rb_sys::VALUE;
 
-use crate::init::RbConst;
+use crate::init::{RbConst, EXC_ERROR, MOD_HTML_NODE_METHODS};
 
 /// `mkr_node_data_t` - what a node wrapper holds: the node pointer plus the
 /// keepalive Document. Declared here because both `glue::node` (which owns the
@@ -109,21 +109,6 @@ pub use crate::glue::node_set::node_set_new;
 pub use crate::glue::node_set::node_set_push;
 pub use crate::glue::xml_node::wrap_xml_node;
 pub use crate::glue::xml_node::xml_node_unwrap;
-pub use crate::init::CLASS_DOCUMENT;
-pub use crate::init::CLASS_DOCUMENT_FRAGMENT;
-pub use crate::init::CLASS_HTML_DOCUMENT;
-pub use crate::init::CLASS_NODE;
-pub use crate::init::CLASS_NODE_SET;
-pub use crate::init::CLASS_XML_DOCUMENT;
-pub use crate::init::CLASS_XML_DOCUMENT_FRAGMENT;
-pub use crate::init::EXC_CSS_SYNTAX_ERROR;
-pub use crate::init::EXC_ERROR;
-pub use crate::init::EXC_XML_LIMIT_EXCEEDED;
-pub use crate::init::EXC_XML_SYNTAX_ERROR;
-pub use crate::init::MOD_HTML_NODE_METHODS;
-pub use crate::init::MOD_LEXBOR;
-pub use crate::init::MOD_XML;
-pub use crate::init::MOD_XML_NODE_METHODS;
 
 /// The XML arena behind a parsed handle, or null for an HTML one.
 ///

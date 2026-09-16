@@ -49,9 +49,9 @@ use rb_sys::VALUE;
 
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push,
-    ruby_bytes_view, verify_text, wrap_html_node, LxbNode, EXC_CSS_SYNTAX_ERROR, LXB_STATUS_OK,
-    MOD_HTML_NODE_METHODS,
+    ruby_bytes_view, verify_text, wrap_html_node, LxbNode, LXB_STATUS_OK,
 };
+use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
 
 /// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
 /// same bound.

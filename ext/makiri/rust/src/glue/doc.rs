@@ -34,10 +34,12 @@ use crate::lexbor_abi as lxb;
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
     ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbDoc, LxbNode,
-    CLASS_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS,
 };
 use super::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
+};
+use crate::init::{
+    CLASS_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS,
 };
 
 /* ------------------------------------------------------------------ *

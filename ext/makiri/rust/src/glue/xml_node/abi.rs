@@ -8,11 +8,7 @@
 
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
-pub use super::super::abi::{
-    doc_parsed, error_class, node_set_new, node_set_push, parsed_xml_doc, CLASS_DOCUMENT,
-    CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_ERROR, EXC_XML_SYNTAX_ERROR, MOD_XML,
-    MOD_XML_NODE_METHODS,
-};
+pub use super::super::abi::{doc_parsed, error_class, node_set_new, node_set_push, parsed_xml_doc};
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
@@ -20,14 +16,21 @@ pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, St
 pub use crate::glue::abi::{ruby_verified_text, RubyText};
 
 pub use crate::glue::node::XML_NODE_TYPE;
+pub use crate::init::CLASS_DOCUMENT;
 pub use crate::init::CLASS_XML_ATTR;
 pub use crate::init::CLASS_XML_CDATA_SECTION;
 pub use crate::init::CLASS_XML_COMMENT;
+pub use crate::init::CLASS_XML_DOCUMENT;
+pub use crate::init::CLASS_XML_DOCUMENT_FRAGMENT;
 pub use crate::init::CLASS_XML_DOCUMENT_TYPE;
 pub use crate::init::CLASS_XML_ELEMENT;
 pub use crate::init::CLASS_XML_NODE;
 pub use crate::init::CLASS_XML_PROCESSING_INSTRUCTION;
 pub use crate::init::CLASS_XML_TEXT;
+pub use crate::init::EXC_ERROR;
+pub use crate::init::EXC_XML_SYNTAX_ERROR;
+pub use crate::init::MOD_XML;
+pub use crate::init::MOD_XML_NODE_METHODS;
 
 /// A field's bytes as a UTF-8 Ruby String (empty bytes -> `""`).
 pub fn str_field(ruby: &Ruby, bytes: &[u8]) -> Value {

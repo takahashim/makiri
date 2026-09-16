@@ -54,9 +54,9 @@ use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 use super::abi::{
     doc_parsed, error_class, html_node_unwrap, is_kind_of, keepalive_document, node_raw,
     node_set_new, node_set_push, parsed_xml_doc, ruby_str_from_utf8, ruby_verified_text,
-    xml_node_unwrap, RubyText, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT,
-    MOD_HTML_NODE_METHODS,
+    xml_node_unwrap, RubyText,
 };
+use crate::init::{CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS};
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
 /// many times, so each is parsed once and the AST re-evaluated (the evaluator

@@ -46,8 +46,9 @@ use crate::lexbor_abi::consts as k;
 
 use super::abi::{
     error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
-    ruby_verified_text, CssParser, MOD_LEXBOR,
+    ruby_verified_text, CssParser,
 };
+use crate::init::MOD_LEXBOR;
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
 /// pathologically nested stylesheet.

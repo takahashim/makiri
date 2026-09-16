@@ -24,7 +24,8 @@ use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
 use self::abi::*;
-use super::abi::{doc_parsed, parsed_xml_doc, NodeData, CLASS_DOCUMENT, CLASS_NODE_SET};
+use super::abi::{doc_parsed, parsed_xml_doc, NodeData};
+use crate::init::{CLASS_DOCUMENT, CLASS_NODE_SET};
 
 /// Wrap an arena node into its `Makiri::XML::*` leaf.
 ///

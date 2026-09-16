@@ -35,13 +35,10 @@ use magnus::rb_sys::FromRawValue;
 use magnus::{method, prelude::*, RClass, Ruby, Value};
 use rb_sys::VALUE;
 
-use super::abi::{
-    html_doc_unwrap, html_node_methods, is_kind_of, LxbNode, NodeData, CLASS_DOCUMENT,
-    CLASS_XML_DOCUMENT,
-};
+use super::abi::{html_doc_unwrap, html_node_methods, is_kind_of, LxbNode, NodeData};
 /* Only the mutation half registers on the Document class. */
-use super::abi::CLASS_HTML_DOCUMENT;
 use crate::dom_adapter::html::HtmlNode;
+use crate::init::{CLASS_DOCUMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT};
 
 /* ------------------------------------------------------------------ *
  * the DOM node types                                                 *

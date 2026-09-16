@@ -98,7 +98,8 @@ const NODE_KIND_OTHER: c_int = 0;
 const NODE_KIND_HTML: c_int = 1;
 const NODE_KIND_XML: c_int = 2;
 
-use super::abi::{doc_parsed, parsed_xml_doc, DataType, CLASS_DOCUMENT, CLASS_NODE};
+use super::abi::{doc_parsed, parsed_xml_doc, DataType};
+use crate::init::{CLASS_DOCUMENT, CLASS_NODE};
 
 /// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an
 /// opaque `*mut c_void` - dereferencing it takes an explicit cast, so it cannot

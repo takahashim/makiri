@@ -22,7 +22,8 @@ use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
 use super::abi::*;
 use super::{node_document, unwrap, wrap};
-use crate::glue::abi::{doc_parsed, html_node_unwrap, parsed_xml_doc, CLASS_NODE};
+use crate::glue::abi::{doc_parsed, html_node_unwrap, parsed_xml_doc};
+use crate::init::CLASS_NODE;
 
 /// `NodeKind`.
 const KIND_HTML: core::ffi::c_int = 1;

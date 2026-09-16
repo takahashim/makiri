@@ -57,9 +57,11 @@ use crate::css::CssNs;
 
 use super::abi::{
     doc_parsed, keepalive_document, node_set_new, parsed_xml_doc, ruby_verified_text, verify_text,
-    wrap_xml_node, xml_node_unwrap, CLASS_DOCUMENT, CLASS_XML_DOCUMENT,
-    CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED,
-    EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
+    wrap_xml_node, xml_node_unwrap,
+};
+use crate::init::{
+    CLASS_DOCUMENT, CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR,
+    EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
 };
 
 /// Wrap an XML node, typed.

@@ -41,8 +41,9 @@ use rb_sys::VALUE;
 
 use super::abi::{
     error_class, keepalive_document, node_raw, typed_data_unprotected, wrap_html_node,
-    wrap_xml_node, LxbNode, CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT,
+    wrap_xml_node, LxbNode,
 };
+use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
 
 /// The per-set node cap, shared with the CSS and XPath glue: every
 /// node-collecting path fails closed at the same bound instead of growing
