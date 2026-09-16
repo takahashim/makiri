@@ -151,22 +151,32 @@ pub fn doc_parsed(rb_doc: Value) -> Result<*mut crate::dom_adapter::post_parse::
 /// that edited the same document could leave the evaluator reading freed
 /// memory. Every mutator checks [`ensure_document_mutable`] first, so that
 /// borrow is never invalidated under a suspended walk.
-pub(crate) struct DocumentEvaluation(*mut crate::dom_adapter::post_parse::Parsed);
+pub(crate) struct DocumentEvaluation(
+    *mut crate::dom_adapter::post_parse::Parsed,
+    /// The Document the handle belongs to. Holding it is what keeps the handle
+    /// valid: a guard lives on the machine stack, which Ruby's collector scans,
+    /// so the Document cannot be collected while one is alive.
+    Value,
+);
 
 impl DocumentEvaluation {
-    /// # Safety
-    /// The caller keeps `rb_doc` reachable for as long as the guard lives.
-    pub(crate) unsafe fn enter(rb_doc: Value) -> Result<Self, Error> {
+    pub(crate) fn enter(rb_doc: Value) -> Result<Self, Error> {
         let p = doc_parsed(rb_doc)?;
-        (*p).evaluating += 1;
-        Ok(DocumentEvaluation(p))
+        // SAFETY: the handle of a live Document, kept alive by the guard itself.
+        unsafe { (*p).evaluating += 1 };
+        Ok(DocumentEvaluation(p, rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        // SAFETY: `enter` counted this handle, and its document is still alive.
+        // SAFETY: `enter` counted this handle, and field 1 has kept its Document
+        // - and so the handle - alive for as long as this guard.
         unsafe { (*self.0).evaluating -= 1 }
+        /* Read the Document here, so the guard demonstrably holds it: the field
+         * is there to keep it reachable, and a field nothing reads is one the
+         * compiler is free to treat as absent. */
+        core::hint::black_box(self.1);
     }
 }
 

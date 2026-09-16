@@ -370,7 +370,7 @@ unsafe fn build_ctx(
 
 /// Evaluate a compiled AST with no handler and convert the result, freeing the
 /// AST and the context first.
-unsafe fn run_ast(
+fn run_ast(
     ruby: &Ruby,
     ctx: XPathContext<'static>,
     ast: Box<Ast>,
@@ -404,7 +404,7 @@ fn xpath_run(
             return Ok(if first_only {
                 ruby.qnil().as_value()
             } else {
-                Value::from_raw(node_set_new(document.as_raw()))
+                node_set_new(document)
             });
         }
         let ctx = build_ctx(ruby, rb_self, document, expr, c"XPath expression", ns)?;
@@ -484,7 +484,7 @@ fn css_run(
             return Ok(if first_only {
                 ruby.qnil().as_value()
             } else {
-                Value::from_raw(node_set_new(document.as_raw()))
+                node_set_new(document)
             });
         }
         let ctx = build_ctx(ruby, rb_self, document, selector, c"CSS selector", Some(ns))?;

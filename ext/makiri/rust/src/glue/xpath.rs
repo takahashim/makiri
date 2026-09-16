@@ -114,14 +114,16 @@ pub(crate) fn xpath_error(err: &XPathError) -> Error {
 /// node.
 ///
 /// Shared with the XML query glue, like [`xpath_error`].
-pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
+pub(crate) fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
     /* A refused push cannot leave `protect` through `?`, so it is carried out. */
     let mut refused = None;
     let converted = magnus::rb_sys::protect(|| match &v {
         XPathValue::NodeSet(set) => {
-            let rb = node_set_new(document.as_raw());
+            let rb = node_set_new(document).as_raw();
             for &n in set.as_slice() {
-                if let Err(e) = node_set_push(rb, n) {
+                // SAFETY: `rb` is the set just built, and the nodes are the
+                // engine's own, from the document it was built over.
+                if let Err(e) = unsafe { node_set_push(rb, n) } {
                     refused = Some(e);
                     break;
                 }
@@ -130,9 +132,13 @@ pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Val
         }
         XPathValue::String(t) => {
             let s = t.as_slice();
-            rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
+            // SAFETY: a fresh String over bytes the value owns.
+            unsafe {
+                rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
+            }
         }
-        XPathValue::Number(d) => rb_sys::rb_float_new(*d),
+        // SAFETY: allocates a Float; nothing is borrowed.
+        XPathValue::Number(d) => unsafe { rb_sys::rb_float_new(*d) },
         XPathValue::Boolean(true) => rb_sys::Qtrue as VALUE,
         XPathValue::Boolean(false) => rb_sys::Qfalse as VALUE,
     });
@@ -141,7 +147,8 @@ pub(crate) unsafe fn value_to_ruby(v: XPathValue, document: Value) -> Result<Val
     if let Some(e) = refused {
         return Err(e.into());
     }
-    Ok(Value::from_raw(converted))
+    // SAFETY: whatever the conversion above built, which is live.
+    Ok(unsafe { Value::from_raw(converted) })
 }
 
 /* ------------------------------------------------------------------ */
@@ -273,47 +280,48 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<bool, Error> {
 /// alive: the caller holds `document` for as long as the context lives. The
 /// document does not change while an evaluate runs: without a handler no Ruby
 /// runs, and with one [`Bridge`] holds the document's mutation guard.
-pub(crate) unsafe fn context_for(
-    rb_node: Value,
-    document: Value,
-) -> Result<Context<'static>, Error> {
+pub(crate) fn context_for(rb_node: Value, document: Value) -> Result<Context<'static>, Error> {
     let parsed = doc_parsed(document)?;
 
-    if (*parsed).is_xml() {
-        let xdoc = parsed_xml_doc(parsed);
-        if xdoc.is_null() {
-            return Err(Error::new(error_class(), "XPath context with no document"));
+    // SAFETY: the handle of `document`, which the caller holds for as long as
+    // the context it gets back.
+    unsafe {
+        if (*parsed).is_xml() {
+            let xdoc = parsed_xml_doc(parsed);
+            if xdoc.is_null() {
+                return Err(Error::new(error_class(), "XPath context with no document"));
+            }
+            /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
+             * document node for a Document receiver, else the node itself. */
+            let cnode = if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
+                (*(xdoc as *mut crate::xml::model::Doc))
+                    .doc_node()
+                    .to_token() as *mut c_void
+            } else {
+                xml_node_unwrap(rb_node)?
+            };
+            let backend = Backend::Xml {
+                doc: xdoc as *const crate::xml::model::Document,
+            };
+            return Ok(Context::new(backend, cnode));
         }
-        /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
-         * document node for a Document receiver, else the node itself. */
-        let cnode = if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
-            (*(xdoc as *mut crate::xml::model::Doc))
-                .doc_node()
-                .to_token() as *mut c_void
-        } else {
-            xml_node_unwrap(rb_node)?
-        };
-        let backend = Backend::Xml {
-            doc: xdoc as *const crate::xml::model::Document,
-        };
-        return Ok(Context::new(backend, cnode));
-    }
 
-    let node = html_node_unwrap(rb_node)?;
-    /* TypeError for a Document that is not HTML. */
-    crate::glue::abi::html_doc_unwrap(document)?;
-    /* Built up front, so an allocation failure raises here rather than on the
-     * first evaluate. Each evaluate still reads the index afresh from the
-     * handle, which rebuilds it after a mutation - the context must not keep
-     * the one it saw here. */
-    if (*parsed).dom_index().is_none() {
-        return Err(Error::new(
-            error_class(),
-            "failed to build attribute index for XPath",
-        ));
+        let node = html_node_unwrap(rb_node)?;
+        /* TypeError for a Document that is not HTML. */
+        crate::glue::abi::html_doc_unwrap(document)?;
+        /* Built up front, so an allocation failure raises here rather than on the
+         * first evaluate. Each evaluate still reads the index afresh from the
+         * handle, which rebuilds it after a mutation - the context must not keep
+         * the one it saw here. */
+        if (*parsed).dom_index().is_none() {
+            return Err(Error::new(
+                error_class(),
+                "failed to build attribute index for XPath",
+            ));
+        }
+        let backend = Backend::Html { parsed };
+        Ok(Context::new(backend, node as *mut c_void))
     }
-    let backend = Backend::Html { parsed };
-    Ok(Context::new(backend, node as *mut c_void))
 }
 
 /// `XPathContext.new(node, namespace_matching: :strict)`.
@@ -329,7 +337,7 @@ fn ctx_s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         ));
     }
     let document = keepalive_document(rb_node)?;
-    let mut ctx = unsafe { context_for(rb_node, document)? };
+    let mut ctx = context_for(rb_node, document)?;
     ctx.set_lax(lax);
 
     let obj = ruby
@@ -418,7 +426,8 @@ unsafe impl Resolver for Bridge {
 unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
     Ok(match v.get() {
         ValRef::NodeSet(ns) => {
-            let set = node_set_new(b.document);
+            /* The bridge's document, which the evaluation holds. */
+            let set = node_set_new(Value::from_raw(b.document)).as_raw();
             for &n in ns.as_slice() {
                 node_set_push(set, n)?;
             }
@@ -741,19 +750,21 @@ unsafe fn handler_resolver(
 /// Returns a pointer to the AST plus its owner when it could not be cached. A
 /// cached AST lives as long as the context (see [`AstCache`]).
 #[allow(clippy::result_large_err)]
-unsafe fn cached_ast(
+fn cached_ast(
     cache: &mut AstCache,
     limits: crate::xpath::limits::Limits,
     expr: RubyText,
 ) -> Result<(*const Ast, Option<Box<Ast>>), crate::xpath::msg::Error> {
-    let key = expr.bytes();
+    // SAFETY: `expr` holds its String rooted for this lookup.
+    let key = unsafe { expr.bytes() };
     if let Some(ast) = cache.0.get(key) {
         return Ok((&**ast as *const Ast, None));
     }
 
     /* Each parse charges a budget of its own, made from the context's caps. */
     let mut budget = Budget::with_limits(limits);
-    let Ok(ast) = crate::xpath::parse::parse_owned(unsafe { expr.as_verified() }, &mut budget)
+    // SAFETY: as above, and the parse only allocates - no Ruby runs in it.
+    let Ok(ast) = (unsafe { crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget) })
     else {
         return Err(budget.take_error());
     };
@@ -784,10 +795,12 @@ unsafe fn cached_ast(
 
 /// Parse `expr` for one query under `ctx`'s caps, on a budget of the query's
 /// own; a failure is that budget's error as the exception.
-pub(crate) unsafe fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>, Error> {
+pub(crate) fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr, c"XPath expression")?;
     let mut budget = Budget::with_limits(ctx.limits());
-    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
+    // SAFETY: `ev` holds the String rooted, and nothing runs Ruby before it is
+    // dropped below.
+    let parsed = unsafe { crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget) };
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
     parsed.map_err(|_| xpath_error(&budget.take_error()))
@@ -796,7 +809,7 @@ pub(crate) unsafe fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>,
 /// Evaluate `ast` under `ctx`, with `handler` (nil for none) answering unknown
 /// functions for this evaluation only. `first_only` takes the `at_xpath` fast
 /// path.
-pub(crate) unsafe fn evaluate_query(
+pub(crate) fn evaluate_query(
     ctx: &Context,
     ast: &Ast,
     handler: Value,
@@ -828,7 +841,7 @@ pub(crate) unsafe fn evaluate_query(
 ///
 /// Callers free the AST and any context they own BEFORE this: the value owns
 /// its data and references neither.
-pub(crate) unsafe fn query_result(
+pub(crate) fn query_result(
     value: XPathValue,
     document: Value,
     first_only: bool,
@@ -853,7 +866,7 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
      * specific refusal (and permits a nested evaluate). Holding the borrow
      * across the walk would turn all four into one generic "already in use",
      * which is how the handler specs first caught this. */
-    let (ast, owned) = unsafe {
+    let (ast, owned) = {
         /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
          * which may re-enter this context, and a borrow held across that would
          * turn the re-entry into "already in use". */
@@ -869,13 +882,12 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         }
     };
 
-    unsafe {
-        /* A cached AST outlives this call: the context is live (it is
-         * `rb_self`), and its cache frees nothing before the context goes. */
-        let value = evaluate_query(&rb_self.ctx, &*ast, handler, document, false);
-        drop(owned);
-        query_result(value?, document, false)
-    }
+    /* A cached AST outlives this call: the context is live (it is `rb_self`),
+     * and its cache frees nothing before the context goes. */
+    // SAFETY: as above - the AST the cache just handed back.
+    let value = evaluate_query(&rb_self.ctx, unsafe { &*ast }, handler, document, false);
+    drop(owned);
+    query_result(value?, document, false)
 }
 
 fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Value, Error> {
@@ -947,16 +959,14 @@ fn node_xpath_run(
     lax: bool,
     first_only: bool,
 ) -> Result<Value, Error> {
-    unsafe {
-        let document = keepalive_document(rb_self)?;
-        let mut ctx = context_for(rb_self, document)?;
-        ctx.set_lax(lax);
-        let ast = parse_query(&ctx, expr)?;
-        let value = evaluate_query(&ctx, &ast, handler, document, first_only);
-        drop(ast);
-        drop(ctx);
-        query_result(value?, document, first_only)
-    }
+    let document = keepalive_document(rb_self)?;
+    let mut ctx = context_for(rb_self, document)?;
+    ctx.set_lax(lax);
+    let ast = parse_query(&ctx, expr)?;
+    let value = evaluate_query(&ctx, &ast, handler, document, first_only);
+    drop(ast);
+    drop(ctx);
+    query_result(value?, document, first_only)
 }
 
 /// `(expression, handler, lax)` from the argument list.

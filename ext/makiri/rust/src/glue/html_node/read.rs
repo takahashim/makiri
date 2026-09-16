@@ -416,13 +416,13 @@ fn set_of<'d>(
 ) -> Result<Value, Error> {
     // SAFETY: every node is in the tree whose keepalive Document is `document`.
     unsafe {
-        let set = node_set_new(document.as_raw());
+        let set = node_set_new(document);
         for n in nodes {
             if !elements_only || n.element().is_some() {
-                node_set_push(set, n.as_raw() as *mut core::ffi::c_void)?;
+                node_set_push(set.as_raw(), n.as_raw() as *mut core::ffi::c_void)?;
             }
         }
-        Ok(Value::from_raw(set))
+        Ok(set)
     }
 }
 

@@ -352,7 +352,7 @@ mod agree {
     same_signature!(
         node_set_new,
         crate::glue::node_set::node_set_new,
-        unsafe fn(VALUE) -> VALUE
+        fn(Value) -> Value
     );
     same_signature!(
         node_set_push,

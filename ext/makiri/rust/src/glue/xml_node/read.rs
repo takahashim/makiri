@@ -5,7 +5,7 @@
 //! Document. XML nodes never inherit the Lexbor HTML readers - those live on
 //! `Makiri::HTML::NodeMethods` - so this surface is structural.
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::abi::*;
@@ -191,28 +191,28 @@ pub fn get_document(this: super::XmlSelf) -> Value {
 pub fn element_children(this: super::XmlSelf) -> Result<Value, Error> {
     unsafe {
         let d = &*this.doc();
-        let set = node_set_new(this.document.as_raw());
+        let set = node_set_new(this.document);
         let mut c = d.first_child(this.id);
         while let Some(id) = c {
             if d.type_(id) == Some(NodeType::Element) {
-                node_set_push(set, id.to_token() as *mut core::ffi::c_void)?;
+                node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)?;
             }
             c = d.next(id);
         }
-        Ok(Value::from_raw(set))
+        Ok(set)
     }
 }
 
 pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
     unsafe {
         let d = &*this.doc();
-        let set = node_set_new(this.document.as_raw());
+        let set = node_set_new(this.document);
         let mut c = d.first_child(this.id);
         while let Some(id) = c {
-            node_set_push(set, id.to_token() as *mut core::ffi::c_void)?;
+            node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)?;
             c = d.next(id);
         }
-        Ok(Value::from_raw(set))
+        Ok(set)
     }
 }
 
@@ -283,15 +283,15 @@ pub fn attribute_value_by_qualified_name(
 pub fn attribute_nodes(this: super::XmlSelf) -> Result<Value, Error> {
     unsafe {
         let d = &*this.doc();
-        let set = node_set_new(this.document.as_raw());
+        let set = node_set_new(this.document);
         let id = this.id;
         if d.type_(id) == Some(NodeType::Element) {
             let mut a = d.attrs(id);
             while let Some(at) = a {
-                node_set_push(set, at.to_token() as *mut core::ffi::c_void)?;
+                node_set_push(set.as_raw(), at.to_token() as *mut core::ffi::c_void)?;
                 a = d.next(at);
             }
         }
-        Ok(Value::from_raw(set))
+        Ok(set)
     }
 }

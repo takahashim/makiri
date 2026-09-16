@@ -520,7 +520,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         ));
     }
 
-    let set = unsafe { Value::from_raw(node_set_new(document.as_raw())) };
+    let set = node_set_new(document);
     /* Each push can raise (NoMemoryError from Ruby's allocator), and a longjmp
      * would skip `ctx.nodes`'s drop. `protect` turns that into an Err, the Vec
      * drops on the way out, and magnus raises afterwards - the Rust form of the

@@ -265,20 +265,25 @@ fn node_set_class() -> RClass {
 /* the C API other glue files call                                    */
 /* ------------------------------------------------------------------ */
 
-/// # Safety
-/// `document` must be a live `Makiri::Document`.
-pub unsafe fn node_set_new(document: VALUE) -> VALUE {
-    let ruby = Ruby::get_unchecked();
-    let doc = Value::from_raw(document);
-    let doc_is_xml =
-        rb_sys::rb_obj_is_kind_of(document, CLASS_XML_DOCUMENT.raw()) == rb_sys::Qtrue as VALUE;
+/// An empty NodeSet over `document`, whose nodes it will hold.
+///
+/// The Document decides how a stored pointer is read back - an arena token for
+/// XML, a Lexbor node for HTML - so it is checked here rather than taken on
+/// trust: one class test per set, never per node.
+pub fn node_set_new(document: Value) -> Value {
+    assert!(
+        super::abi::is_kind_of(document, &CLASS_DOCUMENT),
+        "a NodeSet needs the Document its nodes belong to"
+    );
+    let ruby = Ruby::get_with(document);
+    let doc_is_xml = super::abi::is_kind_of(document, &CLASS_XML_DOCUMENT);
     let obj = ruby
         .wrap(NodeSet {
-            document: doc.into(),
+            document: document.into(),
             doc_is_xml,
             nodes: RefCell::new(NodeVec::new()),
         })
-        .as_raw();
+        .as_value();
     /* While `wrap` allocates the object - a GC point - `document` is held only by
      * the boxed struct, where no mark sees it. Using it afterwards keeps it on
      * the machine stack across that call, pinned by the conservative scan, so
@@ -566,12 +571,10 @@ fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSe
 /// a wrapped type gives: the data lives as long as the Ruby object, which the
 /// returned `Value` keeps rooted on the caller's stack.
 fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
-    let raw = unsafe { node_set_new(document.as_raw()) };
+    let set = node_set_new(document);
     /* Just built by the line above, so the type is known - no need to pay for
      * the checked conversion. */
-    Ok((unsafe { Value::from_raw(raw) }, unsafe {
-        typed_data_unprotected(raw)
-    }))
+    Ok((set, unsafe { typed_data_unprotected(set.as_raw()) }))
 }
 
 /// `self | other` -> union, deduped, self first.
