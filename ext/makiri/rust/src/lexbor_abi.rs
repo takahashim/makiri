@@ -180,6 +180,24 @@ extern "C" {
     ) -> *mut core::ffi::c_void;
 }
 
+extern "C" {
+
+    /// The fragment parse by tag id, and the fragment interface's constructor.
+    /// Exported by Lexbor, absent from its public headers - so bindgen cannot
+    /// generate them and they are written out here, once, like the `_noi` twins
+    /// above. `parser` and the returned fragment are opaque to every caller:
+    /// each casts to the type it has already established.
+    pub fn lxb_html_parse_fragment_by_tag_id(
+        parser: *mut core::ffi::c_void,
+        doc: *mut core::ffi::c_void,
+        tag: usize,
+        ns: usize,
+        src: *const u8,
+        len: usize,
+    ) -> *mut LxbNode;
+    pub fn lxb_dom_document_fragment_interface_create(doc: *mut LxbDoc) -> *mut core::ffi::c_void;
+}
+
 /* Exported by Lexbor but left out of its public headers, so bindgen cannot see
  * them either - the same hand-declared status as the `_noi` twins above, for a
  * different reason. Lexbor's own document_type.c forward-declares

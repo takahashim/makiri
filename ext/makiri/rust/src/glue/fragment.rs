@@ -38,25 +38,15 @@ use crate::cbuf::{Buf, OwnedBuf};
 pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
 
-extern "C" {
-
-    fn lxb_html_parse_fragment_by_tag_id(
-        parser: *mut c_void,
-        doc: *mut c_void,
-        tag: usize,
-        ns: usize,
-        src: *const u8,
-        len: usize,
-    ) -> *mut LxbNode;
-    fn lxb_dom_document_fragment_interface_create(doc: *mut LxbDoc) -> *mut c_void;
-    fn lxb_dom_document_import_node(
-        doc: *mut LxbDoc,
-        node: *mut LxbNode,
-        deep: bool,
-    ) -> *mut LxbNode;
-    fn lxb_dom_node_insert_child(to: *mut LxbNode, node: *mut LxbNode);
-    fn lxb_dom_node_insert_before(to: *mut LxbNode, node: *mut LxbNode);
-}
+/* `import_node` and the two inserts are generated; they were declared here as
+ * well, which is the one-symbol-two-declarations hazard `lexbor_abi` exists to
+ * prevent - `mutate.rs` reached the same three through the generated bindings.
+ * The two Lexbor leaves out of its public headers live in `lexbor_abi` with the
+ * rest of what bindgen cannot see. */
+use crate::lexbor_abi::{
+    lxb_dom_document_fragment_interface_create, lxb_dom_document_import_node,
+    lxb_dom_node_insert_before, lxb_dom_node_insert_child, lxb_html_parse_fragment_by_tag_id,
+};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
