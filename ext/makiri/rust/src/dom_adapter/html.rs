@@ -440,6 +440,21 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
+    /// Whether `name` satisfies the DOM's doctype-name production, which
+    /// [`create_doctype`](Self::create_doctype) requires of its caller.
+    ///
+    /// Lexbor's check is a scan for the bytes a doctype name may not hold -
+    /// whitespace, NUL and `>` - so this reads the slice and touches no
+    /// document. An empty name is rejected without asking, because Lexbor reads
+    /// a null pointer as absent and an empty Rust slice's pointer is not null.
+    pub fn valid_doctype_name(name: &[u8]) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        // SAFETY: a slice the caller holds; Lexbor only reads it.
+        unsafe { lxb::lxb_dom_document_type_valid_name(name.as_ptr(), name.len()) }
+    }
+
     /// An empty detached DocumentFragment. `None` on allocation failure.
     pub fn create_fragment(self) -> Option<BuildingNode<'doc>> {
         // SAFETY: a live document.

@@ -752,9 +752,9 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let nv = ruby_verified_text(rb_name, c"doctype name")?;
     /* SAFETY: the view is the caller's, live for this call. */
     let name = unsafe { nv.bytes() };
-    if !unsafe { lxb::lxb_dom_document_type_valid_name(name.as_ptr(), name.len()) } {
+    if !HtmlDoc::valid_doctype_name(name) {
         /* The caller's error, not Lexbor's, so the exception class is picked
-         * here rather than in the DOM layer. */
+         * here - the check itself is the DOM layer's. */
         return Err(Error::new(
             ruby.exception_arg_error(),
             "invalid doctype name",
