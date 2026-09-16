@@ -32,7 +32,10 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{node_document, unwrap, wrap};
-use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, ScratchElement, NS_UNDEF};
+use crate::lexbor::adapter::html::{
+    check_document_child_order, DocumentChildOrderError, HtmlDoc, HtmlNode, HtmlNodeMut,
+    ScratchElement, NS_UNDEF,
+};
 use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbNode};
 use crate::lexbor_abi as lxb;
 
@@ -185,88 +188,22 @@ unsafe fn inserted_result(
     }
 }
 
-/// Whether inserting `n` contributes an element at the insertion point: `n` is
-/// an element, or a fragment (spliced as its children) that carries one.
-///
-/// A fragment bypasses the per-node guard because [`splice_or_insert`] hands its
-/// children straight to Lexbor, so the element-vs-doctype order is checked here
-/// instead.
-unsafe fn contributes_element(n: *const LxbNode) -> bool {
-    if (*n).type_ == ty::ELEMENT {
-        return true;
-    }
-    if (*n).type_ == ty::FRAGMENT {
-        let mut c = (*n).first_child;
-        while !c.is_null() {
-            if (*c).type_ == ty::ELEMENT {
-                return true;
-            }
-            c = (*c).next;
-        }
-    }
-    false
-}
-
-/// WHATWG doctype ordering at the document node, fail-closed so a `<!DOCTYPE>`
-/// always precedes the document element:
-///
-/// - a DocumentType may only be a document child, at most one, with no element
-///   before it; and, symmetrically,
-/// - an element may not be inserted ahead of an existing doctype.
-///
-/// `parent` is the future parent, `before` the child `incoming` is inserted
-/// before (NULL = append at the end), `exclude` a node the same operation
-/// removes (the replace target) or NULL. Called BEFORE any link change - that
-/// is, before the detach in [`prepare_insert`].
-unsafe fn guard_doc_child_order(
+/// Validate WHATWG doctype ordering before links are changed.
+fn guard_doc_child_order(
     parent: Option<HtmlNode<'_>>,
     before: Option<HtmlNode<'_>>,
     exclude: Option<HtmlNode<'_>>,
     incoming: HtmlNode<'_>,
 ) -> Result<(), Error> {
-    let (parent, before, exclude, incoming) = (
-        parent.map_or(core::ptr::null(), |n| n.as_raw() as *const LxbNode),
-        before.map_or(core::ptr::null(), |n| n.as_raw() as *const LxbNode),
-        exclude.map_or(core::ptr::null(), |n| n.as_raw() as *const LxbNode),
-        incoming.as_raw() as *const LxbNode,
-    );
-    if (*incoming).type_ == ty::DOCTYPE {
-        if parent.is_null() || (*parent).type_ != ty::DOCUMENT {
-            return Err(err("a doctype node can only be a child of the document"));
+    check_document_child_order(parent, before, exclude, incoming).map_err(|e| match e {
+        DocumentChildOrderError::DoctypeParent => {
+            err("a doctype node can only be a child of the document")
         }
-        let mut c = (*parent).first_child as *const LxbNode;
-        while !c.is_null() {
-            if c != exclude && c != incoming && (*c).type_ == ty::DOCTYPE {
-                return Err(err("the document already has a doctype"));
-            }
-            c = (*c).next;
+        DocumentChildOrderError::DuplicateDoctype => err("the document already has a doctype"),
+        DocumentChildOrderError::DoctypeAfterElement | DocumentChildOrderError::ElementBeforeDoctype => {
+            err("a doctype must precede the document element")
         }
-        /* No element before the doctype. `before == NULL` (append) means every
-         * element child precedes the tail; otherwise only the siblings ahead of
-         * `before` are in the way. */
-        let mut c = (*parent).first_child as *const LxbNode;
-        while c != before {
-            if c != exclude && c != incoming && (*c).type_ == ty::ELEMENT {
-                return Err(err("a doctype must precede the document element"));
-            }
-            c = (*c).next;
-        }
-        return Ok(());
-    }
-
-    if contributes_element(incoming) && !parent.is_null() && (*parent).type_ == ty::DOCUMENT {
-        /* Symmetric: the element (or a fragment carrying one) would sit at
-         * `before`'s slot, so a doctype at or after `before` would end up behind
-         * it - reject. */
-        let mut c = before;
-        while !c.is_null() {
-            if c != exclude && c != incoming && (*c).type_ == ty::DOCTYPE {
-                return Err(err("a doctype must precede the document element"));
-            }
-            c = (*c).next;
-        }
-    }
-    Ok(())
+    })
 }
 
 /// Insert `node` relative to `anchor`, or - when `node` is a document fragment -
