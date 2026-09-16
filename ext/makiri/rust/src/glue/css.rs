@@ -137,6 +137,46 @@ struct GvlCell<T>(UnsafeCell<T>);
 // serialises every access.
 unsafe impl<T> Sync for GvlCell<T> {}
 
+/// A Lexbor object owned only while the engine is being built.
+///
+/// The engine lives for the process - nothing frees it on the normal path, and
+/// that reuse is what makes `at_css` fast - but a half-built one must not leak.
+/// Each piece is owned by one of these until all four are ready; `into_raw`
+/// then hands the pointer to [`Engine`] and this stops owning it.
+///
+/// So the unwinding that four `if !x.is_null()` arms used to do - in an order
+/// that no longer matched the order the four were created in - is the type's
+/// job, and a fifth piece cannot be left out of it.
+struct Building<T>(*mut T, unsafe extern "C" fn(*mut T, bool) -> *mut T);
+
+impl<T> Building<T> {
+    /// `None` when Lexbor could not allocate the object.
+    fn new(
+        p: *mut T,
+        destroy: unsafe extern "C" fn(*mut T, bool) -> *mut T,
+    ) -> Option<Building<T>> {
+        (!p.is_null()).then_some(Building(p, destroy))
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *mut T {
+        self.0
+    }
+
+    /// Hand the pointer on; this stops owning it.
+    fn into_raw(self) -> *mut T {
+        core::mem::ManuallyDrop::new(self).0
+    }
+}
+
+impl<T> Drop for Building<T> {
+    fn drop(&mut self) {
+        // SAFETY: this owns the object, and only gets here when the engine was
+        // not built - nothing else holds the pointer.
+        unsafe { (self.1)(self.0, true) };
+    }
+}
+
 struct Engine {
     mem: *mut CssMemory,
     parser: *mut CssParser,
@@ -179,46 +219,34 @@ unsafe fn globals() -> &'static mut Globals {
 unsafe fn engine() -> Result<&'static Engine, Error> {
     let g = globals();
     if g.engine.is_none() {
-        let mem = lxb_css_memory_create();
-        let parser = lxb_css_parser_create();
-        let css_sel = lxb_css_selectors_create();
-        let selectors = lxb_selectors_create();
+        let refused = || Error::new(error_class(), "failed to initialise CSS selector engine");
 
-        let ok = !mem.is_null()
-            && !parser.is_null()
-            && !css_sel.is_null()
-            && !selectors.is_null()
-            && lxb_css_memory_init(mem, 128) == LXB_STATUS_OK
-            && lxb_css_parser_init(parser, core::ptr::null_mut()) == LXB_STATUS_OK
-            && lxb_css_selectors_init(css_sel) == LXB_STATUS_OK
-            && lxb_selectors_init(selectors) == LXB_STATUS_OK;
+        /* Each piece is owned from here until all four are whole: any return
+         * below frees exactly what was built, without saying so. */
+        let (Some(mem), Some(parser), Some(css_sel), Some(selectors)) = (
+            Building::new(lxb_css_memory_create(), lxb_css_memory_destroy),
+            Building::new(lxb_css_parser_create(), lxb_css_parser_destroy),
+            Building::new(lxb_css_selectors_create(), lxb_css_selectors_destroy),
+            Building::new(lxb_selectors_create(), lxb_selectors_destroy),
+        ) else {
+            return Err(refused());
+        };
 
-        if !ok {
-            if !selectors.is_null() {
-                lxb_selectors_destroy(selectors, true);
-            }
-            if !parser.is_null() {
-                lxb_css_parser_destroy(parser, true);
-            }
-            if !mem.is_null() {
-                lxb_css_memory_destroy(mem, true);
-            }
-            if !css_sel.is_null() {
-                lxb_css_selectors_destroy(css_sel, true);
-            }
-            return Err(Error::new(
-                error_class(),
-                "failed to initialise CSS selector engine",
-            ));
+        if lxb_css_memory_init(mem.as_ptr(), 128) != LXB_STATUS_OK
+            || lxb_css_parser_init(parser.as_ptr(), core::ptr::null_mut()) != LXB_STATUS_OK
+            || lxb_css_selectors_init(css_sel.as_ptr()) != LXB_STATUS_OK
+            || lxb_selectors_init(selectors.as_ptr()) != LXB_STATUS_OK
+        {
+            return Err(refused());
         }
 
-        lxb_css_parser_memory_set_noi(parser, mem);
-        lxb_css_parser_selectors_set_noi(parser, css_sel);
+        lxb_css_parser_memory_set_noi(parser.as_ptr(), mem.as_ptr());
+        lxb_css_parser_selectors_set_noi(parser.as_ptr(), css_sel.as_ptr());
         g.engine = Some(Engine {
-            mem,
-            parser,
-            css_sel,
-            selectors,
+            mem: mem.into_raw(),
+            parser: parser.into_raw(),
+            css_sel: css_sel.into_raw(),
+            selectors: selectors.into_raw(),
         });
     }
     Ok(g.engine.as_ref().expect("just set"))
