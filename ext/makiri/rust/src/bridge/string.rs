@@ -23,7 +23,7 @@
 use core::ffi::{c_char, c_int, c_long, CStr};
 
 use magnus::encoding::Coderange;
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
 use magnus::value::ReprValue;
 use magnus::{Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};
@@ -223,6 +223,41 @@ pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBuf> {
 }
 
 /* ---- encoding ---- */
+
+/// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
+/// for an unknown name, `TypeError` for something that is neither a String nor
+/// an Encoding.
+pub fn to_encoding(v: Value) -> Result<*mut rb_sys::rb_encoding, Error> {
+    let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
+    // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
+    protect(|| unsafe {
+        enc = rb_sys::rb_to_encoding(v.as_raw());
+        rb_sys::Qnil as VALUE
+    })?;
+    Ok(enc)
+}
+
+/// `str` transcoded to `enc`, a character the target cannot represent becoming a
+/// hex character reference. A transcoding failure is returned, not raised.
+///
+/// # Safety
+/// `str` must be a live String and `enc` a live encoding.
+pub unsafe fn str_encode_charref(
+    str: VALUE,
+    enc: *mut rb_sys::rb_encoding,
+) -> Result<VALUE, Error> {
+    const UNDEF_HEX_CHARREF: c_int =
+        rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
+    // SAFETY: the caller's contract, and `protect` turns a raise into `Err`.
+    protect(|| {
+        rb_sys::rb_str_encode(
+            str,
+            rb_sys::rb_enc_from_encoding(enc),
+            UNDEF_HEX_CHARREF,
+            rb_sys::Qnil as VALUE,
+        )
+    })
+}
 
 /// A UTF-8 String for `str`, honouring its declared encoding so the content
 /// survives.

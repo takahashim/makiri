@@ -8,7 +8,7 @@
 //! normally. [`raise`] is the one exit for an entry point Ruby calls with the C
 //! convention, which has no `Result` to return.
 
-use core::ffi::c_void;
+use core::ffi::{c_long, c_void};
 
 use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
 use magnus::{Error, RString, Value};
@@ -102,6 +102,22 @@ pub fn respond_to(v: Value, method: rb_sys::ID) -> Result<bool, Error> {
         }
     })?;
     Ok(answer == rb_sys::Qtrue as VALUE)
+}
+
+/// `rb_range_beg_len` over a collection of `count` elements, with the C's
+/// `err = 0`: a start outside the collection is `None` rather than a raise.
+///
+/// A bound too large for a `long` still raises (`RangeError`), and that raise
+/// comes back as `Err` - the caller holds the collection's nodes in a `Vec` a
+/// longjmp would leak.
+pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
+    let mut beg: c_long = 0;
+    let mut len: c_long = 0;
+    // SAFETY: `range` is a live Range; `protect` turns the raise into `Err`.
+    let answer = protect(|| unsafe {
+        rb_sys::rb_range_beg_len(range.as_raw(), &mut beg, &mut len, count, 0)
+    })?;
+    Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
 }
 
 /// The data pointer of a TypedData object of type `ty` (or a type deriving

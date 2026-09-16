@@ -53,10 +53,10 @@ RB_SYS_COUNTS = {
   "glue/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 2,
   "glue/node.rs" => 3,
-  "glue/node_set.rs" => 17,
+  "glue/node_set.rs" => 15,
   "glue/xml.rs" => 2,
   "glue/xml_node/mod.rs" => 2,
-  "glue/xml_node/serialize.rs" => 8,
+  "glue/xml_node/serialize.rs" => 2,
   "glue/xpath.rs" => 26,
   "init.rs" => 4,
 }.freeze

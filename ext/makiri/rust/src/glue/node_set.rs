@@ -382,14 +382,11 @@ fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> 
     }
 
     if args[0].is_kind_of(ruby.class_range()) {
-        let (mut beg, mut len): (c_long, c_long) = (0, 0);
-        // SAFETY: a Range, and count is its bound. err=0 means "return nil when
-        // the start is out of range" rather than raising.
-        let ok =
-            unsafe { rb_sys::rb_range_beg_len(args[0].as_raw(), &mut beg, &mut len, count, 0) };
-        if ok != rb_sys::Qtrue as VALUE {
+        /* A start outside the set is nil; a bound too large for a `long` raises,
+         * and that raise must not cross this frame - `nodes` is a live Vec. */
+        let Some((beg, len)) = crate::bridge::ruby::range_beg_len(args[0], count)? else {
             return Ok(ruby.qnil().as_value());
-        }
+        };
         return slice_of(&nodes, document, beg as usize, len as usize);
     }
 

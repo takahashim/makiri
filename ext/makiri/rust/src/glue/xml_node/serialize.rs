@@ -7,11 +7,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::c_int;
-
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
-use rb_sys::VALUE;
 
 use super::abi::*;
 use crate::xml::serialize::{self as xml_serialize, Failure};
@@ -58,7 +55,9 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
         let (to_enc, enc_name) = if enc_opt.is_nil() {
             (core::ptr::null_mut(), None)
         } else {
-            let e = rb_sys::rb_to_encoding(enc_opt.as_raw());
+            /* An unknown name raises, and this frame is about to own the
+             * serializer's buffer: the lookup returns the error instead. */
+            let e = crate::bridge::string::to_encoding(enc_opt)?;
             let name: RString = enc_opt.funcall("to_s", ())?;
             (e, Some(name))
         };
@@ -79,14 +78,10 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
             && to_enc != rb_sys::rb_utf8_encoding()
             && to_enc != rb_sys::rb_usascii_encoding()
         {
-            const UNDEF_HEX_CHARREF: c_int =
-                rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
-            str = Value::from_raw(rb_sys::rb_str_encode(
+            str = Value::from_raw(crate::bridge::string::str_encode_charref(
                 str.as_raw(),
-                rb_sys::rb_enc_from_encoding(to_enc),
-                UNDEF_HEX_CHARREF,
-                rb_sys::Qnil as VALUE,
-            ));
+                to_enc,
+            )?);
         }
         Ok(str)
     }
