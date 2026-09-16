@@ -159,6 +159,16 @@ end
 
 errors = []
 
+# `lexbor::adapter` owns the typed DOM facade.  Keeping this explicit avoids a
+# second, gradually diverging compatibility boundary under the old name.
+legacy_adapter_refs = Dir.glob(File.join(RUST, "**", "*.rs")).select do |path|
+  File.binread(path).include?("crate::dom_adapter")
+end
+unless legacy_adapter_refs.empty?
+  paths = legacy_adapter_refs.map { |p| p.delete_prefix("#{RUST}/") }.sort
+  errors << "legacy dom_adapter references: #{paths.inspect}"
+end
+
 unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
 end
