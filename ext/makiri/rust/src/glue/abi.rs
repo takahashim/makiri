@@ -44,10 +44,12 @@ pub type LxbDoc = crate::lexbor_abi::lxb_dom_document_t;
 /* Every Lexbor constant below comes from the generated bindings, none is
  * transcribed. The names are re-exported here rather than used through
  * `lexbor_abi` at the call sites only because these particular ones are spelled
- * this way throughout the glue; `lexbor_abi::consts` is where a NEW one goes. */
-pub const LXB_STATUS_OK: u32 = crate::lexbor_abi::lexbor_status_t_LXB_STATUS_OK;
-pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 =
-    crate::lexbor_abi::lexbor_status_t_LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+ * this way throughout the glue; `lexbor_abi::consts` is where a NEW one goes,
+ * and where these two are defined. */
+pub use crate::lexbor_abi::consts::{
+    STATUS_ERROR_MEMORY_ALLOCATION as LXB_STATUS_ERROR_MEMORY_ALLOCATION,
+    STATUS_OK as LXB_STATUS_OK,
+};
 
 /* The node types the glue still names in Lexbor's own spelling. The values come
  * from `dom_adapter::html`, which is the one place that reads them; the

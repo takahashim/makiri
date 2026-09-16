@@ -46,7 +46,7 @@ use crate::xml::model::Document as XmlDocument;
 type HtmlDoc = lxb::lxb_html_document_t;
 
 use super::html::TYPE_DOCUMENT as NODE_TYPE_DOCUMENT;
-const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
+use crate::lexbor_abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 extern "C" {
 

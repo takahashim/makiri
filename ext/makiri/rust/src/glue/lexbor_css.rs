@@ -115,10 +115,10 @@ unsafe extern "C" fn ser_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u3
         let bytes = core::slice::from_raw_parts(data, len);
         if s.buf.mkr_extend(bytes).is_err() {
             s.oom = true;
-            return 1; /* any non-OK status stops the serializer */
+            return k::STATUS_ERROR; /* any non-OK status stops it */
         }
     }
-    0 /* LXB_STATUS_OK */
+    k::STATUS_OK
 }
 
 /// Drive one of Lexbor's `*_serialize` callbacks into an owned buffer.

@@ -44,7 +44,7 @@ use core::ffi::c_long;
 type SelectorList = lxb::lxb_css_selector_list_t;
 type RawSelector = lxb::lxb_css_selector_t;
 
-const LXB_STATUS_OK: u32 = crate::lexbor_abi::lexbor_status_t_LXB_STATUS_OK;
+use crate::lexbor_abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /// Why a parse did not produce a selector list.
 pub enum ParseError {

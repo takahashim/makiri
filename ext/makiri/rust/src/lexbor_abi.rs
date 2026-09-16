@@ -61,7 +61,7 @@ impl HtmlParser {
         unsafe {
             let p = core::ptr::NonNull::new(lxb_html_parser_create())?;
             let this = HtmlParser(p);
-            if lxb_html_parser_init(p.as_ptr()) != lexbor_status_t_LXB_STATUS_OK {
+            if lxb_html_parser_init(p.as_ptr()) != consts::STATUS_OK {
                 return None; /* `this` drops, destroying it */
             }
             Some(this)
@@ -286,6 +286,19 @@ pub mod consts {
     pub const AT_RULE_FONT_FACE: usize = super::LXB_CSS_AT_RULE_FONT_FACE as usize;
     pub const AT_RULE_MEDIA: usize = super::LXB_CSS_AT_RULE_MEDIA as usize;
     pub const AT_RULE_NAMESPACE: usize = super::LXB_CSS_AT_RULE_NAMESPACE as usize;
+
+    /// Status codes (`lexbor_status_t`) - every Lexbor entry point returns one.
+    ///
+    /// Only `OK` and `ERROR` are given a value in the header; the rest are
+    /// positional, so a member inserted upstream renumbers them all. Hence
+    /// generated rather than written out: `STATUS_STOP` was transcribed as
+    /// `0x0013`, which is 19, which is what it happens to be today.
+    pub const STATUS_OK: u32 = super::lexbor_status_t_LXB_STATUS_OK;
+    pub const STATUS_ERROR: u32 = super::lexbor_status_t_LXB_STATUS_ERROR;
+    pub const STATUS_ERROR_MEMORY_ALLOCATION: u32 =
+        super::lexbor_status_t_LXB_STATUS_ERROR_MEMORY_ALLOCATION;
+    /// Returned by a traversal callback to end the walk early.
+    pub const STATUS_STOP: u32 = super::lexbor_status_t_LXB_STATUS_STOP;
 }
 
 /* ------------------------------------------------------------------ *

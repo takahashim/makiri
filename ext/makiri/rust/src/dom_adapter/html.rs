@@ -804,7 +804,7 @@ impl<'doc> HtmlNodeMut<'doc> {
         // into the document before anything else runs.
         let st =
             unsafe { lxb::lxb_dom_node_text_content_set(self.as_raw(), text.as_ptr(), text.len()) };
-        st == lxb::lexbor_status_t_LXB_STATUS_OK
+        st == lxb::consts::STATUS_OK
     }
 
     /// The node as an element cleared for editing, when it is one.
@@ -993,9 +993,9 @@ impl<'doc> BuildingElement<'doc> {
                 qname.len(),
                 false,
             );
-            if named != lxb::lexbor_status_t_LXB_STATUS_OK
+            if named != lxb::consts::STATUS_OK
                 || lxb::lxb_dom_attr_set_value(at, value.as_ptr(), value.len())
-                    != lxb::lexbor_status_t_LXB_STATUS_OK
+                    != lxb::consts::STATUS_OK
             {
                 return false;
             }
@@ -1123,7 +1123,7 @@ impl<'doc> HtmlElementMut<'doc> {
                 ),
                 None => lxb::lxb_dom_attr_set_name(at.raw(), qname.as_ptr(), qname.len(), false),
             };
-            if named != lxb::lexbor_status_t_LXB_STATUS_OK || !at.set_value(value) {
+            if named != lxb::consts::STATUS_OK || !at.set_value(value) {
                 return false;
             }
             lxb::lxb_dom_element_attr_append(self.0.raw(), at.raw());
@@ -1266,7 +1266,7 @@ impl<'doc> HtmlAttr<'doc> {
         // SAFETY: a live attribute; Lexbor copies the bytes before anything
         // else runs.
         let st = unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) };
-        st == lxb::lexbor_status_t_LXB_STATUS_OK
+        st == lxb::consts::STATUS_OK
     }
 
     /// The attribute's OWN namespace id, the one `setAttributeNS` recorded.

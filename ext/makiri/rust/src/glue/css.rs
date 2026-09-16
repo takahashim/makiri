@@ -65,7 +65,7 @@ const MIN_HIT_PCT: usize = 15;
 /// Re-test caching every N bypass windows.
 const RETEST_GAP: usize = 32;
 
-const LXB_STATUS_STOP: u32 = 0x0013;
+use crate::lexbor_abi::consts::STATUS_STOP as LXB_STATUS_STOP;
 const LXB_SELECTORS_OPT_MATCH_FIRST: u32 = 1 << 2;
 
 /* ---- opaque Lexbor types ---- */
