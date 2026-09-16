@@ -53,8 +53,9 @@ use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 use super::abi::{
     doc_parsed, error_class, html_node_unwrap, is_kind_of, keepalive_document, node_raw,
-    node_set_new, node_set_push, parsed_xml_doc, ruby_verified_text, xml_node_unwrap, RubyText,
-    CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS,
+    node_set_new, node_set_push, parsed_xml_doc, ruby_str_from_utf8, ruby_verified_text,
+    xml_node_unwrap, RubyText, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT,
+    MOD_HTML_NODE_METHODS,
 };
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
@@ -131,13 +132,9 @@ pub(crate) fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Err
             }
             rb
         }
-        XPathValue::String(t) => {
-            let s = t.as_slice();
-            // SAFETY: a fresh String over bytes the value owns.
-            unsafe {
-                rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
-            }
-        }
+        // SAFETY: the bytes are the value's own, and valid UTF-8 - the engine
+        // builds a Text only from input the text contract has passed.
+        XPathValue::String(t) => unsafe { ruby_str_from_utf8(t.as_slice()) },
         // SAFETY: allocates a Float; nothing is borrowed.
         XPathValue::Number(d) => unsafe { rb_sys::rb_float_new(*d) },
         XPathValue::Boolean(true) => rb_sys::Qtrue as VALUE,
@@ -434,10 +431,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
             }
             set
         }
-        ValRef::String(t) => {
-            let s = t.as_slice();
-            rb_sys::rb_utf8_str_new(s.as_ptr() as *const c_char, s.len() as core::ffi::c_long)
-        }
+        ValRef::String(t) => ruby_str_from_utf8(t.as_slice()),
         ValRef::Number(d) => rb_sys::rb_float_new(d),
         ValRef::Boolean(true) => rb_sys::Qtrue as VALUE,
         ValRef::Boolean(false) => rb_sys::Qfalse as VALUE,

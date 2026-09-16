@@ -121,7 +121,7 @@ RB_SYS_COUNTS = {
   "glue/xml.rs" => 2,
   "glue/xml_node/mod.rs" => 2,
   "glue/xml_node/serialize.rs" => 2,
-  "glue/xpath.rs" => 26,
+  "glue/xpath.rs" => 24,
   "init.rs" => 4,
 }.freeze
 
