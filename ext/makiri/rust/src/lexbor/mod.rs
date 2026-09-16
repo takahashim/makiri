@@ -4,3 +4,6 @@
 //! module. Higher layers use the typed handles exported by `adapter`.
 
 pub mod adapter;
+/// The Lexbor CSS stylesheet parser and its raw callback traversal.
+#[cfg(feature = "ruby")]
+pub mod stylesheet;
