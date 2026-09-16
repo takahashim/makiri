@@ -38,17 +38,16 @@ use crate::falloc::try_vec_with_capacity;
 use crate::lexbor_abi::{self as lxb, preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
 use crate::xpath::runtime_abi::cache::ptr_hash;
 
-use super::html::TYPE_ELEMENT as NODE_TYPE_ELEMENT;
-const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
-const TAG_UNDEF: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize;
-
-/// Tag buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`.
+/// Tag buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`,
+/// so the end of that range doubles as this index's capacity.
 ///
 /// A custom element's tag id is the pointer to its interned tag data
 /// (`lxb_tag_append` sets `data->tag_id = (lxb_tag_id_t) data`), an enormous
 /// value that cannot key a dense array. Those elements are simply left out, and
 /// `//customtag` falls back to a tree walk - rare in practice.
-const TAG_INDEX_CAP: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
+use super::html::{
+    NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF, TYPE_ELEMENT as NODE_TYPE_ELEMENT,
+};
 
 /// One attr->owner slot. A null `attr` marks an empty slot; there are no
 /// deletions, so linear probing never needs a tombstone.

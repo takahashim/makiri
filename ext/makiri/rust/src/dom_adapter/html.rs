@@ -45,6 +45,9 @@ pub const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 pub const NS_SVG: usize = lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize;
 /// See [`NS_SVG`].
 pub const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
+/// `LXB_NS_XML`. An attribute in it keeps its `xml:` prefix across a
+/// cross-document translation rather than having one invented.
+pub const NS_XML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize;
 
 /// `LXB_TAG__UNDEF`. A custom element's tag id is a pointer value, far above
 /// the static range the element index buckets, so it is compared against
@@ -61,6 +64,10 @@ pub const TAG_BODY: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize;
 pub const TAG_SVG: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize;
 /// See [`TAG_BODY`].
 pub const TAG_MATH: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize;
+
+/// The last of Lexbor's special tag ids (text, comment, doctype, document,
+/// eof). A token at or below it is not an element start-tag.
+pub const TAG_EM_DOCTYPE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__EM_DOCTYPE as usize;
 
 /* ---------- borrowed bytes ---------- */
 

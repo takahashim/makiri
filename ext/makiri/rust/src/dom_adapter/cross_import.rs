@@ -21,7 +21,9 @@
 
 use core::ffi::c_void;
 
-use crate::dom_adapter::html::{BuildingElement, BuildingNode, HtmlDoc, NS_UNDEF};
+use crate::dom_adapter::html::{
+    BuildingElement, BuildingNode, HtmlDoc, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
+};
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
@@ -39,10 +41,6 @@ mod h {
         TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
     };
 }
-
-const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
-const NS_XML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize;
-const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
 /* Every Lexbor entry point below comes from the generated bindings. */
 use lxb::{
