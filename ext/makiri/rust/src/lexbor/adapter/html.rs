@@ -261,6 +261,15 @@ pub const TYPE_COMMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT
 pub const TYPE_DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 pub const TYPE_FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 
+/// Why an insertion would violate the document's required doctype ordering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentChildOrderError {
+    DoctypeParent,
+    DuplicateDoctype,
+    DoctypeAfterElement,
+    ElementBeforeDoctype,
+}
+
 /// `LXB_TAG_TEMPLATE`.
 pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
@@ -740,6 +749,48 @@ impl<'doc> HtmlNode<'doc> {
         // SAFETY: a live document node, which leads its document struct.
         Self::link(unsafe { lxb::lxb_dom_document_root(self.as_raw() as *mut LxbDoc) })
     }
+}
+
+/// Validate the HTML document's doctype/element ordering before an insertion.
+/// `before` is None for append; `exclude` is a node replaced by this operation.
+pub fn check_document_child_order(
+    parent: Option<HtmlNode<'_>>,
+    before: Option<HtmlNode<'_>>,
+    exclude: Option<HtmlNode<'_>>,
+    incoming: HtmlNode<'_>,
+) -> Result<(), DocumentChildOrderError> {
+    let contributes_element = |n: HtmlNode<'_>| {
+        n.node_type() == TYPE_ELEMENT
+            || (n.node_type() == TYPE_FRAGMENT
+                && n.children().any(|child| child.node_type() == TYPE_ELEMENT))
+    };
+    if incoming.node_type() == TYPE_DOCTYPE {
+        let Some(parent) = parent.filter(|p| p.node_type() == TYPE_DOCUMENT) else {
+            return Err(DocumentChildOrderError::DoctypeParent);
+        };
+        let mut cursor = parent.first_child();
+        while let Some(node) = cursor {
+            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
+                return Err(DocumentChildOrderError::DuplicateDoctype);
+            }
+            if Some(node) == before { break; }
+            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_ELEMENT {
+                return Err(DocumentChildOrderError::DoctypeAfterElement);
+            }
+            cursor = node.next();
+        }
+        return Ok(());
+    }
+    if contributes_element(incoming) && parent.is_some_and(|p| p.node_type() == TYPE_DOCUMENT) {
+        let mut cursor = before;
+        while let Some(node) = cursor {
+            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
+                return Err(DocumentChildOrderError::ElementBeforeDoctype);
+            }
+            cursor = node.next();
+        }
+    }
+    Ok(())
 }
 
 /// A node the caller has cleared for editing.
