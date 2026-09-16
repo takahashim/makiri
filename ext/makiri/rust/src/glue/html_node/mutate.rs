@@ -27,8 +27,6 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::c_void;
-
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
@@ -59,11 +57,10 @@ impl Insert {
 }
 
 pub use crate::bridge::string::ruby_verified_data;
-pub use crate::glue::fragment::emit_append;
-pub use crate::glue::fragment::emit_before;
 pub use crate::glue::fragment::html_import_deep;
 pub use crate::glue::fragment::import_fragment_children;
 pub use crate::glue::fragment::run_fragment_parser;
+pub use crate::glue::fragment::{Emit, FragmentContext};
 
 /* ------------------------------------------------------------------ *
  * shared helpers                                                     *
@@ -592,22 +589,6 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
  * inner_html= / outer_html=                                          *
  * ------------------------------------------------------------------ */
 
-/// Parse callback for `run_fragment_parser`: Lexbor's element-context
-/// fragment parser, which is what `inner_html=`/`outer_html=` need. `ctx` is the
-/// context element.
-unsafe fn parse_fragment_by_context(
-    parser: *mut c_void,
-    src: *const u8,
-    len: usize,
-    ctx: *mut c_void,
-) -> *mut LxbNode {
-    /* The generated declaration is typed to Lexbor's parser and element
-     * interfaces; the callback contract `run_fragment_parser` passes is
-     * representation-opaque, so the casts happen here rather than in a second
-     * declaration of the same symbol. */
-    lxb::lxb_html_parse_fragment(parser as *mut _, ctx as *mut _, src, len)
-}
-
 /// Parse `rb_html` as a fragment in the context of `context_el` and splice the
 /// imported nodes via `emit`.
 ///
@@ -618,26 +599,21 @@ unsafe fn parse_fragment_into(
     context_el: *mut LxbNode,
     rb_html: Value,
     doc: *mut LxbDoc,
-    emit: unsafe fn(*mut LxbNode, *mut c_void),
-    u: *mut c_void,
+    emit: Emit,
 ) -> Result<(), Error> {
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let html = crate::bridge::ruby::string_of(rb_html)?.as_value();
-    let frag = run_fragment_parser(
-        html.as_raw(),
-        parse_fragment_by_context,
-        context_el as *mut c_void,
-    )?;
+    let frag = run_fragment_parser(html.as_raw(), &FragmentContext::Element(context_el))?;
 
     /* The fragment was built in a TRANSIENT document that destroying the parser
      * does NOT free (measured: one leaked per inner_html=/outer_html= call).
      * Owning it here frees it however this returns - the import below can fail,
      * and returning that error first used to skip the free. */
     let _transient = lxb::TransientDoc::of(frag);
-    let imported = import_fragment_children(doc, frag, emit, u);
+    let imported = import_fragment_children(doc, frag, &emit);
     let _anchor = html;
 
-    if imported != 0 {
+    if !imported {
         return Err(err("failed to import a fragment child"));
     }
     Ok(())
@@ -661,8 +637,7 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             node.as_raw(),
             rb_html,
             node.node().owner_document(),
-            emit_append,
-            node.as_raw() as *mut c_void,
+            Emit::Append(node.as_raw()),
         )?;
         invalidate(this.document);
         Ok(rb_html)
@@ -684,8 +659,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             parent.as_raw(),
             rb_html,
             node.node().owner_document(),
-            emit_before,
-            node.as_raw() as *mut c_void,
+            Emit::Before(node.as_raw()),
         )?;
         node.detach();
         invalidate(this.document);

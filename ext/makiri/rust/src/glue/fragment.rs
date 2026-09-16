@@ -16,7 +16,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
@@ -47,7 +47,8 @@ use crate::dom_adapter::utf8_input::Sanitized;
  * rest of what bindgen cannot see. */
 use crate::lexbor_abi::{
     lxb_dom_document_fragment_interface_create, lxb_dom_document_import_node,
-    lxb_dom_node_insert_before, lxb_dom_node_insert_child, lxb_html_parse_fragment_by_tag_id,
+    lxb_dom_node_insert_before, lxb_dom_node_insert_child, lxb_html_parse_fragment,
+    lxb_html_parse_fragment_by_tag_id,
 };
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
@@ -208,46 +209,95 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
     }
 }
 
-/// Where `import_fragment_children` puts each imported child: appended under
-/// `u`, or inserted before it.
-pub unsafe fn emit_append(imported: *mut LxbNode, u: *mut c_void) {
-    lxb_dom_node_insert_child(u as *mut LxbNode, imported);
-}
-
-pub unsafe fn emit_before(imported: *mut LxbNode, u: *mut c_void) {
-    lxb_dom_node_insert_before(u as *mut LxbNode, imported);
-}
-
-/// Deep-import each child of `root` into `doc` and hand it to `emit`.
+/// Where [`import_fragment_children`] puts each child it imports.
 ///
-/// `-1` when a child could not be copied whole. It REPORTS rather than raising,
-/// and that still matters now the C has gone: every caller owns the transient
-/// document the fragment was parsed into (`lexbor_abi::TransientDoc`), and a
-/// raise from here would longjmp past its `Drop` - one leaked Lexbor document
-/// per failure. The caller raises once its own cleanup has run.
-pub unsafe fn import_fragment_children(
-    doc: *mut LxbDoc,
-    root: *mut LxbNode,
-    emit: unsafe fn(*mut LxbNode, *mut c_void),
-    u: *mut c_void,
-) -> c_int {
+/// The node used to travel as a `*mut c_void` beside a function pointer, which
+/// left nothing connecting the two: the callback cast that pointer to a node,
+/// so handing it something else was a cast away and no diagnostic. Choice and
+/// data are one value now.
+pub enum Emit {
+    /// As the last child of this node.
+    Append(*mut LxbNode),
+    /// Immediately before this node, under its parent.
+    Before(*mut LxbNode),
+}
+
+impl Emit {
+    /// # Safety
+    /// The node must be live, and the caller must be clear to change the tree
+    /// it belongs to.
+    unsafe fn put(&self, imported: *mut LxbNode) {
+        match *self {
+            Emit::Append(at) => lxb_dom_node_insert_child(at, imported),
+            Emit::Before(at) => lxb_dom_node_insert_before(at, imported),
+        }
+    }
+}
+
+/// Deep-import each child of `root` into `doc` and place it per `emit`.
+///
+/// `false` when a child could not be copied whole. It REPORTS rather than
+/// raising, and that still matters now the C has gone: every caller owns the
+/// transient document the fragment was parsed into
+/// (`lexbor_abi::TransientDoc`), and a raise from here would longjmp past its
+/// `Drop` - one leaked Lexbor document per failure. The caller raises once its
+/// own cleanup has run, with the message that suits it.
+pub unsafe fn import_fragment_children(doc: *mut LxbDoc, root: *mut LxbNode, emit: &Emit) -> bool {
     let mut f = (*root).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
         match import_with_fixup(doc, f, true) {
-            Some(imp) => emit(imp, u),
-            None => return -1,
+            Some(imp) => emit.put(imp),
+            None => return false,
         }
         f = next;
     }
-    0
+    true
 }
 
-/// Which Lexbor fragment parser to run. The two differ in how the context is
-/// given - an element, or a tag id plus namespace - and each is a thin call
-/// into Lexbor with its own argument shape, so the choice arrives as a function
-/// rather than as a flag the body would have to switch on.
-type FragmentParseFn = unsafe fn(*mut c_void, *const u8, usize, *mut c_void) -> *mut LxbNode;
+/// Which Lexbor fragment parser to run, and the context it needs.
+///
+/// Both implement the same WHATWG algorithm - tokenizer state for
+/// rawtext/rcdata, foreign-content adjustment, the form pointer - and differ
+/// only in how the context arrives. The context used to be a `*mut c_void`
+/// beside a function pointer, cast back by whichever callback was chosen; it
+/// travels with the choice now.
+pub enum FragmentContext {
+    /// The context element itself, which `inner_html=` and `outer_html=` have.
+    Element(*mut LxbNode),
+    /// A named context: a tag id and namespace, for `Document#fragment` and
+    /// `DocumentFragment.parse`, where no such element exists yet.
+    Tag {
+        doc: *mut LxbDoc,
+        tag: usize,
+        ns: usize,
+    },
+}
+
+impl FragmentContext {
+    /// # Safety
+    /// `parser` must be live and initialised, and the source bytes must stay
+    /// put for the call. The context - element or document - must be live.
+    unsafe fn parse(&self, parser: &HtmlParser, src: *const u8, len: usize) -> *mut LxbNode {
+        match *self {
+            /* Lexbor types this one to its element interface; the handle we
+             * hold is a node, which is what that interface begins with. */
+            FragmentContext::Element(el) => {
+                lxb_html_parse_fragment(parser.as_ptr(), el as *mut _, src, len)
+            }
+            /* The by-tag-id entry is hand-declared over opaque pointers (it is
+             * absent from Lexbor's public headers), so the casts are here. */
+            FragmentContext::Tag { doc, tag, ns } => lxb_html_parse_fragment_by_tag_id(
+                parser.as_ptr() as *mut c_void,
+                doc as *mut c_void,
+                tag,
+                ns,
+                src,
+                len,
+            ),
+        }
+    }
+}
 
 /// Run a fragment parse with a fresh parser, or the error that stopped it.
 ///
@@ -256,8 +306,7 @@ type FragmentParseFn = unsafe fn(*mut c_void, *const u8, usize, *mut c_void) -> 
 /// `root->owner_document` afterwards.
 pub unsafe fn run_fragment_parser(
     html: VALUE,
-    parse: FragmentParseFn,
-    ctx: *mut c_void,
+    context: &FragmentContext,
 ) -> Result<*mut LxbNode, Error> {
     let Some(parser) = HtmlParser::create() else {
         return Err(Error::new(error_class(), "failed to create HTML parser"));
@@ -270,10 +319,7 @@ pub unsafe fn run_fragment_parser(
         ));
     };
 
-    /* The two parsers take their context differently, so the contract here is
-     * representation-opaque and the typed parser is cast at this one point
-     * rather than declared a second time per shape. */
-    let root = parse(parser.as_ptr() as *mut c_void, src.ptr, src.len, ctx);
+    let root = context.parse(&parser, src.ptr, src.len);
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
     if root.is_null() {
@@ -395,25 +441,6 @@ pub unsafe fn resolve_fragment_context(
     Ok((tid, NS_HTML))
 }
 
-/// Parse callback for `run_fragment_parser`: Lexbor's by-tag-id parser,
-/// which implements the full algorithm for the context (tokenizer state for
-/// rawtext/rcdata, foreign-content adjustment, the form pointer).
-struct FragTagCtx {
-    doc: *mut LxbDoc,
-    tag: usize,
-    ns: usize,
-}
-
-unsafe fn parse_fragment_by_tag(
-    parser: *mut c_void,
-    hsrc: *const u8,
-    hlen: usize,
-    ctx: *mut c_void,
-) -> *mut LxbNode {
-    let c = &*(ctx as *const FragTagCtx);
-    lxb_html_parse_fragment_by_tag_id(parser, c.doc as *mut c_void, c.tag, c.ns, hsrc, hlen)
-}
-
 /// Parse `html` in the given context and build a DOCUMENT_FRAGMENT owned by
 /// `document`, so its nodes can be spliced into it.
 /// `document` is the wrapper the fragment is bound to (its keepalive), `doc` the
@@ -441,13 +468,8 @@ pub unsafe fn build_fragment_ctx(
     }
     let frag_node = frag as *mut LxbNode;
 
-    let pctx = FragTagCtx { doc, tag, ns };
-    let root = run_fragment_parser(
-        html.as_raw(),
-        parse_fragment_by_tag,
-        &pctx as *const FragTagCtx as *mut c_void,
-    )?;
-    if import_fragment_children(doc, root, emit_append, frag_node as *mut c_void) != 0 {
+    let root = run_fragment_parser(html.as_raw(), &FragmentContext::Tag { doc, tag, ns })?;
+    if !import_fragment_children(doc, root, &Emit::Append(frag_node)) {
         return Err(Error::new(
             error_class(),
             "failed to import a fragment child",
