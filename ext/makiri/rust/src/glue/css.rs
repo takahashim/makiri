@@ -45,11 +45,12 @@ use std::collections::HashMap;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, Exception, Ruby, Value};
-use rb_sys::{StableApiDefinition, VALUE};
+use rb_sys::VALUE;
 
 use super::abi::{
-    error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push, verify_text,
-    wrap_html_node, LxbNode, EXC_CSS_SYNTAX_ERROR, LXB_STATUS_OK, MOD_HTML_NODE_METHODS,
+    error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push,
+    ruby_bytes_view, verify_text, wrap_html_node, LxbNode, EXC_CSS_SYNTAX_ERROR, LXB_STATUS_OK,
+    MOD_HTML_NODE_METHODS,
 };
 
 /// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
@@ -363,6 +364,11 @@ unsafe fn with_compiled_selector(
 ) -> Result<(), Error> {
     /* `Err` for a NUL byte or invalid UTF-8, naming the argument as the C did. */
     verify_text(selector, c"CSS selector")?;
+    /* The borrow comes from the bridge rather than from RSTRING here, so the
+     * view anchors the String while its bytes are read. `ruby_verified_text`
+     * would do both in one, but it also coerces, and these entries are hot
+     * enough that the extra type check measured. */
+    let sv = ruby_bytes_view(selector.as_raw());
     let e = engine()?;
     let g = globals();
 
@@ -386,7 +392,10 @@ unsafe fn with_compiled_selector(
         g.win_hits = 0;
     }
 
-    let (ptr, len) = str_bytes(selector);
+    /* The pointer Lexbor gets is the String's own, as before - `bytes()` would
+     * hand it a dangling one for an empty selector, which the cache key below
+     * does not care about but a parser might. */
+    let (ptr, len) = (sv.as_ptr() as *const u8, sv.len());
 
     if g.bypass {
         /* Parse + clean per call - the behaviour before the cache existed - so
@@ -406,7 +415,7 @@ unsafe fn with_compiled_selector(
         };
     }
 
-    let key = core::slice::from_raw_parts(ptr, len);
+    let key = sv.bytes();
     let h = cache();
     if let Some(&list) = h.get(key) {
         g.win_hits += 1;
@@ -463,16 +472,6 @@ unsafe fn with_compiled_selector(
     }
     run.call(e, node, list, ctx);
     Ok(())
-}
-
-/// The selector's bytes. Only called right after `verify_text`, which has
-/// already coerced and validated it, and the `Value` stays live in the caller's
-/// frame - so the borrow cannot outlive its String.
-unsafe fn str_bytes(v: Value) -> (*const u8, usize) {
-    let api = rb_sys::stable_api::get_default();
-    let ptr = api.rstring_ptr(v.as_raw()) as *const u8;
-    let len = api.rstring_len(v.as_raw()) as usize;
-    (ptr, len)
 }
 
 /// The C's message, exactly.

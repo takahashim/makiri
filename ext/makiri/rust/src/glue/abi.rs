@@ -186,6 +186,7 @@ pub use crate::bridge::string::ruby_bytes_view;
 pub use crate::bridge::string::ruby_copy_bytes;
 pub use crate::bridge::string::ruby_str_from_borrowed;
 pub use crate::bridge::string::ruby_str_from_slices;
+pub use crate::bridge::string::ruby_str_from_utf8;
 pub use crate::bridge::string::ruby_str_known_valid_utf8;
 pub use crate::bridge::string::ruby_to_utf8;
 pub use crate::bridge::string::ruby_verified_text;

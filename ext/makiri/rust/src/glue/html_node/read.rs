@@ -16,8 +16,6 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_char;
-
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
 
@@ -25,10 +23,9 @@ use super::ty;
 use super::{arg_node, wrap, wrap_node};
 use crate::dom_adapter::html::HtmlNode;
 use crate::glue::abi::{
-    doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_borrowed,
-    ruby_str_from_slices, ruby_verified_text, LxbAttr, CLASS_NODE, CLASS_XML_DOCUMENT,
+    doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_slices,
+    ruby_str_from_utf8, ruby_verified_text, LxbAttr, CLASS_NODE, CLASS_XML_DOCUMENT,
 };
-use crate::text::BorrowedText;
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
@@ -36,15 +33,10 @@ use crate::text::BorrowedText;
 
 /// A UTF-8 String copied from bytes the document lends.
 fn dom_str(bytes: &[u8]) -> Value {
-    // SAFETY: the String copies the bytes. They are valid UTF-8 whenever they
-    // come from the document, by the text-input contract; bytes that were not
-    // would make a broken String, not a memory error.
-    unsafe {
-        Value::from_raw(ruby_str_from_borrowed(BorrowedText::from_raw_parts(
-            bytes.as_ptr() as *const c_char,
-            bytes.len(),
-        )))
-    }
+    // SAFETY: the bytes are valid UTF-8 whenever they come from the document,
+    // by the text-input contract - which is the part this layer knows and the
+    // bridge cannot. The String copies them.
+    unsafe { Value::from_raw(ruby_str_from_utf8(bytes)) }
 }
 
 fn nil(ruby: &Ruby) -> Value {

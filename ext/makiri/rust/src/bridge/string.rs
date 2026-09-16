@@ -109,6 +109,24 @@ pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Res
     Ok(str)
 }
 
+/// A UTF-8 String copied from `bytes`.
+///
+/// The DOM readers hand over a slice the document lends them and want a String
+/// of it. Minting the [`BorrowedText`] for that is this layer's job; deciding
+/// that the bytes satisfy its contract is not, because only the caller knows
+/// where they came from.
+///
+/// # Safety
+/// `bytes` must be valid UTF-8. Everything in a parsed document is, by the
+/// text-input contract. Bytes that were not would make a wrong String rather
+/// than a memory error - wrong is still wrong.
+pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
+    ruby_str_from_borrowed(BorrowedText::from_raw_parts(
+        bytes.as_ptr() as *const c_char,
+        bytes.len(),
+    ))
+}
+
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
 /// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
 pub unsafe fn ruby_str_from_borrowed(text: BorrowedText) -> VALUE {

@@ -161,12 +161,7 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
         // its bytes must NOT be borrowed. It is already valid UTF-8, so copy
         // rather than sanitise.
         let mut buf = Buf::new(hv.len());
-        buf.append(if hv.len() == 0 {
-            &[]
-        } else {
-            core::slice::from_raw_parts(hv.as_ptr() as *const u8, hv.len())
-        })
-        .ok()?;
+        buf.append(hv.bytes()).ok()?;
         let owned = buf.steal().ok()?;
         let ptr = owned.as_slice().as_ptr();
         let len = owned.as_slice().len();
@@ -411,11 +406,7 @@ pub unsafe fn resolve_fragment_context(
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
     let cv = ruby_verified_text(context, c"fragment context element")?;
-    let name = if cv.as_ptr().is_null() || cv.len() == 0 {
-        &[][..]
-    } else {
-        core::slice::from_raw_parts(cv.as_ptr() as *const u8, cv.len())
-    };
+    let name = cv.bytes();
     if name == b"svg" {
         return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize, NS_SVG));
     }
