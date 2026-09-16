@@ -132,6 +132,31 @@ def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
 end
 
+# `--fix` transcribes the two tables that move whenever code moves, so a hand
+# count cannot disagree with the one this script does. It deliberately does NOT
+# touch RB_SYS_COUNTS, STATIC_MUT_COUNTS or RAISING_COUNTS: those record a
+# boundary DECISION rather than a consequence of moving code, and a new direct
+# `rb_sys::` call, a new process-wide mutable global or a new raising C call
+# outside `bridge/` is exactly the thing a person should have to think about.
+# Rewriting them automatically would spend the ratchet it exists to hold.
+FIX = ARGV.delete("--fix")
+abort "usage: check_unsafe_boundaries.rb [--fix]" unless ARGV.empty?
+
+# Only the entries that moved: a pinned table has a dozen rows, and printing
+# both copies of it buries the one line that changed.
+def table_diff(recorded, actual)
+  keys = (recorded.keys | actual.keys).select { |k| recorded[k] != actual[k] }
+  keys.sort.map { |k| "#{k} #{recorded[k] || 0} -> #{actual[k] || 0}" }.join(", ")
+end
+
+# Replace `NAME = <open> ... <close>` in this script's own source.
+def rewrite_table!(source, name, open_tok, close_tok, body)
+  head = "#{name} = #{open_tok}\n"
+  from = source.index(head) or abort "unsafe-boundaries: cannot find #{name} to rewrite"
+  to = source.index("#{close_tok}\n", from) or abort "unsafe-boundaries: #{name} is unterminated"
+  source[0...from] + head + body + source[to..]
+end
+
 errors = []
 
 unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
@@ -148,14 +173,34 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   unsafe_actual[relative] = count unless count.zero?
 end
 
-if unsafe_actual != UNSAFE_ISLANDS
-  gained = unsafe_actual.reject { |k, v| UNSAFE_ISLANDS[k] == v }
-  lost = UNSAFE_ISLANDS.reject { |k, v| unsafe_actual[k] == v }
-  errors << "unsafe islands changed: got #{gained.inspect}, recorded #{lost.inspect}"
-end
+if FIX
+  src = File.binread(__FILE__)
+  before = src.dup
+  src = rewrite_table!(src, "UNSAFE_ISLANDS", "{", "}.freeze",
+                       unsafe_actual.sort.map { |f, n| %(  "#{f}" => #{n},\n) }.join)
+  src = rewrite_table!(src, "FORBID_FILES", "%w[", "].freeze",
+                       forbidding.sort.each_slice(3).map { |r| "  #{r.join(' ')}\n" }.join)
+  if src == before
+    # Nothing to say: the exit status and the summary below already report it.
+  else
+    File.binwrite(__FILE__, src)
+    gained = unsafe_actual.reject { |k, v| UNSAFE_ISLANDS[k] == v }
+    lost = UNSAFE_ISLANDS.reject { |k, v| unsafe_actual[k] == v }
+    puts "unsafe-boundaries --fix: islands now #{gained.inspect} (were #{lost.inspect}); " \
+         "#{forbidding.length} forbid files"
+    puts "unsafe-boundaries --fix: review this file's diff - the numbers moved, and why is the commit"
+  end
+else
+  if unsafe_actual != UNSAFE_ISLANDS
+    gained = unsafe_actual.reject { |k, v| UNSAFE_ISLANDS[k] == v }
+    lost = UNSAFE_ISLANDS.reject { |k, v| unsafe_actual[k] == v }
+    errors << "unsafe islands changed: got #{gained.inspect}, recorded #{lost.inspect} " \
+              "(`rake unsafe:fix` transcribes it)"
+  end
 
-missing = FORBID_FILES - forbidding
-errors << "lost #![forbid(unsafe_code)]: #{missing.inspect}" unless missing.empty?
+  missing = FORBID_FILES - forbidding
+  errors << "lost #![forbid(unsafe_code)]: #{missing.inspect}" unless missing.empty?
+end
 
 actual = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
@@ -166,7 +211,7 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 
 if actual != STATIC_MUT_COUNTS
-  errors << "static mut boundary changed: expected #{STATIC_MUT_COUNTS.inspect}, got #{actual.inspect}"
+  errors << "static mut boundary changed: #{table_diff(STATIC_MUT_COUNTS, actual)}"
 end
 
 rb_sys = Hash.new(0)
@@ -183,12 +228,16 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 
 if rb_sys != RB_SYS_COUNTS
-  errors << "rb_sys:: outside bridge/ changed: expected #{RB_SYS_COUNTS.inspect}, got #{rb_sys.inspect}"
+  errors << "rb_sys:: outside bridge/ changed: #{table_diff(RB_SYS_COUNTS, rb_sys)}"
 end
 if raising != RAISING_COUNTS
-  errors << "raising C API outside bridge/ changed: expected #{RAISING_COUNTS.inspect}, got #{raising.inspect}"
+  errors << "raising C API outside bridge/ changed: #{table_diff(RAISING_COUNTS, raising)}"
 end
 
+if FIX && !errors.empty?
+  puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
+  errors.each { |e| puts "  #{e}" }
+end
 abort "unsafe-boundaries: #{errors.join("\nunsafe-boundaries: ")}" unless errors.empty?
 
 puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
