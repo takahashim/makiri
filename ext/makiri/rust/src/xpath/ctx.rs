@@ -108,7 +108,7 @@ pub enum Backend {
     /// mutation between evaluates drops it, and the next evaluate rebuilds it.
     #[cfg(feature = "lexbor")]
     Html {
-        parsed: *mut crate::dom_adapter::post_parse::Parsed,
+        parsed: *mut crate::lexbor::adapter::post_parse::Parsed,
     },
     /// A Makiri XML arena. Its element-name index hangs off the document itself
     /// and is built on first use.
@@ -356,7 +356,7 @@ impl<'d> Context<'d> {
     #[allow(clippy::result_large_err)]
     fn html_dom<'e>(
         &self,
-        parsed: *mut crate::dom_adapter::post_parse::Parsed,
+        parsed: *mut crate::lexbor::adapter::post_parse::Parsed,
     ) -> Result<crate::xpath::dom_html::HtmlDom<'e>, Error> {
         // SAFETY: `new`'s contract - the handle is live for `'d`, and its
         // document does not change while this evaluate runs.
@@ -365,7 +365,7 @@ impl<'d> Context<'d> {
         };
         let raw_doc = parsed.html_doc() as *mut crate::lexbor_abi::LxbDoc;
         // SAFETY: as above.
-        let Some(doc) = (unsafe { crate::dom_adapter::html::HtmlDoc::from_raw(raw_doc) }) else {
+        let Some(doc) = (unsafe { crate::lexbor::adapter::html::HtmlDoc::from_raw(raw_doc) }) else {
             return Err(self.no_document());
         };
         let Some(index) = parsed.dom_index() else {
@@ -377,7 +377,7 @@ impl<'d> Context<'d> {
             );
             return Err(budget.take_error());
         };
-        let index = index as *const crate::dom_adapter::dom_index::DomIndex;
+        let index = index as *const crate::lexbor::adapter::dom_index::DomIndex;
         // SAFETY: the index has an allocation of its own, which only a mutation
         // frees, and none runs during this evaluate (a nested one only reads
         // it), so it outlives the borrow of the handle it came from.

@@ -1,5 +1,5 @@
 //! The XPath engine's HTML backend: `Dom` for a Lexbor document, through
-//! [`crate::dom_adapter::html`], which is the only module that reads Lexbor's
+//! [`crate::lexbor::adapter::html`], which is the only module that reads Lexbor's
 //! structs.
 //!
 //! The adapter's typed handles carry the contract - a live node of a document
@@ -14,8 +14,8 @@ use core::ffi::c_void;
 
 use super::abi::*;
 use super::dom::*;
-use crate::dom_adapter::dom_index::DomIndex;
-use crate::dom_adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
+use crate::lexbor::adapter::dom_index::DomIndex;
+use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
 use crate::lexbor_abi::{self as lxb, LxbNode};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so

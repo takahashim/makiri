@@ -49,7 +49,7 @@ use crate::init::{
 /// `mkr_doc_data_t`: the parsed handle (owned - GC frees it) and the reserved
 /// errors Array.
 struct DocData {
-    parsed: *mut crate::dom_adapter::post_parse::Parsed,
+    parsed: *mut crate::lexbor::adapter::post_parse::Parsed,
     errors: VALUE,
 }
 
@@ -57,10 +57,10 @@ struct DocData {
 /// `import_node` treat every HTML node as an XML one.
 const NODE_KIND_XML: c_int = lxb::parsed::NODE_KIND_XML as c_int;
 
-use crate::dom_adapter::html::HtmlDoc;
+use crate::lexbor::adapter::html::HtmlDoc;
 
-pub use crate::dom_adapter::cross_import::cross_xml_to_html;
-pub use crate::dom_adapter::post_parse::parse_html;
+pub use crate::lexbor::adapter::cross_import::cross_xml_to_html;
+pub use crate::lexbor::adapter::post_parse::parse_html;
 pub use crate::glue::node::node_kind;
 pub use crate::glue::xml_node::mutate::xml_mut_check;
 pub use crate::xml::api::xml_doc_memsize;
@@ -139,7 +139,7 @@ fn html_doc_of(d: *mut DocData) -> *mut lxb::lxb_dom_document_t {
 }
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
-pub fn doc_parsed(rb_doc: Value) -> Result<*mut crate::dom_adapter::post_parse::Parsed, Error> {
+pub fn doc_parsed(rb_doc: Value) -> Result<*mut crate::lexbor::adapter::post_parse::Parsed, Error> {
     let d = crate::bridge::ruby::typed_data(rb_doc, &DOC_TYPE)? as *mut DocData;
     // SAFETY: the data of a live Document.
     Ok(unsafe { (*d).parsed })
@@ -156,7 +156,7 @@ pub fn doc_parsed(rb_doc: Value) -> Result<*mut crate::dom_adapter::post_parse::
 /// memory. Every mutator checks [`ensure_document_mutable`] first, so that
 /// borrow is never invalidated under a suspended walk.
 pub(crate) struct DocumentEvaluation(
-    *mut crate::dom_adapter::post_parse::Parsed,
+    *mut crate::lexbor::adapter::post_parse::Parsed,
     /// The Document the handle belongs to. Holding it is what keeps the handle
     /// valid: a guard lives on the machine stack, which Ruby's collector scans,
     /// so the Document cannot be collected while one is alive.
@@ -199,7 +199,7 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
 
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
-pub fn doc_parsed_known(rb_doc: Value) -> *mut crate::dom_adapter::post_parse::Parsed {
+pub fn doc_parsed_known(rb_doc: Value) -> *mut crate::lexbor::adapter::post_parse::Parsed {
     let d = crate::bridge::ruby::typed_data_known(rb_doc, &DOC_TYPE) as *mut DocData;
     // SAFETY: the data of a live Document.
     unsafe { (*d).parsed }
@@ -209,7 +209,7 @@ pub fn doc_parsed_known(rb_doc: Value) -> *mut crate::dom_adapter::post_parse::P
 /// chosen by kind - a Lexbor-backed handle is an HTML Document, an arena-backed
 /// one an XML Document.
 pub unsafe extern "C" fn wrap_document(
-    parsed: *mut crate::dom_adapter::post_parse::Parsed,
+    parsed: *mut crate::lexbor::adapter::post_parse::Parsed,
 ) -> VALUE {
     let is_xml = (*parsed).is_xml();
     let (klass, ty) = if is_xml {
@@ -235,7 +235,7 @@ pub unsafe extern "C" fn wrap_document(
 struct ParseArgs<'a> {
     src: &'a [u8],
     assume_valid: bool,
-    result: *mut crate::dom_adapter::post_parse::Parsed,
+    result: *mut crate::lexbor::adapter::post_parse::Parsed,
 }
 
 /// Runs with the GVL released: pure C (Lexbor + libc), touching no Ruby state.
@@ -491,7 +491,7 @@ pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 
     let node = html_node_unwrap(rb_self)?;
     // SAFETY: the node of a live wrapper, which keeps its document alive.
-    let Some(handle) = (unsafe { crate::dom_adapter::html::HtmlNode::from_raw(node) }) else {
+    let Some(handle) = (unsafe { crate::lexbor::adapter::html::HtmlNode::from_raw(node) }) else {
         return Err(Error::new(error_class(), "uninitialized HTML node"));
     };
     let doc = handle.owner_document();

@@ -29,7 +29,7 @@ use crate::init::CLASS_NODE;
 const KIND_HTML: core::ffi::c_int = 1;
 const KIND_XML: core::ffi::c_int = 2;
 
-pub use crate::dom_adapter::cross_import::cross_html_to_xml;
+pub use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 pub use crate::glue::node::node_kind;
 pub use crate::xml::api::xml_clone_node;
 pub use crate::xml::api::xml_copy_node;

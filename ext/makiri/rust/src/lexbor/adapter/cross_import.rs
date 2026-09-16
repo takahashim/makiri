@@ -21,7 +21,7 @@
 
 use core::ffi::c_void;
 
-use crate::dom_adapter::html::{
+use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
 };
 use crate::falloc::{try_vec_with_capacity, Reserve};
@@ -36,7 +36,7 @@ use crate::xml::mutate;
  * comparison across representations read as one. */
 
 mod h {
-    pub use crate::dom_adapter::html::{
+    pub use crate::lexbor::adapter::html::{
         TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT, TYPE_ELEMENT as ELEMENT,
         TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
     };

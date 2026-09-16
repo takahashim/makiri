@@ -32,7 +32,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{node_document, unwrap, wrap};
-use crate::dom_adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, ScratchElement, NS_UNDEF};
+use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, ScratchElement, NS_UNDEF};
 use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbNode};
 use crate::lexbor_abi as lxb;
 

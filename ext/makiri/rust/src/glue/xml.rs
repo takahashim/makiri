@@ -77,7 +77,7 @@ fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
 pub use crate::bridge::string::ruby_copy_bytes;
 pub use crate::bridge::string::ruby_try_verified_text;
 pub use crate::bridge::xml_decode::xml_decode_input;
-use crate::dom_adapter::post_parse::Parsed;
+use crate::lexbor::adapter::post_parse::Parsed;
 pub use crate::glue::doc::wrap_document;
 use crate::glue::xpath::xpath_error;
 use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};

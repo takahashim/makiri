@@ -35,12 +35,12 @@ use crate::init::CLASS_NODE;
  * ------------------------------------------------------------------ */
 
 use crate::cbuf::{Buf, OwnedBuf};
-use crate::dom_adapter::html::{
+use crate::lexbor::adapter::html::{
     BuildingNode, HtmlDoc, HtmlNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG,
     TAG_UNDEF,
 };
-pub use crate::dom_adapter::utf8_input::utf8_sanitize;
-use crate::dom_adapter::utf8_input::Sanitized;
+pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
+use crate::lexbor::adapter::utf8_input::Sanitized;
 
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
  * but absent from its public headers, so `lexbor_abi` hand-declares it with the

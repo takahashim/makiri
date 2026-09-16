@@ -54,8 +54,8 @@ pub use crate::lexbor_abi::consts::{
 /* The node types the glue still names in Lexbor's own spelling. The values come
  * from `dom_adapter::html`, which is the one place that reads them; the
  * FRAGMENT one went with serialize.rs's last direct read. */
-pub use crate::dom_adapter::html::TYPE_DOCTYPE as LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
-pub use crate::dom_adapter::html::TYPE_ELEMENT as LXB_DOM_NODE_TYPE_ELEMENT;
+pub use crate::lexbor::adapter::html::TYPE_DOCTYPE as LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+pub use crate::lexbor::adapter::html::TYPE_ELEMENT as LXB_DOM_NODE_TYPE_ELEMENT;
 
 pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
     crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;
@@ -99,7 +99,7 @@ pub use crate::bridge::string::ruby_str_known_valid_utf8;
 pub use crate::bridge::string::ruby_to_utf8;
 pub use crate::bridge::string::ruby_verified_text;
 pub use crate::bridge::string::verify_text;
-pub use crate::dom_adapter::post_parse::lxb_document_bytes;
+pub use crate::lexbor::adapter::post_parse::lxb_document_bytes;
 pub use crate::glue::doc::doc_parsed;
 pub use crate::glue::doc::html_doc_unwrap;
 pub use crate::glue::html_node::html_node_unwrap;
@@ -116,7 +116,7 @@ pub use crate::glue::xml_node::xml_node_unwrap;
 /// # Safety
 /// `p` must be a live handle.
 pub unsafe fn parsed_xml_doc(
-    p: *mut crate::dom_adapter::post_parse::Parsed,
+    p: *mut crate::lexbor::adapter::post_parse::Parsed,
 ) -> *mut crate::xml::model::Document {
     (*p).xml_doc()
 }

@@ -38,7 +38,7 @@ use crate::text::BorrowedText;
 use crate::xpath::runtime_abi::cache::ptr_hash;
 
 mod ty {
-    pub use crate::dom_adapter::html::{
+    pub use crate::lexbor::adapter::html::{
         TYPE_CDATA as CDATA, TYPE_ELEMENT as ELEMENT, TYPE_FRAGMENT as FRAGMENT, TYPE_TEXT as TEXT,
     };
 }

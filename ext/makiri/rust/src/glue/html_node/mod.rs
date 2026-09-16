@@ -37,7 +37,7 @@ use rb_sys::VALUE;
 
 use super::abi::{html_doc_unwrap, html_node_methods, is_kind_of, LxbNode, NodeData};
 /* Only the mutation half registers on the Document class. */
-use crate::dom_adapter::html::HtmlNode;
+use crate::lexbor::adapter::html::HtmlNode;
 use crate::init::{CLASS_DOCUMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT};
 
 /* ------------------------------------------------------------------ *
@@ -45,11 +45,11 @@ use crate::init::{CLASS_DOCUMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT};
  * ------------------------------------------------------------------ */
 
 /// The DOM node types, under the short names this layer reads best. Defined
-/// once in [`crate::dom_adapter::html`], which is where the generated values
+/// once in [`crate::lexbor::adapter::html`], which is where the generated values
 /// are read - a second definition of a node type is how every HTML element
 /// once became foreign (see that module).
 pub mod ty {
-    pub use crate::dom_adapter::html::{
+    pub use crate::lexbor::adapter::html::{
         TYPE_ATTRIBUTE as ATTRIBUTE, TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT,
         TYPE_DOCTYPE as DOCTYPE, TYPE_DOCUMENT as DOCUMENT, TYPE_ELEMENT as ELEMENT,
         TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,

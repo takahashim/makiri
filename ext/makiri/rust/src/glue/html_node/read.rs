@@ -21,7 +21,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{arg_node, wrap, wrap_node};
-use crate::dom_adapter::html::HtmlNode;
+use crate::lexbor::adapter::html::HtmlNode;
 use crate::glue::abi::{
     doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_slices,
     ruby_str_from_utf8, ruby_verified_text, LxbAttr,

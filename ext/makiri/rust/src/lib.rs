@@ -6,7 +6,7 @@
 //!
 //!   engine   `xml`, `xpath`, `cbuf`, `cutf8`, `falloc` - no Ruby, no Lexbor.
 //!            This is what Kani proves and what cargo-fuzz drives.
-//!   lexbor   `lexbor_abi`, `css`, `dom_adapter`, and the XPath HTML instance -
+//!   lexbor   `lexbor_abi`, `lexbor`, `css`, and the XPath HTML instance -
 //!            everything that reads the vendored Lexbor DOM (`lexbor`).
 //!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
 //!            (`ruby`, on by default; it implies `lexbor`).
@@ -82,11 +82,10 @@ pub mod bridge;
 #[cfg(feature = "ruby")]
 pub mod glue;
 
-/// What Lexbor does not provide and we will not patch it to: the attr->owner
-/// and element indices, the text index, source locations, cross-import, and the
-/// input sanitiser.
+/// The vendored Lexbor boundary. This owns every direct use of its C ABI;
+/// `adapter` supplies the compatibility facilities Lexbor does not provide.
 #[cfg(feature = "lexbor")]
-pub mod dom_adapter;
+pub mod lexbor;
 
 /// The XML reader and its arena. Ruby-free and Lexbor-free.
 pub mod xml;

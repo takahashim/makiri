@@ -19,7 +19,7 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use super::abi::*;
 use crate::cbuf::{buf_append, Buf};
-use crate::dom_adapter::html::{HtmlNode, TYPE_FRAGMENT};
+use crate::lexbor::adapter::html::{HtmlNode, TYPE_FRAGMENT};
 
 /// Lexbor's chunk sink. Must not panic: it is called from C.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
