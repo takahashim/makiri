@@ -874,6 +874,43 @@ impl<'doc> HtmlElementMut<'doc> {
         HtmlNode::link(at as *mut LxbNode).map(HtmlAttr)
     }
 
+    /// Create an attribute named `qname`, give it `value`, and append it.
+    ///
+    /// `ns` is the namespace URI, or `None` for none - which is a different
+    /// naming call, not an empty URI, so the two cannot be folded together. A
+    /// fresh attribute is calloc'd into the null namespace already, so only the
+    /// namespaced setter has to say anything about it.
+    ///
+    /// `false` when any step failed; the un-appended attribute is left for the
+    /// document's arena to reclaim wholesale, this module's "never destroy"
+    /// convention.
+    pub fn append_attribute(self, ns: Option<&[u8]>, qname: &[u8], value: &[u8]) -> bool {
+        // SAFETY: a live element of a live document the caller may change;
+        // every slice is read and copied by Lexbor.
+        unsafe {
+            let at = lxb::lxb_dom_attr_interface_create(self.0.node().owner_document());
+            let Some(at) = HtmlNode::link(at as *mut LxbNode).map(HtmlAttr) else {
+                return false;
+            };
+            let named = match ns {
+                Some(uri) => lxb::lxb_dom_attr_set_name_ns(
+                    at.raw(),
+                    uri.as_ptr(),
+                    uri.len(),
+                    qname.as_ptr(),
+                    qname.len(),
+                    false,
+                ),
+                None => lxb::lxb_dom_attr_set_name(at.raw(), qname.as_ptr(), qname.len(), false),
+            };
+            if named != lxb::lexbor_status_t_LXB_STATUS_OK || !at.set_value(value) {
+                return false;
+            }
+            lxb::lxb_dom_element_attr_append(self.0.raw(), at.raw());
+            true
+        }
+    }
+
     /// Take `attr` off the element. The arena keeps it, like a detached node.
     pub fn attr_remove(self, attr: HtmlAttr<'doc>) {
         // SAFETY: a live element the caller may change, and an attribute of it.
@@ -999,6 +1036,19 @@ impl<'doc> HtmlAttr<'doc> {
         // which the handle's contract rules out for 'doc.
         unsafe { named_mut(self.raw(), lxb::lxb_dom_attr_value_noi) }
     }
+    /// Replace the attribute's value. `false` when Lexbor could not store it,
+    /// in which case the attribute keeps what it had.
+    ///
+    /// Lexbor frees the old value here, which is why an XPath evaluation may not
+    /// be reading this document - the borrowed slices it holds would dangle.
+    /// Reaching this through [`HtmlElementMut`] is what says that was checked.
+    pub fn set_value(self, value: &[u8]) -> bool {
+        // SAFETY: a live attribute; Lexbor copies the bytes before anything
+        // else runs.
+        let st = unsafe { lxb::lxb_dom_attr_set_value(self.raw(), value.as_ptr(), value.len()) };
+        st == lxb::lexbor_status_t_LXB_STATUS_OK
+    }
+
     /// The attribute's OWN namespace id, the one `setAttributeNS` recorded.
     ///
     /// An attribute with no namespace of its own reports its element's, so the

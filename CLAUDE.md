@@ -295,8 +295,13 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            access (RSTRING) and verified-string minting, and where
                            raising C calls (rb_String, typed-data checks) and the
                            wrap-then-store constructor live; a raise becomes `Err`
-                           there. `rake unsafe:boundaries` pins the glue's
-                           remaining direct `rb_sys::` and raising calls per file
+                           there. `rake unsafe:boundaries` pins that boundary:
+                           the crate denies `unsafe_code` (`lib.rs`), so every
+                           file that needs it carries an `allow` and the script
+                           holds each one's count exactly - a new file fails even
+                           where a parent module's `allow` kept rustc quiet - plus
+                           the 35 `forbid` files and the glue's remaining direct
+                           `rb_sys::` and raising calls per file
     glue/                  Ruby <-> engine surface, one module per feature
                            (node/doc/node_set/xpath/css/serialize/mutate)
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait

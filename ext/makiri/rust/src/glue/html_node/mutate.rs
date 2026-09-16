@@ -35,12 +35,8 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::ty;
 use super::{node_document, unwrap, wrap};
 use crate::dom_adapter::html::{HtmlDoc, HtmlNode, HtmlNodeMut, ScratchElement, NS_UNDEF};
-use crate::glue::abi::{
-    error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbElement, LxbNode,
-};
+use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbNode};
 use crate::lexbor_abi as lxb;
-
-const STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
 /// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
 /// the fragment rule in one place.
@@ -445,95 +441,56 @@ pub fn set_attribute_ns(
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    unsafe {
-        /* The attribute mutators still work in raw handles; this step is the
-         * tree edits. The clearance is the same, so the node comes back down
-         * to a pointer here. */
-        let node = unwrap_mutable(&this)?.as_raw();
-        if (*node).type_ != ty::ELEMENT {
-            return Err(err("cannot set an attribute on a non-element node"));
-        }
-        let el = node as *mut LxbElement;
+    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+        return Err(err("cannot set an attribute on a non-element node"));
+    };
 
-        let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
-        let vv = ruby_verified_data(rb_value, c"attribute value")?;
+    let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
+    let vv = ruby_verified_data(rb_value, c"attribute value")?;
+    let nv = if rb_ns.is_nil() {
+        None
+    } else {
+        Some(ruby_verified_text(rb_ns, c"namespace")?)
+    };
 
-        let nv = if rb_ns.is_nil() {
-            None
-        } else {
-            Some(ruby_verified_text(rb_ns, c"namespace")?)
-        };
-        let ns_bytes: &[u8] = match &nv {
-            Some(nv) => nv.bytes(),
-            None => &[],
-        };
-        let have_ns = !ns_bytes.is_empty();
+    /* SAFETY: every view is the caller's, live for this call, and Lexbor copies
+     * what it keeps before any Ruby code can run again. */
+    let (qname, value) = unsafe { (qv.bytes(), vv.bytes()) };
+    /* An empty URI is no namespace: it names the attribute the unprefixed way,
+     * which is a different Lexbor call rather than an empty argument. */
+    let ns = match &nv {
+        Some(nv) if nv.len() != 0 => Some(unsafe { nv.bytes() }),
+        _ => None,
+    };
 
-        /* Intern the wanted namespace so the existing attribute is matched on
-         * (namespace, local name) - the DOM key - rather than on the qualified
-         * name. */
-        let want_ns =
-            HtmlDoc::from_raw((*node).owner_document).map_or(NS_UNDEF, |d| d.intern_ns(ns_bytes));
+    /* Intern the wanted namespace so the existing attribute is matched on
+     * (namespace, local name) - the DOM key - rather than on the qualified
+     * name. */
+    let doc = el.element().node().owner_document();
+    /* SAFETY: the element's own Document, live for this call. */
+    let want_ns =
+        unsafe { HtmlDoc::from_raw(doc) }.map_or(NS_UNDEF, |d| d.intern_ns(ns.unwrap_or(&[])));
 
-        let qname = core::slice::from_raw_parts(qv.as_ptr() as *const u8, qv.len());
-        let local = match qname.iter().position(|&b| b == b':') {
-            Some(i) => &qname[i + 1..],
-            None => qname,
-        };
+    let local = match qname.iter().position(|&b| b == b':') {
+        Some(i) => &qname[i + 1..],
+        None => qname,
+    };
 
-        /* A match keeps its qualified name (so re-setting with a different
-         * prefix leaves the prefix unchanged); only the value updates. A miss
-         * appends a new attribute, even when its qualified name collides with an
-         * existing one in a different namespace. */
-        let existing = HtmlNode::from_raw(node)
-            .and_then(|n| n.element())
-            .and_then(|e| e.find_attr_ns(want_ns, local));
-        let outcome = if let Some(existing) = existing {
-            if lxb::lxb_dom_attr_set_value(existing.raw(), vv.as_ptr() as *const u8, vv.len())
-                != STATUS_OK
-            {
-                Err(err("failed to set attribute value"))
-            } else {
-                Ok(())
-            }
-        } else {
-            let attr = lxb::lxb_dom_attr_interface_create((*node).owner_document);
-            if attr.is_null() {
-                Err(err("failed to create attribute"))
-            } else {
-                /* A fresh attr is calloc'd, so node.ns is already the null
-                 * namespace; only the namespaced setter changes it. */
-                let st = if have_ns {
-                    lxb::lxb_dom_attr_set_name_ns(
-                        attr,
-                        ns_bytes.as_ptr(),
-                        ns_bytes.len(),
-                        qv.as_ptr() as *const u8,
-                        qv.len(),
-                        false,
-                    )
-                } else {
-                    lxb::lxb_dom_attr_set_name(attr, qv.as_ptr() as *const u8, qv.len(), false)
-                };
-                if st != STATUS_OK
-                    || lxb::lxb_dom_attr_set_value(attr, vv.as_ptr() as *const u8, vv.len())
-                        != STATUS_OK
-                {
-                    /* Leave the un-appended attr for the document arena to free
-                     * wholesale (this module's "never destroy" convention). */
-                    Err(err("failed to set namespaced attribute"))
-                } else {
-                    lxb::lxb_dom_element_attr_append(el, attr);
-                    Ok(())
-                }
-            }
-        };
-
-        outcome?;
-
-        invalidate(this.document);
-        Ok(rb_value)
+    /* A match keeps its qualified name (so re-setting with a different prefix
+     * leaves the prefix unchanged); only the value updates. A miss appends a new
+     * attribute, even when its qualified name collides with an existing one in a
+     * different namespace. */
+    let stored = match el.element().find_attr_ns(want_ns, local) {
+        Some(existing) => existing.set_value(value),
+        None => el.append_attribute(ns, qname, value),
+    };
+    if !stored {
+        return Err(err("failed to set namespaced attribute"));
     }
+
+    // SAFETY: `this.document` is the element's live Document.
+    unsafe { invalidate(this.document) };
+    Ok(rb_value)
 }
 
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> nil.
