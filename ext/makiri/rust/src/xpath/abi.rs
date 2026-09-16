@@ -2,6 +2,8 @@
 //! from the modules that define them so a module can `use super::abi::*`.
 //! It defines nothing.
 
+#![forbid(unsafe_code)]
+
 pub use super::ast::*;
 pub use super::ctx::{Names, Resolver, ResolverCall};
 pub use super::funcs::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};

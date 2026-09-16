@@ -34,6 +34,7 @@
 //! is merely "as fast as no cache"), and caching is periodically re-tested so a
 //! workload that starts repeating selectors regains it.
 
+#![allow(unsafe_code)]
 /* Every function takes the `VALUE`s its caller already holds. */
 #![allow(clippy::missing_safety_doc)]
 

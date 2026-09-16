@@ -13,6 +13,8 @@
 //! be an axis, a node-type keyword, or a function name), which is done by
 //! advancing and keeping the token that was there.
 
+#![allow(unsafe_code)]
+
 use super::abi::*;
 use super::ast_ops;
 use super::lex::{LexErr, Lexer, Tok, Token};

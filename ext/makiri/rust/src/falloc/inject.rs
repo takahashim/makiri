@@ -1,5 +1,7 @@
 //! Shared OOM injection counter used by the `rake oom` sweep.
 
+#![allow(unsafe_code)]
+
 use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 static COUNTDOWN: AtomicI64 = AtomicI64::new(0);

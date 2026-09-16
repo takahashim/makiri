@@ -12,6 +12,8 @@
 //! tree, so one compiled AST can be evaluated re-entrantly - a handler running
 //! the same cached expression again - through a shared reference.
 
+#![forbid(unsafe_code)]
+
 /// A location step's axis (XPath 1.0 section 2.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {

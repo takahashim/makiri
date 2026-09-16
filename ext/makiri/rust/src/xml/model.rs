@@ -9,6 +9,8 @@
 //! store. No raw pointer is part of the model, so the parser, mutators, index
 //! and XPath XML backend can all be ordinary safe Rust.
 
+#![forbid(unsafe_code)]
+
 /* Boundary readers state their precondition once, on `bytes`. */
 /* ---- status codes ---- */
 

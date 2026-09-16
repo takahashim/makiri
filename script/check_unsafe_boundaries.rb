@@ -2,35 +2,99 @@
 
 # Keep the parts of the extension that are meant to be ordinary Rust that way.
 #
-# This is intentionally a small structural gate, not an attempt to parse Rust:
-# `#![forbid(unsafe_code)]` is the compiler-enforced half.  The explicit list
-# documents the safe island and makes a new raw-pointer escape visible in code
-# review.  The static-mut check catches a different regression: a process-wide
-# mutable singleton must have an ownership/serialisation argument, and new ones
-# must not appear by accident.
+# The compiler holds the default: `lib.rs` denies `unsafe_code`, so a file that
+# wants unsafe must say `#![allow(unsafe_code)]` and that line shows up in
+# review. This script pins the result, the way it already pins `rb_sys::` and
+# `static mut` - what the compiler cannot do is notice that an island grew.
+#
+# Why the count check runs over EVERY file rather than only the islands: an
+# `allow` propagates to child modules, so the one on `falloc/mod.rs` covers all
+# of `falloc/`. A new file added there could use unsafe with the compiler silent
+# AND carry no allow of its own, so a check that only looked at files carrying
+# an allow would miss it. Counting everything and demanding an exact match does
+# not.
 
 ROOT = File.expand_path("..", __dir__)
 RUST = File.join(ROOT, "ext/makiri/rust/src")
 
-SAFE_FILES = %w[
-  css/build.rs
-  css/lower.rs
-  xpath/attr_pred.rs
-  xpath/axis.rs
-  xpath/funcs.rs
-  xpath/lex.rs
-  xpath/nodetest.rs
-  xpath/number.rs
-  xpath/order.rs
-  xpath/step_index.rs
-  xml/chars.rs
-  xml/index.rs
-  xml/mutate.rs
-  xml/qname.rs
-  xml/selftest.rs
-  xml/serialize.rs
-  xml/tree.rs
+# Every file's unsafe count, exact. A new file with unsafe fails here even when
+# a parent module's `allow` kept the compiler quiet; a file that loses its last
+# unsafe fails until the entry goes, so a reduction lands with the gate that
+# records it. The count is `unsafe` followed by `{`, `fn`, `impl`, `trait` or
+# `extern`, outside comment lines - the one definition, kept here.
+UNSAFE_ISLANDS = {
+  "bridge/ruby.rs" => 11,
+  "bridge/string.rs" => 17,
+  "bridge/xml_decode.rs" => 7,
+  "cbuf.rs" => 15,
+  "cbuf/verify.rs" => 7,
+  "css/mod.rs" => 1,
+  "css/parser.rs" => 47,
+  "dom_adapter/cross_import.rs" => 16,
+  "dom_adapter/dom_index.rs" => 3,
+  "dom_adapter/html.rs" => 82,
+  "dom_adapter/post_parse.rs" => 9,
+  "dom_adapter/source_loc.rs" => 4,
+  "dom_adapter/text_index.rs" => 5,
+  "dom_adapter/utf8_input.rs" => 1,
+  "falloc/calloc_verify.rs" => 3,
+  "falloc/cstr.rs" => 3,
+  "falloc/inject.rs" => 3,
+  "falloc/mod.rs" => 2,
+  "falloc/raw.rs" => 4,
+  "glue/abi.rs" => 9,
+  "glue/css.rs" => 22,
+  "glue/doc.rs" => 25,
+  "glue/fragment.rs" => 15,
+  "glue/html_node/mod.rs" => 8,
+  "glue/html_node/mutate.rs" => 37,
+  "glue/html_node/read.rs" => 19,
+  "glue/lexbor_css.rs" => 11,
+  "glue/node.rs" => 7,
+  "glue/node_set.rs" => 16,
+  "glue/serialize.rs" => 9,
+  "glue/xml.rs" => 14,
+  "glue/xml_node/mod.rs" => 8,
+  "glue/xml_node/mutate.rs" => 22,
+  "glue/xml_node/ns.rs" => 4,
+  "glue/xml_node/read.rs" => 21,
+  "glue/xml_node/serialize.rs" => 3,
+  "glue/xpath.rs" => 25,
+  "init.rs" => 7,
+  "lexbor_abi.rs" => 5,
+  "rust_tests.rs" => 6,
+  "text.rs" => 4,
+  "xpath/ctx.rs" => 10,
+  "xpath/dom.rs" => 1,
+  "xpath/dom_html.rs" => 4,
+  "xpath/dom_xml.rs" => 1,
+  "xpath/eval.rs" => 1,
+  "xpath/msg.rs" => 3,
+  "xpath/parse.rs" => 2,
+  "xpath/tests.rs" => 4,
+  "xpath/value.rs" => 1,
+}.freeze
+
+# Files whose safety is compiler-enforced. Checked by containment, so adding one
+# needs no edit here; `forbid` cannot be overridden by an inner `allow`, which is
+# why a module root whose children need unsafe is not on this list. `xml/mod.rs`
+# is, and that fixes the whole `xml/` subtree as Ruby- and Lexbor-free.
+FORBID_FILES = %w[
+  css/build.rs css/lower.rs cutf8.rs
+  cutf8/verify.rs falloc/calloc.rs falloc/verify.rs
+  glue/xml_node/abi.rs xml/api.rs xml/arena.rs
+  xml/chars.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate.rs xml/parse.rs
+  xml/qname.rs xml/selftest.rs xml/serialize.rs
+  xml/tree.rs xml/verify.rs xpath/abi.rs
+  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
+  xpath/axis.rs xpath/funcs.rs xpath/lex.rs
+  xpath/limits.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/runtime_abi.rs xpath/runtime_abi/cache.rs
+  xpath/step_index.rs xpath/verify.rs
 ].freeze
+
+UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
 
 # These are the remaining C/Ruby ABI globals.  Each entry is deliberately
 # exact: adding another static mut must come with a dedicated boundary type or
@@ -70,15 +134,28 @@ end
 
 errors = []
 
-SAFE_FILES.each do |relative|
-  source = File.binread(File.join(RUST, relative))
-  unless source.include?("#![forbid(unsafe_code)]")
-    errors << "#{relative}: must retain #![forbid(unsafe_code)]"
-  end
-  if source.match?(/(^|\n)\s*(?:pub\s+)?unsafe\b/)
-    errors << "#{relative}: contains unsafe code despite its safe-module contract"
-  end
+unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
+  errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
 end
+
+unsafe_actual = Hash.new(0)
+forbidding = []
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  source = File.binread(path)
+  forbidding << relative if source.include?("#![forbid(unsafe_code)]")
+  count = rust_code(path).scan(UNSAFE_USE).length
+  unsafe_actual[relative] = count unless count.zero?
+end
+
+if unsafe_actual != UNSAFE_ISLANDS
+  gained = unsafe_actual.reject { |k, v| UNSAFE_ISLANDS[k] == v }
+  lost = UNSAFE_ISLANDS.reject { |k, v| unsafe_actual[k] == v }
+  errors << "unsafe islands changed: got #{gained.inspect}, recorded #{lost.inspect}"
+end
+
+missing = FORBID_FILES - forbidding
+errors << "lost #![forbid(unsafe_code)]: #{missing.inspect}" unless missing.empty?
 
 actual = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
@@ -114,5 +191,7 @@ end
 
 abort "unsafe-boundaries: #{errors.join("\nunsafe-boundaries: ")}" unless errors.empty?
 
-puts "unsafe-boundaries: #{SAFE_FILES.length} safe modules; #{actual.values.sum} reviewed static mut declarations; " \
+puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
+     "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands; " \
+     "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/"

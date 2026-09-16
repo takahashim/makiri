@@ -29,6 +29,7 @@
 //! truncated text is a well-formed wrong answer, which is exactly what the
 //! project's fail-closed rule is about.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use crate::falloc::{try_vec_with_capacity, Reserve};

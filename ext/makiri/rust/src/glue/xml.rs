@@ -22,6 +22,7 @@
 //! Fragment parsing deliberately does NOT release the GVL: a fragment is small,
 //! and an existing document's arena must never be mutated with the GVL down.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;

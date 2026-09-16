@@ -2,6 +2,8 @@
 //! analysis that finds context-independent subtrees and gives the ones worth
 //! remembering a memo slot.
 
+#![forbid(unsafe_code)]
+
 use super::ast::{Ast, Axis, Expr, ExprKind, Step, TestKind};
 
 /* ---------- the peephole: // fusion ---------- */

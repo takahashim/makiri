@@ -1,5 +1,7 @@
 //! Document creation and XML parsing entry points.
 
+#![forbid(unsafe_code)]
+
 use crate::xml::tree;
 use crate::xml::{Document, Limits, NodeId, Status, MAX_BYTES};
 

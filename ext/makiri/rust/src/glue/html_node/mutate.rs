@@ -24,6 +24,7 @@
 //! next query. [`invalidate`] is the one place that happens, and a mutator that
 //! forgot to call it would serve a stale answer that looks entirely well-formed.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;

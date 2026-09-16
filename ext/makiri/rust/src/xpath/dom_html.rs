@@ -8,6 +8,8 @@
 //! element-only or attribute-only read of another kind of node answers empty
 //! rather than reading it as the wrong struct.
 
+#![allow(unsafe_code)]
+
 use core::ffi::c_void;
 
 use super::abi::*;

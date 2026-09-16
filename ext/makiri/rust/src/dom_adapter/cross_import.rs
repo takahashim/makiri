@@ -16,6 +16,7 @@
 //! [`Document`], so the XML half of this module threads a `&Document`; the
 //! Lexbor half keeps raw pointers.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;

@@ -10,6 +10,8 @@
 //! have no symbol to call and are written out as methods; everything else is
 //! the exported C function.
 
+#![allow(unsafe_code)]
+
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 

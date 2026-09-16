@@ -14,6 +14,8 @@
 //! it drops, and read the bytes before building anything. Bytes borrowed from
 //! the document are arena memory, which a GC does not move.
 
+#![allow(unsafe_code)]
+
 use core::ffi::c_char;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};

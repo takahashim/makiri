@@ -28,6 +28,7 @@
 //!
 //! Run with `rake kani`.
 
+#![allow(unsafe_code)]
 #![cfg(kani)]
 
 use super::{

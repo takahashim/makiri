@@ -11,6 +11,7 @@
 //!
 //! Run with `rake kani` (or `cargo kani --no-default-features`).
 
+#![forbid(unsafe_code)]
 #![cfg(kani)]
 
 use crate::kani_bounds::parse_usize;

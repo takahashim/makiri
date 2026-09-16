@@ -1,5 +1,8 @@
 //! The per-evaluation string-value cache, and the pointer hash every
 //! pointer-keyed table shares.
+
+#![forbid(unsafe_code)]
+
 use super::super::abi::*;
 use super::super::value::Text;
 use crate::err_setf;

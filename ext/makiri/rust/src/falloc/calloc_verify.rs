@@ -17,6 +17,7 @@
 //!
 //! Run with `rake kani`.
 
+#![allow(unsafe_code)]
 #![cfg(kani)]
 
 use core::ffi::c_void;

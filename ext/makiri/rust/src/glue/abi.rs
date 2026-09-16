@@ -6,6 +6,8 @@
 //! types, so a ported feature reads both from C. As more of the glue moves,
 //! entries leave this file rather than accumulate in it.
 
+#![allow(unsafe_code)]
+
 use core::ffi::{c_char, c_void};
 
 use magnus::rb_sys::AsRawValue;

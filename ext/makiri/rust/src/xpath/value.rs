@@ -7,6 +7,8 @@
 //! Rust types: they cross into the glue's custom-function bridge and out as the
 //! evaluate result, and dropping one frees what it holds.
 
+#![allow(unsafe_code)]
+
 use super::abi::*;
 use super::dom::*;
 use super::number;

@@ -40,6 +40,7 @@
 //! properties that a Rust `Vec` and a hand-written `malloc` would each have had
 //! to re-earn.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use crate::cbuf::{Buf, BufError, OwnedBuf};

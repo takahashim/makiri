@@ -3,6 +3,8 @@
 //!
 //! Every overrun is XP_ERR_LIMIT - never a truncated or empty result.
 
+#![forbid(unsafe_code)]
+
 use super::abi::*;
 use crate::err_setf;
 

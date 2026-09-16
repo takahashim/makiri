@@ -24,6 +24,7 @@
 //! each early return - the shape the C used `goto fail` for, and which a Rust
 //! `Drop` gives directly.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;

@@ -4,6 +4,8 @@
 //! Generic over `Dom`, so one body compiles per representation - what the C
 //! did by `#include`-ing this file twice behind different macros.
 
+#![allow(unsafe_code)]
+
 /* A failure is `Err(Reported)`: the detail lives in the evaluation's budget, and
  * the proof says it was written. A value comes back as a `Val`, so one
  * dropped on an error path is cleared. */

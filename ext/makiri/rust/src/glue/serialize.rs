@@ -11,6 +11,8 @@
 //! size so those appends do not realloc on each geometric step. Lexbor emits
 //! UTF-8, which is the string's encoding.
 
+#![allow(unsafe_code)]
+
 use core::ffi::c_void;
 
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};

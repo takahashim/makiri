@@ -5,6 +5,8 @@
 //! Document. XML nodes never inherit the Lexbor HTML readers - those live on
 //! `Makiri::HTML::NodeMethods` - so this surface is structural.
 
+#![allow(unsafe_code)]
+
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 

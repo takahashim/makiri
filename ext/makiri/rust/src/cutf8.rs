@@ -36,6 +36,8 @@
 //!   [`verify::decode1_agrees_with_from_utf8`] and
 //!   [`verify::chain_consumes_exactly_valid_input`].
 
+#![forbid(unsafe_code)]
+
 pub mod verify;
 
 /// Decode ONE code point from the front of `p`, strictly.

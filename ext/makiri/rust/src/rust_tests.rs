@@ -6,6 +6,8 @@
 //! oracles where one exists, and preserve concrete regressions without
 //! requiring a Ruby VM or a Lexbor build.
 
+#![allow(unsafe_code)]
+
 use crate::cutf8::{decode1, valid};
 use crate::falloc::grow_capacity;
 use crate::xml::chars::utf8_encode;

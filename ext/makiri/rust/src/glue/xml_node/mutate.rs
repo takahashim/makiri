@@ -15,6 +15,8 @@
 //! is an element-name index, and [`unwrap_mutable`] is the single choke point
 //! every mutator goes through - so dropping it cannot be forgotten in one path.
 
+#![allow(unsafe_code)]
+
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 

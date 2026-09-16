@@ -8,6 +8,8 @@
 //! normally. [`raise`] is the one exit for an entry point Ruby calls with the C
 //! convention, which has no `Result` to return.
 
+#![allow(unsafe_code)]
+
 use core::ffi::{c_long, c_void};
 
 use magnus::rb_sys::{protect, AsRawValue, FromRawValue};

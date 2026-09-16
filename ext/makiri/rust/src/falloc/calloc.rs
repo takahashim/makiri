@@ -6,6 +6,7 @@
 //! injection. New Rust code should prefer the fallible typed APIs in the
 //! parent [`crate::falloc`] module.
 
+#![forbid(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 pub use super::cstr::{str_alloc, strdup, strndup};

@@ -21,6 +21,7 @@
 //! Where the C used `mkr_span` / `mkr_spanbuf` to make its reads bounded, this
 //! uses slices, which are bounded by construction.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_long};

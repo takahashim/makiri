@@ -29,6 +29,8 @@
 //! Every leaf also loses its allocator. These objects are created only from
 //! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
 
+#![allow(unsafe_code)]
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 

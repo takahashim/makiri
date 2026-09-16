@@ -7,6 +7,8 @@
 //! growing `Vec` cannot invalidate a node, and `detach` (which never destroys)
 //! is free to leave a removed node addressable for life.
 
+#![forbid(unsafe_code)]
+
 use crate::falloc::{Reserve, VecPush};
 use crate::xml::chars::{expand_into, ExpandErr, ExpandMode};
 use crate::xml::{Document, Link, Node, NodeId, NodeType, Span, Status};

@@ -27,6 +27,7 @@
 //! recording failure only sets the overflow flag - and the delegation is the
 //! tail of the function.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;

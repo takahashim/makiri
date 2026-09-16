@@ -4,6 +4,8 @@
 //! declarations are stored as ordinary attribute nodes - qname `xmlns` or
 //! `xmlns:PREFIX` - so all four queries below are just tree reads.
 
+#![allow(unsafe_code)]
+
 use magnus::value::{LazyId, Opaque};
 use magnus::{prelude::*, Error, RArray, RClass, RHash, RObject, RString, Ruby, Value};
 use std::sync::OnceLock;

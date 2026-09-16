@@ -17,6 +17,7 @@
 //! exactly this reason, and its lifetime is tied to nothing. What it does give
 //! is a place to state the rule once, which is here.
 
+#![allow(unsafe_code)]
 /* Every function takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 

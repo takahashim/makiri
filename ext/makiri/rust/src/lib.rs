@@ -15,6 +15,8 @@
 //! `Init_makiri` (and `ruby_abi_version`), so every item is named as Rust.
 //! Lexbor's own names stay `lxb_*`.
 
+#![deny(unsafe_code)]
+
 /// Lexbor's layout and constants, generated from its own headers by build.rs
 /// and checked against the hand-written view the engine's hot paths use.
 #[cfg(feature = "lexbor")]

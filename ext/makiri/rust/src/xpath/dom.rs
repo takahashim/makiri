@@ -12,6 +12,8 @@
 //! with the calls inlined - and a backend that forgets an operation, or gives it
 //! the wrong type, does not build.
 
+#![allow(unsafe_code)]
+
 use super::abi::*;
 use core::ffi::c_void;
 

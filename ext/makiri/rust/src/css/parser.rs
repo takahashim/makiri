@@ -13,6 +13,8 @@
 //! is a `Drop`, so a path added later cannot forget - and the lowering borrows
 //! the list, so the reset must not happen before the lowering is done.
 
+#![allow(unsafe_code)]
+
 //! # Unsafe boundary
 //!
 //! Lexbor owns this parser and exposes it as three raw pointers. This module is

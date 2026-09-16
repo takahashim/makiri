@@ -54,6 +54,7 @@
 //! defines the C macro, so the two halves can never disagree about whether a
 //! build is a sweep build.
 
+#![allow(unsafe_code)]
 // `Result<(), ()>` throughout: these report "the allocation failed", which
 // carries no information beyond itself, and the crate already uses that shape
 // for the same reason (see xml/chars.rs).

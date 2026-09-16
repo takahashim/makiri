@@ -2,6 +2,8 @@
 //!
 //! New code should import operations from `parse`, `mutate`, or `index`.
 
+#![forbid(unsafe_code)]
+
 pub use crate::xml::index::{xml_name_index_get, xml_name_index_invalidate, xml_name_index_lookup};
 pub use crate::xml::mutate::{
     xml_clone_node, xml_copy_node, xml_detach, xml_import_subtree, xml_insert_after,

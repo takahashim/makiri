@@ -31,6 +31,7 @@
 //! lookup that misses reads as "this attribute has no owner", which is a
 //! well-formed wrong answer.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use crate::falloc::try_vec_with_capacity;

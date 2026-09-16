@@ -33,6 +33,7 @@
 //! parsing is rare by design - once per `<style>`, not a hot path - so the
 //! intermediate is not worth optimising away.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_void;

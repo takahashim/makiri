@@ -4,6 +4,7 @@
 //! released by C-compatible destructors. Rust-owned data should use the
 //! fallible typed APIs in `falloc::mod` instead.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_int, c_void};

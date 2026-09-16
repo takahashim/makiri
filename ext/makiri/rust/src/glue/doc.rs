@@ -20,6 +20,7 @@
 //! point, and the copy must not straddle one while holding a borrowed pointer
 //! into a Ruby String's backing store.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_void};

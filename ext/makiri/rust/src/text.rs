@@ -20,6 +20,8 @@
 //! reading the bytes is `unsafe`. A null pointer is the "absent" sentinel (an
 //! omitted prefix, say), distinct from a present empty string.
 
+#![allow(unsafe_code)]
+
 use core::ffi::c_char;
 
 /// The accessors both views share. The contracts differ; the reading does not.

@@ -1,5 +1,6 @@
 //! Fallible NUL-terminated C-string allocations.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_void};

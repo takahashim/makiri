@@ -4,6 +4,8 @@
 //! allocate - one of them reports OOM - so every message is assembled in a
 //! fixed stack buffer and truncated rather than grown.
 
+#![allow(unsafe_code)]
+
 use core::ffi::{c_char, c_int, CStr};
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a

@@ -10,6 +10,8 @@
 //! and any stale handle. The operation then reports no node, empty bytes, or
 //! `false`, never a panic or a cross-document access.
 
+#![allow(unsafe_code)]
+
 use super::abi::*;
 use super::dom::{Bucket, Dom};
 use crate::xml::model as xml;

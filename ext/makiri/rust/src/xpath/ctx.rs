@@ -2,6 +2,8 @@
 //! document and node, its namespace and variable registries, its caps - and the
 //! two evaluate entries that pick the backend for it.
 
+#![allow(unsafe_code)]
+
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;

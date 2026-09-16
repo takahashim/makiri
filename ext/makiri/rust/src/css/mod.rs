@@ -22,6 +22,7 @@
 //! construction is a `build::Built`, and steps and lists are plain owned data, so
 //! a failure anywhere drops - frees - what was built.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 mod build;

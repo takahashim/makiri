@@ -4,6 +4,8 @@
 //! fields refer to the byte store through `Span`s, so the XML engine contains
 //! no raw pointers.
 
+#![forbid(unsafe_code)]
+
 pub mod model;
 pub use model::*;
 

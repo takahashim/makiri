@@ -12,6 +12,7 @@
 //! borrowed slice is in use - which `glue::doc::DocumentEvaluation` enforces for
 //! the one place Ruby can run mid-read, an XPath handler.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::marker::PhantomData;

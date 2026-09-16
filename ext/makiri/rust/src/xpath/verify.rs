@@ -17,6 +17,7 @@
 //! be: Kani does not close through `str::parse::<f64>()` (measured: no result
 //! at 4 nondet bytes after 17 minutes), and std's float parser is not our code.
 
+#![forbid(unsafe_code)]
 #![cfg(kani)]
 
 use crate::kani_bounds::parse_usize;

@@ -27,6 +27,7 @@
 //! glue as well, so an engine failure or value maps to the same Ruby object
 //! whichever entry point produced it.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};

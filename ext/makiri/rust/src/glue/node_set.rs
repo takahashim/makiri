@@ -24,6 +24,8 @@
 //! error rather than a panic: `panic = "abort"` would turn an aliasing mistake
 //! into a dead process, and this codebase fails closed by raising.
 
+#![allow(unsafe_code)]
+
 use crate::falloc::Reserve;
 use core::ffi::{c_long, c_void};
 use std::cell::RefCell;

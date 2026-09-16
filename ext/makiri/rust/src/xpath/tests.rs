@@ -6,6 +6,8 @@
 //! and the engine's front door. The expected values are what `Makiri::XML`
 //! answered for the same document and expressions when these were written.
 
+#![allow(unsafe_code)]
+
 use core::ffi::{c_int, c_void};
 
 use crate::xpath::limits::Budget;

@@ -4,6 +4,8 @@
 //! The node layout comes from `crate::xml::model` - the XML engine's own
 //! declaration - so nothing here restates a field offset or a type constant.
 
+#![forbid(unsafe_code)]
+
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
 pub use super::super::abi::{

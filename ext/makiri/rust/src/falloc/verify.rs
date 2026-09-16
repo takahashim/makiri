@@ -12,6 +12,7 @@
 //!
 //! What did NOT come free is the growth policy, which is ours either way.
 
+#![forbid(unsafe_code)]
 #![cfg(kani)]
 
 use super::grow_capacity;

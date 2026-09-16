@@ -5,6 +5,8 @@
 //! notes/rust_port_remaining.ja.md step 5 for why generated rather than
 //! hand-written, and for what this does not remove.
 
+#![allow(unsafe_code)]
+
 /// The generated bindings, with the blanket allows scoped to THEM.
 ///
 /// They were on the whole module, which meant the hand-written parts below -

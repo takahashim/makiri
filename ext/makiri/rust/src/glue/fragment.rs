@@ -13,6 +13,7 @@
 //! owns `Makiri::HTML::Document` is about that class rather than about three
 //! unrelated things.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_int, c_void};

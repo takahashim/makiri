@@ -5,6 +5,7 @@
 //! options, turns its bytes into a String (transcoding when `encoding:` asks),
 //! and maps a failure to `Makiri::Error`.
 
+#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};

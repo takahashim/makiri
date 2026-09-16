@@ -29,6 +29,7 @@
 //! single source of HTML/XML node-pointer safety - there is deliberately no
 //! "return an lxb_dom_node_t for any node" unwrap.
 
+#![allow(unsafe_code)]
 /* Every function here takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 
