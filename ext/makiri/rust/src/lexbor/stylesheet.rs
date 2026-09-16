@@ -94,6 +94,10 @@ pub enum Rule {
 pub enum Fail {
     Oom,
     TooDeep,
+    /// The stylesheet parser could not be initialised.
+    Init,
+    /// Lexbor could not parse the stylesheet (normally an allocation failure).
+    Parse,
     /// A Lexbor serializer returned non-OK. Named for what it is: the parser
     /// itself never fails this way - Lexbor recovers from CSS syntax errors and
     /// still returns OK, which is why there is no syntax variant.
@@ -569,7 +573,7 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
             || eng.sst.is_null()
             || lxb_css_parser_init(eng.parser, core::ptr::null_mut()) != 0
         {
-            return Err(Fail::Serialize);
+            return Err(Fail::Init);
         }
         if lxb::lxb_css_stylesheet_parse(
             eng.sst,
@@ -578,7 +582,7 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
             css.len(),
         ) != 0
         {
-            return Err(Fail::Serialize);
+            return Err(Fail::Parse);
         }
         let root = (*eng.sst).root;
         if root.is_null() {
@@ -597,57 +601,18 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let eclass = error_class();
     let err = |m: &str| Error::new(eclass, m.to_owned());
 
-    // ---- phase one: no Ruby object is created below this line ----
-    //
-    // `eng` lives for exactly this block, so the parser and stylesheet are
-    // freed at its end - before phase two can raise.
-    let parsed: Vec<Rule> = unsafe {
-        let eng = Engine {
-            parser: lxb_css_parser_create(),
-            sst: lxb::lxb_css_stylesheet_create(core::ptr::null_mut()),
-        };
-        if eng.parser.is_null()
-            || eng.sst.is_null()
-            || lxb_css_parser_init(eng.parser, core::ptr::null_mut()) != 0
-        {
-            return Err(err("failed to initialise CSS parser"));
+    let parsed = match parse(css) {
+        Ok(parsed) => parsed,
+        Err(Fail::Oom) => return Err(err("out of memory parsing CSS stylesheet")),
+        Err(Fail::TooDeep) => {
+            return Err(Error::new(
+                eclass,
+                format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
+            ))
         }
-
-        let st = lxb::lxb_css_stylesheet_parse(
-            eng.sst,
-            eng.parser as *mut lxb::lxb_css_parser_t,
-            css.as_ptr(),
-            css.len(),
-        );
-
-        // Lexbor recovers from CSS syntax errors and still returns OK, so a
-        // non-OK status here is a hard failure (OOM).
-        if st != 0 {
-            return Err(err("failed to parse CSS stylesheet"));
-        }
-
-        let root = (*eng.sst).root;
-        if root.is_null() {
-            Vec::new() /* empty or whitespace-only stylesheet */
-        } else {
-            let mut conv = Conv {
-                css,
-                scratch: Vec::new(),
-            };
-            // The root IS a rule list; Lexbor's downcast is a pointer cast.
-            let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;
-            match rules(&mut conv, first, 0) {
-                Ok(v) => v,
-                Err(Fail::Oom) => return Err(err("out of memory parsing CSS stylesheet")),
-                Err(Fail::TooDeep) => {
-                    return Err(Error::new(
-                        eclass,
-                        format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
-                    ))
-                }
-                Err(Fail::Serialize) => return Err(err("failed to serialize CSS")),
-            }
-        }
+        Err(Fail::Init) => return Err(err("failed to initialise CSS parser")),
+        Err(Fail::Parse) => return Err(err("failed to parse CSS stylesheet")),
+        Err(Fail::Serialize) => return Err(err("failed to serialize CSS")),
     };
 
     // ---- phase two ----

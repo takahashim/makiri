@@ -7,3 +7,9 @@ pub mod adapter;
 /// The Lexbor CSS stylesheet parser and its raw callback traversal.
 #[cfg(feature = "ruby")]
 pub mod stylesheet;
+/// Lexbor's HTML serialization callbacks and buffer traversal.
+#[cfg(feature = "ruby")]
+pub mod serialize;
+/// HTML fragment parsing and import/fixup operations.
+#[cfg(feature = "ruby")]
+pub mod fragment;
