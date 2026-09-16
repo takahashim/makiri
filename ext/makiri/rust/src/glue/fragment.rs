@@ -208,24 +208,27 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
     }
 }
 
-pub unsafe extern "C" fn emit_append(imported: *mut LxbNode, u: *mut c_void) {
+/// Where `import_fragment_children` puts each imported child: appended under
+/// `u`, or inserted before it.
+pub unsafe fn emit_append(imported: *mut LxbNode, u: *mut c_void) {
     lxb_dom_node_insert_child(u as *mut LxbNode, imported);
 }
 
-pub unsafe extern "C" fn emit_before(imported: *mut LxbNode, u: *mut c_void) {
+pub unsafe fn emit_before(imported: *mut LxbNode, u: *mut c_void) {
     lxb_dom_node_insert_before(u as *mut LxbNode, imported);
 }
 
 /// Deep-import each child of `root` into `doc` and hand it to `emit`.
 ///
-/// `-1` when a child could not be copied whole. It RETURNS rather than raising:
-/// `ruby_html_mutate.c` destroys a transient fragment document after this call,
-/// and a longjmp past that free leaks one Lexbor document per failure - the leak
-/// that free was added to fix. The caller raises once its own cleanup has run.
-pub unsafe extern "C" fn import_fragment_children(
+/// `-1` when a child could not be copied whole. It REPORTS rather than raising,
+/// and that still matters now the C has gone: every caller owns the transient
+/// document the fragment was parsed into (`lexbor_abi::TransientDoc`), and a
+/// raise from here would longjmp past its `Drop` - one leaked Lexbor document
+/// per failure. The caller raises once its own cleanup has run.
+pub unsafe fn import_fragment_children(
     doc: *mut LxbDoc,
     root: *mut LxbNode,
-    emit: unsafe extern "C" fn(*mut LxbNode, *mut c_void),
+    emit: unsafe fn(*mut LxbNode, *mut c_void),
     u: *mut c_void,
 ) -> c_int {
     let mut f = (*root).first_child;
@@ -240,9 +243,11 @@ pub unsafe extern "C" fn import_fragment_children(
     0
 }
 
-/// `mkr_fragment_parse_fn`.
-type FragmentParseFn =
-    unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut c_void) -> *mut LxbNode;
+/// Which Lexbor fragment parser to run. The two differ in how the context is
+/// given - an element, or a tag id plus namespace - and each is a thin call
+/// into Lexbor with its own argument shape, so the choice arrives as a function
+/// rather than as a flag the body would have to switch on.
+type FragmentParseFn = unsafe fn(*mut c_void, *const u8, usize, *mut c_void) -> *mut LxbNode;
 
 /// Run a fragment parse with a fresh parser, or the error that stopped it.
 ///
@@ -265,9 +270,9 @@ pub unsafe fn run_fragment_parser(
         ));
     };
 
-    /* The callback contract is representation-opaque (it is a C function
-     * pointer handed across the boundary), so the typed parser is cast here
-     * rather than declared a second time. */
+    /* The two parsers take their context differently, so the contract here is
+     * representation-opaque and the typed parser is cast at this one point
+     * rather than declared a second time per shape. */
     let root = parse(parser.as_ptr() as *mut c_void, src.ptr, src.len, ctx);
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
@@ -399,7 +404,7 @@ struct FragTagCtx {
     ns: usize,
 }
 
-unsafe extern "C" fn parse_fragment_by_tag(
+unsafe fn parse_fragment_by_tag(
     parser: *mut c_void,
     hsrc: *const u8,
     hlen: usize,

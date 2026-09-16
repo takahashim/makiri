@@ -595,7 +595,7 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
 /// Parse callback for `run_fragment_parser`: Lexbor's element-context
 /// fragment parser, which is what `inner_html=`/`outer_html=` need. `ctx` is the
 /// context element.
-unsafe extern "C" fn parse_fragment_by_context(
+unsafe fn parse_fragment_by_context(
     parser: *mut c_void,
     src: *const u8,
     len: usize,
@@ -618,7 +618,7 @@ unsafe fn parse_fragment_into(
     context_el: *mut LxbNode,
     rb_html: Value,
     doc: *mut LxbDoc,
-    emit: unsafe extern "C" fn(*mut LxbNode, *mut c_void),
+    emit: unsafe fn(*mut LxbNode, *mut c_void),
     u: *mut c_void,
 ) -> Result<(), Error> {
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
