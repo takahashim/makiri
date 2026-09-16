@@ -38,7 +38,7 @@ use crate::dom_adapter::text_index::TextIndex;
 pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
 use crate::falloc::try_box;
-use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
+use crate::lexbor_abi::{self as lxb, lxb_html_document_destroy, LxbDoc, LxbNode};
 use crate::text::BorrowedText;
 use crate::xml::model::Document as XmlDocument;
 
@@ -49,7 +49,6 @@ const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
 extern "C" {
 
-    fn lxb_html_document_destroy(doc: *mut HtmlDoc) -> *mut HtmlDoc;
     fn lxb_html_parse_chunk_begin(parser: *mut lxb::lxb_html_parser_t) -> *mut HtmlDoc;
     fn lxb_html_parse_chunk_process(
         parser: *mut lxb::lxb_html_parser_t,
@@ -228,21 +227,6 @@ struct CleanBuf {
     _owned: Option<OwnedBuf>,
 }
 
-/// The parser, destroyed however the parse exits. The parsed DOCUMENT is not
-/// owned here - `parser_destroy` never frees it - which is exactly why it can be
-/// returned.
-struct Parser {
-    p: *mut lxb::lxb_html_parser_t,
-}
-
-impl Drop for Parser {
-    fn drop(&mut self) {
-        if !self.p.is_null() {
-            unsafe { lxb::lxb_html_parser_destroy(self.p) };
-        }
-    }
-}
-
 /// Drive the low-level pipeline so element offsets can be captured, then build
 /// the line table.
 ///
@@ -252,14 +236,9 @@ impl Drop for Parser {
 /// the parse. That degradation is deliberate and is what
 /// `spec/html_line_spec.rb`'s contract ("an Integer, or nil") allows.
 unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Lines>>)> {
-    let parser = Parser {
-        p: lxb::lxb_html_parser_create(),
-    };
-    if parser.p.is_null() || lxb::lxb_html_parser_init(parser.p) != LXB_STATUS_OK {
-        return None;
-    }
+    let parser = lxb::HtmlParser::create()?;
 
-    let doc = NonNull::new(lxb_html_parse_chunk_begin(parser.p))?;
+    let doc = NonNull::new(lxb_html_parse_chunk_begin(parser.as_ptr()))?;
 
     /* Install the recorder, CHAINING the parser's own tree-building callback
      * (which chunk_begin has just set). If the recorder cannot be allocated we
@@ -267,7 +246,7 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Line
      * so it outlives nothing that can still call it. */
     let mut rec = try_box(Recorder::new(src.as_ptr())).ok();
     if let Some(r) = rec.as_deref_mut() {
-        let tkz = lxb::lxb_html_parser_tokenizer_noi(parser.p);
+        let tkz = lxb::lxb_html_parser_tokenizer_noi(parser.as_ptr());
         /* Lexbor has a setter and a ctx getter for the token-done callback but
          * no getter for the callback FUNCTION, so that one field is read from
          * the struct directly; the ctx uses the public accessor. */
@@ -282,9 +261,9 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Line
         );
     }
 
-    let mut st = lxb_html_parse_chunk_process(parser.p, src.as_ptr(), src.len());
+    let mut st = lxb_html_parse_chunk_process(parser.as_ptr(), src.as_ptr(), src.len());
     if st == LXB_STATUS_OK {
-        st = lxb_html_parse_chunk_end(parser.p);
+        st = lxb_html_parse_chunk_end(parser.as_ptr());
     }
     if st != LXB_STATUS_OK {
         lxb_html_document_destroy(doc.as_ptr());

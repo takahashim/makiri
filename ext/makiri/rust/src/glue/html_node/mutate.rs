@@ -728,19 +728,14 @@ unsafe fn parse_fragment_into(
         context_el as *mut c_void,
     )?;
 
+    /* The fragment was built in a TRANSIENT document that destroying the parser
+     * does NOT free (measured: one leaked per inner_html=/outer_html= call).
+     * Owning it here frees it however this returns - the import below can fail,
+     * and returning that error first used to skip the free. */
+    let _transient = lxb::TransientDoc::of(frag);
     let imported = import_fragment_children(doc, frag, emit, u);
-
-    /* lxb_html_parse_fragment built the fragment in a TRANSIENT document that
-     * destroying the parser does NOT free (measured: one document leaked per
-     * inner_html=/outer_html= call). Our imported copies live in `doc`, so the
-     * transient document is destroyed here - frag->owner_document is valid after
-     * the parser is gone. */
-    lxb::lxb_html_document_destroy((*frag).owner_document as *mut _);
     let _anchor = html;
 
-    /* AFTER the destroy: returning the error before it would skip the free
-     * above, leaking one Lexbor document per failure - the very leak that free
-     * exists to fix. */
     if imported != 0 {
         return Err(err("failed to import a fragment child"));
     }

@@ -62,13 +62,11 @@ extern "C" {
  * over an opaque parser, which was fine until the source-location port needed
  * the tokenizer inside it and build.rs started generating them - two Rust types
  * for one symbol again. */
-use crate::glue::abi::LXB_STATUS_OK;
 use crate::lexbor_abi::{
-    lxb_html_parser_create, lxb_html_parser_destroy, lxb_html_parser_init,
     /* The `_noi` twin of an `lxb_inline`. It was declared here, over an opaque
      * hash, until the HTML shim needed the same symbol - one declaration per
      * symbol, and `lexbor_abi` is where the `_noi` twins live. */
-    lxb_tag_id_by_name_noi,
+    lxb_tag_id_by_name_noi, HtmlParser,
 };
 
 /// The shared pre-order walk. Defined once in `lexbor_abi` - it was written out
@@ -271,16 +269,11 @@ pub unsafe fn run_fragment_parser(
     parse: FragmentParseFn,
     ctx: *mut c_void,
 ) -> Result<*mut LxbNode, Error> {
-    let parser = lxb_html_parser_create();
-    if parser.is_null() || lxb_html_parser_init(parser) != LXB_STATUS_OK {
-        if !parser.is_null() {
-            lxb_html_parser_destroy(parser);
-        }
+    let Some(parser) = HtmlParser::create() else {
         return Err(Error::new(error_class(), "failed to create HTML parser"));
-    }
+    };
 
     let Some(src) = sanitize_html_input(html) else {
-        lxb_html_parser_destroy(parser);
         return Err(Error::new(
             error_class(),
             "out of memory decoding fragment HTML",
@@ -290,9 +283,9 @@ pub unsafe fn run_fragment_parser(
     /* The callback contract is representation-opaque (it is a C function
      * pointer handed across the boundary), so the typed parser is cast here
      * rather than declared a second time. */
-    let root = parse(parser as *mut c_void, src.ptr, src.len, ctx);
+    let root = parse(parser.as_ptr() as *mut c_void, src.ptr, src.len, ctx);
     drop(src); /* the parse consumed it; the buffer goes on every path */
-    lxb_html_parser_destroy(parser);
+    drop(parser); /* the fragment belongs to its document, not to the parser */
     if root.is_null() {
         return Err(Error::new(error_class(), "failed to parse HTML fragment"));
     }

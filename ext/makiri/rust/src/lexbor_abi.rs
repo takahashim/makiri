@@ -41,6 +41,74 @@ pub mod parsed {
     pub const NODE_KIND_XML: NodeKind = 2;
 }
 
+/// An HTML parser, destroyed however its scope exits.
+///
+/// Lexbor's `parser_destroy` unrefs the tokenizer and the tree and NOTHING
+/// else: the document a parse produced outlives it, which is what lets a parse
+/// hand its document back. Both parse paths - the tracked document parse and
+/// the fragment parser - own theirs through this type, so a path added later
+/// cannot forget the destroy the way three hand-written ones could.
+pub struct HtmlParser(core::ptr::NonNull<lxb_html_parser_t>);
+
+impl HtmlParser {
+    /// A created and initialised parser, or `None` if either step failed (a
+    /// half-built one is destroyed here rather than handed out).
+    pub fn create() -> Option<HtmlParser> {
+        // SAFETY: the constructor pair Lexbor documents; `init` is called on
+        // exactly what `create` returned.
+        unsafe {
+            let p = core::ptr::NonNull::new(lxb_html_parser_create())?;
+            let this = HtmlParser(p);
+            if lxb_html_parser_init(p.as_ptr()) != lexbor_status_t_LXB_STATUS_OK {
+                return None; /* `this` drops, destroying it */
+            }
+            Some(this)
+        }
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut lxb_html_parser_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HtmlParser {
+    fn drop(&mut self) {
+        // SAFETY: this type owns the parser, and nothing else destroys it.
+        unsafe { lxb_html_parser_destroy(self.0.as_ptr()) };
+    }
+}
+
+/// The document a fragment parse builds its nodes in, destroyed however its
+/// scope exits.
+///
+/// `lxb_html_parse_fragment` puts the fragment in a document of its own that
+/// destroying the parser does not free - one leaked per `inner_html=` before it
+/// was freed by hand. The nodes a caller keeps are imported copies in its own
+/// document, so this one goes as soon as the import is done.
+pub struct TransientDoc(core::ptr::NonNull<lxb_html_document_t>);
+
+impl TransientDoc {
+    /// The document `node` was parsed into.
+    ///
+    /// # Safety
+    /// `node` must be a live node whose owner document is the transient one -
+    /// the root a fragment parse just returned - and must not be destroyed by
+    /// anything else.
+    pub unsafe fn of(node: *mut lxb_dom_node_t) -> Option<TransientDoc> {
+        core::ptr::NonNull::new((*node).owner_document as *mut lxb_html_document_t)
+            .map(TransientDoc)
+    }
+}
+
+impl Drop for TransientDoc {
+    fn drop(&mut self) {
+        // SAFETY: this type owns the document, and the caller's nodes are
+        // copies in its own document by the time this runs.
+        unsafe { lxb_html_document_destroy(self.0.as_ptr()) };
+    }
+}
+
 /* ------------------------------------------------------------------ *
  * Names                                                              *
  * ------------------------------------------------------------------ */
