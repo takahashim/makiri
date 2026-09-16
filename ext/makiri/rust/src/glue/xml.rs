@@ -304,11 +304,7 @@ fn query_context(rb_self: Value) -> Result<(Value, NodeId), Error> {
 /// On any bad entry an error is returned, and the caller's owner frees the
 /// context - never a partial registration. RSS and Atom live in a default
 /// namespace, so a prefix is the strict-mode way to select them.
-unsafe fn register_namespaces(
-    ruby: &Ruby,
-    ctx: &XPathContext,
-    rb_ns: Option<Value>,
-) -> Result<(), Error> {
+fn register_namespaces(ruby: &Ruby, ctx: &XPathContext, rb_ns: Option<Value>) -> Result<(), Error> {
     let Some(rb_ns) = rb_ns.filter(|v| !v.is_nil()) else {
         return Ok(());
     };
@@ -326,8 +322,13 @@ unsafe fn register_namespaces(
         let v = h.get(k).unwrap_or_else(|| ruby.qnil().as_value());
         let vs: RString = v.funcall("to_s", ())?;
 
-        let pair = ruby_try_verified_text(ks.as_raw(), cap)
-            .and_then(|pv| Ok((pv, ruby_try_verified_text(vs.as_raw(), cap)?)));
+        /* SAFETY: `ks` and `vs` are the Strings `to_s` just returned, and the
+         * checks allocate nothing, so the views stay valid through the
+         * registration below. */
+        let pair = unsafe {
+            ruby_try_verified_text(ks.as_raw(), cap)
+                .and_then(|pv| Ok((pv, ruby_try_verified_text(vs.as_raw(), cap)?)))
+        };
         let (pv, uv) = match pair {
             Ok(pair) => pair,
             Err(reason) => {
@@ -337,10 +338,10 @@ unsafe fn register_namespaces(
                 ));
             }
         };
-        if ctx
-            .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
-            .is_err()
-        {
+        // SAFETY: both views are live and checked; `register_ns` copies both.
+        let registered =
+            unsafe { ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) };
+        if registered.is_err() {
             return Err(Error::new(error_class(), "failed to register namespace"));
         }
     }
@@ -354,7 +355,7 @@ unsafe fn register_namespaces(
 /// The query text's contract is verified FIRST, before the context exists. The
 /// borrowed view the parse reads is minted later, by `parse_query`, so its bytes
 /// are never held across the GC points namespace registration goes through.
-unsafe fn build_ctx(
+fn build_ctx(
     ruby: &Ruby,
     context: Value,
     document: Value,
@@ -398,22 +399,20 @@ fn xpath_run(
     ns: Option<Value>,
     first_only: bool,
 ) -> Result<Value, Error> {
-    unsafe {
-        let (document, context) = query_context(rb_self)?;
-        if context.is_invalid() {
-            return Ok(if first_only {
-                ruby.qnil().as_value()
-            } else {
-                node_set_new(document)
-            });
-        }
-        let ctx = build_ctx(ruby, rb_self, document, expr, c"XPath expression", ns)?;
-        /* Parse AFTER namespace registration: that step allocates Ruby objects
-         * and may run a GC, and the borrowed expression bytes must not be live
-         * across one. */
-        let ast = parse_query(&ctx, expr)?;
-        run_ast(ruby, ctx, ast, first_only, document)
+    let (document, context) = query_context(rb_self)?;
+    if context.is_invalid() {
+        return Ok(if first_only {
+            ruby.qnil().as_value()
+        } else {
+            node_set_new(document)
+        });
     }
+    let ctx = build_ctx(ruby, rb_self, document, expr, c"XPath expression", ns)?;
+    /* Parse AFTER namespace registration: that step allocates Ruby objects and
+     * may run a GC, and the borrowed expression bytes must not be live across
+     * one. */
+    let ast = parse_query(&ctx, expr)?;
+    run_ast(ruby, ctx, ast, first_only, document)
 }
 
 fn xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
@@ -444,7 +443,7 @@ fn css_default_namespace(rb_ns: Option<Value>) -> bool {
 }
 
 /// Compile a selector under `ctx`, whose namespaces are already registered.
-unsafe fn css_compile_or_raise(
+fn css_compile_or_raise(
     ctx: &XPathContext,
     selector: Value,
     rb_ns: Option<Value>,
@@ -454,7 +453,9 @@ unsafe fn css_compile_or_raise(
     };
     let sv = ruby_verified_text(selector, c"CSS selector")?;
     let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
-    let ast = crate::css::compile_owned(unsafe { sv.as_verified() }, &cns, &mut budget);
+    // SAFETY: `sv` holds the selector String rooted, and the compile allocates
+    // through falloc only - no Ruby runs in it.
+    let ast = unsafe { crate::css::compile_owned(sv.as_verified(), &cns, &mut budget) };
     drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);
@@ -478,19 +479,17 @@ fn css_run(
     ns: Value,
     first_only: bool,
 ) -> Result<Value, Error> {
-    unsafe {
-        let (document, context) = query_context(rb_self)?;
-        if context.is_invalid() {
-            return Ok(if first_only {
-                ruby.qnil().as_value()
-            } else {
-                node_set_new(document)
-            });
-        }
-        let ctx = build_ctx(ruby, rb_self, document, selector, c"CSS selector", Some(ns))?;
-        let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
-        run_ast(ruby, ctx, ast, first_only, document)
+    let (document, context) = query_context(rb_self)?;
+    if context.is_invalid() {
+        return Ok(if first_only {
+            ruby.qnil().as_value()
+        } else {
+            node_set_new(document)
+        });
     }
+    let ctx = build_ctx(ruby, rb_self, document, selector, c"CSS selector", Some(ns))?;
+    let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
+    run_ast(ruby, ctx, ast, first_only, document)
 }
 
 fn css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
@@ -508,29 +507,27 @@ fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Val
 /// testing membership by node identity. That is the semantics that stays correct
 /// with every combinator.
 fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<bool, Error> {
-    unsafe {
-        let (document, node) = query_context(rb_self)?;
-        if node.is_invalid() {
-            return Ok(false);
-        }
-        /* Rooted at the document node: see above. */
-        let ctx = build_ctx(
-            ruby,
-            document,
-            document,
-            selector,
-            c"CSS selector",
-            Some(ns),
-        )?;
-        let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
-
-        let nil = ruby.qnil().as_value();
-        let value = evaluate_query(&ctx, &ast, nil, document, false);
-        drop(ast);
-        let value = value?;
-        let target = node.to_token() as *mut c_void;
-        Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
+    let (document, node) = query_context(rb_self)?;
+    if node.is_invalid() {
+        return Ok(false);
     }
+    /* Rooted at the document node: see above. */
+    let ctx = build_ctx(
+        ruby,
+        document,
+        document,
+        selector,
+        c"CSS selector",
+        Some(ns),
+    )?;
+    let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
+
+    let nil = ruby.qnil().as_value();
+    let value = evaluate_query(&ctx, &ast, nil, document, false);
+    drop(ast);
+    let value = value?;
+    let target = node.to_token() as *mut c_void;
+    Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
 }
 
 /* ------------------------------------------------------------------ */
@@ -592,7 +589,7 @@ unsafe fn fragment_into(
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
-unsafe fn new_empty_document() -> Result<Value, Error> {
+fn new_empty_document() -> Result<Value, Error> {
     let Some(parsed) = Parsed::new_xml() else {
         return Err(Error::new(
             error_class(),
@@ -600,25 +597,29 @@ unsafe fn new_empty_document() -> Result<Value, Error> {
         ));
     };
     let parsed = Box::into_raw(parsed);
-    let doc_obj = wrap_document(parsed); /* GC owns `parsed` from here */
-    let xdoc = match xml_doc_new() {
-        Ok(doc) => doc,
-        Err(_) => {
-            return Err(Error::new(
-                error_class(),
-                "out of memory allocating XML document",
-            ));
-        }
-    };
-    (*parsed).set_xml_doc(xdoc); /* GC now frees `xdoc` via `parsed` */
-    Ok(Value::from_raw(doc_obj))
+    // SAFETY: a handle this function just allocated. The wrap hands it to the
+    // GC, and the arena is stored into that same handle below.
+    unsafe {
+        let doc_obj = wrap_document(parsed); /* GC owns `parsed` from here */
+        let xdoc = match xml_doc_new() {
+            Ok(doc) => doc,
+            Err(_) => {
+                return Err(Error::new(
+                    error_class(),
+                    "out of memory allocating XML document",
+                ));
+            }
+        };
+        (*parsed).set_xml_doc(xdoc); /* GC now frees `xdoc` via `parsed` */
+        Ok(Value::from_raw(doc_obj))
+    }
 }
 
 /// `Makiri::XML::Document.new` - an empty document to build up programmatically.
 /// Any arguments (Nokogiri accepts a version and encoding) are accepted and
 /// ignored.
 fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
-    unsafe { new_empty_document() }
+    new_empty_document()
 }
 
 /// `Makiri::XML::DocumentFragment.parse(source)` - a standalone fragment with
