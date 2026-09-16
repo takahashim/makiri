@@ -570,6 +570,12 @@ impl<'doc> HtmlNodeMut<'doc> {
         self.0.next().map(HtmlNodeMut)
     }
 
+    /// The node as an element cleared for editing, when it is one.
+    #[inline]
+    pub fn element_mut(self) -> Option<HtmlElementMut<'doc>> {
+        self.0.element().map(HtmlElementMut)
+    }
+
     /// Take the node out of its tree. The arena keeps it, so a Ruby wrapper
     /// that still points at it stays valid - Makiri detaches, never destroys.
     #[inline]
@@ -597,6 +603,51 @@ impl<'doc> HtmlNodeMut<'doc> {
     pub fn insert_after(self, node: HtmlNodeMut<'doc>) {
         // SAFETY: as above.
         unsafe { lxb::lxb_dom_node_insert_after(self.as_raw(), node.as_raw()) };
+    }
+}
+
+/// An element cleared for editing, reached through [`HtmlNodeMut::element_mut`].
+///
+/// Same clearance as the node it came from: the receiver was not frozen, and no
+/// XPath evaluation is reading its document.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct HtmlElementMut<'doc>(HtmlElement<'doc>);
+
+impl<'doc> HtmlElementMut<'doc> {
+    /// The element as an ordinary handle, for reading.
+    #[inline]
+    pub fn element(self) -> HtmlElement<'doc> {
+        self.0
+    }
+
+    /// Set `name` to `value`, adding the attribute when the element has none.
+    ///
+    /// `None` when Lexbor could not store it. The lookup is Lexbor's own, by
+    /// local name and lower-cased for HTML - `set_attribute_ns` is the one that
+    /// keys on (namespace, local name) instead.
+    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Option<HtmlAttr<'doc>> {
+        // SAFETY: a live element the caller may change; both slices are read
+        // and copied by Lexbor before anything else runs.
+        let at = unsafe {
+            lxb::lxb_dom_element_set_attribute(
+                self.0.raw(),
+                name.as_ptr(),
+                name.len(),
+                value.as_ptr(),
+                value.len(),
+            )
+        };
+        HtmlNode::link(at as *mut LxbNode).map(HtmlAttr)
+    }
+
+    /// Remove the attribute Lexbor's lookup finds for `name`; no-op when there
+    /// is none.
+    pub fn remove_attribute(self, name: &[u8]) {
+        // SAFETY: as above.
+        unsafe {
+            lxb::lxb_dom_element_remove_attribute(self.0.raw(), name.as_ptr(), name.len());
+        }
     }
 }
 

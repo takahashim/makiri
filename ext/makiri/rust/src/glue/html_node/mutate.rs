@@ -416,29 +416,20 @@ pub fn aset(
     rb_name: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    unsafe {
-        /* The attribute mutators still work in raw handles; this step is the
-         * tree edits. The clearance is the same, so the node comes back down
-         * to a pointer here. */
-        let node = unwrap_mutable(&this)?.as_raw();
-        if (*node).type_ != ty::ELEMENT {
-            return Err(err("cannot set an attribute on a non-element node"));
-        }
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        let vv = ruby_verified_data(rb_value, c"attribute value")?;
-        let attr = lxb::lxb_dom_element_set_attribute(
-            node as *mut LxbElement,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-            vv.as_ptr() as *const u8,
-            vv.len(),
-        );
-        if attr.is_null() {
-            return Err(err("failed to set attribute"));
-        }
-        invalidate(this.document);
-        Ok(rb_value)
+    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+        return Err(err("cannot set an attribute on a non-element node"));
+    };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    let vv = ruby_verified_data(rb_value, c"attribute value")?;
+    /* SAFETY: both views are the caller's, live for this call, and Lexbor
+     * copies them before any Ruby code can run again. */
+    let stored = unsafe { el.set_attribute(nv.bytes(), vv.bytes()) };
+    if stored.is_none() {
+        return Err(err("failed to set attribute"));
     }
+    // SAFETY: `this.document` is the element's live Document.
+    unsafe { invalidate(this.document) };
+    Ok(rb_value)
 }
 
 /// An attribute's OWN namespace id: the one recorded by `set_attribute_ns`
@@ -708,23 +699,15 @@ pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Resul
 /// `element.delete(name)` -> self. Removes the attribute if present.
 pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    unsafe {
-        /* The attribute mutators still work in raw handles; this step is the
-         * tree edits. The clearance is the same, so the node comes back down
-         * to a pointer here. */
-        let node = unwrap_mutable(&this)?.as_raw();
-        if (*node).type_ != ty::ELEMENT {
-            return Ok(rb_self);
-        }
-        let nv = ruby_verified_text(rb_name, c"attribute name")?;
-        lxb::lxb_dom_element_remove_attribute(
-            node as *mut LxbElement,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-        );
-        invalidate(this.document);
-        Ok(rb_self)
-    }
+    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+        return Ok(rb_self);
+    };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    /* SAFETY: the view is the caller's, live for this call. */
+    unsafe { el.remove_attribute(nv.bytes()) };
+    // SAFETY: `this.document` is the element's live Document.
+    unsafe { invalidate(this.document) };
+    Ok(rb_self)
 }
 
 /* ------------------------------------------------------------------ *
