@@ -351,6 +351,81 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
+    /// A detached DocumentType, DOM `createDocumentType`. `None` on allocation
+    /// failure; the caller validates `name` first, since an invalid one is the
+    /// caller's error rather than Lexbor's.
+    ///
+    /// `None` for an id means ABSENT, and that is not the same as an empty one:
+    /// Lexbor reads a null pointer as omitted, so `Some(&[])` would be a
+    /// present, empty id.
+    ///
+    /// Two things Lexbor leaves to the caller are done here, because both are
+    /// facts about its DOM rather than about the caller:
+    ///
+    /// * `create` interns the name through the attribute local-name hash, which
+    ///   ASCII-lowercases it, while the DOM preserves case. So the name is
+    ///   re-interned case-preserving and the doctype repointed at that.
+    /// * `create` leaves an absent id as a `{NULL, 0}` string, and
+    ///   `lxb_dom_document_type_interface_clone` - which `import_node` and
+    ///   `clone_node` reach - runs `lexbor_str_copy`, which fails on a NULL
+    ///   source. Such a doctype would be unimportable, so an absent id is
+    ///   initialised to an allocated empty string instead. Length stays 0, so
+    ///   the accessor and the serializer still read it as absent.
+    pub fn create_doctype(
+        self,
+        name: &[u8],
+        public_id: Option<&[u8]>,
+        system_id: Option<&[u8]>,
+    ) -> Option<BuildingNode<'doc>> {
+        let part = |id: Option<&[u8]>| match id {
+            Some(b) if !b.is_empty() => (b.as_ptr(), b.len()),
+            _ => (core::ptr::null(), 0),
+        };
+        let (pub_ptr, pub_len) = part(public_id);
+        let (sys_ptr, sys_len) = part(system_id);
+
+        // SAFETY: a live document; Lexbor copies every slice it keeps. The
+        // exception code is written and not read - a null result is the failure
+        // signal, as it was in the C.
+        unsafe {
+            let mut code: core::ffi::c_int = 0;
+            let dt = lxb::lxb_dom_document_type_create(
+                self.as_raw(),
+                name.as_ptr(),
+                name.len(),
+                pub_ptr,
+                pub_len,
+                sys_ptr,
+                sys_len,
+                &mut code,
+            );
+            if dt.is_null() {
+                return None;
+            }
+
+            let interned = lxb::lxb_dom_attr_qualified_name_append(
+                (*self.as_raw()).attrs as *mut core::ffi::c_void,
+                name.as_ptr(),
+                name.len(),
+            );
+            if interned.is_null() {
+                /* The doctype is left for the arena, like any other half-built
+                 * node this crate abandons. */
+                return None;
+            }
+            (*dt).name = (*interned).attr_id;
+
+            let text = (*self.as_raw()).text;
+            if (*dt).public_id.data.is_null() {
+                lxb::lexbor_str_init(&mut (*dt).public_id, text, 0);
+            }
+            if (*dt).system_id.data.is_null() {
+                lxb::lexbor_str_init(&mut (*dt).system_id, text, 0);
+            }
+            BuildingNode::from_raw(dt as *mut LxbNode)
+        }
+    }
+
     /// An empty detached DocumentFragment. `None` on allocation failure.
     pub fn create_fragment(self) -> Option<BuildingNode<'doc>> {
         // SAFETY: a live document.

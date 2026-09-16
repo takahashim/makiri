@@ -774,80 +774,41 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let (rb_name,) = args.required;
     let (rb_pub, rb_sys_) = args.optional;
 
-    unsafe {
-        let doc = html_doc_unwrap(rb_self)?;
-        let nv = ruby_verified_text(rb_name, c"doctype name")?;
-        if !lxb::lxb_dom_document_type_valid_name(nv.as_ptr() as *const u8, nv.len()) {
-            return Err(Error::new(
-                ruby.exception_arg_error(),
-                "invalid doctype name",
-            ));
-        }
-
-        let zero = crate::glue::abi::RubyText::absent;
-        let pv = match rb_pub.filter(|v| !v.is_nil()) {
-            Some(v) => ruby_verified_text(v, c"doctype public id")?,
-            None => zero(),
-        };
-        let sv = match rb_sys_.filter(|v| !v.is_nil()) {
-            Some(v) => ruby_verified_text(v, c"doctype system id")?,
-            None => zero(),
-        };
-        let pub_ptr = if pv.len() != 0 {
-            pv.as_ptr() as *const u8
-        } else {
-            core::ptr::null()
-        };
-        let sys_ptr = if sv.len() != 0 {
-            sv.as_ptr() as *const u8
-        } else {
-            core::ptr::null()
-        };
-
-        /* The exception code is generated as a plain int; it is written but not
-         * read - a NULL dt is the failure signal, as in the C. */
-        let mut code: core::ffi::c_int = 0;
-        let dt = lxb::lxb_dom_document_type_create(
-            doc,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-            pub_ptr,
-            pv.len(),
-            sys_ptr,
-            sv.len(),
-            &mut code,
-        );
-        if dt.is_null() {
-            return Err(err("failed to create doctype"));
-        }
-        /* create() interned the name ASCII-lowercased (the attr local-name
-         * hash); DOM createDocumentType preserves case, so re-intern it raw and
-         * repoint. */
-        let nd = lxb::lxb_dom_attr_qualified_name_append(
-            (*doc).attrs as *mut c_void,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-        );
-        if nd.is_null() {
-            return Err(err("failed to intern doctype name"));
-        }
-        (*dt).name = (*nd).attr_id;
-
-        /* create() leaves an absent public/system id as a {NULL,0} lexbor_str,
-         * but lxb_dom_document_type_interface_clone (used by
-         * import_node/clone_node) runs lexbor_str_copy, which fails on a NULL
-         * source - so an absent-id doctype would be unimportable. Initialise
-         * them to an allocated empty string: the accessor and serializer both
-         * key on length == 0, so this reads as nil/absent to callers but is
-         * non-NULL to the cloner. */
-        if (*dt).public_id.data.is_null() {
-            lxb::lexbor_str_init(&mut (*dt).public_id, (*doc).text, 0);
-        }
-        if (*dt).system_id.data.is_null() {
-            lxb::lexbor_str_init(&mut (*dt).system_id, (*doc).text, 0);
-        }
-        Ok(wrap(dt as *mut LxbNode, rb_self))
+    let doc = owning_doc(&rb_self)?;
+    let nv = ruby_verified_text(rb_name, c"doctype name")?;
+    /* SAFETY: the view is the caller's, live for this call. */
+    let name = unsafe { nv.bytes() };
+    if !unsafe { lxb::lxb_dom_document_type_valid_name(name.as_ptr(), name.len()) } {
+        /* The caller's error, not Lexbor's, so the exception class is picked
+         * here rather than in the DOM layer. */
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            "invalid doctype name",
+        ));
     }
+
+    /* An omitted id and an empty one are the same thing to the DOM: both report
+     * nil. `None` is what reaches Lexbor as a null pointer. */
+    let verified =
+        |v: Option<Value>, what: &'static core::ffi::CStr| match v.filter(|v| !v.is_nil()) {
+            Some(v) => ruby_verified_text(v, what).map(Some),
+            None => Ok(None),
+        };
+    let pv = verified(rb_pub, c"doctype public id")?;
+    let sv = verified(rb_sys_, c"doctype system id")?;
+    /* SAFETY: both views are the caller's, live for this call. */
+    let (pub_id, sys_id) = unsafe {
+        (
+            pv.as_ref().map(|v| v.bytes()),
+            sv.as_ref().map(|v| v.bytes()),
+        )
+    };
+
+    let Some(dt) = doc.create_doctype(name, pub_id, sys_id) else {
+        return Err(err("failed to create doctype"));
+    };
+    /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
+    Ok(unsafe { wrap(dt.as_raw(), rb_self) })
 }
 
 /// `Document#create_document_fragment` - the DOM createDocumentFragment: an
