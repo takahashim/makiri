@@ -37,7 +37,6 @@ use crate::lexbor::adapter::html::{
     ScratchElement, NS_UNDEF,
 };
 use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbNode};
-use crate::lexbor_abi as lxb;
 
 /// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
 /// the fragment rule in one place.
@@ -62,6 +61,7 @@ impl Insert {
 pub use crate::bridge::string::ruby_verified_data;
 pub use crate::glue::fragment::html_import_deep;
 pub use crate::glue::fragment::import_fragment_children;
+pub use crate::glue::fragment::import_transient_fragment_children;
 pub use crate::glue::fragment::run_fragment_parser;
 pub use crate::glue::fragment::{Emit, FragmentContext};
 
@@ -546,8 +546,7 @@ unsafe fn parse_fragment_into(
      * does NOT free (measured: one leaked per inner_html=/outer_html= call).
      * Owning it here frees it however this returns - the import below can fail,
      * and returning that error first used to skip the free. */
-    let _transient = lxb::TransientDoc::of(frag);
-    let imported = import_fragment_children(doc, frag, &emit);
+    let imported = import_transient_fragment_children(doc, frag, &emit);
     let _anchor = html;
 
     if !imported {

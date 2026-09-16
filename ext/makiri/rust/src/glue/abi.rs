@@ -36,20 +36,17 @@ pub struct NodeData {
 /// than a second, opaque view of it. Modules that only pass the pointer along
 /// are unaffected; the ones that read a field (glue::doc) get the real one, and
 /// there is only one definition to be wrong.
-pub type LxbNode = crate::lexbor_abi::lxb_dom_node_t;
+pub type LxbNode = crate::lexbor::ffi::LxbNode;
 /// `lxb_dom_document_t`. Shared vocabulary: both the Document wrapper and the
 /// fragment pipeline pass it around.
-pub type LxbDoc = crate::lexbor_abi::lxb_dom_document_t;
+pub type LxbDoc = crate::lexbor::ffi::LxbDoc;
 
 /* Every Lexbor constant below comes from the generated bindings, none is
  * transcribed. The names are re-exported here rather than used through
  * `lexbor_abi` at the call sites only because these particular ones are spelled
  * this way throughout the glue; `lexbor_abi::consts` is where a NEW one goes,
  * and where these two are defined. */
-pub use crate::lexbor_abi::consts::{
-    STATUS_ERROR_MEMORY_ALLOCATION as LXB_STATUS_ERROR_MEMORY_ALLOCATION,
-    STATUS_OK as LXB_STATUS_OK,
-};
+pub use crate::lexbor::ffi::{LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK};
 
 /* The node types the glue still names in Lexbor's own spelling. The values come
  * from `dom_adapter::html`, which is the one place that reads them; the
@@ -57,8 +54,7 @@ pub use crate::lexbor_abi::consts::{
 pub use crate::lexbor::adapter::html::TYPE_DOCTYPE as LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 pub use crate::lexbor::adapter::html::TYPE_ELEMENT as LXB_DOM_NODE_TYPE_ELEMENT;
 
-pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
-    crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;
+pub use crate::lexbor::ffi::LXB_HTML_SERIALIZE_OPT_UNDEF;
 
 /* ------------------------------------------------------------------ *
  * The Ruby-string views, declared HERE, once                         *
@@ -125,7 +121,7 @@ pub unsafe fn parsed_xml_doc(
 /// live in `lexbor_abi` - the one place in the crate that hand-declares a Lexbor
 /// function, because bindgen cannot generate an inline one - and are re-exported
 /// here so this module stays the single import for the glue layer.
-pub use crate::lexbor_abi::{
+pub use crate::lexbor::ffi::{
     lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_type_public_id_noi,
     lxb_dom_document_type_system_id_noi, lxb_dom_element_first_attribute_noi,
     lxb_dom_element_next_attribute_noi, lxb_dom_node_type_noi,
@@ -134,7 +130,7 @@ pub use crate::lexbor_abi::{
 
 /// The generated Lexbor readers the glue calls, likewise re-exported so a glue
 /// file imports one module.
-pub use crate::lexbor_abi::{
+pub use crate::lexbor::ffi::{
     lxb_dom_attr_local_name, lxb_dom_attr_qualified_name, lxb_dom_document_root,
     lxb_dom_element_get_attribute, lxb_dom_element_has_attribute, lxb_dom_element_local_name,
     lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
@@ -175,7 +171,7 @@ pub fn error_class() -> ExceptionClass {
 /// compiled the two definitions together - which every build now is, so a
 /// second definition is a build error rather than something a feature
 /// combination has to go looking for.
-pub use crate::lexbor_abi::{
+pub use crate::lexbor::ffi::{
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
     CssParser,
 };

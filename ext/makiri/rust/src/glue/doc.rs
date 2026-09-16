@@ -29,11 +29,9 @@ use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RString, Ruby, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
-use crate::lexbor_abi as lxb;
-
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
-    ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbNode,
+    ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbDoc, LxbNode,
 };
 use super::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
@@ -55,7 +53,7 @@ struct DocData {
 
 /// Generated, not transcribed. A hand-written 1 here (it is 2) made
 /// `import_node` treat every HTML node as an XML one.
-const NODE_KIND_XML: c_int = lxb::parsed::NODE_KIND_XML as c_int;
+const NODE_KIND_XML: c_int = crate::lexbor::ffi::NODE_KIND_XML as c_int;
 
 use crate::lexbor::adapter::html::HtmlDoc;
 
@@ -121,21 +119,21 @@ static HTML_DOC_TYPE: DataType =
 static XML_DOC_TYPE: DataType = doc_data_type(c"Makiri::XML::Document".as_ptr(), DOC_TYPE.as_ptr());
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
-pub fn html_doc_unwrap(rb_doc: Value) -> Result<*mut lxb::lxb_dom_document_t, Error> {
+pub fn html_doc_unwrap(rb_doc: Value) -> Result<*mut LxbDoc, Error> {
     let d = crate::bridge::ruby::typed_data(rb_doc, &HTML_DOC_TYPE)? as *mut DocData;
     Ok(html_doc_of(d))
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
-pub fn html_doc_known(rb_doc: Value) -> *mut lxb::lxb_dom_document_t {
+pub fn html_doc_known(rb_doc: Value) -> *mut LxbDoc {
     html_doc_of(crate::bridge::ruby::typed_data_known(rb_doc, &HTML_DOC_TYPE) as *mut DocData)
 }
 
-fn html_doc_of(d: *mut DocData) -> *mut lxb::lxb_dom_document_t {
+fn html_doc_of(d: *mut DocData) -> *mut LxbDoc {
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
     // SAFETY: `d` is the data of a live HTML Document, whose handle it owns.
-    unsafe { (*(*d).parsed).html_doc() as *mut lxb::lxb_dom_document_t }
+    unsafe { (*(*d).parsed).html_doc() as *mut LxbDoc }
 }
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.

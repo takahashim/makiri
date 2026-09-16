@@ -247,6 +247,18 @@ pub unsafe fn import_fragment_children(doc: *mut LxbDoc, root: *mut LxbNode, emi
     true
 }
 
+/// Import a fragment parsed in Lexbor's transient document, then release that
+/// document on every return path.  The transient-document ownership rule is a
+/// Lexbor ABI concern, so callers never need to name `TransientDoc`.
+pub unsafe fn import_transient_fragment_children(
+    doc: *mut LxbDoc,
+    root: *mut LxbNode,
+    emit: &Emit,
+) -> bool {
+    let _transient = crate::lexbor_abi::TransientDoc::of(root);
+    import_fragment_children(doc, root, emit)
+}
+
 /// Which Lexbor fragment parser to run, and the context it needs.
 ///
 /// Both implement the same WHATWG algorithm - tokenizer state for
