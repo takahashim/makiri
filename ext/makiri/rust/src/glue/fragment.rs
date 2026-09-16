@@ -23,7 +23,6 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use rb_sys::VALUE;
 
 use crate::falloc::VecPush;
-use crate::lexbor_abi as lxb;
 
 use super::abi::{
     error_class, html_node_unwrap, is_kind_of, ruby_bytes_view, ruby_str_known_valid_utf8,
@@ -36,20 +35,18 @@ use crate::init::CLASS_NODE;
  * ------------------------------------------------------------------ */
 
 use crate::cbuf::{Buf, OwnedBuf};
-use crate::dom_adapter::html::{BuildingNode, HtmlDoc, HtmlNode};
+use crate::dom_adapter::html::{
+    BuildingNode, HtmlDoc, HtmlNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG,
+    TAG_UNDEF,
+};
 pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
 
-/* `import_node` and the two inserts are generated; they were declared here as
- * well, which is the one-symbol-two-declarations hazard `lexbor_abi` exists to
- * prevent - `mutate.rs` reached the same three through the generated bindings.
- * The two Lexbor leaves out of its public headers live in `lexbor_abi` with the
- * rest of what bindgen cannot see. */
-use crate::lexbor_abi::{
-    lxb_dom_document_fragment_interface_create, lxb_dom_document_import_node,
-    lxb_dom_node_insert_before, lxb_dom_node_insert_child, lxb_html_parse_fragment,
-    lxb_html_parse_fragment_by_tag_id,
-};
+/* The two fragment parsers. One is generated; the other is exported by Lexbor
+ * but absent from its public headers, so `lexbor_abi` hand-declares it with the
+ * rest of what bindgen cannot see. Everything this file does to the DOM itself
+ * goes through `dom_adapter::html` - these are the parser, not the DOM. */
+use crate::lexbor_abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
@@ -61,13 +58,6 @@ use crate::lexbor_abi::{
      * symbol, and `lexbor_abi` is where the `_noi` twins live. */
     lxb_tag_id_by_name_noi, HtmlParser,
 };
-
-/// Lexbor node types and the tag/namespace ids this file compares against.
-/// Generated, so a pin that renumbers them is a build-time change, not a
-/// silently different answer (see lexbor_abi).
-const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
-const NS_SVG: usize = lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize;
-const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
@@ -108,13 +98,7 @@ fn fixup_template_content(
                     /* SAFETY: a live document and a live source node; what
                      * import returns is fresh and detached, which is what
                      * BuildingNode means. */
-                    let imp = unsafe {
-                        BuildingNode::from_raw(lxb_dom_document_import_node(
-                            doc.as_raw(),
-                            child.as_raw(),
-                            true,
-                        ))
-                    };
+                    let imp = doc.import_node(child, true);
                     let Some(imp) = imp else {
                         // Lexbor could not copy a content child. Giving up
                         // here leaves the clone's template SHORT, which is
@@ -222,9 +206,22 @@ impl Emit {
     /// The node must be live, and the caller must be clear to change the tree
     /// it belongs to.
     unsafe fn put(&self, imported: *mut LxbNode) {
+        /* SAFETY: both are live nodes of one document, still being built -
+         * which is what this type's variants carry and what import just made. */
+        let Some(imported) = BuildingNode::from_raw(imported) else {
+            return;
+        };
         match *self {
-            Emit::Append(at) => lxb_dom_node_insert_child(at, imported),
-            Emit::Before(at) => lxb_dom_node_insert_before(at, imported),
+            Emit::Append(at) => {
+                if let Some(at) = BuildingNode::from_raw(at) {
+                    at.insert_child(imported);
+                }
+            }
+            Emit::Before(at) => {
+                if let Some(at) = BuildingNode::from_raw(at) {
+                    at.insert_before(imported);
+                }
+            }
         }
     }
 }
@@ -335,21 +332,13 @@ pub unsafe fn import_with_fixup(
     src: *mut LxbNode,
     deep: bool,
 ) -> Option<*mut LxbNode> {
-    let imp = lxb_dom_document_import_node(doc, src, deep);
-    if imp.is_null() {
-        return None;
-    }
-    /* SAFETY: a live document, the caller's live source node, and the copy
-     * just made - detached, and nothing outside it points at it yet. The walk
-     * is the only thing that reads them, and it does not outlive this call. */
-    let handles = (
-        HtmlDoc::from_raw(doc),
-        HtmlNode::from_raw(src),
-        BuildingNode::from_raw(imp),
-    );
-    let (Some(hdoc), Some(hsrc), Some(himp)) = handles else {
+    /* SAFETY: a live document and the caller's live source node. The handles
+     * do not outlive this call. */
+    let (Some(hdoc), Some(hsrc)) = (HtmlDoc::from_raw(doc), HtmlNode::from_raw(src)) else {
         return None;
     };
+    let himp = hdoc.import_node(hsrc, deep)?;
+    let imp = himp.as_raw();
     if deep && fixup_template_content(hdoc, hsrc, himp).is_err() {
         // A copy whose <template> lost its contents is a wrong answer, not a
         // degraded one: `<template><i>x</i></template>` comes back as
@@ -385,10 +374,10 @@ pub unsafe fn resolve_fragment_context(
     context: Option<Value>,
 ) -> Result<(usize, usize), magnus::Error> {
     let Some(context) = context else {
-        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML));
+        return Ok((TAG_BODY, NS_HTML));
     };
     if context.is_nil() {
-        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize, NS_HTML));
+        return Ok((TAG_BODY, NS_HTML));
     }
 
     if is_kind_of(context, &CLASS_NODE) {
@@ -408,13 +397,13 @@ pub unsafe fn resolve_fragment_context(
     let cv = ruby_verified_text(context, c"fragment context element")?;
     let name = cv.bytes();
     if name == b"svg" {
-        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize, NS_SVG));
+        return Ok((TAG_SVG, NS_SVG));
     }
     if name == b"math" {
-        return Ok((lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize, NS_MATH));
+        return Ok((TAG_MATH, NS_MATH));
     }
     let tid = lxb_tag_id_by_name_noi((*doc).tags, name.as_ptr(), name.len());
-    if tid == lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize {
+    if tid == TAG_UNDEF {
         // The C wrote `"...: %" PRIsVALUE` - two string literals the C
         // preprocessor joins. Rust has no such concatenation, so carrying the
         // line over verbatim produced the literal `%" PRIsVALUE` in the
@@ -450,14 +439,15 @@ pub unsafe fn build_fragment_ctx(
 ) -> Result<Value, Error> {
     let html = ruby.into_value(rb_html.to_r_string()?);
 
-    let frag = lxb_dom_document_fragment_interface_create(doc);
-    if frag.is_null() {
+    /* SAFETY: a live document, for the length of this call. */
+    let frag = HtmlDoc::from_raw(doc).and_then(HtmlDoc::create_fragment);
+    let Some(frag) = frag else {
         return Err(Error::new(
             error_class(),
             "failed to create document fragment",
         ));
-    }
-    let frag_node = frag as *mut LxbNode;
+    };
+    let frag_node = frag.as_raw();
 
     let root = run_fragment_parser(html.as_raw(), &FragmentContext::Tag { doc, tag, ns })?;
     if !import_fragment_children(doc, root, &Emit::Append(frag_node)) {

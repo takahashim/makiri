@@ -33,7 +33,7 @@ use crate::lexbor_abi as lxb;
 
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
-    ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbDoc, LxbNode,
+    ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbNode,
 };
 use super::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
@@ -57,6 +57,8 @@ struct DocData {
 /// `import_node` treat every HTML node as an XML one.
 const NODE_KIND_XML: c_int = lxb::parsed::NODE_KIND_XML as c_int;
 
+use crate::dom_adapter::html::HtmlDoc;
+
 pub use crate::dom_adapter::cross_import::cross_xml_to_html;
 pub use crate::dom_adapter::post_parse::parse_html;
 pub use crate::glue::node::node_kind;
@@ -65,7 +67,6 @@ pub use crate::xml::api::xml_doc_memsize;
 
 extern "C" {
 
-    fn lxb_dom_document_root(doc: *mut LxbDoc) -> *mut LxbNode;
     fn lxb_html_document_title(doc: *mut c_void, len: *mut usize) -> *const u8;
 }
 
@@ -306,11 +307,17 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
 /* ---- read-only accessors ---- */
 
 fn doc_root(ruby: &Ruby, self_: Value) -> Value {
-    let _ = ruby;
-    unsafe {
-        let doc = html_doc_known(self_);
-        Value::from_raw(wrap_html_node(lxb_dom_document_root(doc), self_.as_raw()))
-    }
+    /* SAFETY: a live HTML Document, kept alive by `self_` for this call. */
+    let root = unsafe { HtmlDoc::from_raw(html_doc_known(self_)) }
+        .and_then(|d| d.as_node().document_root());
+    let Some(root) = root else {
+        /* The HTML parser inserts html/head/body even for empty input, so this
+         * is unreachable today. Returning nil rather than wrapping a null is
+         * what the reachable behaviour would want if that ever changed. */
+        return ruby.qnil().as_value();
+    };
+    /* SAFETY: a node of `self_`'s document, which keeps it alive. */
+    unsafe { Value::from_raw(wrap_html_node(root.as_raw(), self_.as_raw())) }
 }
 
 /// The document `<title>`, or `""`.

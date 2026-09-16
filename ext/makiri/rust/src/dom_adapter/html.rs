@@ -40,6 +40,11 @@ const _: () = assert!(
  * silently. Deriving the value removes the class rather than checking for it. */
 pub const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 pub const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
+/// The two foreign roots. A fragment parsed in one of their contexts follows
+/// the foreign-content rules rather than the HTML ones.
+pub const NS_SVG: usize = lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize;
+/// See [`NS_SVG`].
+pub const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
 
 /// `LXB_TAG__UNDEF`. A custom element's tag id is a pointer value, far above
 /// the static range the element index buckets, so it is compared against
@@ -48,6 +53,14 @@ pub const TAG_UNDEF: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize;
 
 /// `LXB_TAG__LAST_ENTRY` - the end of Lexbor's static tag-id range.
 pub const TAG_LAST_ENTRY: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__LAST_ENTRY as usize;
+
+/// The three tags a fragment context can be named by: `<body>` is the default
+/// context, and `<svg>`/`<math>` are the foreign roots.
+pub const TAG_BODY: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_BODY as usize;
+/// See [`TAG_BODY`].
+pub const TAG_SVG: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_SVG as usize;
+/// See [`TAG_BODY`].
+pub const TAG_MATH: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_MATH as usize;
 
 /* ---------- borrowed bytes ---------- */
 
@@ -238,6 +251,7 @@ pub const TYPE_CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SEC
 pub const TYPE_PI: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION;
 pub const TYPE_DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
 pub const TYPE_DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+pub const TYPE_FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 
 /// `LXB_TAG_TEMPLATE`.
 pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
@@ -433,6 +447,25 @@ impl<'doc> HtmlDoc<'doc> {
             BuildingNode::from_raw(
                 lxb::lxb_dom_document_create_document_fragment(self.as_raw()) as *mut LxbNode,
             )
+        }
+    }
+
+    /// Copy `src` into this document, DOM `importNode`. `None` when Lexbor
+    /// could not.
+    ///
+    /// The copy is detached and belongs here, which is what [`BuildingNode`]
+    /// says. `deep` carries the subtree - but NOT a `<template>`'s separate
+    /// contents fragment, which Lexbor's importNode omits; the caller fixes
+    /// that up (see `glue::fragment::import_with_fixup`).
+    pub fn import_node(self, src: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'doc>> {
+        // SAFETY: two live documents' nodes; Lexbor allocates the copy in this
+        // one and leaves the source alone.
+        unsafe {
+            BuildingNode::from_raw(lxb::lxb_dom_document_import_node(
+                self.as_raw(),
+                src.as_raw(),
+                deep,
+            ))
         }
     }
 
@@ -852,6 +885,13 @@ impl<'doc> BuildingNode<'doc> {
     pub fn insert_child(self, child: Self) {
         // SAFETY: two live nodes of one document, both still being built.
         unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), child.as_raw()) };
+    }
+
+    /// Link `node` in immediately before this one, under the same parent.
+    #[inline]
+    pub fn insert_before(self, node: Self) {
+        // SAFETY: as `insert_child`.
+        unsafe { lxb::lxb_dom_node_insert_before(self.as_raw(), node.as_raw()) };
     }
 }
 

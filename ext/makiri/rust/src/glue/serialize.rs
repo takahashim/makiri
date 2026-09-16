@@ -19,6 +19,7 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use super::abi::*;
 use crate::cbuf::{buf_append, Buf};
+use crate::dom_adapter::html::{HtmlNode, TYPE_FRAGMENT};
 
 /// Lexbor's chunk sink. Must not panic: it is called from C.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
@@ -160,7 +161,8 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     // A document fragment has no tag of its own, so its "outer" is its
     // children: the deep serializer is the right one (the tree serializer
     // rejects a fragment node).
-    let deep = unsafe { lxb_dom_node_type_noi(node) } == LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+    /* SAFETY: the node of a live wrapper, which keeps its document alive. */
+    let deep = unsafe { HtmlNode::from_raw(node) }.is_some_and(|n| n.node_type() == TYPE_FRAGMENT);
     serialize(&ruby, node, deep, pretty)
 }
 
