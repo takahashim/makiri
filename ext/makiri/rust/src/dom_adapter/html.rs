@@ -644,6 +644,79 @@ impl<'doc> HtmlNodeMut<'doc> {
     }
 }
 
+/// An element being filled in before anything links it into a tree.
+///
+/// Cross-document translation creates an element, copies the source's
+/// attributes onto it, and hands it back for the caller to insert. It is NOT
+/// [`HtmlElementMut`]: that type means the receiver passed the frozen and
+/// evaluation checks, which say nothing about an element this code just made.
+///
+/// Nor is it [`ScratchElement`], which destroys what it holds. A half-built
+/// subtree that is abandoned on failure is left where it is: the document's
+/// arena reclaims it wholesale, and nothing else ever points at it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct BuildingElement<'doc>(HtmlElement<'doc>);
+
+impl<'doc> BuildingElement<'doc> {
+    /// # Safety
+    /// `el` must be a live element that outlives `'doc`, freshly created and
+    /// not yet linked into any tree.
+    #[inline]
+    pub unsafe fn from_raw(el: *mut LxbElement) -> Option<Self> {
+        HtmlNode::from_raw(el as *mut LxbNode).map(|n| BuildingElement(HtmlElement(n)))
+    }
+
+    /// Set a plain, namespaceless attribute. `false` when Lexbor could not
+    /// store it.
+    pub fn set_attribute(self, name: &[u8], value: &[u8]) -> bool {
+        // SAFETY: an element nothing else holds; both slices are read and
+        // copied by Lexbor.
+        let at = unsafe {
+            lxb::lxb_dom_element_set_attribute(
+                self.0.raw(),
+                name.as_ptr(),
+                name.len(),
+                value.as_ptr(),
+                value.len(),
+            )
+        };
+        !at.is_null()
+    }
+
+    /// Create an attribute in `ns`, name it `qname` case-preserving, give it
+    /// `value`, and append it. `false` when any step failed, in which case the
+    /// unappended attribute is left for the arena, like the rest of an
+    /// abandoned subtree.
+    pub fn append_ns_attribute(self, ns: &[u8], qname: &[u8], value: &[u8]) -> bool {
+        // SAFETY: an element nothing else holds, in a live document; every
+        // slice is read and copied by Lexbor.
+        unsafe {
+            let doc = self.0.node().owner_document();
+            let at = lxb::lxb_dom_attr_interface_create(doc);
+            if at.is_null() {
+                return false;
+            }
+            let named = lxb::lxb_dom_attr_set_name_ns(
+                at,
+                ns.as_ptr(),
+                ns.len(),
+                qname.as_ptr(),
+                qname.len(),
+                false,
+            );
+            if named != lxb::lexbor_status_t_LXB_STATUS_OK
+                || lxb::lxb_dom_attr_set_value(at, value.as_ptr(), value.len())
+                    != lxb::lexbor_status_t_LXB_STATUS_OK
+            {
+                return false;
+            }
+            lxb::lxb_dom_element_attr_append(self.0.raw(), at);
+            true
+        }
+    }
+}
+
 /// An element made only to be read from and thrown away, destroyed when it
 /// goes out of scope.
 ///

@@ -20,6 +20,7 @@
 
 use core::ffi::c_void;
 
+use crate::dom_adapter::html::BuildingElement;
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
@@ -44,14 +45,10 @@ const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
 /* Every Lexbor entry point below comes from the generated bindings. */
 use lxb::{
-    lxb_dom_attr_interface_create, lxb_dom_attr_set_value, lxb_dom_document_create_comment,
-    lxb_dom_document_create_document_fragment, lxb_dom_document_create_element,
-    lxb_dom_document_create_processing_instruction, lxb_dom_document_create_text_node,
-    lxb_dom_element_attr_append, lxb_dom_element_set_attribute, lxb_dom_node_insert_child,
-    lxb_ns_by_id,
+    lxb_dom_document_create_comment, lxb_dom_document_create_document_fragment,
+    lxb_dom_document_create_element, lxb_dom_document_create_processing_instruction,
+    lxb_dom_document_create_text_node, lxb_dom_node_insert_child, lxb_ns_by_id,
 };
-
-const LXB_STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
 /// A DOM name or value slice must fit `u32` - the mkr store's per-slice cap.
 #[inline]
@@ -390,49 +387,21 @@ pub unsafe fn cross_html_to_xml(
 
 /* ================= XML (mkr) -> HTML (lxb) ========================== */
 
-/// Copy the source element's attributes onto the translated Lexbor element.
-unsafe fn x2h_copy_attrs(
-    hdoc: *mut LxbDoc,
-    doc: &XmlDoc,
-    s: NodeId,
-    el: *mut LxbElement,
-) -> MutStatus {
+/// Copy the source element's attributes onto the element being translated into.
+///
+/// The document comes from `el` itself, so there is no second handle to keep in
+/// step with it.
+fn x2h_copy_attrs(doc: &XmlDoc, s: NodeId, el: BuildingElement<'_>) -> MutStatus {
     let mut a = doc.attrs(s);
     while let Some(attr) = a {
-        let val = doc.value(attr);
-        let qname = doc.qname(attr);
-
-        if doc.ns(attr).is_empty() {
-            if lxb_dom_element_set_attribute(
-                el,
-                qname.as_ptr(),
-                qname.len(),
-                val.as_ptr(),
-                val.len(),
-            )
-            .is_null()
-            {
-                return MutStatus::Oom;
-            }
+        let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
+        let stored = if ns.is_empty() {
+            el.set_attribute(qname, val)
         } else {
-            let at = lxb_dom_attr_interface_create(hdoc);
-            if at.is_null() {
-                return MutStatus::Oom;
-            }
-            let ns = doc.ns(attr);
-            if lxb::lxb_dom_attr_set_name_ns(
-                at,
-                ns.as_ptr(),
-                ns.len(),
-                qname.as_ptr(),
-                qname.len(),
-                false,
-            ) != LXB_STATUS_OK
-                || lxb_dom_attr_set_value(at, val.as_ptr(), val.len()) != LXB_STATUS_OK
-            {
-                return MutStatus::Oom;
-            }
-            lxb_dom_element_attr_append(el, at);
+            el.append_ns_attribute(ns, qname, val)
+        };
+        if !stored {
+            return MutStatus::Oom;
         }
         a = doc.next(attr);
     }
@@ -455,12 +424,12 @@ unsafe fn x2h_make(hdoc: *mut LxbDoc, doc: &XmlDoc, s: NodeId) -> Result<*mut Lx
                 qname.len(),
                 core::ptr::null_mut(),
             );
-            if el.is_null() {
+            let Some(building) = BuildingElement::from_raw(el) else {
                 return Err(MutStatus::Oom);
-            }
+            };
             (*(el as *mut LxbNode)).ns = intern_ns(hdoc, doc.ns(s));
 
-            let st = x2h_copy_attrs(hdoc, doc, s, el);
+            let st = x2h_copy_attrs(doc, s, building);
             if st != MutStatus::Ok {
                 return Err(st);
             }
