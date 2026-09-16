@@ -33,6 +33,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{node_document, unwrap, wrap};
+use crate::dom_adapter::html::{HtmlNode, HtmlNodeMut};
 use crate::glue::abi::{
     error_class, html_doc_unwrap, ruby_verified_text, LxbAttr, LxbDoc, LxbElement, LxbNode,
 };
@@ -41,9 +42,25 @@ use crate::lexbor_abi as lxb;
 const NS_UNDEF: usize = lxb::lxb_ns_id_enum_t_LXB_NS__UNDEF as usize;
 const STATUS_OK: u32 = lxb::lexbor_status_t_LXB_STATUS_OK;
 
-/// `lxb_dom_node_insert_child` and its two siblings share this shape, which is
-/// what lets [`splice_or_insert`] hold the fragment rule in one place.
-type InsertFn = unsafe extern "C" fn(*mut LxbNode, *mut LxbNode);
+/// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
+/// the fragment rule in one place.
+#[derive(Clone, Copy)]
+enum Insert {
+    Child,
+    Before,
+    After,
+}
+
+impl Insert {
+    #[inline]
+    fn put(self, anchor: HtmlNodeMut<'_>, node: HtmlNodeMut<'_>) {
+        match self {
+            Insert::Child => anchor.insert_child(node),
+            Insert::Before => anchor.insert_before(node),
+            Insert::After => anchor.insert_after(node),
+        }
+    }
+}
 
 pub use crate::bridge::string::ruby_verified_data;
 pub use crate::glue::fragment::emit_append;
@@ -71,39 +88,42 @@ unsafe fn invalidate(document: Value) {
 /// immutable, so raise FrozenError rather than silently editing it, and a
 /// document an XPath handler is being evaluated over refuses to change. The
 /// readers use [`unwrap`] directly.
-fn unwrap_mutable(this: super::HtmlSelf) -> Result<*mut LxbNode, Error> {
+fn unwrap_mutable(this: &super::HtmlSelf) -> Result<HtmlNodeMut<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     crate::glue::doc::ensure_document_mutable(this.document)?;
-    Ok(this.raw())
+    // SAFETY: the two checks above are exactly what the type asks for - the
+    // receiver is not frozen, and no XPath evaluation is reading its document.
+    Ok(unsafe { HtmlNodeMut::assume_mutable(this.node()) })
 }
 
 /// An HTML node argument. Routes through the HTML unwrap so an XML node is
 /// rejected before its arena pointer reaches Lexbor.
-unsafe fn arg_node(v: Value) -> Result<*mut LxbNode, Error> {
-    unwrap(v)
+fn arg_node(v: Value) -> Result<HtmlNode<'static>, Error> {
+    let raw = unwrap(v)?;
+    // SAFETY: `unwrap` checked `v` is an HTML node, and the caller holds `v`
+    // for the length of the call, which keeps its document alive.
+    unsafe { HtmlNode::from_raw(raw) }.ok_or_else(|| err("uninitialized HTML node"))
 }
 
 /// Copy `node` into `doc`, for a node that came from another document - this
 /// half of the DOM's adopt, or an error rather than a partial node.
-unsafe fn adopt_copy(doc: *mut LxbDoc, node: *mut LxbNode) -> Result<*mut LxbNode, Error> {
-    html_import_deep(doc, node)
+unsafe fn adopt_copy(doc: *mut LxbDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
+    let imp = html_import_deep(doc, node.as_raw())?;
+    // SAFETY: a node just imported into `doc`, which outlives this call.
+    HtmlNode::from_raw(imp).ok_or_else(|| err("failed to import node"))
 }
 
 /// The other half: take `node` out of the document it came from, so the whole
 /// thing reads as the move the DOM says appendChild performs.
-unsafe fn adopt_release(node: *mut LxbNode) {
-    if (*node).type_ == ty::FRAGMENT {
+fn adopt_release(node: HtmlNodeMut<'_>) {
+    if node.node().node_type() == ty::FRAGMENT {
         /* A fragment contributes its children; the DOM leaves a spliced one
          * empty, so empty the source rather than detaching it. */
-        loop {
-            let c = (*node).first_child;
-            if c.is_null() {
-                break;
-            }
-            lxb::lxb_dom_node_remove(c);
+        while let Some(c) = node.first_child() {
+            c.detach();
         }
-    } else if !(*node).parent.is_null() {
-        lxb::lxb_dom_node_remove(node);
+    } else if node.parent().is_some() {
+        node.detach();
     }
 }
 
@@ -118,33 +138,36 @@ unsafe fn adopt_release(node: *mut LxbNode) {
 /// Ruby `Value` rather than the raw node also keeps the source document
 /// reachable until then.
 unsafe fn prepare_insert(
-    reference: *mut LxbNode,
+    reference: HtmlNodeMut<'_>,
     rb_incoming: Value,
-) -> Result<(*mut LxbNode, Option<Value>), Error> {
+) -> Result<(HtmlNodeMut<'static>, Option<Value>), Error> {
     let incoming = arg_node(rb_incoming)?;
 
-    if (*incoming).type_ == ty::ATTRIBUTE {
+    if incoming.node_type() == ty::ATTRIBUTE {
         return Err(err("an attribute node cannot be inserted into the tree"));
     }
     /* `incoming` must not be an inclusive ancestor of `reference`. */
-    let mut p = reference;
-    while !p.is_null() {
-        if p == incoming {
+    let mut p = Some(reference.node());
+    while let Some(n) = p {
+        if n == incoming {
             return Err(err("cannot insert a node into its own subtree"));
         }
-        p = (*p).parent;
+        p = n.parent();
     }
-    if (*reference).owner_document != (*incoming).owner_document {
+    let doc = reference.node().owner_document();
+    if doc != incoming.owner_document() {
         /* Adopting takes the node out of the document it came from, so that
          * document changes too - refuse before anything is copied. */
         crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?)?;
-        return Ok((
-            adopt_copy((*reference).owner_document, incoming)?,
-            Some(rb_incoming),
-        ));
+        let copy = adopt_copy(doc, incoming)?;
+        // SAFETY: a copy this call just made in `reference`'s document, which
+        // the caller cleared for editing.
+        return Ok((HtmlNodeMut::assume_mutable(copy), Some(rb_incoming)));
     }
-    if !(*incoming).parent.is_null() {
-        lxb::lxb_dom_node_remove(incoming);
+    // SAFETY: same document as `reference`, which the caller cleared.
+    let incoming = HtmlNodeMut::assume_mutable(incoming);
+    if incoming.parent().is_some() {
+        incoming.detach();
     }
     Ok((incoming, None))
 }
@@ -155,14 +178,16 @@ unsafe fn prepare_insert(
 unsafe fn inserted_result(
     rb_self: Value,
     rb_arg: Value,
-    inserted: *mut LxbNode,
+    inserted: HtmlNodeMut<'_>,
     adopt_from: Option<Value>,
 ) -> Result<Value, Error> {
     match adopt_from {
         None => Ok(rb_arg),
         Some(src) => {
-            adopt_release(arg_node(src)?);
-            Ok(wrap(inserted, node_document(rb_self)?))
+            /* SAFETY: the source document was cleared for editing by
+             * `prepare_insert` before anything was copied out of it. */
+            adopt_release(HtmlNodeMut::assume_mutable(arg_node(src)?));
+            Ok(wrap(inserted.as_raw(), node_document(rb_self)?))
         }
     }
 }
@@ -201,11 +226,17 @@ unsafe fn contributes_element(n: *const LxbNode) -> bool {
 /// removes (the replace target) or NULL. Called BEFORE any link change - that
 /// is, before the detach in [`prepare_insert`].
 unsafe fn guard_doc_child_order(
-    parent: *const LxbNode,
-    before: *const LxbNode,
-    exclude: *const LxbNode,
-    incoming: *const LxbNode,
+    parent: Option<HtmlNode<'_>>,
+    before: Option<HtmlNode<'_>>,
+    exclude: Option<HtmlNode<'_>>,
+    incoming: HtmlNode<'_>,
 ) -> Result<(), Error> {
+    let (parent, before, exclude, incoming) = (
+        parent.map_or(core::ptr::null(), |n| n.as_raw() as *const LxbNode),
+        before.map_or(core::ptr::null(), |n| n.as_raw() as *const LxbNode),
+        exclude.map_or(core::ptr::null(), |n| n.as_raw() as *const LxbNode),
+        incoming.as_raw() as *const LxbNode,
+    );
     if (*incoming).type_ == ty::DOCTYPE {
         if parent.is_null() || (*parent).type_ != ty::DOCUMENT {
             return Err(err("a doctype node can only be a child of the document"));
@@ -251,23 +282,19 @@ unsafe fn guard_doc_child_order(
 /// With `advance` (insert_after semantics) each spliced child becomes the anchor
 /// for the next, so document order is preserved; child/before splices keep a
 /// fixed anchor. The one place the fragment-vs-single-node rule lives.
-unsafe fn splice_or_insert(
-    mut anchor: *mut LxbNode,
-    node: *mut LxbNode,
-    insert: InsertFn,
+fn splice_or_insert<'d>(
+    mut anchor: HtmlNodeMut<'d>,
+    node: HtmlNodeMut<'d>,
+    insert: Insert,
     advance: bool,
 ) {
-    if (*node).type_ != ty::FRAGMENT {
-        insert(anchor, node);
+    if node.node().node_type() != ty::FRAGMENT {
+        insert.put(anchor, node);
         return;
     }
-    loop {
-        let c = (*node).first_child;
-        if c.is_null() {
-            break;
-        }
-        lxb::lxb_dom_node_remove(c);
-        insert(anchor, c);
+    while let Some(c) = node.first_child() {
+        c.detach();
+        insert.put(anchor, c);
         if advance {
             anchor = c; /* keep document order after the reference node */
         }
@@ -283,15 +310,10 @@ unsafe fn splice_or_insert(
 pub fn add_child(_ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let parent = unwrap_mutable(this)?;
-        guard_doc_child_order(
-            parent,
-            core::ptr::null(),
-            core::ptr::null(),
-            arg_node(rb_child)?,
-        )?;
+        let parent = unwrap_mutable(&this)?;
+        guard_doc_child_order(Some(parent.node()), None, None, arg_node(rb_child)?)?;
         let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
-        splice_or_insert(parent, ins, lxb::lxb_dom_node_insert_child, false);
+        splice_or_insert(parent, ins, Insert::Child, false);
         invalidate(this.document);
         inserted_result(rb_self, rb_child, ins, adopt_from)
     }
@@ -307,18 +329,18 @@ pub fn lshift(ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Val
 pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(this)?;
-        if (*reference).parent.is_null() {
+        let reference = unwrap_mutable(&this)?;
+        let Some(parent) = reference.parent() else {
             return Err(err("cannot add a sibling to a node with no parent"));
-        }
+        };
         guard_doc_child_order(
-            (*reference).parent,
-            reference,
-            core::ptr::null(),
+            Some(parent.node()),
+            Some(reference.node()),
+            None,
             arg_node(rb_node)?,
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
-        splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
+        splice_or_insert(reference, ins, Insert::Before, false);
         invalidate(this.document);
         inserted_result(rb_self, rb_node, ins, adopt_from)
     }
@@ -327,18 +349,18 @@ pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Val
 pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(this)?;
-        if (*reference).parent.is_null() {
+        let reference = unwrap_mutable(&this)?;
+        let Some(parent) = reference.parent() else {
             return Err(err("cannot add a sibling to a node with no parent"));
-        }
+        };
         guard_doc_child_order(
-            (*reference).parent,
-            (*reference).next,
-            core::ptr::null(),
+            Some(parent.node()),
+            reference.next().map(|n| n.node()),
+            None,
             arg_node(rb_node)?,
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
-        splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_after, true);
+        splice_or_insert(reference, ins, Insert::After, true);
         invalidate(this.document);
         inserted_result(rb_self, rb_node, ins, adopt_from)
     }
@@ -349,12 +371,12 @@ pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Valu
 pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(this)?;
-        if (*node).type_ == ty::ATTRIBUTE {
+        let node = unwrap_mutable(&this)?;
+        if node.node().node_type() == ty::ATTRIBUTE {
             return Err(err("use delete(name) to remove an attribute"));
         }
-        if !(*node).parent.is_null() {
-            lxb::lxb_dom_node_remove(node);
+        if node.parent().is_some() {
+            node.detach();
             invalidate(this.document);
         }
         Ok(rb_self)
@@ -365,19 +387,19 @@ pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 pub fn replace(_ruby: &Ruby, this: super::HtmlSelf, rb_other: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let reference = unwrap_mutable(this)?;
-        if (*reference).parent.is_null() {
+        let reference = unwrap_mutable(&this)?;
+        let Some(parent) = reference.parent() else {
             return Err(err("cannot replace a node with no parent"));
-        }
+        };
         guard_doc_child_order(
-            (*reference).parent,
-            reference,
-            reference,
+            Some(parent.node()),
+            Some(reference.node()),
+            Some(reference.node()),
             arg_node(rb_other)?,
         )?;
         let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
-        splice_or_insert(reference, ins, lxb::lxb_dom_node_insert_before, false);
-        lxb::lxb_dom_node_remove(reference);
+        splice_or_insert(reference, ins, Insert::Before, false);
+        reference.detach();
         invalidate(this.document);
         inserted_result(rb_self, rb_other, ins, adopt_from)
     }
@@ -395,7 +417,10 @@ pub fn aset(
     rb_value: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
+        /* The attribute mutators still work in raw handles; this step is the
+         * tree edits. The clearance is the same, so the node comes back down
+         * to a pointer here. */
+        let node = unwrap_mutable(&this)?.as_raw();
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
@@ -489,7 +514,10 @@ pub fn set_attribute_ns(
     rb_value: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
+        /* The attribute mutators still work in raw handles; this step is the
+         * tree edits. The clearance is the same, so the node comes back down
+         * to a pointer here. */
+        let node = unwrap_mutable(&this)?.as_raw();
         if (*node).type_ != ty::ELEMENT {
             return Err(err("cannot set an attribute on a non-element node"));
         }
@@ -585,7 +613,10 @@ pub fn remove_attribute_ns(
     rb_local: Value,
 ) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
+        /* The attribute mutators still work in raw handles; this step is the
+         * tree edits. The clearance is the same, so the node comes back down
+         * to a pointer here. */
+        let node = unwrap_mutable(&this)?.as_raw();
         if (*node).type_ != ty::ELEMENT {
             return Ok(ruby.qnil().as_value());
         }
@@ -619,7 +650,10 @@ pub fn remove_attribute_ns(
 /// then discard it.
 pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
+        /* The attribute mutators still work in raw handles; this step is the
+         * tree edits. The clearance is the same, so the node comes back down
+         * to a pointer here. */
+        let node = unwrap_mutable(&this)?.as_raw();
         if (*node).type_ != ty::ELEMENT {
             return Err(err("name= is only supported on elements"));
         }
@@ -657,7 +691,10 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
 /// it sets the data.
 pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
+        /* The attribute mutators still work in raw handles; this step is the
+         * tree edits. The clearance is the same, so the node comes back down
+         * to a pointer here. */
+        let node = unwrap_mutable(&this)?.as_raw();
         let tv = ruby_verified_data(rb_text, c"node content")?;
         let st = lxb::lxb_dom_node_text_content_set(node, tv.as_ptr() as *const u8, tv.len());
         if st != STATUS_OK {
@@ -672,7 +709,10 @@ pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Resul
 pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     unsafe {
-        let node = unwrap_mutable(this)?;
+        /* The attribute mutators still work in raw handles; this step is the
+         * tree edits. The clearance is the same, so the node comes back down
+         * to a pointer here. */
+        let node = unwrap_mutable(&this)?.as_raw();
         if (*node).type_ != ty::ELEMENT {
             return Ok(rb_self);
         }
@@ -745,27 +785,23 @@ unsafe fn parse_fragment_into(
 /// `element.inner_html = html` -> html. Replaces the element's children.
 pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
-        if (*node).type_ != ty::ELEMENT {
+        let node = unwrap_mutable(&this)?;
+        if node.node().node_type() != ty::ELEMENT {
             return Err(err("inner_html= requires an element"));
         }
 
         /* Detach the existing children; the arena reclaims them at document
          * destroy. */
-        loop {
-            let c = (*node).first_child;
-            if c.is_null() {
-                break;
-            }
-            lxb::lxb_dom_node_remove(c);
+        while let Some(c) = node.first_child() {
+            c.detach();
         }
 
         parse_fragment_into(
-            node,
+            node.as_raw(),
             rb_html,
-            (*node).owner_document,
+            node.node().owner_document(),
             emit_append,
-            node as *mut c_void,
+            node.as_raw() as *mut c_void,
         )?;
         invalidate(this.document);
         Ok(rb_html)
@@ -775,21 +811,22 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 /// `node.outer_html = html` -> html. Replaces the node itself with the parse.
 pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(this)?;
-        let parent = (*node).parent;
-        if parent.is_null() || (*parent).type_ != ty::ELEMENT {
+        let node = unwrap_mutable(&this)?;
+        let parent = node.parent();
+        if parent.is_none_or(|p| p.node().node_type() != ty::ELEMENT) {
             return Err(err("outer_html= requires a node with a parent element"));
         }
+        let parent = parent.expect("checked just above");
 
         /* Parse in the parent's context, splice the imported nodes before self. */
         parse_fragment_into(
-            parent,
+            parent.as_raw(),
             rb_html,
-            (*node).owner_document,
+            node.node().owner_document(),
             emit_before,
-            node as *mut c_void,
+            node.as_raw() as *mut c_void,
         )?;
-        lxb::lxb_dom_node_remove(node);
+        node.detach();
         invalidate(this.document);
         Ok(rb_html)
     }

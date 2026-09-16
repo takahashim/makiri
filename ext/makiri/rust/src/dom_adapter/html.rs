@@ -1,5 +1,6 @@
-//! The one place Makiri reads Lexbor's DOM: node, element, attribute and
-//! document fields, and the Lexbor accessors over them.
+//! The one place Makiri reads Lexbor's DOM - node, element, attribute and
+//! document fields, and the Lexbor accessors over them - and, through
+//! [`HtmlNodeMut`], the one place it edits the tree.
 //!
 //! Everything here reads the GENERATED layout (`crate::lexbor_abi`), so there is
 //! no hand-written copy of a Lexbor struct left to drift from the pinned headers.
@@ -513,6 +514,89 @@ impl<'doc> HtmlNode<'doc> {
         }
         // SAFETY: a live document node, which leads its document struct.
         Self::link(unsafe { lxb::lxb_dom_document_root(self.as_raw() as *mut LxbDoc) })
+    }
+}
+
+/// A node the caller has cleared for editing.
+///
+/// Editing a tree is not something any handle should be able to do: a frozen
+/// receiver must refuse, and a document an XPath handler is evaluating over must
+/// refuse too, because the engine borrows names and index slices across the walk
+/// (see `glue::doc::DocumentEvaluation`). Those two checks live in one place,
+/// `glue::html_node::mutate::unwrap_mutable`, and this type is what that place
+/// hands back - so a node that has not been through them has no edit to call.
+///
+/// Reading needs no such clearance, so [`node`](Self::node) goes back down to
+/// the ordinary handle, and the links below carry the clearance to a node of the
+/// same document, which the same two checks covered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct HtmlNodeMut<'doc>(HtmlNode<'doc>);
+
+impl<'doc> HtmlNodeMut<'doc> {
+    /// # Safety
+    /// The caller has established that `node`'s document may be changed now:
+    /// the receiver is not frozen, and no XPath evaluation is reading it.
+    #[inline]
+    pub unsafe fn assume_mutable(node: HtmlNode<'doc>) -> Self {
+        HtmlNodeMut(node)
+    }
+
+    /// The node as an ordinary handle, for reading.
+    #[inline]
+    pub fn node(self) -> HtmlNode<'doc> {
+        self.0
+    }
+
+    #[inline]
+    pub fn as_raw(self) -> *mut LxbNode {
+        self.0.as_raw()
+    }
+
+    /* The links: same document, so the caller's clearance covers them too. */
+
+    #[inline]
+    pub fn parent(self) -> Option<Self> {
+        self.0.parent().map(HtmlNodeMut)
+    }
+
+    #[inline]
+    pub fn first_child(self) -> Option<Self> {
+        self.0.first_child().map(HtmlNodeMut)
+    }
+
+    #[inline]
+    pub fn next(self) -> Option<Self> {
+        self.0.next().map(HtmlNodeMut)
+    }
+
+    /// Take the node out of its tree. The arena keeps it, so a Ruby wrapper
+    /// that still points at it stays valid - Makiri detaches, never destroys.
+    #[inline]
+    pub fn detach(self) {
+        // SAFETY: a live node of a document the caller may change.
+        unsafe { lxb::lxb_dom_node_remove(self.as_raw()) };
+    }
+
+    /// Append `node` as the last child of `self`.
+    #[inline]
+    pub fn insert_child(self, node: HtmlNodeMut<'doc>) {
+        // SAFETY: two live nodes of a document the caller may change.
+        unsafe { lxb::lxb_dom_node_insert_child(self.as_raw(), node.as_raw()) };
+    }
+
+    /// Put `node` immediately before `self`.
+    #[inline]
+    pub fn insert_before(self, node: HtmlNodeMut<'doc>) {
+        // SAFETY: as above.
+        unsafe { lxb::lxb_dom_node_insert_before(self.as_raw(), node.as_raw()) };
+    }
+
+    /// Put `node` immediately after `self`.
+    #[inline]
+    pub fn insert_after(self, node: HtmlNodeMut<'doc>) {
+        // SAFETY: as above.
+        unsafe { lxb::lxb_dom_node_insert_after(self.as_raw(), node.as_raw()) };
     }
 }
 
