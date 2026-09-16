@@ -46,7 +46,7 @@ type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
 
-const NODE_TYPE_ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
+use super::html::TYPE_ELEMENT as NODE_TYPE_ELEMENT;
 /// The last of Lexbor's special tag ids (text, comment, doctype, document, eof).
 /// A token at or below it is not an element start-tag.
 const TAG_EM_DOCTYPE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__EM_DOCTYPE as usize;

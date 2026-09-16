@@ -49,12 +49,11 @@ pub const LXB_STATUS_OK: u32 = crate::lexbor_abi::lexbor_status_t_LXB_STATUS_OK;
 pub const LXB_STATUS_ERROR_MEMORY_ALLOCATION: u32 =
     crate::lexbor_abi::lexbor_status_t_LXB_STATUS_ERROR_MEMORY_ALLOCATION;
 
-pub const LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT: u32 =
-    crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
-pub const LXB_DOM_NODE_TYPE_ELEMENT: u32 =
-    crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
-pub const LXB_DOM_NODE_TYPE_DOCUMENT_TYPE: u32 =
-    crate::lexbor_abi::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+/* The node types the glue still names in Lexbor's own spelling. The values come
+ * from `dom_adapter::html`, which is the one place that reads them; the
+ * FRAGMENT one went with serialize.rs's last direct read. */
+pub use crate::dom_adapter::html::TYPE_DOCTYPE as LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+pub use crate::dom_adapter::html::TYPE_ELEMENT as LXB_DOM_NODE_TYPE_ELEMENT;
 
 pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
     crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;

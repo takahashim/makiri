@@ -27,16 +27,17 @@ use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;
 
-/* ---- the node-type constants, generated on both sides ---- */
+/* ---- the node-type constants, generated on both sides ----
+ *
+ * `h::` is the HTML side, from the module that reads Lexbor's DOM; the mkr side
+ * arrives as `NodeType` from the XML engine. Keeping the prefix is what makes a
+ * comparison across representations read as one. */
 
 mod h {
-    use crate::lexbor_abi as lxb;
-    pub const ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
-    pub const TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
-    pub const CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
-    pub const COMMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT;
-    pub const PI: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION;
-    pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+    pub use crate::dom_adapter::html::{
+        TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT, TYPE_ELEMENT as ELEMENT,
+        TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
+    };
 }
 
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;

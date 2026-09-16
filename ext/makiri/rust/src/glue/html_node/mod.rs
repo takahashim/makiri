@@ -44,18 +44,16 @@ use crate::init::{CLASS_DOCUMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT};
  * the DOM node types                                                 *
  * ------------------------------------------------------------------ */
 
-/// Generated, never transcribed - the reason is in `build.rs`.
+/// The DOM node types, under the short names this layer reads best. Defined
+/// once in [`crate::dom_adapter::html`], which is where the generated values
+/// are read - a second definition of a node type is how every HTML element
+/// once became foreign (see that module).
 pub mod ty {
-    use crate::lexbor_abi as lxb;
-    pub const ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
-    pub const ATTRIBUTE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ATTRIBUTE;
-    pub const TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
-    pub const CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
-    pub const PI: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_PROCESSING_INSTRUCTION;
-    pub const COMMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT;
-    pub const DOCUMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT;
-    pub const DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
-    pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+    pub use crate::dom_adapter::html::{
+        TYPE_ATTRIBUTE as ATTRIBUTE, TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT,
+        TYPE_DOCTYPE as DOCTYPE, TYPE_DOCUMENT as DOCUMENT, TYPE_ELEMENT as ELEMENT,
+        TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
+    };
 }
 
 pub use crate::glue::doc::node_clone_node;

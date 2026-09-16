@@ -38,11 +38,9 @@ use crate::text::BorrowedText;
 use crate::xpath::runtime_abi::cache::ptr_hash;
 
 mod ty {
-    use crate::lexbor_abi as lxb;
-    pub const ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
-    pub const TEXT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_TEXT;
-    pub const CDATA: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_CDATA_SECTION;
-    pub const FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
+    pub use crate::dom_adapter::html::{
+        TYPE_CDATA as CDATA, TYPE_ELEMENT as ELEMENT, TYPE_FRAGMENT as FRAGMENT, TYPE_TEXT as TEXT,
+    };
 }
 
 /// One container's slice run. `start`/`end` are INDICES into `slices`, not byte

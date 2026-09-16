@@ -38,7 +38,7 @@ use crate::falloc::try_vec_with_capacity;
 use crate::lexbor_abi::{self as lxb, preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
 use crate::xpath::runtime_abi::cache::ptr_hash;
 
-const NODE_TYPE_ELEMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_ELEMENT;
+use super::html::TYPE_ELEMENT as NODE_TYPE_ELEMENT;
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const TAG_UNDEF: usize = lxb::lxb_tag_id_enum_t_LXB_TAG__UNDEF as usize;
 
