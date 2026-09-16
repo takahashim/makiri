@@ -294,6 +294,73 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
+    /// A detached element named `local_name`, in no namespace yet.
+    ///
+    /// `None` when Lexbor could not make one. The DOM's createElement: the
+    /// result belongs to this document but is in no tree, which is what
+    /// [`BuildingElement`] says.
+    pub fn create_element(self, local_name: &[u8]) -> Option<BuildingElement<'doc>> {
+        // SAFETY: a live document; Lexbor copies the name into its own storage.
+        unsafe {
+            BuildingElement::from_raw(lxb::lxb_dom_document_create_element(
+                self.as_raw(),
+                local_name.as_ptr(),
+                local_name.len(),
+                core::ptr::null_mut(),
+            ))
+        }
+    }
+
+    /// A detached text node holding `text`. `None` on allocation failure.
+    pub fn create_text(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
+        // SAFETY: a live document; Lexbor copies the bytes.
+        unsafe {
+            BuildingNode::from_raw(lxb::lxb_dom_document_create_text_node(
+                self.as_raw(),
+                text.as_ptr(),
+                text.len(),
+            ) as *mut LxbNode)
+        }
+    }
+
+    /// A detached comment holding `text`. `None` on allocation failure.
+    pub fn create_comment(self, text: &[u8]) -> Option<BuildingNode<'doc>> {
+        // SAFETY: as above.
+        unsafe {
+            BuildingNode::from_raw(lxb::lxb_dom_document_create_comment(
+                self.as_raw(),
+                text.as_ptr(),
+                text.len(),
+            ) as *mut LxbNode)
+        }
+    }
+
+    /// A detached processing instruction, or `None` when Lexbor could not make
+    /// one. That includes an invalid target, which Lexbor validates, so this
+    /// fails closed rather than building a PI that cannot serialize.
+    pub fn create_pi(self, target: &[u8], data: &[u8]) -> Option<BuildingNode<'doc>> {
+        // SAFETY: as above, for both slices.
+        unsafe {
+            BuildingNode::from_raw(lxb::lxb_dom_document_create_processing_instruction(
+                self.as_raw(),
+                target.as_ptr(),
+                target.len(),
+                data.as_ptr(),
+                data.len(),
+            ) as *mut LxbNode)
+        }
+    }
+
+    /// An empty detached DocumentFragment. `None` on allocation failure.
+    pub fn create_fragment(self) -> Option<BuildingNode<'doc>> {
+        // SAFETY: a live document.
+        unsafe {
+            BuildingNode::from_raw(
+                lxb::lxb_dom_document_create_document_fragment(self.as_raw()) as *mut LxbNode,
+            )
+        }
+    }
+
     /// Intern `uri` in the document's namespace table and give back its id -
     /// the half of the key the DOM matches a namespaced attribute on.
     ///

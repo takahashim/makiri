@@ -697,45 +697,48 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
  * node creation (Document)                                           *
  * ------------------------------------------------------------------ */
 
+/// The Lexbor document behind a Ruby Document, as a handle.
+///
+/// Taken by reference so the handle's lifetime is the borrow of `rb_self`: the
+/// Document is what keeps the Lexbor document alive, and the type now says so.
+/// `'static` would compile and would be a stronger claim than the truth.
+fn owning_doc(rb_self: &Value) -> Result<HtmlDoc<'_>, Error> {
+    let doc = html_doc_unwrap(*rb_self)?;
+    // SAFETY: a live HTML Document, kept alive by `rb_self` for this call.
+    unsafe { HtmlDoc::from_raw(doc) }.ok_or_else(|| err("uninitialized HTML document"))
+}
+
 pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
-    unsafe {
-        let doc = html_doc_unwrap(rb_self)?;
-        let nv = ruby_verified_text(rb_name, c"element name")?;
-        let el = lxb::lxb_dom_document_create_element(
-            doc,
-            nv.as_ptr() as *const u8,
-            nv.len(),
-            core::ptr::null_mut(),
-        );
-        if el.is_null() {
-            return Err(err("failed to create element"));
-        }
-        Ok(wrap(el as *mut LxbNode, rb_self))
-    }
+    let doc = owning_doc(&rb_self)?;
+    let nv = ruby_verified_text(rb_name, c"element name")?;
+    /* SAFETY: the view is the caller's, live for this call. */
+    let Some(el) = doc.create_element(unsafe { nv.bytes() }) else {
+        return Err(err("failed to create element"));
+    };
+    /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
+    Ok(unsafe { wrap(el.as_node().as_raw(), rb_self) })
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
-    unsafe {
-        let doc = html_doc_unwrap(rb_self)?;
-        let tv = ruby_verified_data(rb_text, c"text content")?;
-        let t = lxb::lxb_dom_document_create_text_node(doc, tv.as_ptr() as *const u8, tv.len());
-        if t.is_null() {
-            return Err(err("failed to create text node"));
-        }
-        Ok(wrap(t as *mut LxbNode, rb_self))
-    }
+    let doc = owning_doc(&rb_self)?;
+    let tv = ruby_verified_data(rb_text, c"text content")?;
+    /* SAFETY: the view is the caller's, live for this call. */
+    let Some(t) = doc.create_text(unsafe { tv.bytes() }) else {
+        return Err(err("failed to create text node"));
+    };
+    /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
+    Ok(unsafe { wrap(t.as_raw(), rb_self) })
 }
 
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
-    unsafe {
-        let doc = html_doc_unwrap(rb_self)?;
-        let tv = ruby_verified_data(rb_text, c"comment content")?;
-        let c = lxb::lxb_dom_document_create_comment(doc, tv.as_ptr() as *const u8, tv.len());
-        if c.is_null() {
-            return Err(err("failed to create comment"));
-        }
-        Ok(wrap(c as *mut LxbNode, rb_self))
-    }
+    let doc = owning_doc(&rb_self)?;
+    let tv = ruby_verified_data(rb_text, c"comment content")?;
+    /* SAFETY: the view is the caller's, live for this call. */
+    let Some(c) = doc.create_comment(unsafe { tv.bytes() }) else {
+        return Err(err("failed to create comment"));
+    };
+    /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
+    Ok(unsafe { wrap(c.as_raw(), rb_self) })
 }
 
 /// `Document#create_processing_instruction(target, data)` - the DOM
@@ -747,22 +750,15 @@ pub fn create_pi(
     rb_target: Value,
     rb_data: Value,
 ) -> Result<Value, Error> {
-    unsafe {
-        let doc = html_doc_unwrap(rb_self)?;
-        let tv = ruby_verified_text(rb_target, c"processing instruction target")?;
-        let dv = ruby_verified_text(rb_data, c"processing instruction data")?;
-        let pi = lxb::lxb_dom_document_create_processing_instruction(
-            doc,
-            tv.as_ptr() as *const u8,
-            tv.len(),
-            dv.as_ptr() as *const u8,
-            dv.len(),
-        );
-        if pi.is_null() {
-            return Err(err("failed to create processing instruction"));
-        }
-        Ok(wrap(pi as *mut LxbNode, rb_self))
-    }
+    let doc = owning_doc(&rb_self)?;
+    let tv = ruby_verified_text(rb_target, c"processing instruction target")?;
+    let dv = ruby_verified_text(rb_data, c"processing instruction data")?;
+    /* SAFETY: both views are the caller's, live for this call. */
+    let Some(pi) = doc.create_pi(unsafe { tv.bytes() }, unsafe { dv.bytes() }) else {
+        return Err(err("failed to create processing instruction"));
+    };
+    /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
+    Ok(unsafe { wrap(pi.as_raw(), rb_self) })
 }
 
 /// `Document#create_document_type(name, public_id = "", system_id = "")` - the
@@ -858,12 +854,10 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 /// EMPTY DocumentFragment owned by this document, unlike `#fragment` /
 /// `DocumentFragment.parse`, which parse HTML.
 pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
-    unsafe {
-        let doc = html_doc_unwrap(rb_self)?;
-        let f = lxb::lxb_dom_document_create_document_fragment(doc);
-        if f.is_null() {
-            return Err(err("failed to create document fragment"));
-        }
-        Ok(wrap(f as *mut LxbNode, rb_self))
-    }
+    let doc = owning_doc(&rb_self)?;
+    let Some(f) = doc.create_fragment() else {
+        return Err(err("failed to create document fragment"));
+    };
+    /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
+    Ok(unsafe { wrap(f.as_raw(), rb_self) })
 }
