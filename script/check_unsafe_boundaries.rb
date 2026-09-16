@@ -24,7 +24,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # `extern`, outside comment lines - the one definition, kept here.
 UNSAFE_ISLANDS = {
   "bridge/ruby.rs" => 11,
-  "bridge/string.rs" => 18,
+  "bridge/string.rs" => 22,
   "bridge/xml_decode.rs" => 7,
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
@@ -42,7 +42,7 @@ UNSAFE_ISLANDS = {
   "falloc/inject.rs" => 3,
   "falloc/mod.rs" => 2,
   "falloc/raw.rs" => 4,
-  "glue/abi.rs" => 9,
+  "glue/abi.rs" => 5,
   "glue/css.rs" => 21,
   "glue/doc.rs" => 25,
   "glue/fragment.rs" => 10,
@@ -111,7 +111,7 @@ STATIC_MUT_COUNTS = {}.freeze
 # calls means lowering the count. `magnus::rb_sys` is magnus's own module and is
 # not counted, and neither are comment lines.
 RB_SYS_COUNTS = {
-  "glue/abi.rs" => 4,
+  "glue/abi.rs" => 3,
   "glue/css.rs" => 5,
   "glue/doc.rs" => 9,
   "glue/fragment.rs" => 1,

@@ -8,7 +8,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 
 use magnus::rb_sys::AsRawValue;
 use magnus::{ExceptionClass, RModule, Value};
@@ -72,103 +72,10 @@ pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
  * `crate::text` (`VerifiedText`, `BorrowedText`) rather than gaining another
  * alias. */
 
-/// The contract a [`RubyStr`] was checked against. Uninhabited: types only.
-pub enum TextContract {}
-/// See [`TextContract`].
-pub enum DataContract {}
-/// See [`TextContract`].
-pub enum BytesContract {}
-
-/// Bytes borrowed from a Ruby String, together with the String that owns them.
-///
-/// The parameter records what was checked: [`RubyText`] is valid UTF-8 with no
-/// NUL (`ptr` is NUL-terminated, so it also works as a C string), [`RubyData`]
-/// is valid UTF-8 with NUL permitted (the HTML data family), and [`RubyBytes`]
-/// is unchecked (HTML parsing decodes leniently). They are separate types
-/// because the contract is the only thing that stops a data-family value from
-/// reaching an engine input.
-///
-/// `Drop` is the keep-alive. It reads `value`, so the String stays visible to
-/// the conservative stack scan until the guard goes out of scope - the C's
-/// `RB_GC_GUARD` at the end of the borrow, without each call site having to
-/// remember it. For a non-String argument that String is the coerced one, which
-/// nothing else holds. Hence: not `Copy`, kept on the stack (never in a heap
-/// container, which the GC does not scan), and read through `&self`.
-///
-/// Anchoring keeps the String alive and in place; it does not stop Ruby code
-/// from mutating it. The bytes are read only while no Ruby code runs, which is
-/// why reading them is `unsafe`.
-pub struct RubyStr<C> {
-    value: VALUE,
-    ptr: *const c_char,
-    len: usize,
-    contract: core::marker::PhantomData<C>,
-}
-
-pub type RubyText = RubyStr<TextContract>;
-pub type RubyData = RubyStr<DataContract>;
-pub type RubyBytes = RubyStr<BytesContract>;
-
-impl<C> RubyStr<C> {
-    /// # Safety
-    /// `ptr`/`len` must be the bytes of the String `value`, checked against `C`.
-    pub(crate) unsafe fn from_raw_parts(value: VALUE, ptr: *const c_char, len: usize) -> Self {
-        Self {
-            value,
-            ptr,
-            len,
-            contract: core::marker::PhantomData,
-        }
-    }
-
-    /// No String at all: a null pointer, which Lexbor and the engine read as an
-    /// omitted argument.
-    pub(crate) fn absent() -> Self {
-        Self {
-            value: rb_sys::Qnil as VALUE,
-            ptr: core::ptr::null(),
-            len: 0,
-            contract: core::marker::PhantomData,
-        }
-    }
-
-    pub(crate) fn as_ptr(&self) -> *const c_char {
-        self.ptr
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.len
-    }
-
-    /// The bytes, or an empty slice when absent.
-    ///
-    /// # Safety
-    /// No Ruby code may run, and so mutate the String, while the slice is used.
-    pub(crate) unsafe fn bytes(&self) -> &[u8] {
-        if self.ptr.is_null() || self.len == 0 {
-            return &[];
-        }
-        core::slice::from_raw_parts(self.ptr as *const u8, self.len)
-    }
-}
-
-impl RubyText {
-    /// The bytes as an engine input.
-    ///
-    /// # Safety
-    /// The view carries no lifetime: it must not be used after `self` drops, nor
-    /// while Ruby code runs.
-    pub(crate) unsafe fn as_verified(&self) -> crate::text::VerifiedText {
-        // SAFETY: the bridge checked the text contract when it built `self`.
-        unsafe { crate::text::VerifiedText::from_raw_parts(self.ptr, self.len) }
-    }
-}
-
-impl<C> Drop for RubyStr<C> {
-    fn drop(&mut self) {
-        core::hint::black_box(self.value);
-    }
-}
+/// The anchored Ruby-String views. Defined in [`crate::bridge::string`], beside
+/// the functions that check a String and mint one - this layer only passes them
+/// on to the glue modules that name them.
+pub use crate::bridge::string::{RubyBytes, RubyData, RubyText};
 
 /* Every symbol the glue shares with C is declared HERE, once.
  *

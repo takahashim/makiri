@@ -31,7 +31,7 @@ use magnus::{Error, RString, Value};
 use rb_sys::{rb_encoding, VALUE};
 
 use super::string::{text_check, TextVerdict};
-use crate::glue::abi::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
+use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 
 pub use crate::bridge::string::ruby_exception_message;
 

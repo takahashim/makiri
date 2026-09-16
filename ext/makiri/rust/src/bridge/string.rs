@@ -31,17 +31,19 @@ use rb_sys::{StableApiDefinition, VALUE};
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;
-/// The anchored views, from `glue::abi` - one definition for the whole crate.
-/// `RubyText` and `RubyData` are deliberately SEPARATE types: the lattice's whole
-/// job is to make a data-family value reaching an engine input a type error.
-pub use crate::glue::abi::{RubyBytes, RubyData, RubyText};
 /// The UNANCHORED, NUL-permitting slice from `crate::text` - a different type
-/// from the Ruby-anchored `glue::abi::RubyText` despite the family resemblance.
+/// from the Ruby-anchored [`RubyText`] below, despite the family resemblance.
 /// Text-index slices and Lexbor-interned names reach Ruby through it.
 pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
-use crate::glue::abi::error_class;
+
+/// `Makiri::Error`, read from the registry `Init_makiri` fills. The glue has a
+/// helper of the same name; this layer reads the constant itself rather than
+/// borrowing one from the layer above it.
+fn error_class() -> magnus::ExceptionClass {
+    crate::init::EXC_ERROR.exception()
+}
 
 /* ---- the borrowed-text layouts ----
  *
@@ -51,8 +53,106 @@ use crate::glue::abi::error_class;
  * data family may hold U+0000, like browsers), and `bytes` for nothing at all
  * (HTML parsing decodes leniently). Keeping them apart is what makes a name or
  * engine string that took the data path a type error rather than a silent one,
- * so they stay three types here too: `glue::abi::RubyText` / `RubyData` /
- * `RubyBytes`, one guard type with the contract as its parameter. */
+ * so they stay three types here: [`RubyText`] / [`RubyData`] / [`RubyBytes`],
+ * one guard type with the contract as its parameter. */
+
+/// The contract a [`RubyStr`] was checked against. Uninhabited: types only.
+pub enum TextContract {}
+/// See [`TextContract`].
+pub enum DataContract {}
+/// See [`TextContract`].
+pub enum BytesContract {}
+
+/// Bytes borrowed from a Ruby String, together with the String that owns them.
+///
+/// The parameter records what was checked: [`RubyText`] is valid UTF-8 with no
+/// NUL (`ptr` is NUL-terminated, so it also works as a C string), [`RubyData`]
+/// is valid UTF-8 with NUL permitted (the HTML data family), and [`RubyBytes`]
+/// is unchecked (HTML parsing decodes leniently). They are separate types
+/// because the contract is the only thing that stops a data-family value from
+/// reaching an engine input.
+///
+/// `Drop` is the keep-alive. It reads `value`, so the String stays visible to
+/// the conservative stack scan until the guard goes out of scope - the C's
+/// `RB_GC_GUARD` at the end of the borrow, without each call site having to
+/// remember it. For a non-String argument that String is the coerced one, which
+/// nothing else holds. Hence: not `Copy`, kept on the stack (never in a heap
+/// container, which the GC does not scan), and read through `&self`.
+///
+/// Anchoring keeps the String alive and in place; it does not stop Ruby code
+/// from mutating it. The bytes are read only while no Ruby code runs, which is
+/// why reading them is `unsafe`.
+pub struct RubyStr<C> {
+    value: VALUE,
+    ptr: *const c_char,
+    len: usize,
+    contract: core::marker::PhantomData<C>,
+}
+
+pub type RubyText = RubyStr<TextContract>;
+pub type RubyData = RubyStr<DataContract>;
+pub type RubyBytes = RubyStr<BytesContract>;
+
+impl<C> RubyStr<C> {
+    /// # Safety
+    /// `ptr`/`len` must be the bytes of the String `value`, checked against `C`.
+    pub(crate) unsafe fn from_raw_parts(value: VALUE, ptr: *const c_char, len: usize) -> Self {
+        Self {
+            value,
+            ptr,
+            len,
+            contract: core::marker::PhantomData,
+        }
+    }
+
+    /// No String at all: a null pointer, which Lexbor and the engine read as an
+    /// omitted argument.
+    pub(crate) fn absent() -> Self {
+        Self {
+            value: rb_sys::Qnil as VALUE,
+            ptr: core::ptr::null(),
+            len: 0,
+            contract: core::marker::PhantomData,
+        }
+    }
+
+    pub(crate) fn as_ptr(&self) -> *const c_char {
+        self.ptr
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    /// The bytes, or an empty slice when absent.
+    ///
+    /// # Safety
+    /// No Ruby code may run, and so mutate the String, while the slice is used.
+    pub(crate) unsafe fn bytes(&self) -> &[u8] {
+        if self.ptr.is_null() || self.len == 0 {
+            return &[];
+        }
+        core::slice::from_raw_parts(self.ptr as *const u8, self.len)
+    }
+}
+
+impl RubyText {
+    /// The bytes as an engine input.
+    ///
+    /// # Safety
+    /// The view carries no lifetime: it must not be used after `self` drops, nor
+    /// while Ruby code runs.
+    pub(crate) unsafe fn as_verified(&self) -> crate::text::VerifiedText {
+        // SAFETY: the bridge checked the text contract when it built `self`.
+        unsafe { crate::text::VerifiedText::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl<C> Drop for RubyStr<C> {
+    fn drop(&mut self) {
+        core::hint::black_box(self.value);
+    }
+}
 
 /// What the strict-text check found (`mkr_text_verdict_t`).
 ///
