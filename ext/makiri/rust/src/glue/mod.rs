@@ -20,8 +20,17 @@
 //! frames have returned normally. The node unwraps and the text checks return
 //! `Err` for exactly that reason, and a Ruby C function that can raise is called
 //! through `bridge::ruby`, which catches the raise and hands it back the same
-//! way. No function in this layer calls `rb_raise` or `rb_exc_raise` any more
-//! (`rake unsafe:boundaries` holds that at zero). What can still unwind is Ruby
+//! way. `rake unsafe:boundaries` pins what is left, and it is worth being exact
+//! about what it measures: it counts `rb_raise`, `rb_exc_raise`, `rb_jump_tag`
+//! and `rb_check_typeddata` in every file OUTSIDE `bridge/`, and holds that
+//! count at zero. So the claim is about this layer, not about the process.
+//!
+//! Inside the bridge those calls stay, by design. `bridge::ruby` makes four
+//! `rb_check_typeddata` calls: one under `protect`, two that cannot raise
+//! because the type was established first, and `typed_data_unprotected`, which
+//! CAN raise and documents that no Rust destructor may be live when it does -
+//! the per-node path, where magnus's protected conversion measured about a
+//! quarter of the throughput of the C it replaced. What can still unwind is Ruby
 //! itself - its allocator's `NoMemoryError`, or Ruby code a C call reaches -
 //! which is why the loops that push into a NodeSet while owning a collection
 //! run under `protect`.
