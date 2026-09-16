@@ -832,6 +832,21 @@ impl<'doc> BuildingNode<'doc> {
         }
     }
 
+    /// This node's `<template>` contents fragment, still part of what is being
+    /// built. `None` when the node is not an HTML `<template>`, and equally
+    /// when it is one Lexbor gave no contents fragment.
+    #[inline]
+    pub fn template_content(self) -> Option<Self> {
+        self.0.template_content().map(BuildingNode)
+    }
+
+    /// The next node in a pre-order walk of `root`'s subtree, staying inside
+    /// the subtree being built.
+    #[inline]
+    pub fn preorder_next(self, root: Self) -> Option<Self> {
+        self.0.preorder_next(root.0).map(BuildingNode)
+    }
+
     /// Link `child` in as the last child.
     #[inline]
     pub fn insert_child(self, child: Self) {

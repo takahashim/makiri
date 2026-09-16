@@ -36,6 +36,7 @@ use super::abi::{
  * ------------------------------------------------------------------ */
 
 use crate::cbuf::{Buf, OwnedBuf};
+use crate::dom_adapter::html::{BuildingNode, HtmlDoc, HtmlNode};
 pub use crate::dom_adapter::utf8_input::utf8_sanitize;
 use crate::dom_adapter::utf8_input::Sanitized;
 
@@ -60,34 +61,12 @@ use crate::lexbor_abi::{
     lxb_tag_id_by_name_noi, HtmlParser,
 };
 
-/// The shared pre-order walk. Defined once in `lexbor_abi` - it was written out
-/// here first, and the text-index port would have been a second copy of an
-/// invariant that must not drift.
-use crate::lexbor_abi::preorder_next;
-
 /// Lexbor node types and the tag/namespace ids this file compares against.
 /// Generated, so a pin that renumbers them is a build-time change, not a
 /// silently different answer (see lexbor_abi).
 const NS_HTML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_HTML as usize;
 const NS_SVG: usize = lxb::lxb_ns_id_enum_t_LXB_NS_SVG as usize;
 const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
-
-/// The content fragment of a `<template>`, as a node, or null.
-unsafe fn template_content(n: *mut LxbNode) -> *mut LxbNode {
-    let t = n as *mut lxb::lxb_html_template_element_t;
-    let frag = (*t).content;
-    if frag.is_null() {
-        core::ptr::null_mut()
-    } else {
-        frag as *mut LxbNode /* a fragment begins with its node */
-    }
-}
-
-unsafe fn is_html_template(n: *const LxbNode) -> bool {
-    (*n).type_ == LXB_DOM_NODE_TYPE_ELEMENT
-        && (*n).local_name == lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize
-        && (*n).ns == NS_HTML
-}
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
@@ -98,41 +77,56 @@ unsafe fn is_html_template(n: *const LxbNode) -> bool {
 /// be able to overflow the stack. Best-effort on allocation failure, as the C
 /// was - a template whose content could not be copied is left empty rather than
 /// the whole import failing.
-unsafe fn fixup_template_content(
-    doc: *mut LxbDoc,
-    root_src: *mut LxbNode,
-    root_clone: *mut LxbNode,
+///
+/// `template_content` answers in one what this used to ask in three: it is
+/// `None` for a node that is not an HTML `<template>` AND for one Lexbor gave no
+/// contents fragment. Those are the same case here, because the only thing this
+/// walk does is copy one existing contents fragment into another - which is why
+/// `cross_import`'s `h2x_children_of`, where an empty template and a
+/// non-template mean DIFFERENT children, keeps a test of its own.
+fn fixup_template_content(
+    doc: HtmlDoc<'_>,
+    root_src: HtmlNode<'_>,
+    root_clone: BuildingNode<'_>,
 ) -> Result<(), ()> {
-    let mut stack: Vec<(*mut LxbNode, *mut LxbNode)> = Vec::new();
+    let mut stack: Vec<(HtmlNode<'_>, BuildingNode<'_>)> = Vec::new();
     stack.mkr_push((root_src, root_clone))?;
 
     while let Some((src_root, clone_root)) = stack.pop() {
-        let mut sn = src_root;
-        let mut cn = clone_root;
-        while !sn.is_null() && !cn.is_null() {
-            if is_html_template(sn) && is_html_template(cn) {
-                // Lexbor's `lxb_html_interface_template` is a cast macro, so
-                // reaching the content fragment is a cast plus a field read.
-                let sc = template_content(sn);
-                let cc = template_content(cn);
-                if !sc.is_null() && !cc.is_null() {
-                    let mut x = (*sc).first_child;
-                    while !x.is_null() {
-                        let imp = lxb_dom_document_import_node(doc, x, true);
-                        if imp.is_null() {
-                            // Lexbor could not copy a content child. Giving up
-                            // here leaves the clone's template SHORT, which is
-                            // the truncated answer the contract forbids.
-                            return Err(());
-                        }
-                        lxb_dom_node_insert_child(cc, imp);
-                        x = (*x).next;
-                    }
-                    stack.mkr_push((sc, cc))?;
+        let (mut sn, mut cn) = (Some(src_root), Some(clone_root));
+        while let (Some(s), Some(c)) = (sn, cn) {
+            /* Nested rather than a tuple: the clone-side test is only worth
+             * paying for once the source side has said this is a template, and
+             * every node of every deep import passes through here. */
+            if let Some((sc, cc)) = s
+                .template_content()
+                .and_then(|sc| Some((sc, c.template_content()?)))
+            {
+                let mut x = sc.first_child();
+                while let Some(child) = x {
+                    /* SAFETY: a live document and a live source node; what
+                     * import returns is fresh and detached, which is what
+                     * BuildingNode means. */
+                    let imp = unsafe {
+                        BuildingNode::from_raw(lxb_dom_document_import_node(
+                            doc.as_raw(),
+                            child.as_raw(),
+                            true,
+                        ))
+                    };
+                    let Some(imp) = imp else {
+                        // Lexbor could not copy a content child. Giving up
+                        // here leaves the clone's template SHORT, which is
+                        // the truncated answer the contract forbids.
+                        return Err(());
+                    };
+                    cc.insert_child(imp);
+                    x = child.next();
                 }
+                stack.mkr_push((sc, cc))?;
             }
-            sn = preorder_next(sn, src_root);
-            cn = preorder_next(cn, clone_root);
+            sn = s.preorder_next(src_root);
+            cn = c.preorder_next(clone_root);
         }
     }
     Ok(())
@@ -299,7 +293,18 @@ pub unsafe fn import_with_fixup(
     if imp.is_null() {
         return None;
     }
-    if deep && fixup_template_content(doc, src, imp).is_err() {
+    /* SAFETY: a live document, the caller's live source node, and the copy
+     * just made - detached, and nothing outside it points at it yet. The walk
+     * is the only thing that reads them, and it does not outlive this call. */
+    let handles = (
+        HtmlDoc::from_raw(doc),
+        HtmlNode::from_raw(src),
+        BuildingNode::from_raw(imp),
+    );
+    let (Some(hdoc), Some(hsrc), Some(himp)) = handles else {
+        return None;
+    };
+    if deep && fixup_template_content(hdoc, hsrc, himp).is_err() {
         // A copy whose <template> lost its contents is a wrong answer, not a
         // degraded one: `<template><i>x</i></template>` comes back as
         // `<template></template>` and nothing says so. The C was best-effort
