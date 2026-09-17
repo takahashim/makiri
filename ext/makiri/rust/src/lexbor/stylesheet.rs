@@ -44,12 +44,12 @@ use crate::falloc::{self, VecPush};
 use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::consts as k;
 
-use crate::bridge::string::ruby_verified_text;
 use crate::bridge::ruby::error_class;
+use crate::bridge::string::ruby_verified_text;
+use crate::init::MOD_LEXBOR;
 use crate::lexbor::ffi::{
     lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, CssParser,
 };
-use crate::init::MOD_LEXBOR;
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
 /// pathologically nested stylesheet.
@@ -589,7 +589,10 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         if root.is_null() {
             return Ok(Vec::new());
         }
-        let mut conv = Conv { css, scratch: Vec::new() };
+        let mut conv = Conv {
+            css,
+            scratch: Vec::new(),
+        };
         let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;
         rules(&mut conv, first, 0)
     }

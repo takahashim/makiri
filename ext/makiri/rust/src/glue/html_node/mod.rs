@@ -22,7 +22,6 @@
 //! macOS a hand-written declaration of one of those links to nothing and becomes
 //! a NULL call at run time rather than a link error.
 
-
 pub mod read;
 
 pub mod mutate;
@@ -49,11 +48,11 @@ pub mod ty {
     };
 }
 
+pub use crate::bridge::lexbor::HTML_NODE_TYPE;
 pub use crate::glue::doc::node_clone_node;
 pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;
 pub use crate::glue::node::node_pointer_id;
-pub use crate::bridge::lexbor::HTML_NODE_TYPE;
 pub use crate::init::CLASS_HTML_ATTR;
 pub use crate::init::CLASS_HTML_CDATA_SECTION;
 pub use crate::init::CLASS_HTML_COMMENT;

@@ -132,5 +132,3 @@ pub fn compile_owned(
      * no subtree worth remembering, so its AST is used as built. */
     try_box(Ast::new(root)).map_err(|_| b.oom())
 }
-
-

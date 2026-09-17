@@ -26,18 +26,20 @@ use crate::bridge::lexbor::{
 };
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::VALUE;
-use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text, RubyText};
 pub use crate::bridge::string::{ruby_exception_message, ruby_try_verified_text};
-pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
+use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text, RubyText};
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use crate::init::{
     RbConst, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR, MOD_HTML_NODE_METHODS,
 };
+pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
+use crate::token::{Kind, Token};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, ContextError, Resolver, ResolverCall, XPathValue};
 use crate::xpath::limits::{Budget, Limits};
-use crate::xpath::msg::{Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
-use crate::token::{Kind, Token};
+use crate::xpath::msg::{
+    Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
+};
 use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 /// `Makiri::Error`.
@@ -63,7 +65,10 @@ pub fn xpath_error(err: &XPathError) -> Error {
     };
     let ruby = magnus::Ruby::get_with(class);
     /* The message's bytes as they are, tagged UTF-8 - not a lossy copy. */
-    let bytes = err.message().unwrap_or(c"XPath evaluation failed").to_bytes();
+    let bytes = err
+        .message()
+        .unwrap_or(c"XPath evaluation failed")
+        .to_bytes();
     let msg = ruby.enc_str_new(bytes, ruby.utf8_encoding());
     match class.new_instance((msg,)) {
         Ok(e) => Error::from(e),
@@ -214,7 +219,11 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
             /* The context NODE is the document node for a Document receiver,
              * else the node itself. */
             let node = if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-                Token::xml((*(xdoc as *mut crate::xml::model::Doc)).doc_node().to_token())
+                Token::xml(
+                    (*(xdoc as *mut crate::xml::model::Doc))
+                        .doc_node()
+                        .to_token(),
+                )
             } else {
                 Token::xml(xml_node_unwrap(rb_node)? as usize)
             };
@@ -880,8 +889,7 @@ fn cached_ast(
     /* Each parse charges a budget of its own, made from the context's caps. */
     let mut budget = Budget::with_limits(limits);
     // SAFETY: as above, and the parse only allocates - no Ruby runs in it.
-    let Ok(ast) = crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget)
-    else {
+    let Ok(ast) = crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget) else {
         return Err(budget.take_error());
     };
     if cache.0.len() >= AST_CACHE_MAX || cache.0.mkr_reserve(1).is_err() {
@@ -945,11 +953,7 @@ pub fn evaluate_query(
 ///
 /// Callers free the AST and any context they own BEFORE this: the value owns
 /// its data and references neither.
-pub fn query_result(
-    value: XPathValue,
-    document: Value,
-    first_only: bool,
-) -> Result<Value, Error> {
+pub fn query_result(value: XPathValue, document: Value, first_only: bool) -> Result<Value, Error> {
     let result = value_to_ruby(value, document)?;
     if first_only && is_kind_of(result, &CLASS_NODE_SET) {
         return result.funcall("first", ());
@@ -1030,16 +1034,17 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
     let sv: Value = value.funcall("to_s", ())?;
     let nv = ruby_verified_text(name, c"variable name")?;
     // SAFETY: `sv` is a live String, and the borrow ends with the check.
-    let vv = match unsafe { ruby_try_verified_text(sv.as_raw(), rb_self.ctx.limits().max_string_bytes) }
-    {
-        Ok(vv) => vv,
-        Err(reason) => {
-            return Err(Error::new(
-                error_class(),
-                format!("invalid variable value: {}", reason.to_string_lossy()),
-            ));
-        }
-    };
+    let vv =
+        match unsafe { ruby_try_verified_text(sv.as_raw(), rb_self.ctx.limits().max_string_bytes) }
+        {
+            Ok(vv) => vv,
+            Err(reason) => {
+                return Err(Error::new(
+                    error_class(),
+                    format!("invalid variable value: {}", reason.to_string_lossy()),
+                ));
+            }
+        };
     rb_self
         .ctx
         .register_variable(nv.as_verified().as_bytes(), vv.as_verified().as_bytes()) /* copies both */

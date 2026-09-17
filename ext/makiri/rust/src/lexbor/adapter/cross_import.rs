@@ -21,10 +21,10 @@
 
 use core::ffi::c_void;
 
+use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor::adapter::html::{
     BuildingElement, BuildingNode, HtmlDoc, RawNode, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
 };
-use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
 use crate::xml::model::{Document as XmlDoc, MutStatus, NodeId, NodeType};
 use crate::xml::mutate;

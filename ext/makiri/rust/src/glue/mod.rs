@@ -41,7 +41,6 @@
 
 #![forbid(unsafe_code)]
 
-
 /// Makiri::HTML::Document.
 pub mod doc;
 

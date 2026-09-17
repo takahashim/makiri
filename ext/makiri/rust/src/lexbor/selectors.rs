@@ -411,7 +411,11 @@ unsafe fn with_compiled_selector(
         }
         lxb_css_memory_clean(e.mem);
         lxb_css_parser_clean(e.parser);
-        return if bad { Err(SelectError::Syntax) } else { Ok(()) };
+        return if bad {
+            Err(SelectError::Syntax)
+        } else {
+            Ok(())
+        };
     }
 
     let key = selector;

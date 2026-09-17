@@ -9,8 +9,8 @@
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
 pub use crate::bridge::lexbor::{doc_parsed, parsed_xml_doc};
-pub use crate::bridge::ruby::error_class;
 pub use crate::bridge::node_set::{node_set_new, node_set_with_fill};
+pub use crate::bridge::ruby::error_class;
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the

@@ -4,10 +4,10 @@
 #![forbid(unsafe_code)]
 
 use super::super::abi::*;
-use crate::token::Token;
 use super::super::value::Text;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::token::Token;
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///

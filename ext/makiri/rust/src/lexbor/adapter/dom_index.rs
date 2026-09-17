@@ -46,8 +46,7 @@ use crate::xpath::runtime_abi::cache::ptr_hash;
 /// value that cannot key a dense array. Those elements are simply left out, and
 /// `//customtag` falls back to a tree walk - rare in practice.
 use super::html::{
-    RawNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF,
-    TYPE_ELEMENT as NODE_TYPE_ELEMENT,
+    RawNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF, TYPE_ELEMENT as NODE_TYPE_ELEMENT,
 };
 
 /// One attr->owner slot. A null `attr` marks an empty slot; there are no

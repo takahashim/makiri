@@ -14,12 +14,12 @@ pub use makiri::text::VerifiedText;
 pub use makiri::token::Token;
 pub use makiri::xml::parse::xml_parse;
 pub use makiri::xml::Document;
+pub use makiri::xpath::ast::Ast;
 pub use makiri::xpath::ctx::{Context, XPathValue};
 pub use makiri::xpath::dom::Dom;
 pub use makiri::xpath::limits::Budget;
-pub use makiri::xpath::ast::Ast;
-pub use makiri::xpath::parse::parse_owned;
 pub use makiri::xpath::limits::Limits;
+pub use makiri::xpath::parse::parse_owned;
 
 /// A context over `doc`, rooted at its document node and pinned to the XML
 /// engine - the same arguments the glue's `build_ctx` passes. `None` when the
@@ -36,10 +36,7 @@ pub fn xml_context(doc: &Document) -> Option<Context<'_, &Document>> {
 ///
 /// # Safety
 /// `text`'s bytes must outlive the parse.
-pub unsafe fn parse<'d, D: Dom<'d>>(
-    ctx: &Context<'d, D>,
-    text: VerifiedText,
-) -> Option<Box<Ast>> {
+pub unsafe fn parse<'d, D: Dom<'d>>(ctx: &Context<'d, D>, text: VerifiedText) -> Option<Box<Ast>> {
     let mut budget = Budget::with_limits(ctx.limits());
     parse_owned(text, &mut budget).ok()
 }

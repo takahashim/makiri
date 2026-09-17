@@ -15,8 +15,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, Ruby, Value};
 use crate::bridge::lexbor::keepalive_document;
+use magnus::{method, prelude::*, Error, Ruby, Value};
 
 /// The doctype node type, generated (see lexbor_abi).
 const NODE_TYPE_DOCUMENT_TYPE: u32 = crate::lexbor::adapter::html::TYPE_DOCTYPE;

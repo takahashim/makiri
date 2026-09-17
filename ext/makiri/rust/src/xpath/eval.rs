@@ -19,10 +19,10 @@ use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
-use crate::token::Token;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::token::Token;
 
 /// An evaluation step: the value, or proof its error was written to the
 /// evaluation's budget.

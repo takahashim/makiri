@@ -12,10 +12,10 @@
 use super::abi::*;
 use super::dom::*;
 use super::number;
-use crate::token::Token;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::token::Token;
 
 /* ---- the values ---- */
 
@@ -140,7 +140,6 @@ impl NodeSet<Token> {
         self.push(token, budget)
     }
 }
-
 
 /// An XPath value (§1): a node-set, a string, a number or a boolean. It owns
 /// what it holds. As with [`NodeSet`], the nodes are the backend's handles

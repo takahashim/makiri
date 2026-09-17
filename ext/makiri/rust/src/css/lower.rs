@@ -23,8 +23,8 @@
 #![forbid(unsafe_code)]
 
 use super::build::{self, Built};
-use crate::lexbor::css_parser::{comb, k, m, pc, pf, FunctionArg, Lists, Selector};
 use super::{Build, ERR_LIMIT, ERR_SYNTAX, MAX_COMPOUNDS};
+use crate::lexbor::css_parser::{comb, k, m, pc, pf, FunctionArg, Lists, Selector};
 use crate::xpath::ast::{Axis, Expr, ExprKind, NodeTest, Op, Path, Step, TestKind};
 use crate::xpath::msg::Reported;
 

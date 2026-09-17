@@ -645,7 +645,11 @@ pub fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box<Ast>, 
     let src: &[u8] = expr.as_bytes();
 
     let lx = Lexer::new(src).map_err(|e| lex_err(err.clone(), e))?;
-    let mut p = Parser { lx, err: err.clone(), budget };
+    let mut p = Parser {
+        lx,
+        err: err.clone(),
+        budget,
+    };
 
     let root = p.parse_expr()?;
     if p.kind() != Tok::Eof {

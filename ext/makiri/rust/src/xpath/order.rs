@@ -11,8 +11,8 @@
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
-use crate::token::Token;
 use crate::falloc::try_vec_with_capacity;
+use crate::token::Token;
 
 #[derive(Clone, Copy)]
 struct OrderBucket {

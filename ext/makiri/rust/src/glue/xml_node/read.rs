@@ -196,7 +196,11 @@ pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
 pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, Error> {
     match crate::bridge::xml::find_attribute(this, rb_name)? {
         None => Ok(ruby.qnil().as_value()),
-        Some(at) => Ok(str_span(ruby, this.doc_ref(), this.doc_ref().node(at).value)),
+        Some(at) => Ok(str_span(
+            ruby,
+            this.doc_ref(),
+            this.doc_ref().node(at).value,
+        )),
     }
 }
 
@@ -208,10 +212,7 @@ pub fn attribute_by_qualified_name(
 ) -> Result<Value, Error> {
     let _ = ruby;
     let a = crate::bridge::xml::find_attribute(this, rb_name)?;
-    Ok(super::wrap(
-        a.unwrap_or(NodeId::INVALID),
-        this.document,
-    ))
+    Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
 }
 
 pub fn attribute_value_by_qualified_name(

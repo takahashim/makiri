@@ -74,10 +74,7 @@ unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t 
 ///
 /// `const`, so a module can keep it in a `static` as the C would have; a
 /// derived type passes its base's `as_ptr()` as `parent`.
-pub const fn data_type<T: Hooks>(
-    name: *const c_char,
-    parent: *const rb_data_type_t,
-) -> DataType {
+pub const fn data_type<T: Hooks>(name: *const c_char, parent: *const rb_data_type_t) -> DataType {
     DataType::new(
         name,
         parent,

@@ -16,18 +16,18 @@
 
 pub mod adapter;
 pub mod ffi;
-/// The Lexbor CSS stylesheet parser and its raw callback traversal.
-#[cfg(feature = "ruby")]
-pub mod stylesheet;
-/// Lexbor's HTML serialization callbacks and buffer traversal.
-#[cfg(feature = "ruby")]
-pub mod serialize;
 /// HTML fragment parsing and import/fixup operations.
 #[cfg(feature = "ruby")]
 pub mod fragment;
 /// Selector traversal engine, including its Lexbor callbacks.
 #[cfg(feature = "ruby")]
 pub mod selectors;
+/// Lexbor's HTML serialization callbacks and buffer traversal.
+#[cfg(feature = "ruby")]
+pub mod serialize;
+/// The Lexbor CSS stylesheet parser and its raw callback traversal.
+#[cfg(feature = "ruby")]
+pub mod stylesheet;
 
 /// The XPath engine's HTML backend (`Dom` for a Lexbor document).
 pub mod xpath;

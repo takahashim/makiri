@@ -53,9 +53,12 @@ use crate::css::CssNs;
 
 use crate::bridge::lexbor::{keepalive_document, wrap_xml_node, xml_node_unwrap};
 use crate::bridge::node_set::node_set_new;
-use crate::bridge::string::{ruby_verified_text, verify_text};
 use crate::bridge::string::ruby_try_verified_text_pair;
-use crate::init::{CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS};
+use crate::bridge::string::{ruby_verified_text, verify_text};
+use crate::init::{
+    CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, MOD_XML,
+    MOD_XML_NODE_METHODS,
+};
 
 /// Wrap an XML node, typed.
 fn wrap_typed_xml_node(node: NodeId, document: Value) -> Value {
@@ -193,8 +196,7 @@ fn register_namespaces(ruby: &Ruby, ctx: &XPathContext, rb_ns: Option<Value>) ->
             }
         };
         // SAFETY: both views are live and checked; `register_ns` copies both.
-        let registered =
-            ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes());
+        let registered = ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes());
         if registered.is_err() {
             return Err(Error::new(error_class(), "failed to register namespace"));
         }

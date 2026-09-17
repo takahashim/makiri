@@ -13,9 +13,9 @@ use super::dom::*;
 use super::eval::Evaluation;
 use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
-use crate::token::Token;
 use crate::err_setf;
 use crate::falloc::Reserve;
+use crate::token::Token;
 
 /// Is the context exactly the document node? Both index fast paths need that:
 /// `descendant::tag` from the document is precisely "every element named tag",
@@ -168,9 +168,7 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
         if bucket.recheck && !node_principal_match::<D>(doc, test, e, s1.axis, &b) {
             continue;
         }
-        let par = doc
-            .parent(e)
-            .map_or(Token::null(), D::token);
+        let par = doc.parent(e).map_or(Token::null(), D::token);
         let mut h = (ptr_hash(par.as_ptr() as *const u8) as usize) & mask;
         while !tab[h].0.is_null() && tab[h].0 != par {
             h = (h + 1) & mask;

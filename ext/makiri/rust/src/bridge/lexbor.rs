@@ -687,7 +687,10 @@ fn prepare_insert(
         ensure_document_mutable(keepalive_document(rb_incoming)?)?;
         let copy = adopt_copy(doc, incoming)?;
         // SAFETY: a copy this call just made in `reference`'s document.
-        return Ok((unsafe { HtmlNodeMut::assume_mutable(copy) }, Some(rb_incoming)));
+        return Ok((
+            unsafe { HtmlNodeMut::assume_mutable(copy) },
+            Some(rb_incoming),
+        ));
     }
     // SAFETY: same document as `reference`, which the caller cleared.
     let incoming = unsafe { HtmlNodeMut::assume_mutable(incoming) };
@@ -711,7 +714,10 @@ fn inserted_result(
             /* SAFETY: the source document was cleared for editing by
              * `prepare_insert` before anything was copied out of it. */
             adopt_release(unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) });
-            Ok(wrap(RawNode::from(inserted.node()), keepalive_document(rb_self)?))
+            Ok(wrap(
+                RawNode::from(inserted.node()),
+                keepalive_document(rb_self)?,
+            ))
         }
     }
 }
@@ -857,12 +863,7 @@ use crate::lexbor::fragment::{
 };
 
 /// `element[name] = value` -> value.
-pub fn aset(
-    _ruby: &Ruby,
-    this: HtmlSelf,
-    rb_name: Value,
-    rb_value: Value,
-) -> Result<Value, Error> {
+pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
     let Some(el) = edit(&this)?.element_mut() else {
         return Err(err("cannot set an attribute on a non-element node"));
     };
@@ -972,7 +973,8 @@ pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, E
     let nv = ruby_verified_text(rb_name, c"element name")?;
 
     // SAFETY: the element's own Document, and the view is live for this call.
-    let scratch = unsafe { ScratchElement::create(el.element().node().owner_document(), nv.bytes()) };
+    let scratch =
+        unsafe { ScratchElement::create(el.element().node().owner_document(), nv.bytes()) };
     let Some(scratch) = scratch else {
         return Err(err("failed to rename element"));
     };

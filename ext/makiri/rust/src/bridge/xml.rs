@@ -26,7 +26,9 @@ use crate::bridge::lexbor::{
 use crate::bridge::ruby::{check_frozen, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::xml_decode::xml_decode_input_value;
-use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
+use crate::init::{
+    CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR,
+};
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
@@ -145,8 +147,9 @@ allows a single root element, and a sibling target must have a parent)"
 fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
     let document = node_document(v)?;
     // SAFETY: the handle of `v`'s own Document, which `v` keeps alive.
-    Ok(unsafe { crate::bridge::lexbor::parsed_xml_doc(crate::bridge::lexbor::doc_parsed_known(document)) }
-        as *mut XmlDoc)
+    Ok(unsafe {
+        crate::bridge::lexbor::parsed_xml_doc(crate::bridge::lexbor::doc_parsed_known(document))
+    } as *mut XmlDoc)
 }
 
 /// A byte length as the arena's `uint32`, or an error.
@@ -259,12 +262,13 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     let obj = unsafe { wrap_document(parsed) };
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
-    let (result, status) = crate::bridge::gvl::without_gvl(|| {
-        match crate::xml::api::xml_parse_ex(src.as_slice(), Some(&limits)) {
-            Ok(doc) => (Box::into_raw(doc), Status::Ok),
-            Err(status) => (core::ptr::null_mut(), status),
-        }
-    });
+    let (result, status) =
+        crate::bridge::gvl::without_gvl(|| {
+            match crate::xml::api::xml_parse_ex(src.as_slice(), Some(&limits)) {
+                Ok(doc) => (Box::into_raw(doc), Status::Ok),
+                Err(status) => (core::ptr::null_mut(), status),
+            }
+        });
     drop(src);
 
     if result.is_null() {
@@ -327,7 +331,11 @@ pub fn new_empty_xml_document() -> Result<Value, Error> {
 ///
 /// This runs UNDER the GVL on purpose: a fragment is small, and an existing
 /// document's arena must never be mutated with the GVL released.
-pub fn fragment_into(document: Value, source: Value, inherit_doc_ns: bool) -> Result<NodeId, Error> {
+pub fn fragment_into(
+    document: Value,
+    source: Value,
+    inherit_doc_ns: bool,
+) -> Result<NodeId, Error> {
     let xdoc = doc_of(document);
     if xdoc.is_null() {
         return Err(Error::new(error_class(), "the document has no arena"));
@@ -793,10 +801,9 @@ pub fn create_loose_dom_element(
 
 /// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a =
-        magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
-            args,
-        )?;
+    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
+        args,
+    )?;
     let name = a.required.0;
     let nil = ruby.qnil().as_value();
     let pub_v = a.optional.0.unwrap_or(nil);
@@ -876,7 +883,9 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
-                xml_mut_check(unsafe { xml_clone_node(&mut *xd, unwrap(node_v)?, deep, &mut copy) })?
+                xml_mut_check(unsafe {
+                    xml_clone_node(&mut *xd, unwrap(node_v)?, deep, &mut copy)
+                })?
             } else {
                 // SAFETY: two distinct live arenas.
                 xml_mut_check(unsafe {

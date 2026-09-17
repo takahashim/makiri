@@ -55,7 +55,10 @@ pub type FnImpl<'e, 'd, D> = fn(
 
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
 /// routes the call to the registered resolver.
-pub fn lookup<'e, 'd, D: Dom<'d>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnImpl<'e, 'd, D>> {
+pub fn lookup<'e, 'd, D: Dom<'d>>(
+    ns_uri: Option<&[u8]>,
+    local: &[u8],
+) -> Option<FnImpl<'e, 'd, D>> {
     if let Some(uri) = ns_uri {
         /* The Nokogiri-compatible builtins live in one namespace; any other
          * registered namespace means a user-defined function, so it goes to the
@@ -105,7 +108,9 @@ pub fn lookup<'e, 'd, D: Dom<'d>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option
         b"round" => fn_round::<D> as FnImpl<'e, 'd, D>,
         /* the CSS lowering's internal hooks */
         _ if D::IS_XML && local == FN_OF_TYPE_POS => fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
-        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
+        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => {
+            fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>
+        }
         _ => return None,
     };
     Some(f)
@@ -175,7 +180,10 @@ fn to_text<'e, 'd, D: Dom<'d>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, 'd, D>)
     val_to_owned_text_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
-fn to_number<'e, 'd, D: Dom<'d>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, 'd, D>) -> FnResult<f64> {
+fn to_number<'e, 'd, D: Dom<'d>>(
+    v: &Val<D::Node>,
+    ev: &mut Evaluation<'e, 'd, D>,
+) -> FnResult<f64> {
     let doc = ev.doc;
     val_to_number_or_fail::<D>(doc, v, &mut ev.budget)
 }
@@ -194,7 +202,10 @@ fn arg_or_self_text<'e, 'd, D: Dom<'d>>(
 }
 
 /// The string-value of the context node, or "" when there is none.
-fn self_text<'e, 'd, D: Dom<'d>>(focus: &Focus<'d, D>, ev: &mut Evaluation<'e, 'd, D>) -> FnResult<Text> {
+fn self_text<'e, 'd, D: Dom<'d>>(
+    focus: &Focus<'d, D>,
+    ev: &mut Evaluation<'e, 'd, D>,
+) -> FnResult<Text> {
     match focus.node {
         Some(n) => node_to_owned_text::<D>(ev.doc, n, Some(&mut ev.budget)),
         None => owned_copy(
@@ -973,7 +984,13 @@ fn fn_local_name_is<'e, 'd, D: Dom<'d>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 1, 1, err.clone(), "nokogiri-builtin:local-name-is")?;
+    arity(
+        args.len(),
+        1,
+        1,
+        err.clone(),
+        "nokogiri-builtin:local-name-is",
+    )?;
     let want = to_text::<D>(&args[0], ev)?;
     boolean(
         focus

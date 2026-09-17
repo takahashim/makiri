@@ -117,7 +117,10 @@ fn name_test_match<'a, 'd, D: Dom<'d>>(
     }
 }
 
-fn resolved_prefix<'a, 'd, D: Dom<'d>>(b: &Bindings<'a, 'd, D>, test: &NodeTest) -> Option<&'a [u8]> {
+fn resolved_prefix<'a, 'd, D: Dom<'d>>(
+    b: &Bindings<'a, 'd, D>,
+    test: &NodeTest,
+) -> Option<&'a [u8]> {
     match b.pre {
         Some(u) => Some(u),
         None => b.names.lookup_ns(test.prefix.as_deref().unwrap_or(&[])),

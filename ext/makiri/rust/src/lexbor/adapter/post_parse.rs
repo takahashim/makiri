@@ -31,6 +31,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::cbuf::OwnedBuf;
+use crate::falloc::try_box;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Recorder,
@@ -38,7 +39,6 @@ use crate::lexbor::adapter::source_loc::{
 use crate::lexbor::adapter::text_index::TextIndex;
 pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
-use crate::falloc::try_box;
 use crate::lexbor_abi::{self as lxb, lxb_html_document_destroy, LxbDoc, LxbNode};
 use crate::text::BorrowedText;
 use crate::xml::model::Document as XmlDocument;

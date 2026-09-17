@@ -12,11 +12,11 @@
 
 #![forbid(unsafe_code)]
 
+use crate::token::{Kind, Token};
+use crate::xml::model as xml;
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::{Bucket, Dom};
-use crate::token::{Kind, Token};
-use crate::xml::model as xml;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
 /// so it must not appear on the attribute axis. The reader still keeps it as a
@@ -51,7 +51,11 @@ impl<'d> Dom<'d> for &'d xml::Document {
     fn resolve_token(self, t: Token) -> xml::NodeId {
         /* An HTML token never reaches an XML context; assert it here so a bug
          * shows as a check, not a silently misread arena slot. */
-        assert_eq!(t.kind(), Kind::Xml, "an XML context resolved a non-XML token");
+        assert_eq!(
+            t.kind(),
+            Kind::Xml,
+            "an XML context resolved a non-XML token"
+        );
         xml::NodeId::from_token(t.word())
     }
 

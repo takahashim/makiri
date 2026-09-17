@@ -12,8 +12,8 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
-use crate::token::Token;
 use crate::falloc::Reserve;
+use crate::token::Token;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
 
@@ -269,14 +269,7 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
             return Err(self.index_error());
         }
         let run = self.enter()?;
-        eval::eval_ast(
-            self,
-            &run.names,
-            self.doc,
-            self.focus_node(),
-            ast,
-            handler,
-        )
+        eval::eval_ast(self, &run.names, self.doc, self.focus_node(), ast, handler)
     }
 
     /// [`evaluate`](Self::evaluate) through the `at_xpath` first-match fast

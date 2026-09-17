@@ -18,8 +18,8 @@
 
 use core::ffi::c_void;
 
-use magnus::Error;
 use crate::bridge::ruby::VALUE;
+use magnus::Error;
 
 use crate::falloc::VecPush;
 
@@ -32,9 +32,7 @@ use crate::lexbor::ffi::{LxbDoc, LxbNode};
  * ------------------------------------------------------------------ */
 
 use crate::cbuf::{Buf, OwnedBuf};
-use crate::lexbor::adapter::html::{
-    BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode,
-};
+use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
 pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
 
@@ -246,11 +244,7 @@ pub unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) 
 /// Import a fragment parsed in Lexbor's transient document, then release that
 /// document on every return path.  The transient-document ownership rule is a
 /// Lexbor ABI concern, so callers never need to name `TransientDoc`.
-pub unsafe fn import_transient_fragment_children(
-    doc: RawDoc,
-    root: RawNode,
-    emit: &Emit,
-) -> bool {
+pub unsafe fn import_transient_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
     let _transient = crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode);
     import_fragment_children(doc, root, emit)
 }
@@ -267,11 +261,7 @@ pub enum FragmentContext {
     Element(RawNode),
     /// A named context: a tag id and namespace, for `Document#fragment` and
     /// `DocumentFragment.parse`, where no such element exists yet.
-    Tag {
-        doc: RawDoc,
-        tag: usize,
-        ns: usize,
-    },
+    Tag { doc: RawDoc, tag: usize, ns: usize },
 }
 
 impl FragmentContext {
@@ -334,8 +324,7 @@ pub unsafe fn run_fragment_parser(
 /// and different messages, and each had grown its own copy of the four lines -
 /// so the operation lives here and they keep only the parts that differ.
 pub unsafe fn import_with_fixup(doc: RawDoc, src: RawNode, deep: bool) -> Option<RawNode> {
-    import_raw(doc, src.as_ptr() as *mut LxbNode, deep)
-        .and_then(|p| RawNode::from_ptr(p.cast()))
+    import_raw(doc, src.as_ptr() as *mut LxbNode, deep).and_then(|p| RawNode::from_ptr(p.cast()))
 }
 
 /// The raw form of [`import_with_fixup`]: `src` is a Lexbor node pointer, which
@@ -379,6 +368,10 @@ pub unsafe fn html_import_deep(doc: RawDoc, src: RawNode) -> Result<RawNode, Err
 pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> usize {
     // SAFETY: a live document handle, read for this call.
     unsafe {
-        lxb_tag_id_by_name_noi((*(doc.as_ptr() as *mut LxbDoc)).tags, name.as_ptr(), name.len())
+        lxb_tag_id_by_name_noi(
+            (*(doc.as_ptr() as *mut LxbDoc)).tags,
+            name.as_ptr(),
+            name.len(),
+        )
     }
 }

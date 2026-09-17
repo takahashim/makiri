@@ -31,13 +31,13 @@ use core::ffi::{c_long, c_void};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
+use crate::bridge::ruby::VALUE;
 use magnus::rb_sys::AsRawValue;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{
     gc::Marker, method, prelude::*, DataTypeFunctions, Error, RArray, RClass, Ruby, TypedData,
     Value,
 };
-use crate::bridge::ruby::VALUE;
 
 use crate::bridge::lexbor::{keepalive_document, node_raw, wrap_html_node, wrap_xml_node};
 use crate::bridge::ruby::typed_data_unprotected;

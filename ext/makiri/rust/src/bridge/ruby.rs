@@ -280,14 +280,18 @@ pub fn boolean(b: bool) -> Value {
 #[inline]
 pub fn float(n: f64) -> Value {
     // SAFETY: every caller is a Ruby method, entered with the GVL.
-    unsafe { Ruby::get_unchecked() }.float_from_f64(n).as_value()
+    unsafe { Ruby::get_unchecked() }
+        .float_from_f64(n)
+        .as_value()
 }
 
 /// An Integer from an `i64`.
 #[inline]
 pub fn integer(n: i64) -> Value {
     // SAFETY: as `float`.
-    unsafe { Ruby::get_unchecked() }.integer_from_i64(n).as_value()
+    unsafe { Ruby::get_unchecked() }
+        .integer_from_i64(n)
+        .as_value()
 }
 
 /// A fresh empty Array.
