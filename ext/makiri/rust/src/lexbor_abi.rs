@@ -168,7 +168,7 @@ extern "C" {
     /* The tokenizer accessors the source-location recorder needs. Lexbor has a
      * setter and a ctx getter for the token-done callback but NO getter for the
      * callback function itself, so that one field is read directly from the
-     * generated struct - see `dom_adapter::source_loc`. */
+     * generated struct - see `lexbor::adapter::source_loc`. */
     pub fn lxb_html_parser_tokenizer_noi(
         parser: *mut lxb_html_parser_t,
     ) -> *mut lxb_html_tokenizer_t;

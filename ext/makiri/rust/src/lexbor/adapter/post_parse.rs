@@ -5,7 +5,7 @@
 //! parse, because that is the only way to see the tokens: create and init a
 //! parser, `chunk_begin`, override the tokenizer's token-done callback while
 //! CHAINING the parser's own tree builder, then `chunk_process` and
-//! `chunk_end`. The recorder that rides along is `dom_adapter::source_loc`.
+//! `chunk_end`. The recorder that rides along is `lexbor::adapter::source_loc`.
 //!
 //! Tracking is always on: it costs about 7% over no-tracking, measured, and the
 //! alternative that was tried - a separate source scan - measured ~36% slower

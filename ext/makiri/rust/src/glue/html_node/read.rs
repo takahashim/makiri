@@ -2,7 +2,7 @@
 //! navigation, attributes, source line and document order.
 //!
 //! Every read of the Lexbor tree goes through the typed handles of
-//! `dom_adapter::html`, the node and text index through `bridge::lexbor`, and
+//! `lexbor::adapter::html`, the node and text index through `bridge::lexbor`, and
 //! the NodeSet through its fill handle, so the readers are all safe.
 //!
 //! # Where a GC may run

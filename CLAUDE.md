@@ -300,17 +300,30 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
-                           the 35 `forbid` files and the glue's remaining direct
-                           `rb_sys::` and raising calls per file
+                           the 55 `forbid` files. `glue/**` and `xpath/**` are
+                           fully safe, and `rb_sys::`, `Value::from_raw` and
+                           raising C calls are 0 outside `bridge/`
     glue/                  Ruby <-> engine surface, one module per feature
-                           (node/doc/node_set/xpath/html_node/xml_node)
-    xpath/                 native XPath 1.0 engine, generic over a `Dom` trait
-    xml/                   native XML reader (Ruby/Lexbor-free; own arena)
+                           (node/doc/node_set/xpath/html_node/xml_node); all
+                           `unsafe`-free, its wrappers and TypedData live in
+                           `bridge/`
+    xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
+                           `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
+                           two `Dom` instances live with their layers:
+                           `lexbor/xpath.rs` (HTML) and `xml/xpath.rs` (XML),
+                           joined for the glue by the `Cx` enum in
+                           `bridge/xpath.rs`
+    xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
+                           its XPath `Dom` instance
     lexbor/                the Lexbor boundary: `adapter` - the one reader of
                            Lexbor's DOM structs, plus the attr->owner index,
                            text index, source location and post-parse - and the
-                           selectors/stylesheet/serialize/fragment facades
-    css/                   CSS selector lowering (Lexbor keeps the parser)
+                           selectors/stylesheet/serialize/fragment facades, the
+                           CSS selector parser (`css_parser.rs`) and the XPath
+                           HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
+                           outside it is 0
+    css/                   CSS selector lowering over the lexbor-owned selector
+                           parser (safe Rust, no Lexbor ABI names)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css; built on PRs, run nightly)
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched

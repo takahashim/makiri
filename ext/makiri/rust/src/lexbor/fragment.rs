@@ -47,7 +47,7 @@ use crate::lexbor::adapter::utf8_input::Sanitized;
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
  * but absent from its public headers, so `lexbor_abi` hand-declares it with the
  * rest of what bindgen cannot see. Everything this file does to the DOM itself
- * goes through `dom_adapter::html` - these are the parser, not the DOM. */
+ * goes through `lexbor::adapter::html` - these are the parser, not the DOM. */
 use crate::lexbor_abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first

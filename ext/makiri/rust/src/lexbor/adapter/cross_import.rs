@@ -7,7 +7,7 @@
 //! one representation into the other, owned by the target document, returned
 //! DETACHED for the caller to link.
 //!
-//! Ruby-free, and in `dom_adapter` rather than `glue` because it reads and
+//! Ruby-free, and in `lexbor::adapter` rather than `glue` because it reads and
 //! writes BOTH Lexbor and the XML document - exactly the bridge this layer is
 //! for. The glue entry points do the Ruby-side kind check, call one of these,
 //! and wrap or raise.
