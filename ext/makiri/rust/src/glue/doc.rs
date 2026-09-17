@@ -23,7 +23,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RString, Ruby, Value};
@@ -225,21 +225,6 @@ pub unsafe extern "C" fn wrap_document(
 
 /* ---- Document.parse ---- */
 
-/// Arguments for the GVL-released parse.
-struct ParseArgs<'a> {
-    src: &'a [u8],
-    assume_valid: bool,
-    result: *mut crate::lexbor::adapter::post_parse::Parsed,
-}
-
-/// Runs with the GVL released: pure C (Lexbor + libc), touching no Ruby state.
-unsafe extern "C" fn parse_nogvl(p: *mut c_void) -> *mut c_void {
-    let a = &mut *(p as *mut ParseArgs<'_>);
-    a.result = parse_html(a.src.as_ptr(), a.src.len(), a.assume_valid)
-        .map_or(core::ptr::null_mut(), Box::into_raw);
-    core::ptr::null_mut()
-}
-
 /// `Document._parse(source)`. The Ruby-level `Document.parse` coerces `source`
 /// to a String (and reads IO) before calling this. Source locations for
 /// `Node#line` are always tracked.
@@ -277,18 +262,14 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
             },
         );
 
-        let mut args = ParseArgs {
-            src: owned.as_slice(),
-            assume_valid,
-            result: core::ptr::null_mut(),
-        };
-        rb_sys::rb_thread_call_without_gvl(
-            Some(parse_nogvl),
-            &mut args as *mut ParseArgs<'_> as *mut c_void,
-            None,
-            core::ptr::null_mut(),
-        );
-        let result = args.result;
+        let result = crate::bridge::gvl::without_gvl(|| {
+            parse_html(
+                owned.as_slice().as_ptr(),
+                owned.as_slice().len(),
+                assume_valid,
+            )
+            .map_or(core::ptr::null_mut(), Box::into_raw)
+        });
         drop(owned);
 
         (*d).parsed = result;

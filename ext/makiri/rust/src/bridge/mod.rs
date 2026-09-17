@@ -10,6 +10,10 @@
 //! as a raise: `ruby` holds the few places a raising C function is still
 //! called, and turns each raise into an `Err` there.
 
+pub mod alloc;
+
+pub mod gvl;
+
 pub mod ruby;
 
 pub mod string;

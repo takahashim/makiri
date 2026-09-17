@@ -149,15 +149,10 @@ impl NodeVec {
         if self.len == self.cap {
             let new_cap =
                 Self::grow_capacity(self.cap, self.len + 1).ok_or(PushError::CapacityOverflow)?;
-            // SAFETY: ptr is either null or a live ruby_xmalloc'd block of
-            // `cap` elements; xrealloc2 does the overflow-checked multiply.
-            self.ptr = unsafe {
-                rb_sys::ruby_xrealloc2(
-                    self.ptr as *mut c_void,
-                    new_cap as rb_sys::size_t,
-                    core::mem::size_of::<*mut c_void>() as rb_sys::size_t,
-                ) as *mut *mut c_void
-            };
+            // SAFETY: ptr is either null or a live Ruby-allocated block of
+            // `cap` elements; `realloc_array` reallocates it and checks the
+            // multiply.
+            self.ptr = unsafe { crate::bridge::alloc::realloc_array(self.ptr, new_cap) };
             self.cap = new_cap;
         }
         // SAFETY: len < cap after the growth above.
@@ -170,10 +165,10 @@ impl NodeVec {
 impl Drop for NodeVec {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            // SAFETY: paired with the ruby_xrealloc2 above. Called from the GC's
+            // SAFETY: paired with the reallocation above. Called from the GC's
             // free, where touching Ruby objects would be wrong but freeing our
             // own buffer is exactly what the C did.
-            unsafe { rb_sys::ruby_xfree(self.ptr as *mut c_void) };
+            unsafe { crate::bridge::alloc::free(self.ptr) };
         }
     }
 }
