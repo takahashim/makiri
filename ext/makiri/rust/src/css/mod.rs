@@ -27,7 +27,6 @@
 
 mod build;
 mod lower;
-mod parser;
 
 use crate::xpath::ast::{Ast, Expr, Op};
 use core::cell::RefCell;
@@ -105,12 +104,12 @@ pub unsafe fn compile_owned(
         default_namespace: ns.default_namespace,
     };
 
-    let parsed = match parser::parse(selector) {
+    let parsed = match crate::lexbor::css_parser::parse(selector) {
         Ok(p) => p,
-        Err(parser::ParseError::NotReady) => {
+        Err(crate::lexbor::css_parser::ParseError::NotReady) => {
             return Err(b.fail(ERR_INTERNAL, c"failed to initialise CSS parser"));
         }
-        Err(parser::ParseError::Syntax) => {
+        Err(crate::lexbor::css_parser::ParseError::Syntax) => {
             return Err(b.fail(ERR_SYNTAX, c"invalid CSS selector"));
         }
     };

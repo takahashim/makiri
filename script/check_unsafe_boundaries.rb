@@ -37,7 +37,7 @@ UNSAFE_ISLANDS = {
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
   "css/mod.rs" => 2,
-  "css/parser.rs" => 47,
+  "lexbor/css_parser.rs" => 47,
   "lexbor/adapter/cross_import.rs" => 16,
   "lexbor/adapter/dom_index.rs" => 3,
   "lexbor/adapter/html.rs" => 96,
@@ -119,7 +119,6 @@ VALUE_FROM_RAW_COUNTS = {}.freeze
 # number. `lexbor_abi.rs` is the generated module itself, so it is excluded.
 LEXBOR_ABI = /crate::lexbor_abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
 LEXBOR_ABI_COUNTS = {
-  "css/parser.rs" => 84,
 }.freeze
 
 def rust_code(path)

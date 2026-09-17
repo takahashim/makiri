@@ -20,3 +20,6 @@ pub mod selectors;
 
 /// The XPath engine's HTML backend (`Dom` for a Lexbor document).
 pub mod xpath;
+
+/// The process-global Lexbor CSS selector parser (selector parsing only).
+pub mod css_parser;

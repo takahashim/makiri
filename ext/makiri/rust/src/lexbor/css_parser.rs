@@ -28,6 +28,7 @@
 //! by the tag Lexbor stored beside it.
 
 #![deny(unsafe_op_in_unsafe_fn)]
+#![allow(clippy::missing_safety_doc)]
 
 use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::{
