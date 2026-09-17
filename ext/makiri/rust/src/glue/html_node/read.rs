@@ -23,8 +23,8 @@ use super::ty;
 use super::{arg_node, wrap_node};
 use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 use crate::glue::abi::{
-    doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_slices,
-    ruby_str_from_utf8, ruby_verified_text,
+    is_kind_of, node_set_new, node_set_push, ruby_str_from_slices, ruby_str_from_utf8,
+    ruby_verified_text,
 };
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
 
@@ -327,19 +327,10 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let node = this.node();
     let document = this.document;
     if node.attr().is_some() {
-        // SAFETY: `document` is the attribute's live Document; the owner the
-        // index answers belongs to it.
-        unsafe {
-            let index = doc_parsed(document)?.as_mut().and_then(|p| p.dom_index());
-            let Some(index) = index else {
-                return Err(Error::new(
-                    error_class(),
-                    "could not build the attribute index (out of memory)",
-                ));
-            };
-            let owner = index.owner_of(RawNode::from(node)).map(|o| o.as_node());
-            return Ok(wrap_node(owner, document));
-        }
+        /* The owner the index answers belongs to `document`, the attribute's
+         * live Document. */
+        let owner = crate::bridge::lexbor::attribute_owner(document, RawNode::from(node))?;
+        return Ok(wrap_node(owner, document));
     }
     // SAFETY: the parent is in the receiver's tree.
     Ok(wrap_node(node.parent(), document))
@@ -584,11 +575,7 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    // SAFETY: `this.document` is the node's live Document.
-    let n = unsafe {
-        let p = crate::glue::doc::doc_parsed_known(this.document);
-        p.as_ref().map_or(0, |p| p.node_line(this.node().as_raw()))
-    };
+    let n = crate::bridge::lexbor::node_line(this.document, this.raw());
     if n == 0 {
         nil(ruby)
     } else {

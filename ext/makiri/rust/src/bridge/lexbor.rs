@@ -25,7 +25,7 @@ use crate::init::{
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION,
     CLASS_XML_COMMENT, CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, CLASS_XML_DOCUMENT_TYPE,
-    CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_TEXT,
+    CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_TEXT, EXC_ERROR,
 };
 use crate::lexbor::adapter::html::{
     HtmlNode, RawDoc, RawNode, TYPE_ATTRIBUTE, TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE,
@@ -205,6 +205,47 @@ pub fn doc_parsed(rb_doc: Value) -> Result<*mut Parsed, Error> {
 /// keepalive Document, or the receiver of a Document method.
 pub fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
     typed_data_known_ref::<DocData>(rb_doc, &DOC_TYPE).parsed
+}
+
+/// Run `f` over the parsed handle behind a Document.
+///
+/// The `&mut Parsed` does not escape `f`, so the raw pointer stays in this
+/// layer and no alias can outlive the call. `f` must not run Ruby that could
+/// re-enter this document (the readers' closures copy, they do not call back).
+pub fn with_parsed<R>(rb_doc: Value, f: impl FnOnce(&mut Parsed) -> R) -> Result<R, Error> {
+    let p = doc_parsed(rb_doc)?;
+    // SAFETY: under the GVL, and the borrow is confined to `f`.
+    Ok(unsafe { f(&mut *p) })
+}
+
+/// [`with_parsed`] for a VALUE already known to be a Document.
+pub fn with_parsed_known<R>(rb_doc: Value, f: impl FnOnce(&mut Parsed) -> R) -> R {
+    let p = doc_parsed_known(rb_doc);
+    // SAFETY: as `with_parsed`.
+    unsafe { f(&mut *p) }
+}
+
+/// The element that owns `attr` through the attr->owner index.
+///
+/// `Err` when the index cannot be built (out of memory) - distinct from a node
+/// the index does not know, which is `Ok(None)`.
+pub fn attribute_owner<'a>(rb_doc: Value, attr: RawNode) -> Result<Option<HtmlNode<'a>>, Error> {
+    with_parsed(rb_doc, |p| match p.dom_index() {
+        None => Err(Error::new(
+            EXC_ERROR.exception(),
+            "could not build the attribute index (out of memory)",
+        )),
+        // SAFETY: an owner the live index answers is a live node of this document.
+        Some(i) => Ok(i.owner_of(attr).map(|o| unsafe { o.as_node() })),
+    })?
+}
+
+/// The 1-based source line for `node`, or 0 when unknown.
+pub fn node_line(rb_doc: Value, node: RawNode) -> usize {
+    with_parsed_known(rb_doc, |p| {
+        // SAFETY: `node` is a live node of this document.
+        unsafe { p.node_line(node.as_ptr() as *const _) }
+    })
 }
 
 /// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an

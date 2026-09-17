@@ -74,39 +74,33 @@ use crate::bridge::lexbor::{new_document, set_document_parsed, wrap_document};
 /// memory. Every mutator checks [`ensure_document_mutable`] first, so that
 /// borrow is never invalidated under a suspended walk.
 pub(crate) struct DocumentEvaluation(
-    *mut crate::lexbor::adapter::post_parse::Parsed,
-    /// The Document the handle belongs to. Holding it is what keeps the handle
-    /// valid: a guard lives on the machine stack, which Ruby's collector scans,
-    /// so the Document cannot be collected while one is alive.
+    /// The Document the count belongs to. Holding it is what keeps the parsed
+    /// handle valid: a guard lives on the machine stack, which Ruby's collector
+    /// scans, so the Document cannot be collected while one is alive.
     Value,
 );
 
 impl DocumentEvaluation {
     pub(crate) fn enter(rb_doc: Value) -> Result<Self, Error> {
-        let p = doc_parsed(rb_doc)?;
-        // SAFETY: the handle of a live Document, kept alive by the guard itself.
-        unsafe { (*p).evaluating += 1 };
-        Ok(DocumentEvaluation(p, rb_doc))
+        crate::bridge::lexbor::with_parsed(rb_doc, |p| p.evaluating += 1)?;
+        Ok(DocumentEvaluation(rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        // SAFETY: `enter` counted this handle, and field 1 has kept its Document
-        // - and so the handle - alive for as long as this guard.
-        unsafe { (*self.0).evaluating -= 1 }
+        crate::bridge::lexbor::with_parsed_known(self.0, |p| p.evaluating -= 1);
         /* Read the Document here, so the guard demonstrably holds it: the field
          * is there to keep it reachable, and a field nothing reads is one the
          * compiler is free to treat as absent. */
-        core::hint::black_box(self.1);
+        core::hint::black_box(self.0);
     }
 }
 
 /// `Err(Makiri::Error)` while an evaluation with a handler is reading
 /// `rb_doc`, a Document. Every mutator calls this before it changes anything.
 pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    // SAFETY: the handle of a live Document.
-    if unsafe { (*doc_parsed_known(rb_doc)).evaluating } != 0 {
+    if crate::bridge::lexbor::with_parsed_known(rb_doc, |p| p.evaluating) != 0 {
         return Err(Error::new(
             error_class(),
             "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
