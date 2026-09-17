@@ -4,7 +4,7 @@
 //! Generic over `Dom`, so one body compiles per representation - what the C
 //! did by `#include`-ing this file twice behind different macros.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 /* A failure is `Err(Reported)`: the detail lives in the evaluation's budget, and
  * the proof says it was written. A value comes back as a `Val`, so one
@@ -19,6 +19,7 @@ use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
+use super::token::Token;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
@@ -742,7 +743,7 @@ fn eval_fncall<'e, D: Dom<'e>>(
                 token_args.push(t);
             }
             let site = ResolverCall {
-                node: focus.node.map_or(core::ptr::null_mut(), D::token),
+                node: focus.node.map_or(Token::null(), D::token),
                 pos: focus.pos,
                 size: focus.size,
                 ns_uri,
@@ -751,9 +752,9 @@ fn eval_fncall<'e, D: Dom<'e>>(
             };
             let answer = handler.resolve(&mut ev.budget, &site)?;
             match answer {
-                // SAFETY: `Resolver`'s contract - it answers only nodes of the
-                // document this evaluate walks.
-                Some(v) => match unsafe { val_from_tokens::<D>(ev.doc, v) } {
+                /* A resolver answers only nodes of this document (the bridge
+                 * checks a handler's node before minting its token). */
+                Some(v) => match val_from_tokens::<D>(ev.doc, v) {
                     Some(v) => Some(v),
                     None => return Err(handler_oom(&mut ev.budget)),
                 },

@@ -387,7 +387,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
     let value = evaluate_query(&ctx, &ast, nil, document, false);
     drop(ast);
     let value = value?;
-    let target = node.to_token() as *mut c_void;
+    let target = crate::xpath::token::Token::from_ptr(node.to_token() as *mut c_void);
     Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
 }
 

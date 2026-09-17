@@ -13,10 +13,9 @@ use super::dom::*;
 use super::eval::Evaluation;
 use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
+use super::token::Token;
 use crate::err_setf;
 use crate::falloc::Reserve;
-use core::ffi::c_void;
-use core::ptr;
 
 /// Is the context exactly the document node? Both index fast paths need that:
 /// `descendant::tag` from the document is precisely "every element named tag",
@@ -156,11 +155,11 @@ pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
     let Some(cap) = want.checked_next_power_of_two() else {
         return Ok(false);
     };
-    let mut tab: Vec<(*const c_void, usize)> = Vec::new();
+    let mut tab: Vec<(Token, usize)> = Vec::new();
     if tab.mkr_reserve_exact(cap).is_err() {
         return Err(err_setf!(err, XP_ERR_OOM, "out of memory (//name[N])"));
     }
-    tab.resize(cap, (ptr::null(), 0));
+    tab.resize(cap, (Token::null(), 0));
     let mask = cap - 1;
     let budget = &mut ev.budget;
 
@@ -171,8 +170,8 @@ pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
         }
         let par = doc
             .parent(e)
-            .map_or(ptr::null(), |p| D::token(p) as *const c_void);
-        let mut h = (ptr_hash(par) as usize) & mask;
+            .map_or(Token::null(), D::token);
+        let mut h = (ptr_hash(par.as_ptr() as *const u8) as usize) & mask;
         while !tab[h].0.is_null() && tab[h].0 != par {
             h = (h + 1) & mask;
         }

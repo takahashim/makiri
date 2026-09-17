@@ -10,12 +10,12 @@
 //! and any stale handle. The operation then reports no node, empty bytes, or
 //! `false`, never a panic or a cross-document access.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use super::abi::*;
 use super::dom::{Bucket, Dom};
+use super::token::Token;
 use crate::xml::model as xml;
-use core::ffi::c_void;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
 /// so it must not appear on the attribute axis. The reader still keeps it as a
@@ -41,14 +41,14 @@ impl<'d> Dom<'d> for &'d xml::Document {
     type Attr = xml::NodeId;
 
     #[inline]
-    fn token(n: xml::NodeId) -> *mut c_void {
-        n.to_token() as *mut c_void
+    fn token(n: xml::NodeId) -> Token {
+        Token::from_ptr(n.to_token() as *mut core::ffi::c_void)
     }
     /// The token is opaque data: every read resolves it through
     /// `Document::try_node`, so a stale or foreign one reads as no node.
     #[inline]
-    unsafe fn node(self, p: *mut c_void) -> xml::NodeId {
-        xml::NodeId::from_token(p as usize)
+    fn resolve_token(self, t: Token) -> xml::NodeId {
+        xml::NodeId::from_token(t.as_ptr() as usize)
     }
 
     #[inline]

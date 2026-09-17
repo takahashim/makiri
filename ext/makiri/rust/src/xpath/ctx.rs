@@ -7,6 +7,7 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
+use super::token::Token;
 use crate::falloc::Reserve;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::ffi::c_void;
@@ -14,8 +15,8 @@ use core::marker::PhantomData;
 
 /// One call the evaluator routes to the custom-function resolver.
 pub struct ResolverCall<'a> {
-    /// The focus: the context node as the engine's handle, and its position.
-    pub node: *mut c_void,
+    /// The focus: the context node's token, and its position.
+    pub node: Token,
     pub pos: usize,
     pub size: usize,
     /// The namespace URI of the call's prefix, when it had one.
@@ -140,7 +141,7 @@ pub enum ContextError {
 /// disturb the walk are refused with [`ContextError::Evaluating`].
 pub struct Context<'d> {
     backend: Backend,
-    node: Cell<*mut c_void>,
+    node: Cell<Token>,
     names: RefCell<Names>,
 
     /* The caps every run under this context starts from. Each evaluate and
@@ -167,7 +168,7 @@ impl<'d> Context<'d> {
     /// For `'d`, the document and the index `backend` names must stay live, and
     /// `node` must be null or a node of that document. The document must not
     /// change while an evaluate on this context runs.
-    pub unsafe fn new(backend: Backend, node: *mut c_void) -> Context<'d> {
+    pub unsafe fn new(backend: Backend, node: Token) -> Context<'d> {
         Context {
             backend,
             node: Cell::new(node),
@@ -181,7 +182,7 @@ impl<'d> Context<'d> {
 
     /// A context over an XML document, rooted at `node`.
     pub fn xml(doc: &'d crate::xml::model::Document, node: crate::xml::NodeId) -> Context<'d> {
-        let node = node.to_token() as *mut c_void;
+        let node = Token::from_ptr(node.to_token() as *mut c_void);
         // SAFETY: the document is borrowed for `'d`, so it lives and cannot be
         // changed while the context does; an XML node handle is checked on
         // every read, so any id is a valid one.
@@ -221,7 +222,7 @@ impl<'d> Context<'d> {
     ///
     /// # Safety
     /// `node` must be null or a node of this context's document.
-    pub unsafe fn set_context_node(&self, node: *mut c_void) -> Result<(), ContextError> {
+    pub fn set_context_node(&self, node: Token) -> Result<(), ContextError> {
         if self.is_evaluating() {
             return Err(ContextError::Evaluating);
         }
@@ -405,10 +406,8 @@ impl<'d> Context<'d> {
     /// The context node, read from its handle for the document `doc` this
     /// evaluate borrowed.
     fn focus_node<'e, D: Dom<'e>>(&self, doc: D) -> Option<D::Node> {
-        let p = self.node.get();
-        // SAFETY: `new` and `set_context_node` take only null or a node of this
-        // context's document, which `doc` is.
-        (!p.is_null()).then(|| unsafe { doc.node(p) })
+        let t = self.node.get();
+        (!t.is_null()).then(|| doc.resolve_token(t))
     }
 
     fn no_document(&self) -> Error {

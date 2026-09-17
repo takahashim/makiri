@@ -14,6 +14,7 @@ use core::ffi::c_void;
 
 use super::abi::*;
 use super::dom::*;
+use super::token::Token;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
 use crate::lexbor_abi::{self as lxb, LxbNode};
@@ -58,13 +59,14 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     type Attr = HtmlAttr<'d>;
 
     #[inline]
-    fn token(n: HtmlNode<'d>) -> *mut c_void {
-        n.as_raw() as *mut c_void
+    fn token(n: HtmlNode<'d>) -> Token {
+        Token::from_ptr(n.as_raw() as *mut c_void)
     }
     #[inline]
-    unsafe fn node(self, p: *mut c_void) -> HtmlNode<'d> {
-        debug_assert!(!p.is_null());
-        HtmlNode::from_raw(p as *mut LxbNode).unwrap_unchecked()
+    fn resolve_token(self, t: Token) -> HtmlNode<'d> {
+        // SAFETY: a token comes from `token` (a live node) or from the bridge,
+        // which checked the node's document; both are this document's.
+        unsafe { HtmlNode::from_raw(t.as_ptr() as *mut LxbNode) }.expect("a resolved token names a node")
     }
 
     #[inline]

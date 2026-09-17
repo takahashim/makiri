@@ -33,6 +33,7 @@
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::{Cell, RefCell};
 use core::ffi::{c_char, c_void};
+use crate::xpath::token::Token;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -123,7 +124,7 @@ pub(crate) fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Err
         XPathValue::NodeSet(set) => {
             let (rb, fill) = node_set_with_fill(document);
             for &n in set.as_slice() {
-                if let Err(e) = fill.push(n) {
+                if let Err(e) = fill.push(n.as_ptr()) {
                     refused = Some(e);
                     break;
                 }
@@ -287,11 +288,13 @@ pub(crate) fn context_for(rb_node: Value, document: Value) -> Result<Context<'st
             /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
              * document node for a Document receiver, else the node itself. */
             let cnode = if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
-                (*(xdoc as *mut crate::xml::model::Doc))
-                    .doc_node()
-                    .to_token() as *mut c_void
+                Token::from_ptr(
+                    (*(xdoc as *mut crate::xml::model::Doc))
+                        .doc_node()
+                        .to_token() as *mut c_void,
+                )
             } else {
-                xml_node_unwrap(rb_node)?
+                Token::from_ptr(xml_node_unwrap(rb_node)?)
             };
             let backend = Backend::Xml {
                 doc: xdoc as *const crate::xml::model::Document,
@@ -299,7 +302,7 @@ pub(crate) fn context_for(rb_node: Value, document: Value) -> Result<Context<'st
             return Ok(Context::new(backend, cnode));
         }
 
-        let node = html_node_unwrap(rb_node)?.as_ptr();
+        let node = Token::from_ptr(html_node_unwrap(rb_node)?.as_ptr());
         /* TypeError for a Document that is not HTML. */
         crate::glue::abi::html_doc_unwrap(document)?;
         /* Built up front, so an allocation failure raises here rather than on the
@@ -364,21 +367,19 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
     if rb_self.ctx.is_evaluating() {
         return Err(refused(ContextError::Evaluating, BUSY, BUSY));
     }
-    unsafe {
-        if keepalive_document(rb_node)?.as_raw() != ruby.get_inner(rb_self.document).as_raw() {
-            return Err(Error::new(
-                error_class(),
-                "context node must belong to the same document",
-            ));
-        }
-        rb_self.node.set(rb_node.into()); /* keepalive; marked above */
-        /* Same-document is verified, so rb_node is a node of the context's
-         * document. */
-        rb_self
-            .ctx
-            .set_context_node(node_raw(rb_node)?)
-            .map_err(|e| refused(e, BUSY, BUSY))?;
+    if keepalive_document(rb_node)?.as_raw() != ruby.get_inner(rb_self.document).as_raw() {
+        return Err(Error::new(
+            error_class(),
+            "context node must belong to the same document",
+        ));
     }
+    rb_self.node.set(rb_node.into()); /* keepalive; marked above */
+    /* Same-document is verified, so rb_node is a node of the context's
+     * document. */
+    rb_self
+        .ctx
+        .set_context_node(Token::from_ptr(node_raw(rb_node)?))
+        .map_err(|e| refused(e, BUSY, BUSY))?;
     Ok(rb_node)
 }
 
@@ -422,7 +423,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
             /* The bridge's document, which the evaluation holds. */
             let (set, fill) = node_set_with_fill(crate::bridge::ruby::value(b.document));
             for &n in ns.as_slice() {
-                fill.push(n)?;
+                fill.push(n.as_ptr())?;
             }
             set.as_raw()
         }
@@ -459,7 +460,7 @@ unsafe fn push_result_node(
         err.set("handler returned an unusable node");
         return false;
     };
-    if set.push_token(n, budget).is_err() {
+    if set.push_token(Token::from_ptr(n), budget).is_err() {
         err.set("out of memory building handler result");
         return false;
     }

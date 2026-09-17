@@ -11,18 +11,18 @@
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
+use super::token::Token;
 use crate::falloc::try_vec_with_capacity;
-use core::ffi::c_void;
 
 #[derive(Clone, Copy)]
 struct OrderBucket {
-    /// NULL is an empty slot.
-    node: *const c_void,
+    /// [`Token::null`] is an empty slot.
+    node: Token,
     ord: usize,
 }
 
 const EMPTY_BUCKET: OrderBucket = OrderBucket {
-    node: core::ptr::null(),
+    node: Token::null(),
     ord: 0,
 };
 
@@ -47,7 +47,7 @@ impl OrderIndex {
     }
 
     /// Insert `(node, ord)`, growing past a 3/4 load factor. False on OOM.
-    fn insert(&mut self, node: *const c_void, ord: usize) -> bool {
+    fn insert(&mut self, node: Token, ord: usize) -> bool {
         if self.buckets.is_empty() || self.count * 4 >= self.buckets.len() * 3 {
             let new_cap = if self.buckets.is_empty() {
                 256
@@ -75,7 +75,7 @@ impl OrderIndex {
     /// has a free slot.
     fn put(&mut self, b: OrderBucket) {
         let mask = self.buckets.len() - 1;
-        let mut j = (ptr_hash(b.node) as usize) & mask;
+        let mut j = (ptr_hash(b.node.as_ptr() as *const u8) as usize) & mask;
         loop {
             let slot = &mut self.buckets[j];
             if slot.node.is_null() {
@@ -91,12 +91,12 @@ impl OrderIndex {
     }
 
     #[inline]
-    fn lookup(&self, node: *const c_void) -> Option<usize> {
+    fn lookup(&self, node: Token) -> Option<usize> {
         if self.buckets.is_empty() {
             return None;
         }
         let mask = self.buckets.len() - 1;
-        let mut j = (ptr_hash(node) as usize) & mask;
+        let mut j = (ptr_hash(node.as_ptr() as *const u8) as usize) & mask;
         loop {
             let slot = &self.buckets[j];
             if slot.node.is_null() {

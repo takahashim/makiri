@@ -12,10 +12,10 @@
 //! with the calls inlined - and a backend that forgets an operation, or gives it
 //! the wrong type, does not build.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use super::abi::*;
-use core::ffi::c_void;
+use super::token::Token;
 
 /* ---- node types (shared numeric encoding) ----
  *
@@ -47,8 +47,10 @@ pub const NTYPE_NOTATION: u32 = 12;
 /// that time: without a handler no Ruby runs, and with one the document refuses
 /// every mutation until the evaluate returns (`glue::doc::DocumentEvaluation`).
 ///
-/// One entry is unsafe, and it is the boundary with the glue: reading an erased
-/// node token - the context node, a handler's answer - back as a node.
+/// The token boundary is safe on both sides: [`token`](Self::token) erases a
+/// node this backend just lent, and [`resolve_token`](Self::resolve_token) reads
+/// one back. A token is only ever made by this method or by the Ruby bridge
+/// (which has checked the node's document), so reading one back is sound.
 pub trait Dom<'d>: Copy {
     /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:
     /// `id()` is the empty node-set in XML (an ID is DTD-declared, and DTDs are
@@ -63,14 +65,14 @@ pub trait Dom<'d>: Copy {
     type Attr: Copy;
 
     /// The erased token a node-set stores for `n`.
-    fn token(n: Self::Node) -> *mut c_void;
+    fn token(n: Self::Node) -> Token;
 
     /// The node a non-null token names.
     ///
-    /// # Safety
-    /// `p` must be a token [`token`](Self::token) made for a node of this
+    /// A token comes from [`token`](Self::token) or from the Ruby bridge, which
+    /// checks the node's document first, so it always names a node of this
     /// document.
-    unsafe fn node(self, p: *mut c_void) -> Self::Node;
+    fn resolve_token(self, t: Token) -> Self::Node;
 
     /// The document node itself, for a walk rooted at the whole tree.
     fn document_node(self) -> Self::Node;
