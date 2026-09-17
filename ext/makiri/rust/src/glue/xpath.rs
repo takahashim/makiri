@@ -119,7 +119,7 @@ pub(crate) fn xpath_error(err: &XPathError) -> Error {
 pub(crate) fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
     /* A refused push cannot leave `protect` through `?`, so it is carried out. */
     let mut refused = None;
-    let converted = magnus::rb_sys::protect(|| match &v {
+    let converted = crate::bridge::ruby::protect_value(|| match &v {
         XPathValue::NodeSet(set) => {
             let rb = node_set_new(document).as_raw();
             for &n in set.as_slice() {
@@ -135,18 +135,15 @@ pub(crate) fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Err
         // SAFETY: the bytes are the value's own, and valid UTF-8 - the engine
         // builds a Text only from input the text contract has passed.
         XPathValue::String(t) => unsafe { ruby_str_from_utf8(t.as_slice()) },
-        // SAFETY: allocates a Float; nothing is borrowed.
-        XPathValue::Number(d) => unsafe { rb_sys::rb_float_new(*d) },
-        XPathValue::Boolean(true) => rb_sys::Qtrue as VALUE,
-        XPathValue::Boolean(false) => rb_sys::Qfalse as VALUE,
+        XPathValue::Number(d) => crate::bridge::ruby::float(*d).as_raw(),
+        XPathValue::Boolean(b) => crate::bridge::ruby::boolean(*b).as_raw(),
     });
     drop(v);
     let converted = converted?;
     if let Some(e) = refused {
         return Err(e.into());
     }
-    // SAFETY: whatever the conversion above built, which is live.
-    Ok(unsafe { Value::from_raw(converted) })
+    Ok(converted)
 }
 
 /* ------------------------------------------------------------------ */
@@ -703,22 +700,19 @@ unsafe fn handler_resolver(
         argv: [rb_sys::Qnil as VALUE; HANDLER_MAX_ARGS],
     };
 
-    let mut state: c_int = 0;
-    rb_sys::rb_protect(
-        Some(handler_call_body),
-        &mut state_of_call as *mut HandlerCall as VALUE,
-        &mut state,
-    );
     /* `out` owns whatever the handler produced, so every failure below frees
-     * it. */
-    if state != 0 {
-        let exc = rb_sys::rb_errinfo();
-        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
+     * it. The call runs under `protect`: the body builds the arguments and
+     * converts the result, and any of those can raise. */
+    let state_ptr = &mut state_of_call as *mut HandlerCall as VALUE;
+    let called = crate::bridge::ruby::protect_value(|| unsafe { handler_call_body(state_ptr) });
+    if let Err(e) = called {
         // c_char, not i8: it is signed on aarch64-darwin and UNSIGNED on
         // aarch64-linux, so spelling the element type concretely compiles on
         // one release platform and fails on another.
         let mut msg = [0 as c_char; 200];
-        ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
+        if let magnus::error::ErrorType::Exception(x) = e.error_type() {
+            ruby_exception_message(x.as_raw(), msg.as_mut_ptr(), msg.len());
+        }
         return Err(crate::err_setf!(
             err,
             XP_ERR_RUNTIME,

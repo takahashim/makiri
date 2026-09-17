@@ -23,7 +23,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # records it. The count is `unsafe` followed by `{`, `fn`, `impl`, `trait` or
 # `extern`, outside comment lines - the one definition, kept here.
 UNSAFE_ISLANDS = {
-  "bridge/ruby.rs" => 17,
+  "bridge/ruby.rs" => 18,
   "bridge/string.rs" => 22,
   "bridge/xml_decode.rs" => 7,
   "cbuf.rs" => 15,
@@ -43,7 +43,7 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 2,
   "falloc/raw.rs" => 4,
   "glue/abi.rs" => 1,
-  "lexbor/selectors.rs" => 21,
+  "lexbor/selectors.rs" => 20,
   "glue/doc.rs" => 26,
   "lexbor/fragment.rs" => 11,
   "glue/html_node/mod.rs" => 8,
@@ -59,7 +59,7 @@ UNSAFE_ISLANDS = {
   "glue/xml_node/ns.rs" => 4,
   "glue/xml_node/read.rs" => 21,
   "glue/xml_node/serialize.rs" => 3,
-  "glue/xpath.rs" => 25,
+  "glue/xpath.rs" => 24,
   "init.rs" => 7,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 6,
@@ -112,7 +112,7 @@ STATIC_MUT_COUNTS = {}.freeze
 # not counted, and neither are comment lines.
 RB_SYS_COUNTS = {
   "glue/abi.rs" => 1,
-  "lexbor/selectors.rs" => 5,
+  "lexbor/selectors.rs" => 2,
   "glue/doc.rs" => 6,
   "lexbor/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 1,
@@ -121,7 +121,7 @@ RB_SYS_COUNTS = {
   "glue/xml.rs" => 2,
   "glue/xml_node/mod.rs" => 1,
   "glue/xml_node/serialize.rs" => 2,
-  "glue/xpath.rs" => 24,
+  "glue/xpath.rs" => 17,
   "init.rs" => 4,
 }.freeze
 

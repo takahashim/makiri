@@ -265,6 +265,23 @@ pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
 }
 
+/// Run `f` under `rb_protect`, so a raise inside it comes back as `Err`.
+///
+/// `f` is the raw-building body; the VALUE it returns on success is handed
+/// back as a `Value`. A raise is a `longjmp`, which skips the Rust destructors
+/// in every frame it crosses - so `f` must own nothing a raise could leak, or
+/// the caller must accept the leak (the CSS and XPath result builders snapshot
+/// their `Vec` first and free it on the `Err` path).
+#[inline]
+pub fn protect_value<F>(f: F) -> Result<Value, Error>
+where
+    F: FnOnce() -> VALUE,
+{
+    // SAFETY: `protect` establishes the setjmp frame the raise unwinds to, and
+    // the VALUE it hands back on success is live.
+    protect(f).map(|raw| unsafe { Value::from_raw(raw) })
+}
+
 /// Allocate a zeroed `T`, fill it with `init`, wrap it as a `klass` object of
 /// data type `ty`, and only then let `store` write the VALUEs it holds.
 ///

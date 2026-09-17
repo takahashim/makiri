@@ -44,7 +44,7 @@ use core::ffi::{c_int, c_void};
 use std::collections::HashMap;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{method, prelude::*, Error, Exception, Ruby, Value};
+use magnus::{method, prelude::*, Error, Ruby, Value};
 use rb_sys::VALUE;
 
 use crate::glue::abi::{
@@ -518,7 +518,6 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
 
 /// `Node#css`: every matching descendant, in document order.
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
-    let ruby = Ruby::get_with(rb_self);
     let root = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
     let document = keepalive_document(rb_self)?;
 
@@ -559,28 +558,8 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         nodes: &ctx.nodes,
         refused: None,
     };
-    let mut state: c_int = 0;
-    unsafe {
-        rb_sys::rb_protect(
-            Some(fill_thunk),
-            &mut fill as *mut Fill as VALUE,
-            &mut state,
-        );
-    }
-    if state != 0 {
-        /* Take the in-flight exception, clear it, and hand it back as an Err.
-         * `ctx.nodes` then drops on the way out and magnus re-raises - the Rust
-         * form of the C's rb_ensure. */
-        let exc = unsafe {
-            let e = rb_sys::rb_errinfo();
-            rb_sys::rb_set_errinfo(ruby.qnil().as_raw());
-            Exception::from_value(Value::from_raw(e))
-        };
-        return Err(match exc {
-            Some(e) => Error::from(e),
-            None => Error::new(error_class(), "CSS result could not be built"),
-        });
-    }
+    let fill_ptr = &mut fill as *mut Fill as VALUE;
+    crate::bridge::ruby::protect_value(|| unsafe { fill_thunk(fill_ptr) })?;
     if let Some(e) = fill.refused.take() {
         return Err(e.into());
     }
