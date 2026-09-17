@@ -34,7 +34,7 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::XP_ERR_SYNTAX;
 
-use super::abi::error_class;
+use crate::bridge::lexbor::error_class;
 
 /* The arena ceiling comes from `crate::xml::model` rather than being restated
  * here: that module is the XML engine's own declaration of it. */
@@ -51,10 +51,9 @@ use crate::bridge::xpath::Cx as XPathContext;
 /// here, once in `css`); the fields matched, but nothing checked that.
 use crate::css::CssNs;
 
-use super::abi::{
-    keepalive_document, node_set_new, ruby_verified_text, verify_text, wrap_xml_node,
-    xml_node_unwrap,
-};
+use crate::bridge::lexbor::{keepalive_document, wrap_xml_node, xml_node_unwrap};
+use crate::bridge::node_set::node_set_new;
+use crate::bridge::string::{ruby_verified_text, verify_text};
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::init::{CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS};
 
@@ -68,14 +67,8 @@ fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
 }
 
-pub use crate::bridge::string::ruby_copy_bytes;
-pub use crate::bridge::xml_decode::xml_decode_input;
-pub use crate::bridge::lexbor::wrap_document;
 use crate::bridge::xpath::{context_for, parse_query, xpath_error};
 use crate::glue::xpath::{evaluate_query, query_result};
-pub use crate::xml::api::xml_doc_new;
-pub use crate::xml::api::xml_parse_ex;
-pub use crate::xml::api::xml_parse_fragment;
 
 /* ------------------------------------------------------------------ */
 /* parse                                                              */

@@ -68,7 +68,7 @@ UNSAFE_ISLANDS = {
 FORBID_FILES = %w[
   css/build.rs css/lower.rs cutf8.rs
   cutf8/verify.rs falloc/calloc.rs falloc/verify.rs
-  glue/abi.rs glue/doc.rs glue/html_node/mutate.rs glue/html_node/read.rs glue/node.rs glue/node_set.rs
+  glue/doc.rs glue/html_node/mutate.rs glue/html_node/read.rs glue/node.rs glue/node_set.rs
   glue/xpath.rs glue/xml_node/abi.rs
   glue/xml.rs glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
   xml/api.rs xml/arena.rs

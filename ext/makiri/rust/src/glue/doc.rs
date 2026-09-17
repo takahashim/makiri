@@ -16,19 +16,7 @@
 #![forbid(unsafe_code)]
 
 use magnus::{method, prelude::*, Error, Ruby, Value};
-pub use crate::bridge::lexbor::{
-    doc_parsed, doc_parsed_known, html_doc_known, html_doc_unwrap, keepalive_document,
-};
-
-pub use crate::bridge::doc::{
-    document_errors, document_quirks_mode, document_root, document_title, fragment_in,
-    fragment_shell_document, import_node, parse_document,
-};
-pub use crate::lexbor::adapter::cross_import::cross_xml_to_html;
-pub use crate::lexbor::adapter::post_parse::parse_html;
-pub use crate::glue::node::node_kind;
-pub use crate::glue::xml_node::mutate::xml_mut_check;
-pub use crate::xml::api::xml_doc_memsize;
+use crate::bridge::lexbor::keepalive_document;
 
 /// The doctype node type, generated (see lexbor_abi).
 const NODE_TYPE_DOCUMENT_TYPE: u32 = crate::lexbor::adapter::html::TYPE_DOCTYPE;

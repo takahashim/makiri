@@ -48,10 +48,10 @@ use magnus::{method, prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
 use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
-use crate::glue::abi::{
-    error_class, html_node_unwrap, keepalive_document, ruby_bytes_view, verify_text,
-    wrap_html_node,
+use crate::bridge::lexbor::{
+    error_class, html_node_unwrap, keepalive_document, wrap_html_node,
 };
+use crate::bridge::string::{ruby_bytes_view, verify_text};
 use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 use crate::lexbor::adapter::html::RawNode;
 use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
@@ -98,7 +98,7 @@ pub use crate::lexbor_abi::{
     lxb_css_selectors_parse, CssMemory, CssSelectors,
 };
 
-/// The parser is declared in `glue::abi` - see the note there.
+/// The parser is declared in `lexbor_abi` - see the note there.
 use crate::lexbor::ffi::{
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
     CssParser,

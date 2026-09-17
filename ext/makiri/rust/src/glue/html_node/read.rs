@@ -20,7 +20,9 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::ty;
 use super::{arg_node, wrap_node};
 use crate::bridge::lexbor::{dom_str, text_index_string};
-use crate::glue::abi::{is_kind_of, node_set_with_fill, ruby_verified_text};
+use crate::bridge::lexbor::is_kind_of;
+use crate::bridge::node_set::node_set_with_fill;
+use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 
@@ -582,7 +584,7 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
      * asking is how we avoid arg_node's TypeError below. */
     let comparable = is_kind_of(other, &CLASS_NODE)
         && !is_kind_of(
-            crate::glue::abi::keepalive_document(other)?,
+            crate::bridge::lexbor::keepalive_document(other)?,
             &CLASS_XML_DOCUMENT,
         );
     if !comparable {

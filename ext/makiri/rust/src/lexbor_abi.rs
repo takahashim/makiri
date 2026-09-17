@@ -306,8 +306,8 @@ pub mod consts {
  * ------------------------------------------------------------------ *
  *
  * Opaque, because neither caller reads a field - they hold pointers and call
- * accessors. Declared HERE rather than in `glue::abi`, where they started, so
- * the Ruby-free CSS lowering (`crate::css`) can reach them: that module is
+ * accessors. Declared HERE, the one place that hand-declares a Lexbor inline,
+ * so the Ruby-free CSS lowering (`crate::css`) can reach them: that module is
  * compiled once for both engine instances and must not pull in magnus. */
 
 /// `lxb_css_parser_t`.

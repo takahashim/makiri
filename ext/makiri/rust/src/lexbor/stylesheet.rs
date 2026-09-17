@@ -45,7 +45,7 @@ use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::consts as k;
 
 use crate::bridge::string::ruby_verified_text;
-use crate::glue::abi::error_class;
+use crate::bridge::lexbor::error_class;
 use crate::lexbor::ffi::{
     lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, CssParser,
 };

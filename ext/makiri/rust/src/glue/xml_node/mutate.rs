@@ -13,7 +13,7 @@ pub use crate::bridge::xml::{
     delete, import_node, lshift, remove, remove_attribute_ns, replace, set_attribute_ns,
     set_content, set_name, xml_mut_check,
 };
-pub use crate::glue::node::node_kind;
+pub use crate::bridge::lexbor::node_kind;
 pub use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 pub use crate::xml::api::xml_clone_node;
 pub use crate::xml::api::xml_copy_node;

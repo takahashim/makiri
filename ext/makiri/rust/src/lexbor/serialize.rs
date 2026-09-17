@@ -17,7 +17,8 @@ use core::ffi::c_void;
 
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
-use crate::glue::abi::{error_class, html_node_methods, html_node_unwrap};
+use crate::bridge::lexbor::{error_class, html_node_unwrap};
+use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::post_parse::lxb_document_bytes;
 use crate::lexbor::ffi::{
     LxbNode, LXB_HTML_SERIALIZE_OPT_UNDEF, LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK,
@@ -184,7 +185,7 @@ fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
 /// Called from `Init_makiri`, on the Ruby thread with the GVL held, after the
 /// classes and modules exist.
 pub fn init_serialize() {
-    let m = html_node_methods();
+    let m = MOD_HTML_NODE_METHODS.module();
     for name in ["to_html", "to_s", "outer_html"] {
         m.define_method(name, method!(to_html, -1))
             .expect("defining an HTML serializer method");

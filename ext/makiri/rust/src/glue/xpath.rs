@@ -14,8 +14,4 @@
 
 #![forbid(unsafe_code)]
 
-pub use crate::bridge::xpath::{
-    evaluate_query, init_xpath, query_result, ruby_exception_message, ruby_try_verified_text,
-    xpath_error,
-};
-pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
+pub use crate::bridge::xpath::{evaluate_query, init_xpath, query_result};

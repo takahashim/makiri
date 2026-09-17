@@ -9,13 +9,14 @@
 //! # Two functions here are the HTML node's front door
 //!
 //! [`wrap_html_node`] and [`html_node_unwrap`] are how every other glue
-//! module wraps and unwraps an HTML node. `glue::abi`'s `agree` module pins their
-//! signatures, so a change to either is a visible one.
+//! module wraps and unwraps an HTML node; they live in
+//! [`crate::bridge::lexbor`], the one seam that knows both the Ruby wrapper and
+//! the Lexbor handle.
 //!
 //! # Nothing here is declared twice
 //!
-//! Every Lexbor accessor comes from `glue::abi`, which re-exports the generated
-//! bindings and the hand-declared `_noi` twins. Allowlisting a name in build.rs
+//! Every Lexbor accessor comes from the `lexbor` layer, which re-exports the
+//! generated bindings and the hand-declared `_noi` twins. Allowlisting a name in build.rs
 //! and finding no binding is what identifies an `lxb_inline` function; eight of
 //! the eighteen readers this file needs turned out to be inline-only, and on
 //! macOS a hand-written declaration of one of those links to nothing and becomes
@@ -29,7 +30,7 @@ pub mod mutate;
 
 use magnus::{method, prelude::*, RClass};
 
-use super::abi::html_node_methods;
+use crate::init::MOD_HTML_NODE_METHODS;
 /* Only the mutation half registers on the Document class. */
 use crate::init::CLASS_HTML_DOCUMENT;
 
@@ -85,7 +86,7 @@ pub use crate::bridge::lexbor::{
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
 pub fn init_node() {
-    let m = html_node_methods();
+    let m = MOD_HTML_NODE_METHODS.module();
 
     m.define_method("name", method!(read::name, 0))
         .expect("#name");
@@ -199,7 +200,7 @@ pub fn init_node() {
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
 pub fn init_mutate() {
-    let m = html_node_methods();
+    let m = MOD_HTML_NODE_METHODS.module();
     let doc = RClass::from_value(CLASS_HTML_DOCUMENT.value()).expect("HTML::Document");
 
     m.define_method("add_child", method!(mutate::add_child, 1))
