@@ -14,3 +14,6 @@ pub mod serialize;
 /// HTML fragment parsing and import/fixup operations.
 #[cfg(feature = "ruby")]
 pub mod fragment;
+/// Selector traversal engine, including its Lexbor callbacks.
+#[cfg(feature = "ruby")]
+pub mod selectors;

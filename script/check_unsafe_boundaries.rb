@@ -43,7 +43,7 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 2,
   "falloc/raw.rs" => 4,
   "glue/abi.rs" => 2,
-  "glue/css.rs" => 21,
+  "lexbor/selectors.rs" => 21,
   "glue/doc.rs" => 26,
   "lexbor/fragment.rs" => 10,
   "glue/html_node/mod.rs" => 8,
@@ -112,7 +112,7 @@ STATIC_MUT_COUNTS = {}.freeze
 # not counted, and neither are comment lines.
 RB_SYS_COUNTS = {
   "glue/abi.rs" => 3,
-  "glue/css.rs" => 5,
+  "lexbor/selectors.rs" => 5,
   "glue/doc.rs" => 9,
   "lexbor/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 2,

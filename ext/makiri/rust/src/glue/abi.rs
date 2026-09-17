@@ -43,9 +43,8 @@ pub type LxbDoc = crate::lexbor::ffi::LxbDoc;
 
 /* Every Lexbor constant below comes from the generated bindings, none is
  * transcribed. The names are re-exported here rather than used through
- * `lexbor_abi` at the call sites only because these particular ones are spelled
- * this way throughout the glue; `lexbor_abi::consts` is where a NEW one goes,
- * and where these two are defined. */
+ * `lexbor::ffi` at the call sites only because these particular ones are
+ * spelled this way throughout the glue; the raw definitions stay there. */
 pub use crate::lexbor::ffi::{LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK};
 
 /* The node types the glue still names in Lexbor's own spelling. The values come
