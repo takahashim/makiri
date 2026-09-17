@@ -16,7 +16,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::dom_adapter::post_parse::{parse_html, Parsed};
+use makiri::lexbor::adapter::post_parse::{parse_html, Parsed};
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {

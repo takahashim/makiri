@@ -181,12 +181,17 @@ end
 errors = []
 
 # `lexbor::adapter` owns the typed DOM facade.  Keeping this explicit avoids a
-# second, gradually diverging compatibility boundary under the old name.
-legacy_adapter_refs = Dir.glob(File.join(RUST, "**", "*.rs")).select do |path|
-  File.binread(path).include?("crate::dom_adapter")
-end
+# second, gradually diverging compatibility boundary under the old name - and a
+# file that still names the old module does not build (the fuzz crate quietly
+# did not, because nothing else here looks outside `src/`). So this scans the
+# WHOLE crate, build.rs and fuzz/ included, with comments removed so a
+# doc-comment mention of the old path is not read as a reference.
+CRATE_ROOT = File.join(ROOT, "ext/makiri/rust")
+legacy_adapter_refs = Dir.glob(File.join(CRATE_ROOT, "**", "*.rs"))
+  .reject { |path| path.include?("/target/") }
+  .select { |path| comments_removed(File.binread(path)).match?(/\bdom_adapter\b/) }
 unless legacy_adapter_refs.empty?
-  paths = legacy_adapter_refs.map { |p| p.delete_prefix("#{RUST}/") }.sort
+  paths = legacy_adapter_refs.map { |p| p.delete_prefix("#{CRATE_ROOT}/") }.sort
   errors << "legacy dom_adapter references: #{paths.inspect}"
 end
 
