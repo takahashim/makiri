@@ -9,9 +9,9 @@
 //!
 //! A node from another document is ADOPTED, as the DOM says appendChild does.
 //! Lexbor's arenas own their nodes, so it cannot be relinked across them: it is
-//! copied here ([`adopt_copy`]) and released there ([`adopt_release`]), and the
-//! verb hands back the copy. The release happens only AFTER the insert has gone
-//! through, so a refused insert leaves the source document alone.
+//! copied and released in `bridge::lexbor`, and the verb hands back the copy.
+//! The release happens only AFTER the insert has gone through, so a refused
+//! insert leaves the source document alone.
 //!
 //! # Detach, never destroy
 //!
@@ -31,37 +31,13 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
-use super::{node_document, unwrap, wrap};
-use crate::lexbor::adapter::html::{
-    check_document_child_order, DocumentChildOrderError, HtmlDoc, HtmlNode, HtmlNodeMut, RawDoc,
-    RawNode, ScratchElement, NS_UNDEF,
-};
+use super::wrap;
+use crate::lexbor::adapter::html::{HtmlDoc, RawDoc, RawNode, ScratchElement, NS_UNDEF};
 use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text};
-
-/// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
-/// the fragment rule in one place.
-#[derive(Clone, Copy)]
-enum Insert {
-    Child,
-    Before,
-    After,
-}
-
-impl Insert {
-    #[inline]
-    fn put(self, anchor: HtmlNodeMut<'_>, node: HtmlNodeMut<'_>) {
-        match self {
-            Insert::Child => anchor.insert_child(node),
-            Insert::Before => anchor.insert_before(node),
-            Insert::After => anchor.insert_after(node),
-        }
-    }
-}
 
 pub use crate::bridge::string::ruby_verified_data;
 use crate::lexbor::fragment::{
-    html_import_deep, import_transient_fragment_children, run_fragment_parser, Emit,
-    FragmentContext,
+    import_transient_fragment_children, run_fragment_parser, Emit, FragmentContext,
 };
 
 /* ------------------------------------------------------------------ *
@@ -72,267 +48,10 @@ fn err(msg: &str) -> Error {
     Error::new(error_class(), msg.to_owned())
 }
 
-/// Drop the DOM and text indexes so the next query rebuilds them.
-unsafe fn invalidate(document: Value) {
-    if let Some(p) = crate::glue::doc::doc_parsed_known(document).as_mut() {
-        p.invalidate_indexes();
-    }
-}
-
-/// Every mutator unwraps `self` through here: a node the caller has frozen is
-/// immutable, so raise FrozenError rather than silently editing it, and a
-/// document an XPath handler is being evaluated over refuses to change. The
-/// readers use [`unwrap`] directly.
-fn unwrap_mutable(this: &super::HtmlSelf) -> Result<HtmlNodeMut<'_>, Error> {
-    crate::bridge::ruby::check_frozen(this.value)?;
-    crate::glue::doc::ensure_document_mutable(this.document)?;
-    // SAFETY: the two checks above are exactly what the type asks for - the
-    // receiver is not frozen, and no XPath evaluation is reading its document.
-    Ok(unsafe { HtmlNodeMut::assume_mutable(this.node()) })
-}
-
-/// An HTML node argument. Routes through the HTML unwrap so an XML node is
-/// rejected before its arena pointer reaches Lexbor.
-fn arg_node(v: Value) -> Result<HtmlNode<'static>, Error> {
-    let raw = unwrap(v)?;
-    // SAFETY: `unwrap` checked `v` is an HTML node, and the caller holds `v`
-    // for the length of the call, which keeps its document alive.
-    Ok(unsafe { raw.as_node() })
-}
-
-/// Copy `node` into `doc`, for a node that came from another document - this
-/// half of the DOM's adopt, or an error rather than a partial node.
-unsafe fn adopt_copy(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
-    let imp = html_import_deep(doc, RawNode::from(node))?;
-    // SAFETY: a node just imported into `doc`, which outlives this call.
-    Ok(imp.as_node())
-}
-
-/// The other half: take `node` out of the document it came from, so the whole
-/// thing reads as the move the DOM says appendChild performs.
-fn adopt_release(node: HtmlNodeMut<'_>) {
-    if node.node().node_type() == ty::FRAGMENT {
-        /* A fragment contributes its children; the DOM leaves a spliced one
-         * empty, so empty the source rather than detaching it. */
-        while let Some(c) = node.first_child() {
-            c.detach();
-        }
-    } else if node.parent().is_some() {
-        node.detach();
-    }
-}
-
-/// Validate that `rb_incoming` may be placed relative to `reference`, detach it
-/// from any current parent (move semantics), and return the node to actually
-/// insert.
-///
-/// For a node from another document that is its COPY, so the returned node is
-/// not always the one passed in and the caller must insert - and hand back -
-/// what this returns. The second element is the argument in that case, for
-/// [`inserted_result`] to release once the insert has gone through; holding the
-/// Ruby `Value` rather than the raw node also keeps the source document
-/// reachable until then.
-unsafe fn prepare_insert(
-    reference: HtmlNodeMut<'_>,
-    rb_incoming: Value,
-) -> Result<(HtmlNodeMut<'static>, Option<Value>), Error> {
-    let incoming = arg_node(rb_incoming)?;
-
-    if incoming.node_type() == ty::ATTRIBUTE {
-        return Err(err("an attribute node cannot be inserted into the tree"));
-    }
-    /* `incoming` must not be an inclusive ancestor of `reference`. */
-    let mut p = Some(reference.node());
-    while let Some(n) = p {
-        if n == incoming {
-            return Err(err("cannot insert a node into its own subtree"));
-        }
-        p = n.parent();
-    }
-    let doc = reference.node().owner_document_handle();
-    if doc.as_ptr() != incoming.owner_document_handle().as_ptr() {
-        /* Adopting takes the node out of the document it came from, so that
-         * document changes too - refuse before anything is copied. */
-        crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?)?;
-        let copy = adopt_copy(doc, incoming)?;
-        // SAFETY: a copy this call just made in `reference`'s document, which
-        // the caller cleared for editing.
-        return Ok((HtmlNodeMut::assume_mutable(copy), Some(rb_incoming)));
-    }
-    // SAFETY: same document as `reference`, which the caller cleared.
-    let incoming = HtmlNodeMut::assume_mutable(incoming);
-    if incoming.parent().is_some() {
-        incoming.detach();
-    }
-    Ok((incoming, None))
-}
-
-/// The value an insertion verb hands back: its argument, or - when the node was
-/// adopted - the node now in the tree, which is a different object. Finishing
-/// the adoption here keeps the release after the insert, where it belongs.
-unsafe fn inserted_result(
-    rb_self: Value,
-    rb_arg: Value,
-    inserted: HtmlNodeMut<'_>,
-    adopt_from: Option<Value>,
-) -> Result<Value, Error> {
-    match adopt_from {
-        None => Ok(rb_arg),
-        Some(src) => {
-            /* SAFETY: the source document was cleared for editing by
-             * `prepare_insert` before anything was copied out of it. */
-            adopt_release(HtmlNodeMut::assume_mutable(arg_node(src)?));
-            Ok(wrap(RawNode::from(inserted.node()), node_document(rb_self)?))
-        }
-    }
-}
-
-/// Validate WHATWG doctype ordering before links are changed.
-fn guard_doc_child_order(
-    parent: Option<HtmlNode<'_>>,
-    before: Option<HtmlNode<'_>>,
-    exclude: Option<HtmlNode<'_>>,
-    incoming: HtmlNode<'_>,
-) -> Result<(), Error> {
-    check_document_child_order(parent, before, exclude, incoming).map_err(|e| match e {
-        DocumentChildOrderError::DoctypeParent => {
-            err("a doctype node can only be a child of the document")
-        }
-        DocumentChildOrderError::DuplicateDoctype => err("the document already has a doctype"),
-        DocumentChildOrderError::DoctypeAfterElement | DocumentChildOrderError::ElementBeforeDoctype => {
-            err("a doctype must precede the document element")
-        }
-    })
-}
-
-/// Insert `node` relative to `anchor`, or - when `node` is a document fragment -
-/// splice its children there in order, leaving the fragment empty.
-///
-/// With `advance` (insert_after semantics) each spliced child becomes the anchor
-/// for the next, so document order is preserved; child/before splices keep a
-/// fixed anchor. The one place the fragment-vs-single-node rule lives.
-fn splice_or_insert<'d>(
-    mut anchor: HtmlNodeMut<'d>,
-    node: HtmlNodeMut<'d>,
-    insert: Insert,
-    advance: bool,
-) {
-    if node.node().node_type() != ty::FRAGMENT {
-        insert.put(anchor, node);
-        return;
-    }
-    while let Some(c) = node.first_child() {
-        c.detach();
-        insert.put(anchor, c);
-        if advance {
-            anchor = c; /* keep document order after the reference node */
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ *
- * tree mutation                                                      *
- * ------------------------------------------------------------------ */
-
-/// `node.add_child(child)` -> child. Appends as the last child; a document
-/// fragment contributes its children rather than itself.
-pub fn add_child(_ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    unsafe {
-        let parent = unwrap_mutable(&this)?;
-        guard_doc_child_order(Some(parent.node()), None, None, arg_node(rb_child)?)?;
-        let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
-        splice_or_insert(parent, ins, Insert::Child, false);
-        invalidate(this.document);
-        inserted_result(rb_self, rb_child, ins, adopt_from)
-    }
-}
-
-/// `node << child` -> node (chainable).
-pub fn lshift(ruby: &Ruby, this: super::HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    add_child(ruby, this, rb_child)?;
-    Ok(rb_self)
-}
-
-pub fn before(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    unsafe {
-        let reference = unwrap_mutable(&this)?;
-        let Some(parent) = reference.parent() else {
-            return Err(err("cannot add a sibling to a node with no parent"));
-        };
-        guard_doc_child_order(
-            Some(parent.node()),
-            Some(reference.node()),
-            None,
-            arg_node(rb_node)?,
-        )?;
-        let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
-        splice_or_insert(reference, ins, Insert::Before, false);
-        invalidate(this.document);
-        inserted_result(rb_self, rb_node, ins, adopt_from)
-    }
-}
-
-pub fn after(_ruby: &Ruby, this: super::HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    unsafe {
-        let reference = unwrap_mutable(&this)?;
-        let Some(parent) = reference.parent() else {
-            return Err(err("cannot add a sibling to a node with no parent"));
-        };
-        guard_doc_child_order(
-            Some(parent.node()),
-            reference.next().map(|n| n.node()),
-            None,
-            arg_node(rb_node)?,
-        )?;
-        let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
-        splice_or_insert(reference, ins, Insert::After, true);
-        invalidate(this.document);
-        inserted_result(rb_self, rb_node, ins, adopt_from)
-    }
-}
-
-/// `node.remove` / `node.unlink` -> node. Detaches from the tree; the node stays
-/// usable, because the arena owns it.
-pub fn remove(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    let rb_self = this.value;
-    unsafe {
-        let node = unwrap_mutable(&this)?;
-        if node.node().node_type() == ty::ATTRIBUTE {
-            return Err(err("use delete(name) to remove an attribute"));
-        }
-        if node.parent().is_some() {
-            node.detach();
-            invalidate(this.document);
-        }
-        Ok(rb_self)
-    }
-}
-
-/// `node.replace(other)` -> other. Puts `other` where `node` is, detaches node.
-pub fn replace(_ruby: &Ruby, this: super::HtmlSelf, rb_other: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    unsafe {
-        let reference = unwrap_mutable(&this)?;
-        let Some(parent) = reference.parent() else {
-            return Err(err("cannot replace a node with no parent"));
-        };
-        guard_doc_child_order(
-            Some(parent.node()),
-            Some(reference.node()),
-            Some(reference.node()),
-            arg_node(rb_other)?,
-        )?;
-        let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
-        splice_or_insert(reference, ins, Insert::Before, false);
-        reference.detach();
-        invalidate(this.document);
-        inserted_result(rb_self, rb_other, ins, adopt_from)
-    }
-}
+/* The structural mutators - insert/remove/replace, their adopt and fragment
+ * rules, and the doctype-order guard - live in the Ruby <-> Lexbor seam
+ * (`bridge::lexbor`); this module re-exports them for `init_mutate`. */
+pub use crate::bridge::lexbor::{add_child, after, before, lshift, remove, replace};
 
 /* ------------------------------------------------------------------ *
  * attribute mutation                                                 *
@@ -345,7 +64,7 @@ pub fn aset(
     rb_name: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+    let Some(el) = crate::bridge::lexbor::edit(&this)?.element_mut() else {
         return Err(err("cannot set an attribute on a non-element node"));
     };
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
@@ -357,7 +76,7 @@ pub fn aset(
         return Err(err("failed to set attribute"));
     }
     // SAFETY: `this.document` is the element's live Document.
-    unsafe { invalidate(this.document) };
+    crate::bridge::lexbor::invalidate_indexes(this.document);
     Ok(rb_value)
 }
 
@@ -374,7 +93,7 @@ pub fn set_attribute_ns(
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+    let Some(el) = crate::bridge::lexbor::edit(&this)?.element_mut() else {
         return Err(err("cannot set an attribute on a non-element node"));
     };
 
@@ -422,7 +141,7 @@ pub fn set_attribute_ns(
     }
 
     // SAFETY: `this.document` is the element's live Document.
-    unsafe { invalidate(this.document) };
+    crate::bridge::lexbor::invalidate_indexes(this.document);
     Ok(rb_value)
 }
 
@@ -437,7 +156,7 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+    let Some(el) = crate::bridge::lexbor::edit(&this)?.element_mut() else {
         return Ok(ruby.qnil().as_value());
     };
     let lv = ruby_verified_text(rb_local, c"attribute local name")?;
@@ -458,7 +177,7 @@ pub fn remove_attribute_ns(
     if let Some(attr) = found {
         el.attr_remove(attr);
         // SAFETY: `this.document` is the element's live Document.
-        unsafe { invalidate(this.document) };
+        crate::bridge::lexbor::invalidate_indexes(this.document);
     }
     Ok(ruby.qnil().as_value())
 }
@@ -469,7 +188,7 @@ pub fn remove_attribute_ns(
 /// new name so the document interns it, copy its name fields onto this node,
 /// then discard it.
 pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+    let Some(el) = crate::bridge::lexbor::edit(&this)?.element_mut() else {
         return Err(err("name= is only supported on elements"));
     };
     let nv = ruby_verified_text(rb_name, c"element name")?;
@@ -488,7 +207,7 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
      * persisted index would miss the element under its new name - a truncated,
      * wrong //newtag result. Drop the indexes like every other mutator. */
     // SAFETY: `this.document` is the element's live Document.
-    unsafe { invalidate(this.document) };
+    crate::bridge::lexbor::invalidate_indexes(this.document);
     Ok(rb_name)
 }
 
@@ -496,28 +215,28 @@ pub fn set_name(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<V
 /// this replaces all children with a single text node; for a character-data node
 /// it sets the data.
 pub fn set_content(_ruby: &Ruby, this: super::HtmlSelf, rb_text: Value) -> Result<Value, Error> {
-    let node = unwrap_mutable(&this)?;
+    let node = crate::bridge::lexbor::edit(&this)?;
     let tv = ruby_verified_data(rb_text, c"node content")?;
     /* SAFETY: the view is the caller's, live for this call. */
     if !node.set_text_content(unsafe { tv.bytes() }) {
         return Err(err("failed to set node content"));
     }
     // SAFETY: `this.document` is the node's live Document.
-    unsafe { invalidate(this.document) };
+    crate::bridge::lexbor::invalidate_indexes(this.document);
     Ok(rb_text)
 }
 
 /// `element.delete(name)` -> self. Removes the attribute if present.
 pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let Some(el) = unwrap_mutable(&this)?.element_mut() else {
+    let Some(el) = crate::bridge::lexbor::edit(&this)?.element_mut() else {
         return Ok(rb_self);
     };
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     /* SAFETY: the view is the caller's, live for this call. */
     unsafe { el.remove_attribute(nv.bytes()) };
     // SAFETY: `this.document` is the element's live Document.
-    unsafe { invalidate(this.document) };
+    crate::bridge::lexbor::invalidate_indexes(this.document);
     Ok(rb_self)
 }
 
@@ -557,7 +276,7 @@ unsafe fn parse_fragment_into(
 /// `element.inner_html = html` -> html. Replaces the element's children.
 pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(&this)?;
+        let node = crate::bridge::lexbor::edit(&this)?;
         if node.node().node_type() != ty::ELEMENT {
             return Err(err("inner_html= requires an element"));
         }
@@ -574,7 +293,7 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             node.node().owner_document_handle(),
             Emit::Append(RawNode::from(node.node())),
         )?;
-        invalidate(this.document);
+        crate::bridge::lexbor::invalidate_indexes(this.document);
         Ok(rb_html)
     }
 }
@@ -582,7 +301,7 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 /// `node.outer_html = html` -> html. Replaces the node itself with the parse.
 pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     unsafe {
-        let node = unwrap_mutable(&this)?;
+        let node = crate::bridge::lexbor::edit(&this)?;
         let parent = node.parent();
         if parent.is_none_or(|p| p.node().node_type() != ty::ELEMENT) {
             return Err(err("outer_html= requires a node with a parent element"));
@@ -597,7 +316,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
             Emit::Before(RawNode::from(node.node())),
         )?;
         node.detach();
-        invalidate(this.document);
+        crate::bridge::lexbor::invalidate_indexes(this.document);
         Ok(rb_html)
     }
 }

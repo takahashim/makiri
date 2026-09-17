@@ -16,7 +16,7 @@
 use core::ffi::{c_int, c_void};
 
 use magnus::rb_sys::AsRawValue;
-use magnus::{prelude::*, Error, Value};
+use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::ruby::{nil, typed_data_known_ref, typed_data_ref, value, DataType, VALUE};
 use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
@@ -28,10 +28,12 @@ use crate::init::{
     CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_TEXT, EXC_ERROR,
 };
 use crate::lexbor::adapter::html::{
-    HtmlNode, RawDoc, RawNode, TYPE_ATTRIBUTE, TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE,
-    TYPE_DOCUMENT, TYPE_ELEMENT, TYPE_FRAGMENT, TYPE_PI, TYPE_TEXT,
+    check_document_child_order, DocumentChildOrderError, HtmlNode, HtmlNodeMut, RawDoc, RawNode,
+    TYPE_ATTRIBUTE, TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE, TYPE_DOCUMENT, TYPE_ELEMENT,
+    TYPE_FRAGMENT, TYPE_PI, TYPE_TEXT,
 };
 use crate::lexbor::adapter::post_parse::Parsed;
+use crate::lexbor::fragment::html_import_deep;
 use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
 /* ------------------------------------------------------------------ *
@@ -541,4 +543,273 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
     let nd: &NodeData = typed_data_ref(rb_self, &XML_NODE_TYPE)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
+}
+
+/* ------------------------------------------------------------------ *
+ * structural mutation                                                *
+ * ------------------------------------------------------------------ */
+
+/// `Err(Makiri::Error)` while an evaluation with a handler is reading `rb_doc`.
+/// Every mutator checks this before it changes anything.
+pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
+    with_parsed_known(rb_doc, |p| {
+        if p.evaluating != 0 {
+            Err(Error::new(
+                EXC_ERROR.exception(),
+                "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+/// Drop the DOM and text indexes so the next query rebuilds them.
+pub fn invalidate_indexes(rb_doc: Value) {
+    with_parsed_known(rb_doc, |p| p.invalidate_indexes());
+}
+
+/// A mutable handle to the receiver, after the frozen and evaluation guards.
+///
+/// A node the caller has frozen is immutable (FrozenError), and a document an
+/// XPath handler is being evaluated over refuses to change.
+pub fn edit<'a>(this: &HtmlSelf) -> Result<HtmlNodeMut<'a>, Error> {
+    crate::bridge::ruby::check_frozen(this.value)?;
+    ensure_document_mutable(this.document)?;
+    // SAFETY: the checks above are exactly what the type asks for - the
+    // receiver is not frozen, and no XPath evaluation is reading its document.
+    Ok(unsafe { HtmlNodeMut::assume_mutable(this.raw().as_node()) })
+}
+
+/// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
+/// the fragment rule in one place.
+#[derive(Clone, Copy)]
+enum Insert {
+    Child,
+    Before,
+    After,
+}
+
+impl Insert {
+    #[inline]
+    fn put(self, anchor: HtmlNodeMut<'_>, node: HtmlNodeMut<'_>) {
+        match self {
+            Insert::Child => anchor.insert_child(node),
+            Insert::Before => anchor.insert_before(node),
+            Insert::After => anchor.insert_after(node),
+        }
+    }
+}
+
+fn err(msg: &str) -> Error {
+    Error::new(EXC_ERROR.exception(), msg.to_owned())
+}
+
+/// Copy `node` into `doc`, for a node that came from another document.
+fn adopt_copy(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
+    // SAFETY: `doc` is a live document and `node` its caller's live source.
+    let imp = unsafe { html_import_deep(doc, RawNode::from(node)) }?;
+    // SAFETY: a node just imported into `doc`, which outlives this call.
+    Ok(unsafe { imp.as_node() })
+}
+
+/// Take `node` out of the document it came from, so the whole thing reads as
+/// the move the DOM says appendChild performs.
+fn adopt_release(node: HtmlNodeMut<'_>) {
+    if node.node().node_type() == TYPE_FRAGMENT {
+        /* A fragment contributes its children; the DOM leaves a spliced one
+         * empty, so empty the source rather than detaching it. */
+        while let Some(c) = node.first_child() {
+            c.detach();
+        }
+    } else if node.parent().is_some() {
+        node.detach();
+    }
+}
+
+/// Validate that `rb_incoming` may be placed relative to `reference`, detach it
+/// from any current parent, and return the node to actually insert.
+fn prepare_insert(
+    reference: HtmlNodeMut<'_>,
+    rb_incoming: Value,
+) -> Result<(HtmlNodeMut<'static>, Option<Value>), Error> {
+    // SAFETY: `unwrap` checked `rb_incoming` is an HTML node, and the caller
+    // holds it, which keeps its document alive for the call.
+    let incoming = unsafe { unwrap(rb_incoming)?.as_node() };
+
+    if incoming.node_type() == TYPE_ATTRIBUTE {
+        return Err(err("an attribute node cannot be inserted into the tree"));
+    }
+    /* `incoming` must not be an inclusive ancestor of `reference`. */
+    let mut p = Some(reference.node());
+    while let Some(n) = p {
+        if n == incoming {
+            return Err(err("cannot insert a node into its own subtree"));
+        }
+        p = n.parent();
+    }
+    let doc = reference.node().owner_document_handle();
+    if doc.as_ptr() != incoming.owner_document_handle().as_ptr() {
+        /* Adopting takes the node out of the document it came from, so that
+         * document changes too - refuse before anything is copied. */
+        ensure_document_mutable(keepalive_document(rb_incoming)?)?;
+        let copy = adopt_copy(doc, incoming)?;
+        // SAFETY: a copy this call just made in `reference`'s document.
+        return Ok((unsafe { HtmlNodeMut::assume_mutable(copy) }, Some(rb_incoming)));
+    }
+    // SAFETY: same document as `reference`, which the caller cleared.
+    let incoming = unsafe { HtmlNodeMut::assume_mutable(incoming) };
+    if incoming.parent().is_some() {
+        incoming.detach();
+    }
+    Ok((incoming, None))
+}
+
+/// The value an insertion verb hands back: its argument, or - when the node was
+/// adopted - the node now in the tree.
+fn inserted_result(
+    rb_self: Value,
+    rb_arg: Value,
+    inserted: HtmlNodeMut<'_>,
+    adopt_from: Option<Value>,
+) -> Result<Value, Error> {
+    match adopt_from {
+        None => Ok(rb_arg),
+        Some(src) => {
+            /* SAFETY: the source document was cleared for editing by
+             * `prepare_insert` before anything was copied out of it. */
+            adopt_release(unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) });
+            Ok(wrap(RawNode::from(inserted.node()), keepalive_document(rb_self)?))
+        }
+    }
+}
+
+/// Validate WHATWG doctype ordering before links are changed.
+fn guard_doc_child_order(
+    parent: Option<HtmlNode<'_>>,
+    before: Option<HtmlNode<'_>>,
+    exclude: Option<HtmlNode<'_>>,
+    incoming: HtmlNode<'_>,
+) -> Result<(), Error> {
+    check_document_child_order(parent, before, exclude, incoming).map_err(|e| match e {
+        DocumentChildOrderError::DoctypeParent => {
+            err("a doctype node can only be a child of the document")
+        }
+        DocumentChildOrderError::DuplicateDoctype => err("the document already has a doctype"),
+        DocumentChildOrderError::DoctypeAfterElement
+        | DocumentChildOrderError::ElementBeforeDoctype => {
+            err("a doctype must precede the document element")
+        }
+    })
+}
+
+/// Insert `node` relative to `anchor`, or - when `node` is a document fragment -
+/// splice its children there in order.
+fn splice_or_insert<'d>(
+    mut anchor: HtmlNodeMut<'d>,
+    node: HtmlNodeMut<'d>,
+    insert: Insert,
+    advance: bool,
+) {
+    if node.node().node_type() != TYPE_FRAGMENT {
+        insert.put(anchor, node);
+        return;
+    }
+    while let Some(c) = node.first_child() {
+        c.detach();
+        insert.put(anchor, c);
+        if advance {
+            anchor = c; /* keep document order after the reference node */
+        }
+    }
+}
+
+/// `node.add_child(child)` -> child.
+pub fn add_child(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    let parent = edit(&this)?;
+    guard_doc_child_order(Some(parent.node()), None, None, arg_node(&rb_child)?)?;
+    let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
+    splice_or_insert(parent, ins, Insert::Child, false);
+    invalidate_indexes(this.document);
+    inserted_result(rb_self, rb_child, ins, adopt_from)
+}
+
+/// `node << child` -> node (chainable).
+pub fn lshift(ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    add_child(ruby, this, rb_child)?;
+    Ok(rb_self)
+}
+
+/// `node.add_previous_sibling(node)` / `before` -> node.
+pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    let reference = edit(&this)?;
+    let Some(parent) = reference.parent() else {
+        return Err(err("cannot add a sibling to a node with no parent"));
+    };
+    guard_doc_child_order(
+        Some(parent.node()),
+        Some(reference.node()),
+        None,
+        arg_node(&rb_node)?,
+    )?;
+    let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
+    splice_or_insert(reference, ins, Insert::Before, false);
+    invalidate_indexes(this.document);
+    inserted_result(rb_self, rb_node, ins, adopt_from)
+}
+
+/// `node.add_next_sibling(node)` / `after` -> node.
+pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    let reference = edit(&this)?;
+    let Some(parent) = reference.parent() else {
+        return Err(err("cannot add a sibling to a node with no parent"));
+    };
+    guard_doc_child_order(
+        Some(parent.node()),
+        reference.next().map(|n| n.node()),
+        None,
+        arg_node(&rb_node)?,
+    )?;
+    let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
+    splice_or_insert(reference, ins, Insert::After, true);
+    invalidate_indexes(this.document);
+    inserted_result(rb_self, rb_node, ins, adopt_from)
+}
+
+/// `node.remove` / `node.unlink` -> node.
+pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
+    let rb_self = this.value;
+    let node = edit(&this)?;
+    if node.node().node_type() == TYPE_ATTRIBUTE {
+        return Err(err("use delete(name) to remove an attribute"));
+    }
+    if node.parent().is_some() {
+        node.detach();
+        invalidate_indexes(this.document);
+    }
+    Ok(rb_self)
+}
+
+/// `node.replace(other)` -> other.
+pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    let reference = edit(&this)?;
+    let Some(parent) = reference.parent() else {
+        return Err(err("cannot replace a node with no parent"));
+    };
+    guard_doc_child_order(
+        Some(parent.node()),
+        Some(reference.node()),
+        Some(reference.node()),
+        arg_node(&rb_other)?,
+    )?;
+    let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
+    splice_or_insert(reference, ins, Insert::Before, false);
+    reference.detach();
+    invalidate_indexes(this.document);
+    inserted_result(rb_self, rb_other, ins, adopt_from)
 }
