@@ -40,7 +40,7 @@ use magnus::{
 use rb_sys::VALUE;
 
 use super::abi::{
-    error_class, keepalive_document, node_raw, typed_data_unprotected, wrap_html_node,
+    error_class, is_kind_of, keepalive_document, node_raw, typed_data_unprotected, wrap_html_node,
     wrap_xml_node,
 };
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
@@ -413,7 +413,7 @@ fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> 
 }
 
 fn each(ruby: &Ruby, rb_self: &NodeSet) -> Result<Value, Error> {
-    let this = unsafe { Value::from_raw(rb_self_value(rb_self)) };
+    let this = rb_self_value(rb_self);
     if !ruby.block_given() {
         return Ok(this.enumeratorize("each", ()).as_value());
     }
@@ -428,14 +428,14 @@ fn each(ruby: &Ruby, rb_self: &NodeSet) -> Result<Value, Error> {
     Ok(this)
 }
 
-/// The receiver as a `VALUE`.
+/// The receiver as a `Value`.
 ///
 /// magnus hands methods a `&NodeSet`, not the object; `each` needs the object
 /// itself both to return and to enumeratorize. The reference points into the
 /// wrapped data, and `rb_typeddata_...` has no inverse, so the object is
 /// recovered from the frame's receiver.
-unsafe fn rb_self_value(_s: &NodeSet) -> VALUE {
-    rb_sys::rb_current_receiver()
+fn rb_self_value(_s: &NodeSet) -> Value {
+    crate::bridge::ruby::current_receiver().expect("a method invocation has a receiver")
 }
 
 fn dup(ruby: &Ruby, rb_self: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
@@ -669,21 +669,16 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let (ctx,) = a.required;
     let (list,) = a.optional;
 
-    let doc_raw = unsafe {
-        if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_DOCUMENT.raw()) == rb_sys::Qtrue as VALUE {
-            ctx.as_raw()
-        } else if rb_sys::rb_obj_is_kind_of(ctx.as_raw(), CLASS_NODE.raw())
-            == rb_sys::Qtrue as VALUE
-        {
-            keepalive_document(ctx)?.as_raw()
-        } else {
-            return Err(Error::new(
-                ruby.exception_type_error(),
-                "expected a Makiri::Document or Node as the first argument",
-            ));
-        }
+    let document = if is_kind_of(ctx, &CLASS_DOCUMENT) {
+        ctx
+    } else if is_kind_of(ctx, &CLASS_NODE) {
+        keepalive_document(ctx)?
+    } else {
+        return Err(Error::new(
+            ruby.exception_type_error(),
+            "expected a Makiri::Document or Node as the first argument",
+        ));
     };
-    let document = unsafe { Value::from_raw(doc_raw) };
 
     let (set, s) = new_result(document)?;
     let Some(list) = list.filter(|v| !v.is_nil()) else {
@@ -698,11 +693,9 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
     let mut w = s.write()?;
     for item in arr.into_iter() {
-        let ok = unsafe {
-            rb_sys::rb_obj_is_kind_of(item.as_raw(), CLASS_NODE.raw()) == rb_sys::Qtrue as VALUE
-                && keepalive_document(item)?.as_raw() == doc_raw
-        };
-        if !ok {
+        if !is_kind_of(item, &CLASS_NODE)
+            || !crate::bridge::ruby::same_value(keepalive_document(item)?, document)
+        {
             return Err(Error::new(
                 ruby.exception_arg_error(),
                 "every node must be a Makiri node belonging to the given document",

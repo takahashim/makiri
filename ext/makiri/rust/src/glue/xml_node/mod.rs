@@ -39,7 +39,7 @@ use crate::init::{CLASS_DOCUMENT, CLASS_NODE_SET};
 pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE {
     let id = NodeId::from_token(node as usize);
     if id.is_invalid() {
-        return rb_sys::Qnil as VALUE;
+        return crate::bridge::ruby::nil().as_raw();
     }
     let xdoc = doc_of(Value::from_raw(document));
     /* An HTML Document has no arena: refuse it rather than read through null. */

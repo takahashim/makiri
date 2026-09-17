@@ -218,7 +218,7 @@ pub unsafe extern "C" fn wrap_document(
         klass,
         ty,
         |d| d.parsed = parsed,
-        |d| d.errors = rb_sys::rb_ary_new(),
+        |d| d.errors = crate::bridge::ruby::array_new().as_raw(),
     )
 }
 
@@ -269,7 +269,7 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
             HTML_DOC_TYPE.as_ptr(),
             |data| data.parsed = core::ptr::null_mut(),
             |data| {
-                data.errors = rb_sys::rb_ary_new();
+                data.errors = crate::bridge::ruby::array_new().as_raw();
                 d = data;
             },
         );
@@ -340,7 +340,7 @@ fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
         let doc = html_doc_known(self_).as_doc().as_raw();
-        Value::from_raw(rb_sys::rb_int2inum((*doc).compat_mode as isize))
+        ruby.integer_from_i64((*doc).compat_mode as i64).as_value()
     }
 }
 

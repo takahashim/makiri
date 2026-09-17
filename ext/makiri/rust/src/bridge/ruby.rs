@@ -13,7 +13,7 @@
 use core::ffi::{c_long, c_void};
 
 use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
-use magnus::{Error, RString, Value};
+use magnus::{prelude::*, Error, RString, Ruby, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `rb_data_type_t` that can live in a `static`.
@@ -187,6 +187,82 @@ pub unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(v: VALUE) -> &'a 
      * cast is what the repr promises; the accessor for it is crate-private. */
     let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
     &*(rb_sys::rb_check_typeddata(v, dt) as *const T)
+}
+
+/* ------------------------------------------------------------------ *
+ * Value-level helpers                                                *
+ * ------------------------------------------------------------------ */
+
+/* The singletons and constructors the glue would otherwise spell as rb_sys
+ * constants and raw calls.
+ *
+ * `nil` and `boolean` are immortal singletons and cannot raise.
+ *
+ * The constructors DO allocate through Ruby - `integer` for a value that is
+ * not a fixnum, `float` and `array_new` always - so an out-of-memory there
+ * RAISES `NoMemoryError`, which unwinds with `longjmp` and not as an `Err`.
+ * This is the same OOM the raw `rb_float_new`/`rb_int2inum`/`rb_ary_new` they
+ * replace could raise, so no call site changed; it is also why they are not
+ * protected yet. A caller that holds a live Rust destructor across one must
+ * run the whole conversion under `protect` (as `glue::xpath::value_to_ruby`
+ * does), and turning them into `Result`-returning helpers is part of moving
+ * the protected calls behind the bridge. */
+
+/// `nil`, as a `Value`.
+#[inline]
+pub fn nil() -> Value {
+    // SAFETY: every caller is a Ruby method, entered with the GVL.
+    unsafe { Ruby::get_unchecked() }.qnil().as_value()
+}
+
+/// `true`/`false`, as a `Value`.
+#[inline]
+pub fn boolean(b: bool) -> Value {
+    // SAFETY: as `nil`.
+    let ruby = unsafe { Ruby::get_unchecked() };
+    if b {
+        ruby.qtrue().as_value()
+    } else {
+        ruby.qfalse().as_value()
+    }
+}
+
+/// A fresh Float.
+#[inline]
+pub fn float(n: f64) -> Value {
+    // SAFETY: every caller is a Ruby method, entered with the GVL.
+    unsafe { Ruby::get_unchecked() }.float_from_f64(n).as_value()
+}
+
+/// An Integer from an `i64`.
+#[inline]
+pub fn integer(n: i64) -> Value {
+    // SAFETY: as `float`.
+    unsafe { Ruby::get_unchecked() }.integer_from_i64(n).as_value()
+}
+
+/// A fresh empty Array.
+#[inline]
+pub fn array_new() -> Value {
+    // SAFETY: as `float`.
+    unsafe { Ruby::get_unchecked() }.ary_new().as_value()
+}
+
+/// The frame's current receiver.
+///
+/// magnus hands a method a `&T`, not the object; the registrars that return
+/// `self` recover it from the frame. `Err` only when Ruby has no current
+/// receiver, which a method invocation always has.
+#[inline]
+pub fn current_receiver() -> Result<Value, Error> {
+    // SAFETY: as `float`.
+    unsafe { Ruby::get_unchecked() }.current_receiver::<Value>()
+}
+
+/// VALUE identity, for the several sites that compare two references.
+#[inline]
+pub fn same_value(a: Value, b: Value) -> bool {
+    a.as_raw() == b.as_raw()
 }
 
 /// Allocate a zeroed `T`, fill it with `init`, wrap it as a `klass` object of

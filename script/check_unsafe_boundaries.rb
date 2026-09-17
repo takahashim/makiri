@@ -23,7 +23,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # records it. The count is `unsafe` followed by `{`, `fn`, `impl`, `trait` or
 # `extern`, outside comment lines - the one definition, kept here.
 UNSAFE_ISLANDS = {
-  "bridge/ruby.rs" => 11,
+  "bridge/ruby.rs" => 17,
   "bridge/string.rs" => 22,
   "bridge/xml_decode.rs" => 7,
   "cbuf.rs" => 15,
@@ -42,7 +42,7 @@ UNSAFE_ISLANDS = {
   "falloc/inject.rs" => 3,
   "falloc/mod.rs" => 2,
   "falloc/raw.rs" => 4,
-  "glue/abi.rs" => 2,
+  "glue/abi.rs" => 1,
   "lexbor/selectors.rs" => 21,
   "glue/doc.rs" => 26,
   "lexbor/fragment.rs" => 11,
@@ -51,7 +51,7 @@ UNSAFE_ISLANDS = {
   "glue/html_node/read.rs" => 19,
   "lexbor/stylesheet.rs" => 11,
   "glue/node.rs" => 7,
-  "glue/node_set.rs" => 16,
+  "glue/node_set.rs" => 11,
   "lexbor/serialize.rs" => 9,
   "glue/xml.rs" => 14,
   "glue/xml_node/mod.rs" => 8,
@@ -111,15 +111,15 @@ STATIC_MUT_COUNTS = {}.freeze
 # calls means lowering the count. `magnus::rb_sys` is magnus's own module and is
 # not counted, and neither are comment lines.
 RB_SYS_COUNTS = {
-  "glue/abi.rs" => 3,
+  "glue/abi.rs" => 1,
   "lexbor/selectors.rs" => 5,
-  "glue/doc.rs" => 9,
+  "glue/doc.rs" => 6,
   "lexbor/fragment.rs" => 1,
-  "glue/html_node/mod.rs" => 2,
+  "glue/html_node/mod.rs" => 1,
   "glue/node.rs" => 3,
-  "glue/node_set.rs" => 13,
+  "glue/node_set.rs" => 6,
   "glue/xml.rs" => 2,
-  "glue/xml_node/mod.rs" => 2,
+  "glue/xml_node/mod.rs" => 1,
   "glue/xml_node/serialize.rs" => 2,
   "glue/xpath.rs" => 24,
   "init.rs" => 4,

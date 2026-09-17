@@ -10,8 +10,7 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::AsRawValue;
-use magnus::{ExceptionClass, RModule, Value};
+use magnus::{prelude::*, ExceptionClass, RModule, Value};
 use rb_sys::VALUE;
 
 use crate::init::{RbConst, EXC_ERROR, MOD_HTML_NODE_METHODS};
@@ -143,9 +142,7 @@ pub fn html_node_methods() -> RModule {
 
 /// Is `v` an instance of `klass`?
 pub fn is_kind_of(v: Value, klass: &RbConst) -> bool {
-    // SAFETY: `v` is a live value and `klass` one of `init`'s classes, which
-    // `rb_obj_is_kind_of` accepts without raising.
-    unsafe { rb_sys::rb_obj_is_kind_of(v.as_raw(), klass.raw()) == rb_sys::Qtrue as VALUE }
+    v.is_kind_of(klass.class())
 }
 
 pub use crate::bridge::ruby::typed_data_unprotected;

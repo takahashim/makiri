@@ -211,7 +211,7 @@ pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, magnus::Error> {
 pub unsafe fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
     match node {
         Some(n) => wrap(RawNode::from(n), document),
-        None => Value::from_raw(rb_sys::Qnil as VALUE),
+        None => crate::bridge::ruby::nil(),
     }
 }
 
