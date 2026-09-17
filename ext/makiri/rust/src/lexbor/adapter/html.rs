@@ -602,7 +602,7 @@ impl<'doc> HtmlDoc<'doc> {
     /// The copy is detached and belongs here, which is what [`BuildingNode`]
     /// says. `deep` carries the subtree - but NOT a `<template>`'s separate
     /// contents fragment, which Lexbor's importNode omits; the caller fixes
-    /// that up (see `glue::fragment::import_with_fixup`).
+    /// that up (see `lexbor::fragment::import_with_fixup`).
     pub fn import_node(self, src: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'doc>> {
         // SAFETY: two live documents' nodes; Lexbor allocates the copy in this
         // one and leaves the source alone.

@@ -6,7 +6,7 @@
 //!
 //! Every Lexbor type here stays opaque: the parser's status and the two setters
 //! this needs are `lxb_inline`, and Lexbor publishes a `_noi` twin of each for
-//! exactly this case. So, as in `glue::serialize`, there is no vendored layout
+//! exactly this case. So, as in `lexbor::serialize`, there is no vendored layout
 //! to cross-check.
 //!
 //! # The engine is built once and reused

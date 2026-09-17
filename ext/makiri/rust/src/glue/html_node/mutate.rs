@@ -59,11 +59,10 @@ impl Insert {
 }
 
 pub use crate::bridge::string::ruby_verified_data;
-pub use crate::glue::fragment::html_import_deep;
-pub use crate::glue::fragment::import_fragment_children;
-pub use crate::glue::fragment::import_transient_fragment_children;
-pub use crate::glue::fragment::run_fragment_parser;
-pub use crate::glue::fragment::{Emit, FragmentContext};
+use crate::lexbor::fragment::{
+    html_import_deep, import_transient_fragment_children, run_fragment_parser, Emit,
+    FragmentContext,
+};
 
 /* ------------------------------------------------------------------ *
  * shared helpers                                                     *
@@ -531,7 +530,7 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
 ///
 /// UTF-8 decoding (browser-compatible: invalid bytes become U+FFFD) and the
 /// import + `<template>`-content fixup are shared with the DocumentFragment
-/// paths in `glue::fragment`.
+/// paths in `lexbor::fragment`.
 unsafe fn parse_fragment_into(
     context_el: RawNode,
     rb_html: Value,
