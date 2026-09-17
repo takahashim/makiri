@@ -269,3 +269,42 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     // SAFETY: `clone` is a detached node of `document`'s arena.
     Ok(wrap_html_node(clone, document))
 }
+
+/* ------------------------------------------------------------------ *
+ * the evaluation guard                                                *
+ * ------------------------------------------------------------------ */
+
+/// Marks a document as read by an XPath evaluation that can run Ruby - one with
+/// a handler - for as long as it lives. Nested evaluations stack.
+///
+/// The engine borrows names, attribute values and index slices out of the
+/// document for the whole walk, and a handler runs arbitrary Ruby in the middle
+/// of it. Lexbor frees an attribute's old value when a new one is set
+/// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
+/// that edited the same document could leave the evaluator reading freed
+/// memory. Every mutator checks [`crate::bridge::lexbor::ensure_document_mutable`]
+/// first, so that borrow is never invalidated under a suspended walk.
+pub struct DocumentEvaluation(
+    /// The Document the count belongs to. Holding it is what keeps the parsed
+    /// handle valid: a guard lives on the machine stack, which Ruby's collector
+    /// scans, so the Document cannot be collected while one is alive.
+    Value,
+);
+
+impl DocumentEvaluation {
+    pub fn enter(rb_doc: Value) -> Result<Self, Error> {
+        crate::bridge::lexbor::with_parsed(rb_doc, |p| p.evaluating += 1)?;
+        Ok(DocumentEvaluation(rb_doc))
+    }
+}
+
+impl Drop for DocumentEvaluation {
+    fn drop(&mut self) {
+        crate::bridge::lexbor::with_parsed_known(self.0, |p| p.evaluating -= 1);
+        /* Read the Document here, so the guard demonstrably holds it: the field
+         * is there to keep it reachable, and a field nothing reads is one the
+         * compiler is free to treat as absent. */
+        core::hint::black_box(self.0);
+    }
+}
+
