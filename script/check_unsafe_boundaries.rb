@@ -28,7 +28,7 @@ UNSAFE_ISLANDS = {
   "bridge/lexbor.rs" => 53,
   "bridge/node_set.rs" => 11,
   "bridge/ruby.rs" => 27,
-  "bridge/string.rs" => 22,
+  "bridge/string.rs" => 25,
   "bridge/typed.rs" => 8,
   "bridge/xml.rs" => 36,
   "bridge/xml_decode.rs" => 7,
@@ -55,7 +55,6 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet.rs" => 10,
   "lexbor/serialize.rs" => 8,
   "glue/xml.rs" => 12,
-  "glue/xml_node/serialize.rs" => 2,
   "glue/xpath.rs" => 18,
   "init.rs" => 6,
   "lexbor_abi.rs" => 5,
@@ -80,7 +79,7 @@ FORBID_FILES = %w[
   css/build.rs css/lower.rs cutf8.rs
   cutf8/verify.rs falloc/calloc.rs falloc/verify.rs
   glue/html_node/mutate.rs glue/node.rs glue/node_set.rs glue/xml_node/abi.rs
-  glue/xml_node/mutate.rs glue/xml_node/read.rs
+  glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
   xml/api.rs xml/arena.rs
   xml/chars.rs xml/index.rs xml/mod.rs
   xml/model.rs xml/mutate.rs xml/parse.rs

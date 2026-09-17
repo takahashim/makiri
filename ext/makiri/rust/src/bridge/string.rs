@@ -342,6 +342,15 @@ pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBuf> {
     OwnedBuf::copy_from(v.bytes())
 }
 
+/// [`ruby_copy_bytes`] as a safe call: `s` is a live Ruby String, and an
+/// allocation failure is an `Err` rather than a silent `None` - a caller that
+/// needed the bytes must not carry on without them.
+pub fn ruby_string_bytes(s: Value) -> Result<OwnedBuf, Error> {
+    // SAFETY: `s` is a live Ruby String.
+    unsafe { ruby_copy_bytes(s.as_raw()) }
+        .ok_or_else(|| Error::new(error_class(), "out of memory reading a Ruby string"))
+}
+
 /* ---- encoding ---- */
 
 /// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
@@ -355,14 +364,29 @@ pub fn is_utf8_or_usascii(enc: *mut rb_sys::rb_encoding) -> bool {
     unsafe { enc == rb_sys::rb_utf8_encoding() || enc == rb_sys::rb_usascii_encoding() }
 }
 
-pub fn to_encoding(v: Value) -> Result<*mut rb_sys::rb_encoding, Error> {
+/// A Ruby encoding resolved from a name or an `Encoding` object.
+///
+/// Opaque so callers never hold the raw `rb_encoding*`. Ruby's encodings are
+/// process-lifetime objects, so a value of this type stays valid.
+#[derive(Clone, Copy)]
+pub struct Encoding(*mut rb_sys::rb_encoding);
+
+impl Encoding {
+    /// Whether text that is already UTF-8/US-ASCII needs hex-character-reference
+    /// transcoding to this encoding (that is, it is something else).
+    pub fn needs_transcode(self) -> bool {
+        !is_utf8_or_usascii(self.0)
+    }
+}
+
+pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
     protect(|| unsafe {
         enc = rb_sys::rb_to_encoding(v.as_raw());
         rb_sys::Qnil as VALUE
     })?;
-    Ok(enc)
+    Ok(Encoding(enc))
 }
 
 /// `str` transcoded to `enc`, a character the target cannot represent becoming a
@@ -385,6 +409,15 @@ pub unsafe fn str_encode_charref(
             rb_sys::Qnil as VALUE,
         )
     })
+}
+
+/// [`str_encode_charref`] with both contracts discharged: `str` is a live
+/// String and `enc` a live Ruby encoding (one from [`to_encoding`]).
+pub fn str_encode_charref_value(str: Value, enc: Encoding) -> Result<Value, Error> {
+    // SAFETY: the contracts above.
+    let raw = unsafe { str_encode_charref(str.as_raw(), enc.0)? };
+    // SAFETY: `rb_str_encode` returns a live String value.
+    Ok(unsafe { crate::bridge::ruby::value(raw) })
 }
 
 /// A UTF-8 String for `str`, honouring its declared encoding so the content
