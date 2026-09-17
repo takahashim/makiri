@@ -247,15 +247,15 @@ impl NodeSet {
 /// kind. This is the ONLY place a stored pointer is cast back to a typed one,
 /// and `doc_is_xml` is what justifies the cast.
 unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
-    let raw = if doc_is_xml {
-        wrap_xml_node(node, document.as_raw())
+    if doc_is_xml {
+        // SAFETY: `document` is the set's fixed XML document.
+        unsafe { crate::bridge::ruby::value(wrap_xml_node(node, document.as_raw())) }
     } else {
         match RawNode::from_ptr(node) {
-            Some(n) => wrap_html_node(n, document.as_raw()),
-            None => magnus::Ruby::get_unchecked().qnil().as_raw(),
+            Some(n) => wrap_html_node(n, document),
+            None => crate::bridge::ruby::nil(),
         }
-    };
-    crate::bridge::ruby::value(raw)
+    }
 }
 
 /// `Makiri::NodeSet`, as created by Init_makiri.

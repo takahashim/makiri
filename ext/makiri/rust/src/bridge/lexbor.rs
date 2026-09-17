@@ -18,10 +18,17 @@ use core::ffi::{c_int, c_void};
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Value};
 
-use crate::bridge::ruby::{typed_data_known_ref, typed_data_ref, value, DataType, VALUE};
+use crate::bridge::ruby::{nil, typed_data_known_ref, typed_data_ref, value, DataType, VALUE};
 use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
-use crate::init::CLASS_DOCUMENT;
-use crate::lexbor::adapter::html::RawDoc;
+use crate::init::{
+    CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
+    CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
+    CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
+};
+use crate::lexbor::adapter::html::{
+    HtmlNode, RawDoc, RawNode, TYPE_ATTRIBUTE, TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE,
+    TYPE_DOCUMENT, TYPE_ELEMENT, TYPE_FRAGMENT, TYPE_PI, TYPE_TEXT,
+};
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::model::Doc as XmlDoc;
 
@@ -255,4 +262,147 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     let nd: &NodeData = typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
+}
+
+/* ------------------------------------------------------------------ *
+ * the HTML node front door                                           *
+ * ------------------------------------------------------------------ */
+
+/// Wrap a live HTML node handle into its `Makiri::HTML::*` leaf.
+///
+/// A DOCUMENT node maps back onto the Ruby Document rather than getting a
+/// second wrapper; a node type with no specific leaf (entity/notation, which
+/// Lexbor's HTML parser does not produce) falls back to `Makiri::HTML::Node`.
+pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
+    /* SAFETY: a `RawNode` is live - the safe constructors are `From<HtmlNode>`
+     * and `From<Building*>`, and the only raw one, `from_ptr`, is unsafe. */
+    let handle = unsafe { node.as_node() };
+    let node_type = handle.node_type();
+    if node_type == TYPE_DOCUMENT {
+        return document;
+    }
+
+    let klass = match node_type {
+        TYPE_ELEMENT => CLASS_HTML_ELEMENT.raw(),
+        TYPE_ATTRIBUTE => CLASS_HTML_ATTR.raw(),
+        TYPE_TEXT => CLASS_HTML_TEXT.raw(),
+        TYPE_COMMENT => CLASS_HTML_COMMENT.raw(),
+        TYPE_CDATA => CLASS_HTML_CDATA_SECTION.raw(),
+        TYPE_PI => CLASS_HTML_PROCESSING_INSTRUCTION.raw(),
+        TYPE_DOCTYPE => CLASS_HTML_DOCUMENT_TYPE.raw(),
+        TYPE_FRAGMENT => CLASS_HTML_DOCUMENT_FRAGMENT.raw(),
+        _ => CLASS_HTML_NODE.raw(),
+    };
+
+    /* The Document is stored after the wrap: see `wrap_zeroed`. */
+    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
+    unsafe {
+        value(crate::bridge::ruby::wrap_zeroed::<NodeData>(
+            klass,
+            HTML_NODE_TYPE.as_ptr(),
+            |nd| nd.node = node.as_ptr(),
+            |nd| nd.document = document.as_raw(),
+        ))
+    }
+}
+
+/// The HTML node handle behind an HTML node or HTML Document.
+///
+/// `Err(TypeError)` for an XML node or Document: the typed-data check is against
+/// [`HTML_NODE_TYPE`], which an XML node (wrapped under `XML_NODE_TYPE`) does
+/// not satisfy.
+pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
+    if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
+        if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+            return Err(Error::new(
+                magnus::Ruby::get()
+                    .expect("under the GVL")
+                    .exception_type_error(),
+                "expected an HTML node, got a Makiri::XML::Document",
+            ));
+        }
+        return Ok(html_doc_unwrap(rb_node)?.into());
+    }
+    let nd: &NodeData = typed_data_ref(rb_node, &HTML_NODE_TYPE)?;
+    RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
+}
+
+/// [`html_node_unwrap`], under the name the reader modules use.
+pub fn unwrap(v: Value) -> Result<RawNode, Error> {
+    html_node_unwrap(v)
+}
+
+fn uninitialized() -> Error {
+    Error::new(
+        magnus::Ruby::get()
+            .expect("under the GVL")
+            .exception_type_error(),
+        "uninitialized HTML node",
+    )
+}
+
+/// A method receiver already checked to be an HTML node or HTML Document.
+#[derive(Clone, Copy)]
+pub struct HtmlSelf {
+    pub value: Value,
+    raw: RawNode,
+    /// The keepalive Document (the receiver itself for a Document).
+    pub document: Value,
+}
+
+impl magnus::TryConvert for HtmlSelf {
+    fn try_convert(value: Value) -> Result<Self, Error> {
+        let raw = unwrap(value)?;
+        let document = keepalive_document(value)?;
+        Ok(HtmlSelf {
+            value,
+            raw,
+            document,
+        })
+    }
+}
+
+impl HtmlSelf {
+    /// The receiver's node handle, for the length of this method call.
+    ///
+    /// The receiver is a method argument, which Ruby keeps reachable for the
+    /// call and which keeps its document alive; the borrow of `self` ends the
+    /// handle with the call.
+    #[inline]
+    pub fn node(&self) -> HtmlNode<'_> {
+        // SAFETY: the receiver keeps the node's document alive for this call.
+        unsafe { self.raw.as_node() }
+    }
+
+    /// The receiver's node as the boundary handle, for the mutators.
+    #[inline]
+    pub fn raw(&self) -> RawNode {
+        self.raw
+    }
+}
+
+/// An HTML node argument, for the length of the borrow of `v`.
+///
+/// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
+pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, Error> {
+    // SAFETY: `v` is a method argument, which keeps its node's document alive.
+    Ok(unsafe { unwrap(*v)?.as_node() })
+}
+
+/// [`wrap_html_node`] for an optional handle: nil for None.
+pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
+    match node {
+        Some(n) => wrap_html_node(RawNode::from(n), document),
+        None => nil(),
+    }
+}
+
+/// Wrap a boundary handle under its Document.
+pub fn wrap(node: RawNode, document: Value) -> Value {
+    wrap_html_node(node, document)
+}
+
+/// The keepalive Document of a node, from the kind-agnostic accessor.
+pub fn node_document(v: Value) -> Result<Value, Error> {
+    keepalive_document(v)
 }

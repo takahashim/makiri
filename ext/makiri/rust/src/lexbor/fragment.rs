@@ -476,8 +476,7 @@ pub unsafe fn build_fragment_ctx(
             "failed to import a fragment child",
         ));
     }
-    let out = wrap_html_node(frag_node, document.as_raw());
-    Ok(crate::bridge::ruby::value(out))
+    Ok(wrap_html_node(frag_node, document))
 }
 
 /// The `context:` keyword, or None.

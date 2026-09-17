@@ -625,7 +625,7 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
         return Err(err("failed to create element"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(RawNode::from(el), rb_self) })
+    Ok(wrap(RawNode::from(el), rb_self))
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
@@ -636,7 +636,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
         return Err(err("failed to create text node"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(RawNode::from(t), rb_self) })
+    Ok(wrap(RawNode::from(t), rb_self))
 }
 
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
@@ -647,7 +647,7 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Va
         return Err(err("failed to create comment"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(RawNode::from(c), rb_self) })
+    Ok(wrap(RawNode::from(c), rb_self))
 }
 
 /// `Document#create_processing_instruction(target, data)` - the DOM
@@ -667,7 +667,7 @@ pub fn create_pi(
         return Err(err("failed to create processing instruction"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(RawNode::from(pi), rb_self) })
+    Ok(wrap(RawNode::from(pi), rb_self))
 }
 
 /// `Document#create_document_type(name, public_id = "", system_id = "")` - the
@@ -717,7 +717,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         return Err(err("failed to create doctype"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(RawNode::from(dt), rb_self) })
+    Ok(wrap(RawNode::from(dt), rb_self))
 }
 
 /// `Document#create_document_fragment` - the DOM createDocumentFragment: an
@@ -729,5 +729,5 @@ pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, E
         return Err(err("failed to create document fragment"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(RawNode::from(f), rb_self) })
+    Ok(wrap(RawNode::from(f), rb_self))
 }

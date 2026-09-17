@@ -177,7 +177,7 @@ fn doc_root(ruby: &Ruby, self_: Value) -> Value {
         return ruby.qnil().as_value();
     };
     /* SAFETY: a node of `self_`'s document, which keeps it alive. */
-    unsafe { crate::bridge::ruby::value(wrap_html_node(RawNode::from(root), self_.as_raw())) }
+    wrap_html_node(RawNode::from(root), self_)
 }
 
 /// The document `<title>`, or `""`.
@@ -197,7 +197,7 @@ fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
         .children()
         .find(|c| c.node_type() == NODE_TYPE_DOCUMENT_TYPE);
     // SAFETY: the doctype is a child of this Document, its own keepalive.
-    Ok(unsafe { crate::glue::html_node::wrap_node(doctype, self_) })
+    Ok(crate::glue::html_node::wrap_node(doctype, self_))
 }
 
 /// The quirks mode as an Integer matching Lexbor (and Gumbo/Nokogiri):
@@ -314,17 +314,17 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
                 deep,
                 &mut imp,
             ))?;
-            return Ok(crate::bridge::ruby::value(wrap_html_node(
+            return Ok(wrap_html_node(
                 RawNode::from_ptr(imp.cast()).expect("imported node"),
-                self_.as_raw(),
-            )));
+                self_,
+            ));
         }
 
         let src = html_node_unwrap(node_v)?; /* Err on a non-node */
         let Some(imp) = import_with_fixup(doc, src, deep) else {
             return Err(Error::new(error_class(), "failed to import node"));
         };
-        Ok(crate::bridge::ruby::value(wrap_html_node(imp, self_.as_raw())))
+        Ok(wrap_html_node(imp, self_))
     }
 }
 
@@ -362,7 +362,7 @@ pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     };
     let document = keepalive_document(rb_self)?;
     // SAFETY: `clone` is a detached node of `document`'s arena.
-    Ok(unsafe { crate::bridge::ruby::value(wrap_html_node(clone, document.as_raw())) })
+    Ok(wrap_html_node(clone, document))
 }
 
 /* ---- registration ---- */

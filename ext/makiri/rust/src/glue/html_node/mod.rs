@@ -22,19 +22,16 @@
 //! a NULL call at run time rather than a link error.
 
 #![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
 
 pub mod read;
 
 pub mod mutate;
 
-use magnus::{method, prelude::*, RClass, Value};
-use crate::bridge::ruby::VALUE;
+use magnus::{method, prelude::*, RClass};
 
-use super::abi::{html_doc_unwrap, html_node_methods, is_kind_of, NodeData};
+use super::abi::html_node_methods;
 /* Only the mutation half registers on the Document class. */
-use crate::lexbor::adapter::html::{HtmlNode, RawNode};
-use crate::init::{CLASS_DOCUMENT, CLASS_HTML_DOCUMENT, CLASS_XML_DOCUMENT};
+use crate::init::CLASS_HTML_DOCUMENT;
 
 /* ------------------------------------------------------------------ *
  * the DOM node types                                                 *
@@ -71,157 +68,13 @@ pub use crate::init::CLASS_HTML_TEXT;
  * wrap / unwrap                                                      *
  * ------------------------------------------------------------------ */
 
-/// Wrap an `lxb_dom_node_t` into its `Makiri::HTML::*` leaf.
-///
-/// NULL becomes nil, and the DOCUMENT node maps back onto the Ruby Document
-/// rather than getting a second wrapper. A DOM node type with no specific leaf
-/// (entity/notation - Lexbor's HTML parser does not produce these) falls back to
-/// the generic `Makiri::HTML::Node` rather than being misclassified as an
-/// Element.
-pub unsafe fn wrap_html_node(node: RawNode, document: VALUE) -> VALUE {
-    let handle = node.as_node();
-    let node_type = handle.node_type();
-    if node_type == ty::DOCUMENT {
-        return document;
-    }
-
-    let klass = match node_type {
-        ty::ELEMENT => CLASS_HTML_ELEMENT.raw(),
-        ty::ATTRIBUTE => CLASS_HTML_ATTR.raw(),
-        ty::TEXT => CLASS_HTML_TEXT.raw(),
-        ty::COMMENT => CLASS_HTML_COMMENT.raw(),
-        ty::CDATA => CLASS_HTML_CDATA_SECTION.raw(),
-        ty::PI => CLASS_HTML_PROCESSING_INSTRUCTION.raw(),
-        ty::DOCTYPE => CLASS_HTML_DOCUMENT_TYPE.raw(),
-        ty::FRAGMENT => CLASS_HTML_DOCUMENT_FRAGMENT.raw(),
-        _ => CLASS_HTML_NODE.raw(),
-    };
-
-    /* The Document is stored after the wrap: see `wrap_zeroed`. */
-    crate::bridge::ruby::wrap_zeroed::<NodeData>(
-        klass,
-        HTML_NODE_TYPE.as_ptr(),
-        |nd| nd.node = node.as_ptr(),
-        |nd| nd.document = document,
-    )
-}
-
-/// The `lxb_dom_node_t` behind an HTML node or HTML Document.
-///
-/// `Err(TypeError)` for an XML node or Document: the typed-data check is
-/// against `HTML_NODE_TYPE`, which an XML node - wrapped under
-/// `XML_NODE_TYPE` - does not satisfy. Every HTML-glue site that
-/// dereferences a node or hands its pointer to Lexbor goes through here, for
-/// `self` and arguments alike.
-pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, magnus::Error> {
-    if is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
-            return Err(magnus::Error::new(
-                magnus::Ruby::get()
-                    .expect("under the GVL")
-                    .exception_type_error(),
-                "expected an HTML node, got a Makiri::XML::Document",
-            ));
-        }
-        return Ok(html_doc_unwrap(rb_node)?.into());
-    }
-    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_node, &HTML_NODE_TYPE)?;
-    RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
-}
-
-/* ---- the Rust-side conveniences the reader module uses ---- */
-
-/// [`html_node_unwrap`], under the name the reader modules use.
-pub fn unwrap(v: Value) -> Result<RawNode, magnus::Error> {
-    html_node_unwrap(v)
-}
-
-/// A method receiver already checked to be an HTML node or HTML Document.
-///
-/// The check runs as magnus converts the receiver, so a reader bound onto the
-/// wrong kind of node (the differential's `html_reader_on_xml`) fails with the
-/// same TypeError before the method body starts.
-#[derive(Clone, Copy)]
-pub struct HtmlSelf {
-    pub value: Value,
-    raw: RawNode,
-    /// The keepalive Document (the receiver itself for a Document).
-    pub document: Value,
-}
-
-impl magnus::TryConvert for HtmlSelf {
-    fn try_convert(value: Value) -> Result<Self, magnus::Error> {
-        let raw = unwrap(value)?;
-        let document = super::abi::keepalive_document(value)?;
-        Ok(HtmlSelf {
-            value,
-            raw,
-            document,
-        })
-    }
-}
-
-fn uninitialized() -> magnus::Error {
-    magnus::Error::new(
-        magnus::Ruby::get()
-            .expect("under the GVL")
-            .exception_type_error(),
-        "uninitialized HTML node",
-    )
-}
-
-impl HtmlSelf {
-    /// The receiver's node, for the length of this method call.
-    ///
-    /// The receiver is a method argument, which Ruby keeps reachable for the
-    /// call, and it keeps its document alive; the borrow of `self` ends the
-    /// handle with the call. Like a magnus `Value`, an `HtmlSelf` is only ever
-    /// held on the stack of the method it was converted for.
-    #[inline]
-    pub fn node(&self) -> HtmlNode<'_> {
-        // SAFETY: as above; the document is not restructured by a reader, and
-        // a mutator refuses while an XPath handler could be reading it.
-        unsafe { self.raw.as_node() }
-    }
-
-    /// The receiver's node as the boundary handle, for the mutators.
-    #[inline]
-    pub fn raw(&self) -> RawNode {
-        self.raw
-    }
-}
-
-/// An HTML node argument, for the length of the borrow of `v`.
-///
-/// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
-/// The same reasoning as [`HtmlSelf::node`]: `v` is a method argument on the
-/// stack, which keeps its node's document alive.
-pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, magnus::Error> {
-    // SAFETY: as above.
-    Ok(unsafe { unwrap(*v)?.as_node() })
-}
-
-/// [`wrap`] for an optional handle: nil for None.
-///
-/// # Safety
-/// `document` must be the keepalive Document of `node`'s tree.
-#[inline]
-pub unsafe fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
-    match node {
-        Some(n) => wrap(RawNode::from(n), document),
-        None => crate::bridge::ruby::nil(),
-    }
-}
-
-pub unsafe fn wrap(node: RawNode, document: Value) -> Value {
-    use magnus::rb_sys::AsRawValue;
-    crate::bridge::ruby::value(wrap_html_node(node, document.as_raw()))
-}
-
-/// The keepalive Document of a node, from the kind-agnostic accessor.
-pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
-    super::abi::keepalive_document(v)
-}
+/* The front door - the wrapper/argument handles and the `wrap_html_node` /
+ * `html_node_unwrap` pair - lives in the Ruby <-> Lexbor seam
+ * (`bridge::lexbor`). This module re-exports it for the readers, the mutators
+ * and the rest of the glue. */
+pub use crate::bridge::lexbor::{
+    arg_node, html_node_unwrap, node_document, unwrap, wrap, wrap_html_node, wrap_node, HtmlSelf,
+};
 
 /* ------------------------------------------------------------------ *
  * registration                                                       *

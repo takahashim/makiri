@@ -235,7 +235,7 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     match this.node().template_content() {
         // SAFETY: the contents fragment belongs to the receiver's document.
-        Some(content) => unsafe { wrap_node(Some(content), this.document) },
+        Some(content) => wrap_node(Some(content), this.document),
         None => nil(ruby),
     }
 }
@@ -342,17 +342,17 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         }
     }
     // SAFETY: the parent is in the receiver's tree.
-    Ok(unsafe { wrap_node(node.parent(), document) })
+    Ok(wrap_node(node.parent(), document))
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(this.node().next(), this.document) }
+    wrap_node(this.node().next(), this.document)
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(this.node().prev(), this.document) }
+    wrap_node(this.node().prev(), this.document)
 }
 
 /// The first node from `start` along `step` that is an element. `step` is a
@@ -375,31 +375,31 @@ fn first_element<'d>(
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().next(), HtmlNode::next);
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().prev(), HtmlNode::prev);
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: a child is in the receiver's tree.
-    unsafe { wrap_node(this.node().first_child(), this.document) }
+    wrap_node(this.node().first_child(), this.document)
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().first_child(), HtmlNode::next);
     // SAFETY: a child is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().last_child(), HtmlNode::prev);
     // SAFETY: a child is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 /// Collect nodes into a NodeSet. The set is a live Ruby object across every
@@ -536,7 +536,7 @@ pub fn attribute_by_qualified_name(
     drop(nv);
     Ok(match found {
         // SAFETY: the attribute is in the receiver's tree.
-        Some(at) => unsafe { wrap_node(Some(at.node()), this.document) },
+        Some(at) => wrap_node(Some(at.node()), this.document),
         None => nil(ruby),
     })
 }

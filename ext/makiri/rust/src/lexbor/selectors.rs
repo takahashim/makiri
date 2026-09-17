@@ -590,7 +590,7 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         return Ok(ruby.qnil().as_value());
     }
     let document = keepalive_document(rb_self)?;
-    Ok(unsafe { crate::bridge::ruby::value(wrap_html_node(RawNode::from_ptr(ctx.found.cast()).expect("first match"), document.as_raw())) })
+    Ok(wrap_html_node(RawNode::from_ptr(ctx.found.cast()).expect("first match"), document))
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
