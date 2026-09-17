@@ -128,8 +128,29 @@ RB_SYS_COUNTS = {
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
 RAISING_COUNTS = {}.freeze
 
+# Lexbor ABI names outside `lexbor/` are a ratchet. `lexbor` is the sole owner
+# of the vendored C ABI (notes/rust_third_architecture.ja.md): the bindgen types
+# (`Lxb*`), the `lxb_*` functions and constants, and `crate::lexbor_abi` are not
+# to appear above it. The files below still do while their ports land; each
+# count is pinned, so a new reference fails and lowering one means lowering the
+# number. `lexbor_abi.rs` is the generated module itself, so it is excluded.
+LEXBOR_ABI = /crate::lexbor_abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
+LEXBOR_ABI_COUNTS = {
+  "css/parser.rs" => 84,
+  "glue/abi.rs" => 30,
+  "xpath/ctx.rs" => 2,
+  "xpath/dom_html.rs" => 14,
+}.freeze
+
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
+end
+
+# Comments out entirely, for the Lexbor-name check: a name mentioned in a
+# `/* ... */` block is documentation, not a reference, and `rust_code` above
+# does not strip those (it drops only whole `//` lines).
+def comments_removed(src)
+  src.gsub(%r{/\*.*?\*/}m, "").lines.reject { |line| line.match?(%r{\A\s*//}) }.join
 end
 
 # `--fix` transcribes the two tables that move whenever code moves, so a hand
@@ -244,6 +265,18 @@ if raising != RAISING_COUNTS
   errors << "raising C API outside bridge/ changed: #{table_diff(RAISING_COUNTS, raising)}"
 end
 
+lexbor_abi = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative.start_with?("lexbor/") || relative == "lexbor_abi.rs"
+
+  count = comments_removed(File.binread(path)).scan(LEXBOR_ABI).length
+  lexbor_abi[relative] = count unless count.zero?
+end
+if lexbor_abi != LEXBOR_ABI_COUNTS
+  errors << "Lexbor ABI names outside lexbor/ changed: #{table_diff(LEXBOR_ABI_COUNTS, lexbor_abi)}"
+end
+
 if FIX && !errors.empty?
   puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
   errors.each { |e| puts "  #{e}" }
@@ -253,4 +286,5 @@ abort "unsafe-boundaries: #{errors.join("\nunsafe-boundaries: ")}" unless errors
 puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
-     "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/"
+     "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
+     "#{lexbor_abi.values.sum} Lexbor ABI names outside lexbor/"
