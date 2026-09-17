@@ -26,7 +26,7 @@
 
 use core::ffi::{c_char, c_int, c_long};
 
-use magnus::rb_sys::FromRawValue;
+use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{Error, RString, Value};
 use rb_sys::{rb_encoding, VALUE};
 
@@ -341,4 +341,11 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
     let u = rb_sys::rb_str_subseq(s, off as c_long, len as c_long);
     rb_sys::rb_enc_associate(u, rb_sys::rb_utf8_encoding());
     Ok(u)
+}
+
+/// [`xml_decode_input`] as a safe call: `s` is a live String, and the result is
+/// one.
+pub fn xml_decode_input_value(s: Value, max_bytes: usize) -> Result<Value, Error> {
+    // SAFETY: `s` is a live String; the decoder returns a live String.
+    unsafe { xml_decode_input(s.as_raw(), max_bytes).map(|v| crate::bridge::ruby::value(v)) }
 }

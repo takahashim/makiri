@@ -29,13 +29,13 @@ UNSAFE_ISLANDS = {
   "bridge/lexbor.rs" => 56,
   "bridge/node_set.rs" => 11,
   "bridge/ruby.rs" => 27,
-  "bridge/string.rs" => 27,
+  "bridge/string.rs" => 28,
   "bridge/typed.rs" => 8,
-  "bridge/xml.rs" => 36,
-  "bridge/xml_decode.rs" => 7,
+  "bridge/xml.rs" => 46,
+  "bridge/xml_decode.rs" => 8,
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
-  "css/mod.rs" => 1,
+  "css/mod.rs" => 2,
   "css/parser.rs" => 47,
   "lexbor/adapter/cross_import.rs" => 16,
   "lexbor/adapter/dom_index.rs" => 3,
@@ -53,9 +53,8 @@ UNSAFE_ISLANDS = {
   "lexbor/fragment.rs" => 11,
   "lexbor/stylesheet.rs" => 10,
   "lexbor/serialize.rs" => 8,
-  "glue/xml.rs" => 12,
   "glue/xpath.rs" => 18,
-  "init.rs" => 6,
+  "init.rs" => 7,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 6,
   "text.rs" => 5,
@@ -78,7 +77,7 @@ FORBID_FILES = %w[
   css/build.rs css/lower.rs cutf8.rs
   cutf8/verify.rs falloc/calloc.rs falloc/verify.rs
   glue/doc.rs glue/html_node/mutate.rs glue/html_node/read.rs glue/node.rs glue/node_set.rs glue/xml_node/abi.rs
-  glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
+  glue/xml.rs glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
   xml/api.rs xml/arena.rs
   xml/chars.rs xml/index.rs xml/mod.rs
   xml/model.rs xml/mutate.rs xml/parse.rs

@@ -481,6 +481,21 @@ pub fn ruby_str_known_valid_utf8_value(s: Value) -> bool {
     unsafe { ruby_str_known_valid_utf8(s.as_raw()) }
 }
 
+/// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}` pair),
+/// as a safe call: both are live Strings.
+pub fn ruby_try_verified_text_pair(
+    a: Value,
+    b: Value,
+    max_bytes: usize,
+) -> Result<(RubyText, RubyText), &'static core::ffi::CStr> {
+    // SAFETY: `a` and `b` are live Strings.
+    unsafe {
+        let av = ruby_try_verified_text(a.as_raw(), max_bytes)?;
+        let bv = ruby_try_verified_text(b.as_raw(), max_bytes)?;
+        Ok((av, bv))
+    }
+}
+
 /// The non-raising form: the checked view, or a static reason on rejection.
 /// Allocation-free, like `verify_text`, so the borrow it hands back has not
 /// crossed a Ruby allocation. `sv` must already be a String; nothing is coerced.

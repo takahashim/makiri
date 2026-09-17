@@ -134,3 +134,17 @@ pub unsafe fn compile_owned(
      * no subtree worth remembering, so its AST is used as built. */
     try_box(Ast::new(root)).map_err(|_| b.oom())
 }
+
+/// [`compile_owned`] for callers that already hold a verified selector.
+///
+/// Safe because its one condition - running under the GVL, which the glue does
+/// by construction - is the caller's, and the selector is a [`VerifiedText`]
+/// rather than raw bytes.
+pub fn compile_verified(
+    selector: VerifiedText,
+    ns: &CssNs,
+    budget: &mut Budget,
+) -> Result<Box<Ast>, Reported> {
+    // SAFETY: a verified selector, under the GVL.
+    unsafe { compile_owned(selector, ns, budget) }
+}

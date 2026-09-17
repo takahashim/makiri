@@ -92,6 +92,16 @@ impl RbConst {
     }
 }
 
+/// Publish the `Makiri::XML::Document` class as the global the rest of the
+/// extension reads.
+///
+/// Safe wrapper over [`RbConst::set`]: it runs once, from `Init_makiri`, with a
+/// class that lives for the rest of the process.
+pub(crate) fn record_xml_document_class(klass: magnus::RClass) {
+    // SAFETY: a class that lives for the process, set once at init.
+    unsafe { CLASS_XML_DOCUMENT.set(klass.as_raw()) };
+}
+
 macro_rules! exported {
     ($($name:ident),* $(,)?) => {
         $(

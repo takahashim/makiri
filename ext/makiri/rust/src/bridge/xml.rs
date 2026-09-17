@@ -20,15 +20,17 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
 use crate::bridge::lexbor::{
-    doc_of, ensure_document_mutable, html_node_unwrap, node_kind, wrap_xml_node, xml_doc_ref,
-    xml_node_document, xml_node_unwrap,
+    doc_of, ensure_document_mutable, html_node_unwrap, node_kind, wrap_document, wrap_xml_node,
+    xml_doc_ref, xml_node_document, xml_node_unwrap,
 };
-use crate::bridge::ruby::check_frozen;
+use crate::bridge::ruby::{check_frozen, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR};
+use crate::bridge::xml_decode::xml_decode_input_value;
+use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
+use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
-use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType};
+use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
 
 /// `NodeKind`.
 const KIND_HTML: core::ffi::c_int = 1;
@@ -179,6 +181,164 @@ fn verified_opt(ruby: &Ruby, v: Value, what: &core::ffi::CStr) -> Result<(RubyTe
         return Ok((RubyText::absent(), 0));
     }
     verified(ruby, v, what)
+}
+
+/* ------------------------------------------------------------------ */
+/* documents: parsing, readers, fragments                             *
+ * ------------------------------------------------------------------ */
+
+/// A `Makiri::XML::SyntaxError`-family error for a parse status.
+fn parse_status_error(status: Status, unit: Unit) -> Error {
+    match status {
+        Status::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
+        Status::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
+        Status::Version => Error::new(
+            EXC_XML_SYNTAX_ERROR.exception(),
+            "unsupported XML version (only XML 1.0 is supported)",
+        ),
+        /* `Ok` never reaches here (it means no failure); the rest are the
+         * generic "failed to parse" bucket. */
+        Status::Ok | Status::Oom | Status::Internal => {
+            Error::new(EXC_ERROR.exception(), unit.failed())
+        }
+    }
+}
+
+/// Which entry point failed. The two carry their own wording rather than one
+/// composed string: the document path says "malformed XML" where the fragment
+/// path says "malformed XML fragment", and the messages are observable.
+#[derive(Clone, Copy)]
+enum Unit {
+    Document,
+    Fragment,
+}
+
+impl Unit {
+    fn malformed(self) -> &'static str {
+        match self {
+            Unit::Document => "malformed XML",
+            Unit::Fragment => "malformed XML fragment",
+        }
+    }
+    fn budget(self) -> &'static str {
+        match self {
+            Unit::Document => "XML document budget exceeded",
+            Unit::Fragment => "XML fragment budget exceeded",
+        }
+    }
+    fn failed(self) -> &'static str {
+        match self {
+            Unit::Document => "failed to parse XML document",
+            Unit::Fragment => "failed to parse XML fragment",
+        }
+    }
+}
+
+/// Parse XML source, releasing the GVL, and wrap the result as a Document.
+///
+/// Runs the strict decode under the GVL first (invalid UTF-8, an undecodable
+/// byte or a NUL all raise), then copies into a private buffer BEFORE the
+/// wrapper exists, so no GC point can run between obtaining the decoded String
+/// and copying it.
+pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Result<Value, Error> {
+    let source = crate::bridge::ruby::string_of(source)?;
+    let decoded = xml_decode_input_value(source.as_value(), budget)?;
+    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
+
+    /* Wrap an empty handle first, so a failure mid-parse still frees cleanly
+     * through the GC. The source is already copied, so this Ruby allocation
+     * cannot disturb it. */
+    let Some(parsed) = Parsed::new_xml() else {
+        return Err(Error::new(
+            error_class(),
+            "out of memory allocating XML document",
+        ));
+    };
+    let parsed = Box::into_raw(parsed);
+    // SAFETY: a fresh handle; the wrap hands it to the GC.
+    let obj = unsafe { wrap_document(parsed) };
+
+    /* Ruby-free from here: only the copied bytes and the limits cross. */
+    let (result, status) = crate::bridge::gvl::without_gvl(|| {
+        match crate::xml::api::xml_parse_ex(src.as_slice(), Some(&limits)) {
+            Ok(doc) => (Box::into_raw(doc), Status::Ok),
+            Err(status) => (core::ptr::null_mut(), status),
+        }
+    });
+    drop(src);
+
+    if result.is_null() {
+        return Err(parse_status_error(status, Unit::Document));
+    }
+    // SAFETY: `parsed` is the handle behind `obj`, and `result` is the arena the
+    // parse produced for it.
+    unsafe {
+        (*parsed).set_xml_doc(Box::from_raw(result));
+        Ok(value(obj))
+    }
+}
+
+/// `Document#root` for an XML document: the root element, or nil.
+pub fn document_root(ruby: &Ruby, rb_self: Value) -> Value {
+    let xdoc = doc_of(rb_self);
+    if xdoc.is_null() {
+        return ruby.qnil().as_value();
+    }
+    // SAFETY: a live XML Document's arena, kept alive by `rb_self`.
+    match unsafe { (*xdoc).root } {
+        Some(n) => wrap(n, rb_self),
+        None => ruby.qnil().as_value(),
+    }
+}
+
+/// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
+pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
+    let xdoc = doc_of(rb_self);
+    if xdoc.is_null() || unsafe { (*xdoc).doctype.is_none() } {
+        return ruby.qnil().as_value();
+    }
+    // SAFETY: as `document_root`.
+    match unsafe { (*xdoc).doctype } {
+        Some(n) => wrap(n, rb_self),
+        None => ruby.qnil().as_value(),
+    }
+}
+
+/// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
+pub fn new_empty_xml_document() -> Result<Value, Error> {
+    let Some(parsed) = Parsed::new_xml() else {
+        return Err(Error::new(
+            error_class(),
+            "out of memory allocating XML document",
+        ));
+    };
+    let parsed = Box::into_raw(parsed);
+    // SAFETY: a fresh handle; the wrap hands it to the GC.
+    let doc_obj = unsafe { wrap_document(parsed) };
+    let xdoc = crate::xml::api::xml_doc_new()
+        .map_err(|_| Error::new(error_class(), "out of memory allocating XML document"))?;
+    // SAFETY: `parsed` is the handle behind `doc_obj`, live for this call.
+    unsafe { (*parsed).set_xml_doc(xdoc) };
+    Ok(unsafe { value(doc_obj) })
+}
+
+/// Strict-decode `source` and parse it as a fragment into `document`'s arena,
+/// returning the fragment node.
+///
+/// This runs UNDER the GVL on purpose: a fragment is small, and an existing
+/// document's arena must never be mutated with the GVL released.
+pub fn fragment_into(document: Value, source: Value, inherit_doc_ns: bool) -> Result<NodeId, Error> {
+    let xdoc = doc_of(document);
+    if xdoc.is_null() {
+        return Err(Error::new(error_class(), "the document has no arena"));
+    }
+    let source = crate::bridge::ruby::string_of(source)?;
+    // SAFETY: a live arena; the decode only reads its `max_bytes`.
+    let decoded = xml_decode_input_value(source.as_value(), unsafe { (*xdoc).max_bytes })?;
+    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
+    // SAFETY: the arena is live and mutable for this call, under the GVL.
+    crate::xml::api::xml_parse_fragment(unsafe { &mut *xdoc }, src.as_slice(), inherit_doc_ns)
+        .map_err(|status| parse_status_error(status, Unit::Fragment))
 }
 
 /* ------------------------------------------------------------------ */
