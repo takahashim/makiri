@@ -705,7 +705,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`, with the classes already defined.
-pub unsafe extern "C" fn init_node_set() {
+pub fn init_node_set() {
     let klass = node_set_class();
 
     /* Nodes come only from C; `.new` seeds through the factory below. */

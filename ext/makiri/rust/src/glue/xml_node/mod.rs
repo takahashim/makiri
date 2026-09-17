@@ -182,8 +182,8 @@ pub use crate::glue::node::node_pointer_id;
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn init_xml_node_read() {
-    let ruby = Ruby::get_unchecked();
+pub fn init_xml_node_read() {
+    let ruby = Ruby::get().expect("init runs on the Ruby thread");
     let m = magnus::RModule::from_value(MOD_XML_NODE_METHODS.value())
         .expect("Makiri::XML::NodeMethods");
 
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn init_xml_node_read() {
 ///
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn init_xml_node() {
+pub fn init_xml_node() {
     /* Serialization: #to_xml / #canonicalize, and the refused HTML ones. */
     init_xml_node_serialize();
     init_xml_node_read();

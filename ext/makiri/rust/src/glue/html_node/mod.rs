@@ -28,7 +28,7 @@ pub mod read;
 
 pub mod mutate;
 
-use magnus::{method, prelude::*, RClass, Ruby, Value};
+use magnus::{method, prelude::*, RClass, Value};
 use crate::bridge::ruby::VALUE;
 
 use super::abi::{html_doc_unwrap, html_node_methods, is_kind_of, NodeData};
@@ -232,8 +232,7 @@ pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn init_node() {
-    let _ = Ruby::get_unchecked();
+pub fn init_node() {
     let m = html_node_methods();
 
     m.define_method("name", method!(read::name, 0))
@@ -347,7 +346,7 @@ pub unsafe extern "C" fn init_node() {
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn init_mutate() {
+pub fn init_mutate() {
     let m = html_node_methods();
     let doc = RClass::from_value(CLASS_HTML_DOCUMENT.value()).expect("HTML::Document");
 

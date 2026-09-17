@@ -489,7 +489,7 @@ pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 ///
 /// # Safety
 /// Runs once, from `Init_makiri`, on the Ruby thread.
-pub unsafe extern "C" fn init_document() {
+pub fn init_document() {
     let ruby = Ruby::get().expect("init_document runs on the Ruby thread");
     let html_doc = magnus::RClass::from_value(CLASS_HTML_DOCUMENT.value())
         .expect("Makiri::HTML::Document is a class");

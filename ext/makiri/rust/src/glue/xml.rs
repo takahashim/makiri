@@ -653,8 +653,8 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
 
 /// # Safety
 /// Called from `Init_makiri`.
-pub unsafe extern "C" fn init_xml() {
-    let ruby = Ruby::get_unchecked();
+pub fn init_xml() {
+    let ruby = Ruby::get().expect("init runs on the Ruby thread");
     let m_xml = magnus::RModule::from_value(MOD_XML.value()).expect("Makiri::XML");
     let base = magnus::RClass::from_value(CLASS_DOCUMENT.value()).expect("Makiri::Document");
 
@@ -670,7 +670,8 @@ pub unsafe extern "C" fn init_xml() {
     doc.include_module(node_methods)
         .expect("include NodeMethods");
     /* Init_makiri's global, which the rest of the extension reads. */
-    CLASS_XML_DOCUMENT.set(doc.as_raw());
+    // SAFETY: single-threaded registration, before anything reads the global.
+    unsafe { CLASS_XML_DOCUMENT.set(doc.as_raw()) };
 
     doc.define_method("root", method!(doc_root, 0))
         .expect("#root");

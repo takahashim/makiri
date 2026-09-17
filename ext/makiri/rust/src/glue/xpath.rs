@@ -987,7 +987,7 @@ fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, E
 
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn init_xpath() {
+pub fn init_xpath() {
     let klass =
         RClass::from_value(CLASS_XPATH_CONTEXT.value()).expect("Makiri::XPathContext is a Class");
     klass
