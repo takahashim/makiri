@@ -8,7 +8,6 @@
 //! Nothing here touches Lexbor. The node layout comes from `crate::xml::model`,
 //! the XML engine's own declaration, so no offset or type constant is restated.
 
-#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 pub mod abi;

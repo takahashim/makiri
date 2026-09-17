@@ -22,8 +22,7 @@
 //! construction is a `build::Built`, and steps and lists are plain owned data, so
 //! a failure anywhere drops - frees - what was built.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 mod build;
 mod lower;
@@ -90,9 +89,9 @@ impl Build<'_> {
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
 ///
-/// # Safety
-/// From the XPath/CSS glue, under the GVL.
-pub unsafe fn compile_owned(
+/// Safe: the selector is a [`VerifiedText`], and the only other condition -
+/// running under the GVL - is the caller's by construction.
+pub fn compile_owned(
     selector: VerifiedText,
     ns: &CssNs,
     budget: &mut Budget,
@@ -134,16 +133,4 @@ pub unsafe fn compile_owned(
     try_box(Ast::new(root)).map_err(|_| b.oom())
 }
 
-/// [`compile_owned`] for callers that already hold a verified selector.
-///
-/// Safe because its one condition - running under the GVL, which the glue does
-/// by construction - is the caller's, and the selector is a [`VerifiedText`]
-/// rather than raw bytes.
-pub fn compile_verified(
-    selector: VerifiedText,
-    ns: &CssNs,
-    budget: &mut Budget,
-) -> Result<Box<Ast>, Reported> {
-    // SAFETY: a verified selector, under the GVL.
-    unsafe { compile_owned(selector, ns, budget) }
-}
+

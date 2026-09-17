@@ -22,7 +22,6 @@
 //! macOS a hand-written declaration of one of those links to nothing and becomes
 //! a NULL call at run time rather than a link error.
 
-#![allow(unsafe_code)]
 
 pub mod read;
 

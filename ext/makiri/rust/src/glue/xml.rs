@@ -309,7 +309,7 @@ fn css_compile_or_raise(
     let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
     /* `sv` holds the selector String rooted; the compile allocates through
      * falloc only - no Ruby runs in it. */
-    let ast = crate::css::compile_verified(sv.as_verified(), &cns, &mut budget);
+    let ast = crate::css::compile_owned(sv.as_verified(), &cns, &mut budget);
     drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);

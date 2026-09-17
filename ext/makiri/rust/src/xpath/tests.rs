@@ -83,7 +83,7 @@ fn run(
             let ns = crate::css::CssNs {
                 default_namespace: false,
             };
-            crate::css::compile_verified(source, &ns, &mut parse_budget)
+            crate::css::compile_owned(source, &ns, &mut parse_budget)
         }
     };
     let ast = match compiled {

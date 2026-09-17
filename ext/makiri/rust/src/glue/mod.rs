@@ -39,6 +39,8 @@
 //! `Ruby` handle. The C glue already works this way (parse copies its input to a
 //! C buffer before releasing), and the constraint is the same here.
 
+#![forbid(unsafe_code)]
+
 
 /// Makiri::HTML::Document.
 pub mod doc;

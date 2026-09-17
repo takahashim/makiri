@@ -34,6 +34,7 @@
 //!   `xml::xpath`     the XML reader's nodes
 
 #![allow(private_bounds)]
+#![forbid(unsafe_code)]
 
 pub mod abi;
 pub mod msg;
