@@ -303,12 +303,13 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            the 35 `forbid` files and the glue's remaining direct
                            `rb_sys::` and raising calls per file
     glue/                  Ruby <-> engine surface, one module per feature
-                           (node/doc/node_set/xpath/css/serialize/mutate)
+                           (node/doc/node_set/xpath/html_node/xml_node)
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait
     xml/                   native XML reader (Ruby/Lexbor-free; own arena)
-    lexbor/adapter/           `html` - the one reader of Lexbor's DOM structs -
-                           plus the attr->owner index, text index, source
-                           location, post-parse orchestration
+    lexbor/                the Lexbor boundary: `adapter` - the one reader of
+                           Lexbor's DOM structs, plus the attr->owner index,
+                           text index, source location and post-parse - and the
+                           selectors/stylesheet/serialize/fragment facades
     css/                   CSS selector lowering (Lexbor keeps the parser)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css; built on PRs, run nightly)
@@ -445,7 +446,7 @@ unchanged (see `xpath/nodetest.rs`). Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null).
 
-**CSS** (`glue/css.rs`). `Node#{css,at_css,matches?}` via Lexbor's
+**CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
 `lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the
 `selectors` traversal object) is **built once and reused for every query** -
 safe with no locking because CSS holds the GVL throughout (it never releases
@@ -460,7 +461,7 @@ nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
 and in document order; capped at `NODE_SET_MAX`; malformed →
 `Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
 
-**Serialization** (`glue/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
+**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
 **pre-reserved to ~the output size** via `buf_reserve` so the per-chunk
@@ -558,7 +559,7 @@ Key decisions that got there, worth not regressing:
   `node_principal_match`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
-- **The CSS engine is built once and reused** (`glue/css.rs`, see the
+- **The CSS engine is built once and reused** (`lexbor/selectors.rs`, see the
   subsystem note): the per-call create/init/destroy of the Lexbor CSS object
   graph dominated a cheap query and lost to nokolexbor on `at_css('#id')`; a
   process-global engine (safe because CSS holds the GVL throughout) reset with
