@@ -32,6 +32,11 @@ pub mod doc;
 #[cfg(feature = "lexbor")]
 pub mod node_set;
 
+/// The Ruby <-> XPath engine seam: which backend a query runs on, and
+/// building the engine context for a Ruby node or document.
+#[cfg(feature = "lexbor")]
+pub mod xpath;
+
 pub mod ruby;
 
 pub mod string;

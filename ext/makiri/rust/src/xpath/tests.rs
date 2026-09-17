@@ -6,7 +6,7 @@
 //! and the engine's front door. The expected values are what `Makiri::XML`
 //! answered for the same document and expressions when these were written.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use core::ffi::c_int;
 
@@ -69,7 +69,7 @@ fn run(
     tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
 ) -> Answer {
     let doc = xml_parse(DOC).expect("the fixture parses");
-    let mut ctx = Context::xml(&doc, doc.doc_node());
+    let mut ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     ctx.register_ns(b"d", b"urn:d").expect("registered");
     tighten(ctx.limits_mut());
 
@@ -203,7 +203,7 @@ fn chain(ops: usize) -> String {
 /// test thread has, and what is being tested is where the tree stops being built.
 fn parse_status(expr: &str) -> Result<(), c_int> {
     let doc = xml_parse(DOC).expect("the fixture parses");
-    let ctx = Context::xml(&doc, doc.doc_node());
+    let ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     let mut budget = Budget::with_limits(ctx.limits());
     let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
     // SAFETY: `source` borrows `expr`, which outlives the parse.
@@ -228,13 +228,12 @@ fn nesting_depth_is_bounded_where_the_tree_is_built() {
 /// `f()` answers true, first running `inner` on the same context when `nest`
 /// is set - the shape of a Ruby handler that evaluates again mid-walk.
 struct Nesting<'a> {
-    ctx: &'a Context<'a>,
+    ctx: &'a Context<'a, &'a crate::xml::model::Document>,
     inner: Box<Ast>,
     nest: bool,
 }
 
-// SAFETY: it answers no nodes, and changes nothing.
-unsafe impl Resolver for Nesting<'_> {
+impl Resolver for Nesting<'_> {
     fn resolve(
         &self,
         _budget: &mut Budget,
@@ -254,7 +253,7 @@ unsafe impl Resolver for Nesting<'_> {
 /// nested evaluate inside `f()`.
 fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
     let doc = xml_parse(DOC).expect("the fixture parses");
-    let mut ctx = Context::xml(&doc, doc.doc_node());
+    let mut ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     ctx.limits_mut().max_eval_ops = max_eval_ops;
     let parse = |text: &str| {
         let mut budget = Budget::new();

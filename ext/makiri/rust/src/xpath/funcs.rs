@@ -47,15 +47,15 @@ pub type Answer<N> = FnResult<Val<N>>;
 
 /// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
 /// `args` and clears them after the call.
-pub type FnImpl<'e, D> = fn(
-    &mut Evaluation<'e, D>,
-    &Focus<'e, D>,
-    &[Val<<D as Dom<'e>>::Node>],
-) -> Answer<<D as Dom<'e>>::Node>;
+pub type FnImpl<'e, 'd, D> = fn(
+    &mut Evaluation<'e, 'd, D>,
+    &Focus<'d, D>,
+    &[Val<<D as Dom<'d>>::Node>],
+) -> Answer<<D as Dom<'d>>::Node>;
 
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
 /// routes the call to the registered resolver.
-pub fn lookup<'e, D: Dom<'e>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnImpl<'e, D>> {
+pub fn lookup<'e, 'd, D: Dom<'d>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnImpl<'e, 'd, D>> {
     if let Some(uri) = ns_uri {
         /* The Nokogiri-compatible builtins live in one namespace; any other
          * registered namespace means a user-defined function, so it goes to the
@@ -63,50 +63,52 @@ pub fn lookup<'e, D: Dom<'e>>(ns_uri: Option<&[u8]>, local: &[u8]) -> Option<FnI
         if uri != NS_NOKOGIRI_BUILTIN_URI {
             return None;
         }
-        return Some(match local {
-            b"css-class" => fn_css_class::<D>,
-            b"local-name-is" => fn_local_name_is::<D>,
+        let f: FnImpl<'e, 'd, D> = match local {
+            b"css-class" => fn_css_class::<D> as FnImpl<'e, 'd, D>,
+            b"local-name-is" => fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
             _ => return None,
-        });
+        };
+        return Some(f);
     }
     /* The default namespace: the XPath 1.0 standard library. */
-    Some(match local {
+    let f: FnImpl<'e, 'd, D> = match local {
         /* node-set */
-        b"last" => fn_last::<D>,
-        b"position" => fn_position::<D>,
-        b"count" => fn_count::<D>,
-        b"id" => fn_id::<D>,
-        b"local-name" => fn_local_name::<D>,
-        b"namespace-uri" => fn_namespace_uri::<D>,
-        b"name" => fn_name::<D>,
+        b"last" => fn_last::<D> as FnImpl<'e, 'd, D>,
+        b"position" => fn_position::<D> as FnImpl<'e, 'd, D>,
+        b"count" => fn_count::<D> as FnImpl<'e, 'd, D>,
+        b"id" => fn_id::<D> as FnImpl<'e, 'd, D>,
+        b"local-name" => fn_local_name::<D> as FnImpl<'e, 'd, D>,
+        b"namespace-uri" => fn_namespace_uri::<D> as FnImpl<'e, 'd, D>,
+        b"name" => fn_name::<D> as FnImpl<'e, 'd, D>,
         /* string */
-        b"string" => fn_string::<D>,
-        b"concat" => fn_concat::<D>,
-        b"starts-with" => fn_starts_with::<D>,
-        b"contains" => fn_contains::<D>,
-        b"substring-before" => fn_substring_before::<D>,
-        b"substring-after" => fn_substring_after::<D>,
-        b"substring" => fn_substring::<D>,
-        b"string-length" => fn_string_length::<D>,
-        b"normalize-space" => fn_normalize_space::<D>,
-        b"translate" => fn_translate::<D>,
+        b"string" => fn_string::<D> as FnImpl<'e, 'd, D>,
+        b"concat" => fn_concat::<D> as FnImpl<'e, 'd, D>,
+        b"starts-with" => fn_starts_with::<D> as FnImpl<'e, 'd, D>,
+        b"contains" => fn_contains::<D> as FnImpl<'e, 'd, D>,
+        b"substring-before" => fn_substring_before::<D> as FnImpl<'e, 'd, D>,
+        b"substring-after" => fn_substring_after::<D> as FnImpl<'e, 'd, D>,
+        b"substring" => fn_substring::<D> as FnImpl<'e, 'd, D>,
+        b"string-length" => fn_string_length::<D> as FnImpl<'e, 'd, D>,
+        b"normalize-space" => fn_normalize_space::<D> as FnImpl<'e, 'd, D>,
+        b"translate" => fn_translate::<D> as FnImpl<'e, 'd, D>,
         /* boolean */
-        b"not" => fn_not::<D>,
-        b"true" => fn_true::<D>,
-        b"false" => fn_false::<D>,
-        b"boolean" => fn_boolean::<D>,
-        b"lang" => fn_lang::<D>,
+        b"not" => fn_not::<D> as FnImpl<'e, 'd, D>,
+        b"true" => fn_true::<D> as FnImpl<'e, 'd, D>,
+        b"false" => fn_false::<D> as FnImpl<'e, 'd, D>,
+        b"boolean" => fn_boolean::<D> as FnImpl<'e, 'd, D>,
+        b"lang" => fn_lang::<D> as FnImpl<'e, 'd, D>,
         /* number */
-        b"number" => fn_number::<D>,
-        b"sum" => fn_sum::<D>,
-        b"floor" => fn_floor::<D>,
-        b"ceiling" => fn_ceiling::<D>,
-        b"round" => fn_round::<D>,
+        b"number" => fn_number::<D> as FnImpl<'e, 'd, D>,
+        b"sum" => fn_sum::<D> as FnImpl<'e, 'd, D>,
+        b"floor" => fn_floor::<D> as FnImpl<'e, 'd, D>,
+        b"ceiling" => fn_ceiling::<D> as FnImpl<'e, 'd, D>,
+        b"round" => fn_round::<D> as FnImpl<'e, 'd, D>,
         /* the CSS lowering's internal hooks */
-        _ if D::IS_XML && local == FN_OF_TYPE_POS => fn_of_type_pos::<D>,
-        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => fn_of_type_pos_last::<D>,
+        _ if D::IS_XML && local == FN_OF_TYPE_POS => fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
+        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
         _ => return None,
-    })
+    };
+    Some(f)
 }
 
 /* ---------- shared helpers ---------- */
@@ -168,22 +170,22 @@ fn boolean<N>(b: bool) -> Answer<N> {
     Ok(Val::boolean(b))
 }
 
-fn to_text<'e, D: Dom<'e>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
+fn to_text<'e, 'd, D: Dom<'d>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, 'd, D>) -> FnResult<Text> {
     let doc = ev.doc;
     val_to_owned_text_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
-fn to_number<'e, D: Dom<'e>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, D>) -> FnResult<f64> {
+fn to_number<'e, 'd, D: Dom<'d>>(v: &Val<D::Node>, ev: &mut Evaluation<'e, 'd, D>) -> FnResult<f64> {
     let doc = ev.doc;
     val_to_number_or_fail::<D>(doc, v, &mut ev.budget)
 }
 
 /// The string-value of `args[0]`, or of the context node when there is none -
 /// the idiom string() / string-length() / normalize-space() share.
-fn arg_or_self_text<'e, D: Dom<'e>>(
-    focus: &Focus<'e, D>,
+fn arg_or_self_text<'e, 'd, D: Dom<'d>>(
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
-    ev: &mut Evaluation<'e, D>,
+    ev: &mut Evaluation<'e, 'd, D>,
 ) -> FnResult<Text> {
     match args.first() {
         Some(a) => to_text::<D>(a, ev),
@@ -192,7 +194,7 @@ fn arg_or_self_text<'e, D: Dom<'e>>(
 }
 
 /// The string-value of the context node, or "" when there is none.
-fn self_text<'e, D: Dom<'e>>(focus: &Focus<'e, D>, ev: &mut Evaluation<'e, D>) -> FnResult<Text> {
+fn self_text<'e, 'd, D: Dom<'d>>(focus: &Focus<'d, D>, ev: &mut Evaluation<'e, 'd, D>) -> FnResult<Text> {
     match focus.node {
         Some(n) => node_to_owned_text::<D>(ev.doc, n, Some(&mut ev.budget)),
         None => owned_copy(
@@ -204,8 +206,8 @@ fn self_text<'e, D: Dom<'e>>(focus: &Focus<'e, D>, ev: &mut Evaluation<'e, D>) -
 }
 
 /// Pull both string operands, then run `f`. The guards free them on every path.
-fn two<'e, D: Dom<'e>, F>(
-    ev: &mut Evaluation<'e, D>,
+fn two<'e, 'd, D: Dom<'d>, F>(
+    ev: &mut Evaluation<'e, 'd, D>,
     args: &[Val<D::Node>],
     f: F,
 ) -> Answer<D::Node>
@@ -259,9 +261,9 @@ fn try_vec<T>(n: usize, err: ErrSink, what: &str) -> FnResult<Vec<T>> {
 
 /* ---------- node-set functions ---------- */
 
-fn fn_last<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_last<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -269,9 +271,9 @@ fn fn_last<'e, D: Dom<'e>>(
     number(focus.size as f64)
 }
 
-fn fn_position<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_position<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -279,9 +281,9 @@ fn fn_position<'e, D: Dom<'e>>(
     number(focus.pos as f64)
 }
 
-fn fn_count<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_count<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -295,7 +297,7 @@ fn fn_count<'e, D: Dom<'e>>(
 /// Every visited node is charged to the op budget: without it, id() over a large
 /// node-set - a token per node, a tree walk per token - drives quadratic work at
 /// no cost. Returns Err on an overrun, with the budget's slot set.
-fn find_by_id<'e, D: Dom<'e>>(
+fn find_by_id<'e, 'd, D: Dom<'d>>(
     doc: D,
     root: D::Node,
     id: &[u8],
@@ -334,11 +336,11 @@ fn find_by_id<'e, D: Dom<'e>>(
 ///
 /// Duplicates go in unconditionally: the caller dedups the whole result with one
 /// sort plus an adjacent pass, which beats a contains() check per insert.
-fn id_collect<'e, D: Dom<'e>>(
+fn id_collect<'e, 'd, D: Dom<'d>>(
     s: &[u8],
     root: D::Node,
     out: &mut NodeSet<D::Node>,
-    ev: &mut Evaluation<'e, D>,
+    ev: &mut Evaluation<'e, 'd, D>,
 ) -> FnResult {
     let doc = ev.doc;
     let budget = &mut ev.budget;
@@ -350,9 +352,9 @@ fn id_collect<'e, D: Dom<'e>>(
     Ok(())
 }
 
-fn fn_id<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_id<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -391,9 +393,9 @@ fn fn_id<'e, D: Dom<'e>>(
 /// The first node of a node-set argument, or the context node when there is no
 /// argument. A type error sets `*err`; an empty node-set yields a null handle,
 /// which the callers render as "".
-fn name_target<'e, D: Dom<'e>>(
+fn name_target<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
     err: ErrSink,
     fname: &str,
 ) -> FnResult<Option<D::Node>> {
@@ -412,7 +414,7 @@ fn name_target<'e, D: Dom<'e>>(
 /// element, attribute or PI yields "". A PI's name is its target either way (its
 /// expanded-name is (null, target)). In HTML the qualified name equals the local
 /// name, which also keeps the LXB_NS_HTML prefix out of the result.
-fn name_emit<'e, D: Dom<'e>>(
+fn name_emit<'e, 'd, D: Dom<'d>>(
     doc: D,
     n: Option<D::Node>,
     qualified: bool,
@@ -444,9 +446,9 @@ fn name_emit<'e, D: Dom<'e>>(
     string(name, err, fname)
 }
 
-fn fn_local_name<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_local_name<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -456,9 +458,9 @@ fn fn_local_name<'e, D: Dom<'e>>(
     name_emit::<D>(doc, t, false, err.clone(), "local-name")
 }
 
-fn fn_name<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_name<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -468,9 +470,9 @@ fn fn_name<'e, D: Dom<'e>>(
     name_emit::<D>(doc, t, true, err.clone(), "name")
 }
 
-fn fn_namespace_uri<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -488,9 +490,9 @@ fn fn_namespace_uri<'e, D: Dom<'e>>(
 
 /* ---------- string functions ---------- */
 
-fn fn_string<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_string<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -498,9 +500,9 @@ fn fn_string<'e, D: Dom<'e>>(
     Ok(Val::string(arg_or_self_text::<D>(focus, args, ev)?))
 }
 
-fn fn_concat<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_concat<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -537,9 +539,9 @@ fn fn_concat<'e, D: Dom<'e>>(
     Ok(Val::string(joined))
 }
 
-fn fn_starts_with<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_starts_with<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -547,9 +549,9 @@ fn fn_starts_with<'e, D: Dom<'e>>(
     two::<D, _>(ev, args, |s, t| boolean(s.starts_with(t)))
 }
 
-fn fn_contains<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_contains<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -557,9 +559,9 @@ fn fn_contains<'e, D: Dom<'e>>(
     two::<D, _>(ev, args, |s, t| boolean(find_bytes(s, t).is_some()))
 }
 
-fn fn_substring_before<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_substring_before<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -575,9 +577,9 @@ fn fn_substring_before<'e, D: Dom<'e>>(
     })
 }
 
-fn fn_substring_after<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_substring_after<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -597,9 +599,9 @@ fn fn_substring_after<'e, D: Dom<'e>>(
 
 /// substring(s, start[, length]). Positions are 1-based character offsets that
 /// round to nearest, and out-of-range positions clip silently.
-fn fn_substring<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_substring<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -630,9 +632,9 @@ fn fn_substring<'e, D: Dom<'e>>(
     string(&bytes[from..to], err.clone(), "substring")
 }
 
-fn fn_string_length<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_string_length<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -642,9 +644,9 @@ fn fn_string_length<'e, D: Dom<'e>>(
 }
 
 /// normalize-space: collapse runs of whitespace and trim the ends.
-fn fn_normalize_space<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_normalize_space<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -688,9 +690,9 @@ fn fn_normalize_space<'e, D: Dom<'e>>(
 ///
 /// The input is valid UTF-8 (the literal lexer validates, and DOM string-values
 /// are valid), but a decode failure fails closed rather than truncating.
-fn fn_translate<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_translate<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -760,9 +762,9 @@ fn fn_translate<'e, D: Dom<'e>>(
 
 /* ---------- boolean functions ---------- */
 
-fn fn_not<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_not<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -770,9 +772,9 @@ fn fn_not<'e, D: Dom<'e>>(
     boolean(!val_to_boolean(&args[0]))
 }
 
-fn fn_true<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_true<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -780,9 +782,9 @@ fn fn_true<'e, D: Dom<'e>>(
     boolean(true)
 }
 
-fn fn_false<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_false<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -790,9 +792,9 @@ fn fn_false<'e, D: Dom<'e>>(
     boolean(false)
 }
 
-fn fn_boolean<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_boolean<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -800,9 +802,9 @@ fn fn_boolean<'e, D: Dom<'e>>(
     boolean(val_to_boolean(&args[0]))
 }
 
-fn fn_lang<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_lang<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -839,9 +841,9 @@ fn fn_lang<'e, D: Dom<'e>>(
 
 /* ---------- number functions ---------- */
 
-fn fn_number<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_number<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -856,9 +858,9 @@ fn fn_number<'e, D: Dom<'e>>(
     }
 }
 
-fn fn_sum<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_sum<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -872,8 +874,8 @@ fn fn_sum<'e, D: Dom<'e>>(
     number(total)
 }
 
-fn num1<'e, D: Dom<'e>, F>(
-    ev: &mut Evaluation<'e, D>,
+fn num1<'e, 'd, D: Dom<'d>, F>(
+    ev: &mut Evaluation<'e, 'd, D>,
     args: &[Val<D::Node>],
     name: &str,
     f: F,
@@ -886,17 +888,17 @@ where
     number(f(to_number::<D>(&args[0], ev)?))
 }
 
-fn fn_floor<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_floor<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     num1::<D, _>(ev, args, "floor", f64::floor)
 }
 
-fn fn_ceiling<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_ceiling<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     num1::<D, _>(ev, args, "ceiling", f64::ceil)
@@ -925,9 +927,9 @@ fn round_half_up(d: f64) -> f64 {
     }
 }
 
-fn fn_round<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_round<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     num1::<D, _>(ev, args, "round", round_half_up)
@@ -950,9 +952,9 @@ fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
     hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
 }
 
-fn fn_css_class<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    _focus: &Focus<'e, D>,
+fn fn_css_class<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    _focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -964,9 +966,9 @@ fn fn_css_class<'e, D: Dom<'e>>(
 
 /// local-name-is(name): true iff the context node's qualified name (for HTML the
 /// lowercase local name) equals the argument.
-fn fn_local_name_is<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_local_name_is<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
@@ -984,13 +986,13 @@ fn fn_local_name_is<'e, D: Dom<'e>>(
 
 /// Two elements are the same "type" iff they share an expanded name: local name
 /// plus namespace URI.
-fn same_type<'e, D: Dom<'e>>(a: D::Node, b: D::Node, doc: D) -> bool {
+fn same_type<'e, 'd, D: Dom<'d>>(a: D::Node, b: D::Node, doc: D) -> bool {
     doc.local_name(a) == doc.local_name(b) && doc.ns_uri(a) == doc.ns_uri(b)
 }
 
 /// The 1-based position of `node` among its same-type element siblings: forward
 /// counts the preceding siblings, otherwise the following ones (from the end).
-fn of_type_pos<'e, D: Dom<'e>>(node: Option<D::Node>, forward: bool, doc: D) -> f64 {
+fn of_type_pos<'e, 'd, D: Dom<'d>>(node: Option<D::Node>, forward: bool, doc: D) -> f64 {
     let Some(node) = node else {
         return 0.0;
     };
@@ -1015,18 +1017,18 @@ fn of_type_pos<'e, D: Dom<'e>>(node: Option<D::Node>, forward: bool, doc: D) -> 
     pos as f64
 }
 
-fn fn_of_type_pos<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_of_type_pos<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     _args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let doc = ev.doc;
     number(of_type_pos::<D>(focus.node, true, doc))
 }
 
-fn fn_of_type_pos_last<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
-    focus: &Focus<'e, D>,
+fn fn_of_type_pos_last<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
+    focus: &Focus<'d, D>,
     _args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let doc = ev.doc;

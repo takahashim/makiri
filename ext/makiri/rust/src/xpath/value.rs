@@ -254,7 +254,7 @@ pub fn val_from_tokens<'d, D: Dom<'d>>(doc: D, v: Val) -> Option<Val<D::Node>> {
 /// pass, and the outermost evaluate); the function library only ever receives
 /// one, so it lives here with the other runtime values rather than there.
 #[derive(Clone, Copy)]
-pub struct Focus<'e, D: Dom<'e>> {
+pub struct Focus<'d, D: Dom<'d>> {
     /// None when the context has no node.
     pub node: Option<D::Node>,
     pub pos: usize,
@@ -549,8 +549,8 @@ fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
 
 /// The cached string-value of `node`, building and caching it on a miss. The
 /// text is `ev.str_cache.text(id)`.
-pub fn cached_node_text<'d, D: Dom<'d>>(
-    ev: &mut super::eval::Evaluation<'d, D>,
+pub fn cached_node_text<'e, 'd, D: Dom<'d>>(
+    ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
 ) -> Result<TextId, Reported> {
     let key = D::token(node);
@@ -563,8 +563,8 @@ pub fn cached_node_text<'d, D: Dom<'d>>(
 
 /// `number()` of `node`'s cached string-value.
 #[inline]
-pub fn cached_node_number<'d, D: Dom<'d>>(
-    ev: &mut super::eval::Evaluation<'d, D>,
+pub fn cached_node_number<'e, 'd, D: Dom<'d>>(
+    ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
 ) -> Result<f64, Reported> {
     let id = cached_node_text::<D>(ev, node)?;

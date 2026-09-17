@@ -59,8 +59,8 @@ impl<N> Memo<N> {
 /// A handler that evaluates again on the same context gets an `Evaluation` of
 /// its own, so it can neither refill this walk's budget nor take its handler
 /// away.
-pub struct Evaluation<'e, D: Dom<'e>> {
-    pub cx: &'e Context<'e>,
+pub struct Evaluation<'e, 'd, D: Dom<'d>> {
+    pub cx: &'e Context<'d, D>,
     pub names: &'e Names,
     pub doc: D,
     pub budget: Budget,
@@ -70,10 +70,10 @@ pub struct Evaluation<'e, D: Dom<'e>> {
     handler: Option<&'e dyn Resolver>,
 }
 
-impl<'e, D: Dom<'e>> Evaluation<'e, D> {
+impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
     /// One evaluate of `doc` under `cx`, whose registrations are `names`.
     fn new(
-        cx: &'e Context<'e>,
+        cx: &'e Context<'d, D>,
         names: &'e Names,
         doc: D,
         handler: Option<&'e dyn Resolver>,
@@ -93,8 +93,8 @@ impl<'e, D: Dom<'e>> Evaluation<'e, D> {
 
 /* ---------- predicates ---------- */
 
-fn apply_predicates<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn apply_predicates<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     preds: &[Expr],
     inout: &mut NodeSet<D::Node>,
 ) -> EvalResult {
@@ -151,8 +151,8 @@ fn apply_predicates<'e, D: Dom<'e>>(
 /// register_namespace (and register_variable, node=) while an evaluate is in
 /// progress on the context - which is exactly when a predicate handler could
 /// re-enter.
-fn resolve_test_prefix<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn resolve_test_prefix<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     test: &NodeTest,
 ) -> EvalResult<Option<&'e [u8]>> {
     let Some(prefix) = test.prefix.as_deref() else {
@@ -170,8 +170,8 @@ fn resolve_test_prefix<'e, D: Dom<'e>>(
     }
 }
 
-fn eval_step<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_step<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     step: &Step,
     context_set: &NodeSet<D::Node>,
     out: &mut NodeSet<D::Node>,
@@ -193,7 +193,7 @@ fn eval_step<'e, D: Dom<'e>>(
      * and every per-node match then reuses the URI instead of re-resolving. */
     let pre = resolve_test_prefix(ev, test)?;
 
-    let b = Bindings::<D>::new(ev.cx, ev.names, doc, pre);
+    let b = Bindings::new(ev.cx, ev.names, doc, pre);
 
     /* A post-pass (sort to document order, then optional adjacent dedup) is
      * needed when the axis emits in reverse order per context, when it aliases
@@ -289,8 +289,8 @@ fn eval_step<'e, D: Dom<'e>>(
     Ok(())
 }
 
-fn eval_steps<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_steps<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     steps: &[Step],
     seed: &mut NodeSet<D::Node>,
 ) -> EvalResult<Val<D::Node>> {
@@ -317,8 +317,8 @@ fn eval_steps<'e, D: Dom<'e>>(
 /// §3.4 equality. A node-set on either side means "true iff SOME node satisfies
 /// it"; all node string-values go through the per-evaluate cache, so an M-by-N
 /// comparison costs O(M+N) string builds.
-fn compare_eq<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn compare_eq<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     l: &Val<D::Node>,
     r: &Val<D::Node>,
     op: Op,
@@ -407,8 +407,8 @@ fn rel_hit(op: Op, a: f64, b: f64) -> bool {
 /// §3.4 relational. A node-set on either side is true iff SOME pair satisfies
 /// the relation on their numeric string-values - every pair, not just the first
 /// node of each side.
-fn compare_rel<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn compare_rel<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     l: &Val<D::Node>,
     r: &Val<D::Node>,
     op: Op,
@@ -453,8 +453,8 @@ fn compare_rel<'e, D: Dom<'e>>(
 
 /* ---------- union ---------- */
 
-fn union_nodeset<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn union_nodeset<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     l: &Val<D::Node>,
     r: &Val<D::Node>,
 ) -> EvalResult<Val<D::Node>> {
@@ -527,7 +527,7 @@ fn first_recognise(root: &Expr) -> Option<&Step> {
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
-fn first_node_ok<'e, D: Dom<'e>>(doc: D, step: &Step, n: D::Node) -> bool {
+fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node) -> bool {
     for p in &step.predicates {
         /* The recogniser already confirmed the shape. */
         let ap = match match_attr_pred(p) {
@@ -550,8 +550,8 @@ fn first_node_ok<'e, D: Dom<'e>>(doc: D, step: &Step, n: D::Node) -> bool {
 ///
 /// On a match or none, the answer is the 0-or-1-node node-set.
 #[allow(clippy::result_large_err)]
-pub(crate) fn try_first_match<'e, D: Dom<'e>>(
-    cx: &'e Context<'e>,
+pub(crate) fn try_first_match<'e, 'd, D: Dom<'d>>(
+    cx: &'e Context<'d, D>,
     names: &'e Names,
     doc: D,
     node: Option<D::Node>,
@@ -572,8 +572,8 @@ pub(crate) fn try_first_match<'e, D: Dom<'e>>(
     Ok(Some(Val::NodeSet(set)))
 }
 
-fn first_match_walk<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn first_match_walk<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     ast: &Ast,
     node: Option<D::Node>,
 ) -> EvalResult<Option<Option<D::Node>>> {
@@ -600,7 +600,7 @@ fn first_match_walk<'e, D: Dom<'e>>(
         return Ok(Some(None)); /* recognised; no context means no match */
     };
 
-    let b = Bindings::<D>::new(ev.cx, ev.names, doc, pre);
+    let b = Bindings::new(ev.cx, ev.names, doc, pre);
     let mut cur = doc.first_child(start);
     while let Some(n) = cur {
         ev.budget.charge_op()?;
@@ -633,8 +633,8 @@ fn first_match_walk<'e, D: Dom<'e>>(
 
 /* ---------- the expression evaluator ---------- */
 
-fn eval_path<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_path<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     p: &Path,
     self_node: Option<D::Node>,
 ) -> EvalResult<Val<D::Node>> {
@@ -650,12 +650,12 @@ fn eval_path<'e, D: Dom<'e>>(
     eval_steps::<D>(ev, &p.steps, &mut seed)
 }
 
-fn eval_filter<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_filter<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     expr: &Expr,
     predicates: &[Expr],
     steps: &[Step],
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     let mut primary = eval_node::<D>(ev, expr, focus)?;
     if !predicates.is_empty() {
@@ -682,12 +682,12 @@ fn eval_filter<'e, D: Dom<'e>>(
     Ok(primary)
 }
 
-fn eval_fncall<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_fncall<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     prefix: Option<&[u8]>,
     name: &[u8],
     args: &[Expr],
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     let names = ev.names;
     let ns_uri: Option<&[u8]> = match prefix {
@@ -784,12 +784,12 @@ fn handler_oom(budget: &mut Budget) -> Reported {
     )
 }
 
-fn eval_binop<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_binop<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     op: Op,
     lhs: &Expr,
     rhs: &Expr,
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     let doc = ev.doc;
 
@@ -833,10 +833,10 @@ fn eval_binop<'e, D: Dom<'e>>(
 }
 
 /// Unary minus: the operand as a number, negated.
-fn eval_negate<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_negate<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     x: &Expr,
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     let doc = ev.doc;
     let v = eval_node::<D>(ev, x, focus)?;
@@ -853,10 +853,10 @@ fn string_value<N>(bytes: &[u8], err: ErrSink, what: &core::ffi::CStr) -> EvalRe
 /// recursion is bounded": one op and one recursion level are charged on entry
 /// and the level is released at the single exit. Keeping it single-exit is what
 /// makes that balance locally checkable.
-fn eval_node<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_node<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     e: &Expr,
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     ev.budget.charge_op()?;
     /* A refused entry is not counted, so returning here needs no release. */
@@ -866,10 +866,10 @@ fn eval_node<'e, D: Dom<'e>>(
     result
 }
 
-fn eval_node_inner<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+fn eval_node_inner<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     e: &Expr,
-    focus: &Focus<'e, D>,
+    focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     /* Hoisting: a context-independent subtree already computed in this evaluate
      * comes back as a clone, which keeps ownership clean - clearing either copy
@@ -930,8 +930,8 @@ fn eval_node_inner<'e, D: Dom<'e>>(
 /// Evaluate an AST over `doc` with `node` as the focus, on a fresh evaluation
 /// that `handler` answers unknown functions for.
 #[allow(clippy::result_large_err)]
-pub(crate) fn eval_ast<'e, D: Dom<'e>>(
-    cx: &'e Context<'e>,
+pub(crate) fn eval_ast<'e, 'd, D: Dom<'d>>(
+    cx: &'e Context<'d, D>,
     names: &'e Names,
     doc: D,
     node: Option<D::Node>,

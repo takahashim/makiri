@@ -12,9 +12,10 @@
 
 #![forbid(unsafe_code)]
 
-use super::abi::*;
-use super::dom::{Bucket, Dom};
-use super::token::Token;
+use crate::xpath::abi::*;
+use crate::xpath::ctx::Context;
+use crate::xpath::dom::{Bucket, Dom};
+use crate::xpath::token::Token;
 use crate::xml::model as xml;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
@@ -96,7 +97,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     #[inline]
     fn as_attr(self, n: xml::NodeId) -> Option<xml::NodeId> {
         self.try_node(n)
-            .is_some_and(|x| x.type_.as_u32() == super::dom::NTYPE_ATTRIBUTE)
+            .is_some_and(|x| x.type_.as_u32() == crate::xpath::dom::NTYPE_ATTRIBUTE)
             .then_some(n)
     }
     #[inline]
@@ -187,4 +188,13 @@ impl<'d> Dom<'d> for &'d xml::Document {
             recheck: false,
         })
     }
+}
+
+/// A context over `doc` with `node` as the focus; the bridge passes the document
+/// node for a whole-document query.
+pub fn context(doc: &xml::Document, node: xml::NodeId) -> Context<'_, &xml::Document> {
+    Context::new(
+        doc,
+        Token::from_ptr(node.to_token() as *mut core::ffi::c_void),
+    )
 }

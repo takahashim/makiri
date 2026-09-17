@@ -64,9 +64,3 @@ pub mod step_index;
 pub mod token;
 pub mod value;
 
-/* The XML instance. */
-pub mod dom_xml;
-
-/* The HTML instance: it reads Lexbor's DOM, so it comes with `lexbor`. */
-#[cfg(feature = "lexbor")]
-pub mod dom_html;

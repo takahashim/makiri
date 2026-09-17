@@ -21,18 +21,18 @@ use crate::falloc::Reserve;
 /// `descendant::tag` from the document is precisely "every element named tag",
 /// which is what the index groups.
 ///
-fn context_is_document<'e, D: Dom<'e>>(doc: D, set: &NodeSet<D::Node>) -> bool {
+fn context_is_document<'e, 'd, D: Dom<'d>>(doc: D, set: &NodeSet<D::Node>) -> bool {
     set.len() == 1 && set.get(0) == doc.document_node()
 }
 
 /// `//tag` from the index instead of a tree walk. Returns Ok(true) when it
 /// filled `result`, Ok(false) when the shape does not qualify.
-pub fn try_descendant_index<'e, D: Dom<'e>>(
+pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
     doc: D,
     step: &Step,
     context_set: &NodeSet<D::Node>,
     result: &mut NodeSet<D::Node>,
-    b: &Bindings<'e, D>,
+    b: &Bindings<'e, 'd, D>,
     budget: &mut Budget,
 ) -> Result<bool, Reported> {
     let test = &step.test;
@@ -72,7 +72,7 @@ pub fn try_descendant_index<'e, D: Dom<'e>>(
 /// pointer-keyed parent -> count map emits exactly those whose running count
 /// reaches N, already in document order, with no sort or dedup.
 ///
-fn nth_shape<'e, D: Dom<'e>>(
+fn nth_shape<'e, 'd, D: Dom<'d>>(
     doc: D,
     s0: &Step,
     s1: &Step,
@@ -108,8 +108,8 @@ fn nth_shape<'e, D: Dom<'e>>(
     Some(dn as usize)
 }
 
-pub fn try_descendant_index_nth<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     s0: &Step,
     s1: &Step,
     seed: &NodeSet<D::Node>,

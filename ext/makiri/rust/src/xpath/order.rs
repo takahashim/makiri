@@ -301,8 +301,8 @@ fn doc_order_cmp_indexed<'d, D: Dom<'d>>(doc: D, idx: &OrderIndex, a: D::Node, b
 const INDEX_BUILD_MIN: usize = 200;
 
 /// Sort a node-set into document order.
-pub fn nodeset_sort_doc_order<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+pub fn nodeset_sort_doc_order<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     ns: &mut NodeSet<D::Node>,
 ) {
     let doc = ev.doc;
@@ -341,8 +341,8 @@ pub fn nodeset_sort_doc_order<'e, D: Dom<'e>>(
 }
 
 /// Sort into document order and drop duplicates.
-pub fn nodeset_unique_sorted<'e, D: Dom<'e>>(
-    ev: &mut Evaluation<'e, D>,
+pub fn nodeset_unique_sorted<'e, 'd, D: Dom<'d>>(
+    ev: &mut Evaluation<'e, 'd, D>,
     ns: &mut NodeSet<D::Node>,
 ) {
     if ns.len() < 2 {

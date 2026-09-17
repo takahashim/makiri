@@ -32,7 +32,7 @@
 
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 use crate::xpath::token::Token;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -43,21 +43,19 @@ use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use crate::bridge::ruby::VALUE;
 
+use crate::bridge::xpath::{context_for, parse_query, xpath_error, Cx as Context};
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{Backend, Context, ContextError, Resolver};
+use crate::xpath::ctx::{ContextError, Resolver};
 use crate::xpath::ctx::{ResolverCall, XPathValue};
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{
-    Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
-};
+use crate::xpath::msg::{Reported, XP_ERR_OOM, XP_ERR_RUNTIME};
 use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 use super::abi::{
-    doc_parsed, error_class, html_node_unwrap, is_kind_of, keepalive_document, node_raw,
-    node_set_with_fill, parsed_xml_doc, ruby_str_from_utf8, ruby_verified_text,
-    xml_node_unwrap, RubyText,
+    error_class, is_kind_of, keepalive_document, node_raw, node_set_with_fill, ruby_str_from_utf8,
+    ruby_verified_text, RubyText,
 };
-use crate::init::{CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS};
+use crate::init::{CLASS_NODE, CLASS_NODE_SET, MOD_HTML_NODE_METHODS};
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
 /// many times, so each is parsed once and the AST re-evaluated (the evaluator
@@ -81,30 +79,6 @@ pub use crate::init::EXC_XPATH_SYNTAX_ERROR;
 /* ------------------------------------------------------------------ */
 /* result + error mapping                                             */
 /* ------------------------------------------------------------------ */
-
-/// An engine error as the Ruby exception it maps to.
-///
-/// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
-/// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
-/// magnus raises once its frames - and the context they own - are gone.
-pub(crate) fn xpath_error(err: &XPathError) -> Error {
-    let class = match err.status {
-        XP_ERR_SYNTAX => EXC_XPATH_SYNTAX_ERROR.exception(),
-        XP_ERR_LIMIT => EXC_XPATH_LIMIT_EXCEEDED.exception(),
-        _ => error_class(),
-    };
-    let ruby = Ruby::get_with(class);
-    /* The message's bytes as they are, tagged UTF-8 - not a lossy copy. */
-    let bytes = err
-        .message()
-        .unwrap_or(c"XPath evaluation failed")
-        .to_bytes();
-    let msg = ruby.enc_str_new(bytes, ruby.utf8_encoding());
-    match class.new_instance((msg,)) {
-        Ok(e) => Error::from(e),
-        Err(e) => e,
-    }
-}
 
 /// An evaluation result as a Ruby object. Converting consumes the value, which
 /// frees its node-set array or string; `document` is the keepalive for a
@@ -181,7 +155,7 @@ struct XPathCtx {
     /// Keepalive: the context node's wrapper.
     node: Cell<Opaque<Value>>,
     cache: RefCell<AstCache>,
-    ctx: Context<'static>,
+    ctx: Context,
 }
 
 /* SAFETY: every access holds the GVL, which serialises Ruby threads. magnus's
@@ -259,65 +233,6 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<bool, Error> {
             v.inspect()
         ),
     ))
-}
-
-/// Build a native context bound to `rb_node`'s document, with `rb_node` as the
-/// context node.
-///
-/// The HTML branch builds the attr->owner index up front, so the engine's
-/// parent and ancestor axes and its document-order sort see attribute owners,
-/// and hands over the element index so `//tag` is answered without a tree walk.
-/// The XML branch needs neither: the custom node links attributes to their owner
-/// directly, and its name index hangs off the document.
-///
-/// The context is `'static` because Ruby, not a Rust borrow, keeps the document
-/// alive: the caller holds `document` for as long as the context lives. The
-/// document does not change while an evaluate runs: without a handler no Ruby
-/// runs, and with one [`Bridge`] holds the document's mutation guard.
-pub(crate) fn context_for(rb_node: Value, document: Value) -> Result<Context<'static>, Error> {
-    let parsed = doc_parsed(document)?;
-
-    // SAFETY: the handle of `document`, which the caller holds for as long as
-    // the context it gets back.
-    unsafe {
-        if (*parsed).is_xml() {
-            let xdoc = parsed_xml_doc(parsed);
-            if xdoc.is_null() {
-                return Err(Error::new(error_class(), "XPath context with no document"));
-            }
-            /* `ctx.doc` is the STORAGE (the Document); the context NODE is the
-             * document node for a Document receiver, else the node itself. */
-            let cnode = if is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
-                Token::from_ptr(
-                    (*(xdoc as *mut crate::xml::model::Doc))
-                        .doc_node()
-                        .to_token() as *mut c_void,
-                )
-            } else {
-                Token::from_ptr(xml_node_unwrap(rb_node)?)
-            };
-            let backend = Backend::Xml {
-                doc: xdoc as *const crate::xml::model::Document,
-            };
-            return Ok(Context::new(backend, cnode));
-        }
-
-        let node = Token::from_ptr(html_node_unwrap(rb_node)?.as_ptr());
-        /* TypeError for a Document that is not HTML. */
-        crate::glue::abi::html_doc_unwrap(document)?;
-        /* Built up front, so an allocation failure raises here rather than on the
-         * first evaluate. Each evaluate still reads the index afresh from the
-         * handle, which rebuilds it after a mutation - the context must not keep
-         * the one it saw here. */
-        if (*parsed).dom_index().is_none() {
-            return Err(Error::new(
-                error_class(),
-                "failed to build attribute index for XPath",
-            ));
-        }
-        let backend = Backend::Html { parsed };
-        Ok(Context::new(backend, node))
-    }
 }
 
 /// `XPathContext.new(node, namespace_matching: :strict)`.
@@ -405,7 +320,7 @@ struct Bridge {
 // SAFETY: the bridge holds `document`'s evaluation guard for as long as it
 // exists, so a handler cannot change the document mid-walk; and
 // `push_result_node` admits only nodes whose document is `document`.
-unsafe impl Resolver for Bridge {
+impl Resolver for Bridge {
     fn resolve(
         &self,
         budget: &mut Budget,
@@ -774,19 +689,6 @@ fn cached_ast(
 /* `Node#xpath` / `#at_xpath` for both representations, the XML `#css` family
  * and `XPathContext#evaluate` all run parse -> evaluate -> convert through
  * these three; they differ only in how the context is built and who owns it. */
-
-/// Parse `expr` for one query under `ctx`'s caps, on a budget of the query's
-/// own; a failure is that budget's error as the exception.
-pub(crate) fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>, Error> {
-    let ev = ruby_verified_text(expr, c"XPath expression")?;
-    let mut budget = Budget::with_limits(ctx.limits());
-    /* `ev` holds the String rooted; `as_verified`'s borrow keeps it live for the
-     * parse. */
-    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
-    /* No borrowed bytes across the exception's allocation. */
-    drop(ev);
-    parsed.map_err(|_| xpath_error(&budget.take_error()))
-}
 
 /// Evaluate `ast` under `ctx`, with `handler` (nil for none) answering unknown
 /// functions for this evaluation only. `first_only` takes the `at_xpath` fast

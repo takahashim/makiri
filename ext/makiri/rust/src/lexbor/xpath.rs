@@ -12,12 +12,16 @@
 
 use core::ffi::c_void;
 
-use super::abi::*;
-use super::dom::*;
-use super::token::Token;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
+use crate::lexbor::adapter::post_parse::Parsed;
 use crate::lexbor_abi::{self as lxb, LxbNode};
+use crate::xpath::abi::*;
+use crate::xpath::ctx::Context;
+use crate::xpath::dom::*;
+use crate::xpath::limits::{Budget, Limits};
+use crate::xpath::msg::{Error, XP_ERR_OOM, XP_ERR_RUNTIME};
+use crate::xpath::token::Token;
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
  * Lexbor's enum must agree value for value; a mismatch would make an HTML walk
@@ -189,4 +193,56 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             recheck: true,
         })
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* the backend's context                                              */
+/* ------------------------------------------------------------------ */
+
+/// `evaluate with no document`.
+fn no_document() -> Error {
+    let budget = Budget::with_limits(Limits::DEFAULT);
+    let _ = crate::err_setf!(budget.sink(), XP_ERR_RUNTIME, "evaluate with no document");
+    budget.take_error()
+}
+
+/// A context over the HTML document behind `parsed`, with its element/attribute
+/// index as it stands now, and `node` as the focus.
+///
+/// The index is required, not an optimisation: building it also backfills each
+/// attribute's parent, which the parent and ancestor axes read. Each evaluate
+/// reads the index afresh from the handle, so a mutation between evaluates drops
+/// it and the next evaluate rebuilds it - the context must not keep the one it
+/// saw here.
+///
+/// # Safety
+/// `parsed` must stay live and free of mutation for `'e`, and `node` must be a
+/// node of its document.
+#[allow(clippy::result_large_err)]
+pub unsafe fn context<'e>(
+    parsed: *mut Parsed,
+    node: Token,
+) -> Result<Context<'e, HtmlDom<'e>>, Error> {
+    // SAFETY: the caller's contract - the handle is live for `'e`.
+    let Some(parsed) = (unsafe { parsed.as_mut() }) else {
+        return Err(no_document());
+    };
+    let raw_doc = parsed.html_doc() as *mut lxb::LxbDoc;
+    // SAFETY: as above.
+    let Some(doc) = (unsafe { HtmlDoc::from_raw(raw_doc) }) else {
+        return Err(no_document());
+    };
+    let Some(index) = parsed.dom_index() else {
+        let budget = Budget::with_limits(Limits::DEFAULT);
+        let _ = crate::err_setf!(
+            budget.sink(),
+            XP_ERR_OOM,
+            "out of memory building the attribute index"
+        );
+        return Err(budget.take_error());
+    };
+    // SAFETY: the index has an allocation of its own, which only a mutation
+    // frees, and none runs while the context lives.
+    let index: &'e DomIndex = index;
+    Ok(Context::new(HtmlDom::new(doc, index), node))
 }

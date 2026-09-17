@@ -17,3 +17,6 @@ pub mod fragment;
 /// Selector traversal engine, including its Lexbor callbacks.
 #[cfg(feature = "ruby")]
 pub mod selectors;
+
+/// The XPath engine's HTML backend (`Dom` for a Lexbor document).
+pub mod xpath;

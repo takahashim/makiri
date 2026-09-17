@@ -20,8 +20,8 @@ use super::dom::*;
 /// function call, so they are hoisted here instead - a name-test walk is the
 /// hottest loop in the engine.
 #[derive(Clone, Copy)]
-pub struct Bindings<'a, D: Dom<'a>> {
-    pub cx: &'a Context<'a>,
+pub struct Bindings<'a, 'd, D: Dom<'d>> {
+    pub cx: &'a Context<'d, D>,
     /// The context's registrations, for a prefix the step did not resolve.
     pub names: &'a Names,
     pub doc: D,
@@ -31,13 +31,13 @@ pub struct Bindings<'a, D: Dom<'a>> {
     pub pre: Option<&'a [u8]>,
 }
 
-impl<'a, D: Dom<'a>> Bindings<'a, D> {
+impl<'a, 'd, D: Dom<'d>> Bindings<'a, 'd, D> {
     pub fn new(
-        cx: &'a Context<'a>,
+        cx: &'a Context<'d, D>,
         names: &'a Names,
         doc: D,
         pre: Option<&'a [u8]>,
-    ) -> Bindings<'a, D> {
+    ) -> Bindings<'a, 'd, D> {
         Bindings {
             cx,
             names,
@@ -63,12 +63,12 @@ impl<'a, D: Dom<'a>> Bindings<'a, D> {
 ///
 /// The caller has checked an element's kind; an attribute is checked here, by
 /// taking it as one.
-fn name_test_match<'a, D: Dom<'a>>(
+fn name_test_match<'a, 'd, D: Dom<'d>>(
     doc: D,
     test: &NodeTest,
     node: D::Node,
     axis: Axis,
-    b: &Bindings<'a, D>,
+    b: &Bindings<'a, 'd, D>,
 ) -> bool {
     let Some(want_local) = test.local.as_deref() else {
         return false;
@@ -117,7 +117,7 @@ fn name_test_match<'a, D: Dom<'a>>(
     }
 }
 
-fn resolved_prefix<'a, D: Dom<'a>>(b: &Bindings<'a, D>, test: &NodeTest) -> Option<&'a [u8]> {
+fn resolved_prefix<'a, 'd, D: Dom<'d>>(b: &Bindings<'a, 'd, D>, test: &NodeTest) -> Option<&'a [u8]> {
     match b.pre {
         Some(u) => Some(u),
         None => b.names.lookup_ns(test.prefix.as_deref().unwrap_or(&[])),
@@ -126,12 +126,12 @@ fn resolved_prefix<'a, D: Dom<'a>>(b: &Bindings<'a, D>, test: &NodeTest) -> Opti
 
 /// Whether `node` passes `test` on `axis`, with `b` built for the evaluating
 /// context.
-pub fn node_principal_match<'a, D: Dom<'a>>(
+pub fn node_principal_match<'a, 'd, D: Dom<'d>>(
     doc: D,
     test: &NodeTest,
     node: D::Node,
     axis: Axis,
-    b: &Bindings<'a, D>,
+    b: &Bindings<'a, 'd, D>,
 ) -> bool {
     match test.kind {
         TestKind::Node => {

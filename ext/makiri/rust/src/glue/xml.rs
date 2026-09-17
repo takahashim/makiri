@@ -45,7 +45,7 @@ use crate::xml::model::MAX_BYTES;
 const CSS_DEFAULT_NS_PREFIX: &str = "xmlns";
 
 /// The engine context. Opaque here while C held it; now the real type.
-use crate::xpath::ctx::Context as XPathContext;
+use crate::bridge::xpath::Cx as XPathContext;
 
 /// The default-namespace prefix, or NULL. Declared twice while C held it (once
 /// here, once in `css`); the fields matched, but nothing checked that.
@@ -71,8 +71,8 @@ fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
 pub use crate::bridge::string::ruby_copy_bytes;
 pub use crate::bridge::xml_decode::xml_decode_input;
 pub use crate::bridge::lexbor::wrap_document;
-use crate::glue::xpath::xpath_error;
-use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};
+use crate::bridge::xpath::{context_for, parse_query, xpath_error};
+use crate::glue::xpath::{evaluate_query, query_result};
 pub use crate::xml::api::xml_doc_new;
 pub use crate::xml::api::xml_parse_ex;
 pub use crate::xml::api::xml_parse_fragment;
@@ -223,7 +223,7 @@ fn build_ctx(
     rb_text: Value,
     what: &core::ffi::CStr,
     rb_ns: Option<Value>,
-) -> Result<XPathContext<'static>, Error> {
+) -> Result<XPathContext, Error> {
     verify_text(crate::bridge::ruby::string_of(rb_text)?.as_value(), what)?;
     let ctx = context_for(context, document)?;
     register_namespaces(ruby, &ctx, rb_ns)?; /* ctx drops on error */
@@ -234,7 +234,7 @@ fn build_ctx(
 /// AST and the context first.
 fn run_ast(
     ruby: &Ruby,
-    ctx: XPathContext<'static>,
+    ctx: XPathContext,
     ast: Box<Ast>,
     first_only: bool,
     document: Value,
