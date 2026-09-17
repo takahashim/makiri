@@ -576,7 +576,7 @@ unsafe fn ruby_to_out(
             return false;
         }
     };
-    let Some(text) = Text::try_copy(unsafe { vv.as_verified() }.as_bytes()) else {
+    let Some(text) = Text::try_copy(vv.as_verified().as_bytes()) else {
         err.set("out of memory converting handler result");
         return false;
     };
@@ -880,14 +880,12 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
     if rb_self.ctx.is_evaluating() {
         return Err(refused(ContextError::Evaluating, BUSY, FAILED));
     }
-    unsafe {
-        let pv = ruby_verified_text(prefix, c"namespace prefix")?;
-        let uv = ruby_verified_text(uri, c"namespace URI")?;
-        rb_self
-            .ctx
-            .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) /* copies both */
-            .map_err(|e| refused(e, BUSY, FAILED))?;
-    }
+    let pv = ruby_verified_text(prefix, c"namespace prefix")?;
+    let uv = ruby_verified_text(uri, c"namespace URI")?;
+    rb_self
+        .ctx
+        .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) /* copies both */
+        .map_err(|e| refused(e, BUSY, FAILED))?;
     Ok(rb_self_value())
 }
 
@@ -904,27 +902,27 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
     if rb_self.ctx.is_evaluating() {
         return Err(refused(ContextError::Evaluating, BUSY, FAILED));
     }
-    unsafe {
-        /* Coerce the value FIRST - to_s allocates, which is a GC point - so no
-         * borrowed name bytes are held across it. The value then gets the
-         * stricter engine-string check, which adds the byte cap on top of the
-         * no-NUL / valid-UTF-8 contract. */
-        let sv: Value = value.funcall("to_s", ())?;
-        let nv = ruby_verified_text(name, c"variable name")?;
-        let vv = match ruby_try_verified_text(sv.as_raw(), rb_self.ctx.limits().max_string_bytes) {
-            Ok(vv) => vv,
-            Err(reason) => {
-                return Err(Error::new(
-                    error_class(),
-                    format!("invalid variable value: {}", reason.to_string_lossy()),
-                ));
-            }
-        };
-        rb_self
-            .ctx
-            .register_variable(nv.as_verified().as_bytes(), vv.as_verified().as_bytes()) /* copies both */
-            .map_err(|e| refused(e, BUSY, FAILED))?;
-    }
+    /* Coerce the value FIRST - to_s allocates, which is a GC point - so no
+     * borrowed name bytes are held across it. The value then gets the stricter
+     * engine-string check, which adds the byte cap on top of the no-NUL /
+     * valid-UTF-8 contract. */
+    let sv: Value = value.funcall("to_s", ())?;
+    let nv = ruby_verified_text(name, c"variable name")?;
+    // SAFETY: `sv` is a live String, and the borrow ends with the check.
+    let vv = match unsafe { ruby_try_verified_text(sv.as_raw(), rb_self.ctx.limits().max_string_bytes) }
+    {
+        Ok(vv) => vv,
+        Err(reason) => {
+            return Err(Error::new(
+                error_class(),
+                format!("invalid variable value: {}", reason.to_string_lossy()),
+            ));
+        }
+    };
+    rb_self
+        .ctx
+        .register_variable(nv.as_verified().as_bytes(), vv.as_verified().as_bytes()) /* copies both */
+        .map_err(|e| refused(e, BUSY, FAILED))?;
     Ok(rb_self_value())
 }
 

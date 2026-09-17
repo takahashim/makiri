@@ -137,13 +137,14 @@ impl<C> RubyStr<C> {
 }
 
 impl RubyText {
-    /// The bytes as an engine input.
+    /// The bytes as an engine input, borrowed for the guard's lifetime.
     ///
-    /// # Safety
-    /// The view carries no lifetime: it must not be used after `self` drops, nor
-    /// while Ruby code runs.
-    pub(crate) unsafe fn as_verified(&self) -> crate::text::VerifiedText {
-        // SAFETY: the bridge checked the text contract when it built `self`.
+    /// Safe in the lifetime sense: the token cannot outlive `self`, so the
+    /// anchor keeps the bytes alive for every use. The engine is Ruby-free, so
+    /// nothing runs that could move them while the token is held.
+    pub(crate) fn as_verified(&self) -> crate::text::VerifiedText<'_> {
+        // SAFETY: the bridge checked the text contract when it built `self`,
+        // and the returned lifetime is the borrow of the guard.
         unsafe { crate::text::VerifiedText::from_raw_parts(self.ptr, self.len) }
     }
 }

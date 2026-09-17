@@ -644,7 +644,7 @@ pub unsafe fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box
     let err = budget.sink();
     budget.check_expr_bytes(expr.len())?;
 
-    let src: &[u8] = unsafe { expr.as_bytes() };
+    let src: &[u8] = expr.as_bytes();
 
     let lx = Lexer::new(src).map_err(|e| lex_err(err, e))?;
     let mut p = Parser { lx, err, budget };
