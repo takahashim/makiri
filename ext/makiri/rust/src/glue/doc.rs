@@ -25,7 +25,7 @@
 
 use core::ffi::c_int;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RString, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -277,7 +277,7 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
             return Err(Error::new(error_class(), "failed to parse HTML document"));
         }
         let _ = ruby;
-        Ok(Value::from_raw(obj))
+        Ok(crate::bridge::ruby::value(obj))
     }
 }
 
@@ -295,7 +295,7 @@ fn doc_root(ruby: &Ruby, self_: Value) -> Value {
         return ruby.qnil().as_value();
     };
     /* SAFETY: a node of `self_`'s document, which keeps it alive. */
-    unsafe { Value::from_raw(wrap_html_node(RawNode::from(root), self_.as_raw())) }
+    unsafe { crate::bridge::ruby::value(wrap_html_node(RawNode::from(root), self_.as_raw())) }
 }
 
 /// The document `<title>`, or `""`.
@@ -334,7 +334,7 @@ fn doc_errors(ruby: &Ruby, self_: Value) -> Value {
     unsafe {
         /* A Document method, so the receiver is a Document. */
         let d = crate::bridge::ruby::typed_data_known(self_, &DOC_TYPE) as *mut DocData;
-        Value::from_raw((*d).errors)
+        crate::bridge::ruby::value((*d).errors)
     }
 }
 
@@ -357,7 +357,7 @@ fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Err
                 "failed to create fragment document",
             ));
         };
-        Ok(Value::from_raw(wrap_document(Box::into_raw(parsed)))) /* GC owns parsed now */
+        Ok(crate::bridge::ruby::value(wrap_document(Box::into_raw(parsed)))) /* GC owns parsed now */
     })
 }
 
@@ -432,7 +432,7 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
                 deep,
                 &mut imp,
             ))?;
-            return Ok(Value::from_raw(wrap_html_node(
+            return Ok(crate::bridge::ruby::value(wrap_html_node(
                 RawNode::from_ptr(imp.cast()).expect("imported node"),
                 self_.as_raw(),
             )));
@@ -442,7 +442,7 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
         let Some(imp) = import_with_fixup(doc, src, deep) else {
             return Err(Error::new(error_class(), "failed to import node"));
         };
-        Ok(Value::from_raw(wrap_html_node(imp, self_.as_raw())))
+        Ok(crate::bridge::ruby::value(wrap_html_node(imp, self_.as_raw())))
     }
 }
 
@@ -480,7 +480,7 @@ pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     };
     let document = keepalive_document(rb_self)?;
     // SAFETY: `clone` is a detached node of `document`'s arena.
-    Ok(unsafe { Value::from_raw(wrap_html_node(clone, document.as_raw())) })
+    Ok(unsafe { crate::bridge::ruby::value(wrap_html_node(clone, document.as_raw())) })
 }
 
 /* ---- registration ---- */

@@ -27,7 +27,7 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -238,7 +238,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
             return Err(parse_status_error(status, Unit::Document));
         }
         (*parsed).set_xml_doc(Box::from_raw(result));
-        Ok(Value::from_raw(obj))
+        Ok(crate::bridge::ruby::value(obj))
     }
 }
 
@@ -543,7 +543,7 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() {
             return ruby.qnil().as_value();
         }
-        Value::from_raw(wrap_typed_xml_node(
+        crate::bridge::ruby::value(wrap_typed_xml_node(
             (*xdoc).root.unwrap_or(NodeId::INVALID),
             rb_self.as_raw(),
         ))
@@ -562,7 +562,7 @@ fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() || (*xdoc).doctype.is_none() {
             return ruby.qnil().as_value();
         }
-        Value::from_raw(wrap_typed_xml_node(
+        crate::bridge::ruby::value(wrap_typed_xml_node(
             (*xdoc).doctype.unwrap_or(NodeId::INVALID),
             rb_self.as_raw(),
         ))
@@ -614,7 +614,7 @@ fn new_empty_document() -> Result<Value, Error> {
             }
         };
         (*parsed).set_xml_doc(xdoc); /* GC now frees `xdoc` via `parsed` */
-        Ok(Value::from_raw(doc_obj))
+        Ok(crate::bridge::ruby::value(doc_obj))
     }
 }
 
@@ -634,7 +634,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
         let doc_obj = new_empty_document()?;
         let xdoc = parsed_xml_doc(doc_parsed(doc_obj)?);
         let frag = fragment_into(xdoc, source, false)?;
-        Ok(Value::from_raw(wrap_typed_xml_node(frag, doc_obj.as_raw())))
+        Ok(crate::bridge::ruby::value(wrap_typed_xml_node(frag, doc_obj.as_raw())))
     }
 }
 
@@ -647,7 +647,7 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
             return Err(Error::new(error_class(), "the document has no arena"));
         }
         let frag = fragment_into(xdoc, source, true)?;
-        Ok(Value::from_raw(wrap_typed_xml_node(frag, rb_self.as_raw())))
+        Ok(crate::bridge::ruby::value(wrap_typed_xml_node(frag, rb_self.as_raw())))
     }
 }
 

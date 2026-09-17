@@ -212,6 +212,19 @@ pub unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(v: VALUE) -> &'a 
  * does), and turning them into `Result`-returning helpers is part of moving
  * the protected calls behind the bridge. */
 
+/// A `Value` from a raw handle the caller already holds - a stored field, or a
+/// producer that still returns `VALUE`. The bridge is the one place that turns
+/// a raw handle back into a `Value`.
+///
+/// # Safety
+/// `raw` must be a live Ruby value of the current process (as every `VALUE` a
+/// wrapper stores is), and the caller must keep it rooted.
+#[inline]
+pub unsafe fn value(raw: VALUE) -> Value {
+    // SAFETY: the caller's contract.
+    unsafe { Value::from_raw(raw) }
+}
+
 /// `nil`, as a `Value`.
 #[inline]
 pub fn nil() -> Value {

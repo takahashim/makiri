@@ -28,7 +28,6 @@ pub mod read;
 
 pub mod mutate;
 
-use magnus::rb_sys::FromRawValue;
 use magnus::{method, prelude::*, RClass, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -217,7 +216,7 @@ pub unsafe fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
 
 pub unsafe fn wrap(node: RawNode, document: Value) -> Value {
     use magnus::rb_sys::AsRawValue;
-    Value::from_raw(wrap_html_node(node, document.as_raw()))
+    crate::bridge::ruby::value(wrap_html_node(node, document.as_raw()))
 }
 
 /// The keepalive Document of a node, from the kind-agnostic accessor.

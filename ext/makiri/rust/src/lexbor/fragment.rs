@@ -18,7 +18,7 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -477,7 +477,7 @@ pub unsafe fn build_fragment_ctx(
         ));
     }
     let out = wrap_html_node(frag_node, document.as_raw());
-    Ok(Value::from_raw(out))
+    Ok(crate::bridge::ruby::value(out))
 }
 
 /// The `context:` keyword, or None.

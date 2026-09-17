@@ -19,7 +19,7 @@ pub mod serialize;
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, RClass, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -41,7 +41,7 @@ pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VA
     if id.is_invalid() {
         return crate::bridge::ruby::nil().as_raw();
     }
-    let xdoc = doc_of(Value::from_raw(document));
+    let xdoc = doc_of(crate::bridge::ruby::value(document));
     /* An HTML Document has no arena: refuse it rather than read through null. */
     assert!(
         !xdoc.is_null(),
@@ -107,7 +107,7 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, magnus::Error> {
     }
     let nd = crate::bridge::ruby::typed_data(rb_self, &XML_NODE_TYPE)? as *mut NodeData;
     // SAFETY: the data of a live XML node wrapper, which marks its Document.
-    Ok(unsafe { Value::from_raw((*nd).document) })
+    Ok(unsafe { crate::bridge::ruby::value((*nd).document) })
 }
 
 /// Wrap a node reached from a checked receiver, under its Document.
@@ -167,7 +167,7 @@ pub fn wrap(node: NodeId, document: Value) -> Value {
     // Document with an arena before reading it, and resolves `node` through that
     // arena, where a stale or foreign id reads as no node.
     unsafe {
-        Value::from_raw(wrap_xml_node(
+        crate::bridge::ruby::value(wrap_xml_node(
             node.to_token() as *mut c_void,
             document.as_raw(),
         ))

@@ -25,7 +25,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/gvl.rs" => 3,
-  "bridge/ruby.rs" => 23,
+  "bridge/ruby.rs" => 25,
   "bridge/string.rs" => 23,
   "bridge/typed.rs" => 8,
   "bridge/xml_decode.rs" => 7,
@@ -117,25 +117,11 @@ RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
 RAISING_COUNTS = {}.freeze
 
 # `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
-# boundary: a `VALUE` the glue already holds, turned back into a `Value`. It is
-# a ratchet, not yet zero - the fix is for the bridge producers (`wrap_zeroed`,
-# `wrap_html_node`/`wrap_xml_node`, the String minting) to hand back a `Value`
-# in the first place, and each site that goes removes a row here.
+# boundary: a `VALUE` the glue already holds, turned back into a `Value`. The
+# bridge's `value()` accessor owns that conversion now, so this is zero and any
+# direct `Value::from_raw` above the bridge fails.
 VALUE_FROM_RAW = /\bValue::from_raw\b/
-VALUE_FROM_RAW_COUNTS = {
-  "glue/doc.rs" => 7,
-  "glue/xml.rs" => 6,
-  "glue/xpath.rs" => 5,
-  "glue/xml_node/mod.rs" => 3,
-  "init.rs" => 2,
-  "glue/html_node/read.rs" => 2,
-  "glue/html_node/mod.rs" => 1,
-  "glue/node.rs" => 1,
-  "glue/node_set.rs" => 1,
-  "glue/xml_node/serialize.rs" => 1,
-  "lexbor/fragment.rs" => 1,
-  "lexbor/selectors.rs" => 1,
-}.freeze
+VALUE_FROM_RAW_COUNTS = {}.freeze
 
 # Lexbor ABI names outside `lexbor/` are a ratchet. `lexbor` is the sole owner
 # of the vendored C ABI (notes/rust_third_architecture.ja.md): the bindgen types

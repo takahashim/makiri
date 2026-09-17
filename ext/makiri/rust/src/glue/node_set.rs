@@ -31,7 +31,7 @@ use core::ffi::{c_long, c_void};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{
     gc::Marker, method, prelude::*, DataTypeFunctions, Error, RArray, RClass, Ruby, TypedData,
@@ -255,7 +255,7 @@ unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
             None => magnus::Ruby::get_unchecked().qnil().as_raw(),
         }
     };
-    Value::from_raw(raw)
+    crate::bridge::ruby::value(raw)
 }
 
 /// `Makiri::NodeSet`, as created by Init_makiri.

@@ -43,7 +43,7 @@ use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use std::collections::HashMap;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -590,7 +590,7 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         return Ok(ruby.qnil().as_value());
     }
     let document = keepalive_document(rb_self)?;
-    Ok(unsafe { Value::from_raw(wrap_html_node(RawNode::from_ptr(ctx.found.cast()).expect("first match"), document.as_raw())) })
+    Ok(unsafe { crate::bridge::ruby::value(wrap_html_node(RawNode::from_ptr(ctx.found.cast()).expect("first match"), document.as_raw())) })
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not

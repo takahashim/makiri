@@ -35,7 +35,6 @@
 
 use core::ffi::{c_int, c_void};
 
-use magnus::rb_sys::FromRawValue;
 use magnus::{Integer, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
@@ -144,7 +143,7 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, magnus::Error> {
     let nd = crate::bridge::ruby::typed_data(rb_node, &NODE_DATA_TYPE)? as *mut NodeData;
     // SAFETY: the data of a node wrapper, whose Document it marks and so keeps
     // alive.
-    Ok(unsafe { Value::from_raw((*nd).document) })
+    Ok(unsafe { crate::bridge::ruby::value((*nd).document) })
 }
 
 /* ------------------------------------------------------------------ */

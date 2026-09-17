@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use magnus::gc::Marker;
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 use crate::bridge::ruby::VALUE;
@@ -244,7 +244,7 @@ fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<bool, Error> {
         return Ok(false);
     }
     let (key, strict, lax) = kw_symbols();
-    let Some(v) = opts.get(unsafe { Value::from_raw(key) }) else {
+    let Some(v) = opts.get(unsafe { crate::bridge::ruby::value(key) }) else {
         return Ok(false);
     };
     if v.is_nil() || v.as_raw() == strict {
@@ -422,7 +422,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
     Ok(match v.get() {
         ValRef::NodeSet(ns) => {
             /* The bridge's document, which the evaluation holds. */
-            let set = node_set_new(Value::from_raw(b.document)).as_raw();
+            let set = node_set_new(crate::bridge::ruby::value(b.document)).as_raw();
             for &n in ns.as_slice() {
                 node_set_push(set, n)?;
             }
@@ -447,7 +447,7 @@ unsafe fn push_result_node(
     set: &mut NodeSet,
     err: &mut ErrBuf,
 ) -> bool {
-    let rb_node = Value::from_raw(rb_node);
+    let rb_node = crate::bridge::ruby::value(rb_node);
     let Ok(node_document) = keepalive_document(rb_node) else {
         err.set("handler returned an unusable node");
         return false;
@@ -517,7 +517,7 @@ unsafe fn ruby_to_out(
     out: *mut Val,
     err: &mut ErrBuf,
 ) -> bool {
-    let rv = Value::from_raw(r);
+    let rv = crate::bridge::ruby::value(r);
     if let Some(b) = crate::bridge::ruby::bool_value(r) {
         *out = Val::boolean(b);
         return true;
@@ -653,7 +653,7 @@ unsafe fn handler_resolver(
     /* `respond_to?` - and `respond_to_missing?` behind it - is the handler's own
      * Ruby code, so it is asked under protect: a raise there fails this call like
      * any handler raise, instead of unwinding past the evaluation's guards. */
-    match crate::bridge::ruby::respond_to(Value::from_raw(bridge.handler), method) {
+    match crate::bridge::ruby::respond_to(crate::bridge::ruby::value(bridge.handler), method) {
         Ok(true) => {}
         Ok(false) => return Ok(None), /* let the engine raise "unknown function" */
         Err(e) => {

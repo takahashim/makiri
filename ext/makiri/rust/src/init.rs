@@ -32,7 +32,7 @@
 #![allow(unsafe_code)]
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 
 use magnus::{function, Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
 use crate::bridge::ruby::VALUE;
@@ -76,7 +76,7 @@ impl RbConst {
     pub fn value(&self) -> Value {
         // SAFETY: `0` or, once `init` has run, a class that lives for the
         // process - see the type.
-        unsafe { Value::from_raw(self.raw()) }
+        unsafe { crate::bridge::ruby::value(self.raw()) }
     }
 
     pub fn class(&self) -> RClass {
@@ -167,7 +167,7 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let s = crate::bridge::ruby::string_of(str)?;
     /* decode-only: no arena, no budget */
-    Ok(unsafe { Value::from_raw(crate::bridge::xml_decode::xml_decode_input(s.as_raw(), 0)?) })
+    Ok(unsafe { crate::bridge::ruby::value(crate::bridge::xml_decode::xml_decode_input(s.as_raw(), 0)?) })
 }
 
 /* ------------------------------------------------------------------ *

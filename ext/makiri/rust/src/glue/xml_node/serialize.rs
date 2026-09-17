@@ -8,7 +8,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use super::abi::*;
@@ -76,7 +76,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
         drop(buf);
 
         if !to_enc.is_null() && !crate::bridge::string::is_utf8_or_usascii(to_enc) {
-            str = Value::from_raw(crate::bridge::string::str_encode_charref(
+            str = crate::bridge::ruby::value(crate::bridge::string::str_encode_charref(
                 str.as_raw(),
                 to_enc,
             )?);

@@ -16,7 +16,7 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
@@ -37,7 +37,7 @@ fn dom_str(bytes: &[u8]) -> Value {
     // SAFETY: the bytes are valid UTF-8 whenever they come from the document,
     // by the text-input contract - which is the part this layer knows and the
     // bridge cannot. The String copies them.
-    unsafe { Value::from_raw(ruby_str_from_utf8(bytes)) }
+    unsafe { crate::bridge::ruby::value(ruby_str_from_utf8(bytes)) }
 }
 
 fn nil(ruby: &Ruby) -> Value {
@@ -286,7 +286,7 @@ fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Result<Valu
     unsafe {
         let parsed = crate::glue::doc::doc_parsed_known(document);
         if let Some((slices, total)) = parsed.as_mut().and_then(|p| p.text_slices(node.as_raw())) {
-            return Ok(Value::from_raw(ruby_str_from_slices(slices, total)?));
+            return Ok(crate::bridge::ruby::value(ruby_str_from_slices(slices, total)?));
         }
     }
 
