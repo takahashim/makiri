@@ -480,6 +480,17 @@ pub fn doc_of(document: Value) -> *mut XmlDoc {
     unsafe { parsed_xml_doc(doc_parsed_known(document)) }
 }
 
+/// The XML arena behind a Document or node VALUE, borrowed.
+///
+/// Every XML node reader holds its receiver's Document, which is what keeps the
+/// arena alive; `document` must be an XML Document (the Document wrappers are
+/// distinct Ruby types, so an HTML one cannot reach here).
+pub fn xml_doc_ref<'a>(document: Value) -> &'a XmlDoc {
+    // SAFETY: an XML Document's `DocData` owns the arena, which outlives this
+    // borrow.
+    unsafe { &*doc_of(document) }
+}
+
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
 /// at the type boundary, like [`xml_node_unwrap`].
 pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {

@@ -62,9 +62,14 @@ impl magnus::TryConvert for XmlSelf {
 }
 
 impl XmlSelf {
-    /// The arena behind the receiver's Document.
+    /// The arena behind the receiver's Document, as a mutable handle (mutators).
     pub fn doc(self) -> *mut XmlDoc {
         doc_of(self.document)
+    }
+
+    /// The arena behind the receiver's Document, borrowed (readers).
+    pub fn doc_ref(&self) -> &XmlDoc {
+        crate::bridge::lexbor::xml_doc_ref(self.document)
     }
 }
 

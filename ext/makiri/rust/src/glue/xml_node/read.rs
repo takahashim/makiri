@@ -4,6 +4,10 @@
 //! A node is an index-arena `NodeId`, so every reader resolves through its
 //! Document. XML nodes never inherit the Lexbor HTML readers - those live on
 //! `Makiri::HTML::NodeMethods` - so this surface is structural.
+//!
+//! The arena is reached through `XmlSelf::doc_ref` (the Ruby <-> Lexbor seam),
+//! so the reads themselves are safe; only borrowing a Ruby string's bytes and
+//! pushing into a NodeSet stay `unsafe`.
 
 #![allow(unsafe_code)]
 
@@ -20,62 +24,52 @@ fn wrap_rel(this: super::XmlSelf, rel: Option<NodeId>) -> Value {
 /* ---- name ---- */
 
 pub fn name(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        let id = this.id;
-        match d.type_(id) {
-            Some(NodeType::Element | NodeType::Attribute) => str_span(ruby, d, d.node(id).qname),
-            Some(NodeType::Pi | NodeType::Doctype) => str_span(ruby, d, d.node(id).local),
-            Some(NodeType::Text) => ruby.str_new("text").as_value(),
-            Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
-            Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
-            Some(NodeType::Fragment) => ruby.str_new("#document-fragment").as_value(),
-            _ => ruby.str_new("document").as_value(),
-        }
+    let d = this.doc_ref();
+    let id = this.id;
+    match d.type_(id) {
+        Some(NodeType::Element | NodeType::Attribute) => str_span(ruby, d, d.node(id).qname),
+        Some(NodeType::Pi | NodeType::Doctype) => str_span(ruby, d, d.node(id).local),
+        Some(NodeType::Text) => ruby.str_new("text").as_value(),
+        Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
+        Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
+        Some(NodeType::Fragment) => ruby.str_new("#document-fragment").as_value(),
+        _ => ruby.str_new("document").as_value(),
     }
 }
 
 pub fn local_name(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        let id = this.id;
-        if d.type_(id) == Some(NodeType::Element) || d.type_(id) == Some(NodeType::Attribute) {
-            return str_span(ruby, d, d.node(id).local);
-        }
-        ruby.qnil().as_value()
+    let d = this.doc_ref();
+    let id = this.id;
+    if d.type_(id) == Some(NodeType::Element) || d.type_(id) == Some(NodeType::Attribute) {
+        return str_span(ruby, d, d.node(id).local);
     }
+    ruby.qnil().as_value()
 }
 
 /// `#prefix`. A zero-length prefix means unprefixed, which is nil rather than
 /// `""` - the distinction `#namespace` depends on.
 pub fn prefix(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        let id = this.id;
-        if d.node(id).prefix.len == 0 {
-            return ruby.qnil().as_value();
-        }
-        str_span(ruby, d, d.node(id).prefix)
+    let d = this.doc_ref();
+    let id = this.id;
+    if d.node(id).prefix.len == 0 {
+        return ruby.qnil().as_value();
     }
+    str_span(ruby, d, d.node(id).prefix)
 }
 
 pub fn namespace_uri(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        let id = this.id;
-        if d.node(id).ns_uri.len == 0 {
-            return ruby.qnil().as_value();
-        }
-        str_span(ruby, d, d.node(id).ns_uri)
+    let d = this.doc_ref();
+    let id = this.id;
+    if d.node(id).ns_uri.len == 0 {
+        return ruby.qnil().as_value();
     }
+    str_span(ruby, d, d.node(id).ns_uri)
 }
 
 pub fn node_type(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
-        ruby.integer_from_i64(ty as i64).as_value()
-    }
+    let d = this.doc_ref();
+    let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
+    ruby.integer_from_i64(ty as i64).as_value()
 }
 
 /* ---- DTD identifiers ----
@@ -86,103 +80,85 @@ pub fn node_type(ruby: &Ruby, this: super::XmlSelf) -> Value {
  * present zero-length span and answers `""`. */
 
 pub fn dtd_external_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        str_span_or_nil(ruby, d, d.node(this.id).prefix)
-    }
+    let d = this.doc_ref();
+    str_span_or_nil(ruby, d, d.node(this.id).prefix)
 }
 
 pub fn dtd_system_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        str_span_or_nil(ruby, d, d.node(this.id).value)
-    }
+    let d = this.doc_ref();
+    str_span_or_nil(ruby, d, d.node(this.id).value)
 }
 
 /* ---- content ---- */
 
 pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        let id = this.id;
-        if matches!(
-            d.type_(id),
-            Some(
-                NodeType::Text
-                    | NodeType::CData
-                    | NodeType::Comment
-                    | NodeType::Attribute
-                    | NodeType::Pi
-            )
-        ) {
-            return str_span(ruby, d, d.node(id).value);
-        }
-
-        let mut out: Vec<u8> = Vec::new();
-        let mut cur = d.first_child(id);
-        while let Some(c) = cur {
-            if matches!(d.type_(c), Some(NodeType::Text | NodeType::CData)) {
-                out.extend_from_slice(d.value(c));
-            }
-            if d.first_child(c).is_some() {
-                cur = d.first_child(c);
-                continue;
-            }
-            while let Some(x) = cur {
-                if x != id && d.next(x).is_none() {
-                    cur = d.parent(x);
-                } else {
-                    break;
-                }
-            }
-            match cur {
-                None => break,
-                Some(x) if x == id => break,
-                Some(_) => cur = d.next(cur.unwrap()),
-            }
-        }
-        utf8(ruby, &out).as_value()
+    let d = this.doc_ref();
+    let id = this.id;
+    if matches!(
+        d.type_(id),
+        Some(
+            NodeType::Text
+                | NodeType::CData
+                | NodeType::Comment
+                | NodeType::Attribute
+                | NodeType::Pi
+        )
+    ) {
+        return str_span(ruby, d, d.node(id).value);
     }
+
+    let mut out: Vec<u8> = Vec::new();
+    let mut cur = d.first_child(id);
+    while let Some(c) = cur {
+        if matches!(d.type_(c), Some(NodeType::Text | NodeType::CData)) {
+            out.extend_from_slice(d.value(c));
+        }
+        if d.first_child(c).is_some() {
+            cur = d.first_child(c);
+            continue;
+        }
+        while let Some(x) = cur {
+            if x != id && d.next(x).is_none() {
+                cur = d.parent(x);
+            } else {
+                break;
+            }
+        }
+        match cur {
+            None => break,
+            Some(x) if x == id => break,
+            Some(_) => cur = d.next(cur.unwrap()),
+        }
+    }
+    utf8(ruby, &out).as_value()
 }
 
 pub fn value(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        str_span(ruby, d, d.node(this.id).value)
-    }
+    let d = this.doc_ref();
+    str_span(ruby, d, d.node(this.id).value)
 }
 
 /* ---- navigation ---- */
 
 pub fn parent(this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        wrap_rel(this, d.parent(this.id))
-    }
+    let d = this.doc_ref();
+    wrap_rel(this, d.parent(this.id))
 }
 pub fn next(this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        wrap_rel(this, d.next(this.id))
-    }
+    let d = this.doc_ref();
+    wrap_rel(this, d.next(this.id))
 }
 pub fn previous(this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        wrap_rel(this, d.prev(this.id))
-    }
+    let d = this.doc_ref();
+    wrap_rel(this, d.prev(this.id))
 }
 pub fn first_child(this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        wrap_rel(this, d.first_child(this.id))
-    }
+    let d = this.doc_ref();
+    wrap_rel(this, d.first_child(this.id))
 }
 pub fn last_child(this: super::XmlSelf) -> Value {
-    unsafe {
-        let d = &*this.doc();
-        wrap_rel(this, d.last_child(this.id))
-    }
+    let d = this.doc_ref();
+    wrap_rel(this, d.last_child(this.id))
 }
 
 pub fn get_document(this: super::XmlSelf) -> Value {
@@ -191,31 +167,29 @@ pub fn get_document(this: super::XmlSelf) -> Value {
 
 /// `#element_children` - the child ELEMENT nodes only, in document order.
 pub fn element_children(this: super::XmlSelf) -> Result<Value, Error> {
-    unsafe {
-        let d = &*this.doc();
-        let set = node_set_new(this.document);
-        let mut c = d.first_child(this.id);
-        while let Some(id) = c {
-            if d.type_(id) == Some(NodeType::Element) {
-                node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)?;
-            }
-            c = d.next(id);
+    let d = this.doc_ref();
+    let set = node_set_new(this.document);
+    let mut c = d.first_child(this.id);
+    while let Some(id) = c {
+        if d.type_(id) == Some(NodeType::Element) {
+            // SAFETY: `set` is the NodeSet just built; the id is a valid token.
+            unsafe { node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)? };
         }
-        Ok(set)
+        c = d.next(id);
     }
+    Ok(set)
 }
 
 pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
-    unsafe {
-        let d = &*this.doc();
-        let set = node_set_new(this.document);
-        let mut c = d.first_child(this.id);
-        while let Some(id) = c {
-            node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)?;
-            c = d.next(id);
-        }
-        Ok(set)
+    let d = this.doc_ref();
+    let set = node_set_new(this.document);
+    let mut c = d.first_child(this.id);
+    while let Some(id) = c {
+        // SAFETY: `set` is the NodeSet just built; the id is a valid token.
+        unsafe { node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)? };
+        c = d.next(id);
     }
+    Ok(set)
 }
 
 /* ---- attributes ---- */
@@ -238,21 +212,17 @@ fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 /// `#[]` - the attribute's value, or nil.
 pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, Error> {
     let id = this.id;
-    // SAFETY: the receiver's arena, borrowed for this statement only.
-    if unsafe { (*this.doc()).type_(id) } != Some(NodeType::Element) {
+    if this.doc_ref().type_(id) != Some(NodeType::Element) {
         return Ok(ruby.qnil().as_value());
     }
     /* Convert the name BEFORE borrowing the arena: its `to_str` is Ruby code,
      * and it may edit this same document. */
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    // SAFETY: no Ruby code runs while the arena and the name's bytes are read;
-    // building the String only allocates.
-    unsafe {
-        let d = &*this.doc();
-        match find_attr(d, id, nv.bytes()) {
-            None => Ok(ruby.qnil().as_value()),
-            Some(at) => Ok(str_span(ruby, d, d.node(at).value)),
-        }
+    // SAFETY: the bytes are the verified view's, live across the lookup.
+    let bytes = unsafe { nv.bytes() };
+    match find_attr(this.doc_ref(), id, bytes) {
+        None => Ok(ruby.qnil().as_value()),
+        Some(at) => Ok(str_span(ruby, this.doc_ref(), this.doc_ref().node(at).value)),
     }
 }
 
@@ -263,14 +233,14 @@ pub fn attribute_by_qualified_name(
     rb_name: Value,
 ) -> Result<Value, Error> {
     let id = this.id;
-    // SAFETY: as in `aref`.
-    if unsafe { (*this.doc()).type_(id) } != Some(NodeType::Element) {
+    if this.doc_ref().type_(id) != Some(NodeType::Element) {
         return Ok(ruby.qnil().as_value());
     }
     /* Converted before the arena is borrowed - see `aref`. */
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    // SAFETY: the borrow ends with this statement, before the wrap allocates.
-    let a = unsafe { find_attr(&*this.doc(), id, nv.bytes()) };
+    // SAFETY: the bytes are the verified view's, live across the lookup.
+    let bytes = unsafe { nv.bytes() };
+    let a = find_attr(this.doc_ref(), id, bytes);
     Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
 }
 
@@ -283,17 +253,16 @@ pub fn attribute_value_by_qualified_name(
 }
 
 pub fn attribute_nodes(this: super::XmlSelf) -> Result<Value, Error> {
-    unsafe {
-        let d = &*this.doc();
-        let set = node_set_new(this.document);
-        let id = this.id;
-        if d.type_(id) == Some(NodeType::Element) {
-            let mut a = d.attrs(id);
-            while let Some(at) = a {
-                node_set_push(set.as_raw(), at.to_token() as *mut core::ffi::c_void)?;
-                a = d.next(at);
-            }
+    let d = this.doc_ref();
+    let set = node_set_new(this.document);
+    let id = this.id;
+    if d.type_(id) == Some(NodeType::Element) {
+        let mut a = d.attrs(id);
+        while let Some(at) = a {
+            // SAFETY: `set` is the NodeSet just built; the id is a valid token.
+            unsafe { node_set_push(set.as_raw(), at.to_token() as *mut core::ffi::c_void)? };
+            a = d.next(at);
         }
-        Ok(set)
     }
+    Ok(set)
 }
