@@ -304,7 +304,7 @@ pub(crate) fn context_for(rb_node: Value, document: Value) -> Result<Context<'st
             return Ok(Context::new(backend, cnode));
         }
 
-        let node = html_node_unwrap(rb_node)?;
+        let node = html_node_unwrap(rb_node)?.as_ptr();
         /* TypeError for a Document that is not HTML. */
         crate::glue::abi::html_doc_unwrap(document)?;
         /* Built up front, so an allocation failure raises here rather than on the
@@ -318,7 +318,7 @@ pub(crate) fn context_for(rb_node: Value, document: Value) -> Result<Context<'st
             ));
         }
         let backend = Backend::Html { parsed };
-        Ok(Context::new(backend, node as *mut c_void))
+        Ok(Context::new(backend, node))
     }
 }
 

@@ -124,7 +124,7 @@ pub fn node_raw(rb_node: Value) -> Result<*mut c_void, magnus::Error> {
                 });
             }
         }
-        return Ok(super::abi::html_doc_unwrap(rb_node)? as *mut c_void);
+        return Ok(super::abi::html_doc_unwrap(rb_node)?.as_ptr());
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     let nd = crate::bridge::ruby::typed_data(rb_node, &NODE_DATA_TYPE)? as *mut NodeData;

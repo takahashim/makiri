@@ -22,7 +22,7 @@
 use core::ffi::c_void;
 
 use crate::lexbor::adapter::html::{
-    BuildingElement, BuildingNode, HtmlDoc, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
+    BuildingElement, BuildingNode, HtmlDoc, RawNode, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
 };
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
@@ -299,12 +299,13 @@ unsafe fn h2x_children_of(s: *mut LxbNode) -> *mut LxbNode {
 /// Deep- or shallow-copy an HTML subtree into the XML arena, detached.
 pub unsafe fn cross_html_to_xml(
     xdoc: *mut XmlDoc,
-    src: *mut LxbNode,
+    src: RawNode,
     deep: bool,
     out: *mut NodeId,
 ) -> MutStatus {
     *out = NodeId::INVALID;
     let doc = &mut *xdoc;
+    let src = src.as_ptr() as *mut LxbNode;
 
     let root = match h2x_make(doc, src, None) {
         Ok(m) => m,

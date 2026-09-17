@@ -31,7 +31,7 @@ use rb_sys::{rb_data_type_t, VALUE};
 
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
-    ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType, LxbDoc, LxbNode,
+    ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType,
 };
 use super::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
@@ -55,7 +55,7 @@ struct DocData {
 /// `import_node` treat every HTML node as an XML one.
 const NODE_KIND_XML: c_int = crate::lexbor::ffi::NODE_KIND_XML as c_int;
 
-use crate::lexbor::adapter::html::HtmlDoc;
+use crate::lexbor::adapter::html::{RawDoc, RawNode};
 
 pub use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 pub use crate::lexbor::adapter::post_parse::parse_html;
@@ -114,21 +114,21 @@ static HTML_DOC_TYPE: DataType =
 static XML_DOC_TYPE: DataType = doc_data_type(c"Makiri::XML::Document".as_ptr(), DOC_TYPE.as_ptr());
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
-pub fn html_doc_unwrap(rb_doc: Value) -> Result<*mut LxbDoc, Error> {
+pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
     let d = crate::bridge::ruby::typed_data(rb_doc, &HTML_DOC_TYPE)? as *mut DocData;
     Ok(html_doc_of(d))
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
-pub fn html_doc_known(rb_doc: Value) -> *mut LxbDoc {
+pub fn html_doc_known(rb_doc: Value) -> RawDoc {
     html_doc_of(crate::bridge::ruby::typed_data_known(rb_doc, &HTML_DOC_TYPE) as *mut DocData)
 }
 
-fn html_doc_of(d: *mut DocData) -> *mut LxbDoc {
+fn html_doc_of(d: *mut DocData) -> RawDoc {
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
     // SAFETY: `d` is the data of a live HTML Document, whose handle it owns.
-    unsafe { (*(*d).parsed).html_doc() as *mut LxbDoc }
+    unsafe { RawDoc::from_ptr((*(*d).parsed).html_doc().cast()).expect("live document") }
 }
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
@@ -301,8 +301,9 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
 
 fn doc_root(ruby: &Ruby, self_: Value) -> Value {
     /* SAFETY: a live HTML Document, kept alive by `self_` for this call. */
-    let root = unsafe { HtmlDoc::from_raw(html_doc_known(self_)) }
-        .and_then(|d| d.as_node().document_root());
+    let root = unsafe { html_doc_known(self_).as_doc() }
+        .as_node()
+        .document_root();
     let Some(root) = root else {
         /* The HTML parser inserts html/head/body even for empty input, so this
          * is unreachable today. Returning nil rather than wrapping a null is
@@ -310,14 +311,14 @@ fn doc_root(ruby: &Ruby, self_: Value) -> Value {
         return ruby.qnil().as_value();
     };
     /* SAFETY: a node of `self_`'s document, which keeps it alive. */
-    unsafe { Value::from_raw(wrap_html_node(root.as_raw(), self_.as_raw())) }
+    unsafe { Value::from_raw(wrap_html_node(RawNode::from(root), self_.as_raw())) }
 }
 
 /// The document `<title>`, or `""`.
 fn doc_title(ruby: &Ruby, self_: Value) -> RString {
     /* SAFETY: a live HTML Document, kept alive by `self_` for this call. */
-    let bytes = unsafe { HtmlDoc::from_raw(html_doc_known(self_)) }
-        .and_then(|d| d.title())
+    let bytes = unsafe { html_doc_known(self_).as_doc() }
+        .title()
         .unwrap_or(&[]);
     ruby.enc_str_new(bytes, ruby.utf8_encoding())
 }
@@ -338,7 +339,7 @@ fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
     unsafe {
-        let doc = html_doc_known(self_);
+        let doc = html_doc_known(self_).as_doc().as_raw();
         Value::from_raw(rb_sys::rb_int2inum((*doc).compat_mode as isize))
     }
 }
@@ -436,12 +437,21 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
         /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
          * detached lxb subtree owned by this document. */
         if node_kind(node_v.as_raw()) == NODE_KIND_XML {
-            let mut imp: *mut LxbNode = core::ptr::null_mut();
+            let mut imp = core::ptr::null_mut();
             let xdoc =
                 crate::glue::xml_node::doc_of(crate::glue::xml_node::xml_node_document(node_v)?);
             let src = crate::xml::model::NodeId::from_token(xml_node_unwrap(node_v)? as usize);
-            xml_mut_check(cross_xml_to_html(doc, xdoc, src, deep, &mut imp))?;
-            return Ok(Value::from_raw(wrap_html_node(imp, self_.as_raw())));
+            xml_mut_check(cross_xml_to_html(
+                doc.as_ptr() as *mut _,
+                xdoc,
+                src,
+                deep,
+                &mut imp,
+            ))?;
+            return Ok(Value::from_raw(wrap_html_node(
+                RawNode::from_ptr(imp.cast()).expect("imported node"),
+                self_.as_raw(),
+            )));
         }
 
         let src = html_node_unwrap(node_v)?; /* Err on a non-node */
@@ -478,10 +488,7 @@ pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 
     let node = html_node_unwrap(rb_self)?;
     // SAFETY: the node of a live wrapper, which keeps its document alive.
-    let Some(handle) = (unsafe { crate::lexbor::adapter::html::HtmlNode::from_raw(node) }) else {
-        return Err(Error::new(error_class(), "uninitialized HTML node"));
-    };
-    let doc = handle.owner_document();
+    let doc = unsafe { node.as_node() }.owner_document_handle();
 
     // SAFETY: `node` belongs to `doc`, the document the copy is imported into.
     let Some(clone) = (unsafe { import_with_fixup(doc, node, deep) }) else {

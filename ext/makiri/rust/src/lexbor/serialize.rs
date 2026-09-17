@@ -19,7 +19,7 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use crate::glue::abi::*;
 use crate::cbuf::{buf_append, Buf};
-use crate::lexbor::adapter::html::{HtmlNode, TYPE_FRAGMENT};
+use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 
 /// Lexbor's chunk sink. Must not panic: it is called from C.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
@@ -84,8 +84,9 @@ fn serialize_sizes(live: usize) -> (usize, usize) {
 /// Serialize `node` into a fresh UTF-8 String. `deep` selects the children-only
 /// (inner) serializer over the tree (outer) one; `pretty` selects indented
 /// output.
-fn serialize(ruby: &Ruby, node: *mut LxbNode, deep: bool, pretty: bool) -> Result<RString, Error> {
+fn serialize(ruby: &Ruby, node: RawNode, deep: bool, pretty: bool) -> Result<RString, Error> {
     let utf8 = ruby.utf8_encoding();
+    let node = node.as_ptr() as *mut LxbNode;
     // SAFETY: `node` came from a live wrapper, so its document is live too.
     let (cap, reserve) = serialize_sizes(unsafe { lxb_document_bytes(node) });
 
@@ -162,7 +163,7 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     // children: the deep serializer is the right one (the tree serializer
     // rejects a fragment node).
     /* SAFETY: the node of a live wrapper, which keeps its document alive. */
-    let deep = unsafe { HtmlNode::from_raw(node) }.is_some_and(|n| n.node_type() == TYPE_FRAGMENT);
+    let deep = unsafe { node.as_node() }.node_type() == TYPE_FRAGMENT;
     serialize(&ruby, node, deep, pretty)
 }
 
@@ -170,8 +171,7 @@ fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
 fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
     let ruby = Ruby::get_with(rb_self);
     let pretty = pretty_opt(&ruby, args)?;
-    let node = html_node_unwrap(rb_self)?;
-    serialize(&ruby, node, true, pretty)
+    serialize(&ruby, html_node_unwrap(rb_self)?, true, pretty)
 }
 
 /// `init_serialize` - the same entry point Init_makiri already calls.

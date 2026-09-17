@@ -51,6 +51,7 @@ use crate::glue::abi::{
     error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push,
     ruby_bytes_view, verify_text, wrap_html_node, LxbNode, LXB_STATUS_OK,
 };
+use crate::lexbor::adapter::html::RawNode;
 use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
 
 /// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
@@ -518,7 +519,7 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
 /// `Node#css`: every matching descendant, in document order.
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = html_node_unwrap(rb_self)?;
+    let root = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
     let document = keepalive_document(rb_self)?;
 
     let mut ctx = FindCtx {
@@ -592,7 +593,7 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
     let ruby = Ruby::get_with(rb_self);
-    let root = html_node_unwrap(rb_self)?;
+    let root = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
 
     let mut ctx = FirstCtx {
         root,
@@ -610,13 +611,13 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         return Ok(ruby.qnil().as_value());
     }
     let document = keepalive_document(rb_self)?;
-    Ok(unsafe { Value::from_raw(wrap_html_node(ctx.found, document.as_raw())) })
+    Ok(unsafe { Value::from_raw(wrap_html_node(RawNode::from_ptr(ctx.found.cast()).expect("first match"), document.as_raw())) })
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri.
 fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
-    let node = html_node_unwrap(rb_self)?;
+    let node = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
     let mut matched = false;
     unsafe {
         with_compiled_selector(

@@ -20,11 +20,11 @@ use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
-use super::{arg_node, wrap, wrap_node};
-use crate::lexbor::adapter::html::HtmlNode;
+use super::{arg_node, wrap_node};
+use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 use crate::glue::abi::{
     doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_slices,
-    ruby_str_from_utf8, ruby_verified_text, LxbAttr,
+    ruby_str_from_utf8, ruby_verified_text,
 };
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
 
@@ -337,8 +337,8 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
                     "could not build the attribute index (out of memory)",
                 ));
             };
-            let owner = index.owner_of(node.as_raw() as *const LxbAttr);
-            return Ok(wrap(owner, document));
+            let owner = index.owner_of(RawNode::from(node)).map(|o| o.as_node());
+            return Ok(wrap_node(owner, document));
         }
     }
     // SAFETY: the parent is in the receiver's tree.

@@ -341,6 +341,29 @@ impl<'doc> From<HtmlNode<'doc>> for RawNode {
     }
 }
 
+impl From<RawDoc> for RawNode {
+    /// A document seen as its node: an `lxb_html_document_t` leads with its
+    /// `lxb_dom_document_t`, which leads with its node.
+    #[inline]
+    fn from(d: RawDoc) -> Self {
+        RawNode(d.0.cast())
+    }
+}
+
+impl<'doc> From<BuildingNode<'doc>> for RawNode {
+    #[inline]
+    fn from(n: BuildingNode<'doc>) -> Self {
+        RawNode::from(n.node())
+    }
+}
+
+impl<'doc> From<BuildingElement<'doc>> for RawNode {
+    #[inline]
+    fn from(e: BuildingElement<'doc>) -> Self {
+        RawNode::from(e.as_node())
+    }
+}
+
 /// A document pointer crossing the Ruby-glue boundary. See [`RawNode`].
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -748,6 +771,13 @@ impl<'doc> HtmlNode<'doc> {
     pub fn owner_document(self) -> *mut LxbDoc {
         // SAFETY: as `node_type`.
         unsafe { (*self.as_raw()).owner_document }
+    }
+
+    /// The document the node belongs to, as the boundary handle: a live node's
+    /// owner is a live document of the same tree.
+    #[inline]
+    pub fn owner_document_handle(self) -> RawDoc {
+        RawDoc(NonNull::new(self.owner_document()).expect("a live node has an owner document"))
     }
 
     /// Whether both nodes belong to the same document.

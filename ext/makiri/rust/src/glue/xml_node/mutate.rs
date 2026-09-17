@@ -702,7 +702,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
             }
             KIND_HTML => xml_mut_check(cross_html_to_xml(
                 xd,
-                html_node_unwrap(node_v)? as *mut _,
+                html_node_unwrap(node_v)?,
                 deep,
                 &mut copy,
             ))?,

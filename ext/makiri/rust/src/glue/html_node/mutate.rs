@@ -33,10 +33,10 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::ty;
 use super::{node_document, unwrap, wrap};
 use crate::lexbor::adapter::html::{
-    check_document_child_order, DocumentChildOrderError, HtmlDoc, HtmlNode, HtmlNodeMut,
-    ScratchElement, NS_UNDEF,
+    check_document_child_order, DocumentChildOrderError, HtmlDoc, HtmlNode, HtmlNodeMut, RawDoc,
+    RawNode, ScratchElement, NS_UNDEF,
 };
-use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text, LxbDoc, LxbNode};
+use crate::glue::abi::{error_class, html_doc_unwrap, ruby_verified_text};
 
 /// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
 /// the fragment rule in one place.
@@ -98,15 +98,15 @@ fn arg_node(v: Value) -> Result<HtmlNode<'static>, Error> {
     let raw = unwrap(v)?;
     // SAFETY: `unwrap` checked `v` is an HTML node, and the caller holds `v`
     // for the length of the call, which keeps its document alive.
-    unsafe { HtmlNode::from_raw(raw) }.ok_or_else(|| err("uninitialized HTML node"))
+    Ok(unsafe { raw.as_node() })
 }
 
 /// Copy `node` into `doc`, for a node that came from another document - this
 /// half of the DOM's adopt, or an error rather than a partial node.
-unsafe fn adopt_copy(doc: *mut LxbDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
-    let imp = html_import_deep(doc, node.as_raw())?;
+unsafe fn adopt_copy(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
+    let imp = html_import_deep(doc, RawNode::from(node))?;
     // SAFETY: a node just imported into `doc`, which outlives this call.
-    HtmlNode::from_raw(imp).ok_or_else(|| err("failed to import node"))
+    Ok(imp.as_node())
 }
 
 /// The other half: take `node` out of the document it came from, so the whole
@@ -150,8 +150,8 @@ unsafe fn prepare_insert(
         }
         p = n.parent();
     }
-    let doc = reference.node().owner_document();
-    if doc != incoming.owner_document() {
+    let doc = reference.node().owner_document_handle();
+    if doc.as_ptr() != incoming.owner_document_handle().as_ptr() {
         /* Adopting takes the node out of the document it came from, so that
          * document changes too - refuse before anything is copied. */
         crate::glue::doc::ensure_document_mutable(node_document(rb_incoming)?)?;
@@ -183,7 +183,7 @@ unsafe fn inserted_result(
             /* SAFETY: the source document was cleared for editing by
              * `prepare_insert` before anything was copied out of it. */
             adopt_release(HtmlNodeMut::assume_mutable(arg_node(src)?));
-            Ok(wrap(inserted.as_raw(), node_document(rb_self)?))
+            Ok(wrap(RawNode::from(inserted.node()), node_document(rb_self)?))
         }
     }
 }
@@ -533,9 +533,9 @@ pub fn delete(_ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
 /// import + `<template>`-content fixup are shared with the DocumentFragment
 /// paths in `glue::fragment`.
 unsafe fn parse_fragment_into(
-    context_el: *mut LxbNode,
+    context_el: RawNode,
     rb_html: Value,
-    doc: *mut LxbDoc,
+    doc: RawDoc,
     emit: Emit,
 ) -> Result<(), Error> {
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
@@ -570,10 +570,10 @@ pub fn set_inner_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
         }
 
         parse_fragment_into(
-            node.as_raw(),
+            RawNode::from(node.node()),
             rb_html,
-            node.node().owner_document(),
-            Emit::Append(node.as_raw()),
+            node.node().owner_document_handle(),
+            Emit::Append(RawNode::from(node.node())),
         )?;
         invalidate(this.document);
         Ok(rb_html)
@@ -592,10 +592,10 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 
         /* Parse in the parent's context, splice the imported nodes before self. */
         parse_fragment_into(
-            parent.as_raw(),
+            RawNode::from(parent.node()),
             rb_html,
-            node.node().owner_document(),
-            Emit::Before(node.as_raw()),
+            node.node().owner_document_handle(),
+            Emit::Before(RawNode::from(node.node())),
         )?;
         node.detach();
         invalidate(this.document);
@@ -615,7 +615,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: super::HtmlSelf, rb_html: Value) -> Re
 fn owning_doc(rb_self: &Value) -> Result<HtmlDoc<'_>, Error> {
     let doc = html_doc_unwrap(*rb_self)?;
     // SAFETY: a live HTML Document, kept alive by `rb_self` for this call.
-    unsafe { HtmlDoc::from_raw(doc) }.ok_or_else(|| err("uninitialized HTML document"))
+    Ok(unsafe { doc.as_doc() })
 }
 
 pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
@@ -626,7 +626,7 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
         return Err(err("failed to create element"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(el.as_node().as_raw(), rb_self) })
+    Ok(unsafe { wrap(RawNode::from(el), rb_self) })
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
@@ -637,7 +637,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
         return Err(err("failed to create text node"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(t.as_raw(), rb_self) })
+    Ok(unsafe { wrap(RawNode::from(t), rb_self) })
 }
 
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
@@ -648,7 +648,7 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Va
         return Err(err("failed to create comment"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(c.as_raw(), rb_self) })
+    Ok(unsafe { wrap(RawNode::from(c), rb_self) })
 }
 
 /// `Document#create_processing_instruction(target, data)` - the DOM
@@ -668,7 +668,7 @@ pub fn create_pi(
         return Err(err("failed to create processing instruction"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(pi.as_raw(), rb_self) })
+    Ok(unsafe { wrap(RawNode::from(pi), rb_self) })
 }
 
 /// `Document#create_document_type(name, public_id = "", system_id = "")` - the
@@ -718,7 +718,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         return Err(err("failed to create doctype"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(dt.as_raw(), rb_self) })
+    Ok(unsafe { wrap(RawNode::from(dt), rb_self) })
 }
 
 /// `Document#create_document_fragment` - the DOM createDocumentFragment: an
@@ -730,5 +730,5 @@ pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, E
         return Err(err("failed to create document fragment"));
     };
     /* SAFETY: a fresh node of `rb_self`'s document, which keeps it alive. */
-    Ok(unsafe { wrap(f.as_raw(), rb_self) })
+    Ok(unsafe { wrap(RawNode::from(f), rb_self) })
 }

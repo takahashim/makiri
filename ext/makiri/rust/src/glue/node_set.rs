@@ -41,9 +41,10 @@ use rb_sys::VALUE;
 
 use super::abi::{
     error_class, keepalive_document, node_raw, typed_data_unprotected, wrap_html_node,
-    wrap_xml_node, LxbNode,
+    wrap_xml_node,
 };
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
+use crate::lexbor::adapter::html::RawNode;
 
 /// The per-set node cap, shared with the CSS and XPath glue: every
 /// node-collecting path fails closed at the same bound instead of growing
@@ -254,7 +255,10 @@ unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
     let raw = if doc_is_xml {
         wrap_xml_node(node, document.as_raw())
     } else {
-        wrap_html_node(node as *mut LxbNode, document.as_raw())
+        match RawNode::from_ptr(node) {
+            Some(n) => wrap_html_node(n, document.as_raw()),
+            None => magnus::Ruby::get_unchecked().qnil().as_raw(),
+        }
     };
     Value::from_raw(raw)
 }
