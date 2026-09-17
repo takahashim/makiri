@@ -20,6 +20,20 @@ use rb_sys::rb_data_type_t;
 /// method `ID` without reaching into `rb_sys` itself.
 pub use rb_sys::{ID, VALUE};
 
+/* The two conveniences every layer above shares. Defined here, in the one
+ * bridge module that does not depend on `lexbor`, so that `lexbor/` can use
+ * them without depending on `bridge::lexbor` (which is built on top of it). */
+
+/// `Makiri::Error`.
+pub fn error_class() -> magnus::ExceptionClass {
+    crate::init::EXC_ERROR.exception()
+}
+
+/// Is `v` an instance of the class in `klass`?
+pub fn is_kind_of(v: Value, klass: &crate::init::RbConst) -> bool {
+    v.is_kind_of(klass.class())
+}
+
 /// A `rb_data_type_t` that can live in a `static`.
 ///
 /// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at

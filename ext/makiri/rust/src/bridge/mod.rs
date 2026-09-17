@@ -27,6 +27,10 @@ pub mod xml;
 #[cfg(feature = "lexbor")]
 pub mod doc;
 
+/// `Node#to_html` / `#inner_html` and the HTML serializer binding.
+#[cfg(feature = "lexbor")]
+pub mod serialize;
+
 /// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
 /// keepalive) and the safe fill handle over it.
 #[cfg(feature = "lexbor")]

@@ -24,9 +24,8 @@ use crate::bridge::ruby::VALUE;
 
 use crate::falloc::VecPush;
 
-use crate::bridge::lexbor::{
-    error_class, html_node_unwrap, is_kind_of, wrap_html_node,
-};
+use crate::bridge::lexbor::{html_node_unwrap, wrap_html_node};
+use crate::bridge::ruby::{error_class, is_kind_of};
 use crate::bridge::string::{
     ruby_bytes_view, ruby_str_known_valid_utf8, ruby_to_utf8, ruby_verified_text,
 };

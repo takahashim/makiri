@@ -21,7 +21,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::{nil, typed_data_known_ref, typed_data_ref, value, DataType, VALUE};
 use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
 use crate::init::{
-    RbConst, CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
+    CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION,
     CLASS_XML_COMMENT, CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, CLASS_XML_DOCUMENT_TYPE,
@@ -36,17 +36,13 @@ use crate::lexbor::adapter::post_parse::Parsed;
 use crate::lexbor::fragment::html_import_deep;
 use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
-/* ---- the two conveniences the seams share ---- */
-
-/// `Makiri::Error`.
-pub fn error_class() -> magnus::ExceptionClass {
-    EXC_ERROR.exception()
-}
-
-/// Is `v` an instance of the class in `klass`?
-pub fn is_kind_of(v: Value, klass: &RbConst) -> bool {
-    v.is_kind_of(klass.class())
-}
+/* ---- the two conveniences the seams share ----
+ *
+ * Defined in `bridge::ruby`, which does not depend on `lexbor`, and re-exported
+ * here for the callers that already name this module. Nothing in `lexbor/` may
+ * take the `bridge::lexbor` path for them, or that layer would depend on the
+ * very seam built on top of it. */
+pub use crate::bridge::ruby::{error_class, is_kind_of};
 
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *

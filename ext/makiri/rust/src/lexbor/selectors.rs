@@ -48,9 +48,8 @@ use magnus::{method, prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
 use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
-use crate::bridge::lexbor::{
-    error_class, html_node_unwrap, keepalive_document, wrap_html_node,
-};
+use crate::bridge::lexbor::{html_node_unwrap, keepalive_document, wrap_html_node};
+use crate::bridge::ruby::error_class;
 use crate::bridge::string::{ruby_bytes_view, verify_text};
 use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 use crate::lexbor::adapter::html::RawNode;

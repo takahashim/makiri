@@ -1,30 +1,25 @@
-//! HTML serialization (glue/ruby_html_serialize.c).
+//! HTML serialization primitives (glue/ruby_html_serialize.c).
 //!
-//!   `Node#to_html` / `#to_s` / `#outer_html` -> the node and its subtree
-//!   `Node#inner_html`                        -> the node's children only
+//!   the node and its subtree -> the tree serializer
+//!   the node's children only -> the deep serializer
 //!
 //! Lexbor streams the output in many small chunks (one per tag, attribute or
-//! text piece). They are collected into a single growing C buffer and copied
-//! into a Ruby String once at the end, rather than appended to a Ruby String per
-//! chunk - the per-chunk capacity check and coderange bookkeeping was the
-//! serializer's dominant cost. The buffer is pre-reserved to roughly the output
-//! size so those appends do not realloc on each geometric step. Lexbor emits
-//! UTF-8, which is the string's encoding.
+//! text piece). They are collected into a single growing C buffer, pre-reserved
+//! to roughly the output size so those appends do not realloc on each geometric
+//! step, and handed back as owned bytes; the Ruby-facing wrapper (into a String,
+//! and the `Node#to_html` family) lives in [`crate::bridge::serialize`]. Lexbor
+//! emits UTF-8.
 
 #![allow(unsafe_code)]
 
 use core::ffi::c_void;
 
-use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
-
-use crate::bridge::lexbor::{error_class, html_node_unwrap};
-use crate::init::MOD_HTML_NODE_METHODS;
+use crate::cbuf::{buf_append, Buf};
+use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::adapter::post_parse::lxb_document_bytes;
 use crate::lexbor::ffi::{
     LxbNode, LXB_HTML_SERIALIZE_OPT_UNDEF, LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK,
 };
-use crate::cbuf::{buf_append, Buf};
-use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 
 /// Lexbor's chunk sink. Must not panic: it is called from C.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
@@ -86,11 +81,10 @@ fn serialize_sizes(live: usize) -> (usize, usize) {
     (cap, reserve)
 }
 
-/// Serialize `node` into a fresh UTF-8 String. `deep` selects the children-only
+/// Serialize `node` into owned UTF-8 bytes. `deep` selects the children-only
 /// (inner) serializer over the tree (outer) one; `pretty` selects indented
-/// output.
-fn serialize(ruby: &Ruby, node: RawNode, deep: bool, pretty: bool) -> Result<RString, Error> {
-    let utf8 = ruby.utf8_encoding();
+/// output. `None` is a Lexbor status failure (the buffer is freed).
+pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
     let node = node.as_ptr() as *mut LxbNode;
     // SAFETY: `node` came from a live wrapper, so its document is live too.
     let (cap, reserve) = serialize_sizes(unsafe { lxb_document_bytes(node) });
@@ -123,73 +117,8 @@ fn serialize(ruby: &Ruby, node: RawNode, deep: bool, pretty: bool) -> Result<RSt
 
         if st != LXB_STATUS_OK {
             buf.free();
-            return Err(Error::new(error_class(), "HTML serialization failed"));
+            return None;
         }
-        // Lexbor emits UTF-8, so the String is tagged UTF-8 rather than built
-        // as binary and re-tagged (which is what str_from_slice would give).
-        let str = ruby.enc_str_new(buf.as_slice(), utf8);
-        buf.free();
-        Ok(str)
+        Some(buf)
     }
-}
-
-/// The optional `pretty:` keyword.
-///
-/// Read for truthiness rather than converted to `bool`, which is what
-/// `RTEST(rb_hash_aref(opts, :pretty))` did: `pretty: nil` is false and any
-/// other value - `0` included, this being Ruby - is true. Unknown keywords are
-/// ignored, as the C's `rb_scan_args(argc, argv, "0:", ...)` did, which is also
-/// why the hash is read with a plain lookup rather than `get_kwargs`: that
-/// allocates a second hash to hold the keys it was not asked about.
-///
-/// The no-argument call returns before any of that. It is the overwhelmingly
-/// common one - `to_html` with a keyword is the exception - and routing it
-/// through `scan_args` cost about a quarter of the per-call throughput on a
-/// small element, which is all this method does at that size.
-fn pretty_opt(ruby: &Ruby, args: &[Value]) -> Result<bool, Error> {
-    if args.is_empty() {
-        return Ok(false);
-    }
-    let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
-    Ok(scanned
-        .keywords
-        .get(ruby.to_symbol("pretty"))
-        .is_some_and(|v: Value| v.to_bool()))
-}
-
-/// Outer HTML: the node itself plus its descendants. `pretty: true` indents.
-fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
-    let ruby = Ruby::get_with(rb_self);
-    let pretty = pretty_opt(&ruby, args)?;
-    // The raising accessor, called while nothing is live (see the module docs).
-    let node = html_node_unwrap(rb_self)?;
-
-    // A document fragment has no tag of its own, so its "outer" is its
-    // children: the deep serializer is the right one (the tree serializer
-    // rejects a fragment node).
-    /* SAFETY: the node of a live wrapper, which keeps its document alive. */
-    let deep = unsafe { node.as_node() }.node_type() == TYPE_FRAGMENT;
-    serialize(&ruby, node, deep, pretty)
-}
-
-/// Inner HTML: the node's children, without the node's own tag.
-fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
-    let ruby = Ruby::get_with(rb_self);
-    let pretty = pretty_opt(&ruby, args)?;
-    serialize(&ruby, html_node_unwrap(rb_self)?, true, pretty)
-}
-
-/// `init_serialize` - the same entry point Init_makiri already calls.
-///
-/// # Safety
-/// Called from `Init_makiri`, on the Ruby thread with the GVL held, after the
-/// classes and modules exist.
-pub fn init_serialize() {
-    let m = MOD_HTML_NODE_METHODS.module();
-    for name in ["to_html", "to_s", "outer_html"] {
-        m.define_method(name, method!(to_html, -1))
-            .expect("defining an HTML serializer method");
-    }
-    m.define_method("inner_html", method!(inner_html, -1))
-        .expect("defining an HTML serializer method");
 }

@@ -367,7 +367,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         crate::glue::xpath::init_xpath();
         crate::lexbor::selectors::init_css();
         crate::lexbor::stylesheet::init_lexbor_css();
-        crate::lexbor::serialize::init_serialize();
+        crate::bridge::serialize::init_serialize();
         crate::glue::html_node::init_mutate();
         crate::glue::xml::init_xml();
         crate::glue::xml_node::init_xml_node();
