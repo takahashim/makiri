@@ -72,7 +72,7 @@ pub(crate) struct Build<'a> {
 
 impl Build<'_> {
     pub(crate) fn fail(&self, status: c_int, msg: &core::ffi::CStr) -> Reported {
-        crate::xpath::msg::err_set(self.err, status, msg)
+        crate::xpath::msg::err_set(self.err.clone(), status, msg)
     }
 
     pub(crate) fn oom(&self) -> Reported {

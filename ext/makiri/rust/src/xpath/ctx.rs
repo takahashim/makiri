@@ -369,7 +369,7 @@ impl<'d> Context<'d> {
             return Err(self.no_document());
         };
         let Some(index) = parsed.dom_index() else {
-            let mut budget = Budget::with_limits(self.limits);
+            let budget = Budget::with_limits(self.limits);
             let _ = crate::err_setf!(
                 budget.sink(),
                 XP_ERR_OOM,
@@ -390,7 +390,7 @@ impl<'d> Context<'d> {
     #[allow(clippy::result_large_err)]
     fn enter(&self) -> Result<Running<'_, 'd>, Error> {
         let Ok(names) = self.names.try_borrow() else {
-            let mut budget = Budget::with_limits(self.limits);
+            let budget = Budget::with_limits(self.limits);
             let _ = crate::err_setf!(
                 budget.sink(),
                 XP_ERR_INTERNAL,
@@ -412,7 +412,7 @@ impl<'d> Context<'d> {
     }
 
     fn no_document(&self) -> Error {
-        let mut budget = Budget::with_limits(self.limits);
+        let budget = Budget::with_limits(self.limits);
         let _ = crate::err_setf!(budget.sink(), XP_ERR_RUNTIME, "evaluate with no document");
         budget.take_error()
     }

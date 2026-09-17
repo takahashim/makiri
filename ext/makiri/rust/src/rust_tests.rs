@@ -350,7 +350,7 @@ fn verified_text_rejects_nul_and_invalid_utf8() {
     // A borrow, not a copy.
     assert_eq!(t.as_ptr() as *const u8, bytes.as_ptr());
     assert_eq!(t.len(), bytes.len());
-    assert_eq!(unsafe { t.as_bytes() }, bytes);
+    assert_eq!(t.as_bytes(), bytes);
 }
 
 #[test]

@@ -745,7 +745,7 @@ fn cached_ast(
     /* Each parse charges a budget of its own, made from the context's caps. */
     let mut budget = Budget::with_limits(limits);
     // SAFETY: as above, and the parse only allocates - no Ruby runs in it.
-    let Ok(ast) = (unsafe { crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget) })
+    let Ok(ast) = crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget)
     else {
         return Err(budget.take_error());
     };
@@ -779,9 +779,9 @@ fn cached_ast(
 pub(crate) fn parse_query(ctx: &Context, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(expr, c"XPath expression")?;
     let mut budget = Budget::with_limits(ctx.limits());
-    // SAFETY: `ev` holds the String rooted, and nothing runs Ruby before it is
-    // dropped below.
-    let parsed = unsafe { crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget) };
+    /* `ev` holds the String rooted; `as_verified`'s borrow keeps it live for the
+     * parse. */
+    let parsed = crate::xpath::parse::parse_owned(ev.as_verified(), &mut budget);
     /* No borrowed bytes across the exception's allocation. */
     drop(ev);
     parsed.map_err(|_| xpath_error(&budget.take_error()))

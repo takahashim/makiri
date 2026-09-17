@@ -53,19 +53,17 @@ UNSAFE_ISLANDS = {
   "lexbor/fragment.rs" => 11,
   "lexbor/stylesheet.rs" => 10,
   "lexbor/serialize.rs" => 8,
-  "glue/xpath.rs" => 18,
+  "glue/xpath.rs" => 16,
   "init.rs" => 7,
   "lexbor_abi.rs" => 5,
-  "rust_tests.rs" => 6,
+  "rust_tests.rs" => 5,
   "text.rs" => 5,
   "xpath/ctx.rs" => 10,
   "xpath/dom.rs" => 1,
   "xpath/dom_html.rs" => 4,
   "xpath/dom_xml.rs" => 1,
   "xpath/eval.rs" => 1,
-  "xpath/msg.rs" => 3,
-  "xpath/parse.rs" => 1,
-  "xpath/tests.rs" => 4,
+  "xpath/tests.rs" => 1,
   "xpath/value.rs" => 1,
 }.freeze
 
@@ -85,7 +83,7 @@ FORBID_FILES = %w[
   xml/tree.rs xml/verify.rs xpath/abi.rs
   xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
   xpath/axis.rs xpath/funcs.rs xpath/lex.rs
-  xpath/limits.rs xpath/nodetest.rs xpath/number.rs
+  xpath/limits.rs xpath/nodetest.rs xpath/number.rs xpath/parse.rs
   xpath/order.rs xpath/runtime_abi.rs xpath/runtime_abi/cache.rs
   xpath/step_index.rs xpath/verify.rs
 ].freeze

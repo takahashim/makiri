@@ -7,6 +7,8 @@
 
 use super::abi::*;
 use crate::err_setf;
+use core::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 /// The caps, as configured. Plain data: a run copies them into its [`Budget`].
 #[derive(Clone, Copy, Debug)]
@@ -49,12 +51,16 @@ impl Default for Limits {
 pub struct Budget {
     pub limits: Limits,
     /// AST nodes built by the current parse.
-    pub ast_nodes: usize,
+    ast_nodes: Cell<usize>,
     /// Evaluator steps charged by the current evaluate.
-    pub eval_ops: usize,
+    eval_ops: Cell<usize>,
     /// The current evaluation (or parse) recursion depth.
-    pub recursion_depth: usize,
-    pub err: Error,
+    recursion_depth: Cell<usize>,
+    /// The failure slot. A shared `RefCell` rather than a plain field so a sink
+    /// is a safe, copyable handle to it: the CSS lowering holds its budget and
+    /// its sink at once, and a function keeps its sink across calls that take
+    /// `&mut` of the rest of the run.
+    err: Rc<RefCell<Error>>,
 }
 
 impl Default for Budget {
@@ -86,31 +92,31 @@ impl Budget {
     pub fn with_limits(limits: Limits) -> Budget {
         Budget {
             limits,
-            ast_nodes: 0,
-            eval_ops: 0,
-            recursion_depth: 0,
-            err: Error::new(),
+            ast_nodes: Cell::new(0),
+            eval_ops: Cell::new(0),
+            recursion_depth: Cell::new(0),
+            err: Rc::new(RefCell::new(Error::new())),
         }
     }
 
     /// The failure written so far, leaving the slot empty for the next run.
-    pub fn take_error(&mut self) -> Error {
-        core::mem::take(&mut self.err)
+    pub fn take_error(&self) -> Error {
+        core::mem::take(&mut *self.err.borrow_mut())
     }
 
     /// Where this run reports.
     #[inline]
-    pub fn sink(&mut self) -> ErrSink {
-        ErrSink::new(&mut self.err)
+    pub fn sink(&self) -> ErrSink {
+        ErrSink::new(Rc::clone(&self.err))
     }
 
     /// Charge one AST node.
     #[inline]
-    pub fn charge_ast_node(&mut self) -> Result<(), Reported> {
-        if self.ast_nodes >= self.limits.max_ast_nodes {
+    pub fn charge_ast_node(&self) -> Result<(), Reported> {
+        if self.ast_nodes.get() >= self.limits.max_ast_nodes {
             return Err(over_ast_nodes(self.limits.max_ast_nodes, self.sink()));
         }
-        self.ast_nodes += 1;
+        self.ast_nodes.set(self.ast_nodes.get() + 1);
         Ok(())
     }
 
@@ -127,31 +133,32 @@ impl Budget {
     /// suit run-to-completion loops and would wrongly reject an early-exiting
     /// query if misapplied, trading one foot-gun-free rule for a conditional one.
     #[inline]
-    pub fn charge_op(&mut self) -> Result<(), Reported> {
-        if self.eval_ops >= self.limits.max_eval_ops {
+    pub fn charge_op(&self) -> Result<(), Reported> {
+        if self.eval_ops.get() >= self.limits.max_eval_ops {
             return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
         }
-        self.eval_ops += 1;
+        self.eval_ops.set(self.eval_ops.get() + 1);
         Ok(())
     }
 
     /// Enter one recursion level; a refused entry is not counted, so it needs no
     /// matching [`leave_recursion`](Self::leave_recursion).
     #[inline]
-    pub fn enter_recursion(&mut self) -> Result<(), Reported> {
-        if self.recursion_depth >= self.limits.max_recursion_depth {
+    pub fn enter_recursion(&self) -> Result<(), Reported> {
+        if self.recursion_depth.get() >= self.limits.max_recursion_depth {
             return Err(over_recursion(self.limits.max_recursion_depth, self.sink()));
         }
-        self.recursion_depth += 1;
+        self.recursion_depth.set(self.recursion_depth.get() + 1);
         Ok(())
     }
 
     #[inline]
-    pub fn leave_recursion(&mut self) {
-        self.recursion_depth = self.recursion_depth.saturating_sub(1);
+    pub fn leave_recursion(&self) {
+        self.recursion_depth
+            .set(self.recursion_depth.get().saturating_sub(1));
     }
 
-    pub fn check_nodeset_size(&mut self, new_count: usize) -> Result<(), Reported> {
+    pub fn check_nodeset_size(&self, new_count: usize) -> Result<(), Reported> {
         check(
             new_count,
             self.limits.max_nodeset_size,
@@ -160,14 +167,14 @@ impl Budget {
         )
     }
 
-    pub fn check_string_bytes(&mut self, bytes: usize) -> Result<(), Reported> {
+    pub fn check_string_bytes(&self, bytes: usize) -> Result<(), Reported> {
         if bytes > self.limits.max_string_bytes {
             return Err(over_string_bytes(self.limits.max_string_bytes, self.sink()));
         }
         Ok(())
     }
 
-    pub fn check_steps(&mut self, nsteps: usize) -> Result<(), Reported> {
+    pub fn check_steps(&self, nsteps: usize) -> Result<(), Reported> {
         check(
             nsteps,
             self.limits.max_steps,
@@ -176,7 +183,7 @@ impl Budget {
         )
     }
 
-    pub fn check_predicates(&mut self, npreds: usize) -> Result<(), Reported> {
+    pub fn check_predicates(&self, npreds: usize) -> Result<(), Reported> {
         check(
             npreds,
             self.limits.max_predicates,
@@ -185,7 +192,7 @@ impl Budget {
         )
     }
 
-    pub fn check_func_args(&mut self, nargs: usize) -> Result<(), Reported> {
+    pub fn check_func_args(&self, nargs: usize) -> Result<(), Reported> {
         check(
             nargs,
             self.limits.max_function_args,
@@ -194,7 +201,7 @@ impl Budget {
         )
     }
 
-    pub fn check_expr_bytes(&mut self, bytes: usize) -> Result<(), Reported> {
+    pub fn check_expr_bytes(&self, bytes: usize) -> Result<(), Reported> {
         if bytes > self.limits.max_expr_bytes {
             return Err(over_expr_bytes(
                 bytes,

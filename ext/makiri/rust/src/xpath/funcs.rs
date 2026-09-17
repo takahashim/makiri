@@ -265,7 +265,7 @@ fn fn_last<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err, "last")?;
+    arity(args.len(), 0, 0, err.clone(), "last")?;
     number(focus.size as f64)
 }
 
@@ -275,7 +275,7 @@ fn fn_position<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err, "position")?;
+    arity(args.len(), 0, 0, err.clone(), "position")?;
     number(focus.pos as f64)
 }
 
@@ -285,7 +285,7 @@ fn fn_count<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err, "count")?;
+    arity(args.len(), 1, 1, err.clone(), "count")?;
     let ns = require_nodeset(&args[0], "count", err)?;
     number(ns.len() as f64)
 }
@@ -356,7 +356,7 @@ fn fn_id<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err, "id")?;
+    arity(args.len(), 1, 1, err.clone(), "id")?;
 
     if D::IS_XML {
         /* Host policy: in XML an ID is an attribute DECLARED ID-typed by the
@@ -451,9 +451,9 @@ fn fn_local_name<'e, D: Dom<'e>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 0, 1, err, "local-name")?;
-    let t = name_target::<D>(args, focus, err, "local-name")?;
-    name_emit::<D>(doc, t, false, err, "local-name")
+    arity(args.len(), 0, 1, err.clone(), "local-name")?;
+    let t = name_target::<D>(args, focus, err.clone(), "local-name")?;
+    name_emit::<D>(doc, t, false, err.clone(), "local-name")
 }
 
 fn fn_name<'e, D: Dom<'e>>(
@@ -463,9 +463,9 @@ fn fn_name<'e, D: Dom<'e>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 0, 1, err, "name")?;
-    let t = name_target::<D>(args, focus, err, "name")?;
-    name_emit::<D>(doc, t, true, err, "name")
+    arity(args.len(), 0, 1, err.clone(), "name")?;
+    let t = name_target::<D>(args, focus, err.clone(), "name")?;
+    name_emit::<D>(doc, t, true, err.clone(), "name")
 }
 
 fn fn_namespace_uri<'e, D: Dom<'e>>(
@@ -474,16 +474,16 @@ fn fn_namespace_uri<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err, "namespace-uri")?;
+    arity(args.len(), 0, 1, err.clone(), "namespace-uri")?;
     let doc = ev.doc;
-    let Some(t) = name_target::<D>(args, focus, err, "namespace-uri")? else {
-        return string(b"", err, "namespace-uri");
+    let Some(t) = name_target::<D>(args, focus, err.clone(), "namespace-uri")? else {
+        return string(b"", err.clone(), "namespace-uri");
     };
     if (doc.node_type(t) != NTYPE_ELEMENT && doc.node_type(t) != NTYPE_ATTRIBUTE) || !doc.has_ns(t)
     {
-        return string(b"", err, "namespace-uri");
+        return string(b"", err.clone(), "namespace-uri");
     }
-    string(doc.ns_uri(t), err, "namespace-uri")
+    string(doc.ns_uri(t), err.clone(), "namespace-uri")
 }
 
 /* ---------- string functions ---------- */
@@ -494,7 +494,7 @@ fn fn_string<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err, "string")?;
+    arity(args.len(), 0, 1, err.clone(), "string")?;
     Ok(Val::string(arg_or_self_text::<D>(focus, args, ev)?))
 }
 
@@ -511,7 +511,7 @@ fn fn_concat<'e, D: Dom<'e>>(
             "concat(): expected at least 2 arguments"
         ));
     }
-    let mut parts = try_vec::<Text>(args.len(), err, "concat")?;
+    let mut parts = try_vec::<Text>(args.len(), err.clone(), "concat")?;
     let mut total = 0usize;
     for a in args {
         let t = to_text::<D>(a, ev)?;
@@ -543,7 +543,7 @@ fn fn_starts_with<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err, "starts-with")?;
+    arity(args.len(), 2, 2, err.clone(), "starts-with")?;
     two::<D, _>(ev, args, |s, t| boolean(s.starts_with(t)))
 }
 
@@ -553,7 +553,7 @@ fn fn_contains<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err, "contains")?;
+    arity(args.len(), 2, 2, err.clone(), "contains")?;
     two::<D, _>(ev, args, |s, t| boolean(find_bytes(s, t).is_some()))
 }
 
@@ -563,7 +563,7 @@ fn fn_substring_before<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err, "substring-before")?;
+    arity(args.len(), 2, 2, err.clone(), "substring-before")?;
     two::<D, _>(ev, args, |s, t| {
         /* the bytes of s before the first t, or "" when t is empty or absent */
         let end = if t.is_empty() {
@@ -571,7 +571,7 @@ fn fn_substring_before<'e, D: Dom<'e>>(
         } else {
             find_bytes(s, t).unwrap_or(0)
         };
-        string(&s[..end], err, "substring-before")
+        string(&s[..end], err.clone(), "substring-before")
     })
 }
 
@@ -581,7 +581,7 @@ fn fn_substring_after<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err, "substring-after")?;
+    arity(args.len(), 2, 2, err.clone(), "substring-after")?;
     two::<D, _>(ev, args, |s, t| {
         let rest: &[u8] = if t.is_empty() {
             s
@@ -591,7 +591,7 @@ fn fn_substring_after<'e, D: Dom<'e>>(
                 None => b"",
             }
         };
-        string(rest, err, "substring-after")
+        string(rest, err.clone(), "substring-after")
     })
 }
 
@@ -603,7 +603,7 @@ fn fn_substring<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 3, err, "substring")?;
+    arity(args.len(), 2, 3, err.clone(), "substring")?;
     let s = to_text::<D>(&args[0], ev)?;
     let start_d = to_number::<D>(&args[1], ev)?;
     let bytes = s.as_slice();
@@ -614,7 +614,7 @@ fn fn_substring<'e, D: Dom<'e>>(
     };
 
     if start_d.is_nan() || end_d.is_nan() {
-        return string(b"", err, "substring");
+        return string(b"", err.clone(), "substring");
     }
     /* Round, then clamp AS DOUBLES before any cast: start/end can be infinite
      * or beyond i64 (`substring(s, 1 div 0)`), where casting first would be
@@ -623,11 +623,11 @@ fn fn_substring<'e, D: Dom<'e>>(
     let rstart = (start_d + 0.5).floor().clamp(1.0, imax);
     let rend = (end_d + 0.5).floor().clamp(1.0, imax);
     if rend <= rstart {
-        return string(b"", err, "substring");
+        return string(b"", err.clone(), "substring");
     }
     let from = advance_chars(bytes, (rstart as i64 - 1) as usize);
     let to = from + advance_chars(&bytes[from..], (rend as i64 - rstart as i64) as usize);
-    string(&bytes[from..to], err, "substring")
+    string(&bytes[from..to], err.clone(), "substring")
 }
 
 fn fn_string_length<'e, D: Dom<'e>>(
@@ -636,7 +636,7 @@ fn fn_string_length<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err, "string-length")?;
+    arity(args.len(), 0, 1, err.clone(), "string-length")?;
     let t = arg_or_self_text::<D>(focus, args, ev)?;
     number(count_chars(t.as_slice()) as f64)
 }
@@ -648,7 +648,7 @@ fn fn_normalize_space<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err, "normalize-space")?;
+    arity(args.len(), 0, 1, err.clone(), "normalize-space")?;
     let s = arg_or_self_text::<D>(focus, args, ev)?;
     let src = s.as_slice();
     let normalized = Text::try_fill(src.len(), |dst| {
@@ -694,8 +694,8 @@ fn fn_translate<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 3, 3, err, "translate")?;
-    let mut texts = try_vec::<Text>(3, err, "translate")?;
+    arity(args.len(), 3, 3, err.clone(), "translate")?;
+    let mut texts = try_vec::<Text>(3, err.clone(), "translate")?;
     for a in args {
         texts.push(to_text::<D>(a, ev)?);
     }
@@ -716,9 +716,9 @@ fn fn_translate<'e, D: Dom<'e>>(
     /* A character is never shorter than a byte, so the byte length bounds the
      * count - reserving up front keeps a failed allocation an XPath OOM rather
      * than the abort a growing Vec would give under `panic = "abort"`. */
-    let mut from_cp = try_vec::<char>(fv.len(), err, "translate")?;
+    let mut from_cp = try_vec::<char>(fv.len(), err.clone(), "translate")?;
     from_cp.extend(fv.chars());
-    let mut to_cp = try_vec::<char>(tv.len(), err, "translate")?;
+    let mut to_cp = try_vec::<char>(tv.len(), err.clone(), "translate")?;
     to_cp.extend(tv.chars());
 
     /* Capped: a multibyte replacement can push the result past the limit even
@@ -766,7 +766,7 @@ fn fn_not<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err, "not")?;
+    arity(args.len(), 1, 1, err.clone(), "not")?;
     boolean(!val_to_boolean(&args[0]))
 }
 
@@ -776,7 +776,7 @@ fn fn_true<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err, "true")?;
+    arity(args.len(), 0, 0, err.clone(), "true")?;
     boolean(true)
 }
 
@@ -786,7 +786,7 @@ fn fn_false<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 0, err, "false")?;
+    arity(args.len(), 0, 0, err.clone(), "false")?;
     boolean(false)
 }
 
@@ -796,7 +796,7 @@ fn fn_boolean<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err, "boolean")?;
+    arity(args.len(), 1, 1, err.clone(), "boolean")?;
     boolean(val_to_boolean(&args[0]))
 }
 
@@ -807,7 +807,7 @@ fn fn_lang<'e, D: Dom<'e>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 1, 1, err, "lang")?;
+    arity(args.len(), 1, 1, err.clone(), "lang")?;
     let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
     /* Walk the ancestors for the host's language attribute. Host policy: XPath
@@ -845,7 +845,7 @@ fn fn_number<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 0, 1, err, "number")?;
+    arity(args.len(), 0, 1, err.clone(), "number")?;
     match args.first() {
         Some(a) => number(to_number::<D>(a, ev)?),
         None => {
@@ -862,7 +862,7 @@ fn fn_sum<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 1, 1, err, "sum")?;
+    arity(args.len(), 1, 1, err.clone(), "sum")?;
     let ns = require_nodeset(&args[0], "sum", err)?;
     let mut total = 0.0;
     for i in 0..ns.len() {
@@ -956,7 +956,7 @@ fn fn_css_class<'e, D: Dom<'e>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err, "nokogiri-builtin:css-class")?;
+    arity(args.len(), 2, 2, err.clone(), "nokogiri-builtin:css-class")?;
     two::<D, _>(ev, args, |hay, needle| {
         boolean(ws_token_match(Some(hay), Some(needle)))
     })
@@ -971,7 +971,7 @@ fn fn_local_name_is<'e, D: Dom<'e>>(
 ) -> Answer<D::Node> {
     let err = ev.budget.sink();
     let doc = ev.doc;
-    arity(args.len(), 1, 1, err, "nokogiri-builtin:local-name-is")?;
+    arity(args.len(), 1, 1, err.clone(), "nokogiri-builtin:local-name-is")?;
     let want = to_text::<D>(&args[0], ev)?;
     boolean(
         focus

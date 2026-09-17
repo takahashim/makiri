@@ -29,7 +29,7 @@ pub(crate) fn charge(b: &Build) -> Result<(), Reported> {
 /// `kind` as a node, refused if it would nest the AST too deeply.
 pub(crate) fn expr(b: &Build, kind: ExprKind) -> Built {
     let e = Expr::new(kind);
-    check_ast_depth(&e, b.err)?;
+    check_ast_depth(&e, b.err.clone())?;
     Ok(e)
 }
 
@@ -37,7 +37,7 @@ pub(crate) fn expr(b: &Build, kind: ExprKind) -> Built {
 pub(crate) fn copy_text(b: &Build, s: &[u8]) -> Result<Box<[u8]>, Reported> {
     if VerifiedText::from_bytes(s).is_none() {
         return Err(crate::err_setf!(
-            b.err,
+            b.err.clone(),
             crate::xpath::msg::XP_ERR_INTERNAL,
             "invalid internal CSS text"
         ));

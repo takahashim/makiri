@@ -74,17 +74,15 @@ fn run(
 
     let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
     let mut parse_budget = Budget::with_limits(ctx.limits());
-    // SAFETY: `source` borrows `expr`, which outlives the parse.
-    let compiled: Result<Box<Ast>, _> = unsafe {
-        match query {
-            Query::XPath => parse_owned(source, &mut parse_budget),
-            #[cfg(feature = "lexbor")]
-            Query::Css => {
-                let ns = crate::css::CssNs {
-                    default_namespace: false,
-                };
-                crate::css::compile_owned(source, &ns, &mut parse_budget)
-            }
+    /* `source` borrows `expr`, which outlives the parse. */
+    let compiled: Result<Box<Ast>, _> = match query {
+        Query::XPath => parse_owned(source, &mut parse_budget),
+        #[cfg(feature = "lexbor")]
+        Query::Css => {
+            let ns = crate::css::CssNs {
+                default_namespace: false,
+            };
+            crate::css::compile_verified(source, &ns, &mut parse_budget)
         }
     };
     let ast = match compiled {
@@ -208,7 +206,7 @@ fn parse_status(expr: &str) -> Result<(), c_int> {
     let mut budget = Budget::with_limits(ctx.limits());
     let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
     // SAFETY: `source` borrows `expr`, which outlives the parse.
-    match unsafe { parse_owned(source, &mut budget) } {
+    match parse_owned(source, &mut budget) {
         Ok(_) => Ok(()),
         Err(_) => Err(budget.take_error().status),
     }
@@ -260,8 +258,8 @@ fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
     let parse = |text: &str| {
         let mut budget = Budget::new();
         let source = VerifiedText::from_bytes(text.as_bytes()).unwrap();
-        // SAFETY: `source` borrows `text`, which outlives the parse.
-        match unsafe { parse_owned(source, &mut budget) } {
+        /* `source` borrows `text`, which outlives the parse. */
+        match parse_owned(source, &mut budget) {
             Ok(ast) => ast,
             Err(_) => panic!("{text} parses"),
         }
