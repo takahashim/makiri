@@ -2,9 +2,8 @@
 //! navigation, attributes, source line and document order.
 //!
 //! Every read of the Lexbor tree goes through the typed handles of
-//! `dom_adapter::html`, which are safe to use; what stays `unsafe` here is the
-//! Ruby side - wrapping a node into an object, pushing onto a NodeSet, and the
-//! per-document indexes.
+//! `lexbor::adapter::html`, the node and text index through `bridge::lexbor`, and
+//! the NodeSet through its fill handle, so the readers are all safe.
 //!
 //! # Where a GC may run
 //!
@@ -14,31 +13,22 @@
 //! it drops, and read the bytes before building anything. Bytes borrowed from
 //! the document are arena memory, which a GC does not move.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
-use super::{arg_node, wrap, wrap_node};
-use crate::dom_adapter::html::HtmlNode;
-use crate::glue::abi::{
-    doc_parsed, error_class, is_kind_of, node_set_new, node_set_push, ruby_str_from_slices,
-    ruby_str_from_utf8, ruby_verified_text, LxbAttr,
-};
+use super::{arg_node, wrap_node};
+use crate::bridge::lexbor::{dom_str, text_index_string};
+use crate::bridge::ruby::is_kind_of;
+use crate::bridge::node_set::node_set_with_fill;
+use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
+use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
  * ------------------------------------------------------------------ */
-
-/// A UTF-8 String copied from bytes the document lends.
-fn dom_str(bytes: &[u8]) -> Value {
-    // SAFETY: the bytes are valid UTF-8 whenever they come from the document,
-    // by the text-input contract - which is the part this layer knows and the
-    // bridge cannot. The String copies them.
-    unsafe { Value::from_raw(ruby_str_from_utf8(bytes)) }
-}
 
 fn nil(ruby: &Ruby) -> Value {
     ruby.qnil().as_value()
@@ -235,7 +225,7 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     match this.node().template_content() {
         // SAFETY: the contents fragment belongs to the receiver's document.
-        Some(content) => unsafe { wrap_node(Some(content), this.document) },
+        Some(content) => wrap_node(Some(content), this.document),
         None => nil(ruby),
     }
 }
@@ -281,13 +271,8 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// text/CDATA node's data, stack-safe and skipping Lexbor's intermediate arena
 /// buffer and copy.
 fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
-    // SAFETY: `document` is the node's live Document, and the slices the index
-    // hands back are copied into the String before anything can change it.
-    unsafe {
-        let parsed = crate::glue::doc::doc_parsed_known(document);
-        if let Some((slices, total)) = parsed.as_mut().and_then(|p| p.text_slices(node.as_raw())) {
-            return Ok(Value::from_raw(ruby_str_from_slices(slices, total)?));
-        }
+    if let Some(text) = text_index_string(document, node.into())? {
+        return Ok(text);
     }
 
     let str = ruby.str_new("");
@@ -327,32 +312,23 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let node = this.node();
     let document = this.document;
     if node.attr().is_some() {
-        // SAFETY: `document` is the attribute's live Document; the owner the
-        // index answers belongs to it.
-        unsafe {
-            let index = doc_parsed(document)?.as_mut().and_then(|p| p.dom_index());
-            let Some(index) = index else {
-                return Err(Error::new(
-                    error_class(),
-                    "could not build the attribute index (out of memory)",
-                ));
-            };
-            let owner = index.owner_of(node.as_raw() as *const LxbAttr);
-            return Ok(wrap(owner, document));
-        }
+        /* The owner the index answers belongs to `document`, the attribute's
+         * live Document. */
+        let owner = crate::bridge::lexbor::attribute_owner(document, RawNode::from(node))?;
+        return Ok(wrap_node(owner, document));
     }
     // SAFETY: the parent is in the receiver's tree.
-    Ok(unsafe { wrap_node(node.parent(), document) })
+    Ok(wrap_node(node.parent(), document))
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(this.node().next(), this.document) }
+    wrap_node(this.node().next(), this.document)
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(this.node().prev(), this.document) }
+    wrap_node(this.node().prev(), this.document)
 }
 
 /// The first node from `start` along `step` that is an element. `step` is a
@@ -375,31 +351,31 @@ fn first_element<'d>(
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().next(), HtmlNode::next);
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().prev(), HtmlNode::prev);
     // SAFETY: a sibling is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     // SAFETY: a child is in the receiver's tree.
-    unsafe { wrap_node(this.node().first_child(), this.document) }
+    wrap_node(this.node().first_child(), this.document)
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().first_child(), HtmlNode::next);
     // SAFETY: a child is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().last_child(), HtmlNode::prev);
     // SAFETY: a child is in the receiver's tree.
-    unsafe { wrap_node(found, this.document) }
+    wrap_node(found, this.document)
 }
 
 /// Collect nodes into a NodeSet. The set is a live Ruby object across every
@@ -409,16 +385,13 @@ fn set_of<'d>(
     nodes: impl Iterator<Item = HtmlNode<'d>>,
     elements_only: bool,
 ) -> Result<Value, Error> {
-    // SAFETY: every node is in the tree whose keepalive Document is `document`.
-    unsafe {
-        let set = node_set_new(document);
-        for n in nodes {
-            if !elements_only || n.element().is_some() {
-                node_set_push(set.as_raw(), n.as_raw() as *mut core::ffi::c_void)?;
-            }
+    let (set, fill) = node_set_with_fill(document);
+    for n in nodes {
+        if !elements_only || n.element().is_some() {
+            fill.push(n.as_raw() as *mut core::ffi::c_void)?;
         }
-        Ok(set)
     }
+    Ok(set)
 }
 
 /// `#children`: every child node, as a NodeSet.
@@ -452,7 +425,7 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
     // SAFETY: the guard keeps the name String reachable, and its bytes are only
     // read before the answer String is built.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    let name = unsafe { nv.bytes() };
+    let name = nv.as_verified().as_bytes();
     if !el.has_attribute(name) {
         return Ok(nil(ruby));
     }
@@ -467,7 +440,7 @@ pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
     };
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    let has = el.has_attribute(unsafe { nv.bytes() });
+    let has = el.has_attribute(nv.as_verified().as_bytes());
     Ok(if has {
         ruby.qtrue().as_value()
     } else {
@@ -530,13 +503,13 @@ pub fn attribute_by_qualified_name(
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
-    let name = unsafe { nv.bytes() };
+    let name = nv.as_verified().as_bytes();
     let found = el.attrs().find(|at| at.qualified_name() == name);
     /* The name is not read past here; wrapping allocates, so it happens after. */
     drop(nv);
     Ok(match found {
         // SAFETY: the attribute is in the receiver's tree.
-        Some(at) => unsafe { wrap_node(Some(at.node()), this.document) },
+        Some(at) => wrap_node(Some(at.node()), this.document),
         None => nil(ruby),
     })
 }
@@ -559,7 +532,7 @@ pub fn attribute_value_by_qualified_name(
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
-    let name = unsafe { nv.bytes() };
+    let name = nv.as_verified().as_bytes();
     let value = el
         .attrs()
         .find(|at| at.qualified_name() == name)
@@ -584,11 +557,7 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    // SAFETY: `this.document` is the node's live Document.
-    let n = unsafe {
-        let p = crate::glue::doc::doc_parsed_known(this.document);
-        p.as_ref().map_or(0, |p| p.node_line(this.node().as_raw()))
-    };
+    let n = crate::bridge::lexbor::node_line(this.document, this.raw());
     if n == 0 {
         nil(ruby)
     } else {
@@ -615,7 +584,7 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
      * asking is how we avoid arg_node's TypeError below. */
     let comparable = is_kind_of(other, &CLASS_NODE)
         && !is_kind_of(
-            crate::glue::abi::keepalive_document(other)?,
+            crate::bridge::lexbor::keepalive_document(other)?,
             &CLASS_XML_DOCUMENT,
         );
     if !comparable {

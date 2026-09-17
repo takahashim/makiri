@@ -8,7 +8,6 @@
 //! Nothing here touches Lexbor. The node layout comes from `crate::xml::model`,
 //! the XML engine's own declaration, so no offset or type constant is restated.
 
-#![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 pub mod abi;
@@ -17,162 +16,16 @@ pub mod ns;
 pub mod read;
 pub mod serialize;
 
-use core::ffi::c_void;
-
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{method, prelude::*, RClass, Ruby, Value};
-use rb_sys::VALUE;
+use magnus::{method, prelude::*, RClass, Ruby};
 
 use self::abi::*;
-use super::abi::{doc_parsed, parsed_xml_doc, NodeData};
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE_SET};
 
-/// Wrap an arena node into its `Makiri::XML::*` leaf.
-///
-/// NULL becomes nil, and the DOCUMENT node maps back onto the Ruby Document
-/// rather than getting a second wrapper - so `node.document.equal?(doc)` holds
-/// and the arena has exactly one owner.
-///
-/// The signature is the representation-opaque one every caller shares (see
-/// `glue::abi`); the cast to the XML node is justified by this being the XML
-/// wrap path.
-pub unsafe extern "C" fn wrap_xml_node(node: *mut c_void, document: VALUE) -> VALUE {
-    let id = NodeId::from_token(node as usize);
-    if id.is_invalid() {
-        return rb_sys::Qnil as VALUE;
-    }
-    let xdoc = doc_of(Value::from_raw(document));
-    /* An HTML Document has no arena: refuse it rather than read through null. */
-    assert!(
-        !xdoc.is_null(),
-        "an XML node wrapped under a Document with no XML arena"
-    );
-    let ty = (*xdoc).type_(id);
-    if ty == Some(NodeType::Document) {
-        return document;
-    }
-    let klass = match ty {
-        Some(NodeType::Element) => CLASS_XML_ELEMENT.raw(),
-        Some(NodeType::Attribute) => CLASS_XML_ATTR.raw(),
-        Some(NodeType::Text) => CLASS_XML_TEXT.raw(),
-        Some(NodeType::CData) => CLASS_XML_CDATA_SECTION.raw(),
-        Some(NodeType::Comment) => CLASS_XML_COMMENT.raw(),
-        Some(NodeType::Pi) => CLASS_XML_PROCESSING_INSTRUCTION.raw(),
-        Some(NodeType::Doctype) => CLASS_XML_DOCUMENT_TYPE.raw(),
-        Some(NodeType::Fragment) => CLASS_XML_DOCUMENT_FRAGMENT.raw(),
-        _ => CLASS_XML_NODE.raw(),
-    };
-
-    /* The Document is stored after the wrap: see `wrap_zeroed`. */
-    crate::bridge::ruby::wrap_zeroed::<NodeData>(
-        klass,
-        XML_NODE_TYPE.as_ptr(),
-        |nd| nd.node = node,
-        |nd| nd.document = document,
-    )
-}
-
-/// The arena node behind a wrapper.
-///
-/// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
-/// through the XML TypedData type, which fails with TypeError for an HTML node -
-/// the representation check is Ruby's own type machinery, not a flag we could
-/// forget to test.
-pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut c_void, magnus::Error> {
-    if is_a(rb_self, &CLASS_XML_DOCUMENT) {
-        let parsed = doc_parsed(rb_self)?;
-        // SAFETY: the handle of a live XML Document, and the arena it owns.
-        let node = unsafe { (*(parsed_xml_doc(parsed) as *mut XmlDoc)).doc_node() };
-        return Ok(node.to_token() as *mut c_void);
-    }
-    let nd = crate::bridge::ruby::typed_data(rb_self, &XML_NODE_TYPE)? as *mut NodeData;
-    // SAFETY: the data of a live XML node wrapper.
-    Ok(unsafe { (*nd).node })
-}
-
-/// The XML document behind a Document or node wrapper (`Document` VALUE).
-///
-/// `document` must be a Document the caller has established - a node's
-/// keepalive Document or an XML Document receiver; anything else panics.
-pub fn doc_of(document: Value) -> *mut XmlDoc {
-    // SAFETY: `doc_parsed_known` hands back the live handle of that Document.
-    unsafe { parsed_xml_doc(crate::glue::doc::doc_parsed_known(document)) as *mut XmlDoc }
-}
-
-/// The keepalive Document of an XML node. XML-strict: it rejects an HTML node at
-/// the type boundary, like [`xml_node_unwrap`].
-pub fn xml_node_document(rb_self: Value) -> Result<Value, magnus::Error> {
-    if is_a(rb_self, &CLASS_XML_DOCUMENT) {
-        return Ok(rb_self);
-    }
-    let nd = crate::bridge::ruby::typed_data(rb_self, &XML_NODE_TYPE)? as *mut NodeData;
-    // SAFETY: the data of a live XML node wrapper, which marks its Document.
-    Ok(unsafe { Value::from_raw((*nd).document) })
-}
-
-/// Wrap a node reached from a checked receiver, under its Document.
-pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
-    wrap(rel, this.document)
-}
-
-/* ---- the Rust-side conveniences the submodules use ---- */
-
-/// [`xml_node_unwrap`] with the node id typed.
-pub fn unwrap(v: Value) -> Result<NodeId, magnus::Error> {
-    Ok(NodeId::from_token(xml_node_unwrap(v)? as usize))
-}
-
-/// A method receiver already checked to be an XML node or XML Document; see
-/// the HTML twin, `html_node::HtmlSelf`.
-#[derive(Clone, Copy)]
-pub struct XmlSelf {
-    pub value: Value,
-    pub id: NodeId,
-    /// The keepalive Document (the receiver itself for a Document).
-    pub document: Value,
-}
-
-impl magnus::TryConvert for XmlSelf {
-    fn try_convert(value: Value) -> Result<Self, magnus::Error> {
-        let id = unwrap(value)?;
-        let document = xml_node_document(value)?;
-        Ok(XmlSelf {
-            value,
-            id,
-            document,
-        })
-    }
-}
-
-impl XmlSelf {
-    /// The arena behind the receiver's Document.
-    pub fn doc(self) -> *mut XmlDoc {
-        doc_of(self.document)
-    }
-}
-
-/// The keepalive Document of an XML node. `Err(TypeError)` for an HTML node.
-pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
-    xml_node_document(v)
-}
-
-/// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
-pub fn doc(v: Value) -> Result<*mut XmlDoc, magnus::Error> {
-    Ok(doc_of(xml_node_document(v)?))
-}
-
-/// Wrap an arena node under `document`, its XML Document.
-pub fn wrap(node: NodeId, document: Value) -> Value {
-    // SAFETY: `document` is a live value; `wrap_xml_node` checks it is a
-    // Document with an arena before reading it, and resolves `node` through that
-    // arena, where a stale or foreign id reads as no node.
-    unsafe {
-        Value::from_raw(wrap_xml_node(
-            node.to_token() as *mut c_void,
-            document.as_raw(),
-        ))
-    }
-}
+/* The wrapper, the front door, the arena accessors and the mutators live in the
+ * Ruby <-> XML-arena seam (`bridge::xml`); this module re-exports them for its
+ * submodules and the rest of the glue. */
+pub use crate::bridge::lexbor::{doc_of, wrap_xml_node, xml_node_document, xml_node_unwrap};
+pub use crate::bridge::xml::{doc, node_document, unwrap, wrap, xml_wrap_rel_value, XmlSelf};
 
 pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;
@@ -182,8 +35,8 @@ pub use crate::glue::node::node_pointer_id;
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub unsafe extern "C" fn init_xml_node_read() {
-    let ruby = Ruby::get_unchecked();
+pub fn init_xml_node_read() {
+    let ruby = Ruby::get().expect("init runs on the Ruby thread");
     let m = magnus::RModule::from_value(MOD_XML_NODE_METHODS.value())
         .expect("Makiri::XML::NodeMethods");
 
@@ -310,7 +163,7 @@ pub unsafe extern "C" fn init_xml_node_read() {
 ///
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn init_xml_node() {
+pub fn init_xml_node() {
     /* Serialization: #to_xml / #canonicalize, and the refused HTML ones. */
     init_xml_node_serialize();
     init_xml_node_read();

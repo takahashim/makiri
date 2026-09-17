@@ -22,50 +22,43 @@
 //! Fragment parsing deliberately does NOT release the GVL: a fragment is small,
 //! and an existing document's arena must never be mutated with the GVL down.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
-use rb_sys::VALUE;
 
-use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
+use crate::xml::model::{Limits as XmlLimits, NodeId};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::XP_ERR_SYNTAX;
 
-use super::abi::error_class;
+use crate::bridge::ruby::error_class;
 
-/* The statuses and the arena ceiling come from `crate::xml::model` rather than
- * being restated here: that module is the XML engine's own declaration of them,
- * and the statuses are now a real enum, so the compiler holds the two copies
- * together. */
-use crate::xml::model::{Status, MAX_BYTES};
+/* The arena ceiling comes from `crate::xml::model` rather than being restated
+ * here: that module is the XML engine's own declaration of it. */
+use crate::xml::model::MAX_BYTES;
 
 /// `MKR_CSS_DEFAULT_NS_PREFIX` - the synthetic prefix a default namespace
 /// arrives under, Nokogiri's convention, so a bare type selector binds to it.
 const CSS_DEFAULT_NS_PREFIX: &str = "xmlns";
 
 /// The engine context. Opaque here while C held it; now the real type.
-use crate::xpath::ctx::Context as XPathContext;
+use crate::bridge::xpath::Cx as XPathContext;
 
 /// The default-namespace prefix, or NULL. Declared twice while C held it (once
 /// here, once in `css`); the fields matched, but nothing checked that.
 use crate::css::CssNs;
 
-use super::abi::{
-    doc_parsed, keepalive_document, node_set_new, parsed_xml_doc, ruby_verified_text, verify_text,
-    wrap_xml_node, xml_node_unwrap,
-};
-use crate::init::{
-    CLASS_DOCUMENT, CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR,
-    EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS,
-};
+use crate::bridge::lexbor::{keepalive_document, wrap_xml_node, xml_node_unwrap};
+use crate::bridge::node_set::node_set_new;
+use crate::bridge::string::{ruby_verified_text, verify_text};
+use crate::bridge::string::ruby_try_verified_text_pair;
+use crate::init::{CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, MOD_XML, MOD_XML_NODE_METHODS};
 
 /// Wrap an XML node, typed.
-unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
+fn wrap_typed_xml_node(node: NodeId, document: Value) -> Value {
     wrap_xml_node(node.to_token() as *mut c_void, document)
 }
 
@@ -74,54 +67,12 @@ fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
 }
 
-pub use crate::bridge::string::ruby_copy_bytes;
-pub use crate::bridge::string::ruby_try_verified_text;
-pub use crate::bridge::xml_decode::xml_decode_input;
-use crate::dom_adapter::post_parse::Parsed;
-pub use crate::glue::doc::wrap_document;
-use crate::glue::xpath::xpath_error;
-use crate::glue::xpath::{context_for, evaluate_query, parse_query, query_result};
-pub use crate::xml::api::xml_doc_new;
-pub use crate::xml::api::xml_parse_ex;
-pub use crate::xml::api::xml_parse_fragment;
-
-extern "C" {
-
-    fn rb_thread_call_without_gvl(
-        func: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-        data: *mut c_void,
-        ubf: *const c_void,
-        ubf_data: *mut c_void,
-    ) -> *mut c_void;
-}
+use crate::bridge::xpath::{context_for, parse_query, xpath_error};
+use crate::glue::xpath::{evaluate_query, query_result};
 
 /* ------------------------------------------------------------------ */
 /* parse                                                              */
 /* ------------------------------------------------------------------ */
-
-/// What crosses into the GVL-released closure: plain data only. No `VALUE`, no
-/// `Ruby` handle - that rule is what makes the release safe.
-struct ParseWork<'a> {
-    src: &'a [u8],
-    limits: XmlLimits,
-    result: *mut XmlDoc,
-    status: Status,
-}
-
-unsafe extern "C" fn parse_nogvl(arg: *mut c_void) -> *mut c_void {
-    let w = &mut *(arg as *mut ParseWork<'_>);
-    match xml_parse_ex(w.src, Some(&w.limits)) {
-        Ok(doc) => {
-            w.result = Box::into_raw(doc);
-            w.status = Status::Ok;
-        }
-        Err(status) => {
-            w.result = core::ptr::null_mut();
-            w.status = status;
-        }
-    }
-    core::ptr::null_mut()
-}
 
 /// The optional per-parse budget overrides.
 ///
@@ -189,104 +140,9 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         source
     };
 
-    unsafe {
-        /* Strict decode under the GVL: invalid UTF-8, an undecodable byte or a
-         * NUL all raise here, with no U+FFFD repair. The budget goes in so an
-         * over-large input is refused before its validation copy AND before the
-         * copy below - a hostile document is never materialised twice for a
-         * parse that cannot succeed. */
-        let source = crate::bridge::ruby::string_of(source)?;
-        let decoded = xml_decode_input(source.as_raw(), budget)?;
-
-        /* Copy into a private buffer BEFORE allocating any Ruby object, so there
-         * is no GC point between obtaining `decoded` and copying it. */
-        let Some(src) = ruby_copy_bytes(decoded) else {
-            return Err(Error::new(
-                error_class(),
-                "out of memory copying XML source",
-            ));
-        };
-
-        /* Wrap an empty handle first, so a failure mid-parse still frees
-         * cleanly through the GC. The source is already copied, so this Ruby
-         * allocation cannot disturb it. */
-        let Some(parsed) = Parsed::new_xml() else {
-            return Err(Error::new(
-                error_class(),
-                "out of memory allocating XML document",
-            ));
-        };
-        let parsed = Box::into_raw(parsed);
-        let obj = wrap_document(parsed); /* GC owns `parsed` from here */
-
-        let mut work = ParseWork {
-            src: src.as_slice(),
-            limits,
-            result: core::ptr::null_mut(),
-            status: Status::Ok,
-        };
-        rb_thread_call_without_gvl(
-            parse_nogvl,
-            &mut work as *mut ParseWork<'_> as *mut c_void,
-            core::ptr::null(),
-            core::ptr::null_mut(),
-        );
-        let ParseWork { result, status, .. } = work;
-        drop(src);
-
-        if result.is_null() {
-            return Err(parse_status_error(status, Unit::Document));
-        }
-        (*parsed).set_xml_doc(Box::from_raw(result));
-        Ok(Value::from_raw(obj))
-    }
-}
-
-/// Which entry point failed. The two carry their own wording rather than one
-/// composed string: the document path says "malformed XML" where the fragment
-/// path says "malformed XML fragment", and the messages are observable.
-#[derive(Clone, Copy)]
-enum Unit {
-    Document,
-    Fragment,
-}
-
-impl Unit {
-    fn malformed(self) -> &'static str {
-        match self {
-            Unit::Document => "malformed XML",
-            Unit::Fragment => "malformed XML fragment",
-        }
-    }
-    fn budget(self) -> &'static str {
-        match self {
-            Unit::Document => "XML document budget exceeded",
-            Unit::Fragment => "XML fragment budget exceeded",
-        }
-    }
-    fn failed(self) -> &'static str {
-        match self {
-            Unit::Document => "failed to parse XML document",
-            Unit::Fragment => "failed to parse XML fragment",
-        }
-    }
-}
-
-/// Map a parse status onto its Ruby exception.
-fn parse_status_error(status: Status, unit: Unit) -> Error {
-    match status {
-        Status::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
-        Status::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
-        Status::Version => Error::new(
-            EXC_XML_SYNTAX_ERROR.exception(),
-            "unsupported XML version (only XML 1.0 is supported)",
-        ),
-        /* `Ok` never reaches here (it means no failure); the rest are the
-         * generic "failed to parse" bucket. */
-        Status::Ok | Status::Oom | Status::Internal => {
-            Error::new(EXC_ERROR.exception(), unit.failed())
-        }
-    }
+    /* Strict decode, the source copy, the GVL release and the wrapper all live
+     * in the seam; here only the budget keywords are read. */
+    crate::bridge::xml::parse_xml_document(source, limits, budget)
 }
 
 /* ------------------------------------------------------------------ */
@@ -325,14 +181,9 @@ fn register_namespaces(ruby: &Ruby, ctx: &XPathContext, rb_ns: Option<Value>) ->
         let v = h.get(k).unwrap_or_else(|| ruby.qnil().as_value());
         let vs: RString = v.funcall("to_s", ())?;
 
-        /* SAFETY: `ks` and `vs` are the Strings `to_s` just returned, and the
-         * checks allocate nothing, so the views stay valid through the
-         * registration below. */
-        let pair = unsafe {
-            ruby_try_verified_text(ks.as_raw(), cap)
-                .and_then(|pv| Ok((pv, ruby_try_verified_text(vs.as_raw(), cap)?)))
-        };
-        let (pv, uv) = match pair {
+        /* Both are the Strings `to_s` just returned, and the checks allocate
+         * nothing, so the views stay valid through the registration below. */
+        let (pv, uv) = match ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap) {
             Ok(pair) => pair,
             Err(reason) => {
                 return Err(Error::new(
@@ -343,7 +194,7 @@ fn register_namespaces(ruby: &Ruby, ctx: &XPathContext, rb_ns: Option<Value>) ->
         };
         // SAFETY: both views are live and checked; `register_ns` copies both.
         let registered =
-            unsafe { ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) };
+            ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes());
         if registered.is_err() {
             return Err(Error::new(error_class(), "failed to register namespace"));
         }
@@ -365,7 +216,7 @@ fn build_ctx(
     rb_text: Value,
     what: &core::ffi::CStr,
     rb_ns: Option<Value>,
-) -> Result<XPathContext<'static>, Error> {
+) -> Result<XPathContext, Error> {
     verify_text(crate::bridge::ruby::string_of(rb_text)?.as_value(), what)?;
     let ctx = context_for(context, document)?;
     register_namespaces(ruby, &ctx, rb_ns)?; /* ctx drops on error */
@@ -376,7 +227,7 @@ fn build_ctx(
 /// AST and the context first.
 fn run_ast(
     ruby: &Ruby,
-    ctx: XPathContext<'static>,
+    ctx: XPathContext,
     ast: Box<Ast>,
     first_only: bool,
     document: Value,
@@ -456,9 +307,9 @@ fn css_compile_or_raise(
     };
     let sv = ruby_verified_text(selector, c"CSS selector")?;
     let mut budget = crate::xpath::limits::Budget::with_limits(ctx.limits());
-    // SAFETY: `sv` holds the selector String rooted, and the compile allocates
-    // through falloc only - no Ruby runs in it.
-    let ast = unsafe { crate::css::compile_owned(sv.as_verified(), &cns, &mut budget) };
+    /* `sv` holds the selector String rooted; the compile allocates through
+     * falloc only - no Ruby runs in it. */
+    let ast = crate::css::compile_owned(sv.as_verified(), &cns, &mut budget);
     drop(sv);
     if let Ok(ast) = ast {
         return Ok(ast);
@@ -529,7 +380,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
     let value = evaluate_query(&ctx, &ast, nil, document, false);
     drop(ast);
     let value = value?;
-    let target = node.to_token() as *mut c_void;
+    let target = crate::token::Token::xml(node.to_token());
     Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
 }
 
@@ -538,16 +389,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
 /* ------------------------------------------------------------------ */
 
 fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe {
-        let xdoc = parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self));
-        if xdoc.is_null() {
-            return ruby.qnil().as_value();
-        }
-        Value::from_raw(wrap_typed_xml_node(
-            (*xdoc).root.unwrap_or(NodeId::INVALID),
-            rb_self.as_raw(),
-        ))
-    }
+    crate::bridge::xml::document_root(ruby, rb_self)
 }
 
 /// The document's DOCTYPE, or nil.
@@ -557,72 +399,14 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
 /// undefined-entity error and no external subset is fetched. The node is kept
 /// off the tree, so XPath never sees it (XPath 1.0 has no doctype node type).
 fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
-    unsafe {
-        let xdoc = parsed_xml_doc(crate::glue::doc::doc_parsed_known(rb_self));
-        if xdoc.is_null() || (*xdoc).doctype.is_none() {
-            return ruby.qnil().as_value();
-        }
-        Value::from_raw(wrap_typed_xml_node(
-            (*xdoc).doctype.unwrap_or(NodeId::INVALID),
-            rb_self.as_raw(),
-        ))
-    }
-}
-
-/// Strict-decode `source` and parse it as a fragment into `xdoc`.
-///
-/// This runs UNDER the GVL on purpose: a fragment is small, and an existing
-/// document's arena must never be mutated with the GVL released.
-unsafe fn fragment_into(
-    xdoc: *mut XmlDoc,
-    source: Value,
-    inherit_doc_ns: bool,
-) -> Result<NodeId, Error> {
-    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-    let source = crate::bridge::ruby::string_of(source)?;
-    let decoded = xml_decode_input(source.as_raw(), (*xdoc).max_bytes)?;
-    let Some(src) = ruby_copy_bytes(decoded) else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory copying XML fragment source",
-        ));
-    };
-    xml_parse_fragment(&mut *xdoc, src.as_slice(), inherit_doc_ns)
-        .map_err(|status| parse_status_error(status, Unit::Fragment))
-}
-
-/// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
-fn new_empty_document() -> Result<Value, Error> {
-    let Some(parsed) = Parsed::new_xml() else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    };
-    let parsed = Box::into_raw(parsed);
-    // SAFETY: a handle this function just allocated. The wrap hands it to the
-    // GC, and the arena is stored into that same handle below.
-    unsafe {
-        let doc_obj = wrap_document(parsed); /* GC owns `parsed` from here */
-        let xdoc = match xml_doc_new() {
-            Ok(doc) => doc,
-            Err(_) => {
-                return Err(Error::new(
-                    error_class(),
-                    "out of memory allocating XML document",
-                ));
-            }
-        };
-        (*parsed).set_xml_doc(xdoc); /* GC now frees `xdoc` via `parsed` */
-        Ok(Value::from_raw(doc_obj))
-    }
+    crate::bridge::xml::document_internal_subset(ruby, rb_self)
 }
 
 /// `Makiri::XML::Document.new` - an empty document to build up programmatically.
 /// Any arguments (Nokogiri accepts a version and encoding) are accepted and
 /// ignored.
 fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
-    new_empty_document()
+    crate::bridge::xml::new_empty_xml_document()
 }
 
 /// `Makiri::XML::DocumentFragment.parse(source)` - a standalone fragment with
@@ -630,31 +414,22 @@ fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
 /// its namespace within the fragment itself. Use `Document#fragment` to parse
 /// against an existing document's in-scope namespaces instead.
 fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
-    unsafe {
-        let doc_obj = new_empty_document()?;
-        let xdoc = parsed_xml_doc(doc_parsed(doc_obj)?);
-        let frag = fragment_into(xdoc, source, false)?;
-        Ok(Value::from_raw(wrap_typed_xml_node(frag, doc_obj.as_raw())))
-    }
+    let doc_obj = crate::bridge::xml::new_empty_xml_document()?;
+    let frag = crate::bridge::xml::fragment_into(doc_obj, source, false)?;
+    Ok(wrap_typed_xml_node(frag, doc_obj))
 }
 
 /// `doc.fragment(source)` - a fragment bound to this document, resolving names
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
-    unsafe {
-        let xdoc = parsed_xml_doc(doc_parsed(rb_self)?);
-        if xdoc.is_null() {
-            return Err(Error::new(error_class(), "the document has no arena"));
-        }
-        let frag = fragment_into(xdoc, source, true)?;
-        Ok(Value::from_raw(wrap_typed_xml_node(frag, rb_self.as_raw())))
-    }
+    let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;
+    Ok(wrap_typed_xml_node(frag, rb_self))
 }
 
 /// # Safety
 /// Called from `Init_makiri`.
-pub unsafe extern "C" fn init_xml() {
-    let ruby = Ruby::get_unchecked();
+pub fn init_xml() {
+    let ruby = Ruby::get().expect("init runs on the Ruby thread");
     let m_xml = magnus::RModule::from_value(MOD_XML.value()).expect("Makiri::XML");
     let base = magnus::RClass::from_value(CLASS_DOCUMENT.value()).expect("Makiri::Document");
 
@@ -664,13 +439,13 @@ pub unsafe extern "C" fn init_xml() {
     let doc = m_xml
         .define_class("Document", base)
         .expect("Makiri::XML::Document");
-    rb_sys::rb_undef_alloc_func(doc.as_raw()); /* created only from C, never .new */
+    doc.undef_default_alloc_func(); /* created only from C, never .new */
     let node_methods =
         magnus::RModule::from_value(MOD_XML_NODE_METHODS.value()).expect("NodeMethods");
     doc.include_module(node_methods)
         .expect("include NodeMethods");
     /* Init_makiri's global, which the rest of the extension reads. */
-    CLASS_XML_DOCUMENT.set(doc.as_raw());
+    crate::init::record_xml_document_class(doc);
 
     doc.define_method("root", method!(doc_root, 0))
         .expect("#root");

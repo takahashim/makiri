@@ -180,6 +180,18 @@ RSpec.describe "Makiri mutation" do
             .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
         end
 
+        it "rejects a second doctype even when another node precedes the first" do
+          # The duplicate check must scan the whole child list: stopping at the
+          # insertion point would let the leading comment hide the doctype.
+          d = Makiri::HTML("<!--c--><!DOCTYPE html><html><body>b</body></html>")
+          expect { d.children.first.before(d.create_document_type("x")) }
+            .to raise_error(Makiri::Error, /already has a doctype/)
+          expect { d.children.first.replace(d.create_document_type("x")) }
+            .to raise_error(Makiri::Error, /already has a doctype/)
+          expect(d.children.map(&:class))
+            .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
+        end
+
         it "leaves the tree and the rejected node unchanged after a refused insert" do
           dt = doc.create_document_type("html")
           before = doc.children.map(&:class)

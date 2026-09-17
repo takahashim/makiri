@@ -13,7 +13,7 @@
 //! be an axis, a node-type keyword, or a function name), which is done by
 //! advancing and keeping the token that was there.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use super::abi::*;
 use super::ast_ops;
@@ -112,7 +112,7 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) -> PResult {
-        let err = self.err;
+        let err = self.err.clone();
         self.lx.advance().map_err(|e| lex_err(err, e))
     }
 
@@ -139,7 +139,7 @@ impl<'a> Parser<'a> {
     /// `kind` as a node, refused if it would nest the AST too deeply.
     fn node(&self, kind: ExprKind) -> PResult<Expr> {
         let e = Expr::new(kind);
-        check_ast_depth(&e, self.err)?;
+        check_ast_depth(&e, self.err.clone())?;
         Ok(e)
     }
 
@@ -163,7 +163,7 @@ impl<'a> Parser<'a> {
         self.budget.check_steps(steps.len() + 1)?;
         if steps.mkr_push(s).is_err() {
             return Err(err_setf!(
-                self.err,
+                self.err.clone(),
                 XP_ERR_OOM,
                 "out of memory growing step array"
             ));
@@ -636,18 +636,16 @@ static BINOP_LEVELS: &[&[BinMatch]] = &[
 /// Parse an expression into a compiled AST; `Err` with the budget's error slot
 /// filled on failure.
 ///
-/// `expr` is a verified text: NUL-free, valid UTF-8.
-///
-/// # Safety
-/// `expr`'s bytes must stay live for the parse.
-pub unsafe fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box<Ast>, Reported> {
+/// `expr` is a verified text: NUL-free, valid UTF-8, and its lifetime keeps its
+/// bytes live for the parse.
+pub fn parse_owned(expr: VerifiedText, budget: &mut Budget) -> Result<Box<Ast>, Reported> {
     let err = budget.sink();
     budget.check_expr_bytes(expr.len())?;
 
-    let src: &[u8] = unsafe { expr.as_bytes() };
+    let src: &[u8] = expr.as_bytes();
 
-    let lx = Lexer::new(src).map_err(|e| lex_err(err, e))?;
-    let mut p = Parser { lx, err, budget };
+    let lx = Lexer::new(src).map_err(|e| lex_err(err.clone(), e))?;
+    let mut p = Parser { lx, err: err.clone(), budget };
 
     let root = p.parse_expr()?;
     if p.kind() != Tok::Eof {

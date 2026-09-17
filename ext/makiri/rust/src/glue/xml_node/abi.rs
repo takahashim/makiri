@@ -8,14 +8,16 @@
 
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
-pub use super::super::abi::{doc_parsed, error_class, node_set_new, node_set_push, parsed_xml_doc};
+pub use crate::bridge::lexbor::{doc_parsed, parsed_xml_doc};
+pub use crate::bridge::ruby::error_class;
+pub use crate::bridge::node_set::{node_set_new, node_set_with_fill};
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
 /// whole crate. Not `crate::text::BorrowedText`, which has no Ruby anchor.
-pub use crate::glue::abi::{ruby_verified_text, RubyText};
+pub use crate::bridge::string::{ruby_verified_text, RubyText};
 
-pub use crate::glue::node::XML_NODE_TYPE;
+pub use crate::bridge::lexbor::XML_NODE_TYPE;
 pub use crate::init::CLASS_DOCUMENT;
 pub use crate::init::CLASS_XML_ATTR;
 pub use crate::init::CLASS_XML_CDATA_SECTION;
@@ -69,4 +71,4 @@ pub fn xml_syntax_error_class() -> ExceptionClass {
 
 /// Is `v` an instance of the class in `klass`? The shared one, renamed for the
 /// reading it gets here.
-pub use super::super::abi::is_kind_of as is_a;
+pub use crate::bridge::ruby::is_kind_of as is_a;

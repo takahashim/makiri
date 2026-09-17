@@ -10,12 +10,13 @@
 //! and any stale handle. The operation then reports no node, empty bytes, or
 //! `false`, never a panic or a cross-document access.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
-use super::abi::*;
-use super::dom::{Bucket, Dom};
+use crate::xpath::abi::*;
+use crate::xpath::ctx::Context;
+use crate::xpath::dom::{Bucket, Dom};
+use crate::token::{Kind, Token};
 use crate::xml::model as xml;
-use core::ffi::c_void;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
 /// so it must not appear on the attribute axis. The reader still keeps it as a
@@ -41,14 +42,17 @@ impl<'d> Dom<'d> for &'d xml::Document {
     type Attr = xml::NodeId;
 
     #[inline]
-    fn token(n: xml::NodeId) -> *mut c_void {
-        n.to_token() as *mut c_void
+    fn token(n: xml::NodeId) -> Token {
+        Token::xml(n.to_token())
     }
     /// The token is opaque data: every read resolves it through
     /// `Document::try_node`, so a stale or foreign one reads as no node.
     #[inline]
-    unsafe fn node(self, p: *mut c_void) -> xml::NodeId {
-        xml::NodeId::from_token(p as usize)
+    fn resolve_token(self, t: Token) -> xml::NodeId {
+        /* An HTML token never reaches an XML context; assert it here so a bug
+         * shows as a check, not a silently misread arena slot. */
+        assert_eq!(t.kind(), Kind::Xml, "an XML context resolved a non-XML token");
+        xml::NodeId::from_token(t.word())
     }
 
     #[inline]
@@ -96,7 +100,7 @@ impl<'d> Dom<'d> for &'d xml::Document {
     #[inline]
     fn as_attr(self, n: xml::NodeId) -> Option<xml::NodeId> {
         self.try_node(n)
-            .is_some_and(|x| x.type_.as_u32() == super::dom::NTYPE_ATTRIBUTE)
+            .is_some_and(|x| x.type_.as_u32() == crate::xpath::dom::NTYPE_ATTRIBUTE)
             .then_some(n)
     }
     #[inline]
@@ -187,4 +191,10 @@ impl<'d> Dom<'d> for &'d xml::Document {
             recheck: false,
         })
     }
+}
+
+/// A context over `doc` with `node` as the focus; the bridge passes the document
+/// node for a whole-document query.
+pub fn context(doc: &xml::Document, node: xml::NodeId) -> Context<'_, &xml::Document> {
+    Context::new(doc, Token::xml(node.to_token()))
 }

@@ -5,10 +5,8 @@
 //! options, turns its bytes into a String (transcoding when `encoding:` asks),
 //! and maps a failure to `Makiri::Error`.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use super::abi::*;
@@ -52,40 +50,34 @@ fn failure_error(f: Failure, verb: &str) -> Error {
 
 fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
     let (width, enc_opt) = to_xml_opts(ruby, args)?;
-    unsafe {
-        let (to_enc, enc_name) = if enc_opt.is_nil() {
-            (core::ptr::null_mut(), None)
-        } else {
-            /* An unknown name raises, and this frame is about to own the
-             * serializer's buffer: the lookup returns the error instead. */
-            let e = crate::bridge::string::to_encoding(enc_opt)?;
-            let name: RString = enc_opt.funcall("to_s", ())?;
-            (e, Some(name))
-        };
+    let (to_enc, enc_name) = if enc_opt.is_nil() {
+        (None, None)
+    } else {
+        /* An unknown name raises, and this frame is about to own the
+         * serializer's buffer: the lookup returns the error instead. */
+        let e = crate::bridge::string::to_encoding(enc_opt)?;
+        let name: RString = enc_opt.funcall("to_s", ())?;
+        /* A copy, so the bytes stay valid across the serializer's call. */
+        let bytes = crate::bridge::string::ruby_string_bytes(name.as_value())?;
+        (Some(e), Some(bytes))
+    };
 
-        /* The encoding name is borrowed across a call that allocates nothing
-         * Ruby-side. */
-        let out = xml_serialize::to_xml(
-            &*this.doc(),
-            this.id,
-            width,
-            enc_name.as_ref().map(|name| name.as_slice()),
-        );
-        let buf = out.map_err(|f| failure_error(f, "serialize"))?;
-        let mut str = utf8(ruby, buf.as_slice()).as_value();
-        drop(buf);
+    let out = xml_serialize::to_xml(
+        this.doc_ref(),
+        this.id,
+        width,
+        enc_name.as_ref().map(|b| b.as_slice()),
+    );
+    let buf = out.map_err(|f| failure_error(f, "serialize"))?;
+    let mut str = utf8(ruby, buf.as_slice()).as_value();
+    drop(buf);
 
-        if !to_enc.is_null()
-            && to_enc != rb_sys::rb_utf8_encoding()
-            && to_enc != rb_sys::rb_usascii_encoding()
-        {
-            str = Value::from_raw(crate::bridge::string::str_encode_charref(
-                str.as_raw(),
-                to_enc,
-            )?);
+    if let Some(enc) = to_enc {
+        if enc.needs_transcode() {
+            str = crate::bridge::string::str_encode_charref_value(str, enc)?;
         }
-        Ok(str)
     }
+    Ok(str)
 }
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
@@ -98,11 +90,9 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
             .get(ruby.to_symbol("comments"))
             .is_some_and(|v: Value| v.to_bool())
     };
-    unsafe {
-        let buf = xml_serialize::canonicalize(&*this.doc(), this.id, comments)
-            .map_err(|f| failure_error(f, "canonicalize"))?;
-        Ok(utf8(ruby, buf.as_slice()).as_value())
-    }
+    let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
+        .map_err(|f| failure_error(f, "canonicalize"))?;
+    Ok(utf8(ruby, buf.as_slice()).as_value())
 }
 
 fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, Error> {
@@ -115,7 +105,7 @@ fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, 
 
 /// # Safety
 /// From `Init_makiri`.
-pub unsafe extern "C" fn init_xml_node_serialize() {
+pub fn init_xml_node_serialize() {
     let m = magnus::RModule::from_value(MOD_XML_NODE_METHODS.value())
         .expect("Makiri::XML::NodeMethods");
     for name in ["to_xml", "to_s"] {

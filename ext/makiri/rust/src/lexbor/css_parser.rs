@@ -28,6 +28,7 @@
 //! by the tag Lexbor stored beside it.
 
 #![deny(unsafe_op_in_unsafe_fn)]
+#![allow(clippy::missing_safety_doc)]
 
 use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::{
@@ -174,9 +175,9 @@ impl Drop for Parsed {
 
 /// Parse `selector` into the engine's arena.
 ///
-/// # Safety
-/// Under the GVL, with `selector` a live verified slice.
-pub unsafe fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
+/// The process-global parser is used under the GVL (CSS never releases it),
+/// and `selector` is a live verified slice, so this is safe to call as-is.
+pub fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
     // SAFETY: caller contract holds the GVL for the complete `Parsed` lifetime.
     let e = unsafe { ENGINE.ready() }.ok_or(ParseError::NotReady)?;
 

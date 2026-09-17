@@ -261,6 +261,15 @@ pub const TYPE_COMMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_COMMENT
 pub const TYPE_DOCTYPE: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 pub const TYPE_FRAGMENT: u32 = lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_DOCUMENT_FRAGMENT;
 
+/// Why an insertion would violate the document's required doctype ordering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentChildOrderError {
+    DoctypeParent,
+    DuplicateDoctype,
+    DoctypeAfterElement,
+    ElementBeforeDoctype,
+}
+
 /// `LXB_TAG_TEMPLATE`.
 pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize;
 
@@ -290,6 +299,113 @@ pub struct HtmlDoc<'doc> {
     _doc: PhantomData<&'doc LxbDoc>,
 }
 
+/// A node pointer crossing the Ruby-glue boundary.
+///
+/// The glue holds and passes nodes as this. The field is private, so no module
+/// outside `lexbor` names `lxb_dom_node_t` or reads its layout; where a field
+/// must be read, [`as_node`](RawNode::as_node) lends the typed [`HtmlNode`].
+/// It carries no `'doc`, because the Ruby wrapper owning the pointer is what
+/// keeps the document alive, not a Rust borrow.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct RawNode(NonNull<LxbNode>);
+
+impl RawNode {
+    /// `None` for null.
+    #[inline]
+    pub fn from_ptr(p: *mut core::ffi::c_void) -> Option<Self> {
+        NonNull::new(p as *mut LxbNode).map(RawNode)
+    }
+
+    /// The pointer, for storing in a Ruby wrapper's TypedData.
+    #[inline]
+    pub fn as_ptr(self) -> *mut core::ffi::c_void {
+        self.0.as_ptr().cast()
+    }
+
+    /// The typed node pointer, for the adapter's own readers (the text index).
+    /// Outside `lexbor`, nodes cross as `RawNode` or `c_void`.
+    #[inline]
+    pub fn as_lxb(self) -> *const LxbNode {
+        self.0.as_ptr()
+    }
+
+    /// The typed node, lent for `'doc`.
+    ///
+    /// # Safety
+    /// The node must be live and its document must outlive `'doc` without being
+    /// restructured while `'doc` lasts - the [`HtmlNode`] contract.
+    #[inline]
+    pub unsafe fn as_node<'doc>(self) -> HtmlNode<'doc> {
+        HtmlNode::from_raw(self.0.as_ptr()).expect("non-null by construction")
+    }
+}
+
+impl<'doc> From<HtmlNode<'doc>> for RawNode {
+    #[inline]
+    fn from(n: HtmlNode<'doc>) -> Self {
+        RawNode(n.raw)
+    }
+}
+
+impl From<RawDoc> for RawNode {
+    /// A document seen as its node: an `lxb_html_document_t` leads with its
+    /// `lxb_dom_document_t`, which leads with its node.
+    #[inline]
+    fn from(d: RawDoc) -> Self {
+        RawNode(d.0.cast())
+    }
+}
+
+impl<'doc> From<BuildingNode<'doc>> for RawNode {
+    #[inline]
+    fn from(n: BuildingNode<'doc>) -> Self {
+        RawNode::from(n.node())
+    }
+}
+
+impl<'doc> From<BuildingElement<'doc>> for RawNode {
+    #[inline]
+    fn from(e: BuildingElement<'doc>) -> Self {
+        RawNode::from(e.as_node())
+    }
+}
+
+/// A document pointer crossing the Ruby-glue boundary. See [`RawNode`].
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct RawDoc(NonNull<LxbDoc>);
+
+impl RawDoc {
+    /// `None` for null.
+    #[inline]
+    pub fn from_ptr(p: *mut core::ffi::c_void) -> Option<Self> {
+        NonNull::new(p as *mut LxbDoc).map(RawDoc)
+    }
+
+    /// The pointer, for storing in a Ruby wrapper's TypedData.
+    #[inline]
+    pub fn as_ptr(self) -> *mut core::ffi::c_void {
+        self.0.as_ptr().cast()
+    }
+
+    /// The typed document, lent for `'doc`.
+    ///
+    /// # Safety
+    /// As [`RawNode::as_node`].
+    #[inline]
+    pub unsafe fn as_doc<'doc>(self) -> HtmlDoc<'doc> {
+        HtmlDoc::from_raw(self.0.as_ptr()).expect("non-null by construction")
+    }
+}
+
+impl<'doc> From<HtmlDoc<'doc>> for RawDoc {
+    #[inline]
+    fn from(d: HtmlDoc<'doc>) -> Self {
+        RawDoc(d.raw)
+    }
+}
+
 impl<'doc> HtmlDoc<'doc> {
     /// # Safety
     /// `raw` must be null or a live document that outlives `'doc` and is not
@@ -302,9 +418,22 @@ impl<'doc> HtmlDoc<'doc> {
         })
     }
 
+    /// The raw pointer, for `lexbor/` only.
+    ///
+    /// Hidden so that reading a Lexbor struct field stays inside this layer:
+    /// a `pub` raw pointer is how a document field (`compat_mode`) came to be
+    /// read from `bridge`. Callers above use a named accessor instead.
     #[inline]
-    pub fn as_raw(self) -> *mut LxbDoc {
+    pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc {
         self.raw.as_ptr()
+    }
+
+    /// Lexbor's quirks mode: 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the
+    /// parser from the doctype.
+    #[inline]
+    pub fn compat_mode(self) -> i64 {
+        // SAFETY: a live document handle, read for this call.
+        unsafe { (*self.raw.as_ptr()).compat_mode as i64 }
     }
 
     /// The document as a node: an `lxb_dom_document_t` leads with its node.
@@ -314,6 +443,20 @@ impl<'doc> HtmlDoc<'doc> {
             raw: self.raw.cast(),
             _doc: PhantomData,
         }
+    }
+
+    /// The document's `<title>` text, or None when there is none.
+    pub fn title(self) -> Option<&'doc [u8]> {
+        /* SAFETY: a live HTML document - an `lxb_html_document_t` leads with
+         * its `lxb_dom_document_t`, so this is the same address - and the bytes
+         * are borrowed from it. */
+        let t = unsafe {
+            named_mut(
+                self.as_raw() as *mut lxb::lxb_html_document_t,
+                lxb::lxb_html_document_title,
+            )
+        };
+        (!t.is_empty()).then_some(t)
     }
 
     /// A detached element named `local_name`, in no namespace yet.
@@ -479,7 +622,7 @@ impl<'doc> HtmlDoc<'doc> {
     /// The copy is detached and belongs here, which is what [`BuildingNode`]
     /// says. `deep` carries the subtree - but NOT a `<template>`'s separate
     /// contents fragment, which Lexbor's importNode omits; the caller fixes
-    /// that up (see `glue::fragment::import_with_fixup`).
+    /// that up (see `lexbor::fragment::import_with_fixup`).
     pub fn import_node(self, src: HtmlNode<'_>, deep: bool) -> Option<BuildingNode<'doc>> {
         // SAFETY: two live documents' nodes; Lexbor allocates the copy in this
         // one and leaves the source alone.
@@ -650,6 +793,13 @@ impl<'doc> HtmlNode<'doc> {
         unsafe { (*self.as_raw()).owner_document }
     }
 
+    /// The document the node belongs to, as the boundary handle: a live node's
+    /// owner is a live document of the same tree.
+    #[inline]
+    pub fn owner_document_handle(self) -> RawDoc {
+        RawDoc(NonNull::new(self.owner_document()).expect("a live node has an owner document"))
+    }
+
     /// Whether both nodes belong to the same document.
     pub fn same_document(self, other: HtmlNode<'_>) -> bool {
         // SAFETY: both are live nodes.
@@ -740,6 +890,60 @@ impl<'doc> HtmlNode<'doc> {
         // SAFETY: a live document node, which leads its document struct.
         Self::link(unsafe { lxb::lxb_dom_document_root(self.as_raw() as *mut LxbDoc) })
     }
+}
+
+/// Validate the HTML document's doctype/element ordering before an insertion.
+/// `before` is None for append; `exclude` is a node replaced by this operation.
+pub fn check_document_child_order(
+    parent: Option<HtmlNode<'_>>,
+    before: Option<HtmlNode<'_>>,
+    exclude: Option<HtmlNode<'_>>,
+    incoming: HtmlNode<'_>,
+) -> Result<(), DocumentChildOrderError> {
+    let contributes_element = |n: HtmlNode<'_>| {
+        n.node_type() == TYPE_ELEMENT
+            || (n.node_type() == TYPE_FRAGMENT
+                && n.children().any(|child| child.node_type() == TYPE_ELEMENT))
+    };
+    if incoming.node_type() == TYPE_DOCTYPE {
+        let Some(parent) = parent.filter(|p| p.node_type() == TYPE_DOCUMENT) else {
+            return Err(DocumentChildOrderError::DoctypeParent);
+        };
+        /* At most one doctype ANYWHERE among the children. This scans the whole
+         * list on purpose: stopping at `before` would let a node ahead of the
+         * insertion point (a comment, say) hide a later doctype, and the
+         * document would end up with two. */
+        let mut cursor = parent.first_child();
+        while let Some(node) = cursor {
+            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
+                return Err(DocumentChildOrderError::DuplicateDoctype);
+            }
+            cursor = node.next();
+        }
+        /* No element before the insertion point. `before` None is an append,
+         * where every existing element precedes the new doctype. */
+        let mut cursor = parent.first_child();
+        while let Some(node) = cursor {
+            if Some(node) == before {
+                break;
+            }
+            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_ELEMENT {
+                return Err(DocumentChildOrderError::DoctypeAfterElement);
+            }
+            cursor = node.next();
+        }
+        return Ok(());
+    }
+    if contributes_element(incoming) && parent.is_some_and(|p| p.node_type() == TYPE_DOCUMENT) {
+        let mut cursor = before;
+        while let Some(node) = cursor {
+            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
+                return Err(DocumentChildOrderError::ElementBeforeDoctype);
+            }
+            cursor = node.next();
+        }
+    }
+    Ok(())
 }
 
 /// A node the caller has cleared for editing.

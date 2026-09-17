@@ -16,7 +16,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::dom_adapter::post_parse::{parse_html, Parsed};
+use makiri::lexbor::adapter::post_parse::{parse_html, Parsed};
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -51,8 +51,11 @@ unsafe fn run(p: &mut Parsed, text: VerifiedText, lax: bool) {
         return;
     }
     // SAFETY: the caller destroys `p` only after the context is dropped, and
-    // nothing changes the document in between.
-    let mut ctx = Context::new(Backend::Html { parsed: p }, doc);
+    // nothing changes the document in between; `doc` is that live document's
+    // node.
+    let Ok(mut ctx) = makiri::lexbor::xpath::context(p, Token::html(doc)) else {
+        return;
+    };
     ctx.set_lax(lax);
 
     // As tight as `xml_xpath`'s: the fuzzer controls the document here too.

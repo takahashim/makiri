@@ -32,10 +32,10 @@
 #![allow(unsafe_code)]
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use magnus::rb_sys::{AsRawValue, FromRawValue};
+use magnus::rb_sys::AsRawValue;
 
-use magnus::{function, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
-use rb_sys::VALUE;
+use magnus::{function, Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
+use crate::bridge::ruby::VALUE;
 
 /* ------------------------------------------------------------------ *
  * the classes and modules other modules read                         *
@@ -76,7 +76,7 @@ impl RbConst {
     pub fn value(&self) -> Value {
         // SAFETY: `0` or, once `init` has run, a class that lives for the
         // process - see the type.
-        unsafe { Value::from_raw(self.raw()) }
+        unsafe { crate::bridge::ruby::value(self.raw()) }
     }
 
     pub fn class(&self) -> RClass {
@@ -90,6 +90,16 @@ impl RbConst {
     pub fn exception(&self) -> ExceptionClass {
         ExceptionClass::from_value(self.value()).expect("a Makiri exception, after Init_makiri")
     }
+}
+
+/// Publish the `Makiri::XML::Document` class as the global the rest of the
+/// extension reads.
+///
+/// Safe wrapper over [`RbConst::set`]: it runs once, from `Init_makiri`, with a
+/// class that lives for the rest of the process.
+pub(crate) fn record_xml_document_class(klass: magnus::RClass) {
+    // SAFETY: a class that lives for the process, set once at init.
+    unsafe { CLASS_XML_DOCUMENT.set(klass.as_raw()) };
 }
 
 macro_rules! exported {
@@ -167,7 +177,7 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let s = crate::bridge::ruby::string_of(str)?;
     /* decode-only: no arena, no budget */
-    Ok(unsafe { Value::from_raw(crate::bridge::xml_decode::xml_decode_input(s.as_raw(), 0)?) })
+    Ok(unsafe { crate::bridge::ruby::value(crate::bridge::xml_decode::xml_decode_input(s.as_raw(), 0)?) })
 }
 
 /* ------------------------------------------------------------------ *
@@ -179,10 +189,11 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
 ///
 /// The two go together: a leaf carries the readers because it wraps a live
 /// node, and loses `.new` for the same reason.
-unsafe fn seal_leaves(methods: VALUE, leaves: &[VALUE]) {
+fn seal_leaves(methods: RModule, leaves: &[RClass]) {
     for &leaf in leaves {
-        rb_sys::rb_include_module(leaf, methods);
-        rb_sys::rb_undef_alloc_func(leaf);
+        leaf.include_module(methods)
+            .expect("including the reader module");
+        leaf.undef_default_alloc_func();
     }
 }
 
@@ -298,32 +309,32 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         EXC_XML_LIMIT_EXCEEDED.set(xml_limit.as_raw());
 
         seal_leaves(
-            MOD_HTML_NODE_METHODS.raw(),
+            MOD_HTML_NODE_METHODS.module(),
             &[
-                CLASS_HTML_NODE.raw(),
-                CLASS_HTML_DOCUMENT.raw(),
-                CLASS_HTML_ELEMENT.raw(),
-                CLASS_HTML_ATTR.raw(),
-                CLASS_HTML_TEXT.raw(),
-                CLASS_HTML_COMMENT.raw(),
-                CLASS_HTML_CDATA_SECTION.raw(),
-                CLASS_HTML_PROCESSING_INSTRUCTION.raw(),
-                CLASS_HTML_DOCUMENT_TYPE.raw(),
-                CLASS_HTML_DOCUMENT_FRAGMENT.raw(),
+                CLASS_HTML_NODE.class(),
+                CLASS_HTML_DOCUMENT.class(),
+                CLASS_HTML_ELEMENT.class(),
+                CLASS_HTML_ATTR.class(),
+                CLASS_HTML_TEXT.class(),
+                CLASS_HTML_COMMENT.class(),
+                CLASS_HTML_CDATA_SECTION.class(),
+                CLASS_HTML_PROCESSING_INSTRUCTION.class(),
+                CLASS_HTML_DOCUMENT_TYPE.class(),
+                CLASS_HTML_DOCUMENT_FRAGMENT.class(),
             ],
         );
         seal_leaves(
-            MOD_XML_NODE_METHODS.raw(),
+            MOD_XML_NODE_METHODS.module(),
             &[
-                CLASS_XML_NODE.raw(),
-                CLASS_XML_ELEMENT.raw(),
-                CLASS_XML_ATTR.raw(),
-                CLASS_XML_TEXT.raw(),
-                CLASS_XML_COMMENT.raw(),
-                CLASS_XML_CDATA_SECTION.raw(),
-                CLASS_XML_PROCESSING_INSTRUCTION.raw(),
-                CLASS_XML_DOCUMENT_TYPE.raw(),
-                CLASS_XML_DOCUMENT_FRAGMENT.raw(),
+                CLASS_XML_NODE.class(),
+                CLASS_XML_ELEMENT.class(),
+                CLASS_XML_ATTR.class(),
+                CLASS_XML_TEXT.class(),
+                CLASS_XML_COMMENT.class(),
+                CLASS_XML_CDATA_SECTION.class(),
+                CLASS_XML_PROCESSING_INSTRUCTION.class(),
+                CLASS_XML_DOCUMENT_TYPE.class(),
+                CLASS_XML_DOCUMENT_FRAGMENT.class(),
             ],
         );
 
@@ -332,20 +343,20 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
          * nothing. XPathContext.new exists, but it is defined by
          * init_xpath and wraps a native context. */
         for base in [
-            CLASS_NODE.raw(),
-            CLASS_DOCUMENT.raw(),
-            element.as_raw(),
-            attr.as_raw(),
-            text.as_raw(),
-            comment.as_raw(),
-            cdata.as_raw(),
-            pi.as_raw(),
-            doctype.as_raw(),
-            CLASS_DOCUMENT_FRAGMENT.raw(),
-            CLASS_NODE_SET.raw(),
-            CLASS_XPATH_CONTEXT.raw(),
+            CLASS_NODE.class(),
+            CLASS_DOCUMENT.class(),
+            element,
+            attr,
+            text,
+            comment,
+            cdata,
+            pi,
+            doctype,
+            CLASS_DOCUMENT_FRAGMENT.class(),
+            CLASS_NODE_SET.class(),
+            CLASS_XPATH_CONTEXT.class(),
         ] {
-            rb_sys::rb_undef_alloc_func(base);
+            base.undef_default_alloc_func();
         }
 
         /* The per-feature registrations, in the order the C called them: each
@@ -354,9 +365,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         crate::glue::doc::init_document();
         crate::glue::node_set::init_node_set();
         crate::glue::xpath::init_xpath();
-        crate::glue::css::init_css();
-        crate::glue::lexbor_css::init_lexbor_css();
-        crate::glue::serialize::init_serialize();
+        crate::bridge::selectors::init_css();
+        crate::lexbor::stylesheet::init_lexbor_css();
+        crate::bridge::serialize::init_serialize();
         crate::glue::html_node::init_mutate();
         crate::glue::xml::init_xml();
         crate::glue::xml_node::init_xml_node();

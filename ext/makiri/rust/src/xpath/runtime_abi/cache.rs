@@ -4,10 +4,10 @@
 #![forbid(unsafe_code)]
 
 use super::super::abi::*;
+use crate::token::Token;
 use super::super::value::Text;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use core::ffi::c_void;
 
 /// The MurmurHash3 fmix64 finalizer over a pointer value.
 ///
@@ -38,7 +38,7 @@ pub struct TextId(usize);
 /// It owns every text it holds, and they go with it - there is nothing to
 /// clear by hand.
 pub struct StrCache {
-    entries: Vec<(*const c_void, Text)>,
+    entries: Vec<(Token, Text)>,
     /// node pointer -> entry index + 1; 0 is an empty slot. Empty, or a power
     /// of two at most half full.
     buckets: Vec<usize>,
@@ -62,18 +62,18 @@ impl StrCache {
 
     /// The cached text of `node`, if one is.
     #[inline]
-    pub fn find(&self, node: *const c_void) -> Option<TextId> {
+    pub fn find(&self, node: Token) -> Option<TextId> {
         if self.buckets.is_empty() {
             return None;
         }
         let mask = self.buckets.len() - 1;
-        let mut j = (ptr_hash(node) as usize) & mask;
+        let mut j = (ptr_hash(node.as_ptr() as *const u8) as usize) & mask;
         loop {
             let slot = self.buckets[j];
             if slot == 0 {
                 return None;
             }
-            if core::ptr::eq(self.entries[slot - 1].0, node) {
+            if self.entries[slot - 1].0 == node {
                 return Some(TextId(slot - 1));
             }
             j = (j + 1) & mask;
@@ -93,7 +93,7 @@ impl StrCache {
     /// leaves the cache as it was (and drops `text`).
     pub fn insert(
         &mut self,
-        node: *const c_void,
+        node: Token,
         text: Text,
         budget: &mut Budget,
     ) -> Result<TextId, Reported> {
@@ -163,7 +163,7 @@ impl StrCache {
     /// full before this.
     fn index_put(&mut self, i: usize) {
         let mask = self.buckets.len() - 1;
-        let mut j = (ptr_hash(self.entries[i].0) as usize) & mask;
+        let mut j = (ptr_hash(self.entries[i].0.as_ptr() as *const u8) as usize) & mask;
         while self.buckets[j] != 0 {
             j = (j + 1) & mask;
         }

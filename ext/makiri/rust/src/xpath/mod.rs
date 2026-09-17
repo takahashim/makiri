@@ -3,6 +3,7 @@
 //! Shared:
 //!   abi.rs        the engine's prelude: the shared names, re-exported
 //!   msg.rs        error messages, assembled without allocating
+//!   token.rs      the opaque node token a node-set stores
 //!
 //! The front end:
 //!   number.rs     the Number production, read and written       (no unsafe)
@@ -27,11 +28,13 @@
 //!   funcs.rs      the built-in function library
 //!   eval.rs       node tests, predicates, steps, operators
 //!
-//! An instance binds the contract to one representation:
-//!   dom_xml.rs    the XML reader's nodes
-//!   dom_html.rs   Lexbor's nodes, through `dom_adapter::html` (`lexbor`)
+//! An instance binds the contract to one representation, and lives outside this
+//! module so the engine stays representation-free:
+//!   `lexbor::xpath`  Lexbor's nodes, through `lexbor::adapter::html`
+//!   `xml::xpath`     the XML reader's nodes
 
 #![allow(private_bounds)]
+#![forbid(unsafe_code)]
 
 pub mod abi;
 pub mod msg;
@@ -63,9 +66,3 @@ pub mod order;
 pub mod step_index;
 pub mod value;
 
-/* The XML instance. */
-pub mod dom_xml;
-
-/* The HTML instance: it reads Lexbor's DOM, so it comes with `lexbor`. */
-#[cfg(feature = "lexbor")]
-pub mod dom_html;

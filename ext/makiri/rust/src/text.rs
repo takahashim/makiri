@@ -15,10 +15,15 @@
 //! place that assumes no NUL without being checked.
 //!
 //! Neither is NUL-terminated in general, so both are consumed as `(ptr, len)`,
-//! never as a C string. Neither carries a lifetime either: the owner - a Ruby
-//! String, Lexbor's arena, a `Text` - must outlive every use, which is why
-//! reading the bytes is `unsafe`. A null pointer is the "absent" sentinel (an
-//! omitted prefix, say), distinct from a present empty string.
+//! never as a C string. A null pointer is the "absent" sentinel (an omitted
+//! prefix, say), distinct from a present empty string.
+//!
+//! [`VerifiedText`] carries a lifetime: its owner must outlive `'a`, so an
+//! engine call cannot hold the token past the borrow `as_verified` took. Its
+//! `as_bytes` is then safe - the borrow was established with the token, and the
+//! engine never runs Ruby that could move the bytes. [`BorrowedText`] is still
+//! lifetime-free: its owners are the Lexbor arena and the text index, which
+//! drop and invalidate at runtime (one hook), so reading it stays `unsafe`.
 
 #![allow(unsafe_code)]
 
@@ -62,17 +67,50 @@ macro_rules! view_accessors {
 }
 
 /// Valid UTF-8, no NUL: the text an engine input must be.
+///
+/// The lifetime is the borrow of the bytes' owner, taken by [`from_bytes`] or
+/// asserted by [`from_raw_parts`]; it is what makes [`as_bytes`] safe and stops
+/// a token outliving the bytes it names.
 #[derive(Clone, Copy)]
-pub struct VerifiedText {
+pub struct VerifiedText<'a> {
     ptr: *const c_char,
     len: usize,
+    _borrow: core::marker::PhantomData<&'a [u8]>,
 }
 
 // Its constructors are called from the CSS lowering and the Ruby glue, so the
 // Ruby-free builds (Kani, the fuzz crate) see them unused.
 #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
-impl VerifiedText {
-    view_accessors!();
+impl<'a> VerifiedText<'a> {
+    pub(crate) const fn as_ptr(self) -> *const c_char {
+        self.ptr
+    }
+
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
+
+    pub(crate) const fn is_absent(self) -> bool {
+        self.ptr.is_null()
+    }
+
+    /// No content. An absent view is empty too, but stays distinguishable
+    /// through `is_absent`.
+    pub(crate) const fn is_empty(self) -> bool {
+        self.is_absent() || self.len == 0
+    }
+
+    /// The bytes, or an empty slice when absent.
+    ///
+    /// Safe: the bytes live for `'a` by the constructor's contract.
+    pub(crate) fn as_bytes(self) -> &'a [u8] {
+        if self.is_empty() {
+            &[]
+        } else {
+            // SAFETY: the bytes live for `'a` by the constructor's contract.
+            unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len) }
+        }
+    }
 
     /// A present, zero-length view, backed by a static empty C string.
     #[cfg(test)]
@@ -80,20 +118,19 @@ impl VerifiedText {
         Self {
             ptr: c"".as_ptr(),
             len: 0,
+            _borrow: core::marker::PhantomData,
         }
     }
 
     /// Check `bytes` against the contract and borrow them.
-    ///
-    /// The caller keeps `bytes` alive, at the same address, for as long as the
-    /// view is used.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub fn from_bytes(bytes: &'a [u8]) -> Option<Self> {
         if crate::cutf8::text_verdict(bytes, false) != crate::cutf8::TextVerdict::Ok {
             return None;
         }
         Some(Self {
             ptr: bytes.as_ptr() as *const c_char,
             len: bytes.len(),
+            _borrow: core::marker::PhantomData,
         })
     }
 
@@ -101,9 +138,13 @@ impl VerifiedText {
     ///
     /// # Safety
     /// `ptr` must be null (with `len == 0`) or point to `len` live bytes of
-    /// valid UTF-8 containing no NUL, which stay put while the view is used.
+    /// valid UTF-8 containing no NUL, which stay put for `'a`.
     pub(crate) const unsafe fn from_raw_parts(ptr: *const c_char, len: usize) -> Self {
-        Self { ptr, len }
+        Self {
+            ptr,
+            len,
+            _borrow: core::marker::PhantomData,
+        }
     }
 }
 
@@ -131,8 +172,8 @@ impl BorrowedText {
     }
 }
 
-impl From<VerifiedText> for BorrowedText {
-    fn from(t: VerifiedText) -> Self {
+impl From<VerifiedText<'_>> for BorrowedText {
+    fn from(t: VerifiedText<'_>) -> Self {
         Self {
             ptr: t.ptr,
             len: t.len,

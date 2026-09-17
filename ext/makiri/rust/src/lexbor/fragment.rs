@@ -18,34 +18,30 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{prelude::*, Error, Ruby, Value};
-use rb_sys::VALUE;
+use magnus::Error;
+use crate::bridge::ruby::VALUE;
 
 use crate::falloc::VecPush;
 
-use super::abi::{
-    error_class, html_node_unwrap, is_kind_of, ruby_bytes_view, ruby_str_known_valid_utf8,
-    ruby_to_utf8, ruby_verified_text, wrap_html_node, LxbDoc, LxbNode, LXB_DOM_NODE_TYPE_ELEMENT,
-};
-use crate::init::CLASS_NODE;
+use crate::bridge::ruby::error_class;
+use crate::bridge::string::{ruby_bytes_view, ruby_str_known_valid_utf8, ruby_to_utf8};
+use crate::lexbor::ffi::{LxbDoc, LxbNode};
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
 use crate::cbuf::{Buf, OwnedBuf};
-use crate::dom_adapter::html::{
-    BuildingNode, HtmlDoc, HtmlNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG,
-    TAG_UNDEF,
+use crate::lexbor::adapter::html::{
+    BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode,
 };
-pub use crate::dom_adapter::utf8_input::utf8_sanitize;
-use crate::dom_adapter::utf8_input::Sanitized;
+pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
+use crate::lexbor::adapter::utf8_input::Sanitized;
 
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
  * but absent from its public headers, so `lexbor_abi` hand-declares it with the
  * rest of what bindgen cannot see. Everything this file does to the DOM itself
- * goes through `dom_adapter::html` - these are the parser, not the DOM. */
+ * goes through `lexbor::adapter::html` - these are the parser, not the DOM. */
 use crate::lexbor_abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
@@ -196,29 +192,29 @@ pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
 /// data are one value now.
 pub enum Emit {
     /// As the last child of this node.
-    Append(*mut LxbNode),
+    Append(RawNode),
     /// Immediately before this node, under its parent.
-    Before(*mut LxbNode),
+    Before(RawNode),
 }
 
 impl Emit {
     /// # Safety
     /// The node must be live, and the caller must be clear to change the tree
     /// it belongs to.
-    unsafe fn put(&self, imported: *mut LxbNode) {
+    unsafe fn put(&self, imported: RawNode) {
         /* SAFETY: both are live nodes of one document, still being built -
          * which is what this type's variants carry and what import just made. */
-        let Some(imported) = BuildingNode::from_raw(imported) else {
+        let Some(imported) = BuildingNode::from_raw(imported.as_ptr() as *mut LxbNode) else {
             return;
         };
         match *self {
             Emit::Append(at) => {
-                if let Some(at) = BuildingNode::from_raw(at) {
+                if let Some(at) = BuildingNode::from_raw(at.as_ptr() as *mut LxbNode) {
                     at.insert_child(imported);
                 }
             }
             Emit::Before(at) => {
-                if let Some(at) = BuildingNode::from_raw(at) {
+                if let Some(at) = BuildingNode::from_raw(at.as_ptr() as *mut LxbNode) {
                     at.insert_before(imported);
                 }
             }
@@ -234,17 +230,29 @@ impl Emit {
 /// (`lexbor_abi::TransientDoc`), and a raise from here would longjmp past its
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
-pub unsafe fn import_fragment_children(doc: *mut LxbDoc, root: *mut LxbNode, emit: &Emit) -> bool {
-    let mut f = (*root).first_child;
+pub unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
+    let mut f = (*(root.as_ptr() as *mut LxbNode)).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
-        match import_with_fixup(doc, f, true) {
-            Some(imp) => emit.put(imp),
+        match import_raw(doc, f, true) {
+            Some(imp) => emit.put(RawNode::from_ptr(imp.cast()).expect("imported child")),
             None => return false,
         }
         f = next;
     }
     true
+}
+
+/// Import a fragment parsed in Lexbor's transient document, then release that
+/// document on every return path.  The transient-document ownership rule is a
+/// Lexbor ABI concern, so callers never need to name `TransientDoc`.
+pub unsafe fn import_transient_fragment_children(
+    doc: RawDoc,
+    root: RawNode,
+    emit: &Emit,
+) -> bool {
+    let _transient = crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode);
+    import_fragment_children(doc, root, emit)
 }
 
 /// Which Lexbor fragment parser to run, and the context it needs.
@@ -256,11 +264,11 @@ pub unsafe fn import_fragment_children(doc: *mut LxbDoc, root: *mut LxbNode, emi
 /// travels with the choice now.
 pub enum FragmentContext {
     /// The context element itself, which `inner_html=` and `outer_html=` have.
-    Element(*mut LxbNode),
+    Element(RawNode),
     /// A named context: a tag id and namespace, for `Document#fragment` and
     /// `DocumentFragment.parse`, where no such element exists yet.
     Tag {
-        doc: *mut LxbDoc,
+        doc: RawDoc,
         tag: usize,
         ns: usize,
     },
@@ -275,13 +283,13 @@ impl FragmentContext {
             /* Lexbor types this one to its element interface; the handle we
              * hold is a node, which is what that interface begins with. */
             FragmentContext::Element(el) => {
-                lxb_html_parse_fragment(parser.as_ptr(), el as *mut _, src, len)
+                lxb_html_parse_fragment(parser.as_ptr(), el.as_ptr() as *mut _, src, len)
             }
             /* The by-tag-id entry is hand-declared over opaque pointers (it is
              * absent from Lexbor's public headers), so the casts are here. */
             FragmentContext::Tag { doc, tag, ns } => lxb_html_parse_fragment_by_tag_id(
                 parser.as_ptr() as *mut c_void,
-                doc as *mut c_void,
+                doc.as_ptr(),
                 tag,
                 ns,
                 src,
@@ -299,7 +307,7 @@ impl FragmentContext {
 pub unsafe fn run_fragment_parser(
     html: VALUE,
     context: &FragmentContext,
-) -> Result<*mut LxbNode, Error> {
+) -> Result<RawNode, Error> {
     let Some(parser) = HtmlParser::create() else {
         return Err(Error::new(error_class(), "failed to create HTML parser"));
     };
@@ -314,10 +322,8 @@ pub unsafe fn run_fragment_parser(
     let root = context.parse(&parser, src.ptr, src.len);
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
-    if root.is_null() {
-        return Err(Error::new(error_class(), "failed to parse HTML fragment"));
-    }
-    Ok(root)
+    RawNode::from_ptr(root.cast())
+        .ok_or_else(|| Error::new(error_class(), "failed to parse HTML fragment"))
 }
 
 /// Copy `src` into `doc`, `<template>` contents included, or `None` on failure.
@@ -327,14 +333,20 @@ pub unsafe fn run_fragment_parser(
 /// Three callers wanted it with different deep flags, different error channels
 /// and different messages, and each had grown its own copy of the four lines -
 /// so the operation lives here and they keep only the parts that differ.
-pub unsafe fn import_with_fixup(
-    doc: *mut LxbDoc,
-    src: *mut LxbNode,
-    deep: bool,
-) -> Option<*mut LxbNode> {
+pub unsafe fn import_with_fixup(doc: RawDoc, src: RawNode, deep: bool) -> Option<RawNode> {
+    import_raw(doc, src.as_ptr() as *mut LxbNode, deep)
+        .and_then(|p| RawNode::from_ptr(p.cast()))
+}
+
+/// The raw form of [`import_with_fixup`]: `src` is a Lexbor node pointer, which
+/// only this module uses, for the children it walks itself.
+unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut LxbNode> {
     /* SAFETY: a live document and the caller's live source node. The handles
      * do not outlive this call. */
-    let (Some(hdoc), Some(hsrc)) = (HtmlDoc::from_raw(doc), HtmlNode::from_raw(src)) else {
+    let (Some(hdoc), Some(hsrc)) = (
+        HtmlDoc::from_raw(doc.as_ptr() as *mut LxbDoc),
+        HtmlNode::from_raw(src),
+    ) else {
         return None;
     };
     let himp = hdoc.import_node(hsrc, deep)?;
@@ -351,117 +363,22 @@ pub unsafe fn import_with_fixup(
 }
 
 /// Deep-import `src` into `doc`, or an error rather than a partial node.
-pub unsafe fn html_import_deep(doc: *mut LxbDoc, src: *mut LxbNode) -> Result<*mut LxbNode, Error> {
+pub unsafe fn html_import_deep(doc: RawDoc, src: RawNode) -> Result<RawNode, Error> {
     import_with_fixup(doc, src, true)
         .ok_or_else(|| Error::new(error_class(), "failed to import node"))
 }
 
-/* ------------------------------------------------------------------ *
- * fragment context + the Ruby surface                                *
- * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* the context helpers the Ruby-facing bridge drives                   */
+/* ------------------------------------------------------------------ */
 
-/// Resolve a fragment-parsing context - the element the HTML is parsed "inside
-/// of", per the WHATWG algorithm - into a tag id and namespace.
+/// The tag id Lexbor knows `name` by, or [`TAG_UNDEF`] for an unknown name.
 ///
-/// Matches Nokogiri's `context:`: nil is `<body>` in the HTML namespace; a node
-/// contributes its own tag and namespace (the only way to reach a foreign
-/// non-root context such as SVG `<desc>`); a String names an HTML-namespace tag,
-/// except "svg" / "math" which name the foreign roots.
-///
-/// `Err` for an unusable context.
-pub unsafe fn resolve_fragment_context(
-    doc: *mut LxbDoc,
-    context: Option<Value>,
-) -> Result<(usize, usize), magnus::Error> {
-    let Some(context) = context else {
-        return Ok((TAG_BODY, NS_HTML));
-    };
-    if context.is_nil() {
-        return Ok((TAG_BODY, NS_HTML));
+/// The Ruby-facing context resolution lives in [`crate::bridge::fragment`];
+/// only the ABI read stays here.
+pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> usize {
+    // SAFETY: a live document handle, read for this call.
+    unsafe {
+        lxb_tag_id_by_name_noi((*(doc.as_ptr() as *mut LxbDoc)).tags, name.as_ptr(), name.len())
     }
-
-    if is_kind_of(context, &CLASS_NODE) {
-        /* Reject an XML node before any Lexbor use. */
-        let cn = html_node_unwrap(context)?;
-        if (*cn).type_ != LXB_DOM_NODE_TYPE_ELEMENT {
-            return Err(magnus::Error::new(
-                magnus::Ruby::get_unchecked().exception_arg_error(),
-                "fragment context node must be an element",
-            ));
-        }
-        return Ok(((*cn).local_name, (*cn).ns));
-    }
-
-    /* A context tag name is a programmatic control string, not parsed HTML, so
-     * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = ruby_verified_text(context, c"fragment context element")?;
-    let name = cv.bytes();
-    if name == b"svg" {
-        return Ok((TAG_SVG, NS_SVG));
-    }
-    if name == b"math" {
-        return Ok((TAG_MATH, NS_MATH));
-    }
-    let tid = lxb_tag_id_by_name_noi((*doc).tags, name.as_ptr(), name.len());
-    if tid == TAG_UNDEF {
-        // The C wrote `"...: %" PRIsVALUE` - two string literals the C
-        // preprocessor joins. Rust has no such concatenation, so carrying the
-        // line over verbatim produced the literal `%" PRIsVALUE` in the
-        // message; the differential caught it. `%.*s` over the verified bytes
-        // prints what PRIsVALUE printed for a String: its content.
-        /* The name is verified UTF-8, so the lossy view is its content. */
-        return Err(magnus::Error::new(
-            magnus::Ruby::get_unchecked().exception_arg_error(),
-            format!(
-                "unknown fragment context element: {}",
-                String::from_utf8_lossy(name)
-            ),
-        ));
-    }
-    Ok((tid, NS_HTML))
-}
-
-/// Parse `html` in the given context and build a DOCUMENT_FRAGMENT owned by
-/// `document`, so its nodes can be spliced into it.
-/// `document` is the wrapper the fragment is bound to (its keepalive), `doc` the
-/// Lexbor document already unwrapped from it.
-///
-/// Taking both, rather than unwrapping here, is what keeps this module from
-/// depending on `glue::doc` - unwrapping a Document is that module's job, and
-/// the import back the other way made the two mutually dependent.
-pub unsafe fn build_fragment_ctx(
-    ruby: &Ruby,
-    document: Value,
-    doc: *mut LxbDoc,
-    rb_html: Value,
-    tag: usize,
-    ns: usize,
-) -> Result<Value, Error> {
-    let html = ruby.into_value(rb_html.to_r_string()?);
-
-    /* SAFETY: a live document, for the length of this call. */
-    let frag = HtmlDoc::from_raw(doc).and_then(HtmlDoc::create_fragment);
-    let Some(frag) = frag else {
-        return Err(Error::new(
-            error_class(),
-            "failed to create document fragment",
-        ));
-    };
-    let frag_node = frag.as_raw();
-
-    let root = run_fragment_parser(html.as_raw(), &FragmentContext::Tag { doc, tag, ns })?;
-    if !import_fragment_children(doc, root, &Emit::Append(frag_node)) {
-        return Err(Error::new(
-            error_class(),
-            "failed to import a fragment child",
-        ));
-    }
-    let out = wrap_html_node(frag_node, document.as_raw());
-    Ok(Value::from_raw(out))
-}
-
-/// The `context:` keyword, or None.
-pub fn context_kwarg(ruby: &Ruby, kw: Option<magnus::RHash>) -> Option<Value> {
-    let h = kw?;
-    h.get(ruby.to_symbol("context"))
 }

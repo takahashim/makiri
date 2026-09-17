@@ -9,7 +9,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use makiri::dom_adapter::post_parse::parse_html;
+use makiri::lexbor::adapter::post_parse::parse_html;
 
 fuzz_target!(|data: &[u8]| {
     // SAFETY: `data` is a live slice for the whole call.

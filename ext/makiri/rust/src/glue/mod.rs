@@ -2,13 +2,13 @@
 //!
 //! Unlike the XPath port, this layer does not replace a C ABI with an identical
 //! one - it replaces C that calls Ruby with Rust that calls Ruby through
-//! [magnus]. What it *does* preserve is the seam: `Init_makiri` still creates
-//! every class and module and still calls one `mkr_init_<feature>()` per
-//! feature, so a feature moved language without anything else moving. That seam
-//! is why the port could land one file at a time: each `MAKIRI_RUST_GLUE_*` flag
-//! swapped one `mkr_init_*` implementation and dropped the C file that defined
-//! it. The flags are gone with the C; the seam stayed, and `init.rs` still calls
-//! the same twelve entry points.
+//! [magnus]. The port kept a per-feature `mkr_init_*` seam so a feature could
+//! move a file at a time, and for a while the moved features stayed reachable
+//! here as one-line `pub use` re-exports. Those are gone: a feature whose
+//! implementation lives in `lexbor` (the selector engine, the stylesheet
+//! binding, the serializer, the fragment pipeline) is registered from its
+//! `lexbor` entry point, and what remains in `glue` is the Ruby API that has
+//! not moved below the boundary yet.
 //!
 //! # Two rules this layer lives by
 //!
@@ -39,21 +39,15 @@
 //! `Ruby` handle. The C glue already works this way (parse copies its input to a
 //! C buffer before releasing), and the constraint is the same here.
 
-pub mod abi;
+#![forbid(unsafe_code)]
 
-pub mod css;
+
 /// Makiri::HTML::Document.
 pub mod doc;
-/// The HTML fragment pipeline, which doc.rs and two C files both use.
-pub mod fragment;
-/// Makiri::Lexbor::CSS.parse_stylesheet - the thin stylesheet binding.
-pub mod lexbor_css;
 
 pub mod node;
 
 pub mod node_set;
-
-pub mod serialize;
 
 pub mod xml;
 

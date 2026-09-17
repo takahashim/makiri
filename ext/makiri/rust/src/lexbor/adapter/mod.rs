@@ -1,4 +1,4 @@
-//! The Lexbor gap-fillers (ext/makiri/dom_adapter/).
+//! Lexbor's typed handles and compatibility facilities.
 //!
 //! `html` is the one reader of Lexbor's DOM structs. Around it, everything
 //! Lexbor does not give us and we will not patch it to: the

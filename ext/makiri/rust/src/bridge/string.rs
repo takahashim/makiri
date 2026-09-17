@@ -137,13 +137,14 @@ impl<C> RubyStr<C> {
 }
 
 impl RubyText {
-    /// The bytes as an engine input.
+    /// The bytes as an engine input, borrowed for the guard's lifetime.
     ///
-    /// # Safety
-    /// The view carries no lifetime: it must not be used after `self` drops, nor
-    /// while Ruby code runs.
-    pub(crate) unsafe fn as_verified(&self) -> crate::text::VerifiedText {
-        // SAFETY: the bridge checked the text contract when it built `self`.
+    /// Safe in the lifetime sense: the token cannot outlive `self`, so the
+    /// anchor keeps the bytes alive for every use. The engine is Ruby-free, so
+    /// nothing runs that could move them while the token is held.
+    pub(crate) fn as_verified(&self) -> crate::text::VerifiedText<'_> {
+        // SAFETY: the bridge checked the text contract when it built `self`,
+        // and the returned lifetime is the borrow of the guard.
         unsafe { crate::text::VerifiedText::from_raw_parts(self.ptr, self.len) }
     }
 }
@@ -341,19 +342,51 @@ pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBuf> {
     OwnedBuf::copy_from(v.bytes())
 }
 
+/// [`ruby_copy_bytes`] as a safe call: `s` is a live Ruby String, and an
+/// allocation failure is an `Err` rather than a silent `None` - a caller that
+/// needed the bytes must not carry on without them.
+pub fn ruby_string_bytes(s: Value) -> Result<OwnedBuf, Error> {
+    // SAFETY: `s` is a live Ruby String.
+    unsafe { ruby_copy_bytes(s.as_raw()) }
+        .ok_or_else(|| Error::new(error_class(), "out of memory reading a Ruby string"))
+}
+
 /* ---- encoding ---- */
 
 /// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
 /// for an unknown name, `TypeError` for something that is neither a String nor
 /// an Encoding.
-pub fn to_encoding(v: Value) -> Result<*mut rb_sys::rb_encoding, Error> {
+/// Whether `enc` is UTF-8 or US-ASCII, the two a serialized String may already
+/// be in and so need no hex-character-reference transcoding.
+#[inline]
+pub fn is_utf8_or_usascii(enc: *mut rb_sys::rb_encoding) -> bool {
+    // SAFETY: both are Ruby's immutable global encodings.
+    unsafe { enc == rb_sys::rb_utf8_encoding() || enc == rb_sys::rb_usascii_encoding() }
+}
+
+/// A Ruby encoding resolved from a name or an `Encoding` object.
+///
+/// Opaque so callers never hold the raw `rb_encoding*`. Ruby's encodings are
+/// process-lifetime objects, so a value of this type stays valid.
+#[derive(Clone, Copy)]
+pub struct Encoding(*mut rb_sys::rb_encoding);
+
+impl Encoding {
+    /// Whether text that is already UTF-8/US-ASCII needs hex-character-reference
+    /// transcoding to this encoding (that is, it is something else).
+    pub fn needs_transcode(self) -> bool {
+        !is_utf8_or_usascii(self.0)
+    }
+}
+
+pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
     protect(|| unsafe {
         enc = rb_sys::rb_to_encoding(v.as_raw());
         rb_sys::Qnil as VALUE
     })?;
-    Ok(enc)
+    Ok(Encoding(enc))
 }
 
 /// `str` transcoded to `enc`, a character the target cannot represent becoming a
@@ -376,6 +409,15 @@ pub unsafe fn str_encode_charref(
             rb_sys::Qnil as VALUE,
         )
     })
+}
+
+/// [`str_encode_charref`] with both contracts discharged: `str` is a live
+/// String and `enc` a live Ruby encoding (one from [`to_encoding`]).
+pub fn str_encode_charref_value(str: Value, enc: Encoding) -> Result<Value, Error> {
+    // SAFETY: the contracts above.
+    let raw = unsafe { str_encode_charref(str.as_raw(), enc.0)? };
+    // SAFETY: `rb_str_encode` returns a live String value.
+    Ok(unsafe { crate::bridge::ruby::value(raw) })
 }
 
 /// A UTF-8 String for `str`, honouring its declared encoding so the content
@@ -406,6 +448,12 @@ pub unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
     )
 }
 
+/// [`ruby_to_utf8`] as a safe call: `s` is a live String, and the result is one.
+pub fn ruby_to_utf8_value(s: Value) -> Value {
+    // SAFETY: `s` is a live String; `rb_str_encode` returns a live String.
+    unsafe { crate::bridge::ruby::value(ruby_to_utf8(s.as_raw())) }
+}
+
 /// Whether Ruby ALREADY knows the String is valid UTF-8.
 ///
 /// This reads the cached classification from the object's flags; it does not
@@ -423,6 +471,28 @@ pub unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
          * valid UTF-8. */
         Coderange::Valid => rb_sys::rb_enc_get(str) == rb_sys::rb_utf8_encoding(),
         _ => false,
+    }
+}
+
+/// [`ruby_str_known_valid_utf8`] as a safe call; it only inspects the String's
+/// cached coderange, never scans.
+pub fn ruby_str_known_valid_utf8_value(s: Value) -> bool {
+    // SAFETY: `s` is a live String.
+    unsafe { ruby_str_known_valid_utf8(s.as_raw()) }
+}
+
+/// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}` pair),
+/// as a safe call: both are live Strings.
+pub fn ruby_try_verified_text_pair(
+    a: Value,
+    b: Value,
+    max_bytes: usize,
+) -> Result<(RubyText, RubyText), &'static core::ffi::CStr> {
+    // SAFETY: `a` and `b` are live Strings.
+    unsafe {
+        let av = ruby_try_verified_text(a.as_raw(), max_bytes)?;
+        let bv = ruby_try_verified_text(b.as_raw(), max_bytes)?;
+        Ok((av, bv))
     }
 }
 

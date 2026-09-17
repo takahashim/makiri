@@ -17,7 +17,6 @@ pub use super::runtime_abi::cache::{ptr_hash, StrCache, TextId};
 pub use super::value::{NodeSet, Text, Val, ValRef};
 pub use crate::cbuf::BUF_OK;
 
-pub use super::ctx::Backend;
 pub use super::ctx::Context;
 pub use super::ctx::XPathValue;
 pub use super::limits::Budget;

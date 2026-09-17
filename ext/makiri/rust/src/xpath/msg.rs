@@ -4,9 +4,11 @@
 //! allocate - one of them reports OOM - so every message is assembled in a
 //! fixed stack buffer and truncated rather than grown.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
+use core::cell::RefCell;
 use core::ffi::{c_char, c_int, CStr};
+use std::rc::Rc;
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
 /// name echoed back into an error cannot carry control bytes into the message.
@@ -125,23 +127,6 @@ impl Default for Error {
     }
 }
 
-/// Replace `err`'s status and message. `msg` is copied, truncated to fit.
-///
-/// # Safety
-/// `err` is null or a live error; `msg` is null or NUL-terminated.
-#[cfg(feature = "lexbor")]
-unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
-    if err.is_null() {
-        return;
-    }
-    let e = &mut *err;
-    e.status = status;
-    e.msg.clear();
-    if !msg.is_null() {
-        e.msg.push_bytes(CStr::from_ptr(msg).to_bytes());
-    }
-}
-
 /// Proof that an error has been written to the caller's error slot.
 ///
 /// Only this module makes one, and only by writing the slot, so a
@@ -155,34 +140,31 @@ unsafe fn err_set_raw(err: *mut Error, status: c_int, msg: *const c_char) {
 #[derive(Debug)]
 pub struct Reported(());
 
-/// Where a failure is reported: the caller's error slot, or nowhere.
+/// Where a failure is reported: a handle to the run's error slot, or nowhere.
 ///
-/// A copyable handle rather than a borrow, because every layer of the engine
-/// passes it down beside its other raw handles. Null is spelled
-/// [`ErrSink::silent`], so "don't tell me" is visible at the call site instead
-/// of being one more `ptr::null_mut()` among the arguments.
-#[derive(Clone, Copy)]
-pub struct ErrSink(*mut Error);
+/// A cheaply copyable handle to a shared slot, because every layer of the engine
+/// passes it down beside its other handles: a `Budget` keeps one and the CSS
+/// lowering threads the same one through its builders, so the slot has to be
+/// reachable from both without a borrow that would pin the whole budget. `None`
+/// is [`ErrSink::silent`], so "don't tell me" is visible at the call site rather
+/// than being one more null pointer among the arguments.
+#[derive(Clone)]
+pub struct ErrSink(Option<Rc<RefCell<Error>>>);
 
 impl ErrSink {
-    /// Report into `slot`, which must outlive every use of the sink.
-    pub fn new(slot: &mut Error) -> Self {
-        ErrSink(slot)
+    /// Report into `slot`.
+    pub fn new(slot: Rc<RefCell<Error>>) -> Self {
+        ErrSink(Some(slot))
     }
 
     /// Report nowhere: a failure still comes back as `Err(Reported)`, but no
     /// message is built.
     pub const fn silent() -> Self {
-        ErrSink(core::ptr::null_mut())
+        ErrSink(None)
     }
 
-    pub fn is_silent(self) -> bool {
-        self.0.is_null()
-    }
-
-    /// The slot, for a C-shaped callee.
-    pub fn as_raw(self) -> *mut Error {
-        self.0
+    pub fn is_silent(&self) -> bool {
+        self.0.is_none()
     }
 }
 
@@ -192,9 +174,8 @@ impl ErrSink {
 /// sink skips the formatting as well as the write.
 pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Arguments<'_>) -> Reported {
     use core::fmt::Write;
-    if !err.is_silent() {
-        // SAFETY: a reporting sink names a live slot for every use.
-        let e = unsafe { &mut *err.as_raw() };
+    if let Some(slot) = err.0 {
+        let mut e = slot.borrow_mut();
         e.status = status;
         e.msg.clear();
         let _ = e.msg.write_fmt(args);
@@ -204,10 +185,13 @@ pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Argument
 
 /// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
 #[cfg(feature = "lexbor")]
-pub(crate) fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Reported {
-    // SAFETY: a reporting sink names a live slot for every use, as in
-    // `err_set_fmt`, and `msg` is NUL-terminated.
-    unsafe { err_set_raw(err.as_raw(), status, msg.as_ptr()) };
+pub(crate) fn err_set(err: ErrSink, status: c_int, msg: &CStr) -> Reported {
+    if let Some(slot) = err.0 {
+        let mut e = slot.borrow_mut();
+        e.status = status;
+        e.msg.clear();
+        e.msg.push_bytes(msg.to_bytes());
+    }
     Reported(())
 }
 
@@ -215,7 +199,11 @@ pub(crate) fn err_set(err: ErrSink, status: c_int, msg: &core::ffi::CStr) -> Rep
 #[macro_export]
 macro_rules! err_setf {
     ($err:expr, $status:expr, $($arg:tt)*) => {
-        $crate::xpath::msg::err_set_fmt($err, $status, format_args!($($arg)*))
+        $crate::xpath::msg::err_set_fmt(
+            ::core::clone::Clone::clone(&$err),
+            $status,
+            format_args!($($arg)*),
+        )
     };
 }
 

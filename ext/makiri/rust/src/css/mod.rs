@@ -22,12 +22,10 @@
 //! construction is a `build::Built`, and steps and lists are plain owned data, so
 //! a failure anywhere drops - frees - what was built.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 mod build;
 mod lower;
-mod parser;
 
 use crate::xpath::ast::{Ast, Expr, Op};
 use core::cell::RefCell;
@@ -72,7 +70,7 @@ pub(crate) struct Build<'a> {
 
 impl Build<'_> {
     pub(crate) fn fail(&self, status: c_int, msg: &core::ffi::CStr) -> Reported {
-        crate::xpath::msg::err_set(self.err, status, msg)
+        crate::xpath::msg::err_set(self.err.clone(), status, msg)
     }
 
     pub(crate) fn oom(&self) -> Reported {
@@ -91,9 +89,9 @@ impl Build<'_> {
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
 ///
-/// # Safety
-/// From the XPath/CSS glue, under the GVL.
-pub unsafe fn compile_owned(
+/// Safe: the selector is a [`VerifiedText`], and the only other condition -
+/// running under the GVL - is the caller's by construction.
+pub fn compile_owned(
     selector: VerifiedText,
     ns: &CssNs,
     budget: &mut Budget,
@@ -105,12 +103,12 @@ pub unsafe fn compile_owned(
         default_namespace: ns.default_namespace,
     };
 
-    let parsed = match parser::parse(selector) {
+    let parsed = match crate::lexbor::css_parser::parse(selector) {
         Ok(p) => p,
-        Err(parser::ParseError::NotReady) => {
+        Err(crate::lexbor::css_parser::ParseError::NotReady) => {
             return Err(b.fail(ERR_INTERNAL, c"failed to initialise CSS parser"));
         }
-        Err(parser::ParseError::Syntax) => {
+        Err(crate::lexbor::css_parser::ParseError::Syntax) => {
             return Err(b.fail(ERR_SYNTAX, c"invalid CSS selector"));
         }
     };
@@ -134,3 +132,5 @@ pub unsafe fn compile_owned(
      * no subtree worth remembering, so its AST is used as built. */
     try_box(Ast::new(root)).map_err(|_| b.oom())
 }
+
+

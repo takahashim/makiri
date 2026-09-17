@@ -5,7 +5,7 @@
 //! parse, because that is the only way to see the tokens: create and init a
 //! parser, `chunk_begin`, override the tokenizer's token-done callback while
 //! CHAINING the parser's own tree builder, then `chunk_process` and
-//! `chunk_end`. The recorder that rides along is `dom_adapter::source_loc`.
+//! `chunk_end`. The recorder that rides along is `lexbor::adapter::source_loc`.
 //!
 //! Tracking is always on: it costs about 7% over no-tracking, measured, and the
 //! alternative that was tried - a separate source scan - measured ~36% slower
@@ -31,13 +31,13 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::cbuf::OwnedBuf;
-use crate::dom_adapter::dom_index::DomIndex;
-use crate::dom_adapter::source_loc::{
+use crate::lexbor::adapter::dom_index::DomIndex;
+use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Recorder,
 };
-use crate::dom_adapter::text_index::TextIndex;
-pub use crate::dom_adapter::utf8_input::utf8_sanitize;
-use crate::dom_adapter::utf8_input::Sanitized;
+use crate::lexbor::adapter::text_index::TextIndex;
+pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
+use crate::lexbor::adapter::utf8_input::Sanitized;
 use crate::falloc::try_box;
 use crate::lexbor_abi::{self as lxb, lxb_html_document_destroy, LxbDoc, LxbNode};
 use crate::text::BorrowedText;
@@ -164,7 +164,7 @@ impl Parsed {
         if self.dom_index.is_none() {
             // SAFETY: the handle owns a live document.
             let built =
-                unsafe { crate::dom_adapter::dom_index::build(doc.as_ptr() as *mut LxbDoc) }?;
+                unsafe { crate::lexbor::adapter::dom_index::build(doc.as_ptr() as *mut LxbDoc) }?;
             self.dom_index = Some(try_box(built).ok()?);
         }
         self.dom_index.as_deref()

@@ -7,7 +7,7 @@
 //! one representation into the other, owned by the target document, returned
 //! DETACHED for the caller to link.
 //!
-//! Ruby-free, and in `dom_adapter` rather than `glue` because it reads and
+//! Ruby-free, and in `lexbor::adapter` rather than `glue` because it reads and
 //! writes BOTH Lexbor and the XML document - exactly the bridge this layer is
 //! for. The glue entry points do the Ruby-side kind check, call one of these,
 //! and wrap or raise.
@@ -21,8 +21,8 @@
 
 use core::ffi::c_void;
 
-use crate::dom_adapter::html::{
-    BuildingElement, BuildingNode, HtmlDoc, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
+use crate::lexbor::adapter::html::{
+    BuildingElement, BuildingNode, HtmlDoc, RawNode, NS_HTML, NS_UNDEF, NS_XML, TAG_TEMPLATE,
 };
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::lexbor_abi::{self as lxb, LxbDoc, LxbElement, LxbNode};
@@ -36,7 +36,7 @@ use crate::xml::mutate;
  * comparison across representations read as one. */
 
 mod h {
-    pub use crate::dom_adapter::html::{
+    pub use crate::lexbor::adapter::html::{
         TYPE_CDATA as CDATA, TYPE_COMMENT as COMMENT, TYPE_ELEMENT as ELEMENT,
         TYPE_FRAGMENT as FRAGMENT, TYPE_PI as PI, TYPE_TEXT as TEXT,
     };
@@ -299,12 +299,13 @@ unsafe fn h2x_children_of(s: *mut LxbNode) -> *mut LxbNode {
 /// Deep- or shallow-copy an HTML subtree into the XML arena, detached.
 pub unsafe fn cross_html_to_xml(
     xdoc: *mut XmlDoc,
-    src: *mut LxbNode,
+    src: RawNode,
     deep: bool,
     out: *mut NodeId,
 ) -> MutStatus {
     *out = NodeId::INVALID;
     let doc = &mut *xdoc;
+    let src = src.as_ptr() as *mut LxbNode;
 
     let root = match h2x_make(doc, src, None) {
         Ok(m) => m,

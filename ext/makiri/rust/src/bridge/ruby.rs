@@ -10,11 +10,29 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_long, c_void};
+use core::ffi::{c_int, c_long, c_void};
 
 use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
-use magnus::{Error, RString, Value};
-use rb_sys::{rb_data_type_t, VALUE};
+use magnus::{prelude::*, Error, RString, Ruby, Value};
+use rb_sys::rb_data_type_t;
+
+/// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
+/// method `ID` without reaching into `rb_sys` itself.
+pub use rb_sys::{ID, VALUE};
+
+/* The two conveniences every layer above shares. Defined here, in the one
+ * bridge module that does not depend on `lexbor`, so that `lexbor/` can use
+ * them without depending on `bridge::lexbor` (which is built on top of it). */
+
+/// `Makiri::Error`.
+pub fn error_class() -> magnus::ExceptionClass {
+    crate::init::EXC_ERROR.exception()
+}
+
+/// Is `v` an instance of the class in `klass`?
+pub fn is_kind_of(v: Value, klass: &crate::init::RbConst) -> bool {
+    v.is_kind_of(klass.class())
+}
 
 /// A `rb_data_type_t` that can live in a `static`.
 ///
@@ -149,6 +167,24 @@ pub fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error>
     }
 }
 
+/// A borrowed `T` behind a TypedData object of type `ty`, or `Err(TypeError)`.
+///
+/// The lifetime is unconstrained: the caller must keep `v` rooted for as long
+/// as it uses the reference (a method receiver is), which is what keeps the
+/// data alive. Reading the struct's fields is then ordinary safe code.
+pub fn typed_data_ref<'a, T>(v: Value, ty: &'static DataType) -> Result<&'a T, Error> {
+    let p = typed_data(v, ty)? as *const T;
+    // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
+    Ok(unsafe { &*p })
+}
+
+/// [`typed_data_ref`] for a VALUE whose type the caller already established.
+pub fn typed_data_known_ref<'a, T>(v: Value, ty: &'static DataType) -> &'a T {
+    let p = typed_data_known(v, ty) as *const T;
+    // SAFETY: as `typed_data_ref`; `typed_data_known` asserts the type.
+    unsafe { &*p }
+}
+
 /// The data pointer of a TypedData object whose type the caller has already
 /// established - a receiver magnus converted, or the Document a checked node
 /// holds.
@@ -187,6 +223,153 @@ pub unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(v: VALUE) -> &'a 
      * cast is what the repr promises; the accessor for it is crate-private. */
     let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
     &*(rb_sys::rb_check_typeddata(v, dt) as *const T)
+}
+
+/* ------------------------------------------------------------------ *
+ * Value-level helpers                                                *
+ * ------------------------------------------------------------------ */
+
+/* The singletons and constructors the glue would otherwise spell as rb_sys
+ * constants and raw calls.
+ *
+ * `nil` and `boolean` are immortal singletons and cannot raise.
+ *
+ * The constructors DO allocate through Ruby - `integer` for a value that is
+ * not a fixnum, `float` and `array_new` always - so an out-of-memory there
+ * RAISES `NoMemoryError`, which unwinds with `longjmp` and not as an `Err`.
+ * This is the same OOM the raw `rb_float_new`/`rb_int2inum`/`rb_ary_new` they
+ * replace could raise, so no call site changed; it is also why they are not
+ * protected yet. A caller that holds a live Rust destructor across one must
+ * run the whole conversion under `protect` (as `glue::xpath::value_to_ruby`
+ * does), and turning them into `Result`-returning helpers is part of moving
+ * the protected calls behind the bridge. */
+
+/// A `Value` from a raw handle the caller already holds - a stored field, or a
+/// producer that still returns `VALUE`. The bridge is the one place that turns
+/// a raw handle back into a `Value`.
+///
+/// # Safety
+/// `raw` must be a live Ruby value of the current process (as every `VALUE` a
+/// wrapper stores is), and the caller must keep it rooted.
+#[inline]
+pub unsafe fn value(raw: VALUE) -> Value {
+    // SAFETY: the caller's contract.
+    unsafe { Value::from_raw(raw) }
+}
+
+/// `nil`, as a `Value`.
+#[inline]
+pub fn nil() -> Value {
+    // SAFETY: every caller is a Ruby method, entered with the GVL.
+    unsafe { Ruby::get_unchecked() }.qnil().as_value()
+}
+
+/// `true`/`false`, as a `Value`.
+#[inline]
+pub fn boolean(b: bool) -> Value {
+    // SAFETY: as `nil`.
+    let ruby = unsafe { Ruby::get_unchecked() };
+    if b {
+        ruby.qtrue().as_value()
+    } else {
+        ruby.qfalse().as_value()
+    }
+}
+
+/// A fresh Float.
+#[inline]
+pub fn float(n: f64) -> Value {
+    // SAFETY: every caller is a Ruby method, entered with the GVL.
+    unsafe { Ruby::get_unchecked() }.float_from_f64(n).as_value()
+}
+
+/// An Integer from an `i64`.
+#[inline]
+pub fn integer(n: i64) -> Value {
+    // SAFETY: as `float`.
+    unsafe { Ruby::get_unchecked() }.integer_from_i64(n).as_value()
+}
+
+/// A fresh empty Array.
+#[inline]
+pub fn array_new() -> Value {
+    // SAFETY: as `float`.
+    unsafe { Ruby::get_unchecked() }.ary_new().as_value()
+}
+
+/// The frame's current receiver.
+///
+/// magnus hands a method a `&T`, not the object; the registrars that return
+/// `self` recover it from the frame. `Err` only when Ruby has no current
+/// receiver, which a method invocation always has.
+#[inline]
+pub fn current_receiver() -> Result<Value, Error> {
+    // SAFETY: as `float`.
+    unsafe { Ruby::get_unchecked() }.current_receiver::<Value>()
+}
+
+/// VALUE identity, for the several sites that compare two references.
+#[inline]
+pub fn same_value(a: Value, b: Value) -> bool {
+    a.as_raw() == b.as_raw()
+}
+
+/// A Symbol, interned. Symbols are immortal, so a cached one stays valid.
+#[inline]
+pub fn symbol(name: &str) -> Value {
+    // SAFETY: as `nil`.
+    unsafe { Ruby::get_unchecked() }.to_symbol(name).as_value()
+}
+
+/// A method `ID`, interned from a NUL-terminated name.
+#[inline]
+pub fn intern(name: &[u8]) -> ID {
+    debug_assert_eq!(name.last(), Some(&0), "intern needs a NUL-terminated name");
+    // SAFETY: `name` is NUL-terminated as asserted; interning does not raise.
+    unsafe { rb_sys::rb_intern(name.as_ptr() as *const core::ffi::c_char) }
+}
+
+/// `rb_funcallv`: call `method` on `recv`. Can raise, so the caller runs it
+/// under [`protect_value`].
+///
+/// # Safety
+/// Under the GVL, and no Rust destructor may be live when it raises.
+#[inline]
+pub unsafe fn funcallv(recv: VALUE, method: ID, args: &[VALUE]) -> VALUE {
+    // SAFETY: the caller's contract; `args` is a live slice.
+    unsafe { rb_sys::rb_funcallv(recv, method, args.len() as c_int, args.as_ptr()) }
+}
+
+/// `true`/`false` for Ruby's two boolean singletons, and `None` for anything
+/// else (which a caller treats as neither).
+#[inline]
+pub fn bool_value(v: VALUE) -> Option<bool> {
+    // SAFETY: as `nil`.
+    let ruby = unsafe { Ruby::get_unchecked() };
+    if v == ruby.qtrue().as_raw() {
+        Some(true)
+    } else if v == ruby.qfalse().as_raw() {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Run `f` under `rb_protect`, so a raise inside it comes back as `Err`.
+///
+/// `f` is the raw-building body; the VALUE it returns on success is handed
+/// back as a `Value`. A raise is a `longjmp`, which skips the Rust destructors
+/// in every frame it crosses - so `f` must own nothing a raise could leak, or
+/// the caller must accept the leak (the CSS and XPath result builders snapshot
+/// their `Vec` first and free it on the `Err` path).
+#[inline]
+pub fn protect_value<F>(f: F) -> Result<Value, Error>
+where
+    F: FnOnce() -> VALUE,
+{
+    // SAFETY: `protect` establishes the setjmp frame the raise unwinds to, and
+    // the VALUE it hands back on success is live.
+    protect(f).map(|raw| unsafe { Value::from_raw(raw) })
 }
 
 /// Allocate a zeroed `T`, fill it with `init`, wrap it as a `klass` object of

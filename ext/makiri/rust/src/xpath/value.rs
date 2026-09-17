@@ -7,15 +7,15 @@
 //! Rust types: they cross into the glue's custom-function bridge and out as the
 //! evaluate result, and dropping one frees what it holds.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use super::abi::*;
 use super::dom::*;
 use super::number;
+use crate::token::Token;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use core::ffi::c_void;
 
 /* ---- the values ---- */
 
@@ -54,10 +54,6 @@ impl Text {
         OwnedBuf::fill(cap, fill).map(|b| Text(Some(b)))
     }
 }
-
-/// A node as the glue carries it: an erased handle, which only the backend
-/// that made it can read back.
-pub type Token = *mut c_void;
 
 /// A node-set: nodes in the order the engine collected them.
 ///
@@ -144,6 +140,7 @@ impl NodeSet<Token> {
         self.push(token, budget)
     }
 }
+
 
 /// An XPath value (§1): a node-set, a string, a number or a boolean. It owns
 /// what it holds. As with [`NodeSet`], the nodes are the backend's handles
@@ -239,11 +236,11 @@ pub fn val_copy_to_tokens<'d, D: Dom<'d>>(v: &Val<D::Node>) -> Option<Val> {
 
 /// `v` with its tokens read back as `doc`'s nodes, or None on OOM.
 ///
-/// # Safety
-/// Every token must name a node of `doc`.
-pub unsafe fn val_from_tokens<'d, D: Dom<'d>>(doc: D, v: Val) -> Option<Val<D::Node>> {
+/// Safe because a token is only ever made by `doc`'s own `token` or by the
+/// Ruby bridge, which checked the node's document.
+pub fn val_from_tokens<'d, D: Dom<'d>>(doc: D, v: Val) -> Option<Val<D::Node>> {
     Some(match v {
-        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(|t| doc.node(t))?),
+        Val::NodeSet(ns) => Val::NodeSet(ns.try_map(|t| doc.resolve_token(t))?),
         Val::String(t) => Val::String(t),
         Val::Number(d) => Val::Number(d),
         Val::Boolean(b) => Val::Boolean(b),
@@ -257,7 +254,7 @@ pub unsafe fn val_from_tokens<'d, D: Dom<'d>>(doc: D, v: Val) -> Option<Val<D::N
 /// pass, and the outermost evaluate); the function library only ever receives
 /// one, so it lives here with the other runtime values rather than there.
 #[derive(Clone, Copy)]
-pub struct Focus<'e, D: Dom<'e>> {
+pub struct Focus<'d, D: Dom<'d>> {
     /// None when the context has no node.
     pub node: Option<D::Node>,
     pub pos: usize,
@@ -552,11 +549,11 @@ fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
 
 /// The cached string-value of `node`, building and caching it on a miss. The
 /// text is `ev.str_cache.text(id)`.
-pub fn cached_node_text<'d, D: Dom<'d>>(
-    ev: &mut super::eval::Evaluation<'d, D>,
+pub fn cached_node_text<'e, 'd, D: Dom<'d>>(
+    ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
 ) -> Result<TextId, Reported> {
-    let key = D::token(node) as *const c_void;
+    let key = D::token(node);
     if let Some(id) = ev.str_cache.find(key) {
         return Ok(id);
     }
@@ -566,8 +563,8 @@ pub fn cached_node_text<'d, D: Dom<'d>>(
 
 /// `number()` of `node`'s cached string-value.
 #[inline]
-pub fn cached_node_number<'d, D: Dom<'d>>(
-    ev: &mut super::eval::Evaluation<'d, D>,
+pub fn cached_node_number<'e, 'd, D: Dom<'d>>(
+    ev: &mut super::eval::Evaluation<'e, 'd, D>,
     node: D::Node,
 ) -> Result<f64, Reported> {
     let id = cached_node_text::<D>(ev, node)?;

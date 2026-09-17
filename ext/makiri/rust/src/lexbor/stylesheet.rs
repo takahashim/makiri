@@ -44,9 +44,10 @@ use crate::falloc::{self, VecPush};
 use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::consts as k;
 
-use super::abi::{
-    error_class, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
-    ruby_verified_text, CssParser,
+use crate::bridge::string::ruby_verified_text;
+use crate::bridge::ruby::error_class;
+use crate::lexbor::ffi::{
+    lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, CssParser,
 };
 use crate::init::MOD_LEXBOR;
 
@@ -58,21 +59,21 @@ const MAX_DEPTH: u32 = 64;
  * phase one: Lexbor -> owned Rust                                    *
  * ------------------------------------------------------------------ */
 
-struct Decl {
-    name: Vec<u8>,
-    value: Vec<u8>,
-    important: bool,
+pub struct Decl {
+    pub name: Vec<u8>,
+    pub value: Vec<u8>,
+    pub important: bool,
 }
 
-struct Selector {
-    text: Vec<u8>,
+pub struct Selector {
+    pub text: Vec<u8>,
     /// `[a, b, c]` per Selectors L4 §17. The packed `!important` and
     /// style-attribute flags are never set on a parsed stylesheet rule, so they
     /// are dropped, exactly as the C did.
-    specificity: [u32; 3],
+    pub specificity: [u32; 3],
 }
 
-enum Rule {
+pub enum Rule {
     Style {
         selectors: Vec<Selector>,
         declarations: Vec<Decl>,
@@ -91,9 +92,13 @@ enum Rule {
 /// Anything that stops phase one. `Oom` and `TooDeep` become `Makiri::Error`;
 /// there is no syntax variant because Lexbor recovers from syntax errors and
 /// this layer surfaces what it recovered.
-enum Fail {
+pub enum Fail {
     Oom,
     TooDeep,
+    /// The stylesheet parser could not be initialised.
+    Init,
+    /// Lexbor could not parse the stylesheet (normally an allocation failure).
+    Parse,
     /// A Lexbor serializer returned non-OK. Named for what it is: the parser
     /// itself never fails this way - Lexbor recovers from CSS syntax errors and
     /// still returns OK, which is why there is no syntax variant.
@@ -555,18 +560,12 @@ impl Drop for Engine {
     }
 }
 
-fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    let tv = ruby_verified_text(text, c"CSS stylesheet")?;
-    let css: &[u8] = unsafe { tv.bytes() };
-
-    let eclass = error_class();
-    let err = |m: &str| Error::new(eclass, m.to_owned());
-
-    // ---- phase one: no Ruby object is created below this line ----
-    //
-    // `eng` lives for exactly this block, so the parser and stylesheet are
-    // freed at its end - before phase two can raise.
-    let parsed: Vec<Rule> = unsafe {
+/// Parse a verified UTF-8 stylesheet into owned Rust data.
+///
+/// This is the safe boundary consumed by the Ruby glue: all Lexbor-owned
+/// pointers and callback state have been dropped before it returns.
+pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
+    unsafe {
         let eng = Engine {
             parser: lxb_css_parser_create(),
             sst: lxb::lxb_css_stylesheet_create(core::ptr::null_mut()),
@@ -575,44 +574,46 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
             || eng.sst.is_null()
             || lxb_css_parser_init(eng.parser, core::ptr::null_mut()) != 0
         {
-            return Err(err("failed to initialise CSS parser"));
+            return Err(Fail::Init);
         }
-
-        let st = lxb::lxb_css_stylesheet_parse(
+        if lxb::lxb_css_stylesheet_parse(
             eng.sst,
             eng.parser as *mut lxb::lxb_css_parser_t,
             css.as_ptr(),
             css.len(),
-        );
-
-        // Lexbor recovers from CSS syntax errors and still returns OK, so a
-        // non-OK status here is a hard failure (OOM).
-        if st != 0 {
-            return Err(err("failed to parse CSS stylesheet"));
+        ) != 0
+        {
+            return Err(Fail::Parse);
         }
-
         let root = (*eng.sst).root;
         if root.is_null() {
-            Vec::new() /* empty or whitespace-only stylesheet */
-        } else {
-            let mut conv = Conv {
-                css,
-                scratch: Vec::new(),
-            };
-            // The root IS a rule list; Lexbor's downcast is a pointer cast.
-            let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;
-            match rules(&mut conv, first, 0) {
-                Ok(v) => v,
-                Err(Fail::Oom) => return Err(err("out of memory parsing CSS stylesheet")),
-                Err(Fail::TooDeep) => {
-                    return Err(Error::new(
-                        eclass,
-                        format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
-                    ))
-                }
-                Err(Fail::Serialize) => return Err(err("failed to serialize CSS")),
-            }
+            return Ok(Vec::new());
         }
+        let mut conv = Conv { css, scratch: Vec::new() };
+        let first = (*(root as *mut lxb::lxb_css_rule_list_t)).first;
+        rules(&mut conv, first, 0)
+    }
+}
+
+fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
+    let tv = ruby_verified_text(text, c"CSS stylesheet")?;
+    let css: &[u8] = unsafe { tv.bytes() };
+
+    let eclass = error_class();
+    let err = |m: &str| Error::new(eclass, m.to_owned());
+
+    let parsed = match parse(css) {
+        Ok(parsed) => parsed,
+        Err(Fail::Oom) => return Err(err("out of memory parsing CSS stylesheet")),
+        Err(Fail::TooDeep) => {
+            return Err(Error::new(
+                eclass,
+                format!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
+            ))
+        }
+        Err(Fail::Init) => return Err(err("failed to initialise CSS parser")),
+        Err(Fail::Parse) => return Err(err("failed to parse CSS stylesheet")),
+        Err(Fail::Serialize) => return Err(err("failed to serialize CSS")),
     };
 
     // ---- phase two ----
@@ -623,7 +624,7 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
 ///
 /// # Safety
 /// Runs once, from `Init_makiri`, on the Ruby thread.
-pub unsafe extern "C" fn init_lexbor_css() {
+pub fn init_lexbor_css() {
     let ruby = Ruby::get().expect("init_lexbor_css runs on the Ruby thread");
     let lexbor = magnus::RModule::from_value(MOD_LEXBOR.value())
         .expect("Makiri::Lexbor is a module by the time this runs");

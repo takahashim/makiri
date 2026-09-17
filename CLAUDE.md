@@ -14,7 +14,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 
 - **Vanilla Lexbor, no fork, no patches.** `vendor/lexbor` is a git submodule
   pinned to a release **tag**. Never `git apply` to it. Lexbor gaps are absorbed
-  in `ext/makiri/rust/src/dom_adapter/`, never by editing Lexbor.
+  in `ext/makiri/rust/src/lexbor/adapter/`, never by editing Lexbor.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
 - **One language.** The extension is a single Rust crate
@@ -260,7 +260,7 @@ by the check that concluded "every undefined symbol is legitimate".
   `need`); widening it to `need` would silence off-by-one-into-padding
   overflows.
 - **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
-  `dom_adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  `lexbor/adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
   each site in turn, so an OOM there raises instead of aborting. The glue's
   Ruby-side storage - TypedData wrappers (`bridge::ruby::wrap_zeroed`) and
@@ -300,16 +300,32 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
-                           the 35 `forbid` files and the glue's remaining direct
-                           `rb_sys::` and raising calls per file
+                           the 56 `forbid` files. `glue/**`, `xpath/**` and
+                           `css/**` are fully safe (their module roots carry
+                           `#![forbid(unsafe_code)]`, which the gate pins), and
+                           `rb_sys::`, `Value::from_raw` and raising C calls are
+                           0 outside `bridge/`
     glue/                  Ruby <-> engine surface, one module per feature
-                           (node/doc/node_set/xpath/css/serialize/mutate)
-    xpath/                 native XPath 1.0 engine, generic over a `Dom` trait
-    xml/                   native XML reader (Ruby/Lexbor-free; own arena)
-    dom_adapter/           `html` - the one reader of Lexbor's DOM structs -
-                           plus the attr->owner index, text index, source
-                           location, post-parse orchestration
-    css/                   CSS selector lowering (Lexbor keeps the parser)
+                           (node/doc/node_set/xpath/html_node/xml_node); all
+                           `unsafe`-free, its wrappers and TypedData live in
+                           `bridge/`
+    xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
+                           `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
+                           two `Dom` instances live with their layers:
+                           `lexbor/xpath.rs` (HTML) and `xml/xpath.rs` (XML),
+                           joined for the glue by the `Cx` enum in
+                           `bridge/xpath.rs`
+    xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
+                           its XPath `Dom` instance
+    lexbor/                the Lexbor boundary: `adapter` - the one reader of
+                           Lexbor's DOM structs, plus the attr->owner index,
+                           text index, source location and post-parse - and the
+                           selectors/stylesheet/serialize/fragment facades, the
+                           CSS selector parser (`css_parser.rs`) and the XPath
+                           HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
+                           outside it is 0
+    css/                   CSS selector lowering over the lexbor-owned selector
+                           parser (safe Rust, no Lexbor ABI names)
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css; built on PRs, run nightly)
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
@@ -322,7 +338,7 @@ docs/design_doc.ja.md      authoritative design (read this)
 
 Three features, one per layer, and the default is the extension: **`ruby`** (the
 magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
-that read Lexbor's DOM: the generated ABI, `css`, `dom_adapter`, the XPath HTML
+that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
 instance) and **`alloc-inject`** (the `rake oom` hook, off in any normal build).
 The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
 all. So the fuzz crate builds `--no-default-features --features lexbor` and Kani
@@ -338,7 +354,7 @@ transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
 instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
 parsing then decodes leniently like a browser**: `utf8_sanitize`
-(`dom_adapter/utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
+(`lexbor/adapter/utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
 for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
 bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
@@ -361,7 +377,7 @@ independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 
-**Parsing & source location** (`dom_adapter/post_parse.rs`, `source_loc.rs`).
+**Parsing & source location** (`lexbor/adapter/post_parse.rs`, `source_loc.rs`).
 `parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
 the parser's tree builder → `chunk_process`/`chunk_end`) so it can record each
@@ -377,7 +393,7 @@ tkz/tree). Tracking is **always on**: it rides the parse (~7% over no-tracking,
 measured). An earlier `line: :text`/`:none` option was removed - `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
 
-**attr→owner index** (`dom_adapter/dom_index.rs`). Lexbor never links an
+**attr→owner index** (`lexbor/adapter/dom_index.rs`). Lexbor never links an
 attribute back to its element, so we build an open-addressing hash (pointer
 keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 → no stack DoS; OOM fails closed and retries). The build also **backfills each
@@ -397,7 +413,7 @@ reused `XPathContext` must never keep the one it first saw, because a mutation
 frees it - that stale pointer was a use-after-free that answered from another
 document's index (`spec/xpath_context_mutation_spec.rb`).
 
-**text index** (`dom_adapter/text_index.rs`). Removes the per-call descendant
+**text index** (`lexbor/adapter/text_index.rs`). Removes the per-call descendant
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
 `grow_reserve`, no recursion → no stack DoS) records a flat document-order
@@ -445,7 +461,7 @@ unchanged (see `xpath/nodetest.rs`). Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null).
 
-**CSS** (`glue/css.rs`). `Node#{css,at_css,matches?}` via Lexbor's
+**CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
 `lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the
 `selectors` traversal object) is **built once and reused for every query** -
 safe with no locking because CSS holds the GVL throughout (it never releases
@@ -460,7 +476,7 @@ nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
 and in document order; capped at `NODE_SET_MAX`; malformed →
 `Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
 
-**Serialization** (`glue/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
+**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
 collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
 **pre-reserved to ~the output size** via `buf_reserve` so the per-chunk
@@ -558,7 +574,7 @@ Key decisions that got there, worth not regressing:
   `node_principal_match`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
-- **The CSS engine is built once and reused** (`glue/css.rs`, see the
+- **The CSS engine is built once and reused** (`lexbor/selectors.rs`, see the
   subsystem note): the per-call create/init/destroy of the Lexbor CSS object
   graph dominated a cheap query and lost to nokolexbor on `at_css('#id')`; a
   process-global engine (safe because CSS holds the GVL throughout) reset with
@@ -567,7 +583,7 @@ Key decisions that got there, worth not regressing:
   also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
   not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
   rows and `fuzz:sanitize --target css` (the reuse is the memory-safety risk).
-- **`Node#text` is served from the text index** (`dom_adapter/text_index.rs`,
+- **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction
   into a hash lookup + one pre-sized memcpy instead of a cache-bound walk over
