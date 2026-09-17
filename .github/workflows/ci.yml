@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    # `rust` carries the in-progress Rust port, whose build configurations only
-    # this workflow exercises - so it gets CI on push like the mainlines do.
-    branches: [main, master, rust]
+    branches: [main, master]
   pull_request:
 
 jobs:
@@ -82,12 +80,15 @@ jobs:
 
       # The cargo-fuzz crate is a separate crate that nothing else here builds,
       # so an engine API change used to break it silently until the nightly
-      # run. Clippy on stable proves it still compiles against this commit;
-      # libFuzzer and the sanitizer stay nightly-only (libfuzzer.yml).
-      - name: Fuzz crate builds
+      # run. Formatting and clippy on stable prove it still compiles and stays
+      # tidy against this commit; libFuzzer and the sanitizer stay nightly-only
+      # (libfuzzer.yml).
+      - name: Fuzz crate checks
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust/fuzz
-        run: cargo clippy --bins -- -D warnings
+        run: |
+          cargo fmt -- --check
+          cargo clippy --all-targets -- -D warnings
 
       # Fast, Ruby- and Lexbor-free checks for the Rust core. Kani proves the
       # bounded symbolic contracts in verify.yml; this executes exhaustive
@@ -110,7 +111,10 @@ jobs:
       # #[no_mangle] - because on ELF nothing else works: objcopy cannot remove
       # an entry from a linked .so's .dynsym, and a second --version-script is
       # merged rather than applied. This gate is what proves it held.
+      # One cell, like the Rust-only checks above: the symbol table does not
+      # vary by OS or Ruby.
       - name: Symbol gate
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         run: bundle exec rake symbols
 
       # The :threading suite is heavy (GC.stress across threads) and checks a
@@ -120,8 +124,10 @@ jobs:
       # The recorded C-build differential. It was a tautology while the C was
       # still what built here, and recording it then was the whole point: it is
       # now the only surviving check that this build answers what the C
-      # answered, and it cannot be re-recorded.
+      # answered, and it cannot be re-recorded. Again one cell: the answers do
+      # not vary by OS or Ruby.
       - name: Differential
+        if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         run: bundle exec rake diff
 
       - name: Run the test suite

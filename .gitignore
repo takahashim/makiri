@@ -16,6 +16,8 @@
 *.dll
 *.o
 *.a
+# The retired C fuzzer's directory; the cargo-fuzz crate is ext/makiri/rust/fuzz
+ext/makiri/fuzz/
 ext/makiri/rust/Makefile
 ext/makiri/rust/mkmf.log
 ext/makiri/rust/makiri-exported.sym

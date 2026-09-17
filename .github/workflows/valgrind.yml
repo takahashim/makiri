@@ -46,7 +46,7 @@ jobs:
       # overflows, use-after-move), not the property space - so the full
       # 300-iteration PBT sweep (already run by the normal CI matrix) is
       # overkill here and, multiplied by Valgrind's 10-50x slowdown, never
-      # finishes.  A handful of iterations exercises every C memory path while
+      # finishes.  A handful of iterations exercises every memory path while
       # keeping the run tractable.
       PBT_COUNT: "15"
       CSS_PBT_COUNT: "15"
@@ -99,7 +99,7 @@ jobs:
   # structurally tests the borrowed-pointer discipline under the condition that
   # Ruby Strings actually move (compaction) and that every allocation triggers a
   # full GC cycle (stress).  Failures here are typically use-after-move or stale
-  # pointer bugs in the C extension or bridge layer.
+  # pointer bugs in the extension or bridge layer.
   #
   # Scope: only the examples tagged `:gc_compact` (the `memory safety` blocks in
   # css/xpath/serialize/mutation/source_location/xpath_handler/api_compat2 +

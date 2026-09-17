@@ -356,8 +356,10 @@ See also [`spec/conformance/README.md`](spec/conformance/README.md).
 ## Requirements
 
 * CRuby 3.2 or newer.
-* CMake (to build vendored Lexbor at install time).
-* C99 toolchain.
+* A Rust toolchain (stable) with `cargo` - the extension is a Rust crate.
+* libclang (clang's development library): rb-sys runs bindgen at build time and
+  reads Ruby's headers through it.
+* CMake and a C toolchain, to build the vendored Lexbor static library.
 
 ## Build (development)
 

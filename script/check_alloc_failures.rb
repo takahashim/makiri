@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Allocation-failure injection sweep for the C extension (run via `rake oom`).
+# Allocation-failure injection sweep for the extension (run via `rake oom`).
 #
 # The sanitizers and the leak gate prove the happy path is memory-safe; neither
 # proves the OOM branches are CORRECT. Makiri's contract is fail-closed: when a
@@ -189,7 +189,7 @@ SCENARIOS = {
       n = stack.pop
       stack.concat(n.children.to_a)
       # #line is deliberately absent here. Its line table is built once at parse
-      # time and is ALLOWED to fail: dom_adapter/post_parse.rs documents the
+      # time and is ALLOWED to fail: lexbor/adapter/post_parse.rs documents the
       # degradation, and Node#line's own contract is "an Integer, or nil when no
       # line is available", so answering nil after an allocation failure is
       # within the contract rather than a wrong result. Attribute#parent is the
@@ -241,8 +241,8 @@ SCENARIOS = {
   end,
 
   # Invalid UTF-8 input, which is the ONLY path that reaches the sanitiser's
-  # buffer: every other scenario feeds valid UTF-8, where mkr_utf8_sanitize
-  # short-circuits and allocates nothing. The 3x growth and the steal are what
+  # buffer: every other scenario feeds valid UTF-8, where `utf8_sanitize`
+  # (lexbor/adapter/utf8_input.rs) short-circuits and allocates nothing. The 3x growth and the steal are what
   # is being swept here, and a truncated document is exactly the failure the
   # property forbids.
   "html_invalid_utf8" => lambda do

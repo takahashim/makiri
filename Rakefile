@@ -193,12 +193,13 @@ end
 # regenerated blob.
 
 # `rake clean` (from rake-compiler) removes the ext build dir under tmp/,
-# including the generated Makefile. The next `rake compile` re-runs extconf,
-# so newly-added .c files are picked up - without this, a stale Makefile omits
-# new sources and macOS's -undefined dynamic_lookup turns the missing symbols
-# into runtime NULL calls. The vendored Lexbor build is deliberately NOT wiped
-# here (it is slow to rebuild and rarely changes); use `rake clean:lexbor` for
-# a from-scratch Lexbor build.
+# including the generated Makefile. The next `rake compile` re-runs extconf, so
+# a changed configure step (a new env flag, a different Ruby) is picked up. The
+# Rust crate's sources do not need this - cargo finds a module from its `mod`
+# declaration - but the crate is handed to cargo by that Makefile, so a stale
+# one is still worth clearing. The vendored Lexbor build is deliberately NOT
+# wiped here (it is slow to rebuild and rarely changes); use `rake clean:lexbor`
+# for a from-scratch Lexbor build.
 #
 #   rake clean compile     # regenerate ext Makefile + recompile (fast)
 #   rake clean:lexbor      # force a full Lexbor rebuild next compile

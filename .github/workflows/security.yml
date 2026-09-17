@@ -17,41 +17,9 @@ jobs:
   # `clippy.toml`'s disallowed-methods - run with `-D warnings` by ci.yml's
   # Clippy step (the crate) and libfuzzer.yml's (the fuzz crate, nightly).
 
-  security-sanitize:
-    name: AddressSanitizer security suite
-    runs-on: ubuntu-latest
-    if: github.event_name != 'schedule'
-    steps:
-      - name: Checkout (with vendored Lexbor submodule)
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Ensure cmake is available
-        uses: lukka/get-cmake@latest
-
-      # The extension is a Rust crate; cargo is part of the build now. stable is
-      # the default because that is what ships - but nightly has to be PRESENT
-      # too: -Zsanitizer is unstable, so extconf sets RUSTUP_TOOLCHAIN=nightly
-      # for an ASan build (and aborts rather than quietly building it plain).
-      # Installed uniformly across this file's jobs; the few that never sanitize
-      # pay one toolchain download for one block instead of nine variants.
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install the nightly toolchain (for -Zsanitizer)
-        run: rustup toolchain install nightly
-
-      - name: Install libclang (bindgen, via rb-sys)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          bundler-cache: true
-
-      - name: Build + test under sanitizers
-        run: bundle exec rake sanitize
+  # A security-sanitize job stood here and ran `rake sanitize`. ci.yml's
+  # `sanitize` job already does (Ruby 3.4 and 4.0) and adds the Ruby-free engine
+  # tests under ASan, so this was a second copy of the same run.
 
   security-fuzz-short:
     name: Short sanitized fuzz
