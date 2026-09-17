@@ -89,8 +89,7 @@ pub use crate::lexbor::adapter::post_parse::lxb_document_bytes;
 pub use crate::bridge::lexbor::{doc_parsed, html_doc_unwrap, keepalive_document, node_raw};
 pub use crate::bridge::lexbor::parsed_xml_doc;
 pub use crate::bridge::lexbor::{html_node_unwrap, wrap_html_node};
-pub use crate::glue::node_set::node_set_new;
-pub use crate::glue::node_set::node_set_push;
+pub use crate::bridge::node_set::{node_set_new, node_set_push, node_set_with_fill};
 pub use crate::glue::xml_node::wrap_xml_node;
 pub use crate::glue::xml_node::xml_node_unwrap;
 

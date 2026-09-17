@@ -5,13 +5,13 @@
 //! Document. XML nodes never inherit the Lexbor HTML readers - those live on
 //! `Makiri::HTML::NodeMethods` - so this surface is structural.
 //!
-//! The arena is reached through `XmlSelf::doc_ref` (the Ruby <-> Lexbor seam),
-//! so the reads themselves are safe; only borrowing a Ruby string's bytes and
-//! pushing into a NodeSet stay `unsafe`.
+//! The arena is reached through `XmlSelf::doc_ref` (the Ruby <-> Lexbor seam)
+//! and the NodeSet through its safe fill handle, so every read below is safe;
+//! the attribute-name lookups that need a Ruby string's bytes live in
+//! `bridge::xml::find_attribute`.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::abi::*;
@@ -168,12 +168,11 @@ pub fn get_document(this: super::XmlSelf) -> Value {
 /// `#element_children` - the child ELEMENT nodes only, in document order.
 pub fn element_children(this: super::XmlSelf) -> Result<Value, Error> {
     let d = this.doc_ref();
-    let set = node_set_new(this.document);
+    let (set, fill) = node_set_with_fill(this.document);
     let mut c = d.first_child(this.id);
     while let Some(id) = c {
         if d.type_(id) == Some(NodeType::Element) {
-            // SAFETY: `set` is the NodeSet just built; the id is a valid token.
-            unsafe { node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)? };
+            fill.push(id.to_token() as *mut core::ffi::c_void)?;
         }
         c = d.next(id);
     }
@@ -182,11 +181,10 @@ pub fn element_children(this: super::XmlSelf) -> Result<Value, Error> {
 
 pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
     let d = this.doc_ref();
-    let set = node_set_new(this.document);
+    let (set, fill) = node_set_with_fill(this.document);
     let mut c = d.first_child(this.id);
     while let Some(id) = c {
-        // SAFETY: `set` is the NodeSet just built; the id is a valid token.
-        unsafe { node_set_push(set.as_raw(), id.to_token() as *mut core::ffi::c_void)? };
+        fill.push(id.to_token() as *mut core::ffi::c_void)?;
         c = d.next(id);
     }
     Ok(set)
@@ -194,33 +192,9 @@ pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
 
 /* ---- attributes ---- */
 
-/// The attribute of `el` whose qualified name is exactly `name`.
-fn find_attr(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
-    if d.type_(el) != Some(NodeType::Element) {
-        return None;
-    }
-    let mut a = d.attrs(el);
-    while let Some(id) = a {
-        if d.qname(id) == name {
-            return Some(id);
-        }
-        a = d.next(id);
-    }
-    None
-}
-
 /// `#[]` - the attribute's value, or nil.
 pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, Error> {
-    let id = this.id;
-    if this.doc_ref().type_(id) != Some(NodeType::Element) {
-        return Ok(ruby.qnil().as_value());
-    }
-    /* Convert the name BEFORE borrowing the arena: its `to_str` is Ruby code,
-     * and it may edit this same document. */
-    let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    // SAFETY: the bytes are the verified view's, live across the lookup.
-    let bytes = unsafe { nv.bytes() };
-    match find_attr(this.doc_ref(), id, bytes) {
+    match crate::bridge::xml::find_attribute(this, rb_name)? {
         None => Ok(ruby.qnil().as_value()),
         Some(at) => Ok(str_span(ruby, this.doc_ref(), this.doc_ref().node(at).value)),
     }
@@ -232,16 +206,12 @@ pub fn attribute_by_qualified_name(
     this: super::XmlSelf,
     rb_name: Value,
 ) -> Result<Value, Error> {
-    let id = this.id;
-    if this.doc_ref().type_(id) != Some(NodeType::Element) {
-        return Ok(ruby.qnil().as_value());
-    }
-    /* Converted before the arena is borrowed - see `aref`. */
-    let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    // SAFETY: the bytes are the verified view's, live across the lookup.
-    let bytes = unsafe { nv.bytes() };
-    let a = find_attr(this.doc_ref(), id, bytes);
-    Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
+    let _ = ruby;
+    let a = crate::bridge::xml::find_attribute(this, rb_name)?;
+    Ok(super::wrap(
+        a.unwrap_or(NodeId::INVALID),
+        this.document,
+    ))
 }
 
 pub fn attribute_value_by_qualified_name(
@@ -254,13 +224,12 @@ pub fn attribute_value_by_qualified_name(
 
 pub fn attribute_nodes(this: super::XmlSelf) -> Result<Value, Error> {
     let d = this.doc_ref();
-    let set = node_set_new(this.document);
+    let (set, fill) = node_set_with_fill(this.document);
     let id = this.id;
     if d.type_(id) == Some(NodeType::Element) {
         let mut a = d.attrs(id);
         while let Some(at) = a {
-            // SAFETY: `set` is the NodeSet just built; the id is a valid token.
-            unsafe { node_set_push(set.as_raw(), at.to_token() as *mut core::ffi::c_void)? };
+            fill.push(at.to_token() as *mut core::ffi::c_void)?;
             a = d.next(at);
         }
     }

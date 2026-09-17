@@ -16,14 +16,13 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{arg_node, wrap_node};
 use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 use crate::glue::abi::{
-    is_kind_of, node_set_new, node_set_push, ruby_str_from_slices, ruby_str_from_utf8,
+    is_kind_of, node_set_with_fill, ruby_str_from_slices, ruby_str_from_utf8,
     ruby_verified_text,
 };
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
@@ -400,16 +399,13 @@ fn set_of<'d>(
     nodes: impl Iterator<Item = HtmlNode<'d>>,
     elements_only: bool,
 ) -> Result<Value, Error> {
-    // SAFETY: every node is in the tree whose keepalive Document is `document`.
-    unsafe {
-        let set = node_set_new(document);
-        for n in nodes {
-            if !elements_only || n.element().is_some() {
-                node_set_push(set.as_raw(), n.as_raw() as *mut core::ffi::c_void)?;
-            }
+    let (set, fill) = node_set_with_fill(document);
+    for n in nodes {
+        if !elements_only || n.element().is_some() {
+            fill.push(n.as_raw() as *mut core::ffi::c_void)?;
         }
-        Ok(set)
     }
+    Ok(set)
 }
 
 /// `#children`: every child node, as a NodeSet.

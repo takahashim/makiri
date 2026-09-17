@@ -22,6 +22,11 @@ pub mod lexbor;
 #[cfg(feature = "lexbor")]
 pub mod xml;
 
+/// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
+/// keepalive) and the safe fill handle over it.
+#[cfg(feature = "lexbor")]
+pub mod node_set;
+
 pub mod ruby;
 
 pub mod string;

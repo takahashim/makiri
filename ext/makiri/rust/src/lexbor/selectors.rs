@@ -47,9 +47,10 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::VALUE;
 
+use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
 use crate::glue::abi::{
-    error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push,
-    ruby_bytes_view, verify_text, wrap_html_node, LxbNode, LXB_STATUS_OK,
+    error_class, html_node_unwrap, keepalive_document, ruby_bytes_view, verify_text,
+    wrap_html_node, LxbNode, LXB_STATUS_OK,
 };
 use crate::lexbor::adapter::html::RawNode;
 use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
@@ -499,7 +500,7 @@ struct Fill<'a> {
     set: VALUE,
     nodes: &'a [*mut LxbNode],
     /// A push the set refused, carried out of `rb_protect` for the caller.
-    refused: Option<crate::glue::node_set::PushError>,
+    refused: Option<PushError>,
 }
 
 /// Move the collected matches into the NodeSet. Runs under `rb_protect`: a push

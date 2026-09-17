@@ -182,6 +182,42 @@ fn verified_opt(ruby: &Ruby, v: Value, what: &core::ffi::CStr) -> Result<(RubyTe
 }
 
 /* ------------------------------------------------------------------ */
+/* attribute lookup                                                   *
+ * ------------------------------------------------------------------ */
+
+/// The attribute of `el` whose qualified name is exactly the verified `name`.
+///
+/// `None` for a non-element (the name is then not even verified, matching the
+/// readers' nil-returning behaviour). The name is converted BEFORE the arena is
+/// borrowed, because its `to_str` is Ruby code and it may edit this same
+/// document.
+pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
+    let id = this.id;
+    if this.doc_ref().type_(id) != Some(NodeType::Element) {
+        return Ok(None);
+    }
+    let nv = ruby_verified_text(name, c"attribute name")?;
+    // SAFETY: the bytes are the verified view's, live across the lookup, and
+    // nothing below runs Ruby.
+    let bytes = unsafe { nv.bytes() };
+    Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
+}
+
+fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
+    if d.type_(el) != Some(NodeType::Element) {
+        return None;
+    }
+    let mut a = d.attrs(el);
+    while let Some(id) = a {
+        if d.qname(id) == name {
+            return Some(id);
+        }
+        a = d.next(id);
+    }
+    None
+}
+
+/* ------------------------------------------------------------------ */
 /* in-place edits                                                     */
 /* ------------------------------------------------------------------ */
 

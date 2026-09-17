@@ -53,7 +53,7 @@ use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 use super::abi::{
     doc_parsed, error_class, html_node_unwrap, is_kind_of, keepalive_document, node_raw,
-    node_set_new, node_set_push, parsed_xml_doc, ruby_str_from_utf8, ruby_verified_text,
+    node_set_with_fill, parsed_xml_doc, ruby_str_from_utf8, ruby_verified_text,
     xml_node_unwrap, RubyText,
 };
 use crate::init::{CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, MOD_HTML_NODE_METHODS};
@@ -121,16 +121,14 @@ pub(crate) fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Err
     let mut refused = None;
     let converted = crate::bridge::ruby::protect_value(|| match &v {
         XPathValue::NodeSet(set) => {
-            let rb = node_set_new(document).as_raw();
+            let (rb, fill) = node_set_with_fill(document);
             for &n in set.as_slice() {
-                // SAFETY: `rb` is the set just built, and the nodes are the
-                // engine's own, from the document it was built over.
-                if let Err(e) = unsafe { node_set_push(rb, n) } {
+                if let Err(e) = fill.push(n) {
                     refused = Some(e);
                     break;
                 }
             }
-            rb
+            rb.as_raw()
         }
         // SAFETY: the bytes are the value's own, and valid UTF-8 - the engine
         // builds a Text only from input the text contract has passed.
@@ -422,11 +420,11 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
     Ok(match v.get() {
         ValRef::NodeSet(ns) => {
             /* The bridge's document, which the evaluation holds. */
-            let set = node_set_new(crate::bridge::ruby::value(b.document)).as_raw();
+            let (set, fill) = node_set_with_fill(crate::bridge::ruby::value(b.document));
             for &n in ns.as_slice() {
-                node_set_push(set, n)?;
+                fill.push(n)?;
             }
-            set
+            set.as_raw()
         }
         ValRef::String(t) => ruby_str_from_utf8(t.as_slice()),
         ValRef::Number(d) => crate::bridge::ruby::float(d).as_raw(),

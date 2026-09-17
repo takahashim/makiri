@@ -8,7 +8,9 @@
 
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
-pub use super::super::abi::{doc_parsed, error_class, node_set_new, node_set_push, parsed_xml_doc};
+pub use super::super::abi::{
+    doc_parsed, error_class, node_set_new, node_set_with_fill, parsed_xml_doc,
+};
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
 /// The anchored Ruby-String view, from `glue::abi` - one definition for the
