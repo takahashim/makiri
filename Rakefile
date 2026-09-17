@@ -644,6 +644,10 @@ namespace :rust do
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --no-default-features"
       sh "cargo test --no-default-features --features lexbor"
+      # The fuzz crate is a separate one, so `cargo test` above never sees it;
+      # without this check an engine API change can silently break the nightly
+      # harnesses (they are not built by `rake compile` or `rake spec`).
+      sh "cargo check --manifest-path fuzz/Cargo.toml"
     end
   end
 end

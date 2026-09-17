@@ -15,7 +15,7 @@
 #![forbid(unsafe_code)]
 
 use super::abi::*;
-use super::token::Token;
+use crate::token::Token;
 
 /* ---- node types (shared numeric encoding) ----
  *

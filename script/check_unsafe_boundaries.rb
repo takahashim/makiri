@@ -99,7 +99,7 @@ FORBID_FILES = %w[
   xpath/msg.rs xpath/nodetest.rs xpath/number.rs
   xpath/order.rs xpath/parse.rs xpath/runtime_abi.rs
   xpath/runtime_abi/cache.rs xpath/step_index.rs xpath/tests.rs
-  xpath/token.rs xpath/value.rs xpath/verify.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

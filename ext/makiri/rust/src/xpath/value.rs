@@ -12,7 +12,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::number;
-use super::token::Token;
+use crate::token::Token;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};

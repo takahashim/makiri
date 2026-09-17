@@ -20,7 +20,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 use super::ty;
 use super::{arg_node, wrap_node};
 use crate::bridge::lexbor::{dom_str, text_index_string};
-use crate::bridge::lexbor::is_kind_of;
+use crate::bridge::ruby::is_kind_of;
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::string::ruby_verified_text;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};

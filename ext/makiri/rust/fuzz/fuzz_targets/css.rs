@@ -38,7 +38,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    unsafe {
+    {
         let Some(mut ctx) = xml_context(&doc) else {
             return;
         };

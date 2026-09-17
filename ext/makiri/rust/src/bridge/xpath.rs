@@ -37,7 +37,7 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, ContextError, Resolver, ResolverCall, XPathValue};
 use crate::xpath::limits::{Budget, Limits};
 use crate::xpath::msg::{Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
-use crate::xpath::token::{Kind, Token};
+use crate::token::{Kind, Token};
 use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 /// `Makiri::Error`.

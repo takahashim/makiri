@@ -21,7 +21,7 @@ use crate::bridge::lexbor::node_identity;
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.
 pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> {
-    if !crate::bridge::lexbor::is_kind_of(other, &CLASS_NODE) {
+    if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
         return Ok(false);
     }
     Ok(node_identity(rb_self)? == node_identity(other)?)

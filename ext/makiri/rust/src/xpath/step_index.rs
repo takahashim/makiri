@@ -13,7 +13,7 @@ use super::dom::*;
 use super::eval::Evaluation;
 use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
-use super::token::Token;
+use crate::token::Token;
 use crate::err_setf;
 use crate::falloc::Reserve;
 

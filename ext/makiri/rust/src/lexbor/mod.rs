@@ -8,10 +8,11 @@
 //! Ruby-facing entry points belong in `bridge/` (which sits above this layer),
 //! not here: a `Value`-taking function that reaches `bridge::lexbor` /
 //! `bridge::node_set` - both built on top of `lexbor` - makes the dependency
-//! two-way. Every such wrapper (`serialize`, `stylesheet`, `fragment`,
-//! `selectors`) has been moved into `bridge/`; what remains here uses only the
+//! two-way. The cyclic importers (`serialize`, the fragment context helpers,
+//! `selectors`) have been moved into `bridge/`; what remains Ruby-facing here
+//! (the fragment parser entry and the stylesheet binding) uses only the
 //! lexbor-free leaves `bridge::ruby` and `bridge::string`, so this layer is
-//! never reached from below.
+//! never reached from below - the cycle is gone even where a `Value` remains.
 
 pub mod adapter;
 pub mod ffi;

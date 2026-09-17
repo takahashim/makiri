@@ -300,7 +300,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
-                           the 57 `forbid` files. `glue/**`, `xpath/**` and
+                           the 56 `forbid` files. `glue/**`, `xpath/**` and
                            `css/**` are fully safe (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins), and
                            `rb_sys::`, `Value::from_raw` and raising C calls are

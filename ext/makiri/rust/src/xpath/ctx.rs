@@ -12,7 +12,7 @@
 use super::abi::*;
 use super::dom::Dom;
 use super::eval;
-use super::token::Token;
+use crate::token::Token;
 use crate::falloc::Reserve;
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;

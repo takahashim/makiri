@@ -11,9 +11,11 @@
 use core::ffi::c_void;
 
 pub use makiri::text::VerifiedText;
+pub use makiri::token::Token;
 pub use makiri::xml::parse::xml_parse;
 pub use makiri::xml::Document;
-pub use makiri::xpath::ctx::{Backend, Context, XPathValue};
+pub use makiri::xpath::ctx::{Context, XPathValue};
+pub use makiri::xpath::dom::Dom;
 pub use makiri::xpath::limits::Budget;
 pub use makiri::xpath::ast::Ast;
 pub use makiri::xpath::parse::parse_owned;
@@ -22,11 +24,11 @@ pub use makiri::xpath::limits::Limits;
 /// A context over `doc`, rooted at its document node and pinned to the XML
 /// engine - the same arguments the glue's `build_ctx` passes. `None` when the
 /// document has no root.
-pub fn xml_context(doc: &Document) -> Option<Context<'_>> {
+pub fn xml_context(doc: &Document) -> Option<Context<'_, &Document>> {
     if doc.doc_node.is_invalid() {
         return None;
     }
-    Some(Context::xml(doc, doc.doc_node))
+    Some(makiri::xml::xpath::context(doc, doc.doc_node))
 }
 
 /// Parse `text` under the context's caps, on a budget of the parse's own - the
@@ -34,7 +36,10 @@ pub fn xml_context(doc: &Document) -> Option<Context<'_>> {
 ///
 /// # Safety
 /// `text`'s bytes must outlive the parse.
-pub unsafe fn parse(ctx: &Context, text: VerifiedText) -> Option<Box<Ast>> {
+pub unsafe fn parse<'d, D: Dom<'d>>(
+    ctx: &Context<'d, D>,
+    text: VerifiedText,
+) -> Option<Box<Ast>> {
     let mut budget = Budget::with_limits(ctx.limits());
     parse_owned(text, &mut budget).ok()
 }
@@ -44,7 +49,7 @@ pub unsafe fn parse(ctx: &Context, text: VerifiedText) -> Option<Box<Ast>> {
 /// first node of what `evaluate` answers. A failure on either side is not
 /// compared - the fast path is allowed to finish a walk the full evaluator
 /// overruns.
-pub fn evaluate_both(ctx: &Context, ast: &Ast) {
+pub fn evaluate_both<'d, D: Dom<'d>>(ctx: &Context<'d, D>, ast: &Ast) {
     let full = ctx.evaluate(ast, None);
     let first = ctx.evaluate_first(ast, None);
     if let (Ok(XPathValue::NodeSet(all)), Ok(XPathValue::NodeSet(one))) = (&full, &first) {
@@ -79,7 +84,7 @@ impl Expr {
         Some(Expr(buf))
     }
 
-    pub fn text(&self) -> Option<VerifiedText> {
+    pub fn text(&self) -> Option<VerifiedText<'_>> {
         VerifiedText::from_bytes(&self.0)
     }
 }

@@ -35,7 +35,7 @@ pub enum Kind {
 }
 
 /// An opaque node handle, tagged with its backend.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Token {
     kind: Kind,
     word: usize,
@@ -69,7 +69,7 @@ impl Token {
     /// rejects a stale or foreign one, so no handle value can cause undefined
     /// behaviour.
     #[inline]
-    pub const fn xml(word: usize) -> Token {
+    pub(crate) const fn xml(word: usize) -> Token {
         Token {
             kind: Kind::Xml,
             word,

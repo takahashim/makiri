@@ -15,7 +15,7 @@
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::{Bucket, Dom};
-use crate::xpath::token::{Kind, Token};
+use crate::token::{Kind, Token};
 use crate::xml::model as xml;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,

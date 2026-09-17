@@ -21,7 +21,7 @@ use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
 use crate::xpath::limits::{Budget, Limits};
 use crate::xpath::msg::{Error, XP_ERR_OOM, XP_ERR_RUNTIME};
-use crate::xpath::token::{Kind, Token};
+use crate::token::{Kind, Token};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
  * Lexbor's enum must agree value for value; a mismatch would make an HTML walk

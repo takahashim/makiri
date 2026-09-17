@@ -19,7 +19,7 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, Resolver, ResolverCall, XPathValue};
 use crate::xpath::msg::{XP_ERR_LIMIT, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
 use crate::xpath::parse::parse_owned;
-use crate::xpath::token::Token;
+use crate::token::Token;
 
 const DOC: &[u8] = br#"<r xmlns:d="urn:d"><a k="1">x</a><a k="2"> y  z </a><b><c/><c n="3"/><d:e>ne</d:e></b><!--cm--><?pi data?></r>"#;
 

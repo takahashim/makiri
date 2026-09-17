@@ -19,7 +19,7 @@ use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
 use super::order::nodeset_unique_sorted;
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
-use super::token::Token;
+use crate::token::Token;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};

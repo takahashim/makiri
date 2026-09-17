@@ -11,7 +11,7 @@
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
-use super::token::Token;
+use crate::token::Token;
 use crate::falloc::try_vec_with_capacity;
 
 #[derive(Clone, Copy)]

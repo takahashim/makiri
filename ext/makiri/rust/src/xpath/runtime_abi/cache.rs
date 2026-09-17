@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 
 use super::super::abi::*;
-use super::super::token::Token;
+use crate::token::Token;
 use super::super::value::Text;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};

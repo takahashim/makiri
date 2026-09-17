@@ -12,7 +12,8 @@ use core::ffi::c_void;
 use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
-use crate::bridge::lexbor::{error_class, html_node_unwrap, keepalive_document, wrap_html_node};
+use crate::bridge::lexbor::{html_node_unwrap, keepalive_document, wrap_html_node};
+use crate::bridge::ruby::error_class;
 use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_bytes_view, verify_text, RubyBytes};

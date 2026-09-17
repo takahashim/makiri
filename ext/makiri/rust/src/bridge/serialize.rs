@@ -10,7 +10,8 @@
 
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
-use crate::bridge::lexbor::{error_class, html_node_unwrap};
+use crate::bridge::lexbor::html_node_unwrap;
+use crate::bridge::ruby::error_class;
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 use crate::lexbor::serialize::serialize;

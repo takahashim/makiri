@@ -34,7 +34,7 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::XP_ERR_SYNTAX;
 
-use crate::bridge::lexbor::error_class;
+use crate::bridge::ruby::error_class;
 
 /* The arena ceiling comes from `crate::xml::model` rather than being restated
  * here: that module is the XML engine's own declaration of it. */
@@ -380,7 +380,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
     let value = evaluate_query(&ctx, &ast, nil, document, false);
     drop(ast);
     let value = value?;
-    let target = crate::xpath::token::Token::xml(node.to_token());
+    let target = crate::token::Token::xml(node.to_token());
     Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
 }
 

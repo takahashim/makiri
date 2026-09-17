@@ -8,7 +8,8 @@
 
 use magnus::{prelude::*, ExceptionClass, RString, Ruby, Value};
 
-pub use crate::bridge::lexbor::{doc_parsed, error_class, parsed_xml_doc};
+pub use crate::bridge::lexbor::{doc_parsed, parsed_xml_doc};
+pub use crate::bridge::ruby::error_class;
 pub use crate::bridge::node_set::{node_set_new, node_set_with_fill};
 pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, Status};
 
@@ -70,4 +71,4 @@ pub fn xml_syntax_error_class() -> ExceptionClass {
 
 /// Is `v` an instance of the class in `klass`? The shared one, renamed for the
 /// reading it gets here.
-pub use crate::bridge::lexbor::is_kind_of as is_a;
+pub use crate::bridge::ruby::is_kind_of as is_a;

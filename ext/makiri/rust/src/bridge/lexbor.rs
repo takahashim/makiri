@@ -36,14 +36,6 @@ use crate::lexbor::adapter::post_parse::Parsed;
 use crate::lexbor::fragment::html_import_deep;
 use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
-/* ---- the two conveniences the seams share ----
- *
- * Defined in `bridge::ruby`, which does not depend on `lexbor`, and re-exported
- * here for the callers that already name this module. Nothing in `lexbor/` may
- * take the `bridge::lexbor` path for them, or that layer would depend on the
- * very seam built on top of it. */
-pub use crate::bridge::ruby::{error_class, is_kind_of};
-
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
  * ------------------------------------------------------------------ */
