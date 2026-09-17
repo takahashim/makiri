@@ -7,45 +7,23 @@
 //!
 //! # The Document wrapper, and what other glue modules share
 //!
-//! Ten methods, plus the pieces the rest of the glue uses: the Document wrapper
-//! type and its `rb_data_type_t` chain, the parsed-handle accessors, and the
-//! fragment pipeline `html_node::mutate` and `dom_adapter::cross_import` run
-//! through. `glue::abi`'s compile-time check pins their signatures.
-//!
-//! # Parsing releases the GVL
-//!
-//! `parse_html` and everything under it is Ruby-free, and a freshly parsed
-//! document is not yet shared, so nothing can race it. The source is copied into
-//! a C buffer BEFORE the wrapper is allocated: allocating the wrapper is a GC
-//! point, and the copy must not straddle one while holding a borrowed pointer
-//! into a Ruby String's backing store.
+//! The Document wrapper type and its `rb_data_type_t` chain, the parsed-handle
+//! accessors, and the fragment pipeline live in the bridge
+//! ([`crate::bridge::lexbor`], [`crate::bridge::doc`]); this module keeps the
+//! Ruby methods, the evaluation guard, and the re-exports its callers already
+//! name here.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
-use core::ffi::c_int;
-
-use magnus::rb_sys::AsRawValue;
-use magnus::{method, prelude::*, Error, RString, Ruby, Value};
-use super::abi::{
-    error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
-    ruby_to_utf8, wrap_html_node, xml_node_unwrap,
+use magnus::{method, prelude::*, Error, Ruby, Value};
+pub use crate::bridge::lexbor::{
+    doc_parsed, doc_parsed_known, html_doc_known, html_doc_unwrap, keepalive_document,
 };
-use crate::lexbor::fragment::{
-    build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
+
+pub use crate::bridge::doc::{
+    document_errors, document_quirks_mode, document_root, document_title, fragment_in,
+    fragment_shell_document, import_node, parse_document,
 };
-use crate::init::{CLASS_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT, MOD_HTML_NODE_METHODS};
-
-/* ------------------------------------------------------------------ *
- * the wrapper                                                        *
- * ------------------------------------------------------------------ */
-
-/// Generated, not transcribed. A hand-written 1 here (it is 2) made
-/// `import_node` treat every HTML node as an XML one.
-const NODE_KIND_XML: c_int = crate::lexbor::ffi::NODE_KIND_XML as c_int;
-
-use crate::lexbor::adapter::html::RawNode;
-
 pub use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 pub use crate::lexbor::adapter::post_parse::parse_html;
 pub use crate::glue::node::node_kind;
@@ -55,14 +33,6 @@ pub use crate::xml::api::xml_doc_memsize;
 /// The doctype node type, generated (see lexbor_abi).
 const NODE_TYPE_DOCUMENT_TYPE: u32 = super::abi::LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
-/* The Document wrapper (`mkr_doc_data_t`), its TypedData and GC hooks, and the
- * accessors that turn a Ruby Document into a parsed handle live in the Ruby <->
- * Lexbor seam (`bridge::lexbor`). This module keeps the Document METHODS and the
- * evaluation guard, and re-exports the accessors its callers already name
- * here. */
-pub use crate::bridge::lexbor::{doc_parsed, doc_parsed_known, html_doc_known, html_doc_unwrap};
-use crate::bridge::lexbor::{new_document, set_document_parsed, wrap_document};
-
 /// Marks a document as read by an XPath evaluation that can run Ruby - one with
 /// a handler - for as long as it lives. Nested evaluations stack.
 ///
@@ -71,8 +41,8 @@ use crate::bridge::lexbor::{new_document, set_document_parsed, wrap_document};
 /// of it. Lexbor frees an attribute's old value when a new one is set
 /// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
 /// that edited the same document could leave the evaluator reading freed
-/// memory. Every mutator checks [`ensure_document_mutable`] first, so that
-/// borrow is never invalidated under a suspended walk.
+/// memory. Every mutator checks [`crate::bridge::lexbor::ensure_document_mutable`]
+/// first, so that borrow is never invalidated under a suspended walk.
 pub(crate) struct DocumentEvaluation(
     /// The Document the count belongs to. Holding it is what keeps the parsed
     /// handle valid: a guard lives on the machine stack, which Ruby's collector
@@ -97,90 +67,21 @@ impl Drop for DocumentEvaluation {
     }
 }
 
-/// `Err(Makiri::Error)` while an evaluation with a handler is reading
-/// `rb_doc`, a Document. Every mutator calls this before it changes anything.
-pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    if crate::bridge::lexbor::with_parsed_known(rb_doc, |p| p.evaluating) != 0 {
-        return Err(Error::new(
-            error_class(),
-            "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
-        ));
-    }
-    Ok(())
-}
-
-
-
 /* ---- Document.parse ---- */
 
-/// `Document._parse(source)`. The Ruby-level `Document.parse` coerces `source`
-/// to a String (and reads IO) before calling this. Source locations for
-/// `Node#line` are always tracked.
 fn doc_s_parse(ruby: &Ruby, _klass: Value, source: Value) -> Result<Value, Error> {
-    unsafe {
-        let s = source.to_r_string()?;
-        /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
-         * anything else is transcoded so its content survives. */
-        let src = ruby_to_utf8(s.as_raw());
-
-        /* Copy the source out BEFORE allocating the wrapper. Allocating is a GC
-         * point, and a borrowed pointer into a Ruby String's backing store must
-         * not straddle one - nor be held while the GVL is released. The
-         * coderange is read first (no scan): a source Ruby already knows is
-         * valid UTF-8 lets the parse skip its sanitisation. */
-        let assume_valid = ruby_str_known_valid_utf8(src);
-        let Some(owned) = ruby_copy_bytes(src) else {
-            return Err(Error::new(error_class(), "out of memory copying source"));
-        };
-
-        /* Allocate the wrapper with a null handle, so a failed parse still
-         * frees cleanly through GC. This entry is defined on
-         * Makiri::HTML::Document, so the result is always HTML. */
-        let obj = new_document(true);
-
-        let result = crate::bridge::gvl::without_gvl(|| {
-            parse_html(
-                owned.as_slice().as_ptr(),
-                owned.as_slice().len(),
-                assume_valid,
-            )
-            .map_or(core::ptr::null_mut(), Box::into_raw)
-        });
-        drop(owned);
-
-        if result.is_null() {
-            return Err(Error::new(error_class(), "failed to parse HTML document"));
-        }
-        set_document_parsed(obj, result);
-        let _ = ruby;
-        Ok(crate::bridge::ruby::value(obj))
-    }
+    let _ = ruby;
+    crate::bridge::doc::parse_document(source)
 }
 
 /* ---- read-only accessors ---- */
 
 fn doc_root(ruby: &Ruby, self_: Value) -> Value {
-    /* SAFETY: a live HTML Document, kept alive by `self_` for this call. */
-    let root = unsafe { html_doc_known(self_).as_doc() }
-        .as_node()
-        .document_root();
-    let Some(root) = root else {
-        /* The HTML parser inserts html/head/body even for empty input, so this
-         * is unreachable today. Returning nil rather than wrapping a null is
-         * what the reachable behaviour would want if that ever changed. */
-        return ruby.qnil().as_value();
-    };
-    /* SAFETY: a node of `self_`'s document, which keeps it alive. */
-    wrap_html_node(RawNode::from(root), self_)
+    crate::bridge::doc::document_root(ruby, self_)
 }
 
-/// The document `<title>`, or `""`.
-fn doc_title(ruby: &Ruby, self_: Value) -> RString {
-    /* SAFETY: a live HTML Document, kept alive by `self_` for this call. */
-    let bytes = unsafe { html_doc_known(self_).as_doc() }
-        .title()
-        .unwrap_or(&[]);
-    ruby.enc_str_new(bytes, ruby.utf8_encoding())
+fn doc_title(ruby: &Ruby, self_: Value) -> magnus::RString {
+    crate::bridge::doc::document_title(ruby, self_)
 }
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
@@ -190,28 +91,16 @@ fn doc_internal_subset(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
     let doctype = doc
         .children()
         .find(|c| c.node_type() == NODE_TYPE_DOCUMENT_TYPE);
-    // SAFETY: the doctype is a child of this Document, its own keepalive.
     Ok(crate::glue::html_node::wrap_node(doctype, self_))
 }
 
-/// The quirks mode as an Integer matching Lexbor (and Gumbo/Nokogiri):
-/// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
-    let _ = ruby;
-    unsafe {
-        let doc = html_doc_known(self_).as_doc().as_raw();
-        ruby.integer_from_i64((*doc).compat_mode as i64).as_value()
-    }
+    crate::bridge::doc::document_quirks_mode(ruby, self_)
 }
 
 /// Parse warnings. Reserved; currently always empty.
-fn doc_errors(ruby: &Ruby, self_: Value) -> Value {
-    let _ = ruby;
-    /* A Document method, so the receiver is a Document. */
-    let d: &crate::bridge::lexbor::DocData =
-        crate::bridge::ruby::typed_data_known_ref(self_, &crate::bridge::lexbor::DOC_TYPE);
-    // SAFETY: `d.errors` is the live Array the wrapper marks.
-    unsafe { crate::bridge::ruby::value(d.errors) }
+fn doc_errors(_ruby: &Ruby, self_: Value) -> Value {
+    crate::bridge::doc::document_errors(self_)
 }
 
 /* ---- fragment entry points ---- */
@@ -219,44 +108,13 @@ fn doc_errors(ruby: &Ruby, self_: Value) -> Value {
 /// `document.fragment(html, context: ...)` -> a DocumentFragment bound to this
 /// document. `context` defaults to `<body>`.
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    fragment_in(ruby, args, |_| Ok(self_))
+    crate::bridge::doc::fragment_in(ruby, args, || Ok(self_))
 }
 
 /// `DocumentFragment.parse(html, context: ...)` -> a standalone fragment with
 /// its own backing document, kept alive by the fragment's wrapper.
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
-    fragment_in(ruby, args, |_| unsafe {
-        const SHELL: &[u8] = b"<html><body></body></html>";
-        let Some(parsed) = parse_html(SHELL.as_ptr(), SHELL.len(), true) else {
-            return Err(Error::new(
-                error_class(),
-                "failed to create fragment document",
-            ));
-        };
-        Ok(crate::bridge::ruby::value(wrap_document(Box::into_raw(parsed)))) /* GC owns parsed now */
-    })
-}
-
-/// The body both fragment entry points share: read `(html, context:)`, resolve
-/// the context against a document, and build the fragment in it.
-///
-/// The two differ in ONE thing - which document the fragment belongs to - so
-/// that is what the closure supplies. Written out twice, the shared four steps
-/// were the kind of duplication that drifts.
-fn fragment_in(
-    ruby: &Ruby,
-    args: &[Value],
-    document: impl FnOnce(&Ruby) -> Result<Value, Error>,
-) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let (html,) = a.required;
-    let context = context_kwarg(ruby, Some(a.keywords));
-    let document = document(ruby)?;
-    unsafe {
-        let doc = html_doc_unwrap(document)?;
-        let (tag, ns) = resolve_fragment_context(doc, context)?;
-        build_fragment_ctx(ruby, document, doc, html, tag, ns)
-    }
+    crate::bridge::doc::fragment_in(ruby, args, crate::bridge::doc::fragment_shell_document)
 }
 
 /// `node.parse(html)` -> a NodeSet of nodes parsed as a fragment in this
@@ -272,91 +130,21 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
     /* Only the context's tag and namespace ids are needed, read before the
      * fragment parse runs. */
     let (tag, ns) = (context.node().tag_id(), context.node().ns_id());
-    unsafe {
-        let document = keepalive_document(self_)?;
-        let doc = html_doc_unwrap(document)?;
-        let frag = build_fragment_ctx(ruby, document, doc, rb_html, tag, ns)?;
-        frag.funcall("children", ())
-    }
+    let document = keepalive_document(self_)?;
+    let frag = crate::bridge::doc::build_fragment(ruby, document, rb_html, tag, ns)?;
+    frag.funcall("children", ())
 }
 
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS
 /// document - the DOM importNode, whose `deep` defaults to false.
-///
-/// Unlike `Node#clone_node` the copy belongs to the receiver, so this is the way
-/// to bring a node across documents (Makiri never moves one between arenas). The
-/// source is untouched and the copy is detached.
-fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let (node_v,) = a.required;
-    let deep = a.optional.0.map(|v| v.to_bool()).unwrap_or(false);
-    let _ = ruby;
-    unsafe {
-        let doc = html_doc_unwrap(self_)?;
-
-        /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
-         * detached lxb subtree owned by this document. */
-        if node_kind(node_v.as_raw()) == NODE_KIND_XML {
-            let mut imp = core::ptr::null_mut();
-            let xdoc =
-                crate::glue::xml_node::doc_of(crate::glue::xml_node::xml_node_document(node_v)?);
-            let src = crate::xml::model::NodeId::from_token(xml_node_unwrap(node_v)? as usize);
-            xml_mut_check(cross_xml_to_html(
-                doc.as_ptr() as *mut _,
-                xdoc,
-                src,
-                deep,
-                &mut imp,
-            ))?;
-            return Ok(wrap_html_node(
-                RawNode::from_ptr(imp.cast()).expect("imported node"),
-                self_,
-            ));
-        }
-
-        let src = html_node_unwrap(node_v)?; /* Err on a non-node */
-        let Some(imp) = import_with_fixup(doc, src, deep) else {
-            return Err(Error::new(error_class(), "failed to import node"));
-        };
-        Ok(wrap_html_node(imp, self_))
-    }
+fn doc_import_node(_ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
+    crate::bridge::doc::import_node(self_, args)
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
-///
-/// Built on the same import + `<template>`-content fixup as the fragment parser,
-/// so a deep-cloned `<template>` carries its contents (which `import_node` alone
-/// omits). Fails closed: a null import is an error rather than a partial node.
 pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    /* The 0..1 arity by hand: `scan_args` cost about a third of a shallow
-     * clone. The message is the one `rb_scan_args` gives. */
-    let deep = match args {
-        [] => false,
-        /* RTEST: anything but nil and false. */
-        [v] => v.to_bool(),
-        _ => {
-            return Err(Error::new(
-                Ruby::get_with(rb_self).exception_arg_error(),
-                format!(
-                    "wrong number of arguments (given {}, expected 0..1)",
-                    args.len()
-                ),
-            ))
-        }
-    };
-
-    let node = html_node_unwrap(rb_self)?;
-    // SAFETY: the node of a live wrapper, which keeps its document alive.
-    let doc = unsafe { node.as_node() }.owner_document_handle();
-
-    // SAFETY: `node` belongs to `doc`, the document the copy is imported into.
-    let Some(clone) = (unsafe { import_with_fixup(doc, node, deep) }) else {
-        return Err(Error::new(error_class(), "failed to clone node"));
-    };
-    let document = keepalive_document(rb_self)?;
-    // SAFETY: `clone` is a detached node of `document`'s arena.
-    Ok(wrap_html_node(clone, document))
+    crate::bridge::doc::clone_node(rb_self, args)
 }
 
 /* ---- registration ---- */
@@ -367,7 +155,7 @@ pub fn node_clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 /// Runs once, from `Init_makiri`, on the Ruby thread.
 pub fn init_document() {
     let ruby = Ruby::get().expect("init_document runs on the Ruby thread");
-    let html_doc = magnus::RClass::from_value(CLASS_HTML_DOCUMENT.value())
+    let html_doc = magnus::RClass::from_value(crate::init::CLASS_HTML_DOCUMENT.value())
         .expect("Makiri::HTML::Document is a class");
 
     html_doc
@@ -395,14 +183,14 @@ pub fn init_document() {
         .define_method("import_node", method!(doc_import_node, -1))
         .expect("Document#import_node");
 
-    let frag = magnus::RClass::from_value(CLASS_DOCUMENT_FRAGMENT.value())
+    let frag = magnus::RClass::from_value(crate::init::CLASS_DOCUMENT_FRAGMENT.value())
         .expect("Makiri::DocumentFragment is a class");
     frag.define_singleton_method("parse", method!(frag_s_parse, -1))
         .expect("DocumentFragment.parse");
 
     /* Node#parse(html): fragment-parse in this element's context. Defined here,
      * next to the fragment machinery it reuses. */
-    let node_methods = magnus::RModule::from_value(MOD_HTML_NODE_METHODS.value())
+    let node_methods = magnus::RModule::from_value(crate::init::MOD_HTML_NODE_METHODS.value())
         .expect("Makiri::HTML::NodeMethods is a module");
     node_methods
         .define_method("parse", method!(node_parse, 1))

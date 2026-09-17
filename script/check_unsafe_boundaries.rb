@@ -25,10 +25,11 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/gvl.rs" => 3,
+  "bridge/doc.rs" => 16,
   "bridge/lexbor.rs" => 56,
   "bridge/node_set.rs" => 11,
   "bridge/ruby.rs" => 27,
-  "bridge/string.rs" => 25,
+  "bridge/string.rs" => 27,
   "bridge/typed.rs" => 8,
   "bridge/xml.rs" => 36,
   "bridge/xml_decode.rs" => 7,
@@ -49,7 +50,6 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 2,
   "falloc/raw.rs" => 4,
   "lexbor/selectors.rs" => 18,
-  "glue/doc.rs" => 11,
   "lexbor/fragment.rs" => 11,
   "lexbor/stylesheet.rs" => 10,
   "lexbor/serialize.rs" => 8,
@@ -77,7 +77,7 @@ UNSAFE_ISLANDS = {
 FORBID_FILES = %w[
   css/build.rs css/lower.rs cutf8.rs
   cutf8/verify.rs falloc/calloc.rs falloc/verify.rs
-  glue/html_node/mutate.rs glue/html_node/read.rs glue/node.rs glue/node_set.rs glue/xml_node/abi.rs
+  glue/doc.rs glue/html_node/mutate.rs glue/html_node/read.rs glue/node.rs glue/node_set.rs glue/xml_node/abi.rs
   glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
   xml/api.rs xml/arena.rs
   xml/chars.rs xml/index.rs xml/mod.rs

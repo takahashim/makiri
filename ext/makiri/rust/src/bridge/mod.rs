@@ -22,6 +22,11 @@ pub mod lexbor;
 #[cfg(feature = "lexbor")]
 pub mod xml;
 
+/// The Ruby <-> Document seam: parsing (GVL-released), the Document readers, the
+/// fragment pipeline, and cross-document import/clone.
+#[cfg(feature = "lexbor")]
+pub mod doc;
+
 /// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
 /// keepalive) and the safe fill handle over it.
 #[cfg(feature = "lexbor")]

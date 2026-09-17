@@ -448,6 +448,12 @@ pub unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
     )
 }
 
+/// [`ruby_to_utf8`] as a safe call: `s` is a live String, and the result is one.
+pub fn ruby_to_utf8_value(s: Value) -> Value {
+    // SAFETY: `s` is a live String; `rb_str_encode` returns a live String.
+    unsafe { crate::bridge::ruby::value(ruby_to_utf8(s.as_raw())) }
+}
+
 /// Whether Ruby ALREADY knows the String is valid UTF-8.
 ///
 /// This reads the cached classification from the object's flags; it does not
@@ -466,6 +472,13 @@ pub unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
         Coderange::Valid => rb_sys::rb_enc_get(str) == rb_sys::rb_utf8_encoding(),
         _ => false,
     }
+}
+
+/// [`ruby_str_known_valid_utf8`] as a safe call; it only inspects the String's
+/// cached coderange, never scans.
+pub fn ruby_str_known_valid_utf8_value(s: Value) -> bool {
+    // SAFETY: `s` is a live String.
+    unsafe { ruby_str_known_valid_utf8(s.as_raw()) }
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
