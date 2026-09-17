@@ -1,9 +1,11 @@
-//! CSS selector queries (glue/ruby_html_css.c), over Lexbor's `lxb_selectors`.
+//! The CSS selector engine, over Lexbor's `lxb_selectors`: the process-global
+//! parser/arena/traversal, the adaptive compiled-selector cache, and the safe
+//! `select_all` / `select_first` / `matches_node` entries.
 //!
-//!   `Node#css(selector)`    -> NodeSet of matching descendants, document order
-//!   `Node#at_css(selector)` -> the first matching descendant, or nil
-//!   `Node#matches?(sel)`    -> does THIS node match (like Nokogiri)
-//!
+//! The Ruby methods (`Node#css` / `#at_css` / `#matches?`) and the NodeSet they
+//! fill live in [`crate::bridge::selectors`]; keeping them there is what stops
+//! this module from depending on `bridge::lexbor`/`bridge::node_set`, which are
+//! built on top of it.
 //! Every Lexbor type here stays opaque: the parser's status and the two setters
 //! this needs are `lxb_inline`, and Lexbor publishes a `_noi` twin of each for
 //! exactly this case. So, as in `lexbor::serialize`, there is no vendored layout
@@ -40,24 +42,30 @@
 
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::UnsafeCell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use std::collections::HashMap;
 
-use magnus::rb_sys::AsRawValue;
-use magnus::{method, prelude::*, Error, Ruby, Value};
-use crate::bridge::ruby::VALUE;
-
-use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
-use crate::bridge::lexbor::{html_node_unwrap, keepalive_document, wrap_html_node};
-use crate::bridge::ruby::error_class;
-use crate::bridge::string::{ruby_bytes_view, verify_text};
-use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 use crate::lexbor::adapter::html::RawNode;
-use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
+use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 
 /// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
 /// same bound.
 const NODE_SET_MAX: usize = 10 * 1000 * 1000;
+
+/// Why a selector query did not produce a result. The Ruby-facing layer maps
+/// each variant to its exception and message.
+pub enum SelectError {
+    /// The selector did not parse.
+    Syntax,
+    /// The result set hit `NODE_SET_MAX`.
+    Overflow,
+    /// Out of memory collecting the matches.
+    CollectOom,
+    /// Out of memory in the compiled-selector cache's bookkeeping.
+    CacheOom,
+    /// The process-global engine could not be built.
+    Unavailable,
+}
 
 const CACHE_CAP: usize = 256;
 /// Re-evaluate the hit rate every N lookups.
@@ -220,10 +228,10 @@ unsafe fn globals() -> &'static mut Globals {
 
 /// Build the shared engine on first use. On failure everything is torn down and
 /// the globals stay unset, so a later call retries.
-unsafe fn engine() -> Result<&'static Engine, Error> {
+unsafe fn engine() -> Result<&'static Engine, SelectError> {
     let g = globals();
     if g.engine.is_none() {
-        let refused = || Error::new(error_class(), "failed to initialise CSS selector engine");
+        let refused = || SelectError::Unavailable;
 
         /* Each piece is owned from here until all four are whole: any return
          * below frees exactly what was built, without saying so. */
@@ -273,7 +281,7 @@ unsafe fn cache() -> &'static mut HashMap<Box<[u8]>, *mut SelectorList> {
  * unwound normally and the engine has been reset. */
 
 struct FindCtx {
-    nodes: Vec<*mut LxbNode>,
+    nodes: Vec<*mut c_void>,
     /// Excluded from the results: `css` is descendant-only, like Nokogiri's.
     root: *mut LxbNode,
     overflow: bool,
@@ -296,7 +304,7 @@ unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -
         c.oom = true;
         return LXB_STATUS_STOP;
     }
-    c.nodes.push(node);
+    c.nodes.push(node as *mut c_void);
     LXB_STATUS_OK
 }
 
@@ -359,18 +367,11 @@ impl Run {
 /// function has returned normally, so the reset below is plain control flow
 /// rather than something an error path has to remember.
 unsafe fn with_compiled_selector(
-    selector: Value,
+    selector: &[u8],
     node: *mut LxbNode,
     run: Run,
     ctx: *mut c_void,
-) -> Result<(), Error> {
-    /* `Err` for a NUL byte or invalid UTF-8, naming the argument as the C did. */
-    verify_text(selector, c"CSS selector")?;
-    /* The borrow comes from the bridge rather than from RSTRING here, so the
-     * view anchors the String while its bytes are read. `ruby_verified_text`
-     * would do both in one, but it also coerces, and these entries are hot
-     * enough that the extra type check measured. */
-    let sv = ruby_bytes_view(selector.as_raw());
+) -> Result<(), SelectError> {
     let e = engine()?;
     let g = globals();
 
@@ -397,7 +398,7 @@ unsafe fn with_compiled_selector(
     /* The pointer Lexbor gets is the String's own, as before - `bytes()` would
      * hand it a dangling one for an empty selector, which the cache key below
      * does not care about but a parser might. */
-    let (ptr, len) = (sv.as_ptr() as *const u8, sv.len());
+    let (ptr, len) = (selector.as_ptr(), selector.len());
 
     if g.bypass {
         /* Parse + clean per call - the behaviour before the cache existed - so
@@ -410,14 +411,10 @@ unsafe fn with_compiled_selector(
         }
         lxb_css_memory_clean(e.mem);
         lxb_css_parser_clean(e.parser);
-        return if bad {
-            Err(syntax_error(selector))
-        } else {
-            Ok(())
-        };
+        return if bad { Err(SelectError::Syntax) } else { Ok(()) };
     }
 
-    let key = sv.bytes();
+    let key = selector;
     let h = cache();
     if let Some(&list) = h.get(key) {
         g.win_hits += 1;
@@ -440,18 +437,10 @@ unsafe fn with_compiled_selector(
      * Lexbor list stranded in the shared arena. */
     let owned_key = match try_to_boxed_slice(key) {
         Some(k) => k,
-        None => {
-            return Err(Error::new(
-                error_class(),
-                "out of memory caching CSS selector",
-            ));
-        }
+        None => return Err(SelectError::CacheOom),
     };
     if h.mkr_reserve(1).is_err() {
-        return Err(Error::new(
-            error_class(),
-            "out of memory caching CSS selector",
-        ));
+        return Err(SelectError::CacheOom);
     }
 
     let list = lxb_css_selectors_parse(e.parser, ptr, len);
@@ -460,165 +449,86 @@ unsafe fn with_compiled_selector(
      * list just parsed lives there and is about to be cached. */
     lxb_css_parser_clean(e.parser);
     if bad {
-        return Err(syntax_error(selector));
+        return Err(SelectError::Syntax);
     }
 
     /* The key is copied: the borrow points into a Ruby String that may be
      * collected or mutated, while the entry has to outlive the call. */
     if h.mkr_insert(owned_key, list).is_err() {
         lxb_css_memory_clean(e.mem);
-        return Err(Error::new(
-            error_class(),
-            "out of memory caching CSS selector",
-        ));
+        return Err(SelectError::CacheOom);
     }
     run.call(e, node, list, ctx);
     Ok(())
 }
 
-/// The C's message, exactly.
-///
-/// `%" PRIsVALUE` interpolates a String with `to_s`, not `inspect`, so the C
-/// wrote the selector bare where `inspect` adds quotes and escapes. This used
-/// `inspect` and produced `invalid CSS selector: "p:hover"` where every prior
-/// release said `invalid CSS selector: p:hover` - a user-visible change that no
-/// spec asserted, found by the CSS differential when the lowering was ported.
-fn syntax_error(selector: Value) -> Error {
-    let class = magnus::ExceptionClass::from_value(EXC_CSS_SYNTAX_ERROR.value())
-        .expect("Makiri::CSS::SyntaxError");
-    let shown = selector.to_string();
-    Error::new(class, format!("invalid CSS selector: {shown}"))
-}
-
 /* ------------------------------------------------------------------ */
-/* the Ruby methods                                                   */
+/* the safe entries the Ruby layer calls                              */
 /* ------------------------------------------------------------------ */
 
-/// The arguments to the fill loop below, passed through `rb_protect`'s one
-/// `VALUE`-sized slot.
-struct Fill<'a> {
-    set: VALUE,
-    nodes: &'a [*mut LxbNode],
-    /// A push the set refused, carried out of `rb_protect` for the caller.
-    refused: Option<PushError>,
-}
-
-/// Move the collected matches into the NodeSet. Runs under `rb_protect`: a push
-/// can raise (Ruby's allocator), and a longjmp straight out of here would skip
-/// the collection Vec's drop in the caller.
-unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
-    let f = &mut *(arg as *mut Fill);
-    for n in f.nodes {
-        if let Err(e) = node_set_push(f.set, *n as *mut c_void) {
-            f.refused = Some(e);
-            break;
-        }
-    }
-    crate::bridge::ruby::nil().as_raw()
-}
-
-/// `Node#css`: every matching descendant, in document order.
-fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
-    let root = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
-    let document = keepalive_document(rb_self)?;
-
+/// Every matching **descendant** of `root` (the context node itself excluded),
+/// in document order. `Err` for a bad selector, the node cap or OOM.
+#[inline]
+pub fn select_all(root: RawNode, selector: &[u8]) -> Result<Vec<*mut c_void>, SelectError> {
+    let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = FindCtx {
         nodes: Vec::new(),
-        root,
+        root: raw,
         overflow: false,
         oom: false,
     };
+    // SAFETY: `root` is a live node whose document outlives the call, and CSS
+    // holds the GVL throughout.
     unsafe {
         with_compiled_selector(
             selector,
-            root,
+            raw,
             Run::Find(find_cb),
             &mut ctx as *mut FindCtx as *mut c_void,
         )?;
     }
     if ctx.overflow {
-        return Err(Error::new(
-            error_class(),
-            format!("CSS result set exceeded the node limit ({NODE_SET_MAX})"),
-        ));
+        return Err(SelectError::Overflow);
     }
     if ctx.oom {
-        return Err(Error::new(
-            error_class(),
-            "out of memory collecting CSS results",
-        ));
+        return Err(SelectError::CollectOom);
     }
-
-    let set = node_set_new(document);
-    /* Each push can raise (NoMemoryError from Ruby's allocator), and a longjmp
-     * would skip `ctx.nodes`'s drop. `protect` turns that into an Err, the Vec
-     * drops on the way out, and magnus raises afterwards - the Rust form of the
-     * C's rb_ensure, at one setjmp per call rather than per node. */
-    let mut fill = Fill {
-        set: set.as_raw(),
-        nodes: &ctx.nodes,
-        refused: None,
-    };
-    let fill_ptr = &mut fill as *mut Fill as VALUE;
-    crate::bridge::ruby::protect_value(|| unsafe { fill_thunk(fill_ptr) })?;
-    if let Some(e) = fill.refused.take() {
-        return Err(e.into());
-    }
-    Ok(set)
+    Ok(ctx.nodes)
 }
 
-/// `Node#at_css`: the first matching descendant, or nil.
-///
-/// Stops at the first match and wraps that one node - no NodeSet, and no Ruby
-/// `#first` dispatch, for the single node the caller asked for.
-fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
-    let ruby = Ruby::get_with(rb_self);
-    let root = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
-
+/// The first matching **descendant** of `root`, or `None`.
+#[inline]
+pub fn select_first(root: RawNode, selector: &[u8]) -> Result<Option<RawNode>, SelectError> {
+    let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = FirstCtx {
-        root,
+        root: raw,
         found: core::ptr::null_mut(),
     };
+    // SAFETY: as `select_all`.
     unsafe {
         with_compiled_selector(
             selector,
-            root,
+            raw,
             Run::Find(first_cb),
             &mut ctx as *mut FirstCtx as *mut c_void,
         )?;
     }
-    if ctx.found.is_null() {
-        return Ok(ruby.qnil().as_value());
-    }
-    let document = keepalive_document(rb_self)?;
-    Ok(wrap_html_node(RawNode::from_ptr(ctx.found.cast()).expect("first match"), document))
+    Ok(RawNode::from_ptr(ctx.found.cast()))
 }
 
-/// `Node#matches?`: does THIS node match? Tested against the node itself, not
-/// its descendants, like Nokogiri.
-fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
-    let node = html_node_unwrap(rb_self)?.as_ptr() as *mut LxbNode;
+/// Does `root` itself match `selector`?
+#[inline]
+pub fn matches_node(root: RawNode, selector: &[u8]) -> Result<bool, SelectError> {
+    let raw = root.as_ptr() as *mut LxbNode;
     let mut matched = false;
+    // SAFETY: as `select_all`.
     unsafe {
         with_compiled_selector(
             selector,
-            node,
+            raw,
             Run::MatchNode(match_cb),
             &mut matched as *mut bool as *mut c_void,
         )?;
     }
     Ok(matched)
-}
-
-/// # Safety
-/// Called from `Init_makiri`.
-pub fn init_css() {
-    let m = magnus::RModule::from_value(MOD_HTML_NODE_METHODS.value())
-        .expect("Makiri::HTML::NodeMethods");
-    m.define_method("css", method!(css, 1)).expect("Node#css");
-    m.define_method("at_css", method!(at_css, 1))
-        .expect("Node#at_css");
-    m.define_method("matches?", method!(matches, 1))
-        .expect("Node#matches?");
-    let _: Option<c_int> = None;
 }

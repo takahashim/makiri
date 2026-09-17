@@ -27,6 +27,10 @@ pub mod xml;
 #[cfg(feature = "lexbor")]
 pub mod doc;
 
+/// `Node#css` / `#at_css` / `#matches?` over the CSS selector engine.
+#[cfg(feature = "lexbor")]
+pub mod selectors;
+
 /// The Ruby-facing fragment entry points (`Document#fragment`, `Node#parse`).
 #[cfg(feature = "lexbor")]
 pub mod fragment;
