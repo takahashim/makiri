@@ -265,6 +265,9 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
     /// context cannot disturb the walk it was called from.
     #[allow(clippy::result_large_err)]
     pub fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error> {
+        if !self.doc.prepare() {
+            return Err(self.index_error());
+        }
         let run = self.enter()?;
         eval::eval_ast(
             self,
@@ -288,6 +291,9 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
          * is bounded fail-closed exactly like the full evaluator; it only runs
          * for recognised shapes, which call no functions, so it needs no
          * handler. */
+        if !self.doc.prepare() {
+            return Err(self.index_error());
+        }
         let matched = {
             let run = self.enter()?;
             eval::try_first_match(self, &run.names, self.doc, self.focus_node(), ast)
@@ -313,6 +319,17 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
         };
         self.evaluating.set(self.evaluating.get() + 1);
         Ok(Running { cx: self, names })
+    }
+
+    /// The backend could not build the per-walk index: out of memory.
+    fn index_error(&self) -> Error {
+        let budget = Budget::with_limits(self.limits);
+        let _ = crate::err_setf!(
+            budget.sink(),
+            XP_ERR_OOM,
+            "out of memory building the attribute index"
+        );
+        budget.take_error()
     }
 
     /// The context node, resolved through the backend.

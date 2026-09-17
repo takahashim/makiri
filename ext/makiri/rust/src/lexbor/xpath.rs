@@ -41,18 +41,30 @@ const _: () = {
     assert!(NTYPE_NOTATION == lxb::lxb_dom_node_type_t_LXB_DOM_NODE_TYPE_NOTATION);
 };
 
-/// The HTML backend as an evaluate holds it: the document, and its element
-/// index as it stood when the evaluate began.
+/// The HTML backend as an evaluate holds it: the document, and the parsed handle
+/// its element/attribute index is read from.
+///
+/// The handle, not the index: a mutation between evaluates drops the index, so
+/// each evaluate reads it afresh ([`Dom::prepare`]) rather than keeping a stale
+/// one.
 #[derive(Clone, Copy)]
 pub struct HtmlDom<'d> {
     doc: HtmlDoc<'d>,
-    index: &'d DomIndex,
+    parsed: *mut Parsed,
 }
 
 impl<'d> HtmlDom<'d> {
-    /// `index` must be the index built over `doc`.
-    pub fn new(doc: HtmlDoc<'d>, index: &'d DomIndex) -> HtmlDom<'d> {
-        HtmlDom { doc, index }
+    /// `parsed` must be the live handle behind `doc`.
+    pub fn new(doc: HtmlDoc<'d>, parsed: *mut Parsed) -> HtmlDom<'d> {
+        HtmlDom { doc, parsed }
+    }
+
+    /// The document's element/attribute index as it stands now, rebuilding it
+    /// after a mutation. `None` on OOM.
+    fn index(&self) -> Option<&DomIndex> {
+        // SAFETY: the caller's contract - `parsed` is live for `'d`, and no
+        // mutation runs while an evaluate on it does.
+        unsafe { (*self.parsed).dom_index() }
     }
 }
 
@@ -168,13 +180,20 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         n.with_text_content(|text| text.map_or(Ok(()), |t| buf.append(t)))
     }
 
+    fn prepare(&self) -> bool {
+        /* Reading the index builds it when a mutation dropped it, which also
+         * backfills each attribute's parent. */
+        self.index().is_some()
+    }
+
     fn name_bucket(
         self,
         local: &[u8],
         ns_uri: Option<&[u8]>,
         _lax: bool,
     ) -> Option<Bucket<'d, HtmlNode<'d>>> {
-        if ns_uri.is_some() || self.index.has_foreign() {
+        let index = self.index()?;
+        if ns_uri.is_some() || index.has_foreign() {
             return None;
         }
         // SAFETY: `self.doc` is a live document.
@@ -182,7 +201,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
             return None;
         }
-        let nodes = self.index.tag_bucket(tag);
+        let nodes = index.tag_bucket(tag);
         // SAFETY: `HtmlNode` is a transparent non-null node pointer, and the
         // index holds only live elements of this document, none null.
         let nodes: &'d [HtmlNode<'d>] = unsafe {
@@ -232,7 +251,9 @@ pub unsafe fn context<'e>(
     let Some(doc) = (unsafe { HtmlDoc::from_raw(raw_doc) }) else {
         return Err(no_document());
     };
-    let Some(index) = parsed.dom_index() else {
+    /* Build it now, so an allocation failure is reported here rather than on
+     * the first evaluate. Each evaluate still re-reads it through the handle. */
+    if parsed.dom_index().is_none() {
         let budget = Budget::with_limits(Limits::DEFAULT);
         let _ = crate::err_setf!(
             budget.sink(),
@@ -240,9 +261,7 @@ pub unsafe fn context<'e>(
             "out of memory building the attribute index"
         );
         return Err(budget.take_error());
-    };
-    // SAFETY: the index has an allocation of its own, which only a mutation
-    // frees, and none runs while the context lives.
-    let index: &'e DomIndex = index;
-    Ok(Context::new(HtmlDom::new(doc, index), node))
+    }
+    let parsed: *mut Parsed = parsed;
+    Ok(Context::new(HtmlDom::new(doc, parsed), node))
 }

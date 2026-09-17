@@ -59,7 +59,7 @@ UNSAFE_ISLANDS = {
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
   "text.rs" => 5,
-  "lexbor/xpath.rs" => 7,
+  "lexbor/xpath.rs" => 8,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
