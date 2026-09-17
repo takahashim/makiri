@@ -889,12 +889,24 @@ pub fn check_document_child_order(
         let Some(parent) = parent.filter(|p| p.node_type() == TYPE_DOCUMENT) else {
             return Err(DocumentChildOrderError::DoctypeParent);
         };
+        /* At most one doctype ANYWHERE among the children. This scans the whole
+         * list on purpose: stopping at `before` would let a node ahead of the
+         * insertion point (a comment, say) hide a later doctype, and the
+         * document would end up with two. */
         let mut cursor = parent.first_child();
         while let Some(node) = cursor {
             if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
                 return Err(DocumentChildOrderError::DuplicateDoctype);
             }
-            if Some(node) == before { break; }
+            cursor = node.next();
+        }
+        /* No element before the insertion point. `before` None is an append,
+         * where every existing element precedes the new doctype. */
+        let mut cursor = parent.first_child();
+        while let Some(node) = cursor {
+            if Some(node) == before {
+                break;
+            }
             if Some(node) != exclude && node != incoming && node.node_type() == TYPE_ELEMENT {
                 return Err(DocumentChildOrderError::DoctypeAfterElement);
             }
