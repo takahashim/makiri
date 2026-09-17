@@ -27,6 +27,7 @@ UNSAFE_ISLANDS = {
   "bridge/gvl.rs" => 3,
   "bridge/doc.rs" => 16,
   "bridge/lexbor.rs" => 56,
+  "bridge/xpath.rs" => 1,
   "bridge/node_set.rs" => 11,
   "bridge/ruby.rs" => 27,
   "bridge/string.rs" => 28,
@@ -53,14 +54,12 @@ UNSAFE_ISLANDS = {
   "lexbor/fragment.rs" => 11,
   "lexbor/stylesheet.rs" => 10,
   "lexbor/serialize.rs" => 8,
-  "glue/xpath.rs" => 15,
+  "glue/xpath.rs" => 13,
   "init.rs" => 7,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
   "text.rs" => 5,
-  "xpath/ctx.rs" => 8,
-  "xpath/dom_html.rs" => 4,
-  "xpath/tests.rs" => 1,
+  "lexbor/xpath.rs" => 7,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -78,9 +77,10 @@ FORBID_FILES = %w[
   xml/qname.rs xml/selftest.rs xml/serialize.rs
   xml/tree.rs xml/verify.rs xpath/abi.rs
   xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/dom.rs xpath/dom_xml.rs xpath/eval.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
   xpath/axis.rs xpath/funcs.rs xpath/lex.rs
-  xpath/limits.rs xpath/nodetest.rs xpath/number.rs xpath/parse.rs xpath/token.rs xpath/value.rs
+  xpath/limits.rs xpath/nodetest.rs xpath/number.rs xpath/parse.rs xpath/tests.rs xpath/token.rs
+  xpath/value.rs xml/xpath.rs
   xpath/order.rs xpath/runtime_abi.rs xpath/runtime_abi/cache.rs
   xpath/step_index.rs xpath/verify.rs
 ].freeze
@@ -121,8 +121,6 @@ LEXBOR_ABI = /crate::lexbor_abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
 LEXBOR_ABI_COUNTS = {
   "css/parser.rs" => 84,
   "glue/abi.rs" => 30,
-  "xpath/ctx.rs" => 2,
-  "xpath/dom_html.rs" => 14,
 }.freeze
 
 def rust_code(path)
