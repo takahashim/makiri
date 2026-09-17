@@ -23,16 +23,17 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RString, Ruby, Value};
-use rb_sys::{rb_data_type_t, VALUE};
+use rb_sys::VALUE;
 
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,
     ruby_to_utf8, wrap_html_node, xml_node_unwrap, DataType,
 };
+use crate::bridge::typed::{data_type, Hooks, Marker};
 use crate::lexbor::fragment::{
     build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
 };
@@ -66,43 +67,37 @@ pub use crate::xml::api::xml_doc_memsize;
 /// The doctype node type, generated (see lexbor_abi).
 const NODE_TYPE_DOCUMENT_TYPE: u32 = super::abi::LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
-unsafe extern "C" fn doc_mark(ptr: *mut c_void) {
-    let d = &*(ptr as *const DocData);
-    rb_sys::rb_gc_mark(d.errors);
-}
-
-unsafe extern "C" fn doc_free(ptr: *mut c_void) {
-    let d = ptr as *mut DocData;
-    if !(*d).parsed.is_null() {
-        drop(Box::from_raw((*d).parsed));
+/* The wrapper owns the parsed handle and the reserved errors Array. `release`
+ * drops the handle; `memsize` adds the XML arena's own byte total, because
+ * Lexbor's size is not cheaply queryable and an HTML document reports the
+ * wrapper only. */
+impl Hooks for DocData {
+    fn mark(&self, marker: &Marker) {
+        marker.mark(self.errors);
     }
-    rb_sys::ruby_xfree(ptr);
-}
 
-unsafe extern "C" fn doc_memsize(ptr: *const c_void) -> rb_sys::size_t {
-    let d = &*(ptr as *const DocData);
-    let mut total = core::mem::size_of::<DocData>();
-    // Lexbor's arena size is not cheaply queryable, so an HTML document reports
-    // the wrapper only; the XML arena tracks its own byte total.
-    if let Some(xdoc) = d.parsed.as_ref().and_then(|p| p.xml_doc_ref()) {
-        total += xml_doc_memsize(xdoc);
+    fn memsize(&self) -> usize {
+        let mut total = core::mem::size_of::<DocData>();
+        // SAFETY: `parsed` is owned by this object and live for the call.
+        unsafe {
+            if let Some(xdoc) = self.parsed.as_ref().and_then(|p| p.xml_doc_ref()) {
+                total += xml_doc_memsize(xdoc);
+            }
+        }
+        total
     }
-    total as rb_sys::size_t
-}
 
-const fn doc_data_type(name: *const c_char, parent: *const rb_data_type_t) -> DataType {
-    DataType::new(
-        name,
-        parent,
-        Some(doc_mark),
-        Some(doc_free),
-        Some(doc_memsize),
-    )
+    fn release(&mut self) {
+        if !self.parsed.is_null() {
+            // SAFETY: `parsed` came from `Box::into_raw` and only this owns it.
+            unsafe { drop(Box::from_raw(self.parsed)) };
+        }
+    }
 }
 
 /// The base type, exported: the kind-agnostic accessors (`doc_parsed`,
 /// `#errors`) legitimately accept either representation.
-pub static DOC_TYPE: DataType = doc_data_type(c"Makiri::Document".as_ptr(), core::ptr::null());
+pub static DOC_TYPE: DataType = data_type::<DocData>(c"Makiri::Document".as_ptr(), core::ptr::null());
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
 /// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
@@ -110,8 +105,9 @@ pub static DOC_TYPE: DataType = doc_data_type(c"Makiri::Document".as_ptr(), core
 /// Document through Ruby's own type machinery rather than relying on an assert
 /// that NDEBUG erases.
 static HTML_DOC_TYPE: DataType =
-    doc_data_type(c"Makiri::HTML::Document".as_ptr(), DOC_TYPE.as_ptr());
-static XML_DOC_TYPE: DataType = doc_data_type(c"Makiri::XML::Document".as_ptr(), DOC_TYPE.as_ptr());
+    data_type::<DocData>(c"Makiri::HTML::Document".as_ptr(), DOC_TYPE.as_ptr());
+static XML_DOC_TYPE: DataType =
+    data_type::<DocData>(c"Makiri::XML::Document".as_ptr(), DOC_TYPE.as_ptr());
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
 pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
@@ -210,15 +206,20 @@ pub unsafe extern "C" fn wrap_document(
     } else {
         (CLASS_HTML_DOCUMENT.raw(), HTML_DOC_TYPE.as_ptr())
     };
-    /* The errors array is created AFTER the wrap. Created before, it would sit
-     * in this malloc'd struct - seen by no mark - across the wrap's allocation,
-     * and a GC there frees it; `doc_mark` then marks a dead slot ("try to mark
-     * T_NONE object" under GC_COMPACT_STRESS). */
+    /* The errors array is created BEFORE the wrap but kept in a local, so the
+     * conservative stack scan pins it across the wrap's allocation, and it is
+     * only stored once the object exists. Allocating it INSIDE `store` would
+     * also be GC-safe but could raise `NoMemoryError` after the object exists
+     * (and, in `Document._parse`, across a live `OwnedBuf`), which a bridge
+     * callback must not do. Stored before the wrap it would sit in this
+     * malloc'd struct - seen by no mark - and a GC there frees it: `mark` then
+     * marks a dead slot ("try to mark T_NONE object" under GC_COMPACT_STRESS). */
+    let errors = crate::bridge::ruby::array_new();
     crate::bridge::ruby::wrap_zeroed::<DocData>(
         klass,
         ty,
         |d| d.parsed = parsed,
-        |d| d.errors = crate::bridge::ruby::array_new().as_raw(),
+        |d| d.errors = errors.as_raw(),
     )
 }
 
@@ -263,13 +264,15 @@ fn doc_s_parse(ruby: &Ruby, klass: Value, source: Value) -> Result<Value, Error>
          * frees cleanly through GC. This entry is defined on
          * Makiri::HTML::Document, so the result is always HTML. */
         let mut d: *mut DocData = core::ptr::null_mut();
-        /* The errors array comes after the wrap, as in `wrap_document`. */
+        /* The errors array is built before the wrap, as in `wrap_document`, so
+         * the closure does not allocate while `owned` is live. */
+        let errors = crate::bridge::ruby::array_new();
         let obj = crate::bridge::ruby::wrap_zeroed::<DocData>(
             klass.as_raw(),
             HTML_DOC_TYPE.as_ptr(),
             |data| data.parsed = core::ptr::null_mut(),
             |data| {
-                data.errors = crate::bridge::ruby::array_new().as_raw();
+                data.errors = errors.as_raw();
                 d = data;
             },
         );

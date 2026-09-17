@@ -33,11 +33,13 @@
 /* Every function here takes `VALUE`s its caller holds rooted. */
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 
 use magnus::rb_sys::FromRawValue;
 use magnus::{Integer, Ruby, Value};
-use rb_sys::{rb_data_type_t, rb_gc_mark, rb_typeddata_is_kind_of, ruby_xfree, VALUE};
+use rb_sys::VALUE;
+
+use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
 
 use crate::xml::model::Doc as XmlDoc;
 
@@ -51,43 +53,24 @@ use super::abi::NodeData;
 /* GC + TypedData types                                               */
 /* ------------------------------------------------------------------ */
 
-unsafe extern "C" fn node_gc_mark(ptr: *mut c_void) {
-    let nd = ptr as *mut NodeData;
-    rb_gc_mark((*nd).document);
+/* The wrapper owns nothing but the keepalive Document: the node belongs to the
+ * document's arena (HTML or XML), so it is never freed here, and the wrapper
+ * struct itself goes back to Ruby's allocator through the bridge's free
+ * callback. Marking the Document is the whole GC job. */
+impl Hooks for NodeData {
+    fn mark(&self, marker: &Marker) {
+        marker.mark(self.document);
+    }
 }
 
-unsafe extern "C" fn node_gc_free(ptr: *mut c_void) {
-    /* The node is owned by the document arena (HTML or XML); never freed here.
-     * The wrapper struct came from TypedData_Make_Struct, so it goes back to
-     * Ruby's allocator. */
-    ruby_xfree(ptr);
-}
-
-/// The return type is `rb_sys::size_t` rather than `usize` so the signature
-/// matches whatever bindgen generated for this platform's `size_t`; they are
-/// the same width, but the function-pointer type has to be identical.
-unsafe extern "C" fn node_memsize(_ptr: *const c_void) -> rb_sys::size_t {
-    core::mem::size_of::<NodeData>() as rb_sys::size_t
-}
-
-/// The three node types, which share their GC functions.
-const fn node_type(name: *const c_char, parent: *const rb_data_type_t) -> DataType {
-    DataType::new(
-        name,
-        parent,
-        Some(node_gc_mark),
-        Some(node_gc_free),
-        Some(node_memsize),
-    )
-}
-
-pub static NODE_DATA_TYPE: DataType = node_type(c"Makiri::Node".as_ptr(), core::ptr::null());
+pub static NODE_DATA_TYPE: DataType =
+    data_type::<NodeData>(c"Makiri::Node".as_ptr(), core::ptr::null());
 
 pub static HTML_NODE_TYPE: DataType =
-    node_type(c"Makiri::HTML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
+    data_type::<NodeData>(c"Makiri::HTML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
 
 pub static XML_NODE_TYPE: DataType =
-    node_type(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
+    data_type::<NodeData>(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
 
 /* ------------------------------------------------------------------ */
 /* kind-agnostic accessors (identity / document)                      */
@@ -137,18 +120,10 @@ pub fn node_raw(rb_node: Value) -> Result<*mut c_void, magnus::Error> {
 /// `NODE_KIND_OTHER`. The cross-kind `Document#import_node` entries use this
 /// to route a node to the same-representation copy or the translator.
 pub unsafe extern "C" fn node_kind(v: VALUE) -> c_int {
-    if rb_typeddata_is_kind_of(
-        v,
-        &HTML_NODE_TYPE as *const DataType as *const rb_data_type_t,
-    ) != 0
-    {
+    if kind_of(v, &HTML_NODE_TYPE) {
         return NODE_KIND_HTML;
     }
-    if rb_typeddata_is_kind_of(
-        v,
-        &XML_NODE_TYPE as *const DataType as *const rb_data_type_t,
-    ) != 0
-    {
+    if kind_of(v, &XML_NODE_TYPE) {
         return NODE_KIND_XML;
     }
     NODE_KIND_OTHER

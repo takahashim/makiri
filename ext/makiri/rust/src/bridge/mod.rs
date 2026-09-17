@@ -14,4 +14,7 @@ pub mod ruby;
 
 pub mod string;
 
+/// The TypedData objects and their GC callbacks.
+pub mod typed;
+
 pub mod xml_decode;
