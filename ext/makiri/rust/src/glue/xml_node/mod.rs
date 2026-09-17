@@ -17,76 +17,16 @@ pub mod ns;
 pub mod read;
 pub mod serialize;
 
-use magnus::{method, prelude::*, RClass, Ruby, Value};
+use magnus::{method, prelude::*, RClass, Ruby};
 
 use self::abi::*;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE_SET};
 
-/* The wrap/unwrap front door and the arena accessors live in the Ruby <-> Lexbor
- * seam (`bridge::lexbor`); this module re-exports them for its submodules and
- * the rest of the glue. */
-pub use crate::bridge::lexbor::{doc_of, xml_node_document, xml_node_unwrap, wrap_xml_node};
-
-/// Wrap a node reached from a checked receiver, under its Document.
-pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
-    wrap(rel, this.document)
-}
-
-/* ---- the Rust-side conveniences the submodules use ---- */
-
-/// [`xml_node_unwrap`] with the node id typed.
-pub fn unwrap(v: Value) -> Result<NodeId, magnus::Error> {
-    Ok(NodeId::from_token(xml_node_unwrap(v)? as usize))
-}
-
-/// A method receiver already checked to be an XML node or XML Document; see
-/// the HTML twin, `html_node::HtmlSelf`.
-#[derive(Clone, Copy)]
-pub struct XmlSelf {
-    pub value: Value,
-    pub id: NodeId,
-    /// The keepalive Document (the receiver itself for a Document).
-    pub document: Value,
-}
-
-impl magnus::TryConvert for XmlSelf {
-    fn try_convert(value: Value) -> Result<Self, magnus::Error> {
-        let id = unwrap(value)?;
-        let document = xml_node_document(value)?;
-        Ok(XmlSelf {
-            value,
-            id,
-            document,
-        })
-    }
-}
-
-impl XmlSelf {
-    /// The arena behind the receiver's Document, as a mutable handle (mutators).
-    pub fn doc(self) -> *mut XmlDoc {
-        doc_of(self.document)
-    }
-
-    /// The arena behind the receiver's Document, borrowed (readers).
-    pub fn doc_ref(&self) -> &XmlDoc {
-        crate::bridge::lexbor::xml_doc_ref(self.document)
-    }
-}
-
-/// The keepalive Document of an XML node. `Err(TypeError)` for an HTML node.
-pub fn node_document(v: Value) -> Result<Value, magnus::Error> {
-    xml_node_document(v)
-}
-
-/// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
-pub fn doc(v: Value) -> Result<*mut XmlDoc, magnus::Error> {
-    Ok(doc_of(xml_node_document(v)?))
-}
-
-/// Wrap an arena node under `document`, its XML Document.
-pub fn wrap(node: NodeId, document: Value) -> Value {
-    wrap_xml_node(node.to_token() as *mut core::ffi::c_void, document)
-}
+/* The wrapper, the front door, the arena accessors and the mutators live in the
+ * Ruby <-> XML-arena seam (`bridge::xml`); this module re-exports them for its
+ * submodules and the rest of the glue. */
+pub use crate::bridge::lexbor::{doc_of, wrap_xml_node, xml_node_document, xml_node_unwrap};
+pub use crate::bridge::xml::{doc, node_document, unwrap, wrap, xml_wrap_rel_value, XmlSelf};
 
 pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;

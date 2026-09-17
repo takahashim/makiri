@@ -14,10 +14,13 @@ pub mod alloc;
 
 pub mod gvl;
 
-/// The Ruby <-> Lexbor DOM seam (the one bridge submodule that also depends on
-/// `lexbor`).
+/// The Ruby <-> Lexbor DOM seam.
 #[cfg(feature = "lexbor")]
 pub mod lexbor;
+
+/// The Ruby <-> XML-arena DOM seam (the counterpart of `lexbor`).
+#[cfg(feature = "lexbor")]
+pub mod xml;
 
 pub mod ruby;
 
