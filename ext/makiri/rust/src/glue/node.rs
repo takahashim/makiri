@@ -109,9 +109,8 @@ pub fn node_raw(rb_node: Value) -> Result<*mut c_void, magnus::Error> {
         return Ok(super::abi::html_doc_unwrap(rb_node)?.as_ptr());
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd = crate::bridge::ruby::typed_data(rb_node, &NODE_DATA_TYPE)? as *mut NodeData;
-    // SAFETY: the data pointer of a node wrapper, which lives with `rb_node`.
-    Ok(unsafe { (*nd).node })
+    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
+    Ok(nd.node)
 }
 
 /// Which representation a wrapped node is, by its TypedData type - the robust
@@ -140,10 +139,9 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, magnus::Error> {
     if crate::glue::abi::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_node, &NODE_DATA_TYPE)? as *mut NodeData;
-    // SAFETY: the data of a node wrapper, whose Document it marks and so keeps
-    // alive.
-    Ok(unsafe { crate::bridge::ruby::value((*nd).document) })
+    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
+    // SAFETY: `nd.document` is the live Document the wrapper marks.
+    Ok(unsafe { crate::bridge::ruby::value(nd.document) })
 }
 
 /* ------------------------------------------------------------------ */

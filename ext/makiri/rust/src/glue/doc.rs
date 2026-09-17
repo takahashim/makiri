@@ -111,27 +111,29 @@ static XML_DOC_TYPE: DataType =
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
 pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
-    let d = crate::bridge::ruby::typed_data(rb_doc, &HTML_DOC_TYPE)? as *mut DocData;
+    let d: &DocData = crate::bridge::ruby::typed_data_ref(rb_doc, &HTML_DOC_TYPE)?;
     Ok(html_doc_of(d))
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
 pub fn html_doc_known(rb_doc: Value) -> RawDoc {
-    html_doc_of(crate::bridge::ruby::typed_data_known(rb_doc, &HTML_DOC_TYPE) as *mut DocData)
+    html_doc_of(crate::bridge::ruby::typed_data_known_ref(
+        rb_doc,
+        &HTML_DOC_TYPE,
+    ))
 }
 
-fn html_doc_of(d: *mut DocData) -> RawDoc {
+fn html_doc_of(d: &DocData) -> RawDoc {
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
     // SAFETY: `d` is the data of a live HTML Document, whose handle it owns.
-    unsafe { RawDoc::from_ptr((*(*d).parsed).html_doc().cast()).expect("live document") }
+    unsafe { RawDoc::from_ptr((*d.parsed).html_doc().cast()).expect("live document") }
 }
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
 pub fn doc_parsed(rb_doc: Value) -> Result<*mut crate::lexbor::adapter::post_parse::Parsed, Error> {
-    let d = crate::bridge::ruby::typed_data(rb_doc, &DOC_TYPE)? as *mut DocData;
-    // SAFETY: the data of a live Document.
-    Ok(unsafe { (*d).parsed })
+    let d: &DocData = crate::bridge::ruby::typed_data_ref(rb_doc, &DOC_TYPE)?;
+    Ok(d.parsed)
 }
 
 /// Marks a document as read by an XPath evaluation that can run Ruby - one with
@@ -189,9 +191,7 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
 pub fn doc_parsed_known(rb_doc: Value) -> *mut crate::lexbor::adapter::post_parse::Parsed {
-    let d = crate::bridge::ruby::typed_data_known(rb_doc, &DOC_TYPE) as *mut DocData;
-    // SAFETY: the data of a live Document.
-    unsafe { (*d).parsed }
+    crate::bridge::ruby::typed_data_known_ref::<DocData>(rb_doc, &DOC_TYPE).parsed
 }
 
 /// Wrap an owned handle as a Document; GC takes ownership. The leaf class is
@@ -331,11 +331,10 @@ fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Value {
 /// Parse warnings. Reserved; currently always empty.
 fn doc_errors(ruby: &Ruby, self_: Value) -> Value {
     let _ = ruby;
-    unsafe {
-        /* A Document method, so the receiver is a Document. */
-        let d = crate::bridge::ruby::typed_data_known(self_, &DOC_TYPE) as *mut DocData;
-        crate::bridge::ruby::value((*d).errors)
-    }
+    /* A Document method, so the receiver is a Document. */
+    let d: &DocData = crate::bridge::ruby::typed_data_known_ref(self_, &DOC_TYPE);
+    // SAFETY: `d.errors` is the live Array the wrapper marks.
+    unsafe { crate::bridge::ruby::value(d.errors) }
 }
 
 /* ---- fragment entry points ---- */

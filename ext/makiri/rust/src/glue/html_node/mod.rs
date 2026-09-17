@@ -125,9 +125,8 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, magnus::Error> {
         }
         return Ok(html_doc_unwrap(rb_node)?.into());
     }
-    let nd = crate::bridge::ruby::typed_data(rb_node, &HTML_NODE_TYPE)? as *mut NodeData;
-    // SAFETY: the data of a live HTML node wrapper.
-    RawNode::from_ptr(unsafe { (*nd).node }).ok_or_else(uninitialized)
+    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_node, &HTML_NODE_TYPE)?;
+    RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
 }
 
 /* ---- the Rust-side conveniences the reader module uses ---- */

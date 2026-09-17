@@ -85,9 +85,8 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut c_void, magnus::Error> {
         let node = unsafe { (*(parsed_xml_doc(parsed) as *mut XmlDoc)).doc_node() };
         return Ok(node.to_token() as *mut c_void);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, &XML_NODE_TYPE)? as *mut NodeData;
-    // SAFETY: the data of a live XML node wrapper.
-    Ok(unsafe { (*nd).node })
+    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_self, &XML_NODE_TYPE)?;
+    Ok(nd.node)
 }
 
 /// The XML document behind a Document or node wrapper (`Document` VALUE).
@@ -105,9 +104,9 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, magnus::Error> {
     if is_a(rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    let nd = crate::bridge::ruby::typed_data(rb_self, &XML_NODE_TYPE)? as *mut NodeData;
-    // SAFETY: the data of a live XML node wrapper, which marks its Document.
-    Ok(unsafe { crate::bridge::ruby::value((*nd).document) })
+    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_self, &XML_NODE_TYPE)?;
+    // SAFETY: `nd.document` is the live Document the wrapper marks.
+    Ok(unsafe { crate::bridge::ruby::value(nd.document) })
 }
 
 /// Wrap a node reached from a checked receiver, under its Document.

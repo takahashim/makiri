@@ -153,6 +153,24 @@ pub fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error>
     }
 }
 
+/// A borrowed `T` behind a TypedData object of type `ty`, or `Err(TypeError)`.
+///
+/// The lifetime is unconstrained: the caller must keep `v` rooted for as long
+/// as it uses the reference (a method receiver is), which is what keeps the
+/// data alive. Reading the struct's fields is then ordinary safe code.
+pub fn typed_data_ref<'a, T>(v: Value, ty: &'static DataType) -> Result<&'a T, Error> {
+    let p = typed_data(v, ty)? as *const T;
+    // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
+    Ok(unsafe { &*p })
+}
+
+/// [`typed_data_ref`] for a VALUE whose type the caller already established.
+pub fn typed_data_known_ref<'a, T>(v: Value, ty: &'static DataType) -> &'a T {
+    let p = typed_data_known(v, ty) as *const T;
+    // SAFETY: as `typed_data_ref`; `typed_data_known` asserts the type.
+    unsafe { &*p }
+}
+
 /// The data pointer of a TypedData object whose type the caller has already
 /// established - a receiver magnus converted, or the Document a checked node
 /// holds.
