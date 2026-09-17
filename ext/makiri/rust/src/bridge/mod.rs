@@ -27,6 +27,10 @@ pub mod xml;
 #[cfg(feature = "lexbor")]
 pub mod doc;
 
+/// The Ruby-facing fragment entry points (`Document#fragment`, `Node#parse`).
+#[cfg(feature = "lexbor")]
+pub mod fragment;
+
 /// `Node#to_html` / `#inner_html` and the HTML serializer binding.
 #[cfg(feature = "lexbor")]
 pub mod serialize;

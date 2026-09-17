@@ -35,9 +35,10 @@ use crate::init::EXC_ERROR;
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::adapter::post_parse::parse_html;
-use crate::lexbor::fragment::{
-    build_fragment_ctx, context_kwarg, import_with_fixup, resolve_fragment_context,
+use crate::bridge::fragment::{
+    build_fragment_ctx, context_kwarg, resolve_fragment_context,
 };
+use crate::lexbor::fragment::import_with_fixup;
 
 /// Generated, not transcribed. A hand-written 1 here (it is 2) made
 /// `import_node` treat every HTML node as an XML one.

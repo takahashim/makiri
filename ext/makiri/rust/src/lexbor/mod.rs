@@ -6,11 +6,12 @@
 //! # The Ruby boundary above lexbor
 //!
 //! Ruby-facing entry points belong in `bridge/` (which sits above this layer),
-//! not here: a `Value`-taking function drags in `bridge::lexbor` /
-//! `bridge::node_set`, which are built on top of `lexbor`, and makes the
-//! dependency two-way. `serialize.rs` and `stylesheet.rs` are already split so
-//! this layer is only reached from above; `fragment.rs` and `selectors.rs` still
-//! carry their Ruby wrappers and are the remaining two to move into `bridge/`.
+//! not here: a `Value`-taking function that reaches `bridge::lexbor` /
+//! `bridge::node_set` - both built on top of `lexbor` - makes the dependency
+//! two-way. `serialize.rs`, `stylesheet.rs` and `fragment.rs` are split so this
+//! layer is only reached from above; `selectors.rs` still carries its Ruby
+//! methods and is the last one to move into `bridge/` (it needs a safe
+//! `select_*` API here first).
 
 pub mod adapter;
 pub mod ffi;

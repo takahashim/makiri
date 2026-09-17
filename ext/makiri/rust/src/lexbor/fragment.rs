@@ -18,20 +18,14 @@
 
 use core::ffi::c_void;
 
-use magnus::rb_sys::AsRawValue;
-use magnus::{prelude::*, Error, Ruby, Value};
+use magnus::Error;
 use crate::bridge::ruby::VALUE;
 
 use crate::falloc::VecPush;
 
-use crate::bridge::lexbor::{html_node_unwrap, wrap_html_node};
-use crate::bridge::ruby::{error_class, is_kind_of};
-use crate::bridge::string::{
-    ruby_bytes_view, ruby_str_known_valid_utf8, ruby_to_utf8, ruby_verified_text,
-};
-use crate::lexbor::adapter::html::TYPE_ELEMENT as LXB_DOM_NODE_TYPE_ELEMENT;
+use crate::bridge::ruby::error_class;
+use crate::bridge::string::{ruby_bytes_view, ruby_str_known_valid_utf8, ruby_to_utf8};
 use crate::lexbor::ffi::{LxbDoc, LxbNode};
-use crate::init::CLASS_NODE;
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
@@ -39,8 +33,7 @@ use crate::init::CLASS_NODE;
 
 use crate::cbuf::{Buf, OwnedBuf};
 use crate::lexbor::adapter::html::{
-    BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH,
-    TAG_SVG, TAG_UNDEF,
+    BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode,
 };
 pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
@@ -375,115 +368,17 @@ pub unsafe fn html_import_deep(doc: RawDoc, src: RawNode) -> Result<RawNode, Err
         .ok_or_else(|| Error::new(error_class(), "failed to import node"))
 }
 
-/* ------------------------------------------------------------------ *
- * fragment context + the Ruby surface                                *
- * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* the context helpers the Ruby-facing bridge drives                   */
+/* ------------------------------------------------------------------ */
 
-/// Resolve a fragment-parsing context - the element the HTML is parsed "inside
-/// of", per the WHATWG algorithm - into a tag id and namespace.
+/// The tag id Lexbor knows `name` by, or [`TAG_UNDEF`] for an unknown name.
 ///
-/// Matches Nokogiri's `context:`: nil is `<body>` in the HTML namespace; a node
-/// contributes its own tag and namespace (the only way to reach a foreign
-/// non-root context such as SVG `<desc>`); a String names an HTML-namespace tag,
-/// except "svg" / "math" which name the foreign roots.
-///
-/// `Err` for an unusable context.
-pub unsafe fn resolve_fragment_context(
-    doc: RawDoc,
-    context: Option<Value>,
-) -> Result<(usize, usize), magnus::Error> {
-    let Some(context) = context else {
-        return Ok((TAG_BODY, NS_HTML));
-    };
-    if context.is_nil() {
-        return Ok((TAG_BODY, NS_HTML));
+/// The Ruby-facing context resolution lives in [`crate::bridge::fragment`];
+/// only the ABI read stays here.
+pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> usize {
+    // SAFETY: a live document handle, read for this call.
+    unsafe {
+        lxb_tag_id_by_name_noi((*(doc.as_ptr() as *mut LxbDoc)).tags, name.as_ptr(), name.len())
     }
-
-    if is_kind_of(context, &CLASS_NODE) {
-        /* Reject an XML node before any Lexbor use. */
-        let cn = html_node_unwrap(context)?.as_node();
-        if cn.node_type() != LXB_DOM_NODE_TYPE_ELEMENT {
-            return Err(magnus::Error::new(
-                magnus::Ruby::get_unchecked().exception_arg_error(),
-                "fragment context node must be an element",
-            ));
-        }
-        return Ok((cn.tag_id(), cn.ns_id()));
-    }
-
-    /* A context tag name is a programmatic control string, not parsed HTML, so
-     * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = ruby_verified_text(context, c"fragment context element")?;
-    let name = cv.bytes();
-    if name == b"svg" {
-        return Ok((TAG_SVG, NS_SVG));
-    }
-    if name == b"math" {
-        return Ok((TAG_MATH, NS_MATH));
-    }
-    let tid = lxb_tag_id_by_name_noi(
-        (*(doc.as_ptr() as *mut LxbDoc)).tags,
-        name.as_ptr(),
-        name.len(),
-    );
-    if tid == TAG_UNDEF {
-        // The C wrote `"...: %" PRIsVALUE` - two string literals the C
-        // preprocessor joins. Rust has no such concatenation, so carrying the
-        // line over verbatim produced the literal `%" PRIsVALUE` in the
-        // message; the differential caught it. `%.*s` over the verified bytes
-        // prints what PRIsVALUE printed for a String: its content.
-        /* The name is verified UTF-8, so the lossy view is its content. */
-        return Err(magnus::Error::new(
-            magnus::Ruby::get_unchecked().exception_arg_error(),
-            format!(
-                "unknown fragment context element: {}",
-                String::from_utf8_lossy(name)
-            ),
-        ));
-    }
-    Ok((tid, NS_HTML))
-}
-
-/// Parse `html` in the given context and build a DOCUMENT_FRAGMENT owned by
-/// `document`, so its nodes can be spliced into it.
-/// `document` is the wrapper the fragment is bound to (its keepalive), `doc` the
-/// Lexbor document already unwrapped from it.
-///
-/// Taking both, rather than unwrapping here, is what keeps this module from
-/// depending on `glue::doc` - unwrapping a Document is that module's job, and
-/// the import back the other way made the two mutually dependent.
-pub unsafe fn build_fragment_ctx(
-    ruby: &Ruby,
-    document: Value,
-    doc: RawDoc,
-    rb_html: Value,
-    tag: usize,
-    ns: usize,
-) -> Result<Value, Error> {
-    let html = ruby.into_value(rb_html.to_r_string()?);
-
-    /* SAFETY: a live document, for the length of this call. */
-    let frag = HtmlDoc::from_raw(doc.as_ptr() as *mut LxbDoc).and_then(HtmlDoc::create_fragment);
-    let Some(frag) = frag else {
-        return Err(Error::new(
-            error_class(),
-            "failed to create document fragment",
-        ));
-    };
-    let frag_node = RawNode::from(frag);
-
-    let root = run_fragment_parser(html.as_raw(), &FragmentContext::Tag { doc, tag, ns })?;
-    if !import_fragment_children(doc, root, &Emit::Append(frag_node)) {
-        return Err(Error::new(
-            error_class(),
-            "failed to import a fragment child",
-        ));
-    }
-    Ok(wrap_html_node(frag_node, document))
-}
-
-/// The `context:` keyword, or None.
-pub fn context_kwarg(ruby: &Ruby, kw: Option<magnus::RHash>) -> Option<Value> {
-    let h = kw?;
-    h.get(ruby.to_symbol("context"))
 }
