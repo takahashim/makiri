@@ -227,6 +227,38 @@ pub fn with_parsed_known<R>(rb_doc: Value, f: impl FnOnce(&mut Parsed) -> R) -> 
     unsafe { f(&mut *p) }
 }
 
+/* ---- the document's own bytes and text ---- */
+
+/// A UTF-8 Ruby String copied from bytes the parsed document lends.
+///
+/// Safe by the text-input contract: parsing sanitizes invalid UTF-8 to U+FFFD,
+/// so everything a document's readers hand over is valid UTF-8. That contract
+/// belongs to this module - the one that ran the parser - which is why the
+/// unsafe of `ruby_str_from_utf8` is discharged here.
+pub fn dom_str(bytes: &[u8]) -> Value {
+    // SAFETY: valid UTF-8 by the text-input contract; the String copies it.
+    unsafe { value(crate::bridge::string::ruby_str_from_utf8(bytes)) }
+}
+
+/// The indexed descendant text of `node` as one Ruby String.
+///
+/// `Ok(None)` when the text index cannot serve this node (it is outside the
+/// indexed tree, e.g. a fragment, or its build failed closed) - the caller then
+/// walks. `Err` only when building the String fails.
+pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>, Error> {
+    let mut found: Option<Result<Value, Error>> = None;
+    with_parsed_known(document, |p| {
+        if let Some((slices, total)) = p.text_slices(node.as_lxb()) {
+            // SAFETY: the slices point into this document's arena (the index
+            // borrows them from `p`) and are copied into the String before the
+            // borrow ends; nothing here runs Ruby.
+            let built = unsafe { crate::bridge::string::ruby_str_from_slices(slices, total) };
+            found = Some(built.map(|v| unsafe { value(v) }));
+        }
+    });
+    found.transpose()
+}
+
 /// The element that owns `attr` through the attr->owner index.
 ///
 /// `Err` when the index cannot be built (out of memory) - distinct from a node

@@ -323,6 +323,13 @@ impl RawNode {
         self.0.as_ptr().cast()
     }
 
+    /// The typed node pointer, for the adapter's own readers (the text index).
+    /// Outside `lexbor`, nodes cross as `RawNode` or `c_void`.
+    #[inline]
+    pub fn as_lxb(self) -> *const LxbNode {
+        self.0.as_ptr()
+    }
+
     /// The typed node, lent for `'doc`.
     ///
     /// # Safety

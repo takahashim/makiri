@@ -2,9 +2,8 @@
 //! navigation, attributes, source line and document order.
 //!
 //! Every read of the Lexbor tree goes through the typed handles of
-//! `dom_adapter::html`, which are safe to use; what stays `unsafe` here is the
-//! Ruby side - wrapping a node into an object, pushing onto a NodeSet, and the
-//! per-document indexes.
+//! `dom_adapter::html`, the node and text index through `bridge::lexbor`, and
+//! the NodeSet through its fill handle, so the readers are all safe.
 //!
 //! # Where a GC may run
 //!
@@ -14,30 +13,20 @@
 //! it drops, and read the bytes before building anything. Bytes borrowed from
 //! the document are arena memory, which a GC does not move.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{arg_node, wrap_node};
-use crate::lexbor::adapter::html::{HtmlNode, RawNode};
-use crate::glue::abi::{
-    is_kind_of, node_set_with_fill, ruby_str_from_slices, ruby_str_from_utf8,
-    ruby_verified_text,
-};
+use crate::bridge::lexbor::{dom_str, text_index_string};
+use crate::glue::abi::{is_kind_of, node_set_with_fill, ruby_verified_text};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
+use crate::lexbor::adapter::html::{HtmlNode, RawNode};
 
 /* ------------------------------------------------------------------ *
  * small helpers                                                      *
  * ------------------------------------------------------------------ */
-
-/// A UTF-8 String copied from bytes the document lends.
-fn dom_str(bytes: &[u8]) -> Value {
-    // SAFETY: the bytes are valid UTF-8 whenever they come from the document,
-    // by the text-input contract - which is the part this layer knows and the
-    // bridge cannot. The String copies them.
-    unsafe { crate::bridge::ruby::value(ruby_str_from_utf8(bytes)) }
-}
 
 fn nil(ruby: &Ruby) -> Value {
     ruby.qnil().as_value()
@@ -280,13 +269,8 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// text/CDATA node's data, stack-safe and skipping Lexbor's intermediate arena
 /// buffer and copy.
 fn element_text(ruby: &Ruby, document: Value, node: HtmlNode<'_>) -> Result<Value, Error> {
-    // SAFETY: `document` is the node's live Document, and the slices the index
-    // hands back are copied into the String before anything can change it.
-    unsafe {
-        let parsed = crate::glue::doc::doc_parsed_known(document);
-        if let Some((slices, total)) = parsed.as_mut().and_then(|p| p.text_slices(node.as_raw())) {
-            return Ok(crate::bridge::ruby::value(ruby_str_from_slices(slices, total)?));
-        }
+    if let Some(text) = text_index_string(document, node.into())? {
+        return Ok(text);
     }
 
     let str = ruby.str_new("");
@@ -439,7 +423,7 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
     // SAFETY: the guard keeps the name String reachable, and its bytes are only
     // read before the answer String is built.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    let name = unsafe { nv.bytes() };
+    let name = nv.as_verified().as_bytes();
     if !el.has_attribute(name) {
         return Ok(nil(ruby));
     }
@@ -454,7 +438,7 @@ pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
     };
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    let has = el.has_attribute(unsafe { nv.bytes() });
+    let has = el.has_attribute(nv.as_verified().as_bytes());
     Ok(if has {
         ruby.qtrue().as_value()
     } else {
@@ -517,7 +501,7 @@ pub fn attribute_by_qualified_name(
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
-    let name = unsafe { nv.bytes() };
+    let name = nv.as_verified().as_bytes();
     let found = el.attrs().find(|at| at.qualified_name() == name);
     /* The name is not read past here; wrapping allocates, so it happens after. */
     drop(nv);
@@ -546,7 +530,7 @@ pub fn attribute_value_by_qualified_name(
     // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
-    let name = unsafe { nv.bytes() };
+    let name = nv.as_verified().as_bytes();
     let value = el
         .attrs()
         .find(|at| at.qualified_name() == name)
