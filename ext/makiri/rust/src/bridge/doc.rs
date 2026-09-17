@@ -127,10 +127,8 @@ pub fn document_title(ruby: &Ruby, rb_doc: Value) -> RString {
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
 pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
     // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call.
-    let doc = unsafe { html_doc_known(rb_doc).as_doc().as_raw() };
-    // SAFETY: `doc` is live, as above.
-    ruby.integer_from_i64(unsafe { (*doc).compat_mode as i64 })
-        .as_value()
+    let mode = unsafe { html_doc_known(rb_doc).as_doc() }.compat_mode();
+    ruby.integer_from_i64(mode).as_value()
 }
 
 /// `Document#errors`: the (currently always empty) parse-warning Array.

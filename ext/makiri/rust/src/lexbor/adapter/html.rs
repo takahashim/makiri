@@ -418,9 +418,22 @@ impl<'doc> HtmlDoc<'doc> {
         })
     }
 
+    /// The raw pointer, for `lexbor/` only.
+    ///
+    /// Hidden so that reading a Lexbor struct field stays inside this layer:
+    /// a `pub` raw pointer is how a document field (`compat_mode`) came to be
+    /// read from `bridge`. Callers above use a named accessor instead.
     #[inline]
-    pub fn as_raw(self) -> *mut LxbDoc {
+    pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc {
         self.raw.as_ptr()
+    }
+
+    /// Lexbor's quirks mode: 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the
+    /// parser from the doctype.
+    #[inline]
+    pub fn compat_mode(self) -> i64 {
+        // SAFETY: a live document handle, read for this call.
+        unsafe { (*self.raw.as_ptr()).compat_mode as i64 }
     }
 
     /// The document as a node: an `lxb_dom_document_t` leads with its node.

@@ -30,7 +30,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
-  "bridge/doc.rs" => 16,
+  "bridge/doc.rs" => 15,
   "bridge/fragment.rs" => 2,
   "bridge/gvl.rs" => 3,
   "bridge/lexbor.rs" => 56,
@@ -53,7 +53,7 @@ UNSAFE_ISLANDS = {
   "init.rs" => 7,
   "lexbor/adapter/cross_import.rs" => 16,
   "lexbor/adapter/dom_index.rs" => 3,
-  "lexbor/adapter/html.rs" => 96,
+  "lexbor/adapter/html.rs" => 97,
   "lexbor/adapter/post_parse.rs" => 9,
   "lexbor/adapter/source_loc.rs" => 4,
   "lexbor/adapter/text_index.rs" => 5,
@@ -194,6 +194,15 @@ end
 
 unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
+end
+
+# The typed document handle keeps its raw pointer `lexbor`-private, so nothing
+# above the layer can read a Lexbor struct field through it. This is what closed
+# the `compat_mode` leak: a field read spells no `lxb_*`/`Lxb*` name, so
+# LEXBOR_ABI below cannot see it, and only the compiler can enforce this one.
+unless File.binread(File.join(RUST, "lexbor/adapter/html.rs"))
+    .include?("pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc")
+  errors << "lexbor/adapter/html.rs: HtmlDoc::as_raw must stay `pub(in crate::lexbor)`"
 end
 
 unsafe_actual = Hash.new(0)
