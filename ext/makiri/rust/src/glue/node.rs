@@ -1,156 +1,22 @@
 //! The shared, representation-neutral node core (glue/ruby_node.c).
 //!
 //! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
-//! Ruby-facing Node. This file owns what is common to both: the TypedData types
-//! that tell the two wrappers apart, their GC functions, and the kind-agnostic
-//! accessors used for identity and document lookup. Each representation's own
-//! wrap/unwrap and reader methods stay where they are (ruby_html_node.c,
-//! ruby_xml_node.c).
+//! Ruby-facing Node. The TypedData types, their GC functions and the raw
+//! accessors moved to the Ruby <-> Lexbor seam ([`crate::bridge::lexbor`]);
+//! what is left is representation-neutral and safe: the identity methods
+//! (`==`/`eql?`, `hash`, `pointer_id`), which depend only on the node pointer
+//! and never dereference it.
 //!
-//! # Where magnus comes in
-//!
-//! Most of this file is a library the other glue files call, over rb-sys: the
-//! TypedData types and their GC functions keep the calling convention Ruby's GC
-//! uses. The identity methods (`==`/`eql?`, `hash`, `pointer_id`) are ordinary
-//! magnus methods that return `Result`, bound by both NodeMethods modules from
-//! this one definition, so HTML and XML answer identity with the same code.
-//!
-//! # Who owns the TypedData
-//!
-//! Rust does: the three `rb_data_type_t` are statics here, and every wrap and
-//! unwrap names them - through `bridge::ruby::wrap_zeroed` and
-//! `bridge::ruby::typed_data`.
-//!
-//! HTML and XML nodes share the `mkr_node_data_t` layout and the same GC
-//! functions but are wrapped under DISTINCT types, so the representation is
-//! checked by Ruby's own type machinery: an HTML accessor handed an XML node
-//! raises TypeError, and vice versa. `NODE_DATA_TYPE` is the shared base both
-//! derive from, so the kind-agnostic accessors below accept either. This is the
-//! single source of HTML/XML node-pointer safety - there is deliberately no
-//! "return an lxb_dom_node_t for any node" unwrap.
+//! The raw accessors are re-exported for the glue modules that already name
+//! them here.
 
-#![allow(unsafe_code)]
-/* Every function here takes `VALUE`s its caller holds rooted. */
-#![allow(clippy::missing_safety_doc)]
-
-use core::ffi::{c_int, c_void};
+#![forbid(unsafe_code)]
 
 use magnus::{Integer, Ruby, Value};
-use crate::bridge::ruby::VALUE;
 
-use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
+use crate::init::CLASS_NODE;
 
-use crate::xml::model::Doc as XmlDoc;
-
-/* `mkr_node_data_t` lives in `super::abi`: the node wrapper holds a node pointer
- * plus the keepalive Document, and the XML wrap path writes the same struct.
- * The arena owns the node, so the Document reference is what keeps it alive and
- * marking it is this file's whole GC job. */
-use super::abi::NodeData;
-
-/* ------------------------------------------------------------------ */
-/* GC + TypedData types                                               */
-/* ------------------------------------------------------------------ */
-
-/* The wrapper owns nothing but the keepalive Document: the node belongs to the
- * document's arena (HTML or XML), so it is never freed here, and the wrapper
- * struct itself goes back to Ruby's allocator through the bridge's free
- * callback. Marking the Document is the whole GC job. */
-impl Hooks for NodeData {
-    fn mark(&self, marker: &Marker) {
-        marker.mark(self.document);
-    }
-}
-
-pub static NODE_DATA_TYPE: DataType =
-    data_type::<NodeData>(c"Makiri::Node".as_ptr(), core::ptr::null());
-
-pub static HTML_NODE_TYPE: DataType =
-    data_type::<NodeData>(c"Makiri::HTML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
-
-pub static XML_NODE_TYPE: DataType =
-    data_type::<NodeData>(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
-
-/* ------------------------------------------------------------------ */
-/* kind-agnostic accessors (identity / document)                      */
-/* ------------------------------------------------------------------ */
-
-/// `NodeKind`.
-const NODE_KIND_OTHER: c_int = 0;
-const NODE_KIND_HTML: c_int = 1;
-const NODE_KIND_XML: c_int = 2;
-
-use super::abi::{doc_parsed, parsed_xml_doc, DataType};
-use crate::init::{CLASS_DOCUMENT, CLASS_NODE};
-
-/// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an
-/// opaque `*mut c_void` - dereferencing it takes an explicit cast, so it cannot
-/// be mistaken for a typed pointer. Only for the few sites where the
-/// representation is irrelevant (identity comparison) or already guaranteed by
-/// an external same-document check (the XPath context node).
-///
-/// The Document branch is kind-aware: an XML Document resolves to its arena's
-/// document node, an HTML one to Lexbor's.
-pub fn node_raw(rb_node: Value) -> Result<*mut c_void, magnus::Error> {
-    if crate::glue::abi::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        let parsed = doc_parsed(rb_node)?;
-        // SAFETY: a Document's handle lives as long as the Document, and an XML
-        // arena's document node is read, not written.
-        unsafe {
-            if (*parsed).is_xml() {
-                let xdoc = parsed_xml_doc(parsed) as *mut XmlDoc;
-                return Ok(if xdoc.is_null() {
-                    core::ptr::null_mut()
-                } else {
-                    (*xdoc).doc_node().to_token() as *mut c_void
-                });
-            }
-        }
-        return Ok(super::abi::html_doc_unwrap(rb_node)?.as_ptr());
-    }
-    /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
-    Ok(nd.node)
-}
-
-/// Which representation a wrapped node is, by its TypedData type - the robust
-/// discriminator, not the Ruby class. A Document, a NodeSet or any non-node is
-/// `NODE_KIND_OTHER`. The cross-kind `Document#import_node` entries use this
-/// to route a node to the same-representation copy or the translator.
-pub unsafe extern "C" fn node_kind(v: VALUE) -> c_int {
-    if kind_of(v, &HTML_NODE_TYPE) {
-        return NODE_KIND_HTML;
-    }
-    if kind_of(v, &XML_NODE_TYPE) {
-        return NODE_KIND_XML;
-    }
-    NODE_KIND_OTHER
-}
-
-/// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
-/// kind-agnostic, and never dereferenced.
-pub fn node_identity(rb_node: Value) -> Result<usize, magnus::Error> {
-    Ok(node_raw(rb_node)? as usize)
-}
-
-/// The keepalive Document of any node, or the Document itself.
-/// `Err(TypeError)` for a non-node.
-pub fn keepalive_document(rb_node: Value) -> Result<Value, magnus::Error> {
-    if crate::glue::abi::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        return Ok(rb_node);
-    }
-    let nd: &NodeData = crate::bridge::ruby::typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
-    // SAFETY: `nd.document` is the live Document the wrapper marks.
-    Ok(unsafe { crate::bridge::ruby::value(nd.document) })
-}
-
-/* ------------------------------------------------------------------ */
-/* identity (representation-neutral)                                  */
-/* ------------------------------------------------------------------ */
-/* These depend only on node_identity, which never dereferences a node, so they
- * are identical for HTML and XML and live here rather than once per
- * representation. Both NodeMethods modules bind their ==/eql?/hash/pointer_id
- * to them. */
+pub use crate::bridge::lexbor::{keepalive_document, node_identity, node_kind, node_raw};
 
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.

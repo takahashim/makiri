@@ -8,22 +8,14 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_void;
 
 use magnus::{prelude::*, ExceptionClass, RModule, Value};
-use crate::bridge::ruby::VALUE;
 
 use crate::init::{RbConst, EXC_ERROR, MOD_HTML_NODE_METHODS};
 
-/// `mkr_node_data_t` - what a node wrapper holds: the node pointer plus the
-/// keepalive Document. Declared here because both `glue::node` (which owns the
-/// TypedData) and `glue::xml_node` (which mints XML wrappers) write it.
-pub struct NodeData {
-    /// `mkr_raw_node_t *` - representation-opaque; read it only through a
-    /// kind-checked accessor.
-    pub node: *mut c_void,
-    pub document: VALUE,
-}
+/// `mkr_node_data_t` - what a node wrapper holds. Owned by the DOM seam
+/// ([`crate::bridge::lexbor`]), beside the TypedData that frees and marks it.
+pub use crate::bridge::lexbor::NodeData;
 
 /// An `lxb_dom_node_t`, opaque.
 ///
@@ -94,26 +86,14 @@ pub use crate::bridge::string::ruby_to_utf8;
 pub use crate::bridge::string::ruby_verified_text;
 pub use crate::bridge::string::verify_text;
 pub use crate::lexbor::adapter::post_parse::lxb_document_bytes;
-pub use crate::glue::doc::doc_parsed;
-pub use crate::glue::doc::html_doc_unwrap;
+pub use crate::bridge::lexbor::{doc_parsed, html_doc_unwrap, keepalive_document, node_raw};
+pub use crate::bridge::lexbor::parsed_xml_doc;
 pub use crate::glue::html_node::html_node_unwrap;
 pub use crate::glue::html_node::wrap_html_node;
-pub use crate::glue::node::keepalive_document;
-pub use crate::glue::node::node_raw;
 pub use crate::glue::node_set::node_set_new;
 pub use crate::glue::node_set::node_set_push;
 pub use crate::glue::xml_node::wrap_xml_node;
 pub use crate::glue::xml_node::xml_node_unwrap;
-
-/// The XML arena behind a parsed handle, or null for an HTML one.
-///
-/// # Safety
-/// `p` must be a live handle.
-pub unsafe fn parsed_xml_doc(
-    p: *mut crate::lexbor::adapter::post_parse::Parsed,
-) -> *mut crate::xml::model::Document {
-    (*p).xml_doc()
-}
 
 /// Lexbor's `lxb_inline` accessors, through the `_noi` twins it exports. They
 /// live in `lexbor_abi` - the one place in the crate that hand-declares a Lexbor

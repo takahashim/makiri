@@ -56,7 +56,7 @@ pub use crate::glue::doc::node_clone_node;
 pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;
 pub use crate::glue::node::node_pointer_id;
-pub use crate::glue::node::HTML_NODE_TYPE;
+pub use crate::bridge::lexbor::HTML_NODE_TYPE;
 pub use crate::init::CLASS_HTML_ATTR;
 pub use crate::init::CLASS_HTML_CDATA_SECTION;
 pub use crate::init::CLASS_HTML_COMMENT;

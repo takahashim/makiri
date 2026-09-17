@@ -15,7 +15,7 @@ pub use crate::xml::model::{Doc as XmlDoc, MutStatus, NodeId, NodeType, Span, St
 /// whole crate. Not `crate::text::BorrowedText`, which has no Ruby anchor.
 pub use crate::glue::abi::{ruby_verified_text, RubyText};
 
-pub use crate::glue::node::XML_NODE_TYPE;
+pub use crate::bridge::lexbor::XML_NODE_TYPE;
 pub use crate::init::CLASS_DOCUMENT;
 pub use crate::init::CLASS_XML_ATTR;
 pub use crate::init::CLASS_XML_CDATA_SECTION;
