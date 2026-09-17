@@ -813,3 +813,353 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
     invalidate_indexes(this.document);
     inserted_result(rb_self, rb_other, ins, adopt_from)
 }
+
+/* ------------------------------------------------------------------ *
+ * attribute and content mutation                                     *
+ * ------------------------------------------------------------------ */
+
+use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
+use crate::lexbor::adapter::html::{HtmlDoc, ScratchElement, NS_UNDEF};
+use crate::lexbor::fragment::{
+    import_transient_fragment_children, run_fragment_parser, Emit, FragmentContext,
+};
+
+/// `element[name] = value` -> value.
+pub fn aset(
+    _ruby: &Ruby,
+    this: HtmlSelf,
+    rb_name: Value,
+    rb_value: Value,
+) -> Result<Value, Error> {
+    let Some(el) = edit(&this)?.element_mut() else {
+        return Err(err("cannot set an attribute on a non-element node"));
+    };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    let vv = ruby_verified_data(rb_value, c"attribute value")?;
+    /* SAFETY: both views are the caller's, live for this call, and Lexbor
+     * copies them before any Ruby code can run again. */
+    let stored = unsafe { el.set_attribute(nv.bytes(), vv.bytes()) };
+    if stored.is_none() {
+        return Err(err("failed to set attribute"));
+    }
+    invalidate_indexes(this.document);
+    Ok(rb_value)
+}
+
+/// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
+pub fn set_attribute_ns(
+    _ruby: &Ruby,
+    this: HtmlSelf,
+    rb_ns: Value,
+    rb_qname: Value,
+    rb_value: Value,
+) -> Result<Value, Error> {
+    let Some(el) = edit(&this)?.element_mut() else {
+        return Err(err("cannot set an attribute on a non-element node"));
+    };
+
+    let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
+    let vv = ruby_verified_data(rb_value, c"attribute value")?;
+    let nv = if rb_ns.is_nil() {
+        None
+    } else {
+        Some(ruby_verified_text(rb_ns, c"namespace")?)
+    };
+
+    /* SAFETY: every view is the caller's, live for this call, and Lexbor copies
+     * what it keeps before any Ruby code can run again. */
+    let (qname, value) = unsafe { (qv.bytes(), vv.bytes()) };
+    /* An empty URI is no namespace: it names the attribute the unprefixed way. */
+    let ns = match &nv {
+        Some(nv) if nv.len() != 0 => Some(unsafe { nv.bytes() }),
+        _ => None,
+    };
+
+    /* Intern the wanted namespace so the existing attribute is matched on
+     * (namespace, local name) - the DOM key - rather than on the qualified
+     * name. */
+    let doc = el.element().node().owner_document();
+    // SAFETY: the element's own Document, live for this call.
+    let want_ns =
+        unsafe { HtmlDoc::from_raw(doc) }.map_or(NS_UNDEF, |d| d.intern_ns(ns.unwrap_or(&[])));
+
+    let local = match qname.iter().position(|&b| b == b':') {
+        Some(i) => &qname[i + 1..],
+        None => qname,
+    };
+
+    let stored = match el.element().find_attr_ns(want_ns, local) {
+        Some(existing) => existing.set_value(value),
+        None => el.append_attribute(ns, qname, value),
+    };
+    if !stored {
+        return Err(err("failed to set namespaced attribute"));
+    }
+
+    invalidate_indexes(this.document);
+    Ok(rb_value)
+}
+
+/// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> nil.
+pub fn remove_attribute_ns(
+    ruby: &Ruby,
+    this: HtmlSelf,
+    rb_ns: Value,
+    rb_local: Value,
+) -> Result<Value, Error> {
+    let Some(el) = edit(&this)?.element_mut() else {
+        return Ok(ruby.qnil().as_value());
+    };
+    let lv = ruby_verified_text(rb_local, c"attribute local name")?;
+
+    let mut want_ns = NS_UNDEF;
+    if !rb_ns.is_nil() {
+        let nv = ruby_verified_text(rb_ns, c"namespace")?;
+        if nv.len() != 0 {
+            let doc = el.element().node().owner_document();
+            // SAFETY: the element's own Document, and the view is live here.
+            want_ns = unsafe { HtmlDoc::from_raw(doc) }
+                .map_or(NS_UNDEF, |d| d.intern_ns(unsafe { nv.bytes() }));
+        }
+    }
+
+    // SAFETY: the view is the caller's, live for this call.
+    let found = el.element().find_attr_ns(want_ns, unsafe { lv.bytes() });
+    if let Some(attr) = found {
+        el.attr_remove(attr);
+        invalidate_indexes(this.document);
+    }
+    Ok(ruby.qnil().as_value())
+}
+
+/// `element.name = new_name` -> new_name.
+pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let Some(el) = edit(&this)?.element_mut() else {
+        return Err(err("name= is only supported on elements"));
+    };
+    let nv = ruby_verified_text(rb_name, c"element name")?;
+
+    // SAFETY: the element's own Document, and the view is live for this call.
+    let scratch = unsafe { ScratchElement::create(el.element().node().owner_document(), nv.bytes()) };
+    let Some(scratch) = scratch else {
+        return Err(err("failed to rename element"));
+    };
+    scratch.rename(el);
+    invalidate_indexes(this.document);
+    Ok(rb_name)
+}
+
+/// `node.content = text` -> text.
+pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
+    let node = edit(&this)?;
+    let tv = ruby_verified_data(rb_text, c"node content")?;
+    // SAFETY: the view is the caller's, live for this call.
+    if !node.set_text_content(unsafe { tv.bytes() }) {
+        return Err(err("failed to set node content"));
+    }
+    invalidate_indexes(this.document);
+    Ok(rb_text)
+}
+
+/// `element.delete(name)` -> self.
+pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let rb_self = this.value;
+    let Some(el) = edit(&this)?.element_mut() else {
+        return Ok(rb_self);
+    };
+    let nv = ruby_verified_text(rb_name, c"attribute name")?;
+    // SAFETY: the view is the caller's, live for this call.
+    unsafe { el.remove_attribute(nv.bytes()) };
+    invalidate_indexes(this.document);
+    Ok(rb_self)
+}
+
+/// Parse `rb_html` as a fragment in the context of `context_el` and splice the
+/// imported nodes via `emit`.
+unsafe fn parse_fragment_into(
+    context_el: RawNode,
+    rb_html: Value,
+    doc: RawDoc,
+    emit: Emit,
+) -> Result<(), Error> {
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = crate::bridge::ruby::string_of(rb_html)?.as_value();
+    let frag = run_fragment_parser(html.as_raw(), &FragmentContext::Element(context_el))?;
+
+    /* The fragment was built in a TRANSIENT document that destroying the parser
+     * does NOT free. Owning it here frees it however this returns. */
+    let imported = import_transient_fragment_children(doc, frag, &emit);
+    let _anchor = html;
+
+    if !imported {
+        return Err(err("failed to import a fragment child"));
+    }
+    Ok(())
+}
+
+/// `element.inner_html = html` -> html.
+pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+    let node = edit(&this)?;
+    if node.node().node_type() != TYPE_ELEMENT {
+        return Err(err("inner_html= requires an element"));
+    }
+
+    /* Detach the existing children; the arena reclaims them at document
+     * destroy. */
+    while let Some(c) = node.first_child() {
+        c.detach();
+    }
+
+    // SAFETY: `node` and its document are live for this call.
+    unsafe {
+        parse_fragment_into(
+            RawNode::from(node.node()),
+            rb_html,
+            node.node().owner_document_handle(),
+            Emit::Append(RawNode::from(node.node())),
+        )?;
+    }
+    invalidate_indexes(this.document);
+    Ok(rb_html)
+}
+
+/// `node.outer_html = html` -> html.
+pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+    let node = edit(&this)?;
+    let parent = node.parent();
+    if parent.is_none_or(|p| p.node().node_type() != TYPE_ELEMENT) {
+        return Err(err("outer_html= requires a node with a parent element"));
+    }
+    let parent = parent.expect("checked just above");
+
+    // SAFETY: `parent` and `node` are live nodes of this document.
+    unsafe {
+        parse_fragment_into(
+            RawNode::from(parent.node()),
+            rb_html,
+            node.node().owner_document_handle(),
+            Emit::Before(RawNode::from(node.node())),
+        )?;
+    }
+    node.detach();
+    invalidate_indexes(this.document);
+    Ok(rb_html)
+}
+
+/* ------------------------------------------------------------------ *
+ * node creation (Document)                                           *
+ * ------------------------------------------------------------------ */
+
+fn owning_doc(rb_self: &Value) -> Result<HtmlDoc<'_>, Error> {
+    let doc = html_doc_unwrap(*rb_self)?;
+    // SAFETY: a live HTML Document, kept alive by `rb_self` for this call.
+    Ok(unsafe { doc.as_doc() })
+}
+
+/// `Document#create_element(name)` -> Element.
+pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
+    let doc = owning_doc(&rb_self)?;
+    let nv = ruby_verified_text(rb_name, c"element name")?;
+    // SAFETY: the view is the caller's, live for this call.
+    let Some(el) = doc.create_element(unsafe { nv.bytes() }) else {
+        return Err(err("failed to create element"));
+    };
+    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
+    Ok(wrap(RawNode::from(el), rb_self))
+}
+
+/// `Document#create_text_node(content)` -> Text.
+pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
+    let doc = owning_doc(&rb_self)?;
+    let tv = ruby_verified_data(rb_text, c"text content")?;
+    // SAFETY: the view is the caller's, live for this call.
+    let Some(t) = doc.create_text(unsafe { tv.bytes() }) else {
+        return Err(err("failed to create text node"));
+    };
+    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
+    Ok(wrap(RawNode::from(t), rb_self))
+}
+
+/// `Document#create_comment(content)` -> Comment.
+pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
+    let doc = owning_doc(&rb_self)?;
+    let tv = ruby_verified_data(rb_text, c"comment content")?;
+    // SAFETY: the view is the caller's, live for this call.
+    let Some(c) = doc.create_comment(unsafe { tv.bytes() }) else {
+        return Err(err("failed to create comment"));
+    };
+    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
+    Ok(wrap(RawNode::from(c), rb_self))
+}
+
+/// `Document#create_processing_instruction(target, data)` -> PI.
+pub fn create_pi(
+    _ruby: &Ruby,
+    rb_self: Value,
+    rb_target: Value,
+    rb_data: Value,
+) -> Result<Value, Error> {
+    let doc = owning_doc(&rb_self)?;
+    let tv = ruby_verified_text(rb_target, c"processing instruction target")?;
+    let dv = ruby_verified_text(rb_data, c"processing instruction data")?;
+    // SAFETY: both views are the caller's, live for this call.
+    let Some(pi) = doc.create_pi(unsafe { tv.bytes() }, unsafe { dv.bytes() }) else {
+        return Err(err("failed to create processing instruction"));
+    };
+    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
+    Ok(wrap(RawNode::from(pi), rb_self))
+}
+
+/// `Document#create_document_type(name, public_id = "", system_id = "")`.
+pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let args =
+        magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
+            args,
+        )?;
+    let (rb_name,) = args.required;
+    let (rb_pub, rb_sys_) = args.optional;
+
+    let doc = owning_doc(&rb_self)?;
+    let nv = ruby_verified_text(rb_name, c"doctype name")?;
+    // SAFETY: the view is the caller's, live for this call.
+    let name = unsafe { nv.bytes() };
+    if !HtmlDoc::valid_doctype_name(name) {
+        /* The caller's error, not Lexbor's, so the exception class is picked
+         * here - the check itself is the DOM layer's. */
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            "invalid doctype name",
+        ));
+    }
+
+    let verified =
+        |v: Option<Value>, what: &'static core::ffi::CStr| match v.filter(|v| !v.is_nil()) {
+            Some(v) => ruby_verified_text(v, what).map(Some),
+            None => Ok(None),
+        };
+    let pv = verified(rb_pub, c"doctype public id")?;
+    let sv = verified(rb_sys_, c"doctype system id")?;
+    // SAFETY: both views are the caller's, live for this call.
+    let (pub_id, sys_id) = unsafe {
+        (
+            pv.as_ref().map(|v| v.bytes()),
+            sv.as_ref().map(|v| v.bytes()),
+        )
+    };
+
+    let Some(dt) = doc.create_doctype(name, pub_id, sys_id) else {
+        return Err(err("failed to create doctype"));
+    };
+    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
+    Ok(wrap(RawNode::from(dt), rb_self))
+}
+
+/// `Document#create_document_fragment` -> an EMPTY DocumentFragment.
+pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
+    let doc = owning_doc(&rb_self)?;
+    let Some(f) = doc.create_fragment() else {
+        return Err(err("failed to create document fragment"));
+    };
+    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
+    Ok(wrap(RawNode::from(f), rb_self))
+}
