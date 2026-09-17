@@ -299,6 +299,83 @@ pub struct HtmlDoc<'doc> {
     _doc: PhantomData<&'doc LxbDoc>,
 }
 
+/// A node pointer crossing the Ruby-glue boundary.
+///
+/// The glue holds and passes nodes as this. The field is private, so no module
+/// outside `lexbor` names `lxb_dom_node_t` or reads its layout; where a field
+/// must be read, [`as_node`](RawNode::as_node) lends the typed [`HtmlNode`].
+/// It carries no `'doc`, because the Ruby wrapper owning the pointer is what
+/// keeps the document alive, not a Rust borrow.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct RawNode(NonNull<LxbNode>);
+
+impl RawNode {
+    /// `None` for null.
+    #[inline]
+    pub fn from_ptr(p: *mut core::ffi::c_void) -> Option<Self> {
+        NonNull::new(p as *mut LxbNode).map(RawNode)
+    }
+
+    /// The pointer, for storing in a Ruby wrapper's TypedData.
+    #[inline]
+    pub fn as_ptr(self) -> *mut core::ffi::c_void {
+        self.0.as_ptr().cast()
+    }
+
+    /// The typed node, lent for `'doc`.
+    ///
+    /// # Safety
+    /// The node must be live and its document must outlive `'doc` without being
+    /// restructured while `'doc` lasts - the [`HtmlNode`] contract.
+    #[inline]
+    pub unsafe fn as_node<'doc>(self) -> HtmlNode<'doc> {
+        HtmlNode::from_raw(self.0.as_ptr()).expect("non-null by construction")
+    }
+}
+
+impl<'doc> From<HtmlNode<'doc>> for RawNode {
+    #[inline]
+    fn from(n: HtmlNode<'doc>) -> Self {
+        RawNode(n.raw)
+    }
+}
+
+/// A document pointer crossing the Ruby-glue boundary. See [`RawNode`].
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct RawDoc(NonNull<LxbDoc>);
+
+impl RawDoc {
+    /// `None` for null.
+    #[inline]
+    pub fn from_ptr(p: *mut core::ffi::c_void) -> Option<Self> {
+        NonNull::new(p as *mut LxbDoc).map(RawDoc)
+    }
+
+    /// The pointer, for storing in a Ruby wrapper's TypedData.
+    #[inline]
+    pub fn as_ptr(self) -> *mut core::ffi::c_void {
+        self.0.as_ptr().cast()
+    }
+
+    /// The typed document, lent for `'doc`.
+    ///
+    /// # Safety
+    /// As [`RawNode::as_node`].
+    #[inline]
+    pub unsafe fn as_doc<'doc>(self) -> HtmlDoc<'doc> {
+        HtmlDoc::from_raw(self.0.as_ptr()).expect("non-null by construction")
+    }
+}
+
+impl<'doc> From<HtmlDoc<'doc>> for RawDoc {
+    #[inline]
+    fn from(d: HtmlDoc<'doc>) -> Self {
+        RawDoc(d.raw)
+    }
+}
+
 impl<'doc> HtmlDoc<'doc> {
     /// # Safety
     /// `raw` must be null or a live document that outlives `'doc` and is not
