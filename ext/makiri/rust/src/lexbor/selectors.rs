@@ -50,8 +50,9 @@ use crate::bridge::ruby::VALUE;
 use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
 use crate::glue::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_bytes_view, verify_text,
-    wrap_html_node, LxbNode, LXB_STATUS_OK,
+    wrap_html_node,
 };
+use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 use crate::lexbor::adapter::html::RawNode;
 use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
 
@@ -98,7 +99,7 @@ pub use crate::lexbor_abi::{
 };
 
 /// The parser is declared in `glue::abi` - see the note there.
-use crate::glue::abi::{
+use crate::lexbor::ffi::{
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
     CssParser,
 };

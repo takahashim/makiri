@@ -31,7 +31,7 @@ pub use crate::glue::xml_node::mutate::xml_mut_check;
 pub use crate::xml::api::xml_doc_memsize;
 
 /// The doctype node type, generated (see lexbor_abi).
-const NODE_TYPE_DOCUMENT_TYPE: u32 = super::abi::LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
+const NODE_TYPE_DOCUMENT_TYPE: u32 = crate::lexbor::adapter::html::TYPE_DOCTYPE;
 
 /* ---- Document.parse ---- */
 

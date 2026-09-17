@@ -6,7 +6,7 @@
 //! types, so a ported feature reads both from C. As more of the glue moves,
 //! entries leave this file rather than accumulate in it.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 
 use magnus::{prelude::*, ExceptionClass, RModule, Value};
@@ -17,34 +17,6 @@ use crate::init::{RbConst, EXC_ERROR, MOD_HTML_NODE_METHODS};
 /// ([`crate::bridge::lexbor`]), beside the TypedData that frees and marks it.
 pub use crate::bridge::lexbor::NodeData;
 
-/// An `lxb_dom_node_t`, opaque.
-///
-/// The glue never reads Lexbor's layout: every field it needs has an exported
-/// accessor (`lxb_dom_node_type_noi` and the rest). That keeps this layer out of
-/// the pinned-dependency layout problem that the XPath HTML backend has to
-/// cross-check at load - there is nothing here to get wrong.
-/// Now that `build.rs` generates Lexbor's layout, this IS that layout rather
-/// than a second, opaque view of it. Modules that only pass the pointer along
-/// are unaffected; the ones that read a field (glue::doc) get the real one, and
-/// there is only one definition to be wrong.
-pub type LxbNode = crate::lexbor::ffi::LxbNode;
-/// `lxb_dom_document_t`. Shared vocabulary: both the Document wrapper and the
-/// fragment pipeline pass it around.
-pub type LxbDoc = crate::lexbor::ffi::LxbDoc;
-
-/* Every Lexbor constant below comes from the generated bindings, none is
- * transcribed. The names are re-exported here rather than used through
- * `lexbor::ffi` at the call sites only because these particular ones are
- * spelled this way throughout the glue; the raw definitions stay there. */
-pub use crate::lexbor::ffi::{LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK};
-
-/* The node types the glue still names in Lexbor's own spelling. The values come
- * from `dom_adapter::html`, which is the one place that reads them; the
- * FRAGMENT one went with serialize.rs's last direct read. */
-pub use crate::lexbor::adapter::html::TYPE_DOCTYPE as LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
-pub use crate::lexbor::adapter::html::TYPE_ELEMENT as LXB_DOM_NODE_TYPE_ELEMENT;
-
-pub use crate::lexbor::ffi::LXB_HTML_SERIALIZE_OPT_UNDEF;
 
 /* ------------------------------------------------------------------ *
  * The Ruby-string views, declared HERE, once                         *
@@ -85,33 +57,12 @@ pub use crate::bridge::string::ruby_str_known_valid_utf8;
 pub use crate::bridge::string::ruby_to_utf8;
 pub use crate::bridge::string::ruby_verified_text;
 pub use crate::bridge::string::verify_text;
-pub use crate::lexbor::adapter::post_parse::lxb_document_bytes;
 pub use crate::bridge::lexbor::{doc_parsed, html_doc_unwrap, keepalive_document, node_raw};
 pub use crate::bridge::lexbor::parsed_xml_doc;
 pub use crate::bridge::lexbor::{html_node_unwrap, wrap_html_node};
 pub use crate::bridge::node_set::{node_set_new, node_set_push, node_set_with_fill};
 pub use crate::glue::xml_node::wrap_xml_node;
 pub use crate::glue::xml_node::xml_node_unwrap;
-
-/// Lexbor's `lxb_inline` accessors, through the `_noi` twins it exports. They
-/// live in `lexbor_abi` - the one place in the crate that hand-declares a Lexbor
-/// function, because bindgen cannot generate an inline one - and are re-exported
-/// here so this module stays the single import for the glue layer.
-pub use crate::lexbor::ffi::{
-    lxb_dom_attr_value_noi, lxb_dom_document_destroy_text_noi, lxb_dom_document_type_public_id_noi,
-    lxb_dom_document_type_system_id_noi, lxb_dom_element_first_attribute_noi,
-    lxb_dom_element_next_attribute_noi, lxb_dom_node_type_noi,
-    lxb_dom_processing_instruction_target_noi,
-};
-
-/// The generated Lexbor readers the glue calls, likewise re-exported so a glue
-/// file imports one module.
-pub use crate::lexbor::ffi::{
-    lxb_dom_attr_local_name, lxb_dom_attr_qualified_name, lxb_dom_document_root,
-    lxb_dom_element_get_attribute, lxb_dom_element_has_attribute, lxb_dom_element_local_name,
-    lxb_dom_element_qualified_name, lxb_dom_element_tag_name, lxb_dom_node_name,
-    lxb_dom_node_text_content, lxb_ns_by_id, LxbAttr, LxbElement,
-};
 
 /// The `Makiri::HTML::NodeMethods` module every HTML node leaf includes.
 pub fn html_node_methods() -> RModule {
@@ -130,25 +81,6 @@ pub fn error_class() -> ExceptionClass {
     EXC_ERROR.exception()
 }
 
-/* ------------------------------------------------------------------ *
- * Lexbor's CSS parser, declared once                                 *
- * ------------------------------------------------------------------ */
-
-/// Opaque: neither user reads a field of it.
-///
-/// Three users need this parser - the selector engine, the stylesheet binding,
-/// and the CSS lowering, which is Ruby-free and so needs it without magnus. The
-/// declaration lives in `lexbor_abi` and all three re-export it from there.
-/// Giving one C symbol two Rust types is the failure this file exists to
-/// prevent; it has happened twice (wrap_xml_node, and again while the
-/// stylesheet binding was written). Both escaped until an "everything" build
-/// compiled the two definitions together - which every build now is, so a
-/// second definition is a build error rather than something a feature
-/// combination has to go looking for.
-pub use crate::lexbor::ffi::{
-    lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
-    CssParser,
-};
 
 /* ------------------------------------------------------------------ *
  * rb_data_type_t in a static                                         *

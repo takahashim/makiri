@@ -17,7 +17,11 @@ use core::ffi::c_void;
 
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
-use crate::glue::abi::*;
+use crate::glue::abi::{error_class, html_node_methods, html_node_unwrap};
+use crate::lexbor::adapter::post_parse::lxb_document_bytes;
+use crate::lexbor::ffi::{
+    LxbNode, LXB_HTML_SERIALIZE_OPT_UNDEF, LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK,
+};
 use crate::cbuf::{buf_append, Buf};
 use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 
