@@ -35,7 +35,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 
 use magnus::{function, Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 /* ------------------------------------------------------------------ *
  * the classes and modules other modules read                         *

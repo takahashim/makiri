@@ -27,7 +27,7 @@ use core::ffi::c_int;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RString, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use super::abi::{
     error_class, html_node_unwrap, keepalive_document, ruby_copy_bytes, ruby_str_known_valid_utf8,

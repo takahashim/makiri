@@ -45,7 +45,7 @@ use std::collections::HashMap;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use crate::glue::abi::{
     error_class, html_node_unwrap, keepalive_document, node_set_new, node_set_push,
@@ -513,7 +513,7 @@ unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
             break;
         }
     }
-    rb_sys::Qnil as VALUE
+    crate::bridge::ruby::nil().as_raw()
 }
 
 /// `Node#css`: every matching descendant, in document order.

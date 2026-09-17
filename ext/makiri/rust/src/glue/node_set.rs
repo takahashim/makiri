@@ -37,7 +37,7 @@ use magnus::{
     gc::Marker, method, prelude::*, DataTypeFunctions, Error, RArray, RClass, Ruby, TypedData,
     Value,
 };
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use super::abi::{
     error_class, is_kind_of, keepalive_document, node_raw, typed_data_unprotected, wrap_html_node,

@@ -25,8 +25,8 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/gvl.rs" => 3,
-  "bridge/ruby.rs" => 18,
-  "bridge/string.rs" => 22,
+  "bridge/ruby.rs" => 23,
+  "bridge/string.rs" => 23,
   "bridge/typed.rs" => 8,
   "bridge/xml_decode.rs" => 7,
   "cbuf.rs" => 15,
@@ -62,7 +62,7 @@ UNSAFE_ISLANDS = {
   "glue/xml_node/ns.rs" => 4,
   "glue/xml_node/read.rs" => 21,
   "glue/xml_node/serialize.rs" => 3,
-  "glue/xpath.rs" => 24,
+  "glue/xpath.rs" => 22,
   "init.rs" => 6,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 6,
@@ -104,32 +104,38 @@ UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
 # an explicit review of its synchronisation proof.
 STATIC_MUT_COUNTS = {}.freeze
 
-# Ruby's C API outside `bridge/` is a ratchet. The bridge is where raw VALUEs,
-# typed data and the C calls that raise are meant to live (glue/mod.rs): a raise
-# there becomes an `Err` before it can longjmp past a Rust destructor. The glue
-# still calls `rb_sys::` directly for method registration, constants and the
-# per-node hot paths that must not pay for magnus's `protect`, so each file's
-# count is pinned here. A new direct call - above all a new raising one - fails
-# until it moves behind the bridge or the count is raised in review; removing
-# calls means lowering the count. `magnus::rb_sys` is magnus's own module and is
-# not counted, and neither are comment lines.
-RB_SYS_COUNTS = {
-  "glue/abi.rs" => 1,
-  "lexbor/selectors.rs" => 2,
-  "glue/doc.rs" => 1,
-  "lexbor/fragment.rs" => 1,
-  "glue/html_node/mod.rs" => 1,
-  "glue/node.rs" => 1,
-  "glue/node_set.rs" => 1,
-  "glue/xml.rs" => 1,
-  "glue/xml_node/mod.rs" => 1,
-  "glue/xml_node/serialize.rs" => 2,
-  "glue/xpath.rs" => 17,
-  "init.rs" => 1,
-}.freeze
+# Ruby's C API outside `bridge/` is forbidden: the bridge is the only owner of
+# raw VALUEs, typed data and the C calls that raise (glue/mod.rs), so a raise
+# there becomes an `Err` before it can longjmp past a Rust destructor. This was
+# a pinned count while the glue still reached across; the port is done, so the
+# table is empty and any `rb_sys::` above the bridge fails. `magnus::rb_sys` is
+# magnus's own module (a safe wrapper) and is not counted, and neither are
+# comment lines.
+RB_SYS_COUNTS = {}.freeze
 
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/
 RAISING_COUNTS = {}.freeze
+
+# `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
+# boundary: a `VALUE` the glue already holds, turned back into a `Value`. It is
+# a ratchet, not yet zero - the fix is for the bridge producers (`wrap_zeroed`,
+# `wrap_html_node`/`wrap_xml_node`, the String minting) to hand back a `Value`
+# in the first place, and each site that goes removes a row here.
+VALUE_FROM_RAW = /\bValue::from_raw\b/
+VALUE_FROM_RAW_COUNTS = {
+  "glue/doc.rs" => 7,
+  "glue/xml.rs" => 6,
+  "glue/xpath.rs" => 5,
+  "glue/xml_node/mod.rs" => 3,
+  "init.rs" => 2,
+  "glue/html_node/read.rs" => 2,
+  "glue/html_node/mod.rs" => 1,
+  "glue/node.rs" => 1,
+  "glue/node_set.rs" => 1,
+  "glue/xml_node/serialize.rs" => 1,
+  "lexbor/fragment.rs" => 1,
+  "lexbor/selectors.rs" => 1,
+}.freeze
 
 # Lexbor ABI names outside `lexbor/` are a ratchet. `lexbor` is the sole owner
 # of the vendored C ABI (notes/rust_third_architecture.ja.md): the bindgen types
@@ -273,6 +279,18 @@ if raising != RAISING_COUNTS
   errors << "raising C API outside bridge/ changed: #{table_diff(RAISING_COUNTS, raising)}"
 end
 
+value_from_raw = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative.start_with?("bridge/")
+
+  count = comments_removed(File.binread(path)).scan(VALUE_FROM_RAW).length
+  value_from_raw[relative] = count unless count.zero?
+end
+if value_from_raw != VALUE_FROM_RAW_COUNTS
+  errors << "Value::from_raw outside bridge/ changed: #{table_diff(VALUE_FROM_RAW_COUNTS, value_from_raw)}"
+end
+
 lexbor_abi = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
@@ -295,4 +313,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
-     "#{lexbor_abi.values.sum} Lexbor ABI names outside lexbor/"
+     "#{value_from_raw.values.sum} Value::from_raw and " \
+     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer"

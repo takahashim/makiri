@@ -32,7 +32,7 @@
 
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_void};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -40,7 +40,7 @@ use magnus::gc::Marker;
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Backend, Context, ContextError, Resolver};
@@ -230,8 +230,8 @@ fn kw_symbols() -> (VALUE, VALUE, VALUE) {
     *SYMS.get_or_init(|| {
         // SAFETY: every caller is a Ruby method entered with the GVL. Symbols
         // are interned once and are immortal for the Ruby VM's lifetime.
-        let sym = |s: &core::ffi::CStr| unsafe { rb_sys::rb_id2sym(rb_sys::rb_intern(s.as_ptr())) };
-        (sym(c"namespace_matching"), sym(c"strict"), sym(c"lax"))
+        let sym = |s: &str| crate::bridge::ruby::symbol(s).as_raw();
+        (sym("namespace_matching"), sym("strict"), sym("lax"))
     })
 }
 
@@ -429,9 +429,8 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
             set
         }
         ValRef::String(t) => ruby_str_from_utf8(t.as_slice()),
-        ValRef::Number(d) => rb_sys::rb_float_new(d),
-        ValRef::Boolean(true) => rb_sys::Qtrue as VALUE,
-        ValRef::Boolean(false) => rb_sys::Qfalse as VALUE,
+        ValRef::Number(d) => crate::bridge::ruby::float(d).as_raw(),
+        ValRef::Boolean(b) => crate::bridge::ruby::boolean(b).as_raw(),
     })
 }
 
@@ -519,8 +518,8 @@ unsafe fn ruby_to_out(
     err: &mut ErrBuf,
 ) -> bool {
     let rv = Value::from_raw(r);
-    if r == rb_sys::Qtrue as VALUE || r == rb_sys::Qfalse as VALUE {
-        *out = Val::boolean(r == rb_sys::Qtrue as VALUE);
+    if let Some(b) = crate::bridge::ruby::bool_value(r) {
+        *out = Val::boolean(b);
         return true;
     }
     let ruby = Ruby::get_unchecked();
@@ -596,7 +595,7 @@ fn is_numeric(ruby: &Ruby, v: Value) -> bool {
 struct HandlerCall {
     bridge: *const Bridge,
     budget: *mut Budget,
-    method: rb_sys::ID,
+    method: crate::bridge::ruby::ID,
     args: *const Val,
     nargs: usize,
     out: *mut Val,
@@ -616,18 +615,13 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
                 /* Only the size cap or a busy set refuses a push. */
                 c.ok = false;
                 c.err.set("handler argument node-set could not be built");
-                return rb_sys::Qnil as VALUE;
+                return crate::bridge::ruby::nil().as_raw();
             }
         }
     }
-    let r = rb_sys::rb_funcallv(
-        (*c.bridge).handler,
-        c.method,
-        c.nargs as c_int,
-        c.argv.as_ptr(),
-    );
+    let r = crate::bridge::ruby::funcallv((*c.bridge).handler, c.method, &c.argv[..c.nargs]);
     c.ok = ruby_to_out(&mut *c.budget, (*c.bridge).document, r, c.out, &mut c.err);
-    rb_sys::Qnil as VALUE
+    crate::bridge::ruby::nil().as_raw()
 }
 
 /// The engine's resolver hook: the Ruby handler's method for the call, or
@@ -640,7 +634,7 @@ unsafe fn handler_resolver(
 ) -> Result<Option<Val>, Reported> {
     let err = budget.sink();
     let budget: *mut Budget = budget;
-    if bridge.handler == rb_sys::Qnil as VALUE {
+    if bridge.handler == crate::bridge::ruby::nil().as_raw() {
         return Ok(None);
     }
 
@@ -655,7 +649,7 @@ unsafe fn handler_resolver(
         *dst = if b == b'-' { b'_' } else { b };
     }
 
-    let method = rb_sys::rb_intern(name.as_ptr() as *const c_char);
+    let method = crate::bridge::ruby::intern(&name);
     /* `respond_to?` - and `respond_to_missing?` behind it - is the handler's own
      * Ruby code, so it is asked under protect: a raise there fails this call like
      * any handler raise, instead of unwinding past the evaluation's guards. */
@@ -697,7 +691,7 @@ unsafe fn handler_resolver(
         out: &mut out,
         ok: true,
         err: ErrBuf::new(),
-        argv: [rb_sys::Qnil as VALUE; HANDLER_MAX_ARGS],
+        argv: [crate::bridge::ruby::nil().as_raw(); HANDLER_MAX_ARGS],
     };
 
     /* `out` owns whatever the handler produced, so every failure below frees
@@ -900,7 +894,7 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
 /// magnus hands a method a `&XPathCtx`, not the object; the receiver is
 /// recovered from the frame for the `self`-returning registrars.
 fn rb_self_value() -> Value {
-    unsafe { Value::from_raw(rb_sys::rb_current_receiver()) }
+    crate::bridge::ruby::current_receiver().expect("a method invocation has a receiver")
 }
 
 fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Result<Value, Error> {

@@ -21,7 +21,7 @@ use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, RClass, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use self::abi::*;
 use super::abi::{doc_parsed, parsed_xml_doc, NodeData};

@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 use magnus::{prelude::*, ExceptionClass, RModule, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use crate::init::{RbConst, EXC_ERROR, MOD_HTML_NODE_METHODS};
 

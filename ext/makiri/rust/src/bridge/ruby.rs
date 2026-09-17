@@ -10,11 +10,15 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_long, c_void};
+use core::ffi::{c_int, c_long, c_void};
 
 use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, RString, Ruby, Value};
-use rb_sys::{rb_data_type_t, VALUE};
+use rb_sys::rb_data_type_t;
+
+/// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
+/// method `ID` without reaching into `rb_sys` itself.
+pub use rb_sys::{ID, VALUE};
 
 /// A `rb_data_type_t` that can live in a `static`.
 ///
@@ -263,6 +267,47 @@ pub fn current_receiver() -> Result<Value, Error> {
 #[inline]
 pub fn same_value(a: Value, b: Value) -> bool {
     a.as_raw() == b.as_raw()
+}
+
+/// A Symbol, interned. Symbols are immortal, so a cached one stays valid.
+#[inline]
+pub fn symbol(name: &str) -> Value {
+    // SAFETY: as `nil`.
+    unsafe { Ruby::get_unchecked() }.to_symbol(name).as_value()
+}
+
+/// A method `ID`, interned from a NUL-terminated name.
+#[inline]
+pub fn intern(name: &[u8]) -> ID {
+    debug_assert_eq!(name.last(), Some(&0), "intern needs a NUL-terminated name");
+    // SAFETY: `name` is NUL-terminated as asserted; interning does not raise.
+    unsafe { rb_sys::rb_intern(name.as_ptr() as *const core::ffi::c_char) }
+}
+
+/// `rb_funcallv`: call `method` on `recv`. Can raise, so the caller runs it
+/// under [`protect_value`].
+///
+/// # Safety
+/// Under the GVL, and no Rust destructor may be live when it raises.
+#[inline]
+pub unsafe fn funcallv(recv: VALUE, method: ID, args: &[VALUE]) -> VALUE {
+    // SAFETY: the caller's contract; `args` is a live slice.
+    unsafe { rb_sys::rb_funcallv(recv, method, args.len() as c_int, args.as_ptr()) }
+}
+
+/// `true`/`false` for Ruby's two boolean singletons, and `None` for anything
+/// else (which a caller treats as neither).
+#[inline]
+pub fn bool_value(v: VALUE) -> Option<bool> {
+    // SAFETY: as `nil`.
+    let ruby = unsafe { Ruby::get_unchecked() };
+    if v == ruby.qtrue().as_raw() {
+        Some(true)
+    } else if v == ruby.qfalse().as_raw() {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// Run `f` under `rb_protect`, so a raise inside it comes back as `Err`.

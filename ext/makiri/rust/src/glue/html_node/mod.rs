@@ -30,7 +30,7 @@ pub mod mutate;
 
 use magnus::rb_sys::FromRawValue;
 use magnus::{method, prelude::*, RClass, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use super::abi::{html_doc_unwrap, html_node_methods, is_kind_of, NodeData};
 /* Only the mutation half registers on the Document class. */

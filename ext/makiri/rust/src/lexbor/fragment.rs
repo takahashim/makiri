@@ -20,7 +20,7 @@ use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use crate::falloc::VecPush;
 

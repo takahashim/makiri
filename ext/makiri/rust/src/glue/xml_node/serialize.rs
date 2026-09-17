@@ -75,10 +75,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
         let mut str = utf8(ruby, buf.as_slice()).as_value();
         drop(buf);
 
-        if !to_enc.is_null()
-            && to_enc != rb_sys::rb_utf8_encoding()
-            && to_enc != rb_sys::rb_usascii_encoding()
-        {
+        if !to_enc.is_null() && !crate::bridge::string::is_utf8_or_usascii(to_enc) {
             str = Value::from_raw(crate::bridge::string::str_encode_charref(
                 str.as_raw(),
                 to_enc,

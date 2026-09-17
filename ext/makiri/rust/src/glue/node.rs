@@ -37,7 +37,7 @@ use core::ffi::{c_int, c_void};
 
 use magnus::rb_sys::FromRawValue;
 use magnus::{Integer, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
 

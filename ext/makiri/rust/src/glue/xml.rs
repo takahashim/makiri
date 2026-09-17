@@ -29,7 +29,7 @@ use core::ffi::c_void;
 
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
-use rb_sys::VALUE;
+use crate::bridge::ruby::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath::ast::Ast;
