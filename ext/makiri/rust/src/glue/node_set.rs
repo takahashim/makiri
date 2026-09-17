@@ -709,7 +709,7 @@ pub unsafe extern "C" fn init_node_set() {
     let klass = node_set_class();
 
     /* Nodes come only from C; `.new` seeds through the factory below. */
-    rb_sys::rb_undef_alloc_func(CLASS_NODE_SET.raw());
+    CLASS_NODE_SET.class().undef_default_alloc_func();
     klass
         .define_singleton_method("new", magnus::function!(s_new, -1))
         .expect("NodeSet.new");

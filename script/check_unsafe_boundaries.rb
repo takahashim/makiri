@@ -63,7 +63,7 @@ UNSAFE_ISLANDS = {
   "glue/xml_node/read.rs" => 21,
   "glue/xml_node/serialize.rs" => 3,
   "glue/xpath.rs" => 24,
-  "init.rs" => 7,
+  "init.rs" => 6,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 6,
   "text.rs" => 4,
@@ -120,12 +120,12 @@ RB_SYS_COUNTS = {
   "lexbor/fragment.rs" => 1,
   "glue/html_node/mod.rs" => 1,
   "glue/node.rs" => 1,
-  "glue/node_set.rs" => 2,
-  "glue/xml.rs" => 2,
+  "glue/node_set.rs" => 1,
+  "glue/xml.rs" => 1,
   "glue/xml_node/mod.rs" => 1,
   "glue/xml_node/serialize.rs" => 2,
   "glue/xpath.rs" => 17,
-  "init.rs" => 4,
+  "init.rs" => 1,
 }.freeze
 
 RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata)\b/

@@ -664,7 +664,7 @@ pub unsafe extern "C" fn init_xml() {
     let doc = m_xml
         .define_class("Document", base)
         .expect("Makiri::XML::Document");
-    rb_sys::rb_undef_alloc_func(doc.as_raw()); /* created only from C, never .new */
+    doc.undef_default_alloc_func(); /* created only from C, never .new */
     let node_methods =
         magnus::RModule::from_value(MOD_XML_NODE_METHODS.value()).expect("NodeMethods");
     doc.include_module(node_methods)

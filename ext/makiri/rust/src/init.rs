@@ -34,7 +34,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 
-use magnus::{function, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
+use magnus::{function, Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value};
 use rb_sys::VALUE;
 
 /* ------------------------------------------------------------------ *
@@ -179,10 +179,11 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
 ///
 /// The two go together: a leaf carries the readers because it wraps a live
 /// node, and loses `.new` for the same reason.
-unsafe fn seal_leaves(methods: VALUE, leaves: &[VALUE]) {
+fn seal_leaves(methods: RModule, leaves: &[RClass]) {
     for &leaf in leaves {
-        rb_sys::rb_include_module(leaf, methods);
-        rb_sys::rb_undef_alloc_func(leaf);
+        leaf.include_module(methods)
+            .expect("including the reader module");
+        leaf.undef_default_alloc_func();
     }
 }
 
@@ -298,32 +299,32 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         EXC_XML_LIMIT_EXCEEDED.set(xml_limit.as_raw());
 
         seal_leaves(
-            MOD_HTML_NODE_METHODS.raw(),
+            MOD_HTML_NODE_METHODS.module(),
             &[
-                CLASS_HTML_NODE.raw(),
-                CLASS_HTML_DOCUMENT.raw(),
-                CLASS_HTML_ELEMENT.raw(),
-                CLASS_HTML_ATTR.raw(),
-                CLASS_HTML_TEXT.raw(),
-                CLASS_HTML_COMMENT.raw(),
-                CLASS_HTML_CDATA_SECTION.raw(),
-                CLASS_HTML_PROCESSING_INSTRUCTION.raw(),
-                CLASS_HTML_DOCUMENT_TYPE.raw(),
-                CLASS_HTML_DOCUMENT_FRAGMENT.raw(),
+                CLASS_HTML_NODE.class(),
+                CLASS_HTML_DOCUMENT.class(),
+                CLASS_HTML_ELEMENT.class(),
+                CLASS_HTML_ATTR.class(),
+                CLASS_HTML_TEXT.class(),
+                CLASS_HTML_COMMENT.class(),
+                CLASS_HTML_CDATA_SECTION.class(),
+                CLASS_HTML_PROCESSING_INSTRUCTION.class(),
+                CLASS_HTML_DOCUMENT_TYPE.class(),
+                CLASS_HTML_DOCUMENT_FRAGMENT.class(),
             ],
         );
         seal_leaves(
-            MOD_XML_NODE_METHODS.raw(),
+            MOD_XML_NODE_METHODS.module(),
             &[
-                CLASS_XML_NODE.raw(),
-                CLASS_XML_ELEMENT.raw(),
-                CLASS_XML_ATTR.raw(),
-                CLASS_XML_TEXT.raw(),
-                CLASS_XML_COMMENT.raw(),
-                CLASS_XML_CDATA_SECTION.raw(),
-                CLASS_XML_PROCESSING_INSTRUCTION.raw(),
-                CLASS_XML_DOCUMENT_TYPE.raw(),
-                CLASS_XML_DOCUMENT_FRAGMENT.raw(),
+                CLASS_XML_NODE.class(),
+                CLASS_XML_ELEMENT.class(),
+                CLASS_XML_ATTR.class(),
+                CLASS_XML_TEXT.class(),
+                CLASS_XML_COMMENT.class(),
+                CLASS_XML_CDATA_SECTION.class(),
+                CLASS_XML_PROCESSING_INSTRUCTION.class(),
+                CLASS_XML_DOCUMENT_TYPE.class(),
+                CLASS_XML_DOCUMENT_FRAGMENT.class(),
             ],
         );
 
@@ -332,20 +333,20 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
          * nothing. XPathContext.new exists, but it is defined by
          * init_xpath and wraps a native context. */
         for base in [
-            CLASS_NODE.raw(),
-            CLASS_DOCUMENT.raw(),
-            element.as_raw(),
-            attr.as_raw(),
-            text.as_raw(),
-            comment.as_raw(),
-            cdata.as_raw(),
-            pi.as_raw(),
-            doctype.as_raw(),
-            CLASS_DOCUMENT_FRAGMENT.raw(),
-            CLASS_NODE_SET.raw(),
-            CLASS_XPATH_CONTEXT.raw(),
+            CLASS_NODE.class(),
+            CLASS_DOCUMENT.class(),
+            element,
+            attr,
+            text,
+            comment,
+            cdata,
+            pi,
+            doctype,
+            CLASS_DOCUMENT_FRAGMENT.class(),
+            CLASS_NODE_SET.class(),
+            CLASS_XPATH_CONTEXT.class(),
         ] {
-            rb_sys::rb_undef_alloc_func(base);
+            base.undef_default_alloc_func();
         }
 
         /* The per-feature registrations, in the order the C called them: each
