@@ -23,14 +23,16 @@ use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
-    CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
+    CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION,
+    CLASS_XML_COMMENT, CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, CLASS_XML_DOCUMENT_TYPE,
+    CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::html::{
     HtmlNode, RawDoc, RawNode, TYPE_ATTRIBUTE, TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE,
     TYPE_DOCUMENT, TYPE_ELEMENT, TYPE_FRAGMENT, TYPE_PI, TYPE_TEXT,
 };
 use crate::lexbor::adapter::post_parse::Parsed;
-use crate::xml::model::Doc as XmlDoc;
+use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
 /* ------------------------------------------------------------------ *
  * the node wrapper                                                   *
@@ -405,4 +407,86 @@ pub fn wrap(node: RawNode, document: Value) -> Value {
 /// The keepalive Document of a node, from the kind-agnostic accessor.
 pub fn node_document(v: Value) -> Result<Value, Error> {
     keepalive_document(v)
+}
+
+/* ------------------------------------------------------------------ *
+ * the XML node front door                                            *
+ * ------------------------------------------------------------------ */
+
+/// Wrap an arena node token into its `Makiri::XML::*` leaf.
+///
+/// An invalid token becomes nil, and the DOCUMENT node maps back onto the Ruby
+/// Document rather than getting a second wrapper, so the arena has exactly one
+/// owner. The token resolves through `document`'s arena, where a stale or
+/// foreign id reads as no node.
+pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
+    let id = NodeId::from_token(node as usize);
+    if id.is_invalid() {
+        return nil();
+    }
+    let xdoc = doc_of(document);
+    /* An HTML Document has no arena: refuse it rather than read through null. */
+    assert!(
+        !xdoc.is_null(),
+        "an XML node wrapped under a Document with no XML arena"
+    );
+    // SAFETY: `xdoc` is a live XML document; the id is read through it.
+    let ty = unsafe { (*xdoc).type_(id) };
+    if ty == Some(NodeType::Document) {
+        return document;
+    }
+    let klass = match ty {
+        Some(NodeType::Element) => CLASS_XML_ELEMENT.raw(),
+        Some(NodeType::Attribute) => CLASS_XML_ATTR.raw(),
+        Some(NodeType::Text) => CLASS_XML_TEXT.raw(),
+        Some(NodeType::CData) => CLASS_XML_CDATA_SECTION.raw(),
+        Some(NodeType::Comment) => CLASS_XML_COMMENT.raw(),
+        Some(NodeType::Pi) => CLASS_XML_PROCESSING_INSTRUCTION.raw(),
+        Some(NodeType::Doctype) => CLASS_XML_DOCUMENT_TYPE.raw(),
+        Some(NodeType::Fragment) => CLASS_XML_DOCUMENT_FRAGMENT.raw(),
+        _ => CLASS_XML_NODE.raw(),
+    };
+
+    /* The Document is stored after the wrap: see `wrap_zeroed`. */
+    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
+    unsafe {
+        value(crate::bridge::ruby::wrap_zeroed::<NodeData>(
+            klass,
+            XML_NODE_TYPE.as_ptr(),
+            |nd| nd.node = node,
+            |nd| nd.document = document.as_raw(),
+        ))
+    }
+}
+
+/// The arena node token behind a wrapper.
+///
+/// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
+/// through the XML TypedData type, which fails with TypeError for an HTML node.
+pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> {
+    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        let parsed = doc_parsed(rb_self)?;
+        // SAFETY: the handle of a live XML Document, and the arena it owns.
+        let node = unsafe { (*parsed_xml_doc(parsed)).doc_node() };
+        return Ok(node.to_token() as *mut core::ffi::c_void);
+    }
+    let nd: &NodeData = typed_data_ref(rb_self, &XML_NODE_TYPE)?;
+    Ok(nd.node)
+}
+
+/// The XML arena behind a Document VALUE.
+pub fn doc_of(document: Value) -> *mut XmlDoc {
+    // SAFETY: `doc_parsed_known` hands back the live handle of that Document.
+    unsafe { parsed_xml_doc(doc_parsed_known(document)) }
+}
+
+/// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
+/// at the type boundary, like [`xml_node_unwrap`].
+pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
+    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        return Ok(rb_self);
+    }
+    let nd: &NodeData = typed_data_ref(rb_self, &XML_NODE_TYPE)?;
+    // SAFETY: `nd.document` is the live Document the wrapper marks.
+    Ok(unsafe { value(nd.document) })
 }

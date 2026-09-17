@@ -248,8 +248,7 @@ impl NodeSet {
 /// and `doc_is_xml` is what justifies the cast.
 unsafe fn wrap(node: *mut c_void, document: Value, doc_is_xml: bool) -> Value {
     if doc_is_xml {
-        // SAFETY: `document` is the set's fixed XML document.
-        unsafe { crate::bridge::ruby::value(wrap_xml_node(node, document.as_raw())) }
+        wrap_xml_node(node, document)
     } else {
         match RawNode::from_ptr(node) {
             Some(n) => wrap_html_node(n, document),

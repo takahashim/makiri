@@ -29,7 +29,6 @@ use core::ffi::c_void;
 
 use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
-use crate::bridge::ruby::VALUE;
 
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, NodeId};
 use crate::xpath::ast::Ast;
@@ -65,7 +64,7 @@ use crate::init::{
 };
 
 /// Wrap an XML node, typed.
-unsafe fn wrap_typed_xml_node(node: NodeId, document: VALUE) -> VALUE {
+fn wrap_typed_xml_node(node: NodeId, document: Value) -> Value {
     wrap_xml_node(node.to_token() as *mut c_void, document)
 }
 
@@ -543,10 +542,10 @@ fn doc_root(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() {
             return ruby.qnil().as_value();
         }
-        crate::bridge::ruby::value(wrap_typed_xml_node(
+        wrap_typed_xml_node(
             (*xdoc).root.unwrap_or(NodeId::INVALID),
-            rb_self.as_raw(),
-        ))
+            rb_self,
+        )
     }
 }
 
@@ -562,10 +561,10 @@ fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
         if xdoc.is_null() || (*xdoc).doctype.is_none() {
             return ruby.qnil().as_value();
         }
-        crate::bridge::ruby::value(wrap_typed_xml_node(
+        wrap_typed_xml_node(
             (*xdoc).doctype.unwrap_or(NodeId::INVALID),
-            rb_self.as_raw(),
-        ))
+            rb_self,
+        )
     }
 }
 
@@ -634,7 +633,7 @@ fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
         let doc_obj = new_empty_document()?;
         let xdoc = parsed_xml_doc(doc_parsed(doc_obj)?);
         let frag = fragment_into(xdoc, source, false)?;
-        Ok(crate::bridge::ruby::value(wrap_typed_xml_node(frag, doc_obj.as_raw())))
+        Ok(wrap_typed_xml_node(frag, doc_obj))
     }
 }
 
@@ -647,7 +646,7 @@ fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
             return Err(Error::new(error_class(), "the document has no arena"));
         }
         let frag = fragment_into(xdoc, source, true)?;
-        Ok(crate::bridge::ruby::value(wrap_typed_xml_node(frag, rb_self.as_raw())))
+        Ok(wrap_typed_xml_node(frag, rb_self))
     }
 }
 
