@@ -325,6 +325,20 @@ impl<'doc> HtmlDoc<'doc> {
         }
     }
 
+    /// The document's `<title>` text, or None when there is none.
+    pub fn title(self) -> Option<&'doc [u8]> {
+        /* SAFETY: a live HTML document - an `lxb_html_document_t` leads with
+         * its `lxb_dom_document_t`, so this is the same address - and the bytes
+         * are borrowed from it. */
+        let t = unsafe {
+            named_mut(
+                self.as_raw() as *mut lxb::lxb_html_document_t,
+                lxb::lxb_html_document_title,
+            )
+        };
+        (!t.is_empty()).then_some(t)
+    }
+
     /// A detached element named `local_name`, in no namespace yet.
     ///
     /// `None` when Lexbor could not make one. The DOM's createElement: the

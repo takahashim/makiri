@@ -63,11 +63,6 @@ pub use crate::glue::node::node_kind;
 pub use crate::glue::xml_node::mutate::xml_mut_check;
 pub use crate::xml::api::xml_doc_memsize;
 
-extern "C" {
-
-    fn lxb_html_document_title(doc: *mut c_void, len: *mut usize) -> *const u8;
-}
-
 /// The doctype node type, generated (see lexbor_abi).
 const NODE_TYPE_DOCUMENT_TYPE: u32 = super::abi::LXB_DOM_NODE_TYPE_DOCUMENT_TYPE;
 
@@ -320,17 +315,11 @@ fn doc_root(ruby: &Ruby, self_: Value) -> Value {
 
 /// The document `<title>`, or `""`.
 fn doc_title(ruby: &Ruby, self_: Value) -> RString {
-    unsafe {
-        let mut len: usize = 0;
-        let doc = html_doc_known(self_);
-        let s = lxb_html_document_title(doc as *mut c_void, &mut len);
-        let bytes: &[u8] = if s.is_null() {
-            &[]
-        } else {
-            core::slice::from_raw_parts(s, len)
-        };
-        ruby.enc_str_new(bytes, ruby.utf8_encoding())
-    }
+    /* SAFETY: a live HTML Document, kept alive by `self_` for this call. */
+    let bytes = unsafe { HtmlDoc::from_raw(html_doc_known(self_)) }
+        .and_then(|d| d.title())
+        .unwrap_or(&[]);
+    ruby.enc_str_new(bytes, ruby.utf8_encoding())
 }
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a

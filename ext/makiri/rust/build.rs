@@ -216,6 +216,9 @@ fn main() {
         .allowlist_function("lexbor_str_init")
         .allowlist_function("lxb_html_parse_fragment")
         .allowlist_function("lxb_html_document_destroy")
+        // The document title reader, generated rather than hand-declared like
+        // the rest of this list.
+        .allowlist_function("lxb_html_document_title")
         .allowlist_function("lxb_css_stylesheet_create")
         .allowlist_function("lxb_css_stylesheet_parse")
         .allowlist_function("lxb_css_stylesheet_destroy")
