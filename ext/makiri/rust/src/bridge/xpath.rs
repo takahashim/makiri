@@ -11,7 +11,7 @@
 #![allow(unsafe_code)]
 
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -37,7 +37,7 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::{Context, ContextError, Resolver, ResolverCall, XPathValue};
 use crate::xpath::limits::{Budget, Limits};
 use crate::xpath::msg::{Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX};
-use crate::xpath::token::Token;
+use crate::xpath::token::{Kind, Token};
 use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
 /// `Makiri::Error`.
@@ -108,6 +108,15 @@ impl Cx {
             #[cfg(feature = "lexbor")]
             Cx::Html(cx) => cx.set_lax(lax),
             Cx::Xml(cx) => cx.set_lax(lax),
+        }
+    }
+
+    /// Which backend this context walks, for minting a node token.
+    pub fn token_kind(&self) -> Kind {
+        match self {
+            #[cfg(feature = "lexbor")]
+            Cx::Html(_) => Kind::Html,
+            Cx::Xml(_) => Kind::Xml,
         }
     }
 
@@ -205,13 +214,9 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
             /* The context NODE is the document node for a Document receiver,
              * else the node itself. */
             let node = if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-                Token::from_ptr(
-                    (*(xdoc as *mut crate::xml::model::Doc))
-                        .doc_node()
-                        .to_token() as *mut c_void,
-                )
+                Token::xml((*(xdoc as *mut crate::xml::model::Doc)).doc_node().to_token())
             } else {
-                Token::from_ptr(xml_node_unwrap(rb_node)?)
+                Token::xml(xml_node_unwrap(rb_node)? as usize)
             };
             // SAFETY: the XML arena behind `document`, live for `'static` by the
             // caller's keepalive.
@@ -219,7 +224,9 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
             return Ok(Cx::Xml(Context::new(doc, node)));
         }
 
-        let node = Token::from_ptr(html_node_unwrap(rb_node)?.as_ptr());
+        /* SAFETY: `html_node_unwrap` returned a live node of `document`, and
+         * this block already reasons under the `context_for` contract. */
+        let node = Token::html(html_node_unwrap(rb_node)?.as_ptr());
         /* TypeError for a Document that is not HTML. */
         html_doc_unwrap(document)?;
         /* Built up front, so an allocation failure raises here rather than on the
@@ -480,10 +487,16 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
     }
     rb_self.node.set(rb_node.into()); /* keepalive; marked above */
     /* Same-document is verified, so rb_node is a node of the context's
-     * document. */
+     * document; mint the token for whichever backend that document is. */
+    let raw = node_raw(rb_node)?;
+    let token = match rb_self.ctx.token_kind() {
+        // SAFETY: a live node of this context's document.
+        Kind::Html => unsafe { Token::html(raw) },
+        _ => Token::xml(raw as usize),
+    };
     rb_self
         .ctx
-        .set_context_node(Token::from_ptr(node_raw(rb_node)?))
+        .set_context_node(token)
         .map_err(|e| refused(e, BUSY, BUSY))?;
     Ok(rb_node)
 }
@@ -503,6 +516,8 @@ struct Bridge {
     handler: VALUE,
     /// Keepalive, and the document node-set arguments are wrapped under.
     document: VALUE,
+    /// Which backend the document is, for minting a handler's node token.
+    kind: Kind,
     /// Every mutator on `document` refuses while this lives.
     _reading: crate::bridge::doc::DocumentEvaluation,
 }
@@ -547,6 +562,7 @@ unsafe fn arg_to_ruby(b: &Bridge, v: &Val) -> Result<VALUE, Error> {
 unsafe fn push_result_node(
     budget: &mut Budget,
     document: VALUE,
+    kind: Kind,
     rb_node: VALUE,
     set: &mut NodeSet,
     err: &mut ErrBuf,
@@ -565,7 +581,12 @@ unsafe fn push_result_node(
         err.set("handler returned an unusable node");
         return false;
     };
-    if set.push_token(Token::from_ptr(n), budget).is_err() {
+    let token = match kind {
+        // SAFETY: a live node of the context's own document.
+        Kind::Html => unsafe { Token::html(n) },
+        _ => Token::xml(n as usize),
+    };
+    if set.push_token(token, budget).is_err() {
         err.set("out of memory building handler result");
         return false;
     }
@@ -617,6 +638,7 @@ impl ErrBuf {
 unsafe fn ruby_to_out(
     budget: &mut Budget,
     document: VALUE,
+    kind: Kind,
     r: VALUE,
     out: *mut Val,
     err: &mut ErrBuf,
@@ -639,7 +661,7 @@ unsafe fn ruby_to_out(
     if is_node || is_kind_of(rv, &CLASS_NODE_SET) {
         let mut set = NodeSet::new();
         if is_node {
-            if !push_result_node(budget, document, r, &mut set, err) {
+            if !push_result_node(budget, document, kind, r, &mut set, err) {
                 return false;
             }
         } else {
@@ -654,7 +676,7 @@ unsafe fn ruby_to_out(
                 if !is_kind_of(node, &CLASS_NODE) {
                     continue;
                 }
-                if !push_result_node(budget, document, node.as_raw(), &mut set, err) {
+                if !push_result_node(budget, document, kind, node.as_raw(), &mut set, err) {
                     return false;
                 }
             }
@@ -724,7 +746,14 @@ unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
         }
     }
     let r = crate::bridge::ruby::funcallv((*c.bridge).handler, c.method, &c.argv[..c.nargs]);
-    c.ok = ruby_to_out(&mut *c.budget, (*c.bridge).document, r, c.out, &mut c.err);
+    c.ok = ruby_to_out(
+        &mut *c.budget,
+        (*c.bridge).document,
+        (*c.bridge).kind,
+        r,
+        c.out,
+        &mut c.err,
+    );
     crate::bridge::ruby::nil().as_raw()
 }
 
@@ -899,6 +928,7 @@ pub fn evaluate_query(
         Some(Bridge {
             handler: handler.as_raw(),
             document: document.as_raw(),
+            kind: ctx.token_kind(),
             _reading: crate::bridge::doc::DocumentEvaluation::enter(document)?,
         })
     };

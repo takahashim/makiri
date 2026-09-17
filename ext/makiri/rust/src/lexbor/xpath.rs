@@ -21,7 +21,7 @@ use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
 use crate::xpath::limits::{Budget, Limits};
 use crate::xpath::msg::{Error, XP_ERR_OOM, XP_ERR_RUNTIME};
-use crate::xpath::token::Token;
+use crate::xpath::token::{Kind, Token};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
  * Lexbor's enum must agree value for value; a mismatch would make an HTML walk
@@ -76,12 +76,16 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
 
     #[inline]
     fn token(n: HtmlNode<'d>) -> Token {
-        Token::from_ptr(n.as_raw() as *mut c_void)
+        // SAFETY: `n` is a live node of this document, which `HtmlDom` holds.
+        unsafe { Token::html(n.as_raw() as *mut c_void) }
     }
     #[inline]
     fn resolve_token(self, t: Token) -> HtmlNode<'d> {
-        // SAFETY: a token comes from `token` (a live node) or from the bridge,
-        // which checked the node's document; both are this document's.
+        /* The kind check is the safety gate: only `Token::html` (unsafe) makes
+         * an HTML token, so a token that reaches here names a live node. */
+        assert_eq!(t.kind(), Kind::Html, "an HTML context resolved a non-HTML token");
+        // SAFETY: an HTML token names a live node of the document it was made
+        // over, and `self` is that document.
         unsafe { HtmlNode::from_raw(t.as_ptr() as *mut LxbNode) }.expect("a resolved token names a node")
     }
 

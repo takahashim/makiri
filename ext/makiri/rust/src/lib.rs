@@ -76,6 +76,10 @@ pub mod cutf8;
 /// Unconditional: the engine, the DOM adapter and the glue all pass them.
 pub mod text;
 
+/// The opaque, kind-tagged node token the engine passes around and the bridge
+/// mints. Unconditional: the engine, the backends and the bridge all use it.
+pub mod token;
+
 /// The Ruby boundary - the only part of the crate that depends on magnus.
 #[cfg(feature = "ruby")]
 pub mod bridge;

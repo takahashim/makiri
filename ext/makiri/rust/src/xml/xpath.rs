@@ -15,7 +15,7 @@
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::{Bucket, Dom};
-use crate::xpath::token::Token;
+use crate::xpath::token::{Kind, Token};
 use crate::xml::model as xml;
 
 /// A namespace declaration is a NAMESPACE node in XPath 1.0, not an attribute,
@@ -43,13 +43,16 @@ impl<'d> Dom<'d> for &'d xml::Document {
 
     #[inline]
     fn token(n: xml::NodeId) -> Token {
-        Token::from_ptr(n.to_token() as *mut core::ffi::c_void)
+        Token::xml(n.to_token())
     }
     /// The token is opaque data: every read resolves it through
     /// `Document::try_node`, so a stale or foreign one reads as no node.
     #[inline]
     fn resolve_token(self, t: Token) -> xml::NodeId {
-        xml::NodeId::from_token(t.as_ptr() as usize)
+        /* An HTML token never reaches an XML context; assert it here so a bug
+         * shows as a check, not a silently misread arena slot. */
+        assert_eq!(t.kind(), Kind::Xml, "an XML context resolved a non-XML token");
+        xml::NodeId::from_token(t.word())
     }
 
     #[inline]
@@ -193,8 +196,5 @@ impl<'d> Dom<'d> for &'d xml::Document {
 /// A context over `doc` with `node` as the focus; the bridge passes the document
 /// node for a whole-document query.
 pub fn context(doc: &xml::Document, node: xml::NodeId) -> Context<'_, &xml::Document> {
-    Context::new(
-        doc,
-        Token::from_ptr(node.to_token() as *mut core::ffi::c_void),
-    )
+    Context::new(doc, Token::xml(node.to_token()))
 }

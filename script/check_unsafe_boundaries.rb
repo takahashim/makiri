@@ -39,7 +39,7 @@ UNSAFE_ISLANDS = {
   "bridge/typed.rs" => 8,
   "bridge/xml.rs" => 46,
   "bridge/xml_decode.rs" => 8,
-  "bridge/xpath.rs" => 14,
+  "bridge/xpath.rs" => 16,
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
   "falloc/calloc_verify.rs" => 3,
@@ -60,10 +60,11 @@ UNSAFE_ISLANDS = {
   "lexbor/selectors.rs" => 18,
   "lexbor/serialize.rs" => 8,
   "lexbor/stylesheet.rs" => 10,
-  "lexbor/xpath.rs" => 8,
+  "lexbor/xpath.rs" => 9,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
   "text.rs" => 5,
+  "token.rs" => 1,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
