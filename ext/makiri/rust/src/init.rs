@@ -161,7 +161,7 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
     #[cfg(feature = "alloc-inject")]
     {
         let _ = ruby;
-        Ok(unsafe { crate::falloc::calloc::alloc_inject_call_count() })
+        Ok(crate::falloc::calloc::alloc_inject_call_count())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {

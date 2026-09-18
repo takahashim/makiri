@@ -18,10 +18,10 @@ pub unsafe fn alloc_inject_arm(nth: i64) {
 
 /// Return the number of allocation attempts since the last arm.
 ///
-/// # Safety
-/// This test hook has no memory-safety preconditions; callers must only use
-/// the result for the matching OOM sweep.
-pub unsafe fn alloc_inject_call_count() -> u64 {
+/// Safe: an atomic load of a counter this module owns. Misreading the result
+/// makes the OOM sweep wrong, not unsound, so it is not `unsafe` - unlike
+/// [`alloc_inject_arm`], which changes what the allocator does.
+pub fn alloc_inject_call_count() -> u64 {
     ATTEMPTS.load(Ordering::Acquire)
 }
 
