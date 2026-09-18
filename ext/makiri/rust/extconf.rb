@@ -62,20 +62,32 @@ linux   = RbConfig::CONFIG["target_os"] =~ /linux/
 sanitize    = ENV["MAKIRI_SANITIZE"].to_s.strip
 lexbor_asan = !ENV["MAKIRI_SANITIZE_LEXBOR"].to_s.strip.empty? && sanitize.include?("address")
 
-# Link-time optimization across Lexbor's own translation units. It is the one
-# compile-option win there was: measured -17% on parse and -10% on to_html
-# (CPU time, 6000-element document), for about two seconds of link. Lexbor is
-# already -O3 - `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` AFTER its own
-# `-O2`, and the last one wins - so there was nothing left in the -O level.
+# Link-time optimization across Lexbor's own translation units, DARWIN ONLY.
 #
-# The archive becomes bitcode, which the final link has to understand. That is
-# the same toolchain that compiled it in every configuration we build (clang on
-# darwin, gcc on linux and mingw), so it resolves; `MAKIRI_LEXBOR_NO_LTO=1` is
-# the escape hatch for a toolchain where it does not.
+# It is the one compile-option win there was: measured -17% on parse and -10%
+# on to_html (CPU time, 6000-element document), for about two seconds of link.
+# Lexbor is already -O3 - `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG`
+# AFTER its own `-O2`, and the last one wins - so there was nothing left in the
+# -O level.
+#
+# Darwin only because the archive stops being ordinary objects, and what can
+# read it afterwards is a property of each platform's linker. CI found all
+# three answers, so do not "simplify" this to every platform:
+#
+#   darwin  ld64 reads the bitcode natively. Extension AND `cargo test` link.
+#   linux   the extension links (gcc drives it, with its LTO plugin), but
+#           `cargo test` uses rust-lld, which cannot read GCC's GIMPLE at all.
+#   mingw   BFD ld fails outright: cmake indexes the archive with plain `ar`,
+#           which records no LTO symbols, so every `lxb_*` is undefined.
+#
+# Both could in principle be chased - `gcc-ar` for the index, clang for the
+# Linux Lexbor build so lld sees bitcode - but each turns on a version match
+# between toolchains we do not control. The measured win stays where it is
+# measured. `MAKIRI_LEXBOR_NO_LTO=1` opts out of it.
 #
 # NOT under the sanitizer: that build exists to find bugs, where inlining across
 # the whole archive only makes a report harder to read.
-lexbor_lto = !lexbor_asan && ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
+lexbor_lto = !!darwin && !lexbor_asan && ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
 lexbor_mode = if lexbor_asan
                 "asan"
               elsif lexbor_lto

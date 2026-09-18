@@ -283,18 +283,28 @@ by the check that concluded "every undefined symbol is legitimate".
   `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
   Rust's own bounds checking is what covers the class now on every path that is
   not `unsafe`, which is why `unsafe` blocks carry a stated contract.
-- **Vendored Lexbor is built with LTO** (`-DLEXBOR_C_FLAGS=-flto`), and that is
-  a measured 17% of a parse, not a guess: the archive becomes bitcode and the
-  final link optimises across Lexbor's translation units. It was the only
-  compile-option win available - Lexbor is ALREADY `-O3`, because
-  `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after Lexbor's own `-O2` and
-  the last `-O` wins, so reading its `LEXBOR_OPTIMIZATION_LEVEL` default as the
-  effective level is a trap. Costs about two seconds of link, and `to_html` gains
-  ~10% while `css` loses ~4%. NOT applied under the sanitizer (whole-archive
-  inlining only makes a report harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts
-  out, and the install stamp tracks it (`plain` / `plain-lto` / `asan`), so a
-  mode switch rebuilds - but only through a path that re-runs extconf, i.e.
-  `rake clean compile`, per the Makefile note above.
+- **Vendored Lexbor is built with LTO on macOS, and NOWHERE ELSE** - that split
+  is not a preference, it is what each platform's linker can read. A measured
+  17% of a parse and ~10% of `to_html` (`css` loses ~4%), for about two seconds
+  of link. It was the only compile-option win available: Lexbor is ALREADY
+  `-O3`, because `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after
+  Lexbor's own `-O2` and the last `-O` wins - reading its
+  `LEXBOR_OPTIMIZATION_LEVEL` default as the effective level is a trap.
+
+  Enabling it everywhere was tried and CI gave three different answers, so do
+  not re-derive them: **darwin** ld64 reads the bitcode natively and both the
+  extension and `cargo test` link; **linux** links the extension (gcc drives it,
+  with its LTO plugin) but `cargo test` goes through rust-lld, which cannot read
+  GCC's GIMPLE at all; **mingw** fails outright, because cmake indexes the
+  archive with plain `ar`, which records no LTO symbols. Chasing the last two
+  means `gcc-ar` and a clang-built Lexbor on Linux, each depending on a version
+  match between toolchains we do not control.
+
+  NOT applied under the sanitizer (whole-archive inlining only makes a report
+  harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts out, and the install stamp
+  tracks it (`plain` / `plain-lto` / `asan`), so a mode switch rebuilds - but
+  only through a path that re-runs extconf, i.e. `rake clean compile`, per the
+  Makefile note above.
 
 - **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
   bump arena.** A sub-allocation overrunning into the next one stays within one
