@@ -228,6 +228,37 @@ struct CleanBuf {
     _owned: Option<OwnedBuf>,
 }
 
+/// Owns the document the parse is building, until it is handed to the caller.
+///
+/// Between `chunk_begin` and the return there is Rust that can panic - the
+/// source-position walk and the line table - and the crate unwinds, so an
+/// explicit destroy on the failure path is exactly what a panic skips. This
+/// frees the document on every exit that is not the hand-over.
+struct DocOwner(NonNull<HtmlDoc>);
+
+impl DocOwner {
+    #[inline]
+    fn as_ptr(&self) -> *mut HtmlDoc {
+        self.0.as_ptr()
+    }
+
+    /// Give the document to the caller; this stops owning it.
+    #[inline]
+    fn release(self) -> NonNull<HtmlDoc> {
+        let doc = self.0;
+        core::mem::forget(self);
+        doc
+    }
+}
+
+impl Drop for DocOwner {
+    fn drop(&mut self) {
+        // SAFETY: this type owns the document - `release` is the only way out
+        // and it consumes `self` - so nothing else holds it here.
+        unsafe { lxb_html_document_destroy(self.0.as_ptr()) };
+    }
+}
+
 /// Drive the low-level pipeline so element offsets can be captured, then build
 /// the line table.
 ///
@@ -239,7 +270,7 @@ struct CleanBuf {
 unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Lines>>)> {
     let parser = lxb::HtmlParser::create()?;
 
-    let doc = NonNull::new(lxb_html_parse_chunk_begin(parser.as_ptr()))?;
+    let doc = DocOwner(NonNull::new(lxb_html_parse_chunk_begin(parser.as_ptr()))?);
 
     /* Install the recorder, CHAINING the parser's own tree-building callback
      * (which chunk_begin has just set). If the recorder cannot be allocated we
@@ -267,8 +298,7 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Line
         st = lxb_html_parse_chunk_end(parser.as_ptr());
     }
     if st != LXB_STATUS_OK {
-        lxb_html_document_destroy(doc.as_ptr());
-        return None;
+        return None; /* `doc`'s Drop destroys it */
     }
 
     let mut lines = None;
@@ -280,7 +310,7 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Line
         lines = lines_build(src).and_then(|l| try_box(l).ok());
     }
 
-    Some((doc, lines))
+    Some((doc.release(), lines))
 }
 
 /// Parse `src` as an HTML document.

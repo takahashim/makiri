@@ -9,6 +9,7 @@ module Makiri
   def self.__alloc_inject(1)
   def self.__alloc_inject?(0)
   def self.__alloc_inject_calls(0)
+  def self.__panic(1)
   def self.parse(1 req:source)
 
 class Makiri::Attr < Makiri::Node

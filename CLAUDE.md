@@ -39,6 +39,27 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   "AddressSanitizer: the preload is platform-split" below before changing how a
   sanitized run is launched.
 
+- **A panic must not kill the host.** The crate builds with `panic = "unwind"`,
+  so magnus's `catch_unwind` turns a panic into Ruby's `fatal`: on the thread
+  that ran the query, which dies alone while the process keeps working, with
+  `ensure` and `at_exit` run and every `Drop` executed on the way out. `abort`
+  did none of that - no destructor, no cleanup, SIGABRT for the whole process -
+  so **do not set it back**; `spec/panic_spec.rb` is what would catch that,
+  through the `Makiri.__panic(kind)` hook that exists for no other purpose.
+  Two consequences for anything new. Whatever must be released across a panic
+  is a `Drop`, not a statement after the work - a plain `lxb_*_clean` following
+  a parse is exactly what unwinding skips (`lexbor::selectors::PanicReset` and
+  `post_parse::DocOwner` are the two that had to be converted, both around
+  process-global or not-yet-owned Lexbor state). And a panic inside an `extern
+  "C"` callback Lexbor calls STILL aborts - Rust turns an unwind at that
+  boundary into one, because unwinding through C frames built without unwind
+  tables is undefined behaviour - so those 12 callbacks must keep latching a
+  flag and returning a stop status rather than panicking, as `find_cb` already
+  does for the node cap and OOM.
+  `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
+  from arriving by accident; a site that wants one carries an `#[allow]` with a
+  reason.
+
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:
   they hardened C sources, and there are none. `-fvisibility=hidden`'s job is

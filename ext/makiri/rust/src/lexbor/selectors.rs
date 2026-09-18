@@ -379,12 +379,54 @@ impl Run {
     }
 }
 
+/// Returns the process-global engine to a known-good state IF the stack is
+/// unwinding past it.
+///
+/// The engine outlives every call, so a panic in the middle of one would leave
+/// the shared parser in a non-CLEAN stage and a half-parsed list in the shared
+/// arena - for every LATER query, not just the one that failed. The crate
+/// unwinds (`panic = "unwind"`, so magnus turns a panic into a Ruby exception),
+/// and a plain statement after the parse is exactly what unwinding skips.
+///
+/// It resets the three as a unit, because they are only consistent together:
+/// the cached lists live in the arena, so emptying the arena without dropping
+/// the cache would leave it pointing into freed memory. The cost is one cold
+/// cache after a panic, which is the right trade for a process-global.
+///
+/// On the ordinary path it does nothing: each `clean` below has its own meaning
+/// and its own place, and this is not a substitute for them.
+/// It holds the engine BY VALUE and takes its own borrow of the globals, rather
+/// than keeping the caller's: a stored pointer derived from the caller's `&mut`
+/// would be a second live borrow, which is the aliasing this module must not
+/// create. Its own borrow is safe because the caller cannot touch `g` again -
+/// this runs while the stack unwinds out of the function.
+struct PanicReset {
+    engine: Engine,
+}
+
+impl Drop for PanicReset {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        // SAFETY: the GVL is still held while the stack unwinds through Ruby's
+        // frames, and the caller's borrow is dead - nothing reads `g` after the
+        // guard drops - so taking one here is the only live borrow.
+        unsafe {
+            lxb_css_parser_clean(self.engine.parser);
+            lxb_css_memory_clean(self.engine.mem);
+            globals().cache().clear();
+        }
+    }
+}
+
 /// Parse `selector` with the shared engine, hand the compiled list to `run`,
 /// then leave the engine ready for the next call.
 ///
 /// Unlike the C, a syntax error is *returned*: magnus raises it after this
 /// function has returned normally, so the reset below is plain control flow
-/// rather than something an error path has to remember.
+/// rather than something an error path has to remember. A PANIC is the case
+/// that is not plain control flow, and [`PanicReset`] covers it.
 unsafe fn with_compiled_selector(
     selector: &[u8],
     node: *mut LxbNode,
@@ -396,6 +438,7 @@ unsafe fn with_compiled_selector(
      * does not keep a second borrow alive. */
     let g = globals();
     let e = engine_in(g)?;
+    let _reset = PanicReset { engine: e };
 
     /* The adaptive window: every WIN lookups, decide whether caching pays. */
     g.win += 1;

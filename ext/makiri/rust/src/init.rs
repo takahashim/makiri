@@ -172,6 +172,50 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
     }
 }
 
+/// `Makiri.__panic(kind)` - panic on purpose, so the suite can prove a panic
+/// reaches Ruby as an exception instead of killing the process.
+///
+/// It exists because that property has no other test. `panic = "unwind"` plus
+/// magnus's `catch_unwind` is what makes a panic a Ruby `fatal`; going back to
+/// `abort`, or losing the unwind somewhere, would turn every example green and
+/// the gem lethal. `spec/panic_spec.rb` calls this and expects to catch it.
+///
+/// The four kinds are the four ways the crate could actually panic: an explicit
+/// `panic!`, an out-of-bounds index, an arithmetic overflow (release keeps
+/// `overflow-checks` on), and an `unwrap` on `None`.
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::unnecessary_literal_unwrap,
+    reason = "this function's whole purpose is to panic in each of these ways"
+)]
+fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
+    match kind {
+        0 => panic!("Makiri.__panic(0): deliberate panic"),
+        1 => {
+            let v: Vec<u8> = vec![1, 2, 3];
+            let _ = v[kind as usize * 100];
+        }
+        2 => {
+            let x = kind as usize - 2;
+            let _ = x - 1;
+        }
+        3 => {
+            let n: Option<u8> = None;
+            let _ = n.unwrap();
+        }
+        _ => {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "__panic: kind must be 0..3",
+            ))
+        }
+    }
+    Ok(())
+}
+
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
 fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
@@ -382,6 +426,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     }
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
+    makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
     makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;
     m_xml.define_singleton_method("__decode", function!(xml_decode, 1))?;
