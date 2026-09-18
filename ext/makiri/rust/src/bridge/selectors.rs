@@ -70,7 +70,11 @@ struct Fill<'a> {
 /// Move the collected matches into the NodeSet. Runs under `rb_protect`: a push
 /// can raise (Ruby's allocator), and a longjmp straight out of here would skip
 /// the collection Vec's drop in the caller.
-unsafe extern "C" fn fill_thunk(arg: VALUE) -> VALUE {
+/* A plain Rust fn, NOT `extern "C"`: it is only ever called from the
+ * closure below, and that ABI would turn a panic in it into an abort
+ * at its own boundary - before `bridge::ruby::protect`'s latch could
+ * see it. Nothing passes it to C as a function pointer. */
+unsafe fn fill_thunk(arg: VALUE) -> VALUE {
     let f = &mut *(arg as *mut Fill);
     for &n in f.nodes {
         if let Err(e) = node_set_push(f.set, n) {

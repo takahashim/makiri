@@ -46,19 +46,36 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   did none of that - no destructor, no cleanup, SIGABRT for the whole process -
   so **do not set it back**; `spec/panic_spec.rb` is what would catch that,
   through the `Makiri.__panic(kind)` hook that exists for no other purpose.
-  Two consequences for anything new. Whatever must be released across a panic
-  is a `Drop`, not a statement after the work - a plain `lxb_*_clean` following
-  a parse is exactly what unwinding skips (`lexbor::selectors::PanicReset` and
-  `post_parse::DocOwner` are the two that had to be converted, both around
-  process-global or not-yet-owned Lexbor state). And a panic inside an `extern
-  "C"` callback Lexbor calls STILL aborts - Rust turns an unwind at that
-  boundary into one, because unwinding through C frames built without unwind
-  tables is undefined behaviour - so those 12 callbacks must keep latching a
-  flag and returning a stop status rather than panicking, as `find_cb` already
-  does for the node cap and OOM.
+  Two rules follow, and anything new has to keep both.
+
+  **Whatever must be released across a panic is a `Drop`**, not a statement
+  after the work - a plain `lxb_*_clean` following a parse is exactly what
+  unwinding skips. `lexbor::selectors::PanicReset` and `post_parse::DocOwner`
+  are the two that had to be converted, both around process-global or
+  not-yet-owned Lexbor state.
+
+  **A callback must not panic INTO C.** Rust turns an unwind at an `extern "C"`
+  boundary into an abort, because unwinding through frames built without unwind
+  tables is undefined behaviour - so the callback catches the panic, latches it
+  and returns the stop status, and the caller re-raises once C has unwound.
+  `caught::PanicLatch` is that, and it is deliberately the same shape the
+  callbacks already used for the node cap and OOM. It is installed in all nine:
+  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), both serializer sinks,
+  the tokenizer's `pos_token_cb`, `bridge::gvl`'s trampoline (which carries the
+  whole parser), and - covering every `rb_protect` at once, since magnus runs
+  the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
+  Do not call magnus's `protect` directly; ours is the one with the latch.
+  Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
+  `bridge/typed.rs` run where nothing can be raised and a half-freed object is
+  worse than a stop, so they keep aborting - keep their bodies trivial. The two
+  raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
+  contain only C calls, so there is no Rust there to panic; keep it that way.
+
   `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
-  reason.
+  reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`, whose kind 4
+  panics below the GVL-release frame - the case that proves the latch, since
+  without it that one aborts.
 
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:

@@ -84,13 +84,14 @@ rb-sys = { version = "0.9", optional = true }
 # runs `ensure` blocks and `at_exit` on the way out. `abort` ran neither, and
 # ran no destructor either, so this also RELEASES what the old setting leaked.
 #
-# The one case it does not cover: a panic inside an `extern "C"` callback that
-# Lexbor calls (the CSS traversal, the serializers, the tokenizer's token-done
-# hook). Rust turns an unwind at that boundary into an abort, which is safe -
-# unwinding through C frames compiled without unwind tables would be undefined
-# behaviour - but it is still an abort. Making those raise needs a `catch_unwind`
-# and a latched flag per callback, the shape `find_cb` already uses for the node
-# cap and OOM.
+# A callback is the case this does not cover by itself: Rust turns an unwind at
+# an `extern "C"` boundary into an abort, because unwinding through C frames
+# built without unwind tables is undefined behaviour. So every callback catches
+# its own panic and the caller re-raises it past the C frames - `caught::
+# PanicLatch`, installed in all nine (the CSS traversal, both serializer sinks,
+# the tokenizer hook, the GVL trampoline, and `bridge::ruby::protect`, which
+# covers every `rb_protect`). The GC callbacks in `bridge/typed.rs` keep
+# aborting on purpose; see CLAUDE.md.
 #
 # Anything that must be released across a panic is therefore a `Drop`, not a
 # statement after the work. `lexbor::selectors::PanicReset` and

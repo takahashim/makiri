@@ -24,7 +24,9 @@
 use core::ffi::{c_char, c_int, c_long, CStr};
 
 use magnus::encoding::Coderange;
-use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
+use magnus::rb_sys::{AsRawValue, FromRawValue};
+/* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
+use super::ruby::protect;
 use magnus::value::ReprValue;
 use magnus::{Error, RString, Value};
 use rb_sys::{StableApiDefinition, VALUE};

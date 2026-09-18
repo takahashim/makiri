@@ -18,7 +18,13 @@ RSpec.describe "a Rust panic" do
     0 => "deliberate panic",
     1 => "index out of bounds",
     2 => "subtract with overflow",
-    3 => "unwrap"
+    3 => "unwrap",
+    # Below `rb_thread_call_without_gvl`, so the unwind starts under a C frame.
+    # Rust turns an unwind at an `extern "C"` boundary into an ABORT, so this
+    # one only reaches Ruby because `bridge::gvl` latches it and re-raises once
+    # the GVL is back - the same shape every Lexbor callback now uses. It is
+    # the parser's own path: the whole parse runs under that frame.
+    4 => "panic below the GVL"
   }.freeze
 
   around do |example|
@@ -84,6 +90,14 @@ RSpec.describe "a Rust panic" do
     expect(doc.at_css("div").to_html).to eq("<div>a<span>b</span></div>")
     expect(doc.at_css("div").text).to eq("ab")
     expect(doc.at_xpath("//span").line).to eq(1)
+  end
+
+  it "leaves parsing usable after one below the GVL" do
+    # The parse runs under `rb_thread_call_without_gvl`; a panic there used to
+    # abort at the `extern "C"` boundary before anything could release.
+    panic_on_thread(4)
+    expect(Makiri::HTML("<html><body><p>a</p></body></html>").at_css("p").text).to eq("a")
+    expect(Makiri::XML("<r><c>b</c></r>").at_xpath("//c").text).to eq("b")
   end
 
   it "rejects an unknown kind with an ordinary ArgumentError" do

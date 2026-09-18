@@ -112,6 +112,9 @@ pub enum Fail {
 struct Ser {
     buf: Vec<u8>,
     oom: bool,
+    /// A panic, latched like `oom`: this is called from C, and unwinding into
+    /// Lexbor aborts. `serialize_with` raises it after the call returns.
+    panic: crate::caught::PanicLatch,
 }
 
 unsafe extern "C" fn ser_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
@@ -137,9 +140,16 @@ unsafe fn serialize_with(
     let mut s = Ser {
         buf: core::mem::take(scratch),
         oom: false,
+        panic: crate::caught::PanicLatch::new(),
     };
     s.buf.clear();
     let st = run(&mut s);
+    /* Lexbor has returned: raise what the sink caught, giving the scratch
+     * buffer back first so the caller's allocation is not lost. */
+    if s.panic.caught() {
+        *scratch = core::mem::take(&mut s.buf);
+        s.panic.resume();
+    }
     if s.oom {
         *scratch = s.buf;
         return Err(Fail::Oom);

@@ -143,6 +143,10 @@ pub struct Recorder {
     /// The start of the input buffer, which offsets are relative to.
     first: *const u8,
     overflow: bool,
+    /// A panic in `record`, latched rather than raised: this runs from
+    /// Lexbor's tokenizer, and unwinding into C aborts. `parse_tracked` raises
+    /// it after the parse has unwound (see `crate::caught`).
+    panic: crate::caught::PanicLatch,
 
     /// The parser's OWN token-done callback, which actually builds the tree.
     orig: TokenFn,
@@ -150,12 +154,19 @@ pub struct Recorder {
 }
 
 impl Recorder {
+    /// Re-raise a panic the token callback caught, now that Lexbor's frames
+    /// are gone. A no-op when nothing panicked.
+    pub fn resume_panic(&mut self) {
+        self.panic.resume();
+    }
+
     /// A recorder for the tokens of the input that starts at `src`.
     pub fn new(src: *const u8) -> Recorder {
         Recorder {
             items: Vec::new(),
             first: src,
             overflow: false,
+            panic: crate::caught::PanicLatch::new(),
             orig: None,
             orig_ctx: core::ptr::null_mut(),
         }
@@ -221,8 +232,14 @@ pub unsafe extern "C" fn pos_token_cb(
     ctx: *mut c_void,
 ) -> *mut Token {
     let rec = &mut *(ctx as *mut Recorder);
-    if !rec.overflow {
-        record(rec, token);
+    if !rec.overflow && !rec.panic.caught() {
+        /* Catch rather than unwind into the tokenizer: this is called from C.
+         * The latch is moved out and back so `record` can take `rec` mutably;
+         * recording then stops, the parse carries on through the delegate
+         * below, and `parse_tracked` raises the panic once C has unwound. */
+        let mut latch = core::mem::take(&mut rec.panic);
+        latch.guard((), || record(rec, token));
+        rec.panic = latch;
     }
     match rec.orig {
         Some(f) => f(tkz, token, rec.orig_ctx),

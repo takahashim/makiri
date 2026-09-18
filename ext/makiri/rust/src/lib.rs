@@ -67,6 +67,10 @@ pub mod falloc;
 /// `Buf`, the capped byte buffer more than one subsystem writes into.
 pub mod cbuf;
 
+/// Catching a panic at a C boundary and re-raising it past one, so a panic in a
+/// Lexbor or Ruby callback becomes an exception rather than an abort.
+pub mod caught;
+
 /// The CSS selector front end: lowers a Lexbor-parsed selector list into the
 /// XPath AST. Ruby-free, like the engine it feeds; Lexbor keeps the parser.
 #[cfg(feature = "lexbor")]

@@ -12,7 +12,7 @@
 
 use core::ffi::{c_int, c_long, c_void};
 
-use magnus::rb_sys::{protect, AsRawValue, FromRawValue};
+use magnus::rb_sys::{protect as magnus_protect, AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 use rb_sys::rb_data_type_t;
 
@@ -366,6 +366,27 @@ pub fn bool_value(v: VALUE) -> Option<bool> {
 /// in every frame it crosses - so `f` must own nothing a raise could leak, or
 /// the caller must accept the leak (the CSS and XPath result builders snapshot
 /// their `Vec` first and free it on the `Err` path).
+/// magnus's `protect`, with a Rust panic caught instead of sent into C.
+///
+/// magnus runs the closure inside an `extern "C"` trampoline that `rb_protect`
+/// calls, so a panic in it would hit that boundary and abort the process. This
+/// catches it, lets `rb_protect` return normally - Ruby sees an ordinary `nil`
+/// answer, and every `ensure` it owns runs - and re-raises from HERE, where
+/// only Rust frames are left. See [`crate::caught`].
+///
+/// Every `protect` in the crate goes through this one, which is the point: the
+/// hazard is a property of `rb_protect`, not of any particular closure.
+#[inline]
+pub fn protect<F>(f: F) -> Result<VALUE, Error>
+where
+    F: FnOnce() -> VALUE,
+{
+    let mut latch = crate::caught::PanicLatch::new();
+    let out = magnus_protect(|| latch.guard(rb_sys::Qnil as VALUE, f));
+    latch.resume();
+    out
+}
+
 #[inline]
 pub fn protect_value<F>(f: F) -> Result<Value, Error>
 where

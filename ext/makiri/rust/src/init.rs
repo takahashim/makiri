@@ -180,9 +180,10 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// `abort`, or losing the unwind somewhere, would turn every example green and
 /// the gem lethal. `spec/panic_spec.rb` calls this and expects to catch it.
 ///
-/// The four kinds are the four ways the crate could actually panic: an explicit
+/// Kinds 0..3 are the four ways the crate could actually panic: an explicit
 /// `panic!`, an out-of-bounds index, an arithmetic overflow (release keeps
-/// `overflow-checks` on), and an `unwrap` on `None`.
+/// `overflow-checks` on), and an `unwrap` on `None`. Kind 4 panics BELOW a C
+/// frame, where the unwind would abort if it were not latched.
 #[allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -206,10 +207,16 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
             let n: Option<u8> = None;
             let _ = n.unwrap();
         }
+        4 => {
+            /* Under `rb_thread_call_without_gvl`, so the panic starts below a C
+             * frame - the largest such body in the crate is the parser itself.
+             * `bridge::gvl` latches it and re-raises once the GVL is back. */
+            crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"));
+        }
         _ => {
             return Err(Error::new(
                 ruby.exception_arg_error(),
-                "__panic: kind must be 0..3",
+                "__panic: kind must be 0..4",
             ))
         }
     }

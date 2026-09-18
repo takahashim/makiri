@@ -741,7 +741,11 @@ struct HandlerCall {
 
 /// Runs under `rb_protect`: build the Ruby arguments, invoke the handler,
 /// convert the result.
-unsafe extern "C" fn handler_call_body(p: VALUE) -> VALUE {
+/* A plain Rust fn, NOT `extern "C"`: it is only ever called from the
+ * closure below, and that ABI would turn a panic in it into an abort
+ * at its own boundary - before `bridge::ruby::protect`'s latch could
+ * see it. Nothing passes it to C as a function pointer. */
+unsafe fn handler_call_body(p: VALUE) -> VALUE {
     let c = &mut *(p as *mut HandlerCall);
     for i in 0..c.nargs {
         match arg_to_ruby(&*c.bridge, &*c.args.add(i)) {

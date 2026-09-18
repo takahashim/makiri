@@ -40,6 +40,7 @@
 /* Every function takes the `VALUE`s its caller already holds. */
 #![allow(clippy::missing_safety_doc)]
 
+use crate::caught::PanicLatch;
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -305,45 +306,64 @@ struct FindCtx {
     root: *mut LxbNode,
     overflow: bool,
     oom: bool,
+    /// A panic, latched the same way as the two flags above: it stops the walk
+    /// and is reported after it, because unwinding into Lexbor would abort.
+    panic: PanicLatch,
 }
 
 unsafe extern "C" fn find_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -> u32 {
     let c = &mut *(ctx as *mut FindCtx);
-    if node == c.root {
-        return LXB_STATUS_OK;
-    }
-    if c.nodes.len() >= NODE_SET_MAX {
-        c.overflow = true;
-        return LXB_STATUS_STOP;
-    }
-    /* `try_reserve` rather than relying on `push`: the global allocator aborts
-     * on OOM, and this path fails closed by reporting instead (`rake oom`
-     * sweeps it). */
-    if c.nodes.len() == c.nodes.capacity() && c.nodes.mkr_reserve(1).is_err() {
-        c.oom = true;
-        return LXB_STATUS_STOP;
-    }
-    c.nodes.push(node as *mut c_void);
-    LXB_STATUS_OK
+    let (nodes, root, overflow, oom) = (&mut c.nodes, c.root, &mut c.overflow, &mut c.oom);
+    c.panic.guard(LXB_STATUS_STOP, || {
+        if node == root {
+            return LXB_STATUS_OK;
+        }
+        if nodes.len() >= NODE_SET_MAX {
+            *overflow = true;
+            return LXB_STATUS_STOP;
+        }
+        /* `try_reserve` rather than relying on `push`: the global allocator
+         * aborts on OOM, and this path fails closed by reporting instead
+         * (`rake oom` sweeps it). */
+        if nodes.len() == nodes.capacity() && nodes.mkr_reserve(1).is_err() {
+            *oom = true;
+            return LXB_STATUS_STOP;
+        }
+        nodes.push(node as *mut c_void);
+        LXB_STATUS_OK
+    })
 }
 
 struct FirstCtx {
     root: *mut LxbNode,
     found: *mut LxbNode,
+    panic: PanicLatch,
 }
 
 unsafe extern "C" fn first_cb(node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -> u32 {
     let c = &mut *(ctx as *mut FirstCtx);
-    if node == c.root {
-        return LXB_STATUS_OK; /* descendant-only */
-    }
-    c.found = node;
-    LXB_STATUS_STOP
+    let (root, found) = (c.root, &mut c.found);
+    c.panic.guard(LXB_STATUS_STOP, || {
+        if node == root {
+            return LXB_STATUS_OK; /* descendant-only */
+        }
+        *found = node;
+        LXB_STATUS_STOP
+    })
+}
+
+struct MatchCtx {
+    matched: bool,
+    panic: PanicLatch,
 }
 
 unsafe extern "C" fn match_cb(_node: *mut LxbNode, _spec: u32, ctx: *mut c_void) -> u32 {
-    *(ctx as *mut bool) = true;
-    LXB_STATUS_STOP
+    let c = &mut *(ctx as *mut MatchCtx);
+    let matched = &mut c.matched;
+    c.panic.guard(LXB_STATUS_STOP, || {
+        *matched = true;
+        LXB_STATUS_STOP
+    })
 }
 
 /* ------------------------------------------------------------------ */
@@ -552,17 +572,22 @@ pub fn select_all(root: RawNode, selector: &[u8]) -> Result<Vec<*mut c_void>, Se
         root: raw,
         overflow: false,
         oom: false,
+        panic: PanicLatch::new(),
     };
     // SAFETY: `root` is a live node whose document outlives the call, and CSS
     // holds the GVL throughout.
-    unsafe {
+    let walked = unsafe {
         with_compiled_selector(
             selector,
             raw,
             Run::Find(find_cb),
             &mut ctx as *mut FindCtx as *mut c_void,
-        )?;
-    }
+        )
+    };
+    /* Before the `?`: Lexbor has unwound and the engine is reset, so this is
+     * the first frame where re-raising is safe. */
+    ctx.panic.resume();
+    walked?;
     if ctx.overflow {
         return Err(SelectError::Overflow);
     }
@@ -579,16 +604,19 @@ pub fn select_first(root: RawNode, selector: &[u8]) -> Result<Option<RawNode>, S
     let mut ctx = FirstCtx {
         root: raw,
         found: core::ptr::null_mut(),
+        panic: PanicLatch::new(),
     };
     // SAFETY: as `select_all`.
-    unsafe {
+    let walked = unsafe {
         with_compiled_selector(
             selector,
             raw,
             Run::Find(first_cb),
             &mut ctx as *mut FirstCtx as *mut c_void,
-        )?;
-    }
+        )
+    };
+    ctx.panic.resume(); /* as `select_all` */
+    walked?;
     Ok(RawNode::from_ptr(ctx.found.cast()))
 }
 
@@ -596,15 +624,20 @@ pub fn select_first(root: RawNode, selector: &[u8]) -> Result<Option<RawNode>, S
 #[inline]
 pub fn matches_node(root: RawNode, selector: &[u8]) -> Result<bool, SelectError> {
     let raw = root.as_ptr() as *mut LxbNode;
-    let mut matched = false;
+    let mut ctx = MatchCtx {
+        matched: false,
+        panic: PanicLatch::new(),
+    };
     // SAFETY: as `select_all`.
-    unsafe {
+    let walked = unsafe {
         with_compiled_selector(
             selector,
             raw,
             Run::MatchNode(match_cb),
-            &mut matched as *mut bool as *mut c_void,
-        )?;
-    }
-    Ok(matched)
+            &mut ctx as *mut MatchCtx as *mut c_void,
+        )
+    };
+    ctx.panic.resume(); /* as `select_all` */
+    walked?;
+    Ok(ctx.matched)
 }

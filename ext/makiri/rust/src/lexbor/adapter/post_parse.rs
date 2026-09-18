@@ -297,6 +297,16 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Line
     if st == LXB_STATUS_OK {
         st = lxb_html_parse_chunk_end(parser.as_ptr());
     }
+
+    /* The tokenizer's callback cannot unwind into Lexbor, so a panic in the
+     * position recorder was latched instead. Lexbor has returned, so this is
+     * the first frame where raising it is safe - and it raises BEFORE the
+     * status check, because a panic is not a parse failure. `doc`'s Drop and
+     * the parser's release it all on the way out. */
+    if let Some(r) = rec.as_deref_mut() {
+        r.resume_panic();
+    }
+
     if st != LXB_STATUS_OK {
         return None; /* `doc`'s Drop destroys it */
     }

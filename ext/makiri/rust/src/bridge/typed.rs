@@ -50,6 +50,15 @@ pub trait Hooks: Sized {
     fn release(&mut self) {}
 }
 
+/* The three GC callbacks below are the crate's only `extern "C"` functions
+ * with no panic latch, and deliberately so. They run from Ruby's collector,
+ * where there is no frame to raise into: `mark_cb` cannot report a failure
+ * without risking premature collection of what it did not mark, and `free_cb`
+ * cannot report one without leaking or freeing twice. So a panic here keeps
+ * the old behaviour - Rust turns the unwind at the boundary into an abort -
+ * which is the honest answer when the alternative is a corrupted heap.
+ * Keep their bodies trivial; that is what makes the choice cheap. */
+
 unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
     // SAFETY: Ruby hands back the pointer `wrap_zeroed` stored, a live `T`.
     unsafe { (*(ptr as *mut T)).mark(&Marker(())) };

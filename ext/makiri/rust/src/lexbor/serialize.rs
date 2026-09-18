@@ -21,13 +21,26 @@ use crate::lexbor::ffi::{
     LxbNode, LXB_HTML_SERIALIZE_OPT_UNDEF, LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK,
 };
 
-/// Lexbor's chunk sink. Must not panic: it is called from C.
+/// What the serializer writes into, plus somewhere to put a panic.
+struct SerCtx {
+    buf: Buf,
+    /// A panic in the append, latched: this is called from C, and unwinding
+    /// into Lexbor aborts. The driver raises it after Lexbor has returned.
+    panic: crate::caught::PanicLatch,
+}
+
+/// Lexbor's chunk sink. Must not panic INTO C: a panic is caught and reported
+/// after the walk, the way an allocation failure already is.
 unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
-    if buf_append(ctx as *mut Buf, data as *const c_void, len) == crate::cbuf::BUF_OK {
-        LXB_STATUS_OK
-    } else {
-        LXB_STATUS_ERROR_MEMORY_ALLOCATION
-    }
+    let c = &mut *(ctx as *mut SerCtx);
+    let buf = &mut c.buf;
+    c.panic.guard(LXB_STATUS_ERROR_MEMORY_ALLOCATION, || {
+        if buf_append(buf, data as *const c_void, len) == crate::cbuf::BUF_OK {
+            LXB_STATUS_OK
+        } else {
+            LXB_STATUS_ERROR_MEMORY_ALLOCATION
+        }
+    })
 }
 
 extern "C" {
@@ -89,13 +102,16 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
     // SAFETY: `node` came from a live wrapper, so its document is live too.
     let (cap, reserve) = serialize_sizes(unsafe { lxb_document_bytes(node) });
 
-    let mut buf = Buf::new(cap);
-    // SAFETY: `buf` is freed on both paths below, and nothing between here and
-    // there can raise - the Err is returned, not thrown.
+    let mut c = SerCtx {
+        buf: Buf::new(cap),
+        panic: crate::caught::PanicLatch::new(),
+    };
+    // SAFETY: the buffer is freed by `Buf`'s Drop however this exits, including
+    // the panic the latch re-raises below.
     unsafe {
-        let _ = buf.reserve(reserve); /* best-effort pre-size */
+        let _ = c.buf.reserve(reserve); /* best-effort pre-size */
 
-        let ctx = &mut buf as *mut Buf as *mut c_void;
+        let ctx = &mut c as *mut SerCtx as *mut c_void;
         let st = match (deep, pretty) {
             (true, true) => lxb_html_serialize_pretty_deep_cb(
                 node,
@@ -115,10 +131,13 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
             (false, false) => lxb_html_serialize_tree_cb(node, serialize_cb, ctx),
         };
 
+        /* Lexbor has returned, so this is the first frame where a panic the
+         * sink caught can be raised. `Buf`'s Drop frees what was written. */
+        c.panic.resume();
+
         if st != LXB_STATUS_OK {
-            buf.free();
-            return None;
+            return None; /* `Buf`'s Drop frees it */
         }
-        Some(buf)
+        Some(c.buf)
     }
 }
