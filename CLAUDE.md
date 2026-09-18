@@ -283,10 +283,13 @@ by the check that concluded "every undefined symbol is legitimate".
   `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
   Rust's own bounds checking is what covers the class now on every path that is
   not `unsafe`, which is why `unsafe` blocks carry a stated contract.
-- **Vendored Lexbor is built with LTO on macOS, and NOWHERE ELSE** - that split
-  is not a preference, it is what each platform's linker can read. A measured
-  17% of a parse and ~10% of `to_html` (`css` loses ~4%), for about two seconds
-  of link. It was the only compile-option win available: Lexbor is ALREADY
+- **Vendored Lexbor is built with LTO on macOS and on Linux, but NOT on mingw** -
+  that split is not a preference, it is what each platform's linker can read.
+  Measured against the same build without it, once the GC accounting above made
+  the numbers stable (before that the parse row swung 1.4-2.3x and nothing here
+  was quotable): **parse -16.2%**, **`to_html` -9.2%**, and **`css` +5.3%** -
+  that last one is a real regression, not noise, and it is the price. About two
+  seconds of link. It was the only compile-option win available: Lexbor is ALREADY
   `-O3`, because `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after
   Lexbor's own `-O2` and the last `-O` wins - reading its
   `LEXBOR_OPTIMIZATION_LEVEL` default as the effective level is a trap.
@@ -310,7 +313,9 @@ by the check that concluded "every undefined symbol is legitimate".
   `-march=native` is deliberately NOT used. It measured no gain at all - the hot
   code is a byte-at-a-time state machine plus libc's already-dispatched
   memcpy/memset, with nothing for the compiler to vectorise - and it would bake
-  the CI runner's ISA into a gem that has to run on the user's CPU.
+  the CI runner's ISA into a gem that has to run on the user's CPU. `-flto=thin`
+  measured the same as `-flto`, so the choice between them is only about which
+  compiler spells it.
 
   NOT applied under the sanitizer (whole-archive inlining only makes a report
   harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts out, and the install stamp
