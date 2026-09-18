@@ -439,9 +439,25 @@ recorded token by tag id (bounded lookahead), and stamps `offset+1` into
 (parser-inserted implicit html/head/body, text/comment/attribute nodes) - never
 a wrong line. Recorder bounded by `source_loc::MAX_TOKENS` (fail closed → nil, never
 wrong). The document outlives `lxb_html_parser_destroy` (it only unrefs
-tkz/tree). Tracking is **always on**: it rides the parse (~7% over no-tracking,
-measured). An earlier `line: :text`/`:none` option was removed - `:text` (a
+tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
+
+**The stamping is LAZY, and that is load-bearing for parse speed.** Recording
+rides the parse (`pos_token_cb`, ~1.7% of it), but `pos_assign_to_dom` - the
+walk that pairs elements with tokens - profiled at **11% of a parse**, paid by
+every caller for an answer most never ask for. So the parse hands the offsets
+back (`source_loc::Positions`, which drops the Recorder's pointer INTO the
+source buffer, since the offsets were already resolved) and `Parsed::pending_pos`
+holds them. `Parsed::assign_positions` does the walk once, on the first
+`#line` - or on the first MUTATION, via `ensure_document_mutable`, which is the
+last moment the tree is still the one the parser built. That second trigger is
+what keeps the answers identical to stamping eagerly; a walk over an edited tree
+would pair elements with the wrong tokens. Do not move it after the edit, and do
+not skip it: `spec/source_location_spec.rb`'s "deferred stamping" examples and
+the `lines` differential probe are what catch either. Measured by profile, the
+change took Makiri's own share of a parse from 13.3% to 2.6%. `lines_build`
+stays eager (~2%): deferring it would mean holding the source buffer, which is
+the one thing the parse frees.
 
 **attr→owner index** (`lexbor/adapter/dom_index.rs`). Lexbor never links an
 attribute back to its element, so we build an open-addressing hash (pointer

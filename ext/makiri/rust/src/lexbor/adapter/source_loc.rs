@@ -153,7 +153,27 @@ pub struct Recorder {
     orig_ctx: *mut c_void,
 }
 
+/// The recorded offsets, detached from the parse that produced them.
+///
+/// Only this survives the parse: `Recorder` also holds a pointer INTO the
+/// source buffer, which is freed when the parse returns, and the tokenizer
+/// delegate, which is gone with the parser. Carrying those into the document
+/// would be a dangling pointer nothing needs - the offsets were resolved
+/// against `first` as each token arrived.
+pub struct Positions {
+    items: Vec<Entry>,
+    overflow: bool,
+}
+
 impl Recorder {
+    /// What the document keeps: the offsets, without the parse-time pointers.
+    pub fn into_positions(self) -> Positions {
+        Positions {
+            items: self.items,
+            overflow: self.overflow,
+        }
+    }
+
     /// Re-raise a panic the token callback caught, now that Lexbor's frames
     /// are gone. A no-op when nothing panicked.
     pub fn resume_panic(&mut self) {
@@ -260,7 +280,7 @@ pub unsafe extern "C" fn pos_token_cb(
 /// tag id within a bounded lookahead. An element with no match in that window is
 /// left unstamped; `#line` then answers nil, which is the whole point - never a
 /// wrong line.
-pub unsafe fn pos_assign_to_dom(rec: &Recorder, root: *mut LxbNode) {
+pub unsafe fn pos_assign_to_dom(rec: &Positions, root: *mut LxbNode) {
     if rec.overflow || root.is_null() {
         return;
     }

@@ -34,7 +34,7 @@ use crate::cbuf::OwnedBuf;
 use crate::falloc::try_box;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::source_loc::{
-    lines_build, pos_assign_to_dom, pos_token_cb, Lines, Recorder,
+    lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::TextIndex;
 pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
@@ -84,6 +84,16 @@ pub struct Parsed {
     dom_index: Option<Box<DomIndex>>,
     /// byte offset -> source line.
     lines: Option<Box<Lines>>,
+    /// Recorded element offsets, NOT yet stamped into the DOM.
+    ///
+    /// The stamping walks the whole tree, and it measured 11% of a parse - paid
+    /// by every caller, for a `#line` most never ask for. So the parse records
+    /// and stops; [`assign_positions`](Parsed::assign_positions) does the walk
+    /// on the first `#line`, or on the first MUTATION, whichever comes first.
+    /// The second is what keeps the answers identical to stamping eagerly: a
+    /// walk over an edited tree would match elements to the wrong tokens, and
+    /// a wrong line is the one thing `#line` must never give.
+    pending_pos: Option<Box<Positions>>,
     /// node -> descendant-text slice run.
     text_index: Option<Box<TextIndex>>,
     /// How many XPath evaluations that can run Ruby (ones with a handler)
@@ -110,6 +120,7 @@ impl Parsed {
             doc,
             dom_index: None,
             lines: None,
+            pending_pos: None,
             text_index: None,
             evaluating: 0,
         }
@@ -191,6 +202,26 @@ impl Parsed {
         self.text_index.as_deref()?.slices_of(node)
     }
 
+    /// Stamp the recorded offsets into the DOM, once.
+    ///
+    /// A no-op after the first call, and for a document that recorded nothing.
+    /// Both callers are deliberate: `node_line`, which needs the answer, and
+    /// the mutation gate, which needs the tree to still be the parsed one.
+    ///
+    /// # Safety
+    /// The document must be live and unmodified since the parse.
+    pub unsafe fn assign_positions(&mut self) {
+        let Some(pos) = self.pending_pos.take() else {
+            return;
+        };
+        let Doc::Html(doc) = &self.doc else {
+            return;
+        };
+        // SAFETY: the handle owns a live document, and `pos` is its own parse's
+        // recording - taken above, so this runs once.
+        unsafe { pos_assign_to_dom(&pos, doc.as_ptr() as *mut LxbNode) };
+    }
+
     /// Drop the indices so the next query rebuilds them.
     ///
     /// This is the whole safety protocol for what they borrow: EVERY mutation
@@ -210,7 +241,10 @@ impl Parsed {
     ///
     /// # Safety
     /// `node` must be null or a live node of this document.
-    pub unsafe fn node_line(&self, node: *const LxbNode) -> usize {
+    pub unsafe fn node_line(&mut self, node: *const LxbNode) -> usize {
+        // SAFETY: the document this handle owns, unchanged since the parse -
+        // any mutation would have stamped already (see `assign_positions`).
+        unsafe { self.assign_positions() };
         let Some(lines) = self.lines.as_deref() else {
             return 0;
         };
@@ -228,6 +262,12 @@ struct CleanBuf {
     _owned: Option<OwnedBuf>,
 }
 
+/// What a tracked parse produces: the document, the line table, and the element
+/// offsets still to be stamped into it. The last two are `None` when their
+/// allocation failed, which degrades `#line` to nil rather than failing the
+/// parse.
+type Tracked = (NonNull<HtmlDoc>, Option<Box<Lines>>, Option<Box<Positions>>);
+
 /// Owns the document the parse is building, until it is handed to the caller.
 ///
 /// Between `chunk_begin` and the return there is Rust that can panic - the
@@ -237,11 +277,6 @@ struct CleanBuf {
 struct DocOwner(NonNull<HtmlDoc>);
 
 impl DocOwner {
-    #[inline]
-    fn as_ptr(&self) -> *mut HtmlDoc {
-        self.0.as_ptr()
-    }
-
     /// Give the document to the caller; this stops owning it.
     #[inline]
     fn release(self) -> NonNull<HtmlDoc> {
@@ -267,7 +302,7 @@ impl Drop for DocOwner {
 /// failed, in which case line information degrades to nil rather than failing
 /// the parse. That degradation is deliberate and is what
 /// `spec/html_line_spec.rb`'s contract ("an Integer, or nil") allows.
-unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Lines>>)> {
+unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
     let parser = lxb::HtmlParser::create()?;
 
     let doc = DocOwner(NonNull::new(lxb_html_parse_chunk_begin(parser.as_ptr()))?);
@@ -311,16 +346,19 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<(NonNull<HtmlDoc>, Option<Box<Line
         return None; /* `doc`'s Drop destroys it */
     }
 
+    /* The recording is HANDED BACK rather than stamped here: the stamping walks
+     * the whole tree, which measured 11% of a parse, and most callers never ask
+     * for a line. `Parsed::assign_positions` does it on demand. The line table
+     * stays eager - it is ~2%, and deferring it would mean holding the source
+     * buffer, which is the one thing this function is about to free. */
     let mut lines = None;
+    let mut positions = None;
     if let Some(r) = rec.take() {
-        pos_assign_to_dom(&r, doc.as_ptr() as *mut LxbNode);
-        /* Consumed: dropped now rather than at the end of the scope, because
-         * the line table below is the last thing that needs the input. */
-        drop(r);
+        positions = try_box(r.into_positions()).ok();
         lines = lines_build(src).and_then(|l| try_box(l).ok());
     }
 
-    Some((doc.release(), lines))
+    Some((doc.release(), lines, positions))
 }
 
 /// Parse `src` as an HTML document.
@@ -360,11 +398,12 @@ pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> Opti
         core::slice::from_raw_parts(src, len)
     };
 
-    let (doc, lines) = parse_tracked(bytes)?;
+    let (doc, lines, positions) = parse_tracked(bytes)?;
     drop(clean); /* the parse is done with the buffer, on every path */
 
     let mut parsed = Parsed::with(Doc::Html(doc));
     parsed.lines = lines;
+    parsed.pending_pos = positions;
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).ok()
 }

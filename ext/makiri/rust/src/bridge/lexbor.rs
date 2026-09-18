@@ -592,13 +592,20 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
 pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
     with_parsed_known(rb_doc, |p| {
         if p.evaluating != 0 {
-            Err(Error::new(
+            return Err(Error::new(
                 EXC_ERROR.exception(),
                 "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
-            ))
-        } else {
-            Ok(())
+            ));
         }
+        /* The source offsets are stamped lazily, and this is the LAST moment
+         * the tree is still the one the parser built. A walk after the edit
+         * would pair elements with the wrong tokens, and `#line` must never
+         * answer a wrong line - so it happens here, before the mutation. Only
+         * the first mutation pays; there is nothing pending afterwards. */
+        // SAFETY: the document this handle owns, not yet modified - that is
+        // what this gate is called to decide.
+        unsafe { p.assign_positions() };
+        Ok(())
     })
 }
 
