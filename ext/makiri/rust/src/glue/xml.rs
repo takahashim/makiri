@@ -195,7 +195,6 @@ fn register_namespaces(ruby: &Ruby, ctx: &XPathContext, rb_ns: Option<Value>) ->
                 ));
             }
         };
-        // SAFETY: both views are live and checked; `register_ns` copies both.
         let registered = ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes());
         if registered.is_err() {
             return Err(Error::new(error_class(), "failed to register namespace"));

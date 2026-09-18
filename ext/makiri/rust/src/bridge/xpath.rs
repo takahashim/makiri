@@ -407,8 +407,8 @@ fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Err
 fn kw_symbols() -> (VALUE, VALUE, VALUE) {
     static SYMS: OnceLock<(VALUE, VALUE, VALUE)> = OnceLock::new();
     *SYMS.get_or_init(|| {
-        // SAFETY: every caller is a Ruby method entered with the GVL. Symbols
-        // are interned once and are immortal for the Ruby VM's lifetime.
+        // Every caller is a Ruby method entered with the GVL. Symbols are
+        // interned once and are immortal for the Ruby VM's lifetime.
         let sym = |s: &str| crate::bridge::ruby::symbol(s).as_raw();
         (sym("namespace_matching"), sym("strict"), sym("lax"))
     })
@@ -531,9 +531,9 @@ struct Bridge {
     _reading: crate::bridge::doc::DocumentEvaluation,
 }
 
-// SAFETY: the bridge holds `document`'s evaluation guard for as long as it
-// exists, so a handler cannot change the document mid-walk; and
-// `push_result_node` admits only nodes whose document is `document`.
+// The bridge holds `document`'s evaluation guard for as long as it exists,
+// so a handler cannot change the document mid-walk; and `push_result_node`
+// admits only nodes whose document is `document`.
 impl Resolver for Bridge {
     fn resolve(
         &self,
@@ -888,7 +888,6 @@ fn cached_ast(
 
     /* Each parse charges a budget of its own, made from the context's caps. */
     let mut budget = Budget::with_limits(limits);
-    // SAFETY: as above, and the parse only allocates - no Ruby runs in it.
     let Ok(ast) = crate::xpath::parse::parse_owned(expr.as_verified(), &mut budget) else {
         return Err(budget.take_error());
     };

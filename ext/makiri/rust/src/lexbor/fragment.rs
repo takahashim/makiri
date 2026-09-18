@@ -89,9 +89,6 @@ fn fixup_template_content(
             {
                 let mut x = sc.first_child();
                 while let Some(child) = x {
-                    /* SAFETY: a live document and a live source node; what
-                     * import returns is fresh and detached, which is what
-                     * BuildingNode means. */
                     let imp = doc.import_node(child, true);
                     let Some(imp) = imp else {
                         // Lexbor could not copy a content child. Giving up

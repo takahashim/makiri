@@ -224,7 +224,6 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// real tree - so query the fragment instead.
 pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     match this.node().template_content() {
-        // SAFETY: the contents fragment belongs to the receiver's document.
         Some(content) => wrap_node(Some(content), this.document),
         None => nil(ruby),
     }
@@ -317,17 +316,14 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let owner = crate::bridge::lexbor::attribute_owner(document, RawNode::from(node))?;
         return Ok(wrap_node(owner, document));
     }
-    // SAFETY: the parent is in the receiver's tree.
     Ok(wrap_node(node.parent(), document))
 }
 
 pub fn next(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    // SAFETY: a sibling is in the receiver's tree.
     wrap_node(this.node().next(), this.document)
 }
 
 pub fn previous(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    // SAFETY: a sibling is in the receiver's tree.
     wrap_node(this.node().prev(), this.document)
 }
 
@@ -350,31 +346,26 @@ fn first_element<'d>(
 
 pub fn next_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().next(), HtmlNode::next);
-    // SAFETY: a sibling is in the receiver's tree.
     wrap_node(found, this.document)
 }
 
 pub fn previous_element(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().prev(), HtmlNode::prev);
-    // SAFETY: a sibling is in the receiver's tree.
     wrap_node(found, this.document)
 }
 
 /// `#child`: the first child node of any type, or nil.
 pub fn child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    // SAFETY: a child is in the receiver's tree.
     wrap_node(this.node().first_child(), this.document)
 }
 
 pub fn first_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().first_child(), HtmlNode::next);
-    // SAFETY: a child is in the receiver's tree.
     wrap_node(found, this.document)
 }
 
 pub fn last_element_child(_ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let found = first_element(this.node().last_child(), HtmlNode::prev);
-    // SAFETY: a child is in the receiver's tree.
     wrap_node(found, this.document)
 }
 
@@ -422,8 +413,6 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
     let Some(el) = this.node().element() else {
         return Ok(nil(ruby));
     };
-    // SAFETY: the guard keeps the name String reachable, and its bytes are only
-    // read before the answer String is built.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let name = nv.as_verified().as_bytes();
     if !el.has_attribute(name) {
@@ -438,7 +427,6 @@ pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Val
     let Some(el) = this.node().element() else {
         return Ok(ruby.qfalse().as_value());
     };
-    // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let has = el.has_attribute(nv.as_verified().as_bytes());
     Ok(if has {
@@ -500,15 +488,12 @@ pub fn attribute_by_qualified_name(
     let Some(el) = this.node().element() else {
         return Ok(nil(ruby));
     };
-    // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
     let name = nv.as_verified().as_bytes();
     let found = el.attrs().find(|at| at.qualified_name() == name);
     /* The name is not read past here; wrapping allocates, so it happens after. */
     drop(nv);
     Ok(match found {
-        // SAFETY: the attribute is in the receiver's tree.
         Some(at) => wrap_node(Some(at.node()), this.document),
         None => nil(ruby),
     })
@@ -529,9 +514,7 @@ pub fn attribute_value_by_qualified_name(
     let Some(el) = this.node().element() else {
         return Ok(nil(ruby));
     };
-    // SAFETY: the guard keeps the name String reachable while its bytes are read.
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
-    // SAFETY: the guard keeps the String reachable; nothing allocates meanwhile.
     let name = nv.as_verified().as_bytes();
     let value = el
         .attrs()

@@ -1098,7 +1098,6 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
     let Some(el) = doc.create_element(unsafe { nv.bytes() }) else {
         return Err(err("failed to create element"));
     };
-    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
     Ok(wrap(RawNode::from(el), rb_self))
 }
 
@@ -1110,7 +1109,6 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
     let Some(t) = doc.create_text(unsafe { tv.bytes() }) else {
         return Err(err("failed to create text node"));
     };
-    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
     Ok(wrap(RawNode::from(t), rb_self))
 }
 
@@ -1122,7 +1120,6 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Va
     let Some(c) = doc.create_comment(unsafe { tv.bytes() }) else {
         return Err(err("failed to create comment"));
     };
-    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
     Ok(wrap(RawNode::from(c), rb_self))
 }
 
@@ -1140,7 +1137,6 @@ pub fn create_pi(
     let Some(pi) = doc.create_pi(unsafe { tv.bytes() }, unsafe { dv.bytes() }) else {
         return Err(err("failed to create processing instruction"));
     };
-    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
     Ok(wrap(RawNode::from(pi), rb_self))
 }
 
@@ -1184,7 +1180,6 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let Some(dt) = doc.create_doctype(name, pub_id, sys_id) else {
         return Err(err("failed to create doctype"));
     };
-    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
     Ok(wrap(RawNode::from(dt), rb_self))
 }
 
@@ -1194,6 +1189,5 @@ pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, E
     let Some(f) = doc.create_fragment() else {
         return Err(err("failed to create document fragment"));
     };
-    // SAFETY: a fresh node of `rb_self`'s document, which keeps it alive.
     Ok(wrap(RawNode::from(f), rb_self))
 }

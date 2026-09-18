@@ -110,7 +110,6 @@ pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Value {
     let Some(root) = root else {
         return ruby.qnil().as_value();
     };
-    // SAFETY: a node of `rb_doc`'s document, which keeps it alive.
     wrap_html_node(RawNode::from(root), rb_doc)
 }
 
@@ -267,7 +266,6 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
         return Err(Error::new(EXC_ERROR.exception(), "failed to clone node"));
     };
     let document = keepalive_document(rb_self)?;
-    // SAFETY: `clone` is a detached node of `document`'s arena.
     Ok(wrap_html_node(clone, document))
 }
 

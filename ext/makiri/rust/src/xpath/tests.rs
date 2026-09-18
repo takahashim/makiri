@@ -206,7 +206,6 @@ fn parse_status(expr: &str) -> Result<(), c_int> {
     let ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     let mut budget = Budget::with_limits(ctx.limits());
     let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
-    // SAFETY: `source` borrows `expr`, which outlives the parse.
     match parse_owned(source, &mut budget) {
         Ok(_) => Ok(()),
         Err(_) => Err(budget.take_error().status),
