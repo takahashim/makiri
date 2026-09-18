@@ -192,6 +192,23 @@ end
 # behaviour, so the diff is reviewable as a behaviour change rather than as a
 # regenerated blob.
 
+# The API surface manifest. Unlike the differential above, this one IS
+# regenerable - it describes the current build, not a vanished one - so the
+# discipline is different: re-record it in the same commit as the API change, so
+# the diff reviews as an API change rather than as a regenerated blob.
+# `spec/api_surface_spec.rb` is what compares it, so `rake spec` covers it.
+namespace :api do
+  desc "Re-record the API surface manifest (spec/api_surface.txt)"
+  task record: :compile do
+    sh FileUtils::RUBY, "-Ilib", "script/api_manifest.rb", "--record"
+  end
+
+  desc "Print the API surface manifest of this build"
+  task show: :compile do
+    sh FileUtils::RUBY, "-Ilib", "script/api_manifest.rb"
+  end
+end
+
 # `rake clean` (from rake-compiler) removes the ext build dir under tmp/,
 # including the generated Makefile. The next `rake compile` re-runs extconf, so
 # a changed configure step (a new env flag, a different Ruby) is picked up. The
