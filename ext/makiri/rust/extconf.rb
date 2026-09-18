@@ -5,6 +5,7 @@ require "rbconfig"
 require "fileutils"
 require "shellwords"
 require "etc"
+require "tmpdir"
 require "rb_sys/mkmf"
 
 # extconf for the Makiri extension.
@@ -87,9 +88,43 @@ lexbor_asan = !ENV["MAKIRI_SANITIZE_LEXBOR"].to_s.strip.empty? && sanitize.inclu
 #
 # NOT under the sanitizer: that build exists to find bugs, where inlining across
 # the whole archive only makes a report harder to read.
-lexbor_lto = !!darwin && !lexbor_asan && ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
+#
+# Linux needs the WHOLE chain to be LLVM, not just the compile: `cargo test`
+# links with rust-lld, which reads LLVM bitcode and not GCC's GIMPLE, so clang
+# has to produce the archive, llvm-ar has to index it (plain `ar` records no
+# LTO symbols - that is what broke mingw), and clang has to drive the final
+# link. Missing any of those, LTO is simply off: this DETECTS the toolchain
+# rather than requiring it, so a machine with only gcc builds exactly as before
+# instead of failing.
+def llvm_chain_ok?
+  return false unless find_executable("clang")
+  return false unless find_executable("llvm-ar") && find_executable("llvm-ranlib")
+
+  # clang knowing the NAME lld is not the same as lld being installed.
+  probe = File.join(Dir.tmpdir, "makiri_lld_probe_#{Process.pid}")
+  File.write("#{probe}.c", "int main(void){return 0;}\n")
+  ok = system("clang", "-fuse-ld=lld", "#{probe}.c", "-o", probe,
+              out: File::NULL, err: File::NULL)
+  ok
+ensure
+  FileUtils.rm_f(["#{probe}.c", probe]) if probe
+end
+
+lexbor_lto =
+  if lexbor_asan || !ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
+    false
+  elsif darwin
+    true
+  elsif linux
+    llvm_chain_ok?
+  else
+    false # mingw: BFD ld cannot read the archive at all - see above
+  end
+lexbor_lto_llvm = lexbor_lto && !darwin # darwin's own toolchain needs no help
 lexbor_mode = if lexbor_asan
                 "asan"
+              elsif lexbor_lto_llvm
+                "plain-lto-llvm"
               elsif lexbor_lto
                 "plain-lto"
               else
@@ -126,7 +161,9 @@ unless stamp_ok
       "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
       "-DCMAKE_INSTALL_PREFIX=#{LEXBOR_DST}",
       *(lexbor_asan ? ["-DLEXBOR_BUILD_WITH_ASAN=ON"] : []),
-      *(lexbor_lto ? ["-DLEXBOR_C_FLAGS=-flto"] : []),
+      *(lexbor_lto ? ["-DLEXBOR_C_FLAGS=#{lexbor_lto_llvm ? "-flto=thin" : "-flto"}"] : []),
+      *(lexbor_lto_llvm ? ["-DCMAKE_C_COMPILER=clang", "-DCMAKE_AR=#{`which llvm-ar`.strip}",
+                           "-DCMAKE_RANLIB=#{`which llvm-ranlib`.strip}"] : []),
       LEXBOR_SRC,
     ]
     warn "makiri: building vendored Lexbor (mode=#{lexbor_mode})"
@@ -200,6 +237,14 @@ if linux
   # $DLDFLAGS that still have a subject: they are properties of the link, not of
   # the language that produced the objects.
   rustc_args += ["-C", "link-arg=-Wl,-z,relro", "-C", "link-arg=-Wl,-z,now"]
+
+  # With an LLVM-bitcode Lexbor the link has to be LLVM too: gcc's plugin reads
+  # GIMPLE, not bitcode. `cargo test` already uses rust-lld and needs nothing
+  # here; this is for the extension, which rb_sys otherwise links with Ruby's
+  # own CC.
+  if lexbor_lto_llvm
+    rustc_args += ["-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
+  end
 end
 
 # Flags that must reach the crate AND its dependencies (magnus, rb-sys), which

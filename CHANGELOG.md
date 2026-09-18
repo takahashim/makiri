@@ -16,10 +16,10 @@
   document: the source-location offsets are stamped into the DOM on the first
   `#line` or the first mutation rather than during every parse (-11% for callers
   that never ask for a line, on every platform), and `#line` answers exactly what
-  it did before. On macOS the vendored Lexbor is additionally built with
-  link-time optimization, worth another -17% on parse and -10% on `#to_html`;
-  the other platforms' linkers cannot read such an archive, so they keep the
-  ordinary build.
+  it did before. The vendored Lexbor is additionally built with link-time
+  optimization, worth another -17% on parse and -10% on `#to_html`, wherever the
+  platform's linker can read such an archive: macOS always, Linux when a full
+  LLVM toolchain (clang, llvm-ar, lld) is installed, and Windows not at all.
 
 * **A crash in the extension is now an exception.** The extension used to be
   built with `panic = "abort"`, so an internal failure ended the host process

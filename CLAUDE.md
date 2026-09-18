@@ -296,13 +296,25 @@ by the check that concluded "every undefined symbol is legitimate".
   extension and `cargo test` link; **linux** links the extension (gcc drives it,
   with its LTO plugin) but `cargo test` goes through rust-lld, which cannot read
   GCC's GIMPLE at all; **mingw** fails outright, because cmake indexes the
-  archive with plain `ar`, which records no LTO symbols. Chasing the last two
-  means `gcc-ar` and a clang-built Lexbor on Linux, each depending on a version
-  match between toolchains we do not control.
+  archive with plain `ar`, which records no LTO symbols.
+
+  Linux therefore gets LTO only with the WHOLE chain in LLVM - clang to emit
+  bitcode, `llvm-ar`/`llvm-ranlib` to index it, and clang+lld to drive the
+  extension's link (`cargo test` already uses rust-lld, which reads bitcode).
+  extconf DETECTS that chain rather than requiring it, probing lld by actually
+  linking with it, so a gcc-only machine builds exactly as before; CI installs
+  `clang lld llvm` so the fast path is the one it exercises. mingw stays out:
+  its Ruby is MinGW-gcc-built, so bringing clang in is an ABI question, not a
+  flag.
+
+  `-march=native` is deliberately NOT used. It measured no gain at all - the hot
+  code is a byte-at-a-time state machine plus libc's already-dispatched
+  memcpy/memset, with nothing for the compiler to vectorise - and it would bake
+  the CI runner's ISA into a gem that has to run on the user's CPU.
 
   NOT applied under the sanitizer (whole-archive inlining only makes a report
   harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts out, and the install stamp
-  tracks it (`plain` / `plain-lto` / `asan`), so a mode switch rebuilds - but
+  tracks it (`plain` / `plain-lto` / `plain-lto-llvm` / `asan`), so a mode switch rebuilds - but
   only through a path that re-runs extconf, i.e. `rake clean compile`, per the
   Makefile note above.
 
