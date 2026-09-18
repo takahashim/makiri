@@ -278,8 +278,12 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     // parse produced for it.
     unsafe {
         (*parsed).set_xml_doc(Box::from_raw(result));
-        Ok(value(obj))
     }
+    /* The arena exists now; tell the GC what it weighs. `src` is gone, so a
+     * collection here disturbs nothing. */
+    crate::bridge::lexbor::account_document(obj);
+    // SAFETY: `obj` is the live Document wrapped above.
+    Ok(unsafe { value(obj) })
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -325,6 +329,7 @@ pub fn new_empty_xml_document() -> Result<Value, Error> {
         .map_err(|_| Error::new(error_class(), "out of memory allocating XML document"))?;
     // SAFETY: `parsed` is the handle behind `doc_obj`, live for this call.
     unsafe { (*parsed).set_xml_doc(xdoc) };
+    crate::bridge::lexbor::account_document(doc_obj);
     Ok(unsafe { value(doc_obj) })
 }
 

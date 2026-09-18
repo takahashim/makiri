@@ -720,6 +720,19 @@ Key decisions that got there, worth not regressing:
 - **Per-context compiled-AST cache** (`glue/xpath.rs`): an `XPathContext` parses
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
+- **Every Document reports its arena to the GC** (`bridge::lexbor::account_document`,
+  called after each parse; `DocData::release` takes the report back). Neither
+  Lexbor's pools nor the XML arena is an `xmalloc`, so without the report Ruby
+  sees a parsed Document as ~56 bytes and NO collection is triggered by memory
+  pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,
+  and every parse faulting fresh pages - the parse bench read 1.8× slower than
+  nokolexbor at ±43% variance, and nothing failed. With the report it is at
+  parity. The diagnostic is `GC.count` across a parse loop (must rise) and
+  `minflt` per parse (near 0 once warm). Any new path that hands an arena to a
+  wrapper - a new parse entry, a fragment with its own backing document - must
+  call `account_document` after the arena exists; `spec/gc_accounting_spec.rb`
+  pins both halves. Growth through mutation/fragment import is NOT re-reported
+  (an approximation, in the safe direction of under-reporting).
 - Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't
   shrink it); investigated nodeset-pool / prefetch follow-ups were **not** shipped
   because, with no remaining slower-than-Nokogiri row, they'd add lifetime /

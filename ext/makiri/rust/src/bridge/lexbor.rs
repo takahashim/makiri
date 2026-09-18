@@ -80,6 +80,17 @@ const NODE_KIND_XML: c_int = 2;
 pub struct DocData {
     pub parsed: *mut Parsed,
     pub errors: VALUE,
+    /// The external bytes this wrapper has told the GC about, so `release`
+    /// takes back exactly what [`account_document`] reported.
+    reported: usize,
+}
+
+impl DocData {
+    /// The bytes the handle holds outside Ruby's allocator, or 0 with none.
+    fn external_bytes(&self) -> usize {
+        // SAFETY: `parsed` is owned by this object and live for the call.
+        unsafe { self.parsed.as_ref() }.map_or(0, Parsed::external_bytes)
+    }
 }
 
 impl Hooks for DocData {
@@ -88,14 +99,7 @@ impl Hooks for DocData {
     }
 
     fn memsize(&self) -> usize {
-        let mut total = core::mem::size_of::<DocData>();
-        // SAFETY: `parsed` is owned by this object and live for the call.
-        unsafe {
-            if let Some(xdoc) = self.parsed.as_ref().and_then(|p| p.xml_doc_ref()) {
-                total += crate::xml::api::xml_doc_memsize(xdoc);
-            }
-        }
-        total
+        core::mem::size_of::<DocData>().saturating_add(self.external_bytes())
     }
 
     fn release(&mut self) {
@@ -103,6 +107,46 @@ impl Hooks for DocData {
             // SAFETY: `parsed` came from `Box::into_raw` and only this owns it.
             unsafe { drop(Box::from_raw(self.parsed)) };
         }
+        /* Balance the report, or the GC keeps counting freed arenas as live
+         * and collects ever more eagerly. A plain C call, as this hook has to
+         * be: it only subtracts, and Ruby's own `xfree` does the same from
+         * here. */
+        if let Ok(diff) = isize::try_from(self.reported) {
+            // SAFETY: called from Ruby's free hook, with the GVL held.
+            unsafe { rb_sys::rb_gc_adjust_memory_usage(diff.wrapping_neg() as rb_sys::ssize_t) };
+        }
+    }
+}
+
+/// Tell the GC how much memory `rb_doc` holds outside Ruby's allocator.
+///
+/// Neither the Lexbor arena nor the XML arena is an `xmalloc`, so the GC sees
+/// a parsed document as a few dozen bytes: a loop that parses and drops never
+/// triggers a collection from memory pressure, RSS climbs by a document per
+/// parse, and every parse pays for freshly faulted pages (measured: 2× the
+/// parse time, and gigabytes of RSS, on a 280 KB document). This reports the
+/// difference since the last call, so it is safe to call again after the
+/// document grows.
+///
+/// May run a collection right here, so `rb_doc` must be reachable from the
+/// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
+/// may be held across the call.
+pub fn account_document(rb_doc: VALUE) {
+    // SAFETY: `rb_doc` is a Document (the base type matches either leaf).
+    let d = unsafe {
+        &mut *(crate::bridge::ruby::typed_data_known(value(rb_doc), &DOC_TYPE) as *mut DocData)
+    };
+    let now = d.external_bytes();
+    /* Clamp rather than saturate the report: a document Ruby cannot address
+     * is not one we will see, and a truncated diff would unbalance `release`. */
+    let (Ok(now_i), Ok(then_i)) = (isize::try_from(now), isize::try_from(d.reported)) else {
+        return;
+    };
+    let diff = now_i.wrapping_sub(then_i);
+    if diff != 0 {
+        d.reported = now;
+        // SAFETY: a Document method's frame, with the GVL held.
+        unsafe { rb_sys::rb_gc_adjust_memory_usage(diff as rb_sys::ssize_t) };
     }
 }
 
@@ -132,6 +176,7 @@ pub unsafe fn wrap_document(parsed: *mut Parsed) -> VALUE {
     let html = !unsafe { (*parsed).is_xml() };
     let obj = new_document(html);
     set_document_parsed(obj, parsed);
+    account_document(obj);
     obj
 }
 
@@ -153,7 +198,10 @@ pub fn new_document(html: bool) -> VALUE {
         crate::bridge::ruby::wrap_zeroed::<DocData>(
             klass,
             ty.as_ptr(),
-            |d| d.parsed = core::ptr::null_mut(),
+            |d| {
+                d.parsed = core::ptr::null_mut();
+                d.reported = 0;
+            },
             |d| d.errors = errors.as_raw(),
         )
     }

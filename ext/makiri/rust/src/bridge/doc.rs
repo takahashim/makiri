@@ -24,7 +24,7 @@ use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::fragment::{build_fragment_ctx, context_kwarg, resolve_fragment_context};
 use crate::bridge::lexbor::{
-    doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap, keepalive_document, new_document,
+    account_document, doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap, keepalive_document, new_document,
     node_kind, set_document_parsed, wrap_document, wrap_html_node, DOC_TYPE,
 };
 use crate::bridge::ruby::{typed_data_known_ref, value};
@@ -92,6 +92,9 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
         ));
     }
     set_document_parsed(obj, result);
+    /* The GC learns the arena's size here; `owned` is already gone, so a
+     * collection this triggers has nothing of ours to invalidate. */
+    account_document(obj);
     // SAFETY: `obj` came from `new_document`, which returns a live Document.
     Ok(unsafe { value(obj) })
 }

@@ -232,6 +232,26 @@ impl Parsed {
         self.text_index = None;
     }
 
+    /// The bytes this document holds OUTSIDE Ruby's allocator, for the GC.
+    ///
+    /// Ruby triggers a collection from what `xmalloc` reports, and neither a
+    /// Lexbor arena nor the XML arena goes through it - so without this number
+    /// a loop that parses and drops documents never triggers a GC at all: each
+    /// document (a few MB for a few hundred KB of HTML) waits for a collection
+    /// that only object counts can start, RSS climbs by that much per parse,
+    /// and every parse pays for freshly faulted pages. The bridge reports it
+    /// through `rb_gc_adjust_memory_usage`.
+    ///
+    /// Arena CAPACITY, not the bytes in use: the pages are what cost.
+    pub fn external_bytes(&self) -> usize {
+        match &self.doc {
+            // SAFETY: the handle owns a live document.
+            Doc::Html(doc) => unsafe { lxb_document_capacity(doc.as_ptr() as *mut LxbNode) },
+            Doc::Xml(Some(doc)) => crate::xml::api::xml_doc_memsize(doc),
+            Doc::Xml(None) => 0,
+        }
+    }
+
     /// The 1-based source line for `node`, or 0 when unknown.
     ///
     /// 0 covers both "the tracker could not place this node" and "the line table
@@ -410,13 +430,21 @@ pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> Opti
 
 /* ---- live bytes, for sizing a serialization buffer ---- */
 
-/// Bytes handed out from one Lexbor mem pool.
+/// Which of a chunk's two sizes to sum.
+#[derive(Clone, Copy)]
+enum Measure {
+    /// Bytes handed out (`length`): what a serializer will write.
+    Used,
+    /// Bytes allocated (`size`): what the process paid for.
+    Capacity,
+}
+
+/// Bytes of one Lexbor mem pool.
 ///
 /// Lexbor exposes no running total, so the chunk list is walked summing each
-/// chunk's bump length. Cheap: the chunks are few and large. Saturates to
-/// `usize::MAX` on the unreachable overflow; the caller clamps the derived
-/// capacity to the buffer's hard ceiling anyway.
-unsafe fn mem_used(mem: *const lxb::lexbor_mem_t) -> usize {
+/// chunk. Cheap: the chunks are few and large. Saturates to `usize::MAX` on the
+/// unreachable overflow; the callers clamp anyway.
+unsafe fn mem_total(mem: *const lxb::lexbor_mem_t, measure: Measure) -> usize {
     let mut total = 0usize;
     let mut c = if mem.is_null() {
         core::ptr::null_mut()
@@ -424,7 +452,11 @@ unsafe fn mem_used(mem: *const lxb::lexbor_mem_t) -> usize {
         (*mem).chunk_first
     };
     while !c.is_null() {
-        total = match total.checked_add((*c).length) {
+        let n = match measure {
+            Measure::Used => (*c).length,
+            Measure::Capacity => (*c).size,
+        };
+        total = match total.checked_add(n) {
             Some(t) => t,
             None => return usize::MAX,
         };
@@ -433,9 +465,8 @@ unsafe fn mem_used(mem: *const lxb::lexbor_mem_t) -> usize {
     total
 }
 
-/// The live bytes in a node's document arena, which the serializers size their
-/// buffer from.
-pub unsafe fn lxb_document_bytes(node: *mut LxbNode) -> usize {
+/// Sum the node and text pools of a node's document.
+unsafe fn lxb_document_pools(node: *mut LxbNode, measure: Measure) -> usize {
     if node.is_null() {
         return 0;
     }
@@ -455,10 +486,22 @@ pub unsafe fn lxb_document_bytes(node: *mut LxbNode) -> usize {
         if pool.is_null() {
             continue;
         }
-        total = match total.checked_add(mem_used((*pool).mem)) {
+        total = match total.checked_add(mem_total((*pool).mem, measure)) {
             Some(t) => t,
             None => return usize::MAX,
         };
     }
     total
+}
+
+/// The live bytes in a node's document arena, which the serializers size their
+/// buffer from.
+pub unsafe fn lxb_document_bytes(node: *mut LxbNode) -> usize {
+    lxb_document_pools(node, Measure::Used)
+}
+
+/// The bytes a node's document arena has allocated, used or not - what it
+/// costs the process, for [`Parsed::external_bytes`].
+pub unsafe fn lxb_document_capacity(node: *mut LxbNode) -> usize {
+    lxb_document_pools(node, Measure::Capacity)
 }
