@@ -25,6 +25,23 @@ path = "src/lib.rs"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
+# The panic gate. `panic = "abort"` below means a panic ends the host process
+# rather than raising something Ruby can rescue, so a new one has to be a
+# decision rather than an accident: these two make it a build failure under
+# CI's `-D warnings`, and the few sites that want one carry an `#[allow]` with
+# a reason. Test code is exempt in `lib.rs`.
+#
+# `expect_used` is deliberately NOT here: 223 of its hits are the
+# `.expect("#name")` of method registration, which cannot fail after a
+# successful `Init_makiri`, and allowing each would say nothing. Nor are
+# `indexing_slicing` and `arithmetic_side_effects` (469 hits, mostly the
+# engine's own bounds-checked walks): gating those needs a different argument
+# than "a panic aborts", since release builds keep `overflow-checks` on
+# precisely so a wrapped size stops the process instead of answering wrong.
+[lints.clippy]
+unwrap_used = "warn"
+panic = "warn"
+
 [features]
 # Three features, and each names a real optional dependency rather than a step
 # of the C port: a Ruby runtime, a vendored C library, and a test hook.

@@ -16,6 +16,12 @@
 //! Lexbor's own names stay `lxb_*`.
 
 #![deny(unsafe_code)]
+// `panic = "abort"`, so a panic is not an exception a caller can rescue - it
+// takes the host process down. `Cargo.toml`'s clippy lints therefore refuse a
+// new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants
+// one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
+// the failure report.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::panic))]
 
 /// Lexbor's layout and constants, generated from its own headers by build.rs
 /// and checked against the hand-written view the engine's hot paths use.

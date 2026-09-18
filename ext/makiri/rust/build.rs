@@ -33,6 +33,11 @@
 //! `lxb_dom_node_type_t`), so allowlisting by constant name matches nothing.
 //! The enum TYPE has to be allowlisted instead.
 
+// The crate's panic gate does not apply here: a build script reports failure BY
+// panicking - cargo prints the message and stops the build - so aborting is the
+// interface, not a missing error path. Nothing in this file ships.
+#![allow(clippy::unwrap_used, clippy::panic)]
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=MAKIRI_LEXBOR_INCLUDE");

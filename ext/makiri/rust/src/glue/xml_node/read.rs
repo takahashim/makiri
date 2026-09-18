@@ -127,7 +127,7 @@ pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Value {
         match cur {
             None => break,
             Some(x) if x == id => break,
-            Some(_) => cur = d.next(cur.unwrap()),
+            Some(x) => cur = d.next(x),
         }
     }
     utf8(ruby, &out).as_value()

@@ -17,6 +17,13 @@ static NAMESPACE_CLASS: OnceLock<Opaque<RClass>> = OnceLock::new();
 static PREFIX: LazyId = LazyId::new("@prefix");
 static HREF: LazyId = LazyId::new("@href");
 
+#[allow(
+    clippy::panic,
+    reason = "an init invariant: reachable only if Init_makiri ran twice, which \
+              would mean two class hierarchies in one process. Aborting there is \
+              the fail-closed answer - the alternative is reading a Namespace \
+              class that some other registration owns."
+)]
 pub fn set_namespace_class(klass: RClass) {
     if NAMESPACE_CLASS.set(Opaque::from(klass)).is_err() {
         panic!("Makiri::XML::Namespace is initialized once");
