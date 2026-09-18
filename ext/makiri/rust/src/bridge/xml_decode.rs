@@ -26,11 +26,11 @@
 
 use core::ffi::{c_char, c_int, c_long};
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{Error, RString, Value};
+use magnus::rb_sys::AsRawValue;
+use magnus::{Error, Value};
 use rb_sys::{rb_encoding, VALUE};
 
-use super::string::{text_check, TextVerdict};
+use super::string::{ruby_bytes_view, text_check, TextVerdict};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 
 pub use crate::bridge::string::ruby_exception_message;
@@ -204,13 +204,6 @@ unsafe fn compatible(a: *mut rb_encoding, b: *mut rb_encoding) -> bool {
     a == b || a == rb_sys::rb_usascii_encoding() || b == rb_sys::rb_usascii_encoding()
 }
 
-/// The bytes of a String, borrowed. Valid only until Ruby runs.
-unsafe fn bytes_of(str: VALUE) -> &'static [u8] {
-    let r = RString::from_value(Value::from_raw(str)).expect("a T_STRING");
-    let s = r.as_slice();
-    core::slice::from_raw_parts(s.as_ptr(), s.len())
-}
-
 /// Phase 1: the input's single effective byte encoding (XML 1.0 Appendix F).
 ///
 /// A BOM wins, else the `<?xml encoding=?>` declaration, else the String's own
@@ -220,11 +213,15 @@ unsafe fn bytes_of(str: VALUE) -> &'static [u8] {
 /// ever sees one self-consistent answer.
 unsafe fn effective_encoding(str: VALUE) -> Result<*mut rb_encoding, Error> {
     let tag = rb_sys::rb_enc_get(str);
-    let (bom, geo) = bom_encoding(bytes_of(str));
+    /* One anchor for the call. Holding it is what keeps the String reachable
+     * and in place; each `bytes()` below is a borrow OF THE ANCHOR, so no slice
+     * can outlive it or be stored past this function. */
+    let anchor = ruby_bytes_view(str);
+    let (bom, geo) = bom_encoding(anchor.bytes());
 
     /* Re-borrow: the rb_enc_find inside the BOM lookup can autoload an encoding,
      * which is a GC point, and a borrow must not be held across one. */
-    let raw = bytes_of(str);
+    let raw = anchor.bytes();
     let decl = decl_encoding(&raw[geo.bom_len.min(raw.len())..], geo.stride, geo.off);
     let is_binary = tag == rb_sys::rb_ascii8bit_encoding();
 
@@ -303,7 +300,8 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         out
     };
 
-    let bytes = bytes_of(s);
+    let anchor = ruby_bytes_view(s);
+    let bytes = anchor.bytes();
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
      * covers every input. */

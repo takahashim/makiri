@@ -76,20 +76,26 @@ unsafe fn html_ns_uri<'a>(n: *const LxbNode) -> Option<&'a [u8]> {
 
 /* ---- the work stack, shared by both directions ---- */
 
-struct Frame<S, D> {
+/// One pending subtree, plus the default namespace in scope for its children.
+///
+/// `def` borrows the source document's interned namespace table, which is
+/// [`html_ns_uri`]'s documented contract and outlives the walk. Carrying that
+/// lifetime here rather than erasing it to `'static` is what keeps the
+/// laundering in the one accessor that states the contract.
+struct Frame<'a, S, D> {
     s: S,
     d: D,
-    def: Option<&'static [u8]>,
+    def: Option<&'a [u8]>,
 }
 
 /// Push, growing only when the stack is actually full.
 #[inline]
-fn push<S, D>(stack: &mut Vec<Frame<S, D>>, frame: Frame<S, D>) -> Result<(), ()> {
+fn push<'a, S, D>(stack: &mut Vec<Frame<'a, S, D>>, frame: Frame<'a, S, D>) -> Result<(), ()> {
     if stack.len() == stack.capacity() {
         let want = crate::falloc::grow_capacity(
             stack.capacity(),
             stack.len() + 1,
-            core::mem::size_of::<Frame<S, D>>(),
+            core::mem::size_of::<Frame<'a, S, D>>(),
         )
         .ok_or(())?;
         stack.mkr_reserve_exact(want - stack.len())?;
@@ -316,17 +322,16 @@ pub unsafe fn cross_html_to_xml(
     }
 
     if deep {
-        let mut stack: Vec<Frame<*mut LxbNode, NodeId>> = match try_vec_with_capacity(1) {
+        let mut stack: Vec<Frame<'_, *mut LxbNode, NodeId>> = match try_vec_with_capacity(1) {
             Some(v) => v,
             None => return MutStatus::Oom,
         };
-        let rdef: Option<&'static [u8]> = core::mem::transmute(root.child_default);
         if push(
             &mut stack,
             Frame {
                 s: src,
                 d: root.node,
-                def: rdef,
+                def: root.child_default,
             },
         )
         .is_err()
@@ -346,20 +351,18 @@ pub unsafe fn cross_html_to_xml(
                     if st != MutStatus::Ok {
                         return st;
                     }
-                    if !h2x_children_of(c).is_null() {
-                        let cdef: Option<&'static [u8]> = core::mem::transmute(made.child_default);
-                        if push(
+                    if !h2x_children_of(c).is_null()
+                        && push(
                             &mut stack,
                             Frame {
                                 s: c,
                                 d: made.node,
-                                def: cdef,
+                                def: made.child_default,
                             },
                         )
                         .is_err()
-                        {
-                            return MutStatus::Oom;
-                        }
+                    {
+                        return MutStatus::Oom;
                     }
                 }
                 c = (*c).next;
