@@ -127,6 +127,8 @@ pub static XML_DOC_TYPE: DataType =
 /// # Safety
 /// `parsed` must be an owned handle that nothing else frees.
 pub unsafe fn wrap_document(parsed: *mut Parsed) -> VALUE {
+    // SAFETY: `parsed` is the live owned handle this function's contract names,
+    // and nothing has taken it yet - the wrapper below is what will own it.
     let html = !unsafe { (*parsed).is_xml() };
     let obj = new_document(html);
     set_document_parsed(obj, parsed);
@@ -253,7 +255,11 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
             // borrows them from `p`) and are copied into the String before the
             // borrow ends; nothing here runs Ruby.
             let built = unsafe { crate::bridge::string::ruby_str_from_slices(slices, total) };
-            found = Some(built.map(|v| unsafe { value(v) }));
+            found = Some(built.map(|v| {
+                // SAFETY: the String `ruby_str_from_slices` just built, live and
+                // on this frame.
+                unsafe { value(v) }
+            }));
         }
     });
     found.transpose()
@@ -904,7 +910,11 @@ pub fn set_attribute_ns(
     let (qname, value) = unsafe { (qv.bytes(), vv.bytes()) };
     /* An empty URI is no namespace: it names the attribute the unprefixed way. */
     let ns = match &nv {
-        Some(nv) if nv.len() != 0 => Some(unsafe { nv.bytes() }),
+        Some(nv) if nv.len() != 0 => {
+            // SAFETY: as above - the caller's view, live for this call, and
+            // read before any Ruby code can run again.
+            Some(unsafe { nv.bytes() })
+        }
         _ => None,
     };
 

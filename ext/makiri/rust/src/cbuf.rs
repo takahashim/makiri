@@ -51,6 +51,9 @@ pub struct OwnedBuf {
 impl OwnedBuf {
     /// The bytes written to the allocation, without the trailing NUL.
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: the fields are private and every constructor stores a live
+        // libc allocation of at least `len + 1` initialised bytes, owned until
+        // `Drop` or `into_raw_parts` - neither of which can run for `&self`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
@@ -84,6 +87,9 @@ impl OwnedBuf {
     pub fn fill(cap: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> Option<OwnedBuf> {
         // SAFETY: as in `copy_from`; the room is zeroed before `fill` sees it.
         let p = unsafe { NonNull::new(crate::falloc::cstr::str_alloc(cap) as *mut u8)? };
+        // SAFETY: `p` is `cap + 1` writable bytes nothing else holds yet. This
+        // zeroes the first `cap` - so every byte `fill` sees is initialised -
+        // and lends exactly those, leaving the terminator byte untouched.
         let dst = unsafe {
             core::ptr::write_bytes(p.as_ptr(), 0, cap);
             core::slice::from_raw_parts_mut(p.as_ptr(), cap)
@@ -98,6 +104,9 @@ impl OwnedBuf {
 
 impl Drop for OwnedBuf {
     fn drop(&mut self) {
+        // SAFETY: this type owns the libc allocation, and `into_raw_parts` -
+        // the one way to hand it away - consumes `self`, so nothing else can
+        // still hold it here.
         unsafe { libc_free(self.ptr.as_ptr() as *mut c_void) };
     }
 }
@@ -121,8 +130,9 @@ impl Buf {
 
     /// The bytes written so far, without the trailing NUL.
     pub fn as_slice(&self) -> &[u8] {
-        /* The fields are private, and every constructor/mutator in this module
-         * preserves the allocation invariant used here. */
+        // SAFETY: the fields are private, and every constructor and mutator in
+        // this module leaves `data` either null or an allocation holding `len`
+        // initialised bytes - which is exactly what `as_slice_unchecked` needs.
         unsafe { self.as_slice_unchecked() }
     }
 
@@ -136,6 +146,8 @@ impl Buf {
 
     /// Append bytes without exposing raw pointers to Rust callers.
     pub fn append(&mut self, bytes: &[u8]) -> Result<(), BufError> {
+        // SAFETY: `self` is a live buffer, and the pointer and length are one
+        // Rust slice's, so they name exactly `bytes.len()` readable bytes.
         let status = unsafe { buf_append(self, bytes.as_ptr() as *const c_void, bytes.len()) };
         match status {
             BUF_OK => Ok(()),
@@ -148,6 +160,7 @@ impl Buf {
 
     /// Reserve room for `n` content bytes without changing the current length.
     pub fn reserve(&mut self, n: usize) -> Result<(), BufError> {
+        // SAFETY: `self` is a live buffer.
         let status = unsafe { buf_reserve(self, n) };
         match status {
             BUF_OK => Ok(()),
@@ -161,6 +174,9 @@ impl Buf {
     /// Detach the allocation and reset this buffer to an empty state.
     pub fn steal(&mut self) -> Result<OwnedBuf, BufError> {
         let mut len = 0usize;
+        // SAFETY: `self` is a live buffer and `len` is a writable local. The
+        // call resets the buffer to empty, so the allocation it returns has no
+        // other owner.
         let ptr = unsafe { buf_steal(self, &mut len) };
         let ptr = NonNull::new(ptr as *mut u8).ok_or(BufError::Oom)?;
         Ok(OwnedBuf { ptr, len })
@@ -169,6 +185,9 @@ impl Buf {
     /// Release the allocation and reset the buffer to an empty state.
     pub fn free(&mut self) {
         if !self.data.is_null() {
+            // SAFETY: non-null here, and owned by this buffer - `steal` is the
+            // only way out and it nulls the field. Nulled again below, so a
+            // second `free` (or the `Drop` that calls this) cannot double-free.
             unsafe { libc_free(self.data as *mut c_void) };
             self.data = core::ptr::null_mut();
         }

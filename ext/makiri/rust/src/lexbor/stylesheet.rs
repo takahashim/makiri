@@ -549,6 +549,11 @@ struct Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        // SAFETY: this type owns both objects - `parse` is the only constructor
+        // and never hands either pointer out - so neither can be destroyed
+        // elsewhere. A half-built engine leaves the failed half null, which the
+        // guards below skip, so an `Err` return from `parse` frees exactly what
+        // it managed to create.
         unsafe {
             if !self.sst.is_null() {
                 lxb::lxb_css_stylesheet_destroy(self.sst, true);
@@ -565,6 +570,10 @@ impl Drop for Engine {
 /// This is the safe boundary consumed by the Ruby glue: all Lexbor-owned
 /// pointers and callback state have been dropped before it returns.
 pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
+    // SAFETY: one contract for the whole body. Every pointer here is created by
+    // the Lexbor calls below, null-checked before use, and owned by `eng`,
+    // whose `Drop` frees it on every path out. `css` is a Rust slice, which the
+    // parser only reads, and nothing in here runs Ruby.
     unsafe {
         let eng = Engine {
             parser: lxb_css_parser_create(),
@@ -600,6 +609,8 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
 
 fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, c"CSS stylesheet")?;
+    // SAFETY: `tv` anchors the String for this frame, and `parse` is Lexbor and
+    // the allocator only - no Ruby runs that could move or mutate the bytes.
     let css: &[u8] = unsafe { tv.bytes() };
 
     let eclass = error_class();

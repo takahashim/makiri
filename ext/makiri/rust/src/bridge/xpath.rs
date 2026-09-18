@@ -839,8 +839,14 @@ unsafe fn handler_resolver(
     /* `out` owns whatever the handler produced, so every failure below frees
      * it. The call runs under `protect`: the body builds the arguments and
      * converts the result, and any of those can raise. */
+    /* As in `bridge::selectors`: the state travels through `protect`'s one
+     * word as a `*mut HandlerCall` wearing a VALUE's type, never as an object. */
     let state_ptr = &mut state_of_call as *mut HandlerCall as VALUE;
-    let called = crate::bridge::ruby::protect_value(|| unsafe { handler_call_body(state_ptr) });
+    let called = crate::bridge::ruby::protect_value(|| {
+        // SAFETY: `state_ptr` is the borrow above, which outlives the call, and
+        // `handler_call_body` is the only reader - it casts the word back.
+        unsafe { handler_call_body(state_ptr) }
+    });
     if let Err(e) = called {
         // c_char, not i8: it is signed on aarch64-darwin and UNSIGNED on
         // aarch64-linux, so spelling the element type concretely compiles on

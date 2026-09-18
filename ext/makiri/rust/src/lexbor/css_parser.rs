@@ -87,10 +87,15 @@ impl GvlEngine {
         }
 
         // SAFETY: constructors do not borrow Rust memory; every pointer is
-        // checked before initialization or destruction.
-        let mem = unsafe { lxb_css_memory_create() };
-        let parser = unsafe { lxb_css_parser_create() };
-        let sel = unsafe { lxb_css_selectors_create() };
+        // checked before initialization or destruction. One block for the
+        // three, because the sentence above is the contract for all of them.
+        let (mem, parser, sel) = unsafe {
+            (
+                lxb_css_memory_create(),
+                lxb_css_parser_create(),
+                lxb_css_selectors_create(),
+            )
+        };
         let ok = !mem.is_null()
             && !parser.is_null()
             && !sel.is_null()

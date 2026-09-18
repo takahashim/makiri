@@ -241,6 +241,11 @@ impl TextIndex {
                  * smaller than the bytes actually present, which is a short read
                  * into a pre-sized String. */
                 let total = t.prefix[t.slices.len()].checked_add(len)?;
+                // SAFETY: `ptr`/`len` are the character-data node's own storage
+                // in this document's arena, which outlives the index. The view
+                // is lifetime-free, so what keeps it valid is the invalidation
+                // hook: `Parsed::invalidate_indexes` drops the whole index on
+                // any mutation, before the storage can move or detach.
                 t.slices.push(unsafe {
                     BorrowedText::from_raw_parts(ptr as *const core::ffi::c_char, len)
                 });

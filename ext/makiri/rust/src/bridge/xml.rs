@@ -298,6 +298,8 @@ pub fn document_root(ruby: &Ruby, rb_self: Value) -> Value {
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
 pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
     let xdoc = doc_of(rb_self);
+    // SAFETY: the `is_null` on its left short-circuits, so the deref only runs
+    // for a live arena of `rb_self`, which the receiver keeps rooted.
     if xdoc.is_null() || unsafe { (*xdoc).doctype.is_none() } {
         return ruby.qnil().as_value();
     }
@@ -586,6 +588,8 @@ unsafe fn splice_fragment(
     let mut r = target; /* the moving insertion point, for AFTER */
     // SAFETY: the caller's arena; each call detaches c from frag.
     while let Some(c) = unsafe { (*xd).first_child(frag) } {
+        // SAFETY: same arena, and `target`, `r` and `c` are all nodes of it -
+        // `c` is the child just taken off `frag`, `r` the last one inserted.
         let st = unsafe {
             match op {
                 Op::Child => xml_insert_child(&mut *xd, target, c),
@@ -874,7 +878,10 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
     let xd = crate::bridge::lexbor::doc_parsed(rb_self)
-        .map(|p| unsafe { crate::bridge::lexbor::parsed_xml_doc(p) })
+        .map(|p| {
+            // SAFETY: `p` is `rb_self`'s own handle, live while the receiver is.
+            unsafe { crate::bridge::lexbor::parsed_xml_doc(p) }
+        })
         .unwrap_or(core::ptr::null_mut());
     let mut copy: NodeId = NodeId::INVALID;
     match node_kind(node_v.as_raw()) {

@@ -100,8 +100,15 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         nodes: &nodes,
         refused: None,
     };
+    /* `protect` passes one machine word through, so the state travels as a
+     * `*mut Fill` wearing a VALUE's type - never a Ruby object, and never
+     * reached as one. */
     let fill_ptr = &mut fill as *mut Fill as VALUE;
-    crate::bridge::ruby::protect_value(|| unsafe { fill_thunk(fill_ptr) })?;
+    crate::bridge::ruby::protect_value(|| {
+        // SAFETY: `fill_ptr` is the borrow above, which outlives the call, and
+        // `fill_thunk` is the only reader - it casts the same word back.
+        unsafe { fill_thunk(fill_ptr) }
+    })?;
     if let Some(e) = fill.refused.take() {
         return Err(e.into());
     }

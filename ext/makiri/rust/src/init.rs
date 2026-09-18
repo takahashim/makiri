@@ -273,6 +273,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let xml_syntax = m_xml.define_error("SyntaxError", err)?;
     let xml_limit = m_xml.define_error("LimitExceeded", err)?;
 
+    // SAFETY: `RbConst::set` wants a class or module that lives for the rest of
+    // the process. Every value below was just defined under `Makiri::`, so the
+    // module holds it for good - and this runs once, from `Init_makiri`, before
+    // any of these globals can be read.
     unsafe {
         CLASS_NODE.set(node.as_raw());
         CLASS_DOCUMENT.set(document.as_raw());
