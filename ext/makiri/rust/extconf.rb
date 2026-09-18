@@ -61,12 +61,33 @@ linux   = RbConfig::CONFIG["target_os"] =~ /linux/
 # vendor/lexbor stays vanilla - this is a build flag, not a source patch.
 sanitize    = ENV["MAKIRI_SANITIZE"].to_s.strip
 lexbor_asan = !ENV["MAKIRI_SANITIZE_LEXBOR"].to_s.strip.empty? && sanitize.include?("address")
-lexbor_mode = lexbor_asan ? "asan" : "plain"
+
+# Link-time optimization across Lexbor's own translation units. It is the one
+# compile-option win there was: measured -17% on parse and -10% on to_html
+# (CPU time, 6000-element document), for about two seconds of link. Lexbor is
+# already -O3 - `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` AFTER its own
+# `-O2`, and the last one wins - so there was nothing left in the -O level.
+#
+# The archive becomes bitcode, which the final link has to understand. That is
+# the same toolchain that compiled it in every configuration we build (clang on
+# darwin, gcc on linux and mingw), so it resolves; `MAKIRI_LEXBOR_NO_LTO=1` is
+# the escape hatch for a toolchain where it does not.
+#
+# NOT under the sanitizer: that build exists to find bugs, where inlining across
+# the whole archive only makes a report harder to read.
+lexbor_lto = !lexbor_asan && ENV["MAKIRI_LEXBOR_NO_LTO"].to_s.strip.empty?
+lexbor_mode = if lexbor_asan
+                "asan"
+              elsif lexbor_lto
+                "plain-lto"
+              else
+                "plain"
+              end
 lexbor_stamp = File.join(LEXBOR_DST, ".makiri_build_mode")
 
 # Reuse the cached archive only when it was built in the mode we now want; a
-# mode switch (plain <-> asan) forces a rebuild, so a sanitized Lexbor can never
-# leak into a normal build or vice versa.
+# mode switch (plain <-> asan <-> plain-lto) forces a rebuild, so a sanitized or
+# non-LTO Lexbor can never leak into a build that wanted the other.
 have_archive = File.exist?(File.join(LEXBOR_DST, "lib", "liblexbor_static.a"))
 stamp_ok = have_archive && File.exist?(lexbor_stamp) && File.read(lexbor_stamp).strip == lexbor_mode
 unless stamp_ok
@@ -93,6 +114,7 @@ unless stamp_ok
       "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
       "-DCMAKE_INSTALL_PREFIX=#{LEXBOR_DST}",
       *(lexbor_asan ? ["-DLEXBOR_BUILD_WITH_ASAN=ON"] : []),
+      *(lexbor_lto ? ["-DLEXBOR_C_FLAGS=-flto"] : []),
       LEXBOR_SRC,
     ]
     warn "makiri: building vendored Lexbor (mode=#{lexbor_mode})"

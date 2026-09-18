@@ -12,6 +12,13 @@
 
 ### Changed
 
+* **Parsing is faster.** Two changes, measured in CPU time on a 6000-element
+  document: the vendored Lexbor is now built with link-time optimization (-17%),
+  and the source-location offsets are stamped into the DOM on the first `#line`
+  or the first mutation rather than during every parse (-11% for callers that
+  never ask for a line). `#line` answers exactly what it did before.
+  Serialization (`#to_html`) gains ~10% from the same Lexbor build.
+
 * **A crash in the extension is now an exception.** The extension used to be
   built with `panic = "abort"`, so an internal failure ended the host process
   with SIGABRT, running no `ensure`, no `at_exit` and no cleanup. It now unwinds:

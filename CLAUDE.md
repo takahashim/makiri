@@ -283,6 +283,19 @@ by the check that concluded "every undefined symbol is legitimate".
   `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
   Rust's own bounds checking is what covers the class now on every path that is
   not `unsafe`, which is why `unsafe` blocks carry a stated contract.
+- **Vendored Lexbor is built with LTO** (`-DLEXBOR_C_FLAGS=-flto`), and that is
+  a measured 17% of a parse, not a guess: the archive becomes bitcode and the
+  final link optimises across Lexbor's translation units. It was the only
+  compile-option win available - Lexbor is ALREADY `-O3`, because
+  `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after Lexbor's own `-O2` and
+  the last `-O` wins, so reading its `LEXBOR_OPTIMIZATION_LEVEL` default as the
+  effective level is a trap. Costs about two seconds of link, and `to_html` gains
+  ~10% while `css` loses ~4%. NOT applied under the sanitizer (whole-archive
+  inlining only makes a report harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts
+  out, and the install stamp tracks it (`plain` / `plain-lto` / `asan`), so a
+  mode switch rebuilds - but only through a path that re-runs extconf, i.e.
+  `rake clean compile`, per the Makefile note above.
+
 - **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
   bump arena.** A sub-allocation overrunning into the next one stays within one
   malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
