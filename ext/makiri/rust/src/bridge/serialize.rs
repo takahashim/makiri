@@ -52,24 +52,28 @@ fn render(ruby: &Ruby, node: RawNode, deep: bool, pretty: bool) -> Result<RStrin
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.
 fn to_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
-    let ruby = Ruby::get_with(rb_self);
-    let pretty = pretty_opt(&ruby, args)?;
-    // The raising accessor, called while nothing is live (see the module docs).
-    let node = html_node_unwrap(rb_self)?;
+    crate::bridge::ruby::entry(|| {
+        let ruby = Ruby::get_with(rb_self);
+        let pretty = pretty_opt(&ruby, args)?;
+        // The raising accessor, called while nothing is live (see the module docs).
+        let node = html_node_unwrap(rb_self)?;
 
-    // A document fragment has no tag of its own, so its "outer" is its
-    // children: the deep serializer is the right one (the tree serializer
-    // rejects a fragment node).
-    /* SAFETY: the node of a live wrapper, which keeps its document alive. */
-    let deep = unsafe { node.as_node() }.node_type() == TYPE_FRAGMENT;
-    render(&ruby, node, deep, pretty)
+        // A document fragment has no tag of its own, so its "outer" is its
+        // children: the deep serializer is the right one (the tree serializer
+        // rejects a fragment node).
+        /* SAFETY: the node of a live wrapper, which keeps its document alive. */
+        let deep = unsafe { node.as_node() }.node_type() == TYPE_FRAGMENT;
+        render(&ruby, node, deep, pretty)
+    })
 }
 
 /// Inner HTML: the node's children, without the node's own tag.
 fn inner_html(rb_self: Value, args: &[Value]) -> Result<RString, Error> {
-    let ruby = Ruby::get_with(rb_self);
-    let pretty = pretty_opt(&ruby, args)?;
-    render(&ruby, html_node_unwrap(rb_self)?, true, pretty)
+    crate::bridge::ruby::entry(|| {
+        let ruby = Ruby::get_with(rb_self);
+        let pretty = pretty_opt(&ruby, args)?;
+        render(&ruby, html_node_unwrap(rb_self)?, true, pretty)
+    })
 }
 
 /// `init_serialize` - the same entry point Init_makiri already calls.

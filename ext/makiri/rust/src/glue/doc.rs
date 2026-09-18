@@ -24,8 +24,10 @@ const NODE_TYPE_DOCUMENT_TYPE: u32 = crate::lexbor::adapter::html::TYPE_DOCTYPE;
 /* ---- Document.parse ---- */
 
 fn doc_s_parse(ruby: &Ruby, _klass: Value, source: Value) -> Result<Value, Error> {
-    let _ = ruby;
-    crate::bridge::doc::parse_document(source)
+    crate::bridge::ruby::entry(|| {
+        let _ = ruby;
+        crate::bridge::doc::parse_document(source)
+    })
 }
 
 /* ---- read-only accessors ---- */
@@ -62,31 +64,35 @@ fn doc_errors(_ruby: &Ruby, self_: Value) -> Value {
 /// `document.fragment(html, context: ...)` -> a DocumentFragment bound to this
 /// document. `context` defaults to `<body>`.
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::doc::fragment_in(ruby, args, || Ok(self_))
+    crate::bridge::ruby::entry(|| crate::bridge::doc::fragment_in(ruby, args, || Ok(self_)))
 }
 
 /// `DocumentFragment.parse(html, context: ...)` -> a standalone fragment with
 /// its own backing document, kept alive by the fragment's wrapper.
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::doc::fragment_in(ruby, args, crate::bridge::doc::fragment_shell_document)
+    crate::bridge::ruby::entry(|| {
+        crate::bridge::doc::fragment_in(ruby, args, crate::bridge::doc::fragment_shell_document)
+    })
 }
 
 /// `node.parse(html)` -> a NodeSet of nodes parsed as a fragment in this
 /// element's context. Nokogiri-compatible, and the way to reach a foreign
 /// (SVG/MathML) fragment context.
 fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error> {
-    let Some(context) = crate::glue::html_node::arg_node(&self_)?.element() else {
-        return Err(Error::new(
-            ruby.exception_arg_error(),
-            "Node#parse requires an element context",
-        ));
-    };
-    /* Only the context's tag and namespace ids are needed, read before the
-     * fragment parse runs. */
-    let (tag, ns) = (context.node().tag_id(), context.node().ns_id());
-    let document = keepalive_document(self_)?;
-    let frag = crate::bridge::doc::build_fragment(ruby, document, rb_html, tag, ns)?;
-    frag.funcall("children", ())
+    crate::bridge::ruby::entry(|| {
+        let Some(context) = crate::glue::html_node::arg_node(&self_)?.element() else {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                "Node#parse requires an element context",
+            ));
+        };
+        /* Only the context's tag and namespace ids are needed, read before the
+         * fragment parse runs. */
+        let (tag, ns) = (context.node().tag_id(), context.node().ns_id());
+        let document = keepalive_document(self_)?;
+        let frag = crate::bridge::doc::build_fragment(ruby, document, rb_html, tag, ns)?;
+        frag.funcall("children", ())
+    })
 }
 
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS

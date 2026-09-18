@@ -235,26 +235,28 @@ pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// The DOM makes a Document's textContent null; this returns the ROOT element's
 /// text instead, which is the intuitive, Nokogiri-like `Document#text`.
 pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    let mut node = this.node();
-    if node.node_type() == ty::DOCUMENT {
-        match node.document_root() {
-            Some(root) => node = root,
-            None => return Ok(ruby.str_new("").as_value()),
+    crate::bridge::ruby::entry(|| {
+        let mut node = this.node();
+        if node.node_type() == ty::DOCUMENT {
+            match node.document_root() {
+                Some(root) => node = root,
+                None => return Ok(ruby.str_new("").as_value()),
+            }
         }
-    }
 
-    if matches!(node.node_type(), ty::ELEMENT | ty::FRAGMENT) {
-        return element_text(ruby, this.document, node);
-    }
+        if matches!(node.node_type(), ty::ELEMENT | ty::FRAGMENT) {
+            return element_text(ruby, this.document, node);
+        }
 
-    /* Character data and the other kinds keep the general path. A UTF-8
-     * String, not magnus's str_from_slice: that one tags the String
-     * ASCII-8BIT, and a binary Text#content poisons every UTF-8 String it is
-     * appended to. */
-    Ok(node.with_text_content(|text| match text {
-        Some(bytes) => dom_str(bytes),
-        None => ruby.str_new("").as_value(),
-    }))
+        /* Character data and the other kinds keep the general path. A UTF-8
+         * String, not magnus's str_from_slice: that one tags the String
+         * ASCII-8BIT, and a binary Text#content poisons every UTF-8 String it is
+         * appended to. */
+        Ok(node.with_text_content(|text| match text {
+            Some(bytes) => dom_str(bytes),
+            None => ruby.str_new("").as_value(),
+        }))
+    })
 }
 
 /// The element/fragment half of [`content`], which is the common case and

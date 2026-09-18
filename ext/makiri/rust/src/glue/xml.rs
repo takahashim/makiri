@@ -126,26 +126,28 @@ fn parse_limits(ruby: &Ruby, h: RHash) -> Result<XmlLimits, Error> {
 /// Read a non-UTF-8 file in binary mode so the encoding is autodetected from its
 /// BOM or declaration.
 fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
-    let (source,) = scanned.required;
-    let limits = parse_limits(ruby, scanned.keywords)?;
-    let budget = if limits.max_bytes != 0 {
-        limits.max_bytes
-    } else {
-        MAX_BYTES
-    };
+    crate::bridge::ruby::entry(|| {
+        let scanned = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
+        let (source,) = scanned.required;
+        let limits = parse_limits(ruby, scanned.keywords)?;
+        let budget = if limits.max_bytes != 0 {
+            limits.max_bytes
+        } else {
+            MAX_BYTES
+        };
 
-    /* An IO/File-like source is read first, as the HTML entry does; a String
-     * passes straight through. */
-    let source = if source.respond_to("read", true)? {
-        source.funcall::<_, _, Value>("read", ())?
-    } else {
-        source
-    };
+        /* An IO/File-like source is read first, as the HTML entry does; a String
+         * passes straight through. */
+        let source = if source.respond_to("read", true)? {
+            source.funcall::<_, _, Value>("read", ())?
+        } else {
+            source
+        };
 
-    /* Strict decode, the source copy, the GVL release and the wrapper all live
-     * in the seam; here only the budget keywords are read. */
-    crate::bridge::xml::parse_xml_document(source, limits, budget)
+        /* Strict decode, the source copy, the GVL release and the wrapper all live
+         * in the seam; here only the budget keywords are read. */
+        crate::bridge::xml::parse_xml_document(source, limits, budget)
+    })
 }
 
 /* ------------------------------------------------------------------ */
@@ -271,13 +273,17 @@ fn xpath_run(
 }
 
 fn xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    xpath_run(ruby, rb_self, a.required.0, a.optional.0, false)
+    crate::bridge::ruby::entry(|| {
+        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        xpath_run(ruby, rb_self, a.required.0, a.optional.0, false)
+    })
 }
 
 fn at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    xpath_run(ruby, rb_self, a.required.0, a.optional.0, true)
+    crate::bridge::ruby::entry(|| {
+        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        xpath_run(ruby, rb_self, a.required.0, a.optional.0, true)
+    })
 }
 
 /* ---- CSS over XML, lowered to the native XPath engine ----
@@ -348,11 +354,11 @@ fn css_run(
 }
 
 fn css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    css_run(ruby, rb_self, selector, ns, false)
+    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, selector, ns, false))
 }
 
 fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    css_run(ruby, rb_self, selector, ns, true)
+    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, selector, ns, true))
 }
 
 /// `#matches?(selector)`: does THIS node match?
@@ -362,27 +368,29 @@ fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Val
 /// testing membership by node identity. That is the semantics that stays correct
 /// with every combinator.
 fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<bool, Error> {
-    let (document, node) = query_context(rb_self)?;
-    if node.is_invalid() {
-        return Ok(false);
-    }
-    /* Rooted at the document node: see above. */
-    let ctx = build_ctx(
-        ruby,
-        document,
-        document,
-        selector,
-        c"CSS selector",
-        Some(ns),
-    )?;
-    let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
+    crate::bridge::ruby::entry(|| {
+        let (document, node) = query_context(rb_self)?;
+        if node.is_invalid() {
+            return Ok(false);
+        }
+        /* Rooted at the document node: see above. */
+        let ctx = build_ctx(
+            ruby,
+            document,
+            document,
+            selector,
+            c"CSS selector",
+            Some(ns),
+        )?;
+        let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
 
-    let nil = ruby.qnil().as_value();
-    let value = evaluate_query(&ctx, &ast, nil, document, false);
-    drop(ast);
-    let value = value?;
-    let target = crate::token::Token::xml(node.to_token());
-    Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
+        let nil = ruby.qnil().as_value();
+        let value = evaluate_query(&ctx, &ast, nil, document, false);
+        drop(ast);
+        let value = value?;
+        let target = crate::token::Token::xml(node.to_token());
+        Ok(matches!(&value, XPathValue::NodeSet(set) if set.as_slice().contains(&target)))
+    })
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,16 +423,20 @@ fn document_s_new(_args: &[Value]) -> Result<Value, Error> {
 /// its namespace within the fragment itself. Use `Document#fragment` to parse
 /// against an existing document's in-scope namespaces instead.
 fn fragment_s_parse(_klass: Value, source: Value) -> Result<Value, Error> {
-    let doc_obj = crate::bridge::xml::new_empty_xml_document()?;
-    let frag = crate::bridge::xml::fragment_into(doc_obj, source, false)?;
-    Ok(wrap_typed_xml_node(frag, doc_obj))
+    crate::bridge::ruby::entry(|| {
+        let doc_obj = crate::bridge::xml::new_empty_xml_document()?;
+        let frag = crate::bridge::xml::fragment_into(doc_obj, source, false)?;
+        Ok(wrap_typed_xml_node(frag, doc_obj))
+    })
 }
 
 /// `doc.fragment(source)` - a fragment bound to this document, resolving names
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(rb_self: Value, source: Value) -> Result<Value, Error> {
-    let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;
-    Ok(wrap_typed_xml_node(frag, rb_self))
+    crate::bridge::ruby::entry(|| {
+        let frag = crate::bridge::xml::fragment_into(rb_self, source, true)?;
+        Ok(wrap_typed_xml_node(frag, rb_self))
+    })
 }
 
 /// # Safety

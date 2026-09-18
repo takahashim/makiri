@@ -71,11 +71,23 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
   contain only C calls, so there is no Rust there to panic; keep it that way.
 
+  **An entry point exposed to untrusted input raises `Makiri::InternalError`,
+  not `fatal`.** `bridge::ruby::entry` wraps the twenty-four methods a crafted
+  document or expression reaches - parse and fragment, xpath/at_xpath/evaluate,
+  css/at_css/matches?, the serializers, the text readers - and turns a panic
+  there into that exception. It descends from `Exception`, NOT `StandardError`,
+  which is the point: a bare `rescue => e` keeps passing it through, because a
+  broken invariant is not a bad selector, while a host that wants to turn one
+  request into a 500 can catch it WITHOUT a thread boundary to re-raise at (a
+  `fatal` cannot be rescued in its own frame at all). Everywhere else a panic
+  stays `fatal`, which is the right severity on a path nobody's data reaches.
+  Wrap a new entry if it parses, evaluates, or walks a tree built from input.
+
   `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
-  reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`, whose kind 4
-  panics below the GVL-release frame - the case that proves the latch, since
-  without it that one aborts.
+  reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
+  below the GVL-release frame, the case that proves the latch since without it
+  that one aborts, and kind 5 goes through `entry`.
 
   The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
   `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:

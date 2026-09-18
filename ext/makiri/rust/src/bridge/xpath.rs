@@ -971,40 +971,42 @@ pub fn query_result(value: XPathValue, document: Value, first_only: bool) -> Res
 }
 
 fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let expr = a.required.0;
-    let handler = a.optional.0.unwrap_or(ruby.qnil().as_value());
-    let document = ruby.get_inner(rb_self.document);
+    crate::bridge::ruby::entry(|| {
+        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        let expr = a.required.0;
+        let handler = a.optional.0.unwrap_or(ruby.qnil().as_value());
+        let document = ruby.get_inner(rb_self.document);
 
-    /* The cache borrow is taken for the lookup ONLY, and released before the
-     * evaluation. A handler called mid-walk re-enters this object - to register
-     * a namespace, to rebind the node, or to evaluate again on the same context
-     * - and re-entrancy is governed by the context itself, which reports the
-     * specific refusal (and permits a nested evaluate). Holding the borrow
-     * across the walk would turn all four into one generic "already in use",
-     * which is how the handler specs first caught this. */
-    let (ast, owned) = {
-        /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
-         * which may re-enter this context, and a borrow held across that would
-         * turn the re-entry into "already in use". */
-        let ev = ruby_verified_text(expr, c"XPath expression")?;
-        let mut cache = rb_self.cache()?;
-        let parsed = cached_ast(&mut cache, rb_self.ctx.limits(), ev);
-        /* Release the borrow before building the exception: that allocates, and
-         * a NoMemoryError there would longjmp past the RefMut. */
-        drop(cache);
-        match parsed {
-            Ok((ast, owned)) => (ast, owned),
-            Err(error) => return Err(xpath_error(&error)),
-        }
-    };
+        /* The cache borrow is taken for the lookup ONLY, and released before the
+         * evaluation. A handler called mid-walk re-enters this object - to register
+         * a namespace, to rebind the node, or to evaluate again on the same context
+         * - and re-entrancy is governed by the context itself, which reports the
+         * specific refusal (and permits a nested evaluate). Holding the borrow
+         * across the walk would turn all four into one generic "already in use",
+         * which is how the handler specs first caught this. */
+        let (ast, owned) = {
+            /* Verify BEFORE borrowing: coercing the expression can run Ruby (`to_s`),
+             * which may re-enter this context, and a borrow held across that would
+             * turn the re-entry into "already in use". */
+            let ev = ruby_verified_text(expr, c"XPath expression")?;
+            let mut cache = rb_self.cache()?;
+            let parsed = cached_ast(&mut cache, rb_self.ctx.limits(), ev);
+            /* Release the borrow before building the exception: that allocates, and
+             * a NoMemoryError there would longjmp past the RefMut. */
+            drop(cache);
+            match parsed {
+                Ok((ast, owned)) => (ast, owned),
+                Err(error) => return Err(xpath_error(&error)),
+            }
+        };
 
-    /* A cached AST outlives this call: the context is live (it is `rb_self`),
-     * and its cache frees nothing before the context goes. */
-    // SAFETY: as above - the AST the cache just handed back.
-    let value = evaluate_query(&rb_self.ctx, unsafe { &*ast }, handler, document, false);
-    drop(owned);
-    query_result(value?, document, false)
+        /* A cached AST outlives this call: the context is live (it is `rb_self`),
+         * and its cache frees nothing before the context goes. */
+        // SAFETY: as above - the AST the cache just handed back.
+        let value = evaluate_query(&rb_self.ctx, unsafe { &*ast }, handler, document, false);
+        drop(owned);
+        query_result(value?, document, false)
+    })
 }
 
 fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Value, Error> {
@@ -1108,14 +1110,18 @@ fn scan_query_args(ruby: &Ruby, args: &[Value]) -> Result<(Value, Value, bool), 
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let (expr, handler, lax) = scan_query_args(ruby, args)?;
-    node_xpath_run(rb_self, expr, handler, lax, false)
+    crate::bridge::ruby::entry(|| {
+        let (expr, handler, lax) = scan_query_args(ruby, args)?;
+        node_xpath_run(rb_self, expr, handler, lax, false)
+    })
 }
 
 /// The first matching node for a node-set result, or the scalar otherwise.
 fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let (expr, handler, lax) = scan_query_args(ruby, args)?;
-    node_xpath_run(rb_self, expr, handler, lax, true)
+    crate::bridge::ruby::entry(|| {
+        let (expr, handler, lax) = scan_query_args(ruby, args)?;
+        node_xpath_run(rb_self, expr, handler, lax, true)
+    })
 }
 
 /// # Safety

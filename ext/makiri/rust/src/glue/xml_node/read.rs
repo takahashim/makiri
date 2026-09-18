@@ -91,46 +91,48 @@ pub fn dtd_system_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
 
 /* ---- content ---- */
 
-pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let id = this.id;
-    if matches!(
-        d.type_(id),
-        Some(
-            NodeType::Text
-                | NodeType::CData
-                | NodeType::Comment
-                | NodeType::Attribute
-                | NodeType::Pi
-        )
-    ) {
-        return str_span(ruby, d, d.node(id).value);
-    }
+pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, magnus::Error> {
+    crate::bridge::ruby::entry(|| {
+        let d = this.doc_ref();
+        let id = this.id;
+        if matches!(
+            d.type_(id),
+            Some(
+                NodeType::Text
+                    | NodeType::CData
+                    | NodeType::Comment
+                    | NodeType::Attribute
+                    | NodeType::Pi
+            )
+        ) {
+            return Ok(str_span(ruby, d, d.node(id).value));
+        }
 
-    let mut out: Vec<u8> = Vec::new();
-    let mut cur = d.first_child(id);
-    while let Some(c) = cur {
-        if matches!(d.type_(c), Some(NodeType::Text | NodeType::CData)) {
-            out.extend_from_slice(d.value(c));
-        }
-        if d.first_child(c).is_some() {
-            cur = d.first_child(c);
-            continue;
-        }
-        while let Some(x) = cur {
-            if x != id && d.next(x).is_none() {
-                cur = d.parent(x);
-            } else {
-                break;
+        let mut out: Vec<u8> = Vec::new();
+        let mut cur = d.first_child(id);
+        while let Some(c) = cur {
+            if matches!(d.type_(c), Some(NodeType::Text | NodeType::CData)) {
+                out.extend_from_slice(d.value(c));
+            }
+            if d.first_child(c).is_some() {
+                cur = d.first_child(c);
+                continue;
+            }
+            while let Some(x) = cur {
+                if x != id && d.next(x).is_none() {
+                    cur = d.parent(x);
+                } else {
+                    break;
+                }
+            }
+            match cur {
+                None => break,
+                Some(x) if x == id => break,
+                Some(x) => cur = d.next(x),
             }
         }
-        match cur {
-            None => break,
-            Some(x) if x == id => break,
-            Some(x) => cur = d.next(x),
-        }
-    }
-    utf8(ruby, &out).as_value()
+        Ok(utf8(ruby, &out).as_value())
+    })
 }
 
 pub fn value(ruby: &Ruby, this: super::XmlSelf) -> Value {

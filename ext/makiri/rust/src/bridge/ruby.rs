@@ -366,6 +366,30 @@ pub fn bool_value(v: VALUE) -> Option<bool> {
 /// in every frame it crosses - so `f` must own nothing a raise could leak, or
 /// the caller must accept the leak (the CSS and XPath result builders snapshot
 /// their `Vec` first and free it on the `Err` path).
+/// A Ruby entry point that faces untrusted input: a panic inside becomes
+/// `Makiri::InternalError` rather than Ruby's `fatal`.
+///
+/// Both are internal errors and neither is a `StandardError`, so a bare
+/// `rescue => e` keeps passing them through - a broken invariant is not a bad
+/// selector. The difference is that a `fatal` cannot be rescued AT ALL in the
+/// frame that raised it, so a host with no thread boundary around the call
+/// loses the process; `InternalError` it can catch and turn into a 500.
+///
+/// Wrapped here rather than at every method: these are the entries that parse
+/// a document, evaluate an expression, or walk a tree built from one - the
+/// places a crafted input reaches. Elsewhere a panic still becomes `fatal`,
+/// which is the right severity for a bug on a path nobody's data reaches.
+#[inline]
+pub fn entry<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    match std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)) {
+        Ok(out) => out,
+        Err(payload) => Err(Error::new(
+            crate::init::EXC_INTERNAL_ERROR.exception(),
+            crate::caught::message(payload.as_ref()).to_owned(),
+        )),
+    }
+}
+
 /// magnus's `protect`, with a Rust panic caught instead of sent into C.
 ///
 /// magnus runs the closure inside an `extern "C"` trampoline that `rb_protect`

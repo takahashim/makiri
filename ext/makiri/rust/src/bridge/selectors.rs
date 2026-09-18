@@ -87,36 +87,39 @@ unsafe fn fill_thunk(arg: VALUE) -> VALUE {
 
 /// `Node#css`: every matching descendant, in document order.
 fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
-    let root = html_node_unwrap(rb_self)?;
-    let document = keepalive_document(rb_self)?;
-    let sv = selector_bytes(selector)?;
+    crate::bridge::ruby::entry(|| {
+        let root = html_node_unwrap(rb_self)?;
+        let document = keepalive_document(rb_self)?;
+        let sv = selector_bytes(selector)?;
 
-    // SAFETY: the bytes are the verified view's, read for this call.
-    let nodes = select_all(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
+        // SAFETY: the bytes are the verified view's, read for this call.
+        let nodes =
+            select_all(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
 
-    let set = node_set_new(document);
-    /* Each push can raise (NoMemoryError from Ruby's allocator), and a longjmp
-     * would skip `nodes`'s drop. `protect` turns that into an Err, the Vec drops
-     * on the way out, and magnus raises afterwards - the Rust form of the C's
-     * rb_ensure, at one setjmp per call rather than per node. */
-    let mut fill = Fill {
-        set: set.as_raw(),
-        nodes: &nodes,
-        refused: None,
-    };
-    /* `protect` passes one machine word through, so the state travels as a
-     * `*mut Fill` wearing a VALUE's type - never a Ruby object, and never
-     * reached as one. */
-    let fill_ptr = &mut fill as *mut Fill as VALUE;
-    crate::bridge::ruby::protect_value(|| {
-        // SAFETY: `fill_ptr` is the borrow above, which outlives the call, and
-        // `fill_thunk` is the only reader - it casts the same word back.
-        unsafe { fill_thunk(fill_ptr) }
-    })?;
-    if let Some(e) = fill.refused.take() {
-        return Err(e.into());
-    }
-    Ok(set)
+        let set = node_set_new(document);
+        /* Each push can raise (NoMemoryError from Ruby's allocator), and a longjmp
+         * would skip `nodes`'s drop. `protect` turns that into an Err, the Vec drops
+         * on the way out, and magnus raises afterwards - the Rust form of the C's
+         * rb_ensure, at one setjmp per call rather than per node. */
+        let mut fill = Fill {
+            set: set.as_raw(),
+            nodes: &nodes,
+            refused: None,
+        };
+        /* `protect` passes one machine word through, so the state travels as a
+         * `*mut Fill` wearing a VALUE's type - never a Ruby object, and never
+         * reached as one. */
+        let fill_ptr = &mut fill as *mut Fill as VALUE;
+        crate::bridge::ruby::protect_value(|| {
+            // SAFETY: `fill_ptr` is the borrow above, which outlives the call, and
+            // `fill_thunk` is the only reader - it casts the same word back.
+            unsafe { fill_thunk(fill_ptr) }
+        })?;
+        if let Some(e) = fill.refused.take() {
+            return Err(e.into());
+        }
+        Ok(set)
+    })
 }
 
 /// `Node#at_css`: the first matching descendant, or nil.
@@ -124,26 +127,31 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
 /// Stops at the first match and wraps that one node - no NodeSet, and no Ruby
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
-    let ruby = Ruby::get_with(rb_self);
-    let root = html_node_unwrap(rb_self)?;
-    let sv = selector_bytes(selector)?;
+    crate::bridge::ruby::entry(|| {
+        let ruby = Ruby::get_with(rb_self);
+        let root = html_node_unwrap(rb_self)?;
+        let sv = selector_bytes(selector)?;
 
-    // SAFETY: the bytes are the verified view's, read for this call.
-    let found = select_first(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
-    let Some(node) = found else {
-        return Ok(ruby.qnil().as_value());
-    };
-    let document = keepalive_document(rb_self)?;
-    Ok(wrap_html_node(node, document))
+        // SAFETY: the bytes are the verified view's, read for this call.
+        let found =
+            select_first(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
+        let Some(node) = found else {
+            return Ok(ruby.qnil().as_value());
+        };
+        let document = keepalive_document(rb_self)?;
+        Ok(wrap_html_node(node, document))
+    })
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri.
 fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
-    let root = html_node_unwrap(rb_self)?;
-    let sv = selector_bytes(selector)?;
-    // SAFETY: the bytes are the verified view's, read for this call.
-    matches_node(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))
+    crate::bridge::ruby::entry(|| {
+        let root = html_node_unwrap(rb_self)?;
+        let sv = selector_bytes(selector)?;
+        // SAFETY: the bytes are the verified view's, read for this call.
+        matches_node(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))
+    })
 }
 
 /// # Safety

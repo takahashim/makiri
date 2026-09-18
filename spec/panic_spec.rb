@@ -100,6 +100,41 @@ RSpec.describe "a Rust panic" do
     expect(Makiri::XML("<r><c>b</c></r>").at_xpath("//c").text).to eq("b")
   end
 
+  describe "inside an entry point exposed to untrusted input" do
+    # `bridge::ruby::entry` wraps the methods a crafted document or expression
+    # reaches - parse, fragment, xpath/at_xpath/evaluate, css/at_css/matches?,
+    # the serializers and the text readers. There a panic is not a `fatal`: the
+    # host can catch it and turn one request into a 500 without a thread
+    # boundary to re-raise at.
+    it "raises Makiri::InternalError, in the frame that called it" do
+      expect { Makiri.__panic(5) }
+        .to raise_error(Makiri::InternalError, /panic inside a guarded entry/)
+    end
+
+    it "is not a StandardError, so a bare rescue still passes it through" do
+      expect(Makiri::InternalError.ancestors).to include(Exception)
+      expect(Makiri::InternalError <= StandardError).to be_falsey
+
+      swallowed = begin
+        Makiri.__panic(5)
+      rescue StandardError
+        :swallowed
+      rescue Makiri::InternalError
+        :passed_through
+      end
+      expect(swallowed).to eq(:passed_through)
+    end
+
+    it "leaves the process working" do
+      begin
+        Makiri.__panic(5)
+      rescue Makiri::InternalError
+        nil
+      end
+      expect(Makiri::HTML("<p>after</p>").at_css("p").text).to eq("after")
+    end
+  end
+
   it "rejects an unknown kind with an ordinary ArgumentError" do
     expect { Makiri.__panic(99) }.to raise_error(ArgumentError, /kind must be/)
   end

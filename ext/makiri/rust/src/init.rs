@@ -121,7 +121,7 @@ exported! {
     MOD_XML_NODE_METHODS, CLASS_XML_NODE, CLASS_XML_DOCUMENT, CLASS_XML_ELEMENT,
     CLASS_XML_ATTR, CLASS_XML_TEXT, CLASS_XML_COMMENT, CLASS_XML_CDATA_SECTION,
     CLASS_XML_PROCESSING_INSTRUCTION, CLASS_XML_DOCUMENT_TYPE, CLASS_XML_DOCUMENT_FRAGMENT,
-    EXC_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
+    EXC_ERROR, EXC_INTERNAL_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
     EXC_CSS_SYNTAX_ERROR, EXC_XML_SYNTAX_ERROR, EXC_XML_LIMIT_EXCEEDED,
 }
 
@@ -183,7 +183,9 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// Kinds 0..3 are the four ways the crate could actually panic: an explicit
 /// `panic!`, an out-of-bounds index, an arithmetic overflow (release keeps
 /// `overflow-checks` on), and an `unwrap` on `None`. Kind 4 panics BELOW a C
-/// frame, where the unwind would abort if it were not latched.
+/// frame, where the unwind would abort if it were not latched. Kind 5 goes
+/// through `bridge::ruby::entry`, so it raises `Makiri::InternalError` - what
+/// the entry points exposed to untrusted input do.
 #[allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -213,10 +215,18 @@ fn panic_probe(ruby: &Ruby, kind: i64) -> Result<(), Error> {
              * `bridge::gvl` latches it and re-raises once the GVL is back. */
             crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"));
         }
+        5 => {
+            /* Through `bridge::ruby::entry`, the wrapper the untrusted-input
+             * entry points carry: the panic becomes `Makiri::InternalError`
+             * instead of Ruby's unrescuable `fatal`. */
+            return crate::bridge::ruby::entry(|| -> Result<(), Error> {
+                panic!("Makiri.__panic(5): panic inside a guarded entry")
+            });
+        }
         _ => {
             return Err(Error::new(
                 ruby.exception_arg_error(),
-                "__panic: kind must be 0..4",
+                "__panic: kind must be 0..5",
             ))
         }
     }
@@ -318,6 +328,15 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
      * counterpart descends from Error - that asymmetry is deliberate and
      * predates the port. */
     let err = makiri.define_error("Error", ruby.exception_standard_error())?;
+
+    /* `InternalError` descends from Exception, NOT from StandardError, and that
+     * is the whole point. It carries a Rust panic - a broken invariant, not a
+     * bad argument - so a bare `rescue => e` must not swallow it the way it
+     * would a bad selector, while a host that wants to turn one request into a
+     * 500 can still `rescue Makiri::InternalError`. That is what Ruby's own
+     * `fatal` gives, minus the part where it cannot be rescued at all.
+     * `bridge::ruby::entry` is what raises it; see `crate::caught`. */
+    let internal = makiri.define_error("InternalError", ruby.exception_exception())?;
     let xpath_syntax = m_xpath.define_error("SyntaxError", err)?;
     let xpath_limit = m_xpath.define_error("LimitExceeded", xpath_syntax)?;
     let css_syntax = m_css.define_error("SyntaxError", err)?;
@@ -361,6 +380,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         CLASS_XML_DOCUMENT_FRAGMENT.set(x_fragment.as_raw());
 
         EXC_ERROR.set(err.as_raw());
+        EXC_INTERNAL_ERROR.set(internal.as_raw());
         EXC_XPATH_SYNTAX_ERROR.set(xpath_syntax.as_raw());
         EXC_XPATH_LIMIT_EXCEEDED.set(xpath_limit.as_raw());
         EXC_CSS_SYNTAX_ERROR.set(css_syntax.as_raw());

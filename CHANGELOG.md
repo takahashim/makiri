@@ -2,7 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+* **`Makiri::InternalError`**, raised when an internal invariant breaks while
+  parsing, evaluating an expression or walking a tree built from input. It
+  descends from `Exception` rather than `StandardError`, so a bare `rescue => e`
+  passes it through - it is a bug in Makiri, not a bad argument - while a host
+  that wants to turn one request into an error can `rescue Makiri::InternalError`.
+
 ### Changed
+
+* **A crash in the extension is now an exception.** The extension used to be
+  built with `panic = "abort"`, so an internal failure ended the host process
+  with SIGABRT, running no `ensure`, no `at_exit` and no cleanup. It now unwinds:
+  the failure reaches Ruby as an exception on the thread that ran the call, that
+  thread's `ensure` blocks run, and the process keeps working. At the entry
+  points above it is `Makiri::InternalError`; elsewhere it is Ruby's `fatal`.
 
 * **An XPath handler may not modify the document being evaluated.** While
   `Node#xpath` / `#at_xpath` / `XPathContext#evaluate` runs with a handler,

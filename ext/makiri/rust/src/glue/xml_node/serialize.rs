@@ -49,50 +49,54 @@ fn failure_error(f: Failure, verb: &str) -> Error {
 }
 
 fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let (width, enc_opt) = to_xml_opts(ruby, args)?;
-    let (to_enc, enc_name) = if enc_opt.is_nil() {
-        (None, None)
-    } else {
-        /* An unknown name raises, and this frame is about to own the
-         * serializer's buffer: the lookup returns the error instead. */
-        let e = crate::bridge::string::to_encoding(enc_opt)?;
-        let name: RString = enc_opt.funcall("to_s", ())?;
-        /* A copy, so the bytes stay valid across the serializer's call. */
-        let bytes = crate::bridge::string::ruby_string_bytes(name.as_value())?;
-        (Some(e), Some(bytes))
-    };
+    crate::bridge::ruby::entry(|| {
+        let (width, enc_opt) = to_xml_opts(ruby, args)?;
+        let (to_enc, enc_name) = if enc_opt.is_nil() {
+            (None, None)
+        } else {
+            /* An unknown name raises, and this frame is about to own the
+             * serializer's buffer: the lookup returns the error instead. */
+            let e = crate::bridge::string::to_encoding(enc_opt)?;
+            let name: RString = enc_opt.funcall("to_s", ())?;
+            /* A copy, so the bytes stay valid across the serializer's call. */
+            let bytes = crate::bridge::string::ruby_string_bytes(name.as_value())?;
+            (Some(e), Some(bytes))
+        };
 
-    let out = xml_serialize::to_xml(
-        this.doc_ref(),
-        this.id,
-        width,
-        enc_name.as_ref().map(|b| b.as_slice()),
-    );
-    let buf = out.map_err(|f| failure_error(f, "serialize"))?;
-    let mut str = utf8(ruby, buf.as_slice()).as_value();
-    drop(buf);
+        let out = xml_serialize::to_xml(
+            this.doc_ref(),
+            this.id,
+            width,
+            enc_name.as_ref().map(|b| b.as_slice()),
+        );
+        let buf = out.map_err(|f| failure_error(f, "serialize"))?;
+        let mut str = utf8(ruby, buf.as_slice()).as_value();
+        drop(buf);
 
-    if let Some(enc) = to_enc {
-        if enc.needs_transcode() {
-            str = crate::bridge::string::str_encode_charref_value(str, enc)?;
+        if let Some(enc) = to_enc {
+            if enc.needs_transcode() {
+                str = crate::bridge::string::str_encode_charref_value(str, enc)?;
+            }
         }
-    }
-    Ok(str)
+        Ok(str)
+    })
 }
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let comments = if args.is_empty() {
-        false
-    } else {
-        let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
-        scanned
-            .keywords
-            .get(ruby.to_symbol("comments"))
-            .is_some_and(|v: Value| v.to_bool())
-    };
-    let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
-        .map_err(|f| failure_error(f, "canonicalize"))?;
-    Ok(utf8(ruby, buf.as_slice()).as_value())
+    crate::bridge::ruby::entry(|| {
+        let comments = if args.is_empty() {
+            false
+        } else {
+            let scanned = magnus::scan_args::scan_args::<(), (), (), (), RHash, ()>(args)?;
+            scanned
+                .keywords
+                .get(ruby.to_symbol("comments"))
+                .is_some_and(|v: Value| v.to_bool())
+        };
+        let buf = xml_serialize::canonicalize(this.doc_ref(), this.id, comments)
+            .map_err(|f| failure_error(f, "canonicalize"))?;
+        Ok(utf8(ruby, buf.as_slice()).as_value())
+    })
 }
 
 fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, Error> {

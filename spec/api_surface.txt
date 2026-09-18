@@ -176,6 +176,8 @@ class Makiri::HTML::ProcessingInstruction < Makiri::ProcessingInstruction
 class Makiri::HTML::Text < Makiri::Text
   include Makiri::HTML::NodeMethods
 
+class Makiri::InternalError < Exception
+
 module Makiri::Lexbor
 
 module Makiri::Lexbor::CSS

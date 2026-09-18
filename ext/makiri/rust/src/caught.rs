@@ -71,3 +71,16 @@ impl PanicLatch {
         }
     }
 }
+
+/// The message a panic payload carries, as `panic!` and the standard library's
+/// own panics produce it. `"a panic"` when it is neither of the two shapes the
+/// runtime uses, which no panic in this crate is.
+pub fn message(payload: &(dyn Any + Send)) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "a panic"
+    }
+}
