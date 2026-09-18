@@ -189,6 +189,13 @@ impl<T> Drop for Building<T> {
     }
 }
 
+/// The four Lexbor objects, as plain pointers.
+///
+/// `Copy`, and handed out BY VALUE rather than as a reference into [`Globals`].
+/// That is what lets a caller hold the engine while it also touches the window
+/// counters and the cache: a reference would be a second live borrow of the one
+/// `Globals`, which is the aliasing this module must not create.
+#[derive(Clone, Copy)]
 struct Engine {
     mem: *mut CssMemory,
     parser: *mut CssParser,
@@ -220,16 +227,33 @@ static G: GvlCell<Globals> = GvlCell(UnsafeCell::new(Globals {
     bypass_runs: 0,
 }));
 
+impl Globals {
+    /// The compiled-selector cache, created on first use.
+    fn cache(&mut self) -> &mut HashMap<Box<[u8]>, *mut SelectorList> {
+        self.cache.get_or_insert_with(HashMap::new)
+    }
+}
+
+/// The one mutable borrow of the process-global state.
+///
+/// Call this ONCE per query and thread the `&mut` through. The GVL makes the
+/// state safe to share between Ruby threads, but it says nothing about two
+/// overlapping `&mut` on one thread: deriving a second one from `G` invalidates
+/// the first, and using the first afterwards is undefined behaviour whatever
+/// the GVL is doing. That is not a hazard a sanitizer can see - every address
+/// stays valid - so the discipline is: one call, one borrow, passed down.
+///
 /// # Safety
-/// GVL held.
+/// GVL held, and no other borrow of `G` is live.
 unsafe fn globals() -> &'static mut Globals {
     &mut *G.0.get()
 }
 
-/// Build the shared engine on first use. On failure everything is torn down and
-/// the globals stay unset, so a later call retries.
-unsafe fn engine() -> Result<&'static Engine, SelectError> {
-    let g = globals();
+/// Build the shared engine on first use, and hand it back by value. On failure
+/// everything is torn down and the globals stay unset, so a later call retries.
+///
+/// Takes the caller's borrow rather than making its own: see [`globals`].
+unsafe fn engine_in(g: &mut Globals) -> Result<Engine, SelectError> {
     if g.engine.is_none() {
         let refused = || SelectError::Unavailable;
 
@@ -261,12 +285,7 @@ unsafe fn engine() -> Result<&'static Engine, SelectError> {
             selectors: selectors.into_raw(),
         });
     }
-    Ok(g.engine.as_ref().expect("just set"))
-}
-
-/// The compiled-selector cache, created on first use.
-unsafe fn cache() -> &'static mut HashMap<Box<[u8]>, *mut SelectorList> {
-    globals().cache.get_or_insert_with(HashMap::new)
+    Ok(g.engine.expect("just set"))
 }
 
 /* ------------------------------------------------------------------ */
@@ -372,8 +391,11 @@ unsafe fn with_compiled_selector(
     run: Run,
     ctx: *mut c_void,
 ) -> Result<(), SelectError> {
-    let e = engine()?;
+    /* One borrow of the process-global state, threaded through everything
+     * below - see `globals`. The engine comes back by value, so holding it
+     * does not keep a second borrow alive. */
     let g = globals();
+    let e = engine_in(g)?;
 
     /* The adaptive window: every WIN lookups, decide whether caching pays. */
     g.win += 1;
@@ -383,7 +405,7 @@ unsafe fn with_compiled_selector(
                 g.bypass = true;
                 g.bypass_runs = 0;
                 lxb_css_memory_clean(e.mem); /* drop the cached lists' arena */
-                cache().clear();
+                g.cache().clear();
             }
         } else {
             g.bypass_runs += 1;
@@ -407,7 +429,7 @@ unsafe fn with_compiled_selector(
         let list = lxb_css_selectors_parse(e.parser, ptr, len);
         let bad = list.is_null() || lxb_css_parser_status_noi(e.parser) != LXB_STATUS_OK;
         if !bad {
-            run.call(e, node, list, ctx);
+            run.call(&e, node, list, ctx);
         }
         lxb_css_memory_clean(e.mem);
         lxb_css_parser_clean(e.parser);
@@ -419,13 +441,20 @@ unsafe fn with_compiled_selector(
     }
 
     let key = selector;
-    let h = cache();
-    if let Some(&list) = h.get(key) {
+    /* Copy the pointer out in a `let`, so the cache borrow ends at the
+     * semicolon and the window counter below is reachable. (Inside an `if let`
+     * scrutinee the borrow would live to the end of the block - edition 2021.) */
+    let hit = g.cache().get(key).copied();
+    if let Some(list) = hit {
         g.win_hits += 1;
-        run.call(e, node, list, ctx);
+        run.call(&e, node, list, ctx);
         /* The traversal engine self-cleans; the cached list and its arena stay. */
         return Ok(());
     }
+
+    /* A miss: from here the cache is the only part of `g` this touches, so it
+     * can hold the borrow for the rest of the call. */
+    let h = g.cache();
 
     /* A miss. Bound the cache BEFORE parsing: when it is full, drop every
      * compiled list at once by cleaning the shared arena, so the new list is
@@ -462,7 +491,7 @@ unsafe fn with_compiled_selector(
         lxb_css_memory_clean(e.mem);
         return Err(SelectError::CacheOom);
     }
-    run.call(e, node, list, ctx);
+    run.call(&e, node, list, ctx);
     Ok(())
 }
 
