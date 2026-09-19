@@ -315,10 +315,10 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
                 (ValRef::Boolean(_), _) | (_, ValRef::Boolean(_)) => {
                     val_to_boolean(l) == val_to_boolean(r)
                 }
-                /* Both operands are non-node-sets here, so the unchecked
-                 * coercion is the right entry - it cannot allocate. */
+                /* Neither operand is a node-set here, so both coerce without
+                 * allocating. */
                 (ValRef::Number(_), _) | (_, ValRef::Number(_)) => {
-                    val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r)
+                    scalar_to_number(l) == scalar_to_number(r)
                 }
                 _ => {
                     let ls = val_to_owned_text_or_fail::<D>(doc, l, &mut ev.budget)?;

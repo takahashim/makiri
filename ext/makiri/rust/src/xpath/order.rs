@@ -9,10 +9,14 @@
 #![forbid(unsafe_code)]
 
 use super::abi::*;
+use super::axis::walk_descendants;
 use super::dom::*;
 use super::eval::Evaluation;
+use crate::falloc::try_vec_with_capacity;
 use crate::ptr_table::PtrMap;
 use crate::token::Token;
+use core::cmp::Ordering;
+use core::ops::ControlFlow;
 
 /// One evaluate's document-order index: node token -> its ordinal in a
 /// pre-order walk of the document, built at most once, the first time a sort
@@ -64,9 +68,9 @@ fn depth_of<'d, D: Dom<'d>>(doc: D, mut n: D::Node) -> i32 {
 
 /// Document order (§5.1): an element, then its attribute nodes, then its
 /// children.
-pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> i32 {
+pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> Ordering {
     if a == b {
-        return 0;
+        return Ordering::Equal;
     }
     let mut aa = anchor_for_cmp::<D>(doc, a);
     let mut bb = anchor_for_cmp::<D>(doc, b);
@@ -78,10 +82,10 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> i32 {
         let a_attr = doc.node_type(a) == NTYPE_ATTRIBUTE;
         let b_attr = doc.node_type(b) == NTYPE_ATTRIBUTE;
         if a_attr && !b_attr {
-            return 1; /* b is the owner element; its attribute follows it */
+            return Ordering::Greater; /* b is the owner element; its attribute follows it */
         }
         if b_attr && !a_attr {
-            return -1;
+            return Ordering::Less;
         }
         if a_attr && b_attr {
             /* Both attributes of one element: the relative order is
@@ -90,35 +94,39 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> i32 {
             while let Some(x) = at {
                 let xn = D::attr_node(x);
                 if xn == a {
-                    return -1;
+                    return Ordering::Less;
                 }
                 if xn == b {
-                    return 1;
+                    return Ordering::Greater;
                 }
                 at = doc.attr_next(x);
             }
-            return 0;
+            return Ordering::Equal;
         }
-        return 0;
+        return Ordering::Equal;
     }
 
     let (mut da, mut db) = (depth_of::<D>(doc, aa), depth_of::<D>(doc, bb));
     while da > db {
-        let Some(p) = doc.parent(aa) else { return 0 };
+        let Some(p) = doc.parent(aa) else {
+            return Ordering::Equal;
+        };
         aa = p;
         da -= 1;
     }
     while db > da {
-        let Some(p) = doc.parent(bb) else { return 0 };
+        let Some(p) = doc.parent(bb) else {
+            return Ordering::Equal;
+        };
         bb = p;
         db -= 1;
     }
     if aa == bb {
         /* One is an ancestor of the other, and the ancestor comes first. */
         return if aa == anchor_for_cmp::<D>(doc, a) {
-            -1
+            Ordering::Less
         } else {
-            1
+            Ordering::Greater
         };
     }
     /* Climb in lockstep to the children of the common ancestor. */
@@ -130,7 +138,7 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> i32 {
             }
             (Some(_), Some(_)) => break,
             /* different documents / roots - undefined, keep it stable */
-            _ => return 0,
+            _ => return Ordering::Equal,
         }
     }
     /* Resolve sibling order by scanning outward from aa and bb in lockstep
@@ -143,59 +151,43 @@ pub fn doc_order_cmp<'d, D: Dom<'d>>(doc: D, a: D::Node, b: D::Node) -> i32 {
         fa = fa.and_then(|n| doc.next(n));
         fb = fb.and_then(|n| doc.next(n));
         if fa == Some(bb) {
-            return -1; /* bb lies after aa */
+            return Ordering::Less; /* bb lies after aa */
         }
         if fb == Some(aa) {
-            return 1;
+            return Ordering::Greater;
         }
         if fa.is_none() && fb.is_none() {
-            return 0; /* unreachable for same-parent nodes */
+            return Ordering::Equal; /* unreachable for same-parent nodes */
         }
     }
 }
 
 /* ---- the index ---- */
 
-/// Pre-order DFS assigning ordinals: the node, then its attributes (before any
-/// child), then its descendants - matching `doc_order_cmp`'s placement.
-/// Iterative through parent links, so a deep tree cannot overflow the stack,
-/// and it stays inside the subtree (it never follows `root`'s next).
+/// Assign ordinals in document order: each node, then its attributes (before
+/// any child), then its descendants - matching `doc_order_cmp`'s placement.
+/// The axis walker is iterative through parent links, so a deep tree cannot
+/// overflow the stack, and it stays inside `root`'s subtree. False on OOM.
 fn order_index_walk<'d, D: Dom<'d>>(doc: D, idx: &mut OrderIndex, root: D::Node) -> bool {
-    let mut cur = root;
     let mut ord = 0usize;
-    loop {
-        if !idx.insert(D::token(cur), ord) {
-            return false;
+    let mut number = |n: D::Node| -> ControlFlow<()> {
+        if !idx.insert(D::token(n), ord) {
+            return ControlFlow::Break(());
         }
         ord += 1;
         /* Only an element has attributes; `first_attr` answers None for the
          * rest, so it is the element test too. */
-        let mut a = doc.first_attr(cur);
+        let mut a = doc.first_attr(n);
         while let Some(x) = a {
             if !idx.insert(D::token(D::attr_node(x)), ord) {
-                return false;
+                return ControlFlow::Break(());
             }
             ord += 1;
             a = doc.attr_next(x);
         }
-        if let Some(c) = doc.first_child(cur) {
-            cur = c;
-            continue;
-        }
-        loop {
-            if cur == root {
-                return true;
-            }
-            if let Some(s) = doc.next(cur) {
-                cur = s;
-                break;
-            }
-            match doc.parent(cur) {
-                Some(p) => cur = p,
-                None => return true,
-            }
-        }
-    }
+        ControlFlow::Continue(())
+    };
+    number(root).is_continue() && walk_descendants::<D, _, _>(doc, root, &mut number).is_continue()
 }
 
 fn order_index_build<'d, D: Dom<'d>>(doc: D, idx: &mut OrderIndex, root: D::Node) -> bool {
@@ -212,15 +204,20 @@ fn order_index_build<'d, D: Dom<'d>>(doc: D, idx: &mut OrderIndex, root: D::Node
 
 /// The indexed comparator, falling back to the parent-chain walk on any miss
 /// (a synthesised node, or a cross-document compare).
-fn doc_order_cmp_indexed<'d, D: Dom<'d>>(doc: D, idx: &OrderIndex, a: D::Node, b: D::Node) -> i32 {
+fn doc_order_cmp_indexed<'d, D: Dom<'d>>(
+    doc: D,
+    idx: &OrderIndex,
+    a: D::Node,
+    b: D::Node,
+) -> Ordering {
     if a == b {
-        return 0;
+        return Ordering::Equal;
     }
     if !idx.built {
         return doc_order_cmp::<D>(doc, a, b);
     }
     match (idx.lookup(D::token(a)), idx.lookup(D::token(b))) {
-        (Some(oa), Some(ob)) => oa.cmp(&ob) as i32,
+        (Some(oa), Some(ob)) => oa.cmp(&ob),
         _ => doc_order_cmp::<D>(doc, a, b),
     }
 }
@@ -252,7 +249,7 @@ pub fn nodeset_sort_doc_order<'e, 'd, D: Dom<'d>>(
     let cmp = |idx: &OrderIndex, a: D::Node, b: D::Node| doc_order_cmp_indexed::<D>(doc, idx, a, b);
     if items
         .windows(2)
-        .all(|w| cmp(&ev.order_index, w[0], w[1]) <= 0)
+        .all(|w| cmp(&ev.order_index, w[0], w[1]) != Ordering::Greater)
     {
         return;
     }
@@ -264,12 +261,74 @@ pub fn nodeset_sort_doc_order<'e, 'd, D: Dom<'d>>(
         order_index_build::<D>(doc, &mut ev.order_index, doc.document_node());
     }
 
-    /* A stable merge sort, so ties - possible only for synthesised nodes that
-     * are not in the index - keep insertion order. Rust's sort_by is exactly
-     * that, and it falls back to an in-place merge if it cannot allocate,
-     * which is the C's qsort fallback without the loss of stability. */
     let idx = &ev.order_index;
-    items.sort_by(|x, y| cmp(idx, *x, *y).cmp(&0));
+    merge_sort(items, |x, y| cmp(idx, *x, *y));
+}
+
+/// A stable natural merge sort, its scratch space from falloc.
+///
+/// Not std's `sort_by`, which takes its scratch buffer from the global
+/// allocator and ABORTS the process when it cannot - outside falloc, so `rake
+/// oom` would never see it. Not `sort_unstable_by` alone either, which cannot
+/// use what these inputs usually are: a union, or a step over several
+/// contexts, is a few runs already in document order, and merging runs costs
+/// O(n) per pass where an unstable sort pays O(n log n) comparisons regardless.
+///
+/// When the scratch space cannot be had, the sort falls back to the unstable,
+/// in-place one: still correct, since two nodes compare Equal only when they
+/// are not comparable at all, so there is no order among ties to keep.
+fn merge_sort<T: Copy>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
+    let n = items.len();
+    let Some(mut scratch) = try_vec_with_capacity::<T>(n) else {
+        items.sort_unstable_by(cmp);
+        return;
+    };
+    scratch.extend_from_slice(items); /* reserved above; cannot allocate */
+
+    /* The end of the non-descending run that starts at `i`. */
+    let run_end = |a: &[T], i: usize, cmp: &mut dyn FnMut(&T, &T) -> Ordering| {
+        let mut j = i + 1;
+        while j < a.len() && cmp(&a[j - 1], &a[j]) != Ordering::Greater {
+            j += 1;
+        }
+        j
+    };
+
+    /* Each pass merges neighbouring runs of `items` into `scratch` and copies
+     * back, halving the run count, until one run is left. */
+    loop {
+        let mut runs = 0usize;
+        let mut i = 0usize;
+        while i < n {
+            let mid = run_end(items, i, &mut cmp);
+            let end = if mid < n {
+                run_end(items, mid, &mut cmp)
+            } else {
+                n
+            };
+            /* Stable: on a tie the left run's element goes first. */
+            let (mut l, mut r, mut o) = (i, mid, i);
+            while l < mid && r < end {
+                if cmp(&items[r], &items[l]) == Ordering::Less {
+                    scratch[o] = items[r];
+                    r += 1;
+                } else {
+                    scratch[o] = items[l];
+                    l += 1;
+                }
+                o += 1;
+            }
+            scratch[o..o + (mid - l)].copy_from_slice(&items[l..mid]);
+            o += mid - l;
+            scratch[o..o + (end - r)].copy_from_slice(&items[r..end]);
+            runs += 1;
+            i = end;
+        }
+        items.copy_from_slice(&scratch);
+        if runs <= 1 {
+            return;
+        }
+    }
 }
 
 /// Sort into document order and drop duplicates.
@@ -290,4 +349,49 @@ pub fn nodeset_unique_sorted<'e, 'd, D: Dom<'d>>(
         }
     }
     ns.truncate(w);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_sort;
+    use core::cmp::Ordering;
+
+    /// Pairs of (key, original position), in a deterministic scramble.
+    fn scrambled(n: usize, keys: u32) -> Vec<(u32, usize)> {
+        let mut x = 0x2545_f491_u32;
+        (0..n)
+            .map(|i| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                (x % keys, i)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merge_sort_is_a_stable_sort() {
+        for (n, keys) in [(0, 1), (1, 1), (2, 2), (17, 3), (1000, 7), (4096, 4096)] {
+            let mut got = scrambled(n, keys);
+            let mut want = got.clone();
+            #[allow(clippy::disallowed_methods)] /* the reference answer */
+            want.sort_by_key(|&(k, _)| k);
+            merge_sort(&mut got, |a, b| a.0.cmp(&b.0));
+            assert_eq!(got, want, "n={n} keys={keys}");
+        }
+    }
+
+    #[test]
+    fn merge_sort_merges_presorted_runs() {
+        /* The shape a union hands it: two runs, each already in order. */
+        let mut v: Vec<u32> = (0..500).step_by(2).chain((1..500).step_by(2)).collect();
+        let mut compares = 0usize;
+        merge_sort(&mut v, |a, b| {
+            compares += 1;
+            a.cmp(b)
+        });
+        assert!(v.windows(2).all(|w| w[0].cmp(&w[1]) != Ordering::Greater));
+        /* One pass to find the two runs, one to merge them, one to confirm. */
+        assert!(compares < 3 * v.len(), "{compares} compares");
+    }
 }

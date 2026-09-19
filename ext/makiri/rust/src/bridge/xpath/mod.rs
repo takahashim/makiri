@@ -49,8 +49,7 @@ pub fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
         Status::Syntax => EXC_XPATH_SYNTAX_ERROR.exception(),
         Status::Limit => EXC_XPATH_LIMIT_EXCEEDED.exception(),
-        Status::Ok
-        | Status::NotImplemented
+        Status::NotImplemented
         | Status::Type
         | Status::Runtime
         | Status::Internal

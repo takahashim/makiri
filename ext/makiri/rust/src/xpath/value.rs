@@ -10,12 +10,14 @@
 #![forbid(unsafe_code)]
 
 use super::abi::*;
+use super::axis::walk_descendants;
 use super::dom::*;
 use super::number;
 use crate::cbuf::OwnedBuf;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::token::Token;
+use core::ops::ControlFlow;
 
 /* ---- the values ---- */
 
@@ -294,43 +296,28 @@ pub fn val_clone<N: Copy>(src: &Val<N>, err: ErrSink) -> Result<Val<N>, Reported
 /// document order.
 ///
 /// Both TEXT and CDATA count as character data (§3 / §5: a CDATA section is
-/// text, not a distinct node type). The walk is iterative through parent
-/// pointers rather than recursive, so an adversarially deep tree cannot
-/// overflow the stack; it descends only into elements.
+/// text, not a distinct node type). The axis walker is iterative through parent
+/// links, so an adversarially deep tree cannot overflow the stack; only an
+/// element has children below `node`, so the walk goes into elements only.
 fn append_text_descendants<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
     buf: &mut Buf,
 ) -> Result<(), BufError> {
-    let mut cur = doc.first_child(node);
-    while let Some(n) = cur {
-        let t = doc.node_type(n);
-        if t == NTYPE_TEXT || t == NTYPE_CDATA_SECTION {
-            /* LIMIT or OOM - the caller fails closed */
-            doc.append_own_text(n, buf)?;
+    let flow = walk_descendants::<D, _, _>(doc, node, &mut |n| {
+        if !matches!(doc.node_type(n), NTYPE_TEXT | NTYPE_CDATA_SECTION) {
+            return ControlFlow::Continue(());
         }
-        if t == NTYPE_ELEMENT {
-            if let Some(c) = doc.first_child(n) {
-                cur = Some(c);
-                continue;
-            }
+        /* LIMIT or OOM - the caller fails closed */
+        match doc.append_own_text(n, buf) {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(e) => ControlFlow::Break(e),
         }
-        /* Past `n`'s subtree, without leaving `node`'s. */
-        let mut m = n;
-        cur = loop {
-            if m == node {
-                break None;
-            }
-            if let Some(s) = doc.next(m) {
-                break Some(s);
-            }
-            match doc.parent(m) {
-                Some(p) => m = p,
-                None => break None,
-            }
-        };
+    });
+    match flow {
+        ControlFlow::Continue(()) => Ok(()),
+        ControlFlow::Break(e) => Err(e),
     }
-    Ok(())
 }
 
 fn build_string_value<'d, D: Dom<'d>>(
@@ -350,53 +337,41 @@ fn build_string_value<'d, D: Dom<'d>>(
     }
 }
 
-/// Build `node`'s XPath string-value - the one node string-value builder.
-///
-/// With a budget the build is bounded by its `max_string_bytes` and any failure
-/// returns `Err` with its slot set. Without one it is unbounded and
-/// best-effort: a failure yields an owned "" and returns `Ok`, because the sole
-/// such caller is the NUMBER coercion, and a node whose text overran the ceiling
-/// was never a valid number - "" coerces to NaN, which is the right answer
-/// anyway.
+/// Build `node`'s XPath string-value - the one node string-value builder,
+/// bounded by `budget`'s `max_string_bytes`. Any failure returns `Err` with the
+/// budget's slot set: there is no unbounded or best-effort form to reach for.
 pub fn node_to_owned_text<'d, D: Dom<'d>>(
     doc: D,
     node: D::Node,
-    budget: Option<&mut Budget>,
+    budget: &mut Budget,
 ) -> Result<Text, Reported> {
-    let max = budget.as_ref().map_or(0, |b| b.limits.max_string_bytes);
-    let err = budget.map_or(ErrSink::silent(), |b| b.sink());
+    let max = budget.limits.max_string_bytes;
     let mut buf = Buf::new(max);
-    match build_string_value::<D>(doc, node, &mut buf) {
-        Ok(()) => {
-            if let Ok(owned) = buf.steal() {
-                return Ok(Text::from_buf(owned));
-            }
-            if !err.is_silent() {
-                return Err(err_setf!(
-                    err,
-                    XP_ERR_OOM,
-                    "out of memory building node string-value"
-                ));
-            }
+    let built = build_string_value::<D>(doc, node, &mut buf).map_err(|e| {
+        if e == BufError::Limit {
+            err_setf!(
+                budget.sink(),
+                XP_ERR_LIMIT,
+                "string size limit exceeded ({} bytes) while building node string-value",
+                max
+            )
+        } else {
+            err_setf!(
+                budget.sink(),
+                XP_ERR_OOM,
+                "out of memory building node string-value"
+            )
         }
-        Err(e) => {
-            buf.free();
-            if !err.is_silent() {
-                return Err(if e == BufError::Limit {
-                    err_setf!(
-                        err,
-                        XP_ERR_LIMIT,
-                        "string size limit exceeded ({} bytes) while building node string-value",
-                        max
-                    )
-                } else {
-                    err_setf!(err, XP_ERR_OOM, "out of memory building node string-value")
-                });
-            }
-        }
-    }
-    /* best-effort: never fail - yield "", which allocates nothing. */
-    Ok(Text::default())
+    });
+    built?;
+    let owned = buf.steal().map_err(|_| {
+        err_setf!(
+            budget.sink(),
+            XP_ERR_OOM,
+            "out of memory building node string-value"
+        )
+    })?;
+    Ok(Text::from_buf(owned))
 }
 
 /* ---------- coercions ---------- */
@@ -434,27 +409,15 @@ pub fn bytes_to_number(s: &[u8]) -> f64 {
     }
 }
 
-/// The unchecked number coercion: no limits, no errors, NaN for anything that
-/// does not coerce.
-pub fn val_to_number_unchecked<'d, D: Dom<'d>>(doc: D, v: &Val<D::Node>) -> f64 {
+/// value -> number (§4.4) for anything but a node-set, which never allocates
+/// and cannot fail. None for a node-set, whose number needs its first node's
+/// string-value built under a budget - [`val_to_number_or_fail`].
+pub fn scalar_to_number<N>(v: &Val<N>) -> Option<f64> {
     match v.get() {
-        ValRef::Number(d) => d,
-        ValRef::Boolean(b) => {
-            if b {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        ValRef::String(s) => bytes_to_number(s.as_slice()),
-        ValRef::NodeSet(ns) => {
-            if ns.is_empty() {
-                return f64::NAN;
-            }
-            /* string-value of the first node in document order */
-            let text = node_text_best_effort::<D>(doc, ns.get(0));
-            bytes_to_number(text.as_slice())
-        }
+        ValRef::Number(d) => Some(d),
+        ValRef::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
+        ValRef::String(s) => Some(bytes_to_number(s.as_slice())),
+        ValRef::NodeSet(_) => None,
     }
 }
 
@@ -514,7 +477,7 @@ pub fn val_to_owned_text_or_fail<'d, D: Dom<'d>>(
             }
             /* §4.2: string(node-set) is the string-value of its first node in
              * document order. */
-            node_to_owned_text::<D>(doc, ns.get(0), Some(budget))
+            node_to_owned_text::<D>(doc, ns.get(0), budget)
         }
     }
 }
@@ -526,22 +489,17 @@ pub fn val_to_number_or_fail<'d, D: Dom<'d>>(
     v: &Val<D::Node>,
     budget: &mut Budget,
 ) -> Result<f64, Reported> {
-    if let Some(ns) = v.as_nodeset() {
-        if ns.is_empty() {
-            return Ok(f64::NAN);
-        }
-        let text = node_to_owned_text::<D>(doc, ns.get(0), Some(budget))?;
-        return Ok(bytes_to_number(text.as_slice()));
+    if let Some(d) = scalar_to_number(v) {
+        return Ok(d);
     }
-    Ok(val_to_number_unchecked::<D>(doc, v))
-}
-
-/// Build `node`'s string-value with no limit and no error reporting - the
-/// best-effort form the NUMBER coercion wants, where an overrun yields "" and
-/// "" coerces to NaN, which is the right answer anyway.
-#[inline]
-fn node_text_best_effort<'d, D: Dom<'d>>(doc: D, node: D::Node) -> Text {
-    node_to_owned_text::<D>(doc, node, None).unwrap_or_default()
+    /* A node-set: the string-value of its first node in document order, and
+     * NaN for an empty one. */
+    let first = v.as_nodeset().and_then(|ns| ns.as_slice().first().copied());
+    let Some(node) = first else {
+        return Ok(f64::NAN);
+    };
+    let text = node_to_owned_text::<D>(doc, node, budget)?;
+    Ok(bytes_to_number(text.as_slice()))
 }
 
 /* ---------- the cached string-value of a node ---------- */
@@ -556,7 +514,7 @@ pub fn cached_node_text<'e, 'd, D: Dom<'d>>(
     if let Some(id) = ev.str_cache.find(key) {
         return Ok(id);
     }
-    let text = node_to_owned_text::<D>(ev.doc, node, Some(&mut ev.budget))?;
+    let text = node_to_owned_text::<D>(ev.doc, node, &mut ev.budget)?;
     ev.str_cache.insert(key, text, &mut ev.budget)
 }
 

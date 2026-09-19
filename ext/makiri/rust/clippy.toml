@@ -30,4 +30,11 @@ disallowed-methods = [
   { path = "std::collections::HashSet::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
   { path = "std::collections::HashSet::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
   { path = "std::collections::HashSet::with_capacity", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+  # std's STABLE sorts take a scratch buffer from the global allocator and abort
+  # the process when it cannot be had - outside falloc, so `rake oom` never
+  # fails them. The unstable sorts sort in place and allocate nothing.
+  { path = "slice::sort", reason = "allocates and aborts on OOM; use sort_unstable" },
+  { path = "slice::sort_by", reason = "allocates and aborts on OOM; use sort_unstable_by" },
+  { path = "slice::sort_by_key", reason = "allocates and aborts on OOM; use sort_unstable_by_key" },
+  { path = "slice::sort_by_cached_key", reason = "allocates and aborts on OOM; sort in place" },
 ]

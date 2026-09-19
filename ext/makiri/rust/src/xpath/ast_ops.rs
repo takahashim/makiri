@@ -42,37 +42,6 @@ fn fuse_descendant_or_self(steps: &mut Vec<Step>) {
 
 /* ---------- hoisting ---------- */
 
-/// The pure XPath 1.0 built-ins safe to hoist when all their arguments are
-/// context-independent. Listed explicitly to keep the set conservative:
-/// anything that reads the context node (last, position, the zero-argument
-/// string / normalize-space / local-name, lang) or that may depend on dynamic
-/// state (id, handler-routed calls) is deliberately absent.
-fn is_pure_builtin(name: &[u8], nargs: usize) -> bool {
-    if nargs == 0 {
-        /* These read no input at all. */
-        return name == b"true" || name == b"false";
-    }
-    matches!(
-        name,
-        b"count"
-            | b"string-length"
-            | b"number"
-            | b"boolean"
-            | b"not"
-            | b"floor"
-            | b"ceiling"
-            | b"round"
-            | b"sum"
-            | b"concat"
-            | b"starts-with"
-            | b"contains"
-            | b"substring-before"
-            | b"substring-after"
-            | b"substring"
-            | b"translate"
-    )
-}
-
 /// Run the passes over a parsed root and wrap it.
 ///
 /// One walk does all of it, each node visited once however deep the tree: the
@@ -112,7 +81,7 @@ fn prepare(e: &mut Expr, in_predicate: bool, slots: &mut u32) -> bool {
             }
             /* A prefix means handler-routed or a namespaced builtin, neither
              * of which is hoistable. */
-            let ci = prefix.is_none() && is_pure_builtin(name, args.len()) && all;
+            let ci = prefix.is_none() && super::funcs::purity(name).allows(args.len()) && all;
             if !ci && in_predicate {
                 for a in args.iter_mut() {
                     give_slot(a, slots);

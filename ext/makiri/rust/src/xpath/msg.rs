@@ -106,10 +106,15 @@ pub struct Error {
 }
 
 impl Error {
-    /// No error yet: `XP_OK` and no message.
+    /// An empty error slot: [`Status::Internal`] with no message.
+    ///
+    /// There is no "no error" status. A slot is only ever read after a failure
+    /// has been reported (`Reported` proves it was written), so one read without
+    /// being written is itself a broken invariant, and reads as one - never as
+    /// a success, and never as a user's mistake.
     pub fn new() -> Error {
         Error {
-            status: XP_OK,
+            status: Status::Internal,
             msg: MsgBuf::default(),
         }
     }
@@ -226,8 +231,6 @@ macro_rules! err_setf {
 /// class from it, with a `match` the compiler checks is complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
-    /// No error.
-    Ok,
     /// A construct the engine does not implement (the namespace axis).
     NotImplemented,
     /// The expression does not parse.
@@ -245,7 +248,6 @@ pub enum Status {
 }
 
 /* The short names the engine has always spelled its statuses with. */
-pub const XP_OK: Status = Status::Ok;
 pub const XP_ERR_NOT_IMPLEMENTED: Status = Status::NotImplemented;
 pub const XP_ERR_SYNTAX: Status = Status::Syntax;
 pub const XP_ERR_TYPE: Status = Status::Type;

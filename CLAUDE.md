@@ -359,6 +359,11 @@ by the check that concluded "every undefined symbol is legitimate".
   `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
   is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
   only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
+  std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
+  are banned there too: they take a scratch buffer from the global allocator
+  and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)
+  or, for document order, `xpath::order`'s natural merge sort, which takes its
+  scratch from falloc and falls back to the in-place sort without it.
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it. Its encoding (offset + 1) lives in `HtmlNode::source_offset`
   / `stamp_source_offset`, the only reader and writer.
