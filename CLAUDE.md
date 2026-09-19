@@ -550,9 +550,12 @@ Custom functions: unknown calls route through the engine resolver to
 becomes `Makiri::Error`, never a long-jump through the evaluator); node-set
 returns from a foreign document are rejected. A handler may not modify the document
 being evaluated: while an evaluation with a handler runs, every mutator on that
-document raises `Makiri::Error` (`glue::doc::DocumentEvaluation` /
-`ensure_document_mutable`), because the engine borrows names, values and index
-slices across the walk and Lexbor frees an attribute's old value on set. The **namespace axis is not
+document raises `Makiri::Error` - the factories (`create_*`, `clone_node`,
+`import_node`, `fragment`) included (`bridge::doc::DocumentEvaluation` /
+`ensure_document_mutable`; XML writes reach the arena only through
+`bridge::xml::arena_mut`, which checks it) - because the engine borrows names,
+values and index slices across the walk, Lexbor frees an attribute's old value
+on set, and an XML factory grows the very arena vectors the walk reads. The **namespace axis is not
 implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
 *does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
 nodes), so this is a documented behaviour difference - see

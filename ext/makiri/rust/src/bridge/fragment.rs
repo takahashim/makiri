@@ -98,6 +98,9 @@ pub unsafe fn build_fragment_ctx(
     tag: usize,
     ns: usize,
 ) -> Result<Value, Error> {
+    /* A fragment's nodes are made in `document`: a change to it, refused while
+     * an XPath evaluation with a handler reads it. */
+    crate::bridge::wrapper::ensure_document_mutable(document)?;
     let html = ruby.into_value(rb_html.to_r_string()?);
 
     /* SAFETY: a live document, for the length of this call. */

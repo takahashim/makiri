@@ -401,9 +401,12 @@ pub fn splice_or_insert<'d>(
  * runs no Ruby. A primitive answers what Lexbor answered; the method words the
  * error. */
 
-/// The Lexbor document behind an HTML Document receiver.
+/// The Lexbor document behind an HTML Document receiver, for a factory - so,
+/// like every other change to a document, refused while an XPath evaluation
+/// with a handler is reading it.
 pub fn owning_doc(rb_self: &Value) -> Result<HtmlDoc<'_>, Error> {
     let doc = html_doc_unwrap(*rb_self)?;
+    ensure_document_mutable(*rb_self)?;
     // SAFETY: a live HTML Document, kept alive by `rb_self` for this call.
     Ok(unsafe { doc.as_doc() })
 }

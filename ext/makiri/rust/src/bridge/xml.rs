@@ -186,8 +186,9 @@ impl magnus::TryConvert for XmlSelf {
 }
 
 impl XmlSelf {
-    /// The arena behind the receiver's Document, as a mutable handle (mutators).
-    pub fn doc(self) -> *mut XmlDoc {
+    /// The arena behind the receiver's Document, as a mutable handle - for a
+    /// receiver [`unwrap_mutable`] already cleared for writing.
+    fn doc(self) -> *mut XmlDoc {
         doc_of(self.document)
     }
 
@@ -202,9 +203,23 @@ pub fn unwrap(v: Value) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(v)? as usize))
 }
 
-/// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
-pub fn doc(v: Value) -> Result<*mut XmlDoc, Error> {
-    Ok(doc_of(xml_node_document(v)?))
+/// The XML arena behind `document`, for a WRITE: refused while an XPath
+/// evaluation with a handler is reading the document.
+///
+/// The evaluator holds the arena as `&Document` for the whole walk, and a
+/// write - a new node, a new byte span - can grow the arena's vectors under the
+/// slices it borrowed. Every path that hands out a `&mut` goes through here, so
+/// the one mutation gate covers the factories and the imports as well as the
+/// tree edits.
+pub fn arena_mut(document: Value) -> Result<*mut XmlDoc, Error> {
+    ensure_document_mutable(document)?;
+    Ok(doc_of(document))
+}
+
+/// [`arena_mut`] for the document a node wrapper (or a Document) belongs to.
+/// `Err(TypeError)` for an HTML node.
+pub fn arena_mut_of(v: Value) -> Result<*mut XmlDoc, Error> {
+    arena_mut(xml_node_document(v)?)
 }
 
 /// Wrap an arena node under `document`, its XML Document.
@@ -427,7 +442,7 @@ pub fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
-    let xdoc = doc_of(document);
+    let xdoc = arena_mut(document)?;
     if xdoc.is_null() {
         return Err(Error::new(error_class(), "the document has no arena"));
     }
@@ -634,9 +649,9 @@ unsafe fn incoming_node(
     if xml_node_document(arg)?.as_raw() == target_doc.as_raw() {
         return Ok((src, None)); /* same arena -> move */
     }
-    ensure_document_mutable(xml_node_document(arg)?)?;
     let mut copy: NodeId = NodeId::INVALID;
-    let src_doc = doc(arg)?;
+    /* The source changes too - adopting takes the node out of it. */
+    let src_doc = arena_mut_of(arg)?;
     // SAFETY: `xd` is the target arena and `src_doc` the source; they differ.
     xml_mut_check(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy) })?;
     Ok((copy, Some(Adoption { src_doc, src })))
@@ -763,9 +778,10 @@ pub fn lshift(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
+    let xd = arena_mut(this.document)?;
     let mut out: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, live for this call.
-    unsafe { xml_mut_check(xml_clone_node(&mut *this.doc(), this.id, deep, &mut out))? };
+    // SAFETY: the receiver's arena, live for this call and cleared for writing.
+    unsafe { xml_mut_check(xml_clone_node(&mut *xd, this.id, deep, &mut out))? };
     Ok(xml_wrap_rel_value(this, out))
 }
 
@@ -787,7 +803,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         }
     }
 
-    let xd = doc(rb_self)?;
+    let xd = arena_mut_of(rb_self)?;
     let (nv, _) = verified(ruby, name, c"element name")?;
     let mut el: NodeId = NodeId::INVALID;
     // SAFETY: the receiver's arena, and the view is live for the call.
@@ -832,7 +848,7 @@ pub fn create_loose_dom_element(
     local: Value,
     ns: Value,
 ) -> Result<Value, Error> {
-    let xd = doc(rb_self)?;
+    let xd = arena_mut_of(rb_self)?;
     let (qv, _) = verified(ruby, qname, c"qualified name")?;
     let (lv, _) = verified(ruby, local, c"local name")?;
     let has_prefix = !prefix.is_nil();
@@ -861,7 +877,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let pub_v = a.optional.0.unwrap_or(nil);
     let sys_v = a.optional.1.unwrap_or(nil);
 
-    let xd = doc(rb_self)?;
+    let xd = arena_mut_of(rb_self)?;
     let (nv, _) = verified(ruby, name, c"doctype name")?;
     let (pv, pl) = verified_opt(ruby, pub_v, c"doctype public id")?;
     let (sv, sl) = verified_opt(ruby, sys_v, c"doctype system id")?;
@@ -889,7 +905,7 @@ fn create_chardata(
     type_: NodeType,
     what: &core::ffi::CStr,
 ) -> Result<Value, Error> {
-    let xd = doc(rb_self)?;
+    let xd = arena_mut_of(rb_self)?;
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
     // SAFETY: the receiver's arena, and the view is the caller's for the copy.
@@ -909,7 +925,7 @@ pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Erro
 }
 
 pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
-    let xd = doc(rb_self)?;
+    let xd = arena_mut_of(rb_self)?;
     let (tg, _) = verified(ruby, target, c"PI target")?;
     let (dt, _) = verified(ruby, data, c"PI data")?;
     let mut pi: NodeId = NodeId::INVALID;
@@ -925,11 +941,13 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let node_v = a.required.0;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
-    let xd = crate::bridge::xml::xml_doc_unwrap(rb_self)?;
+    xml_doc_unwrap(rb_self)?; /* TypeError for anything but an XML Document */
+    let xd = arena_mut(rb_self)?;
     let mut copy: NodeId = NodeId::INVALID;
     match node_repr(node_v) {
         NodeRepr::Xml => {
-            let src_doc = doc(node_v)?;
+            /* Read, not written: the copy goes into the receiver's arena. */
+            let src_doc = doc_of(xml_node_document(node_v)?);
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.

@@ -24,8 +24,8 @@ use crate::init::{CLASS_DOCUMENT, CLASS_NODE_SET};
 /* The wrapper, the front door, the arena accessors and the mutators live in the
  * Ruby <-> XML-arena seam (`bridge::xml`); this module re-exports them for its
  * submodules and the rest of the glue. */
-pub use crate::bridge::xml::{doc, unwrap, wrap, xml_wrap_rel_value, XmlSelf};
 pub use crate::bridge::xml::{doc_of, wrap_xml_node, xml_node_document, xml_node_unwrap};
+pub use crate::bridge::xml::{unwrap, wrap, xml_wrap_rel_value, XmlSelf};
 
 pub use crate::glue::node::node_equals;
 pub use crate::glue::node::node_hash;

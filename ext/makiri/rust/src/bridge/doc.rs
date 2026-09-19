@@ -24,8 +24,8 @@ use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::ruby::value;
 use crate::bridge::string::HtmlSource;
 use crate::bridge::wrapper::{
-    html_doc_known, html_doc_unwrap, keepalive_document, node_repr, DocKind, DocumentShell,
-    NodeRepr, DOC_TYPE,
+    ensure_document_mutable, html_doc_known, html_doc_unwrap, keepalive_document, node_repr,
+    DocKind, DocumentShell, NodeRepr, DOC_TYPE,
 };
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
@@ -202,6 +202,8 @@ pub fn import_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let deep = a.optional.0.map(|v| v.to_bool()).unwrap_or(false);
 
     let doc = html_doc_unwrap(rb_self)?;
+    /* The copy is made in this document: refused while a handler reads it. */
+    ensure_document_mutable(rb_self)?;
 
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
      * detached lxb subtree owned by this document. */
@@ -252,6 +254,9 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     };
 
     let node = html_node_unwrap(rb_self)?;
+    let document = keepalive_document(rb_self)?;
+    /* The copy is made in this document: refused while a handler reads it. */
+    ensure_document_mutable(document)?;
     // SAFETY: the node of a live wrapper, which keeps its document alive.
     let doc = unsafe { node.as_node() }.owner_document_handle();
 
@@ -259,7 +264,6 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let Some(clone) = (unsafe { import_with_fixup(doc, node, deep) }) else {
         return Err(Error::new(EXC_ERROR.exception(), "failed to clone node"));
     };
-    let document = keepalive_document(rb_self)?;
     Ok(wrap_html_node(clone, document))
 }
 
