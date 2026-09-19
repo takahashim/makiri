@@ -80,7 +80,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 
         if let Some(enc) = to_enc {
             if enc.needs_transcode() {
-                str = crate::bridge::string::str_encode_charref_value(str, enc)?;
+                str = enc.encode_charref(str)?;
             }
         }
         Ok(str)

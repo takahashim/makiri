@@ -24,7 +24,6 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::html::import_copy;
 use crate::bridge::html::{html_node_unwrap, wrap_html_node};
-use crate::bridge::ruby::value;
 use crate::bridge::string::HtmlSource;
 use crate::bridge::wrapper::{
     ensure_document_mutable, html_doc, html_doc_unwrap, keepalive_document, node_repr, DocKind,
@@ -117,9 +116,7 @@ pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    let d: &crate::bridge::wrapper::DocData = DOC_TYPE.get_known(&rb_doc);
-    // SAFETY: `d.errors` is the live Array the wrapper marks.
-    unsafe { value(d.errors) }
+    DOC_TYPE.get_known(&rb_doc).errors()
 }
 
 /* ------------------------------------------------------------------ *

@@ -74,14 +74,21 @@ pub enum NodeRepr {
 /// `mkr_doc_data_t`: the parsed handle (owned - GC frees it) and the reserved
 /// errors Array.
 pub struct DocData {
-    pub parsed: *mut Parsed,
-    pub errors: VALUE,
+    /// Set once, by `DocumentShell::install`; read through the accessors below.
+    parsed: *mut Parsed,
+    errors: VALUE,
     /// The external bytes this wrapper has told the GC about, so `release`
     /// takes back exactly what [`account_document`] reported.
     reported: usize,
 }
 
 impl DocData {
+    /// The Document's parse-warning Array.
+    pub fn errors(&self) -> Value {
+        // SAFETY: the live Array this wrapper marks.
+        unsafe { value(self.errors) }
+    }
+
     /// The bytes the handle holds outside Ruby's allocator, or 0 with none.
     fn external_bytes(&self) -> usize {
         // SAFETY: `parsed` is owned by this object and live for the call.
@@ -224,7 +231,7 @@ impl DocumentShell {
 ///
 /// # Safety
 /// `p` must be a live handle.
-pub unsafe fn parsed_xml_doc(p: *mut Parsed) -> *mut XmlDoc {
+pub(in crate::bridge) unsafe fn parsed_xml_doc(p: *mut Parsed) -> *mut XmlDoc {
     // SAFETY: the caller's contract.
     unsafe { (*p).xml_doc() }
 }
@@ -257,14 +264,14 @@ fn html_doc_of(d: &DocData) -> RawDoc {
 }
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
-pub fn doc_parsed(rb_doc: Value) -> Result<*mut Parsed, Error> {
+pub(in crate::bridge) fn doc_parsed(rb_doc: Value) -> Result<*mut Parsed, Error> {
     let d: &DocData = DOC_TYPE.get(&rb_doc)?;
     Ok(d.parsed)
 }
 
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
-pub fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
+pub(in crate::bridge) fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
     DOC_TYPE.get_known(&rb_doc).parsed
 }
 
@@ -273,14 +280,20 @@ pub fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
 /// The `&mut Parsed` does not escape `f`, so the raw pointer stays in this
 /// layer and no alias can outlive the call. `f` must not run Ruby that could
 /// re-enter this document (the readers' closures copy, they do not call back).
-pub fn with_parsed<R>(rb_doc: Value, f: impl FnOnce(&mut Parsed) -> R) -> Result<R, Error> {
+pub(in crate::bridge) fn with_parsed<R>(
+    rb_doc: Value,
+    f: impl FnOnce(&mut Parsed) -> R,
+) -> Result<R, Error> {
     let p = doc_parsed(rb_doc)?;
     // SAFETY: under the GVL, and the borrow is confined to `f`.
     Ok(unsafe { f(&mut *p) })
 }
 
 /// [`with_parsed`] for a VALUE already known to be a Document.
-pub fn with_parsed_known<R>(rb_doc: Value, f: impl FnOnce(&mut Parsed) -> R) -> R {
+pub(in crate::bridge) fn with_parsed_known<R>(
+    rb_doc: Value,
+    f: impl FnOnce(&mut Parsed) -> R,
+) -> R {
     let p = doc_parsed_known(rb_doc);
     // SAFETY: as `with_parsed`.
     unsafe { f(&mut *p) }

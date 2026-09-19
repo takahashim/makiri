@@ -30,7 +30,7 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
-  "bridge/doc.rs" => 7,
+  "bridge/doc.rs" => 6,
   "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 3,
   "bridge/html.rs" => 34,
@@ -40,7 +40,7 @@ UNSAFE_ISLANDS = {
   "bridge/serialize.rs" => 1,
   "bridge/string.rs" => 30,
   "bridge/typed.rs" => 16,
-  "bridge/wrapper.rs" => 17,
+  "bridge/wrapper.rs" => 18,
   "bridge/xml.rs" => 15,
   "bridge/xml_decode.rs" => 6,
   "bridge/xpath/context_object.rs" => 6,

@@ -130,6 +130,16 @@ impl TextVerdict {
         }
     }
 
+    /// What the DATA contract rejects - the HTML data family (text, comment
+    /// and attribute values) may hold U+0000 like browsers, so only invalid
+    /// UTF-8 is a problem there.
+    pub fn data_problem(self) -> Option<&'static str> {
+        match self {
+            TextVerdict::InvalidUtf8 => self.problem(),
+            TextVerdict::Ok | TextVerdict::HasNul => None,
+        }
+    }
+
     /// [`problem`](Self::problem) with "string" as its subject, for a caller
     /// that reports through a static C string.
     pub fn reason(self) -> Option<&'static core::ffi::CStr> {
