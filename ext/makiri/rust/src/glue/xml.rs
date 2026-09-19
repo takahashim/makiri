@@ -71,8 +71,8 @@ fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
 }
 
-use crate::bridge::xpath::{context_for, parse_query, xpath_error};
-use crate::glue::xpath::{evaluate_query, query_result};
+use crate::bridge::xpath::{context_for, evaluate_query, parse_query, xpath_error};
+use crate::glue::xpath::run_query;
 
 /* ------------------------------------------------------------------ */
 /* parse                                                              */
@@ -227,8 +227,7 @@ fn build_ctx(
     Ok(ctx)
 }
 
-/// Evaluate a compiled AST with no handler and convert the result, freeing the
-/// AST and the context first.
+/// Evaluate a compiled AST with no handler and convert the result.
 fn run_ast(
     ruby: &Ruby,
     ctx: XPathContext,
@@ -236,11 +235,7 @@ fn run_ast(
     first_only: bool,
     document: Value,
 ) -> Result<Value, Error> {
-    let nil = ruby.qnil().as_value();
-    let value = evaluate_query(&ctx, &ast, nil, document, first_only);
-    drop(ast);
-    drop(ctx);
-    query_result(value?, document, first_only)
+    run_query(ctx, ast, ruby.qnil().as_value(), document, first_only)
 }
 
 /// `#xpath(expr, namespaces = nil)` / `#at_xpath(...)`.

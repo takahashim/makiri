@@ -30,9 +30,7 @@ use crate::bridge::wrapper::{
 };
 use crate::bridge::xml::xml_node_unwrap;
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
-use crate::init::{
-    RbConst, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR, MOD_HTML_NODE_METHODS,
-};
+use crate::init::{RbConst, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR};
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::token::{Kind, Token};
 use crate::xpath::ast::Ast;
@@ -345,7 +343,7 @@ fn kw_symbols() -> (VALUE, VALUE, VALUE) {
 ///
 /// `:strict` (the default) resolves an unprefixed name test in the HTML
 /// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
-fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<bool, Error> {
+pub fn ns_matching_lax(ruby: &Ruby, opts: magnus::RHash) -> Result<bool, Error> {
     if opts.is_empty() {
         return Ok(false);
     }
@@ -990,70 +988,8 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
     Ok(rb_self_value())
 }
 
-/* ------------------------------------------------------------------ */
-/* Node#xpath / Node#at_xpath                                         */
-/* ------------------------------------------------------------------ */
-
-/// A throwaway context per call, so `Node#xpath` caches nothing;
-/// `Makiri::XPathContext` is what a caller reaches for when many queries share
-/// one namespace set and one set of compiled expressions.
-fn node_xpath_run(
-    rb_self: Value,
-    expr: Value,
-    handler: Value,
-    lax: bool,
-    first_only: bool,
-) -> Result<Value, Error> {
-    let document = keepalive_document(rb_self)?;
-    let mut ctx = context_for(rb_self, document)?;
-    ctx.set_lax(lax);
-    let ast = parse_query(&ctx, expr)?;
-    let value = evaluate_query(&ctx, &ast, handler, document, first_only);
-    drop(ast);
-    drop(ctx);
-    query_result(value?, document, first_only)
-}
-
-/// `(expression, handler, lax)` from the argument list.
-///
-/// The one-argument call - `node.xpath(expr)`, much the commonest - is answered
-/// before `scan_args` runs at all. That is not a micro-optimisation: `scan_args`
-/// with a keyword type allocates an empty Hash even when no keywords were
-/// passed, and `at_xpath` spends about 650ns per call in total, so the
-/// allocation and the symbol lookups behind it measured ~32% of it.
-fn scan_query_args(ruby: &Ruby, args: &[Value]) -> Result<(Value, Value, bool), Error> {
-    if args.len() == 1 {
-        return Ok((args[0], ruby.qnil().as_value(), false));
-    }
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), magnus::RHash, ()>(
-        args,
-    )?;
-    let lax = ns_matching_lax(ruby, a.keywords)?;
-    Ok((
-        a.required.0,
-        a.optional.0.unwrap_or(ruby.qnil().as_value()),
-        lax,
-    ))
-}
-
-fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let (expr, handler, lax) = scan_query_args(ruby, args)?;
-        node_xpath_run(rb_self, expr, handler, lax, false)
-    })
-}
-
-/// The first matching node for a node-set result, or the scalar otherwise.
-fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let (expr, handler, lax) = scan_query_args(ruby, args)?;
-        node_xpath_run(rb_self, expr, handler, lax, true)
-    })
-}
-
-/// # Safety
-/// From `Init_makiri`.
-pub fn init_xpath() {
+/// Register `Makiri::XPathContext`. `Node#xpath` is `glue::xpath`'s.
+pub fn init_xpath_context() {
     let klass =
         RClass::from_value(CLASS_XPATH_CONTEXT.value()).expect("Makiri::XPathContext is a Class");
     klass
@@ -1071,11 +1007,4 @@ pub fn init_xpath() {
     klass
         .define_method("node=", method!(ctx_set_node, 1))
         .expect("#node=");
-
-    let m = magnus::RModule::from_value(MOD_HTML_NODE_METHODS.value())
-        .expect("Makiri::HTML::NodeMethods");
-    m.define_method("xpath", method!(node_xpath, -1))
-        .expect("#xpath");
-    m.define_method("at_xpath", method!(node_at_xpath, -1))
-        .expect("#at_xpath");
 }
