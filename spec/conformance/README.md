@@ -209,28 +209,31 @@ The test data is not vendored. On the first run, the runner downloads the pinned
 W3C zip into `spec/conformance/data/xmlconf/`. Use `--no-fetch` when the data
 must already be present.
 
-Makiri is an XML 1.0 parser. It is namespace-aware, non-validating, and
-no-DTD-processing.
+Makiri is an XML 1.0 (Fifth Edition) parser. It is namespace-aware and
+non-validating; it checks the internal DTD subset but applies none of it.
 
 Scoring rules:
 
 - `not-wf` tests must reject with `Makiri::XML::SyntaxError`.
 - `valid` and `invalid` tests must accept when they do not depend on DTD-defined
   entities or validation.
-- XML 1.1 and Namespaces 1.1 tests are skipped.
+- XML 1.1 and Namespaces 1.1 tests are skipped, and so are tests for editions
+  1-4 only: the Fifth Edition widened the name characters, so what they call
+  not-wf is well-formed now.
 - non-namespace-mode tests are skipped.
 - optional `error` cases are skipped.
 - missing files are skipped.
 - DTD-entity-dependent validation cases are skipped.
-- Expected no-DTD differences are reported as `policy differences`, not
-  failures. Use `--show-policy` to list them.
-- A short `KNOWN_DIVERGENCES` list excludes the few eduni cases where Makiri
-  deliberately follows the normative spec over a stricter test interpretation;
-  these are reported as `deliberate diverge`, not failures. Currently just
-  `rmt-ns10-042` ("Colon in PI name"): a `PITarget` is a `Name` (XML 1.0 §2.6),
-  and Namespaces in XML 1.0 constrains only QNames, so `<?a:b ...?>` is
-  well-formed. The exclusion self-prunes - it only applies while Makiri actually
-  diverges, so if the behaviour ever changes the case scores normally again.
+- Two expected differences are reported as `policy differences`, not failures:
+  a not-wf document whose defect lies in an external entity (never read, as
+  §5.1 allows), and a well-formed one refused with "unsupported DTD construct"
+  (its DTD declares a default, a non-CDATA type or an entity Makiri would
+  otherwise have to ignore). Anything else - a well-formed document rejected
+  for another reason, or a not-wf one with no external reference accepted - is
+  a failure. Use `--show-policy` to list them.
+- A `KNOWN_DIVERGENCES` list can exclude a case where Makiri deliberately
+  follows the normative spec over a stricter test; it is empty now. An
+  exclusion self-prunes - it only applies while Makiri actually diverges.
 
 ---
 

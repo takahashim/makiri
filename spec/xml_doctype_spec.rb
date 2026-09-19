@@ -56,6 +56,96 @@ RSpec.describe "Makiri::XML DOCTYPE / internal_subset" do
     expect(d.system_id).to be_nil
   end
 
+  describe "the internal subset (checked, never applied)" do
+    # §5.1: even a non-validating parser checks the internal subset for
+    # well-formedness and must APPLY its attribute defaults and entities.
+    # Makiri checks it but applies nothing, so a declaration that would change
+    # the tree is refused rather than silently ignored.
+    unsupported = /unsupported DTD construct/
+
+    it "accepts declarations that change nothing" do
+      src = <<~XML
+        <!DOCTYPE r [
+          <!-- a comment with an apostrophe: don't -->
+          <?pi data?>
+          <!ELEMENT r (a|(b,c)*)+>
+          <!ELEMENT a (#PCDATA|b)*>
+          <!ELEMENT b (#PCDATA)>
+          <!ELEMENT c EMPTY>
+          <!ATTLIST r k CDATA #IMPLIED j CDATA #REQUIRED>
+          <!ENTITY e "x&amp;y&#x41;">
+          <!ENTITY u SYSTEM "u.bin" NDATA n>
+          <!ENTITY % p "q">
+          <!NOTATION n PUBLIC "-//n//EN">
+        ]>
+        <r j="1"/>
+      XML
+      expect(Makiri::XML(src).root.name).to eq("r")
+    end
+
+    it "refuses an attribute default, which it would otherwise leave out" do
+      expect { Makiri::XML(%(<!DOCTYPE a [<!ATTLIST a k CDATA "d">]><a/>)) }
+        .to raise_error(Makiri::XML::SyntaxError, unsupported)
+      expect { Makiri::XML(%(<!DOCTYPE a [<!ATTLIST a k CDATA #FIXED "d">]><a/>)) }
+        .to raise_error(Makiri::XML::SyntaxError, unsupported)
+      # a defaulted xmlns would put the element in a namespace
+      expect { Makiri::XML(%(<!DOCTYPE a [<!ATTLIST a xmlns CDATA #FIXED "urn:x">]><a/>)) }
+        .to raise_error(Makiri::XML::SyntaxError, unsupported)
+    end
+
+    it "refuses a non-CDATA attribute type, whose values would be normalized" do
+      %w[ID IDREF IDREFS ENTITY ENTITIES NMTOKEN NMTOKENS (x|y) NOTATION\ (n)].each do |type|
+        expect { Makiri::XML(%(<!DOCTYPE a [<!ATTLIST a k #{type} #IMPLIED>]><a k="x"/>)) }
+          .to raise_error(Makiri::XML::SyntaxError, unsupported), type
+      end
+    end
+
+    it "refuses a parameter-entity reference, whose text could declare either" do
+      expect { Makiri::XML(%(<!DOCTYPE a [<!ENTITY % p "x"> %p;]><a/>)) }
+        .to raise_error(Makiri::XML::SyntaxError, unsupported)
+    end
+
+    it "refuses a reference to a declared entity, in content and in attributes" do
+      decl = %(<!DOCTYPE a [<!ENTITY e "x">])
+      expect { Makiri::XML(%(#{decl}><a>&e;</a>)) }.to raise_error(Makiri::XML::SyntaxError, unsupported)
+      expect { Makiri::XML(%(#{decl}><a k="&e;"/>)) }.to raise_error(Makiri::XML::SyntaxError, unsupported)
+      # an external subset may declare it, and is never read
+      expect { Makiri::XML(%(<!DOCTYPE a SYSTEM "a.dtd"><a>&e;</a>)) }
+        .to raise_error(Makiri::XML::SyntaxError, unsupported)
+    end
+
+    it "still reports an undeclared entity as malformed" do
+      expect { Makiri::XML("<a>&e;</a>") }.to raise_error(Makiri::XML::SyntaxError, /malformed/)
+      expect { Makiri::XML(%(<!DOCTYPE a [<!ENTITY f "x">]><a>&e;</a>)) }
+        .to raise_error(Makiri::XML::SyntaxError, /malformed/)
+    end
+
+    it "rejects a malformed subset" do
+      [
+        "<!BOGUS>",                              # not a declaration
+        "<!ELEMENT a (b|c,d)>",                  # mixed separators
+        "<!ELEMENT a (#PCDATA|b)>",              # names need ')*'
+        "<!ATTLIST a k CDATA>",                  # no DefaultDecl
+        "<!ATTLIST a k CDATA 'x<y'>",            # '<' in an AttValue
+        %(<!ENTITY e "%p;">),                    # PE reference inside a declaration
+        %(<!ENTITY a:b "x">),                    # entity names are NCNames
+        "<?a:b x?>",                             # so are PI targets
+        "<!-- a -- b -->",                       # '--' in a comment
+        %(<!NOTATION n SYSTEM>),                 # no literal
+        "<!ELEMENT a EMPTY",                     # unterminated
+      ].each do |decl|
+        expect { Makiri::XML("<!DOCTYPE a [#{decl}]><a/>") }.to raise_error(Makiri::XML::SyntaxError), decl
+      end
+      expect { Makiri::XML(%(<!DOCTYPE a PUBLIC "a{b" "s"><a/>)) }.to raise_error(Makiri::XML::SyntaxError)
+      expect { Makiri::XML("<!DOCTYPE a:b:c><a/>") }.to raise_error(Makiri::XML::SyntaxError)
+    end
+
+    it "bounds content-model nesting instead of recursing without limit" do
+      src = "<!DOCTYPE a [<!ELEMENT a #{'(' * 5000}b#{')' * 5000}>]><a/>"
+      expect { Makiri::XML(src) }.to raise_error(Makiri::XML::LimitExceeded)
+    end
+  end
+
   it "links the DOCTYPE into the tree before the root (browser-DOM order), yet XPath 1.0 excludes it" do
     doc = Makiri::XML(%(<!DOCTYPE r SYSTEM "r.dtd"><r><a/><b/></r>))
     # In the tree: a real first child of the document, before the root, with

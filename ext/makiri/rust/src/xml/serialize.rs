@@ -35,6 +35,10 @@ pub enum Failure {
     /// A DOM-loose element name - created through the browser-DOM interop
     /// hatch - has no XML form.
     DomLooseName,
+    /// A PI target with a colon: the DOM creates one, but Namespaces in XML §7
+    /// makes every PI target an NCName, and DOM Parsing's serializer refuses
+    /// it too.
+    PiTargetColon,
     /// The output exceeded its ceiling, or memory ran out.
     Output,
 }
@@ -56,8 +60,8 @@ pub fn to_xml(
     indent: i32,
     encoding: Option<&[u8]>,
 ) -> Result<Buf, Failure> {
-    if has_dom_loose_name(doc, n) {
-        return Err(Failure::DomLooseName);
+    if let Some(f) = unserializable_name(doc, n) {
+        return Err(f);
     }
     let mut buf = Buf::new(output_cap(doc));
     let b = &mut buf;
@@ -88,8 +92,8 @@ pub fn to_xml(
 /// For the Document node that is the root element, plus the top-level PIs (and
 /// comments, when asked for) on their own lines before and after it.
 pub fn canonicalize(doc: &XmlDoc, n: NodeId, comments: bool) -> Result<Buf, Failure> {
-    if has_dom_loose_name(doc, n) {
-        return Err(Failure::DomLooseName);
+    if let Some(f) = unserializable_name(doc, n) {
+        return Err(f);
     }
     let mut buf = Buf::new(output_cap(doc));
     let b = &mut buf;
@@ -395,16 +399,22 @@ fn has_chardata(doc: &XmlDoc, e: NodeId) -> bool {
     false
 }
 
-fn has_dom_loose_name(doc: &XmlDoc, root: NodeId) -> bool {
+/// The first name under `root` that has no namespace-well-formed XML form.
+fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
     let mut cur = Some(root);
     while let Some(id) = cur {
-        if doc.type_(id) == Some(NodeType::Element) && doc.node(id).flags & FLAG_DOM_LOOSE_NAME != 0
-        {
-            return true;
+        match doc.type_(id) {
+            Some(NodeType::Element) if doc.node(id).flags & FLAG_DOM_LOOSE_NAME != 0 => {
+                return Some(Failure::DomLooseName)
+            }
+            Some(NodeType::Pi) if field(doc, doc.node(id).local).contains(&b':') => {
+                return Some(Failure::PiTargetColon)
+            }
+            _ => {}
         }
         cur = doc.preorder_next(root, id);
     }
-    false
+    None
 }
 
 fn write_doctype(b: &mut Buf, doc: &XmlDoc, dt: NodeId) -> W {

@@ -18,7 +18,9 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     `Nokogiri::HTML`/libxml2-HTML4 behaviour).
 * `namespace-uri()` of an HTML element returns the XHTML URI (DOM-correct, as browsers report)
   * `Nokogiri::HTML5` returns `""`.
-* Name tests fold ASCII case on HTML elements, like browsers (WPT `domxpath`)
+* Name tests fold ASCII case on HTML elements, like browsers (WPT `domxpath`).
+  The HTML Standard's XPath section does not ask for this - it only sets the
+  default element namespace - so here Makiri follows the browsers over the text.
   * `//DiV` matches `<div>` and `//div[@Id]` its `id`; SVG / MathML names compare
     exactly (`//*[@refX]`, not `@refx`). Only ASCII folds: `Ø` still differs from `ø`.
     This holds in `namespace_matching: :lax` too.
@@ -30,23 +32,34 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 
 ## XML
 
-* `Makiri::XML` is XML 1.0 only and non-validating.
-  * A `version="1.1"` declaration is rejected; Nokogiri parses XML 1.1.
-  * The DTD is recognized but not processed: DTD-defined entities are not
-    expanded and DTD default attributes are not applied (Nokogiri/libxml2 can do
-    both). External entities/subsets are never fetched (no I/O).
+* `Makiri::XML` is XML 1.0 (Fifth Edition) only and non-validating.
+  * A `version="1.x"` document is read as XML 1.0, as §2.8 says a 1.0 processor
+    does; a construct only XML 1.1 allows still fails.
+  * The internal DTD subset is checked but never applied. §5.1 requires even
+    a non-validating parser to apply its attribute defaults and entities, so a
+    document whose DTD would change the tree is refused
+    (`Makiri::XML::SyntaxError`, "unsupported DTD construct") rather than parsed
+    without them: an attribute default (`"d"` or `#FIXED "d"`), a non-CDATA
+    attribute type (`ID`, `NMTOKEN`, an enumeration, ... - they normalize the
+    value), a parameter-entity reference, or a reference to an entity the DTD
+    declares. Declarations that change nothing (`<!ELEMENT>`, `CDATA #IMPLIED` /
+    `#REQUIRED`, unused entity declarations, notations) are accepted.
+    Nokogiri/libxml2 by default parses such documents and leaves the defaults and
+    entities out (its `DTDATTR` / `NOENT` options apply them).
+  * External entities and the external subset are never fetched (no I/O), as
+    §5.1 allows a non-validating parser.
   * Mutation supports in-place edits, the node factories, fragments
     (`Document#fragment` / `DocumentFragment.parse`), node insertion, and building
     a document from scratch (`XML::Document.new` + `#root=`); only handing a raw
     markup string straight to `#add_child` is unsupported (parse it into a fragment
     first). (`#to_xml` serialization is supported; HTML serialization - `to_html`
     / `inner_html` / `outer_html` - is not.)
-* A colon in a processing-instruction target is well-formed (`<?a:b ...?>` parses).
-  * XML 1.0 §2.6: a `PITarget` is a `Name`, not an NCName, and Namespaces in XML
-    1.0's normative conformance section constrains only element/attribute names
-    (QNames), never PI targets. Nokogiri/libxml2 rejects it (`colons are forbidden
-    from PI names`); Makiri follows the normative text. Only the reserved `xml`
-    (any case) target is rejected.
+* A processing-instruction target with a colon can be created but not written.
+  * The parser rejects `<?a:b ...?>`, as Nokogiri does: Namespaces in XML §7
+    requires every Name other than element and attribute names to be an NCName.
+  * `create_processing_instruction("a:b", ...)` succeeds, as DOM
+    `createProcessingInstruction` does, but `#to_xml` / `#canonicalize` then raise,
+    as DOM Parsing's well-formed serializer does. Nokogiri writes `<?a:b ...?>`.
 * A node's namespace URI is its identity, not something re-derived from the
   declarations around it - the WHATWG DOM model, measured against Chrome 152
   (`DOMParser` + `XMLSerializer`).

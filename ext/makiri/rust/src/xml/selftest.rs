@@ -450,13 +450,26 @@ fn parse_selftest_impl() -> i32 {
     i += 1; /* 14: §9 fail-closed cases */
     for s in [
         &b"<r/><!DOCTYPE r>"[..],
-        b"<!DOCTYPE r [ <!ENTITY x \"y\"> ]><r>&x;</r>",
         b"<r><!-- a--b --></r>",
         b"<r><!-- c </r>",
         b" <?xml version=\"1.0\"?><r/>",
         b"<![CDATA[x]]><r/>",
+        b"<r><?a:b x?></r>",              /* NS §7: PI target is an NCName */
+        b"<!DOCTYPE r [ <!BOGUS> ]><r/>", /* §5.1: the subset is checked */
+        b"<!DOCTYPE r [ <!ENTITY e \"%p;\"> ]><r/>", /* WFC: PEs in Internal Subset */
     ] {
         if !rejects(s, Status::Syntax) {
+            return i;
+        }
+    }
+    /* Well-formed, but it declares what Makiri would have to apply. */
+    for s in [
+        &b"<!DOCTYPE r [ <!ENTITY x \"y\"> ]><r>&x;</r>"[..],
+        b"<!DOCTYPE r [ <!ATTLIST r k CDATA \"d\"> ]><r/>",
+        b"<!DOCTYPE r [ <!ATTLIST r k ID #IMPLIED> ]><r/>",
+        b"<!DOCTYPE r [ <!ENTITY % p \"x\"> %p; ]><r/>",
+    ] {
+        if !rejects(s, Status::Unsupported) {
             return i;
         }
     }
@@ -559,8 +572,9 @@ fn parse_selftest_impl() -> i32 {
                 return i;
             }
         }
-        if !rejects(b"<?xml version=\"1.1\"?><r/>", Status::Version)
-            || !rejects(b"<?xml version=\"1.5\"?><r/>", Status::Version)
+        /* §2.8: a 1.x label is read as 1.0; 2.0 is not a VersionNum at all. */
+        if parse_ex(b"<?xml version=\"1.1\"?><r/>", None).is_err()
+            || parse_ex(b"<?xml version=\"1.5\"?><r/>", None).is_err()
             || !rejects(b"<?xml version=\"2.0\"?><r/>", Status::Syntax)
         {
             return i;

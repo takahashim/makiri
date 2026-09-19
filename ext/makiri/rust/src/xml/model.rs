@@ -30,7 +30,10 @@ pub enum Status {
     Limit = 2,
     Oom = 3,
     Internal = 4,
-    Version = 5,
+    /// Well-formed, but it uses a DTD construct Makiri does not apply (an
+    /// attribute default, a non-CDATA attribute type, a parameter entity, a
+    /// reference to a declared entity) - refused rather than ignored.
+    Unsupported = 5,
 }
 
 impl Status {

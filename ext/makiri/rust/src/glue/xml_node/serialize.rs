@@ -41,6 +41,9 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
 fn failure_error(f: Failure, verb: &str) -> Error {
     let msg = match f {
         Failure::DomLooseName => format!("cannot {verb} XML containing a DOM-loose element name"),
+        Failure::PiTargetColon => {
+            format!("cannot {verb} XML containing a processing-instruction target with a colon")
+        }
         Failure::Output => {
             format!("failed to {verb} XML: output exceeded the size limit or out of memory")
         }

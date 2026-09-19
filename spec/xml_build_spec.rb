@@ -32,8 +32,19 @@ RSpec.describe "Makiri::XML building (Phase 2)" do
       pi = doc.create_processing_instruction("xml-stylesheet", %(href="a.xsl"))
       expect(pi).to be_a(Makiri::XML::ProcessingInstruction)
       expect(pi.name).to eq("xml-stylesheet")
-      # §2.6: PITarget is a Name (not an NCName), so a colon is allowed.
+      # DOM createProcessingInstruction takes any Name, colon included.
       expect(doc.create_processing_instruction("a:b", "d").name).to eq("a:b")
+    end
+
+    it "creates a PI target with a colon but refuses to serialize it" do
+      # Namespaces in XML §7 makes a PI target an NCName, so the parser rejects
+      # `<?a:b?>`; the DOM still creates one, and - as DOM Parsing's serializer
+      # does - writing it out as XML fails closed.
+      pi = doc.create_processing_instruction("a:b", "d")
+      doc.root.add_child(pi)
+      expect { pi.to_xml }.to raise_error(Makiri::Error, /target with a colon/)
+      expect { doc.to_xml }.to raise_error(Makiri::Error, /target with a colon/)
+      expect { doc.canonicalize }.to raise_error(Makiri::Error, /target with a colon/)
     end
 
     it "fails closed on invalid factory input" do

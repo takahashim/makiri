@@ -218,25 +218,24 @@ RSpec.describe "Makiri::XML minimal parse" do
       ].each { |src| expect { Makiri::XML(src) }.to raise_error(Makiri::XML::SyntaxError), src.inspect }
     end
 
-    it "accepts only XML 1.0, rejecting other versions with a clear message" do
+    it "reads a 1.x version label as XML 1.0, and rejects any other" do
       expect(ok?("<?xml version='1.0'?><r/>")).to be true
       expect(ok?("<r/>")).to be true # no declaration -> XML 1.0 by default
-      # well-formed but a version Makiri does not implement -> fail closed, not silently 1.0
-      expect { Makiri::XML("<?xml version='1.1'?><r/>") }
-        .to raise_error(Makiri::XML::SyntaxError, /unsupported XML version/)
-      expect { Makiri::XML("<?xml version='1.5'?><r/>") }
-        .to raise_error(Makiri::XML::SyntaxError, /unsupported XML version/)
-      # "2.0" is not even a valid VersionNum ('1.' digits) -> a plain syntax error
+      # §2.8: VersionNum is '1.' digits, and a 1.0 processor reads 1.x as 1.0 -
+      # a 1.1-only construct still fails on the construct itself.
+      expect(ok?("<?xml version='1.1'?><r/>")).to be true
+      expect(ok?("<?xml version='1.5'?><r/>")).to be true
+      expect { Makiri::XML("<?xml version='1.1'?><r>\u0001</r>") }.to raise_error(Makiri::XML::SyntaxError)
+      # "2.0" is not a valid VersionNum at all
       expect { Makiri::XML("<?xml version='2.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
     end
 
-    it "reserves the PI target 'xml' (any case) but allows a Name target with a colon" do
+    it "reserves the PI target 'xml' (any case) and rejects a colon in a target" do
       expect { Makiri::XML("<?XML version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
       expect { Makiri::XML("<?xmL version='1.0'?><r/>") }.to raise_error(Makiri::XML::SyntaxError)
-      # §2.6: PITarget is a Name, not an NCName, so a colon is well-formed.
-      expect(ok?("<r><?a:b data?></r>")).to be true
-      pi = Makiri::XML("<r><?a:b data?></r>").at_xpath("//processing-instruction()")
-      expect(pi.name).to eq("a:b")
+      # Namespaces in XML §7: every Name that is not an element or attribute
+      # name - a PI target among them - must be an NCName.
+      expect { Makiri::XML("<r><?a:b data?></r>") }.to raise_error(Makiri::XML::SyntaxError)
       expect(ok?("<r><?xml-stylesheet href='s'?></r>")).to be true # not the reserved 3-letter name
     end
 
@@ -246,9 +245,9 @@ RSpec.describe "Makiri::XML minimal parse" do
       expect(ok?("<!DOCTYPE r><r/>")).to be true
       expect(ok?("<!DOCTYPE r SYSTEM 'x.dtd'><r/>")).to be true
       expect(Makiri::XML("<!DOCTYPE r SYSTEM 'x.dtd'><r/>").internal_subset.name).to eq("r")
-      # an entity the DTD would define stays undefined -> referencing it is fatal
+      # an entity the DTD defines is not expanded -> referencing it is refused
       expect { Makiri::XML("<!DOCTYPE r [ <!ENTITY x 'y'> ]><r>&x;</r>") }
-        .to raise_error(Makiri::XML::SyntaxError)
+        .to raise_error(Makiri::XML::SyntaxError, /unsupported DTD construct/)
     end
 
     it "rejects malformed comments (-- in content, unterminated, --->)" do
