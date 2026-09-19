@@ -195,9 +195,11 @@ fn parse_status_error(status: Status, unit: Unit) -> Error {
     match status {
         Status::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
         Status::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
-        Status::Version => Error::new(
+        Status::Unsupported => Error::new(
             EXC_XML_SYNTAX_ERROR.exception(),
-            "unsupported XML version (only XML 1.0 is supported)",
+            "unsupported DTD construct: Makiri does not apply attribute defaults or \
+             non-CDATA attribute types, expand parameter entities, or expand entities \
+             a DTD declares",
         ),
         /* `Ok` never reaches here (it means no failure); the rest are the
          * generic "failed to parse" bucket. */

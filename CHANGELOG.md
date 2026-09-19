@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+* **XPath over HTML follows the browsers on name case and `xmlns`.** A name
+  test now matches an HTML element's name, and its attributes' names, ASCII
+  case-insensitively - `//DiV` finds `<div>` and `//div[@Id]` its `id` - while
+  SVG and MathML names still compare exactly (`//*[@refX]`, not `@refx`). The
+  `xmlns` / `xmlns:*` declarations on an SVG or MathML element are no longer
+  attributes to XPath, so `//*[@xmlns]` and `@*` do not see them; an `xmlns` on
+  an HTML element is still an ordinary attribute. This matches `document.evaluate`
+  in browsers and the WPT `domxpath` suite, and differs from `Nokogiri::HTML5`,
+  which compares names case-sensitively. XML documents are unaffected.
+
+* **`Makiri::XML` checks the internal DTD subset and refuses what it would have
+  to ignore.** The subset used to be skipped, so a malformed one parsed, and a
+  document came back without the attribute defaults its DTD declares - silently
+  wrong. It is now checked for well-formedness (§5.1), and a document whose DTD
+  would change the tree raises `Makiri::XML::SyntaxError` ("unsupported DTD
+  construct"): an attribute default, a non-CDATA attribute type, a
+  parameter-entity reference, or a reference to a declared entity. Declarations
+  that change nothing are still accepted.
+
+* **A `version="1.x"` document is read as XML 1.0**, as XML 1.0 §2.8 says, instead
+  of being rejected.
+
+* **A colon in a processing-instruction target is rejected**, as Namespaces in
+  XML §7 requires (`<?a:b?>`); a PI created with one through the DOM API can no
+  longer be serialized.
+
 ## [0.10.0.rc1] - 2026-09-19
 
 ### Changed

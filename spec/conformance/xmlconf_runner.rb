@@ -5,8 +5,9 @@
 # over the ~2200 OASIS/NIST/Sun/IBM/Japanese/Edinburgh test files and checks that
 # Makiri ACCEPTS / REJECTS each document as the spec requires.
 #
-# What is scored, given Makiri is a NON-VALIDATING, NO-DTD-PROCESSING,
-# always-namespace-aware XML 1.0 reader:
+# What is scored, given Makiri is a NON-VALIDATING, always-namespace-aware
+# XML 1.0 (Fifth Edition) reader that checks the internal DTD subset but
+# applies none of it:
 #   * not-wf  -> Makiri MUST reject (raise Makiri::XML::SyntaxError). This is the
 #               core well-formedness conformance signal.
 #   * valid / invalid -> Makiri MUST accept (it does not validate). Only tests
@@ -15,19 +16,23 @@
 #
 # Out of scope -> skipped (never silently failed), so the pass rate is honest:
 #   * XML 1.1 / Namespaces 1.1 (Makiri targets XML 1.0).
+#   * tests for editions 1-4 only (EDITION without 5): the Fifth Edition widened
+#     the name characters, so what they call not-wf is well-formed now.
 #   * NAMESPACE="no" tests (colons used in non-namespace ways; Makiri, like
 #     Nokogiri::XML, is always namespace-aware).
 #   * valid/invalid tests needing DTD-defined general/parameter entities
-#     (Makiri does not process the DTD, so &name; stays undefined - by design).
+#     (Makiri does not expand them - by design).
 #   * the optional "error" category (a parser may accept or reject).
 #   * files whose declared encoding we cannot transcode here.
 #
 # The interesting buckets:
-#   * FAIL    - a genuine divergence to investigate (e.g. a not-wf document with
-#               NO doctype that Makiri wrongly accepts: a real wf bug).
-#   * POLICY  - an expected difference from Makiri's no-DTD-validation stance
-#               (e.g. a not-wf document whose only defect is inside the DTD that
-#               Makiri recognizes-but-does-not-validate).
+#   * FAIL    - a genuine divergence to investigate: a not-wf document that
+#               names no external subset or entity yet is accepted, or a
+#               well-formed one rejected for anything but a refused DTD construct.
+#   * POLICY  - an expected difference: a not-wf document whose defect lies in
+#               an external entity Makiri never reads (§5.1 allows that), or a
+#               well-formed one refused because its DTD declares something
+#               Makiri would otherwise have to ignore ("unsupported DTD construct").
 #
 # Test data is NOT vendored. On first run this downloads the pinned W3C suite zip
 # into spec/conformance/data/ (gitignored). Use --no-fetch to require a local copy.
@@ -102,7 +107,7 @@ def manifest_paths
 end
 
 Test = Struct.new(:id, :type, :entities, :namespace, :recommendation, :version,
-                  :path, :manifest, keyword_init: true)
+                  :edition, :path, :manifest, keyword_init: true)
 
 def load_tests
   tests = []
@@ -122,6 +127,7 @@ def load_tests
         namespace:      t["NAMESPACE"]      || "yes",
         recommendation: t["RECOMMENDATION"] || "XML1.0",
         version:        t["VERSION"], # nil => applies to all versions
+        edition:        t["EDITION"], # nil => applies to all editions
         path:           File.expand_path(uri, dir),
         manifest:       File.basename(mpath),
       )
@@ -139,9 +145,10 @@ end
 # by anything and is rejected; that matches the spec default of UTF-8.
 
 # Cheap structural probe (used only to classify divergences as POLICY vs FAIL),
-# on a best-effort ASCII view of the bytes.
-def has_doctype?(bytes)
-  bytes.byteslice(0, 4096).delete("\x00").include?("<!DOCTYPE")
+# on a best-effort ASCII view of the bytes: whether the document names an external subset or external entity - something
+# a non-validating parser does not read, so a defect in it goes unseen.
+def external_refs?(bytes)
+  bytes.delete("\x00").force_encoding("BINARY").match?(/SYSTEM|PUBLIC/n)
 end
 
 # --- deliberate divergences ------------------------------------------------
@@ -151,16 +158,7 @@ end
 # the normative text instead. These are NOT failures - they are documented design
 # choices - so they are excluded from scoring (with the reason recorded) rather
 # than counted as a wf bug. Keep this list tiny and each entry justified.
-KNOWN_DIVERGENCES = {
-  # "Colon in PI name". XML 1.0 §2.6: a PITarget is a Name, not an NCName, so a
-  # colon is well-formed; Namespaces in XML 1.0's normative conformance section
-  # constrains only element/attribute names (QNames), never PI targets. This test
-  # expects not-wf (the interpretation libxml2/Nokogiri implement); Makiri follows
-  # §2.6 and accepts `<?a:b ...?>` on purpose. See the parser note in
-  # mkr_xml_tree.c parse_pi and CHANGELOG (PITarget is a Name).
-  "rmt-ns10-042" => "PITarget is a Name (XML 1.0 §2.6): a colon is well-formed; " \
-                    "NS 1.0 constrains only QNames, not PI targets",
-}.freeze
+KNOWN_DIVERGENCES = {}.freeze
 
 # --- run -------------------------------------------------------------------
 
@@ -179,6 +177,9 @@ tests.each do |t|
   if t.version && !t.version.split.include?("1.0")
     stats[:skip_xml11] += 1; next
   end
+  if t.edition && !t.edition.split.include?("5")
+    stats[:skip_edition] += 1; next
+  end
   if t.namespace == "no"
     stats[:skip_nons] += 1; next
   end
@@ -194,21 +195,14 @@ tests.each do |t|
 
   raw = File.binread(t.path) # ASCII-8BIT; Makiri autodetects the encoding
 
-  # A document that DECLARES version!="1.0" is XML 1.1/1.x even if its manifest
-  # entry is version-agnostic - out of scope (Makiri implements XML 1.0 only,
-  # rejecting other versions by design). Skip it like a manifest-1.1 test rather
-  # than scoring Makiri's deliberate rejection.
-  if raw.byteslice(0, 256).delete("\x00") =~ /\A\s*(?:\xEF\xBB\xBF)?<\?xml\s[^>]*?version\s*=\s*["']([\d.]+)["']/n &&
-     Regexp.last_match(1) != "1.0"
-    stats[:skip_xml11] += 1; next
-  end
-
   # run Makiri -----------------------------------------------------------
+  refused = false
   outcome =
     begin
       Makiri::XML(raw)
       :accept
-    rescue Makiri::XML::SyntaxError
+    rescue Makiri::XML::SyntaxError => e
+      refused = e.message.start_with?("unsupported DTD construct")
       :reject
     rescue StandardError => e
       # a non-SyntaxError Makiri error (budget, etc.) - treat as a flavour of
@@ -234,9 +228,9 @@ tests.each do |t|
   when "not-wf"
     if outcome == :reject
       stats[:pass] += 1
-    elsif has_doctype?(raw)
+    elsif external_refs?(raw)
       stats[:policy] += 1
-      policies << [t, "not-wf accepted (defect is in the DTD; Makiri does not validate DTDs)"]
+      policies << [t, "not-wf accepted (the defect is in an external entity, never read)"]
     else
       stats[:fail] += 1
       fails << [t, "expected REJECT (not-wf) but Makiri ACCEPTED", raw]
@@ -244,9 +238,9 @@ tests.each do |t|
   when "valid", "invalid"
     if outcome == :accept
       stats[:pass] += 1
-    elsif has_doctype?(raw)
+    elsif refused
       stats[:policy] += 1
-      policies << [t, "well-formed doc rejected; relies on the DTD (defaults/entities Makiri skips)"]
+      policies << [t, "well-formed doc refused: its DTD declares a construct Makiri does not apply"]
     else
       stats[:fail] += 1
       fails << [t, "expected ACCEPT (#{t.type}) but Makiri REJECTED", raw]
@@ -283,12 +277,13 @@ puts "\n#{'=' * 72}"
 puts "W3C XML Conformance Test Suite (xmlts20130923)"
 puts "  total tests        : #{stats[:total]}"
 puts "  skipped XML 1.1    : #{stats[:skip_xml11]}"
+puts "  skipped editions1-4: #{stats[:skip_edition]}"
 puts "  skipped non-NS     : #{stats[:skip_nons]}"
 puts "  skipped error-type : #{stats[:skip_error]}"
 puts "  skipped DTD-entity : #{stats[:skip_entities]}"
 puts "  skipped encoding   : #{stats[:skip_encoding]}"
 puts "  skipped missing    : #{stats[:skip_missing]}"
-puts "  policy differences : #{stats[:policy]}  (no-DTD-validation stance; expected)"
+puts "  policy differences : #{stats[:policy]}  (unread external entities, refused DTD constructs)"
 puts "  deliberate diverge : #{stats[:divergence]}  (normative-spec reading; see KNOWN_DIVERGENCES)"
 puts "  scored (in-scope)  : #{scored}"
 puts "  pass               : #{stats[:pass]}"

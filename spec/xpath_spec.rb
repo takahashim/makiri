@@ -172,13 +172,22 @@ RSpec.describe "Makiri XPath" do
         expect(list.xpath("//li[@class='x']").length).to eq(1)
       end
 
-      it "matches attribute names case-sensitively (like the attribute axis)" do
-        # The fast path must not inherit Lexbor's case-insensitive HTML
-        # attribute lookup: //li[@Class] would then match `class`, diverging
-        # from XPath 1.0, Nokogiri::HTML5, and Makiri's own //@Class axis test.
-        expect(list.xpath("//li[@Class]")).to be_empty
-        expect(list.xpath('//li[@Class="x"]')).to be_empty
-        expect(list.xpath("//li[@class]").length).to eq(3) # exact case still matches
+      it "folds attribute-name case exactly as the attribute axis does" do
+        # On an HTML element both fold ASCII case, like browsers. `or false()`
+        # takes the predicate off the fast path, so the pair compares the
+        # shortcut with the generic attribute-axis evaluation.
+        expect(list.xpath("//li[@Class]").length).to eq(3)
+        expect(ids(list.xpath('//li[@Class="x"]'))).to eq(ids(list.xpath('//li[@Class="x" or false()]')))
+        expect(ids(list.xpath("//li[@Class]"))).to eq(ids(list.xpath("//li[@Class or false()]")))
+      end
+
+      it "keeps an SVG attribute's name exact on the fast path too" do
+        # Lexbor's own attribute lookup folds case on every element; the fast
+        # path must not, or [@refx] would find the SVG refX the axis does not.
+        d = Makiri::HTML('<body><svg><path id="p" refX="1"/></svg></body>')
+        expect(d.xpath("//*[@refx]")).to be_empty
+        expect(d.xpath("//*[@refx or false()]")).to be_empty
+        expect(d.xpath("//*[@refX]").length).to eq(1)
       end
 
       it "falls through for shapes that are not a plain attribute test" do
@@ -740,9 +749,13 @@ RSpec.describe "Makiri XPath" do
       expect(d.xpath("//my-widget").map(&:text)).to eq(%w[w1 w2])
     end
 
-    it "matches the case-sensitivity of the generic walk" do
-      # HTML qualified names are lowercase; an upper-case test matches nothing.
-      expect(doc.xpath("//LI")).to be_empty
+    it "folds case like the generic walk" do
+      # An HTML element's name test folds ASCII case, so //LI is //li - through
+      # the index, through the walk (a step shape the index does not take), and
+      # through at_xpath's first-match path.
+      expect(doc.xpath("//LI").map { |n| n["id"] }).to eq(doc.xpath("//li").map { |n| n["id"] })
+      expect(doc.xpath("/descendant::LI").map { |n| n["id"] }).to eq(doc.xpath("//li").map { |n| n["id"] })
+      expect(doc.at_xpath("//LI")["id"]).to eq(doc.at_xpath("//li")["id"])
     end
 
     it "reflects mutations (the index is invalidated)" do

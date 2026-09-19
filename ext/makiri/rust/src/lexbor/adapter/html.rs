@@ -48,6 +48,9 @@ pub const NS_MATH: usize = lxb::lxb_ns_id_enum_t_LXB_NS_MATH as usize;
 /// `LXB_NS_XML`. An attribute in it keeps its `xml:` prefix across a
 /// cross-document translation rather than having one invented.
 pub const NS_XML: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XML as usize;
+/// `LXB_NS_XMLNS`: the parser puts a foreign element's `xmlns` / `xmlns:*`
+/// declarations in it, and XPath does not see them as attributes.
+pub const NS_XMLNS: usize = lxb::lxb_ns_id_enum_t_LXB_NS_XMLNS as usize;
 
 /// `LXB_TAG__UNDEF`. A custom element's tag id is a pointer value, far above
 /// the static range the element index buckets, so it is compared against

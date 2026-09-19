@@ -124,6 +124,12 @@ pub trait Dom<'d>: Copy {
     /// node: XML calls any namespace foreign, HTML admits its own and none.
     fn is_foreign_ns(self, n: Self::Node) -> bool;
 
+    /// Whether name tests compare this element's names ASCII case-insensitively:
+    /// an HTML element in an HTML document, as browsers do (WPT domxpath
+    /// text-html-*). Its own attributes follow it; an SVG / MathML element, and
+    /// every XML node, compares exactly.
+    fn folds_name_case(self, el: Self::Node) -> bool;
+
     /// Whether the node is in a namespace at all - `MKR_NODE_NS_ID(n) != 0`.
     /// Separate from `ns_uri` because HTML answers it without the document.
     fn has_ns(self, n: Self::Node) -> bool;

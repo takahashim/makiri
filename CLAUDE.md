@@ -555,8 +555,8 @@ document raises `Makiri::Error` (`glue::doc::DocumentEvaluation` /
 slices across the walk and Lexbor frees an attribute's old value on set. The **namespace axis is not
 implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
 *does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
-nodes), so this is a documented behaviour difference - see README "Differences
-from Nokogiri". `namespace-uri()`/`local-name()` are implemented.
+nodes), so this is a documented behaviour difference - see
+`NOKOGIRI_DIFFERENCES.md`. `namespace-uri()`/`local-name()` are implemented.
 **Namespace matching of name tests is strict by default** (HTML5/WHATWG-faithful,
 like browsers' `document.evaluate` and `Nokogiri::HTML5`): an *unprefixed*
 element name test resolves in the HTML namespace, so `//div` matches but
@@ -567,7 +567,14 @@ where `//path` finds the SVG element. The mode affects *only* unprefixed
 element name tests; prefixed tests, the `*` wildcard, and attribute tests are
 unchanged (see `xpath/nodetest.rs`). Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
-null).
+null). **Name tests fold ASCII case on HTML elements** (browsers + WPT
+`domxpath`, NOT the HTML Standard, whose XPath section only sets the default
+element namespace): `//DiV` finds `<div>`, `[@Id]` its `id`, in both modes;
+SVG/MathML names stay exact (`refX`). One rule, `nodetest::names_equal` over
+`Dom::folds_name_case`, serves the name test AND the `[@attr]` fast path - keep
+it that way, since Lexbor's own attribute lookup folds on every element. The
+HTML attribute axis also skips attributes in the XMLNS namespace (a foreign
+element's `xmlns`/`xmlns:*`), as the XML backend skips declarations.
 
 **CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
 `lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the

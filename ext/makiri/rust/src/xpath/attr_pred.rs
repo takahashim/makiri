@@ -9,6 +9,7 @@
 
 use super::abi::*;
 use super::dom::*;
+use super::nodetest::names_equal;
 
 /// The two most common predicate shapes. The generic evaluator services them by
 /// building a throwaway node-set per context node plus a string-cache insert;
@@ -72,17 +73,18 @@ fn string_literal(e: &Expr) -> Option<&[u8]> {
     }
 }
 
-/// The attribute whose QUALIFIED name is exactly `name`, case-sensitively.
+/// The attribute whose QUALIFIED name is `name`, compared exactly as the
+/// attribute axis's name test compares it ([`names_equal`]): ASCII
+/// case-insensitively on an HTML element, byte for byte otherwise.
 ///
-/// This scans rather than using the host's attribute lookup, because Lexbor's is
-/// HTML case-INsensitive - which would make `[@Id]` match `id`, diverging from
-/// XPath 1.0, from Nokogiri::HTML5, and from Makiri's own attribute-axis name
-/// test, which compares the qualified name byte for byte. The fast path handles
-/// unprefixed names only, matching that comparison.
+/// This scans rather than using the host's attribute lookup, whose rules are
+/// not the name test's: Lexbor's folds case on every element, SVG included,
+/// and sees the namespace declarations the axis hides. The fast path handles
+/// unprefixed names only, matching the name test's qualified-name compare.
 fn attr_by_qualified_name<'d, D: Dom<'d>>(doc: D, el: D::Node, name: &[u8]) -> Option<D::Attr> {
     let mut a = doc.first_attr(el);
     while let Some(x) = a {
-        if doc.attr_qualified_name(x) == name {
+        if names_equal(doc, Some(el), doc.attr_qualified_name(x), name) {
             return Some(x);
         }
         a = doc.attr_next(x);

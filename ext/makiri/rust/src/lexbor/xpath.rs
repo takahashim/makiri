@@ -124,13 +124,17 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         n.parent()
     }
 
+    /* A namespace declaration is not an attribute in XPath's data model, so the
+     * axis skips the ones the parser put in the XMLNS namespace - the XML
+     * backend does the same. An `xmlns` on an HTML element is an ordinary
+     * no-namespace attribute and stays. */
     #[inline]
     fn first_attr(self, el: HtmlNode<'d>) -> Option<HtmlAttr<'d>> {
-        el.element()?.first_attr()
+        skip_ns_decls(el.element()?.first_attr())
     }
     #[inline]
     fn attr_next(self, a: HtmlAttr<'d>) -> Option<HtmlAttr<'d>> {
-        a.next_attr()
+        skip_ns_decls(a.next_attr())
     }
     #[inline]
     fn attr_node(a: HtmlAttr<'d>) -> HtmlNode<'d> {
@@ -181,6 +185,10 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         ns != dom::NS_HTML && ns != dom::NS_UNDEF
     }
     #[inline]
+    fn folds_name_case(self, el: HtmlNode<'d>) -> bool {
+        el.ns_id() == dom::NS_HTML
+    }
+    #[inline]
     fn has_ns(self, n: HtmlNode<'d>) -> bool {
         n.ns_id() != dom::NS_UNDEF
     }
@@ -221,6 +229,17 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
             recheck: true,
         })
     }
+}
+
+/// `a`, or the first attribute after it that is not a namespace declaration.
+fn skip_ns_decls(mut a: Option<HtmlAttr<'_>>) -> Option<HtmlAttr<'_>> {
+    while let Some(x) = a {
+        if x.node().ns_id() != dom::NS_XMLNS {
+            return Some(x);
+        }
+        a = x.next_attr();
+    }
+    None
 }
 
 /* ------------------------------------------------------------------ */

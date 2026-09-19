@@ -7,7 +7,7 @@
 use crate::falloc::Reserve;
 use crate::xml::chars::{
     decode1, is_name_char, is_name_start, is_reserved_pi_target, normalize_newlines,
-    validate_chars, ExpandMode,
+    validate_chars, validate_name, ExpandMode,
 };
 use crate::xml::qname::{
     is_enc_name, is_version_num, is_yes_no, split_scanned, xmlns_prefix, Split,
@@ -33,6 +33,9 @@ struct RawAttr {
 
 type R<T = ()> = Result<T, ()>;
 
+/// An ExternalID's (public id, system id), each an (offset, len) input slice.
+type ExternalId = (Option<(usize, usize)>, Option<(usize, usize)>);
+
 #[inline]
 fn is_space(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r')
@@ -56,6 +59,13 @@ pub struct Parser<'a> {
     stack: Vec<NodeId>,
     frame: Vec<usize>,
     saw_doctype: bool,
+    /// The general entities the internal subset declares, as input slices. A
+    /// reference to one is a construct Makiri does not expand, not an
+    /// undeclared name, and is reported as such.
+    ge_names: Vec<(usize, usize)>,
+    /// The DOCTYPE names an external subset, which a non-validating parser does
+    /// not read; an entity it declares is equally not expanded.
+    external_subset: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -73,6 +83,8 @@ impl<'a> Parser<'a> {
             stack: Vec::new(),
             frame: Vec::new(),
             saw_doctype: false,
+            ge_names: Vec::new(),
+            external_subset: false,
         }
     }
 
@@ -136,6 +148,13 @@ impl<'a> Parser<'a> {
         if self.status.is_ok() {
             self.status = Status::Syntax;
         }
+        Err(())
+    }
+    /// Well-formed, but uses a DTD construct Makiri refuses rather than
+    /// silently ignores (see `parse_int_subset`).
+    #[inline]
+    fn unsupported<T>(&mut self) -> R<T> {
+        self.status = Status::Unsupported;
         Err(())
     }
     #[inline]
@@ -202,7 +221,35 @@ impl<'a> Parser<'a> {
 
     fn expand(&mut self, s: &[u8], mode: ExpandMode) -> R<Span> {
         let r = self.doc.expand(s, mode);
+        if r == Err(Status::Syntax) && self.refs_unexpanded_entity(s) {
+            return self.unsupported();
+        }
         self.arena(r).map_err(|_| ())
+    }
+
+    /// Whether `s` references a general entity that a DTD declares (or may
+    /// declare, in an external subset) - one Makiri does not expand, as opposed
+    /// to an undeclared name, which is a well-formedness error.
+    fn refs_unexpanded_entity(&self, s: &[u8]) -> bool {
+        let mut i = 0;
+        while let Some(at) = find(&s[i..], b'&') {
+            i += at + 1;
+            if s.get(i) == Some(&b'#') {
+                continue;
+            }
+            let Some(end) = find(&s[i..], b';') else {
+                return false;
+            };
+            let name = &s[i..i + end];
+            if !matches!(name, b"lt" | b"gt" | b"amp" | b"apos" | b"quot")
+                && (self.external_subset
+                    || self.ge_names.iter().any(|&(o, l)| self.sl(o, l) == name))
+            {
+                return true;
+            }
+            i += end;
+        }
+        false
     }
 
     fn new_node(&mut self, ty: NodeType) -> R<NodeId> {
@@ -555,12 +602,10 @@ impl<'a> Parser<'a> {
         self.decl_eq()?;
         let (vs, vl) = self.parse_quoted()?;
         let ver = self.sl(vs, vl);
+        /* §2.8: any 1.x. A 1.0 processor reads a 1.x document as 1.0, so one
+         * that uses a 1.1-only feature fails on that feature, not its label. */
         if !is_version_num(ver) {
             return self.syntax();
-        }
-        if ver != b"1.0" {
-            self.status = Status::Version; /* well-formed, unsupported version */
-            return Err(());
         }
         let (mut saw_enc, mut saw_sd) = (false, false);
         loop {
@@ -610,6 +655,9 @@ impl<'a> Parser<'a> {
         }
         if ci_xml {
             return self.syntax(); /* reserved target ("XML"/"xmL"/...) */
+        }
+        if tgt.contains(&b':') {
+            return self.syntax(); /* Namespaces in XML §7: a PI target is an NCName */
         }
         if !self.starts(b"?>") {
             self.need_space()?;
@@ -682,7 +730,13 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// '<!DOCTYPE' (cursor at '!'): recognized, not processed (§9.4).
+    /// '<!DOCTYPE' (cursor at '!').
+    ///
+    /// The internal subset is parsed, not skipped: §5.1 requires even a
+    /// non-validating processor to check it for well-formedness. Makiri does
+    /// not APPLY what it declares, so a declaration that would change the tree
+    /// fails the parse instead of being silently ignored (`parse_int_subset`).
+    /// An external subset is named but, as §5.1 allows, never read.
     fn parse_doctype(&mut self) -> R {
         if !self.stack.is_empty() || self.doc.root().is_some() || self.saw_doctype {
             return self.syntax();
@@ -691,54 +745,34 @@ impl<'a> Parser<'a> {
         self.advance_n(8); /* "!DOCTYPE" */
         self.need_space()?;
         self.skip_ws();
-        let (n, nl) = self.scan_name()?;
+        let (n, nl) = self.scan_qname()?;
 
-        let mut pub_id: Option<(usize, usize)> = None;
-        let mut sys_id: Option<(usize, usize)> = None;
-        if let Some(c) = self.peek() {
-            if is_space(c) {
+        let mut ids: ExternalId = (None, None);
+        if self.peek().is_some_and(is_space) {
+            self.skip_ws();
+            if self.starts(b"SYSTEM") || self.starts(b"PUBLIC") {
+                ids = self.scan_external_id(false)?;
                 self.skip_ws();
-                if self.starts(b"SYSTEM") {
-                    self.advance_n(6);
-                    self.need_space()?;
-                    self.skip_ws();
-                    sys_id = Some(self.parse_quoted()?);
-                } else if self.starts(b"PUBLIC") {
-                    self.advance_n(6);
-                    self.need_space()?;
-                    self.skip_ws();
-                    pub_id = Some(self.parse_quoted()?);
-                    self.need_space()?;
-                    self.skip_ws();
-                    sys_id = Some(self.parse_quoted()?);
-                }
             }
         }
+        let (pub_id, sys_id) = ids;
+        self.external_subset = sys_id.is_some();
 
-        /* skip the optional internal subset + whitespace to the true '>' */
-        let mut quote: Option<u8> = None;
-        let mut depth = 0usize;
-        let mut closed = false;
-        while let Some(c) = self.peek() {
-            if let Some(q) = quote {
-                if c == q {
-                    quote = None;
-                }
-            } else if c == b'"' || c == b'\'' {
-                quote = Some(c);
-            } else if c == b'[' {
-                depth += 1;
-            } else if c == b']' {
-                depth = depth.saturating_sub(1);
-            } else if c == b'>' && depth == 0 {
-                self.advance();
-                closed = true;
-                break;
-            }
+        let unsupported = if self.peek() == Some(b'[') {
             self.advance();
-        }
-        if !closed {
+            let u = self.parse_int_subset()?;
+            self.advance(); /* ']' */
+            self.skip_ws();
+            u
+        } else {
+            false
+        };
+        if self.peek() != Some(b'>') {
             return self.syntax(); /* unterminated DOCTYPE */
+        }
+        self.advance();
+        if unsupported {
+            return self.unsupported();
         }
 
         let dt = self.new_node(NodeType::Doctype)?;
@@ -760,6 +794,473 @@ impl<'a> Parser<'a> {
         self.doc.append_child(dn, dt);
         self.doc.set_doctype(Some(dt));
         Ok(())
+    }
+
+    /* ---- the internal DTD subset (§2.8, §3.2-3.3, §4.2, §4.7) ---- */
+
+    /// `intSubset` up to (not past) its closing ']'. Answers whether it holds a
+    /// declaration Makiri refuses to ignore: one that would change the tree if
+    /// applied - an attribute default or a non-CDATA attribute type (both
+    /// change attribute values, §3.3.2-3.3.3) - or a parameter-entity reference,
+    /// whose replacement text could carry either. The whole subset is still
+    /// checked first, so a malformed one reports as malformed.
+    ///
+    /// Entity declarations are accepted: declaring one changes nothing until a
+    /// reference to it, and that reference is refused where it occurs.
+    fn parse_int_subset(&mut self) -> R<bool> {
+        let mut unsupported = false;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                None => return self.syntax(),
+                Some(b']') => return Ok(unsupported),
+                Some(b'%') => {
+                    /* DeclSep: a PEReference. */
+                    self.advance();
+                    let (s, l) = self.scan_name()?;
+                    self.check_ncname(s, l)?;
+                    if self.peek() != Some(b';') {
+                        return self.syntax();
+                    }
+                    self.advance();
+                    unsupported = true;
+                }
+                Some(b'<') => {
+                    if self.starts(b"<!--") {
+                        self.advance();
+                        self.scan_comment()?;
+                    } else if self.starts(b"<?") {
+                        self.advance();
+                        self.scan_subset_pi()?;
+                    } else if self.eat_decl(b"<!ELEMENT")? {
+                        self.parse_element_decl()?;
+                    } else if self.eat_decl(b"<!ATTLIST")? {
+                        unsupported |= self.parse_attlist_decl()?;
+                    } else if self.eat_decl(b"<!ENTITY")? {
+                        self.parse_entity_decl()?;
+                    } else if self.eat_decl(b"<!NOTATION")? {
+                        self.parse_notation_decl()?;
+                    } else {
+                        return self.syntax();
+                    }
+                }
+                Some(_) => return self.syntax(),
+            }
+        }
+    }
+
+    /// A declaration keyword, which must be followed by white space.
+    fn eat_decl(&mut self, kw: &[u8]) -> R<bool> {
+        if !self.starts(kw) {
+            return Ok(false);
+        }
+        self.advance_n(kw.len());
+        self.need_space()?;
+        self.skip_ws();
+        Ok(true)
+    }
+
+    /// White space, then the declaration's closing '>'.
+    fn end_decl(&mut self) -> R {
+        self.skip_ws();
+        if self.peek() != Some(b'>') {
+            return self.syntax();
+        }
+        self.advance();
+        Ok(())
+    }
+
+    /// A Name that must also be a QName (Namespaces in XML §3: element and
+    /// attribute names, the DOCTYPE's included).
+    fn scan_qname(&mut self) -> R<(usize, usize)> {
+        let (s, l) = self.scan_name()?;
+        if split_scanned(self.sl(s, l)).is_none() {
+            return self.syntax();
+        }
+        Ok((s, l))
+    }
+
+    /// Namespaces in XML §7: every other Name - entity, notation, PI target -
+    /// is an NCName.
+    fn check_ncname(&mut self, s: usize, l: usize) -> R {
+        if self.sl(s, l).contains(&b':') {
+            return self.syntax();
+        }
+        Ok(())
+    }
+
+    /// '<!--' Comment '-->' in the subset (cursor at '!'); nothing is kept.
+    fn scan_comment(&mut self) -> R {
+        self.advance_n(3);
+        let cstart = self.pos;
+        let mut j = self.pos;
+        loop {
+            match find(&self.input[j..], b'-') {
+                Some(at) => j += at,
+                None => return self.syntax(),
+            }
+            if self.input.get(j + 1) == Some(&b'-') {
+                if self.input.get(j + 2) == Some(&b'>') {
+                    break;
+                }
+                return self.syntax();
+            }
+            j += 1;
+        }
+        if !validate_chars(&self.input[cstart..j]) {
+            return self.syntax();
+        }
+        self.advance_n(j - cstart + 3);
+        Ok(())
+    }
+
+    /// '<?' PI '?>' in the subset (cursor at '?'); nothing is kept.
+    fn scan_subset_pi(&mut self) -> R {
+        self.advance();
+        let (t, tl) = self.scan_name()?;
+        if is_reserved_pi_target(self.sl(t, tl)) {
+            return self.syntax();
+        }
+        self.check_ncname(t, tl)?;
+        if !self.starts(b"?>") {
+            self.need_space()?;
+        }
+        let dstart = self.pos;
+        let mut j = self.pos;
+        loop {
+            match find(&self.input[j..], b'?') {
+                Some(at) => j += at,
+                None => return self.syntax(),
+            }
+            if self.input.get(j + 1) == Some(&b'>') {
+                break;
+            }
+            j += 1;
+        }
+        if !validate_chars(&self.input[dstart..j]) {
+            return self.syntax();
+        }
+        self.advance_n(j - dstart + 2);
+        Ok(())
+    }
+
+    /// A quoted literal whose characters must all be XML Chars.
+    fn scan_char_literal(&mut self) -> R<(usize, usize)> {
+        let (s, l) = self.parse_quoted()?;
+        if !validate_chars(self.sl(s, l)) {
+            return self.syntax();
+        }
+        Ok((s, l))
+    }
+
+    /// PubidLiteral (§2.3): a restricted ASCII set.
+    fn scan_pubid_literal(&mut self) -> R<(usize, usize)> {
+        let (s, l) = self.parse_quoted()?;
+        let ok = self
+            .sl(s, l)
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || b" \r\n-'()+,./:=?;!*#@$_%".contains(&c));
+        if !ok {
+            return self.syntax();
+        }
+        Ok((s, l))
+    }
+
+    /// ExternalID (§4.2.2), or with `public_only_ok` also NOTATION's PublicID:
+    /// 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral (S SystemLiteral)?.
+    /// Answers (public id, system id).
+    fn scan_external_id(&mut self, public_only_ok: bool) -> R<ExternalId> {
+        if self.eat_keyword(b"SYSTEM") {
+            self.need_space()?;
+            self.skip_ws();
+            return Ok((None, Some(self.scan_char_literal()?)));
+        }
+        if !self.eat_keyword(b"PUBLIC") {
+            return self.syntax();
+        }
+        self.need_space()?;
+        self.skip_ws();
+        let p = self.scan_pubid_literal()?;
+        let before = self.pos;
+        self.skip_ws();
+        if matches!(self.peek(), Some(b'"' | b'\'')) && self.pos > before {
+            return Ok((Some(p), Some(self.scan_char_literal()?)));
+        }
+        if public_only_ok {
+            return Ok((Some(p), None));
+        }
+        self.syntax()
+    }
+
+    /// An EntityValue / AttValue literal: Chars, with every '&' a well-formed
+    /// Reference. An AttValue may not hold '<'; an EntityValue may not hold
+    /// '%', since in the internal subset a parameter-entity reference may not
+    /// occur inside a declaration (WFC: PEs in Internal Subset). In an AttValue
+    /// '%' is an ordinary character.
+    fn scan_ref_literal(&mut self, att_value: bool) -> R {
+        let (s, l) = self.scan_char_literal()?;
+        let v = self.sl(s, l);
+        let mut i = 0;
+        while i < v.len() {
+            match v[i] {
+                b'%' if !att_value => return self.syntax(),
+                b'<' if att_value => return self.syntax(),
+                b'&' => {
+                    let Some(end) = find(&v[i..], b';') else {
+                        return self.syntax();
+                    };
+                    let body = &v[i + 1..i + end];
+                    let ok = match body.strip_prefix(b"#") {
+                        Some(num) => match num.strip_prefix(b"x") {
+                            Some(hex) => !hex.is_empty() && hex.iter().all(u8::is_ascii_hexdigit),
+                            None => !num.is_empty() && num.iter().all(u8::is_ascii_digit),
+                        },
+                        None => validate_name(body),
+                    };
+                    if !ok {
+                        return self.syntax();
+                    }
+                    i += end;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// elementdecl (§3.2), after '<!ELEMENT' S.
+    fn parse_element_decl(&mut self) -> R {
+        self.scan_qname()?;
+        self.need_space()?;
+        self.skip_ws();
+        if !(self.eat_keyword(b"EMPTY") || self.eat_keyword(b"ANY")) {
+            if self.peek() != Some(b'(') {
+                return self.syntax();
+            }
+            self.advance();
+            self.skip_ws();
+            if self.eat_keyword(b"#PCDATA") {
+                self.parse_mixed()?;
+            } else {
+                self.parse_cp_group(0)?;
+                self.eat_quantifier();
+            }
+        }
+        self.end_decl()
+    }
+
+    /// Mixed (§3.2.2), after '(' S? '#PCDATA'.
+    fn parse_mixed(&mut self) -> R {
+        let mut names = false;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some(b')') => {
+                    self.advance();
+                    /* with names the '*' is required; bare #PCDATA may take one */
+                    if self.peek() == Some(b'*') {
+                        self.advance();
+                    } else if names {
+                        return self.syntax();
+                    }
+                    return Ok(());
+                }
+                Some(b'|') => {
+                    self.advance();
+                    self.skip_ws();
+                    self.scan_qname()?;
+                    names = true;
+                }
+                _ => return self.syntax(),
+            }
+        }
+    }
+
+    /// A choice or seq (§3.2.1) after its '(' - one kind of separator
+    /// throughout. Nesting is bounded like element nesting, so a hostile
+    /// content model cannot exhaust the stack.
+    fn parse_cp_group(&mut self, depth: usize) -> R {
+        if depth >= MAX_DEPTH {
+            return self.limit();
+        }
+        let mut sep: Option<u8> = None;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some(b'(') {
+                self.advance();
+                self.parse_cp_group(depth + 1)?;
+            } else {
+                self.scan_qname()?;
+            }
+            self.eat_quantifier();
+            self.skip_ws();
+            match self.peek() {
+                Some(b')') => {
+                    self.advance();
+                    return Ok(());
+                }
+                Some(c @ (b'|' | b',')) if sep.is_none_or(|s| s == c) => {
+                    sep = Some(c);
+                    self.advance();
+                }
+                _ => return self.syntax(),
+            }
+        }
+    }
+
+    fn eat_quantifier(&mut self) {
+        if matches!(self.peek(), Some(b'?' | b'*' | b'+')) {
+            self.advance();
+        }
+    }
+
+    /// AttlistDecl (§3.3), after '<!ATTLIST' S. Answers whether any AttDef is
+    /// one Makiri refuses: a non-CDATA type, or a default value.
+    fn parse_attlist_decl(&mut self) -> R<bool> {
+        self.scan_qname()?;
+        let mut unsupported = false;
+        loop {
+            let before = self.pos;
+            self.skip_ws();
+            if self.peek() == Some(b'>') {
+                self.advance();
+                return Ok(unsupported);
+            }
+            if self.pos == before {
+                return self.syntax(); /* AttDef ::= S Name ... */
+            }
+            self.scan_qname()?;
+            self.need_space()?;
+            self.skip_ws();
+            let cdata = self.parse_att_type()?;
+            self.need_space()?;
+            self.skip_ws();
+            let defaulted = if self.eat_keyword(b"#REQUIRED") || self.eat_keyword(b"#IMPLIED") {
+                false
+            } else {
+                if self.eat_keyword(b"#FIXED") {
+                    self.need_space()?;
+                    self.skip_ws();
+                }
+                self.scan_ref_literal(true)?;
+                true
+            };
+            unsupported |= !cdata || defaulted;
+        }
+    }
+
+    /// AttType (§3.3.1); answers whether it is CDATA.
+    fn parse_att_type(&mut self) -> R<bool> {
+        if self.eat_keyword(b"CDATA") {
+            return Ok(true);
+        }
+        /* longest first, so IDREFS is not read as ID + "REFS" */
+        for kw in [
+            &b"IDREFS"[..],
+            b"IDREF",
+            b"ID",
+            b"ENTITIES",
+            b"ENTITY",
+            b"NMTOKENS",
+            b"NMTOKEN",
+        ] {
+            if self.eat_keyword(kw) {
+                return Ok(false);
+            }
+        }
+        let notation = self.eat_keyword(b"NOTATION");
+        if notation {
+            self.need_space()?;
+            self.skip_ws();
+        }
+        if self.peek() != Some(b'(') {
+            return self.syntax();
+        }
+        self.advance();
+        loop {
+            self.skip_ws();
+            if notation {
+                let (s, l) = self.scan_name()?;
+                self.check_ncname(s, l)?;
+            } else {
+                self.scan_nmtoken()?;
+            }
+            self.skip_ws();
+            match self.peek() {
+                Some(b')') => {
+                    self.advance();
+                    return Ok(false);
+                }
+                Some(b'|') => self.advance(),
+                _ => return self.syntax(),
+            }
+        }
+    }
+
+    /// Nmtoken (§2.3): one or more NameChars.
+    fn scan_nmtoken(&mut self) -> R {
+        let start = self.pos;
+        while let Some((cp, bl)) = decode1(&self.input[self.pos..]) {
+            if !is_name_char(cp) {
+                break;
+            }
+            self.advance_n(bl);
+        }
+        if self.pos == start {
+            return self.syntax();
+        }
+        Ok(())
+    }
+
+    /// EntityDecl (§4.2), after '<!ENTITY' S. A general entity's name is
+    /// recorded, so a reference to it reports as unexpanded, not undeclared.
+    fn parse_entity_decl(&mut self) -> R {
+        let pe = self.peek() == Some(b'%');
+        if pe {
+            self.advance();
+            self.need_space()?;
+            self.skip_ws();
+        }
+        let (s, l) = self.scan_name()?;
+        self.check_ncname(s, l)?;
+        self.need_space()?;
+        self.skip_ws();
+        if matches!(self.peek(), Some(b'"' | b'\'')) {
+            self.scan_ref_literal(false)?;
+        } else {
+            self.scan_external_id(false)?;
+            if !pe {
+                /* NDataDecl ::= S 'NDATA' S Name */
+                let before = self.pos;
+                self.skip_ws();
+                if self.pos > before && self.eat_keyword(b"NDATA") {
+                    self.need_space()?;
+                    self.skip_ws();
+                    let (ns, nl) = self.scan_name()?;
+                    self.check_ncname(ns, nl)?;
+                }
+            }
+        }
+        self.end_decl()?;
+        if !pe {
+            if self.ge_names.mkr_reserve(1).is_err() {
+                self.status = Status::Oom;
+                return Err(());
+            }
+            self.ge_names.push((s, l));
+        }
+        Ok(())
+    }
+
+    /// NotationDecl (§4.7), after '<!NOTATION' S.
+    fn parse_notation_decl(&mut self) -> R {
+        let (s, l) = self.scan_name()?;
+        self.check_ncname(s, l)?;
+        self.need_space()?;
+        self.skip_ws();
+        self.scan_external_id(true)?;
+        self.end_decl()
     }
 
     /// '<!' markup: comment, CDATA, or DOCTYPE.

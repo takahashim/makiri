@@ -157,6 +157,12 @@ impl<'d> Dom<'d> for &'d xml::Document {
         self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
     }
 
+    /// XML names are case-sensitive.
+    #[inline]
+    fn folds_name_case(self, _el: xml::NodeId) -> bool {
+        false
+    }
+
     #[inline]
     fn has_ns(self, n: xml::NodeId) -> bool {
         self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
