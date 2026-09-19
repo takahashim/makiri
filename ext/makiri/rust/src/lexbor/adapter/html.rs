@@ -225,16 +225,6 @@ pub unsafe fn has_ns(node: *mut LxbNode) -> bool {
     (*node).ns != NS_UNDEF
 }
 
-/* ---------- documents ---------- */
-
-/// A tag name as Lexbor's tag id, for the `//tag` index, or [`TAG_UNDEF`].
-pub unsafe fn tag_id_by_name(doc: *const LxbDoc, local: &[u8]) -> usize {
-    if doc.is_null() || local.is_empty() || (*doc).tags.is_null() {
-        return TAG_UNDEF;
-    }
-    lxb::lxb_tag_id_by_name_noi((*doc).tags, local.as_ptr(), local.len())
-}
-
 /* ---------- text ---------- */
 
 /* ------------------------------------------------------------------ *
@@ -437,6 +427,19 @@ impl<'doc> HtmlDoc<'doc> {
     pub fn compat_mode(self) -> i64 {
         // SAFETY: a live document handle, read for this call.
         unsafe { (*self.raw.as_ptr()).compat_mode as i64 }
+    }
+
+    /// The tag id Lexbor knows `name` by, or [`TAG_UNDEF`] for an unknown or
+    /// empty name. Custom-element ids are pointer values past
+    /// [`TAG_LAST_ENTRY`], which callers bucketing by id must allow for.
+    pub fn tag_id(self, name: &[u8]) -> usize {
+        // SAFETY: a live document handle, read for this call.
+        let tags = unsafe { (*self.raw.as_ptr()).tags };
+        if name.is_empty() || tags.is_null() {
+            return TAG_UNDEF;
+        }
+        // SAFETY: `tags` is the document's own tag table, `name` a live slice.
+        unsafe { lxb::lxb_tag_id_by_name_noi(tags, name.as_ptr(), name.len()) }
     }
 
     /// The document as a node: an `lxb_dom_document_t` leads with its node.

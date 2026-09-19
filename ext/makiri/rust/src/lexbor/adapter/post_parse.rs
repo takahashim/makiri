@@ -37,7 +37,7 @@ use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::TextIndex;
-pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
+use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
 use crate::lexbor_abi::{
     self as lxb, lxb_dom_document_root, lxb_html_document_destroy, lxb_html_parse_chunk_begin,

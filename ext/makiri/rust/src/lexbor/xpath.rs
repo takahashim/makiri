@@ -213,8 +213,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         if ns_uri.is_some() || index.has_foreign() {
             return None;
         }
-        // SAFETY: `self.doc` is a live document.
-        let tag = unsafe { dom::tag_id_by_name(self.doc.as_raw(), local) };
+        let tag = self.doc.tag_id(local);
         if tag == dom::TAG_UNDEF || tag >= dom::TAG_LAST_ENTRY {
             return None;
         }

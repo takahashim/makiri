@@ -28,7 +28,7 @@ use crate::lexbor_abi::{LxbDoc, LxbNode};
 
 use crate::cbuf::OwnedBuf;
 use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
-pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
+use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
 
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
@@ -41,12 +41,7 @@ use crate::lexbor_abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_
  * over an opaque parser, which was fine until the source-location port needed
  * the tokenizer inside it and build.rs started generating them - two Rust types
  * for one symbol again. */
-use crate::lexbor_abi::{
-    /* The `_noi` twin of an `lxb_inline`. It was declared here, over an opaque
-     * hash, until the HTML shim needed the same symbol - one declaration per
-     * symbol, and `lexbor_abi` is where the `_noi` twins live. */
-    lxb_tag_id_by_name_noi, HtmlParser,
-};
+use crate::lexbor_abi::HtmlParser;
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
@@ -364,17 +359,11 @@ unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut 
 /* the context helpers the Ruby-facing bridge drives                   */
 /* ------------------------------------------------------------------ */
 
-/// The tag id Lexbor knows `name` by, or [`TAG_UNDEF`] for an unknown name.
+/// The tag id Lexbor knows `name` by, or `TAG_UNDEF` for an unknown name.
 ///
 /// The Ruby-facing context resolution lives in [`crate::bridge::fragment`];
-/// only the ABI read stays here.
+/// the lookup itself is [`HtmlDoc::tag_id`].
 pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> usize {
     // SAFETY: a live document handle, read for this call.
-    unsafe {
-        lxb_tag_id_by_name_noi(
-            (*(doc.as_ptr() as *mut LxbDoc)).tags,
-            name.as_ptr(),
-            name.len(),
-        )
-    }
+    unsafe { doc.as_doc() }.tag_id(name)
 }
