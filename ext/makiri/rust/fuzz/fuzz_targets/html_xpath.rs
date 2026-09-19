@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     unsafe {
-        let Some(mut p) = parse_html(html.as_ptr(), html.len(), false) else {
+        let Some(mut p) = parse_html(html, false) else {
             return;
         };
         run(&mut p, text, mode & 1 != 0);

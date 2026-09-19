@@ -64,16 +64,9 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Html);
 
     let result = crate::bridge::gvl::without_gvl(|| {
-        // SAFETY: the bytes are `owned`'s, valid for the closure's lifetime,
-        // and the parser only reads them.
-        unsafe {
-            parse_html(
-                owned.as_slice().as_ptr(),
-                owned.as_slice().len(),
-                assume_valid,
-            )
-        }
-        .map_or(core::ptr::null_mut(), Box::into_raw)
+        /* The handle crosses the GVL boundary as a raw pointer; it is boxed
+         * again below, on this thread. */
+        parse_html(owned.as_slice(), assume_valid).map_or(core::ptr::null_mut(), Box::into_raw)
     });
     drop(owned);
 

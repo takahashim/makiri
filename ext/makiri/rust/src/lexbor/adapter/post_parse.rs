@@ -29,7 +29,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::cbuf::OwnedBuf;
 use crate::falloc::try_box;
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
@@ -37,8 +36,7 @@ use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::TextIndex;
-use crate::lexbor::adapter::utf8_input::utf8_sanitize;
-use crate::lexbor::adapter::utf8_input::Sanitized;
+use crate::lexbor::adapter::utf8_input::sanitize;
 use crate::lexbor_abi::{
     self as lxb, lxb_dom_document_root, lxb_html_document_destroy, lxb_html_parse_chunk_begin,
     lxb_html_parse_chunk_end, lxb_html_parse_chunk_process, LxbDoc, LxbNode,
@@ -187,11 +185,6 @@ impl HtmlParsed {
 
 /* ---- parsing ---- */
 
-/// The sanitiser's replacement buffer, freed however the parse exits.
-struct CleanBuf {
-    _owned: Option<OwnedBuf>,
-}
-
 /// What a tracked parse produces: the document, the line table, and the element
 /// offsets still to be stamped into it. The last two are `None` when their
 /// allocation failed, which degrades `#line` to nil rather than failing the
@@ -293,47 +286,18 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
 
 /// Parse `src` as an HTML document.
 ///
-/// `assume_valid` skips the UTF-8 validation scan entirely - the caller has
-/// already proved the bytes valid, typically from a Ruby String's cached
-/// coderange. None on failure.
-///
-/// # Safety
-/// `src` must name `len` readable bytes, or be null with `len == 0`.
-pub unsafe fn parse_html(
-    src: *const u8,
-    len: usize,
-    assume_valid: bool,
-) -> Option<Box<HtmlParsed>> {
-    if src.is_null() && len != 0 {
-        return None;
-    }
-
-    /* Browser-compatible decoding: invalid UTF-8 becomes U+FFFD (WHATWG
-     * byte-stream decoding), so parsing never fails on bad bytes and the DOM is
-     * always valid UTF-8. Valid input - the common case - is used as-is with no
-     * copy. Source offsets are then relative to the SANITISED bytes: exact for
-     * valid input, best-effort where replacement shifted byte positions. */
-    let mut clean = CleanBuf { _owned: None };
-    if !assume_valid {
-        match utf8_sanitize(src, len) {
-            Some(Sanitized::Unchanged) => {}
-            Some(Sanitized::Replaced(r)) => {
-                clean._owned = Some(r);
-            }
-            None => return None, /* OOM */
-        }
-    }
-
-    let bytes: &[u8] = if let Some(owned) = clean._owned.as_ref() {
-        owned.as_slice()
-    } else if src.is_null() {
-        &[]
-    } else {
-        core::slice::from_raw_parts(src, len)
-    };
-
-    let (doc, lines, positions) = parse_tracked(bytes)?;
-    drop(clean); /* the parse is done with the buffer, on every path */
+/// Browser-compatible decoding first: invalid UTF-8 becomes U+FFFD (WHATWG
+/// byte-stream decoding), so parsing never fails on bad bytes and the DOM is
+/// always valid UTF-8. `assume_valid` skips that scan - the caller has already
+/// proved the bytes valid. Source offsets are relative to the SANITISED bytes:
+/// exact for valid input, best-effort where replacement shifted positions.
+/// None on failure.
+pub fn parse_html(src: &[u8], assume_valid: bool) -> Option<Box<HtmlParsed>> {
+    let input = sanitize(src, assume_valid)?;
+    // SAFETY: a live slice, which the parse only reads and is done with when it
+    // returns.
+    let (doc, lines, positions) = unsafe { parse_tracked(input.as_slice()) }?;
+    drop(input); /* the parse is done with the buffer, on every path */
 
     let parsed = HtmlParsed {
         doc,

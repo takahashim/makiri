@@ -23,10 +23,8 @@ use crate::lexbor_abi::{LxbDoc, LxbNode};
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
-use crate::cbuf::OwnedBuf;
 use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
-use crate::lexbor::adapter::utf8_input::utf8_sanitize;
-use crate::lexbor::adapter::utf8_input::Sanitized;
+use crate::lexbor::adapter::utf8_input::sanitize;
 
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
  * but absent from its public headers, so `lexbor_abi` hand-declares it with the
@@ -93,40 +91,6 @@ fn fixup_template_content(
         }
     }
     Ok(())
-}
-
-/// Fragment input after browser-compatible decoding: the caller's bytes when
-/// they needed no repair, or the repaired copy, which this owns and frees.
-pub enum SanitizedHtml<'a> {
-    Borrowed(&'a [u8]),
-    Owned(OwnedBuf),
-}
-
-impl SanitizedHtml<'_> {
-    pub fn as_slice(&self) -> &[u8] {
-        match self {
-            SanitizedHtml::Borrowed(b) => b,
-            SanitizedHtml::Owned(o) => o.as_slice(),
-        }
-    }
-}
-
-/// Browser-compatible decoding for fragment input: invalid UTF-8 becomes
-/// U+FFFD, valid input is used in place. `known_valid` - the caller already
-/// knows the bytes are valid UTF-8 - skips the scan. `None` on OOM with
-/// nothing allocated.
-///
-/// Bytes in, bytes out: taking them from a Ruby String, and honouring its
-/// encoding, is the bridge's job (`bridge::string::HtmlSource`).
-pub fn sanitize_html_input(input: &[u8], known_valid: bool) -> Option<SanitizedHtml<'_>> {
-    if known_valid {
-        return Some(SanitizedHtml::Borrowed(input));
-    }
-    // SAFETY: a Rust slice, readable for its length.
-    match unsafe { utf8_sanitize(input.as_ptr(), input.len()) }? {
-        Sanitized::Unchanged => Some(SanitizedHtml::Borrowed(input)),
-        Sanitized::Replaced(r) => Some(SanitizedHtml::Owned(r)),
-    }
 }
 
 /// Why a fragment parse produced no fragment. The bridge words it for Ruby.
@@ -309,7 +273,7 @@ unsafe fn run_fragment_parser(
     context: &FragmentContext,
 ) -> Result<RawNode, FragmentError> {
     let parser = HtmlParser::create().ok_or(FragmentError::Parser)?;
-    let src = sanitize_html_input(input, known_valid).ok_or(FragmentError::Decode)?;
+    let src = sanitize(input, known_valid).ok_or(FragmentError::Decode)?;
     let bytes = src.as_slice();
     let root = context.parse(&parser, bytes.as_ptr(), bytes.len());
     drop(src); /* the parse consumed it; the buffer goes on every path */
