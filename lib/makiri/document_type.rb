@@ -9,6 +9,6 @@ module Makiri
     # @return [String, nil] the public identifier, or nil if absent. An empty
     #   `PUBLIC ""` literal returns "".
     # `public_id`, `external_id` (Nokogiri-compatible alias), and `system_id`
-    # are defined in the C extension.
+    # are defined in the extension.
   end
 end

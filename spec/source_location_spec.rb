@@ -54,6 +54,66 @@ RSpec.describe "Makiri source location" do
     end
   end
 
+  # The offsets are recorded during the parse but stamped into the DOM lazily -
+  # on the first `#line`, or on the first MUTATION, whichever comes first. The
+  # mutation case is the one that needs pinning: the stamping walks the tree
+  # pairing elements with tokens in document order, so a walk that ran AFTER an
+  # edit would pair them wrongly, and `#line` must never answer a wrong line.
+  describe "the deferred stamping" do
+    SRC = <<~HTML
+      <!doctype html>
+      <html>
+      <body>
+      <div id="a">x</div>
+      <p id="b">y</p>
+      <span id="c">z</span>
+      </body>
+      </html>
+    HTML
+
+    def lines_of(doc)
+      doc.css("div,p,span").map { |n| [n["id"], n.line] }
+    end
+
+    it "answers the same lines whether or not the tree was edited first" do
+      untouched = lines_of(Makiri::HTML(SRC))
+      expect(untouched).to eq([["a", 4], ["b", 5], ["c", 6]])
+
+      inserted = Makiri::HTML(SRC)
+      inserted.at_css("#a").add_child(inserted.create_element("b"))
+      expect(lines_of(inserted)).to eq(untouched)
+
+      renamed = Makiri::HTML(SRC)
+      renamed.at_css("#b").name = "h1"
+      expect(renamed.css("div,h1,span").map { |n| [n["id"], n.line] }).to eq(untouched)
+
+      attributed = Makiri::HTML(SRC)
+      attributed.at_css("#a")["class"] = "x"
+      expect(lines_of(attributed)).to eq(untouched)
+    end
+
+    it "keeps the surviving nodes' lines after a removal" do
+      doc = Makiri::HTML(SRC)
+      doc.at_css("#a").remove
+      expect(doc.css("p,span").map { |n| [n["id"], n.line] }).to eq([["b", 5], ["c", 6]])
+    end
+
+    it "still answers nil for a node that was never parsed" do
+      doc = Makiri::HTML(SRC)
+      made = doc.create_element("i")
+      doc.at_css("#a").add_child(made)
+      expect(made.line).to be_nil
+    end
+
+    it "is idempotent - asking twice gives the same answer" do
+      doc = Makiri::HTML(SRC)
+      first = lines_of(doc)
+      expect(lines_of(doc)).to eq(first)
+      doc.at_css("#a")["k"] = "v"
+      expect(lines_of(doc)).to eq(first)
+    end
+  end
+
   describe "nodes without a recorded location" do
     let(:doc) { Makiri::HTML("<html><body><p>hi<!--c--></p></body></html>") }
 

@@ -8,7 +8,7 @@ require "makiri"
 # (process-wide stress makes even loading the spec files run a full GC per
 # allocation - tens of minutes before the first example). Under this combination
 # every allocation inside an example triggers a *compacting* GC, the strongest
-# form of the borrowed-pointer / use-after-move test for the C extension.
+# form of the borrowed-pointer / use-after-move test for the extension.
 GC_COMPACT_STRESS = !ENV["GC_COMPACT_STRESS"].to_s.empty?
 GC.auto_compact = true if GC_COMPACT_STRESS
 
@@ -60,15 +60,27 @@ RSpec.configure do |config|
     end
   end
 
-  # Under Valgrind (VALGRIND=1, set by the spec:valgrind task) skip the examples
-  # tagged :slow. These are fail-closed *limit* tests that push a budget to its
-  # cap by sheer volume (e.g. registering 70k namespaces) - the memory operations
-  # they exercise are identical to the smaller tests, so they add no memory-safety
-  # coverage under memcheck, but at ~10-50x slowdown they dominate the run (and,
-  # being single examples, can't be split across the sharded jobs). The normal CI
-  # matrix still runs them for correctness.
-  unless ENV["VALGRIND"].to_s.empty?
+  # Under an instrumented run - Valgrind (VALGRIND=1, from `spec:valgrind`) or a
+  # sanitizer (MAKIRI_SANITIZE, from `rake sanitize`) - skip the examples tagged
+  # :slow. These are fail-closed *limit* tests that push a budget to its cap by
+  # sheer volume (e.g. registering 70k namespaces) - the memory operations they
+  # exercise are identical to the smaller tests, so they add no memory-safety
+  # coverage under instrumentation, but at ~10-50x slowdown they dominate the run
+  # (and, being single examples, can't be split across the sharded jobs). The
+  # normal CI matrix still runs them for correctness.
+  #
+  # The sanitizer arm was added on the reasoning above, NOT on evidence that it
+  # was costing anything: it went in while an ASan run appeared to hang, and the
+  # hang turned out to be something else entirely (the extension segfaulted at
+  # load under ASan - since fixed, see CLAUDE.md - and the hour was Ruby printing
+  # a crash report whose memory map is enormous because ASan reserves terabytes
+  # of shadow). Against a working ASan build the whole suite now takes ~8s, so
+  # this arm has still not been shown to matter here. It is kept because the
+  # Valgrind argument applies unchanged: volume tests, multiplied by
+  # instrumentation.
+  instrumented = [ENV["VALGRIND"], ENV["MAKIRI_SANITIZE"]].any? { |v| !v.to_s.empty? }
+  if instrumented
     config.filter_run_excluding :slow
-    config.before(:suite) { warn "[spec] skipping :slow examples under Valgrind" }
+    config.before(:suite) { warn "[spec] skipping :slow examples under instrumentation" }
   end
 end

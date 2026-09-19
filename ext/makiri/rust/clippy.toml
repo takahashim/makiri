@@ -1,0 +1,33 @@
+# The allocation chokepoint, enforced (see src/falloc.rs).
+#
+# Rust's own allocating APIs are either infallible - they abort the process on
+# OOM, which for a library inside someone's application server is not "failing
+# closed" - or they are fallible but invisible to `rake oom`, which can only
+# fail allocations that consult the injection counter. `falloc` fixes both, and
+# this list is what keeps a new call site from quietly going around it.
+#
+# Scope is deliberate. Banned here are the ways a NEW owning container comes
+# into existence or grows its capacity, because those are unambiguous. `push`,
+# `insert` and `extend` are NOT banned: after a successful reserve they cannot
+# allocate, and that is the normal shape of the code.
+#
+# So one residual risk is left uncovered on purpose, and it is stated here
+# rather than deferred to a document: a `push`, `insert` or `extend` with no
+# reserve in front of it allocates infallibly and the sweep cannot fail it.
+# Banning them would need an allow on every second line, which buys nothing -
+# `falloc`'s VecPush / MapInsert exist so the reserve and the write are one
+# call, and review is what catches a site that skipped them.
+disallowed-methods = [
+  { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box / try_box_raw" },
+  { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },
+  { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+  { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::mkr_reserve_exact" },
+  { path = "alloc::vec::Vec::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
+  { path = "alloc::vec::Vec::try_reserve_exact", reason = "not injectable; use Reserve::mkr_reserve_exact" },
+  { path = "std::collections::HashMap::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+  { path = "std::collections::HashMap::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
+  { path = "std::collections::HashMap::with_capacity", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+  { path = "std::collections::HashSet::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+  { path = "std::collections::HashSet::try_reserve", reason = "not injectable; use Reserve::mkr_reserve" },
+  { path = "std::collections::HashSet::with_capacity", reason = "aborts on OOM; use Reserve::mkr_reserve" },
+]

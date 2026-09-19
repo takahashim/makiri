@@ -5,7 +5,7 @@ module Makiri
     # A Nokogiri-compatible DSL for building an XML document (or subtree) from
     # scratch. It is a thin, pure-Ruby layer over the public construction surface
     # (+XML::Document.new+, +Document#create_element+ / +#create_text_node+ /
-    # +#create_cdata+ / +#create_comment+, and +Node#add_child+); no C code is
+    # +#create_cdata+ / +#create_comment+, and +Node#add_child+); no native code is
     # involved.
     #
     # @example Block-with-argument form (recommended)

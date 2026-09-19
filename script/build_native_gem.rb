@@ -33,6 +33,9 @@ spec.extensions = []
 spec.files = spec.files.reject { |f| f.start_with?("ext/", "vendor/") }
 spec.files += libs.map { |p| p.sub("#{root}/", "") }
 spec.files.uniq!
+# rb_sys is a runtime dependency only because extconf requires it at install
+# time; a binary gem runs no extconf, so it must not drag rb_sys along.
+spec.dependencies.reject! { |d| d.name == "rb_sys" }
 
 # Bound the Ruby versions this binary gem serves - one subdir per ABI minor.
 abis = libs.map { |p| File.basename(File.dirname(p)) }.sort_by { |v| v.split(".").map(&:to_i) }

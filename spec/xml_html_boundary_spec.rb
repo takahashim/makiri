@@ -26,19 +26,14 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
   end
 
   # The two cases below USED to assert-abort. They are kept as subprocess specs so
-  # a regression surfaces as a failed child, not a crash of the whole rspec run -
-  # but on macOS a child can't inherit the ASan DYLD preload (SIP strips DYLD_*),
-  # so skip them under the sanitizer (the in-process examples that follow cover
-  # the same kind-aware Document-branch under ASan).
-  def skip_under_sanitizer!
-    return unless ENV.key?("ASAN_OPTIONS")
-
-    skip "subprocess can't inherit the ASan preload on macOS (SIP strips DYLD_*)"
-  end
+  # a regression surfaces as a failed child, not a crash of the whole rspec run.
+  # They used to skip under the sanitizer, because a child could not inherit the
+  # ASan DYLD preload (SIP strips DYLD_*). A sanitized run needs no preload any
+  # more - ASAN_OPTIONS is an ordinary variable, which a child does inherit - so
+  # they run there too.
 
   describe "kind-aware document unwrap (no assert-abort)" do
     it "compares an XML node to its Document without aborting (isolated)" do
-      skip_under_sanitizer!
       status, out = run_isolated(<<~RUBY)
         doc = Makiri::XML("<r><a/></r>")
         print(doc.at_xpath("//a") == doc)
@@ -48,7 +43,6 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
     end
 
     it "rebinds XPathContext#node to an XML Document without aborting (isolated)" do
-      skip_under_sanitizer!
       status, out = run_isolated(<<~RUBY)
         doc = Makiri::XML("<r><a/><a/></r>")
         ctx = Makiri::XPathContext.new(doc.root)
@@ -179,10 +173,8 @@ RSpec.describe "Makiri HTML/XML representation boundary" do
 
     # import_node now TRANSLATES an XML node (it is the cross-kind crossing point),
     # so it must not crash and must yield an HTML node. Isolated so a regression
-    # fails the child rather than crashing the whole run (skipped under the
-    # sanitizer, where the child can't inherit the ASan preload on macOS).
+    # fails the child rather than crashing the whole run.
     it "translates (does not crash on) import_node(xml_node)" do
-      skip_under_sanitizer!
       status, out = run_isolated(<<~RUBY)
         h = Makiri::HTML("<div/>")
         x = Makiri::XML("<r/>")

@@ -1,0 +1,174 @@
+# Recorded from: C only (no MAKIRI_RUST_* flags)
+# Regenerate with `bundle exec rake diff:record`. See spec/differential/run.rb.
+add_child.ret = Element/b
+add_child.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b></b></div></body></html>"
+add_child.text_node = Text/text
+add_child.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b></b>t</div></body></html>"
+add_child.frag = DocumentFragment/#document-fragment
+add_child.tree3 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b></b>t<i>i</i><u>u</u></div></body></html>"
+add_child.move = Element/p
+add_child.tree4 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p2\">two</p><b></b>t<i>i</i><u>u</u><p id=\"p1\">one</p></div></body></html>"
+add_child.cycle = UTF-8:"RAISE Makiri::Error: cannot insert a node into its own subtree"
+add_child.attr = UTF-8:"RAISE Makiri::Error: an attribute node cannot be inserted into the tree"
+<<.ret = Element/div
+<<.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b></b></div></body></html>"
+<<.text_node = Element/div
+<<.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b></b>t</div></body></html>"
+<<.frag = Element/div
+<<.tree3 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b></b>t<i>i</i><u>u</u></div></body></html>"
+<<.move = Element/div
+<<.tree4 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p2\">two</p><b></b>t<i>i</i><u>u</u><p id=\"p1\">one</p></div></body></html>"
+<<.cycle = UTF-8:"RAISE Makiri::Error: cannot insert a node into its own subtree"
+<<.attr = UTF-8:"RAISE Makiri::Error: an attribute node cannot be inserted into the tree"
+add_previous_sibling.ret = Element/s
+add_previous_sibling.tree = UTF-8:"<html><head></head><body><div id=\"a\"><s></s><p id=\"p1\">one</p><p id=\"p2\">two</p></div></body></html>"
+add_previous_sibling.frag = DocumentFragment/#document-fragment
+add_previous_sibling.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><s></s><i>1</i><u>2</u><p id=\"p1\">one</p><p id=\"p2\">two</p></div></body></html>"
+add_previous_sibling.orphan = UTF-8:"RAISE Makiri::Error: cannot add a sibling to a node with no parent"
+before.ret = Element/s
+before.tree = UTF-8:"<html><head></head><body><div id=\"a\"><s></s><p id=\"p1\">one</p><p id=\"p2\">two</p></div></body></html>"
+before.frag = DocumentFragment/#document-fragment
+before.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><s></s><i>1</i><u>2</u><p id=\"p1\">one</p><p id=\"p2\">two</p></div></body></html>"
+before.orphan = UTF-8:"RAISE Makiri::Error: cannot add a sibling to a node with no parent"
+add_next_sibling.ret = Element/s
+add_next_sibling.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><s></s><p id=\"p2\">two</p></div></body></html>"
+add_next_sibling.frag = DocumentFragment/#document-fragment
+add_next_sibling.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><i>1</i><u>2</u><s></s><p id=\"p2\">two</p></div></body></html>"
+add_next_sibling.orphan = UTF-8:"RAISE Makiri::Error: cannot add a sibling to a node with no parent"
+after.ret = Element/s
+after.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><s></s><p id=\"p2\">two</p></div></body></html>"
+after.frag = DocumentFragment/#document-fragment
+after.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><i>1</i><u>2</u><s></s><p id=\"p2\">two</p></div></body></html>"
+after.orphan = UTF-8:"RAISE Makiri::Error: cannot add a sibling to a node with no parent"
+remove.ret = Element/p
+remove.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p2\">two</p></div></body></html>"
+remove.twice = Element/p
+remove.attr = UTF-8:"RAISE Makiri::Error: use delete(name) to remove an attribute"
+unlink.ret = Element/p
+unlink.tree = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p2\">two</p></div></body></html>"
+unlink.twice = Element/p
+unlink.attr = UTF-8:"RAISE Makiri::Error: use delete(name) to remove an attribute"
+replace.ret = Element/r
+replace.tree = UTF-8:"<html><head></head><body><div id=\"a\"><r></r><p id=\"p2\">two</p></div></body></html>"
+replace.frag = DocumentFragment/#document-fragment
+replace.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><r></r><i>x</i><u>y</u></div></body></html>"
+replace.orphan = UTF-8:"RAISE Makiri::Error: cannot replace a node with no parent"
+adopt.ret = Element/section
+adopt.dst = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><section id=\"s\"><em>moved</em></section></div></body></html>"
+adopt.src = UTF-8:"<html><head></head><body></body></html>"
+adopt.identical = FalseClass:false
+adopt_frag.ret = DocumentFragment/#document-fragment
+adopt_frag.dst = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">one</p><p id=\"p2\">two</p><b>1</b><b>2</b></div></body></html>"
+xml_arg = UTF-8:"RAISE TypeError: wrong argument type Makiri::XML::Node (expected Makiri::HTML::Node)"
+doctype.second = UTF-8:"RAISE Makiri::Error: the document already has a doctype"
+doctype.on_element = UTF-8:"RAISE Makiri::Error: a doctype node can only be a child of the document"
+doctype.after_element = UTF-8:"RAISE Makiri::Error: a doctype must precede the document element"
+doctype.before_element = DocumentType/z
+doctype.tree = UTF-8:"<!DOCTYPE z><html><head></head><body>b</body></html>"
+element_before_doctype = UTF-8:"RAISE Makiri::Error: a doctype must precede the document element"
+element_before_doctype.frag = UTF-8:"RAISE Makiri::Error: a doctype must precede the document element"
+element_before_doctype.tree = UTF-8:"<!DOCTYPE html><html><head></head><body>b</body></html>"
+doctype.before_comment = UTF-8:"RAISE Makiri::Error: the document already has a doctype"
+doctype.replace_comment = UTF-8:"RAISE Makiri::Error: the document already has a doctype"
+doctype.before_comment.tree = UTF-8:"<!--c--><!DOCTYPE html><html><head></head><body>b</body></html>"
+aset.ret = UTF-8:"1"
+aset.read = UTF-8:"1"
+aset.empty = UTF-8:""
+aset.nul = UTF-8:"a\u0000b"
+aset.read_nul = UTF-8:"\"a\\u0000b\""
+aset.bad_name = UTF-8:"RAISE Makiri::Error: attribute name must be valid UTF-8"
+aset.non_element = UTF-8:"RAISE Makiri::Error: cannot set an attribute on a non-element node"
+aset.tree = UTF-8:"<div id=\"a\" data-x=\"1\" data-e=\"\" data-n=\"a\u0000b\"><p id=\"p1\">one</p><p id=\"p2\">two</p></div>"
+delete.ret = Element/div
+delete.read = nil
+delete.missing = Element/div
+remove_attribute.ret = Element/div
+delete.non_element = Text/text
+sans.existing = UTF-8:"#new"
+sans.read = UTF-8:"#new"
+sans.new_ns = UTF-8:"v"
+sans.new_null = UTF-8:"v2"
+sans.empty_ns = UTF-8:"v3"
+sans.case = UTF-8:"v4"
+sans.reset_other_prefix = UTF-8:"#third"
+sans.tree = UTF-8:"<a xlink:href=\"#third\" p:thing=\"v\" plain=\"v2\" plain2=\"v3\" mixedcase=\"v4\">t</a>"
+sans.keys = UTF-8:"[\"xlink:href\", \"p:thing\", \"plain\", \"plain2\", \"MixedCase\"]"
+sans.ns_of_each = UTF-8:"[[\"xlink:href\", \"http://www.w3.org/1999/xlink\", \"#third\"], [\"p:thing\", \"urn:x\", \"v\"], [\"plain\", nil, \"v2\"], [\"plain2\", nil, \"v3\"], [\"MixedCase\", nil, \"v4\"]]"
+rans.hit = nil
+rans.null = nil
+rans.miss = nil
+rans.case_miss = nil
+rans.tree = UTF-8:"<a xlink:href=\"#third\" plain2=\"v3\" mixedcase=\"v4\">t</a>"
+rans.non_element = nil
+name=.ret = UTF-8:"h1"
+name=.tree = UTF-8:"<html><head></head><body><div id=\"a\"><h1 id=\"p1\">one</h1><p id=\"p2\">two</p></div></body></html>"
+name=.query = Integer:1
+name=.non_element = UTF-8:"x"
+name=.bad = UTF-8:"RAISE Makiri::Error: element name must be valid UTF-8"
+content=.element = UTF-8:"replaced"
+content=.tree = UTF-8:"<html><head></head><body><div id=\"a\">replaced</div></body></html>"
+content=.text = UTF-8:"T"
+content=.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"><p id=\"p1\">T</p><p id=\"p2\">two</p></div></body></html>"
+content=.nul = UTF-8:"a\u0000b"
+content=.read_nul = UTF-8:"\"a\\u0000b\""
+frozen.remove = UTF-8:"RAISE FrozenError: can't modify frozen Makiri::HTML::Element: #<Makiri::HTML::Element name=\"p\">"
+frozen.aset = UTF-8:"RAISE FrozenError: can't modify frozen Makiri::HTML::Element: #<Makiri::HTML::Element name=\"p\">"
+frozen.content = UTF-8:"RAISE FrozenError: can't modify frozen Makiri::HTML::Element: #<Makiri::HTML::Element name=\"p\">"
+frozen.add_child = UTF-8:"RAISE FrozenError: can't modify frozen Makiri::HTML::Element: #<Makiri::HTML::Element name=\"p\">"
+inner.ret = UTF-8:"<b>B</b>text<i>I</i>"
+inner.tree = UTF-8:"<html><head></head><body><div id=\"a\"><b>B</b>text<i>I</i></div></body></html>"
+inner.empty = UTF-8:""
+inner.tree2 = UTF-8:"<html><head></head><body><div id=\"a\"></div></body></html>"
+inner.template = UTF-8:"<template><i>f</i></template>"
+inner.tree3 = UTF-8:"<html><head></head><body><div id=\"a\"><template><i>f</i></template></div></body></html>"
+inner.template_content = UTF-8:"<i>f</i>"
+inner.non_element = UTF-8:"x"
+outer.ret = UTF-8:"<b>B</b><i>I</i>"
+outer.tree = UTF-8:"<html><head></head><body><div id=\"a\"><b>B</b><i>I</i><p id=\"p2\">two</p></div></body></html>"
+outer.orphan = UTF-8:"RAISE Makiri::Error: outer_html= requires a node with a parent element"
+outer.root = UTF-8:"RAISE Makiri::Error: outer_html= requires a node with a parent element"
+create_element = Element/my-el
+create_element.bad = UTF-8:"RAISE Makiri::Error: element name must be valid UTF-8"
+create_text_node = Text/text
+create_text_node.nul = UTF-8:"\"a\\u0000b\""
+create_comment = Comment/comment
+create_comment.tohtml = UTF-8:"<!-- c -->"
+create_pi = ProcessingInstruction/tgt
+create_pi.target = UTF-8:"tgt"
+create_pi.bad = ProcessingInstruction/bad target
+create_fragment = DocumentFragment/#document-fragment
+create_fragment.children = NodeSet(0)
+create_doctype(html) = DocumentType/html
+create_doctype(html).name = UTF-8:"html"
+create_doctype(HTML) = DocumentType/HTML
+create_doctype(HTML).name = UTF-8:"HTML"
+create_doctype(MiXeD) = DocumentType/MiXeD
+create_doctype(MiXeD).name = UTF-8:"MiXeD"
+create_doctype.full = DocumentType/html
+create_doctype.ids = UTF-8:"[\"-//W3C//DTD HTML 4.01//EN\", \"http://x/s.dtd\"]"
+create_doctype.empty_ids = US-ASCII:"[nil, nil]"
+create_doctype.importable = UTF-8:"n2"
+create_doctype.bad = UTF-8:"RAISE ArgumentError: invalid doctype name"
+create_doctype.no_args = UTF-8:"RAISE ArgumentError: wrong number of arguments (given 0, expected 1..3)"
+doctype.place = UTF-8:"<!DOCTYPE html><html><head></head><body>b</body></html>"
+inval.rename = Integer:1
+inval.text = UTF-8:"oneNEW"
+inval.add = Integer:1
+inval.remove = Integer:0
+inval.attr = UTF-8:"div"
+---- branch counts ----
+adopt=1
+adopt_fragment=1
+create_doctype=1
+doctype_guard=1
+factories=1
+fragment_splice=2
+frozen=1
+inner_html=1
+invalidation=1
+move=2
+nul_value=1
+outer_html=1
+raised=31
+remove_attribute_ns=1
+set_attribute_ns=1

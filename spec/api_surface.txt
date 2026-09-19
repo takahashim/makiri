@@ -1,0 +1,442 @@
+# Makiri's Ruby API surface, recorded. Regenerate: bundle exec rake api:record
+# A diff here is an API change - review it as one, do not just re-record.
+module Makiri
+  const CDATA = Makiri::CDATASection
+  const DTD = Makiri::DocumentType
+  const VERSION : String
+  def self.HTML(1 req:source)
+  def self.XML(-2 req:source,keyrest:opts)
+  def self.__alloc_inject(1)
+  def self.__alloc_inject?(0)
+  def self.__alloc_inject_calls(0)
+  def self.__panic(1)
+  def self.parse(1 req:source)
+
+class Makiri::Attr < Makiri::Node
+  def element(0)
+
+class Makiri::CDATASection < Makiri::Node
+  def self.new(2 req:document,req:content)
+
+module Makiri::CSS
+
+class Makiri::CSS::SyntaxError < Makiri::Error
+
+class Makiri::Comment < Makiri::Node
+  def self.new(2 req:document,req:content)
+
+class Makiri::Document < Makiri::Node
+  def self.coerce!(1 req:document)
+
+class Makiri::DocumentFragment < Makiri::Node
+  def self.parse(-1)
+
+class Makiri::DocumentType < Makiri::Node
+
+class Makiri::Element < Makiri::Node
+  def self.new(2 req:name,req:document)
+
+class Makiri::Error < StandardError
+
+module Makiri::HTML
+  const CDATA = Makiri::HTML::CDATASection
+  const DTD = Makiri::HTML::DocumentType
+
+class Makiri::HTML::Attr < Makiri::Attr
+  include Makiri::HTML::NodeMethods
+
+class Makiri::HTML::CDATASection < Makiri::CDATASection
+  include Makiri::HTML::NodeMethods
+
+class Makiri::HTML::Comment < Makiri::Comment
+  include Makiri::HTML::NodeMethods
+
+class Makiri::HTML::Document < Makiri::Document
+  include Makiri::HTML::NodeMethods
+  def self._parse(1)
+  def self.parse(1 req:source)
+  def body(0)
+  def clone(-1 key:freeze)
+  def create_comment(1)
+  def create_document_fragment(0)
+  def create_document_type(-1)
+  def create_element(1)
+  def create_processing_instruction(2)
+  def create_text_node(1)
+  def dup(-1 rest:*)
+  def encoding(0)
+  def errors(0)
+  def fragment(-1)
+  def head(0)
+  def import_node(-1)
+  def internal_subset(0)
+  def meta_encoding(0)
+  def meta_encoding=(1 req:value)
+  def quirks_mode(0)
+  def root(0)
+  def title(0)
+  def title=(1 req:text)
+  private def ensure_in_head(2 req:css_query,req:tag)
+
+class Makiri::HTML::DocumentFragment < Makiri::DocumentFragment
+  include Makiri::HTML::NodeMethods
+
+class Makiri::HTML::DocumentType < Makiri::DocumentType
+  include Makiri::HTML::NodeMethods
+  def external_id(0)
+  def public_id(0)
+  def system_id(0)
+
+class Makiri::HTML::Element < Makiri::Element
+  include Makiri::HTML::NodeMethods
+  def content_fragment(0)
+
+class Makiri::HTML::Node < Makiri::Node
+  include Makiri::HTML::NodeMethods
+
+module Makiri::HTML::NodeMethods
+  def <<(1)
+  def <=>(1)
+  def ==(1)
+  def [](1)
+  def []=(2)
+  def add_child(1)
+  def add_next_sibling(1)
+  def add_previous_sibling(1)
+  def after(1)
+  def ancestors(0)
+  def at_css(1)
+  def at_xpath(-1)
+  def attr(1)
+  def attribute_by_qualified_name(1)
+  def attribute_nodes(0)
+  def attribute_value_by_qualified_name(1)
+  def before(1)
+  def child(0)
+  def children(0)
+  def clone_node(-1)
+  def content(0)
+  def content=(1)
+  def css(1)
+  def delete(1)
+  def document(0)
+  def element_children(0)
+  def elements(0)
+  def eql?(1)
+  def first_element_child(0)
+  def get_attribute(1)
+  def has_attribute?(1)
+  def hash(0)
+  def inner_html(-1)
+  def inner_html=(1)
+  def inner_text(0)
+  def key?(1)
+  def keys(0)
+  def last_element_child(0)
+  def line(0)
+  def local_name(0)
+  def matches?(1)
+  def name(0)
+  def name=(1)
+  def namespace_uri(0)
+  def next(0)
+  def next_element(0)
+  def next_sibling(0)
+  def node_name(0)
+  def node_name=(1)
+  def node_type(0)
+  def outer_html(-1)
+  def outer_html=(1)
+  def parent(0)
+  def parse(1)
+  def pointer_id(0)
+  def prefix(0)
+  def previous(0)
+  def previous_element(0)
+  def previous_sibling(0)
+  def remove(0)
+  def remove_attribute(1)
+  def remove_attribute_ns(2)
+  def replace(1)
+  def set_attribute_ns(3)
+  def tag_name(0)
+  def target(0)
+  def text(0)
+  def to_html(-1)
+  def to_s(-1)
+  def type(0)
+  def unlink(0)
+  def value(0)
+  def values(0)
+  def xpath(-1)
+
+class Makiri::HTML::ProcessingInstruction < Makiri::ProcessingInstruction
+  include Makiri::HTML::NodeMethods
+
+class Makiri::HTML::Text < Makiri::Text
+  include Makiri::HTML::NodeMethods
+
+class Makiri::InternalError < Exception
+
+module Makiri::Lexbor
+
+module Makiri::Lexbor::CSS
+  def self.parse_stylesheet(1)
+  private def parse_stylesheet(1)
+
+class Makiri::Node < Object
+  include Comparable
+  include Enumerable
+  def add_class(1 req:names)
+  def append_class(1 req:names)
+  def at(1 req:path)
+  def attribute(1 req:name)
+  def attribute?(0)
+  def attributes(0)
+  def blank?(0)
+  def cdata?(0)
+  def classes(0)
+  def clone(-1 key:freeze)
+  def comment?(0)
+  def document?(0)
+  def document_fragment?(0)
+  def dup(-1 opt:level)
+  def each(0 block:block)
+  def elem?(0)
+  def element?(0)
+  def fragment?(0)
+  def inspect(0)
+  def path(0)
+  def processing_instruction?(0)
+  def remove_class(-1 opt:names)
+  def root(0)
+  def search(1 req:path)
+  def set_attribute(2 req:name,req:value)
+  def text?(0)
+  def to_h(0)
+  def traverse(0 block:block)
+  private def path_segment(0)
+  private def same_step_kind?(1 req:other)
+  private def step_name(0)
+  private def xpath?(1 req:path)
+
+class Makiri::NodeSet < Object
+  include Enumerable
+  def self.new(-1)
+  def &(1)
+  def +(1)
+  def -(1)
+  def [](-1)
+  def at(1 req:index)
+  def at_css(1 req:selector)
+  def at_xpath(1 req:expr)
+  def clone(-1 key:freeze)
+  def css(1 req:selector)
+  def dup(-1)
+  def each(0)
+  def empty?(0)
+  def first(0)
+  def inner_text(0)
+  def inspect(0)
+  def last(0)
+  def length(0)
+  def remove(0)
+  def remove_attr(1 req:name)
+  def remove_attribute(1 req:name)
+  def search(1 req:path)
+  def size(0)
+  def text(0)
+  def to_html(0)
+  def to_s(0)
+  def unlink(0)
+  def xpath(1 req:expr)
+  def |(1)
+  private def union_query(2 req:method,req:arg)
+
+class Makiri::ProcessingInstruction < Makiri::Node
+  def self.new(3 req:document,req:target,req:content)
+  def target(0)
+
+class Makiri::Text < Makiri::Node
+  def self.new(2 req:content,req:document)
+
+module Makiri::XML
+  const CDATA = Makiri::XML::CDATASection
+  const DTD = Makiri::XML::DocumentType
+  def self.__decode(1)
+
+class Makiri::XML::Attr < Makiri::Attr
+  include Makiri::XML::NodeMethods
+
+class Makiri::XML::Builder < Object
+  def self.with(1 req:node,block:block)
+  def <<(1 req:string)
+  def [](1 req:ns_prefix)
+  def cdata(1 req:string)
+  def comment(1 req:string)
+  def descend(1 req:node,block:block)
+  def doc(0)
+  def method_missing(-2 req:name,rest:args,block:block)
+  def parent(0)
+  def text(1 req:string)
+  def to_s(-1 rest:*,keyrest:**,block:&)
+  def to_xml(-1 rest:*,keyrest:**,block:&)
+  private def check_prefix_defined!(2 req:node,req:prefix)
+  private def create_element(2 req:tag,req:args)
+  private def initialize(-1 opt:options,opt:root,block:block)
+  private def insert(1 req:node,block:block)
+  private def respond_to_missing?(-2 req:_name,opt:_include_private)
+  private def run(0 block:block)
+
+class Makiri::XML::Builder::NodeBuilder < Object
+  def [](1 req:key)
+  def []=(2 req:key,req:value)
+  def method_missing(-2 req:method,rest:args,block:block)
+  private def append_attr(2 req:key,req:value)
+  private def initialize(2 req:node,req:doc_builder)
+  private def respond_to_missing?(-2 req:_name,opt:_include_private)
+
+class Makiri::XML::CDATASection < Makiri::CDATASection
+  include Makiri::XML::NodeMethods
+
+class Makiri::XML::Comment < Makiri::Comment
+  include Makiri::XML::NodeMethods
+
+class Makiri::XML::Document < Makiri::Document
+  include Makiri::XML::NodeMethods
+  def self.new(-1)
+  def self.parse(-1)
+  def at_xpath(-1)
+  def create_cdata(1)
+  def create_cdata_node(1)
+  def create_comment(1)
+  def create_document_type(-1)
+  def create_element(-1)
+  def create_loose_dom_element(4)
+  def create_processing_instruction(2)
+  def create_text_node(1)
+  def fragment(1)
+  def import_node(-1)
+  def internal_subset(0)
+  def root(0)
+  def root=(1 req:node)
+  def xpath(-1)
+
+class Makiri::XML::DocumentFragment < Makiri::DocumentFragment
+  include Makiri::XML::NodeMethods
+  def self.parse(1)
+
+class Makiri::XML::DocumentType < Makiri::DocumentType
+  include Makiri::XML::NodeMethods
+  def external_id(0)
+  def public_id(0)
+  def system_id(0)
+
+class Makiri::XML::Element < Makiri::Element
+  include Makiri::XML::NodeMethods
+
+class Makiri::XML::LimitExceeded < Makiri::Error
+
+class Makiri::XML::Namespace < Object
+  def ==(1)
+  def eql?(1)
+  def hash(0)
+  def href(0)
+  def inspect(0)
+  def prefix(0)
+  def to_s(0)
+
+class Makiri::XML::Node < Makiri::Node
+  include Makiri::XML::NodeMethods
+
+module Makiri::XML::NodeMethods
+  def <<(1)
+  def ==(1)
+  def [](1)
+  def []=(2)
+  def add_child(1)
+  def add_next_sibling(1)
+  def add_previous_sibling(1)
+  def after(1)
+  def ancestors(0)
+  def at_css(-2 req:selector,opt:ns)
+  def at_xpath(-1)
+  def attribute_by_qualified_name(1)
+  def attribute_nodes(0)
+  def attribute_value_by_qualified_name(1)
+  def before(1)
+  def canonicalize(-1)
+  def child(0)
+  def children(0)
+  def clone_node(-1)
+  def collect_namespaces(0)
+  def content(0)
+  def content=(1)
+  def css(-2 req:selector,opt:ns)
+  def delete(1)
+  def document(0)
+  def element_children(0)
+  def eql?(1)
+  def has_attribute?(1 req:name)
+  def hash(0)
+  def inner_html(-1)
+  def inner_text(0)
+  def key?(1 req:name)
+  def last_element_child(0)
+  def local_name(0)
+  def matches?(-2 req:selector,opt:ns)
+  def name(0)
+  def name=(1)
+  def namespace(0)
+  def namespace_definitions(0)
+  def namespace_uri(0)
+  def namespaces(0)
+  def next(0)
+  def next_sibling(0)
+  def node_type(0)
+  def outer_html(-1)
+  def parent(0)
+  def pointer_id(0)
+  def prefix(0)
+  def previous(0)
+  def previous_sibling(0)
+  def remove(0)
+  def remove_attribute(1)
+  def remove_attribute_ns(2)
+  def replace(1)
+  def set_attribute_ns(3)
+  def text(0)
+  def to_html(-1)
+  def to_s(-1)
+  def to_xml(-1)
+  def unlink(0)
+  def value(0)
+  def xpath(-1)
+  private def _at_css(2)
+  private def _css(2)
+  private def _css_matches(2)
+  private def _css_namespaces(1 req:user)
+
+class Makiri::XML::ProcessingInstruction < Makiri::ProcessingInstruction
+  include Makiri::XML::NodeMethods
+
+class Makiri::XML::SyntaxError < Makiri::Error
+
+class Makiri::XML::Text < Makiri::Text
+  include Makiri::XML::NodeMethods
+
+module Makiri::XPath
+
+class Makiri::XPath::LimitExceeded < Makiri::XPath::SyntaxError
+
+class Makiri::XPath::SyntaxError < Makiri::Error
+
+class Makiri::XPathContext < Object
+  def self.new(-1)
+  def evaluate(-1)
+  def node=(1)
+  def register_namespace(2)
+  def register_namespaces(1 req:bindings)
+  def register_ns(2)
+  def register_variable(2)
+  def register_variables(1 req:bindings)

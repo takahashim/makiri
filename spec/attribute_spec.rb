@@ -165,6 +165,19 @@ RSpec.describe Makiri::Attr do
       end
     end
 
+    it "keeps a coerced non-String argument alive while its bytes are borrowed" do
+      # A Symbol goes through rb_String, which makes a fresh String only the
+      # borrowed view holds; the view's guard must keep it reachable.
+      GC.stress = true
+      begin
+        div[:"data-sym"] = :value
+        expect(div[:"data-sym"]).to eq("value")
+        expect(div.key?(:"data-sym")).to be(true)
+      ensure
+        GC.stress = false
+      end
+    end
+
     it "survives dropping many documents that built the index" do
       gc_churn_iters(1000).times do
         d = Makiri::HTML('<p id="z" data-x="y">t</p>')

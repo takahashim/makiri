@@ -11,10 +11,10 @@ module Makiri
   # +evaluate+ returns a NodeSet for node-set expressions, and a String,
   # Float, or boolean for the corresponding scalar XPath types.
   #
-  # The bulk of the implementation lives in C (see
-  # ext/makiri/glue/ruby_xpath.c and ext/makiri/xpath/).
+  # The bulk of the implementation lives in the extension (see
+  # ext/makiri/rust/src/glue/xpath.rs and ext/makiri/rust/src/xpath/).
   class XPathContext
-    # +#evaluate+ is defined in C and runs under the GVL (XPath never releases
+    # +#evaluate+ is defined in the extension and runs under the GVL (XPath never releases
     # it), so it cannot corrupt memory under concurrency. Two distinct hazards,
     # handled differently:
     #

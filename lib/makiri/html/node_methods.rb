@@ -2,7 +2,7 @@
 
 module Makiri
   module HTML
-    # The lxb_dom reader/query methods are defined in C on this module and
+    # The lxb_dom reader/query methods are defined natively on this module and
     # included into every HTML leaf (including the generic Makiri::HTML::Node).
     # The Nokogiri-compatible aliases over those readers live here (not on
     # Makiri::Node) so they resolve against the HTML readers at definition time.

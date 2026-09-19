@@ -61,7 +61,7 @@ module Makiri
 
       private
 
-      # Build the {prefix => uri} hash the C primitives register. Matching
+      # Build the {prefix => uri} hash the native primitives register. Matching
       # Nokogiri: with NO explicit namespaces the document's own declarations are
       # collected (the default namespace under the synthetic prefix "xmlns", so a
       # bare type selector binds to it - the RSS/Atom common case); but once the

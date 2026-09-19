@@ -180,6 +180,18 @@ RSpec.describe "Makiri mutation" do
             .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
         end
 
+        it "rejects a second doctype even when another node precedes the first" do
+          # The duplicate check must scan the whole child list: stopping at the
+          # insertion point would let the leading comment hide the doctype.
+          d = Makiri::HTML("<!--c--><!DOCTYPE html><html><body>b</body></html>")
+          expect { d.children.first.before(d.create_document_type("x")) }
+            .to raise_error(Makiri::Error, /already has a doctype/)
+          expect { d.children.first.replace(d.create_document_type("x")) }
+            .to raise_error(Makiri::Error, /already has a doctype/)
+          expect(d.children.map(&:class))
+            .to eq([Makiri::HTML::Comment, Makiri::HTML::DocumentType, Makiri::HTML::Element])
+        end
+
         it "leaves the tree and the rejected node unchanged after a refused insert" do
           dt = doc.create_document_type("html")
           before = doc.children.map(&:class)
@@ -350,6 +362,30 @@ RSpec.describe "Makiri mutation" do
       expect(doc.css(".fresh").length).to eq(1)
       div.delete("class")
       expect(doc.css(".fresh").length).to eq(0)
+    end
+
+    # Lexbor's `lxb_dom_document_root` answers with the document's FIRST CHILD
+    # when the document has no `<html>` - so a comment or processing instruction
+    # put in front of the root element becomes what the text index is asked to
+    # build over. It is rooted at a container, and a leaf one used to reach into
+    # a range table sized for no containers at all.
+    it "reads text after a leaf node is placed before the root element" do
+      built = Makiri::HTML("")
+      built.children.to_a.each(&:unlink)
+      root = built.create_element("p")
+      built.add_child(root)
+      leaf = built.create_element("span")
+      root.add_child(leaf)
+      root.add_child(built.create_text_node("t5"))
+
+      [built.create_processing_instruction("pi", "d"), built.create_comment("c"),
+        built.create_text_node("x")].each do |node|
+        root.add_previous_sibling(node)
+
+        expect(root.text).to eq("t5")
+        expect(leaf.text).to eq("")
+        node.unlink
+      end
     end
 
     it "invalidates the element-by-tag index when #name= renames an element" do

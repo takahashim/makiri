@@ -14,24 +14,94 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 
 - **Vanilla Lexbor, no fork, no patches.** `vendor/lexbor` is a git submodule
   pinned to a release **tag**. Never `git apply` to it. Lexbor gaps are absorbed
-  in `ext/makiri/dom_adapter/`, never by editing Lexbor.
+  in `ext/makiri/rust/src/lexbor/adapter/`, never by editing Lexbor.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
-- **C identifier prefix `mkr_`** for everything we write (`mkr_xpath_*`,
-  `mkr_parse_html`, `mkr_node_data_t`, `mkr_c{Element,...}`); Lexbor stays `lxb_*`.
+- **One language.** The extension is a single Rust crate
+  (`ext/makiri/rust`); the only C that ships is vendored Lexbor, which keeps its
+  `lxb_*` names. Nothing of ours carries a C-style prefix any more: the crate
+  exports only `Init_makiri` and `ruby_abi_version`, so every other item is
+  named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
+  with it.)
 - **Security-first / fail-closed.** Enforce per-evaluate XPath budgets and
   node-set caps, validate inputs, never return a truncated/wrong result (raise
-  instead). Keep the build hardening flags (`-D_FORTIFY_SOURCE=2`,
-  `-fstack-protector-strong`, `-fvisibility=hidden` + `RUBY_FUNC_EXPORTED` on
-  `Init_makiri`). **Export only `Init_makiri`** from the compiled extension
-  (`extconf.rb`: `-Wl,-exported_symbol,_Init_makiri` on macOS,
-  `-Wl,--exclude-libs,ALL` on Linux): `-fvisibility=hidden` hides our own
-  sources but *not* the prebuilt vendored Lexbor static lib, so without this the
-  bundle re-exports ~1700 `lxb_*`/`lexbor_*` symbols and another Lexbor-based
-  gem in the same process (e.g. `nokolexbor`) binds its `lxb_*` calls to our
-  different Lexbor version → segfault. Keep Makiri's Lexbor private; verify with
-  `nm -gU lib/makiri/makiri.bundle | grep -c ' T _lxb_'` → `0`. Every C change
-  must stay clean under ASan+UBSan and keep the fuzzer green.
+  instead). **Export only `Init_makiri`** (plus `ruby_abi_version`, which Ruby
+  reads at require time): the vendored Lexbor archive is built with default
+  visibility, so a bundle that re-exports its ~1700 `lxb_*`/`lexbor_*` symbols
+  lets another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
+  `lxb_*` calls to our different Lexbor version → segfault. Keep Makiri's Lexbor
+  private; **verify with `bundle exec rake symbols`**, which asserts the whole
+  claim (nothing of ours or Lexbor's left undefined, and nothing but those two
+  names exported). Do not weaken that gate to "no `lxb_` exported" - it passed
+  happily while ~220 `mkr_*` names leaked into the dynamic table.
+  Every change must stay clean under ASan and keep the fuzzers green. The ASan
+  runtime preload is PLATFORM-SPLIT (required on Linux, harmful on macOS) - see
+  "AddressSanitizer: the preload is platform-split" below before changing how a
+  sanitized run is launched.
+
+- **A panic must not kill the host.** The crate builds with `panic = "unwind"`,
+  so magnus's `catch_unwind` turns a panic into Ruby's `fatal`: on the thread
+  that ran the query, which dies alone while the process keeps working, with
+  `ensure` and `at_exit` run and every `Drop` executed on the way out. `abort`
+  did none of that - no destructor, no cleanup, SIGABRT for the whole process -
+  so **do not set it back**; `spec/panic_spec.rb` is what would catch that,
+  through the `Makiri.__panic(kind)` hook that exists for no other purpose.
+  Two rules follow, and anything new has to keep both.
+
+  **Whatever must be released across a panic is a `Drop`**, not a statement
+  after the work - a plain `lxb_*_clean` following a parse is exactly what
+  unwinding skips. `lexbor::selectors::PanicReset` and `post_parse::DocOwner`
+  are the two that had to be converted, both around process-global or
+  not-yet-owned Lexbor state.
+
+  **A callback must not panic INTO C.** Rust turns an unwind at an `extern "C"`
+  boundary into an abort, because unwinding through frames built without unwind
+  tables is undefined behaviour - so the callback catches the panic, latches it
+  and returns the stop status, and the caller re-raises once C has unwound.
+  `caught::PanicLatch` is that, and it is deliberately the same shape the
+  callbacks already used for the node cap and OOM. It is installed in all nine:
+  the CSS traversal (`find_cb`/`first_cb`/`match_cb`), both serializer sinks,
+  the tokenizer's `pos_token_cb`, `bridge::gvl`'s trampoline (which carries the
+  whole parser), and - covering every `rb_protect` at once, since magnus runs
+  the closure inside its own `extern "C"` trampoline - `bridge::ruby::protect`.
+  Do not call magnus's `protect` directly; ours is the one with the latch.
+  Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
+  `bridge/typed.rs` run where nothing can be raised and a half-freed object is
+  worse than a stop, so they keep aborting - keep their bodies trivial. The two
+  raw `rb_protect` thunks (`exception_message_thunk`, `strict_transcode_thunk`)
+  contain only C calls, so there is no Rust there to panic; keep it that way.
+
+  **An entry point exposed to untrusted input raises `Makiri::InternalError`,
+  not `fatal`.** `bridge::ruby::entry` wraps the twenty-four methods a crafted
+  document or expression reaches - parse and fragment, xpath/at_xpath/evaluate,
+  css/at_css/matches?, the serializers, the text readers - and turns a panic
+  there into that exception. It descends from `Exception`, NOT `StandardError`,
+  which is the point: a bare `rescue => e` keeps passing it through, because a
+  broken invariant is not a bad selector, while a host that wants to turn one
+  request into a 500 can catch it WITHOUT a thread boundary to re-raise at (a
+  `fatal` cannot be rescued in its own frame at all). Everywhere else a panic
+  stays `fatal`, which is the right severity on a path nobody's data reaches.
+  Wrap a new entry if it parses, evaluates, or walks a tree built from input.
+
+  `clippy::unwrap_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
+  from arriving by accident; a site that wants one carries an `#[allow]` with a
+  reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
+  below the GVL-release frame, the case that proves the latch since without it
+  that one aborts, and kind 5 goes through `entry`.
+
+  The C-era hardening flags (`-D_FORTIFY_SOURCE=2`, `-fstack-protector-strong`,
+  `-fvisibility=hidden`, `-Wformat-security`) are **gone rather than relaxed**:
+  they hardened C sources, and there are none. `-fvisibility=hidden`'s job is
+  the one that survives, and it is enforced AT THE SOURCE: nothing but
+  `Init_makiri` is `#[no_mangle]`, so rustc emits no other exported name. That
+  is not a stylistic choice - on ELF it is the only thing that works. rustc owns
+  the cdylib link and passes its own export list, a second `--version-script` is
+  MERGED rather than applied (so it cannot narrow), and `objcopy`/`strip` cannot
+  remove an entry from a linked `.so`'s `.dynsym` at all. The post-link trim in
+  `extconf.rb` survives as belt-and-braces on macOS, where `strip -u -r -s` does
+  work; do not mistake it for the mechanism.
+  UBSan is gone for the same reason: rustc's `-Zsanitizer` has no `undefined`,
+  and there is no C left for `-fsanitize=undefined` to instrument.
 
 ## Lexbor version
 
@@ -56,20 +126,27 @@ constraint that relaxed is "release tag only", not "no fork".
 ```bash
 git submodule update --init        # fresh clone only
 bundle install
-bundle exec rake compile           # builds vendored Lexbor static lib, then the ext
+bundle exec rake compile           # builds vendored Lexbor static lib, then the crate
 bundle exec rake spec
-bundle exec rake clean             # wipe ext build dir (regenerates Makefile next compile)
+bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
-bundle exec rake sanitize          # rebuild ext w/ -fsanitize=address,undefined, run suite
+bundle exec rake symbols           # THE export/undefined gate - see Hard constraints
+bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
+bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
 bundle exec rake invariants        # randomized property checks (spec/invariants/):
                                    # namespaces, tree shape, index staleness,
                                    # serialization, the text-input contract.
                                    # INVARIANT_COUNT tunes the sweep;
                                    # `invariants:sanitize` runs them under ASan
-bundle exec rake fuzz:sanitize     # fuzz under ASan - the C engine's memory-safety net
+bundle exec rake fuzz:sanitize     # fuzz under ASan - the engine's memory-safety net
+bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses (needs cargo-fuzz + nightly);
+                                   # TARGETS=css,html_xpath narrows, FUZZ_TIME per
+                                   # target or FUZZ_BUDGET total. ASan on Linux only:
+                                   # an ASan harness deadlocks in dyld on macOS, so
+                                   # macOS runs `-s none` (see the Rakefile)
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
                                    # so this is the ONLY leak check; flags per-call
                                    # leak stacks through the ext incl. rescued raises)
@@ -77,36 +154,122 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # MAKIRI_ALLOC_INJECT=1 and fails each core alloc
                                    # site in turn - every OOM branch must fail closed
                                    # (clean raise or baseline-identical result)
-bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
-bundle exec rake verify            # CBMC proofs over the Ruby/Lexbor-free carve-out
-                                   # (every logic-bearing core primitive: size arithmetic,
-                                   # UTF-8 validate/decode, span/spanbuf, mkr_buf, pow2 sizer;
-                                   # needs `brew install cbmc`;
+bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan+UBSan (mraw-arena
+                                   # overflows). LINUX ONLY: Apple clang's ASan ABI
+                                   # does not match rustc's runtime (load segfault)
+bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
+                                   # The successor to the C-era CBMC harnesses: the
+                                   # allocator, cbuf, UTF-8 validate/decode.
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
-Requires CRuby >= 3.2 and `cmake`.
+Requires CRuby >= 3.2, `cmake`, and a **Rust toolchain** (`cargo`). A source
+install needs cargo too; that is why `rb_sys` is a RUNTIME gemspec dependency -
+`extconf.rb` requires it at install time. Binary gems are published per platform,
+so most users never compile.
+
+**`rake diff` is not an ordinary test.** `spec/differential/baseline/` holds what
+the **C implementation answered**, recorded while it still existed, and the probes
+compare this build against it. It cannot be re-recorded - there is no second
+implementation left - so a mismatch is a finding to investigate, never something
+to refresh. If a difference is genuinely intended, edit the baseline in the same
+commit as the behaviour change, so it reviews as a behaviour change rather than
+as a regenerated blob. It is the check that caught an ASCII-8BIT string, a quoted
+error message and a lost NUL terminator that the 1001-example suite passed over.
+
+### AddressSanitizer: the preload is platform-split
+
+`rake sanitize` works. It did not for a long while - the extension segfaulted at
+address 0 during `require` - and the cause is worth keeping, because the fix is
+the *absence* of something the task used to do.
+
+rustc links its own ASan runtime into the cdylib as an `@rpath` dependency, so
+dyld loads it together with the extension. The task used to ALSO preload a
+runtime, and every way of doing that is broken on macOS:
+
+- Preloading Apple's clang runtime (what `asan_runtime_path` found, via `cc
+  -print-file-name`) hands the process a runtime that does not export
+  `__asan_version_mismatch_check_v8` - which rustc's instrumentation calls from
+  every image's `asan.module_ctor`. Under `-undefined dynamic_lookup` a missing
+  symbol is not a link error but a NULL pointer, so that constructor jumped to 0
+  while dyld ran the image's initialisers, **before `Init_makiri`**. That was the
+  load segfault - the same `dynamic_lookup` hazard recorded two bullets above,
+  in a symbol nobody was auditing.
+- Preloading rustc's runtime instead deadlocks inside dyld: its init takes a
+  non-recursive spin lock, maps shadow memory, and the dyld call that does so
+  allocates - re-entering that same init through ASan's own malloc interceptor,
+  which then spins in `sched_yield` forever. No output, 100% CPU, before Ruby
+  executes a line.
+- Preloading clang's alongside rustc's linked one is simply two runtimes.
+
+So on macOS the task preloads nothing, and passes `verify_interceptors=0` (with
+`verify_asan_link_order=0`, the same assertion under another name). That check
+asserts the runtime loaded ahead of libSystem, which is false for a library dyld
+brings in with the extension; the interceptors themselves install fine - a
+`verbosity=1` run reports "libc interceptors initialized" with the shadow
+mapped, `redzone=16` and a 256M quarantine - so heap red-zoning is live. Do not
+"fix" that flag away. Dropping the macOS preload also closed a coverage hole:
+three `spec/xml_html_boundary_spec.rb` examples used to skip under ASan because
+a subprocess cannot inherit `DYLD_*`. `ASAN_OPTIONS` is an ordinary variable, so
+they run now.
+
+**Linux is the mirror image, and generalising from macOS is the trap.** rustc
+links the sanitizer runtime into executables but NOT into a cdylib, so the `.so`
+carries `__asan_*` undefined and expects the host to supply them. With no
+preload `dlopen` fails outright - `undefined symbol: __asan_handle_no_return` -
+and no `ASAN_OPTIONS` value helps, because the flags govern checks, not symbol
+resolution. So Linux keeps `LD_PRELOAD` of GCC's `libasan`, which exports the
+same `_v8` ABI rustc asks for (Apple's runtime is the odd one out, not
+`libasan`). `Rakefile`'s `asan_preload_env` is the single place that decides,
+and it returns `{}` on macOS by construction.
+
+Verified on macOS (arm64): `rake sanitize` builds and completes the suite, 1000
+examples, 0 failures. The Linux half was verified in a linux/amd64 container on
+the mechanism rather than on Makiri: an ASan-instrumented cdylib `dlopen`'d by an
+uninstrumented host fails to load without the preload, loads with it, and with it
+reports a real heap-buffer-overflow. CI is what exercises it on Makiri itself.
+
+Two things the earlier investigation recorded as ESTABLISHED were wrong. They are
+corrected here so nobody re-derives them: `lr` **is** inside the bundle's `r-x`
+text (the dump's memory map has ~7900 entries, dozens of them `rw-` ranges named
+`makiri.bundle`, which is what misled the reading), and the null-call hypothesis
+was right rather than dead - the NULL symbol was an `__asan_*` one, waved through
+by the check that concluded "every undefined symbol is legitimate".
 
 ### Build / runtime gotchas (read before debugging weirdness)
 
-- **After adding a new `.c` file, run `rake clean compile`** (not plain
-  `compile`). extconf globs sources at configure time; a stale Makefile silently
-  drops the new file, and macOS's `-undefined dynamic_lookup` turns the missing
-  symbols into runtime NULL jumps (segfault), not a link error. (*Header* edits
-  are covered without a clean: extconf appends a coarse `$(OBJS): <all project
-  headers>` rule to the Makefile, so touching any `.h` - e.g. a struct layout -
-  recompiles every object instead of leaving stale-ABI ones behind.)
+- **A plain `rake compile` after a sanitizer run keeps building with ASan.**
+  extconf writes `tmp/<platform>/makiri/<ruby>/Makefile` with
+  `RB_SYS_EXTRA_RUSTFLAGS ?= -Zsanitizer=address ...`, and rake-compiler re-runs
+  extconf only when that Makefile is ABSENT - so every later `rake compile`
+  silently reuses the sanitized flags. Nothing says so: the build is quiet, and
+  the first symptom is `rake spec`/`rake diff` dying with "Interceptors are not
+  working" (or, before the preload fix, something stranger). `rake clean compile`
+  is the cure, and `nm -u lib/makiri/makiri.bundle | grep -c __asan` (0 on a
+  plain build) is the check. This is worth knowing because it invalidates
+  measurements taken in between without failing anything.
+
+- **Adding a source file needs no special step.** cargo discovers modules from
+  `mod` declarations and does its own dependency tracking, and the Makefile
+  extconf writes re-runs cargo on every build - so a new `.rs` cannot be silently
+  dropped the way a new `.c` could. (That hazard was real and is worth
+  remembering for anything else generated at configure time: extconf globbed
+  sources once, a stale Makefile omitted the new file, and macOS's `-undefined
+  dynamic_lookup` turned the missing symbols into runtime NULL jumps rather than
+  a link error.)
 - **Sanitizer must be run via the rake task, not `bundle exec rspec`.**
-  `MAKIRI_SANITIZE=<set>` makes extconf drop `_FORTIFY_SOURCE` and add
-  `-fsanitize=<set> -O1 -g`; the task then preloads the ASan runtime
-  (`DYLD_INSERT_LIBRARIES` on macOS, `LD_PRELOAD` on Linux). Without the preload
-  a late-`dlopen`'d sanitized ext aborts with "interceptors are not working",
-  and `bundle exec` drops `DYLD_*` on macOS. `ASAN_OPTIONS` disables
-  LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap-overflow + UB
-  in our code still fire. CI runs a separate `sanitize` job on Linux.
+  `MAKIRI_SANITIZE=address` makes extconf build the crate with
+  `-Zsanitizer=address` on the **nightly** toolchain (it aborts if nightly is
+  missing rather than silently building it plain). It preloads the ASan runtime
+  on Linux and NOT on macOS - see "AddressSanitizer: the preload is
+  platform-split", and do not "simplify" the two into one - plus
+  `verify_interceptors=0`/`verify_asan_link_order=0`. `ASAN_OPTIONS` also disables
+  LSan/container/odr checks (Ruby+Lexbor are uninstrumented); heap errors in our
+  code still fire. CI runs a separate `sanitize` job on Linux. There is no
+  `undefined` mode any more - see Hard constraints.
 - **ASan *stack* instrumentation is deliberately OFF in sanitize builds**
-  (`--param asan-stack=0` / clang `-mllvm -asan-stack=0` in extconf). CRuby is
-  built with `RUBY_SETJMP = __builtin_setjmp`, so `rb_raise` unwinds via
+  (`-Cllvm-args=-asan-stack=0`, passed by extconf). CRuby is
+  built with `RUBY_SETJMP = __builtin_setjmp`, so a raise unwinds via
   `__builtin_longjmp`, which ASan cannot intercept: a raise crossing an
   instrumented frame (ours, or a Ruby raise through `rb_protect` under the
   evaluator) leaves that frame's stack-redzone poison behind, and a later
@@ -114,10 +277,54 @@ Requires CRuby >= 3.2 and `cmake`.
   stale shadow - a layout-sensitive spurious report that ASan then aborts on
   while rendering (`asan_thread.cpp` `kCurrentStackFrameMagic` CHECK; this took
   CI's sanitize jobs down via the XML-mutation PBT, which raises thousands of
-  times - see `docs/ci-crash/INVESTIGATION.md`). Heap red zones, UBSan, and the
-  `mkr_xml_node.c` arena poisoning are unaffected; only stack-buffer checks are
-  lost (`-fstack-protector-strong` still covers smashing). Do not re-enable
-  without solving the `__builtin_longjmp` shadow problem.
+  times - see `docs/ci-crash/INVESTIGATION.md`). Heap red zones and the
+  `xml::arena` poisoning are unaffected; only stack-buffer checks are lost.
+  Do not re-enable without solving the `__builtin_longjmp` shadow problem.
+
+  What used to soften this loss no longer applies and was not replaced:
+  `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
+  Rust's own bounds checking is what covers the class now on every path that is
+  not `unsafe`, which is why `unsafe` blocks carry a stated contract.
+- **Vendored Lexbor is built with LTO on macOS and on Linux, but NOT on mingw** -
+  that split is not a preference, it is what each platform's linker can read.
+  Measured against the same build without it, once the GC accounting above made
+  the numbers stable (before that the parse row swung 1.4-2.3x and nothing here
+  was quotable): **parse -16.2%**, **`to_html` -9.2%**, and **`css` +5.3%** -
+  that last one is a real regression, not noise, and it is the price. About two
+  seconds of link. It was the only compile-option win available: Lexbor is ALREADY
+  `-O3`, because `CMAKE_BUILD_TYPE=Release` appends `-O3 -DNDEBUG` after
+  Lexbor's own `-O2` and the last `-O` wins - reading its
+  `LEXBOR_OPTIMIZATION_LEVEL` default as the effective level is a trap.
+
+  Enabling it everywhere was tried and CI gave three different answers, so do
+  not re-derive them: **darwin** ld64 reads the bitcode natively and both the
+  extension and `cargo test` link; **linux** links the extension (gcc drives it,
+  with its LTO plugin) but `cargo test` goes through rust-lld, which cannot read
+  GCC's GIMPLE at all; **mingw** fails outright, because cmake indexes the
+  archive with plain `ar`, which records no LTO symbols.
+
+  Linux therefore gets LTO only with the WHOLE chain in LLVM - clang to emit
+  bitcode, `llvm-ar`/`llvm-ranlib` to index it, and clang+lld to drive the
+  extension's link (`cargo test` already uses rust-lld, which reads bitcode).
+  extconf DETECTS that chain rather than requiring it, probing lld by actually
+  linking with it, so a gcc-only machine builds exactly as before; CI installs
+  `clang lld llvm` so the fast path is the one it exercises. mingw stays out:
+  its Ruby is MinGW-gcc-built, so bringing clang in is an ABI question, not a
+  flag.
+
+  `-march=native` is deliberately NOT used. It measured no gain at all - the hot
+  code is a byte-at-a-time state machine plus libc's already-dispatched
+  memcpy/memset, with nothing for the compiler to vectorise - and it would bake
+  the CI runner's ISA into a gem that has to run on the user's CPU. `-flto=thin`
+  measured the same as `-flto`, so the choice between them is only about which
+  compiler spells it.
+
+  NOT applied under the sanitizer (whole-archive inlining only makes a report
+  harder to read). `MAKIRI_LEXBOR_NO_LTO=1` opts out, and the install stamp
+  tracks it (`plain` / `plain-lto` / `plain-lto-llvm` / `asan`), so a mode switch rebuilds - but
+  only through a path that re-runs extconf, i.e. `rake clean compile`, per the
+  Makefile note above.
+
 - **A plain `sanitize` build does NOT catch overflows inside Lexbor's `mraw`
   bump arena.** A sub-allocation overrunning into the next one stays within one
   malloc'd chunk, so the heap allocator's red-zones never see it (this is exactly
@@ -131,19 +338,27 @@ Requires CRuby >= 3.2 and `cmake`.
   auto-rebuilds on a switch, so an instrumented Lexbor never leaks into a normal
   build. Switching the Lexbor *commit* still needs `rake clean:lexbor` (the stamp
   tracks mode, not revision). No Lexbor patch - it is a vendor build flag.
-- **Our XML bump arena (`mkr_xml_node.c`) is ASan-red-zoned, so its intra-arena
+- **Our XML bump arena (`src/xml/arena.rs`) is ASan-red-zoned, so its intra-arena
   overflows ARE caught** - the same blind spot as Lexbor's mraw, but this is our
-  own TU. `arena_alloc` poisons each fresh 64 KiB chunk and unpoisons only the
-  bytes a cut hands out (the `[size, need)` alignment tail stays poisoned), so a
-  write past one `arena_node`/`arena_bytes`/`scratch_bytes` cut hits poisoned
-  memory and ASan reports it. It auto-activates under any `-fsanitize=address`
-  build (`__has_feature`/`__SANITIZE_ADDRESS__`) - no extra flag, unlike Lexbor -
-  and is a no-op otherwise. So plain `rake sanitize` / `fuzz:sanitize --target
-  xml,mutate` already cover the arena. Everything else we write (XPath engine,
-  CSS lowering, glue, core) uses plain malloc/calloc/realloc, which ASan
-  red-zones per allocation - no arena, no special handling. Keep the unpoison at
-  exactly the requested `size` (not `need`); widening it to `need` would silence
-  off-by-one-into-padding overflows.
+  own module. The allocator poisons each fresh 64 KiB chunk and unpoisons only
+  the bytes a cut hands out (the `[size, need)` alignment tail stays poisoned),
+  so a write past one node/bytes/scratch cut hits poisoned memory and ASan
+  reports it. It auto-activates under any address-sanitized build - no extra
+  flag, unlike Lexbor - and is a no-op otherwise. So plain `rake sanitize` /
+  `fuzz:sanitize --target xml,mutate` already cover the arena. Everything else
+  we write allocates through `falloc` onto the system allocator, or - for the
+  glue's Ruby-side storage - through Ruby's xmalloc; ASan red-zones both per
+  allocation - no arena, no special handling. Keep the unpoison at exactly the requested `size` (not
+  `need`); widening it to `need` would silence off-by-one-into-padding
+  overflows.
+- **The fallible-allocation line.** The engine (`xml`, `xpath`, `css`,
+  `lexbor/adapter`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  infallible `Box::new` / `Vec::with_capacity` / `reserve`, and `rake oom` fails
+  each site in turn, so an OOM there raises instead of aborting. The glue's
+  Ruby-side storage - TypedData wrappers (`bridge::ruby::wrap_zeroed`) and
+  `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
+  is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
+  only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
@@ -153,51 +368,92 @@ Requires CRuby >= 3.2 and `cmake`.
 
 ```
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
-ext/makiri/
-  makiri.{c,h}             Init_makiri, module/class refs
-  core/                    Ruby-free safety primitives, split by concern under
-                           the mkr_core.h umbrella: mkr_alloc (overflow-checked
-                           alloc/grow), mkr_hash (ptr hash + pow2 sizer), mkr_text
-                           (string-type lattice / mkr_verified_text_t), mkr_buf
-                           (growable buffer + mkr_spanbuf bounded writer),
-                           mkr_span (bounded reader - byte-scanning parser TUs
-                           may read input ONLY through it; lint-enforced via
-                           raw_scan_call / raw_cursor_member), mkr_utf8 (the one
-                           validator + strict 1-codepoint decoder)
-  bridge/                  the Ruby boundary - the ONLY layer allowed raw Ruby String
-                           access (RSTRING) and verified-string minting
-                           (mkr_verified_text_t + the data-family borrowed view)
-  glue/                    Ruby <-> C surface, one file per feature (ruby_node/doc/node_set/
-                           xpath/css/serialize/mutate.c)
-  xpath/                   native XPath 1.0 engine (mkr_xpath_*)
-  xml/                     native XML reader (Ruby/Lexbor-free; own arena)
-  dom_adapter/             attr->owner index, source location, post-parse orchestration
-  fuzz/                    native libFuzzer harnesses (xml/xpath/xml_xpath; nightly CI)
+ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `makiri`
+  extconf.rb               builds vendored Lexbor (cmake), then hands the crate to
+                           cargo via create_rust_makefile; owns the link arguments
+                           and the export trim
+  build.rs                 bindgen over Lexbor's own headers -> the layout and
+                           constants the crate reads (never transcribed by hand)
+  src/
+    init.rs                Init_makiri: the class hierarchy and the registration seam
+    falloc/                fallible allocation - every engine allocation goes
+                           through here, so `rake oom` can fail it and OOM raises
+                           rather than aborting the host process (the glue's
+                           Ruby-side storage is Ruby's xmalloc; see the gotchas)
+    cbuf.rs                `Buf`: the owned, capped, growable byte buffer
+    cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
+    lexbor_abi.rs          the generated Lexbor layout and the `_noi` twins
+    bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
+                           access (RSTRING) and verified-string minting, and where
+                           raising C calls (rb_String, typed-data checks) and the
+                           wrap-then-store constructor live; a raise becomes `Err`
+                           there. `rake unsafe:boundaries` pins that boundary:
+                           the crate denies `unsafe_code` (`lib.rs`), so every
+                           file that needs it carries an `allow` and the script
+                           holds each one's count exactly - a new file fails even
+                           where a parent module's `allow` kept rustc quiet - plus
+                           the 56 `forbid` files. `glue/**`, `xpath/**` and
+                           `css/**` are fully safe (their module roots carry
+                           `#![forbid(unsafe_code)]`, which the gate pins), and
+                           `rb_sys::`, `Value::from_raw` and raising C calls are
+                           0 outside `bridge/`
+    glue/                  Ruby <-> engine surface, one module per feature
+                           (node/doc/node_set/xpath/html_node/xml_node); all
+                           `unsafe`-free, its wrappers and TypedData live in
+                           `bridge/`
+    xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
+                           `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
+                           two `Dom` instances live with their layers:
+                           `lexbor/xpath.rs` (HTML) and `xml/xpath.rs` (XML),
+                           joined for the glue by the `Cx` enum in
+                           `bridge/xpath.rs`
+    xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
+                           its XPath `Dom` instance
+    lexbor/                the Lexbor boundary: `adapter` - the one reader of
+                           Lexbor's DOM structs, plus the attr->owner index,
+                           text index, source location and post-parse - and the
+                           selectors/stylesheet/serialize/fragment facades, the
+                           CSS selector parser (`css_parser.rs`) and the XPath
+                           HTML backend (`xpath.rs`); every `lxb_*`/`Lxb*` name
+                           outside it is 0
+    css/                   CSS selector lowering over the lexbor-owned selector
+                           parser (safe Rust, no Lexbor ABI names)
+  fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
+                           html_xpath, css; built on PRs, run nightly)
 vendor/lexbor/             git submodule, pinned 3a2d595 (v3.0.0-25), NEVER patched
 spec/fuzz/                 grammar-aware robustness fuzzer
 spec/invariants/           randomized property checks (see its README)
+spec/differential/         the recorded C-build answers + the probes (see `rake diff`)
 bench/                     Nokogiri-comparison benchmark
-verify/                    CBMC proof harnesses (rake verify)
 docs/design_doc.ja.md      authoritative design (read this)
 ```
+
+Three features, one per layer, and the default is the extension: **`ruby`** (the
+magnus boundary + `glue` + `init`; implies `lexbor`), **`lexbor`** (the layers
+that read Lexbor's DOM: the generated ABI, `css`, `lexbor/adapter`, the XPath HTML
+instance) and **`alloc-inject`** (the `rake oom` hook, off in any normal build).
+The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8` - is behind no gate at
+all. So the fuzz crate builds `--no-default-features --features lexbor` and Kani
+builds `--no-default-features`. The ~30 features that used to stand here were
+migration scaffolding, one per ported C file, and went with the C.
 
 ## Subsystems
 
 **Text-input contract.** Parsing **honours the input String's encoding**
-(`mkr_ruby_to_utf8`, `bridge/ruby_string.c`): UTF-8 / US-ASCII / ASCII-8BIT pass
+(`ruby_to_utf8`, `bridge/string.rs`): UTF-8 / US-ASCII / ASCII-8BIT pass
 through untouched (the UTF-8 common case is a single encoding compare - no
 transcode, no copy), any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
 `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD) so its content survives
 instead of being read as raw UTF-8. After that the bytes are UTF-8. **HTML
-parsing then decodes leniently like a browser**: `mkr_utf8_sanitize`
-(`utf8_input.c`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
+parsing then decodes leniently like a browser**: `utf8_sanitize`
+(`lexbor/adapter/utf8_input.rs`) replaces any remaining invalid UTF-8 with U+FFFD (a NUL is left
 for the HTML5 tokenizer to drop/replace), so parse/fragment **never fail** on
 bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
-no forced scan) already proves it valid - `mkr_parse_html`'s `assume_valid` and
-`mkr_ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
-`mkr_verify_text` (`bridge/ruby_string.c`) raises `Makiri::Error` for **invalid
+no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
+`ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
+`verify_text` (`bridge/string.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
 attribute name/value, `content=`, `name=`, `create_*`, variable/namespace) -
 never truncate/repair. **Embedded NUL (U+0000) is a two-tier contract**: rejected
@@ -205,66 +461,86 @@ for names/tags/namespaces/PI target+data/selectors/XPath/variables and all engin
 inputs (which assume NUL-terminated C strings), but **accepted for the HTML
 data-family** - text/comment node content (`create_text_node`/`create_comment`/
 `content=`) and attribute values (`[]=`/`set_attribute_ns`) - so the DOM can hold
-U+0000 like browsers. Those data-family sites go through `mkr_ruby_verified_data`
-(distinct type `mkr_ruby_borrowed_data_t`, UTF-8-validated but NUL-permitting;
-consumed only as `(ptr,len)`), never `mkr_verify_text`. `Makiri::XML` keeps
-rejecting NUL everywhere (its `mkr_xml_*` engine enforces the XML 1.0 char class,
+U+0000 like browsers. Those data-family sites go through `ruby_verified_data`
+(distinct type `RubyData`, UTF-8-validated but NUL-permitting;
+consumed only as `(ptr,len)`), never `verify_text`. `Makiri::XML` keeps
+rejecting NUL everywhere (its `crate::xml` engine enforces the XML 1.0 char class,
 independent of the bridge; U+0000 can't be well-formed XML). Don't drop the
 UTF-8 checks or route a name/engine string through the data path; see
 `docs/string_types.md`.
 
-**Parsing & source location** (`dom_adapter/post_parse.c`, `source_loc.c`).
-`mkr_parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
+**Parsing & source location** (`lexbor/adapter/post_parse.rs`, `source_loc.rs`).
+`parse_html` drives Lexbor's low-level pipeline (`parser_create`/`init` →
 `parse_chunk_begin` → override the tokenizer's token-done callback, **chaining**
 the parser's tree builder → `chunk_process`/`chunk_end`) so it can record each
 element start-tag's byte offset (`token->begin`). After the tree is built,
-`mkr_pos_assign_to_dom` walks pre-order, matches each element to the next
+`pos_assign_to_dom` walks pre-order, matches each element to the next
 recorded token by tag id (bounded lookahead), and stamps `offset+1` into
-`node->user`; a line table (`mkr_lines_t`, built once) resolves that to a
+`node->user`; a line table (`source_loc::Lines`, built once) resolves that to a
 1-based line. `Node#line` returns an Integer, or **nil** when unplaceable
 (parser-inserted implicit html/head/body, text/comment/attribute nodes) - never
-a wrong line. Recorder bounded by `MKR_POS_MAX_TOKENS` (fail closed → nil, never
+a wrong line. Recorder bounded by `source_loc::MAX_TOKENS` (fail closed → nil, never
 wrong). The document outlives `lxb_html_parser_destroy` (it only unrefs
-tkz/tree). Tracking is **always on**: it rides the parse (~7% over no-tracking,
-measured). An earlier `line: :text`/`:none` option was removed - `:text` (a
+tkz/tree). An earlier `line: :text`/`:none` option was removed - `:text` (a
 separate source scan) measured *slower* (~36%) and was only approximate.
 
-**attr→owner index** (`dom_adapter/dom_index.c`). Lexbor never links an
+**The stamping is LAZY, and that is load-bearing for parse speed.** Recording
+rides the parse (`pos_token_cb`, ~1.7% of it), but `pos_assign_to_dom` - the
+walk that pairs elements with tokens - profiled at **11% of a parse**, paid by
+every caller for an answer most never ask for. So the parse hands the offsets
+back (`source_loc::Positions`, which drops the Recorder's pointer INTO the
+source buffer, since the offsets were already resolved) and `Parsed::pending_pos`
+holds them. `Parsed::assign_positions` does the walk once, on the first
+`#line` - or on the first MUTATION, via `ensure_document_mutable`, which is the
+last moment the tree is still the one the parser built. That second trigger is
+what keeps the answers identical to stamping eagerly; a walk over an edited tree
+would pair elements with the wrong tokens. Do not move it after the edit, and do
+not skip it: `spec/source_location_spec.rb`'s "deferred stamping" examples and
+the `lines` differential probe are what catch either. Measured by profile, the
+change took Makiri's own share of a parse from 13.3% to 2.6%. `lines_build`
+stays eager (~2%): deferring it would mean holding the source buffer, which is
+the one thing the parse frees.
+
+**attr→owner index** (`lexbor/adapter/dom_index.rs`). Lexbor never links an
 attribute back to its element, so we build an open-addressing hash (pointer
 keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 → no stack DoS; OOM fails closed and retries). The build also **backfills each
 attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
 first_child/next, never attr.parent), so the XPath engine handles
 parent/ancestor axes and document-order over attributes with no special-casing.
-Reached via `mkr_parsed_attr_owner`; `mkr_parsed_dom_index_invalidate` drops it
-after any mutation so it rebuilds on the next query. The same walk **co-builds
+Owned by the parse handle (`Parsed::dom_index`, `DomIndex::owner_of`);
+`Parsed::invalidate_indexes` drops it after any mutation so it rebuilds on the
+next query. The same walk **co-builds
 an element index** (`tag id → elements`, document-order CSR) used by the XPath
 `//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
 is bucketed - custom-element tag ids are *pointer values* (`lxb_tag_append`),
 so those elements are left out and `//customtag` falls back to the tree walk.
-Reached via `mkr_parsed_element_index` / `mkr_element_index_tag` /
-`mkr_element_index_has_foreign`; invalidated with the attr index.
+Reached via `DomIndex::tag_bucket` / `DomIndex::has_foreign`; invalidated with
+the attr index. **Every evaluate reads the index afresh from the handle**: a
+reused `XPathContext` must never keep the one it first saw, because a mutation
+frees it - that stale pointer was a use-after-free that answered from another
+document's index (`spec/xpath_context_mutation_spec.rb`).
 
-**text index** (`dom_adapter/text_index.c`). Removes the per-call descendant
+**text index** (`lexbor/adapter/text_index.rs`). Removes the per-call descendant
 walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
-`mkr_grow_reserve`, no recursion → no stack DoS) records a flat document-order
-array of every TEXT/CDATA node's **borrowed** `mkr_borrowed_text_t` slice, a
+`grow_reserve`, no recursion → no stack DoS) records a flat document-order
+array of every TEXT/CDATA node's **borrowed** `BorrowedText` slice, a
 prefix-sum of their lengths, and a pointer-keyed open-addressing hash mapping
 each element/fragment to the `[start,end)` run of slices its subtree owns. A
-`Node#text` is then a hash lookup + `mkr_ruby_str_from_slices` (one pre-sized
+`Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
 memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
-Cached on `mkr_parsed_t.text_index`; `mkr_parsed_text_index_invalidate` drops it
+Cached on the parse handle; `Parsed::invalidate_indexes` drops it
 from the **same single mutation hook** as the attr index, so a borrowed slice
 can never point at reallocated/detached text storage. Reached via
-`mkr_parsed_text_slices` (returns 0 → caller walks: fragments, build OOM).
+`Parsed::text_slices` (None → caller walks: fragments, build OOM).
 Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 
-**XPath engine** (`xpath/mkr_xpath_*.{c,h}`). Original implementation: lexer →
+**XPath engine** (`src/xpath/`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
-external hook is `mkr_dom_node_name_qualified` (in `mkr_xpath.c`). Per-evaluate
+external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set & string
-caps) live in `mkr_xpath.c` and fail closed with `MKR_XPATH_ERR_LIMIT`. Ruby:
+caps) live in `xpath/limits.rs` and fail closed with `XP_ERR_LIMIT`. Ruby:
 `Node#{xpath,at_xpath}(expr, handler=nil)`, `Makiri::XPathContext`
 (`.new`, `#evaluate`, `#register_namespace`/`#register_ns`, `#register_variable`).
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map
@@ -272,7 +548,11 @@ SYNTAX→`XPath::SyntaxError`, LIMIT→`XPath::LimitExceeded`, else `Makiri::Err
 Custom functions: unknown calls route through the engine resolver to
 `handler.<local_name with - → _>`, run under `rb_protect` (a Ruby exception
 becomes `Makiri::Error`, never a long-jump through the evaluator); node-set
-returns from a foreign document are rejected. The **namespace axis is not
+returns from a foreign document are rejected. A handler may not modify the document
+being evaluated: while an evaluation with a handler runs, every mutator on that
+document raises `Makiri::Error` (`glue::doc::DocumentEvaluation` /
+`ensure_document_mutable`), because the engine borrows names, values and index
+slices across the walk and Lexbor frees an attribute's old value on set. The **namespace axis is not
 implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
 *does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
 nodes), so this is a documented behaviour difference - see README "Differences
@@ -285,11 +565,11 @@ prefix (`//svg:path`). Pass `namespace_matching: :lax` (on `Node#{xpath,at_xpath
 or `XPathContext.new`) for the namespace-agnostic, `Nokogiri::HTML`-style match
 where `//path` finds the SVG element. The mode affects *only* unprefixed
 element name tests; prefixed tests, the `*` wildcard, and attribute tests are
-unchanged (see `mkr_xpath_internal.h` §2–§5). Makiri keeps HTML elements in the
+unchanged (see `xpath/nodetest.rs`). Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null).
 
-**CSS** (`glue/ruby_html_css.c`). `Node#{css,at_css,matches?}` via Lexbor's
+**CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
 `lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the
 `selectors` traversal object) is **built once and reused for every query** -
 safe with no locking because CSS holds the GVL throughout (it never releases
@@ -301,13 +581,13 @@ nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
 `lxb_selectors_find` runs with `MATCH_FIRST` to dedup comma lists; `at_css`
 **stops at the first match and wraps that one node** (no NodeSet / no Ruby
 `#first`). Results are **descendant-only** (context node excluded, like Nokogiri)
-and in document order; capped at `MKR_NODE_SET_MAX`; malformed →
+and in document order; capped at `NODE_SET_MAX`; malformed →
 `Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
 
-**Serialization** (`glue/ruby_html_serialize.c`). `Node#{to_html,to_s,outer_html}` =
+**Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
-collects Lexbor's many small chunks into one growing C buffer (`mkr_buf`,
-**pre-reserved to ~the output size** via `mkr_buf_reserve` so the per-chunk
+collects Lexbor's many small chunks into one growing C buffer (`cbuf::Buf`,
+**pre-reserved to ~the output size** via `buf_reserve` so the per-chunk
 appends don't realloc on every geometric step) and the
 whole thing is copied into a UTF-8 Ruby String once - markedly faster than
 `rb_str_cat` per chunk (its per-append capacity + coderange bookkeeping was the
@@ -317,13 +597,13 @@ the intermediate growth is GC-tracked; the untracked C buffer + one copy wins.)
 `pretty: true` uses `serialize_pretty_*` (Lexbor
 quotes text nodes in that mode). A `DocumentFragment` serializes via the deep
 serializer (the tree serializer rejects a fragment node). `Node#text`/`#content`
-(`mkr_node_content`) serves descendant text from the **text index** (see
-below) - a hash lookup + one pre-sized `mkr_ruby_str_from_slices` memcpy run,
+(`html_node::read::content`) serves descendant text from the **text index** (see
+below) - a hash lookup + one pre-sized `ruby_str_from_slices` memcpy run,
 no per-call tree walk - and falls back to a direct iterative walk for
 non-indexed nodes (fragments). For a Document it returns the **root element's**
 text (DOM makes a Document's textContent null, which is not what callers want).
 
-**Mutation** (`glue/ruby_mutate.c`). Tree edits (`add_child`/`<<`,
+**Mutation** (`glue/html_node/mutate.rs`). Tree edits (`add_child`/`<<`,
 `add_previous_sibling`/`before`, `add_next_sibling`/`after`, `remove`/`unlink`,
 `replace`) over Lexbor insert/remove. We **detach, never destroy** - the arena
 owns node memory and live Ruby wrappers may alias a removed node; move semantics
@@ -336,11 +616,15 @@ Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
 inserting a fragment splices its **children**. Guards Lexbor omits: same-document
 only, no self-cycles, attribute nodes can't be tree children. Every structural /
-attribute change calls `mkr_parsed_dom_index_invalidate`.
+attribute change calls `Parsed::invalidate_indexes`.
 
-**Ruby surface niceties.** Node classes: Document, Element, Attribute, Text,
-Comment, CData, ProcessingInstruction, DocumentFragment (mapped in
-`mkr_wrap_node` by DOM node type). Convenience: `Node#{root,ancestors,path}`
+**Ruby surface niceties.** Node classes, under the WHATWG DOM interface names:
+Document, Element, Attr, Text, Comment, CDATASection, ProcessingInstruction,
+DocumentType, DocumentFragment (mapped by DOM node type in
+`wrap_html_node` / `wrap_xml_node` - one per representation, since the
+leaf classes are `Makiri::HTML::*` and `Makiri::XML::*`). `CDATA` and `DTD` are
+Nokogiri-compatible aliases, defined in Ruby (`lib/makiri/compat_aliases.rb`) at
+all three scopes; there is no `Attribute`. Convenience: `Node#{root,ancestors,path}`
 (path round-trips through `#at_xpath`), `Node#{attributes,to_h}`,
 `Node#{search,at}` (CSS/XPath auto-detect: starts `/ ./ .. .// ( @` or contains
 `::` ⇒ XPath, else CSS), `Document#{body,head,encoding,meta_encoding}`
@@ -352,17 +636,29 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 
 ## Performance
 
-**Makiri currently meets or beats Nokogiri/libxml2 on every `rake bench` row**
-(parse ~3×, css ~12×, at_css ~6000× vs Nokogiri / ~5× vs nokolexbor, serialize ~4×, traverse ~1.2×, xpath
-attr-axis ~1.3×, `[@attr='v']` predicate ~1.5×, `//tag` ~3.4× faster, full-text
-extraction ~4×). Plus parsing scales across threads (~2× on 8 cores) since
-it releases the GVL. Key decisions that got there, worth not regressing:
+**Makiri beats Nokogiri/libxml2 on every `rake bench` row.** Measured
+against Nokogiri: parse ~4.6×, css ~12×, at_css ~9400×, `//tag` ~4×,
+`//*[@id=…]` ~8×, `[@attr='v']` ~4.3×, attribute axis ~3×, serialize ~6×,
+full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
+that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
+beats it too.
 
-- **Parsing releases the GVL; XPath evaluation does NOT** (`ruby_doc.c`,
-  `ruby_xpath.c`): parse copies the source to a C buffer then runs
-  `mkr_parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
+Treat these as indicative, not precise. Two consecutive runs on the same machine
+put full-text extraction at 2.9× and 3.5×, and threaded parse scaling at 2.4×
+and 1.7×; benchmark-ips reports ±18-27% on the heavier rows. What the numbers
+are good for is catching a *regression in kind* (a row falling to parity or
+below), not for defending a second decimal place.
+
+Parsing also scales across threads (~1.7-2.4× on 8 cores) because it releases
+the GVL; XPath does not scale, by design (it holds the GVL - see below).
+
+Key decisions that got there, worth not regressing:
+
+- **Parsing releases the GVL; XPath evaluation does NOT** (`glue/doc.rs`,
+  `glue/xpath.rs`): parse copies the source to a C buffer then runs
+  `parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. **XPath holds
-  the GVL for the whole evaluation by design** (`mkr_eval_compiled` is a plain
+  the GVL for the whole evaluation by design** (`xpath::ctx::Context::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL
   serialises all Ruby-thread C code, so an XPath walk never runs in parallel
@@ -377,14 +673,13 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   (~2× on 8 cores); verify with `bench`'s threaded rows and the `GC.stress`
   `spec/threading_spec.rb` (which now also asserts shared-document XPath+mutation
   and shared-context evaluate are crash-free under the GVL).
-- **`//tag` is served from the element index** (`mkr_xpath_eval.c`
-  `try_descendant_tag_index`): a document-rooted, predicate-free, unprefixed
+- **`//tag` is served from the element index** (`xpath/step_index.rs`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
   (`has_foreign` guard) and each candidate is re-checked with
   `node_principal_match`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
-- **The CSS engine is built once and reused** (`glue/ruby_html_css.c`, see the
+- **The CSS engine is built once and reused** (`lexbor/selectors.rs`, see the
   subsystem note): the per-call create/init/destroy of the Lexbor CSS object
   graph dominated a cheap query and lost to nokolexbor on `at_css('#id')`; a
   process-global engine (safe because CSS holds the GVL throughout) reset with
@@ -393,7 +688,7 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   also wraps the single first match directly (no NodeSet / no Ruby `#first`). Do
   not reintroduce per-call engine teardown; verify with `bench`'s `at_css`/`css`
   rows and `fuzz:sanitize --target css` (the reuse is the memory-safety risk).
-- **`Node#text` is served from the text index** (`dom_adapter/text_index.c`,
+- **`Node#text` is served from the text index** (`lexbor/adapter/text_index.rs`,
   see the subsystem note): a per-document, lazily-built, mutation-invalidated
   map from node → its document-order text-slice run, turning text extraction
   into a hash lookup + one pre-sized memcpy instead of a cache-bound walk over
@@ -401,17 +696,19 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   for non-indexed nodes. Do not regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
-- **String-value cache is hashed** (`mkr_xpath_value.c`): a pointer-keyed
+- **String-value cache is hashed** (`xpath/runtime_abi/cache.rs`): a pointer-keyed
   open-addressing index over an ordered store, so per-node predicate compares
-  are O(1), not the old O(n²) linear scan. The ordered store keeps
-  snapshot/partial-truncate working for nested (handler-triggered) evals.
+  are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
+  (`xpath::eval::Evaluation`), as do the op budget and the document-order
+  index, so a nested (handler-triggered) evaluate gets its own and cannot
+  disturb the walk that called it.
 - **`[@name]` / `[@name='lit']` predicates take a direct-attribute fast path**
-  (`mkr_match_attr_pred`/`mkr_filter_attr_pred` in `mkr_xpath_eval.c`): a
+  (`match_attr_pred`/`attr_pred_matches` in `xpath/attr_pred.rs`): a
   position-independent filter via `lxb_dom_element_has_attribute`/`get_attribute`
   instead of building a throwaway node-set per candidate; anything else falls
   through to the generic evaluator.
-- **`Node#at_xpath` first-match short-circuit** (`mkr_xpath_eval.c`
-  `mkr_try_first_match`, entered via `mkr_xpath_eval_compiled_first`): `at_xpath`
+- **`Node#at_xpath` first-match short-circuit** (`xpath/eval.rs`
+  `try_first_match`, entered via `evaluate_first`): `at_xpath`
   wants only node-set[0], so for the common "first descendant by name (+ a
   position-independent `[@a]`/`[@a='v']` predicate)" shapes - `//x`, `//x[@a]`,
   `//*[@a='v']`, `.//x`, `descendant::x[...]` (after the `//` peephole; one or two
@@ -424,9 +721,22 @@ it releases the GVL. Key decisions that got there, worth not regressing:
   (positional predicates, functions/variables, reverse axes, unions, prefixes,
   longer paths) returns 0 from the recogniser → full evaluator. Only `at_xpath`
   uses it; `xpath` always builds the full set.
-- **Per-context compiled-AST cache** (`mkr_xpath.c`): an `XPathContext` parses
-  each expression once and re-runs the cached AST (bounded by `MKR_AST_CACHE_MAX`).
+- **Per-context compiled-AST cache** (`glue/xpath.rs`): an `XPathContext` parses
+  each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
+- **Every Document reports its arena to the GC** (`bridge::lexbor::account_document`,
+  called after each parse; `DocData::release` takes the report back). Neither
+  Lexbor's pools nor the XML arena is an `xmalloc`, so without the report Ruby
+  sees a parsed Document as ~56 bytes and NO collection is triggered by memory
+  pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,
+  and every parse faulting fresh pages - the parse bench read 1.8× slower than
+  nokolexbor at ±43% variance, and nothing failed. With the report it is at
+  parity. The diagnostic is `GC.count` across a parse loop (must rise) and
+  `minflt` per parse (near 0 once warm). Any new path that hands an arena to a
+  wrapper - a new parse entry, a fragment with its own backing document - must
+  call `account_document` after the arena exists; `spec/gc_accounting_spec.rb`
+  pins both halves. Growth through mutation/fragment import is NOT re-reported
+  (an approximation, in the safe direction of under-reporting).
 - Tree-walk speed is structurally capped by Lexbor's 96-byte node (we can't
   shrink it); investigated nodeset-pool / prefetch follow-ups were **not** shipped
   because, with no remaining slower-than-Nokogiri row, they'd add lifetime /

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Malloc-leak gate for the C extension (macOS only; run via `rake leaks`).
+# Malloc-leak gate for the extension (macOS only; run via `rake leaks`).
 #
 # ASan runs everywhere with detect_leaks=0 (Ruby and Lexbor are uninstrumented,
 # so LeakSanitizer drowns in their noise) - which means plain leaks were never

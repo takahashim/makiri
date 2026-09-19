@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Makiri
-  # An element node (HTML or XML). Attribute access lives in C.
+  # An element node (HTML or XML). Attribute access lives in the extension.
   class Element < Node
     # Create a detached element named +name+ owned by +document+ (Nokogiri-style
     # constructor; delegates to {Document#create_element}, so its representation

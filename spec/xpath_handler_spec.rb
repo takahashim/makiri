@@ -179,7 +179,7 @@ RSpec.describe "Makiri XPath custom function handler" do
     # namespace prefix freed the URI string the evaluator still borrowed -> an
     # ASan-confirmed use-after-free read on the next context iteration's walk.
     # The fix refuses register_namespace / register_variable / node= while an
-    # evaluate is in progress on that context (mkr_ctx_is_evaluating), so the
+    # evaluate is in progress on that context (Context::is_evaluating), so the
     # borrowed registrations and context node can never be freed/swapped under
     # the suspended evaluator. The mutation fails closed; the handler exception
     # surfaces as a clean Makiri::Error.
@@ -244,6 +244,89 @@ RSpec.describe "Makiri XPath custom function handler" do
       reg.instance_variable_set(:@ctx, c)
       def reg.inner(*) = @ctx.evaluate("count(//p)")
       expect(c.evaluate("ng:inner()", reg)).to eq(3.0)
+    end
+
+    it "keeps the outer walk's handler across a nested evaluate that has its own" do
+      # The nested evaluate installs a handler too. Taking it off used to clear
+      # the context's resolver outright, so the outer walk's next call - the
+      # second <p> - failed as an unknown function.
+      c = Makiri::XPathContext.new(multi)
+      h = Object.new
+      h.instance_variable_set(:@ctx, c)
+      h.instance_variable_set(:@calls, 0)
+      def h.touch
+        @calls += 1
+        @ctx.evaluate("count(//p[inner()])", self) if @calls == 1
+        true
+      end
+      def h.inner = true
+      def h.calls = @calls
+      expect(c.evaluate("//p[touch()]", h).length).to eq(3)
+      expect(h.calls).to eq(3)
+    end
+
+    # The engine borrows names, values and index slices from the document for
+    # the whole walk, and Lexbor frees an attribute's old value when a new one is
+    # set, so a handler must not edit the document it is evaluated over: every
+    # mutator refuses while such an evaluation runs.
+    describe "a handler editing the document under evaluation" do
+      editor_class = Class.new do
+        def initialize(&edit) = @edit = edit
+
+        def touch
+          @edit.call
+          true
+        end
+      end
+
+      {
+        "sets an attribute" => ->(d) { d.at_css("p")["class"] = "x" },
+        "removes an attribute" => ->(d) { d.at_css("p").delete("class") },
+        "sets content" => ->(d) { d.at_css("p").content = "y" },
+        "renames a node" => ->(d) { d.at_css("div").name = "span" },
+        "removes a node" => ->(d) { d.at_css("div").remove },
+        "inserts a node" => ->(d) { d.at_css("body").add_child(d.create_element("hr")) },
+        "sets inner_html" => ->(d) { d.at_css("div").inner_html = "<b>z</b>" },
+      }.each do |what, edit|
+        it "fails closed when it #{what}" do
+          h = editor_class.new { edit.call(doc) }
+          expect { doc.xpath("//p[touch()]", h) }
+            .to raise_error(Makiri::Error, /while evaluating/)
+          expect { ctx.evaluate("//p[ng:touch()]", h) }
+            .to raise_error(Makiri::Error, /while evaluating/)
+        end
+      end
+
+      it "leaves the document unchanged, and editable again once the walk is over" do
+        h = editor_class.new { doc.at_css("p")["class"] = "x" }
+        expect { doc.xpath("//p[touch()]", h) }.to raise_error(Makiri::Error)
+        expect(doc.at_css("p")["class"]).to be_nil
+        doc.at_css("p")["class"] = "x"
+        expect(doc.at_css("p")["class"]).to eq("x")
+      end
+
+      it "still lets a handler edit a different document" do
+        other = Makiri::HTML("<p>o</p>")
+        h = editor_class.new { other.at_css("p")["class"] = "x" }
+        expect(doc.xpath("//p[touch()]", h).length).to eq(2)
+        expect(other.at_css("p")["class"]).to eq("x")
+      end
+
+      it "fails closed when it moves a node out of the document into another" do
+        other = Makiri::HTML("<p>o</p>")
+        h = editor_class.new { other.at_css("body").add_child(doc.at_css("div")) }
+        expect { doc.xpath("//p[touch()]", h) }
+          .to raise_error(Makiri::Error, /while evaluating/)
+        expect(doc.at_css("div")).not_to be_nil
+      end
+
+      it "fails closed for an XML document too" do
+        xml = Makiri::XML(%(<r><a k="1"/><a/></r>))
+        h = editor_class.new { xml.at_xpath("//a")["k"] = "2" }
+        expect { Makiri::XPathContext.new(xml).evaluate("//a[touch()]", h) }
+          .to raise_error(Makiri::Error, /while evaluating/)
+        expect(xml.at_xpath("//a")["k"]).to eq("1")
+      end
     end
   end
 end

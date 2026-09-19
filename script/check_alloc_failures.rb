@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Allocation-failure injection sweep for the C extension (run via `rake oom`).
+# Allocation-failure injection sweep for the extension (run via `rake oom`).
 #
 # The sanitizers and the leak gate prove the happy path is memory-safe; neither
 # proves the OOM branches are CORRECT. Makiri's contract is fail-closed: when a
@@ -168,6 +168,126 @@ SCENARIOS = {
     doc.text
   end,
 
+  # The HTML node readers, which reach three lazily-built C structures the other
+  # scenarios do not: the attr->owner index (Attribute#parent), the line table
+  # (#line) and the NodeSet builder (#children / #ancestors / #attribute_nodes).
+  # Each has its own OOM branch, and each must fail closed - a NodeSet that
+  # silently loses a member reads exactly like a correct shorter one.
+  "html_node_read" => lambda do
+    doc = Makiri::HTML::Document.parse(<<~HTML)
+      <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+      <html><body>
+        <div id="a" class="x y" data-n="1">A<span>B<i>C</i></span>D</div>
+        <div id="b">café<p>déép<b>!</b></p></div>
+        <svg viewBox="0 0 1 1"><a xlink:href="#z" xml:lang="en">t</a></svg>
+        <template><i>inside</i></template>
+      </body></html>
+    HTML
+    out = []
+    stack = doc.children.to_a
+    until stack.empty?
+      n = stack.pop
+      stack.concat(n.children.to_a)
+      # #line is deliberately absent here. Its line table is built once at parse
+      # time and is ALLOWED to fail: lexbor/adapter/post_parse.rs documents the
+      # degradation, and Node#line's own contract is "an Integer, or nil when no
+      # line is available", so answering nil after an allocation failure is
+      # within the contract rather than a wrong result. Attribute#parent is the
+      # opposite case - nil there means "no parent", a navigation answer with no
+      # such allowance - so it IS swept, and now raises instead of degrading.
+      out << [n.name, n.local_name, n.prefix, n.namespace_uri, n.node_type,
+              n.text].inspect
+      next unless n.is_a?(Makiri::HTML::Element)
+      out << n.keys.inspect << n.values.inspect
+      out << n.attribute_nodes.map { |a| [a.name, a.value, a.parent&.name] }.inspect
+      out << n.ancestors.map(&:name).inspect
+      out << n.attribute_by_qualified_name("xlink:href")&.value.inspect
+      out << n.attribute_value_by_qualified_name("data-n").inspect
+      out << n.content_fragment&.text.inspect
+    end
+    dt = doc.children.find { |c| c.is_a?(Makiri::HTML::DocumentType) }
+    out << [dt&.public_id, dt&.system_id].inspect
+    out.join("\n")
+  end,
+
+  # Cross-representation import, which no other scenario reaches: it allocates
+  # in BOTH arenas at once and synthesizes xmlns declarations, and its
+  # fail-closed model is "abandon the partial subtree in the destination arena".
+  # A partial import that still returned a node would be a silently truncated
+  # tree - the shape this whole sweep is looking for.
+  "cross_import" => lambda do
+    hdoc = Makiri::HTML::Document.parse(<<~HTML)
+      <html><body><div id="a" class="c">text<b>bold</b>
+        <svg viewBox="0 0 1 1"><a xlink:href="#z"><path d="M0 0"/></a></svg>
+        <template><i>inside</i></template>
+        <p>a &amp; b</p>
+      </div></body></html>
+    HTML
+    xdoc = Makiri::XML::Document.parse("<root xmlns='urn:d'><keep/></root>")
+
+    # HTML -> XML, then LINKED: the synthesized declarations only resolve at
+    # link time, so a half-built one shows up here rather than in the copy.
+    imported = xdoc.import_node(hdoc.at_css("#a"), true)
+    xdoc.root.add_child(imported)
+
+    # XML -> HTML, both directions in one scenario.
+    src = Makiri::XML::Document.parse(
+      "<r xmlns='urn:d' xmlns:p='urn:p'><p:a p:k='v'>t</p:a><b>u</b></r>"
+    )
+    back = hdoc.import_node(src.root, true)
+    hdoc.at_css("body").add_child(back)
+
+    xdoc.to_xml + "|" + hdoc.to_html
+  end,
+
+  # Invalid UTF-8 input, which is the ONLY path that reaches the sanitiser's
+  # buffer: every other scenario feeds valid UTF-8, where `utf8_sanitize`
+  # (lexbor/adapter/utf8_input.rs) short-circuits and allocates nothing. The 3x growth and the steal are what
+  # is being swept here, and a truncated document is exactly the failure the
+  # property forbids.
+  "html_invalid_utf8" => lambda do
+    bad = (1..200).map { |i| "<p id='p#{i}'>a\xC3(b \xE0\x80\x80 \xF4\x90\x80\x80 \xED\xA0\x80</p>" }.join
+    doc = Makiri::HTML::Document.parse("<html><body>#{bad}</body></html>".dup.force_encoding("BINARY"))
+    frag = doc.fragment("<i>\xC3\x28</i><b>\xF1\x80</b>".dup.force_encoding("BINARY"))
+    doc.text + "|" + frag.to_html
+  end,
+
+  # The HTML mutation surface: the factories, insertion on every side, the
+  # fragment splice, cross-document adopt, rename, content, the namespaced
+  # attribute setters and inner_html=. Its XML twin (xml_mutate) covers the
+  # other backend; this one reaches the Lexbor arena, the <template> fixup and
+  # the transient-document free that a raise must not skip.
+  "html_mutate" => lambda do
+    d = Makiri::HTML::Document.parse("<html><body><div id='a'><p>one</p></div></body></html>")
+    a = d.at_css("#a")
+    a.add_child(d.create_element("made"))
+    a.add_child(d.create_text_node("inner"))
+    a.add_child(d.create_comment(" note "))
+    a.add_child(d.create_processing_instruction("tgt", "pd"))
+    a.add_child(d.fragment("<i>i</i><u>u</u>"))
+    p1 = d.at_css("p")
+    p1.add_previous_sibling(d.create_element("prev"))
+    p1.add_next_sibling(d.create_element("next"))
+    p1.name = "h1"
+    p1.content = "renamed"
+    p1["data-n"] = "1"
+    p1.set_attribute_ns("http://www.w3.org/1999/xlink", "xlink:href", "#x")
+    p1.set_attribute_ns(nil, "plain", "v")
+    p1.remove_attribute_ns("http://www.w3.org/1999/xlink", "href")
+    p1.delete("data-n")
+    a.inner_html = "<b>B</b><template><i>f</i></template>"
+
+    src = Makiri::HTML::Document.parse("<html><body><section id='s'><em>e</em></section></body></html>")
+    a.add_child(src.at_css("#s"))
+    d.at_css("b").outer_html = "<strong>S</strong>"
+    d.at_css("strong").replace(d.create_element("r"))
+    d.at_css("r").remove
+
+    dt = d.create_document_type("html", "-//X//EN", "urn:s")
+    d.root.add_previous_sibling(dt)
+    d.to_html + "|" + src.to_html
+  end,
+
   # CSS: a comma list with combinators through the reused engine, plus the
   # at_css first-match path.
   "css" => lambda do
@@ -180,6 +300,52 @@ SCENARIOS = {
     HTML
     doc.css("p.c, div > span").map { |n| n.name }.join(",") +
       doc.at_css("#x")&.name.to_s
+  end,
+
+  # The HTML fragment pipeline: parsing in a context, importing the result into
+  # a document, and the <template>-content fixup that import_node omits.
+  #
+  # Nothing else here reaches it. `xml_fragment` and `xml_mutate` call
+  # `doc.fragment`, but on an XML document, which is a different code path
+  # entirely - so the whole of glue/fragment.rs, including the worklist its
+  # template fixup allocates, had no scenario. The nesting is deliberate: a
+  # template inside a template makes the fixup queue a second subtree, which is
+  # the allocation worth failing.
+  "html_fragment" => lambda do
+    doc = Makiri::HTML::Document.parse(<<~HTML)
+      <html><body>
+        <div id=d><p>a</p></div>
+        <template><i>x</i><template><b>deep</b></template></template>
+      </body></html>
+    HTML
+    parts = []
+    parts << doc.fragment("<template><i>f</i></template>").to_html
+    parts << doc.fragment("<td>cell</td>", context: "tr").to_html
+    parts << doc.at_css("div").parse("<span>s</span>").map(&:name).join(",")
+    parts << Makiri::DocumentFragment.parse("<p>standalone</p>").to_html
+
+    other = Makiri::HTML::Document.parse("<html><body></body></html>")
+    parts << other.import_node(doc.at_css("div"), true).to_html
+    # A template nested in a template: the fixup queues the inner subtree, which
+    # is the allocation this scenario exists to fail.
+    parts << doc.at_css("template").clone_node(true).to_html
+    parts.join("|")
+  end,
+
+  # The stylesheet binding (Makiri::Lexbor::CSS.parse_stylesheet). Its own
+  # layer allocates for every selector, declaration and at-rule name, and it
+  # walks Lexbor's parsed tree into owned values BEFORE building any Ruby - so
+  # a failure in the middle has a half-built intermediate to abandon, which is
+  # exactly the shape this sweep exists to check.
+  "css_stylesheet" => lambda do
+    css = <<~CSS
+      div.a, p#b > span { color: red; margin: 0 !important }
+      p::before { content: "x" }
+      @media (min-width: 600px) { .x { color: blue } }
+      @font-face { font-family: F; src: url(f.woff) }
+      @namespace svg url(http://www.w3.org/2000/svg);
+    CSS
+    Makiri::Lexbor::CSS.parse_stylesheet(css).inspect
   end,
 
   # The Builder DSL (pure Ruby over create_*/add_child, so this sweeps the

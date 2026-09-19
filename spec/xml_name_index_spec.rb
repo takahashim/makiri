@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-# The element-name index (ext/makiri/xml/mkr_xml_index.c) serves document-rooted
+# The element-name index (ext/makiri/rust/src/xml/index.rs) serves document-rooted
 # descendant name tests (//name, css("name")) from a name->elements bucket
 # instead of walking. These tests pin that the indexed result is byte-identical
 # to a ground-truth tree walk, in document order, and that the index is dropped

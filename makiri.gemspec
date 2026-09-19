@@ -52,7 +52,19 @@ Gem::Specification.new do |spec|
   spec.bindir            = "exe"
   spec.executables       = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths     = ["lib"]
-  spec.extensions        = ["ext/makiri/extconf.rb"]
+  # The extension is the Rust crate; rb_sys runs this extconf from the crate's
+  # own manifest directory.
+  spec.extensions        = ["ext/makiri/rust/extconf.rb"]
+
+  # A RUNTIME dependency, and that is not a slip. extconf.rb does
+  # `require "rb_sys/mkmf"` for `create_rust_makefile`, and extconf runs at gem
+  # INSTALL time - so a development dependency would not be installed for the
+  # person building from source, and `gem install makiri` would fail with
+  # "cannot load such file -- rb_sys/mkmf". (The C extconf needed only mkmf,
+  # which ships with Ruby, so this hazard did not exist before.) rb_sys is small
+  # and pure Ruby; RubyGems installs runtime dependencies before building
+  # extensions, which is what makes this work.
+  spec.add_dependency "rb_sys", "~> 0.9"
 
   # Vendored Lexbor builds via cmake; declared as a dev requirement.
   spec.add_development_dependency "rake",            "~> 13.0"

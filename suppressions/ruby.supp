@@ -160,3 +160,19 @@
   fun:vm_search_cc
   ...
 }
+
+# ---- Makiri's process-lifetime CSS compiled-selector cache ----
+# `lexbor::selectors` keeps compiled selector lists in a process-global
+# `HashMap<Box<[u8]>, *mut SelectorList>` (bounded by CACHE_CAP) that lives until
+# exit by design. hashbrown holds only a pointer INTO its allocation (at the
+# control bytes), never to its start, so the exit-time leak scan calls the table
+# and every key inside it "possibly lost". (The C kept this cache in a Ruby Hash,
+# which RUBY_FREE_AT_EXIT freed.) `possible` only: a real `definite` leak on this
+# path still fails the run.
+{
+  makiri-css-selector-cache
+  Memcheck:Leak
+  match-leak-kinds: possible
+  ...
+  fun:*with_compiled_selector*
+}

@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.10.0.rc1] - 2026-09-19
+
+### Changed
+
+* **The native extension is rewritten in Rust.** The C glue, the XPath engine,
+  the XML reader and the CSS lowering are now one Rust crate; the only C left is
+  the vendored Lexbor, still unpatched. The Ruby API is unchanged, and answers
+  were checked against the C build's recorded output as well as the existing
+  differential suites against Nokogiri.
+
+  * **Installing from source needs a Rust toolchain.** `cargo` (stable) and
+    libclang are required alongside CMake, and `rb_sys` becomes a runtime
+    dependency of the source gem, because its `extconf.rb` runs at install time.
+    The precompiled platform gems need none of this and do not depend on
+    `rb_sys`.
+  * **Faster.** Makiri now beats both Nokogiri and nokolexbor on every
+    `rake bench` row, parse included - previously ~1.25x slower than nokolexbor.
+    Source locations are stamped on the first `#line` or mutation rather than
+    during every parse, and the vendored Lexbor is built with link-time
+    optimization where the linker supports it (macOS; Linux with clang,
+    llvm-ar and lld; not Windows).
+  * **An internal failure is an exception, not a crash.** It used to end the
+    host process with SIGABRT. Now it unwinds on the thread that ran the call:
+    `ensure` blocks run and the process keeps working. On entry points that
+    handle input (parse, XPath, CSS, serialization, text) it is the new
+    **`Makiri::InternalError`**, which descends from `Exception`, not
+    `StandardError`, so a bare `rescue => e` does not swallow it; elsewhere it
+    is Ruby's `fatal`.
+  * **An XPath handler may not modify the document being evaluated.** Every
+    mutator on that document raises `Makiri::Error` while an evaluation with a
+    handler runs, because the evaluator holds names and values from it for the
+    whole walk.
+
+### Fixed
+
+* Reading text no longer crashes when a comment, processing instruction or text
+  node stands before the root element of a document without `<html>`.
+* A handler that evaluates again on its own `XPathContext` no longer leaves the
+  outer walk without its handler or with reset operation budgets.
+
 ## [0.9.0] - 2026-09-11
 
 ### Added

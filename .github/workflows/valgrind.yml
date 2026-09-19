@@ -9,10 +9,16 @@ on:
   # regressions within ~30 min without adding ~20 min to every PR. (It is gated to
   # main only, not pull_request, to keep PR latency low.)
   #
-  # The GC.stress job stays nightly-only (see its `if:` below): it is heavy and
-  # checks structural properties that do not vary by day-to-day churn.
+  # The GC.stress job also runs on pull requests (see its `if:` below). It was
+  # nightly-only on the reasoning that it checks structural properties that do
+  # not vary with day-to-day churn, but a schedule runs on the default branch
+  # only, so a branch could carry a GC-graph bug it never saw: the Rust port did
+  # (a VALUE stored in a wrapper struct before the wrap, freed by the GC there).
+  # It runs only the :gc_compact examples, so it is cheap enough for a PR.
+  # Valgrind memcheck stays off pull requests, as above.
   push:
     branches: [main, master]
+  pull_request:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -24,6 +30,8 @@ jobs:
   # (intra-arena overflows).  Runs on Linux because Valgrind is x86_64/amd64
   # Linux only.
   valgrind-memcheck:
+    # Post-merge and nightly; not on pull requests (see the note under `on:`).
+    if: github.event_name != 'pull_request'
     name: Valgrind memcheck (Ruby ${{ matrix.ruby }}, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -38,7 +46,7 @@ jobs:
       # overflows, use-after-move), not the property space - so the full
       # 300-iteration PBT sweep (already run by the normal CI matrix) is
       # overkill here and, multiplied by Valgrind's 10-50x slowdown, never
-      # finishes.  A handful of iterations exercises every C memory path while
+      # finishes.  A handful of iterations exercises every memory path while
       # keeping the run tractable.
       PBT_COUNT: "15"
       CSS_PBT_COUNT: "15"
@@ -61,6 +69,12 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -85,7 +99,7 @@ jobs:
   # structurally tests the borrowed-pointer discipline under the condition that
   # Ruby Strings actually move (compaction) and that every allocation triggers a
   # full GC cycle (stress).  Failures here are typically use-after-move or stale
-  # pointer bugs in the C extension or bridge layer.
+  # pointer bugs in the extension or bridge layer.
   #
   # Scope: only the examples tagged `:gc_compact` (the `memory safety` blocks in
   # css/xpath/serialize/mutation/source_location/xpath_handler/api_compat2 +
@@ -106,8 +120,8 @@ jobs:
   # of iterations; it runs in ci.yml and its GC-sensitive examples opt into
   # GC.stress themselves, so cross-thread interactions are covered there.
   gc-compact-stress:
-    # Nightly / on-demand only - not on push (the valgrind job is the post-merge
-    # gate; GC.stress is heavy and structural, so it does not need per-push runs).
+    # Pull requests, nightly and on demand - not on push (the valgrind job is the
+    # post-merge gate). See the note under `on:` for why pull requests.
     if: github.event_name != 'push'
     name: GC.auto_compact + GC.stress (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
@@ -132,6 +146,12 @@ jobs:
 
       - name: Ensure cmake is available
         uses: lukka/get-cmake@latest
+
+      # The extension is a Rust crate; cargo is part of the build now.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (bindgen, via rb-sys)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
