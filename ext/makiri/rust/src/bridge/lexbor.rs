@@ -605,6 +605,28 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> 
 }
 
 /// The XML arena behind a Document VALUE.
+/// The XML arena behind an XML Document, checked: `Err(TypeError)` for
+/// anything else, including a Document with no arena yet. For a receiver that
+/// has not been established as an XML Document - [`doc_of`] assumes it.
+pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
+    let d: &DocData = typed_data_ref(rb_doc, &XML_DOC_TYPE)?;
+    // SAFETY: a live Document's own handle, when it has one.
+    let arena = if d.parsed.is_null() {
+        core::ptr::null_mut()
+    } else {
+        unsafe { parsed_xml_doc(d.parsed) }
+    };
+    if arena.is_null() {
+        return Err(Error::new(
+            magnus::Ruby::get()
+                .expect("under the GVL")
+                .exception_type_error(),
+            "uninitialized XML document",
+        ));
+    }
+    Ok(arena)
+}
+
 pub fn doc_of(document: Value) -> *mut XmlDoc {
     // SAFETY: `doc_parsed_known` hands back the live handle of that Document.
     unsafe { parsed_xml_doc(doc_parsed_known(document)) }

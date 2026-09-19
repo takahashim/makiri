@@ -132,15 +132,6 @@ allows a single root element, and a sibling target must have a parent)"
 /* helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-/// The arena behind a node's document.
-fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
-    let document = xml_node_document(v)?;
-    // SAFETY: the handle of `v`'s own Document, which `v` keeps alive.
-    Ok(unsafe {
-        crate::bridge::lexbor::parsed_xml_doc(crate::bridge::lexbor::doc_parsed_known(document))
-    } as *mut XmlDoc)
-}
-
 /// A byte length as the arena's `uint32`, or an error.
 fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
     u32::try_from(len).map_err(|_| {
@@ -507,7 +498,7 @@ unsafe fn incoming_node(
     xd: *mut XmlDoc,
     target_doc: Value,
     arg: Value,
-) -> Result<(NodeId, Value), Error> {
+) -> Result<(NodeId, Option<Adoption>), Error> {
     if !is_a(arg, &CLASS_NODE) || !is_a(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(Error::new(
             ruby.exception_type_error(),
@@ -516,38 +507,41 @@ unsafe fn incoming_node(
     }
     let src = unwrap(arg)?;
     if xml_node_document(arg)?.as_raw() == target_doc.as_raw() {
-        return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
+        return Ok((src, None)); /* same arena -> move */
     }
     ensure_document_mutable(xml_node_document(arg)?)?;
     let mut copy: NodeId = NodeId::INVALID;
-    let src_doc = xdoc(arg)?;
+    let src_doc = doc(arg)?;
     // SAFETY: `xd` is the target arena and `src_doc` the source; they differ.
     xml_mut_check(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy) })?;
-    Ok((copy, arg))
+    Ok((copy, Some(Adoption { src_doc, src })))
 }
 
-/// Finish the adoption by emptying the node out of its old document.
-fn adopt_finish(arg: Value) {
-    if arg.is_nil() {
-        return;
-    }
-    let Ok(src) = unwrap(arg) else {
-        return;
-    };
-    let Ok(sdoc) = xdoc(arg) else {
-        return;
-    };
-    // SAFETY: `sdoc` is the arena of `arg`'s Document, which `arg` keeps alive,
-    // and `src` is its own node. No Ruby runs in the detaching below.
-    unsafe {
-        if (*sdoc).type_(src) == Some(NodeType::Fragment) {
-            while let Some(c) = (*sdoc).first_child(src) {
-                xml_remove(&mut *sdoc, c);
+/// A node copied in from another document, still to be taken out of it: the
+/// second half of the move `appendChild` performs across arenas. It carries
+/// the source arena and node `incoming_node` already resolved, so finishing
+/// cannot fail - there is nothing left to look up.
+struct Adoption {
+    src_doc: *mut XmlDoc,
+    src: NodeId,
+}
+
+impl Adoption {
+    /// Empty the node out of its old document.
+    ///
+    /// # Safety
+    /// `src_doc` must still be the live arena `incoming_node` found, which the
+    /// caller's argument keeps alive; no Ruby runs in between.
+    unsafe fn finish(self) {
+        let sdoc = &mut *self.src_doc;
+        if sdoc.type_(self.src) == Some(NodeType::Fragment) {
+            while let Some(c) = sdoc.first_child(self.src) {
+                xml_remove(sdoc, c);
             }
         } else {
-            xml_remove(&mut *sdoc, src);
+            xml_remove(sdoc, self.src);
         }
-        xml_name_index_invalidate(&mut *sdoc);
+        xml_name_index_invalidate(sdoc);
     }
 }
 
@@ -596,7 +590,10 @@ fn insert(ruby: &Ruby, this: XmlSelf, arg: Value, op: Op) -> Result<Value, Error
     if unsafe { (*xd).type_(node) } == Some(NodeType::Fragment) {
         // SAFETY: as above.
         let out = unsafe { splice_fragment(xd, target, node, doc_v, op)? };
-        adopt_finish(adopt_from);
+        // SAFETY: the source arena `incoming_node` resolved, kept alive by `arg`.
+        if let Some(a) = adopt_from {
+            unsafe { a.finish() };
+        }
         return Ok(out);
     }
 
@@ -610,7 +607,10 @@ fn insert(ruby: &Ruby, this: XmlSelf, arg: Value, op: Op) -> Result<Value, Error
         }
     };
     xml_mut_check(st)?;
-    adopt_finish(adopt_from);
+    // SAFETY: as above.
+    if let Some(a) = adopt_from {
+        unsafe { a.finish() };
+    }
     Ok(wrap(node, doc_v))
 }
 
@@ -720,7 +720,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         }
     }
 
-    let xd = xdoc(rb_self)?;
+    let xd = doc(rb_self)?;
     let (nv, _) = verified(ruby, name, c"element name")?;
     let mut el: NodeId = NodeId::INVALID;
     // SAFETY: the receiver's arena, and the view is live for the call.
@@ -765,7 +765,7 @@ pub fn create_loose_dom_element(
     local: Value,
     ns: Value,
 ) -> Result<Value, Error> {
-    let xd = xdoc(rb_self)?;
+    let xd = doc(rb_self)?;
     let (qv, _) = verified(ruby, qname, c"qualified name")?;
     let (lv, _) = verified(ruby, local, c"local name")?;
     let has_prefix = !prefix.is_nil();
@@ -792,7 +792,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let pub_v = a.optional.0.unwrap_or(nil);
     let sys_v = a.optional.1.unwrap_or(nil);
 
-    let xd = xdoc(rb_self)?;
+    let xd = doc(rb_self)?;
     let (nv, _) = verified(ruby, name, c"doctype name")?;
     let (pv, pl) = verified_opt(ruby, pub_v, c"doctype public id")?;
     let (sv, sl) = verified_opt(ruby, sys_v, c"doctype system id")?;
@@ -820,7 +820,7 @@ fn create_chardata(
     type_: NodeType,
     what: &core::ffi::CStr,
 ) -> Result<Value, Error> {
-    let xd = xdoc(rb_self)?;
+    let xd = doc(rb_self)?;
     let (tv, _) = verified(ruby, text, what)?;
     let mut n: NodeId = NodeId::INVALID;
     // SAFETY: the receiver's arena, and the view is the caller's for the copy.
@@ -840,7 +840,7 @@ pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Erro
 }
 
 pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
-    let xd = xdoc(rb_self)?;
+    let xd = doc(rb_self)?;
     let (tg, _) = verified(ruby, target, c"PI target")?;
     let (dt, _) = verified(ruby, data, c"PI data")?;
     let mut pi: NodeId = NodeId::INVALID;
@@ -856,16 +856,11 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let node_v = a.required.0;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
-    let xd = crate::bridge::lexbor::doc_parsed(rb_self)
-        .map(|p| {
-            // SAFETY: `p` is `rb_self`'s own handle, live while the receiver is.
-            unsafe { crate::bridge::lexbor::parsed_xml_doc(p) }
-        })
-        .unwrap_or(core::ptr::null_mut());
+    let xd = crate::bridge::lexbor::xml_doc_unwrap(rb_self)?;
     let mut copy: NodeId = NodeId::INVALID;
     match node_repr(node_v) {
         NodeRepr::Xml => {
-            let src_doc = xdoc(node_v)?;
+            let src_doc = doc(node_v)?;
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
