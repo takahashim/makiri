@@ -13,8 +13,6 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use core::ffi::c_void;
-
 use crate::falloc::VecPush;
 
 use crate::lexbor::abi::{LxbDoc, LxbNode};
@@ -26,10 +24,9 @@ use crate::lexbor::abi::{LxbDoc, LxbNode};
 use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
 use crate::lexbor::adapter::utf8_input::sanitize;
 
-/* The two fragment parsers. One is generated; the other is exported by Lexbor
- * but absent from its public headers, so `lexbor::abi` hand-declares it with the
- * rest of what bindgen cannot see. Everything this file does to the DOM itself
- * goes through `lexbor::adapter::html` - these are the parser, not the DOM. */
+/* The two fragment parsers, both generated. Everything this file does to the
+ * DOM itself goes through `lexbor::adapter::html` - these are the parser, not
+ * the DOM. */
 use crate::lexbor::abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
@@ -248,11 +245,11 @@ impl FragmentContext {
             FragmentContext::Element(el) => {
                 lxb_html_parse_fragment(parser.as_ptr(), el.as_ptr() as *mut _, src, len)
             }
-            /* The by-tag-id entry is hand-declared over opaque pointers (it is
-             * absent from Lexbor's public headers), so the casts are here. */
+            /* A document handle is untyped; this entry takes the HTML document
+             * it is. */
             FragmentContext::Tag { doc, tag, ns } => lxb_html_parse_fragment_by_tag_id(
-                parser.as_ptr() as *mut c_void,
-                doc.as_ptr(),
+                parser.as_ptr(),
+                doc.as_ptr().cast(),
                 tag,
                 ns,
                 src,

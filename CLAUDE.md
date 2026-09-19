@@ -424,10 +424,13 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
                            its XPath `Dom` instance
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
-                           the `_noi` twins, the ONE place a Lexbor function is
-                           declared (a second `extern "C"` spelling is a second
-                           Rust type for the symbol; `rake unsafe:boundaries`
-                           fails on one) - `adapter`, the one reader of
+                           functions (the `_noi` twins included), the ONE place
+                           a Lexbor function is declared (a second `extern "C"`
+                           spelling is a second Rust type for the symbol;
+                           `rake unsafe:boundaries` fails on one). Only the three
+                           exports no header declares are written by hand, and
+                           build.rs's `UNDECLARED_EXPORTS` fails the build if
+                           their C definitions change - `adapter`, the one reader of
                            Lexbor's DOM structs, plus the attr->owner index,
                            text index, source location and post-parse - and the
                            selectors/stylesheet/serialize/fragment facades, the
