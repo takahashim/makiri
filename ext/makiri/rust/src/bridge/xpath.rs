@@ -455,7 +455,7 @@ struct Bridge {
     /// Which backend the document is, for minting a handler's node token.
     kind: Kind,
     /// Every mutator on `document` refuses while this lives.
-    _reading: crate::bridge::doc::DocumentEvaluation,
+    _reading: crate::bridge::wrapper::DocumentEvaluation,
 }
 
 // The bridge holds `document`'s evaluation guard for as long as it exists,
@@ -873,7 +873,7 @@ pub fn evaluate_query(
             handler: handler.as_raw(),
             document: document.as_raw(),
             kind: ctx.token_kind(),
-            _reading: crate::bridge::doc::DocumentEvaluation::enter(document)?,
+            _reading: crate::bridge::wrapper::DocumentEvaluation::enter(document)?,
         })
     };
     let resolver = bridge.as_ref().map(|b| b as &dyn Resolver);

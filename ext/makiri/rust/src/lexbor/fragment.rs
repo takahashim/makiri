@@ -204,7 +204,7 @@ impl Emit {
 /// (`lexbor_abi::TransientDoc`), and a raise from here would longjmp past its
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
-pub unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
+unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
     let mut f = (*(root.as_ptr() as *mut LxbNode)).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
@@ -217,9 +217,10 @@ pub unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) 
     true
 }
 
-/// A fragment parsed in the context of an element, in the TRANSIENT document
-/// Lexbor builds for it - which destroying the parser does not free, so this
-/// owns it and frees it on drop, whatever happens in between.
+/// A fragment parsed in a context - an element, or a tag and namespace. With an
+/// element context it lives in a TRANSIENT document Lexbor builds for it, which
+/// destroying the parser does not free, so this owns it and frees it on drop,
+/// whatever happens in between (see `parse` for why only that context).
 ///
 /// Parsing and importing are separate steps so a caller can parse FIRST and
 /// change its tree only once the input has turned out to be usable:
@@ -232,14 +233,26 @@ pub struct TransientFragment {
 
 impl TransientFragment {
     /// # Safety
-    /// `context` must be a live element; `input` is only read.
+    /// `context`'s element or document must be live; `input` is only read.
     pub unsafe fn parse(
         input: &[u8],
         known_valid: bool,
-        context: RawNode,
+        context: &FragmentContext,
     ) -> Result<TransientFragment, FragmentError> {
-        let root = run_fragment_parser(input, known_valid, &FragmentContext::Element(context))?;
-        let _doc = crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode);
+        let root = run_fragment_parser(input, known_valid, context)?;
+        /* Only the element context gets a document of its own to free.
+         * `lxb_html_parse_fragment_chunk_begin` builds the fragment in
+         * `lxb_html_document_interface_create(owner)`: the element parser passes
+         * its fresh parser's tree document - NULL - so the result is standalone
+         * and must be destroyed here; the by-tag parser is handed the TARGET
+         * document, so its result is made inside that document's memory and
+         * destroying it would free the target's. */
+        let _doc = match context {
+            FragmentContext::Element(_) => {
+                crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode)
+            }
+            FragmentContext::Tag { .. } => None,
+        };
         Ok(TransientFragment { root, _doc })
     }
 
@@ -298,7 +311,7 @@ impl FragmentContext {
 /// The parser is destroyed on every path: the fragment tree belongs to its
 /// document, not the parser, so it survives - the caller may still read
 /// `root->owner_document` afterwards.
-pub unsafe fn run_fragment_parser(
+unsafe fn run_fragment_parser(
     input: &[u8],
     known_valid: bool,
     context: &FragmentContext,

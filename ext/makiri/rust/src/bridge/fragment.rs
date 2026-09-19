@@ -1,137 +1,218 @@
-//! The Ruby-facing half of fragment parsing: `Document#fragment(html,
-//! context:)`, `DocumentFragment.parse`, and `Node#parse`.
+//! HTML fragments: parsing a String in a context, and splicing the result.
 //!
-//! The Lexbor parser, the import primitives and the context tag lookup live in
-//! [`crate::lexbor::fragment`]; this layer resolves the Ruby `context:` argument
-//! (a node, a tag name, or nil) and wraps the fragment it builds.
+//! One pipeline for every entry - `Document#fragment`, `DocumentFragment.parse`,
+//! `Node#parse`, `inner_html=` and `outer_html=`. The input goes through
+//! [`HtmlSource`] (converted under protect, its encoding honoured), the parse
+//! into a [`TransientFragment`] that owns Lexbor's throwaway document, and
+//! nothing in the target document changes until the parse has succeeded. The
+//! Lexbor parsers and the import primitives are [`crate::lexbor::fragment`]'s;
+//! reading the Ruby arguments is the glue's.
 
 #![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::html::{html_node_unwrap, wrap_html_node};
-use crate::bridge::ruby::{error_class, is_kind_of};
-use crate::bridge::string::ruby_verified_text;
-use crate::bridge::string::HtmlSource;
-use crate::init::CLASS_NODE;
+use crate::bridge::ruby::{error_class, is_kind_of, string_of};
+use crate::bridge::string::{ruby_verified_text, HtmlSource};
+use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
+use crate::init::{CLASS_NODE, EXC_ERROR};
 use crate::lexbor::adapter::html::{
-    HtmlDoc, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG, TAG_UNDEF,
-    TYPE_ELEMENT,
+    HtmlDoc, HtmlNode, HtmlNodeMut, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG,
+    TAG_UNDEF, TYPE_ELEMENT,
 };
+use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::fragment::{
-    import_fragment_children, run_fragment_parser, tag_id_by_name, Emit, FragmentContext,
-    FragmentError,
+    tag_id_by_name, Emit, FragmentContext, FragmentError, TransientFragment,
 };
 
 /// A fragment-parse failure as `Makiri::Error`.
-pub fn fragment_error(e: FragmentError) -> Error {
+fn fragment_error(e: FragmentError) -> Error {
     Error::new(error_class(), e.message())
 }
 
-/// Resolve a fragment-parsing context - the element the HTML is parsed "inside
-/// of", per the WHATWG algorithm - into a tag id and namespace.
+/// The context a fragment is parsed "inside of", per the WHATWG algorithm, as
+/// the tag and namespace ids the parser takes - a pair that used to travel as
+/// two bare `usize`s, where swapping them compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FragmentTag {
+    pub tag: usize,
+    pub ns: usize,
+}
+
+impl FragmentTag {
+    /// `<body>` in the HTML namespace - the context when none is given.
+    pub const BODY: FragmentTag = FragmentTag {
+        tag: TAG_BODY,
+        ns: NS_HTML,
+    };
+
+    /// The context an element provides: its own tag and namespace.
+    pub fn of(el: HtmlNode<'_>) -> FragmentTag {
+        FragmentTag {
+            tag: el.tag_id(),
+            ns: el.ns_id(),
+        }
+    }
+}
+
+/// Resolve the Ruby `context:` argument against `document`.
 ///
 /// Matches Nokogiri's `context:`: nil is `<body>` in the HTML namespace; a node
 /// contributes its own tag and namespace (the only way to reach a foreign
 /// non-root context such as SVG `<desc>`); a String names an HTML-namespace tag,
-/// except "svg" / "math" which name the foreign roots.
-///
-/// `Err` for an unusable context.
-pub unsafe fn resolve_fragment_context(
-    doc: RawDoc,
+/// except "svg" / "math" which name the foreign roots. `Err` for an unusable one.
+pub fn resolve_fragment_context(
+    document: Value,
     context: Option<Value>,
-) -> Result<(usize, usize), Error> {
-    let Some(context) = context else {
-        return Ok((TAG_BODY, NS_HTML));
+) -> Result<FragmentTag, Error> {
+    let Some(context) = context.filter(|c| !c.is_nil()) else {
+        return Ok(FragmentTag::BODY);
     };
-    if context.is_nil() {
-        return Ok((TAG_BODY, NS_HTML));
-    }
 
     if is_kind_of(context, &CLASS_NODE) {
         /* Reject an XML node before any Lexbor use. */
-        let cn = html_node_unwrap(context)?.as_node();
+        // SAFETY: `unwrap` checked it is an HTML node, which `context` keeps
+        // alive for this call.
+        let cn = unsafe { html_node_unwrap(context)?.as_node() };
         if cn.node_type() != TYPE_ELEMENT {
             return Err(Error::new(
-                Ruby::get_unchecked().exception_arg_error(),
+                Ruby::get_with(context).exception_arg_error(),
                 "fragment context node must be an element",
             ));
         }
-        return Ok((cn.tag_id(), cn.ns_id()));
+        return Ok(FragmentTag::of(cn));
     }
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
     let cv = ruby_verified_text(context, c"fragment context element")?;
-    let name = cv.bytes();
+    let name = cv.as_verified().as_bytes();
     if name == b"svg" {
-        return Ok((TAG_SVG, NS_SVG));
+        return Ok(FragmentTag {
+            tag: TAG_SVG,
+            ns: NS_SVG,
+        });
     }
     if name == b"math" {
-        return Ok((TAG_MATH, NS_MATH));
+        return Ok(FragmentTag {
+            tag: TAG_MATH,
+            ns: NS_MATH,
+        });
     }
-    let tid = tag_id_by_name(doc, name);
-    if tid == TAG_UNDEF {
-        /* The C wrote `"...: %" PRIsVALUE`; `%.*s` over the verified bytes
-         * prints what PRIsVALUE printed for a String: its content. */
+    let tag = tag_id_by_name(html_doc_unwrap(document)?, name);
+    if tag == TAG_UNDEF {
         return Err(Error::new(
-            Ruby::get_unchecked().exception_arg_error(),
+            Ruby::get_with(context).exception_arg_error(),
             format!(
                 "unknown fragment context element: {}",
                 String::from_utf8_lossy(name)
             ),
         ));
     }
-    Ok((tid, NS_HTML))
+    Ok(FragmentTag { tag, ns: NS_HTML })
 }
 
-/// Parse `html` in the given context and build a DOCUMENT_FRAGMENT owned by
-/// `document`, so its nodes can be spliced into it.
-/// `document` is the wrapper the fragment is bound to (its keepalive), `doc` the
-/// Lexbor document already unwrapped from it.
-pub unsafe fn build_fragment_ctx(
-    ruby: &Ruby,
-    document: Value,
-    doc: RawDoc,
+/// Parse `rb_html` as a fragment in `context`. Nothing is changed yet: a String
+/// that fails to convert or parse leaves every document as it was.
+fn parse(rb_html: Value, context: &FragmentContext) -> Result<TransientFragment, Error> {
+    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
+    let html = string_of(rb_html)?.as_value();
+    let src = HtmlSource::from_ruby(html)?;
+    // SAFETY: the context's element or document is live (the callers below hold
+    // it), and the bytes are read by the parse alone, which runs no Ruby.
+    unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), context) }
+        .map_err(fragment_error)
+}
+
+/// Parse `rb_html` in the context of the element `context`, for
+/// `inner_html=` / `outer_html=`; splice it in with [`splice_fragment`].
+pub fn parse_fragment_in(
+    context: HtmlNode<'_>,
     rb_html: Value,
-    tag: usize,
-    ns: usize,
-) -> Result<Value, Error> {
+) -> Result<TransientFragment, Error> {
+    parse(rb_html, &FragmentContext::Element(RawNode::from(context)))
+}
+
+/// Where [`splice_fragment`] puts the fragment's children.
+#[derive(Clone, Copy)]
+pub enum Place {
+    /// As the last children of the node.
+    Append,
+    /// Just before the node, under its parent.
+    Before,
+}
+
+/// Import `frag`'s children into `at`'s document, placed by `place`.
+pub fn splice_fragment(
+    frag: TransientFragment,
+    at: HtmlNodeMut<'_>,
+    place: Place,
+) -> Result<(), Error> {
+    let node = RawNode::from(at.node());
+    let emit = match place {
+        Place::Append => Emit::Append(node),
+        Place::Before => Emit::Before(node),
+    };
+    // SAFETY: `at` is a live node the caller cleared for editing, and its
+    // document is the one the children go into.
+    if !unsafe { frag.import_into(at.node().owner_document_handle(), &emit) } {
+        return Err(Error::new(
+            error_class(),
+            "failed to import a fragment child",
+        ));
+    }
+    Ok(())
+}
+
+/// A DOCUMENT_FRAGMENT owned by `document`, holding `rb_html` parsed in the
+/// context `at`. The fragment node is made only once the parse has succeeded.
+pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Result<Value, Error> {
     /* A fragment's nodes are made in `document`: a change to it, refused while
      * an XPath evaluation with a handler reads it. */
-    crate::bridge::wrapper::ensure_document_mutable(document)?;
-    let html = ruby.into_value(rb_html.to_r_string()?);
+    ensure_document_mutable(document)?;
+    let doc = html_doc_unwrap(document)?;
+    let parsed = parse(
+        rb_html,
+        &FragmentContext::Tag {
+            doc,
+            tag: at.tag,
+            ns: at.ns,
+        },
+    )?;
 
-    /* SAFETY: a live document, for the length of this call. */
-    let frag = HtmlDoc::from_raw(doc.as_ptr() as *mut _).and_then(HtmlDoc::create_fragment);
+    // SAFETY: `document`'s live Lexbor document, for the length of this call.
+    let frag =
+        unsafe { HtmlDoc::from_raw(doc.as_ptr() as *mut _) }.and_then(HtmlDoc::create_fragment);
     let Some(frag) = frag else {
         return Err(Error::new(
             error_class(),
             "failed to create document fragment",
         ));
     };
-    let frag_node = RawNode::from(frag);
-
-    let src = HtmlSource::from_ruby(html)?;
-    let root = run_fragment_parser(
-        src.bytes(),
-        src.known_valid(),
-        &FragmentContext::Tag { doc, tag, ns },
-    )
-    .map_err(fragment_error)?;
-    drop(src);
-    if !import_fragment_children(doc, root, &Emit::Append(frag_node)) {
+    let frag = RawNode::from(frag);
+    // SAFETY: `frag` was just made in `doc`, which nothing else is editing.
+    if !unsafe { parsed.import_into(doc, &Emit::Append(frag)) } {
         return Err(Error::new(
             error_class(),
             "failed to import a fragment child",
         ));
     }
-    Ok(wrap_html_node(frag_node, document))
+    Ok(wrap_html_node(frag, document))
 }
 
-/// The `context:` keyword, or None.
-pub fn context_kwarg(ruby: &Ruby, kw: Option<magnus::RHash>) -> Option<Value> {
-    let h = kw?;
-    h.get(ruby.to_symbol("context"))
+/// The standalone fragment's backing document: a throwaway
+/// `<html><body></body></html>` shell, owned by the fragment's wrapper.
+pub fn fragment_shell_document() -> Result<Value, Error> {
+    const SHELL: &[u8] = b"<html><body></body></html>";
+    /* The wrapper first, while nothing needs freeing - see DocumentShell. */
+    let shell = DocumentShell::new(DocKind::Html);
+    // SAFETY: a static byte string; the parse copies what it needs.
+    let Some(parsed) = (unsafe { parse_html(SHELL.as_ptr(), SHELL.len(), true) }) else {
+        return Err(Error::new(
+            EXC_ERROR.exception(),
+            "failed to create fragment document",
+        ));
+    };
+    Ok(shell.install(parsed))
 }

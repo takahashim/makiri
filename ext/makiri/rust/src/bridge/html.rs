@@ -23,11 +23,9 @@ use crate::lexbor::adapter::html::{
 };
 use crate::lexbor::fragment::import_with_fixup;
 
-use crate::bridge::fragment::fragment_error;
-use crate::bridge::string::{HtmlSource, RubyData, RubyText};
+use crate::bridge::string::{RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlElementMut, ScratchElement, NS_UNDEF};
-use crate::lexbor::fragment::{Emit, TransientFragment};
 
 /* ---- the document's own bytes and text ---- */
 
@@ -548,50 +546,4 @@ pub fn create_doctype(
         )
     };
     doc.create_doctype(name, pub_id, sys_id).map(RawNode::from)
-}
-
-/* ---- fragments for inner_html= / outer_html= ---- */
-
-/// Parse `rb_html` as a fragment in the context of `context`. Nothing is
-/// changed yet: a String that fails to convert or parse leaves the tree as it
-/// was, and the caller splices the result in with [`splice_fragment`].
-pub fn parse_fragment_for(
-    context: HtmlNode<'_>,
-    rb_html: Value,
-) -> Result<TransientFragment, Error> {
-    /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
-    let html = crate::bridge::ruby::string_of(rb_html)?.as_value();
-    let src = HtmlSource::from_ruby(html)?;
-    // SAFETY: `context` is a live element, and the bytes are read by the parse
-    // alone, which runs no Ruby.
-    unsafe { TransientFragment::parse(src.bytes(), src.known_valid(), RawNode::from(context)) }
-        .map_err(fragment_error)
-}
-
-/// Where [`splice_fragment`] puts the fragment's children.
-#[derive(Clone, Copy)]
-pub enum Place {
-    /// As the last children of the node.
-    Append,
-    /// Just before the node, under its parent.
-    Before,
-}
-
-/// Import `frag`'s children into `at`'s document, placed by `place`.
-pub fn splice_fragment(
-    frag: TransientFragment,
-    at: HtmlNodeMut<'_>,
-    place: Place,
-) -> Result<(), Error> {
-    let node = RawNode::from(at.node());
-    let emit = match place {
-        Place::Append => Emit::Append(node),
-        Place::Before => Emit::Before(node),
-    };
-    // SAFETY: `at` is a live node the caller cleared for editing, and its
-    // document is the one the children go into.
-    if !unsafe { frag.import_into(at.node().owner_document_handle(), &emit) } {
-        return Err(err("failed to import a fragment child"));
-    }
-    Ok(())
 }

@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::fragment;
 use crate::bridge::wrapper::keepalive_document;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
@@ -64,15 +65,27 @@ fn doc_errors(_ruby: &Ruby, self_: Value) -> Value {
 /// `document.fragment(html, context: ...)` -> a DocumentFragment bound to this
 /// document. `context` defaults to `<body>`.
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::doc::fragment_in(ruby, args, || Ok(self_)))
+    crate::bridge::ruby::entry(|| fragment_from_args(ruby, args, || Ok(self_)))
+}
+
+/// `(html, context:)` from the argument list, parsed as a fragment bound to the
+/// document `document` supplies - the one thing the two entry points differ in.
+fn fragment_from_args(
+    ruby: &Ruby,
+    args: &[Value],
+    document: impl FnOnce() -> Result<Value, Error>,
+) -> Result<Value, Error> {
+    let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
+    let context = a.keywords.get(ruby.to_symbol("context"));
+    let document = document()?;
+    let at = fragment::resolve_fragment_context(document, context)?;
+    fragment::build_fragment(document, a.required.0, at)
 }
 
 /// `DocumentFragment.parse(html, context: ...)` -> a standalone fragment with
 /// its own backing document, kept alive by the fragment's wrapper.
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        crate::bridge::doc::fragment_in(ruby, args, crate::bridge::doc::fragment_shell_document)
-    })
+    crate::bridge::ruby::entry(|| fragment_from_args(ruby, args, fragment::fragment_shell_document))
 }
 
 /// `node.parse(html)` -> a NodeSet of nodes parsed as a fragment in this
@@ -88,9 +101,9 @@ fn node_parse(ruby: &Ruby, self_: Value, rb_html: Value) -> Result<Value, Error>
         };
         /* Only the context's tag and namespace ids are needed, read before the
          * fragment parse runs. */
-        let (tag, ns) = (context.node().tag_id(), context.node().ns_id());
+        let at = fragment::FragmentTag::of(context.node());
         let document = keepalive_document(self_)?;
-        let frag = crate::bridge::doc::build_fragment(ruby, document, rb_html, tag, ns)?;
+        let frag = fragment::build_fragment(document, rb_html, at)?;
         frag.funcall("children", ())
     })
 }

@@ -17,7 +17,7 @@ use magnus::{prelude::*, Error, Value};
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, TypedType};
 use crate::init::{CLASS_DOCUMENT, EXC_ERROR};
-use crate::lexbor::adapter::html::RawDoc;
+use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::model::Doc as XmlDoc;
 
@@ -233,6 +233,15 @@ pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
     Ok(html_doc_of(d))
 }
 
+/// The Lexbor document of `rb_doc`, a VALUE already known to be an HTML
+/// Document (a Document method's receiver), borrowed for as long as the caller
+/// borrows it.
+pub fn html_doc(rb_doc: &Value) -> HtmlDoc<'_> {
+    // SAFETY: a live HTML Document, kept alive by `rb_doc`, which the caller
+    // holds for the borrow.
+    unsafe { html_doc_known(*rb_doc).as_doc() }
+}
+
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
 pub fn html_doc_known(rb_doc: Value) -> RawDoc {
     html_doc_of(HTML_DOC_TYPE.get_known(&rb_doc))
@@ -359,4 +368,42 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
 /// Drop the DOM and text indexes so the next query rebuilds them.
 pub fn invalidate_indexes(rb_doc: Value) {
     with_parsed_known(rb_doc, |p| p.invalidate_indexes());
+}
+
+/* ------------------------------------------------------------------ *
+ * the evaluation guard                                                *
+ * ------------------------------------------------------------------ */
+
+/// Marks a document as read by an XPath evaluation that can run Ruby - one with
+/// a handler - for as long as it lives. Nested evaluations stack.
+///
+/// The engine borrows names, attribute values and index slices out of the
+/// document for the whole walk, and a handler runs arbitrary Ruby in the middle
+/// of it. Lexbor frees an attribute's old value when a new one is set
+/// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
+/// that edited the same document could leave the evaluator reading freed
+/// memory. Every mutator checks [`ensure_document_mutable`]
+/// first, so that borrow is never invalidated under a suspended walk.
+pub struct DocumentEvaluation(
+    /// The Document the count belongs to. Holding it is what keeps the parsed
+    /// handle valid: a guard lives on the machine stack, which Ruby's collector
+    /// scans, so the Document cannot be collected while one is alive.
+    Value,
+);
+
+impl DocumentEvaluation {
+    pub fn enter(rb_doc: Value) -> Result<Self, Error> {
+        with_parsed(rb_doc, |p| p.evaluating += 1)?;
+        Ok(DocumentEvaluation(rb_doc))
+    }
+}
+
+impl Drop for DocumentEvaluation {
+    fn drop(&mut self) {
+        with_parsed_known(self.0, |p| p.evaluating -= 1);
+        /* Read the Document here, so the guard demonstrably holds it: the field
+         * is there to keep it reachable, and a field nothing reads is one the
+         * compiler is free to treat as absent. */
+        core::hint::black_box(self.0);
+    }
 }

@@ -11,9 +11,10 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
+use crate::bridge::fragment::{parse_fragment_in, splice_fragment, Place};
 use crate::bridge::html::{
-    arg_node, edit, finish_insert, guard_doc_child_order, owning_doc, parse_fragment_for,
-    prepare_insert, splice_fragment, splice_or_insert, wrap_html_node, HtmlSelf, Insert, Place,
+    arg_node, edit, finish_insert, guard_doc_child_order, owning_doc, prepare_insert,
+    splice_or_insert, wrap_html_node, HtmlSelf, Insert,
 };
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
 use crate::bridge::wrapper::invalidate_indexes;
@@ -225,7 +226,7 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
     if node.node().node_type() != TYPE_ELEMENT {
         return Err(err("inner_html= requires an element"));
     }
-    let frag = parse_fragment_for(node.node(), rb_html)?;
+    let frag = parse_fragment_in(node.node(), rb_html)?;
 
     /* Only now that the input parsed: detach the existing children (the arena
      * reclaims them at document destroy) and put the new ones in. */
@@ -245,7 +246,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
         return Err(err("outer_html= requires a node with a parent element"));
     }
     let parent = parent.expect("checked just above");
-    let frag = parse_fragment_for(parent.node(), rb_html)?;
+    let frag = parse_fragment_in(parent.node(), rb_html)?;
     splice_fragment(frag, node, Place::Before)?;
     node.detach();
     invalidate_indexes(this.document);

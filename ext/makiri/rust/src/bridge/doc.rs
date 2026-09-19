@@ -1,5 +1,6 @@
-//! The Ruby <-> document seam: parsing a Document, its read-only accessors, the
-//! fragment pipeline, and cross-document import/clone.
+//! The HTML Document: parsing one, its read-only accessors, and import/clone.
+//! Fragments are `bridge::fragment`'s; the wrapper and its mutation gate are
+//! `bridge::wrapper`'s.
 //!
 //! The arena work is `lexbor`'s; what lives here is the part that must touch
 //! raw Ruby values and Lexbor handles together - copying the source out of a
@@ -19,13 +20,12 @@
 
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
-use crate::bridge::fragment::{build_fragment_ctx, context_kwarg, resolve_fragment_context};
 use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::ruby::value;
 use crate::bridge::string::HtmlSource;
 use crate::bridge::wrapper::{
-    ensure_document_mutable, html_doc_known, html_doc_unwrap, keepalive_document, node_repr,
-    DocKind, DocumentShell, NodeRepr, DOC_TYPE,
+    ensure_document_mutable, html_doc, html_doc_unwrap, keepalive_document, node_repr, DocKind,
+    DocumentShell, NodeRepr, DOC_TYPE,
 };
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
@@ -96,10 +96,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
 /// `Document#root`: the root Element node, or nil (unreachable today - the HTML
 /// parser inserts html/head/body even for empty input).
 pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Value {
-    // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call.
-    let root = unsafe { html_doc_known(rb_doc).as_doc() }
-        .as_node()
-        .document_root();
+    let root = html_doc(&rb_doc).as_node().document_root();
     let Some(root) = root else {
         return ruby.qnil().as_value();
     };
@@ -108,18 +105,14 @@ pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Value {
 
 /// `Document#title`: the document `<title>`, or `""`.
 pub fn document_title(ruby: &Ruby, rb_doc: Value) -> RString {
-    // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call.
-    let bytes = unsafe { html_doc_known(rb_doc).as_doc() }
-        .title()
-        .unwrap_or(&[]);
+    let bytes = html_doc(&rb_doc).title().unwrap_or(&[]);
     ruby.enc_str_new(bytes, ruby.utf8_encoding())
 }
 
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
 pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
-    // SAFETY: a live HTML Document, kept alive by `rb_doc` for this call.
-    let mode = unsafe { html_doc_known(rb_doc).as_doc() }.compat_mode();
+    let mode = html_doc(&rb_doc).compat_mode();
     ruby.integer_from_i64(mode).as_value()
 }
 
@@ -129,61 +122,6 @@ pub fn document_errors(rb_doc: Value) -> Value {
     let d: &crate::bridge::wrapper::DocData = DOC_TYPE.get_known(&rb_doc);
     // SAFETY: `d.errors` is the live Array the wrapper marks.
     unsafe { value(d.errors) }
-}
-
-/* ------------------------------------------------------------------ *
- * fragments                                                          *
- * ------------------------------------------------------------------ */
-
-/// The standalone fragment's backing document: a throwaway
-/// `<html><body></body></html>` shell, owned by the fragment's wrapper.
-pub fn fragment_shell_document() -> Result<Value, Error> {
-    const SHELL: &[u8] = b"<html><body></body></html>";
-    /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(DocKind::Html);
-    // SAFETY: a static byte string; the parse copies what it needs.
-    let Some(parsed) = (unsafe { parse_html(SHELL.as_ptr(), SHELL.len(), true) }) else {
-        return Err(Error::new(
-            EXC_ERROR.exception(),
-            "failed to create fragment document",
-        ));
-    };
-    Ok(shell.install(parsed))
-}
-
-/// The body the fragment entry points share: read `(html, context:)`, resolve
-/// the context against a document, and build the fragment in it.
-///
-/// The entry points differ in ONE thing - which document the fragment belongs
-/// to - so that is what `make_document` supplies.
-pub fn fragment_in(
-    ruby: &Ruby,
-    args: &[Value],
-    make_document: impl FnOnce() -> Result<Value, Error>,
-) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (), (), (), magnus::RHash, ()>(args)?;
-    let (html,) = a.required;
-    let context = context_kwarg(ruby, Some(a.keywords));
-    let document = make_document()?;
-    let doc = html_doc_unwrap(document)?;
-    // SAFETY: `doc` is `document`'s live Lexbor document for this call.
-    let (tag, ns) = unsafe { resolve_fragment_context(doc, context)? };
-    // SAFETY: as above; the fragment is bound to `document`.
-    unsafe { build_fragment_ctx(ruby, document, doc, html, tag, ns) }
-}
-
-/// Parse `html` as a fragment in the context named by `(tag, ns)` and return the
-/// fragment, owned by `document`.
-pub fn build_fragment(
-    ruby: &Ruby,
-    document: Value,
-    html: Value,
-    tag: usize,
-    ns: usize,
-) -> Result<Value, Error> {
-    let doc = html_doc_unwrap(document)?;
-    // SAFETY: `doc` is `document`'s live document; the fragment is bound to it.
-    unsafe { build_fragment_ctx(ruby, document, doc, html, tag, ns) }
 }
 
 /* ------------------------------------------------------------------ *
@@ -265,42 +203,4 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
         return Err(Error::new(EXC_ERROR.exception(), "failed to clone node"));
     };
     Ok(wrap_html_node(clone, document))
-}
-
-/* ------------------------------------------------------------------ *
- * the evaluation guard                                                *
- * ------------------------------------------------------------------ */
-
-/// Marks a document as read by an XPath evaluation that can run Ruby - one with
-/// a handler - for as long as it lives. Nested evaluations stack.
-///
-/// The engine borrows names, attribute values and index slices out of the
-/// document for the whole walk, and a handler runs arbitrary Ruby in the middle
-/// of it. Lexbor frees an attribute's old value when a new one is set
-/// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
-/// that edited the same document could leave the evaluator reading freed
-/// memory. Every mutator checks [`crate::bridge::wrapper::ensure_document_mutable`]
-/// first, so that borrow is never invalidated under a suspended walk.
-pub struct DocumentEvaluation(
-    /// The Document the count belongs to. Holding it is what keeps the parsed
-    /// handle valid: a guard lives on the machine stack, which Ruby's collector
-    /// scans, so the Document cannot be collected while one is alive.
-    Value,
-);
-
-impl DocumentEvaluation {
-    pub fn enter(rb_doc: Value) -> Result<Self, Error> {
-        crate::bridge::wrapper::with_parsed(rb_doc, |p| p.evaluating += 1)?;
-        Ok(DocumentEvaluation(rb_doc))
-    }
-}
-
-impl Drop for DocumentEvaluation {
-    fn drop(&mut self) {
-        crate::bridge::wrapper::with_parsed_known(self.0, |p| p.evaluating -= 1);
-        /* Read the Document here, so the guard demonstrably holds it: the field
-         * is there to keep it reachable, and a field nothing reads is one the
-         * compiler is free to treat as absent. */
-        core::hint::black_box(self.0);
-    }
 }
