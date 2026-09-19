@@ -81,7 +81,7 @@ jobs:
           test "$reports" -gt 0 || { echo "not ASan-instrumented"; exit 1; }
 
       - name: Restore corpus cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ext/makiri/rust/fuzz/corpus/${{ matrix.target }}
           key: cargo-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
