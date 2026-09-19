@@ -1,4 +1,4 @@
-//! XPath 1.0 recursive-descent parser (mkr_xpath_parse.c).
+//! XPath 1.0 recursive-descent parser.
 //!
 //! It builds the same AST as the CSS lowering, so the evaluator runs what either
 //! produces. A part under construction is ordinary owned data - a boxed operand,
@@ -35,7 +35,7 @@ type PResult<T = ()> = Result<T, Reported>;
 /// A name's optional prefix and its local part.
 type QualifiedName = (Option<Box<[u8]>>, Box<[u8]>);
 
-/// Report a lexer failure as an `mkr_xpath_error_t`. A free function because
+/// Report a lexer failure as the run's error. A free function because
 /// the very first token is lexed before there is a parser to hold it.
 fn lex_err(err: ErrSink, e: LexErr) -> Reported {
     match e {

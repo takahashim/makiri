@@ -20,7 +20,6 @@ use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;
 use crate::xpath::dom::*;
-use crate::xpath::limits::{Budget, Limits};
 use crate::xpath::msg::{Error, XP_ERR_OOM, XP_ERR_RUNTIME};
 
 /* The engine reads every node's type through the shared `NTYPE_*` encoding, so
@@ -280,9 +279,7 @@ fn skip_ns_decls(mut a: Option<HtmlAttr<'_>>) -> Option<HtmlAttr<'_>> {
 
 /// `evaluate with no document`.
 fn no_document() -> Error {
-    let budget = Budget::with_limits(Limits::DEFAULT);
-    let _ = crate::err_setf!(budget.sink(), XP_ERR_RUNTIME, "evaluate with no document");
-    budget.take_error()
+    Error::with(XP_ERR_RUNTIME, format_args!("evaluate with no document"))
 }
 
 /// A context over the HTML document behind `parsed`, with its element/attribute
@@ -311,13 +308,10 @@ pub unsafe fn context<'e>(
     /* Build it now, so an allocation failure is reported here rather than on
      * the first evaluate. Each evaluate still re-reads it through the handle. */
     if parsed.dom_index().is_none() {
-        let budget = Budget::with_limits(Limits::DEFAULT);
-        let _ = crate::err_setf!(
-            budget.sink(),
+        return Err(Error::with(
             XP_ERR_OOM,
-            "out of memory building the attribute index"
-        );
-        return Err(budget.take_error());
+            format_args!("out of memory building the attribute index"),
+        ));
     }
     let parsed: *mut HtmlParsed = parsed;
     Ok(Context::new(HtmlDom::new(doc, parsed), node))

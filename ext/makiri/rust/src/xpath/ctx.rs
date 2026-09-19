@@ -87,6 +87,20 @@ impl Names {
             .map(|e| e.uri.as_slice())
     }
 
+    /// The URI registered for `prefix`, or the RUNTIME error an expression
+    /// naming an unbound prefix gets - the one spelling of it, for name tests
+    /// and function calls alike.
+    pub fn resolve_prefix(&self, prefix: &[u8], err: ErrSink) -> Result<&[u8], Reported> {
+        self.lookup_ns(prefix).ok_or_else(|| {
+            crate::err_setf!(
+                err,
+                XP_ERR_RUNTIME,
+                "unknown namespace prefix '{}'",
+                super::msg::Bytes(prefix)
+            )
+        })
+    }
+
     /// The string bound to `$prefix:name` (`prefix` is `None` when unprefixed).
     pub fn variable_text(&self, prefix: Option<&[u8]>, name: &[u8]) -> Option<&[u8]> {
         self.vars
@@ -302,13 +316,10 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
     #[allow(clippy::result_large_err)]
     fn enter(&self) -> Result<Running<'_, 'd, D>, Error> {
         let Ok(names) = self.names.try_borrow() else {
-            let budget = Budget::with_limits(self.limits);
-            let _ = crate::err_setf!(
-                budget.sink(),
+            return Err(Error::with(
                 XP_ERR_INTERNAL,
-                "evaluate: the context is being changed"
-            );
-            return Err(budget.take_error());
+                format_args!("evaluate: the context is being changed"),
+            ));
         };
         self.evaluating.set(self.evaluating.get() + 1);
         Ok(Running { cx: self, names })
@@ -316,13 +327,10 @@ impl<'d, D: Dom<'d>> Context<'d, D> {
 
     /// The backend could not build the per-walk index: out of memory.
     fn index_error(&self) -> Error {
-        let budget = Budget::with_limits(self.limits);
-        let _ = crate::err_setf!(
-            budget.sink(),
+        Error::with(
             XP_ERR_OOM,
-            "out of memory building the attribute index"
-        );
-        budget.take_error()
+            format_args!("out of memory building the attribute index"),
+        )
     }
 
     /// The context node, resolved through the backend.

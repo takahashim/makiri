@@ -1,10 +1,10 @@
-//! XPath 1.0 lexer (mkr_xpath_lex.c).
+//! XPath 1.0 lexer.
 //!
 //! Context-free by design: the parser resolves the keywords that are names in
 //! one position and operators in another (`and`, `or`, `div`, `mod`, `node()`)
 //! by lookahead.
 //!
-//! The C version read the input only through a bounded reader (`mkr_span_t`), a
+//! The C version read the input only through a bounded span reader, a
 //! discipline the build lints for, because a raw cursor in a byte scanner is
 //! where out-of-bounds reads come from. Here the input is a slice and the cursor
 //! an index, so every read is checked by the language and the discipline needs
@@ -64,7 +64,7 @@ impl Token {
     }
 }
 
-/// What went wrong, for the parser to turn into an `mkr_xpath_error_t`.
+/// What went wrong, for the parser to turn into an [`Error`](super::msg::Error).
 pub enum LexErr {
     ExpectedNumber,
     UnterminatedString,

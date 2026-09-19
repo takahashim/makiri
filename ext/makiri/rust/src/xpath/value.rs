@@ -1,4 +1,4 @@
-//! The per-backend value model (mkr_xpath_value_body.h): node string-values
+//! The per-backend value model: node string-values
 //! (XPath 1.0 §5), the coercions that read a node-set's first node, document
 //! order, and the cached string-value lookup.
 //!

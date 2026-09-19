@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use core::ffi::c_int;
+use crate::xpath::msg::Status;
 
 use crate::xpath::limits::Budget;
 
@@ -29,7 +29,7 @@ enum Answer {
     Str(String),
     Num(f64),
     Bool(bool),
-    Err(c_int),
+    Err(Status),
 }
 
 impl PartialEq for Answer {
@@ -201,7 +201,7 @@ fn chain(ops: usize) -> String {
 ///
 /// Parse only: evaluating a tree this deep takes more stack than a debug build's
 /// test thread has, and what is being tested is where the tree stops being built.
-fn parse_status(expr: &str) -> Result<(), c_int> {
+fn parse_status(expr: &str) -> Result<(), Status> {
     let doc = xml_parse(DOC).expect("the fixture parses");
     let ctx = crate::xml::xpath::context(&doc, doc.doc_node());
     let mut budget = Budget::with_limits(ctx.limits());
@@ -271,7 +271,7 @@ fn walk_with_handler(nest: bool, max_eval_ops: usize) -> Answer {
     };
     match ctx.evaluate(&outer, Some(&nesting)) {
         Ok(XPathValue::NodeSet(set)) => Answer::Num(set.len() as f64),
-        Ok(_) => Answer::Err(-1),
+        Ok(_) => panic!("the outer evaluate answers a node-set"),
         Err(e) => Answer::Err(e.status),
     }
 }

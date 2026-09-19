@@ -55,7 +55,7 @@ pub struct TextIndex {
     /// reads `prefix[0]` rather than nothing.
     prefix: Vec<usize>,
     /// Container -> slice run.
-    runs: PtrTable<LxbNode, Run>,
+    runs: PtrTable<*const LxbNode, Run>,
 }
 
 #[inline]
@@ -143,7 +143,7 @@ impl TextIndex {
          * The run table was sized for exactly the containers pass 1 counted, so
          * a refused insert means the tree changed under us: fail closed. */
         let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1)?;
-        let slot = t.runs.insert(root.as_raw(), empty)?;
+        let slot = t.runs.insert(root.as_raw().cast_const(), empty)?;
         stack.push(Frame {
             child: root.first_child(),
             slot,
@@ -187,7 +187,9 @@ impl TextIndex {
                 t.prefix.push(total);
             } else if is_container(child) {
                 let start = t.slices.len() as u32;
-                let slot = t.runs.insert(child.as_raw(), Run { start, end: start })?;
+                let slot = t
+                    .runs
+                    .insert(child.as_raw().cast_const(), Run { start, end: start })?;
                 /* Reserve only when the stack is actually full. `mkr_push`
                  * consults the injection counter on EVERY call, so pushing
                  * unconditionally made each of a document's containers its own

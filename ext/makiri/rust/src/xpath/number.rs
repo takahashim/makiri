@@ -1,5 +1,5 @@
-//! The XPath 1.0 Number production, read and written (mkr_xpath_number.c for
-//! the read; the write is `string()`'s number rule, §4.2).
+//! The XPath 1.0 Number production, read and written (the write is `string()`'s
+//! number rule, §4.2).
 #![forbid(unsafe_code)]
 //!
 //! Both halves of one grammar, so they sit together: a change to what counts as

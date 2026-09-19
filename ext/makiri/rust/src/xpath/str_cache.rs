@@ -4,8 +4,8 @@
 
 use super::abi::*;
 use crate::err_setf;
-use crate::falloc::{try_vec_with_capacity, Reserve};
-use crate::ptr_table::ptr_hash;
+use crate::falloc::Reserve;
+use crate::ptr_table::PtrMap;
 use crate::token::Token;
 
 /// Where a string-value sits in the cache that returned it.
@@ -17,29 +17,23 @@ use crate::token::Token;
 pub struct TextId(usize);
 
 /// One evaluate's node string-value cache: an ordered store of the texts it
-/// built, plus a pointer-keyed open-addressing index into it.
+/// built, plus a token-keyed index into it.
 ///
 /// It owns every text it holds, and they go with it - there is nothing to
 /// clear by hand.
+#[derive(Default)]
 pub struct StrCache {
     entries: Vec<(Token, Text)>,
-    /// node pointer -> entry index + 1; 0 is an empty slot. Empty, or a power
-    /// of two at most half full.
-    buckets: Vec<usize>,
+    /// node token -> entry index.
+    index: PtrMap<Token, usize>,
     total_bytes: usize,
-}
-
-impl Default for StrCache {
-    fn default() -> Self {
-        StrCache::new()
-    }
 }
 
 impl StrCache {
     pub const fn new() -> StrCache {
         StrCache {
             entries: Vec::new(),
-            buckets: Vec::new(),
+            index: PtrMap::new(),
             total_bytes: 0,
         }
     }
@@ -47,21 +41,7 @@ impl StrCache {
     /// The cached text of `node`, if one is.
     #[inline]
     pub fn find(&self, node: Token) -> Option<TextId> {
-        if self.buckets.is_empty() {
-            return None;
-        }
-        let mask = self.buckets.len() - 1;
-        let mut j = (ptr_hash(node.as_ptr() as *const u8) as usize) & mask;
-        loop {
-            let slot = self.buckets[j];
-            if slot == 0 {
-                return None;
-            }
-            if self.entries[slot - 1].0 == node {
-                return Some(TextId(slot - 1));
-            }
-            j = (j + 1) & mask;
-        }
+        self.index.get(node).map(TextId)
     }
 
     /// The text `id` names.
@@ -100,57 +80,18 @@ impl StrCache {
         };
         budget.check_string_bytes(new_total)?;
 
-        /* Grow the index before committing. It rebuilds only from the entries
-         * already there, so the new entry goes in once nothing can fail. Load
-         * factor stays at or below 1/2. */
-        if self.buckets.is_empty() || (self.entries.len() + 1) * 2 > self.buckets.len() {
-            let new_cap = if self.buckets.is_empty() {
-                64
-            } else {
-                let Some(cap) = self.buckets.len().checked_mul(2) else {
-                    return Err(err_setf!(
-                        budget.sink(),
-                        XP_ERR_OOM,
-                        "node string cache index overflow"
-                    ));
-                };
-                cap
-            };
-            if self.reindex(new_cap).is_err() {
-                return Err(err_setf!(
-                    budget.sink(),
-                    XP_ERR_OOM,
-                    "out of memory indexing node string cache"
-                ));
-            }
-        }
-
+        /* Index before committing: a failed growth leaves the map as it was,
+         * and the entry push below cannot fail - it was reserved above. */
         let id = self.entries.len();
+        if self.index.insert(node, id).is_err() {
+            return Err(err_setf!(
+                budget.sink(),
+                XP_ERR_OOM,
+                "out of memory indexing node string cache"
+            ));
+        }
         self.total_bytes = new_total;
         self.entries.push((node, text));
-        self.index_put(id);
         Ok(TextId(id))
-    }
-
-    /// Replace the index with one of `cap` slots over the current entries.
-    fn reindex(&mut self, cap: usize) -> Result<(), ()> {
-        let mut buckets = try_vec_with_capacity(cap).ok_or(())?;
-        buckets.resize(cap, 0);
-        self.buckets = buckets;
-        for i in 0..self.entries.len() {
-            self.index_put(i);
-        }
-        Ok(())
-    }
-
-    /// Point a free slot at entry `i`. The index has room: it is at most half
-    /// full before this.
-    fn index_put(&mut self, i: usize) {
-        let mask = self.buckets.len() - 1;
-        let mut j = (ptr_hash(self.entries[i].0.as_ptr() as *const u8) as usize) & mask;
-        while self.buckets[j] != 0 {
-            j = (j + 1) & mask;
-        }
-        self.buckets[j] = i + 1;
     }
 }

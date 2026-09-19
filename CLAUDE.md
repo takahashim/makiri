@@ -365,8 +365,12 @@ by the check that concluded "every undefined symbol is legitimate".
 - **Lexbor's DOM structs are read only through `lexbor::adapter::html`'s typed
   handles** - the index builders included; its two tree writes are named
   (`HtmlAttr::backfill_parent`, `HtmlNode::stamp_source_offset`). Pointer-keyed
-  tables hash with `crate::ptr_table::ptr_hash`, and a fixed-size one is a
-  `PtrTable` rather than another hand-written probe loop.
+  tables hash with `crate::ptr_table::ptr_hash`, and are a `PtrTable` (sized
+  once) or a `PtrMap` (grows) rather than another hand-written probe loop; a
+  key that can be 0 (an XML token) supplies its own empty marker through
+  `TableKey`. An XPath step's name test is compiled once into a
+  `nodetest::CompiledTest` - where an unknown prefix is reported, via
+  `Names::resolve_prefix` - and axis walks report through `ControlFlow`.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
   ignores them; findings land in `spec/fuzz/regressions/` (gitignored).
 
@@ -715,8 +719,8 @@ Key decisions that got there, worth not regressing:
   and shared-context evaluate are crash-free under the GVL).
 - **`//tag` is served from the element index** (`xpath/step_index.rs`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
-  (`has_foreign` guard) and each candidate is re-checked with
-  `node_principal_match`, so the result is identical to the walk; custom/unknown
+  (`has_foreign` guard) and each candidate is re-checked with the step's
+  `CompiledTest`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
 - **The CSS engine is built once and reused** (`lexbor/selectors.rs`, see the
@@ -736,8 +740,8 @@ Key decisions that got there, worth not regressing:
   for non-indexed nodes. Do not regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
-- **String-value cache is hashed** (`xpath/str_cache.rs`): a pointer-keyed
-  open-addressing index over an ordered store, so per-node predicate compares
+- **String-value cache is hashed** (`xpath/str_cache.rs`): a token-keyed
+  `PtrMap` index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
   (`xpath::eval::Evaluation`), as do the op budget and the document-order
   index, so a nested (handler-triggered) evaluate gets its own and cannot
@@ -756,7 +760,7 @@ Key decisions that got there, worth not regressing:
   instead of materialising+sorting the whole set, the XPath analogue of at_css's
   `MATCH_FIRST`. Cost becomes O(position of first match): a front hit is ~µs
   (vs ~280µs full-eval), trailing/absent fall back to a full scan. Reuses
-  `node_principal_match` + the `[@attr]` matcher so it's **byte-identical to
+  the step's `CompiledTest` + the `[@attr]` matcher so it's **byte-identical to
   `xpath(e).first`** (asserted by `spec/at_xpath_first_spec.rb`). Anything else
   (positional predicates, functions/variables, reverse axes, unions, prefixes,
   longer paths) returns 0 from the recogniser → full evaluator. Only `at_xpath`

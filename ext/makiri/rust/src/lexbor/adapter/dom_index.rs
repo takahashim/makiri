@@ -51,7 +51,7 @@ use super::html::{
 
 pub struct DomIndex {
     /// attribute -> owner element.
-    owners: PtrTable<LxbAttr, *mut LxbNode>,
+    owners: PtrTable<*const LxbAttr, *mut LxbNode>,
 
     /// Every indexed element, grouped by tag id, in document order.
     tag_nodes: Vec<*mut LxbNode>,
@@ -143,7 +143,8 @@ pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
             cursor[tag] += 1;
         }
         for a in el.attrs() {
-            idx.owners.insert(a.raw(), el.node().as_raw())?;
+            idx.owners
+                .insert(a.raw().cast_const(), el.node().as_raw())?;
             /* Backfill the attribute's parent - see the module docs. */
             a.backfill_parent(el);
         }

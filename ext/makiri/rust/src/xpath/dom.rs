@@ -1,9 +1,8 @@
 //! The node-access contract the engine is written against.
 //!
-//! In C this is a pair of headers of `MKR_NODE_*` macros
-//! (mkr_xpath_node_access_{html,xml}.h) plus a prelude that `#include`s the
-//! engine bodies once per representation. That is monomorphization by
-//! preprocessor: it costs nothing at runtime (a runtime kind-branch measured
+//! The C engine this replaced bound its two representations with per-host
+//! macro headers, `#include`-ing the engine bodies once per representation.
+//! That is monomorphization by preprocessor: it costs nothing at runtime (a runtime kind-branch measured
 //! ~+150%), but nothing checks that the two bindings agree on what an operation
 //! means, or that the body only uses operations both provide.
 //!
@@ -99,8 +98,7 @@ pub trait Dom<'d>: Copy {
     fn prev(self, n: Self::Node) -> Option<Self::Node>;
     fn parent(self, n: Self::Node) -> Option<Self::Node>;
 
-    /* attributes (the C contract's MKR_ELEM_FIRST_ATTR / MKR_ATTR_NEXT). Only an
-     * element has any, so `first_attr` is also the element test; the rest take
+    /* attributes. Only an element has any, so `first_attr` is also the element test; the rest take
      * an attribute handle and do not test again. */
     fn first_attr(self, el: Self::Node) -> Option<Self::Attr>;
     fn attr_next(self, a: Self::Attr) -> Option<Self::Attr>;
@@ -179,9 +177,7 @@ pub trait Dom<'d>: Copy {
     /// lend those bytes. The XML node owns its value, but Lexbor builds a node's
     /// text content on demand and hands back an allocation the caller must free,
     /// so a borrowed return has nowhere to free it. Owning the append is the one
-    /// shape both can satisfy - and it is what the C contract says
-    /// (`MKR_NODE_APPEND_OWN_TEXT`, which is a statement, not an expression, for
-    /// exactly this reason).
+    /// shape both can satisfy.
     fn append_own_text(self, n: Self::Node, buf: &mut Buf) -> Result<(), BufError>;
 
     /// The document-level element index's answer for a document-rooted,

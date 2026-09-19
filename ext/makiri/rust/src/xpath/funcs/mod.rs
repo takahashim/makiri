@@ -1,18 +1,23 @@
-//! The built-in XPath 1.0 function library (mkr_xpath_funcs_body.h), plus the
+//! The built-in XPath 1.0 function library, plus the
 //! two Nokogiri-compatible builtins and the CSS lowering's internal hooks.
 //!
 //! One function per builtin behind one signature, and `lookup` is the only place
-//! that knows which names exist - the shape the C has as `fn_table` plus
-//! `mkr_lookup_function`. Keeping "does it exist" and "what does it do" as one
+//! that knows which names exist. Keeping "does it exist" and "what does it do" as one
 //! question matters here: the evaluator asks before deciding whether to route a
 //! call to a Ruby handler, so a second list of names maintained separately could
 //! disagree with this one and turn an unknown function into a bare failure.
 //!
-//! The host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
+//! Where HTML and XML differ (`id()`, `lang()`), the function asks the host's
+//! policy item on `Dom` rather than which host it is.
 
 #![forbid(unsafe_code)]
 
+/// The functions beyond XPath 1.0's library: the Nokogiri builtins and the
+/// CSS lowering's internal hooks.
+mod ext;
+
 use super::abi::*;
+use super::axis::walk_descendants;
 use super::dom::*;
 use super::eval::Evaluation;
 use super::order::nodeset_unique_sorted;
@@ -20,6 +25,7 @@ use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
+use core::ops::ControlFlow;
 
 /// Names the CSS lowering EMITS and the evaluator RESOLVES for an untyped
 /// `:*-of-type`, where the "type" is the element's own expanded name - a
@@ -45,7 +51,7 @@ pub type FnResult<T = ()> = Result<T, Reported>;
 /// receiving it still clears it.
 pub type Answer<N> = FnResult<Val<N>>;
 
-/// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
+/// Every built-in has this shape. The engine owns
 /// `args` and clears them after the call.
 pub type FnImpl<'e, 'd, D> = fn(
     &mut Evaluation<'e, 'd, D>,
@@ -67,8 +73,8 @@ pub fn lookup<'e, 'd, D: Dom<'d>>(
             return None;
         }
         let f: FnImpl<'e, 'd, D> = match local {
-            b"css-class" => fn_css_class::<D> as FnImpl<'e, 'd, D>,
-            b"local-name-is" => fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
+            b"css-class" => ext::fn_css_class::<D> as FnImpl<'e, 'd, D>,
+            b"local-name-is" => ext::fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
             _ => return None,
         };
         return Some(f);
@@ -109,8 +115,8 @@ pub fn lookup<'e, 'd, D: Dom<'d>>(
         /* The CSS lowering's internal hooks. Registered for every host: their
          * names begin with \x01, which no expression can spell, so only the
          * lowering reaches them - and it runs only for XML today. */
-        _ if local == FN_OF_TYPE_POS => fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
-        _ if local == FN_OF_TYPE_POS_LAST => fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
+        _ if local == FN_OF_TYPE_POS => ext::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
+        _ if local == FN_OF_TYPE_POS_LAST => ext::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
         _ => return None,
     };
     Some(f)
@@ -318,29 +324,20 @@ fn find_by_id<'e, 'd, D: Dom<'d>>(
     if id.is_empty() {
         return Ok(None);
     }
-    let mut n = root;
-    loop {
-        budget.charge_op()?;
+    /* `root` is the document node, never an element, so its descendants are
+     * every element there is. */
+    let flow = walk_descendants::<D, _, _>(doc, root, &mut |n| {
+        if let Err(e) = budget.charge_op() {
+            return ControlFlow::Break(Err(e));
+        }
         if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, id_attr) == Some(id) {
-            return Ok(Some(n));
+            return ControlFlow::Break(Ok(n));
         }
-        if let Some(c) = doc.first_child(n) {
-            n = c;
-            continue;
-        }
-        loop {
-            if n == root {
-                return Ok(None);
-            }
-            if let Some(s) = doc.next(n) {
-                n = s;
-                break;
-            }
-            match doc.parent(n) {
-                Some(p) => n = p,
-                None => return Ok(None),
-            }
-        }
+        ControlFlow::Continue(())
+    });
+    match flow {
+        ControlFlow::Continue(()) => Ok(None),
+        ControlFlow::Break(found) => found.map(Some),
     }
 }
 
@@ -357,7 +354,10 @@ fn id_collect<'e, 'd, D: Dom<'d>>(
 ) -> FnResult {
     let doc = ev.doc;
     let budget = &mut ev.budget;
-    for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
+    for tok in s
+        .split(|&b| crate::xpath::lex::is_ws(b))
+        .filter(|t| !t.is_empty())
+    {
         if let Some(hit) = find_by_id::<D>(doc, root, id_attr, tok, budget)? {
             out.push(hit, budget)?;
         }
@@ -671,7 +671,7 @@ fn fn_normalize_space<'e, 'd, D: Dom<'d>>(
         let mut w = 0usize;
         let mut in_space = true;
         for &c in src {
-            if super::lex::is_ws(c) {
+            if crate::xpath::lex::is_ws(c) {
                 if !in_space && w > 0 {
                     dst[w] = b' ';
                     w += 1;
@@ -945,110 +945,4 @@ fn fn_round<'e, 'd, D: Dom<'d>>(
     args: &[Val<D::Node>],
 ) -> Answer<D::Node> {
     num1::<D, _>(ev, args, "round", round_half_up)
-}
-
-/* ---------- the Nokogiri builtins ---------- */
-
-/// css-class(haystack, needle): true iff `needle` is a whitespace-separated
-/// token of `haystack`. Kept behaviour-identical to libxml2's builtin_css_class,
-/// including the NULL ordering - a NULL haystack is a non-match even for an
-/// empty needle.
-fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
-    let (hay, val) = match (hay, val) {
-        (Some(h), Some(v)) => (h, v),
-        _ => return false,
-    };
-    if val.is_empty() {
-        return true; /* libxml2 returns non-NULL for an empty val */
-    }
-    hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
-}
-
-fn fn_css_class<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    _focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "nokogiri-builtin:css-class")?;
-    two::<D, _>(ev, args, |hay, needle| {
-        boolean(ws_token_match(Some(hay), Some(needle)))
-    })
-}
-
-/// local-name-is(name): true iff the context node's qualified name (for HTML the
-/// lowercase local name) equals the argument.
-fn fn_local_name_is<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    let doc = ev.doc;
-    arity(
-        args.len(),
-        1,
-        1,
-        err.clone(),
-        "nokogiri-builtin:local-name-is",
-    )?;
-    let want = to_text::<D>(&args[0], ev)?;
-    boolean(
-        focus
-            .node
-            .is_some_and(|n| doc.qualified_name(n) == want.as_slice()),
-    )
-}
-
-/* ---------- the CSS-lowered of-type hooks (XML only) ---------- */
-
-/// Two elements are the same "type" iff they share an expanded name: local name
-/// plus namespace URI.
-fn same_type<'e, 'd, D: Dom<'d>>(a: D::Node, b: D::Node, doc: D) -> bool {
-    doc.local_name(a) == doc.local_name(b) && doc.ns_uri(a) == doc.ns_uri(b)
-}
-
-/// The 1-based position of `node` among its same-type element siblings: forward
-/// counts the preceding siblings, otherwise the following ones (from the end).
-fn of_type_pos<'e, 'd, D: Dom<'d>>(node: Option<D::Node>, forward: bool, doc: D) -> f64 {
-    let Some(node) = node else {
-        return 0.0;
-    };
-    if doc.node_type(node) != NTYPE_ELEMENT {
-        return 0.0;
-    }
-    let step = |n: D::Node| {
-        if forward {
-            doc.prev(n)
-        } else {
-            doc.next(n)
-        }
-    };
-    let mut pos = 1i64;
-    let mut s = step(node);
-    while let Some(n) = s {
-        if doc.node_type(n) == NTYPE_ELEMENT && same_type::<D>(node, n, doc) {
-            pos += 1;
-        }
-        s = step(n);
-    }
-    pos as f64
-}
-
-fn fn_of_type_pos<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    focus: &Focus<'d, D>,
-    _args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let doc = ev.doc;
-    number(of_type_pos::<D>(focus.node, true, doc))
-}
-
-fn fn_of_type_pos_last<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    focus: &Focus<'d, D>,
-    _args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let doc = ev.doc;
-    number(of_type_pos::<D>(focus.node, false, doc))
 }
