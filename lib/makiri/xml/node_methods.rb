@@ -2,12 +2,19 @@
 
 module Makiri
   module XML
-    # Ruby additions over the C-defined XML node readers, mirroring
+    # Ruby additions over the native XML node readers, mirroring
     # Makiri::HTML::NodeMethods so the XML node surface matches the HTML one for
     # the methods consumers (e.g. Dommy) rely on. Each is guarded with
     # `method_defined?` so a future native implementation on this module takes
     # precedence rather than being shadowed.
     module NodeMethods
+      # The HTML surface's aliases, for the same readers.
+      alias_method :attr, :[]
+      alias_method :get_attribute, :[]
+      alias_method :node_name, :name
+      alias_method :node_name=, :name=
+      alias_method :type, :node_type
+
       # Element ancestors, nearest first, excluding self (element nodes only) —
       # matching Makiri::HTML's #ancestors.
       unless method_defined?(:ancestors)

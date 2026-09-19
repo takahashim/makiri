@@ -15,7 +15,7 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt, with_arena_mut, wrap,
-    xml_mut_check, xml_wrap_rel_value, XmlSelf,
+    xml_mut_check, xml_mut_result, xml_wrap_rel_value, XmlSelf,
 };
 use crate::init::CLASS_XML_DOCUMENT;
 use crate::xml::api::{
@@ -64,11 +64,9 @@ pub fn aset(_ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Valu
     let nv = verified_text(name, c"attribute name")?;
     let vv = verified_text(val, c"attribute value")?;
     let (name, value) = (nv.as_verified().as_bytes(), vv.as_verified().as_bytes());
-    let mut out = NodeId::INVALID;
-    let st = with_arena_mut(this.document, |d| {
-        xml_set_attribute(d, n, name, value, &mut out)
-    })?;
-    xml_mut_check(st)?;
+    xml_mut_result(with_arena_mut(this.document, |d| {
+        xml_set_attribute(d, n, name, value)
+    })?)?;
     Ok(val)
 }
 
@@ -89,11 +87,9 @@ pub fn set_attribute_ns(
         qv.as_verified().as_bytes(),
         vv.as_verified().as_bytes(),
     );
-    let mut out = NodeId::INVALID;
-    let st = with_arena_mut(this.document, |d| {
-        xml_set_attribute_ns(d, n, ns, qname, value, &mut out)
-    })?;
-    xml_mut_check(st)?;
+    xml_mut_result(with_arena_mut(this.document, |d| {
+        xml_set_attribute_ns(d, n, ns, qname, value)
+    })?)?;
     Ok(val)
 }
 
@@ -191,11 +187,10 @@ pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
-    let mut out = NodeId::INVALID;
-    xml_mut_check(with_arena_mut(this.document, |d| {
-        xml_clone_node(d, this.id, deep, &mut out)
+    let copy = xml_mut_result(with_arena_mut(this.document, |d| {
+        xml_clone_node(d, this.id, deep)
     })?)?;
-    Ok(xml_wrap_rel_value(this, out))
+    Ok(xml_wrap_rel_value(this, copy))
 }
 
 /* ------------------------------------------------------------------ */
@@ -219,10 +214,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     let nv = verified_text(name, c"element name")?;
     let cv = verified_text_opt(content, c"element content")?;
     let (name, text) = (nv.as_verified().as_bytes(), cv.as_verified().as_bytes());
-    let mut el = NodeId::INVALID;
-    xml_mut_check(with_arena_mut(rb_self, |d| {
-        xml_new_element(d, name, &mut el)
-    })?)?;
+    let el = xml_mut_result(with_arena_mut(rb_self, |d| xml_new_element(d, name))?)?;
     if !content.is_nil() {
         xml_mut_check(with_arena_mut(rb_self, |d| xml_set_content(d, el, text))?)?;
     }
@@ -273,9 +265,8 @@ pub fn create_loose_dom_element(
     )
     .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
     let ns = nv.as_verified().as_bytes();
-    let mut el = NodeId::INVALID;
-    xml_mut_check(with_arena_mut(rb_self, |d| {
-        xml_new_loose_dom_element(d, qname, sp, ns, &mut el)
+    let el = xml_mut_result(with_arena_mut(rb_self, |d| {
+        xml_new_loose_dom_element(d, qname, sp, ns)
     })?)?;
     Ok(wrap(el, rb_self))
 }
@@ -296,9 +287,8 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         (pv.len() != 0).then(|| pv.as_verified().as_bytes()),
         (sv.len() != 0).then(|| sv.as_verified().as_bytes()),
     );
-    let mut dt = NodeId::INVALID;
-    xml_mut_check(with_arena_mut(rb_self, |d| {
-        xml_new_document_type(d, name, pub_id, sys_id, &mut dt)
+    let dt = xml_mut_result(with_arena_mut(rb_self, |d| {
+        xml_new_document_type(d, name, pub_id, sys_id)
     })?)?;
     Ok(wrap(dt, rb_self))
 }
@@ -312,9 +302,8 @@ fn create_chardata(
 ) -> Result<Value, Error> {
     let tv = verified_text(text, what)?;
     let bytes = tv.as_verified().as_bytes();
-    let mut n = NodeId::INVALID;
-    xml_mut_check(with_arena_mut(rb_self, |d| {
-        xml_new_chardata(d, type_, bytes, &mut n)
+    let n = xml_mut_result(with_arena_mut(rb_self, |d| {
+        xml_new_chardata(d, type_, bytes)
     })?)?;
     Ok(wrap(n, rb_self))
 }
@@ -333,10 +322,7 @@ pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Re
     let tg = verified_text(target, c"PI target")?;
     let dt = verified_text(data, c"PI data")?;
     let (target, data) = (tg.as_verified().as_bytes(), dt.as_verified().as_bytes());
-    let mut pi = NodeId::INVALID;
-    xml_mut_check(with_arena_mut(rb_self, |d| {
-        xml_new_pi(d, target, data, &mut pi)
-    })?)?;
+    let pi = xml_mut_result(with_arena_mut(rb_self, |d| xml_new_pi(d, target, data))?)?;
     Ok(wrap(pi, rb_self))
 }
 

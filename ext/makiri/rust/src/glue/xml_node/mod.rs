@@ -1,43 +1,45 @@
-//! The XML node: wrapping and unwrapping an arena node, and every method that
-//! answers from the tree without writing to it - name and namespace, the DTD
-//! identifiers, namespace introspection, content, navigation and attributes.
+//! The XML node surface: the readers (`read`), namespace introspection (`ns`),
+//! mutation and the document factories (`mutate`), and `#to_xml` /
+//! `#canonicalize` (`serialize`), registered on `Makiri::XML::NodeMethods`.
 //!
-//! The writing half is in the submodules: `mutate` (mutation and the document
-//! factories) and `serialize` (`#to_xml`, `#canonicalize`).
-//!
-//! Nothing here touches Lexbor. The node layout comes from `crate::xml::model`,
-//! the XML engine's own declaration, so no offset or type constant is restated.
+//! Nothing here touches Lexbor, and nothing restates the node layout: the arena
+//! is `crate::xml`'s, reached through the seam in `crate::bridge::xml`.
 
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
-pub mod abi;
 pub mod mutate;
 pub mod ns;
 pub mod read;
 pub mod serialize;
+pub mod strings;
 
-use magnus::{method, prelude::*, RClass, Ruby};
+use magnus::{method, prelude::*, RClass, RModule};
 
-use self::abi::*;
-use crate::init::{CLASS_DOCUMENT, CLASS_NODE_SET};
+use crate::glue::node::{node_equals, node_hash, node_pointer_id};
+use crate::init::{CLASS_XML_DOCUMENT, CLASS_XML_DOCUMENT_TYPE, MOD_XML_NODE_METHODS};
 
-/* The wrapper, the front door, the arena accessors and the mutators live in the
- * Ruby <-> XML-arena seam (`bridge::xml`); this module re-exports them for its
- * submodules and the rest of the glue. */
-pub use crate::bridge::xml::{unwrap, wrap, xml_wrap_rel_value, XmlSelf};
+/* The wrapper and the receiver handle live in the Ruby <-> XML-arena seam
+ * (`bridge::xml`). */
+pub use crate::bridge::xml::{wrap, XmlSelf};
 
-pub use crate::glue::node::node_equals;
-pub use crate::glue::node::node_hash;
-pub use crate::glue::node::node_pointer_id;
+fn node_methods() -> RModule {
+    RModule::from_value(MOD_XML_NODE_METHODS.value()).expect("Makiri::XML::NodeMethods")
+}
 
-/// `init_xml_node_read` - the same entry point `init_xml_node` calls.
+/// The whole XML node surface.
 ///
 /// # Safety
 /// From `Init_makiri`, after the classes exist.
-pub fn init_xml_node_read() {
-    let ruby = Ruby::get().expect("init runs on the Ruby thread");
-    let m = magnus::RModule::from_value(MOD_XML_NODE_METHODS.value())
-        .expect("Makiri::XML::NodeMethods");
+pub fn init_xml_node() {
+    serialize::init_xml_node_serialize();
+    init_read();
+    init_ns();
+    init_mutate();
+}
+
+/// The readers - names, content, navigation, attributes - and identity.
+fn init_read() {
+    let m = node_methods();
 
     m.define_method("name", method!(read::name, 0))
         .expect("#name");
@@ -47,48 +49,12 @@ pub fn init_xml_node_read() {
         .expect("#prefix");
     m.define_method("namespace_uri", method!(read::namespace_uri, 0))
         .expect("#namespace_uri");
+    m.define_method("tag_name", method!(read::tag_name, 0))
+        .expect("#tag_name");
+    m.define_method("target", method!(read::pi_target, 0))
+        .expect("#target");
     m.define_method("node_type", method!(read::node_type, 0))
         .expect("#node_type");
-
-    /* Namespace introspection, plus the (prefix, href) value object it hands back. */
-    let m_xml = magnus::RModule::from_value(MOD_XML.value()).expect("Makiri::XML");
-    let ns_class: RClass = m_xml
-        .define_class("Namespace", ruby.class_object())
-        .expect("Makiri::XML::Namespace");
-    ns::set_namespace_class(ns_class);
-    ns_class
-        .define_method("prefix", method!(ns::ns_prefix, 0))
-        .expect("Namespace#prefix");
-    ns_class
-        .define_method("href", method!(ns::ns_href, 0))
-        .expect("Namespace#href");
-    ns_class
-        .define_method("to_s", method!(ns::ns_href, 0))
-        .expect("Namespace#to_s");
-    ns_class
-        .define_method("==", method!(ns::ns_equal, 1))
-        .expect("Namespace#==");
-    ns_class
-        .define_method("eql?", method!(ns::ns_equal, 1))
-        .expect("Namespace#eql?");
-    ns_class
-        .define_method("hash", method!(ns::ns_hash, 0))
-        .expect("Namespace#hash");
-    ns_class
-        .define_method("inspect", method!(ns::ns_inspect, 0))
-        .expect("Namespace#inspect");
-
-    m.define_method("namespace", method!(ns::namespace, 0))
-        .expect("#namespace");
-    m.define_method(
-        "namespace_definitions",
-        method!(ns::namespace_definitions, 0),
-    )
-    .expect("#namespace_definitions");
-    m.define_method("namespaces", method!(ns::namespaces, 0))
-        .expect("#namespaces");
-    m.define_method("collect_namespaces", method!(ns::collect_namespaces, 0))
-        .expect("#collect_namespaces");
 
     for name in ["content", "text", "inner_text"] {
         m.define_method(name, method!(read::content, 0))
@@ -109,16 +75,30 @@ pub fn init_xml_node_read() {
         m.define_method(name, method!(read::previous, 0))
             .expect("#previous");
     }
+    m.define_method("next_element", method!(read::next_element, 0))
+        .expect("#next_element");
+    m.define_method("previous_element", method!(read::previous_element, 0))
+        .expect("#previous_element");
     m.define_method("child", method!(read::first_child, 0))
         .expect("#child");
-    m.define_method("last_element_child", method!(read::last_child, 0))
-        .expect("#last_element_child");
     m.define_method("children", method!(read::children, 0))
         .expect("#children");
-    m.define_method("element_children", method!(read::element_children, 0))
-        .expect("#element_children");
+    for name in ["element_children", "elements"] {
+        m.define_method(name, method!(read::element_children, 0))
+            .expect("#element_children");
+    }
+    m.define_method("first_element_child", method!(read::first_element_child, 0))
+        .expect("#first_element_child");
+    m.define_method("last_element_child", method!(read::last_element_child, 0))
+        .expect("#last_element_child");
 
-    m.define_method("[]", method!(read::aref, 1)).expect("#[]");
+    for name in ["[]", "attribute_value_by_qualified_name"] {
+        m.define_method(name, method!(read::aref, 1)).expect("#[]");
+    }
+    m.define_method("keys", method!(read::keys, 0))
+        .expect("#keys");
+    m.define_method("values", method!(read::values, 0))
+        .expect("#values");
     m.define_method("attribute_nodes", method!(read::attribute_nodes, 0))
         .expect("#attribute_nodes");
     m.define_method(
@@ -126,17 +106,12 @@ pub fn init_xml_node_read() {
         method!(read::attribute_by_qualified_name, 1),
     )
     .expect("#attribute_by_qualified_name");
-    m.define_method(
-        "attribute_value_by_qualified_name",
-        method!(read::attribute_value_by_qualified_name, 1),
-    )
-    .expect("#attribute_value_by_qualified_name");
 
     /* Node identity by the underlying pointer, so #path, NodeSet dedup, Set and
      * Hash all work - the same contract HTML nodes have, from the same code. */
-    m.define_method("==", method!(node_equals, 1)).expect("#==");
-    m.define_method("eql?", method!(node_equals, 1))
-        .expect("#eql?");
+    for name in ["==", "eql?"] {
+        m.define_method(name, method!(node_equals, 1)).expect("#==");
+    }
     m.define_method("hash", method!(node_hash, 0))
         .expect("#hash");
     m.define_method("pointer_id", method!(node_pointer_id, 0))
@@ -152,27 +127,32 @@ pub fn init_xml_node_read() {
     }
     dt.define_method("system_id", method!(read::dtd_system_id, 0))
         .expect("#system_id");
-
-    let _ = (CLASS_DOCUMENT.raw(), CLASS_NODE_SET.raw());
 }
 
-/// `init_xml_node` - the whole XML node surface, once the mutation half is
-/// Rust too. Until then `glue/ruby_xml_node.c` provides it and calls the reader
-/// half's entry point above.
-///
-/// # Safety
-/// From `Init_makiri`.
-pub fn init_xml_node() {
-    /* Serialization: #to_xml / #canonicalize, and the refused HTML ones. */
-    init_xml_node_serialize();
-    init_xml_node_read();
+/// Namespace introspection. The `Makiri::XML::Namespace` it hands back is
+/// defined in Ruby.
+fn init_ns() {
+    let m = node_methods();
+    m.define_method("namespace", method!(ns::namespace, 0))
+        .expect("#namespace");
+    m.define_method(
+        "namespace_definitions",
+        method!(ns::namespace_definitions, 0),
+    )
+    .expect("#namespace_definitions");
+    m.define_method("namespaces", method!(ns::namespaces, 0))
+        .expect("#namespaces");
+    m.define_method("collect_namespaces", method!(ns::collect_namespaces, 0))
+        .expect("#collect_namespaces");
+}
 
-    let m = magnus::RModule::from_value(MOD_XML_NODE_METHODS.value())
-        .expect("Makiri::XML::NodeMethods");
+/// The mutators, insertion, and the Document factories.
+fn init_mutate() {
+    let m = node_methods();
     let doc = RClass::from_value(CLASS_XML_DOCUMENT.value()).expect("XML::Document");
 
-    /* In-place edits. Detach-never-destroy; the primitives live in
-     * xml/mkr_xml_mutate.c. */
+    /* In-place edits. Detach, never destroy: the primitives are
+     * `crate::xml::mutate`'s. */
     for name in ["remove", "unlink"] {
         m.define_method(name, method!(mutate::remove, 0))
             .expect("#remove");
@@ -211,6 +191,8 @@ pub fn init_xml_node() {
     }
     m.define_method("replace", method!(mutate::replace, 1))
         .expect("#replace");
+    m.define_method("clone_node", method!(mutate::clone_node, -1))
+        .expect("#clone_node");
 
     /* Document factories. The node-class .new constructors and Document#root=
      * are pure delegations to these, defined once in the Ruby layer. */
@@ -241,9 +223,4 @@ pub fn init_xml_node() {
     .expect("#create_processing_instruction");
     doc.define_method("import_node", method!(mutate::import_node, -1))
         .expect("#import_node");
-
-    m.define_method("clone_node", method!(mutate::clone_node, -1))
-        .expect("#clone_node");
 }
-
-use self::serialize::init_xml_node_serialize;

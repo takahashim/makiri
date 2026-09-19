@@ -512,10 +512,9 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
     let xd = arena_mut(target_doc)?;
     /* The source changes too - adopting takes the node out of it. */
     let src_doc = arena_mut(src_document)?;
-    let mut copy: NodeId = NodeId::INVALID;
     // SAFETY: two distinct live arenas (the documents differ), both cleared
     // for writing; the source is only read here.
-    xml_mut_check(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy) })?;
+    let copy = xml_mut_result(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src) })?;
     Ok((
         copy,
         Some(Adoption {
@@ -531,8 +530,7 @@ pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Ad
 pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, Error> {
     xml_doc_unwrap(rb_self)?; /* TypeError for anything but an XML Document */
     let xd = arena_mut(rb_self)?;
-    let mut copy: NodeId = NodeId::INVALID;
-    match node_repr(node_v) {
+    let copy = match node_repr(node_v) {
         NodeRepr::Xml => {
             /* Read, not written: the copy goes into the receiver's arena. */
             let src_doc = doc_of(xml_node_document(node_v)?);
@@ -540,17 +538,17 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
-                xml_mut_check(unsafe { xml_clone_node(&mut *xd, src, deep, &mut copy) })?
+                xml_mut_result(unsafe { xml_clone_node(&mut *xd, src, deep) })?
             } else {
                 // SAFETY: two distinct live arenas.
-                xml_mut_check(unsafe { xml_copy_node(&mut *xd, &*src_doc, src, deep, &mut copy) })?
+                xml_mut_result(unsafe { xml_copy_node(&mut *xd, &*src_doc, src, deep) })?
             }
         }
         NodeRepr::Html => {
             let src = html_node_unwrap(node_v)?;
             // SAFETY: the target arena, and the HTML source node - live, and
             // nothing restructures its document during the copy.
-            copy = xml_mut_result(unsafe { cross_html_to_xml(&mut *xd, src, deep) })?;
+            xml_mut_result(unsafe { cross_html_to_xml(&mut *xd, src, deep) })?
         }
         NodeRepr::Other => {
             return Err(Error::new(
@@ -558,6 +556,6 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
                 "import_node expects a Makiri node",
             ))
         }
-    }
+    };
     Ok(copy)
 }
