@@ -17,7 +17,7 @@ use core::ffi::c_void;
 
 use crate::falloc::VecPush;
 
-use crate::lexbor_abi::{LxbDoc, LxbNode};
+use crate::lexbor::abi::{LxbDoc, LxbNode};
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
@@ -27,16 +27,16 @@ use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawN
 use crate::lexbor::adapter::utf8_input::sanitize;
 
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
- * but absent from its public headers, so `lexbor_abi` hand-declares it with the
+ * but absent from its public headers, so `lexbor::abi` hand-declares it with the
  * rest of what bindgen cannot see. Everything this file does to the DOM itself
  * goes through `lexbor::adapter::html` - these are the parser, not the DOM. */
-use crate::lexbor_abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
+use crate::lexbor::abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_id};
 
 /* The HTML parser's lifecycle, from the generated bindings. Declared here first
  * over an opaque parser, which was fine until the source-location port needed
  * the tokenizer inside it and build.rs started generating them - two Rust types
  * for one symbol again. */
-use crate::lexbor_abi::HtmlParser;
+use crate::lexbor::abi::HtmlParser;
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
@@ -157,7 +157,7 @@ impl Emit {
 /// `false` when a child could not be copied whole. It REPORTS rather than
 /// raising, and that still matters now the C has gone: every caller owns the
 /// transient document the fragment was parsed into
-/// (`lexbor_abi::TransientDoc`), and a raise from here would longjmp past its
+/// (`lexbor::abi::TransientDoc`), and a raise from here would longjmp past its
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
 unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
@@ -184,7 +184,7 @@ unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> b
 /// raised with the old children already gone.
 pub struct TransientFragment {
     root: RawNode,
-    _doc: Option<crate::lexbor_abi::TransientDoc>,
+    _doc: Option<crate::lexbor::abi::TransientDoc>,
 }
 
 impl TransientFragment {
@@ -205,7 +205,7 @@ impl TransientFragment {
          * destroying it would free the target's. */
         let _doc = match context {
             FragmentContext::Element(_) => {
-                crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode)
+                crate::lexbor::abi::TransientDoc::of(root.as_ptr() as *mut LxbNode)
             }
             FragmentContext::Tag { .. } => None,
         };

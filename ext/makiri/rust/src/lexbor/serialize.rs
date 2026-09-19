@@ -15,21 +15,21 @@
 use core::ffi::c_void;
 
 use crate::cbuf::{buf_append, Buf};
-use crate::lexbor::adapter::arena_bytes::document_bytes;
-use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor_abi::consts::{
+use crate::lexbor::abi::consts::{
     STATUS_ERROR_MEMORY_ALLOCATION as LXB_STATUS_ERROR_MEMORY_ALLOCATION,
     STATUS_OK as LXB_STATUS_OK,
 };
-use crate::lexbor_abi::{
+use crate::lexbor::abi::{
     lxb_html_serialize_deep_cb, lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF,
     lxb_html_serialize_pretty_deep_cb, lxb_html_serialize_pretty_tree_cb,
     lxb_html_serialize_tree_cb, LxbNode,
 };
+use crate::lexbor::adapter::arena_bytes::document_bytes;
+use crate::lexbor::adapter::html::RawNode;
 
 /// No pretty-printing option. The functions take the `int` typedef, the enum
 /// is its own type, so the one conversion is spelled here.
-const LXB_HTML_SERIALIZE_OPT_UNDEF: crate::lexbor_abi::lxb_html_serialize_opt_t =
+const LXB_HTML_SERIALIZE_OPT_UNDEF: crate::lexbor::abi::lxb_html_serialize_opt_t =
     lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF as _;
 
 /// What the serializer writes into, plus somewhere to put a panic.

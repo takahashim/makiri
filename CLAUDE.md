@@ -388,10 +388,6 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            Ruby-side storage is Ruby's xmalloc; see the gotchas)
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
-    lexbor_abi.rs          the generated Lexbor layout and the `_noi` twins - the
-                           ONE place a Lexbor function is declared (a second
-                           `extern "C"` spelling is a second Rust type for the
-                           symbol; `rake unsafe:boundaries` fails on one)
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
                            raising C calls (rb_String, typed-data checks) and the
@@ -418,7 +414,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `bridge/xpath.rs`
     xml/                   native XML reader (Ruby/Lexbor-free; own arena), plus
                            its XPath `Dom` instance
-    lexbor/                the Lexbor boundary: `adapter` - the one reader of
+    lexbor/                the Lexbor boundary: `abi` - the generated layout and
+                           the `_noi` twins, the ONE place a Lexbor function is
+                           declared (a second `extern "C"` spelling is a second
+                           Rust type for the symbol; `rake unsafe:boundaries`
+                           fails on one) - `adapter`, the one reader of
                            Lexbor's DOM structs, plus the attr->owner index,
                            text index, source location and post-parse - and the
                            selectors/stylesheet/serialize/fragment facades, the

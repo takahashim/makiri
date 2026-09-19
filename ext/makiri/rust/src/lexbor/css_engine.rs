@@ -12,8 +12,8 @@
 
 use core::cell::UnsafeCell;
 
-use crate::lexbor_abi::consts::STATUS_OK;
-use crate::lexbor_abi::{
+use crate::lexbor::abi::consts::STATUS_OK;
+use crate::lexbor::abi::{
     lxb_css_memory_clean, lxb_css_memory_create, lxb_css_memory_destroy, lxb_css_memory_init,
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
     lxb_css_parser_memory_set_noi, lxb_css_parser_selectors_set_noi, lxb_css_parser_status_noi,

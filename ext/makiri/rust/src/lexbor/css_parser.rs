@@ -30,8 +30,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::missing_safety_doc)]
 
+use crate::lexbor::abi as lxb;
 use crate::lexbor::css_engine::{GvlCell, ParserParts, SelectorParser};
-use crate::lexbor_abi as lxb;
 use crate::text::VerifiedText;
 use core::ffi::c_long;
 
@@ -115,7 +115,7 @@ pub fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
 /// not handle reaches it as an explicit `Other` - never as a number that a
 /// catch-all arm could mistake for one it does handle.
 mod raw {
-    use crate::lexbor_abi as l;
+    use crate::lexbor::abi as l;
 
     type Ty = l::lxb_css_selector_type_t;
     pub const ANY: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ANY;

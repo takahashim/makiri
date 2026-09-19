@@ -8,7 +8,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::lexbor_abi::{self as lxb, LxbDoc, LxbNode};
+use crate::lexbor::abi::{self as lxb, LxbDoc, LxbNode};
 
 use super::html::TYPE_DOCUMENT as NODE_TYPE_DOCUMENT;
 

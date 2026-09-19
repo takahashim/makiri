@@ -1,7 +1,7 @@
 //! The sole owner of the vendored Lexbor FFI boundary.
 //!
-//! Raw `lxb_*` bindings, generated layouts, and C callbacks stay below this
-//! module. Higher layers use the typed handles exported by `adapter`.
+//! Raw `lxb_*` bindings, generated layouts, and C callbacks stay in `abi` and
+//! below this module. Higher layers use the typed handles exported by `adapter`.
 //!
 //! # The Ruby boundary above lexbor
 //!
@@ -15,6 +15,9 @@
 //! in `bridge::string::HtmlSource` and `glue::stylesheet`. Nothing here names a
 //! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
+/// Lexbor's generated layout and constants, plus the wrappers that own a raw
+/// Lexbor object. The one module allowed to hold `lxb_*` bindings.
+pub mod abi;
 pub mod adapter;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;

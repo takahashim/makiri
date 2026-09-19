@@ -32,7 +32,7 @@
 #![allow(unsafe_code)]
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use crate::lexbor_abi::LxbNode;
+use crate::lexbor::abi::LxbNode;
 use crate::ptr_table::PtrTable;
 use crate::text::BorrowedText;
 

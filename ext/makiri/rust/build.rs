@@ -6,7 +6,7 @@
 //! `#[repr(C)]` view of one of its structs does not fail to build when a field
 //! is added or reordered - it reads the wrong offset, which is a silent wrong
 //! answer. `xpath/html_abi.rs` still declares the three node structs by hand;
-//! what checks them is `lexbor_abi::agree`, which compares every offset against
+//! what checks them is `lexbor::abi::agree`, which compares every offset against
 //! the generated view at COMPILE time. That replaced a C translation unit doing
 //! the same comparison with `offsetof` at load time.
 //!
@@ -73,7 +73,7 @@ fn main() {
         .allowlist_type("lxb_dom_document_type_t")
         .allowlist_type("lxb_dom_processing_instruction_t")
         // Read only for their id fields, by the three header-less
-        // Lexbor exports declared in lexbor_abi.rs.
+        // Lexbor exports declared in lexbor/abi.rs.
         .allowlist_type("lxb_ns_data_t")
         .allowlist_type("lxb_dom_attr_data_t")
         .allowlist_type("lxb_dom_exception_code_t")
@@ -136,7 +136,7 @@ fn main() {
         .allowlist_type("lexbor_status_t")
         .allowlist_type("lxb_html_serialize_opt")
         .allowlist_type("lxb_tag_id_enum_t")
-        // NOT lxb_css_parser_create/init/destroy: `lexbor_abi` declares those
+        // NOT lxb_css_parser_create/init/destroy: `lexbor::abi` declares those
         // over an OPAQUE parser, which is the right shape (nothing reads a
         // field of it). Generating them here as well gave the same C symbol two
         // Rust types - a duplicate that escaped until a build compiled both
@@ -189,14 +189,14 @@ fn main() {
         .allowlist_function("lxb_html_parse_chunk_end")
         // NOT lxb_html_parser_tokenizer / the two token-done accessors: all
         // three are lxb_inline, so bindgen emits nothing and they are declared
-        // as `_noi` twins in lexbor_abi.rs. Left here as a record of the check.
+        // as `_noi` twins in lexbor/abi.rs. Left here as a record of the check.
         // The mutators and factories glue/html_node/mutate uses. Same rule, and
         // this time every one of them is a real exported function - the three
         // Lexbor exports this file needs that bindgen CANNOT see
         // (lxb_ns_append, lxb_dom_attr_set_name_ns,
         // lxb_dom_attr_qualified_name_append) are absent from the public
         // headers entirely, not inline, so they are hand-declared next to the
-        // `_noi` twins in lexbor_abi.rs.
+        // `_noi` twins in lexbor/abi.rs.
         .allowlist_function("lxb_dom_node_remove")
         .allowlist_function("lxb_dom_node_insert_child")
         .allowlist_function("lxb_dom_node_insert_before")
@@ -250,7 +250,7 @@ fn main() {
         .default_enum_style(bindgen::EnumVariation::Consts)
         // Layout tests are `#[test]` functions, and this crate's are not run by
         // `cargo test` (they need a live Ruby), so they would be dead weight.
-        // The compile-time asserts in lexbor_abi.rs are what actually run.
+        // The compile-time asserts in lexbor/abi.rs are what actually run.
         .layout_tests(false)
         .generate_comments(false)
         .derive_default(false)
@@ -280,7 +280,7 @@ fn main() {
     // same reason Lexbor's are - a transcribed `MKR_NODE_KIND_XML = 1` (it is 2)
     // had made `Document#import_node` treat every HTML node as an XML one. Those
     // headers are gone with the rest of the C, and the definitions are now
-    // ordinary Rust consts in `lexbor_abi::mkr`, so there is no second reading
+    // ordinary Rust consts in `lexbor::abi::mkr`, so there is no second reading
     // of them left to keep in agreement.
 }
 

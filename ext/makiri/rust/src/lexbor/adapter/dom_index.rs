@@ -35,7 +35,7 @@
 #![forbid(unsafe_code)]
 
 use crate::falloc::try_vec_with_capacity;
-use crate::lexbor_abi::{LxbAttr, LxbNode};
+use crate::lexbor::abi::{LxbAttr, LxbNode};
 use crate::ptr_table::PtrTable;
 
 /// Tag buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`,

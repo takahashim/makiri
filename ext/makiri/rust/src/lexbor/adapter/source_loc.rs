@@ -35,7 +35,7 @@ use core::ffi::c_void;
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
 
-use crate::lexbor_abi as lxb;
+use crate::lexbor::abi as lxb;
 
 extern "C" {
     /// libc `memchr` - see [`next_newline`].

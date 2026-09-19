@@ -12,10 +12,10 @@
 
 use core::ffi::c_void;
 
+use crate::lexbor::abi::{self as lxb, LxbNode};
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
 use crate::lexbor::adapter::post_parse::HtmlParsed;
-use crate::lexbor_abi::{self as lxb, LxbNode};
 use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
 use crate::xpath::ctx::Context;

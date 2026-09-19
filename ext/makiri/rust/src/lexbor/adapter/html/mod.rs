@@ -2,7 +2,7 @@
 //! document fields, and the Lexbor accessors over them - and, through
 //! [`HtmlNodeMut`], the one place it edits the tree.
 //!
-//! Everything here reads the GENERATED layout (`crate::lexbor_abi`), so there is
+//! Everything here reads the GENERATED layout (`crate::lexbor::abi`), so there is
 //! no hand-written copy of a Lexbor struct left to drift from the pinned headers.
 //! The XPath engine's HTML backend and the Ruby-facing readers both come through
 //! this module, so a field is read one way, in one place.
@@ -18,7 +18,7 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use crate::lexbor_abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
+use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
 
 mod build;
 mod mutate;

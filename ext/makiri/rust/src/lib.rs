@@ -6,8 +6,8 @@
 //!
 //!   engine   `xml`, `xpath`, `cbuf`, `cutf8`, `falloc` - no Ruby, no Lexbor.
 //!            This is what Kani proves and what cargo-fuzz drives.
-//!   lexbor   `lexbor_abi`, `lexbor`, `css`, and the XPath HTML instance -
-//!            everything that reads the vendored Lexbor DOM (`lexbor`).
+//!   lexbor   `lexbor` (its `abi` and DOM facade), `css`, and the XPath HTML
+//!            instance - everything that reads the vendored Lexbor DOM.
 //!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
 //!            (`ruby`, on by default; it implies `lexbor`).
 //!
@@ -22,11 +22,6 @@
 // one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
 // the failure report.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::panic))]
-
-/// Lexbor's layout and constants, generated from its own headers by build.rs
-/// and checked against the hand-written view the engine's hot paths use.
-#[cfg(feature = "lexbor")]
-pub mod lexbor_abi;
 
 /// Compile-time decimal parsing, for the settings that arrive as `option_env!`
 /// overrides: a const context cannot call `parse`.

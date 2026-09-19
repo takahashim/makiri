@@ -40,11 +40,11 @@
 use core::ffi::c_void;
 
 use crate::falloc::{self, VecPush};
-use crate::lexbor_abi as lxb;
-use crate::lexbor_abi::consts as k;
+use crate::lexbor::abi as lxb;
+use crate::lexbor::abi::consts as k;
 
+use crate::lexbor::abi::{lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init};
 use crate::lexbor::css_engine::Owned;
-use crate::lexbor_abi::{lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init};
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
 /// pathologically nested stylesheet.

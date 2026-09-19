@@ -44,13 +44,13 @@ use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::ffi::c_void;
 use std::collections::HashMap;
 
-use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::css_engine::{GvlCell, Owned, ParserParts, SelectorParser};
-use crate::lexbor_abi::consts::{STATUS_OK as LXB_STATUS_OK, STATUS_STOP as LXB_STATUS_STOP};
-use crate::lexbor_abi::{
+use crate::lexbor::abi::consts::{STATUS_OK as LXB_STATUS_OK, STATUS_STOP as LXB_STATUS_STOP};
+use crate::lexbor::abi::{
     lxb_selectors_create, lxb_selectors_destroy, lxb_selectors_find, lxb_selectors_init,
     lxb_selectors_match_node, lxb_selectors_opt_set_noi, LxbNode,
 };
+use crate::lexbor::adapter::html::RawNode;
+use crate::lexbor::css_engine::{GvlCell, Owned, ParserParts, SelectorParser};
 
 use crate::limits::NODE_SET_MAX;
 
@@ -77,15 +77,15 @@ const MIN_HIT_PCT: usize = 15;
 /// Re-test caching every N bypass windows.
 const RETEST_GAP: usize = 32;
 
-const LXB_SELECTORS_OPT_MATCH_FIRST: crate::lexbor_abi::lxb_selectors_opt_t =
-    crate::lexbor_abi::lxb_selectors_opt_t_LXB_SELECTORS_OPT_MATCH_FIRST;
+const LXB_SELECTORS_OPT_MATCH_FIRST: crate::lexbor::abi::lxb_selectors_opt_t =
+    crate::lexbor::abi::lxb_selectors_opt_t_LXB_SELECTORS_OPT_MATCH_FIRST;
 
 /// `lxb_selectors_t`, the traversal engine. Only ever passed along.
-type Selectors = crate::lexbor_abi::lxb_selectors_t;
+type Selectors = crate::lexbor::abi::lxb_selectors_t;
 
 /// The parsed selector list. The engine only passes the pointer along - it
 /// reads no field.
-pub type SelectorList = crate::lexbor_abi::lxb_css_selector_list_t;
+pub type SelectorList = crate::lexbor::abi::lxb_css_selector_list_t;
 
 type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
 

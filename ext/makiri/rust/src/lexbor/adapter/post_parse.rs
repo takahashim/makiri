@@ -30,6 +30,10 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::falloc::try_box;
+use crate::lexbor::abi::{
+    self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
+    lxb_html_parse_chunk_process, LxbDoc, LxbNode,
+};
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawNode};
@@ -38,15 +42,11 @@ use crate::lexbor::adapter::source_loc::{
 };
 use crate::lexbor::adapter::text_index::TextIndex;
 use crate::lexbor::adapter::utf8_input::sanitize;
-use crate::lexbor_abi::{
-    self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
-    lxb_html_parse_chunk_process, LxbDoc, LxbNode,
-};
 use crate::text::BorrowedText;
 
 type HtmlDoc = lxb::lxb_html_document_t;
 
-use crate::lexbor_abi::consts::STATUS_OK as LXB_STATUS_OK;
+use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /* ---- the parsed document ---- */
 
