@@ -43,9 +43,8 @@ use crate::falloc::{self, VecPush};
 use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::consts as k;
 
-use crate::lexbor_abi::{
-    lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, CssParser,
-};
+use crate::lexbor::css_engine::Owned;
+use crate::lexbor_abi::{lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init};
 
 /// Bound on at-rule nesting: fail closed rather than recurse without limit on a
 /// pathologically nested stylesheet.
@@ -433,64 +432,41 @@ unsafe fn rules(
  * entry point                                                        *
  * ------------------------------------------------------------------ */
 
-/// Owns the parser and stylesheet for the length of phase one.
-///
-/// A `Drop` guard is sound HERE, unlike in the C's arrangement, precisely
-/// because nothing between construction and drop can `longjmp`: phase one calls
-/// Lexbor and the allocator, never Ruby.
-struct Engine {
-    parser: *mut CssParser,
-    sst: *mut lxb::lxb_css_stylesheet_t,
-}
-
-impl Drop for Engine {
-    fn drop(&mut self) {
-        // SAFETY: this type owns both objects - `parse` is the only constructor
-        // and never hands either pointer out - so neither can be destroyed
-        // elsewhere. A half-built engine leaves the failed half null, which the
-        // guards below skip, so an `Err` return from `parse` frees exactly what
-        // it managed to create.
-        unsafe {
-            if !self.sst.is_null() {
-                lxb::lxb_css_stylesheet_destroy(self.sst, true);
-            }
-            if !self.parser.is_null() {
-                lxb_css_parser_destroy(self.parser, true);
-            }
-        }
-    }
-}
-
 /// Parse a verified UTF-8 stylesheet into owned Rust data.
 ///
 /// This is the safe boundary consumed by the Ruby glue: all Lexbor-owned
 /// pointers and callback state have been dropped before it returns.
+///
+/// The parser and the stylesheet are owned by [`Owned`] for the length of phase
+/// one, so every path out frees exactly what was created. That `Drop` is sound
+/// because nothing between construction and drop can `longjmp`: phase one calls
+/// Lexbor and the allocator, never Ruby.
 pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
     // SAFETY: one contract for the whole body. Every pointer here is created by
-    // the Lexbor calls below, null-checked before use, and owned by `eng`,
-    // whose `Drop` frees it on every path out. `css` is a Rust slice, which the
-    // parser only reads, and nothing in here runs Ruby.
+    // the Lexbor calls below and owned by an `Owned` from then on. `css` is a
+    // Rust slice, which the parser only reads, and nothing in here runs Ruby.
     unsafe {
-        let eng = Engine {
-            parser: lxb_css_parser_create(),
-            sst: lxb::lxb_css_stylesheet_create(core::ptr::null_mut()),
-        };
-        if eng.parser.is_null()
-            || eng.sst.is_null()
-            || lxb_css_parser_init(eng.parser, core::ptr::null_mut()) != 0
-        {
+        /* Declared stylesheet-first, so the parser drops first. */
+        let sst = Owned::new(
+            lxb::lxb_css_stylesheet_create(core::ptr::null_mut()),
+            lxb::lxb_css_stylesheet_destroy,
+        )
+        .ok_or(Fail::Init)?;
+        let parser =
+            Owned::new(lxb_css_parser_create(), lxb_css_parser_destroy).ok_or(Fail::Init)?;
+        if lxb_css_parser_init(parser.as_ptr(), core::ptr::null_mut()) != k::STATUS_OK {
             return Err(Fail::Init);
         }
         if lxb::lxb_css_stylesheet_parse(
-            eng.sst,
-            eng.parser as *mut lxb::lxb_css_parser_t,
+            sst.as_ptr(),
+            parser.as_ptr() as *mut lxb::lxb_css_parser_t,
             css.as_ptr(),
             css.len(),
-        ) != 0
+        ) != k::STATUS_OK
         {
             return Err(Fail::Parse);
         }
-        let root = (*eng.sst).root;
+        let root = (*sst.as_ptr()).root;
         if root.is_null() {
             return Ok(Vec::new());
         }
