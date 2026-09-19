@@ -18,8 +18,8 @@ use core::ffi::c_void;
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use crate::bridge::ruby::{nil, typed_data_known_ref, typed_data_ref, value, DataType, VALUE};
-use crate::bridge::typed::{data_type, kind_of, Hooks, Marker};
+use crate::bridge::ruby::{nil, value, VALUE};
+use crate::bridge::typed::{Hooks, Marker, TypedType};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
@@ -57,14 +57,13 @@ impl Hooks for NodeData {
     }
 }
 
-pub static NODE_DATA_TYPE: DataType =
-    data_type::<NodeData>(c"Makiri::Node".as_ptr(), core::ptr::null());
+pub static NODE_DATA_TYPE: TypedType<NodeData> = TypedType::base(c"Makiri::Node".as_ptr());
 
-pub static HTML_NODE_TYPE: DataType =
-    data_type::<NodeData>(c"Makiri::HTML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
+pub static HTML_NODE_TYPE: TypedType<NodeData> =
+    TypedType::derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
 
-pub static XML_NODE_TYPE: DataType =
-    data_type::<NodeData>(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
+pub static XML_NODE_TYPE: TypedType<NodeData> =
+    TypedType::derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
 
 /// Which representation a wrapped Ruby node is, decided by its TypedData type
 /// rather than its Ruby class. A Document, a NodeSet or any non-node is
@@ -143,9 +142,7 @@ impl Hooks for DocData {
 /// may be held across the call.
 fn account_document(rb_doc: VALUE) {
     // SAFETY: `rb_doc` is a Document (the base type matches either leaf).
-    let d = unsafe {
-        &mut *(crate::bridge::ruby::typed_data_known(value(rb_doc), &DOC_TYPE) as *mut DocData)
-    };
+    let d = unsafe { &mut *(DOC_TYPE.known_ptr(value(rb_doc))) };
     let now = d.external_bytes();
     /* Clamp rather than saturate the report: a document Ruby cannot address
      * is not one we will see, and a truncated diff would unbalance `release`. */
@@ -162,18 +159,17 @@ fn account_document(rb_doc: VALUE) {
 
 /// The base type: the kind-agnostic accessors (`doc_parsed`, `#errors`) accept
 /// either representation.
-pub static DOC_TYPE: DataType =
-    data_type::<DocData>(c"Makiri::Document".as_ptr(), core::ptr::null());
+pub static DOC_TYPE: TypedType<DocData> = TypedType::base(c"Makiri::Document".as_ptr());
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
 /// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
 /// reinterprets the handle as a Lexbor document - raises TypeError on an XML
 /// Document through Ruby's own type machinery rather than relying on an assert
 /// that NDEBUG erases.
-pub static HTML_DOC_TYPE: DataType =
-    data_type::<DocData>(c"Makiri::HTML::Document".as_ptr(), DOC_TYPE.as_ptr());
-pub static XML_DOC_TYPE: DataType =
-    data_type::<DocData>(c"Makiri::XML::Document".as_ptr(), DOC_TYPE.as_ptr());
+pub static HTML_DOC_TYPE: TypedType<DocData> =
+    TypedType::derived(c"Makiri::HTML::Document".as_ptr(), &DOC_TYPE);
+pub static XML_DOC_TYPE: TypedType<DocData> =
+    TypedType::derived(c"Makiri::XML::Document".as_ptr(), &DOC_TYPE);
 
 /// Which leaf class a Document wrapper is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -207,9 +203,8 @@ impl DocumentShell {
         let errors = crate::bridge::ruby::array_new();
         // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
         DocumentShell(unsafe {
-            crate::bridge::ruby::wrap_zeroed::<DocData>(
+            ty.wrap(
                 klass,
-                ty.as_ptr(),
                 |d| {
                     d.parsed = core::ptr::null_mut();
                     d.reported = 0;
@@ -225,7 +220,7 @@ impl DocumentShell {
         // SAFETY: `self.0` is a Document wrapper (the base type matches either
         // leaf) that has no handle yet, so nothing is overwritten.
         unsafe {
-            let d = crate::bridge::ruby::typed_data_known(value(self.0), &DOC_TYPE) as *mut DocData;
+            let d = DOC_TYPE.known_ptr(value(self.0));
             (*d).parsed = Box::into_raw(parsed);
         }
         account_document(self.0);
@@ -249,13 +244,13 @@ pub unsafe fn parsed_xml_doc(p: *mut Parsed) -> *mut XmlDoc {
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
 pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
-    let d: &DocData = typed_data_ref(rb_doc, &HTML_DOC_TYPE)?;
+    let d: &DocData = HTML_DOC_TYPE.get(rb_doc)?;
     Ok(html_doc_of(d))
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
 pub fn html_doc_known(rb_doc: Value) -> RawDoc {
-    html_doc_of(typed_data_known_ref(rb_doc, &HTML_DOC_TYPE))
+    html_doc_of(HTML_DOC_TYPE.get_known(rb_doc))
 }
 
 fn html_doc_of(d: &DocData) -> RawDoc {
@@ -267,14 +262,14 @@ fn html_doc_of(d: &DocData) -> RawDoc {
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
 pub fn doc_parsed(rb_doc: Value) -> Result<*mut Parsed, Error> {
-    let d: &DocData = typed_data_ref(rb_doc, &DOC_TYPE)?;
+    let d: &DocData = DOC_TYPE.get(rb_doc)?;
     Ok(d.parsed)
 }
 
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
 pub fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
-    typed_data_known_ref::<DocData>(rb_doc, &DOC_TYPE).parsed
+    DOC_TYPE.get_known(rb_doc).parsed
 }
 
 /// Run `f` over the parsed handle behind a Document.
@@ -379,15 +374,15 @@ pub fn node_raw(rb_node: Value) -> Result<*mut c_void, Error> {
         return Ok(html_doc_unwrap(rb_node)?.as_ptr());
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd: &NodeData = typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
+    let nd: &NodeData = NODE_DATA_TYPE.get(rb_node)?;
     Ok(nd.node)
 }
 
 /// Which representation `v` wraps ([`NodeRepr`]).
 pub fn node_repr(v: Value) -> NodeRepr {
-    if kind_of(v.as_raw(), &HTML_NODE_TYPE) {
+    if HTML_NODE_TYPE.is(v) {
         NodeRepr::Html
-    } else if kind_of(v.as_raw(), &XML_NODE_TYPE) {
+    } else if XML_NODE_TYPE.is(v) {
         NodeRepr::Xml
     } else {
         NodeRepr::Other
@@ -406,7 +401,7 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
         return Ok(rb_node);
     }
-    let nd: &NodeData = typed_data_ref(rb_node, &NODE_DATA_TYPE)?;
+    let nd: &NodeData = NODE_DATA_TYPE.get(rb_node)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
 }
@@ -441,12 +436,11 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Value {
         _ => CLASS_HTML_NODE.raw(),
     };
 
-    /* The Document is stored after the wrap: see `wrap_zeroed`. */
+    /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
     unsafe {
-        value(crate::bridge::ruby::wrap_zeroed::<NodeData>(
+        value(HTML_NODE_TYPE.wrap(
             klass,
-            HTML_NODE_TYPE.as_ptr(),
             |nd| nd.node = node.as_ptr(),
             |nd| nd.document = document.as_raw(),
         ))
@@ -470,7 +464,7 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
         }
         return Ok(html_doc_unwrap(rb_node)?.into());
     }
-    let nd: &NodeData = typed_data_ref(rb_node, &HTML_NODE_TYPE)?;
+    let nd: &NodeData = HTML_NODE_TYPE.get(rb_node)?;
     RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
 }
 
@@ -577,12 +571,11 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
         _ => CLASS_XML_NODE.raw(),
     };
 
-    /* The Document is stored after the wrap: see `wrap_zeroed`. */
+    /* The Document is stored after the wrap: see `TypedType::wrap`. */
     // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
     unsafe {
-        value(crate::bridge::ruby::wrap_zeroed::<NodeData>(
+        value(XML_NODE_TYPE.wrap(
             klass,
-            XML_NODE_TYPE.as_ptr(),
             |nd| nd.node = node,
             |nd| nd.document = document.as_raw(),
         ))
@@ -600,7 +593,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> 
         let node = unsafe { (*parsed_xml_doc(parsed)).doc_node() };
         return Ok(node.to_token() as *mut core::ffi::c_void);
     }
-    let nd: &NodeData = typed_data_ref(rb_self, &XML_NODE_TYPE)?;
+    let nd: &NodeData = XML_NODE_TYPE.get(rb_self)?;
     Ok(nd.node)
 }
 
@@ -609,7 +602,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> 
 /// anything else, including a Document with no arena yet. For a receiver that
 /// has not been established as an XML Document - [`doc_of`] assumes it.
 pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
-    let d: &DocData = typed_data_ref(rb_doc, &XML_DOC_TYPE)?;
+    let d: &DocData = XML_DOC_TYPE.get(rb_doc)?;
     // SAFETY: a live Document's own handle, when it has one.
     let arena = if d.parsed.is_null() {
         core::ptr::null_mut()
@@ -649,7 +642,7 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
     if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
         return Ok(rb_self);
     }
-    let nd: &NodeData = typed_data_ref(rb_self, &XML_NODE_TYPE)?;
+    let nd: &NodeData = XML_NODE_TYPE.get(rb_self)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
 }

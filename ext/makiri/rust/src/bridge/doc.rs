@@ -25,7 +25,7 @@ use crate::bridge::lexbor::{
     doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap, keepalive_document, node_repr,
     wrap_html_node, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
 };
-use crate::bridge::ruby::{typed_data_known_ref, value};
+use crate::bridge::ruby::value;
 use crate::bridge::string::HtmlSource;
 use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_check};
 use crate::init::EXC_ERROR;
@@ -124,7 +124,7 @@ pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    let d: &crate::bridge::lexbor::DocData = typed_data_known_ref(rb_doc, &DOC_TYPE);
+    let d: &crate::bridge::lexbor::DocData = DOC_TYPE.get_known(rb_doc);
     // SAFETY: `d.errors` is the live Array the wrapper marks.
     unsafe { value(d.errors) }
 }

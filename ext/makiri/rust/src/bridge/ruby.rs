@@ -10,7 +10,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_int, c_long, c_void};
+use core::ffi::{c_int, c_long};
 
 use magnus::rb_sys::{protect as magnus_protect, AsRawValue, FromRawValue};
 use magnus::{prelude::*, Error, RString, Ruby, Value};
@@ -31,49 +31,6 @@ pub fn error_class() -> magnus::ExceptionClass {
 /// Is `v` an instance of the class in `klass`?
 pub fn is_kind_of(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())
-}
-
-/// A `rb_data_type_t` that can live in a `static`.
-///
-/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at
-/// compile time and never written. `repr(transparent)` keeps the layout exactly
-/// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
-#[repr(transparent)]
-pub struct DataType(rb_sys::rb_data_type_t);
-
-// SAFETY: the contents are set once at compile time and never mutated. Ruby
-// reads them from whichever thread holds the GVL.
-unsafe impl Sync for DataType {}
-
-impl DataType {
-    /// `parent` is null for a base type.
-    pub const fn new(
-        name: *const core::ffi::c_char,
-        parent: *const rb_sys::rb_data_type_t,
-        dmark: rb_sys::RUBY_DATA_FUNC,
-        dfree: rb_sys::RUBY_DATA_FUNC,
-        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
-    ) -> DataType {
-        DataType(rb_sys::rb_data_type_t {
-            wrap_struct_name: name,
-            function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
-                dmark,
-                dfree,
-                dsize,
-                dcompact: None,
-                reserved: [core::ptr::null_mut(); 1],
-            },
-            parent,
-            data: core::ptr::null_mut(),
-            flags: rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE,
-        })
-    }
-
-    /// The raw pointer the Ruby API wants.
-    #[inline]
-    pub const fn as_ptr(&self) -> *const rb_sys::rb_data_type_t {
-        self as *const DataType as *const rb_sys::rb_data_type_t
-    }
 }
 
 /// `v` as a String, coerced the way `rb_String` does (`to_str`, else `to_s`).
@@ -137,71 +94,6 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
         rb_sys::rb_range_beg_len(range.as_raw(), &mut beg, &mut len, count, 0)
     })?;
     Ok((answer == rb_sys::Qtrue as VALUE).then_some((beg, len)))
-}
-
-/// The data pointer of a TypedData object of type `ty` (or a type deriving
-/// from it), or the `TypeError` Ruby's own check raises.
-///
-/// The type is tested first, so a well-typed object - every call on the normal
-/// path - never enters `protect`. Only a mismatch runs `rb_check_typeddata`
-/// under it, which is what keeps the error message Ruby's own, word for word,
-/// on every supported Ruby.
-pub fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
-    let (v, ty) = (v.as_raw(), ty.as_ptr());
-    // SAFETY: `v` is a live value and `ty` a registered data type. The check
-    // runs unprotected only once the type is known to match, so it cannot
-    // raise there; a mismatch runs it under `protect`.
-    unsafe {
-        if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
-            return Ok(rb_sys::rb_check_typeddata(v, ty));
-        }
-        match protect(|| rb_sys::rb_check_typeddata(v, ty) as VALUE) {
-            Err(e) => Err(e),
-            /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-            Ok(_) => Err(Error::new(
-                magnus::Ruby::get_unchecked().exception_type_error(),
-                "wrong argument type",
-            )),
-        }
-    }
-}
-
-/// A borrowed `T` behind a TypedData object of type `ty`, or `Err(TypeError)`.
-///
-/// The lifetime is unconstrained: the caller must keep `v` rooted for as long
-/// as it uses the reference (a method receiver is), which is what keeps the
-/// data alive. Reading the struct's fields is then ordinary safe code.
-pub fn typed_data_ref<'a, T>(v: Value, ty: &'static DataType) -> Result<&'a T, Error> {
-    let p = typed_data(v, ty)? as *const T;
-    // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
-    Ok(unsafe { &*p })
-}
-
-/// [`typed_data_ref`] for a VALUE whose type the caller already established.
-pub fn typed_data_known_ref<'a, T>(v: Value, ty: &'static DataType) -> &'a T {
-    let p = typed_data_known(v, ty) as *const T;
-    // SAFETY: as `typed_data_ref`; `typed_data_known` asserts the type.
-    unsafe { &*p }
-}
-
-/// The data pointer of a TypedData object whose type the caller has already
-/// established - a receiver magnus converted, or the Document a checked node
-/// holds.
-///
-/// A mismatch here is a bug in that reasoning, not a user error, so it panics:
-/// the panic unwinds through the Rust frames (running their destructors) and
-/// magnus turns it into a fatal error, where a raise would longjmp past them.
-pub fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
-    let (v, ty) = (v.as_raw(), ty.as_ptr());
-    // SAFETY: as in `typed_data`; the assert makes the check that follows one
-    // that cannot raise.
-    unsafe {
-        assert!(
-            rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
-            "a VALUE of an established type had a different one"
-        );
-        rb_sys::rb_check_typeddata(v, ty)
-    }
 }
 
 /// The wrapped Rust value behind a TypedData object, without magnus's
@@ -418,33 +310,4 @@ where
     // SAFETY: `protect` establishes the setjmp frame the raise unwinds to, and
     // the VALUE it hands back on success is live.
     protect(f).map(|raw| unsafe { Value::from_raw(raw) })
-}
-
-/// Allocate a zeroed `T`, fill it with `init`, wrap it as a `klass` object of
-/// data type `ty`, and only then let `store` write the VALUEs it holds.
-///
-/// The order is the point. The wrap allocates, so it is a GC point, and a VALUE
-/// already sitting in this malloc'd struct is seen by no mark there: a GC can
-/// free it, or compaction move it out from under the stored copy. Zeroed, a
-/// VALUE field reads as `false` to the mark until `store` sets it; and the
-/// VALUEs `store` writes are still on the caller's stack across the wrap,
-/// where the conservative scan pins them.
-///
-/// `ruby_xcalloc` raises `NoMemoryError` on OOM; nothing is owned at that
-/// point, which is the fallible-allocation line for glue-side buffers.
-///
-/// # Safety
-/// Under the GVL. `T` must be valid when zeroed, and `ty` must free it with
-/// `ruby_xfree`.
-pub unsafe fn wrap_zeroed<T>(
-    klass: VALUE,
-    ty: *const rb_data_type_t,
-    init: impl FnOnce(&mut T),
-    store: impl FnOnce(&mut T),
-) -> VALUE {
-    let data = rb_sys::ruby_xcalloc(1, core::mem::size_of::<T>() as rb_sys::size_t) as *mut T;
-    init(&mut *data);
-    let obj = rb_sys::rb_data_typed_object_wrap(klass, data as *mut c_void, ty);
-    store(&mut *data);
-    obj
 }
