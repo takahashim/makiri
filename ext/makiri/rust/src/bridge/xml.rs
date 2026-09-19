@@ -20,10 +20,10 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
 use crate::bridge::lexbor::{
-    doc_of, ensure_document_mutable, html_node_unwrap, node_repr, wrap_document, wrap_xml_node,
-    xml_doc_ref, xml_node_document, xml_node_unwrap, NodeRepr,
+    doc_of, ensure_document_mutable, html_node_unwrap, node_repr, wrap_xml_node, xml_doc_ref,
+    xml_node_document, xml_node_unwrap, DocKind, DocumentShell, NodeRepr,
 };
-use crate::bridge::ruby::{check_frozen, value};
+use crate::bridge::ruby::check_frozen;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::xml_decode::xml_decode_input_value;
 use crate::init::{
@@ -239,18 +239,9 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     let decoded = xml_decode_input_value(source.as_value(), budget)?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
-    /* Wrap an empty handle first, so a failure mid-parse still frees cleanly
-     * through the GC. The source is already copied, so this Ruby allocation
-     * cannot disturb it. */
-    let Some(parsed) = Parsed::new_xml() else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    };
-    let parsed = Box::into_raw(parsed);
-    // SAFETY: a fresh handle; the wrap hands it to the GC.
-    let obj = unsafe { wrap_document(parsed) };
+    /* The wrapper first, while nothing needs freeing (see DocumentShell). The
+     * source is already copied, so this Ruby allocation cannot disturb it. */
+    let shell = DocumentShell::new(DocKind::Xml);
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let (result, status) =
@@ -265,16 +256,11 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     if result.is_null() {
         return Err(parse_status_error(status, Unit::Document));
     }
-    // SAFETY: `parsed` is the handle behind `obj`, and `result` is the arena the
-    // parse produced for it.
-    unsafe {
-        (*parsed).set_xml_doc(Box::from_raw(result));
-    }
-    /* The arena exists now; tell the GC what it weighs. `src` is gone, so a
-     * collection here disturbs nothing. */
-    crate::bridge::lexbor::account_document(obj);
-    // SAFETY: `obj` is the live Document wrapped above.
-    Ok(unsafe { value(obj) })
+    // SAFETY: `result` is the arena the parse just returned, owned by no one.
+    let arena = unsafe { Box::from_raw(result) };
+    /* `src` is gone, so the collection `install`'s GC report may trigger
+     * disturbs nothing. */
+    Ok(shell.install(xml_parsed(arena)?))
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -305,23 +291,20 @@ pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
     }
 }
 
+/// A parsed handle owning the XML `arena`.
+fn xml_parsed(arena: Box<XmlDoc>) -> Result<Box<Parsed>, Error> {
+    let mut parsed = Parsed::new_xml()
+        .ok_or_else(|| Error::new(error_class(), "out of memory allocating XML document"))?;
+    parsed.set_xml_doc(arena);
+    Ok(parsed)
+}
+
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
-    let Some(parsed) = Parsed::new_xml() else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    };
-    let parsed = Box::into_raw(parsed);
-    // SAFETY: a fresh handle; the wrap hands it to the GC.
-    let doc_obj = unsafe { wrap_document(parsed) };
-    let xdoc = crate::xml::api::xml_doc_new()
+    let shell = DocumentShell::new(DocKind::Xml);
+    let arena = crate::xml::api::xml_doc_new()
         .map_err(|_| Error::new(error_class(), "out of memory allocating XML document"))?;
-    // SAFETY: `parsed` is the handle behind `doc_obj`, live for this call.
-    unsafe { (*parsed).set_xml_doc(xdoc) };
-    crate::bridge::lexbor::account_document(doc_obj);
-    Ok(unsafe { value(doc_obj) })
+    Ok(shell.install(xml_parsed(arena)?))
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,

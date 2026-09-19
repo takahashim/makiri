@@ -141,7 +141,7 @@ impl Hooks for DocData {
 /// May run a collection right here, so `rb_doc` must be reachable from the
 /// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
 /// may be held across the call.
-pub fn account_document(rb_doc: VALUE) {
+fn account_document(rb_doc: VALUE) {
     // SAFETY: `rb_doc` is a Document (the base type matches either leaf).
     let d = unsafe {
         &mut *(crate::bridge::ruby::typed_data_known(value(rb_doc), &DOC_TYPE) as *mut DocData)
@@ -175,54 +175,62 @@ pub static HTML_DOC_TYPE: DataType =
 pub static XML_DOC_TYPE: DataType =
     data_type::<DocData>(c"Makiri::XML::Document".as_ptr(), DOC_TYPE.as_ptr());
 
-/// Wrap an owned parsed handle as a Document; GC takes ownership. The leaf
-/// class follows the handle's kind.
+/// Which leaf class a Document wrapper is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DocKind {
+    Html,
+    Xml,
+}
+
+/// A Document wrapper allocated before the content it will own, and the only
+/// way a Document gets that content.
 ///
-/// # Safety
-/// `parsed` must be an owned handle that nothing else frees.
-pub unsafe fn wrap_document(parsed: *mut Parsed) -> VALUE {
-    // SAFETY: `parsed` is the live owned handle this function's contract names,
-    // and nothing has taken it yet - the wrapper below is what will own it.
-    let html = !unsafe { (*parsed).is_xml() };
-    let obj = new_document(html);
-    set_document_parsed(obj, parsed);
-    account_document(obj);
-    obj
-}
+/// The order is the point. Allocating the Ruby wrapper can raise
+/// (`NoMemoryError`), and a raise `longjmp`s past Rust destructors, so a parse
+/// result held at that moment would leak. So the wrapper is made FIRST - while
+/// nothing needs freeing - and the parsed handle goes in afterwards through
+/// [`install`](Self::install), which also reports the arena to the GC. That
+/// report is not optional (see `account_document`), and the parse entries used
+/// to make it by hand, each one a place to forget it.
+pub struct DocumentShell(VALUE);
 
-/// A Document wrapper whose parsed handle is not set yet - for a parse that
-/// fills it afterwards, so a failed parse still frees cleanly through the GC.
-pub fn new_document(html: bool) -> VALUE {
-    let (klass, ty) = if html {
-        (crate::init::CLASS_HTML_DOCUMENT.raw(), &HTML_DOC_TYPE)
-    } else {
-        (crate::init::CLASS_XML_DOCUMENT.raw(), &XML_DOC_TYPE)
-    };
-    /* The errors array is built before the wrap and kept in a local, so the
-     * conservative stack scan pins it across the wrap's allocation and the
-     * store closure does not allocate (an allocation there could raise
-     * NoMemoryError while the caller holds a live resource). */
-    let errors = crate::bridge::ruby::array_new();
-    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
-    unsafe {
-        crate::bridge::ruby::wrap_zeroed::<DocData>(
-            klass,
-            ty.as_ptr(),
-            |d| {
-                d.parsed = core::ptr::null_mut();
-                d.reported = 0;
-            },
-            |d| d.errors = errors.as_raw(),
-        )
+impl DocumentShell {
+    pub fn new(kind: DocKind) -> DocumentShell {
+        let (klass, ty) = match kind {
+            DocKind::Html => (crate::init::CLASS_HTML_DOCUMENT.raw(), &HTML_DOC_TYPE),
+            DocKind::Xml => (crate::init::CLASS_XML_DOCUMENT.raw(), &XML_DOC_TYPE),
+        };
+        /* The errors array is built before the wrap and kept in a local, so the
+         * conservative stack scan pins it across the wrap's allocation and the
+         * store closure does not allocate (an allocation there could raise
+         * NoMemoryError while the caller holds a live resource). */
+        let errors = crate::bridge::ruby::array_new();
+        // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
+        DocumentShell(unsafe {
+            crate::bridge::ruby::wrap_zeroed::<DocData>(
+                klass,
+                ty.as_ptr(),
+                |d| {
+                    d.parsed = core::ptr::null_mut();
+                    d.reported = 0;
+                },
+                |d| d.errors = errors.as_raw(),
+            )
+        })
     }
-}
 
-/// Store the parsed handle into a Document wrapper built by [`new_document`].
-pub fn set_document_parsed(rb_doc: VALUE, parsed: *mut Parsed) {
-    // SAFETY: `rb_doc` is a Document (the base type matches either leaf).
-    unsafe {
-        let d = crate::bridge::ruby::typed_data_known(value(rb_doc), &DOC_TYPE) as *mut DocData;
-        (*d).parsed = parsed;
+    /// Give the Document its parsed handle - the GC owns it from here - and
+    /// report the arena's size.
+    pub fn install(self, parsed: Box<Parsed>) -> Value {
+        // SAFETY: `self.0` is a Document wrapper (the base type matches either
+        // leaf) that has no handle yet, so nothing is overwritten.
+        unsafe {
+            let d = crate::bridge::ruby::typed_data_known(value(self.0), &DOC_TYPE) as *mut DocData;
+            (*d).parsed = Box::into_raw(parsed);
+        }
+        account_document(self.0);
+        // SAFETY: a live Document.
+        unsafe { value(self.0) }
     }
 }
 

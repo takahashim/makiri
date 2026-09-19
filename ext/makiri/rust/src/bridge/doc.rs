@@ -22,9 +22,8 @@ use magnus::{prelude::*, Error, RString, Ruby, Value};
 use crate::bridge::fragment::{build_fragment_ctx, context_kwarg, resolve_fragment_context};
 use crate::bridge::lexbor::xml_node_document;
 use crate::bridge::lexbor::{
-    account_document, doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap,
-    keepalive_document, new_document, node_repr, set_document_parsed, wrap_document,
-    wrap_html_node, NodeRepr, DOC_TYPE,
+    doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap, keepalive_document, node_repr,
+    wrap_html_node, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
 };
 use crate::bridge::ruby::{typed_data_known_ref, value};
 use crate::bridge::string::HtmlSource;
@@ -60,7 +59,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     /* Allocate the wrapper with a null handle, so a failed parse still
      * frees cleanly through GC. This entry is defined on
      * Makiri::HTML::Document, so the result is always HTML. */
-    let obj = new_document(true);
+    let shell = DocumentShell::new(DocKind::Html);
 
     let result = crate::bridge::gvl::without_gvl(|| {
         // SAFETY: the bytes are `owned`'s, valid for the closure's lifetime,
@@ -82,12 +81,10 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
             "failed to parse HTML document",
         ));
     }
-    set_document_parsed(obj, result);
-    /* The GC learns the arena's size here; `owned` is already gone, so a
-     * collection this triggers has nothing of ours to invalidate. */
-    account_document(obj);
-    // SAFETY: `obj` came from `new_document`, which returns a live Document.
-    Ok(unsafe { value(obj) })
+    /* The GC learns the arena's size in `install`; `owned` is already gone, so
+     * a collection that triggers has nothing of ours to invalidate. */
+    // SAFETY: `result` is the handle the parse just returned, owned by no one.
+    Ok(shell.install(unsafe { Box::from_raw(result) }))
 }
 
 /* ------------------------------------------------------------------ *
@@ -140,6 +137,8 @@ pub fn document_errors(rb_doc: Value) -> Value {
 /// `<html><body></body></html>` shell, owned by the fragment's wrapper.
 pub fn fragment_shell_document() -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
+    /* The wrapper first, while nothing needs freeing - see DocumentShell. */
+    let shell = DocumentShell::new(DocKind::Html);
     // SAFETY: a static byte string; the parse copies what it needs.
     let Some(parsed) = (unsafe { parse_html(SHELL.as_ptr(), SHELL.len(), true) }) else {
         return Err(Error::new(
@@ -147,8 +146,7 @@ pub fn fragment_shell_document() -> Result<Value, Error> {
             "failed to create fragment document",
         ));
     };
-    // SAFETY: the wrapper takes ownership of `parsed`; GC frees it.
-    Ok(unsafe { value(wrap_document(Box::into_raw(parsed))) })
+    Ok(shell.install(parsed))
 }
 
 /// The body the fragment entry points share: read `(html, context:)`, resolve
