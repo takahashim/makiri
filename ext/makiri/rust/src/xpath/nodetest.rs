@@ -92,13 +92,12 @@ fn name_test_match<'a, 'd, D: Dom<'d>>(
         /* An unknown prefix is a non-match here; the step driver reports it. */
         return resolved_prefix(b, test).is_some_and(|uri| uri == doc.ns_uri(node));
     }
-    b.lax || doc.unprefixed_matches(node, false)
+    doc.unprefixed_matches(node, false, b.lax)
 }
 
 /// Whether attribute `a` of element `owner` matches the unprefixed name test
 /// `want`. The attribute axis and the `[@name]` fast path both ask this, so the
-/// two cannot answer differently - they once did, in XML's lax mode, where the
-/// fast path compared qualified names and the axis local ones.
+/// two cannot answer differently - they once did, in XML's lax mode.
 ///
 /// `owner` is the attribute's element, which decides whether names fold case;
 /// the HTML index backfills it as the attribute's parent.
@@ -110,7 +109,7 @@ pub fn unprefixed_attr_matches<'d, D: Dom<'d>>(
     lax: bool,
 ) -> bool {
     names_equal(doc, owner, doc.attr_test_name(a, false), want)
-        && (lax || doc.unprefixed_matches(D::attr_node(a), true))
+        && doc.unprefixed_matches(D::attr_node(a), true, lax)
 }
 
 /// A name test's name against a node's, as the node's element `owner` decides:

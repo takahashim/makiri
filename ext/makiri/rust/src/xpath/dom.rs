@@ -144,12 +144,19 @@ pub trait Dom<'d>: Copy {
     /// [`test_name`](Self::test_name) for an attribute.
     fn attr_test_name(self, a: Self::Attr, prefixed: bool) -> &'d [u8];
 
-    /// Whether a STRICT unprefixed name test that matched `n`'s name matches
-    /// `n`: an element, or an attribute node when `is_attr`. XML admits no
-    /// namespace only. HTML admits an element in the HTML namespace or none -
-    /// a foreign (SVG / MathML) element needs a prefix - and every attribute,
+    /// Whether an unprefixed name test that matched `n`'s name matches `n`:
+    /// an element, or an attribute node when `is_attr`.
+    ///
+    /// Strict (`lax` false) is the specification: XML admits no namespace only;
+    /// HTML admits an element in the HTML namespace or none - a foreign (SVG /
+    /// MathML) element needs a prefix, as in browsers - and every attribute,
     /// whose qualified-name compare already set the prefixed ones apart.
-    fn unprefixed_matches(self, n: Self::Node, is_attr: bool) -> bool;
+    ///
+    /// Lax (`namespace_matching: :lax`) is Nokogiri's behaviour, whatever that
+    /// is for the host: `Nokogiri::HTML` has no namespaces, so HTML admits any
+    /// element; `Nokogiri::XML` (libxml2) is namespace-strict, so XML ignores
+    /// the flag.
+    fn unprefixed_matches(self, n: Self::Node, is_attr: bool, lax: bool) -> bool;
 
     /// An attribute's OWN namespace URI, empty when it has none - never its
     /// element's. The XPath data model and the DOM agree: `id` on an HTML
@@ -183,12 +190,11 @@ pub trait Dom<'d>: Copy {
     /// Both hosts keep such an index, but they key it differently: XML by
     /// (local name, namespace URI), which is exactly the test, and HTML by
     /// Lexbor tag id, which is only an approximation - hence `recheck`.
-    fn name_bucket(
-        self,
-        local: &[u8],
-        ns_uri: Option<&[u8]>,
-        lax: bool,
-    ) -> Option<Bucket<'d, Self::Node>>;
+    ///
+    /// An unprefixed test is the strict one; where lax admits more (HTML's
+    /// foreign elements), the host must not answer a bucket that leaves them
+    /// out.
+    fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, Self::Node>>;
 }
 
 /// What `Dom::name_bucket` found: the elements, in document order, and whether

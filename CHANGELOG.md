@@ -46,10 +46,11 @@
   own `xml:lang` did not match went on to ask its ancestors, so an `en` element
   inside a `ja` one answered `lang("ja")`.
 
-* **`[@a]` answers as `@a` does in XML's lax namespace mode.** The attribute
-  predicate took a shortcut that compared qualified names, so with
-  `namespace_matching: :lax` `//*[@a]` missed an element whose `a` is
-  namespaced while `//@a` found it.
+* **`namespace_matching: :lax` no longer changes XPath over XML.** Lax means
+  "as Nokogiri does", and `Nokogiri::XML` (libxml2) is namespace-strict: `//g`
+  does not find `<p:g>`, nor `//@a` a `p:a`. Makiri's lax matched both by
+  local name - and its `[@a]` shortcut disagreed with `@a` besides. XML now
+  answers the same in either mode; HTML's lax is unchanged.
 
 * **Moving a node to another HTML document updates the one it left.** The
   source document's text and element indexes still listed the node, so its

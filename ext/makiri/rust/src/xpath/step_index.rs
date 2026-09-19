@@ -50,7 +50,7 @@ pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
     if test.prefix.is_some() && ns_uri.is_none() {
         return Ok(false); /* eval_step pre-resolves, so this should not happen */
     }
-    let bucket = match doc.name_bucket(local, ns_uri, b.lax) {
+    let bucket = match doc.name_bucket(local, ns_uri) {
         Some(bk) => bk,
         None => return Ok(false),
     };
@@ -141,7 +141,7 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     };
     let b = Bindings::<D>::new(cx, names, doc, ns_uri);
     let local = test.local.as_deref().unwrap_or(&[]);
-    let bucket = match doc.name_bucket(local, ns_uri, b.lax) {
+    let bucket = match doc.name_bucket(local, ns_uri) {
         Some(bk) => bk,
         None => return Ok(false),
     };

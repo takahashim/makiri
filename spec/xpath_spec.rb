@@ -812,14 +812,19 @@ RSpec.describe "Makiri XPath" do
       expect(Makiri::XML(%(<r><e id="a"/></r>)).xpath('count(id("a"))')).to eq(0)
     end
 
-    it "matches [@a] as the attribute axis does, in XML's lax mode too" do
-      doc = Makiri::XML(%(<r xmlns:p="urn:p"><e p:a="v"/><f a="w"/></r>))
-      lax = Makiri::XPathContext.new(doc, namespace_matching: :lax)
-      expect(lax.evaluate("count(//@a)")).to eq(2)
-      expect(lax.evaluate("count(//*[@a])")).to eq(2)
-      expect(lax.evaluate(%(count(//*[@a="v"])))).to eq(1)
-      expect(doc.xpath("count(//*[@a])")).to eq(1)
-      expect(doc.at_xpath("//*[@a]").name).to eq("f")
+    # Lax is "what Nokogiri does", and Nokogiri::XML (libxml2) is as
+    # namespace-strict as the specification - so in XML the flag changes
+    # nothing, for elements or attributes, on the axis or the [@a] fast path.
+    it "leaves XML namespace-strict under lax, as Nokogiri::XML is" do
+      doc = Makiri::XML(%(<r xmlns:p="urn:p"><e p:a="v"/><f a="w"/><p:g/></r>))
+      [doc, Makiri::XPathContext.new(doc, namespace_matching: :lax)].each do |q|
+        run = ->(e) { q.is_a?(Makiri::XPathContext) ? q.evaluate(e) : q.xpath(e) }
+        expect(run.("count(//@a)")).to eq(1)
+        expect(run.("count(//*[@a])")).to eq(1)
+        expect(run.(%(count(//*[@a="v"])))).to eq(0)
+        expect(run.("count(//g)")).to eq(0)
+      end
+      expect(doc.at_xpath("//*[@a]", namespace_matching: :lax).name).to eq("f")
     end
   end
 end

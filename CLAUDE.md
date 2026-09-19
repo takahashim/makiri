@@ -575,12 +575,14 @@ element name test resolves in the HTML namespace, so `//div` matches but
 `//svg`/`//path` do NOT - foreign (SVG/MathML) elements need a registered
 prefix (`//svg:path`). Pass `namespace_matching: :lax` (on `Node#{xpath,at_xpath}`
 or `XPathContext.new`) for the namespace-agnostic, `Nokogiri::HTML`-style match
-where `//path` finds the SVG element. The mode affects *only* unprefixed
-name tests; prefixed tests and the `*` wildcard are unchanged. In HTML that
-means element tests (an attribute is exempt from the strict rule anyway); in
-XML an unprefixed attribute test goes namespace-agnostic too (`@a` finds
-`p:a`), and the `[@a]` fast path answers exactly as the axis does (see
-`xpath/nodetest.rs`, `unprefixed_attr_matches`). Makiri keeps HTML elements in the
+where `//path` finds the SVG element. **The rule for the two modes: strict is
+the specification, lax is Nokogiri** - whatever Nokogiri does for the host.
+So the mode affects *only* unprefixed element name tests in HTML
+(`Nokogiri::HTML` has no namespaces); prefixed tests, the `*` wildcard and
+attribute tests are unchanged, and in XML the flag changes nothing, because
+`Nokogiri::XML` (libxml2) is as namespace-strict as the spec. The decision is
+the `Dom::unprefixed_matches(n, is_attr, lax)` policy item, which the axis and
+the `[@a]` fast path both reach through `nodetest::unprefixed_attr_matches`. Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null). **Name tests fold ASCII case on HTML elements** (browsers + WPT
 `domxpath`, NOT the HTML Standard, whose XPath section only sets the default

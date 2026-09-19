@@ -206,10 +206,11 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     /// Strict: an unprefixed element test resolves in the HTML namespace (or
     /// none), so a foreign SVG / MathML element needs a prefix. Attributes are
     /// exempt: the qualified-name compare already set the prefixed ones apart.
+    /// Lax is `Nokogiri::HTML`, which has no namespaces: anything goes.
     #[inline]
-    fn unprefixed_matches(self, n: HtmlNode<'d>, is_attr: bool) -> bool {
+    fn unprefixed_matches(self, n: HtmlNode<'d>, is_attr: bool, lax: bool) -> bool {
         let ns = n.ns_id();
-        is_attr || ns == dom::NS_HTML || ns == dom::NS_UNDEF
+        lax || is_attr || ns == dom::NS_HTML || ns == dom::NS_UNDEF
     }
 
     /// Lexbor gives an attribute with no namespace of its own its element's,
@@ -238,12 +239,9 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
         self.index().is_some()
     }
 
-    fn name_bucket(
-        self,
-        local: &[u8],
-        ns_uri: Option<&[u8]>,
-        _lax: bool,
-    ) -> Option<Bucket<'d, HtmlNode<'d>>> {
+    /// Served only for a document with no foreign element, where lax and
+    /// strict admit the same elements.
+    fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, HtmlNode<'d>>> {
         let index = self.index()?;
         if ns_uri.is_some() || index.has_foreign() {
             return None;
