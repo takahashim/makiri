@@ -21,8 +21,10 @@
 //! the "this is a NodeSet" invariant so their pushes are safe.
 //!
 //! Mutation goes through a `RefCell`, and every borrow failure becomes a Ruby
-//! error rather than a panic: `panic = "abort"` would turn an aliasing mistake
-//! into a dead process, and this codebase fails closed by raising.
+//! error rather than a panic: a panic would reach Ruby as `fatal` (the crate
+//! unwinds, it no longer aborts), which is still the wrong answer for an
+//! aliasing mistake a Ruby caller can provoke - this codebase fails closed by
+//! raising an ordinary error.
 
 #![allow(unsafe_code)]
 
@@ -219,7 +221,7 @@ impl DataTypeFunctions for NodeSet {
 
 impl NodeSet {
     /// Borrow the contents, turning a borrow conflict into a Ruby error instead
-    /// of a panic (which, under `panic = "abort"`, would end the process).
+    /// of a panic (which would surface as `fatal`).
     fn read(&self) -> Result<std::cell::Ref<'_, NodeVec>, Error> {
         self.nodes
             .try_borrow()
@@ -328,15 +330,6 @@ impl Fill<'_> {
     #[inline]
     pub fn push(&self, node: *mut c_void) -> Result<(), PushError> {
         self.set.try_push(node)
-    }
-
-    /// The number of nodes pushed so far.
-    pub fn len(&self) -> usize {
-        self.set.nodes.try_borrow().map(|n| n.len()).unwrap_or(0)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 

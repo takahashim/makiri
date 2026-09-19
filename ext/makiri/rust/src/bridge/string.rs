@@ -348,9 +348,6 @@ pub fn ruby_string_bytes(s: Value) -> Result<OwnedBuf, Error> {
 
 /* ---- encoding ---- */
 
-/// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
-/// for an unknown name, `TypeError` for something that is neither a String nor
-/// an Encoding.
 /// Whether `enc` is UTF-8 or US-ASCII, the two a serialized String may already
 /// be in and so need no hex-character-reference transcoding.
 #[inline]
@@ -374,6 +371,9 @@ impl Encoding {
     }
 }
 
+/// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
+/// for an unknown name, `TypeError` for something that is neither a String nor
+/// an Encoding.
 pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.

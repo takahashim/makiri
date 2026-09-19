@@ -250,13 +250,6 @@ pub fn bool_value(v: VALUE) -> Option<bool> {
     }
 }
 
-/// Run `f` under `rb_protect`, so a raise inside it comes back as `Err`.
-///
-/// `f` is the raw-building body; the VALUE it returns on success is handed
-/// back as a `Value`. A raise is a `longjmp`, which skips the Rust destructors
-/// in every frame it crosses - so `f` must own nothing a raise could leak, or
-/// the caller must accept the leak (the CSS and XPath result builders snapshot
-/// their `Vec` first and free it on the `Err` path).
 /// A Ruby entry point that faces untrusted input: a panic inside becomes
 /// `Makiri::InternalError` rather than Ruby's `fatal`.
 ///
@@ -303,6 +296,13 @@ where
 }
 
 #[inline]
+/// Run `f` under `rb_protect`, so a raise inside it comes back as `Err`.
+///
+/// `f` is the raw-building body; the VALUE it returns on success is handed
+/// back as a `Value`. A raise is a `longjmp`, which skips the Rust destructors
+/// in every frame it crosses - so `f` must own nothing a raise could leak, or
+/// the caller must accept the leak (the CSS and XPath result builders snapshot
+/// their `Vec` first and free it on the `Err` path).
 pub fn protect_value<F>(f: F) -> Result<Value, Error>
 where
     F: FnOnce() -> VALUE,

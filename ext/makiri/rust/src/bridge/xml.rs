@@ -462,6 +462,12 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
     Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
 }
 
+/// The attribute of `el` whose qualified name is `name`.
+///
+/// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is an
+/// attribute, so `node["xmlns:p"]` reads it as `getAttribute` does. XPath's data
+/// model is the one that hides them (`xml::xpath` skips them on the attribute
+/// axis), which is why `@xmlns:p` finds nothing while this does.
 fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
     if d.type_(el) != Some(NodeType::Element) {
         return None;

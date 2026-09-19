@@ -410,6 +410,8 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
     }
     const BUSY: &str =
         "cannot change the context node while evaluating (re-entrant mutation from a handler)";
+    /* The engine refuses this too; asked first so a handler's re-entrant call
+     * reads as busy rather than as whatever the checks below would say. */
     if rb_self.ctx.is_evaluating() {
         return Err(refused(ContextError::Evaluating, BUSY, BUSY));
     }
@@ -938,6 +940,9 @@ fn ctx_register_ns(rb_self: &XPathCtx, prefix: Value, uri: Value) -> Result<Valu
     const BUSY: &str =
         "cannot register a namespace while evaluating (re-entrant mutation from a handler)";
     const FAILED: &str = "failed to register namespace";
+    /* The engine refuses this too, but only once the arguments are converted -
+     * and converting runs `to_s`, arbitrary Ruby, from inside a handler. Asking
+     * first answers "busy" before any of that runs. */
     if rb_self.ctx.is_evaluating() {
         return Err(refused(ContextError::Evaluating, BUSY, FAILED));
     }
@@ -960,6 +965,7 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
     const BUSY: &str =
         "cannot register a variable while evaluating (re-entrant mutation from a handler)";
     const FAILED: &str = "failed to register variable";
+    /* Before any conversion runs Ruby - see `ctx_register_ns`. */
     if rb_self.ctx.is_evaluating() {
         return Err(refused(ContextError::Evaluating, BUSY, FAILED));
     }
