@@ -3,7 +3,7 @@
 //!
 //! CSS compilation runs under the GVL (the glue holds it throughout), so a
 //! single global is safe with no locking, the same argument the HTML CSS engine
-//! makes. Created lazily; a creation failure is reported to the caller rather
+//! makes - and [`parse`] takes the [`Gvl`] that says so. Created lazily; a creation failure is reported to the caller rather
 //! than retried, and leaves the globals untouched so a later call tries again.
 //!
 //! # The arena is cleaned on every path out
@@ -19,8 +19,7 @@
 //!
 //! Lexbor owns this parser and exposes it as three raw pointers. This module is
 //! the only CSS module allowed to retain those pointers or mutate the
-//! process-global parser state. CSS compilation holds Ruby's GVL, which is the
-//! serialisation mechanism documented by [`GvlCell`].
+//! process-global parser state, which it reaches through a [`GvlCell`].
 //!
 //! It is also the only reader of what a parse builds: the lowering walks the
 //! selectors through [`List`] and [`Selector`], borrowed from [`Parsed`], so
@@ -30,8 +29,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::missing_safety_doc)]
 
+use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::abi as lxb;
-use crate::lexbor::css_engine::{GvlCell, ParserParts, SelectorParser};
+use crate::lexbor::css_engine::{ParserParts, SelectorParser};
 use crate::text::VerifiedText;
 use core::ffi::c_long;
 
@@ -45,64 +45,58 @@ pub enum ParseError {
     NotReady,
     /// The selector is malformed.
     Syntax,
+    /// A parse on this thread is still borrowing the parser.
+    Busy,
 }
 
 /// The process-global parser, built on first use. A build failure leaves it
 /// unset, so a later call tries again.
 static ENGINE: GvlCell<Option<SelectorParser>> = GvlCell::new(None);
 
-/// The parser, built if this is the first call.
-///
-/// # Safety
-/// The GVL is held until the returned parser has been cleaned.
-unsafe fn ready() -> Option<SelectorParser> {
-    // SAFETY: the GVL makes this the only borrow of the cell.
-    let slot = unsafe { ENGINE.get() };
-    if slot.is_none() {
-        *slot = Some(ParserParts::build()?.into_parser());
-    }
-    *slot
-}
-
 /// A parsed selector list, borrowed from the engine's arena.
 ///
 /// Dropping it cleans the arena and returns the parser to its CLEAN stage, which
 /// is what makes the next call safe. The list must not be read afterwards - the
-/// lifetime says so.
-pub struct Parsed {
+/// lifetime says so. It holds the borrow of the global for as long as it lives,
+/// so a second parse cannot reuse the arena under it.
+pub struct Parsed<'g> {
     first: *mut SelectorList,
     engine: SelectorParser,
+    /// Released after `drop` below has cleaned the arena.
+    _slot: GvlRef<'g, Option<SelectorParser>>,
 }
 
-impl Drop for Parsed {
+impl Drop for Parsed<'_> {
     fn drop(&mut self) {
-        // SAFETY: `Parsed` is constructed under the GVL and owns the interval
-        // in which `first` may be read.
+        // SAFETY: the borrow in `_slot` is live, and the list is not read after
+        // `self` goes.
         unsafe { self.engine.clean_all() };
     }
 }
 
 /// Parse `selector` into the engine's arena.
-///
-/// The process-global parser is used under the GVL (CSS never releases it),
-/// and `selector` is a live verified slice, so this is safe to call as-is.
-pub fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
-    // SAFETY: caller contract holds the GVL for the complete `Parsed` lifetime.
-    let e = unsafe { ready() }.ok_or(ParseError::NotReady)?;
+pub fn parse<'g>(gvl: &'g Gvl, selector: VerifiedText) -> Result<Parsed<'g>, ParseError> {
+    let mut slot = ENGINE.borrow(gvl).map_err(|_| ParseError::Busy)?;
+    let e = match *slot {
+        Some(e) => e,
+        None => *slot.insert(
+            ParserParts::build()
+                .ok_or(ParseError::NotReady)?
+                .into_parser(),
+        ),
+    };
 
-    // SAFETY: as above; the verified slice is live for the call.
-    match unsafe { e.parse(selector.as_bytes()) } {
-        Some(list) => Ok(Parsed {
-            first: list,
-            engine: e,
-        }),
-        None => {
-            drop(Parsed {
-                first: core::ptr::null_mut(),
-                engine: e,
-            }); /* clean the arena */
-            Err(ParseError::Syntax)
-        }
+    // SAFETY: the borrow in `slot` is live; the verified slice is live for the
+    // call.
+    let list = unsafe { e.parse(selector.as_bytes()) };
+    let parsed = Parsed {
+        first: list.unwrap_or(core::ptr::null_mut()),
+        engine: e,
+        _slot: slot,
+    };
+    match list {
+        Some(_) => Ok(parsed),
+        None => Err(ParseError::Syntax), /* `parsed` drops: the arena is cleaned */
     }
 }
 
@@ -213,7 +207,7 @@ unsafe fn str_opt(s: &lxb::lexbor_str_t) -> Option<&[u8]> {
     }
 }
 
-impl Parsed {
+impl Parsed<'_> {
     /// The selector's comma groups, in order.
     pub fn groups(&self) -> Lists<'_> {
         // SAFETY: `first` is null or the list Lexbor built, which the arena

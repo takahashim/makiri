@@ -32,7 +32,7 @@ UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
   "bridge/doc.rs" => 5,
   "bridge/fragment.rs" => 5,
-  "bridge/gvl.rs" => 3,
+  "bridge/gvl.rs" => 4,
   "bridge/html.rs" => 33,
   "bridge/node_set.rs" => 10,
   "bridge/ruby.rs" => 24,
@@ -46,12 +46,13 @@ UNSAFE_ISLANDS = {
   "bridge/xpath/context_object.rs" => 6,
   "bridge/xpath/handler.rs" => 8,
   "bridge/xpath/mod.rs" => 6,
-  "cbuf.rs" => 15,
+  "cbuf.rs" => 17,
   "cbuf/verify.rs" => 7,
   "falloc/calloc_verify.rs" => 3,
   "falloc/cstr.rs" => 2,
   "falloc/mod.rs" => 1,
   "falloc/raw.rs" => 3,
+  "gvl.rs" => 4,
   "init.rs" => 5,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 3,
@@ -62,8 +63,8 @@ UNSAFE_ISLANDS = {
   "lexbor/adapter/post_parse.rs" => 9,
   "lexbor/adapter/source_loc.rs" => 3,
   "lexbor/adapter/text_index.rs" => 1,
-  "lexbor/css_engine.rs" => 15,
-  "lexbor/css_parser.rs" => 23,
+  "lexbor/css_engine.rs" => 12,
+  "lexbor/css_parser.rs" => 20,
   "lexbor/fragment.rs" => 9,
   "lexbor/selectors.rs" => 13,
   "lexbor/serialize.rs" => 3,
@@ -329,7 +330,7 @@ if lexbor_abi != LEXBOR_ABI_COUNTS
 end
 
 # A Lexbor function is DECLARED in one place, `lexbor/abi.rs` (bindgen's output
-# or its hand-declared `_noi` twins). A second `extern "C"` declaration of the
+# plus the three exports no header declares). A second `extern "C"` declaration of the
 # same symbol gives it a second Rust type, which nothing checks agree, and on
 # macOS a declaration that matches no symbol is a NULL call rather than a link
 # error. `post_parse.rs` re-declared four generated functions that way.
@@ -344,6 +345,18 @@ Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
 end
 unless lexbor_decls.empty?
   errors << "Lexbor functions declared outside lexbor/abi.rs: #{lexbor_decls.inspect}"
+end
+
+# Inside it, only the header-less exports are written by hand - everything else
+# is generated, so its signature is Lexbor's. A new hand declaration of a
+# header-declared function belongs in build.rs's allowlist instead; one with no
+# header belongs in build.rs's UNDECLARED_EXPORTS as well as here.
+LEXBOR_HAND_DECLS = 3
+abi_decls = comments_removed(File.binread(File.join(RUST, "lexbor/abi.rs"))).scan(LEXBOR_DECL).length
+if abi_decls != LEXBOR_HAND_DECLS
+  errors << "lexbor/abi.rs hand-declares #{abi_decls} Lexbor functions (expected " \
+            "#{LEXBOR_HAND_DECLS}): generate header-declared ones in build.rs; pin a " \
+            "header-less one in build.rs's UNDECLARED_EXPORTS"
 end
 
 ruby_layer = Hash.new(0)

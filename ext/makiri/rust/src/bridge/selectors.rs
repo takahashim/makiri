@@ -14,6 +14,7 @@ use magnus::rb_sys::AsRawValue;
 use crate::bridge::ruby::makiri_error;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
+use crate::bridge::gvl::held;
 use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
 use crate::bridge::ruby::VALUE;
@@ -41,6 +42,7 @@ fn select_error(err: SelectError, selector: Value) -> Error {
         SelectError::CollectOom => makiri_error("out of memory collecting CSS results"),
         SelectError::CacheOom => makiri_error("out of memory caching CSS selector"),
         SelectError::Unavailable => makiri_error("failed to initialise CSS selector engine"),
+        SelectError::Busy => makiri_error("CSS selector engine is already in use"),
     }
 }
 
@@ -89,8 +91,9 @@ fn css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         let sv = selector_bytes(selector)?;
 
         // SAFETY: the bytes are the verified view's, read for this call.
+        let gvl = held(&Ruby::get_with(rb_self));
         let nodes =
-            select_all(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
+            select_all(&gvl, root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
 
         let set = node_set_new(document);
         /* Each push can raise (NoMemoryError from Ruby's allocator), and a longjmp
@@ -129,8 +132,8 @@ fn at_css(rb_self: Value, selector: Value) -> Result<Value, Error> {
         let sv = selector_bytes(selector)?;
 
         // SAFETY: the bytes are the verified view's, read for this call.
-        let found =
-            select_first(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))?;
+        let found = select_first(&held(&ruby), root, unsafe { sv.bytes() })
+            .map_err(|e| select_error(e, selector))?;
         let Some(node) = found else {
             return Ok(ruby.qnil().as_value());
         };
@@ -146,7 +149,8 @@ fn matches(rb_self: Value, selector: Value) -> Result<bool, Error> {
         let root = html_node_unwrap(rb_self)?;
         let sv = selector_bytes(selector)?;
         // SAFETY: the bytes are the verified view's, read for this call.
-        matches_node(root, unsafe { sv.bytes() }).map_err(|e| select_error(e, selector))
+        matches_node(&held(&Ruby::get_with(rb_self)), root, unsafe { sv.bytes() })
+            .map_err(|e| select_error(e, selector))
     })
 }
 

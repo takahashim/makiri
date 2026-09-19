@@ -66,6 +66,11 @@ pub mod cbuf;
 /// Lexbor or Ruby callback becomes an exception rather than an abort.
 pub mod caught;
 
+/// Holding the GVL as a value: the token the process-global CSS engines ask
+/// for, and the cell that keeps them.
+#[cfg(feature = "lexbor")]
+pub mod gvl;
+
 /// The CSS selector front end: lowers a Lexbor-parsed selector list into the
 /// XPath AST. Ruby-free, like the engine it feeds; Lexbor keeps the parser.
 #[cfg(feature = "lexbor")]

@@ -48,6 +48,14 @@ pub struct OwnedBuf {
     len: usize,
 }
 
+// SAFETY: an `OwnedBuf` owns its allocation outright and never writes to it
+// after construction - it is `Box<[u8]>` with a NUL - so moving it to another
+// thread, or reading it from two, is as sound as for that. The parse reads its
+// copy of the source from the GVL-released thread (`bridge::gvl::without_gvl`).
+unsafe impl Send for OwnedBuf {}
+// SAFETY: as `Send`; `&OwnedBuf` offers only reads.
+unsafe impl Sync for OwnedBuf {}
+
 impl OwnedBuf {
     /// The bytes written to the allocation, without the trailing NUL.
     pub fn as_slice(&self) -> &[u8] {

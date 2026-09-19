@@ -16,11 +16,11 @@
 //! # Nothing here is declared twice
 //!
 //! Every Lexbor accessor comes from the `lexbor` layer, which re-exports the
-//! generated bindings and the hand-declared `_noi` twins. Allowlisting a name in build.rs
-//! and finding no binding is what identifies an `lxb_inline` function; eight of
-//! the eighteen readers this file needs turned out to be inline-only, and on
-//! macOS a hand-written declaration of one of those links to nothing and becomes
-//! a NULL call at run time rather than a link error.
+//! generated bindings - the `_noi` twins included. Allowlisting a name in
+//! build.rs and finding no binding is what identifies an `lxb_inline` function;
+//! eight of the eighteen readers this file needs turned out to be inline-only,
+//! and on macOS a hand-written declaration of one of those links to nothing and
+//! becomes a NULL call at run time rather than a link error.
 
 pub mod read;
 

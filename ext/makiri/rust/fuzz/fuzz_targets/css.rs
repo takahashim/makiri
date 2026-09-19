@@ -66,7 +66,8 @@ fuzz_target!(|data: &[u8]| {
         };
 
         let mut budget = Budget::with_limits(ctx.limits());
-        let Ok(ast) = compile_owned(text, &ns, &mut budget) else {
+        let gvl = makiri::gvl::Gvl::exclusive();
+        let Ok(ast) = compile_owned(&gvl, text, &ns, &mut budget) else {
             return;
         };
         evaluate_both(&ctx, &ast);
