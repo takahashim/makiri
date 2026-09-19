@@ -131,7 +131,7 @@ pub unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(v: VALUE) -> &'a 
  * This is the same OOM the raw `rb_float_new`/`rb_int2inum`/`rb_ary_new` they
  * replace could raise, so no call site changed; it is also why they are not
  * protected yet. A caller that holds a live Rust destructor across one must
- * run the whole conversion under `protect` (as `glue::xpath::value_to_ruby`
+ * run the whole conversion under `protect` (as `bridge::xpath::value_to_ruby`
  * does), and turning them into `Result`-returning helpers is part of moving
  * the protected calls behind the bridge. */
 
@@ -201,6 +201,12 @@ pub fn array_new() -> Value {
 pub fn current_receiver() -> Result<Value, Error> {
     // SAFETY: as `float`.
     unsafe { Ruby::get_unchecked() }.current_receiver::<Value>()
+}
+
+/// The receiver of the method being run - for a wrapped-type method, whose
+/// argument is the Rust value rather than the object, to return `self`.
+pub fn method_receiver() -> Value {
+    current_receiver().expect("a method invocation has a receiver")
 }
 
 /// VALUE identity, for the several sites that compare two references.
@@ -310,4 +316,55 @@ where
     // SAFETY: `protect` establishes the setjmp frame the raise unwinds to, and
     // the VALUE it hands back on success is live.
     protect(f).map(|raw| unsafe { Value::from_raw(raw) })
+}
+
+/* ---- exception messages ---- */
+
+unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
+    rb_sys::rb_obj_as_string(rb_sys::rb_funcall(
+        exc,
+        rb_sys::rb_intern(c"message".as_ptr()),
+        0,
+    ))
+}
+
+/// The longest message kept: this runs on error paths to word another error,
+/// and a handler's exception message is untrusted input.
+const EXCEPTION_MESSAGE_MAX: usize = 255;
+
+/// `exc`'s message, for wording another error with it: up to the first NUL,
+/// at most [`EXCEPTION_MESSAGE_MAX`] bytes, invalid UTF-8 replaced. "error" if
+/// asking for the message raises or answers with a non-String - this runs on
+/// error paths, so it must not raise itself.
+pub fn exception_message(exc: VALUE) -> String {
+    let mut state: c_int = 0;
+    // SAFETY: the thunk is only C calls, run under rb_protect; a raise inside
+    // comes back as a nonzero state, which is cleared.
+    let msg = unsafe { rb_sys::rb_protect(Some(exception_message_thunk), exc, &mut state) };
+    if state != 0 {
+        // SAFETY: clearing the error the protected call left, under the GVL.
+        unsafe { rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE) };
+        return "error".to_owned();
+    }
+    // SAFETY: `msg` is the live VALUE the call returned.
+    let Some(r) = magnus::RString::from_value(unsafe { Value::from_raw(msg) }) else {
+        return "error".to_owned();
+    };
+    // SAFETY: copied out before anything below can run Ruby.
+    let bytes = unsafe { r.as_slice() };
+    let n = bytes
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(bytes.len())
+        .min(EXCEPTION_MESSAGE_MAX);
+    String::from_utf8_lossy(&bytes[..n]).into_owned()
+}
+
+/// [`exception_message`] for a magnus error: the Ruby exception's message, or
+/// "error" for one that carries none.
+pub fn error_message(e: &Error) -> String {
+    match e.error_type() {
+        magnus::error::ErrorType::Exception(x) => exception_message(x.as_raw()),
+        _ => "error".to_owned(),
+    }
 }

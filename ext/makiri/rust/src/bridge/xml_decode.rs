@@ -22,7 +22,8 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{Error, Value};
 use rb_sys::{rb_encoding, VALUE};
 
-use super::string::{ruby_bytes_view, ruby_exception_message, text_check};
+use super::ruby::exception_message;
+use super::string::{ruby_bytes_view, text_check};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff_bom, sniff_decl};
 
@@ -136,11 +137,7 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         if state != 0 {
             let exc = rb_sys::rb_errinfo();
             rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
-            // c_char, not i8 - signed on aarch64-darwin, unsigned on
-            // aarch64-linux (see the same fix in glue/xpath.rs).
-            let mut msg = [0 as c_char; 256];
-            ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
-            let msg = core::ffi::CStr::from_ptr(msg.as_ptr()).to_string_lossy();
+            let msg = exception_message(exc);
             return Err(syntax_error(format!(
                 "XML input could not be decoded to UTF-8: {msg}"
             )));

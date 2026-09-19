@@ -45,7 +45,7 @@ use crate::bridge::html::wrap_html_node;
 use crate::bridge::ruby::typed_data_unprotected;
 use crate::bridge::wrapper::{keepalive_document, node_raw};
 use crate::bridge::xml::wrap_xml_node;
-use crate::init::{RbConst, CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
+use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::RawNode;
 
 use crate::limits::NODE_SET_MAX;
@@ -56,9 +56,7 @@ const HASH_MIN: usize = 64;
 use crate::bridge::ruby::error_class;
 
 /// Is `v` an instance of `klass`?
-fn is_kind_of(v: Value, klass: &RbConst) -> bool {
-    v.is_kind_of(klass.class())
-}
+use crate::bridge::ruby::is_kind_of;
 
 /* ------------------------------------------------------------------ */
 /* storage                                                            */
@@ -461,7 +459,7 @@ fn aref(ruby: &Ruby, rb_self: &NodeSet, args: &[Value]) -> Result<Value, Error> 
 }
 
 fn each(ruby: &Ruby, rb_self: &NodeSet) -> Result<Value, Error> {
-    let this = rb_self_value(rb_self);
+    let this = crate::bridge::ruby::method_receiver();
     if !ruby.block_given() {
         return Ok(this.enumeratorize("each", ()).as_value());
     }
@@ -485,10 +483,6 @@ fn each(ruby: &Ruby, rb_self: &NodeSet) -> Result<Value, Error> {
 /// itself both to return and to enumeratorize. The reference points into the
 /// wrapped data, and `rb_typeddata_...` has no inverse, so the object is
 /// recovered from the frame's receiver.
-fn rb_self_value(_s: &NodeSet) -> Value {
-    crate::bridge::ruby::current_receiver().expect("a method invocation has a receiver")
-}
-
 fn dup(ruby: &Ruby, rb_self: &NodeSet, _args: &[Value]) -> Result<Value, Error> {
     let document = rb_self.document(ruby);
     let mine = rb_self.read()?;
