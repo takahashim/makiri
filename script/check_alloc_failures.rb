@@ -302,6 +302,31 @@ SCENARIOS = {
       doc.at_css("#x")&.name.to_s
   end,
 
+  # CSS on XML: a different engine from the HTML one above - the selector is
+  # lowered (css/) into an XPath AST, every node of which is a falloc site. One
+  # selector per lowering shape: combinators, attribute operators, the nth and
+  # of-type arithmetic, the selector-list pseudo-classes, :lexbor-contains and
+  # namespaced type/universal selectors.
+  "xml_css" => lambda do
+    doc = Makiri::XML::Document.parse(<<~XML)
+      <root xmlns:p="urn:p">
+        <a id="x" class="c d" lang="en-GB">alpha</a>
+        <b v="pre-mid-suf"/><a>Beta</a><p:c><a>nested</a></p:c>
+      </root>
+    XML
+    ns = { "p" => "urn:p" }
+    [
+      "root > a + b ~ a, p|c a",
+      "#x.d[lang|=en][class~=c]",
+      "[v^=pre][v$=suf][v*=mid]",
+      ":nth-child(2n+1):not(:last-child)",
+      "a:nth-last-of-type(1), :first-of-type:only-of-type",
+      ":is(root > a, p|*):where(a) :empty",
+      "root:has(> b + a) a:lexbor-contains(\"BETA\" i)",
+      "*|a, |b, p|*",
+    ].map { |s| doc.css(s, ns).map { |n| n.name }.join(",") }.join("\n")
+  end,
+
   # The HTML fragment pipeline: parsing in a context, importing the result into
   # a document, and the <template>-content fixup that import_node omits.
   #

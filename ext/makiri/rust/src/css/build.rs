@@ -2,9 +2,7 @@
 //!
 //! Every one takes the nodes it is handed as [`Built`] and returns one: an `Err`
 //! operand fails the build, and the operands it did receive are dropped - freed -
-//! on the way out. So a caller chains builders without tracking partial state,
-//! which is what the C's cascade of `if (x == NULL) { free(...); return NULL; }`
-//! was doing, spelled once per builder instead of once per call.
+//! on the way out. So a caller chains builders without tracking partial state.
 //!
 //! Each expression node is charged against the AST budget where the builder
 //! makes it, as the parser does, and every allocation goes through `falloc`.
@@ -16,7 +14,8 @@ use crate::falloc::{try_box, try_to_boxed_slice, VecPush};
 use crate::text::VerifiedText;
 use crate::xpath::ast::{Axis, Expr, ExprKind, Op, Path, Step, TestKind};
 use crate::xpath::limits::check_ast_depth;
-use crate::xpath::msg::Reported;
+use crate::xpath::msg::{Reported, XP_ERR_INTERNAL, XP_ERR_OOM, XP_ERR_SYNTAX};
+use core::ffi::CStr;
 
 /// A node under construction, or the proof its build failed with `*err` set.
 pub(crate) type Built = Result<Expr, Reported>;
@@ -36,13 +35,9 @@ pub(crate) fn expr(b: &Build, kind: ExprKind) -> Built {
 /// An owned copy of `s` for an AST name, or `Err` with `*err` set.
 pub(crate) fn copy_text(b: &Build, s: &[u8]) -> Result<Box<[u8]>, Reported> {
     if VerifiedText::from_bytes(s).is_none() {
-        return Err(crate::err_setf!(
-            b.err.clone(),
-            crate::xpath::msg::XP_ERR_INTERNAL,
-            "invalid internal CSS text"
-        ));
+        return Err(b.fail(XP_ERR_INTERNAL, c"invalid internal CSS text"));
     }
-    try_to_boxed_slice(s).ok_or_else(|| b.fail(super::ERR_OOM, c"css name"))
+    try_to_boxed_slice(s).ok_or_else(|| b.fail(XP_ERR_OOM, c"css name"))
 }
 
 /// `e` on the heap, for an operand slot.
@@ -107,6 +102,21 @@ pub(crate) fn call2(b: &Build, name: &[u8], a0: Built, a1: Built) -> Built {
     call(b, name, [a0, a1])
 }
 
+/// `items` joined left to right by `op` - the comma list's union, the
+/// selector-list pseudo-classes' OR. An empty list is refused with `empty`, so
+/// every failure is reported even where Lexbor already rejects one.
+pub(crate) fn fold(b: &Build, op: Op, items: impl Iterator<Item = Built>, empty: &CStr) -> Built {
+    let mut acc: Option<Expr> = None;
+    for item in items {
+        let item = item?;
+        acc = Some(match acc {
+            None => item,
+            Some(lhs) => binop(b, op, Ok(lhs), Ok(item))?,
+        });
+    }
+    acc.ok_or_else(|| b.fail(XP_ERR_SYNTAX, empty))
+}
+
 /// A relative PATH node over already-built steps.
 pub(crate) fn path(b: &Build, steps: Vec<Step>) -> Built {
     charge(b)?;
@@ -119,51 +129,30 @@ pub(crate) fn path(b: &Build, steps: Vec<Step>) -> Built {
     )
 }
 
-/// A one-step relative PATH with no predicates: `axis::nodetest`.
-///
-/// `local` is `None` for a wildcard or a kind test. Used for `@attr`,
-/// `preceding-sibling::*`, `child::node()` and the rest.
-pub(crate) fn step_path(b: &Build, axis: Axis, nt_kind: TestKind, local: Option<&[u8]>) -> Built {
-    named_step_path_inner(b, axis, None, local, nt_kind)
+/// A relative PATH of the one step `step`, predicates and all.
+pub(crate) fn single_step_path(b: &Build, step: Step) -> Built {
+    let mut steps = Vec::new();
+    push(b, &mut steps, step)?;
+    path(b, steps)
+}
+
+/// A one-step relative PATH with no predicates and a wildcard or kind test:
+/// `preceding-sibling::*`, `child::node()`, `self::node()` and the rest.
+pub(crate) fn step_path(b: &Build, axis: Axis, kind: TestKind) -> Built {
+    single_step_path(b, Step::new(axis, kind))
 }
 
 /// A one-step relative PATH with a NAME test: `axis::[prefix:]local`.
 ///
 /// The shared builder for every named single-step path - `@prefix:name`, the
-/// of-type `not()`, the nth-of-type position - so the step, its two names and
-/// the charge exist once.
+/// typed of-type sibling tests - so the step and its two names exist once.
 pub(crate) fn named_step_path(b: &Build, axis: Axis, prefix: Option<&[u8]>, name: &[u8]) -> Built {
-    named_step_path_inner(b, axis, prefix, Some(name), TestKind::Name)
-}
-
-fn named_step_path_inner(
-    b: &Build,
-    axis: Axis,
-    prefix: Option<&[u8]>,
-    local: Option<&[u8]>,
-    nt_kind: TestKind,
-) -> Built {
-    charge(b)?;
-    let mut step = Step::new(axis, nt_kind);
-
-    if nt_kind == TestKind::Name {
-        if let Some(local) = local {
-            step.test.local = Some(copy_text(b, local)?);
-        }
-        if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
-            step.test.prefix = Some(copy_text(b, prefix)?);
-        }
+    let mut step = Step::new(axis, TestKind::Name);
+    step.test.local = Some(copy_text(b, name)?);
+    if let Some(prefix) = prefix.filter(|p| !p.is_empty()) {
+        step.test.prefix = Some(copy_text(b, prefix)?);
     }
-
-    let mut steps = Vec::new();
-    push(b, &mut steps, step)?;
-    expr(
-        b,
-        ExprKind::Path(Path {
-            absolute: false,
-            steps,
-        }),
-    )
+    single_step_path(b, step)
 }
 
 /// `@prefix:name` (or `@name`) as a relative attribute-axis path.

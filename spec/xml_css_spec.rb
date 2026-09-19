@@ -204,6 +204,14 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect { doc.css("a::before") }.to raise_error(Makiri::CSS::SyntaxError)
     end
 
+    it "refuses the column combinator instead of reading it as a descendant" do
+      # `a || b` parses, but XPath has no table-column relation; it used to fall
+      # through to the descendant axis and answer <b> inside <a>.
+      nested = Makiri::XML("<r><a><b/></a></r>")
+      expect { nested.css("a || b") }.to raise_error(Makiri::CSS::SyntaxError, /combinator/)
+      expect { nested.css(":is(a || b)") }.to raise_error(Makiri::CSS::SyntaxError, /combinator/)
+    end
+
     it "rejects a selector with invalid UTF-8 / an embedded NUL (verify_text)" do
       expect { doc.css("a\xFF".b) }.to raise_error(Makiri::Error)
       expect { doc.css("a\x00b") }.to raise_error(Makiri::Error)
@@ -313,6 +321,56 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(doc.css("wrap").length).to eq(1)                     # bare: no-namespace here
       expect(doc.xpath("//wrap").length).to eq(1)
       expect(doc.css(%([id|="x"])).length).to eq(0)               # |= operator unaffected
+    end
+  end
+
+  describe "namespaced universal selectors (ns|*, |*, *|*)" do
+    let(:doc) { Makiri::XML(%(<r xmlns:p="urn:p"><p:a/><a/><p:b/></r>)) }
+
+    # `ns|*` used to drop its namespace and match every element.
+    it "restricts p|* to the namespace bound to p" do
+      expect(doc.css("p|*", "p" => "urn:p").map(&:name)).to eq(%w[p:a p:b])
+      expect(doc.css(":is(p|*)", "p" => "urn:p").map(&:name)).to eq(%w[p:a p:b])
+      expect(doc.css("r > p|*:first-of-type", "p" => "urn:p").map(&:name)).to eq(%w[p:a p:b])
+    end
+
+    it "restricts |* to no-namespace elements" do
+      expect(doc.css("|*").map(&:name)).to eq(%w[r a])
+      expect(Makiri::XML(%(<r xmlns="urn:d"><a/></r>)).css("|*")).to be_empty
+    end
+
+    it "keeps *|* and a bare * matching every element" do
+      expect(doc.css("*|*").map(&:name)).to eq(%w[r p:a a p:b])
+      expect(doc.css("*").map(&:name)).to eq(%w[r p:a a p:b])
+    end
+
+    it "raises on an unbound prefix, as a prefixed type selector does" do
+      expect { doc.css("q|*") }.to raise_error(Makiri::Error, /prefix/)
+    end
+  end
+
+  # HTML CSS runs on Lexbor's matcher, XML CSS on this lowering - two engines
+  # whose agreement nothing else checks. Each selector is scoped to a context
+  # that is its own ancestor-free root in both, so the one known difference
+  # (an HTML selector's ancestors may lie outside the context, as in
+  # querySelectorAll; the lowering's may not, as in Nokogiri) stays out of it.
+  describe "agreement with the HTML matcher" do
+    body = %(<main id="m"><p id="p1" class="a b">one</p><p id="p2"></p>) +
+           %(<div id="d1"><span id="s1">x</span><span id="s2">y z</span></div>) +
+           %(<p id="p3" lang="en-US" data-k="pre-mid-suf">Three</p><div id="d2"></div><em id="e1"> </em></main>)
+    [
+      ":first-child", ":last-child", ":only-child", ":empty", ":first-of-type", ":last-of-type",
+      ":only-of-type", ":nth-child(2n+1)", ":nth-child(-n+2)", ":nth-last-child(2)", ":nth-of-type(2)",
+      ":nth-last-of-type(1)", "span:nth-child(odd)", "p + p", "p ~ div", "div > span", ".a", ".b.a", "#p3",
+      "[lang|=en]", "[data-k^=pre]", "[data-k$=suf]", "[data-k*=mid]", "[class~=b]", ":not(p)",
+      "p:not(:first-child)", ":is(p, span)", ":where(div > span)", ":has(> span)", ":has(+ p)", ":has(~ em)",
+      "*:not(:has(*))", %(:lexbor-contains("y")), %(:lexbor-contains("three" i)),
+    ].each do |sel|
+      it "answers #{sel} as the HTML matcher does" do
+        xml = Makiri::XML(body).root
+        html = Makiri::HTML("<!doctype html><html><head></head><body>#{body}</body></html>").at_css("#m")
+        expect(xml.css(sel).map { |n| n["id"] }).to eq(html.css(sel).map { |n| n["id"] })
+      end
     end
   end
 

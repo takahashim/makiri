@@ -210,82 +210,80 @@ pub fn parse(selector: VerifiedText) -> Result<Parsed, ParseError> {
  * the parse, read through typed views                                *
  * ------------------------------------------------------------------ */
 
-/* The selector kinds, combinators, match operators and pseudo ids, generated. */
-pub(crate) mod k {
+/// Lexbor's generated enum values. Nothing outside this module sees them: the
+/// views below translate each into a Rust enum, so a value the lowering does
+/// not handle reaches it as an explicit `Other` - never as a number that a
+/// catch-all arm could mistake for one it does handle.
+mod raw {
     use crate::lexbor_abi as l;
-    pub const ANY: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ANY;
-    pub const ELEMENT: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ELEMENT;
-    pub const ID: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ID;
-    pub const CLASS: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_CLASS;
-    pub const ATTRIBUTE: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ATTRIBUTE;
-    pub const PSEUDO_CLASS: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS;
-    pub const PSEUDO_CLASS_FUNCTION: u32 =
+
+    type Ty = l::lxb_css_selector_type_t;
+    pub const ANY: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ANY;
+    pub const ELEMENT: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ELEMENT;
+    pub const ID: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ID;
+    pub const CLASS: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_CLASS;
+    pub const ATTRIBUTE: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_ATTRIBUTE;
+    pub const PSEUDO_CLASS: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS;
+    pub const PSEUDO_CLASS_FUNCTION: Ty =
         l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS_FUNCTION;
-    pub const PSEUDO_ELEMENT: u32 = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_ELEMENT;
-    pub const PSEUDO_ELEMENT_FUNCTION: u32 =
+    pub const PSEUDO_ELEMENT: Ty = l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_ELEMENT;
+    pub const PSEUDO_ELEMENT_FUNCTION: Ty =
         l::lxb_css_selector_type_t_LXB_CSS_SELECTOR_TYPE_PSEUDO_ELEMENT_FUNCTION;
-}
 
-pub(crate) mod comb {
-    use crate::lexbor_abi as l;
-    pub const CLOSE: u32 = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CLOSE;
-    pub const CHILD: u32 = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CHILD;
-    pub const SIBLING: u32 = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_SIBLING;
-    pub const FOLLOWING: u32 =
+    type Comb = l::lxb_css_selector_combinator_t;
+    pub const DESCENDANT: Comb =
+        l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_DESCENDANT;
+    pub const CLOSE: Comb = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CLOSE;
+    pub const CHILD: Comb = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_CHILD;
+    pub const SIBLING: Comb = l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_SIBLING;
+    pub const FOLLOWING: Comb =
         l::lxb_css_selector_combinator_t_LXB_CSS_SELECTOR_COMBINATOR_FOLLOWING;
-}
 
-pub(crate) mod m {
-    use crate::lexbor_abi as l;
-    pub const EQUAL: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_EQUAL;
-    pub const INCLUDE: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_INCLUDE;
-    pub const PREFIX: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_PREFIX;
-    pub const SUBSTRING: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_SUBSTRING;
-    pub const SUFFIX: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_SUFFIX;
-    pub const DASH: u32 = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_DASH;
-    pub const MOD_I: u32 = l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_I;
-    pub const MOD_S: u32 = l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_S;
-}
+    type Match = l::lxb_css_selector_match_t;
+    pub const EQUAL: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_EQUAL;
+    pub const INCLUDE: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_INCLUDE;
+    pub const DASH: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_DASH;
+    pub const PREFIX: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_PREFIX;
+    pub const SUFFIX: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_SUFFIX;
+    pub const SUBSTRING: Match = l::lxb_css_selector_match_t_LXB_CSS_SELECTOR_MATCH_SUBSTRING;
 
-pub(crate) mod pc {
-    use crate::lexbor_abi as l;
-    pub const FIRST_CHILD: u32 =
+    pub const MOD_UNSET: l::lxb_css_selector_modifier_t =
+        l::lxb_css_selector_modifier_t_LXB_CSS_SELECTOR_MODIFIER_UNSET;
+
+    type Pc = l::lxb_css_selector_pseudo_class_id_t;
+    pub const FIRST_CHILD: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_CHILD;
-    pub const LAST_CHILD: u32 =
+    pub const LAST_CHILD: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_CHILD;
-    pub const ONLY_CHILD: u32 =
+    pub const ONLY_CHILD: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_CHILD;
-    pub const EMPTY: u32 =
-        l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_EMPTY;
-    pub const ROOT: u32 = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ROOT;
-    pub const FIRST_OF_TYPE: u32 =
+    pub const EMPTY: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_EMPTY;
+    pub const ROOT: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ROOT;
+    pub const FIRST_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FIRST_OF_TYPE;
-    pub const LAST_OF_TYPE: u32 =
+    pub const LAST_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
-    pub const ONLY_OF_TYPE: u32 =
+    pub const ONLY_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
-}
 
-pub(crate) mod pf {
-    use crate::lexbor_abi as l;
-    type T = l::lxb_css_selector_pseudo_class_function_id_t;
-    pub const NTH_CHILD: T =
+    type Pf = l::lxb_css_selector_pseudo_class_function_id_t;
+    pub const NTH_CHILD: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_CHILD;
-    pub const NTH_LAST_CHILD: T =
+    pub const NTH_LAST_CHILD: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_LAST_CHILD;
-    pub const NTH_OF_TYPE: T =
+    pub const NTH_OF_TYPE: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_OF_TYPE;
-    pub const NTH_LAST_OF_TYPE: T =
+    pub const NTH_LAST_OF_TYPE: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NTH_LAST_OF_TYPE;
-    pub const NOT: T =
+    pub const NOT: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_NOT;
-    pub const IS: T =
+    pub const IS: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_IS;
-    pub const WHERE: T =
+    pub const WHERE: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_WHERE;
-    pub const HAS: T =
+    pub const HAS: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_HAS;
-    pub const LEXBOR_CONTAINS: T =
+    pub const LEXBOR_CONTAINS: Pf =
         l::lxb_css_selector_pseudo_class_function_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_FUNCTION_LEXBOR_CONTAINS;
 }
 
@@ -363,15 +361,67 @@ impl PartialEq for Selector<'_> {
     }
 }
 
+/// How a simple selector attaches to the one before it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Combinator {
+    /// Whitespace.
+    Descendant,
+    /// None written: the selector continues the same compound (`a.b`).
+    Close,
+    /// `>`
+    Child,
+    /// `+`
+    NextSibling,
+    /// `~`
+    SubsequentSibling,
+    /// Anything else Lexbor parses - the column combinator `||`.
+    Other,
+}
+
+/// An attribute selector's operator.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AttrMatch {
+    /// `=`
+    Equal,
+    /// `~=`
+    Include,
+    /// `|=`
+    Dash,
+    /// `^=`
+    Prefix,
+    /// `$=`
+    Suffix,
+    /// `*=`
+    Substring,
+    Other,
+}
+
 /// An attribute selector's operator, case modifier and value.
+#[derive(Clone, Copy)]
 pub struct Attribute<'p> {
-    pub match_: u32,
-    pub modifier: u32,
+    pub op: AttrMatch,
+    /// Whether an `i` or `s` modifier was written.
+    pub case_modifier: bool,
     /// None for `[name]`, an existence test.
     pub value: Option<&'p [u8]>,
 }
 
+/// The non-functional pseudo-classes the lowering can express.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PseudoClass {
+    FirstChild,
+    LastChild,
+    OnlyChild,
+    Empty,
+    Root,
+    FirstOfType,
+    LastOfType,
+    OnlyOfType,
+    Other,
+}
+
 /// `:nth-*(an+b [of S])`.
+#[derive(Clone, Copy)]
 pub struct Nth {
     pub a: c_long,
     pub b: c_long,
@@ -380,30 +430,90 @@ pub struct Nth {
 }
 
 /// `:lexbor-contains(needle [i])`.
+#[derive(Clone, Copy)]
 pub struct Contains<'p> {
     pub needle: &'p [u8],
     pub insensitive: bool,
 }
 
-/// A functional pseudo-class's argument, as what its id says Lexbor stored.
+/// The functional pseudo-classes that take a selector list.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ListPseudo {
+    Not,
+    Is,
+    Where,
+    Has,
+}
+
+/// A functional pseudo-class, with the argument its id says Lexbor stored.
+///
+/// The id is resolved HERE, once: each variant carries what tells its members
+/// apart, so the lowering never reads the id a second time.
+#[derive(Clone, Copy)]
 pub enum FunctionArg<'p> {
-    /// The `:nth-*` family, or None when Lexbor stored nothing.
-    Nth(Option<Nth>),
+    /// The `:nth-*` family; `anb` is None when Lexbor stored nothing.
+    Nth {
+        /// `:nth-last-*`: counted from the end.
+        from_end: bool,
+        /// `:nth-*-of-type`: counted among same-type siblings.
+        of_type: bool,
+        anb: Option<Nth>,
+    },
     /// `:not`, `:is`, `:where` and `:has`.
-    Selectors(Lists<'p>),
+    Selectors {
+        pseudo: ListPseudo,
+        lists: Lists<'p>,
+    },
     /// `:lexbor-contains`, or None when Lexbor stored nothing.
     Contains(Option<Contains<'p>>),
-    /// Anything else, or not a functional pseudo-class.
+    /// Any other functional pseudo-class.
+    Other,
+}
+
+/// What a simple selector is, with the parts its kind carries.
+#[derive(Clone, Copy)]
+pub enum Simple<'p> {
+    /// `*` or `ns|*`.
+    Universal,
+    /// A type selector: `el`, `ns|el`, `|el` or `*|el`.
+    Type,
+    /// `#id`
+    Id,
+    /// `.class`
+    Class,
+    Attribute(Attribute<'p>),
+    PseudoClass(PseudoClass),
+    PseudoClassFunction(FunctionArg<'p>),
+    /// `::x` or `::x()`.
+    PseudoElement,
     Other,
 }
 
 impl<'p> Selector<'p> {
-    pub fn kind(self) -> u32 {
-        self.0.type_
+    /// The kind of this simple selector, with its kind's parts.
+    pub fn simple(self) -> Simple<'p> {
+        match self.0.type_ {
+            raw::ANY => Simple::Universal,
+            raw::ELEMENT => Simple::Type,
+            raw::ID => Simple::Id,
+            raw::CLASS => Simple::Class,
+            raw::ATTRIBUTE => Simple::Attribute(self.attribute()),
+            raw::PSEUDO_CLASS => Simple::PseudoClass(self.pseudo_class()),
+            raw::PSEUDO_CLASS_FUNCTION => Simple::PseudoClassFunction(self.function_arg()),
+            raw::PSEUDO_ELEMENT | raw::PSEUDO_ELEMENT_FUNCTION => Simple::PseudoElement,
+            _ => Simple::Other,
+        }
     }
 
-    pub fn combinator(self) -> u32 {
-        self.0.combinator
+    pub fn combinator(self) -> Combinator {
+        match self.0.combinator {
+            raw::DESCENDANT => Combinator::Descendant,
+            raw::CLOSE => Combinator::Close,
+            raw::CHILD => Combinator::Child,
+            raw::SIBLING => Combinator::NextSibling,
+            raw::FOLLOWING => Combinator::SubsequentSibling,
+            _ => Combinator::Other,
+        }
     }
 
     /// The name, empty when there is none.
@@ -424,56 +534,77 @@ impl<'p> Selector<'p> {
         unsafe { arena(self.0.next) }.map(Selector)
     }
 
-    /// An attribute selector's parts; None for any other kind.
-    pub fn attribute(self) -> Option<Attribute<'p>> {
-        if self.kind() != k::ATTRIBUTE {
-            return None;
-        }
+    /// An attribute selector's parts; `simple` calls it for no other kind.
+    fn attribute(self) -> Attribute<'p> {
         // SAFETY: Lexbor fills `u.attribute` for an attribute selector.
         let at = unsafe { &self.0.u.attribute };
-        Some(Attribute {
-            match_: at.match_,
-            modifier: at.modifier,
+        Attribute {
+            op: match at.match_ {
+                raw::EQUAL => AttrMatch::Equal,
+                raw::INCLUDE => AttrMatch::Include,
+                raw::DASH => AttrMatch::Dash,
+                raw::PREFIX => AttrMatch::Prefix,
+                raw::SUFFIX => AttrMatch::Suffix,
+                raw::SUBSTRING => AttrMatch::Substring,
+                _ => AttrMatch::Other,
+            },
+            case_modifier: at.modifier != raw::MOD_UNSET,
             // SAFETY: as in `name`.
             value: unsafe { str_opt(&at.value) },
-        })
+        }
     }
 
-    /// A pseudo-class's id, plain or functional; None for any other kind.
-    pub fn pseudo_id(self) -> Option<u32> {
-        if !matches!(self.kind(), k::PSEUDO_CLASS | k::PSEUDO_CLASS_FUNCTION) {
-            return None;
-        }
+    /// A plain pseudo-class; `simple` calls it for no other kind.
+    fn pseudo_class(self) -> PseudoClass {
         // SAFETY: Lexbor fills `u.pseudo` for a pseudo-class.
-        Some(unsafe { self.0.u.pseudo.type_ })
+        match unsafe { self.0.u.pseudo.type_ } {
+            raw::FIRST_CHILD => PseudoClass::FirstChild,
+            raw::LAST_CHILD => PseudoClass::LastChild,
+            raw::ONLY_CHILD => PseudoClass::OnlyChild,
+            raw::EMPTY => PseudoClass::Empty,
+            raw::ROOT => PseudoClass::Root,
+            raw::FIRST_OF_TYPE => PseudoClass::FirstOfType,
+            raw::LAST_OF_TYPE => PseudoClass::LastOfType,
+            raw::ONLY_OF_TYPE => PseudoClass::OnlyOfType,
+            _ => PseudoClass::Other,
+        }
     }
 
-    /// A functional pseudo-class's argument.
-    pub fn function_arg(self) -> FunctionArg<'p> {
-        if self.kind() != k::PSEUDO_CLASS_FUNCTION {
-            return FunctionArg::Other;
-        }
-        // SAFETY: as in `pseudo_id`.
+    /// A functional pseudo-class and its argument; `simple` calls it for no
+    /// other kind.
+    fn function_arg(self) -> FunctionArg<'p> {
+        // SAFETY: Lexbor fills `u.pseudo` for a functional pseudo-class.
         let pseudo = unsafe { self.0.u.pseudo };
         let data = pseudo.data as *const core::ffi::c_void;
-        match pseudo.type_ {
-            pf::NTH_CHILD | pf::NTH_LAST_CHILD | pf::NTH_OF_TYPE | pf::NTH_LAST_OF_TYPE => {
-                // SAFETY: for the `:nth-*` family Lexbor stores an
-                // `lxb_css_selector_anb_of_t`, in the arena.
-                let anb = unsafe { arena(data as *const lxb::lxb_css_selector_anb_of_t) };
-                FunctionArg::Nth(anb.map(|n| Nth {
+        let nth = |from_end: bool, of_type: bool| {
+            // SAFETY: for the `:nth-*` family Lexbor stores an
+            // `lxb_css_selector_anb_of_t`, in the arena.
+            let anb = unsafe { arena(data as *const lxb::lxb_css_selector_anb_of_t) };
+            FunctionArg::Nth {
+                from_end,
+                of_type,
+                anb: anb.map(|n| Nth {
                     a: n.anb.a,
                     b: n.anb.b,
                     of: !n.of.is_null(),
-                }))
+                }),
             }
-            pf::NOT | pf::IS | pf::WHERE | pf::HAS => {
-                // SAFETY: for these Lexbor stores a selector list, in the arena.
-                FunctionArg::Selectors(Lists(
-                    unsafe { arena(data as *const SelectorList) }.map(List),
-                ))
-            }
-            pf::LEXBOR_CONTAINS => {
+        };
+        let selectors = |pseudo: ListPseudo| FunctionArg::Selectors {
+            pseudo,
+            // SAFETY: for these Lexbor stores a selector list, in the arena.
+            lists: Lists(unsafe { arena(data as *const SelectorList) }.map(List)),
+        };
+        match pseudo.type_ {
+            raw::NTH_CHILD => nth(false, false),
+            raw::NTH_LAST_CHILD => nth(true, false),
+            raw::NTH_OF_TYPE => nth(false, true),
+            raw::NTH_LAST_OF_TYPE => nth(true, true),
+            raw::NOT => selectors(ListPseudo::Not),
+            raw::IS => selectors(ListPseudo::Is),
+            raw::WHERE => selectors(ListPseudo::Where),
+            raw::HAS => selectors(ListPseudo::Has),
+            raw::LEXBOR_CONTAINS => {
                 // SAFETY: Lexbor stores an `lxb_css_selector_contains_t`, in the
                 // arena.
                 let c = unsafe { arena(data as *const lxb::lxb_css_selector_contains_t) };

@@ -38,16 +38,13 @@ use crate::xpath::msg::XP_ERR_SYNTAX;
  * here: that module is the XML engine's own declaration of it. */
 use crate::xml::model::MAX_BYTES;
 
-/// `MKR_CSS_DEFAULT_NS_PREFIX` - the synthetic prefix a default namespace
-/// arrives under, Nokogiri's convention, so a bare type selector binds to it.
-const CSS_DEFAULT_NS_PREFIX: &str = "xmlns";
-
 /// The engine context. Opaque here while C held it; now the real type.
 use crate::bridge::xpath::Cx as XPathContext;
 
-/// The default-namespace prefix, or NULL. Declared twice while C held it (once
-/// here, once in `css`); the fields matched, but nothing checked that.
-use crate::css::CssNs;
+/// The namespace context a CSS compile takes, and the synthetic prefix a
+/// default namespace arrives under (Nokogiri's convention) - one constant for
+/// the glue's lookup and the lowering's binding.
+use crate::css::{CssNs, DEFAULT_NS_PREFIX as CSS_DEFAULT_NS_PREFIX};
 
 use crate::bridge::node_set::node_set_new;
 use crate::bridge::string::ruby_try_verified_text_pair;

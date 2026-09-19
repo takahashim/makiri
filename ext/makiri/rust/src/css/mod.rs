@@ -10,8 +10,7 @@
 //! Lexbor parses the selector; this walks the result. The design doc lists
 //! "re-implementing what Lexbor already provides - parsing, DOM, **selectors**,
 //! encoding, serialization" among the things deliberately avoided, so replacing
-//! the parser would be a separate decision with its own migration, not part of
-//! moving a file between languages. See notes/rust_port_remaining.ja.md step 9.
+//! the parser would be a separate decision with its own migration.
 //!
 //! Lexbor's selector parser is used rather than its matcher for one further
 //! reason: unlike the matcher, it preserves name case.
@@ -27,14 +26,15 @@
 mod build;
 mod lower;
 
-use crate::xpath::ast::{Ast, Expr, Op};
+use crate::lexbor::css_parser;
+use crate::xpath::ast::{Ast, Op};
 use core::cell::RefCell;
 use core::ffi::c_int;
 
 use crate::falloc::try_box;
 use crate::text::VerifiedText;
 use crate::xpath::limits::Budget;
-use crate::xpath::msg::{ErrSink, Reported};
+use crate::xpath::msg::{ErrSink, Reported, XP_ERR_INTERNAL, XP_ERR_OOM, XP_ERR_SYNTAX};
 
 /// The namespace context the glue hands in.
 ///
@@ -45,17 +45,13 @@ pub struct CssNs {
     pub default_namespace: bool,
 }
 
-/// The synthetic prefix bound to the document's default namespace.
-pub const DEFAULT_NS_PREFIX: &[u8] = b"xmlns";
+/// The synthetic prefix bound to the document's default namespace. The glue
+/// looks for it in the namespace hash the Ruby side normalises, and a bare type
+/// selector is lowered under it, so both read this one constant.
+pub const DEFAULT_NS_PREFIX: &str = "xmlns";
 
 /// The cap on compounds in one selector chain - a selector-complexity bound.
-pub const MAX_COMPOUNDS: usize = 64;
-
-/// `MKR_XPATH_ERR_*`, as the C names them.
-pub const ERR_SYNTAX: c_int = crate::xpath::msg::XP_ERR_SYNTAX;
-pub const ERR_OOM: c_int = crate::xpath::msg::XP_ERR_OOM;
-pub const ERR_LIMIT: c_int = crate::xpath::msg::XP_ERR_LIMIT;
-pub const ERR_INTERNAL: c_int = crate::xpath::msg::XP_ERR_INTERNAL;
+pub(crate) const MAX_COMPOUNDS: usize = 64;
 
 /// What every builder in this module carries: where to charge AST nodes, where
 /// to report a failure, and the namespace context.
@@ -74,12 +70,13 @@ impl Build<'_> {
     }
 
     pub(crate) fn oom(&self) -> Reported {
-        self.fail(ERR_OOM, c"out of memory (css)")
+        self.fail(XP_ERR_OOM, c"out of memory (css)")
     }
 
     /// The default-namespace prefix in scope, if any.
     pub(crate) fn default_prefix(&self) -> Option<&'static [u8]> {
-        self.default_namespace.then_some(DEFAULT_NS_PREFIX)
+        self.default_namespace
+            .then_some(DEFAULT_NS_PREFIX.as_bytes())
     }
 }
 
@@ -103,31 +100,28 @@ pub fn compile_owned(
         default_namespace: ns.default_namespace,
     };
 
-    let parsed = match crate::lexbor::css_parser::parse(selector) {
+    let parsed = match css_parser::parse(selector) {
         Ok(p) => p,
-        Err(crate::lexbor::css_parser::ParseError::NotReady) => {
-            return Err(b.fail(ERR_INTERNAL, c"failed to initialise CSS parser"));
+        Err(css_parser::ParseError::NotReady) => {
+            return Err(b.fail(XP_ERR_INTERNAL, c"failed to initialise CSS parser"));
         }
-        Err(crate::lexbor::css_parser::ParseError::Syntax) => {
-            return Err(b.fail(ERR_SYNTAX, c"invalid CSS selector"));
+        Err(css_parser::ParseError::Syntax) => {
+            return Err(b.fail(XP_ERR_SYNTAX, c"invalid CSS selector"));
         }
     };
 
     /* Lower each comma-group to a PATH and union them. `parsed` cleans the
-     * parser's arena when it drops, on every path out of this function - the C
-     * spelled that out at each return instead. */
-    let mut acc: Option<Expr> = None;
-    for g in parsed.groups() {
-        /* Top level: the first compound is a descendant of the context node. */
-        let path = lower::complex(&b, g.first(), false)?;
-        acc = Some(match acc {
-            None => path,
-            Some(lhs) => build::binop(&b, Op::Union, Ok(lhs), Ok(path))?,
-        });
-    }
-    /* Lexbor rejects an empty selector list before it gets here; answering it
-     * anyway keeps every failure reported. */
-    let root = acc.ok_or_else(|| b.fail(ERR_SYNTAX, c"empty CSS selector"))?;
+     * parser's arena when it drops, on every path out of this function. Lexbor
+     * rejects an empty selector list before it gets here. */
+    let root = build::fold(
+        &b,
+        Op::Union,
+        parsed.groups().map(|g| {
+            /* Top level: the first compound is a descendant of the context node. */
+            lower::complex(&b, g.first(), false)
+        }),
+        c"empty CSS selector",
+    )?;
     /* No peephole or hoisting pass: the lowering emits no `//` pair to fuse and
      * no subtree worth remembering, so its AST is used as built. */
     try_box(Ast::new(root)).map_err(|_| b.oom())
