@@ -12,7 +12,7 @@
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::html::{
-    arg_node, edit, guard_doc_child_order, inserted_result, owning_doc, parse_fragment_for,
+    arg_node, edit, finish_insert, guard_doc_child_order, owning_doc, parse_fragment_for,
     prepare_insert, splice_fragment, splice_or_insert, wrap_html_node, HtmlSelf, Insert, Place,
 };
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
@@ -36,7 +36,7 @@ pub fn add_child(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value,
     let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
     splice_or_insert(parent, ins, Insert::Child, false);
     invalidate_indexes(this.document);
-    inserted_result(rb_self, rb_child, ins, adopt_from)
+    finish_insert(rb_self, rb_child, ins, adopt_from)
 }
 
 /// `node << child` -> node (chainable).
@@ -62,7 +62,7 @@ pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Err
     let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
     splice_or_insert(reference, ins, Insert::Before, false);
     invalidate_indexes(this.document);
-    inserted_result(rb_self, rb_node, ins, adopt_from)
+    finish_insert(rb_self, rb_node, ins, adopt_from)
 }
 
 /// `node.add_next_sibling(node)` / `after` -> node.
@@ -81,7 +81,7 @@ pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Erro
     let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
     splice_or_insert(reference, ins, Insert::After, true);
     invalidate_indexes(this.document);
-    inserted_result(rb_self, rb_node, ins, adopt_from)
+    finish_insert(rb_self, rb_node, ins, adopt_from)
 }
 
 /// `node.remove` / `node.unlink` -> node.
@@ -115,7 +115,7 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
     splice_or_insert(reference, ins, Insert::Before, false);
     reference.detach();
     invalidate_indexes(this.document);
-    inserted_result(rb_self, rb_other, ins, adopt_from)
+    finish_insert(rb_self, rb_other, ins, adopt_from)
 }
 
 /* ------------------------------------------------------------------ *

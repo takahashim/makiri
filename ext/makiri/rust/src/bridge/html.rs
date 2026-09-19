@@ -264,9 +264,20 @@ fn adopt_copy(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Erro
     Ok(unsafe { imp.as_node() })
 }
 
-/// Take `node` out of the document it came from, so the whole thing reads as
-/// the move the DOM says appendChild performs.
-fn adopt_release(node: HtmlNodeMut<'_>) {
+/// Take the node `src` wraps out of the document it came from, so the whole
+/// thing reads as the move the DOM says appendChild performs - and drop that
+/// document's indexes, which still list it. A structural change to a document
+/// invalidates ITS indexes; this is one, made from another document's method.
+fn adopt_release(src: Value) -> Result<(), Error> {
+    /* SAFETY: the source document was cleared for editing by `prepare_insert`
+     * before anything was copied out of it. */
+    let node = unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) };
+    release_from_tree(node);
+    invalidate_indexes(keepalive_document(src)?);
+    Ok(())
+}
+
+fn release_from_tree(node: HtmlNodeMut<'_>) {
     if node.node().node_type() == TYPE_FRAGMENT {
         /* A fragment contributes its children; the DOM leaves a spliced one
          * empty, so empty the source rather than detaching it. */
@@ -319,9 +330,10 @@ pub fn prepare_insert(
     Ok((incoming, None))
 }
 
-/// The value an insertion verb hands back: its argument, or - when the node was
-/// adopted - the node now in the tree.
-pub fn inserted_result(
+/// Finish an insertion: for an adopted node, take it out of its old document
+/// (see [`adopt_release`]); then the value the verb hands back - its argument,
+/// or for an adopted node the copy now in the tree.
+pub fn finish_insert(
     rb_self: Value,
     rb_arg: Value,
     inserted: HtmlNodeMut<'_>,
@@ -330,9 +342,7 @@ pub fn inserted_result(
     match adopt_from {
         None => Ok(rb_arg),
         Some(src) => {
-            /* SAFETY: the source document was cleared for editing by
-             * `prepare_insert` before anything was copied out of it. */
-            adopt_release(unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) });
+            adopt_release(src)?;
             Ok(wrap_html_node(
                 RawNode::from(inserted.node()),
                 keepalive_document(rb_self)?,
