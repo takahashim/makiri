@@ -352,3 +352,63 @@ fn copy(bytes: &[u8]) -> Result<Text, ContextError> {
 /// The result of an evaluate, owned: dropping it frees the node-set's array or
 /// the string.
 pub type XPathValue = Val;
+
+/// What a caller does with a context whatever backend it walks - the
+/// document-independent part of [`Context`], as an object-safe trait.
+///
+/// The glue holds a context for either an HTML or an XML document, and used to
+/// forward each of these nine operations through a two-armed `match`. With this
+/// it picks the backend once and calls through `&dyn QueryContext`.
+pub trait QueryContext {
+    fn limits(&self) -> Limits;
+    fn lax(&self) -> bool;
+    fn set_lax(&mut self, lax: bool);
+    fn is_evaluating(&self) -> bool;
+    fn set_context_node(&self, node: Token) -> Result<(), ContextError>;
+    fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError>;
+    fn register_variable(&self, name: &[u8], value: &[u8]) -> Result<(), ContextError>;
+    #[allow(clippy::result_large_err)]
+    fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error>;
+    #[allow(clippy::result_large_err)]
+    fn evaluate_first(
+        &self,
+        ast: &Ast,
+        handler: Option<&dyn Resolver>,
+    ) -> Result<XPathValue, Error>;
+}
+
+/* Each forwards to the inherent method of the same name, which method
+ * resolution prefers - so none of these calls itself. */
+impl<'d, D: Dom<'d>> QueryContext for Context<'d, D> {
+    fn limits(&self) -> Limits {
+        Context::limits(self)
+    }
+    fn lax(&self) -> bool {
+        Context::lax(self)
+    }
+    fn set_lax(&mut self, lax: bool) {
+        Context::set_lax(self, lax)
+    }
+    fn is_evaluating(&self) -> bool {
+        Context::is_evaluating(self)
+    }
+    fn set_context_node(&self, node: Token) -> Result<(), ContextError> {
+        Context::set_context_node(self, node)
+    }
+    fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError> {
+        Context::register_ns(self, prefix, uri)
+    }
+    fn register_variable(&self, name: &[u8], value: &[u8]) -> Result<(), ContextError> {
+        Context::register_variable(self, name, value)
+    }
+    fn evaluate(&self, ast: &Ast, handler: Option<&dyn Resolver>) -> Result<XPathValue, Error> {
+        Context::evaluate(self, ast, handler)
+    }
+    fn evaluate_first(
+        &self,
+        ast: &Ast,
+        handler: Option<&dyn Resolver>,
+    ) -> Result<XPathValue, Error> {
+        Context::evaluate_first(self, ast, handler)
+    }
+}

@@ -92,16 +92,11 @@ pub fn xml_new_element(doc: &mut Document, name: &[u8], out: &mut NodeId) -> Mut
 pub fn xml_new_loose_dom_element(
     doc: &mut Document,
     name: &[u8],
-    prefix_len: u32,
-    local_off: u32,
-    local_len: u32,
+    sp: Split,
     ns: &[u8],
     out: &mut NodeId,
 ) -> MutStatus {
-    put_node(
-        out,
-        new_loose_dom_element(doc, name, prefix_len, local_off, local_len, ns),
-    )
+    put_node(out, new_loose_dom_element(doc, name, sp, ns))
 }
 
 pub fn xml_new_document_type(
@@ -169,6 +164,54 @@ pub fn xml_insert_after(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatu
 }
 pub fn xml_replace_node(doc: &mut Document, r: NodeId, node: NodeId) -> MutStatus {
     replace_node(doc, r, node)
+}
+
+/// Where [`place`] puts a node, relative to its target.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// As the target's last child.
+    Child,
+    /// Just before the target.
+    Before,
+    /// Just after the target.
+    After,
+    /// In the target's place.
+    Replace,
+}
+
+/// Put `node` at `place` relative to `target`. A DOCUMENT_FRAGMENT contributes
+/// its CHILDREN, in order, and is left empty - as the DOM's insertion does -
+/// and replacing with one swaps the target for all of them.
+pub fn place(doc: &mut Document, target: NodeId, node: NodeId, place: Place) -> MutStatus {
+    if doc.type_(node) != Some(NodeType::Fragment) {
+        return match place {
+            Place::Child => insert_child(doc, target, node),
+            Place::Before => insert_before(doc, target, node),
+            Place::After => insert_after(doc, target, node),
+            Place::Replace => replace_node(doc, target, node),
+        };
+    }
+    if place == Place::Replace {
+        /* An empty fragment still removes the target. */
+        return replace_with_fragment(doc, target, node);
+    }
+    let mut last = target; /* the moving insertion point, for After */
+    while let Some(c) = doc.first_child(node) {
+        let st = match place {
+            Place::Child => insert_child(doc, target, c),
+            Place::Before => insert_before(doc, target, c),
+            Place::After => {
+                let st = insert_after(doc, last, c);
+                last = c;
+                st
+            }
+            Place::Replace => MutStatus::Internal, /* handled above */
+        };
+        if st != MutStatus::Ok {
+            return st;
+        }
+    }
+    MutStatus::Ok
 }
 
 /// Resolve `name` (split per `sp`) applied at `scope` (mirrors the parser's §7
@@ -480,11 +523,14 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus>
 pub fn new_loose_dom_element(
     doc: &mut Document,
     name: &[u8],
-    prefix_len: u32,
-    local_off: u32,
-    local_len: u32,
+    sp: Split,
     ns: &[u8],
 ) -> Result<NodeId, MutStatus> {
+    let Split {
+        prefix_len,
+        local_off,
+        local_len,
+    } = sp;
     if name.is_empty() || local_len == 0 {
         return Err(MutStatus::BadName);
     }

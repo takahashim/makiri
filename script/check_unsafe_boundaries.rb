@@ -30,19 +30,22 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
-  "bridge/doc.rs" => 15,
-  "bridge/fragment.rs" => 2,
+  "bridge/doc.rs" => 6,
+  "bridge/fragment.rs" => 6,
   "bridge/gvl.rs" => 3,
-  "bridge/lexbor.rs" => 60,
-  "bridge/node_set.rs" => 11,
-  "bridge/ruby.rs" => 27,
+  "bridge/html.rs" => 34,
+  "bridge/node_set.rs" => 10,
+  "bridge/ruby.rs" => 24,
   "bridge/selectors.rs" => 6,
   "bridge/serialize.rs" => 1,
-  "bridge/string.rs" => 28,
-  "bridge/typed.rs" => 8,
-  "bridge/xml.rs" => 47,
-  "bridge/xml_decode.rs" => 7,
-  "bridge/xpath.rs" => 16,
+  "bridge/string.rs" => 30,
+  "bridge/typed.rs" => 17,
+  "bridge/wrapper.rs" => 18,
+  "bridge/xml.rs" => 15,
+  "bridge/xml_decode.rs" => 6,
+  "bridge/xpath/context_object.rs" => 6,
+  "bridge/xpath/handler.rs" => 8,
+  "bridge/xpath/mod.rs" => 4,
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
   "falloc/calloc_verify.rs" => 3,
@@ -62,7 +65,7 @@ UNSAFE_ISLANDS = {
   "lexbor/fragment.rs" => 10,
   "lexbor/selectors.rs" => 16,
   "lexbor/serialize.rs" => 7,
-  "lexbor/stylesheet.rs" => 10,
+  "lexbor/stylesheet.rs" => 9,
   "lexbor/xpath.rs" => 9,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
@@ -87,19 +90,19 @@ FORBID_FILES = %w[
   glue/html_node/read.rs glue/mod.rs glue/node.rs
   glue/node_set.rs glue/xml.rs glue/xml_node/abi.rs
   glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath.rs xml/api.rs xml/arena.rs
-  xml/chars.rs xml/index.rs xml/mod.rs
-  xml/model.rs xml/mutate.rs xml/parse.rs
-  xml/qname.rs xml/selftest.rs xml/serialize.rs
-  xml/tree.rs xml/verify.rs xml/xpath.rs
-  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
-  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/runtime_abi.rs
-  xpath/runtime_abi/cache.rs xpath/step_index.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  glue/xpath.rs limits.rs xml/api.rs
+  xml/arena.rs xml/chars.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate.rs
+  xml/parse.rs xml/qname.rs xml/selftest.rs
+  xml/serialize.rs xml/tree.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/msg.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/runtime_abi.rs xpath/runtime_abi/cache.rs xpath/step_index.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -136,6 +139,16 @@ VALUE_FROM_RAW_COUNTS = {}.freeze
 # `lexbor_abi.rs` is the generated module itself, so it is excluded.
 LEXBOR_ABI = /crate::lexbor_abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
 LEXBOR_ABI_COUNTS = {}.freeze
+
+# The engine layers are Ruby-free: `lexbor/`, `xml/`, `xpath/` and `css/` take
+# bytes and return their own error types, and the Ruby half of a feature lives in
+# `bridge/` or `glue/`. `lexbor/fragment.rs` and `lexbor/stylesheet.rs` once
+# reached back up for a `VALUE`, the String borrow rules and `Makiri::Error` - an
+# engine module holding the bridge's invariants, and the path a raise escaped
+# along - so the table is empty and any such use fails.
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/].freeze
+RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
+RUBY_LAYER_COUNTS = {}.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -313,6 +326,18 @@ if lexbor_abi != LEXBOR_ABI_COUNTS
   errors << "Lexbor ABI names outside lexbor/ changed: #{table_diff(LEXBOR_ABI_COUNTS, lexbor_abi)}"
 end
 
+ruby_layer = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next unless relative.start_with?(*ENGINE_DIRS)
+
+  count = comments_removed(File.binread(path)).scan(RUBY_LAYER).length
+  ruby_layer[relative] = count unless count.zero?
+end
+if ruby_layer != RUBY_LAYER_COUNTS
+  errors << "Ruby-layer use inside an engine layer changed: #{table_diff(RUBY_LAYER_COUNTS, ruby_layer)}"
+end
+
 if FIX && !errors.empty?
   puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
   errors.each { |e| puts "  #{e}" }
@@ -328,4 +353,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
-     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer"
+     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer; " \
+     "#{ruby_layer.values.sum} Ruby-layer uses inside the engine"

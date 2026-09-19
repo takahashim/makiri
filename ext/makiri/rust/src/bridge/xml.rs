@@ -1,4 +1,4 @@
-//! The Ruby <-> XML-arena DOM seam (the XML counterpart of [`crate::bridge::lexbor`]).
+//! The Ruby <-> XML-arena DOM seam (the XML counterpart of [`crate::bridge::html`]).
 //!
 //! A Ruby XML node is an arena [`NodeId`] behind a TypedData wrapper; turning a
 //! `Value` into that id, and running the Ruby-free mutation primitives over the
@@ -17,33 +17,129 @@
 #![allow(unsafe_code)]
 
 use magnus::rb_sys::AsRawValue;
-use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
-use crate::bridge::lexbor::{
-    doc_of, ensure_document_mutable, html_node_unwrap, node_kind, wrap_document, wrap_xml_node,
-    xml_doc_ref, xml_node_document, xml_node_unwrap,
-};
-use crate::bridge::ruby::{check_frozen, value};
+use crate::bridge::ruby::makiri_error;
+use magnus::{prelude::*, Error, Ruby, Value};
+
+use crate::bridge::html::html_node_unwrap;
+use crate::bridge::ruby::{check_frozen, nil, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
+use crate::bridge::wrapper::*;
+use crate::bridge::wrapper::{
+    ensure_document_mutable, node_repr, DocKind, DocumentShell, NodeRepr,
+};
 use crate::bridge::xml_decode::xml_decode_input_value;
+use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{
-    CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR,
+    CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
+    CLASS_XML_DOCUMENT_TYPE, CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION,
+    CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
 
-/// `NodeKind`.
-const KIND_HTML: core::ffi::c_int = 1;
-const KIND_XML: core::ffi::c_int = 2;
-
-fn error_class() -> magnus::ExceptionClass {
-    EXC_ERROR.exception()
-}
-
 fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())
+}
+
+/* ------------------------------------------------------------------ *
+ * the XML node front door                                            *
+ * ------------------------------------------------------------------ */
+
+/// Wrap an arena node token into its `Makiri::XML::*` leaf.
+///
+/// An invalid token becomes nil, and the DOCUMENT node maps back onto the Ruby
+/// Document rather than getting a second wrapper, so the arena has exactly one
+/// owner. The token resolves through `document`'s arena, where a stale or
+/// foreign id reads as no node.
+pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
+    let id = NodeId::from_token(node as usize);
+    if id.is_invalid() {
+        return nil();
+    }
+    let ty = arena_ref(&document).type_(id);
+    if ty == Some(NodeType::Document) {
+        return document;
+    }
+    let klass = match ty {
+        Some(NodeType::Element) => CLASS_XML_ELEMENT.raw(),
+        Some(NodeType::Attribute) => CLASS_XML_ATTR.raw(),
+        Some(NodeType::Text) => CLASS_XML_TEXT.raw(),
+        Some(NodeType::CData) => CLASS_XML_CDATA_SECTION.raw(),
+        Some(NodeType::Comment) => CLASS_XML_COMMENT.raw(),
+        Some(NodeType::Pi) => CLASS_XML_PROCESSING_INSTRUCTION.raw(),
+        Some(NodeType::Doctype) => CLASS_XML_DOCUMENT_TYPE.raw(),
+        Some(NodeType::Fragment) => CLASS_XML_DOCUMENT_FRAGMENT.raw(),
+        _ => CLASS_XML_NODE.raw(),
+    };
+
+    /* The Document is stored after the wrap: see `TypedType::wrap`. */
+    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
+    unsafe {
+        value(XML_NODE_TYPE.wrap(
+            klass,
+            |nd| nd.node = node,
+            |nd| nd.document = document.as_raw(),
+        ))
+    }
+}
+
+/// The arena node token behind a wrapper.
+///
+/// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
+/// through the XML TypedData type, which fails with TypeError for an HTML node.
+pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> {
+    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        let parsed = doc_parsed(rb_self)?;
+        // SAFETY: the handle of a live XML Document, and the arena it owns.
+        let node = unsafe { (*parsed_xml_doc(parsed)).doc_node() };
+        return Ok(node.to_token() as *mut core::ffi::c_void);
+    }
+    let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
+    Ok(nd.node)
+}
+
+/// The XML arena behind a value checked to be an XML Document:
+/// `Err(TypeError)` for anything else. For a receiver not yet established as
+/// one; [`doc_of`] is for a document already known to be.
+pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
+    XML_DOC_TYPE.get(&rb_doc)?;
+    Ok(doc_of(rb_doc))
+}
+
+/// The XML arena behind an XML Document.
+///
+/// Every XML Document HAS one: `DocumentShell::install` gives it the arena
+/// before the Document reaches Ruby, and nothing takes it away. So there is no
+/// "no arena" case to handle, and a null here is a broken invariant - it
+/// panics (unwinding to `fatal` / `Makiri::InternalError`) rather than being
+/// read through.
+pub fn doc_of(document: Value) -> *mut XmlDoc {
+    // SAFETY: `doc_parsed_known` hands back the live handle of that Document.
+    let arena = unsafe { parsed_xml_doc(doc_parsed_known(document)) };
+    assert!(!arena.is_null(), "an XML Document without its arena");
+    arena
+}
+
+/// The arena behind `document`, borrowed for as long as the caller borrows the
+/// VALUE - which it holds, and which keeps the Document alive.
+fn arena_ref(document: &Value) -> &XmlDoc {
+    // SAFETY: the Document's `DocData` owns the arena, alive while `document`
+    // is held; only read here.
+    unsafe { &*doc_of(*document) }
+}
+
+/// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
+/// at the type boundary, like [`xml_node_unwrap`].
+pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
+    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        return Ok(rb_self);
+    }
+    let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
+    // SAFETY: `nd.document` is the live Document the wrapper marks.
+    Ok(unsafe { value(nd.document) })
 }
 
 /* ------------------------------------------------------------------ *
@@ -73,14 +169,10 @@ impl magnus::TryConvert for XmlSelf {
 }
 
 impl XmlSelf {
-    /// The arena behind the receiver's Document, as a mutable handle (mutators).
-    pub fn doc(self) -> *mut XmlDoc {
-        doc_of(self.document)
-    }
-
-    /// The arena behind the receiver's Document, borrowed (readers).
+    /// The arena behind the receiver's Document, borrowed (readers) for as long
+    /// as the receiver is.
     pub fn doc_ref(&self) -> &XmlDoc {
-        xml_doc_ref(self.document)
+        arena_ref(&self.document)
     }
 }
 
@@ -89,14 +181,17 @@ pub fn unwrap(v: Value) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(v)? as usize))
 }
 
-/// The keepalive Document of an XML node. `Err(TypeError)` for an HTML node.
-pub fn node_document(v: Value) -> Result<Value, Error> {
-    xml_node_document(v)
-}
-
-/// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
-pub fn doc(v: Value) -> Result<*mut XmlDoc, Error> {
-    Ok(doc_of(xml_node_document(v)?))
+/// The XML arena behind `document`, for a WRITE: refused while an XPath
+/// evaluation with a handler is reading the document.
+///
+/// The evaluator holds the arena as `&Document` for the whole walk, and a
+/// write - a new node, a new byte span - can grow the arena's vectors under the
+/// slices it borrowed. Every path that hands out a `&mut` goes through here, so
+/// the one mutation gate covers the factories and the imports as well as the
+/// tree edits.
+fn arena_mut(document: Value) -> Result<*mut XmlDoc, Error> {
+    ensure_document_mutable(document)?;
+    Ok(doc_of(document))
 }
 
 /// Wrap an arena node under `document`, its XML Document.
@@ -108,10 +203,6 @@ pub fn wrap(node: NodeId, document: Value) -> Value {
 pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
     wrap(rel, this.document)
 }
-
-pub use crate::xml::api::xml_clone_node;
-pub use crate::xml::api::xml_copy_node;
-pub use crate::xml::api::xml_import_subtree;
 
 /// The exception for a non-OK mutation status; [`MutStatus::Ok`] is `Ok`.
 pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
@@ -136,54 +227,54 @@ allows a single root element, and a sibling target must have a parent)"
         MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
         MutStatus::Internal => "internal error mutating XML (no document)",
     };
-    Err(Error::new(error_class(), msg))
+    Err(makiri_error(msg))
 }
 
 /* ------------------------------------------------------------------ */
-/* helpers                                                            */
+/* lending the arena for an edit                                      */
 /* ------------------------------------------------------------------ */
 
-/// The arena behind a node's document.
-fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
-    let document = node_document(v)?;
-    // SAFETY: the handle of `v`'s own Document, which `v` keeps alive.
-    Ok(unsafe {
-        crate::bridge::lexbor::parsed_xml_doc(crate::bridge::lexbor::doc_parsed_known(document))
-    } as *mut XmlDoc)
+/// Run `f` on `document`'s arena, for a WRITE - the one way a caller outside
+/// this module gets `&mut` to an XML arena.
+///
+/// Refused while an XPath evaluation with a handler reads the document (see
+/// [`arena_mut`]). The `&mut` lives for `f` alone, and `f` must not run Ruby:
+/// the arena is `Vec`s, so Ruby code that read or wrote this same document
+/// meanwhile would alias the borrow. That is why a method converts and checks
+/// its arguments FIRST and only then calls this, with nothing but engine calls
+/// inside - which are Ruby-free by construction.
+pub fn with_arena_mut<R>(document: Value, f: impl FnOnce(&mut XmlDoc) -> R) -> Result<R, Error> {
+    let xd = arena_mut(document)?;
+    // SAFETY: a live arena of `document`, which the caller holds; cleared for
+    // writing above, and borrowed only for `f`, which runs no Ruby.
+    Ok(f(unsafe { &mut *xd }))
 }
 
-/// A byte length as the arena's `uint32`, or an error.
-fn u32_len(ruby: &Ruby, len: usize) -> Result<u32, Error> {
-    u32::try_from(len).map_err(|_| {
-        let _ = ruby;
-        Error::new(error_class(), "string too long for an XML node (max 4 GiB)")
-    })
-}
-
-/// Unwrap for mutation.
-fn unwrap_mutable(this: XmlSelf) -> Result<NodeId, Error> {
+/// The receiver cleared for an edit - not frozen, its document not under
+/// evaluation - with the document's name index dropped, since the edit is
+/// about to change what it indexes.
+pub fn begin_edit(this: XmlSelf) -> Result<NodeId, Error> {
     check_frozen(this.value)?;
-    ensure_document_mutable(this.document)?;
-    // SAFETY: the receiver's own arena, which the receiver keeps alive, and
-    // nothing else holds a borrow of it here.
-    unsafe { xml_name_index_invalidate(&mut *this.doc()) };
+    with_arena_mut(this.document, xml_name_index_invalidate)?;
     Ok(this.id)
 }
 
-/// Verify a String argument and hand back its bytes plus the length the arena
-/// wants.
-fn verified(ruby: &Ruby, v: Value, what: &core::ffi::CStr) -> Result<(RubyText, u32), Error> {
+/// A String argument verified as an engine string - valid UTF-8, no NUL - and
+/// short enough for an arena span (4 GiB).
+pub fn verified_text(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
     let t = ruby_verified_text(v, what)?;
-    let n = u32_len(ruby, t.len())?;
-    Ok((t, n))
+    if u32::try_from(t.len()).is_err() {
+        return Err(makiri_error("string too long for an XML node (max 4 GiB)"));
+    }
+    Ok(t)
 }
 
-/// The same for an optional argument: nil is (absent, 0).
-fn verified_opt(ruby: &Ruby, v: Value, what: &core::ffi::CStr) -> Result<(RubyText, u32), Error> {
+/// [`verified_text`] for an optional argument: nil is absent.
+pub fn verified_text_opt(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
     if v.is_nil() {
-        return Ok((RubyText::absent(), 0));
+        return Ok(RubyText::absent());
     }
-    verified(ruby, v, what)
+    verified_text(v, what)
 }
 
 /* ------------------------------------------------------------------ */
@@ -203,9 +294,7 @@ fn parse_status_error(status: Status, unit: Unit) -> Error {
         ),
         /* `Ok` never reaches here (it means no failure); the rest are the
          * generic "failed to parse" bucket. */
-        Status::Ok | Status::Oom | Status::Internal => {
-            Error::new(EXC_ERROR.exception(), unit.failed())
-        }
+        Status::Ok | Status::Oom | Status::Internal => makiri_error(unit.failed()),
     }
 }
 
@@ -250,18 +339,9 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     let decoded = xml_decode_input_value(source.as_value(), budget)?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
-    /* Wrap an empty handle first, so a failure mid-parse still frees cleanly
-     * through the GC. The source is already copied, so this Ruby allocation
-     * cannot disturb it. */
-    let Some(parsed) = Parsed::new_xml() else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    };
-    let parsed = Box::into_raw(parsed);
-    // SAFETY: a fresh handle; the wrap hands it to the GC.
-    let obj = unsafe { wrap_document(parsed) };
+    /* The wrapper first, while nothing needs freeing (see DocumentShell). The
+     * source is already copied, so this Ruby allocation cannot disturb it. */
+    let shell = DocumentShell::new(DocKind::Xml);
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let (result, status) =
@@ -276,26 +356,16 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     if result.is_null() {
         return Err(parse_status_error(status, Unit::Document));
     }
-    // SAFETY: `parsed` is the handle behind `obj`, and `result` is the arena the
-    // parse produced for it.
-    unsafe {
-        (*parsed).set_xml_doc(Box::from_raw(result));
-    }
-    /* The arena exists now; tell the GC what it weighs. `src` is gone, so a
-     * collection here disturbs nothing. */
-    crate::bridge::lexbor::account_document(obj);
-    // SAFETY: `obj` is the live Document wrapped above.
-    Ok(unsafe { value(obj) })
+    // SAFETY: `result` is the arena the parse just returned, owned by no one.
+    let arena = unsafe { Box::from_raw(result) };
+    /* `src` is gone, so the collection `install`'s GC report may trigger
+     * disturbs nothing. */
+    Ok(shell.install(xml_parsed(arena)?))
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
 pub fn document_root(ruby: &Ruby, rb_self: Value) -> Value {
-    let xdoc = doc_of(rb_self);
-    if xdoc.is_null() {
-        return ruby.qnil().as_value();
-    }
-    // SAFETY: a live XML Document's arena, kept alive by `rb_self`.
-    match unsafe { (*xdoc).root } {
+    match arena_ref(&rb_self).root {
         Some(n) => wrap(n, rb_self),
         None => ruby.qnil().as_value(),
     }
@@ -303,36 +373,26 @@ pub fn document_root(ruby: &Ruby, rb_self: Value) -> Value {
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
 pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
-    let xdoc = doc_of(rb_self);
-    // SAFETY: the `is_null` on its left short-circuits, so the deref only runs
-    // for a live arena of `rb_self`, which the receiver keeps rooted.
-    if xdoc.is_null() || unsafe { (*xdoc).doctype.is_none() } {
-        return ruby.qnil().as_value();
-    }
-    // SAFETY: as `document_root`.
-    match unsafe { (*xdoc).doctype } {
+    match arena_ref(&rb_self).doctype {
         Some(n) => wrap(n, rb_self),
         None => ruby.qnil().as_value(),
     }
 }
 
+/// A parsed handle owning the XML `arena`.
+fn xml_parsed(arena: Box<XmlDoc>) -> Result<Box<Parsed>, Error> {
+    let mut parsed =
+        Parsed::new_xml().ok_or_else(|| makiri_error("out of memory allocating XML document"))?;
+    parsed.set_xml_doc(arena);
+    Ok(parsed)
+}
+
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
-    let Some(parsed) = Parsed::new_xml() else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory allocating XML document",
-        ));
-    };
-    let parsed = Box::into_raw(parsed);
-    // SAFETY: a fresh handle; the wrap hands it to the GC.
-    let doc_obj = unsafe { wrap_document(parsed) };
-    let xdoc = crate::xml::api::xml_doc_new()
-        .map_err(|_| Error::new(error_class(), "out of memory allocating XML document"))?;
-    // SAFETY: `parsed` is the handle behind `doc_obj`, live for this call.
-    unsafe { (*parsed).set_xml_doc(xdoc) };
-    crate::bridge::lexbor::account_document(doc_obj);
-    Ok(unsafe { value(doc_obj) })
+    let shell = DocumentShell::new(DocKind::Xml);
+    let arena = crate::xml::api::xml_doc_new()
+        .map_err(|_| makiri_error("out of memory allocating XML document"))?;
+    Ok(shell.install(xml_parsed(arena)?))
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,
@@ -345,10 +405,7 @@ pub fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
-    let xdoc = doc_of(document);
-    if xdoc.is_null() {
-        return Err(Error::new(error_class(), "the document has no arena"));
-    }
+    let xdoc = arena_mut(document)?;
     let source = crate::bridge::ruby::string_of(source)?;
     // SAFETY: a live arena; the decode only reads its `max_bytes`.
     let decoded = xml_decode_input_value(source.as_value(), unsafe { (*xdoc).max_bytes })?;
@@ -380,6 +437,12 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
     Ok(find_attribute_bytes(this.doc_ref(), id, bytes))
 }
 
+/// The attribute of `el` whose qualified name is `name`.
+///
+/// Namespace declarations included: in the DOM an `xmlns` / `xmlns:p` is an
+/// attribute, so `node["xmlns:p"]` reads it as `getAttribute` does. XPath's data
+/// model is the one that hides them (`xml::xpath` skips them on the attribute
+/// axis), which is why `@xmlns:p` finds nothing while this does.
 fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
     if d.type_(el) != Some(NodeType::Element) {
         return None;
@@ -395,530 +458,106 @@ fn find_attribute_bytes(d: &XmlDoc, el: NodeId, name: &[u8]) -> Option<NodeId> {
 }
 
 /* ------------------------------------------------------------------ */
-/* in-place edits                                                     */
+/* two arenas at once: adopting and importing                         */
 /* ------------------------------------------------------------------ */
+/* The node methods live in `glue::xml_node::mutate`. What stays here is what
+ * holds two arenas - or an arena and a Lexbor document - at the same time,
+ * which `with_arena_mut`'s one-at-a-time lending cannot express. */
 
-/// `#remove` / `#unlink` -> self.
-pub fn remove(this: XmlSelf) -> Result<Value, Error> {
-    let rb_self = this.value;
-    if is_a(rb_self, &CLASS_XML_DOCUMENT) {
-        return Err(Error::new(error_class(), "cannot remove the document node"));
-    }
-    let n = unwrap_mutable(this)?;
-    // SAFETY: the receiver's own arena, live for this call.
-    unsafe { xml_remove(&mut *this.doc(), n) };
-    Ok(rb_self)
+/// A node copied in from another document, still to be taken out of it: the
+/// second half of the move `appendChild` performs across arenas. It carries
+/// the source arena and node [`incoming_node`] already resolved, so finishing
+/// cannot fail - there is nothing left to look up.
+pub struct Adoption {
+    src_doc: *mut XmlDoc,
+    src: NodeId,
+    /// The source node's wrapper, which keeps its document - and so
+    /// `src_doc` - alive until the adoption is finished.
+    _keep: Value,
 }
 
-/// The element behind `rb_self`, or an error naming what was attempted.
-fn element_for(this: XmlSelf) -> Result<NodeId, Error> {
-    let n = unwrap_mutable(this)?;
-    // SAFETY: the receiver's arena, read for this statement only.
-    if unsafe { (*this.doc()).type_(n) } != Some(NodeType::Element) {
+impl Adoption {
+    /// Empty the node out of its old document, whose name index goes with it.
+    pub fn finish(self) {
+        // SAFETY: `src_doc` is the live arena `incoming_node` found and cleared
+        // for writing; `_keep` holds it, and the caller ran only engine code
+        // on the OTHER arena since.
+        let sdoc = unsafe { &mut *self.src_doc };
+        if sdoc.type_(self.src) == Some(NodeType::Fragment) {
+            while let Some(c) = sdoc.first_child(self.src) {
+                xml_remove(sdoc, c);
+            }
+        } else {
+            xml_remove(sdoc, self.src);
+        }
+        xml_name_index_invalidate(sdoc);
+    }
+}
+
+/// `arg` as a node of `target_doc`'s arena: itself when it already lives there
+/// (a move), or a copy imported from its own document plus the [`Adoption`]
+/// that takes it out of there once it is placed.
+pub fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
+    if !is_a(arg, &CLASS_NODE) || !is_a(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(Error::new(
-            error_class(),
-            "cannot set an attribute on a non-element node",
-        ));
-    }
-    Ok(n)
-}
-
-/// `element[name] = value` -> value.
-pub fn aset(ruby: &Ruby, this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
-    let n = element_for(this)?;
-    let (nv, _) = verified(ruby, name, c"attribute name")?;
-    let (vv, _) = verified(ruby, val, c"attribute value")?;
-    let mut out = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the views are the caller's for the call.
-    let st = unsafe { xml_set_attribute(&mut *this.doc(), n, nv.bytes(), vv.bytes(), &mut out) };
-    xml_mut_check(st)?;
-    Ok(val)
-}
-
-/// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
-pub fn set_attribute_ns(
-    ruby: &Ruby,
-    this: XmlSelf,
-    ns: Value,
-    qname: Value,
-    val: Value,
-) -> Result<Value, Error> {
-    let n = element_for(this)?;
-    let (qv, _) = verified(ruby, qname, c"attribute qualified name")?;
-    let (vv, _) = verified(ruby, val, c"attribute value")?;
-    let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
-    let mut out = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the views are the caller's for the call.
-    let st = unsafe {
-        xml_set_attribute_ns(
-            &mut *this.doc(),
-            n,
-            nv.bytes(),
-            qv.bytes(),
-            vv.bytes(),
-            &mut out,
-        )
-    };
-    xml_mut_check(st)?;
-    Ok(val)
-}
-
-/// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
-pub fn remove_attribute_ns(
-    ruby: &Ruby,
-    this: XmlSelf,
-    ns: Value,
-    local: Value,
-) -> Result<Value, Error> {
-    let rb_self = this.value;
-    let n = unwrap_mutable(this)?;
-    // SAFETY: the receiver's arena, live for this call.
-    if unsafe { (*this.doc()).type_(n) } != Some(NodeType::Element) {
-        return Ok(rb_self);
-    }
-    let (lv, _) = verified(ruby, local, c"attribute local name")?;
-    let (nv, _) = verified_opt(ruby, ns, c"namespace")?;
-    // SAFETY: as above.
-    unsafe { xml_remove_attribute_ns(&mut *this.doc(), n, nv.bytes(), lv.bytes()) };
-    Ok(rb_self)
-}
-
-/// `element.delete(name)` / `#remove_attribute` -> self.
-pub fn delete(ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    let n = unwrap_mutable(this)?;
-    // SAFETY: the receiver's arena, live for this call.
-    if unsafe { (*this.doc()).type_(n) } != Some(NodeType::Element) {
-        return Ok(rb_self);
-    }
-    let (nv, _) = verified(ruby, name, c"attribute name")?;
-    // SAFETY: as above.
-    unsafe { xml_remove_attribute(&mut *this.doc(), n, nv.bytes()) };
-    Ok(rb_self)
-}
-
-/// `node.content = text` -> text.
-pub fn set_content(ruby: &Ruby, this: XmlSelf, text: Value) -> Result<Value, Error> {
-    let n = unwrap_mutable(this)?;
-    let (tv, _) = verified(ruby, text, c"node content")?;
-    // SAFETY: the receiver's arena, and the view is the caller's for the call.
-    let st = unsafe { xml_set_content(&mut *this.doc(), n, tv.bytes()) };
-    xml_mut_check(st)?;
-    Ok(text)
-}
-
-/// `node.name = new_name` -> new_name.
-pub fn set_name(ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Value, Error> {
-    let n = unwrap_mutable(this)?;
-    let (nv, _) = verified(ruby, name, c"node name")?;
-    // SAFETY: the receiver's arena, and the view is the caller's for the call.
-    let st = unsafe { xml_rename(&mut *this.doc(), n, nv.bytes()) };
-    xml_mut_check(st)?;
-    Ok(name)
-}
-
-/* ------------------------------------------------------------------ */
-/* building: insertion                                                */
-/* ------------------------------------------------------------------ */
-
-#[derive(Clone, Copy, PartialEq)]
-enum Op {
-    Child,
-    Before,
-    After,
-    Replace,
-}
-
-/// Coerce `arg` to a node living in (or imported into) `target`'s arena.
-unsafe fn incoming_node(
-    ruby: &Ruby,
-    xd: *mut XmlDoc,
-    target_doc: Value,
-    arg: Value,
-) -> Result<(NodeId, Value), Error> {
-    if !is_a(arg, &CLASS_NODE) || !is_a(node_document(arg)?, &CLASS_XML_DOCUMENT) {
-        return Err(Error::new(
-            ruby.exception_type_error(),
+            Ruby::get_with(arg).exception_type_error(),
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
     let src = unwrap(arg)?;
-    if node_document(arg)?.as_raw() == target_doc.as_raw() {
-        return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
+    let src_document = xml_node_document(arg)?;
+    if src_document.as_raw() == target_doc.as_raw() {
+        return Ok((src, None)); /* same arena -> move */
     }
-    ensure_document_mutable(node_document(arg)?)?;
+    let xd = arena_mut(target_doc)?;
+    /* The source changes too - adopting takes the node out of it. */
+    let src_doc = arena_mut(src_document)?;
     let mut copy: NodeId = NodeId::INVALID;
-    let src_doc = xdoc(arg)?;
-    // SAFETY: `xd` is the target arena and `src_doc` the source; they differ.
+    // SAFETY: two distinct live arenas (the documents differ), both cleared
+    // for writing; the source is only read here.
     xml_mut_check(unsafe { xml_import_subtree(&mut *xd, &*src_doc, src, &mut copy) })?;
-    Ok((copy, arg))
+    Ok((
+        copy,
+        Some(Adoption {
+            src_doc,
+            src,
+            _keep: arg,
+        }),
+    ))
 }
 
-/// Finish the adoption by emptying the node out of its old document.
-fn adopt_finish(arg: Value) {
-    if arg.is_nil() {
-        return;
-    }
-    let Ok(src) = unwrap(arg) else {
-        return;
-    };
-    let Ok(sdoc) = xdoc(arg) else {
-        return;
-    };
-    // SAFETY: `sdoc` is the arena of `arg`'s Document, which `arg` keeps alive,
-    // and `src` is its own node. No Ruby runs in the detaching below.
-    unsafe {
-        if (*sdoc).type_(src) == Some(NodeType::Fragment) {
-            while let Some(c) = (*sdoc).first_child(src) {
-                xml_remove(&mut *sdoc, c);
-            }
-        } else {
-            xml_remove(&mut *sdoc, src);
-        }
-        xml_name_index_invalidate(&mut *sdoc);
-    }
-}
-
-/// A DOCUMENT_FRAGMENT contributes its CHILDREN, not itself.
-unsafe fn splice_fragment(
-    xd: *mut XmlDoc,
-    target: NodeId,
-    frag: NodeId,
-    doc_v: Value,
-    op: Op,
-) -> Result<Value, Error> {
-    if op == Op::Replace {
-        // SAFETY: the caller's arena; the primitive validates before linking.
-        unsafe { xml_mut_check(xml_replace_with_fragment(&mut *xd, target, frag))? };
-        return Ok(wrap(frag, doc_v));
-    }
-    let mut r = target; /* the moving insertion point, for AFTER */
-    // SAFETY: the caller's arena; each call detaches c from frag.
-    while let Some(c) = unsafe { (*xd).first_child(frag) } {
-        // SAFETY: same arena, and `target`, `r` and `c` are all nodes of it -
-        // `c` is the child just taken off `frag`, `r` the last one inserted.
-        let st = unsafe {
-            match op {
-                Op::Child => xml_insert_child(&mut *xd, target, c),
-                Op::After => {
-                    let s = xml_insert_after(&mut *xd, r, c);
-                    r = c;
-                    s
-                }
-                _ => xml_insert_before(&mut *xd, target, c),
-            }
-        };
-        xml_mut_check(st)?;
-    }
-    Ok(wrap(frag, doc_v))
-}
-
-fn insert(ruby: &Ruby, this: XmlSelf, arg: Value, op: Op) -> Result<Value, Error> {
-    let target = unwrap_mutable(this)?;
-    let doc_v = this.document;
-    let xd = this.doc();
-    // SAFETY: the receiver's arena and the source node's, both live.
-    let (node, adopt_from) = unsafe { incoming_node(ruby, xd, doc_v, arg)? };
-
-    // SAFETY: `xd` is the receiver's arena, live for this call.
-    if unsafe { (*xd).type_(node) } == Some(NodeType::Fragment) {
-        // SAFETY: as above.
-        let out = unsafe { splice_fragment(xd, target, node, doc_v, op)? };
-        adopt_finish(adopt_from);
-        return Ok(out);
-    }
-
-    // SAFETY: as above.
-    let st = unsafe {
-        match op {
-            Op::Child => xml_insert_child(&mut *xd, target, node),
-            Op::Before => xml_insert_before(&mut *xd, target, node),
-            Op::After => xml_insert_after(&mut *xd, target, node),
-            Op::Replace => xml_replace_node(&mut *xd, target, node),
-        }
-    };
-    xml_mut_check(st)?;
-    adopt_finish(adopt_from);
-    Ok(wrap(node, doc_v))
-}
-
-pub fn add_child(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(ruby, this, arg, Op::Child)
-}
-pub fn before(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(ruby, this, arg, Op::Before)
-}
-pub fn after(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(ruby, this, arg, Op::After)
-}
-pub fn replace(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(ruby, this, arg, Op::Replace)
-}
-
-/// `element << node` -> self.
-pub fn lshift(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    insert(ruby, this, arg, Op::Child)?;
-    Ok(rb_self)
-}
-
-/// `clone_node(deep = false)` -> a detached copy in the same document.
-pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
-    let deep = a.optional.0.is_some_and(|v| v.to_bool());
-    let mut out: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, live for this call.
-    unsafe { xml_mut_check(xml_clone_node(&mut *this.doc(), this.id, deep, &mut out))? };
-    Ok(xml_wrap_rel_value(this, out))
-}
-
-/* ------------------------------------------------------------------ */
-/* document factories                                                 */
-/* ------------------------------------------------------------------ */
-
-/* WHATWG DOM element-name rules, for the loose escape hatch below. */
-
-fn dom_name_forbidden(c: u8) -> bool {
-    matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'/' | b'>')
-}
-
-fn dom_prefix_ok(p: &[u8]) -> bool {
-    !p.is_empty() && !p.iter().copied().any(dom_name_forbidden)
-}
-
-fn dom_local_ok(p: &[u8]) -> bool {
-    let Some(&first) = p.first() else {
-        return false;
-    };
-    if first < 0x80 && !(first.is_ascii_alphabetic() || first == b':' || first == b'_') {
-        return false;
-    }
-    !p.iter().copied().any(dom_name_forbidden)
-}
-
-/// Check that the three name pieces describe the same name.
-fn dom_name_consistency(
-    ruby: &Ruby,
-    qv: &RubyText,
-    pv: &RubyText,
-    has_prefix: bool,
-    lv: &RubyText,
-) -> Result<(u32, u32, u32), Error> {
-    /* SAFETY: the three views are the caller's, live for this call, and only
-     * their bytes are compared - nothing here runs Ruby. */
-    let (q, p, l) = unsafe { (qv.bytes(), pv.bytes(), lv.bytes()) };
-    let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());
-
-    if !dom_local_ok(l) {
-        return Err(arg_err("invalid DOM element local name"));
-    }
-    if !has_prefix {
-        if q != l {
-            return Err(arg_err(
-                "qualified name must equal local name when prefix is nil",
-            ));
-        }
-        return Ok((0, 0, q.len() as u32));
-    }
-
-    if !dom_prefix_ok(p) {
-        return Err(arg_err("invalid DOM element prefix"));
-    }
-    if q.len() != p.len() + 1 + l.len()
-        || &q[..p.len()] != p
-        || q[p.len()] != b':'
-        || &q[p.len() + 1..] != l
-    {
-        return Err(arg_err("qualified name must be prefix + ':' + local name"));
-    }
-    Ok((p.len() as u32, (p.len() + 1) as u32, l.len() as u32))
-}
-
-/// `create_element(name, content = nil, attributes = {})` -> Element.
-pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (), magnus::RArray, (), (), ()>(args)?;
-    let (name,) = a.required;
-    let mut content = ruby.qnil().as_value();
-    let mut attrs: Option<RHash> = None;
-    for v in a.splat.into_iter() {
-        if let Some(h) = RHash::from_value(v) {
-            attrs = Some(h);
-        } else if !v.is_nil() {
-            content = v;
-        }
-    }
-
-    let xd = xdoc(rb_self)?;
-    let (nv, _) = verified(ruby, name, c"element name")?;
-    let mut el: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the view is live for the call.
-    let st = unsafe { xml_new_element(&mut *xd, nv.bytes(), &mut el) };
-    xml_mut_check(st)?;
-
-    if !content.is_nil() {
-        let (tv, _) = verified(ruby, content, c"element content")?;
-        // SAFETY: as above.
-        let st = unsafe { xml_set_content(&mut *xd, el, tv.bytes()) };
-        xml_mut_check(st)?;
-    }
-    let rb_el = wrap(el, rb_self);
-    if let Some(h) = attrs {
-        /* Keys and values are stringified - Nokogiri accepts symbol keys and
-         * non-string values - then go through the normal validated setter. */
-        let pairs: RArray = h.funcall("to_a", ())?;
-        for pair in pairs.into_iter() {
-            let entry = RArray::from_value(pair).expect("Hash#to_a yields pairs");
-            let k: Value = entry.entry(0)?;
-            let v: Value = entry.entry(1)?;
-            /* `rb_el` was wrapped just above, so it converts. */
-            let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
-            aset(
-                ruby,
-                el_self,
-                k.funcall("to_s", ())?,
-                v.funcall("to_s", ())?,
-            )?;
-        }
-    }
-    Ok(rb_el)
-}
-
-/// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
-/// -> Element.
-pub fn create_loose_dom_element(
-    ruby: &Ruby,
-    rb_self: Value,
-    qname: Value,
-    prefix: Value,
-    local: Value,
-    ns: Value,
-) -> Result<Value, Error> {
-    let xd = xdoc(rb_self)?;
-    let (qv, _) = verified(ruby, qname, c"qualified name")?;
-    let (lv, _) = verified(ruby, local, c"local name")?;
-    let has_prefix = !prefix.is_nil();
-    let (pv, _) = verified_opt(ruby, prefix, c"prefix")?;
-    let (nv, _) = verified_opt(ruby, ns, c"namespace URI")?;
-
-    let (plen, loff, llen) = dom_name_consistency(ruby, &qv, &pv, has_prefix, &lv)?;
-    let mut el: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the views are live for the call.
-    let st = unsafe {
-        xml_new_loose_dom_element(&mut *xd, qv.bytes(), plen, loff, llen, nv.bytes(), &mut el)
-    };
-    xml_mut_check(st)?;
-    Ok(wrap(el, rb_self))
-}
-
-/// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
-pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>, Option<Value>), (), (), (), ()>(
-        args,
-    )?;
-    let name = a.required.0;
-    let nil = ruby.qnil().as_value();
-    let pub_v = a.optional.0.unwrap_or(nil);
-    let sys_v = a.optional.1.unwrap_or(nil);
-
-    let xd = xdoc(rb_self)?;
-    let (nv, _) = verified(ruby, name, c"doctype name")?;
-    let (pv, pl) = verified_opt(ruby, pub_v, c"doctype public id")?;
-    let (sv, sl) = verified_opt(ruby, sys_v, c"doctype system id")?;
-    /* An empty id is absent (NULL), matching the HTML factory and Nokogiri. */
-    let mut dt: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the views are live for the call.
-    let st = unsafe {
-        xml_new_document_type(
-            &mut *xd,
-            nv.bytes(),
-            (pl != 0).then_some(pv.bytes()),
-            (sl != 0).then_some(sv.bytes()),
-            &mut dt,
-        )
-    };
-    xml_mut_check(st)?;
-    Ok(wrap(dt, rb_self))
-}
-
-/// The shared body of the leaf-data factories.
-fn create_chardata(
-    ruby: &Ruby,
-    rb_self: Value,
-    text: Value,
-    type_: NodeType,
-    what: &core::ffi::CStr,
-) -> Result<Value, Error> {
-    let xd = xdoc(rb_self)?;
-    let (tv, _) = verified(ruby, text, what)?;
-    let mut n: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the view is the caller's for the copy.
-    let st = unsafe { xml_new_chardata(&mut *xd, type_, tv.bytes(), &mut n) };
-    xml_mut_check(st)?;
-    Ok(wrap(n, rb_self))
-}
-
-pub fn create_text_node(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    create_chardata(ruby, rb_self, t, NodeType::Text, c"text content")
-}
-pub fn create_comment(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    create_chardata(ruby, rb_self, t, NodeType::Comment, c"comment content")
-}
-pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    create_chardata(ruby, rb_self, t, NodeType::CData, c"CDATA content")
-}
-
-pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
-    let xd = xdoc(rb_self)?;
-    let (tg, _) = verified(ruby, target, c"PI target")?;
-    let (dt, _) = verified(ruby, data, c"PI data")?;
-    let mut pi: NodeId = NodeId::INVALID;
-    // SAFETY: the receiver's arena, and the views are live for the call.
-    let st = unsafe { xml_new_pi(&mut *xd, tg.bytes(), dt.bytes(), &mut pi) };
-    xml_mut_check(st)?;
-    Ok(wrap(pi, rb_self))
-}
-
-/// `Document#import_node(node, deep = false)` - the DOM's importNode.
-pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-    let node_v = a.required.0;
-    let deep = a.optional.0.is_some_and(|v| v.to_bool());
-
-    let xd = crate::bridge::lexbor::doc_parsed(rb_self)
-        .map(|p| {
-            // SAFETY: `p` is `rb_self`'s own handle, live while the receiver is.
-            unsafe { crate::bridge::lexbor::parsed_xml_doc(p) }
-        })
-        .unwrap_or(core::ptr::null_mut());
+/// `Document#import_node`'s copy: `node_v` - XML from any document, or HTML -
+/// copied, detached, into the XML Document `rb_self`. The source is untouched.
+pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, Error> {
+    xml_doc_unwrap(rb_self)?; /* TypeError for anything but an XML Document */
+    let xd = arena_mut(rb_self)?;
     let mut copy: NodeId = NodeId::INVALID;
-    match node_kind(node_v.as_raw()) {
-        KIND_XML => {
-            let src_doc = xdoc(node_v)?;
+    match node_repr(node_v) {
+        NodeRepr::Xml => {
+            /* Read, not written: the copy goes into the receiver's arena. */
+            let src_doc = doc_of(xml_node_document(node_v)?);
+            let src = unwrap(node_v)?;
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
                 // SAFETY: the target arena, which is the source here.
-                xml_mut_check(unsafe {
-                    xml_clone_node(&mut *xd, unwrap(node_v)?, deep, &mut copy)
-                })?
+                xml_mut_check(unsafe { xml_clone_node(&mut *xd, src, deep, &mut copy) })?
             } else {
                 // SAFETY: two distinct live arenas.
-                xml_mut_check(unsafe {
-                    xml_copy_node(&mut *xd, &*src_doc, unwrap(node_v)?, deep, &mut copy)
-                })?
+                xml_mut_check(unsafe { xml_copy_node(&mut *xd, &*src_doc, src, deep, &mut copy) })?
             }
         }
-        KIND_HTML => {
+        NodeRepr::Html => {
             // SAFETY: the target arena, and the HTML source node.
             xml_mut_check(unsafe {
                 cross_html_to_xml(xd, html_node_unwrap(node_v)?, deep, &mut copy)
             })?
         }
-        _ => {
+        NodeRepr::Other => {
             return Err(Error::new(
-                ruby.exception_type_error(),
+                Ruby::get_with(node_v).exception_type_error(),
                 "import_node expects a Makiri node",
             ))
         }
     }
-    Ok(wrap(copy, rb_self))
+    Ok(copy)
 }

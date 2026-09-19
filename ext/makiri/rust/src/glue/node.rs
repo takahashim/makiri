@@ -2,7 +2,7 @@
 //!
 //! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
 //! Ruby-facing Node. The TypedData types, their GC functions and the raw
-//! accessors moved to the Ruby <-> Lexbor seam ([`crate::bridge::lexbor`]);
+//! accessors moved to the Ruby <-> Lexbor seam ([`crate::bridge::wrapper`]);
 //! what is left is representation-neutral and safe: the identity methods
 //! (`==`/`eql?`, `hash`, `pointer_id`), which depend only on the node pointer
 //! and never dereference it.
@@ -16,7 +16,7 @@ use magnus::{Integer, Ruby, Value};
 
 use crate::init::CLASS_NODE;
 
-use crate::bridge::lexbor::node_identity;
+use crate::bridge::wrapper::node_identity;
 
 /// Pointer identity: equal iff both wrappers resolve to the same node pointer,
 /// so an HTML node is never equal to an XML one.

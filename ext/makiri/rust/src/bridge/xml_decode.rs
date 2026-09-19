@@ -1,25 +1,17 @@
-//! XML 1.0 Appendix F byte-encoding autodetection, and the strict decode to
-//! UTF-8 the XML reader runs before it sees a byte (bridge/xml_decode.c).
+//! XML 1.0 Appendix F: choosing the input's encoding, and the strict decode to
+//! UTF-8 the XML reader runs before it sees a byte.
 //!
-//! Split from [`super::string`] because it is an XML-specific charset
-//! subsystem rather than a generic Ruby String helper. It borrows bytes only
-//! through `ruby_bytes_view`, and shares that module's allocation-free
-//! strict-text check.
+//! The byte reading - the BOM and the declaration's `encoding=` - is the
+//! Ruby-free `xml::encoding_sniff`. This module adds the Ruby half: looking the
+//! names up as `Encoding`s, weighing them against the String's own tag, and
+//! transcoding.
 //!
-//! # Where the borrows are fragile
+//! # The one ordering rule
 //!
 //! `rb_enc_find` can AUTOLOAD an encoding, which is a Ruby allocation and so a
-//! GC point. Two things follow, and both are load-bearing:
-//!
-//!   * the bytes are re-borrowed after the BOM lookup, because the view taken
-//!     before it may no longer be valid;
-//!   * the declaration scanner is kept allocation-free until every read is
-//!     done - the interleave geometry is resolved by the BOM matcher and passed
-//!     in rather than re-derived (which would need `rb_enc_find`), and the one
-//!     name lookup happens after the bytes have been copied out.
-//!
-//! Where the C used `mkr_span` / `mkr_spanbuf` to make its reads bounded, this
-//! uses slices, which are bounded by construction.
+//! GC point, and a borrow of the String's bytes must not be held across one.
+//! So both scans finish while the bytes are borrowed, and the lookups run only
+//! after that borrow has ended.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -30,10 +22,10 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{Error, Value};
 use rb_sys::{rb_encoding, VALUE};
 
-use super::string::{ruby_bytes_view, text_check, TextVerdict};
+use super::ruby::exception_message;
+use super::string::{ruby_bytes_view, text_check};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
-
-pub use crate::bridge::string::ruby_exception_message;
+use crate::xml::encoding_sniff::{sniff_bom, sniff_decl};
 
 /// `rb_str_encode` with no replacement flags, so an undefined conversion or an
 /// invalid byte sequence RAISES rather than substituting U+FFFD. Run under
@@ -48,154 +40,11 @@ unsafe extern "C" fn strict_transcode_thunk(str: VALUE) -> VALUE {
     )
 }
 
-/// The byte at `i`, or -1 past the end - the C's `mkr_span_at`, which lets the
-/// scanner below read ahead without a bounds dance at every step.
-#[inline]
-fn at(s: &[u8], i: usize) -> i32 {
-    match s.get(i) {
-        Some(&b) => b as i32,
-        None => -1,
-    }
-}
-
-fn decl_ws(c: i32) -> bool {
-    c == b' ' as i32 || c == b'\t' as i32 || c == b'\r' as i32 || c == b'\n' as i32
-}
-
-/// How a detected encoding interleaves the ASCII column the declaration scanner
-/// reads: `stride` bytes per character, the ASCII byte at `off`.
-struct Geometry {
-    bom_len: usize,
-    stride: usize,
-    off: usize,
-}
-
-/// The leading byte-order mark's encoding, or NULL, plus the geometry.
-///
-/// UTF-32 BOMs are tested before the UTF-16 LE BOM whose prefix they share. The
-/// geometry is resolved here, at the match, rather than re-derived downstream:
-/// that derivation needs `rb_enc_find`, and the scanner must stay
-/// allocation-free while it holds a borrow.
-unsafe fn bom_encoding(p: &[u8]) -> (*mut rb_encoding, Geometry) {
-    let mut g = Geometry {
-        bom_len: 0,
-        stride: 1,
-        off: 0,
-    };
-    let starts = |pat: &[u8]| p.starts_with(pat);
-    if starts(b"\x00\x00\xFE\xFF") {
-        g = Geometry {
-            bom_len: 4,
-            stride: 4,
-            off: 3,
-        };
-        return (rb_sys::rb_enc_find(c"UTF-32BE".as_ptr()), g);
-    }
-    if starts(b"\xFF\xFE\x00\x00") {
-        g = Geometry {
-            bom_len: 4,
-            stride: 4,
-            off: 0,
-        };
-        return (rb_sys::rb_enc_find(c"UTF-32LE".as_ptr()), g);
-    }
-    if starts(b"\xFE\xFF") {
-        g = Geometry {
-            bom_len: 2,
-            stride: 2,
-            off: 1,
-        };
-        return (rb_sys::rb_enc_find(c"UTF-16BE".as_ptr()), g);
-    }
-    if starts(b"\xFF\xFE") {
-        g = Geometry {
-            bom_len: 2,
-            stride: 2,
-            off: 0,
-        };
-        return (rb_sys::rb_enc_find(c"UTF-16LE".as_ptr()), g);
-    }
-    if starts(b"\xEF\xBB\xBF") {
-        g.bom_len = 3;
-        return (rb_sys::rb_utf8_encoding(), g);
-    }
-    (core::ptr::null_mut(), g)
-}
-
-/// The encoding named in `<?xml ... encoding="NAME" ?>`, or NULL.
-///
-/// The declaration is ASCII, but for a UTF-16/32 document its bytes are
-/// stride-interleaved, so the ASCII column is extracted first - which is what
-/// lets a BOM-versus-declaration conflict be caught even in UTF-16.
-unsafe fn decl_encoding(p: &[u8], stride: usize, off: usize) -> *mut rb_encoding {
-    /* The extracted column, bounded by the buffer rather than by the loop
-     * arithmetic. */
-    let mut head = [0u8; 256];
-    let mut hn = 0usize;
-    let mut i = off;
-    while hn < head.len() {
-        let c = at(p, i);
-        if c < 0 {
-            break;
-        }
-        head[hn] = c as u8;
-        hn += 1;
-        i += stride;
-    }
-    let h = &head[..hn];
-
-    let mut i = 0usize;
-    while decl_ws(at(h, i)) {
-        i += 1;
-    }
-    if !h[i.min(hn)..].starts_with(b"<?xml") {
-        return core::ptr::null_mut();
-    }
-    i += 5;
-
-    /* A whitespace-introduced "encoding" before the '?>'. */
-    while i + 8 <= hn {
-        if at(h, i) == b'?' as i32 && at(h, i + 1) == b'>' as i32 {
-            return core::ptr::null_mut(); /* end of the declaration */
-        }
-        if !decl_ws(at(h, i.wrapping_sub(1))) || !h[i..].starts_with(b"encoding") {
-            i += 1;
-            continue;
-        }
-        let mut j = i + 8;
-        while decl_ws(at(h, j)) {
-            j += 1;
-        }
-        if at(h, j) != b'=' as i32 {
-            return core::ptr::null_mut();
-        }
-        j += 1;
-        while decl_ws(at(h, j)) {
-            j += 1;
-        }
-        let q = at(h, j);
-        if q != b'"' as i32 && q != b'\'' as i32 {
-            return core::ptr::null_mut();
-        }
-        j += 1;
-        let ns = j;
-        while at(h, j) >= 0 && at(h, j) != q {
-            j += 1;
-        }
-        if j >= hn {
-            return core::ptr::null_mut();
-        }
-        let nl = j - ns;
-        let mut name = [0u8; 64];
-        if nl == 0 || nl >= name.len() {
-            return core::ptr::null_mut();
-        }
-        name[..nl].copy_from_slice(&h[ns..j]);
-        name[nl] = 0;
-        /* Unknown names come back NULL, which is not an error here. */
-        return rb_sys::rb_enc_find(name.as_ptr() as *const c_char);
-    }
-    core::ptr::null_mut()
+/// `rb_enc_find` for a name the sniffers produced; null for one Ruby does not
+/// know, which is not an error here. May autoload an encoding - a GC point - so
+/// it runs only once every borrow of the input is over.
+unsafe fn find_encoding(name: &core::ffi::CStr) -> *mut rb_encoding {
+    rb_sys::rb_enc_find(name.as_ptr())
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -213,16 +62,16 @@ unsafe fn compatible(a: *mut rb_encoding, b: *mut rb_encoding) -> bool {
 /// ever sees one self-consistent answer.
 unsafe fn effective_encoding(str: VALUE) -> Result<*mut rb_encoding, Error> {
     let tag = rb_sys::rb_enc_get(str);
-    /* One anchor for the call. Holding it is what keeps the String reachable
-     * and in place; each `bytes()` below is a borrow OF THE ANCHOR, so no slice
-     * can outlive it or be stored past this function. */
-    let anchor = ruby_bytes_view(str);
-    let (bom, geo) = bom_encoding(anchor.bytes());
-
-    /* Re-borrow: the rb_enc_find inside the BOM lookup can autoload an encoding,
-     * which is a GC point, and a borrow must not be held across one. */
-    let raw = anchor.bytes();
-    let decl = decl_encoding(&raw[geo.bom_len.min(raw.len())..], geo.stride, geo.off);
+    /* Read everything first, while the bytes are borrowed and nothing can run
+     * a GC; the name lookups - which can - come after the borrow ends. */
+    let (bom, decl) = {
+        let anchor = ruby_bytes_view(str);
+        let raw = anchor.bytes();
+        let (bom, geo) = sniff_bom(raw);
+        (bom, sniff_decl(&raw[geo.bom_len.min(raw.len())..], geo))
+    };
+    let bom = bom.map_or(core::ptr::null_mut(), |b| find_encoding(b.name()));
+    let decl = decl.map_or(core::ptr::null_mut(), |d| find_encoding(d.as_cstr()));
     let is_binary = tag == rb_sys::rb_ascii8bit_encoding();
 
     if !bom.is_null() && !decl.is_null() && !compatible(bom, decl) {
@@ -288,11 +137,7 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         if state != 0 {
             let exc = rb_sys::rb_errinfo();
             rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
-            // c_char, not i8 - signed on aarch64-darwin, unsigned on
-            // aarch64-linux (see the same fix in glue/xpath.rs).
-            let mut msg = [0 as c_char; 256];
-            ruby_exception_message(exc, msg.as_mut_ptr(), msg.len());
-            let msg = core::ffi::CStr::from_ptr(msg.as_ptr()).to_string_lossy();
+            let msg = exception_message(exc);
             return Err(syntax_error(format!(
                 "XML input could not be decoded to UTF-8: {msg}"
             )));
@@ -300,17 +145,20 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         out
     };
 
-    let anchor = ruby_bytes_view(s);
-    let bytes = anchor.bytes();
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
-     * covers every input. */
-    let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
-        3
-    } else {
-        0
+     * covers every input. Each read of the bytes is a scoped borrow that ends
+     * before anything can allocate - the module's one ordering rule. */
+    let (off, len) = {
+        let anchor = ruby_bytes_view(s);
+        let bytes = anchor.bytes();
+        let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
+            3
+        } else {
+            0
+        };
+        (off, bytes.len() - off)
     };
-    let len = bytes.len() - off;
 
     /* Fail closed on an over-budget input BEFORE the validation scan and the
      * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
@@ -322,20 +170,21 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         ));
     }
 
-    /* Strict validation through the shared, allocation-free core - no GC point
-     * while the borrow is live. An embedded NUL or any invalid UTF-8 is fatal;
-     * there is no U+FFFD repair here, unlike the HTML sanitize path. The whole
-     * String is consulted for its cached coderange (which covers the stripped
-     * suffix too - the BOM is one complete UTF-8 character) while the bytes
-     * validated are the suffix. */
-    match text_check(s, bytes.as_ptr().add(off) as *const c_char, len) {
-        TextVerdict::HasNul => return Err(syntax_error("XML input must not contain a NUL byte")),
-        TextVerdict::InvalidUtf8 => return Err(syntax_error("XML input must be valid UTF-8")),
-        TextVerdict::Ok => {}
+    /* Strict validation through the shared, allocation-free core. An embedded
+     * NUL or any invalid UTF-8 is fatal; there is no U+FFFD repair here, unlike
+     * the HTML sanitize path. The whole String is consulted for its cached
+     * coderange (which covers the stripped suffix too - the BOM is one complete
+     * UTF-8 character) while the bytes validated are the suffix. */
+    let problem = {
+        let anchor = ruby_bytes_view(s);
+        text_check(s, anchor.bytes().as_ptr().add(off) as *const c_char, len).problem()
+    };
+    if let Some(problem) = problem {
+        return Err(syntax_error(format!("XML input {problem}")));
     }
 
-    /* Build the result from the VALUE, not the borrow: rb_str_subseq allocates,
-     * so the borrowed pointer must not be what it copies from. */
+    /* Built from the VALUE: the borrow above is over, and rb_str_subseq
+     * allocates. */
     let u = rb_sys::rb_str_subseq(s, off as c_long, len as c_long);
     rb_sys::rb_enc_associate(u, rb_sys::rb_utf8_encoding());
     Ok(u)

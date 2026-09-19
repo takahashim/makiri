@@ -18,20 +18,15 @@
 
 use core::ffi::c_void;
 
-use crate::bridge::ruby::VALUE;
-use magnus::Error;
-
 use crate::falloc::VecPush;
 
-use crate::bridge::ruby::error_class;
-use crate::bridge::string::{ruby_bytes_view, ruby_str_known_valid_utf8, ruby_to_utf8};
 use crate::lexbor::ffi::{LxbDoc, LxbNode};
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
-use crate::cbuf::{Buf, OwnedBuf};
+use crate::cbuf::OwnedBuf;
 use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
 pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
@@ -108,73 +103,57 @@ fn fixup_template_content(
     Ok(())
 }
 
-/// What `sanitize_html_input` decided about the input bytes.
-///
-/// The buffer is `Some` when the bytes are OURS to free and `None` when they
-/// are borrowed from the Ruby String the caller is keeping alive - the
-/// distinction the C expressed with an out-parameter that the caller had to
-/// remember to `free`.
-pub struct SanitizedHtml {
-    pub ptr: *const u8,
-    pub len: usize,
-    _owned: Option<OwnedBuf>,
+/// Fragment input after browser-compatible decoding: the caller's bytes when
+/// they needed no repair, or the repaired copy, which this owns and frees.
+pub enum SanitizedHtml<'a> {
+    Borrowed(&'a [u8]),
+    Owned(OwnedBuf),
+}
+
+impl SanitizedHtml<'_> {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            SanitizedHtml::Borrowed(b) => b,
+            SanitizedHtml::Owned(o) => o.as_slice(),
+        }
+    }
 }
 
 /// Browser-compatible decoding for fragment input: invalid UTF-8 becomes
-/// U+FFFD, valid input is used in place. `None` on OOM with nothing allocated.
+/// U+FFFD, valid input is used in place. `known_valid` - the caller already
+/// knows the bytes are valid UTF-8 - skips the scan. `None` on OOM with
+/// nothing allocated.
 ///
-/// This is the Rust-facing form. The C ABI wrapper below hands the same result
-/// back through four out-parameters because that is what `ruby_html_mutate.c`
-/// expects; in Rust the ownership is in the type and `Drop` frees it, so no
-/// caller has to remember.
-pub unsafe fn sanitize_html_input(html: VALUE) -> Option<SanitizedHtml> {
-    let u8v = ruby_to_utf8(html);
-    let hv = ruby_bytes_view(u8v);
-
-    if u8v != html {
-        // Transcoded: a fresh String nothing keeps alive past this return, so
-        // its bytes must NOT be borrowed. It is already valid UTF-8, so copy
-        // rather than sanitise.
-        let mut buf = Buf::new(hv.len());
-        buf.append(hv.bytes()).ok()?;
-        let owned = buf.steal().ok()?;
-        let ptr = owned.as_slice().as_ptr();
-        let len = owned.as_slice().len();
-        return Some(SanitizedHtml {
-            ptr,
-            len,
-            _owned: Some(owned),
-        });
+/// Bytes in, bytes out: taking them from a Ruby String, and honouring its
+/// encoding, is the bridge's job (`bridge::string::HtmlSource`).
+pub fn sanitize_html_input(input: &[u8], known_valid: bool) -> Option<SanitizedHtml<'_>> {
+    if known_valid {
+        return Some(SanitizedHtml::Borrowed(input));
     }
-
-    // Not transcoded: input Ruby already knows is valid UTF-8 is borrowed in
-    // place (the caller keeps `html` alive); anything else is sanitised.
-    if ruby_str_known_valid_utf8(html) {
-        return Some(SanitizedHtml {
-            ptr: hv.as_ptr() as *const u8,
-            len: hv.len(),
-            _owned: None,
-        });
+    // SAFETY: a Rust slice, readable for its length.
+    match unsafe { utf8_sanitize(input.as_ptr(), input.len()) }? {
+        Sanitized::Unchanged => Some(SanitizedHtml::Borrowed(input)),
+        Sanitized::Replaced(r) => Some(SanitizedHtml::Owned(r)),
     }
-    let clean = match utf8_sanitize(hv.as_ptr() as *const u8, hv.len()) {
-        Some(Sanitized::Unchanged) => None,
-        Some(Sanitized::Replaced(r)) => Some(r),
-        None => return None,
-    };
-    match clean {
-        None => Some(SanitizedHtml {
-            ptr: hv.as_ptr() as *const u8,
-            len: hv.len(),
-            _owned: None,
-        }),
-        Some(r) => {
-            let ptr = r.as_slice().as_ptr();
-            let len = r.as_slice().len();
-            Some(SanitizedHtml {
-                ptr,
-                len,
-                _owned: Some(r),
-            })
+}
+
+/// Why a fragment parse produced no fragment. The bridge words it for Ruby.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FragmentError {
+    /// Lexbor could not create or initialise a parser.
+    Parser,
+    /// Out of memory repairing the input's UTF-8.
+    Decode,
+    /// The parse itself returned no fragment.
+    Parse,
+}
+
+impl FragmentError {
+    pub fn message(self) -> &'static str {
+        match self {
+            FragmentError::Parser => "failed to create HTML parser",
+            FragmentError::Decode => "out of memory decoding fragment HTML",
+            FragmentError::Parse => "failed to parse HTML fragment",
         }
     }
 }
@@ -225,7 +204,7 @@ impl Emit {
 /// (`lexbor_abi::TransientDoc`), and a raise from here would longjmp past its
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
-pub unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
+unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
     let mut f = (*(root.as_ptr() as *mut LxbNode)).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
@@ -238,12 +217,53 @@ pub unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) 
     true
 }
 
-/// Import a fragment parsed in Lexbor's transient document, then release that
-/// document on every return path.  The transient-document ownership rule is a
-/// Lexbor ABI concern, so callers never need to name `TransientDoc`.
-pub unsafe fn import_transient_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
-    let _transient = crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode);
-    import_fragment_children(doc, root, emit)
+/// A fragment parsed in a context - an element, or a tag and namespace. With an
+/// element context it lives in a TRANSIENT document Lexbor builds for it, which
+/// destroying the parser does not free, so this owns it and frees it on drop,
+/// whatever happens in between (see `parse` for why only that context).
+///
+/// Parsing and importing are separate steps so a caller can parse FIRST and
+/// change its tree only once the input has turned out to be usable:
+/// `inner_html=` used to empty the element and then fail to parse, which
+/// raised with the old children already gone.
+pub struct TransientFragment {
+    root: RawNode,
+    _doc: Option<crate::lexbor_abi::TransientDoc>,
+}
+
+impl TransientFragment {
+    /// # Safety
+    /// `context`'s element or document must be live; `input` is only read.
+    pub unsafe fn parse(
+        input: &[u8],
+        known_valid: bool,
+        context: &FragmentContext,
+    ) -> Result<TransientFragment, FragmentError> {
+        let root = run_fragment_parser(input, known_valid, context)?;
+        /* Only the element context gets a document of its own to free.
+         * `lxb_html_parse_fragment_chunk_begin` builds the fragment in
+         * `lxb_html_document_interface_create(owner)`: the element parser passes
+         * its fresh parser's tree document - NULL - so the result is standalone
+         * and must be destroyed here; the by-tag parser is handed the TARGET
+         * document, so its result is made inside that document's memory and
+         * destroying it would free the target's. */
+        let _doc = match context {
+            FragmentContext::Element(_) => {
+                crate::lexbor_abi::TransientDoc::of(root.as_ptr() as *mut LxbNode)
+            }
+            FragmentContext::Tag { .. } => None,
+        };
+        Ok(TransientFragment { root, _doc })
+    }
+
+    /// Import every child into `doc`, placed by `emit`; `false` if one failed.
+    ///
+    /// # Safety
+    /// `doc` and the node `emit` names must be live, and the caller clear to
+    /// change that tree.
+    pub unsafe fn import_into(self, doc: RawDoc, emit: &Emit) -> bool {
+        import_fragment_children(doc, self.root, emit)
+    }
 }
 
 /// Which Lexbor fragment parser to run, and the context it needs.
@@ -291,26 +311,18 @@ impl FragmentContext {
 /// The parser is destroyed on every path: the fragment tree belongs to its
 /// document, not the parser, so it survives - the caller may still read
 /// `root->owner_document` afterwards.
-pub unsafe fn run_fragment_parser(
-    html: VALUE,
+unsafe fn run_fragment_parser(
+    input: &[u8],
+    known_valid: bool,
     context: &FragmentContext,
-) -> Result<RawNode, Error> {
-    let Some(parser) = HtmlParser::create() else {
-        return Err(Error::new(error_class(), "failed to create HTML parser"));
-    };
-
-    let Some(src) = sanitize_html_input(html) else {
-        return Err(Error::new(
-            error_class(),
-            "out of memory decoding fragment HTML",
-        ));
-    };
-
-    let root = context.parse(&parser, src.ptr, src.len);
+) -> Result<RawNode, FragmentError> {
+    let parser = HtmlParser::create().ok_or(FragmentError::Parser)?;
+    let src = sanitize_html_input(input, known_valid).ok_or(FragmentError::Decode)?;
+    let bytes = src.as_slice();
+    let root = context.parse(&parser, bytes.as_ptr(), bytes.len());
     drop(src); /* the parse consumed it; the buffer goes on every path */
     drop(parser); /* the fragment belongs to its document, not to the parser */
-    RawNode::from_ptr(root.cast())
-        .ok_or_else(|| Error::new(error_class(), "failed to parse HTML fragment"))
+    RawNode::from_ptr(root.cast()).ok_or(FragmentError::Parse)
 }
 
 /// Copy `src` into `doc`, `<template>` contents included, or `None` on failure.
@@ -346,12 +358,6 @@ unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut 
         return None;
     }
     Some(imp)
-}
-
-/// Deep-import `src` into `doc`, or an error rather than a partial node.
-pub unsafe fn html_import_deep(doc: RawDoc, src: RawNode) -> Result<RawNode, Error> {
-    import_with_fixup(doc, src, true)
-        .ok_or_else(|| Error::new(error_class(), "failed to import node"))
 }
 
 /* ------------------------------------------------------------------ */

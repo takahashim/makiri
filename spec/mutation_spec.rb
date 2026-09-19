@@ -351,6 +351,31 @@ RSpec.describe "Makiri mutation" do
   end
 
   describe "query consistency after mutation" do
+    # Adopting takes the node out of the document it came from, and that
+    # document's text and element indexes still list it - they have to be
+    # dropped too, or its #text and //tag go on answering with the node.
+    %i[add_child add_previous_sibling add_next_sibling replace].each do |verb|
+      it "drops the SOURCE document's indexes when #{verb} adopts a node" do
+        src = Makiri::HTML("<div><p>moved</p><span>stay</span></div>")
+        dst = Makiri::HTML("<section><b>anchor</b></section>")
+        expect([src.text, src.xpath("//p").size]).to eq(["movedstay", 1]) # warm both indexes
+        dst.at_css("b").public_send(verb, src.at_css("p"))
+        expect(src.text).to eq("stay")
+        expect(src.xpath("//p")).to be_empty
+        expect(src.at_xpath("//p")).to be_nil
+        expect(dst.xpath("//p").size).to eq(1)
+      end
+    end
+
+    it "drops the source document's indexes when a whole subtree is adopted" do
+      src = Makiri::HTML("<div><i>x</i></div><p>rest</p>")
+      dst = Makiri::HTML("<section></section>")
+      expect([src.xpath("//i").size, src.text]).to eq([1, "xrest"])
+      dst.at_css("section").add_child(src.at_css("div"))
+      expect(src.xpath("//i")).to be_empty
+      expect(src.text).to eq("rest")
+    end
+
     it "rebuilds the attribute index so XPath sees the new tree" do
       div.inner_html = '<a id="link" href="/z">L</a>'
       expect(doc.xpath("//a/@href").map(&:value)).to eq(["/z"])

@@ -445,7 +445,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         crate::glue::node_set::init_node_set();
         crate::glue::xpath::init_xpath();
         crate::bridge::selectors::init_css();
-        crate::lexbor::stylesheet::init_lexbor_css();
+        crate::glue::stylesheet::init_lexbor_css();
         crate::bridge::serialize::init_serialize();
         crate::glue::html_node::init_mutate();
         crate::glue::xml::init_xml();

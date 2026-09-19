@@ -4,11 +4,11 @@
 //! one - it replaces C that calls Ruby with Rust that calls Ruby through
 //! [magnus]. The port kept a per-feature `mkr_init_*` seam so a feature could
 //! move a file at a time, and for a while the moved features stayed reachable
-//! here as one-line `pub use` re-exports. Those are gone: a feature whose
-//! implementation lives in `lexbor` (the selector engine, the stylesheet
-//! binding, the serializer, the fragment pipeline) is registered from its
-//! `lexbor` entry point, and what remains in `glue` is the Ruby API that has
-//! not moved below the boundary yet.
+//! here as one-line `pub use` re-exports. Those are gone. `lexbor/` itself is
+//! Ruby-free - it takes bytes and returns its own error types, and
+//! `rake unsafe:boundaries` holds it to no `crate::bridge` use - so the Ruby
+//! half of a Lexbor-backed feature (the stylesheet binding's conversion and
+//! registration, say) lives here or in `bridge`.
 //!
 //! # Two rules this layer lives by
 //!
@@ -40,6 +40,9 @@
 //! C buffer before releasing), and the constraint is the same here.
 
 #![forbid(unsafe_code)]
+
+/// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `lexbor::stylesheet`.
+pub mod stylesheet;
 
 /// Makiri::HTML::Document.
 pub mod doc;

@@ -24,25 +24,6 @@ mod sys {
 
 pub use sys::*;
 
-/// Makiri's own constants.
-///
-/// Unlike everything above, these are NOT generated. They were, from
-/// `ext/makiri/*.h` - added after a transcribed `NODE_KIND_XML = 1` (it is
-/// 2) made `Document#import_node` treat every HTML node as an XML one. Those
-/// headers went with the rest of the C, so there is no second reading of them
-/// left to check against: this module is now the definition.
-pub mod parsed {
-    #![allow(dead_code)]
-    use core::ffi::c_uint;
-
-    /// Which representation a wrapped Ruby node is, by its TypedData type (NOT
-    /// by Ruby class). A Document, a NodeSet, or any non-node is OTHER.
-    pub type NodeKind = c_uint;
-    pub const NODE_KIND_OTHER: NodeKind = 0;
-    pub const NODE_KIND_HTML: NodeKind = 1;
-    pub const NODE_KIND_XML: NodeKind = 2;
-}
-
 /// An HTML parser, destroyed however its scope exits.
 ///
 /// Lexbor's `parser_destroy` unrefs the tokenizer and the tree and NOTHING

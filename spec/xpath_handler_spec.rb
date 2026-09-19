@@ -320,6 +320,40 @@ RSpec.describe "Makiri XPath custom function handler" do
         expect(doc.at_css("div")).not_to be_nil
       end
 
+      # A factory changes the document too - it makes its nodes there - and on
+      # an XML document it grows the arena the walk is reading from. So the
+      # factories are refused like any other edit, on both representations.
+      {
+        "create_element" => ->(d) { d.create_element("hr") },
+        "create_text_node" => ->(d) { d.create_text_node("t") },
+        "create_comment" => ->(d) { d.create_comment("c") },
+        "clone_node" => ->(d) { d.at_css("p").clone_node(true) },
+        "import_node" => ->(d) { d.import_node(Makiri::HTML("<i>x</i>").at_css("i")) },
+        "fragment" => ->(d) { d.fragment("<i>x</i>") },
+      }.each do |what, make|
+        it "fails closed when it calls #{what} on the HTML document" do
+          h = editor_class.new { make.call(doc) }
+          expect { doc.xpath("//p[touch()]", h) }
+            .to raise_error(Makiri::Error, /while evaluating/)
+        end
+      end
+
+      {
+        "create_element" => ->(x) { x.create_element("e") },
+        "create_text_node" => ->(x) { x.create_text_node("t") },
+        "create_comment" => ->(x) { x.create_comment("c") },
+        "clone_node" => ->(x) { x.at_xpath("//a").clone_node(true) },
+        "import_node" => ->(x) { x.import_node(Makiri::XML("<i/>").root) },
+        "fragment" => ->(x) { x.fragment("<i/>") },
+      }.each do |what, make|
+        it "fails closed when it calls #{what} on the XML document" do
+          xml = Makiri::XML(%(<r><a k="1"/><a/></r>))
+          h = editor_class.new { make.call(xml) }
+          expect { Makiri::XPathContext.new(xml).evaluate("//a[touch()]", h) }
+            .to raise_error(Makiri::Error, /while evaluating/)
+        end
+      end
+
       it "fails closed for an XML document too" do
         xml = Makiri::XML(%(<r><a k="1"/><a/></r>))
         h = editor_class.new { xml.at_xpath("//a")["k"] = "2" }

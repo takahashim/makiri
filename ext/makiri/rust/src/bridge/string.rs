@@ -1,4 +1,4 @@
-//! Ruby String <-> Makiri text (bridge/ruby_string.c).
+//! Ruby String <-> Makiri text.
 //!
 //! # The borrow rule this file exists to hold
 //!
@@ -24,6 +24,8 @@
 use core::ffi::{c_char, c_int, c_long, CStr};
 
 use magnus::encoding::Coderange;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 /* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
 use super::ruby::protect;
@@ -40,18 +42,10 @@ pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
 
-/// `Makiri::Error`, read from the registry `Init_makiri` fills. The glue has a
-/// helper of the same name; this layer reads the constant itself rather than
-/// borrowing one from the layer above it.
-fn error_class() -> magnus::ExceptionClass {
-    crate::init::EXC_ERROR.exception()
-}
-
 /* ---- the borrowed-text layouts ----
  *
- * `mkr_ruby_borrowed_text_t` / `_data_t` / `_bytes_t` share ONE layout and are
- * three C types. The distinction is the contract, not the shape: `text` has
- * been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only (the HTML
+ * Three borrowed-text types with ONE layout. The distinction is the contract,
+ * not the shape: `text` has been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only (the HTML
  * data family may hold U+0000, like browsers), and `bytes` for nothing at all
  * (HTML parsing decodes leniently). Keeping them apart is what makes a name or
  * engine string that took the data path a type error rather than a silent one,
@@ -118,10 +112,6 @@ impl<C> RubyStr<C> {
         }
     }
 
-    pub(crate) fn as_ptr(&self) -> *const c_char {
-        self.ptr
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.len
     }
@@ -157,7 +147,7 @@ impl<C> Drop for RubyStr<C> {
     }
 }
 
-/// What the strict-text check found (`mkr_text_verdict_t`).
+/// What the strict-text check found.
 ///
 /// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
 /// re-exported here so the bridge's callers keep naming it from this module.
@@ -186,7 +176,7 @@ unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
 /// both a long slice and a short sum fail closed.
 pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Result<VALUE, Error> {
     if total > c_long::MAX as usize {
-        return Err(Error::new(error_class(), "text too large to assemble"));
+        return Err(makiri_error("text too large to assemble"));
     }
     let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
     /* We just created it and hold the only reference, so writing through the
@@ -200,14 +190,14 @@ pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Res
         }
         if s.len() > total - off {
             /* off <= total holds, so the subtraction cannot underflow. */
-            return Err(Error::new(error_class(), "text slice length inconsistency"));
+            return Err(makiri_error("text slice length inconsistency"));
         }
         core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, dst.add(off), s.len());
         off += s.len();
     }
     if off != total {
         /* A short sum would leave the tail of the uninitialised String unwritten. */
-        return Err(Error::new(error_class(), "text slice length inconsistency"));
+        return Err(makiri_error("text slice length inconsistency"));
     }
     Ok(str)
 }
@@ -232,7 +222,7 @@ pub unsafe fn ruby_str_from_utf8(bytes: &[u8]) -> VALUE {
 
 /// A UTF-8 String copied from a borrowed slice. NULL is the "absent" sentinel
 /// and yields `""` whatever `len` says, so the sentinel is never dereferenced.
-pub unsafe fn ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
+unsafe fn ruby_str_from_borrowed(text: BorrowedText) -> VALUE {
     if text.is_absent() {
         return rb_sys::rb_utf8_str_new(c"".as_ptr(), 0);
     }
@@ -274,13 +264,12 @@ pub fn verify_text(str: Value, what: &CStr) -> Result<(), Error> {
     let str = str.as_raw();
     // SAFETY: `str` is a live String, and the borrow ends with the check -
     // before anything below can allocate.
-    let problem = match unsafe {
+    let verdict = unsafe {
         let (_, ptr, len) = borrow(str);
         text_check(str, ptr, len)
-    } {
-        TextVerdict::HasNul => "must not contain a NUL byte",
-        TextVerdict::InvalidUtf8 => "must be valid UTF-8",
-        TextVerdict::Ok => return Ok(()),
+    };
+    let Some(problem) = verdict.problem() else {
+        return Ok(());
     };
     /* The borrow is not used past the check, so building the message may
      * allocate. */
@@ -290,7 +279,7 @@ pub fn verify_text(str: Value, what: &CStr) -> Result<(), Error> {
 /// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
 fn text_error(what: &CStr, problem: &str) -> Error {
     let what = what.to_string_lossy();
-    Error::new(error_class(), format!("{what} {problem}"))
+    makiri_error(format!("{what} {problem}"))
 }
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
@@ -317,8 +306,8 @@ pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
     // allocating, and the view anchors it.
     unsafe {
         let (value, ptr, len) = borrow(s);
-        if text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
-            return Err(text_error(what, "must be valid UTF-8"));
+        if let Some(problem) = text_check(s, ptr, len).data_problem() {
+            return Err(text_error(what, problem));
         }
         Ok(RubyData::from_raw_parts(value, ptr, len))
     }
@@ -335,52 +324,98 @@ pub unsafe fn ruby_bytes_view(s: VALUE) -> RubyBytes {
     RubyBytes::from_raw_parts(value, ptr, len)
 }
 
-/// Copy a String's raw bytes into an owned buffer, so the result is usable
-/// while the GVL is released. `None` on OOM, with nothing allocated. `s` must
-/// already be a String.
-pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBuf> {
-    let v = ruby_bytes_view(s);
-    /* `v` keeps the String reachable until it drops, after the copy. */
-    OwnedBuf::copy_from(v.bytes())
+impl<C> RubyStr<C> {
+    /// The bytes copied into an owned buffer, usable while the GVL is released
+    /// or across a Ruby allocation. An allocation failure is an `Err` - a
+    /// caller that needed the bytes must not carry on without them.
+    pub fn to_owned_buf(&self) -> Result<OwnedBuf, Error> {
+        // SAFETY: the copy runs no Ruby code, and the guard anchors the String.
+        OwnedBuf::copy_from(unsafe { self.bytes() })
+            .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
+    }
 }
 
-/// [`ruby_copy_bytes`] as a safe call: `s` is a live Ruby String, and an
-/// allocation failure is an `Err` rather than a silent `None` - a caller that
-/// needed the bytes must not carry on without them.
+/// A live Ruby String's raw bytes, copied into an owned buffer.
 pub fn ruby_string_bytes(s: Value) -> Result<OwnedBuf, Error> {
-    // SAFETY: `s` is a live Ruby String.
-    unsafe { ruby_copy_bytes(s.as_raw()) }
-        .ok_or_else(|| Error::new(error_class(), "out of memory reading a Ruby string"))
+    // SAFETY: `s` is a live Ruby String; the view anchors it for the copy.
+    unsafe { ruby_bytes_view(s.as_raw()) }.to_owned_buf()
 }
 
 /* ---- encoding ---- */
 
-/// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
-/// for an unknown name, `TypeError` for something that is neither a String nor
-/// an Encoding.
-/// Whether `enc` is UTF-8 or US-ASCII, the two a serialized String may already
-/// be in and so need no hex-character-reference transcoding.
-#[inline]
-pub fn is_utf8_or_usascii(enc: *mut rb_sys::rb_encoding) -> bool {
-    // SAFETY: both are Ruby's immutable global encodings.
-    unsafe { enc == rb_sys::rb_utf8_encoding() || enc == rb_sys::rb_usascii_encoding() }
-}
-
-/// A Ruby encoding resolved from a name or an `Encoding` object.
+/// A Ruby encoding - of a String, or resolved from a name or an `Encoding`.
 ///
-/// Opaque so callers never hold the raw `rb_encoding*`. Ruby's encodings are
+/// Opaque so callers never hold the raw `rb_encoding*`, and the one place the
+/// "which encodings are already UTF-8 bytes" rules live. Ruby's encodings are
 /// process-lifetime objects, so a value of this type stays valid.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Encoding(*mut rb_sys::rb_encoding);
 
 impl Encoding {
+    /// The encoding `str` (a live String) is tagged with.
+    fn of(str: VALUE) -> Encoding {
+        // SAFETY: `str` is a live String; reading its tag runs no Ruby.
+        Encoding(unsafe { rb_sys::rb_enc_get(str) })
+    }
+
+    fn utf8() -> Encoding {
+        // SAFETY: Ruby's immutable global encoding.
+        Encoding(unsafe { rb_sys::rb_utf8_encoding() })
+    }
+
+    fn is_usascii(self) -> bool {
+        // SAFETY: Ruby's immutable global encoding.
+        self.0 == unsafe { rb_sys::rb_usascii_encoding() }
+    }
+
+    fn is_ascii8bit(self) -> bool {
+        // SAFETY: Ruby's immutable global encoding.
+        self.0 == unsafe { rb_sys::rb_ascii8bit_encoding() }
+    }
+
+    /// UTF-8 or US-ASCII: text in it is already UTF-8, character for
+    /// character. What a serialized String needs no transcoding into.
+    fn is_utf8_compatible(self) -> bool {
+        self == Encoding::utf8() || self.is_usascii()
+    }
+
     /// Whether text that is already UTF-8/US-ASCII needs hex-character-reference
     /// transcoding to this encoding (that is, it is something else).
     pub fn needs_transcode(self) -> bool {
-        !is_utf8_or_usascii(self.0)
+        !self.is_utf8_compatible()
+    }
+
+    /// Whether HTML input in this encoding is parsed as it is: UTF-8, US-ASCII,
+    /// or ASCII-8BIT - deliberately raw bytes, which the parser decodes
+    /// leniently. Anything else is transcoded to UTF-8 first.
+    fn parses_as_is(self) -> bool {
+        self.is_utf8_compatible() || self.is_ascii8bit()
+    }
+
+    /// `str` transcoded to this encoding, a character it cannot represent
+    /// becoming a hex character reference. A transcoding failure is returned,
+    /// not raised.
+    pub fn encode_charref(self, str: Value) -> Result<Value, Error> {
+        const UNDEF_HEX_CHARREF: c_int =
+            rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
+        // SAFETY: `str` is a live String and `self` a live encoding; `protect`
+        // turns a raise into `Err`.
+        let raw = protect(|| unsafe {
+            rb_sys::rb_str_encode(
+                str.as_raw(),
+                rb_sys::rb_enc_from_encoding(self.0),
+                UNDEF_HEX_CHARREF,
+                rb_sys::Qnil as VALUE,
+            )
+        })?;
+        // SAFETY: `rb_str_encode` returns a live String value.
+        Ok(unsafe { crate::bridge::ruby::value(raw) })
     }
 }
 
+/// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
+/// for an unknown name, `TypeError` for something that is neither a String nor
+/// an Encoding.
 pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
     let mut enc: *mut rb_sys::rb_encoding = core::ptr::null_mut();
     // SAFETY: `v` is a live value; `protect` turns the raise into `Err`.
@@ -389,37 +424,6 @@ pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
         rb_sys::Qnil as VALUE
     })?;
     Ok(Encoding(enc))
-}
-
-/// `str` transcoded to `enc`, a character the target cannot represent becoming a
-/// hex character reference. A transcoding failure is returned, not raised.
-///
-/// # Safety
-/// `str` must be a live String and `enc` a live encoding.
-pub unsafe fn str_encode_charref(
-    str: VALUE,
-    enc: *mut rb_sys::rb_encoding,
-) -> Result<VALUE, Error> {
-    const UNDEF_HEX_CHARREF: c_int =
-        rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
-    // SAFETY: the caller's contract, and `protect` turns a raise into `Err`.
-    protect(|| {
-        rb_sys::rb_str_encode(
-            str,
-            rb_sys::rb_enc_from_encoding(enc),
-            UNDEF_HEX_CHARREF,
-            rb_sys::Qnil as VALUE,
-        )
-    })
-}
-
-/// [`str_encode_charref`] with both contracts discharged: `str` is a live
-/// String and `enc` a live Ruby encoding (one from [`to_encoding`]).
-pub fn str_encode_charref_value(str: Value, enc: Encoding) -> Result<Value, Error> {
-    // SAFETY: the contracts above.
-    let raw = unsafe { str_encode_charref(str.as_raw(), enc.0)? };
-    // SAFETY: `rb_str_encode` returns a live String value.
-    Ok(unsafe { crate::bridge::ruby::value(raw) })
 }
 
 /// A UTF-8 String for `str`, honouring its declared encoding so the content
@@ -433,27 +437,84 @@ pub fn str_encode_charref_value(str: Value, enc: Encoding) -> Result<Value, Erro
 ///    transcoded with invalid/undef -> U+FFFD, so the text becomes the right
 ///    characters instead of being read as raw UTF-8 and mangled. Only
 ///    non-UTF-8 input pays for this.
-pub unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
-    let enc = rb_sys::rb_enc_get(str);
-    let utf8 = rb_sys::rb_utf8_encoding();
-    if enc == utf8 || enc == rb_sys::rb_usascii_encoding() || enc == rb_sys::rb_ascii8bit_encoding()
-    {
+///
+/// `rb_str_encode` RAISES when Ruby has no converter at all (UTF-7,
+/// ISO-2022-JP-2 to UTF-8), so it is only ever called under [`protect`] - see
+/// [`ruby_to_utf8_value`]. Called bare, that raise would `longjmp` over the
+/// Rust frames above it.
+unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
+    if Encoding::of(str).parses_as_is() {
         return str;
     }
     const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
         | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
     rb_sys::rb_str_encode(
         str,
-        rb_sys::rb_enc_from_encoding(utf8),
+        rb_sys::rb_enc_from_encoding(Encoding::utf8().0),
         REPLACE,
         rb_sys::Qnil as VALUE,
     )
 }
 
 /// [`ruby_to_utf8`] as a safe call: `s` is a live String, and the result is one.
-pub fn ruby_to_utf8_value(s: Value) -> Value {
-    // SAFETY: `s` is a live String; `rb_str_encode` returns a live String.
-    unsafe { crate::bridge::ruby::value(ruby_to_utf8(s.as_raw())) }
+/// An encoding Ruby cannot convert to UTF-8 comes back as its
+/// `Encoding::ConverterNotFoundError`, returned rather than raised.
+pub fn ruby_to_utf8_value(s: Value) -> Result<Value, Error> {
+    // SAFETY: `s` is a live String, and `protect` turns the raise into `Err`.
+    let raw = protect(|| unsafe { ruby_to_utf8(s.as_raw()) })?;
+    // SAFETY: `rb_str_encode` returns a live String.
+    Ok(unsafe { crate::bridge::ruby::value(raw) })
+}
+
+/// A Ruby String as HTML parser input, under the text-input contract: its
+/// encoding honoured ([`ruby_to_utf8_value`]), and whether the bytes are
+/// already known to be valid UTF-8, so the parser can skip its sanitisation.
+///
+/// The one place that turns a Ruby String into bytes a Lexbor parser reads.
+/// Both HTML entry points - a document parse and a fragment parse - take their
+/// input through it, so the engine below never sees a `VALUE`.
+///
+/// The bytes are borrowed from the String, or from the transcoded copy, which
+/// the guard inside keeps alive: like every [`RubyStr`], this lives on the
+/// stack and is read only while no Ruby code runs.
+pub struct HtmlSource {
+    view: RubyBytes,
+    known_valid: bool,
+}
+
+impl HtmlSource {
+    /// `s` must be a String (the caller has coerced it).
+    pub fn from_ruby(s: Value) -> Result<HtmlSource, Error> {
+        let src = ruby_to_utf8_value(s)?;
+        /* A transcode replaced every invalid or unmappable byte, so its result
+         * is valid UTF-8 whatever its coderange says. */
+        let transcoded = src.as_raw() != s.as_raw();
+        // SAFETY: `src` is a live String; the view anchors it.
+        let known_valid = transcoded || unsafe { ruby_str_known_valid_utf8(src.as_raw()) };
+        // SAFETY: as above.
+        let view = unsafe { ruby_bytes_view(src.as_raw()) };
+        Ok(HtmlSource { view, known_valid })
+    }
+
+    /// Whether the bytes are valid UTF-8 already - never a scan, only what
+    /// Ruby (or the transcode) has established.
+    pub fn known_valid(&self) -> bool {
+        self.known_valid
+    }
+
+    /// The bytes.
+    ///
+    /// # Safety
+    /// No Ruby code may run, and so move or mutate the String, while the slice
+    /// is used.
+    pub unsafe fn bytes(&self) -> &[u8] {
+        self.view.bytes()
+    }
+
+    /// The bytes copied out, for a parse that runs with the GVL released.
+    pub fn to_owned_bytes(&self) -> Result<OwnedBuf, Error> {
+        self.view.to_owned_buf()
+    }
 }
 
 /// Whether Ruby ALREADY knows the String is valid UTF-8.
@@ -462,7 +523,7 @@ pub fn ruby_to_utf8_value(s: Value) -> Value {
 /// scan (a scan would cost as much as running our own validator), so it only
 /// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
 /// the caller validates or sanitises.
-pub unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
+unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
     let Some(r) = RString::from_value(Value::from_raw(str)) else {
         return false;
     };
@@ -471,16 +532,9 @@ pub unsafe fn ruby_str_known_valid_utf8(str: VALUE) -> bool {
         Coderange::SevenBit => true,
         /* Valid for its own encoding - which has to be UTF-8 for that to mean
          * valid UTF-8. */
-        Coderange::Valid => rb_sys::rb_enc_get(str) == rb_sys::rb_utf8_encoding(),
+        Coderange::Valid => Encoding::of(str) == Encoding::utf8(),
         _ => false,
     }
-}
-
-/// [`ruby_str_known_valid_utf8`] as a safe call; it only inspects the String's
-/// cached coderange, never scans.
-pub fn ruby_str_known_valid_utf8_value(s: Value) -> bool {
-    // SAFETY: `s` is a live String.
-    unsafe { ruby_str_known_valid_utf8(s.as_raw()) }
 }
 
 /// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}` pair),
@@ -509,50 +563,8 @@ pub unsafe fn ruby_try_verified_text(
     if len > max_bytes {
         return Err(c"string exceeds the maximum length");
     }
-    match text_check(sv, ptr, len) {
-        TextVerdict::HasNul => Err(c"string contains a NUL byte"),
-        TextVerdict::InvalidUtf8 => Err(c"string is not valid UTF-8"),
-        TextVerdict::Ok => Ok(RubyText::from_raw_parts(value, ptr, len)),
+    match text_check(sv, ptr, len).reason() {
+        Some(reason) => Err(reason),
+        None => Ok(RubyText::from_raw_parts(value, ptr, len)),
     }
-}
-
-/* ---- exception messages ---- */
-
-unsafe extern "C" fn exception_message_thunk(exc: VALUE) -> VALUE {
-    rb_sys::rb_obj_as_string(rb_sys::rb_funcall(
-        exc,
-        rb_sys::rb_intern(c"message".as_ptr()),
-        0,
-    ))
-}
-
-/// Write `exc`'s message into `buf` as a NUL-terminated C string, truncating to
-/// fit. Falls back to "error" if asking for the message raises or answers with
-/// a non-String - this runs on error paths, so it must not raise itself.
-pub unsafe fn ruby_exception_message(exc: VALUE, buf: *mut c_char, len: usize) {
-    if buf.is_null() || len == 0 {
-        return;
-    }
-    let mut state: c_int = 0;
-    let msg = rb_sys::rb_protect(Some(exception_message_thunk), exc, &mut state);
-    if state != 0 {
-        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
-        return write_cstr(buf, len, b"error");
-    }
-    let Some(r) = RString::from_value(Value::from_raw(msg)) else {
-        return write_cstr(buf, len, b"error");
-    };
-    /* snprintf("%s") stops at the first NUL, so match that rather than copying
-     * the String's full byte length. */
-    let bytes = r.as_slice();
-    let n = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    write_cstr(buf, len, &bytes[..n]);
-}
-
-/// Copy `src` into `buf` (capacity `cap`, including the terminator), truncating
-/// as `snprintf` would.
-unsafe fn write_cstr(buf: *mut c_char, cap: usize, src: &[u8]) {
-    let n = core::cmp::min(src.len(), cap - 1);
-    core::ptr::copy_nonoverlapping(src.as_ptr(), buf as *mut u8, n);
-    *buf.add(n) = 0;
 }

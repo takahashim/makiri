@@ -9,6 +9,8 @@
 
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
+use crate::bridge::ruby::makiri_error;
+
 use super::abi::*;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
@@ -48,7 +50,7 @@ fn failure_error(f: Failure, verb: &str) -> Error {
             format!("failed to {verb} XML: output exceeded the size limit or out of memory")
         }
     };
-    Error::new(error_class(), msg)
+    makiri_error(msg)
 }
 
 fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
@@ -78,7 +80,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 
         if let Some(enc) = to_enc {
             if enc.needs_transcode() {
-                str = crate::bridge::string::str_encode_charref_value(str, enc)?;
+                str = enc.encode_charref(str)?;
             }
         }
         Ok(str)

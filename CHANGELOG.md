@@ -30,6 +30,19 @@
   XML §7 requires (`<?a:b?>`); a PI created with one through the DOM API can no
   longer be serialized.
 
+### Fixed
+
+* **Moving a node to another HTML document updates the one it left.** The
+  source document's text and element indexes still listed the node, so its
+  `#text` and `//tag` kept answering with it; they are dropped now, as they
+  already were for XML.
+
+* **An XPath handler cannot create nodes in the document being evaluated.**
+  The rule that a handler may not modify that document covered the tree edits
+  but not the factories - `create_*`, `clone_node`, `import_node`, `fragment` -
+  and on an XML document those grow the storage the evaluation is reading. They
+  raise `Makiri::Error` now, on both representations.
+
 ## [0.10.0.rc1] - 2026-09-19
 
 ### Changed

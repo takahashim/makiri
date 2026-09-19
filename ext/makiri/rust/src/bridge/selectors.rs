@@ -1,4 +1,4 @@
-//! `Node#css` / `#at_css` / `#matches?` (glue/ruby_html_css.c).
+//! `Node#css` / `#at_css` / `#matches?`.
 //!
 //! The selector engine, its process-global cache and its Lexbor callbacks live
 //! in [`crate::lexbor::selectors`], which does not know about Ruby. This layer
@@ -10,18 +10,19 @@
 use core::ffi::c_void;
 
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
-use crate::bridge::lexbor::{html_node_unwrap, keepalive_document, wrap_html_node};
+use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::node_set::{node_set_new, node_set_push, PushError};
-use crate::bridge::ruby::error_class;
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_bytes_view, verify_text, RubyBytes};
+use crate::bridge::wrapper::keepalive_document;
 use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
 use crate::lexbor::selectors::{matches_node, select_all, select_first, SelectError};
 
-/// Mirrors the engine's cap, for the same message.
-const NODE_SET_MAX: usize = 10 * 1000 * 1000;
+use crate::limits::NODE_SET_MAX;
 
 /// An engine failure as the Ruby exception it maps to.
 fn select_error(err: SelectError, selector: Value) -> Error {
@@ -34,17 +35,12 @@ fn select_error(err: SelectError, selector: Value) -> Error {
             let shown = selector.to_string();
             Error::new(class, format!("invalid CSS selector: {shown}"))
         }
-        SelectError::Overflow => Error::new(
-            error_class(),
-            format!("CSS result set exceeded the node limit ({NODE_SET_MAX})"),
-        ),
-        SelectError::CollectOom => {
-            Error::new(error_class(), "out of memory collecting CSS results")
-        }
-        SelectError::CacheOom => Error::new(error_class(), "out of memory caching CSS selector"),
-        SelectError::Unavailable => {
-            Error::new(error_class(), "failed to initialise CSS selector engine")
-        }
+        SelectError::Overflow => makiri_error(format!(
+            "CSS result set exceeded the node limit ({NODE_SET_MAX})"
+        )),
+        SelectError::CollectOom => makiri_error("out of memory collecting CSS results"),
+        SelectError::CacheOom => makiri_error("out of memory caching CSS selector"),
+        SelectError::Unavailable => makiri_error("failed to initialise CSS selector engine"),
     }
 }
 

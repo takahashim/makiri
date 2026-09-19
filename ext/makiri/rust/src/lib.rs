@@ -86,6 +86,9 @@ pub mod cutf8;
 /// Unconditional: the engine, the DOM adapter and the glue all pass them.
 pub mod text;
 
+/// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.
+pub mod limits;
+
 /// The opaque, kind-tagged node token the engine passes around and the bridge
 /// mints. Unconditional: the engine, the backends and the bridge all use it.
 pub mod token;

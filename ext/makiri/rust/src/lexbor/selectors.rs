@@ -4,7 +4,7 @@
 //!
 //! The Ruby methods (`Node#css` / `#at_css` / `#matches?`) and the NodeSet they
 //! fill live in [`crate::bridge::selectors`]; keeping them there is what stops
-//! this module from depending on `bridge::lexbor`/`bridge::node_set`, which are
+//! this module from depending on `bridge::html`/`bridge::node_set`, which are
 //! built on top of it.
 //! Every Lexbor type here stays opaque: the parser's status and the two setters
 //! this needs are `lxb_inline`, and Lexbor publishes a `_noi` twin of each for
@@ -49,9 +49,7 @@ use std::collections::HashMap;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 
-/// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
-/// same bound.
-const NODE_SET_MAX: usize = 10 * 1000 * 1000;
+use crate::limits::NODE_SET_MAX;
 
 /// Why a selector query did not produce a result. The Ruby-facing layer maps
 /// each variant to its exception and message.

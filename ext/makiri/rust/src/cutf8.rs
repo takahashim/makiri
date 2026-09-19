@@ -118,6 +118,39 @@ pub enum TextVerdict {
     InvalidUtf8,
 }
 
+impl TextVerdict {
+    /// What is wrong, as the predicate of an error message - "<subject> must be
+    /// valid UTF-8" - or `None` for [`TextVerdict::Ok`]. The one wording every
+    /// error surface uses (`Makiri::Error`, `XML::SyntaxError`, a reason string).
+    pub fn problem(self) -> Option<&'static str> {
+        match self {
+            TextVerdict::Ok => None,
+            TextVerdict::HasNul => Some("must not contain a NUL byte"),
+            TextVerdict::InvalidUtf8 => Some("must be valid UTF-8"),
+        }
+    }
+
+    /// What the DATA contract rejects - the HTML data family (text, comment
+    /// and attribute values) may hold U+0000 like browsers, so only invalid
+    /// UTF-8 is a problem there.
+    pub fn data_problem(self) -> Option<&'static str> {
+        match self {
+            TextVerdict::InvalidUtf8 => self.problem(),
+            TextVerdict::Ok | TextVerdict::HasNul => None,
+        }
+    }
+
+    /// [`problem`](Self::problem) with "string" as its subject, for a caller
+    /// that reports through a static C string.
+    pub fn reason(self) -> Option<&'static core::ffi::CStr> {
+        match self {
+            TextVerdict::Ok => None,
+            TextVerdict::HasNul => Some(c"string must not contain a NUL byte"),
+            TextVerdict::InvalidUtf8 => Some(c"string must be valid UTF-8"),
+        }
+    }
+}
+
 #[inline]
 pub fn text_verdict(bytes: &[u8], known_valid_utf8: bool) -> TextVerdict {
     if bytes.contains(&0) {
