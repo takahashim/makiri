@@ -1,4 +1,4 @@
-//! `Node#css` / `#at_css` / `#matches?` (glue/ruby_html_css.c).
+//! `Node#css` / `#at_css` / `#matches?`.
 //!
 //! The selector engine, its process-global cache and its Lexbor callbacks live
 //! in [`crate::lexbor::selectors`], which does not know about Ruby. This layer

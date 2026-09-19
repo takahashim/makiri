@@ -28,7 +28,8 @@ pub mod wrapper;
 #[cfg(feature = "lexbor")]
 pub mod html;
 
-/// The Ruby <-> XML-arena DOM seam (the counterpart of `lexbor`).
+/// The XML front door and the one gated way to write an arena (the XML
+/// counterpart of `html`).
 #[cfg(feature = "lexbor")]
 pub mod xml;
 

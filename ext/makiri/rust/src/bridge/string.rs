@@ -1,4 +1,4 @@
-//! Ruby String <-> Makiri text (bridge/ruby_string.c).
+//! Ruby String <-> Makiri text.
 //!
 //! # The borrow rule this file exists to hold
 //!
@@ -44,9 +44,8 @@ use crate::bridge::ruby::string_of;
 
 /* ---- the borrowed-text layouts ----
  *
- * `mkr_ruby_borrowed_text_t` / `_data_t` / `_bytes_t` share ONE layout and are
- * three C types. The distinction is the contract, not the shape: `text` has
- * been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only (the HTML
+ * Three borrowed-text types with ONE layout. The distinction is the contract,
+ * not the shape: `text` has been checked for valid UTF-8 *and* no NUL, `data` for UTF-8 only (the HTML
  * data family may hold U+0000, like browsers), and `bytes` for nothing at all
  * (HTML parsing decodes leniently). Keeping them apart is what makes a name or
  * engine string that took the data path a type error rather than a silent one,
@@ -148,7 +147,7 @@ impl<C> Drop for RubyStr<C> {
     }
 }
 
-/// What the strict-text check found (`mkr_text_verdict_t`).
+/// What the strict-text check found.
 ///
 /// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
 /// re-exported here so the bridge's callers keep naming it from this module.

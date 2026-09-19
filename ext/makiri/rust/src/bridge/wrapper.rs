@@ -27,7 +27,7 @@ use crate::xml::model::Doc as XmlDoc;
  * the node wrapper                                                   *
  * ------------------------------------------------------------------ */
 
-/// `mkr_node_data_t`: the node pointer plus the keepalive Document.
+/// A node wrapper's data: the node pointer plus the keepalive Document.
 ///
 /// The node is owned by the document's arena (HTML or XML), so the wrapper
 /// never frees it; the Document reference is what keeps it alive, and marking
@@ -71,7 +71,7 @@ pub enum NodeRepr {
  * the document wrapper                                               *
  * ------------------------------------------------------------------ */
 
-/// `mkr_doc_data_t`: the parsed handle (owned - GC frees it) and the reserved
+/// A Document wrapper's data: the parsed handle (owned - GC frees it) and the reserved
 /// errors Array.
 pub struct DocData {
     /// Set once, by `DocumentShell::install`; read through the accessors below.

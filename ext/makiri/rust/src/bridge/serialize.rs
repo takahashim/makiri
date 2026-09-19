@@ -1,5 +1,4 @@
 //! `Node#to_html` / `#to_s` / `#outer_html` and `#inner_html`
-//! (glue/ruby_html_serialize.c).
 //!
 //! The Ruby-facing half of HTML serialization: it reads the receiver, picks the
 //! tree or deep serializer, and copies the owned bytes into a String. The

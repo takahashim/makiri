@@ -1,4 +1,4 @@
-//! `Makiri::NodeSet` (glue/ruby_node_set.c).
+//! `Makiri::NodeSet`.
 //!
 //! A NodeSet is an array of node pointers plus a keepalive reference to the
 //! owning Document. The nodes are owned by the document's arena, so marking the
@@ -7,7 +7,7 @@
 //! The stored pointers are representation-opaque. The set never dereferences
 //! one; it compares them for identity and, when vending a node, casts to the
 //! representation named by `doc_is_xml`. That keeps an XML set from ever reading
-//! its `mkr_xml_node_t*` as an `lxb_dom_node_t*`. The kind is decided once at
+//! an XML arena handle as a Lexbor node. The kind is decided once at
 //! construction rather than probed per node, which would regress the hot
 //! traversal path.
 //!
@@ -191,7 +191,7 @@ struct NodeSet {
     /// a Ruby thread), and it is `Mark`, which is what makes storing it sound -
     /// `mark` below is what the GC follows to reach it.
     document: Opaque<Value>,
-    /// Decided once: the stored pointers are `mkr_xml_node_t*`, so they wrap as
+    /// Decided once: the stored pointers are XML arena handles, so they wrap as
     /// `Makiri::XML::*`.
     doc_is_xml: bool,
     nodes: RefCell<NodeVec>,

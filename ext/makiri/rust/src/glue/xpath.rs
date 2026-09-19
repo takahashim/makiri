@@ -14,7 +14,7 @@ use magnus::{method, prelude::*, Error, Ruby, Value};
 
 use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{
-    context_for, evaluate_query, ns_matching_lax, parse_query, query_result, Cx,
+    context_for, evaluate_query, ns_matching_lax, parse_query, query_result, Answer, Cx,
 };
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::xpath::ast::Ast;
@@ -30,12 +30,12 @@ pub fn run_query(
     ast: Box<Ast>,
     handler: Value,
     document: Value,
-    first_only: bool,
+    answer: Answer,
 ) -> Result<Value, Error> {
-    let value = evaluate_query(&ctx, &ast, handler, document, first_only);
+    let value = evaluate_query(&ctx, &ast, handler, document, answer);
     drop(ast);
     drop(ctx);
-    query_result(value?, document, first_only)
+    query_result(value?, document, answer)
 }
 
 /// A throwaway context per call, so `Node#xpath` caches nothing;
@@ -46,13 +46,13 @@ fn node_xpath_run(
     expr: Value,
     handler: Value,
     lax: bool,
-    first_only: bool,
+    answer: Answer,
 ) -> Result<Value, Error> {
     let document = keepalive_document(rb_self)?;
     let mut ctx = context_for(rb_self, document)?;
     ctx.set_lax(lax);
     let ast = parse_query(&ctx, expr)?;
-    run_query(ctx, ast, handler, document, first_only)
+    run_query(ctx, ast, handler, document, answer)
 }
 
 /// `(expression, handler, lax)` from the argument list.
@@ -80,7 +80,7 @@ fn scan_query_args(ruby: &Ruby, args: &[Value]) -> Result<(Value, Value, bool), 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let (expr, handler, lax) = scan_query_args(ruby, args)?;
-        node_xpath_run(rb_self, expr, handler, lax, false)
+        node_xpath_run(rb_self, expr, handler, lax, Answer::All)
     })
 }
 
@@ -88,7 +88,7 @@ fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Erro
 fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let (expr, handler, lax) = scan_query_args(ruby, args)?;
-        node_xpath_run(rb_self, expr, handler, lax, true)
+        node_xpath_run(rb_self, expr, handler, lax, Answer::First)
     })
 }
 

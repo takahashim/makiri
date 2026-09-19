@@ -145,17 +145,20 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         out
     };
 
-    let anchor = ruby_bytes_view(s);
-    let bytes = anchor.bytes();
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
-     * covers every input. */
-    let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
-        3
-    } else {
-        0
+     * covers every input. Each read of the bytes is a scoped borrow that ends
+     * before anything can allocate - the module's one ordering rule. */
+    let (off, len) = {
+        let anchor = ruby_bytes_view(s);
+        let bytes = anchor.bytes();
+        let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
+            3
+        } else {
+            0
+        };
+        (off, bytes.len() - off)
     };
-    let len = bytes.len() - off;
 
     /* Fail closed on an over-budget input BEFORE the validation scan and the
      * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
@@ -167,18 +170,21 @@ pub unsafe fn xml_decode_input(str: VALUE, max_bytes: usize) -> Result<VALUE, Er
         ));
     }
 
-    /* Strict validation through the shared, allocation-free core - no GC point
-     * while the borrow is live. An embedded NUL or any invalid UTF-8 is fatal;
-     * there is no U+FFFD repair here, unlike the HTML sanitize path. The whole
-     * String is consulted for its cached coderange (which covers the stripped
-     * suffix too - the BOM is one complete UTF-8 character) while the bytes
-     * validated are the suffix. */
-    if let Some(problem) = text_check(s, bytes.as_ptr().add(off) as *const c_char, len).problem() {
+    /* Strict validation through the shared, allocation-free core. An embedded
+     * NUL or any invalid UTF-8 is fatal; there is no U+FFFD repair here, unlike
+     * the HTML sanitize path. The whole String is consulted for its cached
+     * coderange (which covers the stripped suffix too - the BOM is one complete
+     * UTF-8 character) while the bytes validated are the suffix. */
+    let problem = {
+        let anchor = ruby_bytes_view(s);
+        text_check(s, anchor.bytes().as_ptr().add(off) as *const c_char, len).problem()
+    };
+    if let Some(problem) = problem {
         return Err(syntax_error(format!("XML input {problem}")));
     }
 
-    /* Build the result from the VALUE, not the borrow: rb_str_subseq allocates,
-     * so the borrowed pointer must not be what it copies from. */
+    /* Built from the VALUE: the borrow above is over, and rb_str_subseq
+     * allocates. */
     let u = rb_sys::rb_str_subseq(s, off as c_long, len as c_long);
     rb_sys::rb_enc_associate(u, rb_sys::rb_utf8_encoding());
     Ok(u)

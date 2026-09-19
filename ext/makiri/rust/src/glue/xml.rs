@@ -59,7 +59,7 @@ use crate::init::{
     MOD_XML_NODE_METHODS,
 };
 
-use crate::bridge::xpath::{context_for, evaluate_query, parse_query, xpath_error};
+use crate::bridge::xpath::{context_for, evaluate_query, parse_query, xpath_error, Answer};
 use crate::glue::xpath::run_query;
 
 /* ------------------------------------------------------------------ */
@@ -220,10 +220,10 @@ fn run_ast(
     ruby: &Ruby,
     ctx: XPathContext,
     ast: Box<Ast>,
-    first_only: bool,
+    answer: Answer,
     document: Value,
 ) -> Result<Value, Error> {
-    run_query(ctx, ast, ruby.qnil().as_value(), document, first_only)
+    run_query(ctx, ast, ruby.qnil().as_value(), document, answer)
 }
 
 /// `#xpath(expr, namespaces = nil)` / `#at_xpath(...)`.
@@ -238,11 +238,11 @@ fn xpath_run(
     rb_self: Value,
     expr: Value,
     ns: Option<Value>,
-    first_only: bool,
+    answer: Answer,
 ) -> Result<Value, Error> {
     let (document, context) = query_context(rb_self)?;
     if context.is_invalid() {
-        return Ok(if first_only {
+        return Ok(if answer == Answer::First {
             ruby.qnil().as_value()
         } else {
             node_set_new(document)
@@ -253,20 +253,20 @@ fn xpath_run(
      * may run a GC, and the borrowed expression bytes must not be live across
      * one. */
     let ast = parse_query(&ctx, expr)?;
-    run_ast(ruby, ctx, ast, first_only, document)
+    run_ast(ruby, ctx, ast, answer, document)
 }
 
 fn xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        xpath_run(ruby, rb_self, a.required.0, a.optional.0, false)
+        xpath_run(ruby, rb_self, a.required.0, a.optional.0, Answer::All)
     })
 }
 
 fn at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        xpath_run(ruby, rb_self, a.required.0, a.optional.0, true)
+        xpath_run(ruby, rb_self, a.required.0, a.optional.0, Answer::First)
     })
 }
 
@@ -322,11 +322,11 @@ fn css_run(
     rb_self: Value,
     selector: Value,
     ns: Value,
-    first_only: bool,
+    answer: Answer,
 ) -> Result<Value, Error> {
     let (document, context) = query_context(rb_self)?;
     if context.is_invalid() {
-        return Ok(if first_only {
+        return Ok(if answer == Answer::First {
             ruby.qnil().as_value()
         } else {
             node_set_new(document)
@@ -334,15 +334,15 @@ fn css_run(
     }
     let ctx = build_ctx(ruby, rb_self, document, selector, c"CSS selector", Some(ns))?;
     let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
-    run_ast(ruby, ctx, ast, first_only, document)
+    run_ast(ruby, ctx, ast, answer, document)
 }
 
 fn css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, selector, ns, false))
+    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, selector, ns, Answer::All))
 }
 
 fn at_css(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, selector, ns, true))
+    crate::bridge::ruby::entry(|| css_run(ruby, rb_self, selector, ns, Answer::First))
 }
 
 /// `#matches?(selector)`: does THIS node match?
@@ -369,7 +369,7 @@ fn css_matches(ruby: &Ruby, rb_self: Value, selector: Value, ns: Value) -> Resul
         let ast = css_compile_or_raise(&ctx, selector, Some(ns))?;
 
         let nil = ruby.qnil().as_value();
-        let value = evaluate_query(&ctx, &ast, nil, document, false);
+        let value = evaluate_query(&ctx, &ast, nil, document, Answer::All);
         drop(ast);
         let value = value?;
         let target = crate::token::Token::xml(node.to_token());

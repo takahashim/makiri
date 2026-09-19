@@ -257,14 +257,22 @@ unsafe fn node_token(kind: Kind, raw: *mut c_void) -> Option<Token> {
  * these three; they differ only in how the context is built and who owns it. */
 
 /// Evaluate `ast` under `ctx`, with `handler` (nil for none) answering unknown
-/// functions for this evaluation only. `first_only` takes the `at_xpath` fast
+/// functions for this evaluation only. [`Answer::First`] takes the `at_xpath` fast
 /// path.
+/// What a query answers: every result, or - for `at_xpath` / `at_css` - the
+/// first node of a node-set, which also lets the engine stop at it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Answer {
+    All,
+    First,
+}
+
 pub fn evaluate_query(
     ctx: &Cx,
     ast: &Ast,
     handler: Value,
     document: Value,
-    first_only: bool,
+    answer: Answer,
 ) -> Result<XPathValue, Error> {
     /* A handler runs Ruby mid-walk, so for as long as one can, the document
      * refuses to be changed: the bridge holds that guard, and lives on this
@@ -280,7 +288,7 @@ pub fn evaluate_query(
         })
     };
     let resolver = bridge.as_ref().map(|b| b as &dyn Resolver);
-    let result = if first_only {
+    let result = if answer == Answer::First {
         ctx.evaluate_first(ast, resolver)
     } else {
         ctx.evaluate(ast, resolver)
@@ -292,9 +300,9 @@ pub fn evaluate_query(
 ///
 /// Callers free the AST and any context they own BEFORE this: the value owns
 /// its data and references neither.
-pub fn query_result(value: XPathValue, document: Value, first_only: bool) -> Result<Value, Error> {
+pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Result<Value, Error> {
     let result = value_to_ruby(value, document)?;
-    if first_only && is_kind_of(result, &CLASS_NODE_SET) {
+    if answer == Answer::First && is_kind_of(result, &CLASS_NODE_SET) {
         return result.funcall("first", ());
     }
     Ok(result)

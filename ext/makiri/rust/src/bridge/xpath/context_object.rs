@@ -299,9 +299,15 @@ fn ctx_evaluate(ruby: &Ruby, rb_self: &XPathCtx, args: &[Value]) -> Result<Value
         /* A cached AST outlives this call: the context is live (it is `rb_self`),
          * and its cache frees nothing before the context goes. */
         // SAFETY: as above - the AST the cache just handed back.
-        let value = evaluate_query(&rb_self.ctx, unsafe { &*ast }, handler, document, false);
+        let value = evaluate_query(
+            &rb_self.ctx,
+            unsafe { &*ast },
+            handler,
+            document,
+            Answer::All,
+        );
         drop(owned);
-        query_result(value?, document, false)
+        query_result(value?, document, Answer::All)
     })
 }
 
