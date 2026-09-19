@@ -601,7 +601,9 @@ fn c14n_namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<C14nNs<
                                 !out.iter().any(|x| x.prefix == p)
                             }
                         } else {
-                            let above = c14n_nearest(doc, id, p);
+                            // Declared above this element, not on it: its own
+                            // declaration would always match and never render.
+                            let above = doc.parent(id).and_then(|up| c14n_nearest(doc, up, p));
                             if above == Some(u) {
                                 false
                             } else {

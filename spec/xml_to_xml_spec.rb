@@ -124,6 +124,15 @@ RSpec.describe "Makiri::XML#to_xml" do
         .to eq(%(<a xmlns="urn:d"><b>x &lt; y</b></a>)) # inner xmlns is superfluous
     end
 
+    it "keeps a descendant's own declarations that change the binding" do
+      xml = %(<r xmlns:p="urn:a"><a xmlns="urn:b"/><p:x xmlns:p="urn:c" xmlns:q="urn:d"/>) +
+            %(<d xmlns="urn:e"><u xmlns=""/></d></r>)
+      expect(Makiri::XML(xml).canonicalize)
+        .to eq(%(<r xmlns:p="urn:a"><a xmlns="urn:b"></a>) +
+               %(<p:x xmlns:p="urn:c" xmlns:q="urn:d"></p:x>) +
+               %(<d xmlns="urn:e"><u xmlns=""></u></d></r>))
+    end
+
     it "omits comments by default and includes them with comments: true" do
       xml = "<r>a<!-- c -->b</r>"
       expect(Makiri::XML(xml).root.canonicalize).to eq("<r>ab</r>")
