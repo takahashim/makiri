@@ -248,9 +248,12 @@ impl NodeSet {
 
     /// A copy of the node pointers, for the paths that must not hold a borrow:
     /// `each` yields (the block can push), and the set operators push into a
-    /// result while reading an operand that may be the same object.
+    /// result while reading an operand that may be the same object. The copy
+    /// goes through falloc: it is as large as the set, so an OOM must raise
+    /// rather than abort.
     fn snapshot(&self, ruby: &Ruby) -> Result<(Vec<*mut c_void>, Value, bool), Error> {
-        let nodes = self.read()?.as_slice().to_vec();
+        let nodes = crate::falloc::try_to_vec(self.read()?.as_slice())
+            .ok_or_else(|| makiri_error("out of memory copying a node set"))?;
         Ok((nodes, self.document(ruby), self.doc_is_xml))
     }
 }
