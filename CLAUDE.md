@@ -555,8 +555,8 @@ document raises `Makiri::Error` (`glue::doc::DocumentEvaluation` /
 slices across the walk and Lexbor frees an attribute's old value on set. The **namespace axis is not
 implemented** (raises "not implemented", never silently empty); Nokogiri/libxml2
 *does* implement it (e.g. `<svg>` in HTML yields the `xml`+`svg` namespace
-nodes), so this is a documented behaviour difference - see README "Differences
-from Nokogiri". `namespace-uri()`/`local-name()` are implemented.
+nodes), so this is a documented behaviour difference - see
+`NOKOGIRI_DIFFERENCES.md`. `namespace-uri()`/`local-name()` are implemented.
 **Namespace matching of name tests is strict by default** (HTML5/WHATWG-faithful,
 like browsers' `document.evaluate` and `Nokogiri::HTML5`): an *unprefixed*
 element name test resolves in the HTML namespace, so `//div` matches but
