@@ -20,7 +20,7 @@ use crate::bridge::html::{
 };
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
 use crate::bridge::wrapper::invalidate_indexes;
-use crate::lexbor::adapter::html::{RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
+use crate::lexbor::adapter::html::{Insertion, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
 
 /* ------------------------------------------------------------------ *
  * structural mutation                                                *
@@ -30,7 +30,7 @@ use crate::lexbor::adapter::html::{RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
 pub fn add_child(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     let parent = edit(&this)?;
-    guard_doc_child_order(Some(parent.node()), None, None, arg_node(&rb_child)?)?;
+    guard_doc_child_order(Insertion::append(parent.node(), arg_node(&rb_child)?))?;
     let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
     splice_or_insert(parent, ins, Insert::Child, false);
     invalidate_indexes(this.document);
@@ -53,12 +53,11 @@ pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Err
             "cannot add a sibling to a node with no parent",
         ));
     };
-    guard_doc_child_order(
-        Some(parent.node()),
+    guard_doc_child_order(Insertion::before(
+        parent.node(),
         Some(reference.node()),
-        None,
         arg_node(&rb_node)?,
-    )?;
+    ))?;
     let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
     splice_or_insert(reference, ins, Insert::Before, false);
     invalidate_indexes(this.document);
@@ -74,12 +73,11 @@ pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Erro
             "cannot add a sibling to a node with no parent",
         ));
     };
-    guard_doc_child_order(
-        Some(parent.node()),
+    guard_doc_child_order(Insertion::before(
+        parent.node(),
         reference.next().map(|n| n.node()),
-        None,
         arg_node(&rb_node)?,
-    )?;
+    ))?;
     let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
     splice_or_insert(reference, ins, Insert::After, true);
     invalidate_indexes(this.document);
@@ -107,12 +105,11 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
     let Some(parent) = reference.parent() else {
         return Err(makiri_error("cannot replace a node with no parent"));
     };
-    guard_doc_child_order(
-        Some(parent.node()),
-        Some(reference.node()),
-        Some(reference.node()),
+    guard_doc_child_order(Insertion::replacing(
+        parent.node(),
+        reference.node(),
         arg_node(&rb_other)?,
-    )?;
+    ))?;
     let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
     splice_or_insert(reference, ins, Insert::Before, false);
     reference.detach();

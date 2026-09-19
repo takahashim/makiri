@@ -33,7 +33,7 @@ use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_result};
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
-use crate::lexbor::adapter::html::RawNode;
+use crate::lexbor::adapter::html::{RawDoc, RawNode};
 use crate::lexbor::adapter::post_parse::parse_html;
 
 /* ------------------------------------------------------------------ *
@@ -176,7 +176,7 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     /* The copy is made in this document: refused while a handler reads it. */
     ensure_document_mutable(document)?;
     // SAFETY: the node of a live wrapper, which keeps its document alive.
-    let doc = unsafe { node.as_node() }.owner_document_handle();
+    let doc = RawDoc::from(unsafe { node.as_node() }.owner_document());
 
     // SAFETY: `node` belongs to `doc`, the document the copy is imported into.
     let clone = unsafe { import_copy(doc, node, deep, "clone node") }?;

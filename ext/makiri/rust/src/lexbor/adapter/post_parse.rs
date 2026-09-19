@@ -32,11 +32,11 @@ use core::ptr::NonNull;
 use crate::falloc::try_box;
 use crate::lexbor::abi::{
     self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
-    lxb_html_parse_chunk_process, LxbDoc, LxbNode,
+    lxb_html_parse_chunk_process, LxbDoc,
 };
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
-use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawNode};
+use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawDoc, RawNode};
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
@@ -91,9 +91,9 @@ impl Drop for HtmlParsed {
 }
 
 impl HtmlParsed {
-    /// The Lexbor document.
-    pub fn html_doc(&self) -> *mut HtmlDoc {
-        self.doc.as_ptr()
+    /// The document, as the handle that crosses to the Ruby glue.
+    pub fn raw_doc(&self) -> RawDoc {
+        RawDoc::from(self.doc())
     }
 
     /// The document as a handle, borrowed for as long as this is.
@@ -157,8 +157,7 @@ impl HtmlParsed {
     /// The bytes this document holds OUTSIDE Ruby's allocator, for the GC:
     /// arena CAPACITY, not the bytes in use, because the pages are what cost.
     pub fn external_bytes(&self) -> usize {
-        // SAFETY: the handle owns a live document.
-        unsafe { document_capacity(self.doc.as_ptr() as *mut LxbNode) }
+        document_capacity(self.doc())
     }
 
     /// The 1-based source line for `node`, or 0 when unknown.

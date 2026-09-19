@@ -272,11 +272,8 @@ pub unsafe fn context<'e>(
     let Some(parsed) = (unsafe { parsed.as_mut() }) else {
         return Err(no_document());
     };
-    let raw_doc = parsed.html_doc() as *mut lxb::LxbDoc;
-    // SAFETY: as above.
-    let Some(doc) = (unsafe { HtmlDoc::from_raw(raw_doc) }) else {
-        return Err(no_document());
-    };
+    // SAFETY: as above - the document the handle owns, live for `'e`.
+    let doc: HtmlDoc<'e> = unsafe { parsed.raw_doc().as_doc() };
     /* Build it now, so an allocation failure is reported here rather than on
      * the first evaluate. Each evaluate still re-reads it through the handle. */
     if parsed.dom_index().is_none() {

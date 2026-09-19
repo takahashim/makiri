@@ -326,18 +326,7 @@ impl<'doc> BuildingElement<'doc> {
     /// Set a plain, namespaceless attribute. `false` when Lexbor could not
     /// store it.
     pub fn set_attribute(self, name: &[u8], value: &[u8]) -> bool {
-        // SAFETY: an element nothing else holds; both slices are read and
-        // copied by Lexbor.
-        let at = unsafe {
-            lxb::lxb_dom_element_set_attribute(
-                self.0.raw(),
-                name.as_ptr(),
-                name.len(),
-                value.as_ptr(),
-                value.len(),
-            )
-        };
-        !at.is_null()
+        self.0.put_attribute(name, value).is_some()
     }
 
     /// Create an attribute in `ns`, name it `qname` case-preserving, give it
@@ -345,31 +334,7 @@ impl<'doc> BuildingElement<'doc> {
     /// unappended attribute is left for the arena, like the rest of an
     /// abandoned subtree.
     pub fn append_ns_attribute(self, ns: &[u8], qname: &[u8], value: &[u8]) -> bool {
-        // SAFETY: an element nothing else holds, in a live document; every
-        // slice is read and copied by Lexbor.
-        unsafe {
-            let doc = self.0.node().owner_document();
-            let at = lxb::lxb_dom_attr_interface_create(doc);
-            if at.is_null() {
-                return false;
-            }
-            let named = lxb::lxb_dom_attr_set_name_ns(
-                at,
-                ns.as_ptr(),
-                ns.len(),
-                qname.as_ptr(),
-                qname.len(),
-                false,
-            );
-            if named != lxb::consts::STATUS_OK
-                || lxb::lxb_dom_attr_set_value(at, value.as_ptr(), value.len())
-                    != lxb::consts::STATUS_OK
-            {
-                return false;
-            }
-            lxb::lxb_dom_element_attr_append(self.0.raw(), at);
-            true
-        }
+        self.0.append_attribute_ns(Some(ns), qname, value)
     }
 }
 
@@ -392,16 +357,8 @@ impl<'doc> ScratchElement<'doc> {
     /// A detached element named `local_name`, or `None` when Lexbor could not
     /// make one.
     ///
-    /// # Safety
-    /// `doc` must be a live document that outlives `'doc`.
-    pub unsafe fn create(doc: *mut LxbDoc, local_name: &[u8]) -> Option<Self> {
-        let el = lxb::lxb_dom_document_create_element(
-            doc,
-            local_name.as_ptr(),
-            local_name.len(),
-            core::ptr::null_mut(),
-        );
-        HtmlNode::from_raw(el as *mut LxbNode).map(|n| ScratchElement(HtmlElement(n)))
+    pub fn create(doc: HtmlDoc<'doc>, local_name: &[u8]) -> Option<Self> {
+        doc.create_element(local_name).map(|b| ScratchElement(b.0))
     }
 
     /// Give `target` this element's interned name, in place, so a Ruby wrapper

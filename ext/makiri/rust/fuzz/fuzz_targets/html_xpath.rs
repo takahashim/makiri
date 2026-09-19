@@ -10,8 +10,6 @@
 //! is the expression.
 #![no_main]
 
-use core::ffi::c_void;
-
 use libfuzzer_sys::fuzz_target;
 
 mod common;
@@ -46,7 +44,7 @@ fuzz_target!(|data: &[u8]| {
 unsafe fn run(p: &mut HtmlParsed, text: VerifiedText, lax: bool) {
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
-    let doc = p.html_doc() as *mut c_void;
+    let doc = p.raw_doc().as_ptr();
     if p.dom_index().is_none() {
         return;
     }

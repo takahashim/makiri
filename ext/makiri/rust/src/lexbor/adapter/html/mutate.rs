@@ -1,5 +1,5 @@
 //! Editing a tree: the clearance types [`HtmlNodeMut`] and [`HtmlElementMut`],
-//! and the doctype-ordering rule an insertion into a document must keep.
+//! and the doctype-ordering rule an [`Insertion`] into a document must keep.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -15,58 +15,106 @@ pub enum DocumentChildOrderError {
     ElementBeforeDoctype,
 }
 
-/// Validate the HTML document's doctype/element ordering before an insertion.
-/// `before` is None for append; `exclude` is a node replaced by this operation.
-pub fn check_document_child_order(
-    parent: Option<HtmlNode<'_>>,
-    before: Option<HtmlNode<'_>>,
-    exclude: Option<HtmlNode<'_>>,
-    incoming: HtmlNode<'_>,
-) -> Result<(), DocumentChildOrderError> {
-    let contributes_element = |n: HtmlNode<'_>| {
-        n.node_type() == TYPE_ELEMENT
-            || (n.node_type() == TYPE_FRAGMENT
-                && n.children().any(|child| child.node_type() == TYPE_ELEMENT))
-    };
-    if incoming.node_type() == TYPE_DOCTYPE {
-        let Some(parent) = parent.filter(|p| p.node_type() == TYPE_DOCUMENT) else {
-            return Err(DocumentChildOrderError::DoctypeParent);
-        };
-        /* At most one doctype ANYWHERE among the children. This scans the whole
-         * list on purpose: stopping at `before` would let a node ahead of the
-         * insertion point (a comment, say) hide a later doctype, and the
-         * document would end up with two. */
-        let mut cursor = parent.first_child();
-        while let Some(node) = cursor {
-            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
+/// An insertion about to be made: under which parent, before which child (none
+/// for an append), replacing which child (for a replace), and what node.
+///
+/// A value rather than four arguments because the three positions are easy to
+/// swap and mean different things - `before` bounds a scan, `replaces` is left
+/// out of one - and the ordering rule reads them as a unit.
+#[derive(Clone, Copy)]
+pub struct Insertion<'d> {
+    parent: HtmlNode<'d>,
+    before: Option<HtmlNode<'d>>,
+    replaces: Option<HtmlNode<'d>>,
+    node: HtmlNode<'d>,
+}
+
+impl<'d> Insertion<'d> {
+    /// `node` as `parent`'s new last child.
+    pub fn append(parent: HtmlNode<'d>, node: HtmlNode<'d>) -> Self {
+        Insertion {
+            parent,
+            before: None,
+            replaces: None,
+            node,
+        }
+    }
+
+    /// `node` under `parent`, immediately before `before` - or appended, when
+    /// there is no such child (an insertion after the last one).
+    pub fn before(parent: HtmlNode<'d>, before: Option<HtmlNode<'d>>, node: HtmlNode<'d>) -> Self {
+        Insertion {
+            parent,
+            before,
+            replaces: None,
+            node,
+        }
+    }
+
+    /// `node` in place of `old`, a child of `parent`.
+    pub fn replacing(parent: HtmlNode<'d>, old: HtmlNode<'d>, node: HtmlNode<'d>) -> Self {
+        Insertion {
+            parent,
+            before: Some(old),
+            replaces: Some(old),
+            node,
+        }
+    }
+
+    /// Whether `n` is a child that stays where it is: not the one being
+    /// replaced, and not the incoming node (which may be moving within the same
+    /// parent).
+    fn stays(&self, n: HtmlNode<'d>) -> bool {
+        Some(n) != self.replaces && n != self.node
+    }
+
+    /// The document's doctype/element ordering, checked before any link changes
+    /// (WHATWG DOM "ensure pre-insertion validity", the doctype half).
+    pub fn check_document_order(&self) -> Result<(), DocumentChildOrderError> {
+        let siblings_from =
+            |start: Option<HtmlNode<'d>>| core::iter::successors(start, |n| n.next());
+        let at_document = self.parent.node_type() == TYPE_DOCUMENT;
+
+        if self.node.node_type() == TYPE_DOCTYPE {
+            if !at_document {
+                return Err(DocumentChildOrderError::DoctypeParent);
+            }
+            /* At most one doctype ANYWHERE among the children. This scans the
+             * whole list on purpose: stopping at `before` would let a node ahead
+             * of the insertion point (a comment, say) hide a later doctype, and
+             * the document would end up with two. */
+            if siblings_from(self.parent.first_child())
+                .any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
+            {
                 return Err(DocumentChildOrderError::DuplicateDoctype);
             }
-            cursor = node.next();
-        }
-        /* No element before the insertion point. `before` None is an append,
-         * where every existing element precedes the new doctype. */
-        let mut cursor = parent.first_child();
-        while let Some(node) = cursor {
-            if Some(node) == before {
-                break;
-            }
-            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_ELEMENT {
+            /* No element before the insertion point. The scan stops AT `before`
+             * before anything is excluded - on a replace `before` is also the
+             * replaced node, and excluding it first would scan past it. */
+            if siblings_from(self.parent.first_child())
+                .take_while(|n| Some(*n) != self.before)
+                .any(|n| self.stays(n) && n.node_type() == TYPE_ELEMENT)
+            {
                 return Err(DocumentChildOrderError::DoctypeAfterElement);
             }
-            cursor = node.next();
+            return Ok(());
         }
-        return Ok(());
-    }
-    if contributes_element(incoming) && parent.is_some_and(|p| p.node_type() == TYPE_DOCUMENT) {
-        let mut cursor = before;
-        while let Some(node) = cursor {
-            if Some(node) != exclude && node != incoming && node.node_type() == TYPE_DOCTYPE {
-                return Err(DocumentChildOrderError::ElementBeforeDoctype);
-            }
-            cursor = node.next();
+
+        let contributes_element = |n: HtmlNode<'_>| {
+            n.node_type() == TYPE_ELEMENT
+                || (n.node_type() == TYPE_FRAGMENT
+                    && n.children().any(|child| child.node_type() == TYPE_ELEMENT))
+        };
+        /* An element must not land ahead of the doctype: none may follow the
+         * insertion point. */
+        if at_document
+            && contributes_element(self.node)
+            && siblings_from(self.before).any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
+        {
+            return Err(DocumentChildOrderError::ElementBeforeDoctype);
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// A node the caller has cleared for editing.
@@ -191,55 +239,13 @@ impl<'doc> HtmlElementMut<'doc> {
     /// local name and lower-cased for HTML - `set_attribute_ns` is the one that
     /// keys on (namespace, local name) instead.
     pub fn set_attribute(self, name: &[u8], value: &[u8]) -> Option<HtmlAttr<'doc>> {
-        // SAFETY: a live element the caller may change; both slices are read
-        // and copied by Lexbor before anything else runs.
-        let at = unsafe {
-            lxb::lxb_dom_element_set_attribute(
-                self.0.raw(),
-                name.as_ptr(),
-                name.len(),
-                value.as_ptr(),
-                value.len(),
-            )
-        };
-        HtmlNode::link(at as *mut LxbNode).map(HtmlAttr)
+        self.0.put_attribute(name, value)
     }
 
-    /// Create an attribute named `qname`, give it `value`, and append it.
-    ///
-    /// `ns` is the namespace URI, or `None` for none - which is a different
-    /// naming call, not an empty URI, so the two cannot be folded together. A
-    /// fresh attribute is calloc'd into the null namespace already, so only the
-    /// namespaced setter has to say anything about it.
-    ///
-    /// `false` when any step failed; the un-appended attribute is left for the
-    /// document's arena to reclaim wholesale, this module's "never destroy"
-    /// convention.
+    /// Create an attribute named `qname`, give it `value`, and append it, in
+    /// namespace `ns` or none. `false` when any step failed.
     pub fn append_attribute(self, ns: Option<&[u8]>, qname: &[u8], value: &[u8]) -> bool {
-        // SAFETY: a live element of a live document the caller may change;
-        // every slice is read and copied by Lexbor.
-        unsafe {
-            let at = lxb::lxb_dom_attr_interface_create(self.0.node().owner_document());
-            let Some(at) = HtmlNode::link(at as *mut LxbNode).map(HtmlAttr) else {
-                return false;
-            };
-            let named = match ns {
-                Some(uri) => lxb::lxb_dom_attr_set_name_ns(
-                    at.raw(),
-                    uri.as_ptr(),
-                    uri.len(),
-                    qname.as_ptr(),
-                    qname.len(),
-                    false,
-                ),
-                None => lxb::lxb_dom_attr_set_name(at.raw(), qname.as_ptr(), qname.len(), false),
-            };
-            if named != lxb::consts::STATUS_OK || !at.set_value(value) {
-                return false;
-            }
-            lxb::lxb_dom_element_attr_append(self.0.raw(), at.raw());
-            true
-        }
+        self.0.append_attribute_ns(ns, qname, value)
     }
 
     /// Take `attr` off the element. The arena keeps it, like a detached node.
