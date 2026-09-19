@@ -30,35 +30,22 @@
 //! project's fail-closed rule is about.
 
 #![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
-use crate::lexbor_abi::{self as lxb, preorder_next, LxbNode};
+use crate::lexbor_abi::LxbNode;
+use crate::ptr_table::PtrTable;
 use crate::text::BorrowedText;
-use crate::xpath::runtime_abi::cache::ptr_hash;
 
-mod ty {
-    pub use crate::lexbor::adapter::html::{
-        TYPE_CDATA as CDATA, TYPE_ELEMENT as ELEMENT, TYPE_FRAGMENT as FRAGMENT, TYPE_TEXT as TEXT,
-    };
-}
+use super::html::{HtmlNode, RawNode, TYPE_ELEMENT, TYPE_FRAGMENT};
 
 /// One container's slice run. `start`/`end` are INDICES into `slices`, not byte
 /// offsets, and are `u32` because the build refuses to index a document with
 /// more than `u32::MAX` slices (see [`TextIndex::build`]).
 #[derive(Clone, Copy)]
-struct Range {
-    /// The key; null marks an empty slot.
-    node: *const LxbNode,
+struct Run {
     start: u32,
     end: u32,
 }
-
-const EMPTY_RANGE: Range = Range {
-    node: core::ptr::null(),
-    start: 0,
-    end: 0,
-};
 
 pub struct TextIndex {
     /// Document-order TEXT/CDATA slices, borrowed from the arena.
@@ -67,101 +54,47 @@ pub struct TextIndex {
     /// `i`. Always non-empty, so an empty `[0, 0)` run over a text-free subtree
     /// reads `prefix[0]` rather than nothing.
     prefix: Vec<usize>,
-    /// Container -> slice run, open addressing with linear probing. Empty (cap
-    /// 0) when the subtree has no containers.
-    ranges: Vec<Range>,
-    /// A power of two, or 0.
-    ranges_cap: usize,
-}
-
-impl TextIndex {
-    #[inline]
-    fn slot_for(&self, node: *const LxbNode) -> usize {
-        (ptr_hash(node) as usize) & (self.ranges_cap - 1)
-    }
-
-    /// Insert `node` with `start`; `end` is filled when its subtree closes.
-    /// Returns the slot index.
-    ///
-    /// The table is pre-sized for exactly the container count at load < 3/4, so
-    /// it never rehashes mid-build and a free slot always exists - which is what
-    /// makes this probe loop terminate.
-    fn range_insert(&mut self, node: *const LxbNode, start: u32) -> usize {
-        let mut i = self.slot_for(node);
-        while !self.ranges[i].node.is_null() {
-            i = (i + 1) & (self.ranges_cap - 1);
-        }
-        self.ranges[i] = Range {
-            node,
-            start,
-            end: start,
-        };
-        i
-    }
-
-    fn range_lookup(&self, node: *const LxbNode) -> Option<Range> {
-        if self.ranges_cap == 0 {
-            return None;
-        }
-        let mut i = self.slot_for(node);
-        while !self.ranges[i].node.is_null() {
-            if self.ranges[i].node == node {
-                return Some(self.ranges[i]);
-            }
-            i = (i + 1) & (self.ranges_cap - 1);
-        }
-        None
-    }
+    /// Container -> slice run.
+    runs: PtrTable<LxbNode, Run>,
 }
 
 #[inline]
-unsafe fn is_container(n: *const LxbNode) -> bool {
-    (*n).type_ == ty::ELEMENT || (*n).type_ == ty::FRAGMENT
+fn is_container(n: HtmlNode<'_>) -> bool {
+    matches!(n.node_type(), TYPE_ELEMENT | TYPE_FRAGMENT)
 }
 
-/// The non-empty character-data payload of a TEXT/CDATA node, as `(ptr, len)`,
-/// or `None`.
+/// The non-empty character data of a TEXT/CDATA node, or `None`.
 ///
 /// The single "does this node contribute a slice" test, shared by the counting
 /// and filling passes so the two-pass sizing and the fill can never disagree
 /// about which nodes yield one - a disagreement would size the array for a
 /// different set than it fills.
 #[inline]
-unsafe fn text_slice(n: *const LxbNode) -> Option<(*const u8, usize)> {
-    if (*n).type_ != ty::TEXT && (*n).type_ != ty::CDATA {
-        return None;
-    }
-    let d = &(*(n as *const lxb::lxb_dom_character_data_t)).data;
-    if d.data.is_null() || d.length == 0 {
-        None
-    } else {
-        Some((d.data, d.length))
-    }
+fn text_slice(n: HtmlNode<'_>) -> Option<&[u8]> {
+    n.char_data().filter(|d| !d.is_empty())
 }
 
 /// Pass 1: count the text slices and the containers under `root` (inclusive),
 /// so each array is sized exactly once.
-unsafe fn count(root: *mut LxbNode) -> (usize, usize) {
+fn count(root: HtmlNode<'_>) -> (usize, usize) {
     let (mut slices, mut containers) = (0usize, 0usize);
-    let mut n = root;
-    while !n.is_null() {
+    for n in core::iter::successors(Some(root), |n| n.preorder_next(root)) {
         if is_container(n) {
             containers += 1;
         } else if text_slice(n).is_some() {
             slices += 1;
         }
-        n = preorder_next(n, root);
     }
     (slices, containers)
 }
 
 /// An explicit DFS frame. Recursion is avoided so a deep tree cannot exhaust the
 /// stack - the same discipline as the attr/element index.
-struct Frame {
+struct Frame<'d> {
     /// The next child to visit.
-    child: *mut LxbNode,
-    /// Index into `ranges` for this open container.
-    range: usize,
+    child: Option<HtmlNode<'d>>,
+    /// This open container's slot in `runs`.
+    slot: usize,
 }
 
 impl TextIndex {
@@ -169,24 +102,21 @@ impl TextIndex {
     /// a container - `lxb_dom_document_root` answers with the first child when
     /// the document has no `<html>`, and that can be a leaf - or on OOM; both
     /// are fail-closed and the caller walks instead.
-    ///
-    /// # Safety
-    /// `root` must be a node of a live Lexbor document.
-    pub(crate) unsafe fn build(root: *mut LxbNode) -> Option<TextIndex> {
-        /* The index is ROOTED at a container: pass 2 opens `root`'s own range
-         * before it looks at anything, and the range table is sized from the
-         * container count, which does not count `root` when it is a leaf - so a
-         * leaf root would insert into a table of zero slots. The caller can
-         * hand us one: `lxb_dom_document_root` answers with the document's
-         * first child when the document has no `<html>`, and a script can put a
-         * comment or a processing instruction there. Walk instead. */
+    pub(crate) fn build(root: HtmlNode<'_>) -> Option<TextIndex> {
+        /* The index is ROOTED at a container: pass 2 opens `root`'s own run
+         * before it looks at anything, and the run table is sized from the
+         * container count, which does not count `root` when it is a leaf. The
+         * caller can hand us one: `lxb_dom_document_root` answers with the
+         * document's first child when the document has no `<html>`, and a
+         * script can put a comment or a processing instruction there. Walk
+         * instead. */
         if !is_container(root) {
             return None;
         }
 
         let (nslices, ncont) = count(root);
 
-        /* Run bounds are u32 in the range table. A document with more than
+        /* Run bounds are u32 in the run table. A document with more than
          * u32::MAX text slices is impossible in practice (each is >= 1 byte),
          * but guard it anyway rather than truncate the index. */
         if nslices > u32::MAX as usize {
@@ -199,48 +129,37 @@ impl TextIndex {
          * every slice its own injection point in `rake oom` - hundreds of them
          * for one document, all testing the same branch. See clippy.toml on why
          * `push` after a successful reserve is deliberately not banned. */
+        let empty = Run { start: 0, end: 0 };
         let mut t = TextIndex {
             slices: try_vec_with_capacity(nslices)?,
             prefix: try_vec_with_capacity(nslices.checked_add(1)?)?,
-            ranges: Vec::new(),
-            ranges_cap: 0,
+            runs: PtrTable::with_keys(ncont, empty)?,
         };
         t.prefix.push(0);
 
-        if ncont > 0 {
-            /* Load factor < 3/4: ncont + ncont/2 + 1, rounded up to a power of
-             * two. `checked_next_power_of_two` is the fail-closed sizer - a
-             * table sized below the element count would never find a free slot
-             * under linear probing, and the insert loop would spin forever. */
-            let want = ncont.checked_add(ncont >> 1)?.checked_add(1)?;
-            let cap = want.checked_next_power_of_two()?;
-            t.ranges = try_vec_with_capacity(cap)?;
-            t.ranges.resize(cap, EMPTY_RANGE); /* reserved above; cannot allocate */
-            t.ranges_cap = cap;
-        }
-
         /* Pass 2: explicit DFS recording each container's slice run. The frame
          * stack is the one array whose size is not known in advance (it is
-         * bounded by tree DEPTH, not node count), so it grows through falloc. */
-        let mut stack: Vec<Frame> = try_vec_with_capacity(1)?;
-        let r = t.range_insert(root, 0);
+         * bounded by tree DEPTH, not node count), so it grows through falloc.
+         * The run table was sized for exactly the containers pass 1 counted, so
+         * a refused insert means the tree changed under us: fail closed. */
+        let mut stack: Vec<Frame<'_>> = try_vec_with_capacity(1)?;
+        let slot = t.runs.insert(root.as_raw(), empty)?;
         stack.push(Frame {
-            child: (*root).first_child,
-            range: r,
+            child: root.first_child(),
+            slot,
         });
 
         while let Some(top) = stack.last_mut() {
-            let child = top.child;
-            if child.is_null() {
+            let Some(child) = top.child else {
                 /* Close this subtree. */
-                let range = top.range;
-                t.ranges[range].end = t.slices.len() as u32;
+                let slot = top.slot;
+                t.runs.slot_mut(slot).end = t.slices.len() as u32;
                 stack.pop();
                 continue;
-            }
-            top.child = (*child).next; /* advance the cursor for our return */
+            };
+            top.child = child.next(); /* advance the cursor for our return */
 
-            if let Some((ptr, len)) = text_slice(child) {
+            if let Some(text) = text_slice(child) {
                 /* Compared against the COUNT, not against `capacity()`: a Vec
                  * may reserve more than asked, so capacity would not catch a
                  * count/fill disagreement. One more slice than pass 1 saw means
@@ -253,19 +172,22 @@ impl TextIndex {
                  * prefix would make a later `prefix[end] - prefix[start]`
                  * smaller than the bytes actually present, which is a short read
                  * into a pre-sized String. */
-                let total = t.prefix[t.slices.len()].checked_add(len)?;
-                // SAFETY: `ptr`/`len` are the character-data node's own storage
-                // in this document's arena, which outlives the index. The view
-                // is lifetime-free, so what keeps it valid is the invalidation
+                let total = t.prefix[t.slices.len()].checked_add(text.len())?;
+                // SAFETY: `text` is the character-data node's own storage in
+                // this document's arena, which outlives the index. The view is
+                // lifetime-free, so what keeps it valid is the invalidation
                 // hook: `HtmlParsed::invalidate_indexes` drops the whole index on
                 // any mutation, before the storage can move or detach.
                 t.slices.push(unsafe {
-                    BorrowedText::from_raw_parts(ptr as *const core::ffi::c_char, len)
+                    BorrowedText::from_raw_parts(
+                        text.as_ptr() as *const core::ffi::c_char,
+                        text.len(),
+                    )
                 });
                 t.prefix.push(total);
             } else if is_container(child) {
                 let start = t.slices.len() as u32;
-                let r = t.range_insert(child, start);
+                let slot = t.runs.insert(child.as_raw(), Run { start, end: start })?;
                 /* Reserve only when the stack is actually full. `mkr_push`
                  * consults the injection counter on EVERY call, so pushing
                  * unconditionally made each of a document's containers its own
@@ -276,13 +198,13 @@ impl TextIndex {
                     let want = crate::falloc::grow_capacity(
                         stack.capacity(),
                         stack.len() + 1,
-                        core::mem::size_of::<Frame>(),
+                        core::mem::size_of::<Frame<'_>>(),
                     )?;
                     stack.mkr_reserve_exact(want - stack.len()).ok()?;
                 }
                 stack.push(Frame {
-                    child: (*child).first_child,
-                    range: r,
+                    child: child.first_child(),
+                    slot,
                 });
             }
             /* Other kinds (comment / PI / doctype) are childless leaves. */
@@ -300,8 +222,8 @@ impl TextIndex {
     /// The document-order run of text slices `node`'s subtree owns, with its
     /// byte total; None for a node outside the indexed tree. Never a shorter
     /// run than the truth.
-    pub fn slices_of(&self, node: *const LxbNode) -> Option<(&[BorrowedText], usize)> {
-        let r = self.range_lookup(node)?;
+    pub fn slices_of(&self, node: RawNode) -> Option<(&[BorrowedText], usize)> {
+        let r = self.runs.get(node.as_lxb())?;
         let (start, end) = (r.start as usize, r.end as usize);
         Some((
             &self.slices[start..end],

@@ -50,7 +50,7 @@ pub fn dom_str(bytes: &[u8]) -> Value {
 pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>, Error> {
     let mut found: Option<Result<Value, Error>> = None;
     with_html_parsed_known(document, |p| {
-        if let Some((slices, total)) = p.text_slices(node.as_lxb()) {
+        if let Some((slices, total)) = p.text_slices(node) {
             // SAFETY: the slices point into this document's arena (the index
             // borrows them from `p`) and are copied into the String before the
             // borrow ends; nothing here runs Ruby.
@@ -84,7 +84,7 @@ pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<
 pub fn node_line(rb_doc: Value, node: RawNode) -> usize {
     with_html_parsed_known(rb_doc, |p| {
         // SAFETY: `node` is a live node of this document.
-        unsafe { p.node_line(node.as_ptr() as *const _) }
+        unsafe { p.node_line(node) }
     })
 }
 

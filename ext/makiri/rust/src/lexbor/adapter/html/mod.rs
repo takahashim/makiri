@@ -167,8 +167,11 @@ unsafe fn ns_uri<'a>(node: *mut LxbNode) -> &'a [u8] {
  * one, so it is the single place that contract is asserted, and every method
  * is safe.
  *
- * "Not restructured" admits one write: building the attribute->owner index
- * backfills an attribute's `parent` from null to its element. That is why the
+ * "Not restructured" admits two writes, neither to the tree's links: building
+ * the attribute->owner index backfills an attribute's `parent` from null to its
+ * element (`HtmlAttr::backfill_parent`), and source-location stamping records
+ * an element's offset in `node.user` (`HtmlNode::stamp_source_offset`). That is
+ * why the
  * methods read fields through the raw pointer, place by place, rather than
  * holding a `&LxbNode` - no reference to a Lexbor struct outlives the read. */
 
@@ -236,10 +239,10 @@ impl RawNode {
         self.0.as_ptr().cast()
     }
 
-    /// The typed node pointer, for the adapter's own readers (the text index).
-    /// Outside `lexbor`, nodes cross as `RawNode` or `c_void`.
+    /// The typed node pointer, for the adapter's own tables (the text index
+    /// keys on it). Outside `lexbor`, nodes cross as `RawNode` or `c_void`.
     #[inline]
-    pub fn as_lxb(self) -> *const LxbNode {
+    pub(in crate::lexbor) fn as_lxb(self) -> *const LxbNode {
         self.0.as_ptr()
     }
 
@@ -503,6 +506,27 @@ impl<'doc> HtmlNode<'doc> {
     pub fn ns_id(self) -> usize {
         // SAFETY: as `node_type`.
         unsafe { (*self.as_raw()).ns }
+    }
+
+    /// The source byte offset the parse stamped on this element, or None when
+    /// it could not be placed.
+    ///
+    /// Stored in Lexbor's `node.user`, which is reserved for exactly this, as
+    /// offset + 1 so that a genuine offset of 0 is distinguishable from unset.
+    /// [`stamp_source_offset`](Self::stamp_source_offset) is the other half of
+    /// that encoding; nothing else reads or writes the field.
+    pub fn source_offset(self) -> Option<usize> {
+        // SAFETY: as `node_type`.
+        let user = unsafe { (*self.as_raw()).user };
+        (!user.is_null()).then(|| user as usize - 1)
+    }
+
+    /// Record `offset` as the element's source position - see
+    /// [`source_offset`](Self::source_offset). Only the source-location
+    /// stamping calls it, while the tree is still the one the parser built.
+    pub(crate) fn stamp_source_offset(self, offset: usize) {
+        // SAFETY: a live node; `user` is not part of the tree's structure.
+        unsafe { (*self.as_raw()).user = offset.wrapping_add(1) as *mut core::ffi::c_void };
     }
 
     /// The interned tag id (`local_name`).
@@ -785,6 +809,16 @@ impl<'doc> HtmlAttr<'doc> {
         // SAFETY: a live attribute.
         let owner = unsafe { (*self.raw()).owner };
         HtmlNode::link(owner as *mut LxbNode).map(HtmlElement)
+    }
+    /// Point the attribute's `parent` at `owner`.
+    ///
+    /// The one write the handle contract admits (see the section note): the
+    /// attr->owner index build makes it, so the XPath engine can climb from an
+    /// attribute like from any other node. Lexbor never walks an attribute
+    /// through the tree links, so the field is otherwise unused.
+    pub(crate) fn backfill_parent(self, owner: HtmlElement<'doc>) {
+        // SAFETY: a live attribute of a live element of the same document.
+        unsafe { (*self.raw()).node.parent = owner.node().as_raw() };
     }
 }
 

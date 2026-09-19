@@ -32,14 +32,15 @@ use core::ptr::NonNull;
 use crate::falloc::try_box;
 use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
+use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawNode};
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
 };
 use crate::lexbor::adapter::text_index::TextIndex;
 use crate::lexbor::adapter::utf8_input::sanitize;
 use crate::lexbor_abi::{
-    self as lxb, lxb_dom_document_root, lxb_html_document_destroy, lxb_html_parse_chunk_begin,
-    lxb_html_parse_chunk_end, lxb_html_parse_chunk_process, LxbDoc, LxbNode,
+    self as lxb, lxb_html_document_destroy, lxb_html_parse_chunk_begin, lxb_html_parse_chunk_end,
+    lxb_html_parse_chunk_process, LxbDoc, LxbNode,
 };
 use crate::text::BorrowedText;
 
@@ -95,14 +96,20 @@ impl HtmlParsed {
         self.doc.as_ptr()
     }
 
+    /// The document as a handle, borrowed for as long as this is.
+    fn doc(&self) -> DomDoc<'_> {
+        // SAFETY: the handle owns a live document, and it is not restructured
+        // while `&self` is borrowed - every mutation takes `&mut` of the
+        // wrapper's content first (see `bridge::wrapper`).
+        unsafe { DomDoc::from_raw(self.doc.as_ptr() as *mut LxbDoc) }
+            .expect("a parsed handle owns a document")
+    }
+
     /// The attr->owner and tag index, built on first use. None when the build
     /// cannot allocate - which caches nothing, so a later call retries.
     pub fn dom_index(&mut self) -> Option<&DomIndex> {
         if self.dom_index.is_none() {
-            // SAFETY: the handle owns a live document.
-            let built = unsafe {
-                crate::lexbor::adapter::dom_index::build(self.doc.as_ptr() as *mut LxbDoc)
-            }?;
+            let built = crate::lexbor::adapter::dom_index::build(self.doc())?;
             self.dom_index = Some(try_box(built).ok()?);
         }
         self.dom_index.as_deref()
@@ -112,15 +119,10 @@ impl HtmlParsed {
     ///
     /// None means "walk instead": a node outside the indexed tree (a
     /// fragment), or a build that could not allocate.
-    pub fn text_slices(&mut self, node: *const LxbNode) -> Option<(&[BorrowedText], usize)> {
+    pub fn text_slices(&mut self, node: RawNode) -> Option<(&[BorrowedText], usize)> {
         if self.text_index.is_none() {
-            // SAFETY: the handle owns a live document.
-            let root = unsafe { lxb_dom_document_root(self.doc.as_ptr() as *mut LxbDoc) };
-            if root.is_null() {
-                return None;
-            }
-            // SAFETY: `root` is the live document's root element.
-            let built = unsafe { TextIndex::build(root) }?;
+            let root = self.doc().as_node().document_root()?;
+            let built = TextIndex::build(root)?;
             self.text_index = Some(try_box(built).ok()?);
         }
         self.text_index.as_deref()?.slices_of(node)
@@ -133,14 +135,13 @@ impl HtmlParsed {
     /// the mutation gate, which needs the tree to still be the parsed one.
     ///
     /// # Safety
-    /// The document must be live and unmodified since the parse.
+    /// The document must be unmodified since the parse.
     pub unsafe fn assign_positions(&mut self) {
-        let Some(pos) = self.pending_pos.take() else {
-            return;
-        };
-        // SAFETY: the handle owns a live document, and `pos` is its own parse's
-        // recording - taken above, so this runs once.
-        unsafe { pos_assign_to_dom(&pos, self.doc.as_ptr() as *mut LxbNode) };
+        if let Some(pos) = self.pending_pos.take() {
+            /* `pos` is this parse's own recording - taken above, so this runs
+             * once. */
+            pos_assign_to_dom(&pos, self.doc().as_node());
+        }
     }
 
     /// Drop the indices so the next query rebuilds them.
@@ -168,18 +169,19 @@ impl HtmlParsed {
     /// allocation is an allowed degradation - see `parse_tracked`.
     ///
     /// # Safety
-    /// `node` must be null or a live node of this document.
-    pub unsafe fn node_line(&mut self, node: *const LxbNode) -> usize {
+    /// `node` must be a live node of this document.
+    pub unsafe fn node_line(&mut self, node: RawNode) -> usize {
         // SAFETY: the document this handle owns, unchanged since the parse -
         // any mutation would have stamped already (see `assign_positions`).
         unsafe { self.assign_positions() };
         let Some(lines) = self.lines.as_deref() else {
             return 0;
         };
-        if node.is_null() || (*node).user.is_null() {
-            return 0;
+        // SAFETY: the caller's contract.
+        match unsafe { node.as_node() }.source_offset() {
+            Some(offset) => lines.lookup(offset),
+            None => 0,
         }
-        lines.lookup((*node).user as usize - 1)
     }
 }
 

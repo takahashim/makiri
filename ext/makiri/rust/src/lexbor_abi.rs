@@ -221,32 +221,6 @@ pub type LxbNsData = lxb_ns_data_t;
 /// `lxb_dom_attr_data_t`, likewise read only for `attr_id`.
 pub type LxbAttrData = lxb_dom_attr_data_t;
 
-/// The shared pre-order (document-order) walk over a subtree: the next node
-/// after `node`, bounded to `root`, or NULL after the last one.
-///
-/// `mkr_dom_preorder_next` in C, where it is `static inline` in a header and so
-/// has no symbol to call. It is written out here ONCE rather than per module:
-/// the DoS-avoiding invariant it carries - climb via parent pointers, never
-/// recurse, so an adversarially deep tree cannot exhaust the stack - is the
-/// reason it exists, and two copies are two chances to lose it. The C header
-/// says the same thing about its own single copy.
-///
-/// # Safety
-/// `node` must be a live node in `root`'s subtree.
-#[inline]
-pub unsafe fn preorder_next(mut node: *mut LxbNode, root: *mut LxbNode) -> *mut LxbNode {
-    if !(*node).first_child.is_null() {
-        return (*node).first_child;
-    }
-    while node != root && (*node).next.is_null() {
-        node = (*node).parent;
-    }
-    if node == root {
-        return core::ptr::null_mut();
-    }
-    (*node).next
-}
-
 /// bindgen names an enum's constants by whether the enum is NAMED: a typedef'd
 /// one gets its type as a prefix (`lxb_ns_id_enum_t_LXB_NS_HTML`), a truly
 /// anonymous one keeps the bare name (`LXB_CSS_AT_RULE_MEDIA`). That is an

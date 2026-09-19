@@ -360,7 +360,13 @@ by the check that concluded "every undefined symbol is legitimate".
   is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
   only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
-  not repurpose it.
+  not repurpose it. Its encoding (offset + 1) lives in `HtmlNode::source_offset`
+  / `stamp_source_offset`, the only reader and writer.
+- **Lexbor's DOM structs are read only through `lexbor::adapter::html`'s typed
+  handles** - the index builders included; its two tree writes are named
+  (`HtmlAttr::backfill_parent`, `HtmlNode::stamp_source_offset`). Pointer-keyed
+  tables hash with `crate::ptr_table::ptr_hash`, and a fixed-size one is a
+  `PtrTable` rather than another hand-written probe loop.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
   ignores them; findings land in `spec/fuzz/regressions/` (gitignored).
 
@@ -505,7 +511,7 @@ stays eager (~2%): deferring it would mean holding the source buffer, which is
 the one thing the parse frees.
 
 **attr→owner index** (`lexbor/adapter/dom_index.rs`). Lexbor never links an
-attribute back to its element, so we build an open-addressing hash (pointer
+attribute back to its element, so we build a `PtrTable` (pointer
 keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 → no stack DoS; OOM fails closed and retries). The build also **backfills each
 attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
@@ -529,7 +535,7 @@ walk from text extraction (the cache-bound cost on Lexbor's 96-byte nodes). One
 lazy build (count, size once, fill; explicit **heap**-stack DFS via
 `grow_capacity` + `mkr_reserve_exact`, no recursion → no stack DoS) records a flat document-order
 array of every TEXT/CDATA node's **borrowed** `BorrowedText` slice, a
-prefix-sum of their lengths, and a pointer-keyed open-addressing hash mapping
+prefix-sum of their lengths, and a `PtrTable` mapping
 each element/fragment to the `[start,end)` run of slices its subtree owns. A
 `Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
 memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
