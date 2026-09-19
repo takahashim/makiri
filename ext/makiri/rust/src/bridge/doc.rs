@@ -5,7 +5,7 @@
 //! The arena work is `lexbor`'s; what lives here is the part that must touch
 //! raw Ruby values and Lexbor handles together - copying the source out of a
 //! Ruby String before the wrapper allocation, releasing the GVL for the parse,
-//! and minting the wrapper. Keeping it here is what lets `glue/doc.rs` be
+//! and minting the wrapper. Keeping it here is what lets `glue/html_doc.rs` be
 //! ordinary safe orchestration.
 //!
 //! # Parsing releases the GVL

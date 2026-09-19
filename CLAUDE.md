@@ -72,9 +72,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   contain only C calls, so there is no Rust there to panic; keep it that way.
 
   **An entry point exposed to untrusted input raises `Makiri::InternalError`,
-  not `fatal`.** `bridge::ruby::entry` wraps the twenty-four methods a crafted
-  document or expression reaches - parse and fragment, xpath/at_xpath/evaluate,
-  css/at_css/matches?, the serializers, the text readers - and turns a panic
+  not `fatal`.** `bridge::ruby::entry` wraps every method a crafted document,
+  expression or stylesheet reaches - parse and fragment, xpath/at_xpath/evaluate,
+  css/at_css/matches?, the serializers, the text readers, the namespace queries,
+  `parse_stylesheet` - and turns a panic
   there into that exception. It descends from `Exception`, NOT `StandardError`,
   which is the point: a bare `rescue => e` keeps passing it through, because a
   broken invariant is not a bad selector, while a host that wants to turn one
@@ -720,8 +721,8 @@ the GVL; XPath does not scale, by design (it holds the GVL - see below).
 
 Key decisions that got there, worth not regressing:
 
-- **Parsing releases the GVL; XPath evaluation does NOT** (`glue/doc.rs`,
-  `glue/xpath.rs`): parse copies the source to a C buffer then runs
+- **Parsing releases the GVL; XPath evaluation does NOT** (`bridge::doc`,
+  `glue/query.rs`): parse copies the source to a C buffer then runs
   `parse_html` under `rb_thread_call_without_gvl` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. **XPath holds
   the GVL for the whole evaluation by design** (`xpath::ctx::Context::evaluate` is a plain
@@ -787,7 +788,7 @@ Key decisions that got there, worth not regressing:
   (positional predicates, functions/variables, reverse axes, unions, prefixes,
   longer paths) returns 0 from the recogniser → full evaluator. Only `at_xpath`
   uses it; `xpath` always builds the full set.
-- **Per-context compiled-AST cache** (`glue/xpath.rs`): an `XPathContext` parses
+- **Per-context compiled-AST cache** (`bridge/xpath/context_object.rs`): an `XPathContext` parses
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
 - **Every Document reports its arena to the GC** (`account_document`, which

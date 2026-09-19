@@ -1,14 +1,9 @@
-//! The shared, representation-neutral node core (glue/ruby_node.c).
+//! The node identity methods both representations share.
 //!
 //! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
-//! Ruby-facing Node. The TypedData types, their GC functions and the raw
-//! accessors moved to the Ruby <-> Lexbor seam ([`crate::bridge::wrapper`]);
-//! what is left is representation-neutral and safe: the identity methods
-//! (`==`/`eql?`, `hash`, `pointer_id`), which depend only on the node pointer
-//! and never dereference it.
-//!
-//! The raw accessors are re-exported for the glue modules that already name
-//! them here.
+//! Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` depend only on the
+//! node pointer and never dereference it, so one implementation serves both;
+//! the TypedData types behind the pointer are [`crate::bridge::wrapper`]'s.
 
 #![forbid(unsafe_code)]
 

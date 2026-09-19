@@ -441,14 +441,15 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         /* The per-feature registrations, in the order the C called them: each
          * defines the methods of one subsystem onto the classes above. */
         crate::glue::html_node::init_node();
-        crate::glue::doc::init_document();
+        crate::glue::html_doc::init_html_doc();
         crate::glue::node_set::init_node_set();
-        crate::glue::xpath::init_xpath();
+        crate::glue::query::init_xpath();
         crate::bridge::selectors::init_css();
         crate::glue::stylesheet::init_lexbor_css();
         crate::bridge::serialize::init_serialize();
         crate::glue::html_node::init_mutate();
-        crate::glue::xml::init_xml();
+        crate::glue::xml_doc::init_xml_doc();
+        crate::glue::xml_css::init_xml_css();
         crate::glue::xml_node::init_xml_node();
     }
 

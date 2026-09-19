@@ -48,12 +48,12 @@ pub mod ty {
     };
 }
 
-use crate::glue::doc::node_clone_node;
+use crate::glue::html_doc::node_clone_node;
 use crate::glue::node::{node_equals, node_hash, node_pointer_id};
 use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
 /* The receiver and argument handles, from the Ruby <-> Lexbor seam
- * (`bridge::html`), for the readers and for `glue::doc`. */
+ * (`bridge::html`), for the readers and for `glue::html_doc`. */
 pub use crate::bridge::html::{arg_node, wrap_node, HtmlSelf};
 
 /* ------------------------------------------------------------------ *

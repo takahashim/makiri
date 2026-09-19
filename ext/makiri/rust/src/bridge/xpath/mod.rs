@@ -3,7 +3,7 @@
 //! calls.
 //!
 //! The engine (`xpath/`) is generic over `Dom` and names no representation, and
-//! `glue/xpath.rs` must not name a Lexbor or XML type either. This module sits
+//! `glue/query.rs` must not name a Lexbor or XML type either. This module sits
 //! between them: it is the one place that knows both backends exist, and it
 //! turns a Ruby node into the right context with the raw-pointer work the
 //! backend's lifetime contract needs.

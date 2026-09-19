@@ -361,7 +361,7 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
     Ok(crate::bridge::ruby::method_receiver())
 }
 
-/// Register `Makiri::XPathContext`. `Node#xpath` is `glue::xpath`'s.
+/// Register `Makiri::XPathContext`. `Node#xpath` is `glue::query`'s.
 pub fn init_xpath_context() {
     let klass =
         RClass::from_value(CLASS_XPATH_CONTEXT.value()).expect("Makiri::XPathContext is a Class");

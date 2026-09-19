@@ -13,7 +13,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::css::{compile_owned, CssNs};
+use makiri::css::{compile_owned, CssNs, Form};
 
 const FIXED_XML: &[u8] = b"<?xml version='1.0'?>\
 <root xmlns='http://example.com/default' xmlns:ns='http://example.com/ns'>\
@@ -65,11 +65,15 @@ fuzz_target!(|data: &[u8]| {
             }
         };
 
-        let mut budget = Budget::with_limits(ctx.limits());
+        /* Both forms: the selection `css` runs and the self-test `matches?`
+         * runs, which lowers the same chain along the reverse axes. */
         let gvl = makiri::gvl::Gvl::exclusive();
-        let Ok(ast) = compile_owned(&gvl, text, &ns, &mut budget) else {
-            return;
-        };
-        evaluate_both(&ctx, &ast);
+        for form in [Form::Select, Form::SelfTest] {
+            let mut budget = Budget::with_limits(ctx.limits());
+            let Ok(ast) = compile_owned(&gvl, text, &ns, form, &mut budget) else {
+                return;
+            };
+            evaluate_both(&ctx, &ast);
+        }
     }
 });

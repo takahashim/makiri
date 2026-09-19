@@ -183,6 +183,12 @@ RSpec.describe "Makiri::XML CSS selectors" do
       expect(a.matches?("b")).to be(false)
       expect(doc.at_css("b").matches?("a + b")).to be(true)
     end
+
+    it "tests a detached node by itself, as the HTML #matches? does" do
+      loose = doc.create_element("p")
+      expect(loose.matches?("p")).to be(true)
+      expect(loose.matches?("r p")).to be(false)
+    end
   end
 
   describe "NodeSet#css" do

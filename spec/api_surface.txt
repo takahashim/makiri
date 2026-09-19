@@ -306,7 +306,6 @@ class Makiri::XML::Document < Makiri::Document
   include Makiri::XML::NodeMethods
   def self.new(-1)
   def self.parse(-1)
-  def at_xpath(-1)
   def create_cdata(1)
   def create_cdata_node(1)
   def create_comment(1)
@@ -320,7 +319,6 @@ class Makiri::XML::Document < Makiri::Document
   def internal_subset(0)
   def root(0)
   def root=(1 req:node)
-  def xpath(-1)
 
 class Makiri::XML::DocumentFragment < Makiri::DocumentFragment
   include Makiri::XML::NodeMethods
