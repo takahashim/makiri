@@ -16,7 +16,6 @@
 //! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
 pub mod adapter;
-pub mod ffi;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
 /// Selector traversal engine, including its Lexbor callbacks.

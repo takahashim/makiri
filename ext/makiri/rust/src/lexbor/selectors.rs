@@ -47,7 +47,8 @@ use core::ffi::c_void;
 use std::collections::HashMap;
 
 use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
+use crate::lexbor_abi::consts::STATUS_OK as LXB_STATUS_OK;
+use crate::lexbor_abi::LxbNode;
 
 use crate::limits::NODE_SET_MAX;
 
@@ -75,19 +76,11 @@ const MIN_HIT_PCT: usize = 15;
 const RETEST_GAP: usize = 32;
 
 use crate::lexbor_abi::consts::STATUS_STOP as LXB_STATUS_STOP;
-const LXB_SELECTORS_OPT_MATCH_FIRST: u32 = 1 << 2;
+const LXB_SELECTORS_OPT_MATCH_FIRST: crate::lexbor_abi::lxb_selectors_opt_t =
+    crate::lexbor_abi::lxb_selectors_opt_t_LXB_SELECTORS_OPT_MATCH_FIRST;
 
-/* ---- opaque Lexbor types ---- */
-
-macro_rules! opaque {
-    ($($name:ident),* $(,)?) => {$(
-        #[repr(C)]
-        pub struct $name {
-            _private: [u8; 0],
-        }
-    )*};
-}
-opaque!(Selectors);
+/// `lxb_selectors_t`, the traversal engine. Only ever passed along.
+type Selectors = crate::lexbor_abi::lxb_selectors_t;
 
 /// The parsed selector list. Aliased to the generated type rather than kept
 /// opaque here: `lxb_css_selectors_parse` is declared once, in `lexbor_abi`, and
@@ -105,35 +98,13 @@ pub use crate::lexbor_abi::{
 };
 
 /// The parser is declared in `lexbor_abi` - see the note there.
-use crate::lexbor::ffi::{
+use crate::lexbor_abi::{
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
-    CssParser,
+    lxb_selectors_create, lxb_selectors_destroy, lxb_selectors_find, lxb_selectors_init,
+    lxb_selectors_match_node, lxb_selectors_opt_set_noi, CssParser,
 };
 
 type SelectorCb = unsafe extern "C" fn(*mut LxbNode, u32, *mut c_void) -> u32;
-
-extern "C" {
-
-    /// The `_noi` twins of Lexbor's `lxb_inline` accessors.
-    fn lxb_selectors_create() -> *mut Selectors;
-    fn lxb_selectors_init(s: *mut Selectors) -> u32;
-    fn lxb_selectors_destroy(s: *mut Selectors, self_destroy: bool) -> *mut Selectors;
-    fn lxb_selectors_opt_set_noi(s: *mut Selectors, opt: u32);
-    fn lxb_selectors_find(
-        s: *mut Selectors,
-        root: *mut LxbNode,
-        list: *const SelectorList,
-        cb: SelectorCb,
-        ctx: *mut c_void,
-    ) -> u32;
-    fn lxb_selectors_match_node(
-        s: *mut Selectors,
-        node: *mut LxbNode,
-        list: *const SelectorList,
-        cb: SelectorCb,
-        ctx: *mut c_void,
-    ) -> u32;
-}
 
 /* ------------------------------------------------------------------ */
 /* process-global state                                               */
@@ -388,10 +359,10 @@ impl Run {
         match self {
             Run::Find(cb) => {
                 lxb_selectors_opt_set_noi(e.selectors, LXB_SELECTORS_OPT_MATCH_FIRST);
-                lxb_selectors_find(e.selectors, node, list, *cb, ctx);
+                lxb_selectors_find(e.selectors, node, list, Some(*cb), ctx);
             }
             Run::MatchNode(cb) => {
-                lxb_selectors_match_node(e.selectors, node, list, *cb, ctx);
+                lxb_selectors_match_node(e.selectors, node, list, Some(*cb), ctx);
             }
         }
     }

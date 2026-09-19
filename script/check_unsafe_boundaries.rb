@@ -63,8 +63,8 @@ UNSAFE_ISLANDS = {
   "lexbor/css_parser.rs" => 44,
   "lexbor/fragment.rs" => 10,
   "lexbor/selectors.rs" => 16,
-  "lexbor/serialize.rs" => 7,
-  "lexbor/stylesheet.rs" => 9,
+  "lexbor/serialize.rs" => 3,
+  "lexbor/stylesheet.rs" => 10,
   "lexbor/xpath.rs" => 9,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
@@ -325,6 +325,24 @@ if lexbor_abi != LEXBOR_ABI_COUNTS
   errors << "Lexbor ABI names outside lexbor/ changed: #{table_diff(LEXBOR_ABI_COUNTS, lexbor_abi)}"
 end
 
+# A Lexbor function is DECLARED in one place, `lexbor_abi.rs` (bindgen's output
+# or its hand-declared `_noi` twins). A second `extern "C"` declaration of the
+# same symbol gives it a second Rust type, which nothing checks agree, and on
+# macOS a declaration that matches no symbol is a NULL call rather than a link
+# error. `post_parse.rs` re-declared four generated functions that way.
+LEXBOR_DECL = /\bfn\s+(?:lxb|lexbor)_[A-Za-z0-9_]*\s*\([^)]*\)[^;{]*;/m
+lexbor_decls = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative == "lexbor_abi.rs"
+
+  count = comments_removed(File.binread(path)).scan(LEXBOR_DECL).length
+  lexbor_decls[relative] = count unless count.zero?
+end
+unless lexbor_decls.empty?
+  errors << "Lexbor functions declared outside lexbor_abi.rs: #{lexbor_decls.inspect}"
+end
+
 ruby_layer = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
@@ -352,5 +370,6 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
-     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer; " \
+     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
+     "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor_abi.rs; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine"

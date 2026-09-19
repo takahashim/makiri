@@ -43,7 +43,7 @@ use crate::falloc::{self, VecPush};
 use crate::lexbor_abi as lxb;
 use crate::lexbor_abi::consts as k;
 
-use crate::lexbor::ffi::{
+use crate::lexbor_abi::{
     lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init, CssParser,
 };
 

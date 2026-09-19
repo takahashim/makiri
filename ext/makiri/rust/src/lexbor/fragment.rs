@@ -20,7 +20,7 @@ use core::ffi::c_void;
 
 use crate::falloc::VecPush;
 
-use crate::lexbor::ffi::{LxbDoc, LxbNode};
+use crate::lexbor_abi::{LxbDoc, LxbNode};
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *

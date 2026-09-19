@@ -56,7 +56,8 @@ fn main() {
                   #include <lexbor/html/html.h>\n\
                   #include <lexbor/ns/ns.h>\n\
                   #include <lexbor/tag/tag.h>\n\
-                  #include <lexbor/css/css.h>\n";
+                  #include <lexbor/css/css.h>\n\
+                  #include <lexbor/selectors/selectors.h>\n";
 
     let bindings = bindgen::Builder::default()
         .header_contents("makiri_lexbor.h", header)
@@ -135,12 +136,11 @@ fn main() {
         .allowlist_type("lexbor_status_t")
         .allowlist_type("lxb_html_serialize_opt")
         .allowlist_type("lxb_tag_id_enum_t")
-        // NOT lxb_css_parser_create/init/destroy: glue/css.rs already
-        // declares those over an OPAQUE parser, which is the right shape (the
-        // selector engine reads no field of it). Generating them here as well
-        // gave the same C symbol two Rust types - a duplicate that escaped
-        // until a build compiled both definitions together, the same way the
-        // mkr_wrap_xml_node one did. One declaration per symbol.
+        // NOT lxb_css_parser_create/init/destroy: `lexbor_abi` declares those
+        // over an OPAQUE parser, which is the right shape (nothing reads a
+        // field of it). Generating them here as well gave the same C symbol two
+        // Rust types - a duplicate that escaped until a build compiled both
+        // definitions together. One declaration per symbol.
         // The DOM readers glue/html_node uses. Generating them rather than
         // hand-declaring them is also the inline-only CHECK: bindgen does not
         // emit a `static inline`, so a name that is only inline in the headers
@@ -230,6 +230,20 @@ fn main() {
         .allowlist_function("lxb_css_property_serialize")
         .allowlist_function("lxb_css_property_serialize_name")
         .allowlist_function("lxb_css_selector_serialize_chain")
+        // The HTML serializers `lexbor::serialize` drives through its sink.
+        .allowlist_function("lxb_html_serialize_tree_cb")
+        .allowlist_function("lxb_html_serialize_deep_cb")
+        .allowlist_function("lxb_html_serialize_pretty_tree_cb")
+        .allowlist_function("lxb_html_serialize_pretty_deep_cb")
+        // The selector matcher `lexbor::selectors` runs. Its option setter is
+        // an inline whose `_noi` twin the header declares, so it generates too.
+        .allowlist_function("lxb_selectors_create")
+        .allowlist_function("lxb_selectors_init")
+        .allowlist_function("lxb_selectors_destroy")
+        .allowlist_function("lxb_selectors_find")
+        .allowlist_function("lxb_selectors_match_node")
+        .allowlist_function("lxb_selectors_opt_set_noi")
+        .allowlist_type("lxb_selectors_opt_t")
         // Top-level consts, not modules: the names then match the headers
         // exactly and do not depend on bindgen's numbering of anonymous types.
         // Lexbor's constants are uniquely prefixed, so nothing collides.

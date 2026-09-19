@@ -39,7 +39,10 @@ use crate::lexbor::adapter::source_loc::{
 use crate::lexbor::adapter::text_index::TextIndex;
 pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
 use crate::lexbor::adapter::utf8_input::Sanitized;
-use crate::lexbor_abi::{self as lxb, lxb_html_document_destroy, LxbDoc, LxbNode};
+use crate::lexbor_abi::{
+    self as lxb, lxb_dom_document_root, lxb_html_document_destroy, lxb_html_parse_chunk_begin,
+    lxb_html_parse_chunk_end, lxb_html_parse_chunk_process, LxbDoc, LxbNode,
+};
 use crate::text::BorrowedText;
 use crate::xml::model::Document as XmlDocument;
 
@@ -47,19 +50,6 @@ type HtmlDoc = lxb::lxb_html_document_t;
 
 use super::html::TYPE_DOCUMENT as NODE_TYPE_DOCUMENT;
 use crate::lexbor_abi::consts::STATUS_OK as LXB_STATUS_OK;
-
-extern "C" {
-
-    fn lxb_html_parse_chunk_begin(parser: *mut lxb::lxb_html_parser_t) -> *mut HtmlDoc;
-    fn lxb_html_parse_chunk_process(
-        parser: *mut lxb::lxb_html_parser_t,
-        data: *const u8,
-        size: usize,
-    ) -> u32;
-    fn lxb_html_parse_chunk_end(parser: *mut lxb::lxb_html_parser_t) -> u32;
-    fn lxb_dom_document_root(doc: *mut LxbDoc) -> *mut LxbNode;
-
-}
 
 /* ---- the parsed document ---- */
 
@@ -246,7 +236,7 @@ impl Parsed {
     pub fn external_bytes(&self) -> usize {
         match &self.doc {
             // SAFETY: the handle owns a live document.
-            Doc::Html(doc) => unsafe { lxb_document_capacity(doc.as_ptr() as *mut LxbNode) },
+            Doc::Html(doc) => unsafe { document_capacity(doc.as_ptr() as *mut LxbNode) },
             Doc::Xml(Some(doc)) => crate::xml::api::xml_doc_memsize(doc),
             Doc::Xml(None) => 0,
         }
@@ -466,7 +456,7 @@ unsafe fn mem_total(mem: *const lxb::lexbor_mem_t, measure: Measure) -> usize {
 }
 
 /// Sum the node and text pools of a node's document.
-unsafe fn lxb_document_pools(node: *mut LxbNode, measure: Measure) -> usize {
+unsafe fn document_pools(node: *mut LxbNode, measure: Measure) -> usize {
     if node.is_null() {
         return 0;
     }
@@ -496,12 +486,12 @@ unsafe fn lxb_document_pools(node: *mut LxbNode, measure: Measure) -> usize {
 
 /// The live bytes in a node's document arena, which the serializers size their
 /// buffer from.
-pub unsafe fn lxb_document_bytes(node: *mut LxbNode) -> usize {
-    lxb_document_pools(node, Measure::Used)
+pub unsafe fn document_bytes(node: *mut LxbNode) -> usize {
+    document_pools(node, Measure::Used)
 }
 
 /// The bytes a node's document arena has allocated, used or not - what it
 /// costs the process, for [`Parsed::external_bytes`].
-pub unsafe fn lxb_document_capacity(node: *mut LxbNode) -> usize {
-    lxb_document_pools(node, Measure::Capacity)
+pub unsafe fn document_capacity(node: *mut LxbNode) -> usize {
+    document_pools(node, Measure::Capacity)
 }
