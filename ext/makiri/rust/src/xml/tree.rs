@@ -1398,7 +1398,10 @@ impl<'a> Parser<'a> {
         };
         let mut a = self.doc.attrs(root);
         while let Some(attr) = a {
-            let bpfx = xmlns_prefix(self.doc.qname(attr)).map(|p| p.to_vec());
+            let bpfx = match xmlns_prefix(self.doc.qname(attr)) {
+                Some(p) => Some(crate::falloc::try_to_vec(p).ok_or(())?),
+                None => None,
+            };
             if let Some(bpfx) = bpfx {
                 let uri = self.doc.node(attr).value;
                 self.push_binding(&bpfx, uri)?;

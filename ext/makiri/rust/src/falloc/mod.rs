@@ -1,58 +1,63 @@
-//! Fallible allocation: the one place Rust code is allowed to ask for memory.
+//! Fallible allocation: the one place engine Rust code is allowed to ask for
+//! memory.
 //!
 //! # Why this exists
 //!
 //! `rake oom` is the gate behind CLAUDE.md's fail-closed rule. It arms "the nth
-//! core allocation fails", runs a workload, and asserts the result is a clean
-//! exception or byte-identical to the baseline - never truncated, never a
-//! crash. The C half funnels every allocation through `core/mkr_alloc.c`, which
-//! consults the injection hook, so the sweep reaches all of it.
+//! allocation hook consultation fails", runs a workload, and asserts the result
+//! is a clean exception or byte-identical to the baseline - never truncated,
+//! never a crash.
 //!
-//! Rust was not in that sweep at all. Two things were wrong, and they are
-//! different problems:
+//! Raw `std` containers do not give us that:
 //!
 //!  1. **Not injectable.** Allocations made with `std` containers never consult
-//!     the hook, so no sweep could reach them. The XPath engine and the bridge
-//!     were fine - they call `callocarray` / `reallocarray` /
-//!     `grow_reserve` and inherit the hook - but everything built on `Vec`,
-//!     `HashMap` and `Box` was invisible.
+//!     the hook, so no sweep can reach them. Code that allocates through this
+//!     module (or the libc facades in `cstr`) inherits it.
 //!  2. **Not fallible.** `Box::new`, `Vec::push` and `HashMap::insert` abort the
 //!     process on allocation failure (`handle_alloc_error`). For a library
 //!     loaded into someone's application server, aborting is not "failing
-//!     closed" - it takes the host down instead of raising. The result is
-//!     safe (never a wrong answer) but the blast radius is the whole process.
+//!     closed" - it takes the host down instead of raising.
 //!
-//! So this module does both: it consults the same counter the C half does, and
-//! it returns failure instead of aborting. Every heap allocation in Rust code
-//! that is not already going through the C allocator goes through here.
+//! So this module does both: it consults the counter the sweep arms, and it
+//! returns failure instead of aborting. Container growth goes through the
+//! traits below, construction through the `try_*` free functions, and raw
+//! NUL-terminated C strings through `cstr`. `clippy.toml` bans the `std`
+//! methods these wrap, so a new call site cannot quietly go around the sweep.
 //!
-//! # The counter is shared, deliberately
+//! The `bridge`'s Ruby-side storage is the deliberate exception: it is Ruby's
+//! `xmalloc` memory, freed by Ruby, and never reaches this counter.
 //!
-//! `alloc_inject_should_fail` is the C hook itself, not a copy of it. One
-//! counter means one sweep with one numbering: `rake oom` does not need to know
-//! which language owns allocation number 4,271, and a sweep sized from a
-//! disarmed baseline run stays correct as sites move from C to Rust. When
-//! `core/` is ported (step 8 of notes/rust_port_remaining.ja.md) the counter
-//! moves here and the direction of the call reverses; nothing else changes.
+//! # The counter
+//!
+//! `inject` owns the single counter the sweep arms, and
+//! `allocation_should_fail` reads it. One counter means one numbering: `rake
+//! oom` does not need to know which code path owns consultation number 4,271,
+//! and a sweep sized from a disarmed baseline run stays correct as sites move.
+//!
+//! It counts consultations, not allocations: `Reserve::mkr_reserve` consults
+//! before a reserve that may not need to allocate. The sweep still covers every
+//! real allocation, because the call sequence up to the armed index is exactly
+//! the baseline one.
+//!
+//! The counter is atomic, not GVL-protected: a parse runs under
+//! `rb_thread_call_without_gvl` and consults it from there, so two threads can
+//! reach it at once.
 //!
 //! # Two shapes, and why
 //!
 //! Growth is on traits (`Reserve`, `VecPush`, `MapInsert`) because it has a
 //! receiver: `v.mkr_push(x)` reads like the `v.push(x)` it replaces, which is
-//! what kept the conversion of nineteen call sites reviewable. Construction is
-//! free functions (`try_box`, `try_vec_with_capacity`, `try_to_vec`, ...)
-//! because there is nothing to hang a method on. Each names one shape and each
-//! has callers; the split is by whether a receiver exists, not by accident.
+//! what kept the conversion of the call sites reviewable. Construction is free
+//! functions (`try_box`, `try_vec_with_capacity`, `try_to_vec`, ...) because
+//! there is nothing to hang a method on. Each names one shape and each has
+//! callers; the split is by whether a receiver exists, not by accident.
 //!
 //! # Cost when not sweeping
 //!
 //! None. Without the `alloc-inject` feature `allocation_should_fail` is a
-//! `const false`
-//! that the optimiser deletes along with the branch, exactly as the C macro
-//! `MKR_ALLOC_INJECT_FAIL()` compiles to `0` outside `-DMKR_ALLOC_INJECT`.
-//! extconf turns the feature on for the same `MAKIRI_ALLOC_INJECT=1` that
-//! defines the C macro, so the two halves can never disagree about whether a
-//! build is a sweep build.
+//! `const false` that the optimiser deletes along with the branch. extconf
+//! turns the feature on for the same `MAKIRI_ALLOC_INJECT=1` that arms the
+//! sweep.
 
 #![allow(unsafe_code)]
 // `Result<(), ()>` throughout: these report "the allocation failed", which
@@ -62,19 +67,28 @@
 
 use std::collections::{HashMap, HashSet};
 
-/// The allocator surface that replaced core/mkr_alloc.c.
-pub mod calloc;
-/// Its Kani proofs - the ownership contract at the boundary, which is what is
-/// left after the size arithmetic went to `checked_*` and the OOM branches to
-/// `rake oom`.
+/// Its Kani proofs - the ownership contract at the raw boundaries, which is
+/// what is left after the size arithmetic went to `checked_*` and the OOM
+/// branches to `rake oom`.
 pub mod calloc_verify;
 pub(crate) mod cstr;
 #[cfg(feature = "alloc-inject")]
 pub(crate) mod inject;
+/// The raw allocator primitives the Kani proofs quantify over. No production
+/// path calls them any more; the typed API above and `cstr` cover every live
+/// allocation.
+#[cfg(kani)]
 pub(crate) mod raw;
 
 /* The injection counter has ONE home, `inject`. The allocator implementations
  * call only `allocation_should_fail`, which is a constant false in production. */
+
+/* Re-exported rather than reached into directly so `init` (the Ruby test
+ * bridge) does not have to know where the counter lives. `pub` for the same
+ * reason `inject` keeps `pub` items: it must stay lint-clean in the
+ * `alloc-inject`-without-`ruby` build, where nothing in-crate consumes it. */
+#[cfg(feature = "alloc-inject")]
+pub use inject::{alloc_inject_arm, alloc_inject_call_count};
 
 #[cfg(feature = "alloc-inject")]
 use inject::alloc_inject_should_fail;
@@ -83,10 +97,11 @@ use inject::alloc_inject_should_fail;
 #[cfg(feature = "alloc-inject")]
 #[inline(always)]
 pub(crate) fn allocation_should_fail() -> bool {
-    // SAFETY: a plain counter read in C, no arguments, no pointers. The hook is
-    // single-threaded by design (the sweep is), which holds here because every
-    // caller is under the GVL.
-    unsafe { alloc_inject_should_fail() != 0 }
+    /* Safe to call from any thread: `inject` keeps the counter atomic, and a
+     * parse consults it under `rb_thread_call_without_gvl`. The only contract
+     * is the sweep's - call it once per allocation attempt - and violating it
+     * mis-sizes the sweep rather than causing UB. */
+    alloc_inject_should_fail() != 0
 }
 
 /// Production allocator hook: no test instrumentation or branch remains.
@@ -99,19 +114,19 @@ pub(crate) const fn allocation_should_fail() -> bool {
 /// `Box::new` that reports failure instead of aborting.
 ///
 /// Written against the raw allocator rather than `Box::try_new` (unstable): ask
-/// for the layout, write the value into it, and only then claim ownership, so a
-/// null response leaves `value` untouched and returns it to the caller. A
-/// zero-sized `T` never allocates, so it cannot fail and is not counted - the
-/// same convention as `callocarray(0, _)`.
+/// for the layout, write the value into it, and only then claim ownership. On
+/// failure `value` is dropped and `Err(())` is returned, no allocation having
+/// escaped. A zero-sized `T` never allocates, so it cannot fail and is not
+/// counted.
 #[inline]
-pub fn try_box<T>(value: T) -> Result<Box<T>, T> {
+pub fn try_box<T>(value: T) -> Result<Box<T>, ()> {
     let layout = std::alloc::Layout::new::<T>();
     if layout.size() == 0 {
         #[allow(clippy::disallowed_methods)]
         return Ok(Box::new(value));
     }
     if allocation_should_fail() {
-        return Err(value);
+        return Err(());
     }
     // SAFETY: the layout is non-zero-sized (checked above), so `alloc` is being
     // used within its contract. On success the pointer is fresh, uniquely
@@ -120,20 +135,10 @@ pub fn try_box<T>(value: T) -> Result<Box<T>, T> {
     unsafe {
         let p = std::alloc::alloc(layout) as *mut T;
         if p.is_null() {
-            return Err(value);
+            return Err(());
         }
         p.write(value);
         Ok(Box::from_raw(p))
-    }
-}
-
-/// `Box::into_raw(Box::new(v))` for the handles the C ABI hands out. Null is the
-/// failure the C callers already expect from `callocarray`.
-#[inline]
-pub fn try_box_raw<T>(value: T) -> *mut T {
-    match try_box(value) {
-        Ok(b) => Box::into_raw(b),
-        Err(_) => core::ptr::null_mut(),
     }
 }
 
@@ -158,7 +163,8 @@ pub trait Reserve {
     /// Room for `additional` more elements. `Err(())` leaves the receiver
     /// untouched.
     fn mkr_reserve(&mut self, additional: usize) -> Result<(), ()>;
-    /// As `mkr_reserve`, without the growth slack.
+    /// As `mkr_reserve`, without the growth slack. The hash containers below
+    /// cannot honour the difference and forward to `mkr_reserve`.
     fn mkr_reserve_exact(&mut self, additional: usize) -> Result<(), ()>;
 }
 
@@ -281,16 +287,16 @@ impl<K: core::hash::Hash + Eq, V, S: core::hash::BuildHasher> MapInsert<K, V> fo
     }
 }
 
-/// Geometric growth for a hand-managed array, restated from the C
-/// `mkr_grow_capacity`: double from 8 until it covers `need`, falling back to
-/// exactly `need` when doubling would overshoot what `elem` allows. `None` only
-/// when `need` itself does not fit.
+/// Geometric growth for a hand-managed array: start from the current capacity
+/// (or 8 when there is none and 8 elements fit), double until it covers `need`,
+/// and fall back to exactly `need` when doubling would overshoot what `elem`
+/// allows. `None` only when `need` itself does not fit.
 ///
-/// This lives here rather than beside its one caller (`glue::node_set`) for a
-/// reason worth keeping: that module needs magnus, hence a live Ruby, so
-/// nothing in it can be built under Kani. The arithmetic is pure, and putting
-/// it where it can be proved is the difference between a property that is
-/// checked and one that is merely commented.
+/// This lives here rather than beside its callers (`cbuf`, the text index, the
+/// proofs) for a reason worth keeping: the arithmetic is pure, so it can be
+/// built under Kani and `cargo test` without Lexbor or Ruby. Putting it where it
+/// can be proved is the difference between a property that is checked and one
+/// that is merely commented.
 pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     need.checked_mul(elem)?;
     // No allocation is required for an empty request. More importantly, do
