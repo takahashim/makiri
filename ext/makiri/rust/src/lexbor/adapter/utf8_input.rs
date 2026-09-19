@@ -1,4 +1,4 @@
-//! Browser-compatible UTF-8 input sanitisation (dom_adapter/utf8_input.c).
+//! Browser-compatible UTF-8 input sanitisation.
 //!
 //! Turns arbitrary bytes into the valid UTF-8 the rest of the engine assumes:
 //! every invalid sequence becomes U+FFFD, per WHATWG byte-stream decoding, so
@@ -32,10 +32,10 @@
 //! `Drop` guard each, so the ownership was already Rust's. [`Sanitized`] now
 //! carries it in the type and neither caller has to remember.
 //!
-//! # The allocation stays C's
+//! # The allocation stays libc's
 //!
 //! The result is a `malloc`'d buffer the caller frees with libc `free`, so it is
-//! built in an `mkr_buf_t` and stolen, exactly as before. That also keeps the
+//! built in a `cbuf::Buf` and stolen. That also keeps the
 //! growth clamp, the NUL terminator and the `rake oom` injection hook - three
 //! properties that a Rust `Vec` and a hand-written `malloc` would each have had
 //! to re-earn.
@@ -63,10 +63,10 @@ fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
      * (3 bytes) and valid bytes pass through 1:1. Cap at exactly that bound -
      * tight and tied to the actual input, so a large document still parses but
      * nothing runs away - rather than a blanket ceiling. */
-    /* On overflow, `usize::MAX` rather than a restated MKR_BUF_HARD_MAX: every
-     * growth path in mkr_buf.c already takes min(max, HARD_MAX), so this is the
-     * same ceiling the C reached for, without a Rust copy of the constant that a
-     * `-DMKR_BUF_HARD_MAX=` build could silently disagree with (see cbuf.rs). */
+    /* On overflow, `usize::MAX` rather than a restated hard ceiling: every
+     * growth path in `cbuf::Buf` already takes min(max, BUF_HARD_MAX), so this
+     * is that ceiling, without a second copy of the constant that an
+     * `MKR_BUF_HARD_MAX=` build could silently disagree with (see cbuf.rs). */
     let cap = src.len().saturating_mul(3);
     let mut buf = Buf::new(cap);
 

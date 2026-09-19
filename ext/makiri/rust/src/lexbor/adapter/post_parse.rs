@@ -1,5 +1,4 @@
-//! The parse pipeline and the parsed-document lifecycle
-//! (dom_adapter/post_parse.c).
+//! The HTML parse pipeline and the parsed document it produces.
 //!
 //! `parse_html` drives Lexbor's LOW-LEVEL pipeline rather than its one-shot
 //! parse, because that is the only way to see the tokens: create and init a
@@ -32,6 +31,7 @@ use core::ptr::NonNull;
 
 use crate::cbuf::OwnedBuf;
 use crate::falloc::try_box;
+use crate::lexbor::adapter::arena_bytes::document_capacity;
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::source_loc::{
     lines_build, pos_assign_to_dom, pos_token_cb, Lines, Positions, Recorder,
@@ -44,32 +44,25 @@ use crate::lexbor_abi::{
     lxb_html_parse_chunk_end, lxb_html_parse_chunk_process, LxbDoc, LxbNode,
 };
 use crate::text::BorrowedText;
-use crate::xml::model::Document as XmlDocument;
 
 type HtmlDoc = lxb::lxb_html_document_t;
 
-use super::html::TYPE_DOCUMENT as NODE_TYPE_DOCUMENT;
 use crate::lexbor_abi::consts::STATUS_OK as LXB_STATUS_OK;
 
 /* ---- the parsed document ---- */
 
-/// The document a parse produced.
-enum Doc {
-    /// A Lexbor document, destroyed with the handle.
-    Html(NonNull<HtmlDoc>),
-    /// An XML arena. None until the parse that fills it has finished, so a
-    /// handle wrapped before that parse still frees cleanly.
-    Xml(Option<Box<XmlDocument>>),
-}
-
-/// The result of a parse: the document, and the HTML indices built over it on
-/// demand.
+/// A parsed HTML document, and the indices built over it on demand.
 ///
 /// The indices point into the document's nodes and text, so every change to the
-/// document goes through [`invalidate_indexes`](Parsed::invalidate_indexes),
+/// document goes through [`invalidate_indexes`](HtmlParsed::invalidate_indexes),
 /// which drops them; the next query rebuilds.
-pub struct Parsed {
-    doc: Doc,
+///
+/// HTML only. What a Ruby Document owns - this or an XML arena, plus the count
+/// of evaluations reading it - is `bridge::wrapper`'s: the XML engine's
+/// document does not belong to the Lexbor adapter, and the evaluation count is
+/// the Ruby layer's mutation gate.
+pub struct HtmlParsed {
+    doc: NonNull<HtmlDoc>,
     /// attr->owner map + the tag->elements index.
     dom_index: Option<Box<DomIndex>>,
     /// byte offset -> source line.
@@ -78,94 +71,40 @@ pub struct Parsed {
     ///
     /// The stamping walks the whole tree, and it measured 11% of a parse - paid
     /// by every caller, for a `#line` most never ask for. So the parse records
-    /// and stops; [`assign_positions`](Parsed::assign_positions) does the walk
-    /// on the first `#line`, or on the first MUTATION, whichever comes first.
-    /// The second is what keeps the answers identical to stamping eagerly: a
-    /// walk over an edited tree would match elements to the wrong tokens, and
-    /// a wrong line is the one thing `#line` must never give.
+    /// and stops; [`assign_positions`](HtmlParsed::assign_positions) does the
+    /// walk on the first `#line`, or on the first MUTATION, whichever comes
+    /// first. The second is what keeps the answers identical to stamping
+    /// eagerly: a walk over an edited tree would match elements to the wrong
+    /// tokens, and a wrong line is the one thing `#line` must never give.
     pending_pos: Option<Box<Positions>>,
     /// node -> descendant-text slice run.
     text_index: Option<Box<TextIndex>>,
-    /// How many XPath evaluations that can run Ruby (ones with a handler)
-    /// are reading this document right now. Every mutator refuses while it
-    /// is non-zero - see `glue::doc::DocumentEvaluation`.
-    pub evaluating: usize,
 }
 
-impl Drop for Parsed {
+impl Drop for HtmlParsed {
     fn drop(&mut self) {
         /* The indices point into the document, so they go first. */
         self.invalidate_indexes();
-        if let Doc::Html(doc) = &self.doc {
-            // SAFETY: the handle owns the document, and nothing reads it once
-            // the handle is gone.
-            unsafe { lxb_html_document_destroy(doc.as_ptr()) };
-        }
+        // SAFETY: the handle owns the document, and nothing reads it once the
+        // handle is gone.
+        unsafe { lxb_html_document_destroy(self.doc.as_ptr()) };
     }
 }
 
-impl Parsed {
-    fn with(doc: Doc) -> Parsed {
-        Parsed {
-            doc,
-            dom_index: None,
-            lines: None,
-            pending_pos: None,
-            text_index: None,
-            evaluating: 0,
-        }
-    }
-
-    /// A handle for an XML document still to be parsed. None on OOM.
-    pub fn new_xml() -> Option<Box<Parsed>> {
-        try_box(Parsed::with(Doc::Xml(None))).ok()
-    }
-
-    pub fn is_xml(&self) -> bool {
-        matches!(self.doc, Doc::Xml(_))
-    }
-
-    /// The Lexbor document, or null for an XML handle.
+impl HtmlParsed {
+    /// The Lexbor document.
     pub fn html_doc(&self) -> *mut HtmlDoc {
-        match &self.doc {
-            Doc::Html(doc) => doc.as_ptr(),
-            Doc::Xml(_) => core::ptr::null_mut(),
-        }
+        self.doc.as_ptr()
     }
 
-    /// The XML arena, or null for an HTML handle or one not yet filled.
-    pub fn xml_doc(&mut self) -> *mut XmlDocument {
-        match &mut self.doc {
-            Doc::Xml(Some(doc)) => &mut **doc,
-            _ => core::ptr::null_mut(),
-        }
-    }
-
-    /// The XML arena, for reading.
-    pub fn xml_doc_ref(&self) -> Option<&XmlDocument> {
-        match &self.doc {
-            Doc::Xml(Some(doc)) => Some(doc),
-            _ => None,
-        }
-    }
-
-    /// Fill an XML handle with its parsed arena.
-    pub fn set_xml_doc(&mut self, doc: Box<XmlDocument>) {
-        debug_assert!(self.is_xml());
-        self.doc = Doc::Xml(Some(doc));
-    }
-
-    /// The attr->owner and tag index, built on first use. None for an XML
-    /// handle, or when the build cannot allocate - which caches nothing, so a
-    /// later call retries.
+    /// The attr->owner and tag index, built on first use. None when the build
+    /// cannot allocate - which caches nothing, so a later call retries.
     pub fn dom_index(&mut self) -> Option<&DomIndex> {
-        let Doc::Html(doc) = &self.doc else {
-            return None;
-        };
         if self.dom_index.is_none() {
             // SAFETY: the handle owns a live document.
-            let built =
-                unsafe { crate::lexbor::adapter::dom_index::build(doc.as_ptr() as *mut LxbDoc) }?;
+            let built = unsafe {
+                crate::lexbor::adapter::dom_index::build(self.doc.as_ptr() as *mut LxbDoc)
+            }?;
             self.dom_index = Some(try_box(built).ok()?);
         }
         self.dom_index.as_deref()
@@ -174,14 +113,11 @@ impl Parsed {
     /// The run of text slices `node`'s subtree owns, and its byte total.
     ///
     /// None means "walk instead": a node outside the indexed tree (a
-    /// fragment), an XML handle, or a build that could not allocate.
+    /// fragment), or a build that could not allocate.
     pub fn text_slices(&mut self, node: *const LxbNode) -> Option<(&[BorrowedText], usize)> {
-        let Doc::Html(doc) = &self.doc else {
-            return None;
-        };
         if self.text_index.is_none() {
             // SAFETY: the handle owns a live document.
-            let root = unsafe { lxb_dom_document_root(doc.as_ptr() as *mut LxbDoc) };
+            let root = unsafe { lxb_dom_document_root(self.doc.as_ptr() as *mut LxbDoc) };
             if root.is_null() {
                 return None;
             }
@@ -204,12 +140,9 @@ impl Parsed {
         let Some(pos) = self.pending_pos.take() else {
             return;
         };
-        let Doc::Html(doc) = &self.doc else {
-            return;
-        };
         // SAFETY: the handle owns a live document, and `pos` is its own parse's
         // recording - taken above, so this runs once.
-        unsafe { pos_assign_to_dom(&pos, doc.as_ptr() as *mut LxbNode) };
+        unsafe { pos_assign_to_dom(&pos, self.doc.as_ptr() as *mut LxbNode) };
     }
 
     /// Drop the indices so the next query rebuilds them.
@@ -222,24 +155,11 @@ impl Parsed {
         self.text_index = None;
     }
 
-    /// The bytes this document holds OUTSIDE Ruby's allocator, for the GC.
-    ///
-    /// Ruby triggers a collection from what `xmalloc` reports, and neither a
-    /// Lexbor arena nor the XML arena goes through it - so without this number
-    /// a loop that parses and drops documents never triggers a GC at all: each
-    /// document (a few MB for a few hundred KB of HTML) waits for a collection
-    /// that only object counts can start, RSS climbs by that much per parse,
-    /// and every parse pays for freshly faulted pages. The bridge reports it
-    /// through `rb_gc_adjust_memory_usage`.
-    ///
-    /// Arena CAPACITY, not the bytes in use: the pages are what cost.
+    /// The bytes this document holds OUTSIDE Ruby's allocator, for the GC:
+    /// arena CAPACITY, not the bytes in use, because the pages are what cost.
     pub fn external_bytes(&self) -> usize {
-        match &self.doc {
-            // SAFETY: the handle owns a live document.
-            Doc::Html(doc) => unsafe { document_capacity(doc.as_ptr() as *mut LxbNode) },
-            Doc::Xml(Some(doc)) => crate::xml::api::xml_doc_memsize(doc),
-            Doc::Xml(None) => 0,
-        }
+        // SAFETY: the handle owns a live document.
+        unsafe { document_capacity(self.doc.as_ptr() as *mut LxbNode) }
     }
 
     /// The 1-based source line for `node`, or 0 when unknown.
@@ -358,7 +278,7 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
 
     /* The recording is HANDED BACK rather than stamped here: the stamping walks
      * the whole tree, which measured 11% of a parse, and most callers never ask
-     * for a line. `Parsed::assign_positions` does it on demand. The line table
+     * for a line. `HtmlParsed::assign_positions` does it on demand. The line table
      * stays eager - it is ~2%, and deferring it would mean holding the source
      * buffer, which is the one thing this function is about to free. */
     let mut lines = None;
@@ -379,7 +299,11 @@ unsafe fn parse_tracked(src: &[u8]) -> Option<Tracked> {
 ///
 /// # Safety
 /// `src` must name `len` readable bytes, or be null with `len == 0`.
-pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> Option<Box<Parsed>> {
+pub unsafe fn parse_html(
+    src: *const u8,
+    len: usize,
+    assume_valid: bool,
+) -> Option<Box<HtmlParsed>> {
     if src.is_null() && len != 0 {
         return None;
     }
@@ -411,87 +335,13 @@ pub unsafe fn parse_html(src: *const u8, len: usize, assume_valid: bool) -> Opti
     let (doc, lines, positions) = parse_tracked(bytes)?;
     drop(clean); /* the parse is done with the buffer, on every path */
 
-    let mut parsed = Parsed::with(Doc::Html(doc));
-    parsed.lines = lines;
-    parsed.pending_pos = positions;
+    let parsed = HtmlParsed {
+        doc,
+        dom_index: None,
+        lines,
+        pending_pos: positions,
+        text_index: None,
+    };
     /* On OOM the handle drops, and with it the document. */
     try_box(parsed).ok()
-}
-
-/* ---- live bytes, for sizing a serialization buffer ---- */
-
-/// Which of a chunk's two sizes to sum.
-#[derive(Clone, Copy)]
-enum Measure {
-    /// Bytes handed out (`length`): what a serializer will write.
-    Used,
-    /// Bytes allocated (`size`): what the process paid for.
-    Capacity,
-}
-
-/// Bytes of one Lexbor mem pool.
-///
-/// Lexbor exposes no running total, so the chunk list is walked summing each
-/// chunk. Cheap: the chunks are few and large. Saturates to `usize::MAX` on the
-/// unreachable overflow; the callers clamp anyway.
-unsafe fn mem_total(mem: *const lxb::lexbor_mem_t, measure: Measure) -> usize {
-    let mut total = 0usize;
-    let mut c = if mem.is_null() {
-        core::ptr::null_mut()
-    } else {
-        (*mem).chunk_first
-    };
-    while !c.is_null() {
-        let n = match measure {
-            Measure::Used => (*c).length,
-            Measure::Capacity => (*c).size,
-        };
-        total = match total.checked_add(n) {
-            Some(t) => t,
-            None => return usize::MAX,
-        };
-        c = (*c).next;
-    }
-    total
-}
-
-/// Sum the node and text pools of a node's document.
-unsafe fn document_pools(node: *mut LxbNode, measure: Measure) -> usize {
-    if node.is_null() {
-        return 0;
-    }
-    /* The document node owns itself; every other node points back through
-     * owner_document. */
-    let doc: *mut LxbDoc = if (*node).type_ == NODE_TYPE_DOCUMENT {
-        node as *mut LxbDoc
-    } else {
-        (*node).owner_document
-    };
-    if doc.is_null() {
-        return 0;
-    }
-
-    let mut total = 0usize;
-    for pool in [(*doc).mraw, (*doc).text] {
-        if pool.is_null() {
-            continue;
-        }
-        total = match total.checked_add(mem_total((*pool).mem, measure)) {
-            Some(t) => t,
-            None => return usize::MAX,
-        };
-    }
-    total
-}
-
-/// The live bytes in a node's document arena, which the serializers size their
-/// buffer from.
-pub unsafe fn document_bytes(node: *mut LxbNode) -> usize {
-    document_pools(node, Measure::Used)
-}
-
-/// The bytes a node's document arena has allocated, used or not - what it
-/// costs the process, for [`Parsed::external_bytes`].
-pub unsafe fn document_capacity(node: *mut LxbNode) -> usize {
-    document_pools(node, Measure::Capacity)
 }

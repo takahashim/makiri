@@ -1,17 +1,14 @@
-//! The HTML fragment pipeline (was part of glue/ruby_doc.c).
+//! The HTML fragment pipeline.
 //!
 //! Parsing a fragment, importing its children into a document, and the
-//! `<template>`-content fixup that `lxb_dom_document_import_node` omits. Five
-//! of these are exported C symbols, called by `ruby_html_mutate.c` and
-//! `cross_import.c`.
+//! `<template>`-content fixup that `lxb_dom_document_import_node` omits.
 //!
-//! # Why this is not in `doc.rs`
+//! # Why this is not with the Document
 //!
-//! The C had one file because the C had one file. None of this is about the
-//! Document WRAPPER - it is a service the wrapper happens to use and two other
-//! translation units use directly, and keeping it here means the module that
-//! owns `Makiri::HTML::Document` is about that class rather than about three
-//! unrelated things.
+//! None of this is about the Document WRAPPER - it is a service the wrapper
+//! happens to use and the mutators and `import_node` use directly, and keeping
+//! it here means the module that owns `Makiri::HTML::Document` is about that
+//! class rather than about three unrelated things.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]

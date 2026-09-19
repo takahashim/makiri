@@ -83,7 +83,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
     // SAFETY: `result` is the handle the parse just returned, owned by no one.
-    Ok(shell.install(unsafe { Box::from_raw(result) }))
+    Ok(shell.install_html(unsafe { Box::from_raw(result) }))
 }
 
 /* ------------------------------------------------------------------ *

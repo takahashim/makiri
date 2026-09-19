@@ -204,5 +204,5 @@ pub fn fragment_shell_document() -> Result<Value, Error> {
     let Some(parsed) = (unsafe { parse_html(SHELL.as_ptr(), SHELL.len(), true) }) else {
         return Err(makiri_error("failed to create fragment document"));
     };
-    Ok(shell.install(parsed))
+    Ok(shell.install_html(parsed))
 }

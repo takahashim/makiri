@@ -36,7 +36,6 @@ use crate::init::{
     CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
-use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
 
@@ -92,9 +91,9 @@ pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
 /// through the XML TypedData type, which fails with TypeError for an HTML node.
 pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> {
     if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-        let parsed = doc_parsed(rb_self)?;
-        // SAFETY: the handle of a live XML Document, and the arena it owns.
-        let node = unsafe { (*parsed_xml_doc(parsed)).doc_node() };
+        XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
+        // SAFETY: the arena a live XML Document owns.
+        let node = unsafe { (*doc_of(rb_self)).doc_node() };
         return Ok(node.to_token() as *mut core::ffi::c_void);
     }
     let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
@@ -117,8 +116,7 @@ pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
 /// panics (unwinding to `fatal` / `Makiri::InternalError`) rather than being
 /// read through.
 pub fn doc_of(document: Value) -> *mut XmlDoc {
-    // SAFETY: `doc_parsed_known` hands back the live handle of that Document.
-    let arena = unsafe { parsed_xml_doc(doc_parsed_known(document)) };
+    let arena = xml_arena_known(document);
     assert!(!arena.is_null(), "an XML Document without its arena");
     arena
 }
@@ -370,7 +368,7 @@ pub fn parse_xml_document(source: Value, limits: XmlLimits, budget: usize) -> Re
     let arena = unsafe { Box::from_raw(result) };
     /* `src` is gone, so the collection `install`'s GC report may trigger
      * disturbs nothing. */
-    Ok(shell.install(xml_parsed(arena)?))
+    Ok(shell.install_xml(arena))
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -389,20 +387,12 @@ pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
     }
 }
 
-/// A parsed handle owning the XML `arena`.
-fn xml_parsed(arena: Box<XmlDoc>) -> Result<Box<Parsed>, Error> {
-    let mut parsed =
-        Parsed::new_xml().ok_or_else(|| makiri_error("out of memory allocating XML document"))?;
-    parsed.set_xml_doc(arena);
-    Ok(parsed)
-}
-
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);
     let arena = crate::xml::api::xml_doc_new()
         .map_err(|_| makiri_error("out of memory allocating XML document"))?;
-    Ok(shell.install(xml_parsed(arena)?))
+    Ok(shell.install_xml(arena))
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,

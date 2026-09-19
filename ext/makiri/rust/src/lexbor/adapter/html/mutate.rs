@@ -74,8 +74,8 @@ pub fn check_document_child_order(
 /// Editing a tree is not something any handle should be able to do: a frozen
 /// receiver must refuse, and a document an XPath handler is evaluating over must
 /// refuse too, because the engine borrows names and index slices across the walk
-/// (see `glue::doc::DocumentEvaluation`). Those two checks live in one place,
-/// `glue::html_node::mutate::unwrap_mutable`, and this type is what that place
+/// (see `bridge::wrapper::DocumentEvaluation`). Those two checks live in one place,
+/// `bridge::html::edit`, and this type is what that place
 /// hands back - so a node that has not been through them has no edit to call.
 ///
 /// Reading needs no such clearance, so [`node`](Self::node) goes back down to

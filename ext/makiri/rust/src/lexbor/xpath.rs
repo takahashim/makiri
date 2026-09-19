@@ -14,7 +14,7 @@ use core::ffi::c_void;
 
 use crate::lexbor::adapter::dom_index::DomIndex;
 use crate::lexbor::adapter::html::{self as dom, HtmlAttr, HtmlDoc, HtmlNode};
-use crate::lexbor::adapter::post_parse::Parsed;
+use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::lexbor_abi::{self as lxb, LxbNode};
 use crate::token::{Kind, Token};
 use crate::xpath::abi::*;
@@ -50,12 +50,12 @@ const _: () = {
 #[derive(Clone, Copy)]
 pub struct HtmlDom<'d> {
     doc: HtmlDoc<'d>,
-    parsed: *mut Parsed,
+    parsed: *mut HtmlParsed,
 }
 
 impl<'d> HtmlDom<'d> {
     /// `parsed` must be the live handle behind `doc`.
-    pub fn new(doc: HtmlDoc<'d>, parsed: *mut Parsed) -> HtmlDom<'d> {
+    pub fn new(doc: HtmlDoc<'d>, parsed: *mut HtmlParsed) -> HtmlDom<'d> {
         HtmlDom { doc, parsed }
     }
 
@@ -265,7 +265,7 @@ fn no_document() -> Error {
 /// node of its document.
 #[allow(clippy::result_large_err)]
 pub unsafe fn context<'e>(
-    parsed: *mut Parsed,
+    parsed: *mut HtmlParsed,
     node: Token,
 ) -> Result<Context<'e, HtmlDom<'e>>, Error> {
     // SAFETY: the caller's contract - the handle is live for `'e`.
@@ -288,6 +288,6 @@ pub unsafe fn context<'e>(
         );
         return Err(budget.take_error());
     }
-    let parsed: *mut Parsed = parsed;
+    let parsed: *mut HtmlParsed = parsed;
     Ok(Context::new(HtmlDom::new(doc, parsed), node))
 }

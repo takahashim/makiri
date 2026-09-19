@@ -1,4 +1,4 @@
-//! Per-document text-extraction index (dom_adapter/text_index.c).
+//! Per-document text-extraction index.
 //!
 //! Descendant-text aggregation (`Node#text`, the XPath string-value) otherwise
 //! walks every node of a subtree chasing pointers through Lexbor's 96-byte
@@ -12,11 +12,11 @@
 //! # The slices are raw pointers on purpose
 //!
 //! A borrowed `&[u8]` here would be a stronger claim than the truth. The nodes
-//! belong to C, and C's mutation API writes through them outside Rust's borrow
+//! belong to Lexbor, and its mutation API writes through them outside Rust's borrow
 //! checker, so a long-lived Rust reference would assert a lifetime nothing
 //! enforces. What actually keeps a cached slice valid is a RUNTIME protocol:
 //! every mutation goes through one invalidation hook
-//! (`Parsed::invalidate_indexes`), which drops the whole index, so a
+//! (`HtmlParsed::invalidate_indexes`), which drops the whole index, so a
 //! slice can never outlive the storage it points into. The arena also never
 //! frees a node - detached, never destroyed - so only a mutation can reallocate
 //! the text a slice borrows. That protocol is the safety argument; the types
@@ -257,7 +257,7 @@ impl TextIndex {
                 // SAFETY: `ptr`/`len` are the character-data node's own storage
                 // in this document's arena, which outlives the index. The view
                 // is lifetime-free, so what keeps it valid is the invalidation
-                // hook: `Parsed::invalidate_indexes` drops the whole index on
+                // hook: `HtmlParsed::invalidate_indexes` drops the whole index on
                 // any mutation, before the storage can move or detach.
                 t.slices.push(unsafe {
                     BorrowedText::from_raw_parts(ptr as *const core::ffi::c_char, len)

@@ -49,7 +49,7 @@ pub fn dom_str(bytes: &[u8]) -> Value {
 /// walks. `Err` only when building the String fails.
 pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>, Error> {
     let mut found: Option<Result<Value, Error>> = None;
-    with_parsed_known(document, |p| {
+    with_html_parsed_known(document, |p| {
         if let Some((slices, total)) = p.text_slices(node.as_lxb()) {
             // SAFETY: the slices point into this document's arena (the index
             // borrows them from `p`) and are copied into the String before the
@@ -71,7 +71,7 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
 /// the index does not know, which is `Ok(None)`. The owner is borrowed for as
 /// long as the caller borrows `rb_doc`, the Document that keeps it alive.
 pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<'_>>, Error> {
-    with_parsed(*rb_doc, |p| match p.dom_index() {
+    with_html_parsed(*rb_doc, |p| match p.dom_index() {
         None => Err(makiri_error(
             "could not build the attribute index (out of memory)",
         )),
@@ -82,7 +82,7 @@ pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<
 
 /// The 1-based source line for `node`, or 0 when unknown.
 pub fn node_line(rb_doc: Value, node: RawNode) -> usize {
-    with_parsed_known(rb_doc, |p| {
+    with_html_parsed_known(rb_doc, |p| {
         // SAFETY: `node` is a live node of this document.
         unsafe { p.node_line(node.as_ptr() as *const _) }
     })

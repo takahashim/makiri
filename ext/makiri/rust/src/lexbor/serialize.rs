@@ -1,4 +1,4 @@
-//! HTML serialization primitives (glue/ruby_html_serialize.c).
+//! HTML serialization primitives.
 //!
 //!   the node and its subtree -> the tree serializer
 //!   the node's children only -> the deep serializer
@@ -15,8 +15,8 @@
 use core::ffi::c_void;
 
 use crate::cbuf::{buf_append, Buf};
+use crate::lexbor::adapter::arena_bytes::document_bytes;
 use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::adapter::post_parse::document_bytes;
 use crate::lexbor_abi::consts::{
     STATUS_ERROR_MEMORY_ALLOCATION as LXB_STATUS_ERROR_MEMORY_ALLOCATION,
     STATUS_OK as LXB_STATUS_OK,
@@ -63,7 +63,7 @@ unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void)
 /// legitimate parse round-trips through `to_html` (HTML parsing is itself
 /// byte-uncapped) while a pathologically deep pretty-print fails closed instead
 /// of growing without bound. It is deliberately *not* clamped to
-/// `MKR_BUF_HARD_MAX` here; `mkr_buf.c` takes the minimum of the two on every
+/// `cbuf`'s hard ceiling here; `Buf` takes the minimum of the two on every
 /// growth, so the clamp would only duplicate a constant this side could then
 /// disagree with. The HTML tree cannot cycle (the mutation guards plus Lexbor's
 /// own insert checks), so the ceiling is never reached in normal operation.

@@ -1,4 +1,4 @@
-//! The per-document DOM indices (dom_adapter/dom_index.c).
+//! The per-document DOM indices.
 //!
 //! Two indices, built in one object because they share a walk:
 //!

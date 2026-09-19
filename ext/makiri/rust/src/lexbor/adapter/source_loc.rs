@@ -1,4 +1,4 @@
-//! Source-location tracking (dom_adapter/source_loc.c).
+//! Source-location tracking.
 //!
 //! Lexbor does not record where in the input a node came from, and we stay on
 //! vanilla Lexbor, so it is reconstructed from the tokenizer instead:
@@ -70,7 +70,7 @@ impl Lines {
 
 /// The offset of the next newline at or after `from`, or `None`.
 ///
-/// libc `memchr`, which is what the C reached for through `mkr_span_find`.
+/// libc `memchr`.
 /// A scalar `iter().position()` here measured about 9% off the whole parse on a
 /// 220 KB document - the line table walks every input byte twice, so the
 /// difference between a vectorised scan and a byte loop is the difference
@@ -137,7 +137,8 @@ struct Entry {
     offset: usize,
 }
 
-/// `mkr_pos_recorder_t`, opaque to C.
+/// The start-tag offsets a parse records, handed to the tokenizer callback as
+/// its opaque context.
 pub struct Recorder {
     items: Vec<Entry>,
     /// The start of the input buffer, which offsets are relative to.

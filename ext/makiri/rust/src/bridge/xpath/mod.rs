@@ -22,7 +22,7 @@ use crate::bridge::html::html_node_unwrap;
 use crate::bridge::node_set::{node_set_with_fill, PushError};
 use crate::bridge::ruby::VALUE;
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text};
-use crate::bridge::wrapper::{doc_parsed, html_doc_unwrap, parsed_xml_doc};
+use crate::bridge::wrapper::{doc_content, html_doc_unwrap, with_html_parsed_known, Content};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::init::{CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR};
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
@@ -120,47 +120,41 @@ impl core::ops::DerefMut for Cx {
 /// document does not change while an evaluate runs: without a handler no Ruby
 /// runs, and with one the glue's `Bridge` holds the document's mutation guard.
 pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
-    let parsed = doc_parsed(document)?;
+    let content = doc_content(document)?;
 
-    // SAFETY: the handle of `document`, which the caller holds for as long as
-    // the context it gets back.
-    unsafe {
-        if (*parsed).is_xml() {
-            let xdoc = parsed_xml_doc(parsed);
-            if xdoc.is_null() {
-                return Err(makiri_error("XPath context with no document"));
-            }
-            /* The context NODE is the document node for a Document receiver,
-             * else the node itself. */
-            let node = if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-                Token::xml(
-                    (*(xdoc as *mut crate::xml::model::Doc))
-                        .doc_node()
-                        .to_token(),
-                )
-            } else {
-                Token::xml(xml_node_unwrap(rb_node)? as usize)
-            };
-            // SAFETY: the XML arena behind `document`, live for `'static` by the
-            // caller's keepalive.
-            let doc: &'static crate::xml::model::Document = &*xdoc;
-            return Ok(Cx::Xml(Context::new(doc, node)));
-        }
-
-        /* SAFETY: `html_node_unwrap` returned a live node of `document`, and
-         * this block already reasons under the `context_for` contract. */
-        let node = Token::html(html_node_unwrap(rb_node)?.as_ptr());
-        /* TypeError for a Document that is not HTML. */
-        html_doc_unwrap(document)?;
-        /* Built up front, so an allocation failure raises here rather than on the
-         * first evaluate. Each evaluate still reads the index afresh from the
-         * handle, which rebuilds it after a mutation. */
-        if (*parsed).dom_index().is_none() {
-            return Err(makiri_error("failed to build attribute index for XPath"));
-        }
-        let cx = crate::lexbor::xpath::context(parsed, node).map_err(|e| xpath_error(&e))?;
-        Ok(Cx::Html(cx))
+    if let Content::Xml(xdoc) = content {
+        /* The context NODE is the document node for a Document receiver,
+         * else the node itself. */
+        // SAFETY: the XML arena behind `document`, live for `'static` by the
+        // caller's keepalive, and only read here.
+        let doc: &'static crate::xml::model::Document = unsafe { &*xdoc.as_ptr() };
+        let node = if rb_node.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+            Token::xml(doc.doc_node().to_token())
+        } else {
+            Token::xml(xml_node_unwrap(rb_node)? as usize)
+        };
+        return Ok(Cx::Xml(Context::new(doc, node)));
     }
+
+    let raw = html_node_unwrap(rb_node)?;
+    // SAFETY: `html_node_unwrap` returned a live node of `document`.
+    let node = unsafe { Token::html(raw.as_ptr()) };
+    /* TypeError for a Document that is not HTML. */
+    html_doc_unwrap(document)?;
+    let Content::Html(parsed) = content else {
+        return Err(makiri_error("XPath context with no document"));
+    };
+    /* Built up front, so an allocation failure raises here rather than on the
+     * first evaluate. Each evaluate still reads the index afresh from the
+     * handle, which rebuilds it after a mutation. */
+    if with_html_parsed_known(document, |p| p.dom_index().is_none()) {
+        return Err(makiri_error("failed to build attribute index for XPath"));
+    }
+    // SAFETY: the handle of `document`, which the caller holds for as long as
+    // the context it gets back, and `node` is one of its nodes.
+    let cx = unsafe { crate::lexbor::xpath::context(parsed.as_ptr(), node) }
+        .map_err(|e| xpath_error(&e))?;
+    Ok(Cx::Html(cx))
 }
 
 /// Parse `expr` for one query under `cx`'s caps, on a budget of the query's own;

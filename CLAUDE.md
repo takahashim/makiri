@@ -382,7 +382,10 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            Ruby-side storage is Ruby's xmalloc; see the gotchas)
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
-    lexbor_abi.rs          the generated Lexbor layout and the `_noi` twins
+    lexbor_abi.rs          the generated Lexbor layout and the `_noi` twins - the
+                           ONE place a Lexbor function is declared (a second
+                           `extern "C"` spelling is a second Rust type for the
+                           symbol; `rake unsafe:boundaries` fails on one)
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting, and where
                            raising C calls (rb_String, typed-data checks) and the
@@ -489,8 +492,8 @@ rides the parse (`pos_token_cb`, ~1.7% of it), but `pos_assign_to_dom` - the
 walk that pairs elements with tokens - profiled at **11% of a parse**, paid by
 every caller for an answer most never ask for. So the parse hands the offsets
 back (`source_loc::Positions`, which drops the Recorder's pointer INTO the
-source buffer, since the offsets were already resolved) and `Parsed::pending_pos`
-holds them. `Parsed::assign_positions` does the walk once, on the first
+source buffer, since the offsets were already resolved) and `HtmlParsed::pending_pos`
+holds them. `HtmlParsed::assign_positions` does the walk once, on the first
 `#line` - or on the first MUTATION, via `ensure_document_mutable`, which is the
 last moment the tree is still the one the parser built. That second trigger is
 what keeps the answers identical to stamping eagerly; a walk over an edited tree
@@ -508,8 +511,8 @@ keys, lazy two-phase build - count, size once, fill; iterative DFS, no recursion
 attribute's `node.parent`** to its owner (safe: Lexbor walks the tree via
 first_child/next, never attr.parent), so the XPath engine handles
 parent/ancestor axes and document-order over attributes with no special-casing.
-Owned by the parse handle (`Parsed::dom_index`, `DomIndex::owner_of`);
-`Parsed::invalidate_indexes` drops it after any mutation so it rebuilds on the
+Owned by the parse handle (`HtmlParsed::dom_index`, `DomIndex::owner_of`);
+`HtmlParsed::invalidate_indexes` drops it after any mutation so it rebuilds on the
 next query. The same walk **co-builds
 an element index** (`tag id → elements`, document-order CSR) used by the XPath
 `//tag` fast path; only Lexbor's static tag-id range `[1, LXB_TAG__LAST_ENTRY)`
@@ -530,10 +533,10 @@ prefix-sum of their lengths, and a pointer-keyed open-addressing hash mapping
 each element/fragment to the `[start,end)` run of slices its subtree owns. A
 `Node#text` is then a hash lookup + `ruby_str_from_slices` (one pre-sized
 memcpy run; **~4× faster than libxml2 at all sizes**), no element node touched.
-Cached on the parse handle; `Parsed::invalidate_indexes` drops it
+Cached on the parse handle; `HtmlParsed::invalidate_indexes` drops it
 from the **same single mutation hook** as the attr index, so a borrowed slice
 can never point at reallocated/detached text storage. Reached via
-`Parsed::text_slices` (None → caller walks: fragments, build OOM).
+`HtmlParsed::text_slices` (None → caller walks: fragments, build OOM).
 Fail-closed: a build OOM leaves it unbuilt and the walk fallback serves.
 
 **XPath engine** (`src/xpath/`). Original implementation: lexer →
@@ -593,6 +596,11 @@ nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
 `#first`). Results are **descendant-only** (context node excluded, like Nokogiri)
 and in document order; capped at `NODE_SET_MAX`; malformed →
 `Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
+The parser/arena/table trio is assembled by `lexbor::css_engine`
+(`ParserParts`, `Owned<T>`, `GvlCell<T>`), which the selector-lowering parser
+(`css_parser`) and the stylesheet reader share; the compiled-selector cache's
+decision and storage are `CachePolicy` / `SelectorCache`, and the arena and the
+map are only ever emptied together (`spec/css_selector_cache_spec.rb`).
 
 **Serialization** (`lexbor/serialize.rs`). `Node#{to_html,to_s,outer_html}` =
 Lexbor `serialize_tree_cb`, `#inner_html` = `serialize_deep_cb`; the callback
@@ -626,7 +634,7 @@ Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
 inserting a fragment splices its **children**. Guards Lexbor omits: same-document
 only, no self-cycles, attribute nodes can't be tree children. Every structural /
-attribute change calls `Parsed::invalidate_indexes`.
+attribute change calls `HtmlParsed::invalidate_indexes`.
 
 **Ruby surface niceties.** Node classes, under the WHATWG DOM interface names:
 Document, Element, Attr, Text, Comment, CDATASection, ProcessingInstruction,
@@ -745,7 +753,8 @@ Key decisions that got there, worth not regressing:
   `minflt` per parse (near 0 once warm). A Document gets its arena ONLY through
   `bridge::wrapper::DocumentShell`: the wrapper is allocated first (a Ruby
   allocation can raise, and a raise would leak a parse result already held),
-  and `install(Box<Parsed>)` stores the handle and reports it in one step, so a
+  and `install_html(Box<HtmlParsed>)` / `install_xml(Box<XmlDoc>)` store the
+  content and report it in one step, so a
   new parse entry cannot skip the report; `spec/gc_accounting_spec.rb` pins
   both halves. Growth through mutation/fragment import is NOT re-reported
   (an approximation, in the safe direction of under-reporting).
