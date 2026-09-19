@@ -8,12 +8,12 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::lexbor::{html_node_unwrap, wrap_html_node};
 use crate::bridge::ruby::{error_class, is_kind_of};
 use crate::bridge::string::ruby_verified_text;
+use crate::bridge::string::HtmlSource;
 use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{
     HtmlDoc, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG, TAG_UNDEF,
@@ -21,7 +21,13 @@ use crate::lexbor::adapter::html::{
 };
 use crate::lexbor::fragment::{
     import_fragment_children, run_fragment_parser, tag_id_by_name, Emit, FragmentContext,
+    FragmentError,
 };
+
+/// A fragment-parse failure as `Makiri::Error`.
+pub fn fragment_error(e: FragmentError) -> Error {
+    Error::new(error_class(), e.message())
+}
 
 /// Resolve a fragment-parsing context - the element the HTML is parsed "inside
 /// of", per the WHATWG algorithm - into a tag id and namespace.
@@ -104,7 +110,14 @@ pub unsafe fn build_fragment_ctx(
     };
     let frag_node = RawNode::from(frag);
 
-    let root = run_fragment_parser(html.as_raw(), &FragmentContext::Tag { doc, tag, ns })?;
+    let src = HtmlSource::from_ruby(html)?;
+    let root = run_fragment_parser(
+        src.bytes(),
+        src.known_valid(),
+        &FragmentContext::Tag { doc, tag, ns },
+    )
+    .map_err(fragment_error)?;
+    drop(src);
     if !import_fragment_children(doc, root, &Emit::Append(frag_node)) {
         return Err(Error::new(
             error_class(),

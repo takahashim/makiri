@@ -118,10 +118,6 @@ impl<C> RubyStr<C> {
         }
     }
 
-    pub(crate) fn as_ptr(&self) -> *const c_char {
-        self.ptr
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.len
     }
@@ -433,7 +429,12 @@ pub fn str_encode_charref_value(str: Value, enc: Encoding) -> Result<Value, Erro
 ///    transcoded with invalid/undef -> U+FFFD, so the text becomes the right
 ///    characters instead of being read as raw UTF-8 and mangled. Only
 ///    non-UTF-8 input pays for this.
-pub unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
+///
+/// `rb_str_encode` RAISES when Ruby has no converter at all (UTF-7,
+/// ISO-2022-JP-2 to UTF-8), so it is only ever called under [`protect`] - see
+/// [`ruby_to_utf8_value`]. Called bare, that raise would `longjmp` over the
+/// Rust frames above it.
+unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
     let enc = rb_sys::rb_enc_get(str);
     let utf8 = rb_sys::rb_utf8_encoding();
     if enc == utf8 || enc == rb_sys::rb_usascii_encoding() || enc == rb_sys::rb_ascii8bit_encoding()
@@ -451,9 +452,66 @@ pub unsafe fn ruby_to_utf8(str: VALUE) -> VALUE {
 }
 
 /// [`ruby_to_utf8`] as a safe call: `s` is a live String, and the result is one.
-pub fn ruby_to_utf8_value(s: Value) -> Value {
-    // SAFETY: `s` is a live String; `rb_str_encode` returns a live String.
-    unsafe { crate::bridge::ruby::value(ruby_to_utf8(s.as_raw())) }
+/// An encoding Ruby cannot convert to UTF-8 comes back as its
+/// `Encoding::ConverterNotFoundError`, returned rather than raised.
+pub fn ruby_to_utf8_value(s: Value) -> Result<Value, Error> {
+    // SAFETY: `s` is a live String, and `protect` turns the raise into `Err`.
+    let raw = protect(|| unsafe { ruby_to_utf8(s.as_raw()) })?;
+    // SAFETY: `rb_str_encode` returns a live String.
+    Ok(unsafe { crate::bridge::ruby::value(raw) })
+}
+
+/// A Ruby String as HTML parser input, under the text-input contract: its
+/// encoding honoured ([`ruby_to_utf8_value`]), and whether the bytes are
+/// already known to be valid UTF-8, so the parser can skip its sanitisation.
+///
+/// The one place that turns a Ruby String into bytes a Lexbor parser reads.
+/// Both HTML entry points - a document parse and a fragment parse - take their
+/// input through it, so the engine below never sees a `VALUE`.
+///
+/// The bytes are borrowed from the String, or from the transcoded copy, which
+/// the guard inside keeps alive: like every [`RubyStr`], this lives on the
+/// stack and is read only while no Ruby code runs.
+pub struct HtmlSource {
+    view: RubyBytes,
+    known_valid: bool,
+}
+
+impl HtmlSource {
+    /// `s` must be a String (the caller has coerced it).
+    pub fn from_ruby(s: Value) -> Result<HtmlSource, Error> {
+        let src = ruby_to_utf8_value(s)?;
+        /* A transcode replaced every invalid or unmappable byte, so its result
+         * is valid UTF-8 whatever its coderange says. */
+        let transcoded = src.as_raw() != s.as_raw();
+        // SAFETY: `src` is a live String; the view anchors it.
+        let known_valid = transcoded || unsafe { ruby_str_known_valid_utf8(src.as_raw()) };
+        // SAFETY: as above.
+        let view = unsafe { ruby_bytes_view(src.as_raw()) };
+        Ok(HtmlSource { view, known_valid })
+    }
+
+    /// Whether the bytes are valid UTF-8 already - never a scan, only what
+    /// Ruby (or the transcode) has established.
+    pub fn known_valid(&self) -> bool {
+        self.known_valid
+    }
+
+    /// The bytes.
+    ///
+    /// # Safety
+    /// No Ruby code may run, and so move or mutate the String, while the slice
+    /// is used.
+    pub unsafe fn bytes(&self) -> &[u8] {
+        self.view.bytes()
+    }
+
+    /// The bytes copied out, for a parse that runs with the GVL released.
+    pub fn to_owned_bytes(&self) -> Result<OwnedBuf, Error> {
+        // SAFETY: the copy runs no Ruby code.
+        OwnedBuf::copy_from(unsafe { self.bytes() })
+            .ok_or_else(|| Error::new(error_class(), "out of memory reading a Ruby string"))
+    }
 }
 
 /// Whether Ruby ALREADY knows the String is valid UTF-8.

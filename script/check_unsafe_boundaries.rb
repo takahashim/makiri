@@ -33,12 +33,12 @@ UNSAFE_ISLANDS = {
   "bridge/doc.rs" => 15,
   "bridge/fragment.rs" => 2,
   "bridge/gvl.rs" => 3,
-  "bridge/lexbor.rs" => 60,
+  "bridge/lexbor.rs" => 62,
   "bridge/node_set.rs" => 11,
   "bridge/ruby.rs" => 27,
   "bridge/selectors.rs" => 6,
   "bridge/serialize.rs" => 1,
-  "bridge/string.rs" => 28,
+  "bridge/string.rs" => 33,
   "bridge/typed.rs" => 8,
   "bridge/xml.rs" => 47,
   "bridge/xml_decode.rs" => 7,
@@ -62,7 +62,7 @@ UNSAFE_ISLANDS = {
   "lexbor/fragment.rs" => 10,
   "lexbor/selectors.rs" => 16,
   "lexbor/serialize.rs" => 7,
-  "lexbor/stylesheet.rs" => 10,
+  "lexbor/stylesheet.rs" => 9,
   "lexbor/xpath.rs" => 9,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
@@ -136,6 +136,16 @@ VALUE_FROM_RAW_COUNTS = {}.freeze
 # `lexbor_abi.rs` is the generated module itself, so it is excluded.
 LEXBOR_ABI = /crate::lexbor_abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
 LEXBOR_ABI_COUNTS = {}.freeze
+
+# The engine layers are Ruby-free: `lexbor/`, `xml/`, `xpath/` and `css/` take
+# bytes and return their own error types, and the Ruby half of a feature lives in
+# `bridge/` or `glue/`. `lexbor/fragment.rs` and `lexbor/stylesheet.rs` once
+# reached back up for a `VALUE`, the String borrow rules and `Makiri::Error` - an
+# engine module holding the bridge's invariants, and the path a raise escaped
+# along - so the table is empty and any such use fails.
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/].freeze
+RUBY_LAYER = /crate::(?:bridge|glue|init)|magnus::/
+RUBY_LAYER_COUNTS = {}.freeze
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -313,6 +323,18 @@ if lexbor_abi != LEXBOR_ABI_COUNTS
   errors << "Lexbor ABI names outside lexbor/ changed: #{table_diff(LEXBOR_ABI_COUNTS, lexbor_abi)}"
 end
 
+ruby_layer = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next unless relative.start_with?(*ENGINE_DIRS)
+
+  count = comments_removed(File.binread(path)).scan(RUBY_LAYER).length
+  ruby_layer[relative] = count unless count.zero?
+end
+if ruby_layer != RUBY_LAYER_COUNTS
+  errors << "Ruby-layer use inside an engine layer changed: #{table_diff(RUBY_LAYER_COUNTS, ruby_layer)}"
+end
+
 if FIX && !errors.empty?
   puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
   errors.each { |e| puts "  #{e}" }
@@ -328,4 +350,5 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
-     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer"
+     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer; " \
+     "#{ruby_layer.values.sum} Ruby-layer uses inside the engine"

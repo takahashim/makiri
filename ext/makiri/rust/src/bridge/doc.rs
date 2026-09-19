@@ -29,9 +29,7 @@ use crate::bridge::lexbor::{
     wrap_html_node, DOC_TYPE,
 };
 use crate::bridge::ruby::{typed_data_known_ref, value};
-use crate::bridge::string::{
-    ruby_str_known_valid_utf8_value, ruby_string_bytes, ruby_to_utf8_value,
-};
+use crate::bridge::string::HtmlSource;
 use crate::bridge::xml::{
     node_document as xml_node_document, unwrap as xml_node_id, xml_mut_check,
 };
@@ -57,15 +55,15 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     let s = source.to_r_string()?;
     /* Honour the input's encoding: UTF-8/US-ASCII/binary pass through,
      * anything else is transcoded so its content survives. */
-    let src = ruby_to_utf8_value(s.as_value());
+    let src = HtmlSource::from_ruby(s.as_value())?;
 
     /* Copy the source out BEFORE allocating the wrapper. Allocating is a GC
      * point, and a borrowed pointer into a Ruby String's backing store must
-     * not straddle one - nor be held while the GVL is released. The
-     * coderange is read first (no scan): a source Ruby already knows is
-     * valid UTF-8 lets the parse skip its sanitisation. */
-    let assume_valid = ruby_str_known_valid_utf8_value(src);
-    let owned = ruby_string_bytes(src)?;
+     * not straddle one - nor be held while the GVL is released. A source
+     * already known to be valid UTF-8 lets the parse skip its sanitisation. */
+    let assume_valid = src.known_valid();
+    let owned = src.to_owned_bytes()?;
+    drop(src);
 
     /* Allocate the wrapper with a null handle, so a failed parse still
      * frees cleanly through GC. This entry is defined on

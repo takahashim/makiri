@@ -53,4 +53,29 @@ RSpec.describe "arguments a Ruby C function refuses" do
       expect(out.encode("UTF-8")).to eq("<r><c>t</c></r>")
     end
   end
+
+  describe "HTML input in an encoding Ruby cannot convert to UTF-8" do
+    # ISO-2022-JP-2 and UTF-7 have no converter to UTF-8, so the transcode the
+    # text-input contract asks for raises. It used to raise from inside the
+    # parse, straight over the Rust frames above it; it comes back as a return
+    # value now and reaches the caller as Ruby's own error.
+    let(:src) { "<p>a</p>".dup.force_encoding("ISO-2022-JP-2") }
+
+    it "raises Encoding::ConverterNotFoundError from every HTML entry point" do
+      expect { Makiri::HTML(src) }.to raise_error(Encoding::ConverterNotFoundError)
+      doc = Makiri::HTML("<div></div>")
+      expect { doc.fragment(src) }.to raise_error(Encoding::ConverterNotFoundError)
+      expect { Makiri::HTML::DocumentFragment.parse(src) }.to raise_error(Encoding::ConverterNotFoundError)
+      expect { doc.at_css("div").inner_html = src }.to raise_error(Encoding::ConverterNotFoundError)
+      expect { doc.at_css("div").outer_html = src }.to raise_error(Encoding::ConverterNotFoundError)
+    end
+
+    it "leaves the tree as it was: inner_html= parses before it replaces" do
+      doc = Makiri::HTML("<div><p>x</p></div>")
+      expect { doc.at_css("div").inner_html = src }.to raise_error(Encoding::ConverterNotFoundError)
+      expect(doc.at_css("div").inner_html).to eq("<p>x</p>")
+      expect { doc.at_css("p").outer_html = src }.to raise_error(Encoding::ConverterNotFoundError)
+      expect(doc.at_css("div").inner_html).to eq("<p>x</p>")
+    end
+  end
 end

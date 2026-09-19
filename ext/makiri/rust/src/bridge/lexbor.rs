@@ -33,7 +33,7 @@ use crate::lexbor::adapter::html::{
     TYPE_FRAGMENT, TYPE_PI, TYPE_TEXT,
 };
 use crate::lexbor::adapter::post_parse::Parsed;
-use crate::lexbor::fragment::html_import_deep;
+use crate::lexbor::fragment::import_with_fixup;
 use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
 /* ------------------------------------------------------------------ *
@@ -701,7 +701,8 @@ fn err(msg: &str) -> Error {
 /// Copy `node` into `doc`, for a node that came from another document.
 fn adopt_copy(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
     // SAFETY: `doc` is a live document and `node` its caller's live source.
-    let imp = unsafe { html_import_deep(doc, RawNode::from(node)) }?;
+    let imp = unsafe { import_with_fixup(doc, RawNode::from(node), true) }
+        .ok_or_else(|| err("failed to import node"))?;
     // SAFETY: a node just imported into `doc`, which outlives this call.
     Ok(unsafe { imp.as_node() })
 }
@@ -917,11 +918,10 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
  * attribute and content mutation                                     *
  * ------------------------------------------------------------------ */
 
-use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
+use crate::bridge::fragment::fragment_error;
+use crate::bridge::string::{ruby_verified_data, ruby_verified_text, HtmlSource};
 use crate::lexbor::adapter::html::{HtmlDoc, ScratchElement, NS_UNDEF};
-use crate::lexbor::fragment::{
-    import_transient_fragment_children, run_fragment_parser, Emit, FragmentContext,
-};
+use crate::lexbor::fragment::{Emit, TransientFragment};
 
 /// `element[name] = value` -> value.
 pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
@@ -1073,24 +1073,22 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
     Ok(rb_self)
 }
 
-/// Parse `rb_html` as a fragment in the context of `context_el` and splice the
-/// imported nodes via `emit`.
-unsafe fn parse_fragment_into(
+/// Parse `rb_html` as a fragment in the context of `context_el`. Nothing is
+/// changed yet: a String that fails to convert or parse leaves the tree as it
+/// was, and the caller splices the result in with [`splice_fragment`].
+unsafe fn parse_fragment_for(
     context_el: RawNode,
     rb_html: Value,
-    doc: RawDoc,
-    emit: Emit,
-) -> Result<(), Error> {
+) -> Result<TransientFragment, Error> {
     /* `to_str`/`to_s` is Ruby code that may raise: converted under protect. */
     let html = crate::bridge::ruby::string_of(rb_html)?.as_value();
-    let frag = run_fragment_parser(html.as_raw(), &FragmentContext::Element(context_el))?;
+    let src = HtmlSource::from_ruby(html)?;
+    TransientFragment::parse(src.bytes(), src.known_valid(), context_el).map_err(fragment_error)
+}
 
-    /* The fragment was built in a TRANSIENT document that destroying the parser
-     * does NOT free. Owning it here frees it however this returns. */
-    let imported = import_transient_fragment_children(doc, frag, &emit);
-    let _anchor = html;
-
-    if !imported {
+/// Import `frag`'s children into `doc`, placed by `emit`.
+unsafe fn splice_fragment(frag: TransientFragment, doc: RawDoc, emit: Emit) -> Result<(), Error> {
+    if !frag.import_into(doc, &emit) {
         return Err(err("failed to import a fragment child"));
     }
     Ok(())
@@ -1102,22 +1100,23 @@ pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
     if node.node().node_type() != TYPE_ELEMENT {
         return Err(err("inner_html= requires an element"));
     }
+    let context = RawNode::from(node.node());
+    // SAFETY: `node` is a live element of this document.
+    let frag = unsafe { parse_fragment_for(context, rb_html) }?;
 
-    /* Detach the existing children; the arena reclaims them at document
-     * destroy. */
+    /* Only now that the input parsed: detach the existing children (the arena
+     * reclaims them at document destroy) and put the new ones in. */
     while let Some(c) = node.first_child() {
         c.detach();
     }
-
     // SAFETY: `node` and its document are live for this call.
     unsafe {
-        parse_fragment_into(
-            RawNode::from(node.node()),
-            rb_html,
+        splice_fragment(
+            frag,
             node.node().owner_document_handle(),
-            Emit::Append(RawNode::from(node.node())),
-        )?;
-    }
+            Emit::Append(context),
+        )
+    }?;
     invalidate_indexes(this.document);
     Ok(rb_html)
 }
@@ -1133,9 +1132,9 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
 
     // SAFETY: `parent` and `node` are live nodes of this document.
     unsafe {
-        parse_fragment_into(
-            RawNode::from(parent.node()),
-            rb_html,
+        let frag = parse_fragment_for(RawNode::from(parent.node()), rb_html)?;
+        splice_fragment(
+            frag,
             node.node().owner_document_handle(),
             Emit::Before(RawNode::from(node.node())),
         )?;
