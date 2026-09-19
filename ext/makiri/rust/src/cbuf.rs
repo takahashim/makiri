@@ -53,17 +53,8 @@ impl OwnedBuf {
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: the fields are private and every constructor stores a live
         // libc allocation of at least `len + 1` initialised bytes, owned until
-        // `Drop` or `into_raw_parts` - neither of which can run for `&self`.
+        // `Drop`, which cannot run for `&self`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-    }
-
-    /// Return the allocation to a caller whose ABI requires a raw pointer.
-    ///
-    /// Ownership is transferred to the caller, which must free the pointer
-    /// with libc `free`. Consuming `self` prevents its destructor from running.
-    pub fn into_raw_parts(self) -> (*mut u8, usize) {
-        let this = core::mem::ManuallyDrop::new(self);
-        (this.ptr.as_ptr(), this.len)
     }
 }
 
@@ -104,9 +95,8 @@ impl OwnedBuf {
 
 impl Drop for OwnedBuf {
     fn drop(&mut self) {
-        // SAFETY: this type owns the libc allocation, and `into_raw_parts` -
-        // the one way to hand it away - consumes `self`, so nothing else can
-        // still hold it here.
+        // SAFETY: this type owns the libc allocation, and the destructor is the
+        // only thing that frees it, so nothing else can still hold it here.
         unsafe { libc_free(self.ptr.as_ptr() as *mut c_void) };
     }
 }
