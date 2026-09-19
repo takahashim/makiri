@@ -24,8 +24,6 @@
 
 #![forbid(unsafe_code)]
 
-use core::ffi::c_void;
-
 use magnus::rb_sys::AsRawValue;
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 
@@ -55,21 +53,11 @@ use crate::bridge::node_set::node_set_new;
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::string::{ruby_verified_text, verify_text};
 use crate::bridge::wrapper::keepalive_document;
-use crate::bridge::xml::{wrap_xml_node, xml_node_unwrap};
+use crate::bridge::xml::{unwrap as typed_xml_node_unwrap, wrap as wrap_typed_xml_node};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, MOD_XML,
     MOD_XML_NODE_METHODS,
 };
-
-/// Wrap an XML node, typed.
-fn wrap_typed_xml_node(node: NodeId, document: Value) -> Value {
-    wrap_xml_node(node.to_token() as *mut c_void, document)
-}
-
-/// The XML node behind a wrapper, typed. `Err(TypeError)` for an HTML node.
-fn typed_xml_node_unwrap(rb_node: Value) -> Result<NodeId, Error> {
-    Ok(NodeId::from_token(xml_node_unwrap(rb_node)? as usize))
-}
 
 use crate::bridge::xpath::{context_for, evaluate_query, parse_query, xpath_error};
 use crate::glue::xpath::run_query;
