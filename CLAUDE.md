@@ -673,9 +673,16 @@ identity preserved); `Node#content=`. `Document#{create_element,create_text_node
 Fragments: `DocumentFragment.parse(html)` (own backing doc) and
 `Document#fragment(html)` (bound to a doc) parse in a throwaway `<body>` context
 and `lxb_dom_document_import_node` (deep) each child into the target arena;
-inserting a fragment splices its **children**. Guards Lexbor omits: same-document
-only, no self-cycles, attribute nodes can't be tree children. Every structural /
-attribute change calls `HtmlParsed::invalidate_indexes`.
+inserting a fragment splices its **children**. The four structural verbs are one
+`bridge::html::insert(this, node, Place)`; every rule Lexbor omits (no parent,
+no self-cycles, attribute nodes can't be tree children, doctype order) is the
+adapter's `Insertion::check`, run before any link changes, and the placing is
+`HtmlNodeMut::place`. **Every edit starts at `bridge::html::edit`, which drops
+the indexes** (`HtmlParsed::invalidate_indexes`) - so no mutator calls it, and
+none can forget to on an error path. `inner_html=`/`outer_html=` are all or
+nothing: `stage_fragment_in` imports into a DETACHED fragment first, and only
+then are the old nodes swapped out (`rake oom`'s `html_inner_html` scenario
+checks the document is unchanged after every injected failure).
 
 **Ruby surface niceties.** Node classes, under the WHATWG DOM interface names:
 Document, Element, Attr, Text, Comment, CDATASection, ProcessingInstruction,

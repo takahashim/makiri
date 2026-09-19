@@ -1,8 +1,10 @@
 //! The HTML node's mutators and the Document factories (glue/ruby_html_mutate.c).
 //!
 //! The Ruby surface of each edit: reading and verifying the arguments, the
-//! DOM's rules about what may go where, the error each refusal raises,
-//! dropping the document's indexes, and the value handed back. What touches a
+//! error each refusal raises, and the value handed back. The DOM's rules about
+//! what may go where are the adapter's `Insertion`, and every edit starts at
+//! `bridge::html::edit`, which also drops the document's indexes - so no method
+//! here can forget to. What touches a
 //! raw handle or a String's bytes - the adopt copy, the fragment import, the
 //! handoff of a verified String to Lexbor - is a primitive in
 //! [`crate::bridge::html`], so this module holds no unsafe.
@@ -13,14 +15,10 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
-use crate::bridge::fragment::{parse_fragment_in, splice_fragment, Place};
-use crate::bridge::html::{
-    arg_node, edit, finish_insert, guard_doc_child_order, owning_doc, prepare_insert,
-    splice_or_insert, wrap_html_node, HtmlSelf, Insert,
-};
+use crate::bridge::fragment::stage_fragment_in;
+use crate::bridge::html::{edit, insert, owning_doc, wrap_html_node, HtmlSelf};
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
-use crate::bridge::wrapper::invalidate_indexes;
-use crate::lexbor::adapter::html::{Insertion, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
+use crate::lexbor::adapter::html::{Place, RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
 
 /* ------------------------------------------------------------------ *
  * structural mutation                                                *
@@ -28,93 +26,40 @@ use crate::lexbor::adapter::html::{Insertion, RawNode, TYPE_ATTRIBUTE, TYPE_ELEM
 
 /// `node.add_child(child)` -> child.
 pub fn add_child(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    let parent = edit(&this)?;
-    guard_doc_child_order(Insertion::append(parent.node(), arg_node(&rb_child)?))?;
-    let (ins, adopt_from) = prepare_insert(parent, rb_child)?;
-    splice_or_insert(parent, ins, Insert::Child, false);
-    invalidate_indexes(this.document);
-    finish_insert(rb_self, rb_child, ins, adopt_from)
+    insert(&this, rb_child, Place::Child)
 }
 
 /// `node << child` -> node (chainable).
-pub fn lshift(ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    add_child(ruby, this, rb_child)?;
-    Ok(rb_self)
+pub fn lshift(_ruby: &Ruby, this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    insert(&this, rb_child, Place::Child)?;
+    Ok(this.value)
 }
 
 /// `node.add_previous_sibling(node)` / `before` -> node.
 pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    let reference = edit(&this)?;
-    let Some(parent) = reference.parent() else {
-        return Err(makiri_error(
-            "cannot add a sibling to a node with no parent",
-        ));
-    };
-    guard_doc_child_order(Insertion::before(
-        parent.node(),
-        Some(reference.node()),
-        arg_node(&rb_node)?,
-    ))?;
-    let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
-    splice_or_insert(reference, ins, Insert::Before, false);
-    invalidate_indexes(this.document);
-    finish_insert(rb_self, rb_node, ins, adopt_from)
+    insert(&this, rb_node, Place::Before)
 }
 
 /// `node.add_next_sibling(node)` / `after` -> node.
 pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    let reference = edit(&this)?;
-    let Some(parent) = reference.parent() else {
-        return Err(makiri_error(
-            "cannot add a sibling to a node with no parent",
-        ));
-    };
-    guard_doc_child_order(Insertion::before(
-        parent.node(),
-        reference.next().map(|n| n.node()),
-        arg_node(&rb_node)?,
-    ))?;
-    let (ins, adopt_from) = prepare_insert(reference, rb_node)?;
-    splice_or_insert(reference, ins, Insert::After, true);
-    invalidate_indexes(this.document);
-    finish_insert(rb_self, rb_node, ins, adopt_from)
+    insert(&this, rb_node, Place::After)
+}
+
+/// `node.replace(other)` -> other.
+pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
+    insert(&this, rb_other, Place::Replace)
 }
 
 /// `node.remove` / `node.unlink` -> node.
 pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
-    let rb_self = this.value;
     let node = edit(&this)?;
     if node.node().node_type() == TYPE_ATTRIBUTE {
         return Err(makiri_error("use delete(name) to remove an attribute"));
     }
     if node.parent().is_some() {
         node.detach();
-        invalidate_indexes(this.document);
     }
-    Ok(rb_self)
-}
-
-/// `node.replace(other)` -> other.
-pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
-    let rb_self = this.value;
-    let reference = edit(&this)?;
-    let Some(parent) = reference.parent() else {
-        return Err(makiri_error("cannot replace a node with no parent"));
-    };
-    guard_doc_child_order(Insertion::replacing(
-        parent.node(),
-        reference.node(),
-        arg_node(&rb_other)?,
-    ))?;
-    let (ins, adopt_from) = prepare_insert(reference, rb_other)?;
-    splice_or_insert(reference, ins, Insert::Before, false);
-    reference.detach();
-    invalidate_indexes(this.document);
-    finish_insert(rb_self, rb_other, ins, adopt_from)
+    Ok(this.value)
 }
 
 /* ------------------------------------------------------------------ *
@@ -133,7 +78,6 @@ pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Re
     if !crate::bridge::html::set_attribute(el, &nv, &vv) {
         return Err(makiri_error("failed to set attribute"));
     }
-    invalidate_indexes(this.document);
     Ok(rb_value)
 }
 
@@ -160,7 +104,6 @@ pub fn set_attribute_ns(
     if !crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv) {
         return Err(makiri_error("failed to set namespaced attribute"));
     }
-    invalidate_indexes(this.document);
     Ok(rb_value)
 }
 
@@ -180,9 +123,7 @@ pub fn remove_attribute_ns(
     } else {
         Some(ruby_verified_text(rb_ns, c"namespace")?)
     };
-    if crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv) {
-        invalidate_indexes(this.document);
-    }
+    crate::bridge::html::remove_attribute_ns(el, nv.as_ref(), &lv);
     Ok(ruby.qnil().as_value())
 }
 
@@ -195,7 +136,6 @@ pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, E
     if !crate::bridge::html::rename(el, &nv) {
         return Err(makiri_error("failed to rename element"));
     }
-    invalidate_indexes(this.document);
     Ok(rb_name)
 }
 
@@ -206,7 +146,6 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
     if !crate::bridge::html::set_text_content(node, &tv) {
         return Err(makiri_error("failed to set node content"));
     }
-    invalidate_indexes(this.document);
     Ok(rb_text)
 }
 
@@ -218,42 +157,40 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
     };
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     crate::bridge::html::remove_attribute(el, &nv);
-    invalidate_indexes(this.document);
     Ok(rb_self)
 }
 
 /// `element.inner_html = html` -> html.
+///
+/// All or nothing: the new content is parsed and imported into a detached
+/// fragment first, and only then are the old children swapped for it.
 pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     let node = edit(&this)?;
     if node.node().node_type() != TYPE_ELEMENT {
         return Err(makiri_error("inner_html= requires an element"));
     }
-    let frag = parse_fragment_in(node.node(), rb_html)?;
-
-    /* Only now that the input parsed: detach the existing children (the arena
-     * reclaims them at document destroy) and put the new ones in. */
+    let staged = stage_fragment_in(node, rb_html)?;
+    /* Detached, not destroyed: the arena reclaims them with the document. */
     while let Some(c) = node.first_child() {
         c.detach();
     }
-    splice_fragment(frag, node, Place::Append)?;
-    invalidate_indexes(this.document);
+    node.place(staged, Place::Child);
     Ok(rb_html)
 }
 
-/// `node.outer_html = html` -> html.
+/// `node.outer_html = html` -> html. All or nothing, as `inner_html=`.
 pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     let node = edit(&this)?;
-    let parent = node.parent();
-    if parent.is_none_or(|p| p.node().node_type() != TYPE_ELEMENT) {
+    let Some(parent) = node
+        .parent()
+        .filter(|p| p.node().node_type() == TYPE_ELEMENT)
+    else {
         return Err(makiri_error(
             "outer_html= requires a node with a parent element",
         ));
-    }
-    let parent = parent.expect("checked just above");
-    let frag = parse_fragment_in(parent.node(), rb_html)?;
-    splice_fragment(frag, node, Place::Before)?;
-    node.detach();
-    invalidate_indexes(this.document);
+    };
+    let staged = stage_fragment_in(parent, rb_html)?;
+    node.place(staged, Place::Replace);
     Ok(rb_html)
 }
 

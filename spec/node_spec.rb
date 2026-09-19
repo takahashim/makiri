@@ -55,6 +55,16 @@ RSpec.describe Makiri::Node do
         expect(ps[0].child.local_name).to be_nil
         expect(doc.local_name).to be_nil
       end
+
+      it "keeps the DOM's case where Lexbor stores it lower-cased" do
+        # `foreignObject` and `refX` are mixed-case SVG names; the DOM's
+        # localName keeps them, as XPath's local-name() does.
+        mixed = Makiri::HTML('<svg><foreignObject refX="1"></foreignObject></svg>')
+        el = mixed.at_css("svg").element_children.first
+        expect(el.local_name).to eq("foreignObject")
+        expect(el.local_name).to eq(el.at_xpath("local-name(.)"))
+        expect(el.attribute_nodes.first.local_name).to eq("refX")
+      end
     end
 
     describe "#namespace_uri" do
@@ -81,6 +91,17 @@ RSpec.describe Makiri::Node do
       it "is the parser-assigned namespace for a prefixed attribute" do
         expect(attr(a, "xlink:href").namespace_uri).to eq("http://www.w3.org/1999/xlink")
         expect(attr(a, "xml:lang").namespace_uri).to eq("http://www.w3.org/XML/1998/namespace")
+      end
+
+      it "agrees with namespace-uri() for every attribute, however it was set" do
+        a["xlink:role"] = "r"                   # a plain setAttribute: no namespace
+        a.set_attribute_ns(nil, "data-n", "v")  # explicitly no namespace
+        a.set_attribute_ns("urn:x", "x:k", "v") # a namespace of its own
+        a.attribute_nodes.each_with_index do |at, i|
+          from_xpath = a.at_xpath("namespace-uri(@*[#{i + 1}])")
+          expect(at.namespace_uri.to_s).to eq(from_xpath), at.name
+        end
+        expect(attr(a, "x:k").namespace_uri).to eq("urn:x")
       end
 
       it "is nil for non-element/attribute nodes (DOM)" do

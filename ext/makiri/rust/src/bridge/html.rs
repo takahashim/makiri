@@ -19,7 +19,7 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    DocumentChildOrderError, HtmlNode, HtmlNodeMut, Insertion, RawDoc, RawNode, TYPE_ATTRIBUTE,
+    HtmlNode, HtmlNodeMut, Insertion, Place, PreInsertError, RawDoc, RawNode, TYPE_ATTRIBUTE,
     TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE, TYPE_DOCUMENT, TYPE_ELEMENT, TYPE_FRAGMENT, TYPE_PI,
     TYPE_TEXT,
 };
@@ -223,32 +223,18 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
 ///
 /// A node the caller has frozen is immutable (FrozenError), and a document an
 /// XPath handler is being evaluated over refuses to change.
+///
+/// It is also where the document's indexes are dropped. Every change to a tree
+/// starts here, so no method can forget to, on any path out - a failed edit
+/// included. Before the change rather than after it is as good: nothing between
+/// here and the change runs a query that could rebuild them.
 pub fn edit(this: &HtmlSelf) -> Result<HtmlNodeMut<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     ensure_document_mutable(this.document)?;
+    invalidate_indexes(this.document);
     // SAFETY: the checks above are exactly what the type asks for - the
     // receiver is not frozen, and no XPath evaluation is reading its document.
     Ok(unsafe { HtmlNodeMut::assume_mutable(this.raw().as_node()) })
-}
-
-/// Where an insert puts its node, which is what lets [`splice_or_insert`] hold
-/// the fragment rule in one place.
-#[derive(Clone, Copy)]
-pub enum Insert {
-    Child,
-    Before,
-    After,
-}
-
-impl Insert {
-    #[inline]
-    fn put(self, anchor: HtmlNodeMut<'_>, node: HtmlNodeMut<'_>) {
-        match self {
-            Insert::Child => anchor.insert_child(node),
-            Insert::Before => anchor.insert_before(node),
-            Insert::After => anchor.insert_after(node),
-        }
-    }
 }
 
 /// A detached copy of `src` in `doc` - `<template>` contents included - or a
@@ -280,7 +266,7 @@ fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error
 /// document's indexes, which still list it. A structural change to a document
 /// invalidates ITS indexes; this is one, made from another document's method.
 fn adopt_release(src: Value) -> Result<(), Error> {
-    /* SAFETY: the source document was cleared for editing by `prepare_insert`
+    /* SAFETY: the source document was cleared for editing by `take_incoming`
      * before anything was copied out of it. */
     let node = unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) };
     release_from_tree(node);
@@ -300,105 +286,73 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
     }
 }
 
-/// Validate that `rb_incoming` may be placed relative to `reference`, detach it
-/// from any current parent, and return the node to actually insert.
-pub fn prepare_insert<'d>(
-    reference: HtmlNodeMut<'d>,
-    rb_incoming: Value,
-) -> Result<(HtmlNodeMut<'d>, Option<Value>), Error> {
-    // SAFETY: `unwrap` checked `rb_incoming` is an HTML node, and the caller
-    // holds it, which keeps its document alive for the call.
-    let incoming = unsafe { html_node_unwrap(rb_incoming)?.as_node() };
-
-    if incoming.node_type() == TYPE_ATTRIBUTE {
-        return Err(makiri_error(
-            "an attribute node cannot be inserted into the tree",
-        ));
-    }
-    /* `incoming` must not be an inclusive ancestor of `reference`. */
-    let mut p = Some(reference.node());
-    while let Some(n) = p {
-        if n == incoming {
-            return Err(makiri_error("cannot insert a node into its own subtree"));
+/// `node.add_child(other)` and its siblings: put `rb_incoming` at `place`
+/// relative to the receiver - moved within the document, or adopted from its
+/// own - and hand back what is now in the tree: the argument, or for an adopted
+/// node its copy.
+///
+/// Every rule is checked before anything changes (see
+/// [`Insertion::check`]); after that only the adoption copy can fail, and it
+/// too runs before a link is touched.
+pub fn insert(this: &HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
+    let target = edit(this)?;
+    let incoming = arg_node(&rb_incoming)?;
+    Insertion::new(target.node(), place, incoming)
+        .and_then(|i| i.check())
+        .map_err(|e| refused(e, place))?;
+    let (node, adopted_from) = take_incoming(target, rb_incoming, incoming)?;
+    target.place(node, place);
+    match adopted_from {
+        None => Ok(rb_incoming),
+        Some(src) => {
+            adopt_release(src)?;
+            Ok(wrap_html_node(RawNode::from(node.node()), this.document))
         }
-        p = n.parent();
     }
-    let doc = RawDoc::from(reference.node().owner_document());
-    if !reference.node().same_document(incoming) {
+}
+
+/// A refused insertion, worded. The one place these messages live.
+fn refused(e: PreInsertError, place: Place) -> Error {
+    makiri_error(match e {
+        PreInsertError::NoParent if place == Place::Replace => {
+            "cannot replace a node with no parent"
+        }
+        PreInsertError::NoParent => "cannot add a sibling to a node with no parent",
+        PreInsertError::AttributeNode => "an attribute node cannot be inserted into the tree",
+        PreInsertError::OwnSubtree => "cannot insert a node into its own subtree",
+        PreInsertError::DoctypeParent => "a doctype node can only be a child of the document",
+        PreInsertError::DuplicateDoctype => "the document already has a doctype",
+        PreInsertError::DoctypeAfterElement | PreInsertError::ElementBeforeDoctype => {
+            "a doctype must precede the document element"
+        }
+    })
+}
+
+/// The node to put in the tree for `incoming`: itself, taken out of where it
+/// was, or - from another document - a copy made in `target`'s, with the
+/// original's wrapper to release once the copy is in (see [`adopt_release`]).
+fn take_incoming<'d>(
+    target: HtmlNodeMut<'d>,
+    rb_incoming: Value,
+    incoming: HtmlNode<'_>,
+) -> Result<(HtmlNodeMut<'d>, Option<Value>), Error> {
+    if !target.node().same_document(incoming) {
         /* Adopting takes the node out of the document it came from, so that
          * document changes too - refuse before anything is copied. */
         ensure_document_mutable(keepalive_document(rb_incoming)?)?;
-        let copy = adopt_copy(doc, incoming)?;
-        // SAFETY: a copy this call just made in `reference`'s document.
+        let copy = adopt_copy(RawDoc::from(target.node().owner_document()), incoming)?;
+        // SAFETY: a copy this call just made in `target`'s document.
         return Ok((
             unsafe { HtmlNodeMut::assume_mutable(copy) },
             Some(rb_incoming),
         ));
     }
-    // SAFETY: same document as `reference`, which the caller cleared.
-    let incoming = unsafe { HtmlNodeMut::assume_mutable(incoming) };
+    // SAFETY: a node of `target`'s document, which `edit` cleared.
+    let incoming = unsafe { HtmlNodeMut::assume_mutable(RawNode::from(incoming).as_node()) };
     if incoming.parent().is_some() {
         incoming.detach();
     }
     Ok((incoming, None))
-}
-
-/// Finish an insertion: for an adopted node, take it out of its old document
-/// (see [`adopt_release`]); then the value the verb hands back - its argument,
-/// or for an adopted node the copy now in the tree.
-pub fn finish_insert(
-    rb_self: Value,
-    rb_arg: Value,
-    inserted: HtmlNodeMut<'_>,
-    adopt_from: Option<Value>,
-) -> Result<Value, Error> {
-    match adopt_from {
-        None => Ok(rb_arg),
-        Some(src) => {
-            adopt_release(src)?;
-            Ok(wrap_html_node(
-                RawNode::from(inserted.node()),
-                keepalive_document(rb_self)?,
-            ))
-        }
-    }
-}
-
-/// Validate WHATWG doctype ordering before links are changed.
-pub fn guard_doc_child_order(insertion: Insertion<'_>) -> Result<(), Error> {
-    insertion.check_document_order().map_err(|e| match e {
-        DocumentChildOrderError::DoctypeParent => {
-            makiri_error("a doctype node can only be a child of the document")
-        }
-        DocumentChildOrderError::DuplicateDoctype => {
-            makiri_error("the document already has a doctype")
-        }
-        DocumentChildOrderError::DoctypeAfterElement
-        | DocumentChildOrderError::ElementBeforeDoctype => {
-            makiri_error("a doctype must precede the document element")
-        }
-    })
-}
-
-/// Insert `node` relative to `anchor`, or - when `node` is a document fragment -
-/// splice its children there in order.
-pub fn splice_or_insert<'d>(
-    mut anchor: HtmlNodeMut<'d>,
-    node: HtmlNodeMut<'d>,
-    insert: Insert,
-    advance: bool,
-) {
-    if node.node().node_type() != TYPE_FRAGMENT {
-        insert.put(anchor, node);
-        return;
-    }
-    while let Some(c) = node.first_child() {
-        c.detach();
-        insert.put(anchor, c);
-        if advance {
-            anchor = c; /* keep document order after the reference node */
-        }
-    }
 }
 
 /* ------------------------------------------------------------------ *

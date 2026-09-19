@@ -27,7 +27,7 @@ use crate::lexbor::abi::{self as lxb, LxbAttr, LxbDoc, LxbElement, LxbNode};
 mod build;
 mod mutate;
 pub use build::{BuildingElement, BuildingNode, ScratchElement};
-pub use mutate::{DocumentChildOrderError, HtmlElementMut, HtmlNodeMut, Insertion};
+pub use mutate::{HtmlElementMut, HtmlNodeMut, Insertion, Place, PreInsertError};
 
 /* A node handle is cast to an element or attribute handle, which is sound only
  * while the node sits FIRST in both. That is a claim about the absolute offset,
@@ -530,6 +530,67 @@ impl<'doc> HtmlNode<'doc> {
     /// Whether both nodes belong to the same document.
     pub fn same_document(self, other: HtmlNode<'_>) -> bool {
         self.owner_document().as_raw() == other.owner_document().as_raw()
+    }
+
+    /// Where `other` falls against `self` in document (pre-order) order, or
+    /// None when the two are not ordered: an attribute on either side (an
+    /// attribute is not in the `first_child`/`next` chain), different
+    /// documents, or detached subtrees with no common root.
+    pub fn document_order(self, other: HtmlNode<'doc>) -> Option<core::cmp::Ordering> {
+        use core::cmp::Ordering::{Equal, Greater, Less};
+        let (a, b) = (self, other);
+        if a == b {
+            return Some(Equal);
+        }
+        if a.attr().is_some() || b.attr().is_some() || !a.same_document(b) {
+            return None;
+        }
+
+        let (da, db) = (a.ancestors().count(), b.ancestors().count());
+        let (mut pa, mut pb) = (a, b);
+
+        /* Raise the deeper node to the other's depth; landing ON the other makes
+         * that other an ancestor, which comes first in pre-order. */
+        if da > db {
+            for _ in 0..(da - db) {
+                pa = pa.parent()?;
+            }
+            if pa == b {
+                return Some(Greater);
+            }
+        } else if db > da {
+            for _ in 0..(db - da) {
+                pb = pb.parent()?;
+            }
+            if pb == a {
+                return Some(Less);
+            }
+        }
+
+        /* Climb both until they share a parent (the lowest common ancestor). A
+         * missing parent on either side means different trees, or two roots. */
+        let parent = loop {
+            let (qa, qb) = (pa.parent()?, pb.parent()?);
+            if qa == qb {
+                break qa;
+            }
+            pa = qa;
+            pb = qb;
+        };
+
+        /* pa and pb are distinct siblings: earlier in the child list is first. A
+         * wide parent makes this the hot loop of a sort, so it is written out. */
+        let mut c = parent.first_child();
+        while let Some(x) = c {
+            if x == pa {
+                return Some(Less);
+            }
+            if x == pb {
+                return Some(Greater);
+            }
+            c = x.next();
+        }
+        None /* unreachable for a well-formed tree */
     }
 
     /// A processing instruction's target, or None for any other kind.

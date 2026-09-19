@@ -336,6 +336,29 @@ SCENARIOS = {
   # template fixup allocates, had no scenario. The nesting is deliberate: a
   # template inside a template makes the fixup queue a second subtree, which is
   # the allocation worth failing.
+  # inner_html= / outer_html= are all or nothing: an allocation failure part-way
+  # must leave the tree - and the text read through its index - as it was.
+  # A partial edit raises a RuntimeError here, which is not a clean raise.
+  "html_inner_html" => lambda do
+    d = Makiri::HTML::Document.parse(
+      "<html><body><div id=a><p>old</p> text</div><div id=b><p>keep</p></div></body></html>"
+    )
+    edits = [
+      [d.at_css("#a"), :inner_html=, "<i>n</i><b>e</b><u>w</u>"],
+      [d.at_css("#b p"), :outer_html=, "<s>x</s><em>y</em>"],
+    ]
+    edits.each do |node, verb, src|
+      before = [d.to_html, d.text]
+      begin
+        node.public_send(verb, src)
+      rescue *ALLOWED
+        raise "#{verb} left a partial edit" unless [d.to_html, d.text] == before
+
+        raise
+      end
+    end
+    [d.to_html, d.text].join("|")
+  end,
   "html_fragment" => lambda do
     doc = Makiri::HTML::Document.parse(<<~HTML)
       <html><body>
