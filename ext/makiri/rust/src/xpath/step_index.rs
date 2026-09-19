@@ -15,6 +15,7 @@ use super::msg::Bytes;
 use super::nodetest::{node_principal_match, Bindings};
 use crate::err_setf;
 use crate::falloc::Reserve;
+use crate::ptr_table::ptr_hash;
 use crate::token::Token;
 
 /// Is the context exactly the document node? Both index fast paths need that:

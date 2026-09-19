@@ -2,14 +2,11 @@
 
 #![forbid(unsafe_code)]
 
-use super::super::abi::*;
-use super::super::value::Text;
+use super::abi::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
+use crate::ptr_table::ptr_hash;
 use crate::token::Token;
-
-/// The pointer hash every pointer-keyed table shares, from its own module.
-pub use crate::ptr_table::ptr_hash;
 
 /// Where a string-value sits in the cache that returned it.
 ///

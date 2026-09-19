@@ -12,6 +12,7 @@ use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
 use crate::falloc::try_vec_with_capacity;
+use crate::ptr_table::ptr_hash;
 use crate::token::Token;
 
 #[derive(Clone, Copy)]

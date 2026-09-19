@@ -720,7 +720,7 @@ Key decisions that got there, worth not regressing:
   for non-indexed nodes. Do not regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
-- **String-value cache is hashed** (`xpath/runtime_abi/cache.rs`): a pointer-keyed
+- **String-value cache is hashed** (`xpath/str_cache.rs`): a pointer-keyed
   open-addressing index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
   (`xpath::eval::Evaluation`), as do the op budget and the document-order

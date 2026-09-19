@@ -18,7 +18,7 @@
 //!   dom.rs        the node-access contract, as a trait
 //!   ast.rs        the compiled AST
 //!   ast_ops.rs    the peephole and hoisting pass over a parsed one
-//!   runtime_abi.rs the per-evaluate string-value cache
+//!   str_cache.rs  the per-evaluate string-value cache
 //!   axis.rs       the thirteen axes, as orders over the tree
 //!   order.rs      document order and its per-evaluate index
 //!   value.rs      the values, string-values and coercions
@@ -54,7 +54,7 @@ pub mod ctx;
 pub mod limits;
 
 pub mod ast_ops;
-pub mod runtime_abi;
+pub mod str_cache;
 
 pub mod attr_pred;
 pub mod axis;
