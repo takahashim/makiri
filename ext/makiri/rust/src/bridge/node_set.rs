@@ -44,7 +44,7 @@ use magnus::{
 };
 
 use crate::bridge::html::wrap_html_node;
-use crate::bridge::ruby::typed_data_unprotected;
+use crate::bridge::typed::typed_data_unprotected;
 use crate::bridge::wrapper::{keepalive_document, node_raw};
 use crate::bridge::xml::wrap_xml_node;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
@@ -377,7 +377,7 @@ fn slice_of(
     beg: usize,
     len: usize,
 ) -> Result<Value, Error> {
-    let (result, r) = new_result(document)?;
+    let (result, r) = new_result(document);
     {
         let mut w = r.write()?;
         for n in &nodes[beg..beg + len] {
@@ -621,12 +621,10 @@ fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSe
 /// The reference's lifetime is unconstrained, as magnus's own `try_convert` for
 /// a wrapped type gives: the data lives as long as the Ruby object, which the
 /// returned `Value` keeps rooted on the caller's stack.
-fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
-    let set = node_set_new(document);
-    // SAFETY: built as a NodeSet by the line above, so the type is known and
-    // the conversion cannot raise. `set` is returned alongside the reference,
-    // which is what keeps it rooted for the unconstrained lifetime.
-    Ok((set, unsafe { typed_data_unprotected(set.as_raw()) }))
+fn new_result<'a>(document: Value) -> (Value, &'a NodeSet) {
+    /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
+    let (set, fill) = node_set_with_fill(document);
+    (set, fill.set)
 }
 
 /// `self | other` -> union, deduped, self first.
@@ -636,7 +634,7 @@ fn op_or(ruby: &Ruby, rb_self: &NodeSet, other: Value) -> Result<Value, Error> {
     let mine = rb_self.read()?;
     let theirs = o.read()?;
 
-    let (result, r) = new_result(document)?;
+    let (result, r) = new_result(document);
     let mut w = r.write()?;
     let mut seen = Index::empty(mine.len() + theirs.len());
     for &n in mine.as_slice().iter().chain(theirs.as_slice().iter()) {
@@ -655,7 +653,7 @@ fn op_plus(ruby: &Ruby, rb_self: &NodeSet, other: Value) -> Result<Value, Error>
     let mine = rb_self.read()?;
     let theirs = o.read()?;
 
-    let (result, r) = new_result(document)?;
+    let (result, r) = new_result(document);
     let mut w = r.write()?;
     for &n in mine.as_slice().iter().chain(theirs.as_slice().iter()) {
         w.push(n)?;
@@ -678,7 +676,7 @@ fn op_filter(
     let theirs = o.read()?;
 
     let theirs_index = Index::build(theirs.as_slice());
-    let (result, r) = new_result(document)?;
+    let (result, r) = new_result(document);
     let mut w = r.write()?;
     let mut seen = Index::empty(mine.len());
     for &n in mine.as_slice() {
@@ -725,7 +723,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         ));
     };
 
-    let (set, s) = new_result(document)?;
+    let (set, s) = new_result(document);
     let Some(list) = list.filter(|v| !v.is_nil()) else {
         return Ok(set);
     };
