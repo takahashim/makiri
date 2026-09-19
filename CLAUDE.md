@@ -154,7 +154,9 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # MAKIRI_ALLOC_INJECT=1 and fails each core alloc
                                    # site in turn - every OOM branch must fail closed
                                    # (clean raise or baseline-identical result)
-bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan (mraw-arena overflows)
+bundle exec rake "sanitize:lexbor" # also build vendored Lexbor under ASan+UBSan (mraw-arena
+                                   # overflows). LINUX ONLY: Apple clang's ASan ABI
+                                   # does not match rustc's runtime (load segfault)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.

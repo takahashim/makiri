@@ -309,6 +309,16 @@ def asan_preload_env(sanitize)
   { "LD_PRELOAD" => runtime }
 end
 
+# Lexbor's LEXBOR_BUILD_WITH_ASAN compiles with `-fsanitize=undefined,address`,
+# so an instrumented Lexbor also references `__ubsan_handle_*`. The C extension
+# got libubsan from gcc's link; rustc links nothing of the kind, so the .so fails
+# to dlopen unless the UBSan runtime is preloaded next to the ASan one.
+def ubsan_runtime_path
+  cc = RbConfig::CONFIG["CC"] || "cc"
+  path = `#{cc} -print-file-name=libubsan.so 2>/dev/null`.strip
+  path if path != "libubsan.so" && !path.empty? && File.exist?(path)
+end
+
 # The coverage-guided harnesses are a cargo-fuzz crate now (they were C files
 # under ext/makiri/fuzz driven by a Makefile). cargo-fuzz supplies libFuzzer and
 # the sanitizer itself, so the check is for the tool, not for a working clang.
@@ -488,6 +498,18 @@ task "sanitize:lexbor" do
   sanitize = ENV["MAKIRI_SANITIZE"] || "address"
   sanitize.include?("address") or
     abort "sanitize:lexbor needs an address build (MAKIRI_SANITIZE must include 'address')"
+  # Apple clang's instrumentation calls __asan_version_mismatch_check_apple_clang_*,
+  # which the runtime rustc links in does not export; under -undefined
+  # dynamic_lookup that is a NULL, so Lexbor's asan.module_ctor jumps to 0 while
+  # dyld runs initialisers. Linux (CI's nightly job) is where this task runs.
+  if RbConfig::CONFIG["target_os"] =~ /darwin/
+    abort "sanitize:lexbor: not supported on macOS - Apple clang's ASan ABI does not " \
+          "match rustc's runtime, and the extension segfaults at load. Run it on " \
+          "Linux (`gh workflow run security.yml --ref <branch>`)."
+  end
+  ubsan = ubsan_runtime_path or
+    abort "sanitize:lexbor: no UBSan runtime found for #{RbConfig::CONFIG['CC']} - " \
+          "Lexbor's ASan build is also UBSan-instrumented and needs libubsan preloaded."
 
   # MAKIRI_SANITIZE_LEXBOR makes extconf build Lexbor with -DLEXBOR_BUILD_WITH_ASAN
   # (enabling its mraw poisoning); the build-mode stamp auto-rebuilds Lexbor on the
@@ -502,7 +524,9 @@ task "sanitize:lexbor" do
     # measured to dominate - never applied here. That is how a suite which takes
     # 18s plain reached an hour under ASan without anything being wrong.
     "MAKIRI_SANITIZE" => sanitize,
+    "UBSAN_OPTIONS"   => "print_stacktrace=1:halt_on_error=1",
   }.merge(asan_preload_env(sanitize))
+  env["LD_PRELOAD"] = [env["LD_PRELOAD"], ubsan].compact.join(":")
   if ENV["FUZZ_ARGS"]
     sh(env, "#{FileUtils::RUBY} -Ilib spec/fuzz/run.rb #{ENV['FUZZ_ARGS']}")
   else
