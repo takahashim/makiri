@@ -225,6 +225,15 @@ Detailed, test-backed notes live in `spec/conformance/README.md`.
     `Nokogiri::HTML`/libxml2-HTML4 behaviour).
 * `namespace-uri()` of an HTML element returns the XHTML URI (DOM-correct, as browsers report)
   * `Nokogiri::HTML5` returns `""`.
+* Name tests fold ASCII case on HTML elements, like browsers (WPT `domxpath`)
+  * `//DiV` matches `<div>` and `//div[@Id]` its `id`; SVG / MathML names compare
+    exactly (`//*[@refX]`, not `@refx`). Only ASCII folds: `Ø` still differs from `ø`.
+    This holds in `namespace_matching: :lax` too.
+  * `Nokogiri::HTML5` is case-sensitive there.
+* A foreign element's namespace declarations are not attributes
+  * `<svg xmlns="...">` has no `@xmlns` for `//*[@xmlns]` or `@*`, as in browsers
+    and in XPath's data model. An `xmlns` on an HTML element is an ordinary
+    attribute and stays visible.
 
 ### XML
 

@@ -90,7 +90,15 @@ fn name_test_match<'a, 'd, D: Dom<'d>>(
     } else {
         doc.qualified_name(node)
     };
-    if got != want_local {
+    /* An HTML element's names, and its attributes' names, compare ASCII
+     * case-insensitively; everything else exactly. An attribute's owner is its
+     * parent, which the HTML index backfills. */
+    let owner = if is_attr {
+        doc.parent(node)
+    } else {
+        Some(node)
+    };
+    if !names_equal(doc, owner, got, want_local) {
         return false;
     }
 
@@ -114,6 +122,24 @@ fn name_test_match<'a, 'd, D: Dom<'d>>(
          * the qualified-name compare above already excluded prefixed foreign
          * attributes. */
         is_attr || !doc.is_foreign_ns(node)
+    }
+}
+
+/// A name test's name against a node's, as the node's element `owner` decides:
+/// ASCII case-insensitively for an HTML element in an HTML document (so
+/// `//DiV` finds `<div>` and `[@Id]` its `id`, while `Ø` still differs from
+/// `ø`), byte for byte otherwise. Shared with the `[@name]` fast path, which has
+/// to agree with the attribute axis node for node.
+pub fn names_equal<'d, D: Dom<'d>>(
+    doc: D,
+    owner: Option<D::Node>,
+    got: &[u8],
+    want: &[u8],
+) -> bool {
+    if owner.is_some_and(|el| doc.folds_name_case(el)) {
+        got.eq_ignore_ascii_case(want)
+    } else {
+        got == want
     }
 }
 

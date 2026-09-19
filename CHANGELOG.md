@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+* **XPath over HTML follows the browsers on name case and `xmlns`.** A name
+  test now matches an HTML element's name, and its attributes' names, ASCII
+  case-insensitively - `//DiV` finds `<div>` and `//div[@Id]` its `id` - while
+  SVG and MathML names still compare exactly (`//*[@refX]`, not `@refx`). The
+  `xmlns` / `xmlns:*` declarations on an SVG or MathML element are no longer
+  attributes to XPath, so `//*[@xmlns]` and `@*` do not see them; an `xmlns` on
+  an HTML element is still an ordinary attribute. This matches `document.evaluate`
+  in browsers and the WPT `domxpath` suite, and differs from `Nokogiri::HTML5`,
+  which compares names case-sensitively. XML documents are unaffected.
+
 ## [0.10.0.rc1] - 2026-09-19
 
 ### Changed

@@ -14,14 +14,11 @@
 # cross-realm and crash tests are out of scope (they target a browser API
 # Makiri does not mirror).
 #
-# Known intentional deviations from browser behaviour are marked `pending` with
-# a reason, so the suite records them honestly AND flags us (a pending example
-# that starts passing fails the run) if Makiri ever aligns:
-#   * HTML name/attribute tests are case-SENSITIVE in Makiri (and Nokogiri::HTML5);
-#     browsers fold ASCII case for HTML. e.g. //DiV, //*[@Id].
-#   * Makiri's XPath lexer accepts ASCII NCNames only; a non-ASCII element/
-#     attribute name in a name test raises SyntaxError (browsers accept it).
-#   * xmlns="..." is a normal attribute to Makiri; browsers hide it from XPath.
+# Makiri follows the browsers here, not Nokogiri::HTML5: name tests fold ASCII
+# case on HTML elements and their attributes (//DiV, //div[@Id]) and compare
+# exactly on SVG / MathML, and the namespace declarations the parser puts on a
+# foreign element are not attributes (//*[@xmlns] is empty). A deviation would
+# be marked `pending` with a reason; there are none now.
 
 RSpec.describe "WPT domxpath (XPath over HTML)" do
   XHTML_NS = "http://www.w3.org/1999/xhtml"
@@ -73,6 +70,11 @@ RSpec.describe "WPT domxpath (XPath over HTML)" do
       expect(doc.xpath("//path", namespace_matching: :lax).length).to eq(2)
     end
 
+    it "lax mode folds case on HTML elements and stays exact on SVG" do
+      expect(doc.xpath("//DiV", namespace_matching: :lax).length).to eq(2)
+      expect(doc.xpath("//PaTh", namespace_matching: :lax)).to be_empty
+    end
+
     it "an unknown namespace prefix is rejected" do
       expect { doc.xpath("//invalid:path") }.to raise_error(Makiri::Error)
     end
@@ -84,7 +86,6 @@ RSpec.describe "WPT domxpath (XPath over HTML)" do
     end
 
     it "HTML name tests fold ASCII case (//DiV == //div; //DØDD == //dØdd)" do
-      pending "Makiri (like Nokogiri::HTML5) is case-sensitive; browsers fold HTML case"
       expect(doc.xpath("//DiV").length).to eq(2)
       d = Makiri::HTML("<body><dØdd></dØdd></body>")
       expect(d.xpath("//DØDD").length).to eq(1)
@@ -128,24 +129,49 @@ RSpec.describe "WPT domxpath (XPath over HTML)" do
       expect(ns.evaluate("//svg:path[@xlink:href]").length).to eq(1)
     end
 
-    it "attribute matching is uniformly case-sensitive (predicate and axis)" do
-      # Exact case matches; wrong case does not - consistently across the
-      # [@attr] predicate and the attribute axis (= XPath 1.0 = Nokogiri::HTML5).
-      expect(doc.xpath("//div[@id='log']").length).to eq(1)
-      expect(doc.xpath("//div[@Id='log']")).to be_empty
-      expect(doc.xpath("//@id").length).to eq(3) # div + both svg path ids
-      expect(doc.xpath("//@Id")).to be_empty
-    end
-
     it "HTML attribute name tests fold ASCII case (//div[@Id] == //div[@id])" do
-      pending "Makiri (like Nokogiri::HTML5) is case-sensitive everywhere; browsers fold HTML case"
       expect(doc.xpath("//div[@Id='log']").length).to eq(1)
     end
 
+    it "folds case on HTML elements only, alike in the predicate and on the axis" do
+      # //*[@Id]: the div's id, not the SVG paths' - SVG attributes are exact.
+      expect(doc.xpath("//*[@Id]").map { |n| n["id"] }).to eq(["log"])
+      expect(doc.xpath("//@Id").length).to eq(1)
+      expect(doc.xpath("//@id").length).to eq(3) # div + both svg path ids
+      expect(ns.evaluate("//svg:path[@Id]")).to be_empty
+    end
+
+    it "compares an SVG attribute's mixed-case name exactly (refX)" do
+      d = Makiri::HTML('<body><svg><path id="a" refX="1"/></svg></body>')
+      expect(d.xpath("//*[@refX]").map { |n| n["id"] }).to eq(["a"])
+      expect(d.xpath("//*[@refx]")).to be_empty
+      expect(d.xpath("//*[@Refx]")).to be_empty
+    end
+
+    it "folds only ASCII in a non-ASCII attribute name" do
+      d = Makiri::HTML("<body><div id='log' nonÄsciiAttribute></div></body>")
+      expect(d.xpath("//*[@nonÄsciiattribute]").map { |n| n["id"] }).to eq(["log"])
+      expect(d.xpath("//*[@nonÄsciiAttribute]").map { |n| n["id"] }).to eq(["log"])
+      expect(d.xpath("//*[@nonäsciiattribute]")).to be_empty
+    end
+
     it "hides xmlns from attribute tests" do
-      pending "Makiri exposes xmlns as a normal attribute; browsers hide it"
       d = Makiri::HTML('<html><body><svg xmlns="x"></svg></body></html>')
       expect(d.xpath("//*[@xmlns]")).to be_empty
+    end
+
+    it "hides a foreign element's namespace declarations from the whole axis" do
+      d = Makiri::HTML(%(<body><svg xmlns="#{SVG_NS}" xmlns:xlink="http://www.w3.org/1999/xlink" ) +
+                       %(id="s"><path xlink:href="u"/></svg></body>))
+      expect(d.xpath("//*[local-name()='svg']/@*").map(&:name)).to eq(["id"])
+      expect(d.xpath("count(//@*)")).to eq(2) # the svg id and the path's xlink:href
+    end
+
+    it "keeps xmlns on an HTML element, where it is an ordinary attribute" do
+      # The parser adjusts xmlns into the XMLNS namespace in foreign content
+      # only; on <div> it is a no-namespace attribute like any other.
+      d = Makiri::HTML('<body><div xmlns="q"></div></body>')
+      expect(d.xpath("//div[@xmlns]").length).to eq(1)
     end
   end
 
