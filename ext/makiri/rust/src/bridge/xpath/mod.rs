@@ -13,6 +13,8 @@
 use core::ffi::c_void;
 
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::value::ReprValue;
 use magnus::{prelude::*, Error, Value};
 
@@ -126,10 +128,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
         if (*parsed).is_xml() {
             let xdoc = parsed_xml_doc(parsed);
             if xdoc.is_null() {
-                return Err(Error::new(
-                    EXC_ERROR.exception(),
-                    "XPath context with no document",
-                ));
+                return Err(makiri_error("XPath context with no document"));
             }
             /* The context NODE is the document node for a Document receiver,
              * else the node itself. */
@@ -157,10 +156,7 @@ pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
          * first evaluate. Each evaluate still reads the index afresh from the
          * handle, which rebuilds it after a mutation. */
         if (*parsed).dom_index().is_none() {
-            return Err(Error::new(
-                EXC_ERROR.exception(),
-                "failed to build attribute index for XPath",
-            ));
+            return Err(makiri_error("failed to build attribute index for XPath"));
         }
         let cx = crate::lexbor::xpath::context(parsed, node).map_err(|e| xpath_error(&e))?;
         Ok(Cx::Html(cx))

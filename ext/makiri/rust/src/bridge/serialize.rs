@@ -10,8 +10,9 @@
 
 use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
+use crate::bridge::ruby::makiri_error;
+
 use crate::bridge::html::html_node_unwrap;
-use crate::bridge::ruby::error_class;
 use crate::init::MOD_HTML_NODE_METHODS;
 use crate::lexbor::adapter::html::{RawNode, TYPE_FRAGMENT};
 use crate::lexbor::serialize::serialize;
@@ -43,8 +44,8 @@ fn pretty_opt(ruby: &Ruby, args: &[Value]) -> Result<bool, Error> {
 /// The node's serialization as a UTF-8 String, or `Makiri::Error` on a Lexbor
 /// status failure.
 fn render(ruby: &Ruby, node: RawNode, deep: bool, pretty: bool) -> Result<RString, Error> {
-    let buf = serialize(node, deep, pretty)
-        .ok_or_else(|| Error::new(error_class(), "HTML serialization failed"))?;
+    let buf =
+        serialize(node, deep, pretty).ok_or_else(|| makiri_error("HTML serialization failed"))?;
     // Lexbor emits UTF-8, so the String is tagged UTF-8 rather than built as
     // binary and re-tagged (which is what str_from_slice would give).
     Ok(ruby.enc_str_new(buf.as_slice(), ruby.utf8_encoding()))

@@ -28,6 +28,13 @@ pub fn error_class() -> magnus::ExceptionClass {
     crate::init::EXC_ERROR.exception()
 }
 
+/// A `Makiri::Error` carrying `msg` - the one way the extension raises its own
+/// error class, so a caller never spells the class (or finds a stale copy of
+/// the lookup) itself.
+pub fn makiri_error(msg: impl Into<std::borrow::Cow<'static, str>>) -> Error {
+    Error::new(error_class(), msg)
+}
+
 /// Is `v` an instance of the class in `klass`?
 pub fn is_kind_of(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())

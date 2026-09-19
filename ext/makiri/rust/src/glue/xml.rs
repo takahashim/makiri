@@ -25,14 +25,14 @@
 #![forbid(unsafe_code)]
 
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::{method, prelude::*, Error, RArray, RHash, RString, Ruby, Value};
 
 use crate::xml::model::{Limits as XmlLimits, NodeId};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::XPathValue;
 use crate::xpath::msg::XP_ERR_SYNTAX;
-
-use crate::bridge::ruby::error_class;
 
 /* The arena ceiling comes from `crate::xml::model` rather than being restated
  * here: that module is the XML engine's own declaration of it. */
@@ -180,15 +180,15 @@ fn register_namespaces(ruby: &Ruby, ctx: &XPathContext, rb_ns: Option<Value>) ->
         let (pv, uv) = match ruby_try_verified_text_pair(ks.as_value(), vs.as_value(), cap) {
             Ok(pair) => pair,
             Err(reason) => {
-                return Err(Error::new(
-                    error_class(),
-                    format!("invalid namespace mapping: {}", reason.to_string_lossy()),
-                ));
+                return Err(makiri_error(format!(
+                    "invalid namespace mapping: {}",
+                    reason.to_string_lossy()
+                )));
             }
         };
         let registered = ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes());
         if registered.is_err() {
-            return Err(Error::new(error_class(), "failed to register namespace"));
+            return Err(makiri_error("failed to register namespace"));
         }
     }
     Ok(())

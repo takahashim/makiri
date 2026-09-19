@@ -11,7 +11,8 @@
 
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
-use crate::bridge::ruby::error_class;
+use crate::bridge::ruby::makiri_error;
+
 use crate::bridge::xml::{
     begin_edit, import_copy, incoming_node, verified_text, verified_text_opt, with_arena_mut, wrap,
     xml_mut_check, xml_wrap_rel_value, XmlSelf,
@@ -34,7 +35,7 @@ use crate::xml::qname::split_loose_dom_name;
 pub fn remove(this: XmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
-        return Err(Error::new(error_class(), "cannot remove the document node"));
+        return Err(makiri_error("cannot remove the document node"));
     }
     let n = begin_edit(this)?;
     with_arena_mut(this.document, |d| xml_remove(d, n))?;
@@ -50,8 +51,7 @@ fn is_element(this: &XmlSelf, n: NodeId) -> bool {
 fn element_for(this: XmlSelf) -> Result<NodeId, Error> {
     let n = begin_edit(this)?;
     if !is_element(&this, n) {
-        return Err(Error::new(
-            error_class(),
+        return Err(makiri_error(
             "cannot set an attribute on a non-element node",
         ));
     }

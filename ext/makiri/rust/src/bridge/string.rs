@@ -24,6 +24,8 @@
 use core::ffi::{c_char, c_int, c_long, CStr};
 
 use magnus::encoding::Coderange;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::{AsRawValue, FromRawValue};
 /* Not magnus's: ours catches a panic before `rb_protect`'s C frame. */
 use super::ruby::protect;
@@ -39,8 +41,6 @@ use crate::cbuf::OwnedBuf;
 pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
-
-use crate::bridge::ruby::error_class;
 
 /* ---- the borrowed-text layouts ----
  *
@@ -177,7 +177,7 @@ unsafe fn borrow(s: VALUE) -> (VALUE, *const c_char, usize) {
 /// both a long slice and a short sum fail closed.
 pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Result<VALUE, Error> {
     if total > c_long::MAX as usize {
-        return Err(Error::new(error_class(), "text too large to assemble"));
+        return Err(makiri_error("text too large to assemble"));
     }
     let str = rb_sys::rb_utf8_str_new(core::ptr::null(), total as c_long);
     /* We just created it and hold the only reference, so writing through the
@@ -191,14 +191,14 @@ pub unsafe fn ruby_str_from_slices(slices: &[BorrowedText], total: usize) -> Res
         }
         if s.len() > total - off {
             /* off <= total holds, so the subtraction cannot underflow. */
-            return Err(Error::new(error_class(), "text slice length inconsistency"));
+            return Err(makiri_error("text slice length inconsistency"));
         }
         core::ptr::copy_nonoverlapping(s.as_ptr() as *const u8, dst.add(off), s.len());
         off += s.len();
     }
     if off != total {
         /* A short sum would leave the tail of the uninitialised String unwritten. */
-        return Err(Error::new(error_class(), "text slice length inconsistency"));
+        return Err(makiri_error("text slice length inconsistency"));
     }
     Ok(str)
 }
@@ -280,7 +280,7 @@ pub fn verify_text(str: Value, what: &CStr) -> Result<(), Error> {
 /// `Makiri::Error` with "<what> <problem>", the wording the C raised with.
 fn text_error(what: &CStr, problem: &str) -> Error {
     let what = what.to_string_lossy();
-    Error::new(error_class(), format!("{what} {problem}"))
+    makiri_error(format!("{what} {problem}"))
 }
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
@@ -343,7 +343,7 @@ pub unsafe fn ruby_copy_bytes(s: VALUE) -> Option<OwnedBuf> {
 pub fn ruby_string_bytes(s: Value) -> Result<OwnedBuf, Error> {
     // SAFETY: `s` is a live Ruby String.
     unsafe { ruby_copy_bytes(s.as_raw()) }
-        .ok_or_else(|| Error::new(error_class(), "out of memory reading a Ruby string"))
+        .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
 }
 
 /* ---- encoding ---- */
@@ -507,7 +507,7 @@ impl HtmlSource {
     pub fn to_owned_bytes(&self) -> Result<OwnedBuf, Error> {
         // SAFETY: the copy runs no Ruby code.
         OwnedBuf::copy_from(unsafe { self.bytes() })
-            .ok_or_else(|| Error::new(error_class(), "out of memory reading a Ruby string"))
+            .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
     }
 }
 

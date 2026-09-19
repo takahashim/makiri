@@ -35,6 +35,8 @@ use std::collections::HashSet;
 
 use crate::bridge::ruby::VALUE;
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{
     gc::Marker, method, prelude::*, DataTypeFunctions, Error, RArray, RClass, Ruby, TypedData,
@@ -52,8 +54,6 @@ use crate::limits::NODE_SET_MAX;
 
 /// Below this operand size a linear scan beats building a hash set.
 const HASH_MIN: usize = 64;
-
-use crate::bridge::ruby::error_class;
 
 /// Is `v` an instance of `klass`?
 use crate::bridge::ruby::is_kind_of;
@@ -102,7 +102,7 @@ impl PushError {
 
 impl From<PushError> for Error {
     fn from(e: PushError) -> Error {
-        Error::new(error_class(), e.message())
+        makiri_error(e.message())
     }
 }
 
@@ -223,13 +223,13 @@ impl NodeSet {
     fn read(&self) -> Result<std::cell::Ref<'_, NodeVec>, Error> {
         self.nodes
             .try_borrow()
-            .map_err(|_| Error::new(error_class(), "node set is already in use"))
+            .map_err(|_| makiri_error("node set is already in use"))
     }
 
     fn write(&self) -> Result<std::cell::RefMut<'_, NodeVec>, Error> {
         self.nodes
             .try_borrow_mut()
-            .map_err(|_| Error::new(error_class(), "node set is already in use"))
+            .map_err(|_| makiri_error("node set is already in use"))
     }
 
     fn document(&self, ruby: &Ruby) -> Value {
@@ -609,8 +609,7 @@ fn other_of<'a>(ruby: &Ruby, document: Value, other: Value) -> Result<&'a NodeSe
     }
     let o = <&NodeSet>::try_convert(other)?;
     if o.document(ruby).as_raw() != document.as_raw() {
-        return Err(Error::new(
-            error_class(),
+        return Err(makiri_error(
             "cannot combine node sets from different documents",
         ));
     }

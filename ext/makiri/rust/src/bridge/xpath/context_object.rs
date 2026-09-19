@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use magnus::gc::Marker;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::rb_sys::AsRawValue;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{method, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
@@ -23,8 +25,6 @@ use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
 use crate::xpath::limits::Budget;
 use crate::xpath::msg::XP_ERR_OOM;
-
-use crate::bridge::ruby::error_class;
 
 use super::*;
 
@@ -98,7 +98,7 @@ impl XPathCtx {
     fn cache(&self) -> Result<core::cell::RefMut<'_, AstCache>, Error> {
         self.cache
             .try_borrow_mut()
-            .map_err(|_| Error::new(error_class(), "XPath context is already in use"))
+            .map_err(|_| makiri_error("XPath context is already in use"))
     }
 }
 
@@ -109,7 +109,7 @@ fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Err
         ContextError::Evaluating => busy,
         ContextError::Failed => failed,
     };
-    Error::new(error_class(), msg)
+    makiri_error(msg)
 }
 
 /* ------------------------------------------------------------------ */
@@ -205,8 +205,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
         return Err(refused(ContextError::Evaluating, BUSY, BUSY));
     }
     if keepalive_document(rb_node)?.as_raw() != ruby.get_inner(rb_self.document).as_raw() {
-        return Err(Error::new(
-            error_class(),
+        return Err(makiri_error(
             "context node must belong to the same document",
         ));
     }
@@ -216,7 +215,7 @@ fn ctx_set_node(ruby: &Ruby, rb_self: &XPathCtx, rb_node: Value) -> Result<Value
     let raw = node_raw(rb_node)?;
     // SAFETY: a live node of this context's document.
     let token = unsafe { node_token(rb_self.ctx.token_kind(), raw) }
-        .ok_or_else(|| Error::new(error_class(), "the context has no document"))?;
+        .ok_or_else(|| makiri_error("the context has no document"))?;
     rb_self
         .ctx
         .set_context_node(token)
@@ -345,10 +344,10 @@ fn ctx_register_variable(rb_self: &XPathCtx, name: Value, value: Value) -> Resul
         {
             Ok(vv) => vv,
             Err(reason) => {
-                return Err(Error::new(
-                    error_class(),
-                    format!("invalid variable value: {}", reason.to_string_lossy()),
-                ));
+                return Err(makiri_error(format!(
+                    "invalid variable value: {}",
+                    reason.to_string_lossy()
+                )));
             }
         };
     rb_self

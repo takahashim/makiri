@@ -8,13 +8,15 @@
 #![allow(unsafe_code)]
 
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::{nil, value};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_HTML_ATTR, CLASS_HTML_CDATA_SECTION, CLASS_HTML_COMMENT,
     CLASS_HTML_DOCUMENT_FRAGMENT, CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT, CLASS_HTML_NODE,
-    CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT, EXC_ERROR,
+    CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
     check_document_child_order, DocumentChildOrderError, HtmlNode, HtmlNodeMut, RawDoc, RawNode,
@@ -70,8 +72,7 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
 /// long as the caller borrows `rb_doc`, the Document that keeps it alive.
 pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<'_>>, Error> {
     with_parsed(*rb_doc, |p| match p.dom_index() {
-        None => Err(Error::new(
-            EXC_ERROR.exception(),
+        None => Err(makiri_error(
             "could not build the attribute index (out of memory)",
         )),
         // SAFETY: an owner the live index answers is a live node of this document.
@@ -250,15 +251,26 @@ impl Insert {
     }
 }
 
-fn err(msg: &str) -> Error {
-    Error::new(EXC_ERROR.exception(), msg.to_owned())
+/// A detached copy of `src` in `doc` - `<template>` contents included - or a
+/// `Makiri::Error` naming `what` failed ("import node", "clone node"). The one
+/// copy every import, adopt and clone makes, so none can grow its own variant.
+///
+/// # Safety
+/// `doc` must be a live document and `src` a live node, both held by the
+/// caller for the call.
+pub unsafe fn import_copy(
+    doc: RawDoc,
+    src: RawNode,
+    deep: bool,
+    what: &str,
+) -> Result<RawNode, Error> {
+    import_with_fixup(doc, src, deep).ok_or_else(|| makiri_error(format!("failed to {what}")))
 }
 
 /// Copy `node` into `doc`, for a node that came from another document.
 fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error> {
     // SAFETY: `doc` is a live document and `node` its caller's live source.
-    let imp = unsafe { import_with_fixup(doc, RawNode::from(node), true) }
-        .ok_or_else(|| err("failed to import node"))?;
+    let imp = unsafe { import_copy(doc, RawNode::from(node), true, "import node") }?;
     // SAFETY: a node just imported into `doc`, which outlives this call.
     Ok(unsafe { imp.as_node() })
 }
@@ -299,13 +311,15 @@ pub fn prepare_insert<'d>(
     let incoming = unsafe { html_node_unwrap(rb_incoming)?.as_node() };
 
     if incoming.node_type() == TYPE_ATTRIBUTE {
-        return Err(err("an attribute node cannot be inserted into the tree"));
+        return Err(makiri_error(
+            "an attribute node cannot be inserted into the tree",
+        ));
     }
     /* `incoming` must not be an inclusive ancestor of `reference`. */
     let mut p = Some(reference.node());
     while let Some(n) = p {
         if n == incoming {
-            return Err(err("cannot insert a node into its own subtree"));
+            return Err(makiri_error("cannot insert a node into its own subtree"));
         }
         p = n.parent();
     }
@@ -359,12 +373,14 @@ pub fn guard_doc_child_order(
 ) -> Result<(), Error> {
     check_document_child_order(parent, before, exclude, incoming).map_err(|e| match e {
         DocumentChildOrderError::DoctypeParent => {
-            err("a doctype node can only be a child of the document")
+            makiri_error("a doctype node can only be a child of the document")
         }
-        DocumentChildOrderError::DuplicateDoctype => err("the document already has a doctype"),
+        DocumentChildOrderError::DuplicateDoctype => {
+            makiri_error("the document already has a doctype")
+        }
         DocumentChildOrderError::DoctypeAfterElement
         | DocumentChildOrderError::ElementBeforeDoctype => {
-            err("a doctype must precede the document element")
+            makiri_error("a doctype must precede the document element")
         }
     })
 }

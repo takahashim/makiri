@@ -12,11 +12,13 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
+use crate::bridge::ruby::makiri_error;
+
 use crate::bridge::html::{html_node_unwrap, wrap_html_node};
-use crate::bridge::ruby::{error_class, is_kind_of, string_of};
+use crate::bridge::ruby::{is_kind_of, string_of};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
-use crate::init::{CLASS_NODE, EXC_ERROR};
+use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{
     HtmlDoc, HtmlNode, HtmlNodeMut, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG,
     TAG_UNDEF, TYPE_ELEMENT,
@@ -28,7 +30,7 @@ use crate::lexbor::fragment::{
 
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError) -> Error {
-    Error::new(error_class(), e.message())
+    makiri_error(e.message())
 }
 
 /// The context a fragment is parsed "inside of", per the WHATWG algorithm, as
@@ -157,10 +159,7 @@ pub fn splice_fragment(
     // SAFETY: `at` is a live node the caller cleared for editing, and its
     // document is the one the children go into.
     if !unsafe { frag.import_into(at.node().owner_document_handle(), &emit) } {
-        return Err(Error::new(
-            error_class(),
-            "failed to import a fragment child",
-        ));
+        return Err(makiri_error("failed to import a fragment child"));
     }
     Ok(())
 }
@@ -185,18 +184,12 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
     let frag =
         unsafe { HtmlDoc::from_raw(doc.as_ptr() as *mut _) }.and_then(HtmlDoc::create_fragment);
     let Some(frag) = frag else {
-        return Err(Error::new(
-            error_class(),
-            "failed to create document fragment",
-        ));
+        return Err(makiri_error("failed to create document fragment"));
     };
     let frag = RawNode::from(frag);
     // SAFETY: `frag` was just made in `doc`, which nothing else is editing.
     if !unsafe { parsed.import_into(doc, &Emit::Append(frag)) } {
-        return Err(Error::new(
-            error_class(),
-            "failed to import a fragment child",
-        ));
+        return Err(makiri_error("failed to import a fragment child"));
     }
     Ok(wrap_html_node(frag, document))
 }
@@ -209,10 +202,7 @@ pub fn fragment_shell_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Html);
     // SAFETY: a static byte string; the parse copies what it needs.
     let Some(parsed) = (unsafe { parse_html(SHELL.as_ptr(), SHELL.len(), true) }) else {
-        return Err(Error::new(
-            EXC_ERROR.exception(),
-            "failed to create fragment document",
-        ));
+        return Err(makiri_error("failed to create fragment document"));
     };
     Ok(shell.install(parsed))
 }

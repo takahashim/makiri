@@ -20,6 +20,9 @@
 
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
+use crate::bridge::ruby::makiri_error;
+
+use crate::bridge::html::import_copy;
 use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::ruby::value;
 use crate::bridge::string::HtmlSource;
@@ -30,11 +33,9 @@ use crate::bridge::wrapper::{
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_check};
-use crate::init::EXC_ERROR;
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::adapter::post_parse::parse_html;
-use crate::lexbor::fragment::import_with_fixup;
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
@@ -78,10 +79,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     drop(owned);
 
     if result.is_null() {
-        return Err(Error::new(
-            EXC_ERROR.exception(),
-            "failed to parse HTML document",
-        ));
+        return Err(makiri_error("failed to parse HTML document"));
     }
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
@@ -161,9 +159,7 @@ pub fn import_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 
     let src = html_node_unwrap(node_v)?; /* Err on a non-node */
     // SAFETY: `src` is a live node; the copy is imported into `doc`.
-    let Some(imp) = (unsafe { import_with_fixup(doc, src, deep) }) else {
-        return Err(Error::new(EXC_ERROR.exception(), "failed to import node"));
-    };
+    let imp = unsafe { import_copy(doc, src, deep, "import node") }?;
     Ok(wrap_html_node(imp, rb_self))
 }
 
@@ -199,8 +195,6 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let doc = unsafe { node.as_node() }.owner_document_handle();
 
     // SAFETY: `node` belongs to `doc`, the document the copy is imported into.
-    let Some(clone) = (unsafe { import_with_fixup(doc, node, deep) }) else {
-        return Err(Error::new(EXC_ERROR.exception(), "failed to clone node"));
-    };
+    let clone = unsafe { import_copy(doc, node, deep, "clone node") }?;
     Ok(wrap_html_node(clone, document))
 }

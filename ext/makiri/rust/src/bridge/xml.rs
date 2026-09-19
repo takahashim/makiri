@@ -17,19 +17,19 @@
 #![allow(unsafe_code)]
 
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::html::html_node_unwrap;
-use crate::bridge::ruby::{check_frozen, error_class, nil, value};
+use crate::bridge::ruby::{check_frozen, nil, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{
     ensure_document_mutable, node_repr, DocKind, DocumentShell, NodeRepr,
 };
 use crate::bridge::xml_decode::xml_decode_input_value;
-use crate::init::{
-    CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR,
-};
+use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{
     CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
     CLASS_XML_DOCUMENT_TYPE, CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION,
@@ -227,7 +227,7 @@ allows a single root element, and a sibling target must have a parent)"
         MutStatus::BadNsDecl => "cannot bind a namespace prefix to the empty namespace",
         MutStatus::Internal => "internal error mutating XML (no document)",
     };
-    Err(Error::new(error_class(), msg))
+    Err(makiri_error(msg))
 }
 
 /* ------------------------------------------------------------------ */
@@ -264,10 +264,7 @@ pub fn begin_edit(this: XmlSelf) -> Result<NodeId, Error> {
 pub fn verified_text(v: Value, what: &core::ffi::CStr) -> Result<RubyText, Error> {
     let t = ruby_verified_text(v, what)?;
     if u32::try_from(t.len()).is_err() {
-        return Err(Error::new(
-            error_class(),
-            "string too long for an XML node (max 4 GiB)",
-        ));
+        return Err(makiri_error("string too long for an XML node (max 4 GiB)"));
     }
     Ok(t)
 }
@@ -297,9 +294,7 @@ fn parse_status_error(status: Status, unit: Unit) -> Error {
         ),
         /* `Ok` never reaches here (it means no failure); the rest are the
          * generic "failed to parse" bucket. */
-        Status::Ok | Status::Oom | Status::Internal => {
-            Error::new(EXC_ERROR.exception(), unit.failed())
-        }
+        Status::Ok | Status::Oom | Status::Internal => makiri_error(unit.failed()),
     }
 }
 
@@ -386,8 +381,8 @@ pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Value {
 
 /// A parsed handle owning the XML `arena`.
 fn xml_parsed(arena: Box<XmlDoc>) -> Result<Box<Parsed>, Error> {
-    let mut parsed = Parsed::new_xml()
-        .ok_or_else(|| Error::new(error_class(), "out of memory allocating XML document"))?;
+    let mut parsed =
+        Parsed::new_xml().ok_or_else(|| makiri_error("out of memory allocating XML document"))?;
     parsed.set_xml_doc(arena);
     Ok(parsed)
 }
@@ -396,7 +391,7 @@ fn xml_parsed(arena: Box<XmlDoc>) -> Result<Box<Parsed>, Error> {
 pub fn new_empty_xml_document() -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Xml);
     let arena = crate::xml::api::xml_doc_new()
-        .map_err(|_| Error::new(error_class(), "out of memory allocating XML document"))?;
+        .map_err(|_| makiri_error("out of memory allocating XML document"))?;
     Ok(shell.install(xml_parsed(arena)?))
 }
 

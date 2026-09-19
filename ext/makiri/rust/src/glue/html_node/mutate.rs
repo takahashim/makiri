@@ -11,6 +11,8 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
+use crate::bridge::ruby::makiri_error;
+
 use crate::bridge::fragment::{parse_fragment_in, splice_fragment, Place};
 use crate::bridge::html::{
     arg_node, edit, finish_insert, guard_doc_child_order, owning_doc, prepare_insert,
@@ -18,12 +20,7 @@ use crate::bridge::html::{
 };
 use crate::bridge::string::{ruby_verified_data, ruby_verified_text};
 use crate::bridge::wrapper::invalidate_indexes;
-use crate::init::EXC_ERROR;
 use crate::lexbor::adapter::html::{RawNode, TYPE_ATTRIBUTE, TYPE_ELEMENT};
-
-fn err(msg: &str) -> Error {
-    Error::new(EXC_ERROR.exception(), msg.to_owned())
-}
 
 /* ------------------------------------------------------------------ *
  * structural mutation                                                *
@@ -52,7 +49,9 @@ pub fn before(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Err
     let rb_self = this.value;
     let reference = edit(&this)?;
     let Some(parent) = reference.parent() else {
-        return Err(err("cannot add a sibling to a node with no parent"));
+        return Err(makiri_error(
+            "cannot add a sibling to a node with no parent",
+        ));
     };
     guard_doc_child_order(
         Some(parent.node()),
@@ -71,7 +70,9 @@ pub fn after(_ruby: &Ruby, this: HtmlSelf, rb_node: Value) -> Result<Value, Erro
     let rb_self = this.value;
     let reference = edit(&this)?;
     let Some(parent) = reference.parent() else {
-        return Err(err("cannot add a sibling to a node with no parent"));
+        return Err(makiri_error(
+            "cannot add a sibling to a node with no parent",
+        ));
     };
     guard_doc_child_order(
         Some(parent.node()),
@@ -90,7 +91,7 @@ pub fn remove(_ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     let node = edit(&this)?;
     if node.node().node_type() == TYPE_ATTRIBUTE {
-        return Err(err("use delete(name) to remove an attribute"));
+        return Err(makiri_error("use delete(name) to remove an attribute"));
     }
     if node.parent().is_some() {
         node.detach();
@@ -104,7 +105,7 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
     let rb_self = this.value;
     let reference = edit(&this)?;
     let Some(parent) = reference.parent() else {
-        return Err(err("cannot replace a node with no parent"));
+        return Err(makiri_error("cannot replace a node with no parent"));
     };
     guard_doc_child_order(
         Some(parent.node()),
@@ -126,12 +127,14 @@ pub fn replace(_ruby: &Ruby, this: HtmlSelf, rb_other: Value) -> Result<Value, E
 /// `element[name] = value` -> value.
 pub fn aset(_ruby: &Ruby, this: HtmlSelf, rb_name: Value, rb_value: Value) -> Result<Value, Error> {
     let Some(el) = edit(&this)?.element_mut() else {
-        return Err(err("cannot set an attribute on a non-element node"));
+        return Err(makiri_error(
+            "cannot set an attribute on a non-element node",
+        ));
     };
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let vv = ruby_verified_data(rb_value, c"attribute value")?;
     if !crate::bridge::html::set_attribute(el, &nv, &vv) {
-        return Err(err("failed to set attribute"));
+        return Err(makiri_error("failed to set attribute"));
     }
     invalidate_indexes(this.document);
     Ok(rb_value)
@@ -146,7 +149,9 @@ pub fn set_attribute_ns(
     rb_value: Value,
 ) -> Result<Value, Error> {
     let Some(el) = edit(&this)?.element_mut() else {
-        return Err(err("cannot set an attribute on a non-element node"));
+        return Err(makiri_error(
+            "cannot set an attribute on a non-element node",
+        ));
     };
     let qv = ruby_verified_text(rb_qname, c"attribute qualified name")?;
     let vv = ruby_verified_data(rb_value, c"attribute value")?;
@@ -156,7 +161,7 @@ pub fn set_attribute_ns(
         Some(ruby_verified_text(rb_ns, c"namespace")?)
     };
     if !crate::bridge::html::set_attribute_ns(el, nv.as_ref(), &qv, &vv) {
-        return Err(err("failed to set namespaced attribute"));
+        return Err(makiri_error("failed to set namespaced attribute"));
     }
     invalidate_indexes(this.document);
     Ok(rb_value)
@@ -187,11 +192,11 @@ pub fn remove_attribute_ns(
 /// `element.name = new_name` -> new_name.
 pub fn set_name(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let Some(el) = edit(&this)?.element_mut() else {
-        return Err(err("name= is only supported on elements"));
+        return Err(makiri_error("name= is only supported on elements"));
     };
     let nv = ruby_verified_text(rb_name, c"element name")?;
     if !crate::bridge::html::rename(el, &nv) {
-        return Err(err("failed to rename element"));
+        return Err(makiri_error("failed to rename element"));
     }
     invalidate_indexes(this.document);
     Ok(rb_name)
@@ -202,7 +207,7 @@ pub fn set_content(_ruby: &Ruby, this: HtmlSelf, rb_text: Value) -> Result<Value
     let node = edit(&this)?;
     let tv = ruby_verified_data(rb_text, c"node content")?;
     if !crate::bridge::html::set_text_content(node, &tv) {
-        return Err(err("failed to set node content"));
+        return Err(makiri_error("failed to set node content"));
     }
     invalidate_indexes(this.document);
     Ok(rb_text)
@@ -224,7 +229,7 @@ pub fn delete(_ruby: &Ruby, this: HtmlSelf, rb_name: Value) -> Result<Value, Err
 pub fn set_inner_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     let node = edit(&this)?;
     if node.node().node_type() != TYPE_ELEMENT {
-        return Err(err("inner_html= requires an element"));
+        return Err(makiri_error("inner_html= requires an element"));
     }
     let frag = parse_fragment_in(node.node(), rb_html)?;
 
@@ -243,7 +248,9 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
     let node = edit(&this)?;
     let parent = node.parent();
     if parent.is_none_or(|p| p.node().node_type() != TYPE_ELEMENT) {
-        return Err(err("outer_html= requires a node with a parent element"));
+        return Err(makiri_error(
+            "outer_html= requires a node with a parent element",
+        ));
     }
     let parent = parent.expect("checked just above");
     let frag = parse_fragment_in(parent.node(), rb_html)?;
@@ -261,7 +268,7 @@ pub fn set_outer_html(_ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Va
 fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
     match node {
         Some(n) => Ok(wrap_html_node(n, rb_self)),
-        None => Err(err(&format!("failed to create {what}"))),
+        None => Err(makiri_error(format!("failed to create {what}"))),
     }
 }
 

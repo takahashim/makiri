@@ -12,11 +12,13 @@
 use core::ffi::c_void;
 
 use magnus::rb_sys::AsRawValue;
+
+use crate::bridge::ruby::makiri_error;
 use magnus::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, TypedType};
-use crate::init::{CLASS_DOCUMENT, EXC_ERROR};
+use crate::init::CLASS_DOCUMENT;
 use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::model::Doc as XmlDoc;
@@ -348,9 +350,7 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
 pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
     with_parsed_known(rb_doc, |p| {
         if p.evaluating != 0 {
-            return Err(Error::new(
-                EXC_ERROR.exception(),
-                "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
+            return Err(makiri_error("cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
             ));
         }
         /* The source offsets are stamped lazily, and this is the LAST moment
