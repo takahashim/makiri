@@ -35,8 +35,8 @@ use crate::init::{
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
 use crate::token::{Kind, Token};
 use crate::xpath::ast::Ast;
-use crate::xpath::ctx::{Context, ContextError, Resolver, ResolverCall, XPathValue};
-use crate::xpath::limits::{Budget, Limits};
+use crate::xpath::ctx::{Context, ContextError, QueryContext, Resolver, ResolverCall, XPathValue};
+use crate::xpath::limits::Budget;
 use crate::xpath::msg::{
     Error as XPathError, Reported, XP_ERR_LIMIT, XP_ERR_OOM, XP_ERR_RUNTIME, XP_ERR_SYNTAX,
 };
@@ -76,10 +76,11 @@ pub fn xpath_error(err: &XPathError) -> Error {
 /// A context bound to whichever backend the receiver's document is.
 ///
 /// The glue holds one of these; the engine sees only the concrete
-/// `Context<'d, D>` inside.
+/// `Context<'d, D>` inside. Everything but the token kind is the same operation
+/// on either backend, so `Cx` derefs to [`QueryContext`] and the backend is
+/// chosen in exactly one place.
 pub enum Cx {
     /// A Lexbor document.
-    #[cfg(feature = "lexbor")]
     Html(Context<'static, crate::lexbor::xpath::HtmlDom<'static>>),
     /// A Makiri XML arena, lent for `'static` because Ruby, not a Rust borrow,
     /// keeps the document alive for as long as the context lives.
@@ -87,102 +88,30 @@ pub enum Cx {
 }
 
 impl Cx {
-    /// The limits a run under this context starts from.
-    pub fn limits(&self) -> Limits {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.limits(),
-            Cx::Xml(cx) => cx.limits(),
-        }
-    }
-
-    /// namespace_matching: :lax - the unprefixed element rule is relaxed.
-    pub fn lax(&self) -> bool {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.lax(),
-            Cx::Xml(cx) => cx.lax(),
-        }
-    }
-
-    pub fn set_lax(&mut self, lax: bool) {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.set_lax(lax),
-            Cx::Xml(cx) => cx.set_lax(lax),
-        }
-    }
-
     /// Which backend this context walks, for minting a node token.
     pub fn token_kind(&self) -> Kind {
         match self {
-            #[cfg(feature = "lexbor")]
             Cx::Html(_) => Kind::Html,
             Cx::Xml(_) => Kind::Xml,
         }
     }
+}
 
-    /// True while an evaluate is in progress on this context.
-    pub fn is_evaluating(&self) -> bool {
+impl core::ops::Deref for Cx {
+    type Target = dyn QueryContext;
+    fn deref(&self) -> &(dyn QueryContext + 'static) {
         match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.is_evaluating(),
-            Cx::Xml(cx) => cx.is_evaluating(),
+            Cx::Html(cx) => cx,
+            Cx::Xml(cx) => cx,
         }
     }
+}
 
-    /// Rebind the context node; refused while an evaluate runs.
-    pub fn set_context_node(&self, node: Token) -> Result<(), ContextError> {
+impl core::ops::DerefMut for Cx {
+    fn deref_mut(&mut self) -> &mut (dyn QueryContext + 'static) {
         match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.set_context_node(node),
-            Cx::Xml(cx) => cx.set_context_node(node),
-        }
-    }
-
-    /// Bind `prefix` to `uri`, replacing an earlier binding.
-    pub fn register_ns(&self, prefix: &[u8], uri: &[u8]) -> Result<(), ContextError> {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.register_ns(prefix, uri),
-            Cx::Xml(cx) => cx.register_ns(prefix, uri),
-        }
-    }
-
-    /// Bind the unprefixed `$name`, replacing an earlier binding.
-    pub fn register_variable(&self, name: &[u8], value: &[u8]) -> Result<(), ContextError> {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.register_variable(name, value),
-            Cx::Xml(cx) => cx.register_variable(name, value),
-        }
-    }
-
-    /// Evaluate `ast` under this context.
-    #[allow(clippy::result_large_err)]
-    pub fn evaluate(
-        &self,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, XPathError> {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.evaluate(ast, handler),
-            Cx::Xml(cx) => cx.evaluate(ast, handler),
-        }
-    }
-
-    /// [`evaluate`](Self::evaluate) through the `at_xpath` first-match fast path.
-    #[allow(clippy::result_large_err)]
-    pub fn evaluate_first(
-        &self,
-        ast: &Ast,
-        handler: Option<&dyn Resolver>,
-    ) -> Result<XPathValue, XPathError> {
-        match self {
-            #[cfg(feature = "lexbor")]
-            Cx::Html(cx) => cx.evaluate_first(ast, handler),
-            Cx::Xml(cx) => cx.evaluate_first(ast, handler),
+            Cx::Html(cx) => cx,
+            Cx::Xml(cx) => cx,
         }
     }
 }
