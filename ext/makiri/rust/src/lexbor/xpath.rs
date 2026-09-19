@@ -163,8 +163,7 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     }
     #[inline]
     fn qualified_name(self, n: HtmlNode<'d>) -> &'d [u8] {
-        // SAFETY: a live node; the reader handles every node kind.
-        unsafe { dom::qualified_name(n.as_raw()) }
+        n.qualified_name()
     }
     #[inline]
     fn attr_qualified_name(self, a: HtmlAttr<'d>) -> &'d [u8] {

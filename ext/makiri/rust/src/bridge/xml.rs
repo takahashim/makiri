@@ -205,6 +205,16 @@ pub fn xml_wrap_rel_value(this: XmlSelf, rel: NodeId) -> Value {
 }
 
 /// The exception for a non-OK mutation status; [`MutStatus::Ok`] is `Ok`.
+/// A translation's `Result` as the Ruby error [`xml_mut_check`] maps its status
+/// to. An `Err(MutStatus::Ok)` cannot be built by the translators, but is
+/// refused rather than read as success.
+pub fn xml_mut_result<T>(r: Result<T, MutStatus>) -> Result<T, Error> {
+    r.or_else(|st| {
+        xml_mut_check(st)?;
+        Err(makiri_error("XML translation failed without a status"))
+    })
+}
+
 pub fn xml_mut_check(st: MutStatus) -> Result<(), Error> {
     let msg: &str = match st {
         MutStatus::Ok => return Ok(()),
@@ -547,10 +557,10 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
             }
         }
         NodeRepr::Html => {
-            // SAFETY: the target arena, and the HTML source node.
-            xml_mut_check(unsafe {
-                cross_html_to_xml(xd, html_node_unwrap(node_v)?, deep, &mut copy)
-            })?
+            let src = html_node_unwrap(node_v)?;
+            // SAFETY: the target arena, and the HTML source node - live, and
+            // nothing restructures its document during the copy.
+            copy = xml_mut_result(unsafe { cross_html_to_xml(&mut *xd, src, deep) })?;
         }
         NodeRepr::Other => {
             return Err(Error::new(

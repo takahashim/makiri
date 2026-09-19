@@ -53,9 +53,11 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 1,
   "falloc/raw.rs" => 3,
   "init.rs" => 5,
-  "lexbor/adapter/cross_import.rs" => 16,
+  "lexbor/adapter/cross_import.rs" => 4,
   "lexbor/adapter/dom_index.rs" => 3,
-  "lexbor/adapter/html.rs" => 98,
+  "lexbor/adapter/html/build.rs" => 19,
+  "lexbor/adapter/html/mod.rs" => 55,
+  "lexbor/adapter/html/mutate.rs" => 10,
   "lexbor/adapter/post_parse.rs" => 16,
   "lexbor/adapter/source_loc.rs" => 4,
   "lexbor/adapter/text_index.rs" => 5,
@@ -66,7 +68,7 @@ UNSAFE_ISLANDS = {
   "lexbor/selectors.rs" => 13,
   "lexbor/serialize.rs" => 3,
   "lexbor/stylesheet.rs" => 9,
-  "lexbor/xpath.rs" => 8,
+  "lexbor/xpath.rs" => 7,
   "lexbor_abi.rs" => 5,
   "rust_tests.rs" => 5,
   "text.rs" => 5,
@@ -213,9 +215,9 @@ end
 # above the layer can read a Lexbor struct field through it. This is what closed
 # the `compat_mode` leak: a field read spells no `lxb_*`/`Lxb*` name, so
 # LEXBOR_ABI below cannot see it, and only the compiler can enforce this one.
-unless File.binread(File.join(RUST, "lexbor/adapter/html.rs"))
+unless File.binread(File.join(RUST, "lexbor/adapter/html/mod.rs"))
     .include?("pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc")
-  errors << "lexbor/adapter/html.rs: HtmlDoc::as_raw must stay `pub(in crate::lexbor)`"
+  errors << "lexbor/adapter/html/mod.rs: HtmlDoc::as_raw must stay `pub(in crate::lexbor)`"
 end
 
 unsafe_actual = Hash.new(0)
