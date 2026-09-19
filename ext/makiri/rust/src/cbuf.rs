@@ -268,6 +268,9 @@ fn content_limit(b: &Buf) -> usize {
 /// `BUF_ERR_INVALID` for a non-empty write with no source, `BUF_ERR_LIMIT` past
 /// the ceiling, `BUF_ERR_OOM` on overflow or allocation failure.
 ///
+/// `pub(crate)` for the Lexbor serializer callback (`lexbor::serialize`), the
+/// one caller that cannot go through [`Buf::append`]'s slice.
+///
 /// # Safety
 /// `b` must be a live buffer; `bytes` must name `n` readable bytes.
 pub(crate) unsafe fn buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> c_int {
@@ -335,7 +338,7 @@ pub(crate) unsafe fn buf_append(b: *mut Buf, bytes: *const c_void, n: usize) -> 
 ///
 /// # Safety
 /// `b` must be a live buffer.
-pub(crate) unsafe fn buf_reserve(b: *mut Buf, n: usize) -> c_int {
+unsafe fn buf_reserve(b: *mut Buf, n: usize) -> c_int {
     let b = &mut *b;
     let n = n.min(content_limit(b));
     let need_term = match n.checked_add(1) {
@@ -367,7 +370,7 @@ pub(crate) unsafe fn buf_reserve(b: *mut Buf, n: usize) -> c_int {
 ///
 /// # Safety
 /// `b` must be a live buffer; `out_len` must be NULL or writable.
-pub(crate) unsafe fn buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
+unsafe fn buf_steal(b: *mut Buf, out_len: *mut usize) -> *mut c_char {
     let b = &mut *b;
     if b.data.is_null() {
         let empty = if crate::falloc::allocation_should_fail() {
