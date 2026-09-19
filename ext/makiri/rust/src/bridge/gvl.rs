@@ -4,15 +4,37 @@
 //! forbidden from touching Ruby state - not a `Value`, not a `Ruby` handle, not
 //! anything Ruby owns. There is no way to check that, so it is the caller's
 //! contract, stated on [`without_gvl`].
+//!
+//! The other direction - proving the GVL IS held - is [`held`], which turns a
+//! `Ruby` handle into the [`Gvl`] token the process-global CSS engines ask for.
+//! `without_gvl` requires a `Send` body so no token can be carried across.
 
 #![allow(unsafe_code)]
 
 use core::ffi::c_void;
 
+use crate::gvl::Gvl;
+
+/// The GVL token for a thread that has a `Ruby` handle.
+///
+/// magnus hands out a `Ruby` only on a Ruby thread holding the GVL, and caches
+/// that answer per thread - so a handle obtained inside [`without_gvl`] would
+/// wrongly succeed. That is the body `without_gvl`'s contract already forbids
+/// touching Ruby, and its `Send` bound keeps both a `&Ruby` and a `Gvl` out of
+/// the closure's captures.
+pub fn held(_ruby: &magnus::Ruby) -> Gvl {
+    // SAFETY: a `Ruby` handle is magnus's proof that this thread holds the GVL,
+    // and the token cannot outlive the frame that has it across a release
+    // (see above).
+    unsafe { Gvl::assume() }
+}
+
 /// Run `f` with the GVL released, and return its result.
 ///
 /// # Contract
-/// `f` must touch no Ruby state and allocate no Ruby object. Its argument is
+/// `f` must touch no Ruby state and allocate no Ruby object. It must also be
+/// `Send`, which is what keeps a `Ruby` handle and a [`Gvl`] - neither is - out
+/// of it. Its argument is
 /// typically a slice copied out of Ruby before the call, as `glue::doc`'s
 /// parse does.
 ///
@@ -21,7 +43,7 @@ use core::ffi::c_void;
 /// unwinding into one aborts the process. This is the whole parser, so it is
 /// the single largest piece of Rust that runs under a callback - see
 /// [`crate::caught`].
-pub fn without_gvl<F: FnOnce() -> R, R>(f: F) -> R {
+pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> R {
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,
