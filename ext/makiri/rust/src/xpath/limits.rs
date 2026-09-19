@@ -32,7 +32,7 @@ impl Limits {
         max_steps: 256,     /* path step count */
         max_predicates: 64, /* per-step predicates */
         max_function_args: 64,
-        max_nodeset_size: 10 * 1000 * 1000, /* 10M nodes - large but bounded */
+        max_nodeset_size: crate::limits::NODE_SET_MAX,
         max_eval_ops: 50 * 1000 * 1000,     /* 50M evaluator steps */
         max_string_bytes: 64 * 1024 * 1024, /* 64 MB string-value */
         max_recursion_depth: 256,

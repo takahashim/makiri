@@ -34,9 +34,7 @@ use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
 
-fn error_class() -> magnus::ExceptionClass {
-    EXC_ERROR.exception()
-}
+use crate::bridge::ruby::error_class;
 
 fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())
@@ -83,11 +81,6 @@ impl XmlSelf {
 /// [`xml_node_unwrap`] with the node id typed.
 pub fn unwrap(v: Value) -> Result<NodeId, Error> {
     Ok(NodeId::from_token(xml_node_unwrap(v)? as usize))
-}
-
-/// The keepalive Document of an XML node. `Err(TypeError)` for an HTML node.
-pub fn node_document(v: Value) -> Result<Value, Error> {
-    xml_node_document(v)
 }
 
 /// The XML document behind a node wrapper. `Err(TypeError)` for an HTML node.
@@ -141,7 +134,7 @@ allows a single root element, and a sibling target must have a parent)"
 
 /// The arena behind a node's document.
 fn xdoc(v: Value) -> Result<*mut XmlDoc, Error> {
-    let document = node_document(v)?;
+    let document = xml_node_document(v)?;
     // SAFETY: the handle of `v`'s own Document, which `v` keeps alive.
     Ok(unsafe {
         crate::bridge::lexbor::parsed_xml_doc(crate::bridge::lexbor::doc_parsed_known(document))
@@ -532,17 +525,17 @@ unsafe fn incoming_node(
     target_doc: Value,
     arg: Value,
 ) -> Result<(NodeId, Value), Error> {
-    if !is_a(arg, &CLASS_NODE) || !is_a(node_document(arg)?, &CLASS_XML_DOCUMENT) {
+    if !is_a(arg, &CLASS_NODE) || !is_a(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
         return Err(Error::new(
             ruby.exception_type_error(),
             "expected a Makiri::XML node (NodeSet / String arguments are a later phase)",
         ));
     }
     let src = unwrap(arg)?;
-    if node_document(arg)?.as_raw() == target_doc.as_raw() {
+    if xml_node_document(arg)?.as_raw() == target_doc.as_raw() {
         return Ok((src, ruby.qnil().as_value())); /* same arena -> move */
     }
-    ensure_document_mutable(node_document(arg)?)?;
+    ensure_document_mutable(xml_node_document(arg)?)?;
     let mut copy: NodeId = NodeId::INVALID;
     let src_doc = xdoc(arg)?;
     // SAFETY: `xd` is the target arena and `src_doc` the source; they differ.

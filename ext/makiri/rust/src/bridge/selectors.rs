@@ -20,8 +20,7 @@ use crate::bridge::string::{ruby_bytes_view, verify_text, RubyBytes};
 use crate::init::{EXC_CSS_SYNTAX_ERROR, MOD_HTML_NODE_METHODS};
 use crate::lexbor::selectors::{matches_node, select_all, select_first, SelectError};
 
-/// Mirrors the engine's cap, for the same message.
-const NODE_SET_MAX: usize = 10 * 1000 * 1000;
+use crate::limits::NODE_SET_MAX;
 
 /// An engine failure as the Ruby exception it maps to.
 fn select_error(err: SelectError, selector: Value) -> Error {

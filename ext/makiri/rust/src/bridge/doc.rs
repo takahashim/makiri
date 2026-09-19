@@ -20,6 +20,7 @@
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::fragment::{build_fragment_ctx, context_kwarg, resolve_fragment_context};
+use crate::bridge::lexbor::xml_node_document;
 use crate::bridge::lexbor::{
     account_document, doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap,
     keepalive_document, new_document, node_repr, set_document_parsed, wrap_document,
@@ -27,9 +28,7 @@ use crate::bridge::lexbor::{
 };
 use crate::bridge::ruby::{typed_data_known_ref, value};
 use crate::bridge::string::HtmlSource;
-use crate::bridge::xml::{
-    node_document as xml_node_document, unwrap as xml_node_id, xml_mut_check,
-};
+use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_check};
 use crate::init::EXC_ERROR;
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::RawNode;

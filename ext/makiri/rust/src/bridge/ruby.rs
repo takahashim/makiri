@@ -20,11 +20,10 @@ use rb_sys::rb_data_type_t;
 /// method `ID` without reaching into `rb_sys` itself.
 pub use rb_sys::{ID, VALUE};
 
-/* The two conveniences every layer above shares. Defined here, in the one
- * bridge module that does not depend on `lexbor`, so that `lexbor/` can use
- * them without depending on `bridge::lexbor` (which is built on top of it). */
+/* The two conveniences every bridge and glue module shares. */
 
-/// `Makiri::Error`.
+/// `Makiri::Error` - the one definition; the modules that each kept a private
+/// copy of this now import it.
 pub fn error_class() -> magnus::ExceptionClass {
     crate::init::EXC_ERROR.exception()
 }

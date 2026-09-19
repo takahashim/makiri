@@ -49,9 +49,7 @@ use std::collections::HashMap;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::ffi::{LxbNode, LXB_STATUS_OK};
 
-/// Mirrors `NODE_SET_MAX`: every node-collecting path fails closed at the
-/// same bound.
-const NODE_SET_MAX: usize = 10 * 1000 * 1000;
+use crate::limits::NODE_SET_MAX;
 
 /// Why a selector query did not produce a result. The Ruby-facing layer maps
 /// each variant to its exception and message.

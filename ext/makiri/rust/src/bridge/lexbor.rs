@@ -466,11 +466,6 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
     RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
 }
 
-/// [`html_node_unwrap`], under the name the reader modules use.
-pub fn unwrap(v: Value) -> Result<RawNode, Error> {
-    html_node_unwrap(v)
-}
-
 fn uninitialized() -> Error {
     Error::new(
         magnus::Ruby::get()
@@ -491,7 +486,7 @@ pub struct HtmlSelf {
 
 impl magnus::TryConvert for HtmlSelf {
     fn try_convert(value: Value) -> Result<Self, Error> {
-        let raw = unwrap(value)?;
+        let raw = html_node_unwrap(value)?;
         let document = keepalive_document(value)?;
         Ok(HtmlSelf {
             value,
@@ -525,7 +520,7 @@ impl HtmlSelf {
 /// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
 pub fn arg_node(v: &Value) -> Result<HtmlNode<'_>, Error> {
     // SAFETY: `v` is a method argument, which keeps its node's document alive.
-    Ok(unsafe { unwrap(*v)?.as_node() })
+    Ok(unsafe { html_node_unwrap(*v)?.as_node() })
 }
 
 /// [`wrap_html_node`] for an optional handle: nil for None.
@@ -534,16 +529,6 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
         Some(n) => wrap_html_node(RawNode::from(n), document),
         None => nil(),
     }
-}
-
-/// Wrap a boundary handle under its Document.
-pub fn wrap(node: RawNode, document: Value) -> Value {
-    wrap_html_node(node, document)
-}
-
-/// The keepalive Document of a node, from the kind-agnostic accessor.
-pub fn node_document(v: Value) -> Result<Value, Error> {
-    keepalive_document(v)
 }
 
 /* ------------------------------------------------------------------ *
@@ -737,7 +722,7 @@ fn prepare_insert(
 ) -> Result<(HtmlNodeMut<'static>, Option<Value>), Error> {
     // SAFETY: `unwrap` checked `rb_incoming` is an HTML node, and the caller
     // holds it, which keeps its document alive for the call.
-    let incoming = unsafe { unwrap(rb_incoming)?.as_node() };
+    let incoming = unsafe { html_node_unwrap(rb_incoming)?.as_node() };
 
     if incoming.node_type() == TYPE_ATTRIBUTE {
         return Err(err("an attribute node cannot be inserted into the tree"));
@@ -784,7 +769,7 @@ fn inserted_result(
             /* SAFETY: the source document was cleared for editing by
              * `prepare_insert` before anything was copied out of it. */
             adopt_release(unsafe { HtmlNodeMut::assume_mutable(arg_node(&src)?) });
-            Ok(wrap(
+            Ok(wrap_html_node(
                 RawNode::from(inserted.node()),
                 keepalive_document(rb_self)?,
             ))
@@ -1170,7 +1155,7 @@ pub fn create_element(_ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Va
     let Some(el) = doc.create_element(unsafe { nv.bytes() }) else {
         return Err(err("failed to create element"));
     };
-    Ok(wrap(RawNode::from(el), rb_self))
+    Ok(wrap_html_node(RawNode::from(el), rb_self))
 }
 
 /// `Document#create_text_node(content)` -> Text.
@@ -1181,7 +1166,7 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
     let Some(t) = doc.create_text(unsafe { tv.bytes() }) else {
         return Err(err("failed to create text node"));
     };
-    Ok(wrap(RawNode::from(t), rb_self))
+    Ok(wrap_html_node(RawNode::from(t), rb_self))
 }
 
 /// `Document#create_comment(content)` -> Comment.
@@ -1192,7 +1177,7 @@ pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Va
     let Some(c) = doc.create_comment(unsafe { tv.bytes() }) else {
         return Err(err("failed to create comment"));
     };
-    Ok(wrap(RawNode::from(c), rb_self))
+    Ok(wrap_html_node(RawNode::from(c), rb_self))
 }
 
 /// `Document#create_processing_instruction(target, data)` -> PI.
@@ -1209,7 +1194,7 @@ pub fn create_pi(
     let Some(pi) = doc.create_pi(unsafe { tv.bytes() }, unsafe { dv.bytes() }) else {
         return Err(err("failed to create processing instruction"));
     };
-    Ok(wrap(RawNode::from(pi), rb_self))
+    Ok(wrap_html_node(RawNode::from(pi), rb_self))
 }
 
 /// `Document#create_document_type(name, public_id = "", system_id = "")`.
@@ -1252,7 +1237,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let Some(dt) = doc.create_doctype(name, pub_id, sys_id) else {
         return Err(err("failed to create doctype"));
     };
-    Ok(wrap(RawNode::from(dt), rb_self))
+    Ok(wrap_html_node(RawNode::from(dt), rb_self))
 }
 
 /// `Document#create_document_fragment` -> an EMPTY DocumentFragment.
@@ -1261,5 +1246,5 @@ pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, E
     let Some(f) = doc.create_fragment() else {
         return Err(err("failed to create document fragment"));
     };
-    Ok(wrap(RawNode::from(f), rb_self))
+    Ok(wrap_html_node(RawNode::from(f), rb_self))
 }

@@ -42,10 +42,7 @@ use crate::xpath::msg::{
 };
 use crate::xpath::value::{NodeSet, Text, Val, ValRef};
 
-/// `Makiri::Error`.
-fn error_class() -> magnus::ExceptionClass {
-    EXC_ERROR.exception()
-}
+use crate::bridge::ruby::error_class;
 
 /// Is `v` an instance of the class in `klass`?
 fn is_kind_of(v: Value, klass: &RbConst) -> bool {

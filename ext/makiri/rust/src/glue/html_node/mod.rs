@@ -71,9 +71,7 @@ pub use crate::init::CLASS_HTML_TEXT;
  * `html_node_unwrap` pair - lives in the Ruby <-> Lexbor seam
  * (`bridge::lexbor`). This module re-exports it for the readers, the mutators
  * and the rest of the glue. */
-pub use crate::bridge::lexbor::{
-    arg_node, html_node_unwrap, node_document, unwrap, wrap, wrap_html_node, wrap_node, HtmlSelf,
-};
+pub use crate::bridge::lexbor::{arg_node, html_node_unwrap, wrap_html_node, wrap_node, HtmlSelf};
 
 /* ------------------------------------------------------------------ *
  * registration                                                       *

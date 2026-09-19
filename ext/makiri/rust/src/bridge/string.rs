@@ -40,12 +40,7 @@ pub use crate::text::BorrowedText;
 
 use crate::bridge::ruby::string_of;
 
-/// `Makiri::Error`, read from the registry `Init_makiri` fills. The glue has a
-/// helper of the same name; this layer reads the constant itself rather than
-/// borrowing one from the layer above it.
-fn error_class() -> magnus::ExceptionClass {
-    crate::init::EXC_ERROR.exception()
-}
+use crate::bridge::ruby::error_class;
 
 /* ---- the borrowed-text layouts ----
  *

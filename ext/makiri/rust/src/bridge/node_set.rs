@@ -41,23 +41,15 @@ use magnus::{
 
 use crate::bridge::lexbor::{keepalive_document, node_raw, wrap_html_node, wrap_xml_node};
 use crate::bridge::ruby::typed_data_unprotected;
-use crate::init::{
-    RbConst, CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR,
-};
+use crate::init::{RbConst, CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::RawNode;
 
-/// The per-set node cap, shared with the CSS and XPath glue: every
-/// node-collecting path fails closed at the same bound instead of growing
-/// without limit.
-const NODE_SET_MAX: usize = 10 * 1000 * 1000;
+use crate::limits::NODE_SET_MAX;
 
 /// Below this operand size a linear scan beats building a hash set.
 const HASH_MIN: usize = 64;
 
-/// `Makiri::Error`.
-fn error_class() -> magnus::ExceptionClass {
-    EXC_ERROR.exception()
-}
+use crate::bridge::ruby::error_class;
 
 /// Is `v` an instance of `klass`?
 fn is_kind_of(v: Value, klass: &RbConst) -> bool {
