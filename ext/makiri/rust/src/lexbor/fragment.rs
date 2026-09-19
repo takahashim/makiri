@@ -111,45 +111,7 @@ impl FragmentError {
     }
 }
 
-/// Where [`import_fragment_children`] puts each child it imports.
-///
-/// The node used to travel as a `*mut c_void` beside a function pointer, which
-/// left nothing connecting the two: the callback cast that pointer to a node,
-/// so handing it something else was a cast away and no diagnostic. Choice and
-/// data are one value now.
-pub enum Emit {
-    /// As the last child of this node.
-    Append(RawNode),
-    /// Immediately before this node, under its parent.
-    Before(RawNode),
-}
-
-impl Emit {
-    /// # Safety
-    /// The node must be live, and the caller must be clear to change the tree
-    /// it belongs to.
-    unsafe fn put(&self, imported: RawNode) {
-        /* SAFETY: both are live nodes of one document, still being built -
-         * which is what this type's variants carry and what import just made. */
-        let Some(imported) = BuildingNode::from_raw(imported.as_ptr() as *mut LxbNode) else {
-            return;
-        };
-        match *self {
-            Emit::Append(at) => {
-                if let Some(at) = BuildingNode::from_raw(at.as_ptr() as *mut LxbNode) {
-                    at.insert_child(imported);
-                }
-            }
-            Emit::Before(at) => {
-                if let Some(at) = BuildingNode::from_raw(at.as_ptr() as *mut LxbNode) {
-                    at.insert_before(imported);
-                }
-            }
-        }
-    }
-}
-
-/// Deep-import each child of `root` into `doc` and place it per `emit`.
+/// Deep-import each child of `root` into `doc`, appending each to `into`.
 ///
 /// `false` when a child could not be copied whole. It REPORTS rather than
 /// raising, and that still matters now the C has gone: every caller owns the
@@ -157,12 +119,20 @@ impl Emit {
 /// (`lexbor::abi::TransientDoc`), and a raise from here would longjmp past its
 /// `Drop` - one leaked Lexbor document per failure. The caller raises once its
 /// own cleanup has run, with the message that suits it.
-unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, emit: &Emit) -> bool {
+unsafe fn import_fragment_children(doc: RawDoc, root: RawNode, into: RawNode) -> bool {
+    let Some(into) = BuildingNode::from_raw(into.as_ptr() as *mut LxbNode) else {
+        return false;
+    };
     let mut f = (*(root.as_ptr() as *mut LxbNode)).first_child;
     while !f.is_null() {
         let next = (*f).next; /* import does not unlink f, but be safe */
         match import_raw(doc, f, true) {
-            Some(imp) => emit.put(RawNode::from_ptr(imp.cast()).expect("imported child")),
+            Some(imp) => {
+                /* A node import just made in `doc`, not yet in any tree. */
+                if let Some(imp) = BuildingNode::from_raw(imp.cast()) {
+                    into.insert_child(imp);
+                }
+            }
             None => return false,
         }
         f = next;
@@ -209,13 +179,18 @@ impl TransientFragment {
         Ok(TransientFragment { root, _doc })
     }
 
-    /// Import every child into `doc`, placed by `emit`; `false` if one failed.
+    /// Import every child into `doc`, as the children of `into`; `false` if
+    /// one failed, with the ones before it already there.
+    ///
+    /// Always into a detached DOCUMENT_FRAGMENT, never into a live tree: a
+    /// failure part-way is then invisible, and the caller places the whole
+    /// fragment afterwards (see `bridge::fragment::stage_fragment_in`).
     ///
     /// # Safety
-    /// `doc` and the node `emit` names must be live, and the caller clear to
-    /// change that tree.
-    pub unsafe fn import_into(self, doc: RawDoc, emit: &Emit) -> bool {
-        import_fragment_children(doc, self.root, emit)
+    /// `doc` must be live, and `into` a detached fragment of `doc` that nothing
+    /// else refers to.
+    pub unsafe fn import_into(self, doc: RawDoc, into: RawNode) -> bool {
+        import_fragment_children(doc, self.root, into)
     }
 }
 

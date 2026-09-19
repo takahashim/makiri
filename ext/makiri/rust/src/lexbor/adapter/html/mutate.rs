@@ -1,28 +1,50 @@
 //! Editing a tree: the clearance types [`HtmlNodeMut`] and [`HtmlElementMut`],
-//! and the doctype-ordering rule an [`Insertion`] into a document must keep.
+//! and the rules an [`Insertion`] must keep before it is [placed](HtmlNodeMut::place).
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
 use super::*;
 
-/// Why an insertion would violate the document's required doctype ordering.
+/// Where an insertion puts its node, relative to the node it is made on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Place {
+    /// As the target's last child.
+    Child,
+    /// Just before the target.
+    Before,
+    /// Just after the target.
+    After,
+    /// In the target's place.
+    Replace,
+}
+
+/// Why an insertion is refused (WHATWG DOM "ensure pre-insertion validity",
+/// as Makiri applies it). Checked before any link changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DocumentChildOrderError {
+pub enum PreInsertError {
+    /// A sibling place, or a replace, on a node with no parent.
+    NoParent,
+    /// An attribute node cannot be a child.
+    AttributeNode,
+    /// The node is the target or one of its ancestors.
+    OwnSubtree,
     DoctypeParent,
     DuplicateDoctype,
     DoctypeAfterElement,
     ElementBeforeDoctype,
 }
 
-/// An insertion about to be made: under which parent, before which child (none
-/// for an append), replacing which child (for a replace), and what node.
+/// An insertion about to be made: `node` at `place` relative to `target`,
+/// resolved to the parent it goes under, the child it goes before (none for an
+/// append), and the child it replaces.
 ///
-/// A value rather than four arguments because the three positions are easy to
+/// A value rather than loose arguments because the three positions are easy to
 /// swap and mean different things - `before` bounds a scan, `replaces` is left
-/// out of one - and the ordering rule reads them as a unit.
+/// out of one - and the checks read them as a unit.
 #[derive(Clone, Copy)]
 pub struct Insertion<'d> {
+    target: HtmlNode<'d>,
     parent: HtmlNode<'d>,
     before: Option<HtmlNode<'d>>,
     replaces: Option<HtmlNode<'d>>,
@@ -30,35 +52,42 @@ pub struct Insertion<'d> {
 }
 
 impl<'d> Insertion<'d> {
-    /// `node` as `parent`'s new last child.
-    pub fn append(parent: HtmlNode<'d>, node: HtmlNode<'d>) -> Self {
-        Insertion {
-            parent,
-            before: None,
-            replaces: None,
-            node,
-        }
-    }
-
-    /// `node` under `parent`, immediately before `before` - or appended, when
-    /// there is no such child (an insertion after the last one).
-    pub fn before(parent: HtmlNode<'d>, before: Option<HtmlNode<'d>>, node: HtmlNode<'d>) -> Self {
-        Insertion {
+    /// `node` at `place` relative to `target`; [`PreInsertError::NoParent`]
+    /// for a place that needs `target`'s parent when it has none.
+    pub fn new(
+        target: HtmlNode<'d>,
+        place: Place,
+        node: HtmlNode<'d>,
+    ) -> Result<Self, PreInsertError> {
+        let parent = || target.parent().ok_or(PreInsertError::NoParent);
+        let (parent, before, replaces) = match place {
+            Place::Child => (target, None, None),
+            Place::Before => (parent()?, Some(target), None),
+            Place::After => (parent()?, target.next(), None),
+            Place::Replace => (parent()?, Some(target), Some(target)),
+        };
+        Ok(Insertion {
+            target,
             parent,
             before,
-            replaces: None,
+            replaces,
             node,
-        }
+        })
     }
 
-    /// `node` in place of `old`, a child of `parent`.
-    pub fn replacing(parent: HtmlNode<'d>, old: HtmlNode<'d>, node: HtmlNode<'d>) -> Self {
-        Insertion {
-            parent,
-            before: Some(old),
-            replaces: Some(old),
-            node,
+    /// Every rule the insertion must keep: the doctype ordering, then that the
+    /// node can be a child at all and is not the target or its ancestor.
+    pub fn check(&self) -> Result<(), PreInsertError> {
+        self.check_document_order()?;
+        if self.node.node_type() == TYPE_ATTRIBUTE {
+            return Err(PreInsertError::AttributeNode);
         }
+        /* The target itself counts: a node placed relative to itself would be
+         * detached from the very position it is placed at. */
+        if core::iter::successors(Some(self.target), |n| n.parent()).any(|n| n == self.node) {
+            return Err(PreInsertError::OwnSubtree);
+        }
+        Ok(())
     }
 
     /// Whether `n` is a child that stays where it is: not the one being
@@ -70,14 +99,14 @@ impl<'d> Insertion<'d> {
 
     /// The document's doctype/element ordering, checked before any link changes
     /// (WHATWG DOM "ensure pre-insertion validity", the doctype half).
-    pub fn check_document_order(&self) -> Result<(), DocumentChildOrderError> {
+    fn check_document_order(&self) -> Result<(), PreInsertError> {
         let siblings_from =
             |start: Option<HtmlNode<'d>>| core::iter::successors(start, |n| n.next());
         let at_document = self.parent.node_type() == TYPE_DOCUMENT;
 
         if self.node.node_type() == TYPE_DOCTYPE {
             if !at_document {
-                return Err(DocumentChildOrderError::DoctypeParent);
+                return Err(PreInsertError::DoctypeParent);
             }
             /* At most one doctype ANYWHERE among the children. This scans the
              * whole list on purpose: stopping at `before` would let a node ahead
@@ -86,7 +115,7 @@ impl<'d> Insertion<'d> {
             if siblings_from(self.parent.first_child())
                 .any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
             {
-                return Err(DocumentChildOrderError::DuplicateDoctype);
+                return Err(PreInsertError::DuplicateDoctype);
             }
             /* No element before the insertion point. The scan stops AT `before`
              * before anything is excluded - on a replace `before` is also the
@@ -95,7 +124,7 @@ impl<'d> Insertion<'d> {
                 .take_while(|n| Some(*n) != self.before)
                 .any(|n| self.stays(n) && n.node_type() == TYPE_ELEMENT)
             {
-                return Err(DocumentChildOrderError::DoctypeAfterElement);
+                return Err(PreInsertError::DoctypeAfterElement);
             }
             return Ok(());
         }
@@ -111,7 +140,7 @@ impl<'d> Insertion<'d> {
             && contributes_element(self.node)
             && siblings_from(self.before).any(|n| self.stays(n) && n.node_type() == TYPE_DOCTYPE)
         {
-            return Err(DocumentChildOrderError::ElementBeforeDoctype);
+            return Err(PreInsertError::ElementBeforeDoctype);
         }
         Ok(())
     }
@@ -215,6 +244,33 @@ impl<'doc> HtmlNodeMut<'doc> {
     pub fn insert_after(self, node: HtmlNodeMut<'doc>) {
         // SAFETY: as above.
         unsafe { lxb::lxb_dom_node_insert_after(self.as_raw(), node.as_raw()) };
+    }
+
+    /// Put `node` at `place` relative to `self`, after an [`Insertion`] of the
+    /// two has checked. A DOCUMENT_FRAGMENT contributes its CHILDREN, in order,
+    /// and is left empty, as the DOM's insertion does; a replace then takes
+    /// `self` out.
+    pub fn place(self, node: HtmlNodeMut<'doc>, place: Place) {
+        let mut after = self;
+        let mut put = |c: HtmlNodeMut<'doc>| match place {
+            Place::Child => self.insert_child(c),
+            Place::Before | Place::Replace => self.insert_before(c),
+            Place::After => {
+                after.insert_after(c);
+                after = c; /* the next one goes after this one */
+            }
+        };
+        if node.node().node_type() == TYPE_FRAGMENT {
+            while let Some(c) = node.first_child() {
+                c.detach();
+                put(c);
+            }
+        } else {
+            put(node);
+        }
+        if place == Place::Replace {
+            self.detach();
+        }
     }
 }
 

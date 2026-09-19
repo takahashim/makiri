@@ -54,27 +54,6 @@ fn qname_prefix(q: &[u8], local_len: usize) -> Option<&[u8]> {
     (q.len() > local_len + 1).then(|| &q[..q.len() - local_len - 1])
 }
 
-/// A node's namespace URI as a String, or nil. The one place an lxb ns-id
-/// becomes a Ruby URI.
-fn ns_uri_str(ruby: &Ruby, node: HtmlNode<'_>) -> Value {
-    node.ns_uri().map_or_else(|| nil(ruby), dom_str)
-}
-
-/// The fixed namespaces the HTML parser assigns to foreign-content attributes by
-/// prefix (the "adjust foreign attributes" step).
-///
-/// Lexbor tags an attribute node with its ELEMENT's ns rather than the
-/// attribute's own, so a parsed attribute's namespaceURI is resolved from its
-/// prefix here rather than from `node.ns`.
-fn attr_ns_for_prefix(p: &[u8]) -> Option<&'static str> {
-    match p {
-        b"xlink" => Some("http://www.w3.org/1999/xlink"),
-        b"xml" => Some("http://www.w3.org/XML/1998/namespace"),
-        b"xmlns" => Some("http://www.w3.org/2000/xmlns/"),
-        _ => None,
-    }
-}
-
 /* ------------------------------------------------------------------ *
  * name / type / content                                              *
  * ------------------------------------------------------------------ */
@@ -84,11 +63,8 @@ fn attr_ns_for_prefix(p: &[u8]) -> Option<&'static str> {
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
 pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let node = this.node();
-    if let Some(el) = node.element() {
-        return dom_str(el.qualified_name());
-    }
-    if let Some(at) = node.attr() {
-        return dom_str(at.qualified_name());
+    if let Some((q, _)) = qname(node) {
+        return dom_str(q);
     }
     match node.node_type() {
         ty::TEXT => ruby.str_new("text").as_value(),
@@ -103,22 +79,15 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
 pub fn local_name(ruby: &Ruby, this: super::HtmlSelf) -> Value {
+    /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
+     * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
     let node = this.node();
-    if let Some(el) = node.element() {
-        return dom_str(el.local_name());
-    }
-    let Some(at) = node.attr() else {
-        return nil(ruby);
+    let local = match (node.element(), node.attr()) {
+        (Some(el), _) => el.dom_local_name(),
+        (None, Some(at)) => at.dom_local_name(),
+        (None, None) => return nil(ruby),
     };
-    /* The case-PRESERVED local name is the suffix of the qualified name;
-     * Lexbor's stored local_name is lower-cased even when the qualified name
-     * keeps its case (set_attribute_ns is case-sensitive). */
-    let (q, local) = (at.qualified_name(), at.local_name());
-    if q.len() >= local.len() {
-        dom_str(&q[q.len() - local.len()..])
-    } else {
-        dom_str(local)
-    }
+    dom_str(local)
 }
 
 /// `#prefix` (DOM `prefix`): nil unless the qualified name is `prefix:local` -
@@ -137,37 +106,19 @@ pub fn prefix(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 /// this is what browsers' DOM and `namespace-uri()` return). SVG/MathML elements
 /// get their own URI; nil only when truly unnamespaced.
 ///
-/// Attribute: nil for an unprefixed attribute; for a prefixed one, the
-/// parser-assigned foreign-content namespace keyed on the prefix.
+/// Attribute: its OWN namespace (`HtmlAttr::own_ns_uri`) - the xlink one for a
+/// parsed `xlink:href` in SVG, nil for an ordinary attribute - which is also
+/// what XPath's `namespace-uri()` answers.
 ///
 /// Other kinds: nil.
 pub fn namespace_uri(ruby: &Ruby, this: super::HtmlSelf) -> Value {
     let node = this.node();
-    if node.element().is_some() {
-        return ns_uri_str(ruby, node);
-    }
-    let Some(at) = node.attr() else {
-        return nil(ruby);
+    let uri = match (node.element(), node.attr()) {
+        (Some(_), _) => node.ns_uri(),
+        (None, Some(at)) => at.own_ns_uri(),
+        (None, None) => None,
     };
-
-    /* An attribute set via set_attribute_ns records its OWN namespace on the
-     * attr node - distinguishable because it differs from the owner element's
-     * ns, which a parsed or normally-set attribute inherits. LXB_NS__UNDEF, set
-     * by set_attribute_ns(nil, ...), is the null namespace and has no URI. */
-    if at
-        .owner()
-        .is_some_and(|owner| owner.node().ns_id() != node.ns_id())
-    {
-        return ns_uri_str(ruby, node);
-    }
-
-    match qname(node).and_then(|(q, local)| qname_prefix(q, local.len())) {
-        None => nil(ruby),
-        Some(p) => match attr_ns_for_prefix(p) {
-            Some(uri) => ruby.str_new(uri).as_value(),
-            None => nil(ruby),
-        },
-    }
+    uri.map_or_else(|| nil(ruby), dom_str)
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name, uppercased for an
@@ -417,6 +368,9 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Value,
     };
     let nv = ruby_verified_text(rb_name, c"attribute name")?;
     let name = nv.as_verified().as_bytes();
+    /* Asked first because the value alone cannot tell: Lexbor answers NULL
+     * both for an absent attribute and for a present one with no value
+     * (`<input disabled>`), and only the second is `""`. */
     if !el.has_attribute(name) {
         return Ok(nil(ruby));
     }
@@ -556,15 +510,11 @@ pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
 
 /// `#<=>`: document (pre-order) position, so an array of nodes can be sorted.
 ///
-/// nil when the nodes are not comparable: a non-node, an XML node, different
-/// documents or detached subtrees with no common root, or an attribute node -
-/// attributes are not in the `first_child`/`next` chain, so their order is not
-/// defined here. Included via Comparable, which supplies `<`, `>`, `between?`
-/// and the rest.
+/// nil when the nodes are not comparable: a non-node, an XML node, or any pair
+/// `HtmlNode::document_order` does not order (different documents, detached
+/// subtrees with no common root, an attribute node). Included via Comparable,
+/// which supplies `<`, `>`, `between?` and the rest.
 pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Value, Error> {
-    let nil = nil(ruby);
-    let int = |i: i64| ruby.integer_from_i64(i).as_value();
-
     /* A non-node, or an XML node - never order-comparable to an HTML one, and
      * asking is how we avoid arg_node's TypeError below. */
     let comparable = is_kind_of(other, &CLASS_NODE)
@@ -573,65 +523,10 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
             &CLASS_XML_DOCUMENT,
         );
     if !comparable {
-        return Ok(nil);
+        return Ok(nil(ruby));
     }
-
-    let a = this.node();
-    let b = arg_node(&other)?;
-    if a == b {
-        return Ok(int(0));
-    }
-    if a.attr().is_some() || b.attr().is_some() || !a.same_document(b) {
-        return Ok(nil);
-    }
-
-    let (da, db) = (a.ancestors().count(), b.ancestors().count());
-    let (mut pa, mut pb) = (a, b);
-
-    /* Raise the deeper node to the other's depth; landing ON the other makes
-     * that other an ancestor, which comes first in pre-order. */
-    if da > db {
-        for _ in 0..(da - db) {
-            let Some(p) = pa.parent() else { return Ok(nil) };
-            pa = p;
-        }
-        if pa == b {
-            return Ok(int(1));
-        }
-    } else if db > da {
-        for _ in 0..(db - da) {
-            let Some(p) = pb.parent() else { return Ok(nil) };
-            pb = p;
-        }
-        if pb == a {
-            return Ok(int(-1));
-        }
-    }
-
-    /* Climb both until they share a parent (the lowest common ancestor). A
-     * missing parent on either side means different trees, or two roots. */
-    let parent = loop {
-        let (Some(qa), Some(qb)) = (pa.parent(), pb.parent()) else {
-            return Ok(nil);
-        };
-        if qa == qb {
-            break qa;
-        }
-        pa = qa;
-        pb = qb;
-    };
-
-    /* pa and pb are distinct siblings: earlier in the child list is first. A
-     * wide parent makes this the hot loop of a sort, so it is written out. */
-    let mut c = parent.first_child();
-    while let Some(x) = c {
-        if x == pa {
-            return Ok(int(-1));
-        }
-        if x == pb {
-            return Ok(int(1));
-        }
-        c = x.next();
-    }
-    Ok(nil) /* unreachable for a well-formed tree */
+    Ok(match this.node().document_order(arg_node(&other)?) {
+        Some(order) => ruby.integer_from_i64(order as i64).as_value(),
+        None => nil(ruby),
+    })
 }

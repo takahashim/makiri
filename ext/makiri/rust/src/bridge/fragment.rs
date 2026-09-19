@@ -24,9 +24,7 @@ use crate::lexbor::adapter::html::{
     TAG_SVG, TAG_UNDEF, TYPE_ELEMENT,
 };
 use crate::lexbor::adapter::post_parse::parse_html;
-use crate::lexbor::fragment::{
-    tag_id_by_name, Emit, FragmentContext, FragmentError, TransientFragment,
-};
+use crate::lexbor::fragment::{tag_id_by_name, FragmentContext, FragmentError, TransientFragment};
 
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError) -> Error {
@@ -127,41 +125,36 @@ fn parse(rb_html: Value, context: &FragmentContext) -> Result<TransientFragment,
         .map_err(fragment_error)
 }
 
-/// Parse `rb_html` in the context of the element `context`, for
-/// `inner_html=` / `outer_html=`; splice it in with [`splice_fragment`].
-pub fn parse_fragment_in(
-    context: HtmlNode<'_>,
+/// Parse `rb_html` in the context of the element `context`, for `inner_html=`
+/// and `outer_html=`, and import the result into a fresh DOCUMENT_FRAGMENT of
+/// `context`'s document - detached, so the tree is still as it was.
+///
+/// That is what makes those two all-or-nothing. The import copies node by node
+/// and can fail part-way; into the tree, that left the old content gone and the
+/// new half in. Staged, a failure changes nothing a reader can see (the
+/// abandoned fragment stays in the arena, which reclaims it with the document),
+/// and what comes back is put in place with `HtmlNodeMut::place`, which only
+/// relinks and cannot fail.
+pub fn stage_fragment_in<'d>(
+    context: HtmlNodeMut<'d>,
     rb_html: Value,
-) -> Result<TransientFragment, Error> {
-    parse(rb_html, &FragmentContext::Element(RawNode::from(context)))
-}
-
-/// Where [`splice_fragment`] puts the fragment's children.
-#[derive(Clone, Copy)]
-pub enum Place {
-    /// As the last children of the node.
-    Append,
-    /// Just before the node, under its parent.
-    Before,
-}
-
-/// Import `frag`'s children into `at`'s document, placed by `place`.
-pub fn splice_fragment(
-    frag: TransientFragment,
-    at: HtmlNodeMut<'_>,
-    place: Place,
-) -> Result<(), Error> {
-    let node = RawNode::from(at.node());
-    let emit = match place {
-        Place::Append => Emit::Append(node),
-        Place::Before => Emit::Before(node),
+) -> Result<HtmlNodeMut<'d>, Error> {
+    let parsed = parse(
+        rb_html,
+        &FragmentContext::Element(RawNode::from(context.node())),
+    )?;
+    let doc = context.node().owner_document();
+    let Some(staged) = doc.create_fragment().map(RawNode::from) else {
+        return Err(makiri_error("failed to create document fragment"));
     };
-    // SAFETY: `at` is a live node the caller cleared for editing, and its
-    // document is the one the children go into.
-    if !unsafe { frag.import_into(RawDoc::from(at.node().owner_document()), &emit) } {
+    // SAFETY: `staged` was just made in `doc`, detached, and nothing else
+    // refers to it.
+    if !unsafe { parsed.import_into(RawDoc::from(doc), staged) } {
         return Err(makiri_error("failed to import a fragment child"));
     }
-    Ok(())
+    // SAFETY: a node of `context`'s document, which the caller cleared for
+    // editing.
+    Ok(unsafe { HtmlNodeMut::assume_mutable(staged.as_node()) })
 }
 
 /// A DOCUMENT_FRAGMENT owned by `document`, holding `rb_html` parsed in the
@@ -188,7 +181,7 @@ pub fn build_fragment(document: Value, rb_html: Value, at: FragmentTag) -> Resul
     };
     let frag = RawNode::from(frag);
     // SAFETY: `frag` was just made in `doc`, which nothing else is editing.
-    if !unsafe { parsed.import_into(doc, &Emit::Append(frag)) } {
+    if !unsafe { parsed.import_into(doc, frag) } {
         return Err(makiri_error("failed to import a fragment child"));
     }
     Ok(wrap_html_node(frag, document))

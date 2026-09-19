@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+* **XML nodes have the HTML node readers that share a meaning:**
+  `#first_element_child`, `#next_element`, `#previous_element`, `#elements`,
+  `#keys`, `#values`, `#tag_name`, `#target`, and the aliases `#attr`,
+  `#get_attribute`, `#node_name`, `#node_name=` and `#type`.
+
 ### Changed
+
+* **`Makiri::XML::Namespace` is a `Data` value object** (frozen, equal by
+  `prefix` and `href`), defined in Ruby. `#to_s` is still the URI.
+
+* **An XML node's `#value` is its text content**, except an attribute's, which is
+  its value - what the HTML `#value` answers. It was the node's raw value field,
+  so an element answered `""` and a DOCTYPE its SYSTEM id.
 
 * **XPath over HTML follows the browsers on name case and `xmlns`.** A name
   test now matches an HTML element's name, and its attributes' names, ASCII
@@ -31,6 +45,19 @@
   longer be serialized.
 
 ### Fixed
+
+* **`Makiri::XML::DocumentType#prefix` is nil.** It answered the PUBLIC id.
+
+* **`Makiri::XML` `#last_element_child` returns an element.** It returned the
+  last child of any kind - a comment or a text node, say.
+
+* **`Element#local_name` keeps the DOM's case for SVG and MathML names** -
+  `foreignObject`, not `foreignobject` - as `local-name()` does.
+
+* **`inner_html=` and `outer_html=` are all or nothing.** An allocation failure
+  part-way through importing the new content could leave the old content gone
+  and the new half in; the content is now imported in full before anything is
+  swapped.
 
 * **XPath over HTML gives an attribute its own namespace.** `namespace-uri()`
   of an attribute returned its element's namespace - the XHTML URI for `id` on

@@ -19,19 +19,6 @@ type Ns = Span;
 
 const NO_NS: Ns = Span::EMPTY;
 
-fn put_node(out: &mut NodeId, result: Result<NodeId, MutStatus>) -> MutStatus {
-    match result {
-        Ok(node) => {
-            *out = node;
-            MutStatus::Ok
-        }
-        Err(status) => {
-            *out = NodeId::INVALID;
-            status
-        }
-    }
-}
-
 /// Copy a node's span out of the arena before taking `&mut doc`. `to_vec` would
 /// abort on OOM; this path must fail closed instead, like every other
 /// allocation here.
@@ -64,9 +51,8 @@ pub fn xml_set_attribute(
     el: NodeId,
     name: &[u8],
     val: &[u8],
-    out: &mut NodeId,
-) -> MutStatus {
-    put_node(out, set_attribute(doc, el, name, val))
+) -> Result<NodeId, MutStatus> {
+    set_attribute(doc, el, name, val)
 }
 
 pub fn xml_remove_attribute(doc: &mut Document, el: NodeId, name: &[u8]) -> bool {
@@ -79,9 +65,8 @@ pub fn xml_set_attribute_ns(
     ns: &[u8],
     name: &[u8],
     val: &[u8],
-    out: &mut NodeId,
-) -> MutStatus {
-    put_node(out, set_attribute_ns(doc, el, ns, name, val))
+) -> Result<NodeId, MutStatus> {
+    set_attribute_ns(doc, el, ns, name, val)
 }
 
 pub fn xml_remove_attribute_ns(doc: &mut Document, el: NodeId, ns: &[u8], local: &[u8]) -> bool {
@@ -92,8 +77,8 @@ pub fn xml_set_content(doc: &mut Document, node: NodeId, text: &[u8]) -> MutStat
     set_content(doc, node, text)
 }
 
-pub fn xml_new_element(doc: &mut Document, name: &[u8], out: &mut NodeId) -> MutStatus {
-    put_node(out, new_element(doc, name))
+pub fn xml_new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus> {
+    new_element(doc, name)
 }
 
 pub fn xml_new_loose_dom_element(
@@ -101,9 +86,8 @@ pub fn xml_new_loose_dom_element(
     name: &[u8],
     sp: Split,
     ns: &[u8],
-    out: &mut NodeId,
-) -> MutStatus {
-    put_node(out, new_loose_dom_element(doc, name, sp, ns))
+) -> Result<NodeId, MutStatus> {
+    new_loose_dom_element(doc, name, sp, ns)
 }
 
 pub fn xml_new_document_type(
@@ -111,35 +95,32 @@ pub fn xml_new_document_type(
     name: &[u8],
     pub_id: Option<&[u8]>,
     sys_id: Option<&[u8]>,
-    out: &mut NodeId,
-) -> MutStatus {
-    put_node(out, new_document_type(doc, name, pub_id, sys_id))
+) -> Result<NodeId, MutStatus> {
+    new_document_type(doc, name, pub_id, sys_id)
 }
 
 pub fn xml_new_chardata(
     doc: &mut Document,
     type_: NodeType,
     text: &[u8],
-    out: &mut NodeId,
-) -> MutStatus {
-    put_node(out, new_chardata(doc, type_, text))
+) -> Result<NodeId, MutStatus> {
+    new_chardata(doc, type_, text)
 }
 
-pub fn xml_new_pi(doc: &mut Document, target: &[u8], data: &[u8], out: &mut NodeId) -> MutStatus {
-    put_node(out, new_pi(doc, target, data))
+pub fn xml_new_pi(doc: &mut Document, target: &[u8], data: &[u8]) -> Result<NodeId, MutStatus> {
+    new_pi(doc, target, data)
 }
 
 pub fn xml_import_subtree(
     doc: &mut Document,
     src_doc: &Document,
     src: NodeId,
-    out: &mut NodeId,
-) -> MutStatus {
+) -> Result<NodeId, MutStatus> {
     debug_assert!(
         !core::ptr::eq(doc as *const Document, src_doc as *const Document),
         "same-document import must use clone_node, not the cross-document copy"
     );
-    put_node(out, import_subtree(doc, src_doc, src))
+    import_subtree(doc, src_doc, src)
 }
 
 pub fn xml_copy_node(
@@ -147,17 +128,16 @@ pub fn xml_copy_node(
     src_doc: &Document,
     src: NodeId,
     deep: bool,
-    out: &mut NodeId,
-) -> MutStatus {
+) -> Result<NodeId, MutStatus> {
     debug_assert!(
         !core::ptr::eq(doc as *const Document, src_doc as *const Document),
         "same-document import must use clone_node, not the cross-document copy"
     );
-    put_node(out, copy_node_from(doc, src_doc, src, deep))
+    copy_node_from(doc, src_doc, src, deep)
 }
 
-pub fn xml_clone_node(doc: &mut Document, src: NodeId, deep: bool, out: &mut NodeId) -> MutStatus {
-    put_node(out, clone_node(doc, src, deep))
+pub fn xml_clone_node(doc: &mut Document, src: NodeId, deep: bool) -> Result<NodeId, MutStatus> {
+    clone_node(doc, src, deep)
 }
 
 pub fn xml_insert_child(doc: &mut Document, parent: NodeId, node: NodeId) -> MutStatus {

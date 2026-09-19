@@ -186,6 +186,35 @@ impl Document {
         self.try_node(id).map_or(&[], |n| self.span(n.value))
     }
 
+    /* ---- names and ids, by node kind ----
+     *
+     * A DOCTYPE repurposes the name fields - `prefix` holds its PUBLIC id and
+     * `value` its SYSTEM id - so a reader that takes those without asking the
+     * kind reads an id as a name. These two answer by kind; the raw accessors
+     * above are for code that has already established it. */
+
+    /// An element's or attribute's naming, or None for any other kind.
+    pub fn name_parts(&self, id: NodeId) -> Option<NameParts<'_>> {
+        let n = self.try_node(id)?;
+        let present = |s: Span| (s.len != 0).then(|| self.span(s));
+        matches!(n.type_, NodeType::Element | NodeType::Attribute).then(|| NameParts {
+            qname: self.span(n.qname),
+            local: self.span(n.local),
+            prefix: present(n.prefix),
+            ns_uri: present(n.ns_uri),
+        })
+    }
+
+    /// A DOCTYPE's PUBLIC and SYSTEM ids, or None for any other kind.
+    pub fn doctype_ids(&self, id: NodeId) -> Option<DoctypeIds<'_>> {
+        let n = self.try_node(id)?;
+        let written = |s: Span| (!s.is_absent()).then(|| self.span(s));
+        (n.type_ == NodeType::Doctype).then(|| DoctypeIds {
+            public: written(n.prefix),
+            system: written(n.value),
+        })
+    }
+
     /// Copy `src` into the byte store, returning its span. Empty is the shared
     /// empty span (never an allocation).
     pub fn store(&mut self, src: &[u8]) -> Result<Span, Status> {
@@ -616,4 +645,23 @@ impl Document {
 #[inline]
 pub fn span_is_empty(s: Span) -> bool {
     s.len == 0
+}
+
+/// How an element or attribute is named: [`Document::name_parts`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NameParts<'a> {
+    pub qname: &'a [u8],
+    pub local: &'a [u8],
+    /// None when unprefixed.
+    pub prefix: Option<&'a [u8]>,
+    /// None when in no namespace.
+    pub ns_uri: Option<&'a [u8]>,
+}
+
+/// A DOCTYPE's identifiers: [`Document::doctype_ids`]. An omitted id is None;
+/// one written as `""` is `Some(b"")`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoctypeIds<'a> {
+    pub public: Option<&'a [u8]>,
+    pub system: Option<&'a [u8]>,
 }

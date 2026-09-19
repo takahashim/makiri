@@ -1,34 +1,57 @@
 //! The XML node's readers: name, namespace, DTD identifiers, content,
-//! navigation and attributes (glue/ruby_xml_node.c, first third).
+//! navigation and attributes.
 //!
 //! A node is an index-arena `NodeId`, so every reader resolves through its
 //! Document. XML nodes never inherit the Lexbor HTML readers - those live on
-//! `Makiri::HTML::NodeMethods` - so this surface is structural.
+//! `Makiri::HTML::NodeMethods` - so the method names here follow that module's,
+//! one for one, where the two representations share a meaning.
 //!
-//! The arena is reached through `XmlSelf::doc_ref` (the Ruby <-> Lexbor seam)
-//! and the NodeSet through its safe fill handle, so every read below is safe;
-//! the attribute-name lookups that need a Ruby string's bytes live in
-//! `bridge::xml::find_attribute`.
+//! A node's naming and a DOCTYPE's ids are read by kind, through
+//! `Document::name_parts` / `doctype_ids`: the arena stores a DOCTYPE's ids in
+//! the name fields, and only those two know it.
+//!
+//! The arena is reached through `XmlSelf::doc_ref` and the NodeSet through its
+//! safe fill handle, so every read below is safe; the attribute-name lookups
+//! that need a Ruby string's bytes live in `bridge::xml::find_attribute`.
 
 #![forbid(unsafe_code)]
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use super::abi::*;
+use super::strings::{str_field, utf8};
+use super::{wrap, XmlSelf};
+use crate::bridge::node_set::node_set_with_fill;
+use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
-/// Wrap an optional reached node under `rb_self`'s Document (invalid -> nil).
-fn wrap_rel(this: super::XmlSelf, rel: Option<NodeId>) -> Value {
-    super::wrap(rel.unwrap_or(NodeId::INVALID), this.document)
+fn nil(ruby: &Ruby) -> Value {
+    ruby.qnil().as_value()
+}
+
+/// Wrap an optional reached node under the receiver's Document (None -> nil).
+fn wrap_rel(this: XmlSelf, rel: Option<NodeId>) -> Value {
+    wrap(rel.unwrap_or(NodeId::INVALID), this.document)
+}
+
+/// A byte field as a String, or nil when there is none.
+fn str_or_nil(ruby: &Ruby, bytes: Option<&[u8]>) -> Value {
+    bytes.map_or_else(|| nil(ruby), |b| str_field(ruby, b))
+}
+
+fn is_element(d: &XmlDoc, id: NodeId) -> bool {
+    d.type_(id) == Some(NodeType::Element)
 }
 
 /* ---- name ---- */
 
-pub fn name(ruby: &Ruby, this: super::XmlSelf) -> Value {
+pub fn name(ruby: &Ruby, this: XmlSelf) -> Value {
     let d = this.doc_ref();
     let id = this.id;
+    if let Some(n) = d.name_parts(id) {
+        return str_field(ruby, n.qname);
+    }
     match d.type_(id) {
-        Some(NodeType::Element | NodeType::Attribute) => str_span(ruby, d, d.node(id).qname),
-        Some(NodeType::Pi | NodeType::Doctype) => str_span(ruby, d, d.node(id).local),
+        /* A PI's target and a DOCTYPE's name are its `local`. */
+        Some(NodeType::Pi | NodeType::Doctype) => str_field(ruby, d.local(id)),
         Some(NodeType::Text) => ruby.str_new("text").as_value(),
         Some(NodeType::CData) => ruby.str_new("#cdata-section").as_value(),
         Some(NodeType::Comment) => ruby.str_new("comment").as_value(),
@@ -37,36 +60,45 @@ pub fn name(ruby: &Ruby, this: super::XmlSelf) -> Value {
     }
 }
 
-pub fn local_name(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let id = this.id;
-    if d.type_(id) == Some(NodeType::Element) || d.type_(id) == Some(NodeType::Attribute) {
-        return str_span(ruby, d, d.node(id).local);
-    }
-    ruby.qnil().as_value()
+/// `#local_name`: Element and Attribute only.
+pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Value {
+    str_or_nil(ruby, this.doc_ref().name_parts(this.id).map(|n| n.local))
 }
 
-/// `#prefix`. A zero-length prefix means unprefixed, which is nil rather than
-/// `""` - the distinction `#namespace` depends on.
-pub fn prefix(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let id = this.id;
-    if d.node(id).prefix.len == 0 {
-        return ruby.qnil().as_value();
-    }
-    str_span(ruby, d, d.node(id).prefix)
+/// `#prefix`: nil when unprefixed - the distinction `#namespace` depends on -
+/// and for any kind but Element and Attribute.
+pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Value {
+    str_or_nil(
+        ruby,
+        this.doc_ref().name_parts(this.id).and_then(|n| n.prefix),
+    )
 }
 
-pub fn namespace_uri(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    let id = this.id;
-    if d.node(id).ns_uri.len == 0 {
-        return ruby.qnil().as_value();
-    }
-    str_span(ruby, d, d.node(id).ns_uri)
+/// `#namespace_uri`: nil in no namespace, and for any kind but Element and
+/// Attribute.
+pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Value {
+    str_or_nil(
+        ruby,
+        this.doc_ref().name_parts(this.id).and_then(|n| n.ns_uri),
+    )
 }
 
-pub fn node_type(ruby: &Ruby, this: super::XmlSelf) -> Value {
+/// `Element#tag_name` (DOM `tagName`): the qualified name - XML keeps its case
+/// - or nil for a non-element.
+pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Value {
+    let d = this.doc_ref();
+    let tag = d.name_parts(this.id).filter(|_| is_element(d, this.id));
+    str_or_nil(ruby, tag.map(|n| n.qname))
+}
+
+/// `ProcessingInstruction#target`, or nil for a non-PI.
+pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Value {
+    let d = this.doc_ref();
+    let target = (d.type_(this.id) == Some(NodeType::Pi)).then(|| d.local(this.id));
+    str_or_nil(ruby, target)
+}
+
+pub fn node_type(ruby: &Ruby, this: XmlSelf) -> Value {
     let d = this.doc_ref();
     let ty = d.type_(this.id).map_or(0, |t| t.as_u32());
     ruby.integer_from_i64(ty as i64).as_value()
@@ -74,24 +106,35 @@ pub fn node_type(ruby: &Ruby, this: super::XmlSelf) -> Value {
 
 /* ---- DTD identifiers ----
  *
- * The doctype node repurposes fields: local/qname are the DOCTYPE name
- * (`#name`), prefix the PUBLIC id, value the SYSTEM id. An ABSENT field means
- * that id was omitted and answers nil; an empty literal (`PUBLIC ""`) is a
- * present zero-length span and answers `""`. */
+ * An omitted id answers nil; an empty literal (`PUBLIC ""`) answers `""`. */
 
-pub fn dtd_external_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    str_span_or_nil(ruby, d, d.node(this.id).prefix)
+pub fn dtd_external_id(ruby: &Ruby, this: XmlSelf) -> Value {
+    str_or_nil(
+        ruby,
+        this.doc_ref()
+            .doctype_ids(this.id)
+            .and_then(|ids| ids.public),
+    )
 }
 
-pub fn dtd_system_id(ruby: &Ruby, this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    str_span_or_nil(ruby, d, d.node(this.id).value)
+pub fn dtd_system_id(ruby: &Ruby, this: XmlSelf) -> Value {
+    str_or_nil(
+        ruby,
+        this.doc_ref()
+            .doctype_ids(this.id)
+            .and_then(|ids| ids.system),
+    )
 }
 
 /* ---- content ---- */
 
-pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, magnus::Error> {
+/// `#content` / `#text` / `#inner_text`: a character-data node's own data, or
+/// the concatenated text of every Text/CDATA descendant.
+///
+/// Measured first and built into one Ruby String of that size, so the copy is
+/// Ruby's allocation - a failure is `NoMemoryError`, not a Rust abort - and the
+/// arena bytes, which a GC does not move, are the only thing read across it.
+pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
         let d = this.doc_ref();
         let id = this.id;
@@ -105,136 +148,148 @@ pub fn content(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, magnus::Error
                     | NodeType::Pi
             )
         ) {
-            return Ok(str_span(ruby, d, d.node(id).value));
+            return Ok(str_field(ruby, d.value(id)));
         }
 
-        let mut out: Vec<u8> = Vec::new();
-        let mut cur = d.first_child(id);
-        while let Some(c) = cur {
-            if matches!(d.type_(c), Some(NodeType::Text | NodeType::CData)) {
-                out.extend_from_slice(d.value(c));
-            }
-            if d.first_child(c).is_some() {
-                cur = d.first_child(c);
-                continue;
-            }
-            while let Some(x) = cur {
-                if x != id && d.next(x).is_none() {
-                    cur = d.parent(x);
-                } else {
-                    break;
-                }
-            }
-            match cur {
-                None => break,
-                Some(x) if x == id => break,
-                Some(x) => cur = d.next(x),
-            }
+        let texts = || {
+            core::iter::successors(d.first_child(id), move |&n| d.preorder_next(id, n))
+                .filter(|&n| matches!(d.type_(n), Some(NodeType::Text | NodeType::CData)))
+                .map(|n| d.value(n))
+        };
+        let total = texts().try_fold(0usize, |acc, t| acc.checked_add(t.len()));
+        let Some(total) = total else {
+            return Err(crate::bridge::ruby::makiri_error("text content too large"));
+        };
+        let out = ruby.str_with_capacity(total);
+        for t in texts() {
+            out.cat(t);
         }
-        Ok(utf8(ruby, &out).as_value())
+        Ok(out.as_value())
     })
 }
 
-pub fn value(ruby: &Ruby, this: super::XmlSelf) -> Value {
+/// `#value`: an attribute's value; for any other node its text content, as
+/// the HTML `#value` answers.
+pub fn value(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.doc_ref();
-    str_span(ruby, d, d.node(this.id).value)
+    if d.type_(this.id) == Some(NodeType::Attribute) {
+        return Ok(str_field(ruby, d.value(this.id)));
+    }
+    content(ruby, this)
 }
 
 /* ---- navigation ---- */
 
-pub fn parent(this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, d.parent(this.id))
+pub fn parent(this: XmlSelf) -> Value {
+    wrap_rel(this, this.doc_ref().parent(this.id))
 }
-pub fn next(this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, d.next(this.id))
+pub fn next(this: XmlSelf) -> Value {
+    wrap_rel(this, this.doc_ref().next(this.id))
 }
-pub fn previous(this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, d.prev(this.id))
+pub fn previous(this: XmlSelf) -> Value {
+    wrap_rel(this, this.doc_ref().prev(this.id))
 }
-pub fn first_child(this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, d.first_child(this.id))
-}
-pub fn last_child(this: super::XmlSelf) -> Value {
-    let d = this.doc_ref();
-    wrap_rel(this, d.last_child(this.id))
+pub fn first_child(this: XmlSelf) -> Value {
+    wrap_rel(this, this.doc_ref().first_child(this.id))
 }
 
-pub fn get_document(this: super::XmlSelf) -> Value {
+/// The first element from `start` along `step`.
+fn first_element(
+    d: &XmlDoc,
+    start: Option<NodeId>,
+    step: impl Fn(NodeId) -> Option<NodeId>,
+) -> Option<NodeId> {
+    core::iter::successors(start, |&n| step(n)).find(|&n| is_element(d, n))
+}
+
+pub fn next_element(this: XmlSelf) -> Value {
+    let d = this.doc_ref();
+    wrap_rel(this, first_element(d, d.next(this.id), |n| d.next(n)))
+}
+pub fn previous_element(this: XmlSelf) -> Value {
+    let d = this.doc_ref();
+    wrap_rel(this, first_element(d, d.prev(this.id), |n| d.prev(n)))
+}
+pub fn first_element_child(this: XmlSelf) -> Value {
+    let d = this.doc_ref();
+    wrap_rel(
+        this,
+        first_element(d, d.first_child(this.id), |n| d.next(n)),
+    )
+}
+pub fn last_element_child(this: XmlSelf) -> Value {
+    let d = this.doc_ref();
+    wrap_rel(this, first_element(d, d.last_child(this.id), |n| d.prev(n)))
+}
+
+pub fn get_document(this: XmlSelf) -> Value {
     this.document
 }
 
-/// `#element_children` - the child ELEMENT nodes only, in document order.
-pub fn element_children(this: super::XmlSelf) -> Result<Value, Error> {
-    let d = this.doc_ref();
+/// Collect nodes into a NodeSet.
+fn set_of(this: XmlSelf, nodes: impl Iterator<Item = NodeId>) -> Result<Value, Error> {
     let (set, fill) = node_set_with_fill(this.document);
-    let mut c = d.first_child(this.id);
-    while let Some(id) = c {
-        if d.type_(id) == Some(NodeType::Element) {
-            fill.push(id.to_token() as *mut core::ffi::c_void)?;
-        }
-        c = d.next(id);
+    for id in nodes {
+        fill.push(id.to_token() as *mut core::ffi::c_void)?;
     }
     Ok(set)
 }
 
-pub fn children(this: super::XmlSelf) -> Result<Value, Error> {
+fn children_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    core::iter::successors(d.first_child(id), move |&n| d.next(n))
+}
+
+/// `#children`: every child node.
+pub fn children(this: XmlSelf) -> Result<Value, Error> {
+    set_of(this, children_of(this.doc_ref(), this.id))
+}
+
+/// `#element_children` / `#elements`: the child elements only.
+pub fn element_children(this: XmlSelf) -> Result<Value, Error> {
     let d = this.doc_ref();
-    let (set, fill) = node_set_with_fill(this.document);
-    let mut c = d.first_child(this.id);
-    while let Some(id) = c {
-        fill.push(id.to_token() as *mut core::ffi::c_void)?;
-        c = d.next(id);
-    }
-    Ok(set)
+    set_of(this, children_of(d, this.id).filter(|&n| is_element(d, n)))
 }
 
 /* ---- attributes ---- */
 
+/// The receiver's attribute nodes, in document order; none for a non-element.
+fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    let first = is_element(d, id).then(|| d.attrs(id)).flatten();
+    core::iter::successors(first, move |&a| d.next(a))
+}
+
 /// `#[]` - the attribute's value, or nil.
-pub fn aref(ruby: &Ruby, this: super::XmlSelf, rb_name: Value) -> Result<Value, Error> {
-    match crate::bridge::xml::find_attribute(this, rb_name)? {
-        None => Ok(ruby.qnil().as_value()),
-        Some(at) => Ok(str_span(
-            ruby,
-            this.doc_ref(),
-            this.doc_ref().node(at).value,
-        )),
-    }
+pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Value, Error> {
+    let found = crate::bridge::xml::find_attribute(this, rb_name)?;
+    Ok(str_or_nil(ruby, found.map(|at| this.doc_ref().value(at))))
 }
 
 /// The Attr NODE with that qualified name.
-pub fn attribute_by_qualified_name(
-    ruby: &Ruby,
-    this: super::XmlSelf,
-    rb_name: Value,
-) -> Result<Value, Error> {
-    let _ = ruby;
+pub fn attribute_by_qualified_name(this: XmlSelf, rb_name: Value) -> Result<Value, Error> {
     let a = crate::bridge::xml::find_attribute(this, rb_name)?;
-    Ok(super::wrap(a.unwrap_or(NodeId::INVALID), this.document))
+    Ok(wrap_rel(this, a))
 }
 
-pub fn attribute_value_by_qualified_name(
-    ruby: &Ruby,
-    this: super::XmlSelf,
-    rb_name: Value,
-) -> Result<Value, Error> {
-    aref(ruby, this, rb_name)
+pub fn attribute_nodes(this: XmlSelf) -> Result<Value, Error> {
+    set_of(this, attrs_of(this.doc_ref(), this.id))
 }
 
-pub fn attribute_nodes(this: super::XmlSelf) -> Result<Value, Error> {
+/// `#keys` -> the attribute names, in document order.
+pub fn keys(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.doc_ref();
-    let (set, fill) = node_set_with_fill(this.document);
-    let id = this.id;
-    if d.type_(id) == Some(NodeType::Element) {
-        let mut a = d.attrs(id);
-        while let Some(at) = a {
-            fill.push(at.to_token() as *mut core::ffi::c_void)?;
-            a = d.next(at);
-        }
+    let ary = ruby.ary_new();
+    for at in attrs_of(d, this.id) {
+        ary.push(str_field(ruby, d.qname(at)))?;
     }
-    Ok(set)
+    Ok(ary.as_value())
+}
+
+/// `#values` -> the attribute values, in document order.
+pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    let d = this.doc_ref();
+    let ary = ruby.ary_new();
+    for at in attrs_of(d, this.id) {
+        ary.push(utf8(ruby, d.value(at)))?;
+    }
+    Ok(ary.as_value())
 }

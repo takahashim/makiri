@@ -8,10 +8,10 @@
 //!
 //! # Two functions here are the HTML node's front door
 //!
-//! [`wrap_html_node`] and [`html_node_unwrap`] are how every other glue
-//! module wraps and unwraps an HTML node; they live in
-//! [`crate::bridge::html`], the one seam that knows both the Ruby wrapper and
-//! the Lexbor handle.
+//! [`crate::bridge::html::wrap_html_node`] and
+//! [`crate::bridge::html::html_node_unwrap`] are how every glue module wraps
+//! and unwraps an HTML node; they live in [`crate::bridge::html`], the one seam
+//! that knows both the Ruby wrapper and the Lexbor handle.
 //!
 //! # Nothing here is declared twice
 //!
@@ -48,30 +48,13 @@ pub mod ty {
     };
 }
 
-pub use crate::bridge::wrapper::HTML_NODE_TYPE;
-pub use crate::glue::doc::node_clone_node;
-pub use crate::glue::node::node_equals;
-pub use crate::glue::node::node_hash;
-pub use crate::glue::node::node_pointer_id;
-pub use crate::init::CLASS_HTML_ATTR;
-pub use crate::init::CLASS_HTML_CDATA_SECTION;
-pub use crate::init::CLASS_HTML_COMMENT;
-pub use crate::init::CLASS_HTML_DOCUMENT_FRAGMENT;
-pub use crate::init::CLASS_HTML_DOCUMENT_TYPE;
-pub use crate::init::CLASS_HTML_ELEMENT;
-pub use crate::init::CLASS_HTML_NODE;
-pub use crate::init::CLASS_HTML_PROCESSING_INSTRUCTION;
-pub use crate::init::CLASS_HTML_TEXT;
+use crate::glue::doc::node_clone_node;
+use crate::glue::node::{node_equals, node_hash, node_pointer_id};
+use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
-/* ------------------------------------------------------------------ *
- * wrap / unwrap                                                      *
- * ------------------------------------------------------------------ */
-
-/* The front door - the wrapper/argument handles and the `wrap_html_node` /
- * `html_node_unwrap` pair - lives in the Ruby <-> Lexbor seam
- * (`bridge::html`). This module re-exports it for the readers, the mutators
- * and the rest of the glue. */
-pub use crate::bridge::html::{arg_node, html_node_unwrap, wrap_html_node, wrap_node, HtmlSelf};
+/* The receiver and argument handles, from the Ruby <-> Lexbor seam
+ * (`bridge::html`), for the readers and for `glue::doc`. */
+pub use crate::bridge::html::{arg_node, wrap_node, HtmlSelf};
 
 /* ------------------------------------------------------------------ *
  * registration                                                       *

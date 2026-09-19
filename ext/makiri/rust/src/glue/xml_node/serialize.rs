@@ -11,7 +11,8 @@ use magnus::{method, prelude::*, Error, RHash, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
-use super::abi::*;
+use super::strings::utf8;
+use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {

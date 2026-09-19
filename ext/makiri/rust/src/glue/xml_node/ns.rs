@@ -1,207 +1,106 @@
 //! Namespace introspection, Nokogiri-compatible.
 //!
-//! `Makiri::XML::Namespace` is a small (prefix, href) value object. xmlns
-//! declarations are stored as ordinary attribute nodes - qname `xmlns` or
-//! `xmlns:PREFIX` - so all four queries below are just tree reads.
+//! xmlns declarations are stored as ordinary attribute nodes - qname `xmlns` or
+//! `xmlns:PREFIX` - so all four queries below are tree reads. What they hand
+//! back is `Makiri::XML::Namespace`, a `Data` value object defined in Ruby
+//! (`lib/makiri/xml/namespace.rb`); this module only makes them.
+//!
+//! Each query walks a tree built from input, so each runs under
+//! `bridge::ruby::entry`, which turns a panic into `Makiri::InternalError`.
 
-use magnus::value::{LazyId, Opaque};
-use magnus::{prelude::*, Error, RArray, RClass, RHash, RObject, RString, Ruby, Value};
-use std::sync::OnceLock;
+#![forbid(unsafe_code)]
 
-use super::abi::*;
+use magnus::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
-/// The `Makiri::XML::Namespace` class, stashed at init.
-static NAMESPACE_CLASS: OnceLock<Opaque<RClass>> = OnceLock::new();
+use super::strings::{str_field, utf8};
+use super::XmlSelf;
+use crate::bridge::ruby::entry;
+use crate::init::MOD_XML;
+use crate::xml::model::{Doc as XmlDoc, NodeId, NodeType};
 
-/// The instance variables a Namespace keeps its two fields in.
-static PREFIX: LazyId = LazyId::new("@prefix");
-static HREF: LazyId = LazyId::new("@href");
-
-#[allow(
-    clippy::panic,
-    reason = "an init invariant: reachable only if Init_makiri ran twice, which \
-              would mean two class hierarchies in one process. Aborting there is \
-              the fail-closed answer - the alternative is reading a Namespace \
-              class that some other registration owns."
-)]
-pub fn set_namespace_class(klass: RClass) {
-    if NAMESPACE_CLASS.set(Opaque::from(klass)).is_err() {
-        panic!("Makiri::XML::Namespace is initialized once");
-    }
+/// `Makiri::XML::Namespace.new(prefix, href)`.
+fn new_ns(prefix: Value, href: Value) -> Result<Value, Error> {
+    let xml = magnus::RModule::from_value(MOD_XML.value()).expect("Makiri::XML");
+    let class: RClass = xml.const_get("Namespace")?;
+    class.funcall("new", (prefix, href))
 }
 
-fn namespace_class(ruby: &Ruby) -> RClass {
-    ruby.get_inner(
-        *NAMESPACE_CLASS
-            .get()
-            .expect("Makiri::XML::Namespace initialized"),
-    )
+/// A prefix as Ruby sees it: nil for none (the default namespace), else the
+/// String.
+fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Value {
+    p.filter(|p| !p.is_empty())
+        .map_or_else(|| ruby.qnil().as_value(), |p| str_field(ruby, p))
 }
 
-pub fn new_ns(ruby: &Ruby, prefix: Value, href: Value) -> Result<Value, Error> {
-    let ns = RObject::from_value(namespace_class(ruby).obj_alloc()?)
-        .expect("Makiri::XML::Namespace allocates a plain object");
-    ns.ivar_set(*PREFIX, prefix)?;
-    ns.ivar_set(*HREF, href)?;
-    Ok(ns.as_value())
-}
-
-/// A Namespace receiver as the object that holds its fields.
-fn ns_object(rb_self: Value) -> Result<RObject, Error> {
-    RObject::from_value(rb_self).ok_or_else(|| {
-        Error::new(
-            Ruby::get_with(rb_self).exception_type_error(),
-            "not a Makiri::XML::Namespace",
-        )
+/// The xmlns declarations among `id`'s attributes, as (declaring attribute,
+/// declared prefix - empty for the default - and URI). None for a non-element.
+fn declarations(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = (NodeId, &[u8], &[u8])> + '_ {
+    let first = (d.type_(id) == Some(NodeType::Element))
+        .then(|| d.attrs(id))
+        .flatten();
+    core::iter::successors(first, move |&a| d.next(a)).filter_map(move |a| {
+        let p = crate::xml::qname::xmlns_prefix(d.qname(a))?;
+        Some((a, p, d.value(a)))
     })
 }
 
-pub fn ns_prefix(rb_self: Value) -> Result<Value, Error> {
-    ns_object(rb_self)?.ivar_get(*PREFIX)
-}
-
-pub fn ns_href(rb_self: Value) -> Result<Value, Error> {
-    ns_object(rb_self)?.ivar_get(*HREF)
-}
-
-pub fn ns_equal(rb_self: Value, other: Value) -> Result<bool, Error> {
-    if !other.is_kind_of(namespace_class(&Ruby::get_with(rb_self))) {
-        return Ok(false);
-    }
-    Ok(ns_prefix(rb_self)?.eql(ns_prefix(other)?)? && ns_href(rb_self)?.eql(ns_href(other)?)?)
-}
-
-pub fn ns_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
-    let pair = ruby.ary_new_from_values(&[ns_prefix(rb_self)?, ns_href(rb_self)?]);
-    pair.funcall("hash", ())
-}
-
-pub fn ns_inspect(ruby: &Ruby, rb_self: Value) -> Result<RString, Error> {
-    Ok(ruby.str_new(&format!(
-        "#<Makiri::XML::Namespace prefix={} href={}>",
-        ns_prefix(rb_self)?.inspect(),
-        ns_href(rb_self)?.inspect()
-    )))
-}
-
-/// Read an attribute node's xmlns declaration, if it is one: the declared
-/// prefix (empty for the default xmlns) and the URI.
-fn xmlns_decl(d: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
-    let p = crate::xml::qname::xmlns_prefix(d.qname(a))?;
-    Some((p, d.value(a)))
-}
-
 /// `#namespace` - the node's own resolved namespace, or nil.
-pub fn namespace(ruby: &Ruby, this: super::XmlSelf) -> Result<Value, Error> {
-    let d = this.doc_ref();
-    let id = this.id;
-    if !matches!(d.type_(id), Some(NodeType::Element | NodeType::Attribute))
-        || d.node(id).ns_uri.len == 0
-    {
-        return Ok(ruby.qnil().as_value());
-    }
-    let prefix = if d.node(id).prefix.len == 0 {
-        ruby.qnil().as_value()
-    } else {
-        str_span(ruby, d, d.node(id).prefix)
-    };
-    new_ns(ruby, prefix, str_span(ruby, d, d.node(id).ns_uri))
+pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    entry(|| {
+        let parts = this.doc_ref().name_parts(this.id);
+        match parts.and_then(|n| Some((n.prefix, n.ns_uri?))) {
+            Some((prefix, uri)) => new_ns(prefix_value(ruby, prefix), str_field(ruby, uri)),
+            None => Ok(ruby.qnil().as_value()),
+        }
+    })
 }
 
 /// `#namespace_definitions` - the declarations made ON this element.
-pub fn namespace_definitions(ruby: &Ruby, this: super::XmlSelf) -> Result<RArray, Error> {
-    let arr = ruby.ary_new();
-    let d = this.doc_ref();
-    let id = this.id;
-    if d.type_(id) == Some(NodeType::Element) {
-        let mut a = d.attrs(id);
-        while let Some(at) = a {
-            if let Some((p, u)) = xmlns_decl(d, at) {
-                let prefix = if p.is_empty() {
-                    ruby.qnil().as_value()
-                } else {
-                    utf8(ruby, p).as_value()
-                };
-                arr.push(new_ns(ruby, prefix, utf8(ruby, u).as_value())?)?;
-            }
-            a = d.next(at);
+pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error> {
+    entry(|| {
+        let arr = ruby.ary_new();
+        for (_, p, u) in declarations(this.doc_ref(), this.id) {
+            arr.push(new_ns(
+                prefix_value(ruby, Some(p)),
+                utf8(ruby, u).as_value(),
+            )?)?;
         }
-    }
-    Ok(arr)
+        Ok(arr)
+    })
 }
 
 /// `#namespaces` - every declaration in scope here, keyed by the declaring
 /// attribute's name. The inner scope wins because the first binding seen is kept.
-pub fn namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
-    let h = ruby.hash_new();
-    let d = this.doc_ref();
-    let mut e = Some(this.id);
-    while let Some(id) = e {
-        if d.type_(id) == Some(NodeType::Element) {
-            let mut a = d.attrs(id);
-            while let Some(at) = a {
-                if let Some((_, u)) = xmlns_decl(d, at) {
-                    let key = str_span(ruby, d, d.node(at).qname);
-                    if h.get(key).is_none() {
-                        h.aset(key, utf8(ruby, u))?;
-                    }
+pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
+    entry(|| {
+        let h = ruby.hash_new();
+        let d = this.doc_ref();
+        for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
+            for (at, _, u) in declarations(d, id) {
+                let key = str_field(ruby, d.qname(at));
+                if h.get(key).is_none() {
+                    h.aset(key, utf8(ruby, u))?;
                 }
-                a = d.next(at);
             }
         }
-        e = d.parent(id);
-    }
-    Ok(h)
+        Ok(h)
+    })
 }
 
-/// `#collect_namespaces` - every declaration anywhere in the document, pre-order
-/// through the tree (no recursion).
-pub fn collect_namespaces(ruby: &Ruby, this: super::XmlSelf) -> Result<RHash, Error> {
-    let h = ruby.hash_new();
-    let d = this.doc_ref();
-    let mut root = this.id;
-    while let Some(p) = d.parent(root) {
-        root = p;
-    }
-    let mut cur = Some(root);
-    while let Some(id) = cur {
-        if d.type_(id) == Some(NodeType::Element) {
-            let mut a = d.attrs(id);
-            while let Some(at) = a {
-                if let Some((_, u)) = xmlns_decl(d, at) {
-                    h.aset(str_span(ruby, d, d.node(at).qname), utf8(ruby, u))?;
-                }
-                a = d.next(at);
+/// `#collect_namespaces` - every declaration anywhere in the document, in
+/// document order, so a later one with the same name wins.
+pub fn collect_namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
+    entry(|| {
+        let h = ruby.hash_new();
+        let d = this.doc_ref();
+        let top = core::iter::successors(Some(this.id), |&n| d.parent(n))
+            .last()
+            .unwrap_or(this.id);
+        for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
+            for (at, _, u) in declarations(d, id) {
+                h.aset(str_field(ruby, d.qname(at)), utf8(ruby, u))?;
             }
         }
-        if d.first_child(id).is_some() {
-            cur = d.first_child(id);
-            continue;
-        }
-        /* Climb until a non-root node with a next sibling is found. */
-        let mut climbed = None;
-        let mut n = id;
-        loop {
-            if n == root {
-                climbed = Some(root);
-                break;
-            }
-            match d.next(n) {
-                Some(nx) => {
-                    climbed = Some(nx);
-                    break;
-                }
-                None => match d.parent(n) {
-                    Some(p) => n = p,
-                    None => break,
-                },
-            }
-        }
-        match climbed {
-            None => break,
-            Some(n) if n == root => break,
-            Some(nx) => cur = Some(nx),
-        }
-    }
-    Ok(h)
+        Ok(h)
+    })
 }
