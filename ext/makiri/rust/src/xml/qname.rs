@@ -14,6 +14,17 @@ pub struct Split {
     pub local_len: u32,
 }
 
+impl Split {
+    /// A name with no prefix: all `len` bytes are the local part.
+    pub const fn unprefixed(len: u32) -> Split {
+        Split {
+            prefix_len: 0,
+            local_off: 0,
+            local_len: len,
+        }
+    }
+}
+
 /// Split a name whose bytes are ALREADY known to be a valid XML 1.0 Name,
 /// enforcing the NCName rules a QName adds: at most one colon, non-empty
 /// prefix and local, and a local part beginning with a NameStartChar.
@@ -98,4 +109,86 @@ pub fn value_seq_ok(node_type: NodeType, text: &[u8]) -> bool {
         NodeType::Pi => !text.windows(2).any(|w| w == b"?>"),
         _ => true,
     }
+}
+
+/* ---- DOM-loose element names (WHATWG DOM, not XML) ---- */
+
+/// Why [`split_loose_dom_name`] refused a name. The bridge words it as an
+/// `ArgumentError`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LooseNameError {
+    Local,
+    Prefix,
+    UnprefixedMismatch,
+    PrefixedMismatch,
+}
+
+impl LooseNameError {
+    pub fn message(self) -> &'static str {
+        match self {
+            LooseNameError::Local => "invalid DOM element local name",
+            LooseNameError::Prefix => "invalid DOM element prefix",
+            LooseNameError::UnprefixedMismatch => {
+                "qualified name must equal local name when prefix is nil"
+            }
+            LooseNameError::PrefixedMismatch => "qualified name must be prefix + ':' + local name",
+        }
+    }
+}
+
+/// The WHATWG DOM's name-character exclusions: what `createElement` refuses
+/// even though it is far looser than an XML Name.
+fn dom_name_forbidden(c: u8) -> bool {
+    matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'/' | b'>')
+}
+
+fn dom_prefix_ok(p: &[u8]) -> bool {
+    !p.is_empty() && !p.iter().copied().any(dom_name_forbidden)
+}
+
+fn dom_local_ok(p: &[u8]) -> bool {
+    let Some(&first) = p.first() else {
+        return false;
+    };
+    if first < 0x80 && !(first.is_ascii_alphabetic() || first == b':' || first == b'_') {
+        return false;
+    }
+    !p.iter().copied().any(dom_name_forbidden)
+}
+
+/// Check that `qname`, `prefix` and `local` describe one DOM element name -
+/// valid under the WHATWG rules, and `qname` exactly `prefix:local` (or
+/// `local` when there is no prefix) - and split it.
+///
+/// For the browser-DOM escape hatch that makes an element XML cannot name
+/// (`Document#create_loose_dom_element`); the serializer refuses those later.
+pub fn split_loose_dom_name(
+    qname: &[u8],
+    prefix: Option<&[u8]>,
+    local: &[u8],
+) -> Result<Split, LooseNameError> {
+    if !dom_local_ok(local) {
+        return Err(LooseNameError::Local);
+    }
+    let Some(p) = prefix else {
+        if qname != local {
+            return Err(LooseNameError::UnprefixedMismatch);
+        }
+        return Ok(Split::unprefixed(qname.len() as u32));
+    };
+    if !dom_prefix_ok(p) {
+        return Err(LooseNameError::Prefix);
+    }
+    if qname.len() != p.len() + 1 + local.len()
+        || &qname[..p.len()] != p
+        || qname[p.len()] != b':'
+        || &qname[p.len() + 1..] != local
+    {
+        return Err(LooseNameError::PrefixedMismatch);
+    }
+    Ok(Split {
+        prefix_len: p.len() as u32,
+        local_off: (p.len() + 1) as u32,
+        local_len: local.len() as u32,
+    })
 }

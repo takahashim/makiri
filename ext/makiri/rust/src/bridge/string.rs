@@ -265,13 +265,12 @@ pub fn verify_text(str: Value, what: &CStr) -> Result<(), Error> {
     let str = str.as_raw();
     // SAFETY: `str` is a live String, and the borrow ends with the check -
     // before anything below can allocate.
-    let problem = match unsafe {
+    let verdict = unsafe {
         let (_, ptr, len) = borrow(str);
         text_check(str, ptr, len)
-    } {
-        TextVerdict::HasNul => "must not contain a NUL byte",
-        TextVerdict::InvalidUtf8 => "must be valid UTF-8",
-        TextVerdict::Ok => return Ok(()),
+    };
+    let Some(problem) = verdict.problem() else {
+        return Ok(());
     };
     /* The borrow is not used past the check, so building the message may
      * allocate. */
@@ -308,8 +307,11 @@ pub fn ruby_verified_data(in_: Value, what: &CStr) -> Result<RubyData, Error> {
     // allocating, and the view anchors it.
     unsafe {
         let (value, ptr, len) = borrow(s);
-        if text_check(s, ptr, len) == TextVerdict::InvalidUtf8 {
-            return Err(text_error(what, "must be valid UTF-8"));
+        let verdict = text_check(s, ptr, len);
+        if verdict == TextVerdict::InvalidUtf8 {
+            if let Some(problem) = verdict.problem() {
+                return Err(text_error(what, problem));
+            }
         }
         Ok(RubyData::from_raw_parts(value, ptr, len))
     }
@@ -562,10 +564,9 @@ pub unsafe fn ruby_try_verified_text(
     if len > max_bytes {
         return Err(c"string exceeds the maximum length");
     }
-    match text_check(sv, ptr, len) {
-        TextVerdict::HasNul => Err(c"string contains a NUL byte"),
-        TextVerdict::InvalidUtf8 => Err(c"string is not valid UTF-8"),
-        TextVerdict::Ok => Ok(RubyText::from_raw_parts(value, ptr, len)),
+    match text_check(sv, ptr, len).reason() {
+        Some(reason) => Err(reason),
+        None => Ok(RubyText::from_raw_parts(value, ptr, len)),
     }
 }
 

@@ -222,8 +222,12 @@ unsafe fn h2x_make<'a>(
              * names). */
             let mut made = mutate::new_element(doc, name);
             if made.as_ref().err() == Some(&MutStatus::BadName) && !name.is_empty() {
-                made =
-                    mutate::new_loose_dom_element(doc, name, 0, 0, nl as u32, euri.unwrap_or(&[]));
+                made = mutate::new_loose_dom_element(
+                    doc,
+                    name,
+                    crate::xml::qname::Split::unprefixed(nl as u32),
+                    euri.unwrap_or(&[]),
+                );
             }
             let el = made?;
 

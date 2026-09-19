@@ -92,16 +92,11 @@ pub fn xml_new_element(doc: &mut Document, name: &[u8], out: &mut NodeId) -> Mut
 pub fn xml_new_loose_dom_element(
     doc: &mut Document,
     name: &[u8],
-    prefix_len: u32,
-    local_off: u32,
-    local_len: u32,
+    sp: Split,
     ns: &[u8],
     out: &mut NodeId,
 ) -> MutStatus {
-    put_node(
-        out,
-        new_loose_dom_element(doc, name, prefix_len, local_off, local_len, ns),
-    )
+    put_node(out, new_loose_dom_element(doc, name, sp, ns))
 }
 
 pub fn xml_new_document_type(
@@ -480,11 +475,14 @@ pub fn new_element(doc: &mut Document, name: &[u8]) -> Result<NodeId, MutStatus>
 pub fn new_loose_dom_element(
     doc: &mut Document,
     name: &[u8],
-    prefix_len: u32,
-    local_off: u32,
-    local_len: u32,
+    sp: Split,
     ns: &[u8],
 ) -> Result<NodeId, MutStatus> {
+    let Split {
+        prefix_len,
+        local_off,
+        local_len,
+    } = sp;
     if name.is_empty() || local_len == 0 {
         return Err(MutStatus::BadName);
     }

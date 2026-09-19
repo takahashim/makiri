@@ -33,6 +33,7 @@ use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
+use crate::xml::qname::split_loose_dom_name;
 
 use crate::bridge::ruby::error_class;
 
@@ -648,64 +649,6 @@ pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
 /* document factories                                                 */
 /* ------------------------------------------------------------------ */
 
-/* WHATWG DOM element-name rules, for the loose escape hatch below. */
-
-fn dom_name_forbidden(c: u8) -> bool {
-    matches!(c, 0 | b'\t' | b'\n' | 0x0C | b'\r' | b' ' | b'/' | b'>')
-}
-
-fn dom_prefix_ok(p: &[u8]) -> bool {
-    !p.is_empty() && !p.iter().copied().any(dom_name_forbidden)
-}
-
-fn dom_local_ok(p: &[u8]) -> bool {
-    let Some(&first) = p.first() else {
-        return false;
-    };
-    if first < 0x80 && !(first.is_ascii_alphabetic() || first == b':' || first == b'_') {
-        return false;
-    }
-    !p.iter().copied().any(dom_name_forbidden)
-}
-
-/// Check that the three name pieces describe the same name.
-fn dom_name_consistency(
-    ruby: &Ruby,
-    qv: &RubyText,
-    pv: &RubyText,
-    has_prefix: bool,
-    lv: &RubyText,
-) -> Result<(u32, u32, u32), Error> {
-    /* SAFETY: the three views are the caller's, live for this call, and only
-     * their bytes are compared - nothing here runs Ruby. */
-    let (q, p, l) = unsafe { (qv.bytes(), pv.bytes(), lv.bytes()) };
-    let arg_err = |msg: &str| Error::new(ruby.exception_arg_error(), msg.to_string());
-
-    if !dom_local_ok(l) {
-        return Err(arg_err("invalid DOM element local name"));
-    }
-    if !has_prefix {
-        if q != l {
-            return Err(arg_err(
-                "qualified name must equal local name when prefix is nil",
-            ));
-        }
-        return Ok((0, 0, q.len() as u32));
-    }
-
-    if !dom_prefix_ok(p) {
-        return Err(arg_err("invalid DOM element prefix"));
-    }
-    if q.len() != p.len() + 1 + l.len()
-        || &q[..p.len()] != p
-        || q[p.len()] != b':'
-        || &q[p.len() + 1..] != l
-    {
-        return Err(arg_err("qualified name must be prefix + ':' + local name"));
-    }
-    Ok((p.len() as u32, (p.len() + 1) as u32, l.len() as u32))
-}
-
 /// `create_element(name, content = nil, attributes = {})` -> Element.
 pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (), magnus::RArray, (), (), ()>(args)?;
@@ -772,12 +715,14 @@ pub fn create_loose_dom_element(
     let (pv, _) = verified_opt(ruby, prefix, c"prefix")?;
     let (nv, _) = verified_opt(ruby, ns, c"namespace URI")?;
 
-    let (plen, loff, llen) = dom_name_consistency(ruby, &qv, &pv, has_prefix, &lv)?;
+    // SAFETY: the three views are the caller's, live for this call; the check
+    // only compares their bytes.
+    let sp =
+        unsafe { split_loose_dom_name(qv.bytes(), has_prefix.then(|| pv.bytes()), lv.bytes()) }
+            .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
     let mut el: NodeId = NodeId::INVALID;
     // SAFETY: the receiver's arena, and the views are live for the call.
-    let st = unsafe {
-        xml_new_loose_dom_element(&mut *xd, qv.bytes(), plen, loff, llen, nv.bytes(), &mut el)
-    };
+    let st = unsafe { xml_new_loose_dom_element(&mut *xd, qv.bytes(), sp, nv.bytes(), &mut el) };
     xml_mut_check(st)?;
     Ok(wrap(el, rb_self))
 }
