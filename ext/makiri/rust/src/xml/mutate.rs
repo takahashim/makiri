@@ -190,10 +190,8 @@ fn resolve_ns(
         if is_attr {
             return Ok(NO_NS); /* unprefixed attribute -> no namespace */
         }
-        return Ok(match doc.resolve_in_scope(scope, b"") {
-            Some(s) if s.len > 0 => s,
-            _ => NO_NS,
-        });
+        let s = doc.resolve_in_scope(scope, b"");
+        return Ok(if s.len > 0 { s } else { NO_NS });
     }
     if prefix == b"xml" {
         return Ok(doc.xml_ns_span());
@@ -201,15 +199,13 @@ fn resolve_ns(
     if prefix == b"xmlns" {
         return Err(MutStatus::BadName);
     }
-    match doc.resolve_in_scope(scope, prefix) {
-        Some(s) if s.len > 0 => Ok(s),
-        _ => {
-            if connected {
-                Err(MutStatus::UnboundNs)
-            } else {
-                Ok(NO_NS)
-            }
-        }
+    let s = doc.resolve_in_scope(scope, prefix);
+    if s.len > 0 {
+        Ok(s)
+    } else if connected {
+        Err(MutStatus::UnboundNs)
+    } else {
+        Ok(NO_NS)
     }
 }
 
