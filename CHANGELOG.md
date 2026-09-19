@@ -43,6 +43,15 @@
   and on an XML document those grow the storage the evaluation is reading. They
   raise `Makiri::Error` now, on both representations.
 
+* **CSS on XML honours the namespace of a universal selector.** `p|*` matched
+  every element, whatever its namespace; it now matches only those in the
+  namespace bound to `p`, and `|*` only those in no namespace. `*|*` and a bare
+  `*` still match every element.
+
+* **CSS on XML refuses the column combinator.** `a || b` was read as the
+  descendant combinator, `a b`; it raises `Makiri::CSS::SyntaxError` now, like
+  the other constructs XPath cannot express.
+
 ## [0.10.0.rc1] - 2026-09-19
 
 ### Changed
