@@ -17,16 +17,13 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_int;
-
-use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::fragment::{build_fragment_ctx, context_kwarg, resolve_fragment_context};
 use crate::bridge::lexbor::{
     account_document, doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap,
-    keepalive_document, new_document, node_kind, set_document_parsed, wrap_document,
-    wrap_html_node, DOC_TYPE,
+    keepalive_document, new_document, node_repr, set_document_parsed, wrap_document,
+    wrap_html_node, NodeRepr, DOC_TYPE,
 };
 use crate::bridge::ruby::{typed_data_known_ref, value};
 use crate::bridge::string::HtmlSource;
@@ -38,10 +35,6 @@ use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::fragment::import_with_fixup;
-
-/// Generated, not transcribed. A hand-written 1 here (it is 2) made
-/// `import_node` treat every HTML node as an XML one.
-const NODE_KIND_XML: c_int = crate::lexbor::ffi::NODE_KIND_XML as c_int;
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
@@ -213,7 +206,7 @@ pub fn import_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
      * detached lxb subtree owned by this document. */
-    if node_kind(node_v.as_raw()) == NODE_KIND_XML {
+    if node_repr(node_v) == NodeRepr::Xml {
         let mut imp = core::ptr::null_mut();
         let xdoc = doc_of(xml_node_document(node_v)?);
         let src = xml_node_id(node_v)?;

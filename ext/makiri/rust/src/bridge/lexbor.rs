@@ -13,7 +13,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, Ruby, Value};
@@ -66,10 +66,20 @@ pub static HTML_NODE_TYPE: DataType =
 pub static XML_NODE_TYPE: DataType =
     data_type::<NodeData>(c"Makiri::XML::Node".as_ptr(), NODE_DATA_TYPE.as_ptr());
 
-/// `NodeKind`.
-const NODE_KIND_OTHER: c_int = 0;
-const NODE_KIND_HTML: c_int = 1;
-const NODE_KIND_XML: c_int = 2;
+/// Which representation a wrapped Ruby node is, decided by its TypedData type
+/// rather than its Ruby class. A Document, a NodeSet or any non-node is
+/// `Other`.
+///
+/// An enum, not the C's `c_int` codes: a transcribed code (`NODE_KIND_XML = 1`
+/// where it was 2) once made `Document#import_node` read every HTML node as an
+/// XML one, and copies of those numbers had spread to three files. A `match`
+/// over this is checked for exhaustiveness and cannot be off by one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NodeRepr {
+    Html,
+    Xml,
+    Other,
+}
 
 /* ------------------------------------------------------------------ *
  * the document wrapper                                               *
@@ -365,17 +375,15 @@ pub fn node_raw(rb_node: Value) -> Result<*mut c_void, Error> {
     Ok(nd.node)
 }
 
-/// Which representation a wrapped node is, by its TypedData type - the robust
-/// discriminator, not the Ruby class. A Document, a NodeSet or any non-node is
-/// `NODE_KIND_OTHER`.
-pub fn node_kind(v: VALUE) -> c_int {
-    if kind_of(v, &HTML_NODE_TYPE) {
-        return NODE_KIND_HTML;
+/// Which representation `v` wraps ([`NodeRepr`]).
+pub fn node_repr(v: Value) -> NodeRepr {
+    if kind_of(v.as_raw(), &HTML_NODE_TYPE) {
+        NodeRepr::Html
+    } else if kind_of(v.as_raw(), &XML_NODE_TYPE) {
+        NodeRepr::Xml
+    } else {
+        NodeRepr::Other
     }
-    if kind_of(v, &XML_NODE_TYPE) {
-        return NODE_KIND_XML;
-    }
-    NODE_KIND_OTHER
 }
 
 /// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -

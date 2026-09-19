@@ -20,8 +20,8 @@ use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
 use crate::bridge::lexbor::{
-    doc_of, ensure_document_mutable, html_node_unwrap, node_kind, wrap_document, wrap_xml_node,
-    xml_doc_ref, xml_node_document, xml_node_unwrap,
+    doc_of, ensure_document_mutable, html_node_unwrap, node_repr, wrap_document, wrap_xml_node,
+    xml_doc_ref, xml_node_document, xml_node_unwrap, NodeRepr,
 };
 use crate::bridge::ruby::{check_frozen, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -33,10 +33,6 @@ use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::lexbor::adapter::post_parse::Parsed;
 use crate::xml::api::*;
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
-
-/// `NodeKind`.
-const KIND_HTML: core::ffi::c_int = 1;
-const KIND_XML: core::ffi::c_int = 2;
 
 fn error_class() -> magnus::ExceptionClass {
     EXC_ERROR.exception()
@@ -891,8 +887,8 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
         })
         .unwrap_or(core::ptr::null_mut());
     let mut copy: NodeId = NodeId::INVALID;
-    match node_kind(node_v.as_raw()) {
-        KIND_XML => {
+    match node_repr(node_v) {
+        NodeRepr::Xml => {
             let src_doc = xdoc(node_v)?;
             if src_doc == xd {
                 /* Same arena: the single-`&mut` clone path. */
@@ -907,13 +903,13 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
                 })?
             }
         }
-        KIND_HTML => {
+        NodeRepr::Html => {
             // SAFETY: the target arena, and the HTML source node.
             xml_mut_check(unsafe {
                 cross_html_to_xml(xd, html_node_unwrap(node_v)?, deep, &mut copy)
             })?
         }
-        _ => {
+        NodeRepr::Other => {
             return Err(Error::new(
                 ruby.exception_type_error(),
                 "import_node expects a Makiri node",

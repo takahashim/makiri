@@ -7,7 +7,6 @@
 
 #![forbid(unsafe_code)]
 
-pub use crate::bridge::lexbor::node_kind;
 pub use crate::bridge::xml::{
     add_child, after, aset, before, clone_node, create_cdata, create_comment, create_document_type,
     create_element, create_loose_dom_element, create_pi, create_text_node, delete, import_node,

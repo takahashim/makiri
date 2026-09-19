@@ -12,7 +12,6 @@ pub use crate::lexbor_abi::consts::{
 };
 pub const LXB_HTML_SERIALIZE_OPT_UNDEF: u32 =
     crate::lexbor_abi::lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF;
-pub const NODE_KIND_XML: i32 = crate::lexbor_abi::parsed::NODE_KIND_XML as i32;
 
 pub use crate::lexbor_abi::{
     lxb_css_parser_clean, lxb_css_parser_create, lxb_css_parser_destroy, lxb_css_parser_init,
