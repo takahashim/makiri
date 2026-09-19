@@ -165,8 +165,10 @@ struct Frame {
 }
 
 impl TextIndex {
-    /// Build over `root` (the document root element). `None` on OOM, which is
-    /// fail-closed: the caller walks instead.
+    /// Build over `root` (the document root element). `None` when `root` is not
+    /// a container - `lxb_dom_document_root` answers with the first child when
+    /// the document has no `<html>`, and that can be a leaf - or on OOM; both
+    /// are fail-closed and the caller walks instead.
     ///
     /// # Safety
     /// `root` must be a node of a live Lexbor document.
