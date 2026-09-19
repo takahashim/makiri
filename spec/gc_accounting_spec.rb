@@ -54,8 +54,13 @@ RSpec.describe "GC accounting of document arenas" do
     # The report is balanced on free, so after a collection the next parse
     # reuses the freed arena instead of faulting a fresh one: the resident set
     # settles rather than growing by one document per parse.
-    rss = -> { Integer(File.read("/proc/self/status")[/VmRSS:\s+(\d+)/, 1]) }
-    skip "needs /proc" unless File.readable?("/proc/self/status")
+    # KiB: /proc on Linux, ps(1) elsewhere (macOS); Windows has neither.
+    rss = if File.readable?("/proc/self/status")
+            -> { Integer(File.read("/proc/self/status")[/VmRSS:\s+(\d+)/, 1]) }
+          elsif !Gem.win_platform?
+            -> { Integer(`ps -o rss= -p #{Process.pid}`) }
+          end
+    skip "needs /proc or ps" unless rss
     32.times { Makiri::HTML(html) }
     GC.start
     settled = rss.call
