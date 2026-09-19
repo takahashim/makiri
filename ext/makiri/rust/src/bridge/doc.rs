@@ -126,7 +126,7 @@ pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    let d: &crate::bridge::wrapper::DocData = DOC_TYPE.get_known(rb_doc);
+    let d: &crate::bridge::wrapper::DocData = DOC_TYPE.get_known(&rb_doc);
     // SAFETY: `d.errors` is the live Array the wrapper marks.
     unsafe { value(d.errors) }
 }

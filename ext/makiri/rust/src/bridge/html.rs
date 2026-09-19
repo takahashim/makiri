@@ -68,9 +68,10 @@ pub fn text_index_string(document: Value, node: RawNode) -> Result<Option<Value>
 /// The element that owns `attr` through the attr->owner index.
 ///
 /// `Err` when the index cannot be built (out of memory) - distinct from a node
-/// the index does not know, which is `Ok(None)`.
-pub fn attribute_owner<'a>(rb_doc: Value, attr: RawNode) -> Result<Option<HtmlNode<'a>>, Error> {
-    with_parsed(rb_doc, |p| match p.dom_index() {
+/// the index does not know, which is `Ok(None)`. The owner is borrowed for as
+/// long as the caller borrows `rb_doc`, the Document that keeps it alive.
+pub fn attribute_owner(rb_doc: &Value, attr: RawNode) -> Result<Option<HtmlNode<'_>>, Error> {
+    with_parsed(*rb_doc, |p| match p.dom_index() {
         None => Err(Error::new(
             EXC_ERROR.exception(),
             "could not build the attribute index (out of memory)",
@@ -146,7 +147,7 @@ pub fn html_node_unwrap(rb_node: Value) -> Result<RawNode, Error> {
         }
         return Ok(html_doc_unwrap(rb_node)?.into());
     }
-    let nd: &NodeData = HTML_NODE_TYPE.get(rb_node)?;
+    let nd: &NodeData = HTML_NODE_TYPE.get(&rb_node)?;
     RawNode::from_ptr(nd.node).ok_or_else(uninitialized)
 }
 
@@ -223,7 +224,7 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Value {
 ///
 /// A node the caller has frozen is immutable (FrozenError), and a document an
 /// XPath handler is being evaluated over refuses to change.
-pub fn edit<'a>(this: &HtmlSelf) -> Result<HtmlNodeMut<'a>, Error> {
+pub fn edit(this: &HtmlSelf) -> Result<HtmlNodeMut<'_>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     ensure_document_mutable(this.document)?;
     // SAFETY: the checks above are exactly what the type asks for - the
@@ -256,7 +257,7 @@ fn err(msg: &str) -> Error {
 }
 
 /// Copy `node` into `doc`, for a node that came from another document.
-fn adopt_copy(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'static>, Error> {
+fn adopt_copy<'d>(doc: RawDoc, node: HtmlNode<'_>) -> Result<HtmlNode<'d>, Error> {
     // SAFETY: `doc` is a live document and `node` its caller's live source.
     let imp = unsafe { import_with_fixup(doc, RawNode::from(node), true) }
         .ok_or_else(|| err("failed to import node"))?;
@@ -291,10 +292,10 @@ fn release_from_tree(node: HtmlNodeMut<'_>) {
 
 /// Validate that `rb_incoming` may be placed relative to `reference`, detach it
 /// from any current parent, and return the node to actually insert.
-pub fn prepare_insert(
-    reference: HtmlNodeMut<'_>,
+pub fn prepare_insert<'d>(
+    reference: HtmlNodeMut<'d>,
     rb_incoming: Value,
-) -> Result<(HtmlNodeMut<'static>, Option<Value>), Error> {
+) -> Result<(HtmlNodeMut<'d>, Option<Value>), Error> {
     // SAFETY: `unwrap` checked `rb_incoming` is an HTML node, and the caller
     // holds it, which keeps its document alive for the call.
     let incoming = unsafe { html_node_unwrap(rb_incoming)?.as_node() };

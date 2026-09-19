@@ -131,19 +131,19 @@ impl<T: Hooks> TypedType<T> {
 
     /// The `T` behind `v`, or Ruby's own `TypeError`.
     ///
-    /// The lifetime is unconstrained: the caller keeps `v` rooted for as long
-    /// as it uses the reference (a method receiver is).
-    pub fn get<'a>(&'static self, v: Value) -> Result<&'a T, Error> {
-        let p = typed_data(v, &self.raw)? as *const T;
+    /// Borrowed for as long as the caller borrows `v`, the object that owns the
+    /// data - so the reference cannot outlive the VALUE it came from.
+    pub fn get<'v>(&'static self, v: &'v Value) -> Result<&'v T, Error> {
+        let p = typed_data(*v, &self.raw)? as *const T;
         // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
         Ok(unsafe { &*p })
     }
 
     /// [`get`](Self::get) for a VALUE whose type the caller already
     /// established; a mismatch is a bug in that reasoning, and panics.
-    pub fn get_known<'a>(&'static self, v: Value) -> &'a T {
+    pub fn get_known<'v>(&'static self, v: &'v Value) -> &'v T {
         // SAFETY: as `get`; `known_ptr` asserts the type.
-        unsafe { &*self.known_ptr(v) }
+        unsafe { &*self.known_ptr(*v) }
     }
 
     /// The `T` behind an object whose type the caller established, for a

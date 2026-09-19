@@ -229,13 +229,13 @@ pub unsafe fn parsed_xml_doc(p: *mut Parsed) -> *mut XmlDoc {
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
 pub fn html_doc_unwrap(rb_doc: Value) -> Result<RawDoc, Error> {
-    let d: &DocData = HTML_DOC_TYPE.get(rb_doc)?;
+    let d: &DocData = HTML_DOC_TYPE.get(&rb_doc)?;
     Ok(html_doc_of(d))
 }
 
 /// [`html_doc_unwrap`] for a VALUE already known to be an HTML Document.
 pub fn html_doc_known(rb_doc: Value) -> RawDoc {
-    html_doc_of(HTML_DOC_TYPE.get_known(rb_doc))
+    html_doc_of(HTML_DOC_TYPE.get_known(&rb_doc))
 }
 
 fn html_doc_of(d: &DocData) -> RawDoc {
@@ -247,14 +247,14 @@ fn html_doc_of(d: &DocData) -> RawDoc {
 
 /// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
 pub fn doc_parsed(rb_doc: Value) -> Result<*mut Parsed, Error> {
-    let d: &DocData = DOC_TYPE.get(rb_doc)?;
+    let d: &DocData = DOC_TYPE.get(&rb_doc)?;
     Ok(d.parsed)
 }
 
 /// [`doc_parsed`] for a VALUE already known to be a Document - a node's
 /// keepalive Document, or the receiver of a Document method.
 pub fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
-    DOC_TYPE.get_known(rb_doc).parsed
+    DOC_TYPE.get_known(&rb_doc).parsed
 }
 
 /// Run `f` over the parsed handle behind a Document.
@@ -300,7 +300,7 @@ pub fn node_raw(rb_node: Value) -> Result<*mut c_void, Error> {
         return Ok(html_doc_unwrap(rb_node)?.as_ptr());
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    let nd: &NodeData = NODE_DATA_TYPE.get(rb_node)?;
+    let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
     Ok(nd.node)
 }
 
@@ -327,7 +327,7 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
     if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
         return Ok(rb_node);
     }
-    let nd: &NodeData = NODE_DATA_TYPE.get(rb_node)?;
+    let nd: &NodeData = NODE_DATA_TYPE.get(&rb_node)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
 }

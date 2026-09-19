@@ -315,7 +315,7 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     if node.attr().is_some() {
         /* The owner the index answers belongs to `document`, the attribute's
          * live Document. */
-        let owner = crate::bridge::html::attribute_owner(document, RawNode::from(node))?;
+        let owner = crate::bridge::html::attribute_owner(&document, RawNode::from(node))?;
         return Ok(wrap_node(owner, document));
     }
     Ok(wrap_node(node.parent(), document))

@@ -97,7 +97,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> 
         let node = unsafe { (*parsed_xml_doc(parsed)).doc_node() };
         return Ok(node.to_token() as *mut core::ffi::c_void);
     }
-    let nd: &NodeData = XML_NODE_TYPE.get(rb_self)?;
+    let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
     Ok(nd.node)
 }
 
@@ -105,7 +105,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> 
 /// `Err(TypeError)` for anything else. For a receiver not yet established as
 /// one; [`doc_of`] is for a document already known to be.
 pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
-    XML_DOC_TYPE.get(rb_doc)?;
+    XML_DOC_TYPE.get(&rb_doc)?;
     Ok(doc_of(rb_doc))
 }
 
@@ -137,7 +137,7 @@ pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
     if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
         return Ok(rb_self);
     }
-    let nd: &NodeData = XML_NODE_TYPE.get(rb_self)?;
+    let nd: &NodeData = XML_NODE_TYPE.get(&rb_self)?;
     // SAFETY: `nd.document` is the live Document the wrapper marks.
     Ok(unsafe { value(nd.document) })
 }
