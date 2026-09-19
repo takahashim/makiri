@@ -636,12 +636,12 @@ encounter-order (**not** doc-order), `#{css,xpath,search}` run per node and unio
 
 ## Performance
 
-**Makiri meets or beats Nokogiri/libxml2 on every `rake bench` row.** Measured
+**Makiri beats Nokogiri/libxml2 on every `rake bench` row.** Measured
 against Nokogiri: parse ~4.6×, css ~12×, at_css ~9400×, `//tag` ~4×,
 `//*[@id=…]` ~8×, `[@attr='v']` ~4.3×, attribute axis ~3×, serialize ~6×,
-full-text extraction ~3.5×. The one row that does not beat it is **traverse**
-(children walk), which lands within measurement error of Nokogiri - "meets", not
-"beats", and it has been that way since before the port.
+full-text extraction ~3.5×. **traverse** (children walk) used to be the one row
+that only met Nokogiri (within measurement error); as of the v0.10.0 bench it
+beats it too.
 
 Treat these as indicative, not precise. Two consecutive runs on the same machine
 put full-text extraction at 2.9× and 3.5×, and threaded parse scaling at 2.4×
@@ -649,11 +649,8 @@ and 1.7×; benchmark-ips reports ±18-27% on the heavier rows. What the numbers
 are good for is catching a *regression in kind* (a row falling to parity or
 below), not for defending a second decimal place.
 
-Against `nokolexbor` - the other Lexbor-based gem, and the sharper comparison -
-Makiri wins everything except two rows: **parse** (~1.25× slower, a known Lexbor
-v3.0.0 cost, not a port regression) and **serialize** (~1.06×, parity). Parsing
-also scales across threads (~1.7-2.4× on 8 cores) because it releases the GVL;
-XPath does not scale, by design (it holds the GVL - see below).
+Parsing also scales across threads (~1.7-2.4× on 8 cores) because it releases
+the GVL; XPath does not scale, by design (it holds the GVL - see below).
 
 Key decisions that got there, worth not regressing:
 

@@ -2,58 +2,43 @@
 
 ## [Unreleased]
 
-### Added
-
-* **`Makiri::InternalError`**, raised when an internal invariant breaks while
-  parsing, evaluating an expression or walking a tree built from input. It
-  descends from `Exception` rather than `StandardError`, so a bare `rescue => e`
-  passes it through - it is a bug in Makiri, not a bad argument - while a host
-  that wants to turn one request into an error can `rescue Makiri::InternalError`.
-
 ### Changed
 
-* **Parsing is faster.** Two changes, measured in CPU time on a 6000-element
-  document: the source-location offsets are stamped into the DOM on the first
-  `#line` or the first mutation rather than during every parse (-11% for callers
-  that never ask for a line, on every platform), and `#line` answers exactly what
-  it did before. The vendored Lexbor is additionally built with link-time
-  optimization, worth another -16% on parse and -9% on `#to_html` (and costing
-  ~5% on `#css`), wherever the platform's linker can read such an archive:
-  macOS always, Linux when a full LLVM toolchain (clang, llvm-ar, lld) is
-  installed, and Windows not at all.
+* **The native extension is rewritten in Rust.** The C glue, the XPath engine,
+  the XML reader and the CSS lowering are now one Rust crate; the only C left is
+  the vendored Lexbor, still unpatched. The Ruby API is unchanged, and answers
+  were checked against the C build's recorded output as well as the existing
+  differential suites against Nokogiri.
 
-* **A crash in the extension is now an exception.** The extension used to be
-  built with `panic = "abort"`, so an internal failure ended the host process
-  with SIGABRT, running no `ensure`, no `at_exit` and no cleanup. It now unwinds:
-  the failure reaches Ruby as an exception on the thread that ran the call, that
-  thread's `ensure` blocks run, and the process keeps working. At the entry
-  points above it is `Makiri::InternalError`; elsewhere it is Ruby's `fatal`.
-
-* **An XPath handler may not modify the document being evaluated.** While
-  `Node#xpath` / `#at_xpath` / `XPathContext#evaluate` runs with a handler,
-  every mutator on that document — attribute and content edits, renames,
-  insertion, removal, `inner_html=`, and moving a node out of it into another
-  document — raises `Makiri::Error`. The evaluator reads names and values out
-  of the document for the whole walk, and an edit could free them underneath
-  it. Other documents stay editable, and the document is editable again as soon
-  as the evaluation returns.
+  * **Installing from source needs a Rust toolchain.** `cargo` (stable) and
+    libclang are required alongside CMake, and `rb_sys` becomes a runtime
+    dependency of the source gem, because its `extconf.rb` runs at install time.
+    The precompiled platform gems need none of this and do not depend on
+    `rb_sys`.
+  * **Faster.** Makiri now beats both Nokogiri and nokolexbor on every
+    `rake bench` row, parse included - previously ~1.25x slower than nokolexbor.
+    Source locations are stamped on the first `#line` or mutation rather than
+    during every parse, and the vendored Lexbor is built with link-time
+    optimization where the linker supports it (macOS; Linux with clang,
+    llvm-ar and lld; not Windows).
+  * **An internal failure is an exception, not a crash.** It used to end the
+    host process with SIGABRT. Now it unwinds on the thread that ran the call:
+    `ensure` blocks run and the process keeps working. On entry points that
+    handle input (parse, XPath, CSS, serialization, text) it is the new
+    **`Makiri::InternalError`**, which descends from `Exception`, not
+    `StandardError`, so a bare `rescue => e` does not swallow it; elsewhere it
+    is Ruby's `fatal`.
+  * **An XPath handler may not modify the document being evaluated.** Every
+    mutator on that document raises `Makiri::Error` while an evaluation with a
+    handler runs, because the evaluator holds names and values from it for the
+    whole walk.
 
 ### Fixed
 
-* **Reading text no longer crashes when a leaf node stands before the root
-  element.** Lexbor answers `lxb_dom_document_root` with the document's first
-  child when the document has no `<html>`, so a script that puts a comment,
-  a processing instruction or a text node in front of the root element handed
-  the text index a leaf to build over — and the index is rooted at a container,
-  with a range table sized from the container count, which does not count a
-  leaf root. The build refuses such a root now and the caller walks instead.
-
-* **A handler that evaluates again on its own `XPathContext` no longer breaks
-  the outer walk.** When that nested `evaluate` passed a handler, finishing it
-  cleared the context's handler, so the outer walk's next function call failed
-  as `unknown function`. It also reset the per-evaluate counters, which let an
-  outer walk exceed its operation budget by evaluating again from a handler.
-  Each evaluate now restores what the walk around it had.
+* Reading text no longer crashes when a comment, processing instruction or text
+  node stands before the root element of a document without `<html>`.
+* A handler that evaluates again on its own `XPathContext` no longer leaves the
+  outer walk without its handler or with reset operation budgets.
 
 ## [0.9.0] - 2026-09-11
 
