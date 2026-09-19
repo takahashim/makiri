@@ -48,15 +48,9 @@ impl<'a, 'd, D: Dom<'d>> Bindings<'a, 'd, D> {
     }
 }
 
-/// The host-specific element / attribute name match. The principal-node-type
-/// filter has already passed; this decides name and namespace.
-///
-/// XML compares the LOCAL name plus the namespace URI: an unprefixed test
-/// matches a no-namespace node only (a prefixed or default-namespaced element
-/// needs a registered prefix), and a prefixed test matches the URI bound to the
-/// prefix. HTML uses the qualified-name model instead: an unprefixed test
-/// compares the qualified name (which for HTML is the local name) and, in strict
-/// mode, restricts elements to the HTML or null namespace.
+/// The element / attribute name match. The principal-node-type filter has
+/// already passed; this decides name and namespace, through the host's policy
+/// items (`Dom::test_name`, `unprefixed_matches`, `attr_ns_uri`).
 ///
 /// `pre` carries the prefix's already-resolved URI, so a hot multi-node walk
 /// resolves it once in `eval_step` rather than per node.
@@ -73,56 +67,50 @@ fn name_test_match<'a, 'd, D: Dom<'d>>(
     let Some(want_local) = test.local.as_deref() else {
         return false;
     };
-    let is_attr = axis == Axis::Attribute;
-    let prefixed = test.prefix.is_some();
-
-    let got: &[u8] = if is_attr {
+    if axis == Axis::Attribute {
         let Some(a) = doc.as_attr(node) else {
             return false;
         };
-        if D::IS_XML || prefixed {
-            doc.attr_local_name(a)
-        } else {
-            doc.attr_qualified_name(a)
-        }
-    } else if D::IS_XML || prefixed {
-        doc.local_name(node)
-    } else {
-        doc.qualified_name(node)
-    };
-    /* An HTML element's names, and its attributes' names, compare ASCII
-     * case-insensitively; everything else exactly. An attribute's owner is its
-     * parent, which the HTML index backfills. */
-    let owner = if is_attr {
-        doc.parent(node)
-    } else {
-        Some(node)
-    };
-    if !names_equal(doc, owner, got, want_local) {
-        return false;
+        return match test.prefix {
+            None => unprefixed_attr_matches(doc, doc.parent(node), a, want_local, b.lax),
+            Some(_) => {
+                names_equal(
+                    doc,
+                    doc.parent(node),
+                    doc.attr_test_name(a, true),
+                    want_local,
+                ) && resolved_prefix(b, test).is_some_and(|uri| uri == doc.attr_ns_uri(a))
+            }
+        };
     }
 
+    let prefixed = test.prefix.is_some();
+    if !names_equal(doc, Some(node), doc.test_name(node, prefixed), want_local) {
+        return false;
+    }
     if prefixed {
-        let want_uri = match resolved_prefix(b, test) {
-            Some(u) => u,
-            None => return false, /* unknown prefix -> non-match; the step driver reports it */
-        };
-        return want_uri == b.doc.ns_uri(node);
+        /* An unknown prefix is a non-match here; the step driver reports it. */
+        return resolved_prefix(b, test).is_some_and(|uri| uri == doc.ns_uri(node));
     }
-    if b.lax {
-        return true;
-    }
-    if D::IS_XML {
-        /* strict unprefixed: the node must be in no namespace */
-        b.doc.ns_uri(node).is_empty()
-    } else {
-        /* strict: unprefixed ELEMENT tests resolve in the HTML namespace, so a
-         * foreign (SVG / MathML) element needs a prefix. Attributes are exempt -
-         * an unprefixed attribute test matches by no-namespace local name, and
-         * the qualified-name compare above already excluded prefixed foreign
-         * attributes. */
-        is_attr || !doc.is_foreign_ns(node)
-    }
+    b.lax || doc.unprefixed_matches(node, false)
+}
+
+/// Whether attribute `a` of element `owner` matches the unprefixed name test
+/// `want`. The attribute axis and the `[@name]` fast path both ask this, so the
+/// two cannot answer differently - they once did, in XML's lax mode, where the
+/// fast path compared qualified names and the axis local ones.
+///
+/// `owner` is the attribute's element, which decides whether names fold case;
+/// the HTML index backfills it as the attribute's parent.
+pub fn unprefixed_attr_matches<'d, D: Dom<'d>>(
+    doc: D,
+    owner: Option<D::Node>,
+    a: D::Attr,
+    want: &[u8],
+    lax: bool,
+) -> bool {
+    names_equal(doc, owner, doc.attr_test_name(a, false), want)
+        && (lax || doc.unprefixed_matches(D::attr_node(a), true))
 }
 
 /// A name test's name against a node's, as the node's element `owner` decides:
@@ -204,10 +192,11 @@ pub fn node_principal_match<'a, 'd, D: Dom<'d>>(
             if test.prefix.is_none() {
                 return true;
             }
-            match resolved_prefix(b, test) {
-                Some(want) => want == b.doc.ns_uri(node),
-                None => false,
-            }
+            let got = match doc.as_attr(node) {
+                Some(a) => doc.attr_ns_uri(a),
+                None => doc.ns_uri(node),
+            };
+            resolved_prefix(b, test).is_some_and(|want| want == got)
         }
         TestKind::Name => {
             /* An attribute's kind is checked by the name test, which takes it as

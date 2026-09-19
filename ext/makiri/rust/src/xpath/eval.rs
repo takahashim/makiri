@@ -1,8 +1,7 @@
-//! The XPath 1.0 evaluator (mkr_xpath_eval_body.h): axis walks, node tests,
-//! predicates, the operator semantics, and the two index fast paths.
+//! The XPath 1.0 evaluator: axis walks, node tests, predicates, the operator
+//! semantics, and the two index fast paths.
 //!
-//! Generic over `Dom`, so one body compiles per representation - what the C
-//! did by `#include`-ing this file twice behind different macros.
+//! Generic over `Dom`, so one body compiles per representation.
 
 #![forbid(unsafe_code)]
 
@@ -99,6 +98,7 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
     inout: &mut NodeSet<D::Node>,
 ) -> EvalResult {
     let doc = ev.doc;
+    let lax = ev.cx.lax();
     for pred in preds {
         let mut kept = NodeSet::new();
 
@@ -111,7 +111,7 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
                  * shortcut stays under the same budget as the path it skips. */
                 ev.budget.charge_op()?;
                 let n = inout.get(i);
-                if attr_pred_matches::<D>(doc, &ap, n) {
+                if attr_pred_matches::<D>(doc, &ap, n, lax) {
                     kept.push(n, &mut ev.budget)?;
                 }
             }
@@ -527,14 +527,14 @@ fn first_recognise(root: &Expr) -> Option<&Step> {
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
-fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node) -> bool {
+fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node, lax: bool) -> bool {
     for p in &step.predicates {
         /* The recogniser already confirmed the shape. */
         let ap = match match_attr_pred(p) {
             Some(ap) => ap,
             None => return false,
         };
-        if !attr_pred_matches::<D>(doc, &ap, n) {
+        if !attr_pred_matches::<D>(doc, &ap, n, lax) {
             return false;
         }
     }
@@ -605,7 +605,7 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
     while let Some(n) = cur {
         ev.budget.charge_op()?;
         if node_principal_match::<D>(doc, test, n, step.axis, &b)
-            && first_node_ok::<D>(doc, step, n)
+            && first_node_ok::<D>(doc, step, n, b.lax)
         {
             return Ok(Some(Some(n)));
         }

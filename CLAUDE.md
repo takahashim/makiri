@@ -576,8 +576,11 @@ element name test resolves in the HTML namespace, so `//div` matches but
 prefix (`//svg:path`). Pass `namespace_matching: :lax` (on `Node#{xpath,at_xpath}`
 or `XPathContext.new`) for the namespace-agnostic, `Nokogiri::HTML`-style match
 where `//path` finds the SVG element. The mode affects *only* unprefixed
-element name tests; prefixed tests, the `*` wildcard, and attribute tests are
-unchanged (see `xpath/nodetest.rs`). Makiri keeps HTML elements in the
+name tests; prefixed tests and the `*` wildcard are unchanged. In HTML that
+means element tests (an attribute is exempt from the strict rule anyway); in
+XML an unprefixed attribute test goes namespace-agnostic too (`@a` finds
+`p:a`), and the `[@a]` fast path answers exactly as the axis does (see
+`xpath/nodetest.rs`, `unprefixed_attr_matches`). Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null). **Name tests fold ASCII case on HTML elements** (browsers + WPT
 `domxpath`, NOT the HTML Standard, whose XPath section only sets the default
@@ -587,6 +590,17 @@ SVG/MathML names stay exact (`refX`). One rule, `nodetest::names_equal` over
 it that way, since Lexbor's own attribute lookup folds on every element. The
 HTML attribute axis also skips attributes in the XMLNS namespace (a foreign
 element's `xmlns`/`xmlns:*`), as the XML backend skips declarations.
+
+**Host policy lives in `Dom`, never in a host test.** Where XPath over HTML
+and over XML differ, the difference is a named item of the `Dom` trait
+(`xpath/dom.rs`, "host policy"): `test_name` / `attr_test_name` (local vs
+qualified name), `unprefixed_matches` (the strict rule), `attr_ns_uri` (an
+attribute's OWN namespace - `namespace-uri(//div/@id)` is `""`),
+`ID_ATTRIBUTE` (`id` in HTML, none in XML), `LANG_ATTRIBUTES`. The engine
+never asks which host it walks; the `IS_XML` flag that did is gone, and a new
+policy is a new item stated in each `impl`. The HTML backend reports the DOM's
+case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
+stored name.
 
 **CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
 `lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the

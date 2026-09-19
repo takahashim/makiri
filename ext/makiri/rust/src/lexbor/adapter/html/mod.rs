@@ -97,6 +97,16 @@ pub const TAG_TEMPLATE: usize = lxb::lxb_tag_id_enum_t_LXB_TAG_TEMPLATE as usize
 
 /* ---------- borrowed bytes ---------- */
 
+/// A DOM `localName` from a qualified name and Lexbor's stored local name: the
+/// qualified name's tail, at the stored name's length, so its case is kept.
+fn case_preserved_tail<'a>(qualified: &'a [u8], local: &'a [u8]) -> &'a [u8] {
+    if qualified.len() >= local.len() {
+        &qualified[qualified.len() - local.len()..]
+    } else {
+        local
+    }
+}
+
 #[inline]
 unsafe fn seen<'a>(p: *const u8, len: usize) -> &'a [u8] {
     if p.is_null() || len == 0 {
@@ -642,6 +652,12 @@ impl<'doc> HtmlElement<'doc> {
         // SAFETY: a live element.
         unsafe { named_mut(self.raw(), lxb::lxb_dom_element_local_name) }
     }
+
+    /// The DOM's `localName`, case preserved - see [`HtmlAttr::dom_local_name`];
+    /// an SVG `foreignObject` is stored as `foreignobject`.
+    pub fn dom_local_name(self) -> &'doc [u8] {
+        case_preserved_tail(self.qualified_name(), self.local_name())
+    }
     /// DOM `tagName`, or None when Lexbor has none.
     pub fn tag_name(self) -> Option<&'doc [u8]> {
         let mut len = 0usize;
@@ -673,10 +689,8 @@ impl<'doc> HtmlElement<'doc> {
     /// the qualified name keeps its case, and `setAttributeNS` is
     /// case-sensitive.
     pub fn find_attr_ns(self, ns_id: usize, local: &[u8]) -> Option<HtmlAttr<'doc>> {
-        self.attrs().find(|a| {
-            let (q, l) = (a.qualified_name(), a.local_name());
-            a.own_ns() == ns_id && q.len() >= l.len() && &q[q.len() - l.len()..] == local
-        })
+        self.attrs()
+            .find(|a| a.own_ns() == ns_id && a.dom_local_name() == local)
     }
 
     /* The attribute-writing steps, spelled once. Reached only through the two
@@ -780,6 +794,14 @@ impl<'doc> HtmlAttr<'doc> {
         // SAFETY: a live attribute.
         unsafe { named(self.raw(), lxb::lxb_dom_attr_local_name) }
     }
+    /// The DOM's `localName`: the qualified name after its prefix, case
+    /// preserved. Lexbor lower-cases its stored local name even where the
+    /// qualified name keeps its case - an SVG `refX` is stored as `refx` - so
+    /// the tail of the qualified name is taken, at the stored name's length.
+    pub fn dom_local_name(self) -> &'doc [u8] {
+        case_preserved_tail(self.qualified_name(), self.local_name())
+    }
+
     #[inline]
     pub fn value(self) -> &'doc [u8] {
         // SAFETY: a live attribute; the value is only changed by a mutator,
@@ -809,6 +831,15 @@ impl<'doc> HtmlAttr<'doc> {
             Some(owner) if owner.node().ns_id() != self.node().ns_id() => self.node().ns_id(),
             _ => NS_UNDEF,
         }
+    }
+
+    /// The attribute's OWN namespace URI - see [`own_ns`](Self::own_ns) - or
+    /// None when it has none.
+    pub fn own_ns_uri(self) -> Option<&'doc [u8]> {
+        if self.own_ns() == NS_UNDEF {
+            return None;
+        }
+        self.node().ns_uri()
     }
 
     /// The element the attribute is set on, when Lexbor has linked it.

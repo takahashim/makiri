@@ -768,4 +768,58 @@ RSpec.describe "Makiri XPath" do
       expect(doc.xpath("//li").map { |n| n["id"] }).to eq(["b", nil, "c"])
     end
   end
+
+  # Where XPath over HTML and over XML differ, the difference is a named host
+  # policy (xpath/dom.rs); these pin the answers each one gives, including five
+  # the policies used to get wrong.
+  describe "host policy" do
+    let(:html) do
+      Makiri::HTML(%(<div id="a" lang="ja"><svg viewBox="0 0 1 1">) +
+                   %(<path refX="1" xlink:href="#z" xml:lang="en"/><foreignObject/></svg></div>))
+    end
+    let(:svg) { "http://www.w3.org/2000/svg" }
+    let(:xlink) { "http://www.w3.org/1999/xlink" }
+
+    it "gives an HTML attribute its own namespace, not its element's" do
+      expect(html.xpath("namespace-uri(//div/@id)")).to eq("")
+      expect(html.xpath(%(namespace-uri(//*[local-name()="path"]/@refX)))).to eq("")
+      expect(html.xpath(%(namespace-uri(//*[local-name()="path"]/@*[local-name()="href"])))).to eq(xlink)
+      cx = Makiri::XPathContext.new(html)
+      cx.register_namespace("xl", xlink)
+      cx.register_namespace("s", svg)
+      expect(cx.evaluate("count(//@xl:href)")).to eq(1)
+      expect(cx.evaluate("count(//@xl:*)")).to eq(1)
+      expect(cx.evaluate("count(//@s:*)")).to eq(0)
+    end
+
+    it "reports an SVG name's case in local-name(), and name tests it exactly" do
+      expect(html.xpath(%(local-name(//*[local-name()="path"]/@refX)))).to eq("refX")
+      expect(html.xpath(%(local-name(//*[local-name()="foreignObject"])))).to eq("foreignObject")
+      cx = Makiri::XPathContext.new(html)
+      cx.register_namespace("s", svg)
+      expect(cx.evaluate("count(//s:foreignObject)")).to eq(1)
+      expect(cx.evaluate("count(//s:foreignobject)")).to eq(0)
+    end
+
+    it "decides lang() by the nearest element carrying a language attribute" do
+      expect(html.xpath(%(count(//*[local-name()="path"][lang("en")])))).to eq(1)
+      expect(html.xpath(%(count(//*[local-name()="path"][lang("ja")])))).to eq(0)
+      expect(html.xpath(%(count(//*[local-name()="foreignObject"][lang("ja")])))).to eq(1)
+    end
+
+    it "answers id() from the id attribute in HTML, and never in XML" do
+      expect(html.xpath('count(id("a"))')).to eq(1)
+      expect(Makiri::XML(%(<r><e id="a"/></r>)).xpath('count(id("a"))')).to eq(0)
+    end
+
+    it "matches [@a] as the attribute axis does, in XML's lax mode too" do
+      doc = Makiri::XML(%(<r xmlns:p="urn:p"><e p:a="v"/><f a="w"/></r>))
+      lax = Makiri::XPathContext.new(doc, namespace_matching: :lax)
+      expect(lax.evaluate("count(//@a)")).to eq(2)
+      expect(lax.evaluate("count(//*[@a])")).to eq(2)
+      expect(lax.evaluate(%(count(//*[@a="v"])))).to eq(1)
+      expect(doc.xpath("count(//*[@a])")).to eq(1)
+      expect(doc.at_xpath("//*[@a]").name).to eq("f")
+    end
+  end
 end

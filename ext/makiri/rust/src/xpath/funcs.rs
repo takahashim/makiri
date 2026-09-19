@@ -106,11 +106,11 @@ pub fn lookup<'e, 'd, D: Dom<'d>>(
         b"floor" => fn_floor::<D> as FnImpl<'e, 'd, D>,
         b"ceiling" => fn_ceiling::<D> as FnImpl<'e, 'd, D>,
         b"round" => fn_round::<D> as FnImpl<'e, 'd, D>,
-        /* the CSS lowering's internal hooks */
-        _ if D::IS_XML && local == FN_OF_TYPE_POS => fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
-        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => {
-            fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>
-        }
+        /* The CSS lowering's internal hooks. Registered for every host: their
+         * names begin with \x01, which no expression can spell, so only the
+         * lowering reaches them - and it runs only for XML today. */
+        _ if local == FN_OF_TYPE_POS => fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
+        _ if local == FN_OF_TYPE_POS_LAST => fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
         _ => return None,
     };
     Some(f)
@@ -303,7 +303,7 @@ fn fn_count<'e, 'd, D: Dom<'d>>(
     number(ns.len() as f64)
 }
 
-/// Walk the tree for an element whose `id` attribute is `id`.
+/// Walk the tree for an element whose `id_attr` attribute is `id`.
 ///
 /// Every visited node is charged to the op budget: without it, id() over a large
 /// node-set - a token per node, a tree walk per token - drives quadratic work at
@@ -311,6 +311,7 @@ fn fn_count<'e, 'd, D: Dom<'d>>(
 fn find_by_id<'e, 'd, D: Dom<'d>>(
     doc: D,
     root: D::Node,
+    id_attr: &[u8],
     id: &[u8],
     budget: &mut Budget,
 ) -> Result<Option<D::Node>, Reported> {
@@ -320,7 +321,7 @@ fn find_by_id<'e, 'd, D: Dom<'d>>(
     let mut n = root;
     loop {
         budget.charge_op()?;
-        if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, b"id") == Some(id) {
+        if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, id_attr) == Some(id) {
             return Ok(Some(n));
         }
         if let Some(c) = doc.first_child(n) {
@@ -348,6 +349,7 @@ fn find_by_id<'e, 'd, D: Dom<'d>>(
 /// Duplicates go in unconditionally: the caller dedups the whole result with one
 /// sort plus an adjacent pass, which beats a contains() check per insert.
 fn id_collect<'e, 'd, D: Dom<'d>>(
+    id_attr: &[u8],
     s: &[u8],
     root: D::Node,
     out: &mut NodeSet<D::Node>,
@@ -356,7 +358,7 @@ fn id_collect<'e, 'd, D: Dom<'d>>(
     let doc = ev.doc;
     let budget = &mut ev.budget;
     for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
-        if let Some(hit) = find_by_id::<D>(doc, root, tok, budget)? {
+        if let Some(hit) = find_by_id::<D>(doc, root, id_attr, tok, budget)? {
             out.push(hit, budget)?;
         }
     }
@@ -371,13 +373,11 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
     let err = ev.budget.sink();
     arity(args.len(), 1, 1, err.clone(), "id")?;
 
-    if D::IS_XML {
-        /* Host policy: in XML an ID is an attribute DECLARED ID-typed by the
-         * DTD, not any attribute named "id". DTDs are rejected at parse, so a
-         * document read here carries no ID-typed attributes and id() is the
-         * empty node-set. (xml:id is a separate, optional spec.) */
+    /* A host with no ID attributes answers the empty node-set - see
+     * `Dom::ID_ATTRIBUTE`. */
+    let Some(id_attr) = D::ID_ATTRIBUTE else {
         return Ok(Val::default());
-    }
+    };
     let doc = ev.doc;
     let root = doc.document_node();
     /* Collected in a guard, so a failure part-way frees what was found. */
@@ -388,11 +388,11 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
     if let Some(set) = args[0].as_nodeset() {
         (0..set.len()).try_for_each(|i| {
             let t = node_to_owned_text::<D>(doc, set.get(i), Some(&mut ev.budget))?;
-            id_collect::<D>(t.as_slice(), root, &mut found, ev)
+            id_collect::<D>(id_attr, t.as_slice(), root, &mut found, ev)
         })?;
     } else {
         let t = to_text::<D>(&args[0], ev)?;
-        id_collect::<D>(t.as_slice(), root, &mut found, ev)?;
+        id_collect::<D>(id_attr, t.as_slice(), root, &mut found, ev)?;
     }
     /* §4.1: the result is in document order with duplicates removed. */
     nodeset_unique_sorted::<D>(ev, &mut found);
@@ -492,11 +492,14 @@ fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(
     let Some(t) = name_target::<D>(args, focus, err.clone(), "namespace-uri")? else {
         return string(b"", err.clone(), "namespace-uri");
     };
-    if (doc.node_type(t) != NTYPE_ELEMENT && doc.node_type(t) != NTYPE_ATTRIBUTE) || !doc.has_ns(t)
-    {
-        return string(b"", err.clone(), "namespace-uri");
-    }
-    string(doc.ns_uri(t), err.clone(), "namespace-uri")
+    /* An attribute's own namespace, never its element's - see
+     * `Dom::attr_ns_uri`. */
+    let uri = match doc.as_attr(t) {
+        Some(a) => doc.attr_ns_uri(a),
+        None if doc.node_type(t) == NTYPE_ELEMENT && doc.has_ns(t) => doc.ns_uri(t),
+        None => b"",
+    };
+    string(uri, err.clone(), "namespace-uri")
 }
 
 /* ---------- string functions ---------- */
@@ -823,26 +826,24 @@ fn fn_lang<'e, 'd, D: Dom<'d>>(
     arity(args.len(), 1, 1, err.clone(), "lang")?;
     let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
-    /* Walk the ancestors for the host's language attribute. Host policy: XPath
-     * 1.0 lang() is xml:lang based; HTML uses `lang`, accepting xml:lang as a
-     * fallback. */
+    /* Walk the ancestors for the host's language attributes
+     * (`Dom::LANG_ATTRIBUTES`). */
     let mut p = focus.node;
     while let Some(n) = p {
         if doc.node_type(n) == NTYPE_ELEMENT {
-            let v = if D::IS_XML {
-                doc.get_attribute(n, b"xml:lang")
-            } else {
-                doc.get_attribute(n, b"lang")
-                    .or_else(|| doc.get_attribute(n, b"xml:lang"))
-            };
+            let v = D::LANG_ATTRIBUTES
+                .iter()
+                .find_map(|name| doc.get_attribute(n, name));
             if let Some(v) = v {
-                /* Case-insensitive compare of the prefix up to a '-'. */
-                if v.len() >= want.len()
-                    && v[..want.len()].eq_ignore_ascii_case(want)
-                    && (v.len() == want.len() || v[want.len()] == b'-')
-                {
-                    return boolean(true);
-                }
+                /* The NEAREST element carrying the attribute decides (§4.3):
+                 * a non-matching one ends the walk rather than letting an
+                 * ancestor's answer through. Case-insensitive compare of the
+                 * prefix up to a '-'. */
+                return boolean(
+                    v.len() >= want.len()
+                        && v[..want.len()].eq_ignore_ascii_case(want)
+                        && (v.len() == want.len() || v[want.len()] == b'-'),
+                );
             }
         }
         p = doc.parent(n);

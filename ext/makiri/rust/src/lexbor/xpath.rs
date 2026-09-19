@@ -69,7 +69,10 @@ impl<'d> HtmlDom<'d> {
 }
 
 impl<'d> Dom<'d> for HtmlDom<'d> {
-    const IS_XML: bool = false;
+    /* ---- host policy: HTML's (see `Dom`) ---- */
+    const ID_ATTRIBUTE: Option<&'static [u8]> = Some(b"id");
+    /// HTML's own `lang` first, then XPath 1.0's `xml:lang`.
+    const LANG_ATTRIBUTES: &'static [&'static [u8]] = &[b"lang", b"xml:lang"];
 
     type Node = HtmlNode<'d>;
     type Attr = HtmlAttr<'d>;
@@ -154,12 +157,15 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     }
 
     #[inline]
+    /// The DOM's `localName`, case preserved (`foreignObject`, not Lexbor's
+    /// `foreignobject`).
     fn local_name(self, n: HtmlNode<'d>) -> &'d [u8] {
-        n.element().map_or(&[], |e| e.local_name())
+        n.element().map_or(&[], |e| e.dom_local_name())
     }
     #[inline]
+    /// The DOM's `localName`, case preserved (`refX`, not Lexbor's `refx`).
     fn attr_local_name(self, a: HtmlAttr<'d>) -> &'d [u8] {
-        a.local_name()
+        a.dom_local_name()
     }
     #[inline]
     fn qualified_name(self, n: HtmlNode<'d>) -> &'d [u8] {
@@ -178,11 +184,41 @@ impl<'d> Dom<'d> for HtmlDom<'d> {
     fn ns_uri(self, n: HtmlNode<'d>) -> &'d [u8] {
         n.ns_uri().unwrap_or(&[])
     }
+    /// A prefixed test compares the local name; an unprefixed one the
+    /// qualified name, as browsers do.
     #[inline]
-    fn is_foreign_ns(self, n: HtmlNode<'d>) -> bool {
-        let ns = n.ns_id();
-        ns != dom::NS_HTML && ns != dom::NS_UNDEF
+    fn test_name(self, n: HtmlNode<'d>, prefixed: bool) -> &'d [u8] {
+        if prefixed {
+            Dom::local_name(self, n)
+        } else {
+            Dom::qualified_name(self, n)
+        }
     }
+    #[inline]
+    fn attr_test_name(self, a: HtmlAttr<'d>, prefixed: bool) -> &'d [u8] {
+        if prefixed {
+            a.dom_local_name()
+        } else {
+            a.qualified_name()
+        }
+    }
+
+    /// Strict: an unprefixed element test resolves in the HTML namespace (or
+    /// none), so a foreign SVG / MathML element needs a prefix. Attributes are
+    /// exempt: the qualified-name compare already set the prefixed ones apart.
+    #[inline]
+    fn unprefixed_matches(self, n: HtmlNode<'d>, is_attr: bool) -> bool {
+        let ns = n.ns_id();
+        is_attr || ns == dom::NS_HTML || ns == dom::NS_UNDEF
+    }
+
+    /// Lexbor gives an attribute with no namespace of its own its element's,
+    /// so the attribute's own one is read (`HtmlAttr::own_ns_uri`).
+    #[inline]
+    fn attr_ns_uri(self, a: HtmlAttr<'d>) -> &'d [u8] {
+        a.own_ns_uri().unwrap_or(&[])
+    }
+
     #[inline]
     fn folds_name_case(self, el: HtmlNode<'d>) -> bool {
         el.ns_id() == dom::NS_HTML
