@@ -1,17 +1,14 @@
-//! The HTML fragment pipeline (was part of glue/ruby_doc.c).
+//! The HTML fragment pipeline.
 //!
 //! Parsing a fragment, importing its children into a document, and the
-//! `<template>`-content fixup that `lxb_dom_document_import_node` omits. Five
-//! of these are exported C symbols, called by `ruby_html_mutate.c` and
-//! `cross_import.c`.
+//! `<template>`-content fixup that `lxb_dom_document_import_node` omits.
 //!
-//! # Why this is not in `doc.rs`
+//! # Why this is not with the Document
 //!
-//! The C had one file because the C had one file. None of this is about the
-//! Document WRAPPER - it is a service the wrapper happens to use and two other
-//! translation units use directly, and keeping it here means the module that
-//! owns `Makiri::HTML::Document` is about that class rather than about three
-//! unrelated things.
+//! None of this is about the Document WRAPPER - it is a service the wrapper
+//! happens to use and the mutators and `import_node` use directly, and keeping
+//! it here means the module that owns `Makiri::HTML::Document` is about that
+//! class rather than about three unrelated things.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -20,16 +17,14 @@ use core::ffi::c_void;
 
 use crate::falloc::VecPush;
 
-use crate::lexbor::ffi::{LxbDoc, LxbNode};
+use crate::lexbor_abi::{LxbDoc, LxbNode};
 
 /* ------------------------------------------------------------------ *
  * fragments                                                          *
  * ------------------------------------------------------------------ */
 
-use crate::cbuf::OwnedBuf;
 use crate::lexbor::adapter::html::{BuildingNode, HtmlDoc, HtmlNode, RawDoc, RawNode};
-pub use crate::lexbor::adapter::utf8_input::utf8_sanitize;
-use crate::lexbor::adapter::utf8_input::Sanitized;
+use crate::lexbor::adapter::utf8_input::sanitize;
 
 /* The two fragment parsers. One is generated; the other is exported by Lexbor
  * but absent from its public headers, so `lexbor_abi` hand-declares it with the
@@ -41,12 +36,7 @@ use crate::lexbor_abi::{lxb_html_parse_fragment, lxb_html_parse_fragment_by_tag_
  * over an opaque parser, which was fine until the source-location port needed
  * the tokenizer inside it and build.rs started generating them - two Rust types
  * for one symbol again. */
-use crate::lexbor_abi::{
-    /* The `_noi` twin of an `lxb_inline`. It was declared here, over an opaque
-     * hash, until the HTML shim needed the same symbol - one declaration per
-     * symbol, and `lexbor_abi` is where the `_noi` twins live. */
-    lxb_tag_id_by_name_noi, HtmlParser,
-};
+use crate::lexbor_abi::HtmlParser;
 
 /// `lxb_dom_document_import_node` deep-clones the normal child chain but NOT a
 /// `<template>`'s separate content fragment, so an imported template comes out
@@ -101,40 +91,6 @@ fn fixup_template_content(
         }
     }
     Ok(())
-}
-
-/// Fragment input after browser-compatible decoding: the caller's bytes when
-/// they needed no repair, or the repaired copy, which this owns and frees.
-pub enum SanitizedHtml<'a> {
-    Borrowed(&'a [u8]),
-    Owned(OwnedBuf),
-}
-
-impl SanitizedHtml<'_> {
-    pub fn as_slice(&self) -> &[u8] {
-        match self {
-            SanitizedHtml::Borrowed(b) => b,
-            SanitizedHtml::Owned(o) => o.as_slice(),
-        }
-    }
-}
-
-/// Browser-compatible decoding for fragment input: invalid UTF-8 becomes
-/// U+FFFD, valid input is used in place. `known_valid` - the caller already
-/// knows the bytes are valid UTF-8 - skips the scan. `None` on OOM with
-/// nothing allocated.
-///
-/// Bytes in, bytes out: taking them from a Ruby String, and honouring its
-/// encoding, is the bridge's job (`bridge::string::HtmlSource`).
-pub fn sanitize_html_input(input: &[u8], known_valid: bool) -> Option<SanitizedHtml<'_>> {
-    if known_valid {
-        return Some(SanitizedHtml::Borrowed(input));
-    }
-    // SAFETY: a Rust slice, readable for its length.
-    match unsafe { utf8_sanitize(input.as_ptr(), input.len()) }? {
-        Sanitized::Unchanged => Some(SanitizedHtml::Borrowed(input)),
-        Sanitized::Replaced(r) => Some(SanitizedHtml::Owned(r)),
-    }
 }
 
 /// Why a fragment parse produced no fragment. The bridge words it for Ruby.
@@ -317,7 +273,7 @@ unsafe fn run_fragment_parser(
     context: &FragmentContext,
 ) -> Result<RawNode, FragmentError> {
     let parser = HtmlParser::create().ok_or(FragmentError::Parser)?;
-    let src = sanitize_html_input(input, known_valid).ok_or(FragmentError::Decode)?;
+    let src = sanitize(input, known_valid).ok_or(FragmentError::Decode)?;
     let bytes = src.as_slice();
     let root = context.parse(&parser, bytes.as_ptr(), bytes.len());
     drop(src); /* the parse consumed it; the buffer goes on every path */
@@ -364,17 +320,11 @@ unsafe fn import_raw(doc: RawDoc, src: *mut LxbNode, deep: bool) -> Option<*mut 
 /* the context helpers the Ruby-facing bridge drives                   */
 /* ------------------------------------------------------------------ */
 
-/// The tag id Lexbor knows `name` by, or [`TAG_UNDEF`] for an unknown name.
+/// The tag id Lexbor knows `name` by, or `TAG_UNDEF` for an unknown name.
 ///
 /// The Ruby-facing context resolution lives in [`crate::bridge::fragment`];
-/// only the ABI read stays here.
+/// the lookup itself is [`HtmlDoc::tag_id`].
 pub fn tag_id_by_name(doc: RawDoc, name: &[u8]) -> usize {
     // SAFETY: a live document handle, read for this call.
-    unsafe {
-        lxb_tag_id_by_name_noi(
-            (*(doc.as_ptr() as *mut LxbDoc)).tags,
-            name.as_ptr(),
-            name.len(),
-        )
-    }
+    unsafe { doc.as_doc() }.tag_id(name)
 }

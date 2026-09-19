@@ -16,20 +16,21 @@
 //! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
 pub mod adapter;
-pub mod ffi;
 /// HTML fragment parsing and import/fixup operations.
 pub mod fragment;
 /// Selector traversal engine, including its Lexbor callbacks.
-#[cfg(feature = "ruby")]
 pub mod selectors;
 /// Lexbor's HTML serialization callbacks and buffer traversal.
-#[cfg(feature = "ruby")]
 pub mod serialize;
 /// The Lexbor CSS stylesheet parser and its raw callback traversal.
 pub mod stylesheet;
 
 /// The XPath engine's HTML backend (`Dom` for a Lexbor document).
 pub mod xpath;
+
+/// What the CSS users share: the owner of a Lexbor object, the GVL cell, and
+/// the selector parser wired to its arena.
+pub(crate) mod css_engine;
 
 /// The process-global Lexbor CSS selector parser (selector parsing only).
 pub mod css_parser;

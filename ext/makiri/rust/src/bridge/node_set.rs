@@ -503,7 +503,7 @@ fn dup(ruby: &Ruby, rb_self: &NodeSet, _args: &[Value]) -> Result<Value, Error> 
  * each operand into a Vec to sidestep all this and measured about half the C's
  * throughput. */
 
-/// Pointer hashing, matching `mkr_ptr_hash` (the MurmurHash3 fmix64 finalizer).
+/// Pointer hashing: `ptr_table`'s MurmurHash3 fmix64 finalizer, as a `Hasher`.
 ///
 /// std's SipHash is the right default for attacker-chosen keys; these are heap
 /// addresses, and paying for it measured about a third of the C's throughput on
@@ -528,13 +528,7 @@ impl core::hash::Hasher for PtrHasher {
     }
 
     fn write_usize(&mut self, p: usize) {
-        let mut h = p as u64;
-        h ^= h >> 33;
-        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        h ^= h >> 33;
-        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        h ^= h >> 33;
-        self.0 = h;
+        self.0 = crate::ptr_table::mix64(p as u64);
     }
 }
 

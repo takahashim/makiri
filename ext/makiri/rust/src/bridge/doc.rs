@@ -31,7 +31,7 @@ use crate::bridge::wrapper::{
 };
 use crate::bridge::xml::doc_of;
 use crate::bridge::xml::xml_node_document;
-use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_check};
+use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_result};
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
 use crate::lexbor::adapter::html::RawNode;
 use crate::lexbor::adapter::post_parse::parse_html;
@@ -64,16 +64,9 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     let shell = DocumentShell::new(DocKind::Html);
 
     let result = crate::bridge::gvl::without_gvl(|| {
-        // SAFETY: the bytes are `owned`'s, valid for the closure's lifetime,
-        // and the parser only reads them.
-        unsafe {
-            parse_html(
-                owned.as_slice().as_ptr(),
-                owned.as_slice().len(),
-                assume_valid,
-            )
-        }
-        .map_or(core::ptr::null_mut(), Box::into_raw)
+        /* The handle crosses the GVL boundary as a raw pointer; it is boxed
+         * again below, on this thread. */
+        parse_html(owned.as_slice(), assume_valid).map_or(core::ptr::null_mut(), Box::into_raw)
     });
     drop(owned);
 
@@ -83,7 +76,7 @@ pub fn parse_document(source: Value) -> Result<Value, Error> {
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
     // SAFETY: `result` is the handle the parse just returned, owned by no one.
-    Ok(shell.install(unsafe { Box::from_raw(result) }))
+    Ok(shell.install_html(unsafe { Box::from_raw(result) }))
 }
 
 /* ------------------------------------------------------------------ *
@@ -141,17 +134,11 @@ pub fn import_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
      * detached lxb subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
-        let mut imp = core::ptr::null_mut();
         let xdoc = doc_of(xml_node_document(node_v)?);
         let src = xml_node_id(node_v)?;
         // SAFETY: two live arenas, and the translation validates the target.
-        xml_mut_check(unsafe {
-            cross_xml_to_html(doc.as_ptr() as *mut _, xdoc, src, deep, &mut imp)
-        })?;
-        return Ok(wrap_html_node(
-            RawNode::from_ptr(imp.cast()).expect("imported node"),
-            rb_self,
-        ));
+        let imp = xml_mut_result(unsafe { cross_xml_to_html(doc, &*xdoc, src, deep) })?;
+        return Ok(wrap_html_node(imp, rb_self));
     }
 
     let src = html_node_unwrap(node_v)?; /* Err on a non-node */

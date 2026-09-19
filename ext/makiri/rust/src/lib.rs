@@ -89,6 +89,11 @@ pub mod text;
 /// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.
 pub mod limits;
 
+/// The one pointer hash, and the fixed-capacity pointer-keyed table the
+/// per-document indexes are built on. Below every layer, so none reaches into
+/// another's internals for them.
+pub mod ptr_table;
+
 /// The opaque, kind-tagged node token the engine passes around and the bridge
 /// mints. Unconditional: the engine, the backends and the bridge all use it.
 pub mod token;

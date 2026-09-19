@@ -1,10 +1,10 @@
-//! Browser-compatible UTF-8 input sanitisation (dom_adapter/utf8_input.c).
+//! Browser-compatible UTF-8 input sanitisation.
 //!
 //! Turns arbitrary bytes into the valid UTF-8 the rest of the engine assumes:
 //! every invalid sequence becomes U+FFFD, per WHATWG byte-stream decoding, so
 //! parsing never fails on bad bytes and the DOM is always valid UTF-8. Used by
 //! the document parse driver and the fragment paths through
-//! [`utf8_sanitize`].
+//! [`sanitize`].
 //!
 //! # Lexbor's encoder is gone from this path
 //!
@@ -24,49 +24,50 @@
 //! byte-identical output from both. `spec/utf8_sanitize_spec.rb` keeps the
 //! enumerated half as a standing check.
 //!
-//! # One spelling of the signature
+//! # One entry point
 //!
-//! The sanitised result is an owned buffer the caller frees with libc `free`.
-//! It used to be returned through two out-parameters (`*mut *mut u8`, `*mut
-//! usize`) to match the C's `lxb_char_t **`; the two callers wrapped it in a
-//! `Drop` guard each, so the ownership was already Rust's. [`Sanitized`] now
-//! carries it in the type and neither caller has to remember.
+//! [`sanitize`] is the whole interface: bytes in, and either those same bytes
+//! (valid already - the common case, no copy) or a repaired copy the result
+//! owns. The document parse and the fragment parse both go through it, so the
+//! "skip when the caller already knows it is valid" rule lives here once.
 //!
-//! # The allocation stays C's
-//!
-//! The result is a `malloc`'d buffer the caller frees with libc `free`, so it is
-//! built in an `mkr_buf_t` and stolen, exactly as before. That also keeps the
-//! growth clamp, the NUL terminator and the `rake oom` injection hook - three
-//! properties that a Rust `Vec` and a hand-written `malloc` would each have had
-//! to re-earn.
+//! The repaired copy is built in a `cbuf::Buf` and stolen as an `OwnedBuf`,
+//! which frees it on drop. That also keeps the growth clamp, the NUL terminator
+//! and the `rake oom` injection hook - three properties that a Rust `Vec` would
+//! have had to re-earn.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use crate::cbuf::{Buf, BufError, OwnedBuf};
 use crate::cutf8::valid;
 
-/// The sanitiser's replacement buffer: `malloc`'d, NUL-terminated, and owned by
-/// the caller, who frees it with libc `free`.
-/// What [`utf8_sanitize`] decided about the input.
-pub enum Sanitized {
-    /// Already valid UTF-8: the caller parses the input in place, no copy.
-    Unchanged,
-    /// Invalid bytes were replaced with U+FFFD; a fresh buffer the caller owns.
-    Replaced(OwnedBuf),
+/// HTML input after browser-compatible decoding: the caller's bytes when they
+/// needed no repair, or the repaired copy, which this owns and frees.
+pub enum Sanitized<'a> {
+    Borrowed(&'a [u8]),
+    Owned(OwnedBuf),
 }
 
-/// UTF-8 -> UTF-8 with every invalid sequence replaced by U+FFFD, into a freshly
-/// `malloc`'d, NUL-terminated buffer. NULL on OOM.
+impl Sanitized<'_> {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Sanitized::Borrowed(b) => b,
+            Sanitized::Owned(o) => o.as_slice(),
+        }
+    }
+}
+
+/// UTF-8 -> UTF-8 with every invalid sequence replaced by U+FFFD, into a fresh
+/// NUL-terminated buffer.
 fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
     /* The output is at most 3x the input: each invalid byte becomes U+FFFD
      * (3 bytes) and valid bytes pass through 1:1. Cap at exactly that bound -
      * tight and tied to the actual input, so a large document still parses but
      * nothing runs away - rather than a blanket ceiling. */
-    /* On overflow, `usize::MAX` rather than a restated MKR_BUF_HARD_MAX: every
-     * growth path in mkr_buf.c already takes min(max, HARD_MAX), so this is the
-     * same ceiling the C reached for, without a Rust copy of the constant that a
-     * `-DMKR_BUF_HARD_MAX=` build could silently disagree with (see cbuf.rs). */
+    /* On overflow, `usize::MAX` rather than a restated hard ceiling: every
+     * growth path in `cbuf::Buf` already takes min(max, BUF_HARD_MAX), so this
+     * is that ceiling, without a second copy of the constant that an
+     * `MKR_BUF_HARD_MAX=` build could silently disagree with (see cbuf.rs). */
     let cap = src.len().saturating_mul(3);
     let mut buf = Buf::new(cap);
 
@@ -74,23 +75,18 @@ fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
      * fails closed if it cannot, so the reserve is a performance hint. */
     let _ = buf.reserve(src.len());
 
+    /* `buf` frees itself on the error returns (`Buf`'s Drop). */
     let mut rest = src;
     loop {
         match core::str::from_utf8(rest) {
             Ok(s) => {
-                if append(&mut buf, s.as_bytes()).is_err() {
-                    return Err(BufError::Oom);
-                }
+                buf.append(s.as_bytes())?;
                 break;
             }
             Err(e) => {
                 let good = e.valid_up_to();
-                if append(&mut buf, &rest[..good]).is_err() {
-                    return Err(BufError::Oom);
-                }
-                if append(&mut buf, "\u{FFFD}".as_bytes()).is_err() {
-                    return Err(BufError::Oom);
-                }
+                buf.append(&rest[..good])?;
+                buf.append("\u{FFFD}".as_bytes())?;
                 match e.error_len() {
                     /* A maximal subpart of `n` bytes was invalid; one U+FFFD
                      * stands for all of it and decoding resumes after it. */
@@ -106,30 +102,13 @@ fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
     buf.steal()
 }
 
-/// Append, freeing the buffer on failure so the error path leaks nothing.
-#[inline]
-fn append(buf: &mut Buf, bytes: &[u8]) -> Result<(), ()> {
-    if bytes.is_empty() {
-        return Ok(());
+/// Sanitise `input` for the HTML parser: invalid UTF-8 becomes U+FFFD, valid
+/// input is used in place. `known_valid` - the caller already knows the bytes
+/// are valid UTF-8, typically from a Ruby String's cached coderange - skips the
+/// scan. `None` on OOM, with nothing allocated.
+pub fn sanitize(input: &[u8], known_valid: bool) -> Option<Sanitized<'_>> {
+    if known_valid || valid(input) {
+        return Some(Sanitized::Borrowed(input));
     }
-    if buf.append(bytes).is_err() {
-        buf.free();
-        return Err(());
-    }
-    Ok(())
-}
-
-/// Sanitise `src` for the HTML parser.
-///
-/// `Unchanged` when the input is already valid UTF-8 (the common case), so the
-/// caller parses `src` as-is with no copy. `Replaced` carries a freshly
-/// `malloc`'d, NUL-terminated replacement the caller owns. `None` on OOM, with
-/// nothing allocated.
-pub unsafe fn utf8_sanitize(src: *const u8, len: usize) -> Option<Sanitized> {
-    if src.is_null() || len == 0 || valid(core::slice::from_raw_parts(src, len)) {
-        return Some(Sanitized::Unchanged);
-    }
-    replace_invalid(core::slice::from_raw_parts(src, len))
-        .ok()
-        .map(Sanitized::Replaced)
+    replace_invalid(input).ok().map(Sanitized::Owned)
 }

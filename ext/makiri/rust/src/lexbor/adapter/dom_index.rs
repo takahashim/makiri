@@ -1,8 +1,8 @@
-//! The per-document DOM indices (dom_adapter/dom_index.c).
+//! The per-document DOM indices.
 //!
 //! Two indices, built in one object because they share a walk:
 //!
-//! - **attribute -> owner element**, an open-addressing hash keyed on the
+//! - **attribute -> owner element**, a [`PtrTable`] keyed on the
 //!   `lxb_dom_attr_t` pointer. Lexbor sets neither `attr->owner` nor
 //!   `attr->node.parent`, so without this an attribute has no way back to its
 //!   element.
@@ -17,7 +17,8 @@
 //!
 //! # The build also writes to the tree
 //!
-//! Filling backfills each attribute node's `parent` to its owner element. Lexbor
+//! Filling backfills each attribute node's `parent` to its owner element
+//! (`HtmlAttr::backfill_parent`). Lexbor
 //! leaves it NULL; setting it to the semantically correct owner is safe because
 //! Lexbor walks the tree through `first_child`/`next` and an attribute never
 //! appears in that chain, and it lets the XPath engine read `node.parent` for the
@@ -31,12 +32,11 @@
 //! lookup that misses reads as "this attribute has no owner", which is a
 //! well-formed wrong answer.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use crate::falloc::try_vec_with_capacity;
-use crate::lexbor_abi::{self as lxb, preorder_next, LxbAttr, LxbDoc, LxbElement, LxbNode};
-use crate::xpath::runtime_abi::cache::ptr_hash;
+use crate::lexbor_abi::{LxbAttr, LxbNode};
+use crate::ptr_table::PtrTable;
 
 /// Tag buckets cover only Lexbor's STATIC tag-id range `[1, LXB_TAG__LAST_ENTRY)`,
 /// so the end of that range doubles as this index's capacity.
@@ -46,26 +46,12 @@ use crate::xpath::runtime_abi::cache::ptr_hash;
 /// value that cannot key a dense array. Those elements are simply left out, and
 /// `//customtag` falls back to a tree walk - rare in practice.
 use super::html::{
-    RawNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF, TYPE_ELEMENT as NODE_TYPE_ELEMENT,
-};
-
-/// One attr->owner slot. A null `attr` marks an empty slot; there are no
-/// deletions, so linear probing never needs a tombstone.
-#[derive(Clone, Copy)]
-struct AttrSlot {
-    attr: *mut LxbAttr,
-    owner: *mut LxbNode,
-}
-
-const EMPTY_SLOT: AttrSlot = AttrSlot {
-    attr: core::ptr::null_mut(),
-    owner: core::ptr::null_mut(),
+    HtmlDoc, HtmlElement, HtmlNode, RawNode, NS_HTML, TAG_LAST_ENTRY as TAG_INDEX_CAP, TAG_UNDEF,
 };
 
 pub struct DomIndex {
-    slots: Vec<AttrSlot>,
-    /// A power of two, or 0 when the document has no attributes.
-    cap: usize,
+    /// attribute -> owner element.
+    owners: PtrTable<LxbAttr, *mut LxbNode>,
 
     /// Every indexed element, grouped by tag id, in document order.
     tag_nodes: Vec<*mut LxbNode>,
@@ -77,70 +63,24 @@ pub struct DomIndex {
     has_foreign: bool,
 }
 
-impl DomIndex {
-    #[inline]
-    fn attr_slot(&self, attr: *const LxbAttr) -> usize {
-        (ptr_hash(attr) as usize) & (self.cap - 1)
-    }
-
-    /// The table is sized at load factor <= 0.5 and never grows during the fill,
-    /// so a free slot always exists and this probe terminates.
-    fn attr_insert(&mut self, attr: *mut LxbAttr, owner: *mut LxbNode) {
-        let mut i = self.attr_slot(attr);
-        while !self.slots[i].attr.is_null() {
-            if self.slots[i].attr == attr {
-                return; /* already mapped; an attribute has one owner */
-            }
-            i = (i + 1) & (self.cap - 1);
-        }
-        self.slots[i] = AttrSlot { attr, owner };
-    }
-
-    fn attr_owner(&self, attr: *mut LxbAttr) -> *mut LxbNode {
-        if self.cap == 0 {
-            return core::ptr::null_mut();
-        }
-        let mut i = self.attr_slot(attr);
-        loop {
-            if self.slots[i].attr.is_null() {
-                return core::ptr::null_mut();
-            }
-            if self.slots[i].attr == attr {
-                return self.slots[i].owner;
-            }
-            i = (i + 1) & (self.cap - 1);
-        }
-    }
-}
-
-/// Walk an element's own attribute list.
-#[inline]
-unsafe fn each_attr(node: *mut LxbNode, mut f: impl FnMut(*mut LxbAttr)) {
-    let mut a = lxb::lxb_dom_element_first_attribute_noi(node as *mut LxbElement);
-    while !a.is_null() {
-        f(a);
-        a = lxb::lxb_dom_element_next_attribute_noi(a);
-    }
-}
-
 /// An element's tag id, when it is one this index buckets.
 #[inline]
-unsafe fn indexable_tag(node: *const LxbNode) -> Option<usize> {
-    let tag = (*node).local_name;
-    if tag != TAG_UNDEF && tag < TAG_INDEX_CAP {
-        Some(tag)
-    } else {
-        None
-    }
+fn indexable_tag(el: HtmlElement<'_>) -> Option<usize> {
+    let tag = el.node().tag_id();
+    (tag != TAG_UNDEF && tag < TAG_INDEX_CAP).then_some(tag)
+}
+
+/// Every element under `root` (inclusive), in document order. The walk climbs
+/// by parent links rather than recursing, so a deep tree cannot exhaust the
+/// stack.
+fn elements<'d>(root: HtmlNode<'d>) -> impl Iterator<Item = HtmlElement<'d>> {
+    core::iter::successors(Some(root), move |n| n.preorder_next(root)).filter_map(HtmlNode::element)
 }
 
 /// Build over `doc`. `None` on allocation failure, with nothing written to the
 /// tree yet - the backfill happens only in the fill pass, which cannot fail.
-///
-/// # Safety
-/// `doc` must be a live Lexbor document.
-pub(crate) unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
-    let root = doc as *mut LxbNode;
+pub(crate) fn build(doc: HtmlDoc<'_>) -> Option<DomIndex> {
+    let root = doc.as_node();
 
     /* Pass 1: one walk to size everything. */
     let mut counts = [0usize; TAG_INDEX_CAP];
@@ -149,40 +89,25 @@ pub(crate) unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
     let mut tag_max = 0usize;
     let mut has_foreign = false;
 
-    let mut node: *mut LxbNode = root;
-    while !node.is_null() {
-        if (*node).type_ == NODE_TYPE_ELEMENT {
-            if (*node).ns != NS_HTML {
-                has_foreign = true;
-            }
-            if let Some(tag) = indexable_tag(node) {
-                counts[tag] += 1;
-                n_indexed += 1;
-                if tag > tag_max {
-                    tag_max = tag;
-                }
-            }
-            each_attr(node, |_| n_attrs += 1);
+    for el in elements(root) {
+        if el.node().ns_id() != NS_HTML {
+            has_foreign = true;
         }
-        node = preorder_next(node, root);
+        if let Some(tag) = indexable_tag(el) {
+            counts[tag] += 1;
+            n_indexed += 1;
+            tag_max = tag_max.max(tag);
+        }
+        n_attrs += el.attrs().count();
     }
 
     let mut idx = DomIndex {
-        slots: Vec::new(),
-        cap: 0,
+        owners: PtrTable::with_keys(n_attrs, core::ptr::null_mut())?,
         tag_nodes: Vec::new(),
         tag_off: Vec::new(),
         tag_max,
         has_foreign,
     };
-
-    /* The attr->owner table, at load factor <= 0.5. */
-    if n_attrs > 0 {
-        let cap = n_attrs.checked_mul(2)?.checked_next_power_of_two()?.max(8);
-        idx.slots = try_vec_with_capacity(cap)?;
-        idx.slots.resize(cap, EMPTY_SLOT); /* reserved above; cannot allocate */
-        idx.cap = cap;
-    }
 
     /* The tag CSR. `cursor` is scratch: a copy of the offsets, advanced as
      * elements are scattered, which is what preserves document order within a
@@ -209,21 +134,19 @@ pub(crate) unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
 
     /* Pass 2: fill. No failure path - every array is already the right size,
      * which is what lets the backfill below happen without a half-built index
-     * ever being observable. */
-    node = root;
-    while !node.is_null() {
-        if (*node).type_ == NODE_TYPE_ELEMENT {
-            if let Some(tag) = indexable_tag(node) {
-                idx.tag_nodes[cursor[tag]] = node;
-                cursor[tag] += 1;
-            }
-            each_attr(node, |a| {
-                idx.attr_insert(a, node);
-                /* Backfill the attribute's parent - see the module docs. */
-                (*a).node.parent = node;
-            });
+     * ever being observable. The table was sized for exactly the attributes
+     * pass 1 counted, so an insert it refuses means the tree changed between
+     * the passes; fail closed without writing further. */
+    for el in elements(root) {
+        if let Some(tag) = indexable_tag(el) {
+            idx.tag_nodes[cursor[tag]] = el.node().as_raw();
+            cursor[tag] += 1;
         }
-        node = preorder_next(node, root);
+        for a in el.attrs() {
+            idx.owners.insert(a.raw(), el.node().as_raw())?;
+            /* Backfill the attribute's parent - see the module docs. */
+            a.backfill_parent(el);
+        }
     }
 
     Some(idx)
@@ -236,7 +159,8 @@ pub(crate) unsafe fn build(doc: *mut LxbDoc) -> Option<DomIndex> {
 impl DomIndex {
     /// The element that owns `attr`, or None when it is not in this document.
     pub fn owner_of(&self, attr: RawNode) -> Option<RawNode> {
-        RawNode::from_ptr(self.attr_owner(attr.as_ptr() as *mut LxbAttr).cast())
+        let owner = self.owners.get(attr.as_ptr() as *const LxbAttr)?;
+        RawNode::from_ptr(owner.cast())
     }
 
     /// The elements with tag id `tag_id`, in document order; empty for a tag

@@ -1,5 +1,4 @@
-//! The per-evaluation string-value cache, and the pointer hash every
-//! pointer-keyed table shares.
+//! The per-evaluation string-value cache.
 
 #![forbid(unsafe_code)]
 
@@ -9,20 +8,8 @@ use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::token::Token;
 
-/// The MurmurHash3 fmix64 finalizer over a pointer value.
-///
-/// One definition for every pointer-keyed table: the string-value cache, the
-/// document-order index and the DOM indexes all hash the same way.
-#[inline]
-pub fn ptr_hash<T>(p: *const T) -> u64 {
-    let mut h = p as usize as u64;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51afd7ed558ccd);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
-    h ^= h >> 33;
-    h
-}
+/// The pointer hash every pointer-keyed table shares, from its own module.
+pub use crate::ptr_table::ptr_hash;
 
 /// Where a string-value sits in the cache that returned it.
 ///

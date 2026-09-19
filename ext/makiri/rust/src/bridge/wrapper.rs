@@ -10,6 +10,7 @@
 #![allow(unsafe_code)]
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use magnus::rb_sys::AsRawValue;
 
@@ -20,7 +21,7 @@ use crate::bridge::ruby::{value, VALUE};
 use crate::bridge::typed::{Hooks, Marker, TypedType};
 use crate::init::CLASS_DOCUMENT;
 use crate::lexbor::adapter::html::{HtmlDoc, RawDoc};
-use crate::lexbor::adapter::post_parse::Parsed;
+use crate::lexbor::adapter::post_parse::HtmlParsed;
 use crate::xml::model::Doc as XmlDoc;
 
 /* ------------------------------------------------------------------ *
@@ -71,11 +72,40 @@ pub enum NodeRepr {
  * the document wrapper                                               *
  * ------------------------------------------------------------------ */
 
-/// A Document wrapper's data: the parsed handle (owned - GC frees it) and the reserved
-/// errors Array.
+/// What a Document owns: its parsed content, in one of the two
+/// representations.
+///
+/// Raw pointers, from `Box::into_raw`, because `DocData` lives in memory Ruby
+/// allocated and has no `Drop` of its own: [`DocData::release`] is where they
+/// are boxed again and freed. `Copy`, so it can be written into that memory
+/// without dropping whatever was there.
+#[derive(Clone, Copy)]
+pub(in crate::bridge) enum Content {
+    /// Not yet installed - only between `DocumentShell::new` and `install`.
+    Empty,
+    Html(NonNull<HtmlParsed>),
+    Xml(NonNull<XmlDoc>),
+}
+
+impl Content {
+    /// The HTML document, when this is one.
+    pub(in crate::bridge) fn html(self) -> Option<NonNull<HtmlParsed>> {
+        match self {
+            Content::Html(p) => Some(p),
+            _ => None,
+        }
+    }
+}
+
+/// A Document wrapper's data: the parsed content (owned - GC frees it), the
+/// mutation gate's count, and the reserved errors Array.
 pub struct DocData {
     /// Set once, by `DocumentShell::install`; read through the accessors below.
-    parsed: *mut Parsed,
+    content: Content,
+    /// How many XPath evaluations that can run Ruby (ones with a handler) are
+    /// reading this document right now. Every mutator refuses while it is
+    /// non-zero - see [`DocumentEvaluation`].
+    evaluating: usize,
     errors: VALUE,
     /// The external bytes this wrapper has told the GC about, so `release`
     /// takes back exactly what [`account_document`] reported.
@@ -89,10 +119,16 @@ impl DocData {
         unsafe { value(self.errors) }
     }
 
-    /// The bytes the handle holds outside Ruby's allocator, or 0 with none.
+    /// The bytes the content holds outside Ruby's allocator, or 0 with none.
     fn external_bytes(&self) -> usize {
-        // SAFETY: `parsed` is owned by this object and live for the call.
-        unsafe { self.parsed.as_ref() }.map_or(0, Parsed::external_bytes)
+        // SAFETY: the content is owned by this object and live for the call.
+        unsafe {
+            match self.content {
+                Content::Empty => 0,
+                Content::Html(p) => p.as_ref().external_bytes(),
+                Content::Xml(d) => crate::xml::api::xml_doc_memsize(d.as_ref()),
+            }
+        }
     }
 }
 
@@ -106,10 +142,15 @@ impl Hooks for DocData {
     }
 
     fn release(&mut self) {
-        if !self.parsed.is_null() {
-            // SAFETY: `parsed` came from `Box::into_raw` and only this owns it.
-            unsafe { drop(Box::from_raw(self.parsed)) };
+        // SAFETY: each pointer came from `Box::into_raw` and only this owns it.
+        unsafe {
+            match self.content {
+                Content::Empty => {}
+                Content::Html(p) => drop(Box::from_raw(p.as_ptr())),
+                Content::Xml(d) => drop(Box::from_raw(d.as_ptr())),
+            }
         }
+        self.content = Content::Empty;
         /* Balance the report, or the GC keeps counting freed arenas as live
          * and collects ever more eagerly. A plain C call, as this hook has to
          * be: it only subtracts, and Ruby's own `xfree` does the same from
@@ -151,7 +192,7 @@ fn account_document(rb_doc: VALUE) {
     }
 }
 
-/// The base type: the kind-agnostic accessors (`doc_parsed`, `#errors`) accept
+/// The base type: the kind-agnostic accessors (`doc_content`, `#errors`) accept
 /// either representation.
 pub static DOC_TYPE: TypedType<DocData> = TypedType::base(c"Makiri::Document".as_ptr());
 
@@ -200,7 +241,8 @@ impl DocumentShell {
             ty.wrap(
                 klass,
                 |d| {
-                    d.parsed = core::ptr::null_mut();
+                    d.content = Content::Empty;
+                    d.evaluating = 0;
                     d.reported = 0;
                 },
                 |d| d.errors = errors.as_raw(),
@@ -208,14 +250,23 @@ impl DocumentShell {
         })
     }
 
-    /// Give the Document its parsed handle - the GC owns it from here - and
-    /// report the arena's size.
-    pub fn install(self, parsed: Box<Parsed>) -> Value {
+    /// Give the HTML Document its parsed document - the GC owns it from here -
+    /// and report the arena's size.
+    pub fn install_html(self, parsed: Box<HtmlParsed>) -> Value {
+        self.install(Content::Html(NonNull::from(Box::leak(parsed))))
+    }
+
+    /// Give the XML Document its arena, as [`install_html`](Self::install_html).
+    pub fn install_xml(self, arena: Box<XmlDoc>) -> Value {
+        self.install(Content::Xml(NonNull::from(Box::leak(arena))))
+    }
+
+    fn install(self, content: Content) -> Value {
         // SAFETY: `self.0` is a Document wrapper (the base type matches either
-        // leaf) that has no handle yet, so nothing is overwritten.
+        // leaf) that has no content yet, so nothing is overwritten.
         unsafe {
             let d = DOC_TYPE.known_ptr(value(self.0));
-            (*d).parsed = Box::into_raw(parsed);
+            (*d).content = content;
         }
         account_document(self.0);
         // SAFETY: a live Document.
@@ -227,13 +278,23 @@ impl DocumentShell {
  * lexbor <-> wrapper accessors                                       *
  * ------------------------------------------------------------------ */
 
-/// The XML arena behind a parsed handle, or null for an HTML one.
-///
-/// # Safety
-/// `p` must be a live handle.
-pub(in crate::bridge) unsafe fn parsed_xml_doc(p: *mut Parsed) -> *mut XmlDoc {
-    // SAFETY: the caller's contract.
-    unsafe { (*p).xml_doc() }
+/// The content of any Document. `Err(TypeError)` for a non-Document.
+pub(in crate::bridge) fn doc_content(rb_doc: Value) -> Result<Content, Error> {
+    Ok(DOC_TYPE.get(&rb_doc)?.content)
+}
+
+/// [`doc_content`] for a VALUE already known to be a Document - a node's
+/// keepalive Document, or the receiver of a Document method.
+pub(in crate::bridge) fn doc_content_known(rb_doc: Value) -> Content {
+    DOC_TYPE.get_known(&rb_doc).content
+}
+
+/// The XML arena of a Document, or null when it is not an XML one.
+pub(in crate::bridge) fn xml_arena_known(rb_doc: Value) -> *mut XmlDoc {
+    match doc_content_known(rb_doc) {
+        Content::Xml(d) => d.as_ptr(),
+        _ => core::ptr::null_mut(),
+    }
 }
 
 /// The Lexbor document behind an HTML Document. `Err(TypeError)` otherwise.
@@ -257,46 +318,50 @@ pub fn html_doc_known(rb_doc: Value) -> RawDoc {
 }
 
 fn html_doc_of(d: &DocData) -> RawDoc {
+    /* The HTML type guarantees HTML content once installed, and nothing
+     * reaches a Document before `install`: a broken invariant. */
+    let p = d
+        .content
+        .html()
+        .expect("an HTML Document without its document");
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
-    // SAFETY: `d` is the data of a live HTML Document, whose handle it owns.
-    unsafe { RawDoc::from_ptr((*d.parsed).html_doc().cast()).expect("live document") }
+    // SAFETY: the live document this Document owns.
+    unsafe { RawDoc::from_ptr(p.as_ref().html_doc().cast()).expect("live document") }
 }
 
-/// The parsed handle behind any Document. `Err(TypeError)` for a non-Document.
-pub(in crate::bridge) fn doc_parsed(rb_doc: Value) -> Result<*mut Parsed, Error> {
-    let d: &DocData = DOC_TYPE.get(&rb_doc)?;
-    Ok(d.parsed)
-}
-
-/// [`doc_parsed`] for a VALUE already known to be a Document - a node's
-/// keepalive Document, or the receiver of a Document method.
-pub(in crate::bridge) fn doc_parsed_known(rb_doc: Value) -> *mut Parsed {
-    DOC_TYPE.get_known(&rb_doc).parsed
-}
-
-/// Run `f` over the parsed handle behind a Document.
+/// Run `f` over an HTML Document's parsed document. `Err(TypeError)` for
+/// anything else.
 ///
-/// The `&mut Parsed` does not escape `f`, so the raw pointer stays in this
+/// The `&mut HtmlParsed` does not escape `f`, so the raw pointer stays in this
 /// layer and no alias can outlive the call. `f` must not run Ruby that could
 /// re-enter this document (the readers' closures copy, they do not call back).
-pub(in crate::bridge) fn with_parsed<R>(
+pub(in crate::bridge) fn with_html_parsed<R>(
     rb_doc: Value,
-    f: impl FnOnce(&mut Parsed) -> R,
+    f: impl FnOnce(&mut HtmlParsed) -> R,
 ) -> Result<R, Error> {
-    let p = doc_parsed(rb_doc)?;
-    // SAFETY: under the GVL, and the borrow is confined to `f`.
-    Ok(unsafe { f(&mut *p) })
+    HTML_DOC_TYPE.get(&rb_doc)?;
+    Ok(with_html_parsed_known(rb_doc, f))
 }
 
-/// [`with_parsed`] for a VALUE already known to be a Document.
-pub(in crate::bridge) fn with_parsed_known<R>(
+/// [`with_html_parsed`] for a VALUE already known to be an HTML Document.
+pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
-    f: impl FnOnce(&mut Parsed) -> R,
+    f: impl FnOnce(&mut HtmlParsed) -> R,
 ) -> R {
-    let p = doc_parsed_known(rb_doc);
-    // SAFETY: as `with_parsed`.
-    unsafe { f(&mut *p) }
+    let mut p = doc_content_known(rb_doc)
+        .html()
+        .expect("an HTML Document without its document");
+    // SAFETY: under the GVL, and the borrow is confined to `f`.
+    unsafe { f(p.as_mut()) }
+}
+
+/// Run `f` over a Document's wrapper data, for the fields that are the
+/// wrapper's own rather than the content's (the evaluation count).
+fn with_doc_data_known<R>(rb_doc: Value, f: impl FnOnce(&mut DocData) -> R) -> R {
+    // SAFETY: a live Document (the base type matches either leaf), under the
+    // GVL, with the borrow confined to `f`.
+    unsafe { f(&mut *DOC_TYPE.known_ptr(rb_doc)) }
 }
 
 /// The kind-AGNOSTIC raw node pointer (the base type, so HTML or XML), as an
@@ -308,18 +373,10 @@ pub(in crate::bridge) fn with_parsed_known<R>(
 /// document node, an HTML one to Lexbor's.
 pub fn node_raw(rb_node: Value) -> Result<*mut c_void, Error> {
     if rb_node.is_kind_of(CLASS_DOCUMENT.class()) {
-        let parsed = doc_parsed(rb_node)?;
-        // SAFETY: a Document's handle lives as long as the Document, and an XML
-        // arena's document node is read, not written.
-        unsafe {
-            if (*parsed).is_xml() {
-                let xdoc = parsed_xml_doc(parsed);
-                return Ok(if xdoc.is_null() {
-                    core::ptr::null_mut()
-                } else {
-                    (*xdoc).doc_node().to_token() as *mut c_void
-                });
-            }
+        if let Content::Xml(xdoc) = doc_content(rb_node)? {
+            // SAFETY: a Document's arena lives as long as the Document, and its
+            // document node is read, not written.
+            return Ok(unsafe { xdoc.as_ref() }.doc_node().to_token() as *mut c_void);
         }
         return Ok(html_doc_unwrap(rb_node)?.as_ptr());
     }
@@ -361,11 +418,12 @@ pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
 /// `Err(Makiri::Error)` while an evaluation with a handler is reading `rb_doc`.
 /// Every mutator checks this before it changes anything.
 pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
-    with_parsed_known(rb_doc, |p| {
-        if p.evaluating != 0 {
-            return Err(makiri_error("cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
-            ));
-        }
+    if with_doc_data_known(rb_doc, |d| d.evaluating) != 0 {
+        return Err(makiri_error(
+            "cannot modify a document while evaluating XPath over it (re-entrant mutation from a handler)",
+        ));
+    }
+    if let Content::Html(_) = doc_content_known(rb_doc) {
         /* The source offsets are stamped lazily, and this is the LAST moment
          * the tree is still the one the parser built. A walk after the edit
          * would pair elements with the wrong tokens, and `#line` must never
@@ -373,14 +431,17 @@ pub fn ensure_document_mutable(rb_doc: Value) -> Result<(), Error> {
          * the first mutation pays; there is nothing pending afterwards. */
         // SAFETY: the document this handle owns, not yet modified - that is
         // what this gate is called to decide.
-        unsafe { p.assign_positions() };
-        Ok(())
-    })
+        with_html_parsed_known(rb_doc, |p| unsafe { p.assign_positions() });
+    }
+    Ok(())
 }
 
-/// Drop the DOM and text indexes so the next query rebuilds them.
+/// Drop the DOM and text indexes so the next query rebuilds them. An XML
+/// Document keeps none.
 pub fn invalidate_indexes(rb_doc: Value) {
-    with_parsed_known(rb_doc, |p| p.invalidate_indexes());
+    if let Content::Html(_) = doc_content_known(rb_doc) {
+        with_html_parsed_known(rb_doc, HtmlParsed::invalidate_indexes);
+    }
 }
 
 /* ------------------------------------------------------------------ *
@@ -406,14 +467,15 @@ pub struct DocumentEvaluation(
 
 impl DocumentEvaluation {
     pub fn enter(rb_doc: Value) -> Result<Self, Error> {
-        with_parsed(rb_doc, |p| p.evaluating += 1)?;
+        DOC_TYPE.get(&rb_doc)?; /* TypeError for a non-Document */
+        with_doc_data_known(rb_doc, |d| d.evaluating += 1);
         Ok(DocumentEvaluation(rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        with_parsed_known(self.0, |p| p.evaluating -= 1);
+        with_doc_data_known(self.0, |d| d.evaluating -= 1);
         /* Read the Document here, so the guard demonstrably holds it: the field
          * is there to keep it reachable, and a field nothing reads is one the
          * compiler is free to treat as absent. */

@@ -82,6 +82,9 @@ pub struct VerifiedText<'a> {
 // Ruby-free builds (Kani, the fuzz crate) see them unused.
 #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
 impl<'a> VerifiedText<'a> {
+    /// The pointer, which the tests pin to the verified owner's own; engine
+    /// callers read `as_bytes`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const fn as_ptr(self) -> *const c_char {
         self.ptr
     }

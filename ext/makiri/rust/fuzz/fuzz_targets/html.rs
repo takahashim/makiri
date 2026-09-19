@@ -13,7 +13,7 @@ use makiri::lexbor::adapter::post_parse::parse_html;
 
 fuzz_target!(|data: &[u8]| {
     // SAFETY: `data` is a live slice for the whole call.
-    let Some(mut p) = (unsafe { parse_html(data.as_ptr(), data.len(), false) }) else {
+    let Some(mut p) = parse_html(data, false) else {
         return;
     };
 

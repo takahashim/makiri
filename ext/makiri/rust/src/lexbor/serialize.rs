@@ -1,4 +1,4 @@
-//! HTML serialization primitives (glue/ruby_html_serialize.c).
+//! HTML serialization primitives.
 //!
 //!   the node and its subtree -> the tree serializer
 //!   the node's children only -> the deep serializer
@@ -15,11 +15,22 @@
 use core::ffi::c_void;
 
 use crate::cbuf::{buf_append, Buf};
+use crate::lexbor::adapter::arena_bytes::document_bytes;
 use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::adapter::post_parse::lxb_document_bytes;
-use crate::lexbor::ffi::{
-    LxbNode, LXB_HTML_SERIALIZE_OPT_UNDEF, LXB_STATUS_ERROR_MEMORY_ALLOCATION, LXB_STATUS_OK,
+use crate::lexbor_abi::consts::{
+    STATUS_ERROR_MEMORY_ALLOCATION as LXB_STATUS_ERROR_MEMORY_ALLOCATION,
+    STATUS_OK as LXB_STATUS_OK,
 };
+use crate::lexbor_abi::{
+    lxb_html_serialize_deep_cb, lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF,
+    lxb_html_serialize_pretty_deep_cb, lxb_html_serialize_pretty_tree_cb,
+    lxb_html_serialize_tree_cb, LxbNode,
+};
+
+/// No pretty-printing option. The functions take the `int` typedef, the enum
+/// is its own type, so the one conversion is spelled here.
+const LXB_HTML_SERIALIZE_OPT_UNDEF: crate::lexbor_abi::lxb_html_serialize_opt_t =
+    lxb_html_serialize_opt_LXB_HTML_SERIALIZE_OPT_UNDEF as _;
 
 /// What the serializer writes into, plus somewhere to put a panic.
 struct SerCtx {
@@ -43,33 +54,6 @@ unsafe extern "C" fn serialize_cb(data: *const u8, len: usize, ctx: *mut c_void)
     })
 }
 
-extern "C" {
-    fn lxb_html_serialize_tree_cb(
-        node: *mut LxbNode,
-        cb: unsafe extern "C" fn(*const u8, usize, *mut c_void) -> u32,
-        ctx: *mut c_void,
-    ) -> u32;
-    fn lxb_html_serialize_deep_cb(
-        node: *mut LxbNode,
-        cb: unsafe extern "C" fn(*const u8, usize, *mut c_void) -> u32,
-        ctx: *mut c_void,
-    ) -> u32;
-    fn lxb_html_serialize_pretty_tree_cb(
-        node: *mut LxbNode,
-        opt: u32,
-        indent: usize,
-        cb: unsafe extern "C" fn(*const u8, usize, *mut c_void) -> u32,
-        ctx: *mut c_void,
-    ) -> u32;
-    fn lxb_html_serialize_pretty_deep_cb(
-        node: *mut LxbNode,
-        opt: u32,
-        indent: usize,
-        cb: unsafe extern "C" fn(*const u8, usize, *mut c_void) -> u32,
-        ctx: *mut c_void,
-    ) -> u32;
-}
-
 /// The buffer's ceiling and its initial reservation, both derived from the
 /// document's live bytes in one walk.
 ///
@@ -79,7 +63,7 @@ extern "C" {
 /// legitimate parse round-trips through `to_html` (HTML parsing is itself
 /// byte-uncapped) while a pathologically deep pretty-print fails closed instead
 /// of growing without bound. It is deliberately *not* clamped to
-/// `MKR_BUF_HARD_MAX` here; `mkr_buf.c` takes the minimum of the two on every
+/// `cbuf`'s hard ceiling here; `Buf` takes the minimum of the two on every
 /// growth, so the clamp would only duplicate a constant this side could then
 /// disagree with. The HTML tree cannot cycle (the mutation guards plus Lexbor's
 /// own insert checks), so the ceiling is never reached in normal operation.
@@ -100,7 +84,7 @@ fn serialize_sizes(live: usize) -> (usize, usize) {
 pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
     let node = node.as_ptr() as *mut LxbNode;
     // SAFETY: `node` came from a live wrapper, so its document is live too.
-    let (cap, reserve) = serialize_sizes(unsafe { lxb_document_bytes(node) });
+    let (cap, reserve) = serialize_sizes(unsafe { document_bytes(node) });
 
     let mut c = SerCtx {
         buf: Buf::new(cap),
@@ -117,18 +101,18 @@ pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
                 node,
                 LXB_HTML_SERIALIZE_OPT_UNDEF,
                 0,
-                serialize_cb,
+                Some(serialize_cb),
                 ctx,
             ),
-            (true, false) => lxb_html_serialize_deep_cb(node, serialize_cb, ctx),
+            (true, false) => lxb_html_serialize_deep_cb(node, Some(serialize_cb), ctx),
             (false, true) => lxb_html_serialize_pretty_tree_cb(
                 node,
                 LXB_HTML_SERIALIZE_OPT_UNDEF,
                 0,
-                serialize_cb,
+                Some(serialize_cb),
                 ctx,
             ),
-            (false, false) => lxb_html_serialize_tree_cb(node, serialize_cb, ctx),
+            (false, false) => lxb_html_serialize_tree_cb(node, Some(serialize_cb), ctx),
         };
 
         /* Lexbor has returned, so this is the first frame where a panic the

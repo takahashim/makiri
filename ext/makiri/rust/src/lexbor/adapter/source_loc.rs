@@ -1,4 +1,4 @@
-//! Source-location tracking (dom_adapter/source_loc.c).
+//! Source-location tracking.
 //!
 //! Lexbor does not record where in the input a node came from, and we stay on
 //! vanilla Lexbor, so it is reconstructed from the tokenizer instead:
@@ -7,7 +7,7 @@
 //!    `(tag_id, byte offset)` for every element start-tag, in token order.
 //! 2. After the tree is built, [`pos_assign_to_dom`] walks the DOM
 //!    pre-order and matches each element to the next compatible recorded token,
-//!    stamping the byte offset into `node.user`.
+//!    stamping the byte offset on it.
 //! 3. [`lines_build`] maps a byte offset to a 1-based line for `Node#line`.
 //!
 //! Precision is about the HTML5 tree-construction reorderings (foster
@@ -16,8 +16,9 @@
 //!
 //! # `node.user` is reserved
 //!
-//! CLAUDE.md reserves Lexbor's `node.user` for exactly this offset. Nothing else
-//! in the extension may write it.
+//! CLAUDE.md reserves Lexbor's `node.user` for exactly this offset. The field and
+//! its encoding belong to `html` (`HtmlNode::stamp_source_offset` /
+//! `source_offset`); this module decides WHICH offset an element gets.
 //!
 //! # The callback runs inside Lexbor
 //!
@@ -34,7 +35,7 @@ use core::ffi::c_void;
 
 use crate::falloc::{try_vec_with_capacity, Reserve};
 
-use crate::lexbor_abi::{self as lxb, preorder_next, LxbNode};
+use crate::lexbor_abi as lxb;
 
 extern "C" {
     /// libc `memchr` - see [`next_newline`].
@@ -46,7 +47,7 @@ type Token = lxb::lxb_html_token_t;
 type Tokenizer = lxb::lxb_html_tokenizer_t;
 type TokenFn = lxb::lxb_html_tokenizer_token_f;
 
-use super::html::{TAG_EM_DOCTYPE, TYPE_ELEMENT as NODE_TYPE_ELEMENT};
+use super::html::{HtmlNode, TAG_EM_DOCTYPE};
 const TOKEN_TYPE_CLOSE: i32 = lxb::lxb_html_token_type_LXB_HTML_TOKEN_TYPE_CLOSE as i32;
 
 /* ------------------------------------------------------------------ *
@@ -70,7 +71,7 @@ impl Lines {
 
 /// The offset of the next newline at or after `from`, or `None`.
 ///
-/// libc `memchr`, which is what the C reached for through `mkr_span_find`.
+/// libc `memchr`.
 /// A scalar `iter().position()` here measured about 9% off the whole parse on a
 /// 220 KB document - the line table walks every input byte twice, so the
 /// difference between a vectorised scan and a byte loop is the difference
@@ -137,7 +138,8 @@ struct Entry {
     offset: usize,
 }
 
-/// `mkr_pos_recorder_t`, opaque to C.
+/// The start-tag offsets a parse records, handed to the tokenizer callback as
+/// its opaque context.
 pub struct Recorder {
     items: Vec<Entry>,
     /// The start of the input buffer, which offsets are relative to.
@@ -274,35 +276,28 @@ pub unsafe extern "C" fn pos_token_cb(
  * assignment                                                         *
  * ------------------------------------------------------------------ */
 
-/// Stamp each element's recorded byte offset into `node.user`.
+/// Stamp each element's recorded byte offset (`HtmlNode::stamp_source_offset`).
 ///
 /// Walks the DOM in document order alongside the recorded tokens, matching by
 /// tag id within a bounded lookahead. An element with no match in that window is
 /// left unstamped; `#line` then answers nil, which is the whole point - never a
 /// wrong line.
-pub unsafe fn pos_assign_to_dom(rec: &Positions, root: *mut LxbNode) {
-    if rec.overflow || root.is_null() {
+pub fn pos_assign_to_dom(rec: &Positions, root: HtmlNode<'_>) {
+    if rec.overflow {
         return;
     }
 
     let mut cursor = 0usize;
-    let mut node = root;
-    while !node.is_null() {
-        if (*node).type_ == NODE_TYPE_ELEMENT {
-            if cursor >= rec.items.len() {
-                break;
-            }
-            let tid = (*node).local_name;
-            let limit = (cursor + LOOKAHEAD).min(rec.items.len());
-            for j in cursor..limit {
-                if rec.items[j].tag_id == tid {
-                    /* +1 so a genuine offset of 0 is distinguishable from unset. */
-                    (*node).user = (rec.items[j].offset + 1) as *mut c_void;
-                    cursor = j + 1;
-                    break;
-                }
-            }
+    let walk = core::iter::successors(Some(root), |n| n.preorder_next(root));
+    for el in walk.filter_map(HtmlNode::element) {
+        if cursor >= rec.items.len() {
+            break;
         }
-        node = preorder_next(node, root);
+        let tid = el.node().tag_id();
+        let limit = (cursor + LOOKAHEAD).min(rec.items.len());
+        if let Some(j) = (cursor..limit).find(|&j| rec.items[j].tag_id == tid) {
+            el.node().stamp_source_offset(rec.items[j].offset);
+            cursor = j + 1;
+        }
     }
 }

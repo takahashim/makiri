@@ -7,7 +7,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_void;
+use crate::lexbor::adapter::html::RawNode;
 
 use magnus::rb_sys::AsRawValue;
 
@@ -58,7 +58,7 @@ fn selector_bytes(selector: Value) -> Result<RubyBytes, Error> {
 /// `VALUE`-sized slot.
 struct Fill<'a> {
     set: VALUE,
-    nodes: &'a [*mut c_void],
+    nodes: &'a [RawNode],
     /// A push the set refused, carried out of `rb_protect` for the caller.
     refused: Option<PushError>,
 }
@@ -73,7 +73,7 @@ struct Fill<'a> {
 unsafe fn fill_thunk(arg: VALUE) -> VALUE {
     let f = &mut *(arg as *mut Fill);
     for &n in f.nodes {
-        if let Err(e) = node_set_push(f.set, n) {
+        if let Err(e) = node_set_push(f.set, n.as_ptr()) {
             f.refused = Some(e);
             break;
         }

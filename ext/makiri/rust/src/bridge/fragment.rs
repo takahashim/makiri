@@ -200,9 +200,8 @@ pub fn fragment_shell_document() -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
     let shell = DocumentShell::new(DocKind::Html);
-    // SAFETY: a static byte string; the parse copies what it needs.
-    let Some(parsed) = (unsafe { parse_html(SHELL.as_ptr(), SHELL.len(), true) }) else {
+    let Some(parsed) = parse_html(SHELL, true) else {
         return Err(makiri_error("failed to create fragment document"));
     };
-    Ok(shell.install(parsed))
+    Ok(shell.install_html(parsed))
 }

@@ -30,8 +30,8 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "bridge/alloc.rs" => 4,
-  "bridge/doc.rs" => 6,
-  "bridge/fragment.rs" => 6,
+  "bridge/doc.rs" => 5,
+  "bridge/fragment.rs" => 5,
   "bridge/gvl.rs" => 3,
   "bridge/html.rs" => 34,
   "bridge/node_set.rs" => 10,
@@ -40,12 +40,12 @@ UNSAFE_ISLANDS = {
   "bridge/serialize.rs" => 1,
   "bridge/string.rs" => 30,
   "bridge/typed.rs" => 17,
-  "bridge/wrapper.rs" => 18,
-  "bridge/xml.rs" => 15,
+  "bridge/wrapper.rs" => 16,
+  "bridge/xml.rs" => 14,
   "bridge/xml_decode.rs" => 6,
   "bridge/xpath/context_object.rs" => 6,
   "bridge/xpath/handler.rs" => 8,
-  "bridge/xpath/mod.rs" => 4,
+  "bridge/xpath/mod.rs" => 6,
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
   "falloc/calloc_verify.rs" => 3,
@@ -53,20 +53,22 @@ UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 1,
   "falloc/raw.rs" => 3,
   "init.rs" => 5,
-  "lexbor/adapter/cross_import.rs" => 16,
-  "lexbor/adapter/dom_index.rs" => 3,
-  "lexbor/adapter/html.rs" => 97,
-  "lexbor/adapter/post_parse.rs" => 16,
-  "lexbor/adapter/source_loc.rs" => 4,
-  "lexbor/adapter/text_index.rs" => 5,
-  "lexbor/adapter/utf8_input.rs" => 1,
-  "lexbor/css_parser.rs" => 44,
-  "lexbor/fragment.rs" => 10,
-  "lexbor/selectors.rs" => 16,
-  "lexbor/serialize.rs" => 7,
+  "lexbor/adapter/arena_bytes.rs" => 4,
+  "lexbor/adapter/cross_import.rs" => 4,
+  "lexbor/adapter/html/build.rs" => 19,
+  "lexbor/adapter/html/mod.rs" => 58,
+  "lexbor/adapter/html/mutate.rs" => 10,
+  "lexbor/adapter/post_parse.rs" => 10,
+  "lexbor/adapter/source_loc.rs" => 3,
+  "lexbor/adapter/text_index.rs" => 1,
+  "lexbor/css_engine.rs" => 15,
+  "lexbor/css_parser.rs" => 23,
+  "lexbor/fragment.rs" => 9,
+  "lexbor/selectors.rs" => 13,
+  "lexbor/serialize.rs" => 3,
   "lexbor/stylesheet.rs" => 9,
-  "lexbor/xpath.rs" => 9,
-  "lexbor_abi.rs" => 5,
+  "lexbor/xpath.rs" => 7,
+  "lexbor_abi.rs" => 4,
   "rust_tests.rs" => 5,
   "text.rs" => 5,
   "token.rs" => 1,
@@ -89,7 +91,8 @@ FORBID_FILES = %w[
   glue/mod.rs glue/node.rs glue/node_set.rs
   glue/xml.rs glue/xml_node/abi.rs glue/xml_node/mutate.rs
   glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath.rs
-  limits.rs xml/api.rs xml/arena.rs
+  lexbor/adapter/dom_index.rs lexbor/adapter/utf8_input.rs limits.rs
+  ptr_table.rs xml/api.rs xml/arena.rs
   xml/chars.rs xml/index.rs xml/mod.rs
   xml/model.rs xml/mutate.rs xml/parse.rs
   xml/qname.rs xml/selftest.rs xml/serialize.rs
@@ -212,9 +215,9 @@ end
 # above the layer can read a Lexbor struct field through it. This is what closed
 # the `compat_mode` leak: a field read spells no `lxb_*`/`Lxb*` name, so
 # LEXBOR_ABI below cannot see it, and only the compiler can enforce this one.
-unless File.binread(File.join(RUST, "lexbor/adapter/html.rs"))
+unless File.binread(File.join(RUST, "lexbor/adapter/html/mod.rs"))
     .include?("pub(in crate::lexbor) fn as_raw(self) -> *mut LxbDoc")
-  errors << "lexbor/adapter/html.rs: HtmlDoc::as_raw must stay `pub(in crate::lexbor)`"
+  errors << "lexbor/adapter/html/mod.rs: HtmlDoc::as_raw must stay `pub(in crate::lexbor)`"
 end
 
 unsafe_actual = Hash.new(0)
@@ -325,6 +328,24 @@ if lexbor_abi != LEXBOR_ABI_COUNTS
   errors << "Lexbor ABI names outside lexbor/ changed: #{table_diff(LEXBOR_ABI_COUNTS, lexbor_abi)}"
 end
 
+# A Lexbor function is DECLARED in one place, `lexbor_abi.rs` (bindgen's output
+# or its hand-declared `_noi` twins). A second `extern "C"` declaration of the
+# same symbol gives it a second Rust type, which nothing checks agree, and on
+# macOS a declaration that matches no symbol is a NULL call rather than a link
+# error. `post_parse.rs` re-declared four generated functions that way.
+LEXBOR_DECL = /\bfn\s+(?:lxb|lexbor)_[A-Za-z0-9_]*\s*\([^)]*\)[^;{]*;/m
+lexbor_decls = Hash.new(0)
+Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
+  relative = path.delete_prefix("#{RUST}/")
+  next if relative == "lexbor_abi.rs"
+
+  count = comments_removed(File.binread(path)).scan(LEXBOR_DECL).length
+  lexbor_decls[relative] = count unless count.zero?
+end
+unless lexbor_decls.empty?
+  errors << "Lexbor functions declared outside lexbor_abi.rs: #{lexbor_decls.inspect}"
+end
+
 ruby_layer = Hash.new(0)
 Dir.glob(File.join(RUST, "**", "*.rs")).sort.each do |path|
   relative = path.delete_prefix("#{RUST}/")
@@ -352,5 +373,6 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{actual.values.sum} reviewed static mut declarations; " \
      "#{rb_sys.values.sum} rb_sys:: and #{raising.values.sum} raising C calls outside bridge/; " \
      "#{value_from_raw.values.sum} Value::from_raw and " \
-     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer; " \
+     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
+     "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor_abi.rs; " \
      "#{ruby_layer.values.sum} Ruby-layer uses inside the engine"
