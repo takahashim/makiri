@@ -113,16 +113,23 @@ struct Ser {
     panic: crate::caught::PanicLatch,
 }
 
+/// Lexbor's chunk sink. Must not panic INTO C: a panic is latched and raised by
+/// `serialize_with` once Lexbor has returned, as an allocation failure is.
 unsafe extern "C" fn ser_cb(data: *const u8, len: usize, ctx: *mut c_void) -> u32 {
     let s = &mut *(ctx as *mut Ser);
-    if len != 0 && !data.is_null() {
-        let bytes = core::slice::from_raw_parts(data, len);
-        if s.buf.mkr_extend(bytes).is_err() {
-            s.oom = true;
-            return k::STATUS_ERROR; /* any non-OK status stops it */
+    let (buf, oom) = (&mut s.buf, &mut s.oom);
+    /* Any non-OK status stops the serializer. */
+    s.panic.guard(k::STATUS_ERROR, || {
+        if len != 0 && !data.is_null() {
+            // SAFETY: Lexbor hands `len` readable bytes at `data`.
+            let bytes = unsafe { core::slice::from_raw_parts(data, len) };
+            if buf.mkr_extend(bytes).is_err() {
+                *oom = true;
+                return k::STATUS_ERROR;
+            }
         }
-    }
-    k::STATUS_OK
+        k::STATUS_OK
+    })
 }
 
 /// Drive one of Lexbor's `*_serialize` callbacks into an owned buffer.
