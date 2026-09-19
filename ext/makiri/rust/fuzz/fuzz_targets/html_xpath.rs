@@ -16,7 +16,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::lexbor::adapter::post_parse::{parse_html, Parsed};
+use makiri::lexbor::adapter::post_parse::{parse_html, HtmlParsed};
 
 fuzz_target!(|data: &[u8]| {
     let Some(sep) = data.iter().position(|&b| b == 0) else {
@@ -43,7 +43,7 @@ fuzz_target!(|data: &[u8]| {
 
 /// Evaluate over `p` the way the glue's `context_for` does for a Document
 /// receiver. Every engine handle is dropped before the caller destroys `p`.
-unsafe fn run(p: &mut Parsed, text: VerifiedText, lax: bool) {
+unsafe fn run(p: &mut HtmlParsed, text: VerifiedText, lax: bool) {
     // An lxb_html_document_t leads with its DOM document, which leads with its
     // node, so the document is also the context node.
     let doc = p.html_doc() as *mut c_void;
