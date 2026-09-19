@@ -15,8 +15,14 @@ pub mod alloc;
 pub mod gvl;
 
 /// The Ruby <-> Lexbor DOM seam.
+/// The node and Document wrappers, their TypedData types, and the
+/// representation-agnostic accessors.
 #[cfg(feature = "lexbor")]
-pub mod lexbor;
+pub mod wrapper;
+
+/// The HTML front door: Lexbor nodes to Ruby and back, and the HTML edits.
+#[cfg(feature = "lexbor")]
+pub mod html;
 
 /// The Ruby <-> XML-arena DOM seam (the counterpart of `lexbor`).
 #[cfg(feature = "lexbor")]

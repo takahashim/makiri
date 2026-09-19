@@ -4,7 +4,7 @@
 //!
 //! The Ruby methods (`Node#css` / `#at_css` / `#matches?`) and the NodeSet they
 //! fill live in [`crate::bridge::selectors`]; keeping them there is what stops
-//! this module from depending on `bridge::lexbor`/`bridge::node_set`, which are
+//! this module from depending on `bridge::html`/`bridge::node_set`, which are
 //! built on top of it.
 //! Every Lexbor type here stays opaque: the parser's status and the two setters
 //! this needs are `lxb_inline`, and Lexbor publishes a `_noi` twin of each for

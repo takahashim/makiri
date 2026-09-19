@@ -1,4 +1,4 @@
-//! The Ruby <-> XML-arena DOM seam (the XML counterpart of [`crate::bridge::lexbor`]).
+//! The Ruby <-> XML-arena DOM seam (the XML counterpart of [`crate::bridge::html`]).
 //!
 //! A Ruby XML node is an arena [`NodeId`] behind a TypedData wrapper; turning a
 //! `Value` into that id, and running the Ruby-free mutation primitives over the
@@ -19,15 +19,21 @@
 use magnus::rb_sys::AsRawValue;
 use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
 
-use crate::bridge::lexbor::{
-    doc_of, ensure_document_mutable, html_node_unwrap, node_repr, wrap_xml_node, xml_doc_ref,
-    xml_node_document, xml_node_unwrap, DocKind, DocumentShell, NodeRepr,
-};
-use crate::bridge::ruby::check_frozen;
+use crate::bridge::html::html_node_unwrap;
+use crate::bridge::ruby::{check_frozen, error_class, nil, value};
 use crate::bridge::string::{ruby_verified_text, RubyText};
+use crate::bridge::wrapper::*;
+use crate::bridge::wrapper::{
+    ensure_document_mutable, node_repr, DocKind, DocumentShell, NodeRepr,
+};
 use crate::bridge::xml_decode::xml_decode_input_value;
 use crate::init::{
     CLASS_NODE, CLASS_XML_DOCUMENT, EXC_ERROR, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR,
+};
+use crate::init::{
+    CLASS_XML_ATTR, CLASS_XML_CDATA_SECTION, CLASS_XML_COMMENT, CLASS_XML_DOCUMENT_FRAGMENT,
+    CLASS_XML_DOCUMENT_TYPE, CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION,
+    CLASS_XML_TEXT,
 };
 use crate::lexbor::adapter::cross_import::cross_html_to_xml;
 use crate::lexbor::adapter::post_parse::Parsed;
@@ -35,10 +41,122 @@ use crate::xml::api::*;
 use crate::xml::model::{Doc as XmlDoc, Limits as XmlLimits, MutStatus, NodeId, NodeType, Status};
 use crate::xml::qname::split_loose_dom_name;
 
-use crate::bridge::ruby::error_class;
-
 fn is_a(v: Value, klass: &crate::init::RbConst) -> bool {
     v.is_kind_of(klass.class())
+}
+
+/* ------------------------------------------------------------------ *
+ * the XML node front door                                            *
+ * ------------------------------------------------------------------ */
+
+/// Wrap an arena node token into its `Makiri::XML::*` leaf.
+///
+/// An invalid token becomes nil, and the DOCUMENT node maps back onto the Ruby
+/// Document rather than getting a second wrapper, so the arena has exactly one
+/// owner. The token resolves through `document`'s arena, where a stale or
+/// foreign id reads as no node.
+pub fn wrap_xml_node(node: *mut core::ffi::c_void, document: Value) -> Value {
+    let id = NodeId::from_token(node as usize);
+    if id.is_invalid() {
+        return nil();
+    }
+    let xdoc = doc_of(document);
+    /* An HTML Document has no arena: refuse it rather than read through null. */
+    assert!(
+        !xdoc.is_null(),
+        "an XML node wrapped under a Document with no XML arena"
+    );
+    // SAFETY: `xdoc` is a live XML document; the id is read through it.
+    let ty = unsafe { (*xdoc).type_(id) };
+    if ty == Some(NodeType::Document) {
+        return document;
+    }
+    let klass = match ty {
+        Some(NodeType::Element) => CLASS_XML_ELEMENT.raw(),
+        Some(NodeType::Attribute) => CLASS_XML_ATTR.raw(),
+        Some(NodeType::Text) => CLASS_XML_TEXT.raw(),
+        Some(NodeType::CData) => CLASS_XML_CDATA_SECTION.raw(),
+        Some(NodeType::Comment) => CLASS_XML_COMMENT.raw(),
+        Some(NodeType::Pi) => CLASS_XML_PROCESSING_INSTRUCTION.raw(),
+        Some(NodeType::Doctype) => CLASS_XML_DOCUMENT_TYPE.raw(),
+        Some(NodeType::Fragment) => CLASS_XML_DOCUMENT_FRAGMENT.raw(),
+        _ => CLASS_XML_NODE.raw(),
+    };
+
+    /* The Document is stored after the wrap: see `TypedType::wrap`. */
+    // SAFETY: a fresh wrapper; the store closure only moves a live VALUE in.
+    unsafe {
+        value(XML_NODE_TYPE.wrap(
+            klass,
+            |nd| nd.node = node,
+            |nd| nd.document = document.as_raw(),
+        ))
+    }
+}
+
+/// The arena node token behind a wrapper.
+///
+/// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
+/// through the XML TypedData type, which fails with TypeError for an HTML node.
+pub fn xml_node_unwrap(rb_self: Value) -> Result<*mut core::ffi::c_void, Error> {
+    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        let parsed = doc_parsed(rb_self)?;
+        // SAFETY: the handle of a live XML Document, and the arena it owns.
+        let node = unsafe { (*parsed_xml_doc(parsed)).doc_node() };
+        return Ok(node.to_token() as *mut core::ffi::c_void);
+    }
+    let nd: &NodeData = XML_NODE_TYPE.get(rb_self)?;
+    Ok(nd.node)
+}
+
+/// The XML arena behind a Document VALUE.
+/// The XML arena behind an XML Document, checked: `Err(TypeError)` for
+/// anything else, including a Document with no arena yet. For a receiver that
+/// has not been established as an XML Document - [`doc_of`] assumes it.
+pub fn xml_doc_unwrap(rb_doc: Value) -> Result<*mut XmlDoc, Error> {
+    let d: &DocData = XML_DOC_TYPE.get(rb_doc)?;
+    // SAFETY: a live Document's own handle, when it has one.
+    let arena = if d.parsed.is_null() {
+        core::ptr::null_mut()
+    } else {
+        unsafe { parsed_xml_doc(d.parsed) }
+    };
+    if arena.is_null() {
+        return Err(Error::new(
+            magnus::Ruby::get()
+                .expect("under the GVL")
+                .exception_type_error(),
+            "uninitialized XML document",
+        ));
+    }
+    Ok(arena)
+}
+
+pub fn doc_of(document: Value) -> *mut XmlDoc {
+    // SAFETY: `doc_parsed_known` hands back the live handle of that Document.
+    unsafe { parsed_xml_doc(doc_parsed_known(document)) }
+}
+
+/// The XML arena behind a Document or node VALUE, borrowed.
+///
+/// Every XML node reader holds its receiver's Document, which is what keeps the
+/// arena alive; `document` must be an XML Document (the Document wrappers are
+/// distinct Ruby types, so an HTML one cannot reach here).
+pub fn xml_doc_ref<'a>(document: Value) -> &'a XmlDoc {
+    // SAFETY: an XML Document's `DocData` owns the arena, which outlives this
+    // borrow.
+    unsafe { &*doc_of(document) }
+}
+
+/// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
+/// at the type boundary, like [`xml_node_unwrap`].
+pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
+    if rb_self.is_kind_of(CLASS_XML_DOCUMENT.class()) {
+        return Ok(rb_self);
+    }
+    let nd: &NodeData = XML_NODE_TYPE.get(rb_self)?;
+    // SAFETY: `nd.document` is the live Document the wrapper marks.
+    Ok(unsafe { value(nd.document) })
 }
 
 /* ------------------------------------------------------------------ *
@@ -801,7 +919,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value,
     let node_v = a.required.0;
     let deep = a.optional.0.is_some_and(|v| v.to_bool());
 
-    let xd = crate::bridge::lexbor::xml_doc_unwrap(rb_self)?;
+    let xd = crate::bridge::xml::xml_doc_unwrap(rb_self)?;
     let mut copy: NodeId = NodeId::INVALID;
     match node_repr(node_v) {
         NodeRepr::Xml => {

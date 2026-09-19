@@ -2,7 +2,7 @@
 //! navigation, attributes, source line and document order.
 //!
 //! Every read of the Lexbor tree goes through the typed handles of
-//! `lexbor::adapter::html`, the node and text index through `bridge::lexbor`, and
+//! `lexbor::adapter::html`, the node and text index through `bridge::wrapper` and `bridge::html`, and
 //! the NodeSet through its fill handle, so the readers are all safe.
 //!
 //! # Where a GC may run
@@ -19,7 +19,7 @@ use magnus::{prelude::*, Error, Ruby, Value};
 
 use super::ty;
 use super::{arg_node, wrap_node};
-use crate::bridge::lexbor::{dom_str, text_index_string};
+use crate::bridge::html::{dom_str, text_index_string};
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::ruby_verified_text;
@@ -315,7 +315,7 @@ pub fn parent(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     if node.attr().is_some() {
         /* The owner the index answers belongs to `document`, the attribute's
          * live Document. */
-        let owner = crate::bridge::lexbor::attribute_owner(document, RawNode::from(node))?;
+        let owner = crate::bridge::html::attribute_owner(document, RawNode::from(node))?;
         return Ok(wrap_node(owner, document));
     }
     Ok(wrap_node(node.parent(), document))
@@ -542,7 +542,7 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(ruby: &Ruby, this: super::HtmlSelf) -> Value {
-    let n = crate::bridge::lexbor::node_line(this.document, this.raw());
+    let n = crate::bridge::html::node_line(this.document, this.raw());
     if n == 0 {
         nil(ruby)
     } else {
@@ -569,7 +569,7 @@ pub fn spaceship(ruby: &Ruby, this: super::HtmlSelf, other: Value) -> Result<Val
      * asking is how we avoid arg_node's TypeError below. */
     let comparable = is_kind_of(other, &CLASS_NODE)
         && !is_kind_of(
-            crate::bridge::lexbor::keepalive_document(other)?,
+            crate::bridge::wrapper::keepalive_document(other)?,
             &CLASS_XML_DOCUMENT,
         );
     if !comparable {

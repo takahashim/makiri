@@ -10,7 +10,7 @@
 
 use magnus::{prelude::*, Error, Ruby, Value};
 
-use crate::bridge::lexbor::{html_node_unwrap, wrap_html_node};
+use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::ruby::{error_class, is_kind_of};
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::string::HtmlSource;

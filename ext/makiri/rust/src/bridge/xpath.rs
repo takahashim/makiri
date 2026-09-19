@@ -20,14 +20,15 @@ use magnus::rb_sys::AsRawValue;
 use magnus::value::{Opaque, ReprValue};
 use magnus::{method, prelude::*, DataTypeFunctions, Error, RClass, Ruby, TypedData, Value};
 
-use crate::bridge::lexbor::{
-    doc_parsed, html_doc_unwrap, html_node_unwrap, keepalive_document, node_raw, parsed_xml_doc,
-    xml_node_unwrap,
-};
+use crate::bridge::html::html_node_unwrap;
 use crate::bridge::node_set::node_set_with_fill;
 use crate::bridge::ruby::VALUE;
 pub use crate::bridge::string::{ruby_exception_message, ruby_try_verified_text};
 use crate::bridge::string::{ruby_str_from_utf8, ruby_verified_text, RubyText};
+use crate::bridge::wrapper::{
+    doc_parsed, html_doc_unwrap, keepalive_document, node_raw, parsed_xml_doc,
+};
+use crate::bridge::xml::xml_node_unwrap;
 use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use crate::init::{
     RbConst, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT, EXC_ERROR, MOD_HTML_NODE_METHODS,

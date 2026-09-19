@@ -51,10 +51,11 @@ use crate::bridge::xpath::Cx as XPathContext;
 /// here, once in `css`); the fields matched, but nothing checked that.
 use crate::css::CssNs;
 
-use crate::bridge::lexbor::{keepalive_document, wrap_xml_node, xml_node_unwrap};
 use crate::bridge::node_set::node_set_new;
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::string::{ruby_verified_text, verify_text};
+use crate::bridge::wrapper::keepalive_document;
+use crate::bridge::xml::{wrap_xml_node, xml_node_unwrap};
 use crate::init::{
     CLASS_DOCUMENT, CLASS_XML_DOCUMENT_FRAGMENT, EXC_CSS_SYNTAX_ERROR, MOD_XML,
     MOD_XML_NODE_METHODS,

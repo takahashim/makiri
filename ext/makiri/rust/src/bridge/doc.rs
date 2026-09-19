@@ -20,13 +20,15 @@
 use magnus::{prelude::*, Error, RString, Ruby, Value};
 
 use crate::bridge::fragment::{build_fragment_ctx, context_kwarg, resolve_fragment_context};
-use crate::bridge::lexbor::xml_node_document;
-use crate::bridge::lexbor::{
-    doc_of, html_doc_known, html_doc_unwrap, html_node_unwrap, keepalive_document, node_repr,
-    wrap_html_node, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
-};
+use crate::bridge::html::{html_node_unwrap, wrap_html_node};
 use crate::bridge::ruby::value;
 use crate::bridge::string::HtmlSource;
+use crate::bridge::wrapper::{
+    html_doc_known, html_doc_unwrap, keepalive_document, node_repr, DocKind, DocumentShell,
+    NodeRepr, DOC_TYPE,
+};
+use crate::bridge::xml::doc_of;
+use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{unwrap as xml_node_id, xml_mut_check};
 use crate::init::EXC_ERROR;
 use crate::lexbor::adapter::cross_import::cross_xml_to_html;
@@ -124,7 +126,7 @@ pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Value {
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    let d: &crate::bridge::lexbor::DocData = DOC_TYPE.get_known(rb_doc);
+    let d: &crate::bridge::wrapper::DocData = DOC_TYPE.get_known(rb_doc);
     // SAFETY: `d.errors` is the live Array the wrapper marks.
     unsafe { value(d.errors) }
 }
@@ -273,7 +275,7 @@ pub fn clone_node(rb_self: Value, args: &[Value]) -> Result<Value, Error> {
 /// of it. Lexbor frees an attribute's old value when a new one is set
 /// (`lxb_dom_attr_set_value`), and a mutation drops the indexes, so a handler
 /// that edited the same document could leave the evaluator reading freed
-/// memory. Every mutator checks [`crate::bridge::lexbor::ensure_document_mutable`]
+/// memory. Every mutator checks [`crate::bridge::wrapper::ensure_document_mutable`]
 /// first, so that borrow is never invalidated under a suspended walk.
 pub struct DocumentEvaluation(
     /// The Document the count belongs to. Holding it is what keeps the parsed
@@ -284,14 +286,14 @@ pub struct DocumentEvaluation(
 
 impl DocumentEvaluation {
     pub fn enter(rb_doc: Value) -> Result<Self, Error> {
-        crate::bridge::lexbor::with_parsed(rb_doc, |p| p.evaluating += 1)?;
+        crate::bridge::wrapper::with_parsed(rb_doc, |p| p.evaluating += 1)?;
         Ok(DocumentEvaluation(rb_doc))
     }
 }
 
 impl Drop for DocumentEvaluation {
     fn drop(&mut self) {
-        crate::bridge::lexbor::with_parsed_known(self.0, |p| p.evaluating -= 1);
+        crate::bridge::wrapper::with_parsed_known(self.0, |p| p.evaluating -= 1);
         /* Read the Document here, so the guard demonstrably holds it: the field
          * is there to keep it reachable, and a field nothing reads is one the
          * compiler is free to treat as absent. */

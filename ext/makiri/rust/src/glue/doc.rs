@@ -9,13 +9,13 @@
 //!
 //! The Document wrapper type and its `rb_data_type_t` chain, the parsed-handle
 //! accessors, and the fragment pipeline live in the bridge
-//! ([`crate::bridge::lexbor`], [`crate::bridge::doc`]); this module keeps the
+//! ([`crate::bridge::wrapper`], [`crate::bridge::doc`]); this module keeps the
 //! Ruby methods, the evaluation guard, and the re-exports its callers already
 //! name here.
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::lexbor::keepalive_document;
+use crate::bridge::wrapper::keepalive_document;
 use magnus::{method, prelude::*, Error, Ruby, Value};
 
 /// The doctype node type, generated (see lexbor_abi).

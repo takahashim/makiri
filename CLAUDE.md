@@ -740,7 +740,7 @@ Key decisions that got there, worth not regressing:
   nokolexbor at ±43% variance, and nothing failed. With the report it is at
   parity. The diagnostic is `GC.count` across a parse loop (must rise) and
   `minflt` per parse (near 0 once warm). A Document gets its arena ONLY through
-  `bridge::lexbor::DocumentShell`: the wrapper is allocated first (a Ruby
+  `bridge::wrapper::DocumentShell`: the wrapper is allocated first (a Ruby
   allocation can raise, and a raise would leak a parse result already held),
   and `install(Box<Parsed>)` stores the handle and reports it in one step, so a
   new parse entry cannot skip the report; `spec/gc_accounting_spec.rb` pins

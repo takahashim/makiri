@@ -39,8 +39,10 @@ use magnus::{
     Value,
 };
 
-use crate::bridge::lexbor::{keepalive_document, node_raw, wrap_html_node, wrap_xml_node};
+use crate::bridge::html::wrap_html_node;
 use crate::bridge::ruby::typed_data_unprotected;
+use crate::bridge::wrapper::{keepalive_document, node_raw};
+use crate::bridge::xml::wrap_xml_node;
 use crate::init::{RbConst, CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET, CLASS_XML_DOCUMENT};
 use crate::lexbor::adapter::html::RawNode;
 

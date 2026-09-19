@@ -6,13 +6,14 @@
 //! # The Ruby boundary above lexbor
 //!
 //! Ruby-facing entry points belong in `bridge/` (which sits above this layer),
-//! not here: a `Value`-taking function that reaches `bridge::lexbor` /
+//! not here: a `Value`-taking function that reaches `bridge::html` /
 //! `bridge::node_set` - both built on top of `lexbor` - makes the dependency
 //! two-way. The cyclic importers (`serialize`, the fragment context helpers,
-//! `selectors`) have been moved into `bridge/`; what remains Ruby-facing here
-//! (the fragment parser entry and the stylesheet binding) uses only the
-//! lexbor-free leaves `bridge::ruby` and `bridge::string`, so this layer is
-//! never reached from below - the cycle is gone even where a `Value` remains.
+//! `selectors`) have been moved into `bridge/`, and the last two - the fragment
+//! parser, which took a Ruby String, and the stylesheet binding, which built
+//! Ruby hashes - now take bytes and return their own errors, with the Ruby half
+//! in `bridge::string::HtmlSource` and `glue::stylesheet`. Nothing here names a
+//! Ruby type, and `rake unsafe:boundaries` holds it to that.
 
 pub mod adapter;
 pub mod ffi;
