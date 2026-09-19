@@ -1,9 +1,8 @@
 //! The node-access contract the engine is written against.
 //!
-//! In C this is a pair of headers of `MKR_NODE_*` macros
-//! (mkr_xpath_node_access_{html,xml}.h) plus a prelude that `#include`s the
-//! engine bodies once per representation. That is monomorphization by
-//! preprocessor: it costs nothing at runtime (a runtime kind-branch measured
+//! The C engine this replaced bound its two representations with per-host
+//! macro headers, `#include`-ing the engine bodies once per representation.
+//! That is monomorphization by preprocessor: it costs nothing at runtime (a runtime kind-branch measured
 //! ~+150%), but nothing checks that the two bindings agree on what an operation
 //! means, or that the body only uses operations both provide.
 //!
@@ -45,19 +44,21 @@ pub const NTYPE_NOTATION: u32 = 12;
 ///
 /// The evaluator holds the document for one evaluate, and it does not change in
 /// that time: without a handler no Ruby runs, and with one the document refuses
-/// every mutation until the evaluate returns (`glue::doc::DocumentEvaluation`).
+/// every mutation until the evaluate returns (`bridge::wrapper::DocumentEvaluation`).
 ///
 /// The token boundary is safe on both sides: [`token`](Self::token) erases a
 /// node this backend just lent, and [`resolve_token`](Self::resolve_token) reads
 /// one back. A token is only ever made by this method or by the Ruby bridge
 /// (which has checked the node's document), so reading one back is sound.
+///
+/// # Host policy
+///
+/// Where XPath over HTML and XPath over XML answer differently, the difference
+/// is one of the items under "host policy" below, each named for the question
+/// the engine asks. The engine never asks WHICH host it is walking: a policy
+/// that is not an item here is not a policy, and a new host states each one in
+/// its `impl`.
 pub trait Dom<'d>: Copy {
-    /// Selects the host-policy branches the C spells `#ifdef MKR_HOST_XML`:
-    /// `id()` is the empty node-set in XML (an ID is DTD-declared, and DTDs are
-    /// rejected at parse), `lang()` reads xml:lang rather than HTML's `lang`,
-    /// and the CSS-lowered of-type hooks exist only for XML.
-    const IS_XML: bool;
-
     type Node: Copy + Eq + 'd;
 
     /// An attribute node, as its own type: holding one is the proof it is an
@@ -97,8 +98,7 @@ pub trait Dom<'d>: Copy {
     fn prev(self, n: Self::Node) -> Option<Self::Node>;
     fn parent(self, n: Self::Node) -> Option<Self::Node>;
 
-    /* attributes (the C contract's MKR_ELEM_FIRST_ATTR / MKR_ATTR_NEXT). Only an
-     * element has any, so `first_attr` is also the element test; the rest take
+    /* attributes. Only an element has any, so `first_attr` is also the element test; the rest take
      * an attribute handle and do not test again. */
     fn first_attr(self, el: Self::Node) -> Option<Self::Attr>;
     fn attr_next(self, a: Self::Attr) -> Option<Self::Attr>;
@@ -117,12 +117,9 @@ pub trait Dom<'d>: Copy {
     fn attr_qualified_name(self, a: Self::Attr) -> &'d [u8];
     fn pi_name(self, n: Self::Node) -> &'d [u8];
 
-    /// The node's namespace URI, empty if it has none.
+    /// The node's namespace URI, empty if it has none. For an attribute, ask
+    /// [`attr_ns_uri`](Self::attr_ns_uri) - see there.
     fn ns_uri(self, n: Self::Node) -> &'d [u8];
-
-    /// True when a strict unprefixed element name test must NOT match this
-    /// node: XML calls any namespace foreign, HTML admits its own and none.
-    fn is_foreign_ns(self, n: Self::Node) -> bool;
 
     /// Whether name tests compare this element's names ASCII case-insensitively:
     /// an HTML element in an HTML document, as browsers do (WPT domxpath
@@ -130,9 +127,48 @@ pub trait Dom<'d>: Copy {
     /// every XML node, compares exactly.
     fn folds_name_case(self, el: Self::Node) -> bool;
 
-    /// Whether the node is in a namespace at all - `MKR_NODE_NS_ID(n) != 0`.
-    /// Separate from `ns_uri` because HTML answers it without the document.
+    /// Whether the element is in a namespace at all. Separate from `ns_uri`
+    /// because HTML answers it without the document.
     fn has_ns(self, n: Self::Node) -> bool;
+
+    /* ---- host policy ---- */
+
+    /// The name a name test compares for element `n`. A prefixed test compares
+    /// the local name (the namespace is compared on its own). An unprefixed
+    /// one compares the local name in XML, where the namespace rule decides the
+    /// rest, and the QUALIFIED name in HTML, as browsers do.
+    fn test_name(self, n: Self::Node, prefixed: bool) -> &'d [u8];
+
+    /// [`test_name`](Self::test_name) for an attribute.
+    fn attr_test_name(self, a: Self::Attr, prefixed: bool) -> &'d [u8];
+
+    /// Whether an unprefixed name test that matched `n`'s name matches `n`:
+    /// an element, or an attribute node when `is_attr`.
+    ///
+    /// Strict (`lax` false) is the specification: XML admits no namespace only;
+    /// HTML admits an element in the HTML namespace or none - a foreign (SVG /
+    /// MathML) element needs a prefix, as in browsers - and every attribute,
+    /// whose qualified-name compare already set the prefixed ones apart.
+    ///
+    /// Lax (`namespace_matching: :lax`) is Nokogiri's behaviour, whatever that
+    /// is for the host: `Nokogiri::HTML` has no namespaces, so HTML admits any
+    /// element; `Nokogiri::XML` (libxml2) is namespace-strict, so XML ignores
+    /// the flag.
+    fn unprefixed_matches(self, n: Self::Node, is_attr: bool, lax: bool) -> bool;
+
+    /// An attribute's OWN namespace URI, empty when it has none - never its
+    /// element's. The XPath data model and the DOM agree: `id` on an HTML
+    /// `<div>` is in no namespace, `xlink:href` on an SVG element is in XLink's.
+    fn attr_ns_uri(self, a: Self::Attr) -> &'d [u8];
+
+    /// The attribute `id()` looks an ID up in, or None when the host has no ID
+    /// attributes: in XML an ID is an attribute a DTD declares ID-typed, and
+    /// DTDs are refused at parse, so `id()` is the empty node-set there.
+    const ID_ATTRIBUTE: Option<&'static [u8]>;
+
+    /// The attributes `lang()` reads on each ancestor, in order: XPath 1.0's
+    /// `xml:lang`, and for HTML its own `lang` first.
+    const LANG_ATTRIBUTES: &'static [&'static [u8]];
 
     /// Append the node's own text - the bytes it contributes to a string-value -
     /// to `buf`; the error is the buffer's (its cap, or OOM).
@@ -141,9 +177,7 @@ pub trait Dom<'d>: Copy {
     /// lend those bytes. The XML node owns its value, but Lexbor builds a node's
     /// text content on demand and hands back an allocation the caller must free,
     /// so a borrowed return has nowhere to free it. Owning the append is the one
-    /// shape both can satisfy - and it is what the C contract says
-    /// (`MKR_NODE_APPEND_OWN_TEXT`, which is a statement, not an expression, for
-    /// exactly this reason).
+    /// shape both can satisfy.
     fn append_own_text(self, n: Self::Node, buf: &mut Buf) -> Result<(), BufError>;
 
     /// The document-level element index's answer for a document-rooted,
@@ -152,12 +186,11 @@ pub trait Dom<'d>: Copy {
     /// Both hosts keep such an index, but they key it differently: XML by
     /// (local name, namespace URI), which is exactly the test, and HTML by
     /// Lexbor tag id, which is only an approximation - hence `recheck`.
-    fn name_bucket(
-        self,
-        local: &[u8],
-        ns_uri: Option<&[u8]>,
-        lax: bool,
-    ) -> Option<Bucket<'d, Self::Node>>;
+    ///
+    /// An unprefixed test is the strict one; where lax admits more (HTML's
+    /// foreign elements), the host must not answer a bucket that leaves them
+    /// out.
+    fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, Self::Node>>;
 }
 
 /// What `Dom::name_bucket` found: the elements, in document order, and whether

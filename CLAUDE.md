@@ -359,14 +359,23 @@ by the check that concluded "every undefined symbol is legitimate".
   `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
   is `NoMemoryError`, Ruby's own, and because that raise longjmps, it may happen
   only in a frame that owns nothing or under `rb_protect` (`value_to_ruby`).
+  std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
+  are banned there too: they take a scratch buffer from the global allocator
+  and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)
+  or, for document order, `xpath::order`'s natural merge sort, which takes its
+  scratch from falloc and falls back to the in-place sort without it.
 - **`node->user` is reserved** for source-location byte offsets (see below) - do
   not repurpose it. Its encoding (offset + 1) lives in `HtmlNode::source_offset`
   / `stamp_source_offset`, the only reader and writer.
 - **Lexbor's DOM structs are read only through `lexbor::adapter::html`'s typed
   handles** - the index builders included; its two tree writes are named
   (`HtmlAttr::backfill_parent`, `HtmlNode::stamp_source_offset`). Pointer-keyed
-  tables hash with `crate::ptr_table::ptr_hash`, and a fixed-size one is a
-  `PtrTable` rather than another hand-written probe loop.
+  tables hash with `crate::ptr_table::ptr_hash`, and are a `PtrTable` (sized
+  once) or a `PtrMap` (grows) rather than another hand-written probe loop; a
+  key that can be 0 (an XML token) supplies its own empty marker through
+  `TableKey`. An XPath step's name test is compiled once into a
+  `nodetest::CompiledTest` - where an unknown prefix is reported, via
+  `Names::resolve_prefix` - and axis walks report through `ControlFlow`.
 - The fuzzer's `spec/fuzz/*.rb` are deliberately not `*_spec.rb`, so `rake spec`
   ignores them; findings land in `spec/fuzz/regressions/` (gitignored).
 
@@ -575,9 +584,14 @@ element name test resolves in the HTML namespace, so `//div` matches but
 `//svg`/`//path` do NOT - foreign (SVG/MathML) elements need a registered
 prefix (`//svg:path`). Pass `namespace_matching: :lax` (on `Node#{xpath,at_xpath}`
 or `XPathContext.new`) for the namespace-agnostic, `Nokogiri::HTML`-style match
-where `//path` finds the SVG element. The mode affects *only* unprefixed
-element name tests; prefixed tests, the `*` wildcard, and attribute tests are
-unchanged (see `xpath/nodetest.rs`). Makiri keeps HTML elements in the
+where `//path` finds the SVG element. **The rule for the two modes: strict is
+the specification, lax is Nokogiri** - whatever Nokogiri does for the host.
+So the mode affects *only* unprefixed element name tests in HTML
+(`Nokogiri::HTML` has no namespaces); prefixed tests, the `*` wildcard and
+attribute tests are unchanged, and in XML the flag changes nothing, because
+`Nokogiri::XML` (libxml2) is as namespace-strict as the spec. The decision is
+the `Dom::unprefixed_matches(n, is_attr, lax)` policy item, which the axis and
+the `[@a]` fast path both reach through `nodetest::unprefixed_attr_matches`. Makiri keeps HTML elements in the
 XHTML namespace (so `namespace-uri()` is correct, unlike `Nokogiri::HTML5`'s
 null). **Name tests fold ASCII case on HTML elements** (browsers + WPT
 `domxpath`, NOT the HTML Standard, whose XPath section only sets the default
@@ -587,6 +601,17 @@ SVG/MathML names stay exact (`refX`). One rule, `nodetest::names_equal` over
 it that way, since Lexbor's own attribute lookup folds on every element. The
 HTML attribute axis also skips attributes in the XMLNS namespace (a foreign
 element's `xmlns`/`xmlns:*`), as the XML backend skips declarations.
+
+**Host policy lives in `Dom`, never in a host test.** Where XPath over HTML
+and over XML differ, the difference is a named item of the `Dom` trait
+(`xpath/dom.rs`, "host policy"): `test_name` / `attr_test_name` (local vs
+qualified name), `unprefixed_matches` (the strict rule), `attr_ns_uri` (an
+attribute's OWN namespace - `namespace-uri(//div/@id)` is `""`),
+`ID_ATTRIBUTE` (`id` in HTML, none in XML), `LANG_ATTRIBUTES`. The engine
+never asks which host it walks; the `IS_XML` flag that did is gone, and a new
+policy is a new item stated in each `impl`. The HTML backend reports the DOM's
+case-preserved `localName` (`refX`, `foreignObject`), not Lexbor's lower-cased
+stored name.
 
 **CSS** (`lexbor/selectors.rs`). `Node#{css,at_css,matches?}` via Lexbor's
 `lxb_selectors`. The engine (`css_memory`+`css_parser`+`css_selectors` and the
@@ -699,8 +724,8 @@ Key decisions that got there, worth not regressing:
   and shared-context evaluate are crash-free under the GVL).
 - **`//tag` is served from the element index** (`xpath/step_index.rs`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
-  (`has_foreign` guard) and each candidate is re-checked with
-  `node_principal_match`, so the result is identical to the walk; custom/unknown
+  (`has_foreign` guard) and each candidate is re-checked with the step's
+  `CompiledTest`, so the result is identical to the walk; custom/unknown
   tag names fall through. See the element index note above.
 
 - **The CSS engine is built once and reused** (`lexbor/selectors.rs`, see the
@@ -720,8 +745,8 @@ Key decisions that got there, worth not regressing:
   for non-indexed nodes. Do not regress to walking on the indexed path; verify
   with `bench`'s "full document text" row and `spec/text_index_spec.rb` (which
   asserts byte-identity with a plain walk across subtrees + mutations).
-- **String-value cache is hashed** (`xpath/str_cache.rs`): a pointer-keyed
-  open-addressing index over an ordered store, so per-node predicate compares
+- **String-value cache is hashed** (`xpath/str_cache.rs`): a token-keyed
+  `PtrMap` index over an ordered store, so per-node predicate compares
   are O(1), not the old O(n²) linear scan. The cache belongs to one evaluate
   (`xpath::eval::Evaluation`), as do the op budget and the document-order
   index, so a nested (handler-triggered) evaluate gets its own and cannot
@@ -740,7 +765,7 @@ Key decisions that got there, worth not regressing:
   instead of materialising+sorting the whole set, the XPath analogue of at_css's
   `MATCH_FIRST`. Cost becomes O(position of first match): a front hit is ~µs
   (vs ~280µs full-eval), trailing/absent fall back to a full scan. Reuses
-  `node_principal_match` + the `[@attr]` matcher so it's **byte-identical to
+  the step's `CompiledTest` + the `[@attr]` matcher so it's **byte-identical to
   `xpath(e).first`** (asserted by `spec/at_xpath_first_spec.rb`). Anything else
   (positional predicates, functions/variables, reverse axes, unions, prefixes,
   longer paths) returns 0 from the recogniser → full evaluator. Only `at_xpath`

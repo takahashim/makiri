@@ -635,7 +635,9 @@ fn c14n_namespaces(doc: &XmlDoc, n: NodeId, is_apex: bool) -> Result<Vec<C14nNs<
         }
         e = doc.parent(id);
     }
-    out.sort_by(|a, b| a.prefix.cmp(b.prefix));
+    /* In place (see clippy.toml): a prefix is declared once per element, so
+     * the keys are distinct and stability would buy nothing. */
+    out.sort_unstable_by(|a, b| a.prefix.cmp(b.prefix));
     Ok(out)
 }
 
@@ -669,7 +671,9 @@ fn c14n_node(b: &mut Buf, doc: &XmlDoc, n: NodeId, is_apex: bool, comments: bool
                 }
                 a = doc.next(at);
             }
-            attrs.sort_by(|&x, &y| {
+            /* In place (see clippy.toml): an element's attributes are distinct
+             * by (namespace URI, local name), so stability would buy nothing. */
+            attrs.sort_unstable_by(|&x, &y| {
                 field(doc, doc.node(x).ns_uri)
                     .cmp(field(doc, doc.node(y).ns_uri))
                     .then_with(|| field(doc, doc.node(x).local).cmp(field(doc, doc.node(y).local)))

@@ -1,8 +1,7 @@
 //! Kani proofs for the XPath Number production.
 //!
-//! These replace `verify/harness_xpath_number.c`. The replacement is NOT
-//! one-for-one, and the difference is the interesting part - see
-//! notes/rust_port_remaining.ja.md step 4.
+//! These replace the C build's CBMC harness for the Number production. The
+//! replacement is NOT one-for-one, and the difference is the interesting part.
 //!
 //! The C harness's subject was the conversion. `strtod` accepts a superset of
 //! the production and honours `LC_NUMERIC`, so a comma-decimal locale would

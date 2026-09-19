@@ -82,9 +82,10 @@ fn serialize_sizes(live: usize) -> (usize, usize) {
 /// (inner) serializer over the tree (outer) one; `pretty` selects indented
 /// output. `None` is a Lexbor status failure (the buffer is freed).
 pub fn serialize(node: RawNode, deep: bool, pretty: bool) -> Option<Buf> {
+    // SAFETY: `node` came from a live wrapper, so it and its document are live.
+    let doc = unsafe { node.as_node() }.owner_document();
+    let (cap, reserve) = serialize_sizes(document_bytes(doc));
     let node = node.as_ptr() as *mut LxbNode;
-    // SAFETY: `node` came from a live wrapper, so its document is live too.
-    let (cap, reserve) = serialize_sizes(unsafe { document_bytes(node) });
 
     let mut c = SerCtx {
         buf: Buf::new(cap),

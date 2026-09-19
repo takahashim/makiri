@@ -35,7 +35,9 @@ fn skip_ns_decls(doc: &xml::Document, mut a: xml::NodeId) -> Option<xml::NodeId>
 }
 
 impl<'d> Dom<'d> for &'d xml::Document {
-    const IS_XML: bool = true;
+    /* ---- host policy: XML's (see `Dom`) ---- */
+    const ID_ATTRIBUTE: Option<&'static [u8]> = None;
+    const LANG_ATTRIBUTES: &'static [&'static [u8]] = &[b"xml:lang"];
 
     type Node = xml::NodeId;
     /// Checked once, by `as_attr` or by coming out of `first_attr`.
@@ -150,11 +152,28 @@ impl<'d> Dom<'d> for &'d xml::Document {
         self.try_node(n).map_or(&[], |x| self.span(x.ns_uri))
     }
 
-    /// Any namespace URI is foreign to an unprefixed test: a strict unprefixed
-    /// element test matches a no-namespace node only.
+    /// A name test compares the local name, prefixed or not: the namespace
+    /// rule decides the rest.
     #[inline]
-    fn is_foreign_ns(self, n: xml::NodeId) -> bool {
-        self.try_node(n).is_some_and(|x| x.ns_uri.len != 0)
+    fn test_name(self, n: xml::NodeId, _prefixed: bool) -> &'d [u8] {
+        Dom::local_name(self, n)
+    }
+    #[inline]
+    fn attr_test_name(self, a: xml::NodeId, _prefixed: bool) -> &'d [u8] {
+        Dom::attr_local_name(self, a)
+    }
+
+    /// An unprefixed test matches a node in no namespace only, element or
+    /// attribute - lax included, since `Nokogiri::XML` (libxml2) is as strict.
+    #[inline]
+    fn unprefixed_matches(self, n: xml::NodeId, _is_attr: bool, _lax: bool) -> bool {
+        self.try_node(n).is_some_and(|x| x.ns_uri.len == 0)
+    }
+
+    /// An attribute node carries its own namespace.
+    #[inline]
+    fn attr_ns_uri(self, a: xml::NodeId) -> &'d [u8] {
+        Dom::ns_uri(self, a)
     }
 
     /// XML names are case-sensitive.
@@ -179,20 +198,10 @@ impl<'d> Dom<'d> for &'d xml::Document {
     }
 
     /// The XML name index is keyed by (local name, namespace URI), so a bucket
-    /// holds exactly the matching elements and needs no re-check. An unprefixed
-    /// LAX test means "any namespace", which one bucket cannot express, so it
-    /// falls back to the walk.
-    fn name_bucket(
-        self,
-        local: &[u8],
-        ns_uri: Option<&[u8]>,
-        lax: bool,
-    ) -> Option<Bucket<'d, xml::NodeId>> {
-        let uri = match ns_uri {
-            Some(u) => u,
-            None if lax => return None,
-            None => b"", /* strict unprefixed -> no namespace */
-        };
+    /// holds exactly the matching elements and needs no re-check. An
+    /// unprefixed test means no namespace, in either mode.
+    fn name_bucket(self, local: &[u8], ns_uri: Option<&[u8]>) -> Option<Bucket<'d, xml::NodeId>> {
+        let uri = ns_uri.unwrap_or(b"");
         /* Built lazily and cached on the document; None on OOM, and the caller
          * walks. */
         let idx = crate::xml::index::get(self)?;

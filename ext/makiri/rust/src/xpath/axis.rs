@@ -8,33 +8,32 @@
 
 use super::abi::*;
 use super::dom::*;
+use core::ops::ControlFlow;
 
 /// Pre-order DFS over `context`'s PROPER descendants, calling `visit` on each;
-/// stops as soon as `visit` returns true. The shared body of the descendant and
+/// stops as soon as `visit` breaks, and hands the break back. The shared body of the descendant and
 /// descendant-or-self axes - the latter only visits `context` first.
 ///
 /// It navigates by the links it reads as it goes, and never leaves `context`'s
 /// subtree.
-pub fn walk_descendants<'d, D: Dom<'d>, F: FnMut(D::Node) -> bool>(
+pub fn walk_descendants<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
     doc: D,
     context: D::Node,
     visit: &mut F,
-) -> bool {
+) -> ControlFlow<B> {
     let mut cur = doc.first_child(context);
     while let Some(n) = cur {
         if n == context {
             break;
         }
-        if visit(n) {
-            return true;
-        }
+        visit(n)?;
         if let Some(c) = doc.first_child(n) {
             cur = Some(c);
             continue;
         }
         cur = next_within(doc, n, context);
     }
-    false
+    ControlFlow::Continue(())
 }
 
 /// The node after `n`'s subtree in document order, without leaving `root`'s
@@ -81,103 +80,93 @@ pub fn axis_base<'d, D: Dom<'d>>(doc: D, context: D::Node) -> D::Node {
 }
 
 /// Call `visit` on each node of `axis` from `context`, in the axis's order;
-/// stops as soon as `visit` returns true, and says whether it did.
-pub fn walk_axis<'d, D: Dom<'d>, F: FnMut(D::Node) -> bool>(
+/// stops as soon as `visit` breaks, and hands the break back - a budget overrun,
+/// or a caller's "found it".
+pub fn walk_axis<'d, D: Dom<'d>, B, F: FnMut(D::Node) -> ControlFlow<B>>(
     doc: D,
     axis: Axis,
     context: D::Node,
     visit: &mut F,
-) -> bool {
+) -> ControlFlow<B> {
     match axis {
         Axis::SelfAxis => visit(context),
         Axis::Parent => match doc.parent(context) {
             Some(p) => visit(p),
-            None => false,
+            None => ControlFlow::Continue(()),
         },
         Axis::Child => {
             let mut c = doc.first_child(context);
             while let Some(n) = c {
-                if visit(n) {
-                    return true;
-                }
+                visit(n)?;
                 c = doc.next(n);
             }
-            false
+            ControlFlow::Continue(())
         }
         Axis::Attribute => {
             /* `first_attr` is None for anything but an element. */
             let mut a = doc.first_attr(context);
             while let Some(x) = a {
-                if visit(D::attr_node(x)) {
-                    return true;
-                }
+                visit(D::attr_node(x))?;
                 a = doc.attr_next(x);
             }
-            false
+            ControlFlow::Continue(())
         }
-        Axis::DescendantOrSelf => visit(context) || walk_descendants::<D, F>(doc, context, visit),
-        Axis::Descendant => walk_descendants::<D, F>(doc, context, visit),
+        Axis::DescendantOrSelf => {
+            visit(context)?;
+            walk_descendants::<D, B, F>(doc, context, visit)
+        }
+        Axis::Descendant => walk_descendants::<D, B, F>(doc, context, visit),
         Axis::Ancestor => {
             let mut p = doc.parent(context);
             while let Some(n) = p {
-                if visit(n) {
-                    return true;
-                }
+                visit(n)?;
                 p = doc.parent(n);
             }
-            false
+            ControlFlow::Continue(())
         }
         Axis::AncestorOrSelf => {
             let mut p = Some(context);
             while let Some(n) = p {
-                if visit(n) {
-                    return true;
-                }
+                visit(n)?;
                 p = doc.parent(n);
             }
-            false
+            ControlFlow::Continue(())
         }
         /* §2.2: both sibling axes are empty for an attribute context node - an
          * attribute is not a sibling of anything. */
         Axis::FollowingSibling => {
             if doc.node_type(context) == NTYPE_ATTRIBUTE {
-                return false;
+                return ControlFlow::Continue(());
             }
             let mut s = doc.next(context);
             while let Some(n) = s {
-                if visit(n) {
-                    return true;
-                }
+                visit(n)?;
                 s = doc.next(n);
             }
-            false
+            ControlFlow::Continue(())
         }
         Axis::PrecedingSibling => {
             if doc.node_type(context) == NTYPE_ATTRIBUTE {
-                return false;
+                return ControlFlow::Continue(());
             }
             let mut s = doc.prev(context);
             while let Some(n) = s {
-                if visit(n) {
-                    return true;
-                }
+                visit(n)?;
                 s = doc.prev(n);
             }
-            false
+            ControlFlow::Continue(())
         }
         Axis::Following => {
             /* Start at the next node in document order after the base's subtree. */
             let mut cur = next_after(doc, axis_base::<D>(doc, context));
             while let Some(n) = cur {
-                if visit(n) {
-                    return true;
-                }
+                visit(n)?;
                 cur = match doc.first_child(n) {
                     Some(c) => Some(c),
                     None => next_after(doc, n),
                 };
             }
-            false
+            ControlFlow::Continue(())
         }
         Axis::Preceding => {
             /* Backward in document order, skipping the context's ancestors, so
@@ -196,12 +185,10 @@ pub fn walk_axis<'d, D: Dom<'d>, F: FnMut(D::Node) -> bool>(
                     while let Some(l) = doc.last_child(cur) {
                         cur = l;
                     }
-                    if visit(cur) {
-                        return true;
-                    }
+                    visit(cur)?;
                 } else {
                     let Some(p) = doc.parent(cur) else {
-                        return false;
+                        return ControlFlow::Continue(());
                     };
                     cur = p;
                     let mut is_ancestor = false;
@@ -213,14 +200,14 @@ pub fn walk_axis<'d, D: Dom<'d>, F: FnMut(D::Node) -> bool>(
                         }
                         a = doc.parent(x);
                     }
-                    if !is_ancestor && visit(cur) {
-                        return true;
+                    if !is_ancestor {
+                        visit(cur)?;
                     }
                 }
             }
         }
         /* The namespace axis is rejected by the step driver before it gets here. */
-        _ => false,
+        _ => ControlFlow::Continue(()),
     }
 }
 

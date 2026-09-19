@@ -1,16 +1,21 @@
-//! Pointer-keyed tables: the one pointer hash, and the fixed-capacity,
-//! insert-only open-addressing table the per-document indexes are built on.
+//! Pointer-keyed tables: the one pointer hash, and the two open-addressing
+//! tables every pointer- or token-keyed index in the crate is built on.
 //!
-//! Every pointer-keyed structure in the crate - the XPath string-value cache,
-//! the document-order index, the DOM and text indexes, the NodeSet set
-//! operations - hashes with [`ptr_hash`]. It lives here, below all of them,
-//! rather than in any one of their modules, so an index does not reach into
-//! another layer's internals for a hash function.
+//! Every such structure - the XPath string-value cache, the document-order
+//! index, the `//tag[N]` per-parent count, the DOM and text indexes, the NodeSet
+//! set operations - hashes with [`ptr_hash`] / [`mix64`]. They live here, below
+//! all of them, so no index reaches into another layer's internals for a hash
+//! function, and each probe loop - with the load-factor argument that makes it
+//! terminate - is written once.
 //!
-//! [`PtrTable`] is the shape two of them had written out separately: sized once
-//! for a known number of keys, filled, then only read. Sizing once is what
-//! makes it fail-closed - a build either gets its whole table or none - and a
-//! load factor of at most 1/2 is what makes every probe terminate.
+//! - [`PtrTable`] is sized once for a key count known before it is filled, and
+//!   never grows. Sizing once is what makes a build fail-closed: it gets its
+//!   whole table or none.
+//! - [`PtrMap`] grows as it is filled, for a cache or an index whose size is not
+//!   known up front. A failed growth leaves it as it was.
+//!
+//! Both keep their load factor at or below 1/2, which is what makes every probe
+//! find a free slot or its key.
 
 #![forbid(unsafe_code)]
 
@@ -26,7 +31,7 @@ pub fn ptr_hash<T>(p: *const T) -> u64 {
 }
 
 /// The finalizer itself, for a caller that already holds the address as an
-/// integer (a `Hasher` fed through `write_usize`).
+/// integer (a `Hasher` fed through `write_usize`, a node token's word).
 #[inline]
 pub fn mix64(mut h: u64) -> u64 {
     h ^= h >> 33;
@@ -37,28 +42,65 @@ pub fn mix64(mut h: u64) -> u64 {
     h
 }
 
-/// A pointer -> `V` table for a key count known before it is filled.
+/// What a table can key on: a hash, and one value no entry ever uses, which
+/// marks an empty slot.
+///
+/// A raw pointer's empty value is null. A key that can legitimately be 0 - an
+/// XML node token is an arena index - supplies its own (`Token::null()`), which
+/// is why the empty marker belongs to the key type rather than to the table.
+pub trait TableKey: Copy + Eq {
+    /// The key of an empty slot.
+    const EMPTY: Self;
+    fn table_hash(self) -> u64;
+}
+
+impl<T> TableKey for *const T {
+    const EMPTY: Self = core::ptr::null();
+    #[inline]
+    fn table_hash(self) -> u64 {
+        ptr_hash(self)
+    }
+}
+
+/// The slot count for `keys` keys at load factor <= 1/2, or None on overflow.
+fn capacity_for(keys: usize) -> Option<usize> {
+    Some(keys.checked_mul(2)?.checked_next_power_of_two()?.max(8))
+}
+
+/// Linear probing over `slots` (a power of two, with a free slot): the slot
+/// holding `key`, or the empty one where it would go.
+#[inline]
+fn probe<K: TableKey, V>(slots: &[(K, V)], key: K) -> usize {
+    let mask = slots.len() - 1;
+    let mut i = (key.table_hash() as usize) & mask;
+    while slots[i].0 != K::EMPTY && slots[i].0 != key {
+        i = (i + 1) & mask;
+    }
+    i
+}
+
+/// A key -> `V` table for a key count known before it is filled.
 ///
 /// Insert-only (there are no tombstones), sized at load factor <= 1/2 for the
 /// count it was built for, and never grown: inserting more keys than that is a
 /// caller's broken count, and is refused rather than allowed to degrade.
 pub struct PtrTable<K, V> {
-    /// `(key, value)`; a null key is an empty slot. Empty, or a power of two.
-    slots: Vec<(*const K, V)>,
+    /// `(key, value)`; `K::EMPTY` is an empty slot. Empty, or a power of two.
+    slots: Vec<(K, V)>,
     len: usize,
     /// The key count the table was sized for.
     limit: usize,
 }
 
-impl<K, V: Copy> PtrTable<K, V> {
+impl<K: TableKey, V: Copy> PtrTable<K, V> {
     /// A table for up to `keys` keys, every slot holding `empty`. `None` when
     /// the allocation fails or the size overflows. Zero keys need no slots.
     pub fn with_keys(keys: usize, empty: V) -> Option<PtrTable<K, V>> {
         let mut slots = Vec::new();
         if keys > 0 {
-            let cap = keys.checked_mul(2)?.checked_next_power_of_two()?.max(8);
+            let cap = capacity_for(keys)?;
             slots = try_vec_with_capacity(cap)?;
-            slots.resize(cap, (core::ptr::null(), empty)); /* reserved above */
+            slots.resize(cap, (K::EMPTY, empty)); /* reserved above */
         }
         Some(PtrTable {
             slots,
@@ -67,31 +109,15 @@ impl<K, V: Copy> PtrTable<K, V> {
         })
     }
 
-    #[inline]
-    fn home(&self, key: *const K) -> usize {
-        (ptr_hash(key) as usize) & (self.slots.len() - 1)
-    }
-
-    /// The slot holding `key`, or the empty slot where it would go.
-    #[inline]
-    fn probe(&self, key: *const K) -> usize {
-        let mask = self.slots.len() - 1;
-        let mut i = self.home(key);
-        while !self.slots[i].0.is_null() && self.slots[i].0 != key {
-            i = (i + 1) & mask;
-        }
-        i
-    }
-
-    /// Map a non-null `key` to `value` and return its slot. A key already
-    /// present keeps its first value. `None` for a null key, or past the count
-    /// the table was sized for.
-    pub fn insert(&mut self, key: *const K, value: V) -> Option<usize> {
-        if key.is_null() || self.slots.is_empty() {
+    /// Map `key` to `value` and return its slot. A key already present keeps
+    /// its first value. `None` for the empty key, or past the count the table
+    /// was sized for.
+    pub fn insert(&mut self, key: K, value: V) -> Option<usize> {
+        if key == K::EMPTY || self.slots.is_empty() {
             return None;
         }
-        let i = self.probe(key);
-        if self.slots[i].0.is_null() {
+        let i = probe(&self.slots, key);
+        if self.slots[i].0 == K::EMPTY {
             if self.len == self.limit {
                 return None;
             }
@@ -108,11 +134,95 @@ impl<K, V: Copy> PtrTable<K, V> {
     }
 
     /// The value `key` maps to.
-    pub fn get(&self, key: *const K) -> Option<V> {
-        if key.is_null() || self.slots.is_empty() {
+    pub fn get(&self, key: K) -> Option<V> {
+        if key == K::EMPTY || self.slots.is_empty() {
             return None;
         }
-        let (k, v) = self.slots[self.probe(key)];
-        (!k.is_null()).then_some(v)
+        let (k, v) = self.slots[probe(&self.slots, key)];
+        (k != K::EMPTY).then_some(v)
+    }
+}
+
+/// Why a [`PtrMap`] refused an insert: the empty key, or a growth that could
+/// not allocate. Either way the map is as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InsertRefused;
+
+/// A key -> `V` map that grows as it is filled, for a cache or an index whose
+/// size is not known up front. Insert-only, like [`PtrTable`].
+pub struct PtrMap<K, V> {
+    /// As [`PtrTable::slots`]; empty until the first insert.
+    slots: Vec<(K, V)>,
+    len: usize,
+}
+
+impl<K: TableKey, V: Copy + Default> Default for PtrMap<K, V> {
+    fn default() -> Self {
+        PtrMap::new()
+    }
+}
+
+impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
+    /// The smallest table a first insert allocates.
+    const MIN_SLOTS: usize = 64;
+
+    pub const fn new() -> PtrMap<K, V> {
+        PtrMap {
+            slots: Vec::new(),
+            len: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The value `key` maps to.
+    #[inline]
+    pub fn get(&self, key: K) -> Option<V> {
+        if key == K::EMPTY || self.slots.is_empty() {
+            return None;
+        }
+        let (k, v) = self.slots[probe(&self.slots, key)];
+        (k != K::EMPTY).then_some(v)
+    }
+
+    /// Map `key` to `value`; a key already present keeps its first value.
+    /// `Err` for the empty key, or when growing could not allocate - in which
+    /// case the map is exactly as it was.
+    pub fn insert(&mut self, key: K, value: V) -> Result<(), InsertRefused> {
+        if key == K::EMPTY {
+            return Err(InsertRefused);
+        }
+        if self.slots.is_empty() || (self.len + 1) * 2 > self.slots.len() {
+            self.grow()?;
+        }
+        let i = probe(&self.slots, key);
+        if self.slots[i].0 == K::EMPTY {
+            self.slots[i] = (key, value);
+            self.len += 1;
+        }
+        Ok(())
+    }
+
+    /// Double the table (or make the first one), re-placing every entry. The
+    /// new table is built whole before it replaces the old one.
+    fn grow(&mut self) -> Result<(), InsertRefused> {
+        let cap = match self.slots.len() {
+            0 => Self::MIN_SLOTS,
+            n => n.checked_mul(2).ok_or(InsertRefused)?,
+        };
+        let mut slots: Vec<(K, V)> = try_vec_with_capacity(cap).ok_or(InsertRefused)?;
+        slots.resize(cap, (K::EMPTY, V::default())); /* reserved above */
+        for &(k, v) in self.slots.iter().filter(|(k, _)| *k != K::EMPTY) {
+            let i = probe(&slots, k);
+            slots[i] = (k, v);
+        }
+        self.slots = slots;
+        Ok(())
     }
 }

@@ -8,9 +8,9 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
-use crate::lexbor::abi::{self as lxb, LxbDoc, LxbNode};
+use crate::lexbor::abi as lxb;
 
-use super::html::TYPE_DOCUMENT as NODE_TYPE_DOCUMENT;
+use super::html::HtmlDoc;
 
 /// Which of a chunk's two sizes to sum.
 #[derive(Clone, Copy)]
@@ -47,28 +47,18 @@ unsafe fn mem_total(mem: *const lxb::lexbor_mem_t, measure: Measure) -> usize {
     total
 }
 
-/// Sum the node and text pools of a node's document.
-unsafe fn document_pools(node: *mut LxbNode, measure: Measure) -> usize {
-    if node.is_null() {
-        return 0;
-    }
-    /* The document node owns itself; every other node points back through
-     * owner_document. */
-    let doc: *mut LxbDoc = if (*node).type_ == NODE_TYPE_DOCUMENT {
-        node as *mut LxbDoc
-    } else {
-        (*node).owner_document
-    };
-    if doc.is_null() {
-        return 0;
-    }
-
+/// Sum the node and text pools of `doc`.
+fn document_pools(doc: HtmlDoc<'_>, measure: Measure) -> usize {
+    let doc = doc.as_raw();
     let mut total = 0usize;
-    for pool in [(*doc).mraw, (*doc).text] {
+    // SAFETY: a live document's two pools, whose chunk lists are only read.
+    for pool in unsafe { [(*doc).mraw, (*doc).text] } {
         if pool.is_null() {
             continue;
         }
-        total = match total.checked_add(mem_total((*pool).mem, measure)) {
+        // SAFETY: as above.
+        let bytes = unsafe { mem_total((*pool).mem, measure) };
+        total = match total.checked_add(bytes) {
             Some(t) => t,
             None => return usize::MAX,
         };
@@ -76,14 +66,14 @@ unsafe fn document_pools(node: *mut LxbNode, measure: Measure) -> usize {
     total
 }
 
-/// The live bytes in a node's document arena, which the serializers size their
-/// buffer from.
-pub unsafe fn document_bytes(node: *mut LxbNode) -> usize {
-    document_pools(node, Measure::Used)
+/// The live bytes in `doc`'s arena, which the serializers size their buffer
+/// from.
+pub fn document_bytes(doc: HtmlDoc<'_>) -> usize {
+    document_pools(doc, Measure::Used)
 }
 
-/// The bytes a node's document arena has allocated, used or not - what it
-/// costs the process, for `HtmlParsed::external_bytes`.
-pub unsafe fn document_capacity(node: *mut LxbNode) -> usize {
-    document_pools(node, Measure::Capacity)
+/// The bytes `doc`'s arena has allocated, used or not - what it costs the
+/// process, for `HtmlParsed::external_bytes`.
+pub fn document_capacity(doc: HtmlDoc<'_>) -> usize {
+    document_pools(doc, Measure::Capacity)
 }

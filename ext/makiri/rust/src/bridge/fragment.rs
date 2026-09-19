@@ -20,8 +20,8 @@ use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{ensure_document_mutable, html_doc_unwrap, DocKind, DocumentShell};
 use crate::init::CLASS_NODE;
 use crate::lexbor::adapter::html::{
-    HtmlDoc, HtmlNode, HtmlNodeMut, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH, TAG_SVG,
-    TAG_UNDEF, TYPE_ELEMENT,
+    HtmlDoc, HtmlNode, HtmlNodeMut, RawDoc, RawNode, NS_HTML, NS_MATH, NS_SVG, TAG_BODY, TAG_MATH,
+    TAG_SVG, TAG_UNDEF, TYPE_ELEMENT,
 };
 use crate::lexbor::adapter::post_parse::parse_html;
 use crate::lexbor::fragment::{
@@ -158,7 +158,7 @@ pub fn splice_fragment(
     };
     // SAFETY: `at` is a live node the caller cleared for editing, and its
     // document is the one the children go into.
-    if !unsafe { frag.import_into(at.node().owner_document_handle(), &emit) } {
+    if !unsafe { frag.import_into(RawDoc::from(at.node().owner_document()), &emit) } {
         return Err(makiri_error("failed to import a fragment child"));
     }
     Ok(())

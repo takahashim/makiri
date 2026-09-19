@@ -32,6 +32,26 @@
 
 ### Fixed
 
+* **XPath over HTML gives an attribute its own namespace.** `namespace-uri()`
+  of an attribute returned its element's namespace - the XHTML URI for `id` on
+  a `<div>`, SVG's for `refX` on a `<path>`; it is `""` now, and XLink's for
+  `xlink:href`, as the DOM and XPath's data model say. A prefixed attribute
+  test (`@svg:*`) no longer matches an attribute by its element's namespace.
+
+* **`local-name()` keeps an SVG name's case in HTML**, like the DOM's
+  `localName`: `refX` and `foreignObject`, not `refx` and `foreignobject`. A
+  prefixed test compares that name exactly (`//svg:foreignObject`).
+
+* **`lang()` is decided by the nearest language attribute.** An element whose
+  own `xml:lang` did not match went on to ask its ancestors, so an `en` element
+  inside a `ja` one answered `lang("ja")`.
+
+* **`namespace_matching: :lax` no longer changes XPath over XML.** Lax means
+  "as Nokogiri does", and `Nokogiri::XML` (libxml2) is namespace-strict: `//g`
+  does not find `<p:g>`, nor `//@a` a `p:a`. Makiri's lax matched both by
+  local name - and its `[@a]` shortcut disagreed with `@a` besides. XML now
+  answers the same in either mode; HTML's lax is unchanged.
+
 * **Moving a node to another HTML document updates the one it left.** The
   source document's text and element indexes still listed the node, so its
   `#text` and `//tag` kept answering with it; they are dropped now, as they

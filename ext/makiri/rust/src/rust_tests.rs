@@ -485,3 +485,43 @@ fn xml_serialization_answers_what_the_ruby_methods_did_and_round_trips() {
         expected
     );
 }
+
+/* ---- ptr_table ---- */
+
+#[test]
+fn a_token_table_keeps_an_xml_node_zero_apart_from_the_empty_slot() {
+    use crate::ptr_table::{PtrMap, PtrTable};
+    use crate::token::Token;
+
+    // An XML token is an arena index, and 0 is one: it must be a real key.
+    let zero = Token::xml(0);
+    let mut map: PtrMap<Token, usize> = PtrMap::new();
+    assert_eq!(map.get(zero), None);
+    map.insert(zero, 7).expect("inserted");
+    assert_eq!(map.get(zero), Some(7));
+    // The null token is the empty slot, never a key.
+    assert!(map.insert(Token::null(), 1).is_err());
+    assert_eq!(map.get(Token::null()), None);
+
+    let mut table: PtrTable<Token, usize> = PtrTable::with_keys(1, 0).expect("sized");
+    let slot = table.insert(zero, 0).expect("room for one key");
+    *table.slot_mut(slot) += 1;
+    assert_eq!(table.get(zero), Some(1));
+    assert_eq!(table.insert(Token::xml(1), 0), None, "sized for one key");
+}
+
+#[test]
+fn a_ptr_map_keeps_every_entry_across_growth() {
+    use crate::ptr_table::PtrMap;
+    use crate::token::Token;
+
+    let mut map: PtrMap<Token, usize> = PtrMap::new();
+    for i in 0..10_000 {
+        map.insert(Token::xml(i), i * 2).expect("inserted");
+        // A key already present keeps its first value.
+        map.insert(Token::xml(i), usize::MAX).expect("present");
+    }
+    assert_eq!(map.len(), 10_000);
+    assert!((0..10_000).all(|i| map.get(Token::xml(i)) == Some(i * 2)));
+    assert_eq!(map.get(Token::xml(10_000)), None);
+}

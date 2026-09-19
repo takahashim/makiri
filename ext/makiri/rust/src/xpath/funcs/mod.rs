@@ -1,18 +1,23 @@
-//! The built-in XPath 1.0 function library (mkr_xpath_funcs_body.h), plus the
+//! The built-in XPath 1.0 function library, plus the
 //! two Nokogiri-compatible builtins and the CSS lowering's internal hooks.
 //!
-//! One function per builtin behind one signature, and `lookup` is the only place
-//! that knows which names exist - the shape the C has as `fn_table` plus
-//! `mkr_lookup_function`. Keeping "does it exist" and "what does it do" as one
+//! One function per builtin behind one signature, and [`BUILTINS`] is the only
+//! place that names them - with their purity beside each. Keeping "does it exist" and "what does it do" as one
 //! question matters here: the evaluator asks before deciding whether to route a
 //! call to a Ruby handler, so a second list of names maintained separately could
 //! disagree with this one and turn an unknown function into a bare failure.
 //!
-//! The host-policy branches the C spells `#ifdef MKR_HOST_XML` are `D::IS_XML`.
+//! Where HTML and XML differ (`id()`, `lang()`), the function asks the host's
+//! policy item on `Dom` rather than which host it is.
 
 #![forbid(unsafe_code)]
 
+/// The functions beyond XPath 1.0's library: the Nokogiri builtins and the
+/// CSS lowering's internal hooks.
+mod ext;
+
 use super::abi::*;
+use super::axis::walk_descendants;
 use super::dom::*;
 use super::eval::Evaluation;
 use super::order::nodeset_unique_sorted;
@@ -20,6 +25,7 @@ use super::value::Focus;
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::Reserve;
+use core::ops::ControlFlow;
 
 /// Names the CSS lowering EMITS and the evaluator RESOLVES for an untyped
 /// `:*-of-type`, where the "type" is the element's own expanded name - a
@@ -45,7 +51,7 @@ pub type FnResult<T = ()> = Result<T, Reported>;
 /// receiving it still clears it.
 pub type Answer<N> = FnResult<Val<N>>;
 
-/// Every built-in has this shape (the C's `mkr_func_impl_t`). The engine owns
+/// Every built-in has this shape. The engine owns
 /// `args` and clears them after the call.
 pub type FnImpl<'e, 'd, D> = fn(
     &mut Evaluation<'e, 'd, D>,
@@ -53,67 +59,197 @@ pub type FnImpl<'e, 'd, D> = fn(
     &[Val<<D as Dom<'d>>::Node>],
 ) -> Answer<<D as Dom<'d>>::Node>;
 
+/// Which library a built-in belongs to: the namespace its name is looked up in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Library {
+    /// XPath 1.0's own, unprefixed - plus the CSS lowering's hooks, whose
+    /// names no expression can spell.
+    Core,
+    /// Nokogiri's builtins, under [`NS_NOKOGIRI_BUILTIN_URI`].
+    Nokogiri,
+}
+
+/// Whether a call may be evaluated once per evaluate and its value reused -
+/// the hoisting pass in `ast_ops` asks. Stated beside each name in
+/// [`BUILTINS`], so a function added there says it at the same time, and an
+/// unknown name is never taken for pure.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Purity {
+    /// Depends on its arguments alone, even with none (`true()`).
+    Pure,
+    /// Depends on its arguments alone when it has any; with none it reads the
+    /// context node (`string-length()`, `number()`).
+    PureWithArgs,
+    /// Reads the context node, position or size, or dynamic state - never
+    /// reused. Deliberately also the class of pure functions the pass has not
+    /// been taught, which keeps it conservative.
+    Impure,
+}
+
+impl Purity {
+    /// Whether a call with `nargs` arguments may be reused.
+    pub fn allows(self, nargs: usize) -> bool {
+        match self {
+            Purity::Pure => true,
+            Purity::PureWithArgs => nargs > 0,
+            Purity::Impure => false,
+        }
+    }
+}
+
+/// Every built-in, as a name-free id: [`Builtin::imp`] maps each to its
+/// function with a `match` the compiler checks is complete.
+#[derive(Clone, Copy)]
+enum Builtin {
+    Last,
+    Position,
+    Count,
+    Id,
+    LocalName,
+    NamespaceUri,
+    Name,
+    String,
+    Concat,
+    StartsWith,
+    Contains,
+    SubstringBefore,
+    SubstringAfter,
+    Substring,
+    StringLength,
+    NormalizeSpace,
+    Translate,
+    Not,
+    True,
+    False,
+    Boolean,
+    Lang,
+    Number,
+    Sum,
+    Floor,
+    Ceiling,
+    Round,
+    CssClass,
+    LocalNameIs,
+    OfTypePos,
+    OfTypePosLast,
+}
+
+/// THE list of built-ins: each name once, with its library and its purity. The
+/// evaluator asks it whether a call is a built-in before routing it to a Ruby
+/// handler, and the hoisting pass asks it whether a call is pure, so there is
+/// no second list of names to fall out of step with this one.
+const BUILTINS: &[(Library, &[u8], Builtin, Purity)] = {
+    use Builtin::*;
+    use Library::*;
+    use Purity::*;
+    &[
+        /* node-set */
+        (Core, b"last", Last, Impure),
+        (Core, b"position", Position, Impure),
+        (Core, b"count", Count, PureWithArgs),
+        (Core, b"id", Id, Impure),
+        (Core, b"local-name", LocalName, Impure),
+        (Core, b"namespace-uri", NamespaceUri, Impure),
+        (Core, b"name", Name, Impure),
+        /* string */
+        (Core, b"string", String, Impure),
+        (Core, b"concat", Concat, PureWithArgs),
+        (Core, b"starts-with", StartsWith, PureWithArgs),
+        (Core, b"contains", Contains, PureWithArgs),
+        (Core, b"substring-before", SubstringBefore, PureWithArgs),
+        (Core, b"substring-after", SubstringAfter, PureWithArgs),
+        (Core, b"substring", Substring, PureWithArgs),
+        (Core, b"string-length", StringLength, PureWithArgs),
+        (Core, b"normalize-space", NormalizeSpace, Impure),
+        (Core, b"translate", Translate, PureWithArgs),
+        /* boolean */
+        (Core, b"not", Not, PureWithArgs),
+        (Core, b"true", True, Pure),
+        (Core, b"false", False, Pure),
+        (Core, b"boolean", Boolean, PureWithArgs),
+        (Core, b"lang", Lang, Impure),
+        /* number */
+        (Core, b"number", Number, PureWithArgs),
+        (Core, b"sum", Sum, PureWithArgs),
+        (Core, b"floor", Floor, PureWithArgs),
+        (Core, b"ceiling", Ceiling, PureWithArgs),
+        (Core, b"round", Round, PureWithArgs),
+        /* The CSS lowering's internal hooks. Registered for every host: their
+         * names begin with \x01, which no expression can spell, so only the
+         * lowering reaches them - and it runs only for XML today. */
+        (Core, FN_OF_TYPE_POS, OfTypePos, Impure),
+        (Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure),
+        /* Nokogiri's builtins, in its builtin namespace */
+        (Nokogiri, b"css-class", CssClass, Impure),
+        (Nokogiri, b"local-name-is", LocalNameIs, Impure),
+    ]
+};
+
+impl Builtin {
+    fn imp<'e, 'd, D: Dom<'d>>(self) -> FnImpl<'e, 'd, D> {
+        match self {
+            Builtin::Last => fn_last::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Position => fn_position::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Count => fn_count::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Id => fn_id::<D> as FnImpl<'e, 'd, D>,
+            Builtin::LocalName => fn_local_name::<D> as FnImpl<'e, 'd, D>,
+            Builtin::NamespaceUri => fn_namespace_uri::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Name => fn_name::<D> as FnImpl<'e, 'd, D>,
+            Builtin::String => fn_string::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Concat => fn_concat::<D> as FnImpl<'e, 'd, D>,
+            Builtin::StartsWith => fn_starts_with::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Contains => fn_contains::<D> as FnImpl<'e, 'd, D>,
+            Builtin::SubstringBefore => fn_substring_before::<D> as FnImpl<'e, 'd, D>,
+            Builtin::SubstringAfter => fn_substring_after::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Substring => fn_substring::<D> as FnImpl<'e, 'd, D>,
+            Builtin::StringLength => fn_string_length::<D> as FnImpl<'e, 'd, D>,
+            Builtin::NormalizeSpace => fn_normalize_space::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Translate => fn_translate::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Not => fn_not::<D> as FnImpl<'e, 'd, D>,
+            Builtin::True => fn_true::<D> as FnImpl<'e, 'd, D>,
+            Builtin::False => fn_false::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Boolean => fn_boolean::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Lang => fn_lang::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Number => fn_number::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Sum => fn_sum::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Floor => fn_floor::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Ceiling => fn_ceiling::<D> as FnImpl<'e, 'd, D>,
+            Builtin::Round => fn_round::<D> as FnImpl<'e, 'd, D>,
+            Builtin::CssClass => ext::fn_css_class::<D> as FnImpl<'e, 'd, D>,
+            Builtin::LocalNameIs => ext::fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
+            Builtin::OfTypePos => ext::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
+            Builtin::OfTypePosLast => ext::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
+        }
+    }
+}
+
+/// The table entry for `local` in `library`.
+fn find(library: Library, local: &[u8]) -> Option<(Builtin, Purity)> {
+    BUILTINS
+        .iter()
+        .find(|(lib, name, _, _)| *lib == library && *name == local)
+        .map(|&(_, _, id, purity)| (id, purity))
+}
+
 /// The built-in named `(ns_uri, local)`, or None - in which case the evaluator
-/// routes the call to the registered resolver.
+/// routes the call to the registered resolver. The Nokogiri builtins live in
+/// one namespace; any other registered namespace means a user-defined function.
 pub fn lookup<'e, 'd, D: Dom<'d>>(
     ns_uri: Option<&[u8]>,
     local: &[u8],
 ) -> Option<FnImpl<'e, 'd, D>> {
-    if let Some(uri) = ns_uri {
-        /* The Nokogiri-compatible builtins live in one namespace; any other
-         * registered namespace means a user-defined function, so it goes to the
-         * resolver. */
-        if uri != NS_NOKOGIRI_BUILTIN_URI {
-            return None;
-        }
-        let f: FnImpl<'e, 'd, D> = match local {
-            b"css-class" => fn_css_class::<D> as FnImpl<'e, 'd, D>,
-            b"local-name-is" => fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
-            _ => return None,
-        };
-        return Some(f);
-    }
-    /* The default namespace: the XPath 1.0 standard library. */
-    let f: FnImpl<'e, 'd, D> = match local {
-        /* node-set */
-        b"last" => fn_last::<D> as FnImpl<'e, 'd, D>,
-        b"position" => fn_position::<D> as FnImpl<'e, 'd, D>,
-        b"count" => fn_count::<D> as FnImpl<'e, 'd, D>,
-        b"id" => fn_id::<D> as FnImpl<'e, 'd, D>,
-        b"local-name" => fn_local_name::<D> as FnImpl<'e, 'd, D>,
-        b"namespace-uri" => fn_namespace_uri::<D> as FnImpl<'e, 'd, D>,
-        b"name" => fn_name::<D> as FnImpl<'e, 'd, D>,
-        /* string */
-        b"string" => fn_string::<D> as FnImpl<'e, 'd, D>,
-        b"concat" => fn_concat::<D> as FnImpl<'e, 'd, D>,
-        b"starts-with" => fn_starts_with::<D> as FnImpl<'e, 'd, D>,
-        b"contains" => fn_contains::<D> as FnImpl<'e, 'd, D>,
-        b"substring-before" => fn_substring_before::<D> as FnImpl<'e, 'd, D>,
-        b"substring-after" => fn_substring_after::<D> as FnImpl<'e, 'd, D>,
-        b"substring" => fn_substring::<D> as FnImpl<'e, 'd, D>,
-        b"string-length" => fn_string_length::<D> as FnImpl<'e, 'd, D>,
-        b"normalize-space" => fn_normalize_space::<D> as FnImpl<'e, 'd, D>,
-        b"translate" => fn_translate::<D> as FnImpl<'e, 'd, D>,
-        /* boolean */
-        b"not" => fn_not::<D> as FnImpl<'e, 'd, D>,
-        b"true" => fn_true::<D> as FnImpl<'e, 'd, D>,
-        b"false" => fn_false::<D> as FnImpl<'e, 'd, D>,
-        b"boolean" => fn_boolean::<D> as FnImpl<'e, 'd, D>,
-        b"lang" => fn_lang::<D> as FnImpl<'e, 'd, D>,
-        /* number */
-        b"number" => fn_number::<D> as FnImpl<'e, 'd, D>,
-        b"sum" => fn_sum::<D> as FnImpl<'e, 'd, D>,
-        b"floor" => fn_floor::<D> as FnImpl<'e, 'd, D>,
-        b"ceiling" => fn_ceiling::<D> as FnImpl<'e, 'd, D>,
-        b"round" => fn_round::<D> as FnImpl<'e, 'd, D>,
-        /* the CSS lowering's internal hooks */
-        _ if D::IS_XML && local == FN_OF_TYPE_POS => fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
-        _ if D::IS_XML && local == FN_OF_TYPE_POS_LAST => {
-            fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>
-        }
-        _ => return None,
+    let library = match ns_uri {
+        None => Library::Core,
+        Some(uri) if uri == NS_NOKOGIRI_BUILTIN_URI => Library::Nokogiri,
+        Some(_) => return None,
     };
-    Some(f)
+    find(library, local).map(|(id, _)| id.imp::<D>())
+}
+
+/// The purity of the unprefixed call `local`; [`Purity::Impure`] for a name
+/// that is not a core built-in, which a handler answers.
+pub fn purity(local: &[u8]) -> Purity {
+    find(Library::Core, local).map_or(Purity::Impure, |(_, purity)| purity)
 }
 
 /* ---------- shared helpers ---------- */
@@ -207,7 +343,7 @@ fn self_text<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
 ) -> FnResult<Text> {
     match focus.node {
-        Some(n) => node_to_owned_text::<D>(ev.doc, n, Some(&mut ev.budget)),
+        Some(n) => node_to_owned_text::<D>(ev.doc, n, &mut ev.budget),
         None => owned_copy(
             b"",
             ev.budget.sink(),
@@ -303,7 +439,7 @@ fn fn_count<'e, 'd, D: Dom<'d>>(
     number(ns.len() as f64)
 }
 
-/// Walk the tree for an element whose `id` attribute is `id`.
+/// Walk the tree for an element whose `id_attr` attribute is `id`.
 ///
 /// Every visited node is charged to the op budget: without it, id() over a large
 /// node-set - a token per node, a tree walk per token - drives quadratic work at
@@ -311,35 +447,27 @@ fn fn_count<'e, 'd, D: Dom<'d>>(
 fn find_by_id<'e, 'd, D: Dom<'d>>(
     doc: D,
     root: D::Node,
+    id_attr: &[u8],
     id: &[u8],
     budget: &mut Budget,
 ) -> Result<Option<D::Node>, Reported> {
     if id.is_empty() {
         return Ok(None);
     }
-    let mut n = root;
-    loop {
-        budget.charge_op()?;
-        if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, b"id") == Some(id) {
-            return Ok(Some(n));
+    /* `root` is the document node, never an element, so its descendants are
+     * every element there is. */
+    let flow = walk_descendants::<D, _, _>(doc, root, &mut |n| {
+        if let Err(e) = budget.charge_op() {
+            return ControlFlow::Break(Err(e));
         }
-        if let Some(c) = doc.first_child(n) {
-            n = c;
-            continue;
+        if doc.node_type(n) == NTYPE_ELEMENT && doc.get_attribute(n, id_attr) == Some(id) {
+            return ControlFlow::Break(Ok(n));
         }
-        loop {
-            if n == root {
-                return Ok(None);
-            }
-            if let Some(s) = doc.next(n) {
-                n = s;
-                break;
-            }
-            match doc.parent(n) {
-                Some(p) => n = p,
-                None => return Ok(None),
-            }
-        }
+        ControlFlow::Continue(())
+    });
+    match flow {
+        ControlFlow::Continue(()) => Ok(None),
+        ControlFlow::Break(found) => found.map(Some),
     }
 }
 
@@ -348,6 +476,7 @@ fn find_by_id<'e, 'd, D: Dom<'d>>(
 /// Duplicates go in unconditionally: the caller dedups the whole result with one
 /// sort plus an adjacent pass, which beats a contains() check per insert.
 fn id_collect<'e, 'd, D: Dom<'d>>(
+    id_attr: &[u8],
     s: &[u8],
     root: D::Node,
     out: &mut NodeSet<D::Node>,
@@ -355,8 +484,11 @@ fn id_collect<'e, 'd, D: Dom<'d>>(
 ) -> FnResult {
     let doc = ev.doc;
     let budget = &mut ev.budget;
-    for tok in s.split(|&b| super::lex::is_ws(b)).filter(|t| !t.is_empty()) {
-        if let Some(hit) = find_by_id::<D>(doc, root, tok, budget)? {
+    for tok in s
+        .split(|&b| crate::xpath::lex::is_ws(b))
+        .filter(|t| !t.is_empty())
+    {
+        if let Some(hit) = find_by_id::<D>(doc, root, id_attr, tok, budget)? {
             out.push(hit, budget)?;
         }
     }
@@ -371,13 +503,11 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
     let err = ev.budget.sink();
     arity(args.len(), 1, 1, err.clone(), "id")?;
 
-    if D::IS_XML {
-        /* Host policy: in XML an ID is an attribute DECLARED ID-typed by the
-         * DTD, not any attribute named "id". DTDs are rejected at parse, so a
-         * document read here carries no ID-typed attributes and id() is the
-         * empty node-set. (xml:id is a separate, optional spec.) */
+    /* A host with no ID attributes answers the empty node-set - see
+     * `Dom::ID_ATTRIBUTE`. */
+    let Some(id_attr) = D::ID_ATTRIBUTE else {
         return Ok(Val::default());
-    }
+    };
     let doc = ev.doc;
     let root = doc.document_node();
     /* Collected in a guard, so a failure part-way frees what was found. */
@@ -387,12 +517,12 @@ fn fn_id<'e, 'd, D: Dom<'d>>(
      * anything else is converted to a string and split the same way. */
     if let Some(set) = args[0].as_nodeset() {
         (0..set.len()).try_for_each(|i| {
-            let t = node_to_owned_text::<D>(doc, set.get(i), Some(&mut ev.budget))?;
-            id_collect::<D>(t.as_slice(), root, &mut found, ev)
+            let t = node_to_owned_text::<D>(doc, set.get(i), &mut ev.budget)?;
+            id_collect::<D>(id_attr, t.as_slice(), root, &mut found, ev)
         })?;
     } else {
         let t = to_text::<D>(&args[0], ev)?;
-        id_collect::<D>(t.as_slice(), root, &mut found, ev)?;
+        id_collect::<D>(id_attr, t.as_slice(), root, &mut found, ev)?;
     }
     /* §4.1: the result is in document order with duplicates removed. */
     nodeset_unique_sorted::<D>(ev, &mut found);
@@ -492,11 +622,14 @@ fn fn_namespace_uri<'e, 'd, D: Dom<'d>>(
     let Some(t) = name_target::<D>(args, focus, err.clone(), "namespace-uri")? else {
         return string(b"", err.clone(), "namespace-uri");
     };
-    if (doc.node_type(t) != NTYPE_ELEMENT && doc.node_type(t) != NTYPE_ATTRIBUTE) || !doc.has_ns(t)
-    {
-        return string(b"", err.clone(), "namespace-uri");
-    }
-    string(doc.ns_uri(t), err.clone(), "namespace-uri")
+    /* An attribute's own namespace, never its element's - see
+     * `Dom::attr_ns_uri`. */
+    let uri = match doc.as_attr(t) {
+        Some(a) => doc.attr_ns_uri(a),
+        None if doc.node_type(t) == NTYPE_ELEMENT && doc.has_ns(t) => doc.ns_uri(t),
+        None => b"",
+    };
+    string(uri, err.clone(), "namespace-uri")
 }
 
 /* ---------- string functions ---------- */
@@ -668,7 +801,7 @@ fn fn_normalize_space<'e, 'd, D: Dom<'d>>(
         let mut w = 0usize;
         let mut in_space = true;
         for &c in src {
-            if super::lex::is_ws(c) {
+            if crate::xpath::lex::is_ws(c) {
                 if !in_space && w > 0 {
                     dst[w] = b' ';
                     w += 1;
@@ -823,26 +956,24 @@ fn fn_lang<'e, 'd, D: Dom<'d>>(
     arity(args.len(), 1, 1, err.clone(), "lang")?;
     let want = to_text::<D>(&args[0], ev)?;
     let want = want.as_slice();
-    /* Walk the ancestors for the host's language attribute. Host policy: XPath
-     * 1.0 lang() is xml:lang based; HTML uses `lang`, accepting xml:lang as a
-     * fallback. */
+    /* Walk the ancestors for the host's language attributes
+     * (`Dom::LANG_ATTRIBUTES`). */
     let mut p = focus.node;
     while let Some(n) = p {
         if doc.node_type(n) == NTYPE_ELEMENT {
-            let v = if D::IS_XML {
-                doc.get_attribute(n, b"xml:lang")
-            } else {
-                doc.get_attribute(n, b"lang")
-                    .or_else(|| doc.get_attribute(n, b"xml:lang"))
-            };
+            let v = D::LANG_ATTRIBUTES
+                .iter()
+                .find_map(|name| doc.get_attribute(n, name));
             if let Some(v) = v {
-                /* Case-insensitive compare of the prefix up to a '-'. */
-                if v.len() >= want.len()
-                    && v[..want.len()].eq_ignore_ascii_case(want)
-                    && (v.len() == want.len() || v[want.len()] == b'-')
-                {
-                    return boolean(true);
-                }
+                /* The NEAREST element carrying the attribute decides (§4.3):
+                 * a non-matching one ends the walk rather than letting an
+                 * ancestor's answer through. Case-insensitive compare of the
+                 * prefix up to a '-'. */
+                return boolean(
+                    v.len() >= want.len()
+                        && v[..want.len()].eq_ignore_ascii_case(want)
+                        && (v.len() == want.len() || v[want.len()] == b'-'),
+                );
             }
         }
         p = doc.parent(n);
@@ -946,108 +1077,41 @@ fn fn_round<'e, 'd, D: Dom<'d>>(
     num1::<D, _>(ev, args, "round", round_half_up)
 }
 
-/* ---------- the Nokogiri builtins ---------- */
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// css-class(haystack, needle): true iff `needle` is a whitespace-separated
-/// token of `haystack`. Kept behaviour-identical to libxml2's builtin_css_class,
-/// including the NULL ordering - a NULL haystack is a non-match even for an
-/// empty needle.
-fn ws_token_match(hay: Option<&[u8]>, val: Option<&[u8]>) -> bool {
-    let (hay, val) = match (hay, val) {
-        (Some(h), Some(v)) => (h, v),
-        _ => return false,
-    };
-    if val.is_empty() {
-        return true; /* libxml2 returns non-NULL for an empty val */
-    }
-    hay.split(|&b| super::lex::is_ws(b)).any(|t| t == val)
-}
-
-fn fn_css_class<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    _focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    arity(args.len(), 2, 2, err.clone(), "nokogiri-builtin:css-class")?;
-    two::<D, _>(ev, args, |hay, needle| {
-        boolean(ws_token_match(Some(hay), Some(needle)))
-    })
-}
-
-/// local-name-is(name): true iff the context node's qualified name (for HTML the
-/// lowercase local name) equals the argument.
-fn fn_local_name_is<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    focus: &Focus<'d, D>,
-    args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let err = ev.budget.sink();
-    let doc = ev.doc;
-    arity(
-        args.len(),
-        1,
-        1,
-        err.clone(),
-        "nokogiri-builtin:local-name-is",
-    )?;
-    let want = to_text::<D>(&args[0], ev)?;
-    boolean(
-        focus
-            .node
-            .is_some_and(|n| doc.qualified_name(n) == want.as_slice()),
-    )
-}
-
-/* ---------- the CSS-lowered of-type hooks (XML only) ---------- */
-
-/// Two elements are the same "type" iff they share an expanded name: local name
-/// plus namespace URI.
-fn same_type<'e, 'd, D: Dom<'d>>(a: D::Node, b: D::Node, doc: D) -> bool {
-    doc.local_name(a) == doc.local_name(b) && doc.ns_uri(a) == doc.ns_uri(b)
-}
-
-/// The 1-based position of `node` among its same-type element siblings: forward
-/// counts the preceding siblings, otherwise the following ones (from the end).
-fn of_type_pos<'e, 'd, D: Dom<'d>>(node: Option<D::Node>, forward: bool, doc: D) -> f64 {
-    let Some(node) = node else {
-        return 0.0;
-    };
-    if doc.node_type(node) != NTYPE_ELEMENT {
-        return 0.0;
-    }
-    let step = |n: D::Node| {
-        if forward {
-            doc.prev(n)
-        } else {
-            doc.next(n)
+    #[test]
+    fn every_builtin_is_named_once_per_library() {
+        for (i, (lib, name, _, _)) in BUILTINS.iter().enumerate() {
+            let twin = BUILTINS[i + 1..]
+                .iter()
+                .any(|(l, n, _, _)| l == lib && n == name);
+            assert!(!twin, "{} is listed twice", String::from_utf8_lossy(name));
         }
-    };
-    let mut pos = 1i64;
-    let mut s = step(node);
-    while let Some(n) = s {
-        if doc.node_type(n) == NTYPE_ELEMENT && same_type::<D>(node, n, doc) {
-            pos += 1;
-        }
-        s = step(n);
     }
-    pos as f64
-}
 
-fn fn_of_type_pos<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    focus: &Focus<'d, D>,
-    _args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let doc = ev.doc;
-    number(of_type_pos::<D>(focus.node, true, doc))
-}
-
-fn fn_of_type_pos_last<'e, 'd, D: Dom<'d>>(
-    ev: &mut Evaluation<'e, 'd, D>,
-    focus: &Focus<'d, D>,
-    _args: &[Val<D::Node>],
-) -> Answer<D::Node> {
-    let doc = ev.doc;
-    number(of_type_pos::<D>(focus.node, false, doc))
+    #[test]
+    fn the_hoisting_pass_only_reuses_what_reads_no_context() {
+        assert!(purity(b"true").allows(0));
+        assert!(purity(b"concat").allows(2));
+        /* With no argument these read the context node. */
+        assert!(!purity(b"string-length").allows(0));
+        assert!(!purity(b"number").allows(0));
+        /* Context, position and dynamic state are never reused. */
+        for name in [
+            &b"last"[..],
+            b"position",
+            b"string",
+            b"id",
+            b"lang",
+            b"local-name",
+        ] {
+            assert!(!purity(name).allows(1), "{}", String::from_utf8_lossy(name));
+        }
+        /* An unknown name is a handler's, and a handler is never taken for pure. */
+        assert!(!purity(b"my-function").allows(1));
+        /* A Nokogiri builtin is looked up under its namespace, not as core. */
+        assert_eq!(purity(b"css-class"), Purity::Impure);
+    }
 }

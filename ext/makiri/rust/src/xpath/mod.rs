@@ -25,7 +25,7 @@
 //!   nodetest.rs   does a node match a step's test?
 //!   attr_pred.rs  the [@name] / [@name='lit'] predicate shapes
 //!   step_index.rs the //tag and //tag[N] index fast paths
-//!   funcs.rs      the built-in function library
+//!   funcs/        the built-in function library (ext.rs: Nokogiri and CSS hooks)
 //!   eval.rs       node tests, predicates, steps, operators
 //!
 //! An instance binds the contract to one representation, and lives outside this

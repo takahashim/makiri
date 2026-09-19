@@ -15,7 +15,8 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * `//div` matches, but foreign elements need a registered prefix (`//svg:path`).
     Pass `namespace_matching: :lax` to `Node#xpath` / `XPathContext.new` for the
     namespace-agnostic match where `//path` finds an SVG element (the
-    `Nokogiri::HTML`/libxml2-HTML4 behaviour).
+    `Nokogiri::HTML`/libxml2-HTML4 behaviour). Lax means "as Nokogiri does", so
+    on an XML document it changes nothing: `Nokogiri::XML` is namespace-strict too.
 * `namespace-uri()` of an HTML element returns the XHTML URI (DOM-correct, as browsers report)
   * `Nokogiri::HTML5` returns `""`.
 * Name tests fold ASCII case on HTML elements, like browsers (WPT `domxpath`).

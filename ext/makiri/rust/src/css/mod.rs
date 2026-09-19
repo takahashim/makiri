@@ -29,7 +29,6 @@ mod lower;
 use crate::lexbor::css_parser;
 use crate::xpath::ast::{Ast, Op};
 use core::cell::RefCell;
-use core::ffi::c_int;
 
 use crate::falloc::try_box;
 use crate::text::VerifiedText;
@@ -65,7 +64,11 @@ pub(crate) struct Build<'a> {
 }
 
 impl Build<'_> {
-    pub(crate) fn fail(&self, status: c_int, msg: &core::ffi::CStr) -> Reported {
+    pub(crate) fn fail(
+        &self,
+        status: crate::xpath::msg::Status,
+        msg: &core::ffi::CStr,
+    ) -> Reported {
         crate::xpath::msg::err_set(self.err.clone(), status, msg)
     }
 

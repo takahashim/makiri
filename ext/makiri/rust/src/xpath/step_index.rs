@@ -11,11 +11,9 @@
 use super::abi::*;
 use super::dom::*;
 use super::eval::Evaluation;
-use super::msg::Bytes;
-use super::nodetest::{node_principal_match, Bindings};
+use super::nodetest::CompiledTest;
 use crate::err_setf;
-use crate::falloc::Reserve;
-use crate::ptr_table::ptr_hash;
+use crate::ptr_table::PtrTable;
 use crate::token::Token;
 
 /// Is the context exactly the document node? Both index fast paths need that:
@@ -30,33 +28,27 @@ fn context_is_document<'e, 'd, D: Dom<'d>>(doc: D, set: &NodeSet<D::Node>) -> bo
 /// filled `result`, Ok(false) when the shape does not qualify.
 pub fn try_descendant_index<'e, 'd, D: Dom<'d>>(
     doc: D,
-    step: &Step,
+    ct: &CompiledTest<'_>,
     context_set: &NodeSet<D::Node>,
     result: &mut NodeSet<D::Node>,
-    b: &Bindings<'e, 'd, D>,
     budget: &mut Budget,
 ) -> Result<bool, Reported> {
-    let test = &step.test;
+    let test = ct.test();
     let Some(local) = test.local.as_deref() else {
         return Ok(false);
     };
-    if step.axis != Axis::Descendant
+    if ct.axis() != Axis::Descendant
         || test.kind != TestKind::Name
         || !context_is_document::<D>(doc, context_set)
     {
         return Ok(false);
     }
-    let ns_uri = if test.prefix.is_none() { None } else { b.pre };
-    if test.prefix.is_some() && ns_uri.is_none() {
-        return Ok(false); /* eval_step pre-resolves, so this should not happen */
-    }
-    let bucket = match doc.name_bucket(local, ns_uri, b.lax) {
-        Some(bk) => bk,
-        None => return Ok(false),
+    let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
+        return Ok(false);
     };
     for &n in bucket.nodes {
         budget.charge_op()?;
-        if bucket.recheck && !node_principal_match::<D>(doc, test, n, step.axis, b) {
+        if bucket.recheck && !ct.matches(doc, n) {
             continue;
         }
         result.push(n, budget)?;
@@ -116,67 +108,48 @@ pub fn try_descendant_index_nth<'e, 'd, D: Dom<'d>>(
     seed: &NodeSet<D::Node>,
     result: &mut NodeSet<D::Node>,
 ) -> Result<bool, Reported> {
-    let err = ev.budget.sink();
     let doc = ev.doc;
-    let cx = ev.cx;
-    let names = ev.names;
     let need = match nth_shape::<D>(doc, s0, s1, seed) {
         Some(n) => n,
         None => return Ok(false),
     };
-    let test = &s1.test;
-    let ns_uri: Option<&[u8]> = match test.prefix.as_deref() {
-        None => None,
-        Some(prefix) => match names.lookup_ns(prefix) {
-            Some(u) => Some(u),
-            None => {
-                return Err(err_setf!(
-                    err,
-                    XP_ERR_RUNTIME,
-                    "unknown namespace prefix '{}' in name test",
-                    Bytes(prefix)
-                ));
-            }
-        },
-    };
-    let b = Bindings::<D>::new(cx, names, doc, ns_uri);
-    let local = test.local.as_deref().unwrap_or(&[]);
-    let bucket = match doc.name_bucket(local, ns_uri, b.lax) {
-        Some(bk) => bk,
-        None => return Ok(false),
+    let names: &'e Names = ev.names;
+    let ct = CompiledTest::new(&s1.test, s1.axis, names, ev.cx.lax(), ev.budget.sink())?;
+    let local = ct.test().local.as_deref().unwrap_or(&[]);
+    let Some(bucket) = doc.name_bucket(local, ct.uri()) else {
+        return Ok(false);
     };
     if bucket.nodes.is_empty() {
         return Ok(true);
     }
 
-    /* A pointer-keyed count per parent. Sized from the bucket so the open
-     * addressing stays under a 2/3 load; an overflow in the sizer falls back to
-     * the generic evaluator rather than risking a table that never finds a slot. */
-    let want = bucket.nodes.len() + (bucket.nodes.len() >> 1) + 1;
-    let Some(cap) = want.checked_next_power_of_two() else {
-        return Ok(false);
+    /* A count per parent, sized for one parent per element - a table that
+     * never grows, so a full one is the tree changing under us: fall back. */
+    let Some(mut per_parent) = PtrTable::<Token, usize>::with_keys(bucket.nodes.len(), 0) else {
+        return Err(err_setf!(
+            ev.budget.sink(),
+            XP_ERR_OOM,
+            "out of memory (//name[N])"
+        ));
     };
-    let mut tab: Vec<(Token, usize)> = Vec::new();
-    if tab.mkr_reserve_exact(cap).is_err() {
-        return Err(err_setf!(err, XP_ERR_OOM, "out of memory (//name[N])"));
-    }
-    tab.resize(cap, (Token::null(), 0));
-    let mask = cap - 1;
     let budget = &mut ev.budget;
 
     for &e in bucket.nodes {
         budget.charge_op()?;
-        if bucket.recheck && !node_principal_match::<D>(doc, test, e, s1.axis, &b) {
+        if bucket.recheck && !ct.matches(doc, e) {
             continue;
         }
-        let par = doc.parent(e).map_or(Token::null(), D::token);
-        let mut h = (ptr_hash(par.as_ptr() as *const u8) as usize) & mask;
-        while !tab[h].0.is_null() && tab[h].0 != par {
-            h = (h + 1) & mask;
-        }
-        tab[h].0 = par;
-        tab[h].1 += 1;
-        if tab[h].1 == need {
+        /* An element of the bucket always has a parent; a parentless one would
+         * be the index disagreeing with the tree, and the walk answers then. */
+        let Some(par) = doc.parent(e) else {
+            return Ok(false);
+        };
+        let Some(slot) = per_parent.insert(D::token(par), 0) else {
+            return Ok(false);
+        };
+        let count = per_parent.slot_mut(slot);
+        *count += 1;
+        if *count == need {
             result.push(e, budget)?;
         }
     }

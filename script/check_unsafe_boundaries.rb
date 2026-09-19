@@ -33,7 +33,7 @@ UNSAFE_ISLANDS = {
   "bridge/doc.rs" => 5,
   "bridge/fragment.rs" => 5,
   "bridge/gvl.rs" => 3,
-  "bridge/html.rs" => 34,
+  "bridge/html.rs" => 33,
   "bridge/node_set.rs" => 10,
   "bridge/ruby.rs" => 24,
   "bridge/selectors.rs" => 6,
@@ -54,12 +54,12 @@ UNSAFE_ISLANDS = {
   "falloc/raw.rs" => 3,
   "init.rs" => 5,
   "lexbor/abi.rs" => 4,
-  "lexbor/adapter/arena_bytes.rs" => 4,
+  "lexbor/adapter/arena_bytes.rs" => 3,
   "lexbor/adapter/cross_import.rs" => 4,
-  "lexbor/adapter/html/build.rs" => 19,
-  "lexbor/adapter/html/mod.rs" => 58,
-  "lexbor/adapter/html/mutate.rs" => 10,
-  "lexbor/adapter/post_parse.rs" => 10,
+  "lexbor/adapter/html/build.rs" => 16,
+  "lexbor/adapter/html/mod.rs" => 53,
+  "lexbor/adapter/html/mutate.rs" => 8,
+  "lexbor/adapter/post_parse.rs" => 9,
   "lexbor/adapter/source_loc.rs" => 3,
   "lexbor/adapter/text_index.rs" => 1,
   "lexbor/css_engine.rs" => 15,
@@ -99,12 +99,12 @@ FORBID_FILES = %w[
   xml/tree.rs xml/verify.rs xml/xpath.rs
   xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
   xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
-  xpath/dom.rs xpath/eval.rs xpath/funcs.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/msg.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

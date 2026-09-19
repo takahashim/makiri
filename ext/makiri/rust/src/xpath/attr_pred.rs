@@ -9,7 +9,7 @@
 
 use super::abi::*;
 use super::dom::*;
-use super::nodetest::names_equal;
+use super::nodetest::unprefixed_attr_matches;
 
 /// The two most common predicate shapes. The generic evaluator services them by
 /// building a throwaway node-set per context node plus a string-cache insert;
@@ -73,35 +73,28 @@ fn string_literal(e: &Expr) -> Option<&[u8]> {
     }
 }
 
-/// The attribute whose QUALIFIED name is `name`, compared exactly as the
-/// attribute axis's name test compares it ([`names_equal`]): ASCII
-/// case-insensitively on an HTML element, byte for byte otherwise.
-///
-/// This scans rather than using the host's attribute lookup, whose rules are
-/// not the name test's: Lexbor's folds case on every element, SVG included,
-/// and sees the namespace declarations the axis hides. The fast path handles
-/// unprefixed names only, matching the name test's qualified-name compare.
-fn attr_by_qualified_name<'d, D: Dom<'d>>(doc: D, el: D::Node, name: &[u8]) -> Option<D::Attr> {
-    let mut a = doc.first_attr(el);
-    while let Some(x) = a {
-        if names_equal(doc, Some(el), doc.attr_qualified_name(x), name) {
-            return Some(x);
-        }
-        a = doc.attr_next(x);
-    }
-    None
-}
-
 /// THE single per-node test for a recognised attribute predicate, shared by the
 /// predicate filter and the at_xpath first-match path so the two stay identical
 /// by construction rather than by a hand-kept copy.
-pub fn attr_pred_matches<'d, D: Dom<'d>>(doc: D, ap: &AttrPred, n: D::Node) -> bool {
+///
+/// It is also the attribute axis's own test: an attribute counts when
+/// [`unprefixed_attr_matches`] - the function the axis's name test calls - says
+/// so. And like `@name = 'v'` over that axis, the value compare is "some
+/// matching attribute has it": in XML's lax mode `a` and `p:a` both match `@a`.
+///
+/// This scans rather than using the host's attribute lookup, whose rules are
+/// not the name test's: Lexbor's folds case on every element, SVG included,
+/// and sees the namespace declarations the axis hides.
+pub fn attr_pred_matches<'d, D: Dom<'d>>(doc: D, ap: &AttrPred, n: D::Node, lax: bool) -> bool {
     /* Only an element has attributes, so a node of any other kind finds none. */
-    let Some(a) = attr_by_qualified_name::<D>(doc, n, ap.name) else {
-        return false;
-    };
-    match ap.value {
-        None => true,
-        Some(want) => doc.attr_value(a) == want,
+    let mut a = doc.first_attr(n);
+    while let Some(x) = a {
+        if unprefixed_attr_matches(doc, Some(n), x, ap.name, lax)
+            && ap.value.is_none_or(|want| doc.attr_value(x) == want)
+        {
+            return true;
+        }
+        a = doc.attr_next(x);
     }
+    false
 }

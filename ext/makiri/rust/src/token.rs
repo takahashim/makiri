@@ -101,3 +101,14 @@ impl Token {
         self.word as *mut c_void
     }
 }
+
+/// A token keys the engine's per-evaluate tables (the string-value cache, the
+/// document-order index). Its word alone cannot mark an empty slot - an XML
+/// token is an arena index, and 0 is one - so the empty slot is the null token.
+impl crate::ptr_table::TableKey for Token {
+    const EMPTY: Token = Token::null();
+    #[inline]
+    fn table_hash(self) -> u64 {
+        crate::ptr_table::mix64(self.word as u64)
+    }
+}

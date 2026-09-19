@@ -1,13 +1,12 @@
 //! Error messages: how the engine writes one, and how it quotes bytes into one.
 //!
-//! Separate from the C type declarations because an error path must not
-//! allocate - one of them reports OOM - so every message is assembled in a
-//! fixed stack buffer and truncated rather than grown.
+//! An error path must not allocate - one of them reports OOM - so every message
+//! is assembled in a fixed stack buffer and truncated rather than grown.
 
 #![forbid(unsafe_code)]
 
 use core::cell::RefCell;
-use core::ffi::{c_char, c_int, CStr};
+use core::ffi::{c_char, CStr};
 use std::rc::Rc;
 
 /// Bytes as text for a message, with anything non-ASCII-printable escaped, so a
@@ -102,17 +101,32 @@ impl core::fmt::Write for MsgBuf {
 /// than grown, so every failure - running out of memory included - can say what
 /// went wrong, and there is nothing to free afterwards.
 pub struct Error {
-    pub status: c_int,
+    pub status: Status,
     msg: MsgBuf,
 }
 
 impl Error {
-    /// No error yet: `XP_OK` and no message.
+    /// An empty error slot: [`Status::Internal`] with no message.
+    ///
+    /// There is no "no error" status. A slot is only ever read after a failure
+    /// has been reported (`Reported` proves it was written), so one read without
+    /// being written is itself a broken invariant, and reads as one - never as
+    /// a success, and never as a user's mistake.
     pub fn new() -> Error {
         Error {
-            status: XP_OK,
+            status: Status::Internal,
             msg: MsgBuf::default(),
         }
+    }
+
+    /// An error of `status`, its message formatted from `args` - for a caller
+    /// that has an error to hand back and no run to report it through.
+    pub fn with(status: Status, args: core::fmt::Arguments<'_>) -> Error {
+        use core::fmt::Write;
+        let mut e = Error::new();
+        e.status = status;
+        let _ = e.msg.write_fmt(args);
+        e
     }
 
     /// The message, or None when none was written.
@@ -172,7 +186,11 @@ impl ErrSink {
 ///
 /// Crate-internal, and the one place the front end writes an error. A silent
 /// sink skips the formatting as well as the write.
-pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Arguments<'_>) -> Reported {
+pub(crate) fn err_set_fmt(
+    err: ErrSink,
+    status: Status,
+    args: core::fmt::Arguments<'_>,
+) -> Reported {
     use core::fmt::Write;
     if let Some(slot) = err.0 {
         let mut e = slot.borrow_mut();
@@ -185,7 +203,7 @@ pub(crate) fn err_set_fmt(err: ErrSink, status: c_int, args: core::fmt::Argument
 
 /// Set `err` to a fixed message: [`err_set_fmt`] without the formatting.
 #[cfg(feature = "lexbor")]
-pub(crate) fn err_set(err: ErrSink, status: c_int, msg: &CStr) -> Reported {
+pub(crate) fn err_set(err: ErrSink, status: Status, msg: &CStr) -> Reported {
     if let Some(slot) = err.0 {
         let mut e = slot.borrow_mut();
         e.status = status;
@@ -195,7 +213,7 @@ pub(crate) fn err_set(err: ErrSink, status: c_int, msg: &CStr) -> Reported {
     Reported(())
 }
 
-/// `mkr_err_setf` for the Rust side: `err_setf!(err, status, "...", args)`.
+/// Write a formatted error to a sink: `err_setf!(err, status, "...", args)`.
 #[macro_export]
 macro_rules! err_setf {
     ($err:expr, $status:expr, $($arg:tt)*) => {
@@ -209,11 +227,31 @@ macro_rules! err_setf {
 
 /* ---- statuses ---- */
 
-pub const XP_OK: c_int = 0;
-pub const XP_ERR_SYNTAX: c_int = 2;
-pub const XP_ERR_INTERNAL: c_int = 5;
-pub const XP_ERR_OOM: c_int = 6;
-pub const XP_ERR_LIMIT: c_int = 7;
-pub const XP_ERR_TYPE: c_int = 3;
-pub const XP_ERR_RUNTIME: c_int = 4;
-pub const XP_ERR_NOT_IMPLEMENTED: c_int = 1;
+/// What kind of failure an [`Error`] is. The Ruby layer picks the exception
+/// class from it, with a `match` the compiler checks is complete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// A construct the engine does not implement (the namespace axis).
+    NotImplemented,
+    /// The expression does not parse.
+    Syntax,
+    /// A value of the wrong type (a predicate over a number).
+    Type,
+    /// A failure while evaluating (an unknown function, prefix or variable).
+    Runtime,
+    /// A broken invariant.
+    Internal,
+    /// Out of memory.
+    Oom,
+    /// A budget or cap was exceeded.
+    Limit,
+}
+
+/* The short names the engine has always spelled its statuses with. */
+pub const XP_ERR_NOT_IMPLEMENTED: Status = Status::NotImplemented;
+pub const XP_ERR_SYNTAX: Status = Status::Syntax;
+pub const XP_ERR_TYPE: Status = Status::Type;
+pub const XP_ERR_RUNTIME: Status = Status::Runtime;
+pub const XP_ERR_INTERNAL: Status = Status::Internal;
+pub const XP_ERR_OOM: Status = Status::Oom;
+pub const XP_ERR_LIMIT: Status = Status::Limit;

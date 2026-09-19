@@ -10,7 +10,7 @@ pub use super::funcs::{FN_OF_TYPE_POS, FN_OF_TYPE_POS_LAST};
 pub use super::limits::Limits;
 pub use super::msg::{
     XP_ERR_INTERNAL, XP_ERR_LIMIT, XP_ERR_NOT_IMPLEMENTED, XP_ERR_OOM, XP_ERR_RUNTIME,
-    XP_ERR_SYNTAX, XP_ERR_TYPE, XP_OK,
+    XP_ERR_SYNTAX, XP_ERR_TYPE,
 };
 pub use super::order::OrderIndex;
 pub use super::str_cache::{StrCache, TextId};

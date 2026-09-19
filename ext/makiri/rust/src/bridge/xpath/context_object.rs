@@ -255,12 +255,10 @@ fn cached_ast(
         return Ok((&*ast as *const Ast, Some(ast)));
     };
     if cache.0.mkr_insert(owned_key, ast).is_err() {
-        crate::xpath::msg::err_set(
-            budget.sink(),
+        return Err(XPathError::with(
             XP_ERR_OOM,
-            c"out of memory caching XPath expression",
-        );
-        return Err(budget.take_error());
+            format_args!("out of memory caching XPath expression"),
+        ));
     }
     let ast = cache.0.get(key).expect("inserted AST");
     Ok((&**ast as *const Ast, None))

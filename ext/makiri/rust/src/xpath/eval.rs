@@ -1,8 +1,7 @@
-//! The XPath 1.0 evaluator (mkr_xpath_eval_body.h): axis walks, node tests,
-//! predicates, the operator semantics, and the two index fast paths.
+//! The XPath 1.0 evaluator: axis walks, node tests, predicates, the operator
+//! semantics, and the two index fast paths.
 //!
-//! Generic over `Dom`, so one body compiles per representation - what the C
-//! did by `#include`-ing this file twice behind different macros.
+//! Generic over `Dom`, so one body compiles per representation.
 
 #![forbid(unsafe_code)]
 
@@ -12,17 +11,20 @@
 
 use super::abi::*;
 use super::attr_pred::{attr_pred_matches, match_attr_pred};
-use super::axis::{axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis};
+use super::axis::{
+    axis_can_alias, axis_is_implemented, axis_name, is_reverse_axis, walk_axis, walk_descendants,
+};
 use super::dom::*;
 use super::funcs;
 use super::msg::Bytes;
-use super::nodetest::{node_principal_match, Bindings};
+use super::nodetest::CompiledTest;
 use super::order::nodeset_unique_sorted;
 use super::step_index::{try_descendant_index, try_descendant_index_nth};
 use super::value::*;
 use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve};
 use crate::token::Token;
+use core::ops::ControlFlow;
 
 /// An evaluation step: the value, or proof its error was written to the
 /// evaluation's budget.
@@ -99,6 +101,7 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
     inout: &mut NodeSet<D::Node>,
 ) -> EvalResult {
     let doc = ev.doc;
+    let lax = ev.cx.lax();
     for pred in preds {
         let mut kept = NodeSet::new();
 
@@ -111,7 +114,7 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
                  * shortcut stays under the same budget as the path it skips. */
                 ev.budget.charge_op()?;
                 let n = inout.get(i);
-                if attr_pred_matches::<D>(doc, &ap, n) {
+                if attr_pred_matches::<D>(doc, &ap, n, lax) {
                     kept.push(n, &mut ev.budget)?;
                 }
             }
@@ -144,29 +147,37 @@ fn apply_predicates<'e, 'd, D: Dom<'d>>(
 
 /* ---------- steps ---------- */
 
-/// The URI a name test's prefix is bound to, or the RUNTIME error a step reports
-/// for an unknown one.
+/// Every node of `ct`'s axis from `context` that passes the test, appended to
+/// `out` - the one walk the step driver makes, predicate path or not.
 ///
-/// The borrow lives in the context's registry, and the glue refuses
-/// register_namespace (and register_variable, node=) while an evaluate is in
-/// progress on the context - which is exactly when a predicate handler could
-/// re-enter.
-fn resolve_test_prefix<'e, 'd, D: Dom<'d>>(
+/// Every visited node is charged to the budget. The axis walk is the dominant
+/// work of a step, and a low-selectivity walk name-tests many nodes while
+/// pushing few - so without this the node-set cap, which bounds only what is
+/// pushed, leaves the walk itself bounded by document size, defeating
+/// max_eval_ops on a descendant walk that matches nothing.
+fn collect_axis<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
-    test: &NodeTest,
-) -> EvalResult<Option<&'e [u8]>> {
-    let Some(prefix) = test.prefix.as_deref() else {
-        return Ok(None);
-    };
-    let names: &'e Names = ev.names;
-    match names.lookup_ns(prefix) {
-        Some(u) => Ok(Some(u)),
-        None => Err(err_setf!(
-            ev.budget.sink(),
-            XP_ERR_RUNTIME,
-            "unknown namespace prefix '{}' in name test",
-            Bytes(prefix)
-        )),
+    ct: &CompiledTest<'_>,
+    context: D::Node,
+    out: &mut NodeSet<D::Node>,
+) -> EvalResult {
+    let (doc, budget) = (ev.doc, &mut ev.budget);
+    let flow = walk_axis::<D, _, _>(doc, ct.axis(), context, &mut |n| {
+        let visited = budget.charge_op().and_then(|()| {
+            if ct.matches(doc, n) {
+                out.push(n, budget)
+            } else {
+                Ok(())
+            }
+        });
+        match visited {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(e) => ControlFlow::Break(e),
+        }
+    });
+    match flow {
+        ControlFlow::Continue(()) => Ok(()),
+        ControlFlow::Break(e) => Err(e),
     }
 }
 
@@ -186,14 +197,11 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
             axis_name(axis)
         ));
     }
-    let test = &step.test;
 
     /* Resolve the namespace prefix once up front (covering `prefix:local` and
-     * `prefix:*`): a uniform RUNTIME error rather than a silently empty match,
-     * and every per-node match then reuses the URI instead of re-resolving. */
-    let pre = resolve_test_prefix(ev, test)?;
-
-    let b = Bindings::new(ev.cx, ev.names, doc, pre);
+     * `prefix:*`), and every per-node match then reuses it. */
+    let names: &'e Names = ev.names;
+    let ct = CompiledTest::new(&step.test, axis, names, ev.cx.lax(), ev.budget.sink())?;
 
     /* A post-pass (sort to document order, then optional adjacent dedup) is
      * needed when the axis emits in reverse order per context, when it aliases
@@ -210,35 +218,12 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
 
     let preds = step.predicates.as_slice();
     if preds.is_empty() {
-        if !try_descendant_index::<D>(doc, step, context_set, &mut result, &b, &mut ev.budget)? {
+        if !try_descendant_index::<D>(doc, &ct, context_set, &mut result, &mut ev.budget)? {
             /* No-predicate walk: every context goes straight into the result
              * buffer regardless of the post-pass, saving the per-context
              * fragment the predicate path needs. */
-            let mut failure: Option<Reported> = None;
             for ci in 0..context_set.len() {
-                let mut visit = |n: D::Node| -> bool {
-                    /* Charge every visited node. The axis walk is the dominant
-                     * work of a step, and a low-selectivity walk name-tests many
-                     * nodes while pushing few - so without this the node-set
-                     * cap, which bounds only what is pushed, leaves the walk
-                     * itself bounded by document size, defeating max_eval_ops on
-                     * a descendant walk that matches nothing. */
-                    if let Err(e) = ev.budget.charge_op() {
-                        failure = Some(e);
-                        return true;
-                    }
-                    if node_principal_match::<D>(doc, test, n, axis, &b) {
-                        if let Err(e) = result.push(n, &mut ev.budget) {
-                            failure = Some(e);
-                            return true;
-                        }
-                    }
-                    false
-                };
-                walk_axis::<D, _>(doc, axis, context_set.get(ci), &mut visit);
-                if let Some(e) = failure.take() {
-                    return Err(e);
-                }
+                collect_axis(ev, &ct, context_set.get(ci), &mut result)?;
             }
         }
     } else {
@@ -249,27 +234,7 @@ fn eval_step<'e, 'd, D: Dom<'d>>(
         let mut fragment = NodeSet::new();
         for ci in 0..context_set.len() {
             fragment.clear();
-            let mut failure: Option<Reported> = None;
-            {
-                let frag = &mut fragment;
-                let mut visit = |n: D::Node| -> bool {
-                    if let Err(e) = ev.budget.charge_op() {
-                        failure = Some(e);
-                        return true;
-                    }
-                    if node_principal_match::<D>(doc, test, n, axis, &b) {
-                        if let Err(e) = frag.push(n, &mut ev.budget) {
-                            failure = Some(e);
-                            return true;
-                        }
-                    }
-                    false
-                };
-                walk_axis::<D, _>(doc, axis, context_set.get(ci), &mut visit);
-            }
-            if let Some(e) = failure {
-                return Err(e);
-            }
+            collect_axis(ev, &ct, context_set.get(ci), &mut fragment)?;
 
             /* Predicates apply per context with axis-natural position numbering
              * (§2.4). For a reverse axis the fragment is in reverse-document
@@ -350,10 +315,10 @@ fn compare_eq<'e, 'd, D: Dom<'d>>(
                 (ValRef::Boolean(_), _) | (_, ValRef::Boolean(_)) => {
                     val_to_boolean(l) == val_to_boolean(r)
                 }
-                /* Both operands are non-node-sets here, so the unchecked
-                 * coercion is the right entry - it cannot allocate. */
+                /* Neither operand is a node-set here, so both coerce without
+                 * allocating. */
                 (ValRef::Number(_), _) | (_, ValRef::Number(_)) => {
-                    val_to_number_unchecked::<D>(doc, l) == val_to_number_unchecked::<D>(doc, r)
+                    scalar_to_number(l) == scalar_to_number(r)
                 }
                 _ => {
                     let ls = val_to_owned_text_or_fail::<D>(doc, l, &mut ev.budget)?;
@@ -527,14 +492,14 @@ fn first_recognise(root: &Expr) -> Option<&Step> {
 }
 
 /// Does `n` satisfy every already-recognised attribute predicate of `step`?
-fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node) -> bool {
+fn first_node_ok<'e, 'd, D: Dom<'d>>(doc: D, step: &Step, n: D::Node, lax: bool) -> bool {
     for p in &step.predicates {
         /* The recogniser already confirmed the shape. */
         let ap = match match_attr_pred(p) {
             Some(ap) => ap,
             None => return false,
         };
-        if !attr_pred_matches::<D>(doc, &ap, n) {
+        if !attr_pred_matches::<D>(doc, &ap, n, lax) {
             return false;
         }
     }
@@ -583,12 +548,13 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
         Some(s) => s,
         None => return Ok(None),
     };
-    let test = &step.test;
 
-    /* Reproduce the step driver's prefix validation, so the fast path stays
-     * identical to the full evaluator down to the errors - and keep what it
-     * resolved, so the walk below does not look the prefix up again per node. */
-    let pre = resolve_test_prefix(ev, test)?;
+    /* Compile the test as the step driver does, so the fast path stays
+     * identical to the full evaluator down to the unknown-prefix error. The
+     * test's axis is the recognised step's own (child:: in the `//X[@a]` form,
+     * descendant:: otherwise); the walk below supplies the descendants. */
+    let names: &'e Names = ev.names;
+    let ct = CompiledTest::new(&step.test, step.axis, names, ev.cx.lax(), ev.budget.sink())?;
 
     let absolute = matches!(&root.kind, ExprKind::Path(p) if p.absolute);
     let start = if absolute {
@@ -600,35 +566,20 @@ fn first_match_walk<'e, 'd, D: Dom<'d>>(
         return Ok(Some(None)); /* recognised; no context means no match */
     };
 
-    let b = Bindings::new(ev.cx, ev.names, doc, pre);
-    let mut cur = doc.first_child(start);
-    while let Some(n) = cur {
-        ev.budget.charge_op()?;
-        if node_principal_match::<D>(doc, test, n, step.axis, &b)
-            && first_node_ok::<D>(doc, step, n)
-        {
-            return Ok(Some(Some(n)));
+    let budget = &mut ev.budget;
+    let flow = walk_descendants::<D, _, _>(doc, start, &mut |n| {
+        if let Err(e) = budget.charge_op() {
+            return ControlFlow::Break(Err(e));
         }
-        if let Some(c) = doc.first_child(n) {
-            cur = Some(c);
-            continue;
+        if ct.matches(doc, n) && first_node_ok::<D>(doc, step, n, ct.lax()) {
+            return ControlFlow::Break(Ok(n));
         }
-        /* Past `n`'s subtree, without leaving `start`'s. */
-        let mut m = n;
-        cur = loop {
-            if m == start {
-                break None;
-            }
-            if let Some(s) = doc.next(m) {
-                break Some(s);
-            }
-            match doc.parent(m) {
-                Some(p) => m = p,
-                None => break None,
-            }
-        };
+        ControlFlow::Continue(())
+    });
+    match flow {
+        ControlFlow::Continue(()) => Ok(Some(None)),
+        ControlFlow::Break(found) => found.map(|n| Some(Some(n))),
     }
-    Ok(Some(None))
 }
 
 /* ---------- the expression evaluator ---------- */
@@ -682,6 +633,8 @@ fn eval_filter<'e, 'd, D: Dom<'d>>(
     Ok(primary)
 }
 
+/// A function call: the prefix resolved, the arguments evaluated, and the
+/// call answered by the built-in library or, failing that, by the handler.
 fn eval_fncall<'e, 'd, D: Dom<'d>>(
     ev: &mut Evaluation<'e, 'd, D>,
     prefix: Option<&[u8]>,
@@ -690,89 +643,86 @@ fn eval_fncall<'e, 'd, D: Dom<'d>>(
     focus: &Focus<'d, D>,
 ) -> EvalResult<Val<D::Node>> {
     let names = ev.names;
-    let ns_uri: Option<&[u8]> = match prefix {
+    let ns_uri = match prefix {
         None => None,
-        Some(prefix) => match names.lookup_ns(prefix) {
-            Some(u) => Some(u),
-            None => {
-                return Err(err_setf!(
-                    ev.budget.sink(),
-                    XP_ERR_RUNTIME,
-                    "unknown namespace prefix '{}'",
-                    Bytes(prefix)
-                ));
-            }
-        },
+        Some(prefix) => Some(names.resolve_prefix(prefix, ev.budget.sink())?),
     };
-    let builtin = funcs::lookup::<D>(ns_uri, name);
 
     /* The arguments are evaluated once and reused by either path. They are owned
      * here, so every way out - an argument failing part-way included - clears
      * them when `vals` drops. */
     let mut vals: Vec<Val<D::Node>> = Vec::new();
-    if !args.is_empty() {
-        if vals.mkr_reserve_exact(args.len()).is_err() {
-            return Err(err_setf!(
-                ev.budget.sink(),
-                XP_ERR_OOM,
-                "out of memory allocating function arguments"
-            ));
-        }
-        for a in args {
-            vals.push(eval_node::<D>(ev, a, focus)?);
-        }
+    if !args.is_empty() && vals.mkr_reserve_exact(args.len()).is_err() {
+        return Err(err_setf!(
+            ev.budget.sink(),
+            XP_ERR_OOM,
+            "out of memory allocating function arguments"
+        ));
+    }
+    for a in args {
+        vals.push(eval_node::<D>(ev, a, focus)?);
     }
 
-    if let Some(f) = builtin {
+    if let Some(f) = funcs::lookup::<D>(ns_uri, name) {
         return f(ev, focus, &vals);
     }
-
-    /* No built-in. Delegate to this evaluate's handler, when it has one. The
-     * handler works in tokens: the arguments are copied out as tokens, and its
-     * answer read back as this document's nodes. */
-    let answer = match ev.handler {
-        Some(handler) => {
-            let mut token_args: Vec<Val> = Vec::new();
-            if token_args.mkr_reserve_exact(vals.len()).is_err() {
-                return Err(handler_oom(&mut ev.budget));
-            }
-            for v in &vals {
-                let Some(t) = val_copy_to_tokens::<D>(v) else {
-                    return Err(handler_oom(&mut ev.budget));
-                };
-                token_args.push(t);
-            }
-            let site = ResolverCall {
-                node: focus.node.map_or(Token::null(), D::token),
-                pos: focus.pos,
-                size: focus.size,
-                ns_uri,
-                local: name,
-                args: &token_args,
-            };
-            let answer = handler.resolve(&mut ev.budget, &site)?;
-            match answer {
-                /* A resolver answers only nodes of this document (the bridge
-                 * checks a handler's node before minting its token). */
-                Some(v) => match val_from_tokens::<D>(ev.doc, v) {
-                    Some(v) => Some(v),
-                    None => return Err(handler_oom(&mut ev.budget)),
-                },
-                None => None,
-            }
-        }
-        None => None,
-    };
-    answer.ok_or_else(|| {
-        err_setf!(
+    match ev.call_handler(focus, ns_uri, name, &vals)? {
+        Some(v) => Ok(v),
+        None => Err(err_setf!(
             ev.budget.sink(),
             XP_ERR_RUNTIME,
             "unknown function {}{}{}",
             Bytes(prefix.unwrap_or(&[])),
             if prefix.is_none() { "" } else { ":" },
             Bytes(name)
-        )
-    })
+        )),
+    }
+}
+
+impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
+    /// Ask this evaluate's handler for a function with no built-in: `None`
+    /// when there is no handler, or it has no such function.
+    ///
+    /// The handler works in tokens: the arguments are copied out as tokens, and
+    /// its answer read back as this document's nodes - a resolver answers only
+    /// nodes of this document (the bridge checks a handler's node before
+    /// minting its token).
+    fn call_handler(
+        &mut self,
+        focus: &Focus<'d, D>,
+        ns_uri: Option<&[u8]>,
+        local: &[u8],
+        args: &[Val<D::Node>],
+    ) -> EvalResult<Option<Val<D::Node>>> {
+        let Some(handler) = self.handler else {
+            return Ok(None);
+        };
+        let mut token_args: Vec<Val> = Vec::new();
+        if token_args.mkr_reserve_exact(args.len()).is_err() {
+            return Err(handler_oom(&mut self.budget));
+        }
+        for v in args {
+            let Some(t) = val_copy_to_tokens::<D>(v) else {
+                return Err(handler_oom(&mut self.budget));
+            };
+            token_args.push(t);
+        }
+        let call = ResolverCall {
+            node: focus.node.map_or(Token::null(), D::token),
+            pos: focus.pos,
+            size: focus.size,
+            ns_uri,
+            local,
+            args: &token_args,
+        };
+        match handler.resolve(&mut self.budget, &call)? {
+            None => Ok(None),
+            Some(v) => match val_from_tokens::<D>(self.doc, v) {
+                Some(v) => Ok(Some(v)),
+                None => Err(handler_oom(&mut self.budget)),
+            },
+        }
+    }
 }
 
 #[cold]

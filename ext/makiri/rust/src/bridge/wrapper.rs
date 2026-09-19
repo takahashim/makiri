@@ -327,7 +327,7 @@ fn html_doc_of(d: &DocData) -> RawDoc {
     /* An lxb_html_document_t leads with its lxb_dom_document_t, so this is a
      * downcast to the embedded base, not a reinterpretation. */
     // SAFETY: the live document this Document owns.
-    unsafe { RawDoc::from_ptr(p.as_ref().html_doc().cast()).expect("live document") }
+    unsafe { p.as_ref().raw_doc() }
 }
 
 /// Run `f` over an HTML Document's parsed document. `Err(TypeError)` for

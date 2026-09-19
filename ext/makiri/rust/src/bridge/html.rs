@@ -19,9 +19,9 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 use crate::lexbor::adapter::html::{
-    check_document_child_order, DocumentChildOrderError, HtmlNode, HtmlNodeMut, RawDoc, RawNode,
-    TYPE_ATTRIBUTE, TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE, TYPE_DOCUMENT, TYPE_ELEMENT,
-    TYPE_FRAGMENT, TYPE_PI, TYPE_TEXT,
+    DocumentChildOrderError, HtmlNode, HtmlNodeMut, Insertion, RawDoc, RawNode, TYPE_ATTRIBUTE,
+    TYPE_CDATA, TYPE_COMMENT, TYPE_DOCTYPE, TYPE_DOCUMENT, TYPE_ELEMENT, TYPE_FRAGMENT, TYPE_PI,
+    TYPE_TEXT,
 };
 use crate::lexbor::fragment::import_with_fixup;
 
@@ -323,8 +323,8 @@ pub fn prepare_insert<'d>(
         }
         p = n.parent();
     }
-    let doc = reference.node().owner_document_handle();
-    if doc.as_ptr() != incoming.owner_document_handle().as_ptr() {
+    let doc = RawDoc::from(reference.node().owner_document());
+    if !reference.node().same_document(incoming) {
         /* Adopting takes the node out of the document it came from, so that
          * document changes too - refuse before anything is copied. */
         ensure_document_mutable(keepalive_document(rb_incoming)?)?;
@@ -365,13 +365,8 @@ pub fn finish_insert(
 }
 
 /// Validate WHATWG doctype ordering before links are changed.
-pub fn guard_doc_child_order(
-    parent: Option<HtmlNode<'_>>,
-    before: Option<HtmlNode<'_>>,
-    exclude: Option<HtmlNode<'_>>,
-    incoming: HtmlNode<'_>,
-) -> Result<(), Error> {
-    check_document_child_order(parent, before, exclude, incoming).map_err(|e| match e {
+pub fn guard_doc_child_order(insertion: Insertion<'_>) -> Result<(), Error> {
+    insertion.check_document_order().map_err(|e| match e {
         DocumentChildOrderError::DoctypeParent => {
             makiri_error("a doctype node can only be a child of the document")
         }
@@ -481,9 +476,7 @@ pub fn remove_attribute_ns(
 
 /// `uri` interned in `el`'s document, for a (namespace, local name) lookup.
 fn intern_ns(el: HtmlElementMut<'_>, uri: &[u8]) -> usize {
-    let doc = el.element().node().owner_document();
-    // SAFETY: the element's own Document, live for this call.
-    unsafe { HtmlDoc::from_raw(doc) }.map_or(NS_UNDEF, |d| d.intern_ns(uri))
+    el.element().node().owner_document().intern_ns(uri)
 }
 
 /// `el.delete(name)`.
@@ -495,9 +488,10 @@ pub fn remove_attribute(el: HtmlElementMut<'_>, name: &RubyText) {
 /// Rename `el` in place, keeping its identity; false when Lexbor could not
 /// intern the name.
 pub fn rename(el: HtmlElementMut<'_>, name: &RubyText) -> bool {
-    // SAFETY: the element's own Document, and the section comment.
-    let scratch =
-        unsafe { ScratchElement::create(el.element().node().owner_document(), name.bytes()) };
+    // SAFETY: see the section comment.
+    let scratch = ScratchElement::create(el.element().node().owner_document(), unsafe {
+        name.bytes()
+    });
     match scratch {
         Some(scratch) => {
             scratch.rename(el);
