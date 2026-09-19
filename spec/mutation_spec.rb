@@ -364,6 +364,30 @@ RSpec.describe "Makiri mutation" do
       expect(doc.css(".fresh").length).to eq(0)
     end
 
+    # Lexbor's `lxb_dom_document_root` answers with the document's FIRST CHILD
+    # when the document has no `<html>` - so a comment or processing instruction
+    # put in front of the root element becomes what the text index is asked to
+    # build over. It is rooted at a container, and a leaf one used to reach into
+    # a range table sized for no containers at all.
+    it "reads text after a leaf node is placed before the root element" do
+      built = Makiri::HTML("")
+      built.children.to_a.each(&:unlink)
+      root = built.create_element("p")
+      built.add_child(root)
+      leaf = built.create_element("span")
+      root.add_child(leaf)
+      root.add_child(built.create_text_node("t5"))
+
+      [built.create_processing_instruction("pi", "d"), built.create_comment("c"),
+        built.create_text_node("x")].each do |node|
+        root.add_previous_sibling(node)
+
+        expect(root.text).to eq("t5")
+        expect(leaf.text).to eq("")
+        node.unlink
+      end
+    end
+
     it "invalidates the element-by-tag index when #name= renames an element" do
       multi = Makiri::HTML("<html><body><div>x</div><div>y</div></body></html>")
       multi.xpath("//div")           # build the persisted tag index

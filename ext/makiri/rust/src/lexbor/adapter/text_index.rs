@@ -169,8 +169,19 @@ impl TextIndex {
     /// fail-closed: the caller walks instead.
     ///
     /// # Safety
-    /// `root` must be the root element of a live Lexbor document.
+    /// `root` must be a node of a live Lexbor document.
     pub(crate) unsafe fn build(root: *mut LxbNode) -> Option<TextIndex> {
+        /* The index is ROOTED at a container: pass 2 opens `root`'s own range
+         * before it looks at anything, and the range table is sized from the
+         * container count, which does not count `root` when it is a leaf - so a
+         * leaf root would insert into a table of zero slots. The caller can
+         * hand us one: `lxb_dom_document_root` answers with the document's
+         * first child when the document has no `<html>`, and a script can put a
+         * comment or a processing instruction there. Walk instead. */
+        if !is_container(root) {
+            return None;
+        }
+
         let (nslices, ncont) = count(root);
 
         /* Run bounds are u32 in the range table. A document with more than

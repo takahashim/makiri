@@ -40,6 +40,14 @@
 
 ### Fixed
 
+* **Reading text no longer crashes when a leaf node stands before the root
+  element.** Lexbor answers `lxb_dom_document_root` with the document's first
+  child when the document has no `<html>`, so a script that puts a comment,
+  a processing instruction or a text node in front of the root element handed
+  the text index a leaf to build over — and the index is rooted at a container,
+  with a range table sized from the container count, which does not count a
+  leaf root. The build refuses such a root now and the caller walks instead.
+
 * **A handler that evaluates again on its own `XPathContext` no longer breaks
   the outer walk.** When that nested `evaluate` passed a handler, finishing it
   cleared the context's handler, so the outer walk's next function call failed
