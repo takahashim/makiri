@@ -50,7 +50,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 
   **Whatever must be released across a panic is a `Drop`**, not a statement
   after the work - a plain `lxb_*_clean` following a parse is exactly what
-  unwinding skips. `lexbor::selectors::PanicReset` and `post_parse::DocOwner`
+  unwinding skips. `lexbor::selectors::Session` and `post_parse::DocOwner`
   are the two that had to be converted, both around process-global or
   not-yet-owned Lexbor state.
 
@@ -605,8 +605,15 @@ nokolexbor on `at_css('#id')`; reuse makes it ~5× faster than nokolexbor.
 `#first`). Results are **descendant-only** (context node excluded, like Nokogiri)
 and in document order; capped at `NODE_SET_MAX`; malformed →
 `Makiri::CSS::SyntaxError` (the shared engine is reset, so it recovers).
+**The GVL is an argument, not a comment**: the two process-global engines live
+in `crate::gvl::GvlCell`, whose `borrow` takes a `&Gvl` - minted from a
+`magnus::Ruby` by `bridge::gvl::held`, and `!Send`, so `without_gvl` (which
+requires a `Send` body) cannot carry one across a release. The cell's busy
+flag turns a re-entrant second borrow into `Busy` rather than a second
+`&mut`. Outside Ruby (cargo tests, fuzz) `Gvl::exclusive()` stands in with a
+process-wide mutex; it does not exist in the extension build.
 The parser/arena/table trio is assembled by `lexbor::css_engine`
-(`ParserParts`, `Owned<T>`, `GvlCell<T>`), which the selector-lowering parser
+(`ParserParts`, `Owned<T>`), which the selector-lowering parser
 (`css_parser`) and the stylesheet reader share; the compiled-selector cache's
 decision and storage are `CachePolicy` / `SelectorCache`, and the arena and the
 map are only ever emptied together (`spec/css_selector_cache_spec.rb`).

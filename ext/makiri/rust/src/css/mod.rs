@@ -26,6 +26,7 @@
 mod build;
 mod lower;
 
+use crate::gvl::Gvl;
 use crate::lexbor::css_parser;
 use crate::xpath::ast::{Ast, Op};
 use core::cell::RefCell;
@@ -86,9 +87,9 @@ impl Build<'_> {
 /// unsupported construct (jQuery extensions, pseudo-elements, the case
 /// modifier), OOM or LIMIT for an allocation failure or the complexity cap.
 ///
-/// Safe: the selector is a [`VerifiedText`], and the only other condition -
-/// running under the GVL - is the caller's by construction.
+/// `gvl` is the proof that Lexbor's process-global selector parser may be used.
 pub fn compile_owned(
+    gvl: &Gvl,
     selector: VerifiedText,
     ns: &CssNs,
     budget: &mut Budget,
@@ -100,13 +101,16 @@ pub fn compile_owned(
         default_namespace: ns.default_namespace,
     };
 
-    let parsed = match css_parser::parse(selector) {
+    let parsed = match css_parser::parse(gvl, selector) {
         Ok(p) => p,
         Err(css_parser::ParseError::NotReady) => {
             return Err(b.fail(XP_ERR_INTERNAL, c"failed to initialise CSS parser"));
         }
         Err(css_parser::ParseError::Syntax) => {
             return Err(b.fail(XP_ERR_SYNTAX, c"invalid CSS selector"));
+        }
+        Err(css_parser::ParseError::Busy) => {
+            return Err(b.fail(XP_ERR_INTERNAL, c"CSS parser is already in use"));
         }
     };
 

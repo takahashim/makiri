@@ -15,7 +15,8 @@
 //!
 //! The selector parser, its arena, and the traversal engine are process-global.
 //! CSS evaluation always holds the GVL - it never releases it - so every query
-//! is serialized and one shared engine needs no locking. Creating and destroying
+//! is serialized and one shared engine needs no locking. Each entry takes the
+//! [`Gvl`] that proves it, and the engine lives in a [`GvlCell`]. Creating and destroying
 //! it per call (four create/init/destroy triples) dominated a cheap query like
 //! `at_css('#id')`, where the match is found almost immediately and setup IS the
 //! cost. Between calls only the parser returns to its CLEAN stage; the traversal
@@ -44,13 +45,14 @@ use crate::falloc::{try_to_boxed_slice, MapInsert, Reserve};
 use core::ffi::c_void;
 use std::collections::HashMap;
 
+use crate::gvl::{Gvl, GvlCell, GvlRef};
 use crate::lexbor::abi::consts::{STATUS_OK as LXB_STATUS_OK, STATUS_STOP as LXB_STATUS_STOP};
 use crate::lexbor::abi::{
     lxb_selectors_create, lxb_selectors_destroy, lxb_selectors_find, lxb_selectors_init,
     lxb_selectors_match_node, lxb_selectors_opt_set_noi, LxbNode,
 };
 use crate::lexbor::adapter::html::RawNode;
-use crate::lexbor::css_engine::{GvlCell, Owned, ParserParts, SelectorParser};
+use crate::lexbor::css_engine::{Owned, ParserParts, SelectorParser};
 
 use crate::limits::NODE_SET_MAX;
 
@@ -67,6 +69,8 @@ pub enum SelectError {
     CacheOom,
     /// The process-global engine could not be built.
     Unavailable,
+    /// A query on this thread is still using the engine.
+    Busy,
 }
 
 const CACHE_CAP: usize = 256;
@@ -187,7 +191,7 @@ impl SelectorCache {
     /// Drop every compiled list: the arena they live in and the map.
     ///
     /// # Safety
-    /// The GVL is held, and no cached list is used afterwards.
+    /// The globals' borrow is live, and no cached list is used afterwards.
     unsafe fn flush(&mut self, p: SelectorParser) {
         p.clean_arena();
         self.map().clear();
@@ -196,7 +200,7 @@ impl SelectorCache {
     /// Parse `selector`, cache it, and hand the list back.
     ///
     /// # Safety
-    /// The GVL is held.
+    /// The globals' borrow is live.
     unsafe fn compile(
         &mut self,
         p: SelectorParser,
@@ -238,8 +242,7 @@ struct Globals {
     cache: SelectorCache,
 }
 
-/// The one process-global. Borrow it ONCE per query and pass the `&mut` down -
-/// see [`GvlCell::get`].
+/// The one process-global, borrowed once per query by [`Session`].
 static G: GvlCell<Globals> = GvlCell::new(Globals {
     engine: None,
     policy: CachePolicy::new(),
@@ -399,26 +402,24 @@ impl Run {
 ///
 /// On the ordinary path it does nothing: each `clean` below has its own meaning
 /// and its own place, and this is not a substitute for them.
-/// It holds the engine BY VALUE and takes its own borrow of the globals, rather
-/// than keeping the caller's: a stored pointer derived from the caller's `&mut`
-/// would be a second live borrow, which is the aliasing this module must not
-/// create. Its own borrow is safe because the caller cannot touch `g` again -
-/// this runs while the stack unwinds out of the function.
-struct PanicReset {
+/// It is also what holds the borrow of the globals for the query, so the reset
+/// uses that borrow rather than taking a second one while the stack unwinds.
+struct Session<'g> {
+    g: GvlRef<'g, Globals>,
     engine: Engine,
 }
 
-impl Drop for PanicReset {
+impl Drop for Session<'_> {
     fn drop(&mut self) {
         if !std::thread::panicking() {
             return;
         }
-        // SAFETY: the GVL is still held while the stack unwinds through Ruby's
-        // frames, and the caller's borrow is dead - nothing reads `g` after the
-        // guard drops - so taking one here is the only live borrow.
+        let parser = self.engine.parser;
+        // SAFETY: the borrow in `g` is live, and nothing reads a cached list
+        // after the query that is unwinding.
         unsafe {
-            G.get().cache.flush(self.engine.parser);
-            self.engine.parser.clean_parser();
+            self.g.cache.flush(parser);
+            parser.clean_parser();
         }
     }
 }
@@ -429,19 +430,21 @@ impl Drop for PanicReset {
 /// A syntax error is *returned*: magnus raises it after this function has
 /// returned normally, so the reset below is plain control flow rather than
 /// something an error path has to remember. A PANIC is the case that is not
-/// plain control flow, and [`PanicReset`] covers it.
+/// plain control flow, and [`Session`] covers it.
 unsafe fn with_compiled_selector(
+    gvl: &Gvl,
     selector: &[u8],
     node: *mut LxbNode,
     run: Run,
     ctx: *mut c_void,
 ) -> Result<(), SelectError> {
-    /* One borrow of the process-global state, threaded through everything
-     * below. The engine comes back by value, so holding it does not keep a
-     * second borrow alive. */
-    let g = G.get();
-    let e = engine_in(g)?;
-    let _reset = PanicReset { engine: e };
+    /* One borrow of the process-global state, held by the session for the
+     * whole query. The engine comes back by value, so holding it does not keep
+     * a second borrow alive. */
+    let mut g = G.borrow(gvl).map_err(|_| SelectError::Busy)?;
+    let e = engine_in(&mut g)?;
+    let mut session = Session { g, engine: e };
+    let g = &mut *session.g;
 
     if g.policy.tick() {
         g.cache.flush(e.parser);
@@ -478,7 +481,7 @@ unsafe fn with_compiled_selector(
 /// Every matching **descendant** of `root` (the context node itself excluded),
 /// in document order. `Err` for a bad selector, the node cap or OOM.
 #[inline]
-pub fn select_all(root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, SelectError> {
+pub fn select_all(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, SelectError> {
     let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = FindCtx {
         nodes: Vec::new(),
@@ -487,10 +490,10 @@ pub fn select_all(root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, Select
         oom: false,
         panic: PanicLatch::new(),
     };
-    // SAFETY: `root` is a live node whose document outlives the call, and CSS
-    // holds the GVL throughout.
+    // SAFETY: `root` is a live node whose document outlives the call.
     let walked = unsafe {
         with_compiled_selector(
+            gvl,
             selector,
             raw,
             Run::Find(find_cb),
@@ -512,7 +515,11 @@ pub fn select_all(root: RawNode, selector: &[u8]) -> Result<Vec<RawNode>, Select
 
 /// The first matching **descendant** of `root`, or `None`.
 #[inline]
-pub fn select_first(root: RawNode, selector: &[u8]) -> Result<Option<RawNode>, SelectError> {
+pub fn select_first(
+    gvl: &Gvl,
+    root: RawNode,
+    selector: &[u8],
+) -> Result<Option<RawNode>, SelectError> {
     let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = FirstCtx {
         root: raw,
@@ -522,6 +529,7 @@ pub fn select_first(root: RawNode, selector: &[u8]) -> Result<Option<RawNode>, S
     // SAFETY: as `select_all`.
     let walked = unsafe {
         with_compiled_selector(
+            gvl,
             selector,
             raw,
             Run::Find(first_cb),
@@ -535,7 +543,7 @@ pub fn select_first(root: RawNode, selector: &[u8]) -> Result<Option<RawNode>, S
 
 /// Does `root` itself match `selector`?
 #[inline]
-pub fn matches_node(root: RawNode, selector: &[u8]) -> Result<bool, SelectError> {
+pub fn matches_node(gvl: &Gvl, root: RawNode, selector: &[u8]) -> Result<bool, SelectError> {
     let raw = root.as_ptr() as *mut LxbNode;
     let mut ctx = MatchCtx {
         matched: false,
@@ -544,6 +552,7 @@ pub fn matches_node(root: RawNode, selector: &[u8]) -> Result<bool, SelectError>
     // SAFETY: as `select_all`.
     let walked = unsafe {
         with_compiled_selector(
+            gvl,
             selector,
             raw,
             Run::MatchNode(match_cb),

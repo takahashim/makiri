@@ -1,6 +1,7 @@
 //! What the three users of Lexbor's CSS parser share: owning a Lexbor object
-//! until it is handed on, the process-global cell they keep it in, and the
-//! parser wired to its arena and selector table.
+//! until it is handed on, and the parser wired to its arena and selector table.
+//! The process-global cell the two long-lived ones keep it in is
+//! [`crate::gvl::GvlCell`].
 //!
 //! The selector matcher (`selectors`), the selector lowering's parser
 //! (`css_parser`) and the stylesheet reader (`stylesheet`) each built these by
@@ -9,8 +10,6 @@
 //! down in, and that a half-built set is freed at all, now live here once.
 
 #![allow(unsafe_code)]
-
-use core::cell::UnsafeCell;
 
 use crate::lexbor::abi::consts::STATUS_OK;
 use crate::lexbor::abi::{
@@ -57,37 +56,6 @@ impl<T> Drop for Owned<T> {
         // SAFETY: this owns the object - `new` is the only constructor and
         // `into_raw` gives ownership up - so nothing else destroys it.
         unsafe { (self.1)(self.0, true) };
-    }
-}
-
-/// A `static mut` in all but name, sound because everything that touches it
-/// holds the GVL: CSS never releases it, so every access is serialised.
-pub(crate) struct GvlCell<T>(UnsafeCell<T>);
-
-// SAFETY: only ever reached from a Ruby thread holding the GVL, which
-// serialises every access.
-unsafe impl<T> Sync for GvlCell<T> {}
-
-impl<T> GvlCell<T> {
-    pub(crate) const fn new(value: T) -> Self {
-        GvlCell(UnsafeCell::new(value))
-    }
-
-    /// The one mutable borrow of the value.
-    ///
-    /// The GVL makes the value safe to share between Ruby threads, but says
-    /// nothing about two overlapping `&mut` on one thread: deriving a second
-    /// one invalidates the first, and using the first afterwards is undefined
-    /// behaviour whatever the GVL is doing - and not something a sanitizer can
-    /// see, since every address stays valid. So: one call per operation, and
-    /// the borrow passed down.
-    ///
-    /// # Safety
-    /// The GVL is held, and no other borrow from this cell is live.
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn get(&self) -> &mut T {
-        // SAFETY: the caller's contract.
-        unsafe { &mut *self.0.get() }
     }
 }
 
@@ -143,6 +111,10 @@ impl ParserParts {
 
 /// A process-lifetime selector parser: its pieces are never destroyed.
 ///
+/// It lives in a [`crate::gvl::GvlCell`], and every method's contract is that
+/// the borrow of that cell it came out of is still live - which is what
+/// serialises the calls, and what keeps two users off one arena.
+///
 /// `Copy`, and handed out BY VALUE: a caller can then hold the parser while it
 /// also touches the rest of the global it lives in, which a reference into
 /// that global would make a second live borrow.
@@ -165,9 +137,9 @@ impl SelectorParser {
     /// the caller wrote. Either way the parser is left for the caller to clean.
     ///
     /// # Safety
-    /// The GVL is held.
+    /// Its cell's borrow is live.
     pub(crate) unsafe fn parse(self, selector: &[u8]) -> Option<*mut lxb_css_selector_list_t> {
-        // SAFETY: a live parser, used GVL-serially; `selector` is a live slice
+        // SAFETY: a live parser, used under its cell's borrow; `selector` is a live slice
         // the parser only reads. The pointer is the slice's own even when it
         // is empty, which the parser may look at.
         unsafe {
@@ -179,18 +151,19 @@ impl SelectorParser {
     /// Empty the arena, freeing every list parsed into it.
     ///
     /// # Safety
-    /// The GVL is held, and no list parsed into the arena is used afterwards.
+    /// Its cell's borrow is live, and no list parsed into the arena is used
+    /// afterwards.
     pub(crate) unsafe fn clean_arena(self) {
-        // SAFETY: a live arena, used GVL-serially; the caller keeps no list.
+        // SAFETY: a live arena, used under its cell's borrow; the caller keeps no list.
         unsafe { lxb_css_memory_clean(self.mem) };
     }
 
     /// Return the parser to its CLEAN stage, keeping what the arena holds.
     ///
     /// # Safety
-    /// The GVL is held.
+    /// Its cell's borrow is live.
     pub(crate) unsafe fn clean_parser(self) {
-        // SAFETY: a live parser, used GVL-serially.
+        // SAFETY: a live parser, used under its cell's borrow.
         unsafe { lxb_css_parser_clean(self.parser) };
     }
 
@@ -198,9 +171,10 @@ impl SelectorParser {
     /// parser to its CLEAN stage.
     ///
     /// # Safety
-    /// The GVL is held, and no list parsed into the arena is used afterwards.
+    /// Its cell's borrow is live, and no list parsed into the arena is used
+    /// afterwards.
     pub(crate) unsafe fn clean_all(self) {
-        // SAFETY: live objects, used GVL-serially; the caller keeps no list.
+        // SAFETY: live objects, used under its cell's borrow; the caller keeps no list.
         unsafe {
             lxb_css_memory_clean(self.mem);
             lxb_css_parser_clean(self.parser);
