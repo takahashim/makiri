@@ -5,10 +5,9 @@
 //! Lexbor is a vendored dependency whose pin moves (CLAUDE.md). A hand-written
 //! `#[repr(C)]` view of one of its structs does not fail to build when a field
 //! is added or reordered - it reads the wrong offset, which is a silent wrong
-//! answer. `xpath/html_abi.rs` still declares the three node structs by hand;
-//! what checks them is `lexbor::abi::agree`, which compares every offset against
-//! the generated view at COMPILE time. That replaced a C translation unit doing
-//! the same comparison with `offsetof` at load time.
+//! answer. Nothing in the crate declares a Lexbor struct or a header-declared
+//! Lexbor function by hand any more; the three exports no header declares are
+//! the exception, and `check_undeclared_exports` pins their C definitions.
 //!
 //! Transcription by hand has already been wrong once, though, and not about an
 //! offset: `LXB_NS_HTML` is 2, and guessing 1 made every HTML element foreign,
@@ -22,8 +21,8 @@
 //! compiled by whatever `cc` cmake picks. They agree in every ordinary case,
 //! but nothing here proves it - and with no C of our own left, there is no
 //! translation unit that could report the real `sizeof`/`offsetof` back. What
-//! survives is the narrower guarantee: the hand-written views are checked
-//! against a GENERATED view rather than being their own source of truth.
+//! survives is the narrower guarantee: the layout and the signatures come from
+//! the headers Lexbor was built from, not from a reading of them.
 //!
 //! # Scope
 //!
@@ -58,6 +57,8 @@ fn main() {
                   #include <lexbor/tag/tag.h>\n\
                   #include <lexbor/css/css.h>\n\
                   #include <lexbor/selectors/selectors.h>\n";
+
+    check_undeclared_exports(&include);
 
     let bindings = bindgen::Builder::default()
         .header_contents("makiri_lexbor.h", header)
@@ -136,11 +137,23 @@ fn main() {
         .allowlist_type("lexbor_status_t")
         .allowlist_type("lxb_html_serialize_opt")
         .allowlist_type("lxb_tag_id_enum_t")
-        // NOT lxb_css_parser_create/init/destroy: `lexbor::abi` declares those
-        // over an OPAQUE parser, which is the right shape (nothing reads a
-        // field of it). Generating them here as well gave the same C symbol two
-        // Rust types - a duplicate that escaped until a build compiled both
-        // definitions together. One declaration per symbol.
+        // The selector parser, its arena and its selector table. The parser is
+        // OPAQUE below - nothing reads a field of it - so its large layout
+        // stays out of the generated file.
+        .allowlist_function("lxb_css_parser_create")
+        .allowlist_function("lxb_css_parser_init")
+        .allowlist_function("lxb_css_parser_clean")
+        .allowlist_function("lxb_css_parser_destroy")
+        .allowlist_function("lxb_css_memory_create")
+        .allowlist_function("lxb_css_memory_init")
+        .allowlist_function("lxb_css_memory_clean")
+        .allowlist_function("lxb_css_memory_destroy")
+        .allowlist_function("lxb_css_selectors_create")
+        .allowlist_function("lxb_css_selectors_init")
+        .allowlist_function("lxb_css_selectors_destroy")
+        .allowlist_function("lxb_css_selectors_parse")
+        .opaque_type("lxb_css_parser_t")
+        .opaque_type("lxb_css_syntax_tokenizer_t")
         // The DOM readers glue/html_node uses. Generating them rather than
         // hand-declaring them is also the inline-only CHECK: bindgen does not
         // emit a `static inline`, so a name that is only inline in the headers
@@ -187,16 +200,36 @@ fn main() {
         .allowlist_function("lxb_html_parse_chunk_begin")
         .allowlist_function("lxb_html_parse_chunk_process")
         .allowlist_function("lxb_html_parse_chunk_end")
-        // NOT lxb_html_parser_tokenizer / the two token-done accessors: all
-        // three are lxb_inline, so bindgen emits nothing and they are declared
-        // as `_noi` twins in lexbor/abi.rs. Left here as a record of the check.
-        // The mutators and factories glue/html_node/mutate uses. Same rule, and
-        // this time every one of them is a real exported function - the three
-        // Lexbor exports this file needs that bindgen CANNOT see
-        // (lxb_ns_append, lxb_dom_attr_set_name_ns,
-        // lxb_dom_attr_qualified_name_append) are absent from the public
-        // headers entirely, not inline, so they are hand-declared next to the
-        // `_noi` twins in lexbor/abi.rs.
+        // The `_noi` twins. Lexbor publishes these accessors as `lxb_inline`,
+        // which bindgen does not emit - allowlisting the plain name yields
+        // nothing, and that is the inline-only CHECK described above. But each
+        // has an exported `_noi` twin DECLARED in the same header, and those
+        // generate like any other function: so their signatures come from the
+        // headers too, and a Lexbor change to one fails the build.
+        .allowlist_function("lxb_dom_node_type_noi")
+        .allowlist_function("lxb_dom_attr_value_noi")
+        .allowlist_function("lxb_dom_element_first_attribute_noi")
+        .allowlist_function("lxb_dom_element_next_attribute_noi")
+        .allowlist_function("lxb_dom_document_type_public_id_noi")
+        .allowlist_function("lxb_dom_document_type_system_id_noi")
+        .allowlist_function("lxb_dom_processing_instruction_target_noi")
+        .allowlist_function("lxb_dom_document_destroy_text_noi")
+        .allowlist_function("lxb_tag_id_by_name_noi")
+        .allowlist_function("lxb_html_parser_tokenizer_noi")
+        .allowlist_function("lxb_html_tokenizer_callback_token_done_set_noi")
+        .allowlist_function("lxb_html_tokenizer_callback_token_done_ctx_noi")
+        .allowlist_function("lxb_css_parser_status_noi")
+        .allowlist_function("lxb_css_parser_memory_set_noi")
+        .allowlist_function("lxb_css_parser_selectors_set_noi")
+        // The fragment parse by tag id and the fragment constructor: ordinary
+        // header-declared exports.
+        .allowlist_function("lxb_html_parse_fragment_by_tag_id")
+        .allowlist_function("lxb_dom_document_fragment_interface_create")
+        // The mutators and factories glue/html_node/mutate uses. Three more
+        // Lexbor exports it needs are in NO header at all (lxb_ns_append,
+        // lxb_dom_attr_set_name_ns, lxb_dom_attr_qualified_name_append), so
+        // bindgen cannot see them: they are hand-declared in lexbor/abi.rs, and
+        // `check_undeclared_exports` below pins their C definitions instead.
         .allowlist_function("lxb_dom_node_remove")
         .allowlist_function("lxb_dom_node_insert_child")
         .allowlist_function("lxb_dom_node_insert_before")
@@ -302,4 +335,92 @@ fn lexbor_include() -> std::path::PathBuf {
         );
     }
     p
+}
+
+/// The Lexbor exports no header declares, with the C definition `lexbor/abi.rs`
+/// was written against: (source file, return type, name, parameters), each as
+/// the source spells it, whitespace collapsed.
+///
+/// bindgen cannot check these - there is no declaration for it to read - so a
+/// Lexbor bump that changes one would otherwise link cleanly and be called with
+/// the wrong arguments. This reads the DEFINITION instead and fails the build
+/// on any difference, which forces the hand-written declaration to be looked at
+/// again. A name that is not found at all fails too: that is the export having
+/// gone, which `rake symbols` would otherwise report only after a link.
+const UNDECLARED_EXPORTS: &[(&str, &str, &str, &str)] = &[
+    (
+        "lexbor/ns/ns.c",
+        "LXB_API const lxb_ns_data_t *",
+        "lxb_ns_append",
+        "lexbor_hash_t *hash, const lxb_char_t *link, size_t length",
+    ),
+    (
+        "lexbor/dom/interfaces/attr.c",
+        "lxb_status_t",
+        "lxb_dom_attr_set_name_ns",
+        "lxb_dom_attr_t *attr, const lxb_char_t *link, size_t link_length, \
+         const lxb_char_t *name, size_t name_length, bool to_lowercase",
+    ),
+    (
+        "lexbor/dom/interfaces/attr.c",
+        "lxb_dom_attr_data_t *",
+        "lxb_dom_attr_qualified_name_append",
+        "lexbor_hash_t *hash, const lxb_char_t *name, size_t length",
+    ),
+];
+
+fn check_undeclared_exports(include: &std::path::Path) {
+    let source = match std::env::var_os("MAKIRI_LEXBOR_SOURCE") {
+        Some(p) => std::path::PathBuf::from(p),
+        /* `<vendor/lexbor>/dist/include` -> `<vendor/lexbor>/source` */
+        None => include.join("../../source"),
+    };
+    let collapse = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    for &(file, ret, name, params) in UNDECLARED_EXPORTS {
+        let path = source.join(file);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {} to check {name}: {e}", path.display()));
+        let found = definition(&text, name).unwrap_or_else(|| {
+            panic!(
+                "no definition of {name} in {} - the export lexbor/abi.rs \
+                 declares by hand is gone",
+                path.display()
+            )
+        });
+        let want = (collapse(ret), collapse(params));
+        let got = (collapse(&found.0), collapse(&found.1));
+        if got != want {
+            panic!(
+                "{name} changed in {}:\n  was: {} {name}({})\n  now: {} {name}({})\n\
+                 update its declaration in lexbor/abi.rs, then UNDECLARED_EXPORTS",
+                path.display(),
+                want.0,
+                want.1,
+                got.0,
+                got.1
+            );
+        }
+    }
+}
+
+/// `(return type, parameters)` of the function DEFINED as `name` in `text`:
+/// Lexbor's style puts the return type on the line above a name that starts
+/// its line, and a definition - unlike the forward declarations the same files
+/// carry - is followed by `{`.
+fn definition(text: &str, name: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let open = format!("{name}(");
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 || !line.starts_with(&open) {
+            continue;
+        }
+        let rest = lines[i..].join("\n");
+        let close = rest.find(')')?;
+        let params = &rest[open.len()..close];
+        if rest[close + 1..].trim_start().starts_with('{') {
+            return Some((lines[i - 1].to_string(), params.to_string()));
+        }
+    }
+    None
 }
