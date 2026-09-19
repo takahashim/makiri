@@ -49,11 +49,10 @@ UNSAFE_ISLANDS = {
   "cbuf.rs" => 15,
   "cbuf/verify.rs" => 7,
   "falloc/calloc_verify.rs" => 3,
-  "falloc/cstr.rs" => 3,
-  "falloc/inject.rs" => 2,
-  "falloc/mod.rs" => 2,
-  "falloc/raw.rs" => 4,
-  "init.rs" => 6,
+  "falloc/cstr.rs" => 2,
+  "falloc/mod.rs" => 1,
+  "falloc/raw.rs" => 3,
+  "init.rs" => 5,
   "lexbor/adapter/cross_import.rs" => 16,
   "lexbor/adapter/dom_index.rs" => 3,
   "lexbor/adapter/html.rs" => 97,
@@ -85,24 +84,24 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs xml/mod.rs xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
   css/build.rs css/lower.rs css/mod.rs
-  cutf8.rs cutf8/verify.rs falloc/calloc.rs
-  falloc/verify.rs glue/doc.rs glue/html_node/mutate.rs
-  glue/html_node/read.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/xml.rs glue/xml_node/abi.rs
-  glue/xml_node/mutate.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath.rs limits.rs xml/api.rs
-  xml/arena.rs xml/chars.rs xml/index.rs
-  xml/mod.rs xml/model.rs xml/mutate.rs
-  xml/parse.rs xml/qname.rs xml/selftest.rs
-  xml/serialize.rs xml/tree.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/msg.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/runtime_abi.rs xpath/runtime_abi/cache.rs xpath/step_index.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  cutf8.rs cutf8/verify.rs falloc/verify.rs
+  glue/doc.rs glue/html_node/mutate.rs glue/html_node/read.rs
+  glue/mod.rs glue/node.rs glue/node_set.rs
+  glue/xml.rs glue/xml_node/abi.rs glue/xml_node/mutate.rs
+  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath.rs
+  limits.rs xml/api.rs xml/arena.rs
+  xml/chars.rs xml/index.rs xml/mod.rs
+  xml/model.rs xml/mutate.rs xml/parse.rs
+  xml/qname.rs xml/selftest.rs xml/serialize.rs
+  xml/tree.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/msg.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/runtime_abi.rs
+  xpath/runtime_abi/cache.rs xpath/step_index.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

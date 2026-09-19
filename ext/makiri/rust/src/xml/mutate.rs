@@ -32,6 +32,13 @@ fn put_node(out: &mut NodeId, result: Result<NodeId, MutStatus>) -> MutStatus {
     }
 }
 
+/// Copy a node's span out of the arena before taking `&mut doc`. `to_vec` would
+/// abort on OOM; this path must fail closed instead, like every other
+/// allocation here.
+fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutStatus> {
+    crate::falloc::try_to_vec(bytes).ok_or(MutStatus::Oom)
+}
+
 pub fn xml_detach(doc: &mut Document, node: NodeId) {
     if !node.is_invalid() {
         detach(doc, node);
@@ -630,7 +637,10 @@ pub fn new_document_type(
 /// prefix in the subtree binds), true writes the resolved URIs.
 fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool) -> MutStatus {
     if doc.node(e).flags & FLAG_DOM_LOOSE_NAME == 0 {
-        let name = doc.qname(e).to_vec();
+        let name = match copy_span(doc.qname(e)) {
+            Ok(v) => v,
+            Err(st) => return st,
+        };
         let prefix_len = doc.node(e).prefix.len;
         let local_off = doc.node(e).local.off.saturating_sub(doc.node(e).qname.off);
         let local_len = doc.node(e).local.len;
@@ -650,7 +660,10 @@ fn resolve_node_ns(doc: &mut Document, e: NodeId, connected: bool, commit: bool)
     }
     let mut a = doc.attrs(e);
     while let Some(attr) = a {
-        let name = doc.qname(attr).to_vec();
+        let name = match copy_span(doc.qname(attr)) {
+            Ok(v) => v,
+            Err(st) => return st,
+        };
         let prefix_len = doc.node(attr).prefix.len;
         let local_off = doc
             .node(attr)
@@ -724,7 +737,7 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
     };
     let n = doc.new_node(ty).map_err(|_| MutStatus::Oom)?;
     if doc.node(src).qname.len > 0 {
-        let name = doc.qname(src).to_vec();
+        let name = copy_span(doc.qname(src))?;
         let prefix_len = doc.node(src).prefix.len;
         let local_off = doc
             .node(src)
@@ -739,12 +752,12 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
             return Err(MutStatus::Oom);
         }
     } else if doc.node(src).local.len > 0 {
-        let t = doc.local(src).to_vec();
+        let t = copy_span(doc.local(src))?;
         let span = doc.store(&t).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(n).local = span;
     }
     if doc.node(src).value.len > 0 {
-        let v = doc.value(src).to_vec();
+        let v = copy_span(doc.value(src))?;
         let span = doc.store(&v).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(n).value = span;
     } else if !doc.node(src).value.is_absent() {
@@ -752,7 +765,7 @@ fn copy_one(doc: &mut Document, src: NodeId) -> Result<NodeId, MutStatus> {
     }
     doc.node_mut(n).flags = doc.node(src).flags;
     if doc.node(src).ns_uri.len > 0 {
-        let u = doc.ns(src).to_vec();
+        let u = copy_span(doc.ns(src))?;
         let span = doc.store(&u).map_err(|_| MutStatus::Oom)?;
         doc.node_mut(n).ns_uri = span;
     }
@@ -781,7 +794,7 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
     };
     let n = dst.new_node(ty).map_err(|_| MutStatus::Oom)?;
     if src_doc.node(src).qname.len > 0 {
-        let name = src_doc.qname(src).to_vec();
+        let name = copy_span(src_doc.qname(src))?;
         let prefix_len = src_doc.node(src).prefix.len;
         let local_off = src_doc
             .node(src)
@@ -796,12 +809,12 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
             return Err(MutStatus::Oom);
         }
     } else if src_doc.node(src).local.len > 0 {
-        let t = src_doc.local(src).to_vec();
+        let t = copy_span(src_doc.local(src))?;
         let span = dst.store(&t).map_err(|_| MutStatus::Oom)?;
         dst.node_mut(n).local = span;
     }
     if src_doc.node(src).value.len > 0 {
-        let v = src_doc.value(src).to_vec();
+        let v = copy_span(src_doc.value(src))?;
         let span = dst.store(&v).map_err(|_| MutStatus::Oom)?;
         dst.node_mut(n).value = span;
     } else if !src_doc.node(src).value.is_absent() {
@@ -809,7 +822,7 @@ fn copy_one_from(dst: &mut Document, src_doc: &Document, src: NodeId) -> Result<
     }
     dst.node_mut(n).flags = src_doc.node(src).flags;
     if src_doc.node(src).ns_uri.len > 0 {
-        let u = src_doc.ns(src).to_vec();
+        let u = copy_span(src_doc.ns(src))?;
         let span = dst.store(&u).map_err(|_| MutStatus::Oom)?;
         dst.node_mut(n).ns_uri = span;
     }

@@ -18,7 +18,7 @@
 # `falloc`'s VecPush / MapInsert exist so the reserve and the write are one
 # call, and review is what catches a site that skipped them.
 disallowed-methods = [
-  { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box / try_box_raw" },
+  { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box" },
   { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },
   { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::mkr_reserve" },
   { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::mkr_reserve_exact" },

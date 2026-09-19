@@ -1,36 +1,36 @@
 //! Shared OOM injection counter used by the `rake oom` sweep.
-
-#![allow(unsafe_code)]
+//!
+//! The counter is atomic: a parse consults it under
+//! `rb_thread_call_without_gvl`, so two threads can reach it at once. None of
+//! these calls is memory-unsafe - misusing the hooks mis-sizes or confuses the
+//! sweep, never triggers UB - so they are ordinary functions whose contract is
+//! stated in prose rather than `unsafe`.
 
 use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 static COUNTDOWN: AtomicI64 = AtomicI64::new(0);
 static ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 
-/// Arm the next allocation attempt to fail once.
+/// Arm "the `nth` hook consultation fails once" (`nth <= 0` disarms), and reset
+/// the attempt counter the sweep sizes itself from.
 ///
-/// # Safety
-/// This test hook must only be used by the serialized OOM sweep.
-pub unsafe fn alloc_inject_arm(nth: i64) {
+/// Only the serialized OOM sweep should call this: arming it under a live
+/// workload would fail an allocation no test asked for.
+pub fn alloc_inject_arm(nth: i64) {
     COUNTDOWN.store(if nth > 0 { nth } else { 0 }, Ordering::Release);
     ATTEMPTS.store(0, Ordering::Release);
 }
 
-/// Return the number of allocation attempts since the last arm.
-///
-/// Safe: an atomic load of a counter this module owns. Misreading the result
-/// makes the OOM sweep wrong, not unsound, so it is not `unsafe` - unlike
-/// [`alloc_inject_arm`], which changes what the allocator does.
+/// Return the number of hook consultations since the last arm.
 pub fn alloc_inject_call_count() -> u64 {
     ATTEMPTS.load(Ordering::Acquire)
 }
 
-/// Consult the shared counter and fail the armed attempt, if any.
+/// Consult the shared counter and fail the armed consultation, if any.
 ///
-/// # Safety
-/// The hook must be called once per allocation attempt and must not be used to
-/// replace the allocator's normal failure handling.
-pub unsafe fn alloc_inject_should_fail() -> core::ffi::c_int {
+/// The caller's only contract is to consult it once per allocation attempt;
+/// violating that mis-numbers the sweep, which is not a soundness problem.
+pub fn alloc_inject_should_fail() -> core::ffi::c_int {
     ATTEMPTS.fetch_add(1, Ordering::Relaxed);
     let mut left = COUNTDOWN.load(Ordering::Acquire);
     while left > 0 {

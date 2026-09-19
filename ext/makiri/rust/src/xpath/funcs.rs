@@ -1051,5 +1051,3 @@ fn fn_of_type_pos_last<'e, 'd, D: Dom<'d>>(
     let doc = ev.doc;
     number(of_type_pos::<D>(focus.node, false, doc))
 }
-
-pub use crate::falloc::cstr::str_alloc;
