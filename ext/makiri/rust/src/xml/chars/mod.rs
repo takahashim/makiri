@@ -1,17 +1,20 @@
 //! Pure character-level primitives: the XML 1.0 Char / Name classes, the strict
 //! one-codepoint UTF-8 decoder and encoder, and §9.3's newline folding.
 //!
-//! Reference EXPANSION is [`expand`]: it is an engine with a cursor and its own
-//! error domain, not a character class, and the two only shared a file.
+//! Reference EXPANSION is the private `expand` submodule - an engine with a
+//! cursor and its own error domain, not a character class - re-exported here as
+//! [`expand_into`], [`ExpandMode`] and [`ExpandErr`], which is the whole of it.
 //!
 //! No unsafe code: every read is a slice index.
 
 #![forbid(unsafe_code)]
 
-pub mod expand;
+mod expand;
 
 use crate::falloc::Reserve;
 use crate::xml::Status;
+/* The engine is reached ONLY through these three names, so there is never a
+ * second equally-correct way to spell one of them. */
 pub use expand::{expand_into, ExpandErr, ExpandMode};
 
 /// XML 1.0 §2.2 Char.

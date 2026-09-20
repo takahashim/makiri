@@ -679,6 +679,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Run to the end of the input, then apply the close-out rule: input can
+    /// stop mid-tree, and only the caller knows whether a root was required.
+    ///
+    /// The whole "normalize, run, check the close-out, report" sequence used to
+    /// be written out in both `parse_ex` and `parse_fragment_into`, so the rule
+    /// for when a parse is finished lived twice.
+    fn run_to_end(&mut self, require_root: bool) -> Result<(), Status> {
+        self.run();
+        let unclosed = !self.stack.is_empty() || (require_root && self.doc.root().is_none());
+        if self.status() == Status::Ok && unclosed {
+            let _ = self.cur.syntax::<()>();
+        }
+        match self.status() {
+            Status::Ok => Ok(()),
+            st => Err(st),
+        }
+    }
+
     /// Seed a fragment parser's scope with the document root's xmlns attributes.
     fn seed_doc_namespaces(&mut self) -> R {
         let Some(root) = self.doc.root() else {
@@ -710,20 +728,7 @@ pub fn parse(src: &[u8]) -> Result<Box<Document>, Status> {
 pub fn parse_ex(src: &[u8], limits: Option<&Limits>) -> Result<Box<Document>, Status> {
     let mut doc = Document::create(limits.map(|l| l.max_bytes), src.len())?;
     let norm = normalize_newlines(src)?;
-    let body: &[u8] = match &norm {
-        Some(v) => v,
-        None => src,
-    };
-    let mut p = Parser::new(body, &mut doc, None);
-    p.run();
-    if p.status() == Status::Ok && (!p.stack.is_empty() || p.doc.root().is_none()) {
-        let _ = p.cur.syntax::<()>(); /* unclosed element(s) / no root */
-    }
-    let st = p.status();
-    drop(p);
-    if st != Status::Ok {
-        return Err(st);
-    }
+    Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None).run_to_end(true)?;
     Ok(doc)
 }
 
@@ -761,21 +766,12 @@ fn parse_fragment_into(
 ) -> Result<NodeId, Status> {
     let frag = doc.new_node(NodeType::Fragment)?;
     let norm = normalize_newlines(src)?;
-    let body: &[u8] = match &norm {
-        Some(v) => v,
-        None => src,
-    };
-    let mut p = Parser::new(body, doc, Some(frag));
+    let mut p = Parser::new(norm.as_deref().unwrap_or(src), doc, Some(frag));
     if inherit_doc_ns && p.seed_doc_namespaces().is_err() {
         return Err(p.status());
     }
-    p.run();
-    if p.status() == Status::Ok && !p.stack.is_empty() {
-        let _ = p.cur.syntax::<()>(); /* unclosed element(s) */
-    }
-    if p.status() != Status::Ok {
-        return Err(p.status());
-    }
+    /* A fragment has no single-root rule. */
+    p.run_to_end(false)?;
     Ok(frag)
 }
 

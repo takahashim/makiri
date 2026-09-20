@@ -41,6 +41,17 @@ fn copy_span(bytes: &[u8]) -> Result<Vec<u8>, MutStatus> {
     crate::falloc::try_to_vec(bytes).ok_or(MutStatus::Oom)
 }
 
+/// The three verbs that splice a fragment's children INTO an existing chain.
+/// `Replace` is not one: it swaps the target out, which is
+/// [`replace_with_fragment`]'s own shape - so the commit loop below cannot have
+/// an arm for it, rather than having one that returns `Internal`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Splice {
+    Child,
+    Before,
+    After,
+}
+
 /// Where [`place`] puts a node, relative to its target.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Place {
@@ -73,19 +84,21 @@ pub fn place(doc: &mut Document, target: NodeId, node: NodeId, place: Place) -> 
             Place::Replace => replace_node(doc, target, node),
         };
     }
-    /* An empty fragment still removes the target. */
-    if place == Place::Replace {
-        return replace_with_fragment(doc, target, node);
+    match place {
+        /* An empty fragment still removes the target. */
+        Place::Replace => replace_with_fragment(doc, target, node),
+        Place::Child => place_fragment(doc, target, node, Splice::Child),
+        Place::Before => place_fragment(doc, target, node, Splice::Before),
+        Place::After => place_fragment(doc, target, node, Splice::After),
     }
-    place_fragment(doc, target, node, place)
 }
 
-/// The site a fragment's children go to, and the node they stand in for.
-fn fragment_site(doc: &Document, target: NodeId, place: Place) -> Option<Site> {
-    match place {
-        Place::Child => Some(Site::appending(target)),
-        Place::Before => Some(Site::before(doc.parent(target)?, target)),
-        Place::After => {
+/// The site a spliced fragment's children go to.
+fn splice_site(doc: &Document, target: NodeId, splice: Splice) -> Option<Site> {
+    match splice {
+        Splice::Child => Some(Site::appending(target)),
+        Splice::Before => Some(Site::before(doc.parent(target)?, target)),
+        Splice::After => {
             let container = doc.parent(target)?;
             /* Every child lands before whatever follows the target, wherever
              * the moving insertion point has reached. */
@@ -94,7 +107,6 @@ fn fragment_site(doc: &Document, target: NodeId, place: Place) -> Option<Site> {
                 None => Site::appending(container),
             })
         }
-        Place::Replace => Some(Site::replacing(doc.parent(target)?, target)),
     }
 }
 
@@ -121,9 +133,14 @@ fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> MutStatu
     MutStatus::Ok
 }
 
-/// Validate every child of `frag` against `site`. On `Ok` the commit that
-/// follows cannot fail: it only relinks.
-fn check_fragment_children(doc: &mut Document, frag: NodeId, site: Site) -> MutStatus {
+/// Validate every child of `frag` against `site` AND resolve its namespaces -
+/// `prepare`, not `check`, because `prepare_insert` writes a resolved URI on a
+/// node whose namespace is not yet decided. (A fragment's children always arrive
+/// decided, from a parse or an import, so in practice nothing is written; the
+/// name says what the code may do, not what it usually does.)
+///
+/// On `Ok` the commit that follows cannot fail: it only relinks.
+fn prepare_fragment_children(doc: &mut Document, frag: NodeId, site: Site) -> MutStatus {
     let st = fragment_fits_container(doc, frag, site);
     if st != MutStatus::Ok {
         return st;
@@ -139,12 +156,12 @@ fn check_fragment_children(doc: &mut Document, frag: NodeId, site: Site) -> MutS
     MutStatus::Ok
 }
 
-/// Splice every child of `frag` at `place`, having already validated them.
-fn place_fragment(doc: &mut Document, target: NodeId, frag: NodeId, place: Place) -> MutStatus {
-    let Some(site) = fragment_site(doc, target, place) else {
+/// Splice every child of `frag` at `splice`, having already validated them.
+fn place_fragment(doc: &mut Document, target: NodeId, frag: NodeId, splice: Splice) -> MutStatus {
+    let Some(site) = splice_site(doc, target, splice) else {
         return MutStatus::Hierarchy;
     };
-    let st = check_fragment_children(doc, frag, site);
+    let st = prepare_fragment_children(doc, frag, site);
     if st != MutStatus::Ok {
         return st;
     }
@@ -152,23 +169,16 @@ fn place_fragment(doc: &mut Document, target: NodeId, frag: NodeId, place: Place
     let mut last = target; /* the moving insertion point, for After */
     while let Some(c) = doc.first_child(frag) {
         doc.detach(c);
-        match place {
-            Place::Child => {
-                let prev = doc.last_child(site.container);
-                doc.splice_between(site.container, c, prev, None);
-            }
-            Place::Before => {
-                let prev = doc.prev(target);
-                doc.splice_between(site.container, c, prev, Some(target));
-            }
-            Place::After => {
-                let next = doc.next(last);
-                doc.splice_between(site.container, c, Some(last), next);
+        let (prev, next) = match splice {
+            Splice::Child => (doc.last_child(site.container), None),
+            Splice::Before => (doc.prev(target), Some(target)),
+            Splice::After => {
+                let after = (Some(last), doc.next(last));
                 last = c;
+                after
             }
-            /* handled by replace_with_fragment */
-            Place::Replace => return MutStatus::Internal,
-        }
+        };
+        doc.splice_between(site.container, c, prev, next);
     }
     doc.sync_doc_meta(site.container);
     MutStatus::Ok
@@ -1155,7 +1165,7 @@ pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -
         return MutStatus::Hierarchy;
     };
     /* --- validation pass: no links change until it all passes */
-    let st = check_fragment_children(doc, frag, Site::replacing(container, target));
+    let st = prepare_fragment_children(doc, frag, Site::replacing(container, target));
     if st != MutStatus::Ok {
         return st;
     }

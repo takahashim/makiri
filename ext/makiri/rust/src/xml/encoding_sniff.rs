@@ -83,59 +83,23 @@ struct Geometry {
 /// Row ORDER is the rule: the UTF-32 marks must be tested before the UTF-16 LE
 /// mark whose prefix they share (`FF FE` opens `FF FE 00 00`), which is checkable
 /// by eye here rather than by following a chain of `else if`s.
+const fn geo(bom_len: usize, stride: usize, off: usize) -> Geometry {
+    Geometry {
+        bom_len,
+        stride,
+        off,
+    }
+}
+
 const BOMS: &[(&[u8], Bom, Geometry)] = &[
-    (
-        b"\x00\x00\xFE\xFF",
-        Bom::Utf32Be,
-        Geometry {
-            bom_len: 4,
-            stride: 4,
-            off: 3,
-        },
-    ),
-    (
-        b"\xFF\xFE\x00\x00",
-        Bom::Utf32Le,
-        Geometry {
-            bom_len: 4,
-            stride: 4,
-            off: 0,
-        },
-    ),
-    (
-        b"\xFE\xFF",
-        Bom::Utf16Be,
-        Geometry {
-            bom_len: 2,
-            stride: 2,
-            off: 1,
-        },
-    ),
-    (
-        b"\xFF\xFE",
-        Bom::Utf16Le,
-        Geometry {
-            bom_len: 2,
-            stride: 2,
-            off: 0,
-        },
-    ),
-    (
-        b"\xEF\xBB\xBF",
-        Bom::Utf8,
-        Geometry {
-            bom_len: 3,
-            stride: 1,
-            off: 0,
-        },
-    ),
+    (b"\x00\x00\xFE\xFF", Bom::Utf32Be, geo(4, 4, 3)),
+    (b"\xFF\xFE\x00\x00", Bom::Utf32Le, geo(4, 4, 0)),
+    (b"\xFE\xFF", Bom::Utf16Be, geo(2, 2, 1)),
+    (b"\xFF\xFE", Bom::Utf16Le, geo(2, 2, 0)),
+    (b"\xEF\xBB\xBF", Bom::Utf8, geo(3, 1, 0)),
 ];
 
-const NO_BOM: Geometry = Geometry {
-    bom_len: 0,
-    stride: 1,
-    off: 0,
-};
+const NO_BOM: Geometry = geo(0, 1, 0);
 
 /// What `p`'s first bytes announce: the byte-order mark, and the encoding its
 /// XML declaration names.

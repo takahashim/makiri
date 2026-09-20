@@ -136,7 +136,7 @@ fn unserializable_name(doc: &XmlDoc, root: NodeId) -> Option<Failure> {
             {
                 return Some(Failure::DomLooseName)
             }
-            Some(NodeType::Pi) if out::field(doc, doc.node(id).local).contains(&b':') => {
+            Some(NodeType::Pi) if doc.span(doc.node(id).local).contains(&b':') => {
                 return Some(Failure::PiTargetColon)
             }
             _ => {}

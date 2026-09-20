@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::{field, put, C14N, W};
+use super::out::{put, C14N, W};
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
 use crate::xml::model::{Document as XmlDoc, NodeId, NodeType, MAX_DEPTH};
@@ -15,7 +15,7 @@ use crate::xml::qname::xmlns_prefix;
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
     let p = xmlns_prefix(doc.qname(a))?;
-    Some((p, field(doc, doc.node(a).value)))
+    Some((p, doc.span(doc.node(a).value)))
 }
 
 struct Ns<'d> {
@@ -105,7 +105,7 @@ pub(super) fn node(
                 return Err(());
             }
             put(b, b"<")?;
-            put(b, field(doc, doc.node(n).qname))?;
+            put(b, doc.span(doc.node(n).qname))?;
 
             for ns in namespaces(doc, n, is_apex)? {
                 if ns.prefix.is_empty() {
@@ -131,15 +131,15 @@ pub(super) fn node(
             /* In place (see clippy.toml): an element's attributes are distinct
              * by (namespace URI, local name), so stability would buy nothing. */
             attrs.sort_unstable_by(|&x, &y| {
-                field(doc, doc.node(x).ns_uri)
-                    .cmp(field(doc, doc.node(y).ns_uri))
-                    .then_with(|| field(doc, doc.node(x).local).cmp(field(doc, doc.node(y).local)))
+                doc.span(doc.node(x).ns_uri)
+                    .cmp(doc.span(doc.node(y).ns_uri))
+                    .then_with(|| doc.span(doc.node(x).local).cmp(doc.span(doc.node(y).local)))
             });
             for at in attrs {
                 put(b, b" ")?;
-                put(b, field(doc, doc.node(at).qname))?;
+                put(b, doc.span(doc.node(at).qname))?;
                 put(b, b"=\"")?;
-                C14N.write(b, field(doc, doc.node(at).value), true)?;
+                C14N.write(b, doc.span(doc.node(at).value), true)?;
                 put(b, b"\"")?;
             }
 
@@ -150,26 +150,24 @@ pub(super) fn node(
                 c = doc.next(cid);
             }
             put(b, b"</")?;
-            put(b, field(doc, doc.node(n).qname))?;
+            put(b, doc.span(doc.node(n).qname))?;
             put(b, b">")
         }
-        Some(NodeType::Text | NodeType::CData) => {
-            C14N.write(b, field(doc, doc.node(n).value), false)
-        }
+        Some(NodeType::Text | NodeType::CData) => C14N.write(b, doc.span(doc.node(n).value), false),
         Some(NodeType::Comment) => {
             if comments {
                 put(b, b"<!--")?;
-                put(b, field(doc, doc.node(n).value))?;
+                put(b, doc.span(doc.node(n).value))?;
                 put(b, b"-->")?;
             }
             Ok(())
         }
         Some(NodeType::Pi) => {
             put(b, b"<?")?;
-            put(b, field(doc, doc.node(n).local))?;
+            put(b, doc.span(doc.node(n).local))?;
             if doc.node(n).value.len != 0 {
                 put(b, b" ")?;
-                put(b, field(doc, doc.node(n).value))?;
+                put(b, doc.span(doc.node(n).value))?;
             }
             put(b, b"?>")
         }

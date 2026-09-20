@@ -19,6 +19,11 @@
 # call, and review is what catches a site that skipped them.
 disallowed-methods = [
   { path = "std::boxed::Box::new", reason = "aborts on OOM; use falloc::try_box" },
+  # `to_vec` and `to_owned` on a slice are the same allocation as `Vec::from`
+  # under a friendlier name, and they were the hole this list had: three of them
+  # reached `xml/serialize` unnoticed, where the engine must fail closed.
+  { path = "slice::to_vec", reason = "aborts on OOM; use falloc::try_to_vec" },
+  { path = "alloc::borrow::ToOwned::to_owned", reason = "aborts on OOM; use falloc::try_to_vec" },
   { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },
   { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },
   { path = "alloc::vec::Vec::reserve_exact", reason = "aborts on OOM; use Reserve::falloc_reserve_exact" },

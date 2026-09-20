@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 
 use crate::cbuf::Buf;
-use crate::xml::model::{Document as XmlDoc, Span};
 
 /// A write either succeeded or the output buffer refused it (its ceiling, or
 /// OOM). The reason is the buffer's; the caller maps it to [`super::Failure`].
@@ -11,11 +10,6 @@ pub(super) type W = Result<(), ()>;
 
 pub(super) fn put(b: &mut Buf, bytes: &[u8]) -> W {
     b.append(bytes).map_err(|_| ())
-}
-
-/// A node span's bytes, borrowed from the document.
-pub(super) fn field(doc: &XmlDoc, s: Span) -> &[u8] {
-    doc.span(s)
 }
 
 /// Which characters an escaper replaces, and with what.

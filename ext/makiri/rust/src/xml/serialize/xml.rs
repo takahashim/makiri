@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use super::out::{field, put, W, XML};
+use super::out::{put, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
 use crate::falloc::Reserve;
@@ -214,8 +214,8 @@ fn plan_element<'d>(
     binds: &mut Bindings<'d>,
     gen: &mut Gen,
 ) -> Option<Plan<'d>> {
-    let own_prefix = field(doc, doc.node(el).prefix);
-    let uri = field(doc, doc.node(el).ns_uri);
+    let own_prefix = doc.span(doc.node(el).prefix);
+    let uri = doc.span(doc.node(el).ns_uri);
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
         declare: doc.node(el).flags & FLAG_DOM_LOOSE_NAME == 0 && !binds.bound_to(own_prefix, uri),
@@ -236,7 +236,7 @@ fn plan_attr<'d>(
     binds: &mut Bindings<'d>,
     gen: &mut Gen,
 ) -> Option<Plan<'d>> {
-    let own_prefix = field(doc, doc.node(a).prefix);
+    let own_prefix = doc.span(doc.node(a).prefix);
     let mut plan = Plan {
         prefix: Prefix::Own(own_prefix),
         declare: false,
@@ -246,7 +246,7 @@ fn plan_attr<'d>(
     if own_prefix.is_empty() || is_decl {
         return Some(plan);
     }
-    let uri = field(doc, doc.node(a).ns_uri);
+    let uri = doc.span(doc.node(a).ns_uri);
     if binds.bound_to(own_prefix, uri) {
         return (!binds.exhausted).then_some(plan);
     }
@@ -255,7 +255,7 @@ fn plan_attr<'d>(
     let taken = binds.is_bound(own_prefix);
     if !taken {
         if let Some(p) = prior {
-            if field(doc, doc.node(p).ns_uri) == uri {
+            if doc.span(doc.node(p).ns_uri) == uri {
                 return (!binds.exhausted).then_some(plan);
             }
         }
@@ -291,8 +291,7 @@ impl<'d, 'b> Writer<'d, 'b> {
     pub(super) fn declaration(&mut self, encoding: Option<&[u8]>) -> W {
         if encoding.is_some() || self.doc.has_encoding_decl {
             self.put(b"<?xml version=\"1.0\" encoding=\"")?;
-            let enc = encoding.unwrap_or(b"UTF-8").to_owned();
-            self.put(&enc)?;
+            self.put(encoding.unwrap_or(b"UTF-8"))?;
             return self.put(b"\"?>\n");
         }
         self.put(b"<?xml version=\"1.0\"?>\n")
@@ -318,20 +317,18 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn name(&mut self, n: NodeId, plan: &Plan) -> W {
         let doc = self.doc;
         if !plan.renamed() {
-            return self.put(field(doc, doc.node(n).qname));
+            return self.put(doc.span(doc.node(n).qname));
         }
-        let prefix = plan.bytes().to_owned();
-        self.put(&prefix)?;
+        self.put(plan.bytes())?;
         self.put(b":")?;
-        self.put(field(doc, doc.node(n).local))
+        self.put(doc.span(doc.node(n).local))
     }
 
     fn declare(&mut self, prefix: &[u8], uri: &'d [u8]) -> W {
         self.put(b" xmlns")?;
         if !prefix.is_empty() {
             self.put(b":")?;
-            let prefix = prefix.to_owned();
-            self.put(&prefix)?;
+            self.put(prefix)?;
         }
         self.put(b"=\"")?;
         self.escape(uri, true)?;
@@ -345,15 +342,15 @@ impl<'d, 'b> Writer<'d, 'b> {
         match doc.type_(n) {
             Some(NodeType::Doctype) => self.doctype(n),
             Some(NodeType::Element) => self.element(n, depth, binds),
-            Some(NodeType::Text) => self.escape(field(doc, doc.node(n).value), false),
+            Some(NodeType::Text) => self.escape(doc.span(doc.node(n).value), false),
             Some(NodeType::CData) => {
                 self.put(b"<![CDATA[")?;
-                self.put(field(doc, doc.node(n).value))?;
+                self.put(doc.span(doc.node(n).value))?;
                 self.put(b"]]>")
             }
             Some(NodeType::Comment) => {
                 self.put(b"<!--")?;
-                self.put(field(doc, doc.node(n).value))?;
+                self.put(doc.span(doc.node(n).value))?;
                 self.put(b"-->")
             }
             Some(NodeType::Pi) => self.pi(n),
@@ -372,10 +369,10 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn pi(&mut self, n: NodeId) -> W {
         let doc = self.doc;
         self.put(b"<?")?;
-        self.put(field(doc, doc.node(n).local))?;
+        self.put(doc.span(doc.node(n).local))?;
         if doc.node(n).value.len != 0 {
             self.put(b" ")?;
-            self.put(field(doc, doc.node(n).value))?;
+            self.put(doc.span(doc.node(n).value))?;
         }
         self.put(b"?>")
     }
@@ -383,17 +380,17 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn doctype(&mut self, dt: NodeId) -> W {
         let doc = self.doc;
         self.put(b"<!DOCTYPE ")?;
-        self.put(field(doc, doc.node(dt).local))?;
+        self.put(doc.span(doc.node(dt).local))?;
         let (prefix, value) = (doc.node(dt).prefix, doc.node(dt).value);
         if !prefix.is_absent() {
             self.put(b" PUBLIC \"")?;
-            self.put(field(doc, prefix))?;
+            self.put(doc.span(prefix))?;
             self.put(b"\" \"")?;
-            self.put(field(doc, value))?;
+            self.put(doc.span(value))?;
             self.put(b"\"")?;
         } else if !value.is_absent() {
             self.put(b" SYSTEM \"")?;
-            self.put(field(doc, value))?;
+            self.put(doc.span(value))?;
             self.put(b"\"")?;
         }
         self.put(b">")
@@ -403,11 +400,9 @@ impl<'d, 'b> Writer<'d, 'b> {
         if depth as usize >= MAX_DEPTH {
             return Err(());
         }
-        let doc = self.doc;
         let base = binds.len();
         let r = self.element_in_scope(n, depth, binds);
         binds.truncate(base);
-        let _ = doc;
         r
     }
 
@@ -420,7 +415,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         let mut a = doc.attrs(n);
         while let Some(at) = a {
             if let Some(p) = xmlns_prefix(doc.qname(at)) {
-                binds.push(Prefix::Own(p), field(doc, doc.node(at).value))?;
+                binds.push(Prefix::Own(p), doc.span(doc.node(at).value))?;
             }
             a = doc.next(at);
         }
@@ -431,7 +426,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(b"<")?;
         self.name(n, &el)?;
         if el.declare {
-            let uri = field(doc, doc.node(n).ns_uri);
+            let uri = doc.span(doc.node(n).ns_uri);
             let prefix = el.prefix.clone();
             self.declare(prefix.bytes(), uri)?;
             binds.push(prefix, uri)?;
@@ -441,7 +436,7 @@ impl<'d, 'b> Writer<'d, 'b> {
         while let Some(at) = a {
             let plan = plan_attr(doc, n, at, binds, &mut gen).ok_or(())?;
             if plan.declare {
-                let uri = field(doc, doc.node(at).ns_uri);
+                let uri = doc.span(doc.node(at).ns_uri);
                 let prefix = plan.prefix.clone();
                 self.declare(prefix.bytes(), uri)?;
                 binds.push(prefix, uri)?;
@@ -449,7 +444,7 @@ impl<'d, 'b> Writer<'d, 'b> {
             self.put(b" ")?;
             self.name(at, &plan)?;
             self.put(b"=\"")?;
-            self.escape(field(doc, doc.node(at).value), true)?;
+            self.escape(doc.span(doc.node(at).value), true)?;
             self.put(b"\"")?;
             a = doc.next(at);
         }
