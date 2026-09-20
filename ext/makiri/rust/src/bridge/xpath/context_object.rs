@@ -99,6 +99,10 @@ impl XPathCtx {
     }
 }
 
+const NS_BUSY: &str =
+    "cannot register a namespace while evaluating (re-entrant mutation from a handler)";
+const NS_FAILED: &str = "failed to register namespace";
+
 /// A context's refusal as the exception it raises: `busy` when an evaluate is
 /// running on it, `failed` otherwise.
 fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Error {
@@ -202,19 +206,31 @@ impl XPathCtx {
         query_result(value?, document, Answer::All)
     }
 
+    /// The engine caps this context evaluates under, for a caller that must
+    /// check a string against them before binding it.
+    pub fn limits(&self) -> crate::xpath::limits::Limits {
+        self.ctx.limits()
+    }
+
     /// Bind `prefix` to `uri` for every later evaluate.
     pub fn register_namespace(&self, prefix: Value, uri: Value) -> Result<(), Error> {
-        const BUSY: &str =
-            "cannot register a namespace while evaluating (re-entrant mutation from a handler)";
-        const FAILED: &str = "failed to register namespace";
         if self.ctx.is_evaluating() {
-            return Err(refused(ContextError::Evaluating, BUSY, FAILED));
+            return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));
         }
         let pv = ruby_verified_text(prefix, c"namespace prefix")?;
         let uv = ruby_verified_text(uri, c"namespace URI")?;
+        self.bind_namespace(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
+    }
+
+    /// As [`register_namespace`](Self::register_namespace), for bytes a caller
+    /// has already put through the text contract.
+    pub fn bind_namespace(&self, prefix: &[u8], uri: &[u8]) -> Result<(), Error> {
+        if self.ctx.is_evaluating() {
+            return Err(refused(ContextError::Evaluating, NS_BUSY, NS_FAILED));
+        }
         self.ctx
-            .register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes()) /* copies both */
-            .map_err(|e| refused(e, BUSY, FAILED))
+            .register_ns(prefix, uri) /* copies both */
+            .map_err(|e| refused(e, NS_BUSY, NS_FAILED))
     }
 
     /// Bind `$name` to `value.to_s` for every later evaluate.

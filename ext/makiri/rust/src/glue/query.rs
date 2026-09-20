@@ -21,7 +21,9 @@ use magnus::{method, prelude::*, Error, RArray, RHash, RModule, RString, Ruby, V
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::wrapper::keepalive_document;
-use crate::bridge::xpath::{context_for, evaluate_query, parse_query, query_result, Answer, Cx};
+use crate::bridge::xpath::{
+    context_for, evaluate_query, parse_query, query_result, Answer, Cx, XPathCtx,
+};
 use crate::init::{MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS};
 use crate::xpath::ast::Ast;
 
@@ -64,11 +66,12 @@ impl QueryArgs {
             RHash,
             (),
         >(args)?;
+        let kw = Keywords::scan(ruby, a.keywords)?;
         let mut q = QueryArgs {
             text: a.required.0,
             namespaces: None,
             handler: nil,
-            lax: ns_matching_lax(ruby, a.keywords)?,
+            lax: kw.lax,
         };
         for v in [a.optional.0, a.optional.1].into_iter().flatten() {
             if v.is_nil() {
@@ -85,33 +88,59 @@ impl QueryArgs {
                 }
             }
         }
-        /* Keywords other than `namespace_matching:` are prefix bindings. */
-        if !a.keywords.is_empty() {
-            let rest = without_mode(ruby, a.keywords)?;
-            if !rest.is_empty() {
-                q.namespaces = Some(match q.namespaces {
-                    Some(h) => h.funcall("merge", (rest,))?,
-                    None => rest,
-                });
-            }
+        /* Keywords other than `namespace_matching:` are prefix bindings, and
+         * win over a Hash given positionally. */
+        if let Some(rest) = kw.bindings {
+            q.namespaces = Some(match q.namespaces {
+                Some(h) => h.funcall("merge", (rest,))?,
+                None => rest,
+            });
         }
         Ok(q)
     }
 }
 
-/// Resolve the `namespace_matching:` keyword to the unprefixed-lax flag.
+/// What a query's keywords mean: the matching mode, and the prefix bindings
+/// every other keyword makes.
+///
+/// One reading for both entry points that take them - `#xpath` and
+/// `XPathContext.new` - so neither can quietly drop what the other binds.
+pub struct Keywords {
+    /// `namespace_matching: :lax`.
+    pub lax: bool,
+    /// Every other keyword, as `{prefix => uri}`; None when there is none.
+    pub bindings: Option<RHash>,
+}
+
+impl Keywords {
+    pub fn scan(ruby: &Ruby, keywords: RHash) -> Result<Keywords, Error> {
+        if keywords.is_empty() {
+            return Ok(Keywords {
+                lax: false,
+                bindings: None,
+            });
+        }
+        let mode = ruby.to_symbol("namespace_matching");
+        let lax = match keywords.get(mode) {
+            None => false,
+            Some(v) => matching_lax(ruby, v)?,
+        };
+        /* The rest are prefix bindings - how Nokogiri's `xpath("//s:p", s: uri)`
+         * reads. Copied rather than mutated: the caller's Hash is its own. */
+        let bindings: RHash = keywords.funcall("dup", ())?;
+        let _: Value = bindings.funcall("delete", (mode,))?;
+        Ok(Keywords {
+            lax,
+            bindings: (!bindings.is_empty()).then_some(bindings),
+        })
+    }
+}
+
+/// `namespace_matching:`'s value as the unprefixed-lax flag.
 ///
 /// `:strict` (the default) resolves an unprefixed name test in the HTML
 /// namespace, which is what browsers do; `:lax` makes it namespace-agnostic.
-/// Only reached when keywords were passed, so the symbol lookups are off the
-/// one-argument path.
-pub fn ns_matching_lax(ruby: &Ruby, opts: RHash) -> Result<bool, Error> {
-    if opts.is_empty() {
-        return Ok(false);
-    }
-    let Some(v) = opts.get(ruby.to_symbol("namespace_matching")) else {
-        return Ok(false);
-    };
+fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
     if v.is_nil() || v.eql(ruby.to_symbol("strict"))? {
         return Ok(false);
     }
@@ -127,23 +156,17 @@ pub fn ns_matching_lax(ruby: &Ruby, opts: RHash) -> Result<bool, Error> {
     ))
 }
 
-/// `keywords` without its `namespace_matching:` entry.
-fn without_mode(ruby: &Ruby, keywords: RHash) -> Result<RHash, Error> {
-    let rest: RHash = keywords.funcall("dup", ())?;
-    let _: Value = rest.funcall("delete", (ruby.to_symbol("namespace_matching"),))?;
-    Ok(rest)
-}
-
-/// Register a `{prefix => uri}` Hash onto `ctx` for one query.
+/// Bind every `{prefix => uri}` pair of `h` through `register`, which is what
+/// differs between a per-query context and an `XPathContext`.
 ///
-/// On any bad entry an error is returned, and the caller's owner frees the
-/// context - never a partial registration. RSS and Atom live in a default
-/// namespace, so a prefix is the strict-mode way to select them.
-pub fn register_namespaces(ctx: &Cx, namespaces: Option<RHash>) -> Result<(), Error> {
-    let Some(h) = namespaces else {
-        return Ok(());
-    };
-    let cap = ctx.limits().max_string_bytes;
+/// On any bad entry the error is returned and nothing further is registered -
+/// the caller's owner then frees the context, so a partial registration is
+/// never handed out.
+fn bind_each(
+    h: RHash,
+    mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
+    cap: usize,
+) -> Result<(), Error> {
     let pairs: RArray = h.funcall("to_a", ())?;
     for pair in pairs.into_iter() {
         let pair = RArray::from_value(pair).expect("Hash#to_a yields pairs");
@@ -159,10 +182,35 @@ pub fn register_namespaces(ctx: &Cx, namespaces: Option<RHash>) -> Result<(), Er
                     reason.to_string_lossy()
                 ))
             })?;
-        ctx.register_ns(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())
-            .map_err(|_| makiri_error("failed to register namespace"))?;
+        register(pv.as_verified().as_bytes(), uv.as_verified().as_bytes())?;
     }
     Ok(())
+}
+
+/// Register a `{prefix => uri}` Hash onto `ctx` for one query.
+///
+/// RSS and Atom live in a default namespace, so a prefix is the strict-mode way
+/// to select them.
+pub fn register_namespaces(ctx: &Cx, namespaces: Option<RHash>) -> Result<(), Error> {
+    let Some(h) = namespaces else {
+        return Ok(());
+    };
+    let cap = ctx.limits().max_string_bytes;
+    bind_each(
+        h,
+        |prefix, uri| {
+            ctx.register_ns(prefix, uri)
+                .map_err(|_| makiri_error("failed to register namespace"))
+        },
+        cap,
+    )
+}
+
+/// Register a `{prefix => uri}` Hash onto an `XPathContext`, for every later
+/// evaluate.
+pub fn register_bindings(ctx: &XPathCtx, bindings: RHash) -> Result<(), Error> {
+    let cap = ctx.limits().max_string_bytes;
+    bind_each(bindings, |prefix, uri| ctx.bind_namespace(prefix, uri), cap)
 }
 
 /// The context a query on `rb_self` runs under: rooted there (a Document's is

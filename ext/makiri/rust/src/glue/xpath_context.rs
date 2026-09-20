@@ -14,7 +14,7 @@ use magnus::{function, method, prelude::*, Error, RClass, RHash, Ruby, Value};
 
 use crate::bridge::ruby::{is_kind_of, method_receiver};
 use crate::bridge::xpath::XPathCtx;
-use crate::glue::query::ns_matching_lax;
+use crate::glue::query::{register_bindings, Keywords};
 use crate::init::{CLASS_NODE, CLASS_XPATH_CONTEXT};
 
 /// `Err(TypeError)` unless `v` is a Makiri node.
@@ -28,13 +28,23 @@ fn expect_node(ruby: &Ruby, v: Value) -> Result<(), Error> {
     ))
 }
 
-/// `XPathContext.new(node, namespace_matching: :strict)`.
+/// `XPathContext.new(node, namespace_matching: :strict, **prefix_bindings)`.
+///
+/// Keywords read exactly as `#xpath`'s do: the mode, and prefix bindings - here
+/// registered on the context, so they hold for every later evaluate.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let a = magnus::scan_args::scan_args::<(Value,), (), (), (), RHash, ()>(args)?;
     let node = a.required.0;
-    let lax = ns_matching_lax(ruby, a.keywords)?;
+    let kw = Keywords::scan(ruby, a.keywords)?;
     expect_node(ruby, node)?;
-    XPathCtx::create(ruby, node, lax)
+
+    let obj = XPathCtx::create(ruby, node, kw.lax)?;
+    if let Some(bindings) = kw.bindings {
+        /* A registration that fails leaves `obj` to the GC, never a context
+         * with half its prefixes. */
+        register_bindings(<&XPathCtx>::try_convert(obj)?, bindings)?;
+    }
+    Ok(obj)
 }
 
 /// `#node=` - rebind the context node, so one context can evaluate relative

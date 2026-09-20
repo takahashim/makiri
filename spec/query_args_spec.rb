@@ -33,6 +33,28 @@ RSpec.describe "XPath query arguments" do
       .to raise_error(Makiri::Error, /unknown namespace prefix/)
   end
 
+  it "registers prefix keywords on an XPathContext, as #xpath does" do
+    ctx = Makiri::XPathContext.new(xml.root, s: "urn:s")
+    expect(ctx.evaluate("//s:p").size).to eq(1)
+    # The mode keyword is still the mode, not a prefix.
+    lax = Makiri::XPathContext.new(xml.root, s: "urn:s", namespace_matching: :lax)
+    expect(lax.evaluate("//s:p").size).to eq(1)
+    expect { Makiri::XPathContext.new(xml.root, s: "bad\0uri") }
+      .to raise_error(Makiri::Error, /invalid namespace mapping/)
+  end
+
+  it "takes the same (selector, namespaces) list for CSS on either representation" do
+    expect(html.css("path", nil).size).to eq(1)
+    expect(html.css("path", {}).size).to eq(1)
+    expect(html.at_css("path").matches?("path", {})).to be(true)
+    expect(xml.css("s|p", { "s" => "urn:s" }).size).to eq(1)
+    # Lexbor resolves a prefix against the document, not against bindings, so
+    # HTML refuses them rather than ignoring them.
+    expect { html.css("path", { "s" => svg }) }
+      .to raise_error(ArgumentError, /not supported by HTML CSS/)
+    expect { html.css("path", 5) }.to raise_error(TypeError, /must be a Hash/)
+  end
+
   it "refuses two namespace Hashes or two handlers" do
     expect { html.xpath("//a", {}, {}) }.to raise_error(ArgumentError)
     expect { html.xpath("//a", handler, handler) }.to raise_error(ArgumentError)

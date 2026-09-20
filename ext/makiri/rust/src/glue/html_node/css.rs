@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use magnus::{method, prelude::*, Error, RHash, Ruby, Value};
 
 use super::HtmlSelf;
 use crate::bridge::gvl::held;
@@ -42,9 +42,39 @@ fn selector_text(selector: Value) -> Result<RubyText, Error> {
     ruby_verified_text(selector, c"CSS selector")
 }
 
+/// `(selector, namespaces = nil)`, the argument list `Makiri::XML`'s CSS
+/// methods take - so one call works on either representation.
+///
+/// Lexbor's matcher resolves a prefix against the document, not against
+/// caller-supplied bindings, so a non-empty Hash is refused rather than
+/// silently ignored: on HTML, `#xpath` is where per-query prefixes work.
+fn css_args(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+    let empty = match a.optional.0.filter(|v| !v.is_nil()) {
+        None => true,
+        Some(ns) => RHash::from_value(ns)
+            .ok_or_else(|| {
+                Error::new(
+                    ruby.exception_type_error(),
+                    "namespaces must be a Hash of prefix => uri",
+                )
+            })?
+            .is_empty(),
+    };
+    if !empty {
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            "namespace bindings are not supported by HTML CSS selectors - \
+             use #xpath for a prefixed query",
+        ));
+    }
+    Ok(a.required.0)
+}
+
 /// `Node#css`: every matching descendant, in document order.
-fn css(ruby: &Ruby, this: HtmlSelf, selector: Value) -> Result<Value, Error> {
+fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
+        let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let nodes = select_all(&held(ruby), this.raw(), sv.as_verified().as_bytes())
             .map_err(|e| select_error(e, selector))?;
@@ -57,8 +87,9 @@ fn css(ruby: &Ruby, this: HtmlSelf, selector: Value) -> Result<Value, Error> {
 ///
 /// Stops at the first match and wraps that one node - no NodeSet, and no Ruby
 /// `#first` dispatch, for the single node the caller asked for.
-fn at_css(ruby: &Ruby, this: HtmlSelf, selector: Value) -> Result<Value, Error> {
+fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     crate::bridge::ruby::entry(|| {
+        let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         let found = select_first(&held(ruby), this.raw(), sv.as_verified().as_bytes())
             .map_err(|e| select_error(e, selector))?;
@@ -72,8 +103,9 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, selector: Value) -> Result<Value, Error> 
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
 /// its descendants, like Nokogiri.
-fn matches(ruby: &Ruby, this: HtmlSelf, selector: Value) -> Result<bool, Error> {
+fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     crate::bridge::ruby::entry(|| {
+        let selector = css_args(ruby, args)?;
         let sv = selector_text(selector)?;
         matches_node(&held(ruby), this.raw(), sv.as_verified().as_bytes())
             .map_err(|e| select_error(e, selector))
@@ -83,9 +115,9 @@ fn matches(ruby: &Ruby, this: HtmlSelf, selector: Value) -> Result<bool, Error> 
 /// From `Init_makiri`.
 pub fn init_css() {
     let m = MOD_HTML_NODE_METHODS.module();
-    m.define_method("css", method!(css, 1)).expect("Node#css");
-    m.define_method("at_css", method!(at_css, 1))
+    m.define_method("css", method!(css, -1)).expect("Node#css");
+    m.define_method("at_css", method!(at_css, -1))
         .expect("Node#at_css");
-    m.define_method("matches?", method!(matches, 1))
+    m.define_method("matches?", method!(matches, -1))
         .expect("Node#matches?");
 }
