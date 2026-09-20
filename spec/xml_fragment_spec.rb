@@ -140,4 +140,37 @@ RSpec.describe "Makiri::XML fragments" do
       expect(doc.root.children.map(&:name)).to eq(%w[keep ok])
     end
   end
+
+  describe "a rejected fragment insertion is all or nothing" do
+    # place() used to insert a fragment's children one at a time, so a child the
+    # rules refused left the earlier ones linked. The document node found it:
+    # two elements there is one too many, and the first was already the root by
+    # the time the second was refused. Place::Replace always validated the whole
+    # fragment first; the other three verbs do now too.
+    it "leaves the document untouched when one child of an appended fragment is refused" do
+      doc = Makiri::XML::Document.new
+      frag = doc.fragment("<a/><b/>")
+      expect { doc.add_child(frag) }.to raise_error(Makiri::Error)
+      expect(doc.root).to be_nil
+      expect(doc.to_xml).not_to include("<a/>")
+      expect(frag.children.map(&:name)).to eq(%w[a b])
+    end
+
+    it "still appends a fragment the rules allow" do
+      doc = Makiri::XML::Document.new
+      doc.add_child(doc.fragment("<only/>"))
+      expect(doc.root.name).to eq("only")
+    end
+
+    it "refuses a second root through before/after as well" do
+      doc = Makiri::XML("<r/>")
+      %i[add_previous_sibling add_next_sibling].each do |verb|
+        frag = doc.fragment("<x/><y/>")
+        expect { doc.root.public_send(verb, frag) }.to raise_error(Makiri::Error)
+        expect(doc.root.name).to eq("r")
+        expect(doc.children.map(&:name)).to eq(%w[r])
+        expect(frag.children.map(&:name)).to eq(%w[x y])
+      end
+    end
+  end
 end

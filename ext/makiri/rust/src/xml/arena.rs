@@ -17,6 +17,13 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Hands each document a unique stamp (never 0). Node ids carry it so a handle
 /// built for one document is rejected by another's `try_node`.
+///
+/// It wraps after 2^32 documents, so in principle a handle kept across that many
+/// later parses could match a stamp again. That is not a hazard worth widening
+/// the counter for: a `NodeId` is only ever obtained from a live Ruby wrapper,
+/// which keeps its document alive, so a handle and its document cannot drift
+/// four billion documents apart - and a handle from a document that is GONE has
+/// no way to reach `try_node` at all.
 static DOC_STAMP: AtomicU32 = AtomicU32::new(1);
 
 const NODE_COST: usize = core::mem::size_of::<Node>();
@@ -553,7 +560,14 @@ impl Document {
     /* ---- tree walks ---- */
 
     /// Pre-order (document-order) successor of `cur` within `root`'s subtree.
+    ///
+    /// `cur` is checked, not assumed: this is reached from the Ruby glue with a
+    /// handle a wrapper supplied, so a stale or foreign one must answer "no
+    /// successor" rather than read whatever slot its index lands on. The link
+    /// walk after that needs no check - a link always names a live slot of THIS
+    /// document.
     pub fn preorder_next(&self, root: NodeId, cur: NodeId) -> Option<NodeId> {
+        self.try_node(cur)?;
         let root_link = Link::of(root);
         let mut cur_link = Link::of(cur);
         let first = self.node_at(cur_link).first_child;
@@ -573,8 +587,9 @@ impl Document {
         self.node_id(self.node_at(cur_link).next)
     }
 
-    /// `node`'s topmost ancestor is the document node.
-    pub fn is_connected(&self, node: NodeId) -> bool {
+    /// `node`'s topmost ancestor is the document node. Internal: it walks links
+    /// unchecked, so the caller must hold a live handle.
+    pub(crate) fn is_connected(&self, node: NodeId) -> bool {
         let mut top = Link::of(node);
         while !self.node_at(top).parent.is_none() {
             top = self.node_at(top).parent;
@@ -608,8 +623,9 @@ impl Document {
         Span::EMPTY
     }
 
-    /// True when two attributes share `(local name, namespace URI)`.
-    pub fn has_duplicate_attributes(&self, element: NodeId) -> bool {
+    /// True when two attributes share `(local name, namespace URI)`. Internal:
+    /// unchecked, like [`Document::is_connected`].
+    pub(crate) fn has_duplicate_attributes(&self, element: NodeId) -> bool {
         let mut a = self.node(element).attrs;
         while !a.is_none() {
             let mut b = self.node_at(a).next;

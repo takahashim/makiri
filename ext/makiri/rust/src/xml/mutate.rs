@@ -57,6 +57,13 @@ pub enum Place {
 /// Put `node` at `place` relative to `target`. A DOCUMENT_FRAGMENT contributes
 /// its CHILDREN, in order, and is left empty - as the DOM's insertion does -
 /// and replacing with one swaps the target for all of them.
+///
+/// A fragment is ALL OR NOTHING: every child is validated before any link
+/// changes. Inserting them one at a time was not, and the document node found
+/// it - a two-element fragment appended there linked the first element, then
+/// refused the second and raised, leaving the document holding half the
+/// fragment (`spec/xml_fragment_spec.rb`). `Place::Replace` always validated
+/// first; the other three now do too.
 pub fn place(doc: &mut Document, target: NodeId, node: NodeId, place: Place) -> MutStatus {
     if doc.type_(node) != Some(NodeType::Fragment) {
         return match place {
@@ -66,26 +73,105 @@ pub fn place(doc: &mut Document, target: NodeId, node: NodeId, place: Place) -> 
             Place::Replace => replace_node(doc, target, node),
         };
     }
+    /* An empty fragment still removes the target. */
     if place == Place::Replace {
-        /* An empty fragment still removes the target. */
         return replace_with_fragment(doc, target, node);
     }
-    let mut last = target; /* the moving insertion point, for After */
-    while let Some(c) = doc.first_child(node) {
-        let st = match place {
-            Place::Child => insert_child(doc, target, c),
-            Place::Before => insert_before(doc, target, c),
-            Place::After => {
-                let st = insert_after(doc, last, c);
-                last = c;
-                st
-            }
-            Place::Replace => MutStatus::Internal, /* handled above */
-        };
+    place_fragment(doc, target, node, place)
+}
+
+/// The site a fragment's children go to, and the node they stand in for.
+fn fragment_site(doc: &Document, target: NodeId, place: Place) -> Option<Site> {
+    match place {
+        Place::Child => Some(Site::appending(target)),
+        Place::Before => Some(Site::before(doc.parent(target)?, target)),
+        Place::After => {
+            let container = doc.parent(target)?;
+            /* Every child lands before whatever follows the target, wherever
+             * the moving insertion point has reached. */
+            Some(match doc.next(target) {
+                Some(next) => Site::before(container, next),
+                None => Site::appending(container),
+            })
+        }
+        Place::Replace => Some(Site::replacing(doc.parent(target)?, target)),
+    }
+}
+
+/// The rule no per-child check can see: a Document holds ONE element, counting
+/// the fragment's and the container's own together. Also refuses a DOCTYPE
+/// child, which a fragment cannot hold today - a fragment is not an insertion
+/// container - but which would otherwise be a silent second root-level doctype.
+fn fragment_fits_container(doc: &Document, frag: NodeId, site: Site) -> MutStatus {
+    if doc.type_(site.container) != Some(NodeType::Document) {
+        return MutStatus::Ok;
+    }
+    if element_child_count(doc, frag, None)
+        + element_child_count(doc, site.container, site.exclude)
+        > 1
+    {
+        return MutStatus::Hierarchy;
+    }
+    let mut c = doc.first_child(frag);
+    while let Some(cur) = c {
+        if doc.type_(cur) == Some(NodeType::Doctype) {
+            return MutStatus::Hierarchy;
+        }
+        c = doc.next(cur);
+    }
+    MutStatus::Ok
+}
+
+/// Validate every child of `frag` against `site`. On `Ok` the commit that
+/// follows cannot fail: it only relinks.
+fn check_fragment_children(doc: &mut Document, frag: NodeId, site: Site) -> MutStatus {
+    let st = fragment_fits_container(doc, frag, site);
+    if st != MutStatus::Ok {
+        return st;
+    }
+    let mut c = doc.first_child(frag);
+    while let Some(cur) = c {
+        let st = prepare_insert(doc, site, cur);
         if st != MutStatus::Ok {
             return st;
         }
+        c = doc.next(cur);
     }
+    MutStatus::Ok
+}
+
+/// Splice every child of `frag` at `place`, having already validated them.
+fn place_fragment(doc: &mut Document, target: NodeId, frag: NodeId, place: Place) -> MutStatus {
+    let Some(site) = fragment_site(doc, target, place) else {
+        return MutStatus::Hierarchy;
+    };
+    let st = check_fragment_children(doc, frag, site);
+    if st != MutStatus::Ok {
+        return st;
+    }
+    /* --- commit pass: relinking only, so nothing here can refuse */
+    let mut last = target; /* the moving insertion point, for After */
+    while let Some(c) = doc.first_child(frag) {
+        doc.detach(c);
+        match place {
+            Place::Child => {
+                let prev = doc.last_child(site.container);
+                doc.splice_between(site.container, c, prev, None);
+            }
+            Place::Before => {
+                let prev = doc.prev(target);
+                doc.splice_between(site.container, c, prev, Some(target));
+            }
+            Place::After => {
+                let next = doc.next(last);
+                doc.splice_between(site.container, c, Some(last), next);
+                last = c;
+            }
+            /* handled by replace_with_fragment */
+            Place::Replace => return MutStatus::Internal,
+        }
+    }
+    doc.sync_doc_meta(site.container);
     MutStatus::Ok
 }
 
@@ -1070,27 +1156,9 @@ pub fn replace_with_fragment(doc: &mut Document, target: NodeId, frag: NodeId) -
         return MutStatus::Hierarchy;
     };
     /* --- validation pass: no links change until it all passes */
-    if doc.type_(container) == Some(NodeType::Document) {
-        if element_child_count(doc, frag, None) + element_child_count(doc, container, Some(target))
-            > 1
-        {
-            return MutStatus::Hierarchy;
-        }
-        let mut c = doc.first_child(frag);
-        while let Some(cur) = c {
-            if doc.type_(cur) == Some(NodeType::Doctype) {
-                return MutStatus::Hierarchy;
-            }
-            c = doc.next(cur);
-        }
-    }
-    let mut c = doc.first_child(frag);
-    while let Some(cur) = c {
-        let st = prepare_insert(doc, Site::replacing(container, target), cur);
-        if st != MutStatus::Ok {
-            return st;
-        }
-        c = doc.next(cur);
+    let st = check_fragment_children(doc, frag, Site::replacing(container, target));
+    if st != MutStatus::Ok {
+        return st;
     }
     /* --- commit pass: every child takes target's slot in fragment order */
     while let Some(c) = doc.first_child(frag) {

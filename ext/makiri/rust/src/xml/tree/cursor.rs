@@ -171,29 +171,33 @@ impl<'a> Cursor<'a> {
 
     /* ---- status ---- */
 
+    /// Record `st` as the parse's outcome and give up.
+    ///
+    /// The FIRST failure wins, for all four kinds: it is the cause, and anything
+    /// after it is a consequence of having given up. (`syntax` alone used to be
+    /// sticky while `limit`/`unsupported` overwrote, which raised a question
+    /// nothing answered - the parse stops at the first failure, so the two
+    /// behaved identically and only one can be the rule.)
     #[inline]
-    pub(super) fn syntax<T>(&mut self) -> R<T> {
+    pub(super) fn fail<T>(&mut self, st: Status) -> R<T> {
         if self.status.is_ok() {
-            self.status = Status::Syntax;
+            self.status = st;
         }
         Err(())
+    }
+    #[inline]
+    pub(super) fn syntax<T>(&mut self) -> R<T> {
+        self.fail(Status::Syntax)
     }
     /// Well-formed, but uses a DTD construct Makiri refuses rather than
     /// silently ignores (see [`super::dtd`]).
     #[inline]
     pub(super) fn unsupported<T>(&mut self) -> R<T> {
-        self.status = Status::Unsupported;
-        Err(())
+        self.fail(Status::Unsupported)
     }
     #[inline]
     pub(super) fn limit<T>(&mut self) -> R<T> {
-        self.status = Status::Limit;
-        Err(())
-    }
-    #[inline]
-    pub(super) fn fail<T>(&mut self, st: Status) -> R<T> {
-        self.status = st;
-        Err(())
+        self.fail(Status::Limit)
     }
     #[inline]
     pub(super) fn need_space(&mut self) -> R {
